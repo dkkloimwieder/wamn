@@ -116,3 +116,70 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON s2.fkchild TO wamn_app;
 
 -- Identity columns: inserts by wamn_app need the backing sequences.
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA s2 TO wamn_app;
+
+-- ===========================================================================
+-- S3 fixture: flow catalog, run-state checkpoints, and an idempotent business
+-- sink for the flow-runner PoC (docs/p0-exit-criteria.md S3). Same security
+-- shape as s2: one app role, tenant separation via the app.tenant claim + RLS.
+-- The flow-runner reads the catalog, checkpoints run state, and writes the
+-- sink entirely through the wamn:postgres capability under its injected claim.
+-- ===========================================================================
+CREATE SCHEMA s3 AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA s3 TO wamn_app;
+
+-- Flow catalog: the versioned IR (graph_json) with an active-version pointer.
+-- "Deploy" = flip `active` to a version. In production this write is a
+-- control-plane action and the runner only READS; for the PoC the runner
+-- performs the flip (seed / set-active exports) so the whole gate exercises a
+-- single wamn:postgres path.
+CREATE TABLE s3.flows (
+    tenant_id  text NOT NULL,
+    flow_id    text NOT NULL,
+    version    int  NOT NULL,
+    active     boolean NOT NULL DEFAULT false,
+    graph_json jsonb NOT NULL,
+    PRIMARY KEY (tenant_id, flow_id, version)
+);
+ALTER TABLE s3.flows ENABLE ROW LEVEL SECURITY;
+ALTER TABLE s3.flows FORCE ROW LEVEL SECURITY;
+CREATE POLICY flows_tenant ON s3.flows
+    USING (tenant_id = current_setting('app.tenant', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+GRANT SELECT, INSERT, UPDATE, DELETE ON s3.flows TO wamn_app;
+
+-- Run-state checkpoints. step_seq = highest COMPLETED step index (a checkpoint
+-- is written after each step commits; -1 means nothing done yet). Resume loads
+-- step_seq and continues from step_seq + 1.
+CREATE TABLE s3.flow_runs (
+    tenant_id    text NOT NULL,
+    run_id       text NOT NULL,
+    flow_id      text NOT NULL,
+    flow_version int  NOT NULL,
+    step_seq     int  NOT NULL DEFAULT -1,
+    status       text NOT NULL DEFAULT 'running',
+    state_json   jsonb,
+    PRIMARY KEY (tenant_id, run_id)
+);
+ALTER TABLE s3.flow_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE s3.flow_runs FORCE ROW LEVEL SECURITY;
+CREATE POLICY flow_runs_tenant ON s3.flow_runs
+    USING (tenant_id = current_setting('app.tenant', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+GRANT SELECT, INSERT, UPDATE, DELETE ON s3.flow_runs TO wamn_app;
+
+-- Business side-effect sink. The idempotency key (tenant_id, run_id, step)
+-- makes the pg-write node's INSERT ... ON CONFLICT DO NOTHING a no-op on
+-- replay, so a killed+resumed run leaves exactly one row per step — never two.
+CREATE TABLE s3.sink (
+    tenant_id  text NOT NULL,
+    run_id     text NOT NULL,
+    step       int  NOT NULL,
+    payload    text NOT NULL,
+    CONSTRAINT sink_idem UNIQUE (tenant_id, run_id, step)
+);
+ALTER TABLE s3.sink ENABLE ROW LEVEL SECURITY;
+ALTER TABLE s3.sink FORCE ROW LEVEL SECURITY;
+CREATE POLICY sink_tenant ON s3.sink
+    USING (tenant_id = current_setting('app.tenant', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+GRANT SELECT, INSERT, UPDATE, DELETE ON s3.sink TO wamn_app;

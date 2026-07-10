@@ -1,0 +1,48 @@
+package wamn:flowrunner@0.1.0;
+
+/// Guest flow-runner for the S3 spike (docs/p0-exit-criteria.md S3).
+///
+/// The runner IS a long-lived component; the STANDARD nodes (webhook-in,
+/// transform, pg-write, conditional, respond) are native Rust compiled into
+/// it, so dispatching a standard node is a same-binary call — that is the
+/// `< 50us` overhead the dispatch bench measures. The runner reads its flow
+/// IR from a catalog table, checkpoints run state, and writes an idempotent
+/// business sink, all through the host `wamn:postgres` capability under the
+/// tenant claim the host injects from workload identity.
+world flowrunner {
+  import wamn:postgres/types@0.1.0;
+  import wamn:postgres/client@0.1.0;
+
+  /// Dispatch micro-benchmark. Runs `iterations` standard-only graph walks
+  /// (webhook-in -> transform -> pg-write* -> conditional -> respond) entirely
+  /// in-component; the pg-write node's side effect is stubbed to an in-process
+  /// counter (*), so no DB and no host boundary is crossed. Each per-node
+  /// dispatch is timed in-component; returns a tuple of
+  /// (dispatch-count, mean-ns, p50-ns, p99-ns, max-ns). mean-ns comes from a
+  /// separate un-instrumented pass (amortized, boundary-free); p50/p99/max come
+  /// from the timed pass and each include one monotonic-clock read, so they
+  /// over-report the true dispatch cost (conservative).
+  export dispatch-bench: func(iterations: u32) -> tuple<u64, u64, u64, u64, u64>;
+
+  /// Seed the catalog with flow versions v1 and v2 (idempotent). Returns the
+  /// highest version seeded. v1 is left active by default.
+  export seed: func() -> result<u32, string>;
+  /// Flip the active flow version in the catalog ("deploy" the version).
+  export set-active: func(version: u32) -> result<_, string>;
+  /// Read the currently-active flow version from the catalog.
+  export active-version: func() -> result<u32, string>;
+
+  /// Execute a run to completion, RESUMING from the last checkpoint if the run
+  /// already exists (idempotent side effects). Returns the flow version it
+  /// executed under, so a hot-reloaded version change is observable.
+  export run: func(run-id: string, payload: string) -> result<u32, string>;
+  /// Like `run`, but busy-loops after the side-effect write commits and BEFORE
+  /// the checkpoint advances — the exact pod-death window. Never returns; the
+  /// harness epoch-kills it, then calls `run` on a fresh instance to resume.
+  export run-until-kill: func(run-id: string, payload: string) -> result<u32, string>;
+
+  /// Count business side-effect rows for a run (the idempotency assertion).
+  export sink-count: func(run-id: string) -> result<u64, string>;
+  /// Delete run state + side effects for a run (clean slate between iters).
+  export reset: func(run-id: string) -> result<u64, string>;
+}

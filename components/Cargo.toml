@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["busyloop", "hello", "memhog", "pgprobe"]
+members = ["busyloop", "flowrunner", "hello", "memhog", "pgprobe"]
 
 [workspace.package]
 version = "0.1.0"

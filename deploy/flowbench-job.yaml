@@ -1,0 +1,53 @@
+# S3 in-cluster flow-runner gates. Runs the flowbench subcommand of the same
+# wamn-host image the operator deploys, against the in-cluster Postgres
+# (deploy/postgres.yaml, whose fixture now includes the s3 flow tables). The
+# dispatch p99 acceptance gate is defined in-cluster, so this Job is the gate of
+# record; local docker runs are for iteration.
+#
+#   kubectl -n wamn-system apply -f deploy/flowbench-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/flowbench --timeout=300s
+#   kubectl -n wamn-system logs job/flowbench
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: flowbench
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: flowbench }
+    spec:
+      restartPolicy: Never
+      # Co-locate with Postgres: the dispatch gate is same-binary and DB-free,
+      # but the hot-reload and resume gates make real DB round trips; pinning
+      # the Job to the Postgres node keeps those off the cross-node overlay hop
+      # (see the S2 pgbench-job rationale).
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: postgres }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: flowbench
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "error"
+            - "flowbench"
+            - "--flowrunner"
+            - "/bench/flowrunner.wasm"
+            - "--mode"
+            - "all"
+          env:
+            - name: WAMN_PG_URL
+              value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+          resources:
+            # No CPU limit on purpose: a CFS quota would throttle the runtime
+            # for the rest of each 100ms window once exhausted, inflating the
+            # dispatch tail with scheduler stalls rather than real work — the
+            # same artifact the S2 gate had to eliminate. Memory is capped.
+            requests: { cpu: "2", memory: "512Mi" }
+            limits: { memory: "1Gi" }

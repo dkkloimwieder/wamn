@@ -157,6 +157,16 @@ kubectl -n wamn-system create configmap pg-init --from-file=init.sql=deploy/post
 kubectl -n wamn-system apply -f deploy/postgres.yaml -f deploy/pgbench-job.yaml
 kubectl -n wamn-system logs -f job/pgbench
 
+# S3 gates (dispatch p99, hot-reload, checkpoint/resume idempotency). The
+# dispatch gate is same-binary and needs no DB; hot-reload/resume use the s3.*
+# fixture tables (also in deploy/postgres-init.sql).
+./target/release/wamn-host --log-level error flowbench \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
+# In-cluster (same co-located / no-cpu-limit Job topology as pgbench):
+kubectl -n wamn-system apply -f deploy/flowbench-job.yaml
+kubectl -n wamn-system logs -f job/flowbench
+
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
 
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage

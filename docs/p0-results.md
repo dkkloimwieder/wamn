@@ -214,7 +214,91 @@ SECURITY` with policies keyed on `current_setting('app.tenant', true)`.
 capability) holds. Closing S2 unblocks 2.2 (production plugin, wamn-ui3), D5
 (wamn-qwd), S3 (wamn-lsf), and [P0-EXIT] (wamn-2rl).
 
-## S3 — Flow-runner PoC (5.2) — pending
+## S3 — Flow-runner PoC (5.2) — **PASS** (2026-07-10)
+
+**Deliverable shipped:** a guest flow-runner (`components/flowrunner`) that
+embeds the standard node library as **native Rust** and imports
+`wamn:postgres/client`, plus a `wamn-host flowbench` subcommand
+(`crates/wamn-host/src/flowbench.rs`) that drives it. The runner *is* a
+long-lived component; the standard nodes are compiled in, so dispatching one is
+an ordinary same-binary function call (`std_node`) — that is the `< 50 µs`
+overhead the dispatch gate measures. Everything durable — the flow IR, the
+run-state checkpoints, and the business sink — flows through the S2
+`wamn:postgres` plugin under the host-injected tenant claim; the runner has no
+other data path. The 5-node PoC graph is `webhook-in → transform → pg-write →
+conditional → respond` (webhook-in/respond modeled as the walk's input/return —
+the HTTP hop is S4). Flow JSON is a minimal versioned IR stored in a catalog
+table; "deploy" flips the active-version pointer.
+
+**Method:** like `pgbench`, `flowbench` instantiates the guest into a hand-built
+`SharedCtx` store with the plugin linked and drives its exports. Fixture tables
+`s3.flows` (versioned `graph_json` + active pointer), `s3.flow_runs`
+(checkpoints; `step_seq` = highest completed step), and `s3.sink` (business
+side effect, `UNIQUE (tenant_id, run_id, step)` idempotency key) live in
+`deploy/postgres-init.sql` under the same `FORCE ROW LEVEL SECURITY` shape as
+s2. The in-cluster Job (`deploy/flowbench-job.yaml`, co-located, no CPU limit —
+the S2 CFS lesson) is the gate of record; the local docker run is for iteration.
+
+| Gate | In-cluster (kind pod, co-located) | Local (workstation) | Threshold | Verdict |
+|---|---|---|---|---|
+| Standard-node dispatch p99 (same-binary) | **0.83 µs** (mean 120 ns/dispatch, max 64.9 µs) | 0.80 µs (mean 124 ns) | < 50 µs | **PASS** (~60×) |
+| Hot-reload flip → version live | **428 µs** worst (5 flips) | 2.64 ms | < 1 s | **PASS** (~2000×) |
+| Kill-mid-run resume, side-effect rows | **10/10 exactly one row**, 10/10 duplicate-absorbed | same | exactly 1 | **PASS** |
+
+**How each gate is constructed:**
+
+- **Dispatch** (`dispatch-bench`): the runner walks the 5-node graph
+  `iterations` times entirely in-component, with the pg-write side effect
+  stubbed to a counter — no DB, no host boundary crossed per node. An
+  un-instrumented pass gives the amortized mean; an instrumented pass times each
+  per-node dispatch with the monotonic clock (each sample therefore *includes*
+  one clock read, so p50/p99/max are conservative upper bounds on the true
+  dispatch cost). The gate isolates same-binary dispatch from both I/O and the
+  wasm boundary, which would otherwise dwarf a sub-µs signal. (The lone `max`
+  outlier — tens of µs — is a single scheduler preemption; the gate is on p99.)
+- **Hot-reload**: the harness flips `s3.flows.active` between v1 (upper-cases the
+  payload) and v2 (reverses it), then re-reads the active version until the flip
+  is observed and confirms a fresh run now executes the *new* version's behavior
+  — proving the flip changes real execution, not just a pointer. The PoC
+  observes the flip by catalog re-read; the production doorbell is NATS core
+  (wamn-m2z [5.14]).
+- **Resume / idempotency**: a runner runs into the kill window — it commits the
+  pg-write side effect, then busy-loops *before* writing its checkpoint (the
+  exact pod-death window) and is epoch-killed (`Trap::Interrupt`, the wamn-4p3
+  patch). A fresh instance resumes from the last checkpoint; because the sink
+  write replays under the same `(run_id, step)` key, `ON CONFLICT DO NOTHING`
+  absorbs the duplicate. Every cycle: clean epoch trap, the side effect was
+  committed pre-kill (so the resume faced a *genuine* duplicate), and the run
+  ended with **exactly one** sink row — never two.
+
+**Notes on method / findings that feed downstream:**
+
+1. **Dispatch is not topology-sensitive (unlike S2's p99).** The dispatch metric
+   is a same-binary, DB-free CPU measurement, so local and in-cluster agree
+   (0.80 vs 0.83 µs); the Job still runs with no CPU limit to keep a CFS quota
+   from injecting scheduler stalls into the tail. The ~60× headroom (sub-µs vs
+   50 µs) confirms the architecture thesis: standard nodes compiled into the
+   runner cost nothing to dispatch, so the per-node budget belongs to real work,
+   not the framework.
+2. **Dispatch-SLO sanity vs 5.14 (for [P0-EXIT]).** 5.14 proposes platform-
+   overhead SLOs of sync write-ahead p99 < 15 ms, fast-path < 10 ms, async warm
+   p50 < 25 ms. S3 shows the *graph-walk* contribution to those budgets is
+   negligible (sub-µs per node); the budgets are dominated by the S2 DB round
+   trip (p99 1.98 ms in-cluster) and the trigger/queue path, not node dispatch.
+   The proposed SLOs remain internally consistent with the measured S2+S3
+   numbers.
+3. **PoC shortcuts and where the real work is tracked** (per the S3 decision to
+   confirm scope up front): catalog re-read stands in for the NATS doorbell →
+   wamn-m2z [5.14]; the minimal ad-hoc flow JSON → wamn-34t [5.1] (canonical
+   schema); webhook-in/respond as walk input/return → trigger dispatch in
+   wamn-m2z [5.14] + the production runner wamn-uyd [5.2] (sync webhook path is
+   locked as D15). The runner also *writes* the catalog (seed/flip) for the PoC;
+   in production that is a control-plane action and the runner only reads.
+
+**Fail branch:** not taken — high dispatch overhead would have forced a plan-
+representation rethink; resume failure would have reworked checkpoint
+granularity. Both held. Closing S3 unblocks S4 (wamn-veg), S6 (wamn-jy9),
+[P0-EXIT] (wamn-2rl), and the production flow-runner 5.2 (wamn-uyd).
 
 ## S4 — Custom-node invocation + config parse (5.6, D7, note 9b) — pending
 

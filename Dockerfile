@@ -24,5 +24,6 @@ COPY components/target/wasm32-wasip2/release/hello.wasm /bench/hello.wasm
 COPY components/target/wasm32-wasip2/release/memhog.wasm /bench/memhog.wasm
 COPY components/target/wasm32-wasip2/release/busyloop.wasm /bench/busyloop.wasm
 COPY components/target/wasm32-wasip2/release/pgprobe.wasm /bench/pgprobe.wasm
+COPY components/target/wasm32-wasip2/release/flowrunner.wasm /bench/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]

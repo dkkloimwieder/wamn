@@ -5,6 +5,7 @@
 
 mod bench;
 mod engine;
+mod flowbench;
 mod host;
 mod pgbench;
 mod plugins;
@@ -32,6 +33,8 @@ enum Command {
     Bench(bench::BenchArgs),
     /// Run the S2 wamn:postgres benchmark + security gates
     Pgbench(pgbench::PgBenchArgs),
+    /// Run the S3 flow-runner gates (dispatch / hot-reload / resume)
+    Flowbench(flowbench::FlowBenchArgs),
 }
 
 #[tokio::main]
@@ -47,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Host(args) => host::run(*args).await,
         Command::Bench(args) => bench::run(args).await,
         Command::Pgbench(args) => pgbench::run(args).await,
+        Command::Flowbench(args) => flowbench::run(args).await,
     };
 
     shutdown_observability();
