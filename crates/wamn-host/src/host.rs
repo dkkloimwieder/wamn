@@ -16,7 +16,7 @@ use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
 use crate::engine::build_engine;
-use crate::plugins::{WamnNodeControl, WamnPostgres};
+use crate::plugins::{WamnLogging, WamnNodeControl, WamnPostgres};
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -134,7 +134,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .copy_environment(true)
                 .build(),
         ))?
-        .with_plugin(Arc::new(plugin::wasi_logging::TracingLogger::default()))?
+        // S5: the custom wamn:logging plugin replaces the vendored TracingLogger
+        // — it enriches (host-trusted tenant/project + guest flow/run/node),
+        // owns a bounded front queue + drop counter, and ships enriched OTel log
+        // records to the collector. Both claim wasi:logging/logging, so exactly
+        // one may be registered.
+        .with_plugin(Arc::new(
+            WamnLogging::from_env().context("wamn:logging plugin init")?,
+        ))?
         .with_plugin(Arc::new(plugin::wasi_otel::WasiOtel::default()))?
         // Pool config from DATABASE_URL / WAMN_PG_* env; without a URL the
         // plugin still links and returns connection-unavailable on use.
@@ -166,7 +173,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let cluster_host = builder.build().context("failed to build cluster host")?;
     tracing::info!(
-        "wamn-host starting (plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres, wamn:node/control[stub])"
+        "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:node/control[stub])"
     );
     let cleanup = wash_runtime::washlet::run_cluster_host(cluster_host)
         .await

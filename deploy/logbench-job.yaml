@@ -1,0 +1,56 @@
+# S5 in-cluster logging-capture gates (gate of record). Runs the logbench
+# subcommand of the same wamn-host image the operator deploys, against the real
+# Loki + OTel Collector. Local docker runs are for iteration.
+#
+# The guest logs via wasi:logging; the wamn:logging plugin enriches + ships OTLP
+# to the collector, which forwards to Loki; logbench queries Loki for the exact
+# delivered count and cross-checks the collector's internal metrics.
+#
+#   kubectl -n wamn-system apply -f deploy/loki.yaml -f deploy/otel-collector.yaml
+#   kubectl -n wamn-system rollout status deploy/loki deploy/otel-collector --timeout=120s
+#   kubectl -n wamn-system apply -f deploy/logbench-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/logbench --timeout=300s
+#   kubectl -n wamn-system logs job/logbench
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: logbench
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: logbench }
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-pipeline
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "until nc -z otel-collector 4317 && nc -z loki 3100; do echo waiting for collector+loki; sleep 1; done"
+      containers:
+        - name: logbench
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "info"          # OTLP log filter is level-tied; guest logs are info
+            - "logbench"
+            - "--logspewer"
+            - "/bench/logspewer.wasm"
+            - "--mode"
+            - "all"
+          env:
+            # Guest logs -> plugin -> OTLP/gRPC -> this collector.
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4317" }
+            - { name: OTEL_EXPORTER_OTLP_PROTOCOL, value: "grpc" }
+            # Keep stderr fmt quiet while the OTLP logs filter stays at info.
+            - { name: RUST_LOG, value: "error" }
+            - { name: LOKI_URL, value: "http://loki:3100" }
+            - { name: COLLECTOR_METRICS_URL, value: "http://otel-collector:8888/metrics" }
+          resources:
+            # No CPU limit (CFS-quota tail artifact — the S2 lesson).
+            requests: { cpu: "2", memory: "512Mi" }
+            limits: { memory: "1Gi" }

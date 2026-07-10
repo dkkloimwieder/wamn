@@ -12,9 +12,17 @@ wash-runtime = { workspace = true }
 # wasmtime; cargo unifies it with wash-runtime's own copy.
 wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
 anyhow = { workspace = true }
-tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt"] }
+tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "sync"] }
 serde_json = "1"
 tracing = { workspace = true }
+# S5 wamn:logging plugin owns its OWN OTel LoggerProvider (generous batch queue
+# -> OTLP gRPC -> collector -> Loki), independent of the vendored
+# observability.rs pipeline (whose 2048 batch queue + log-level-tied filter
+# bottleneck a 10k/s bench). Pinned to the exact 0.31 line wash-runtime uses so
+# cargo unifies to a single crate instance (shared global meter provider).
+opentelemetry = { version = "0.31", default-features = false, features = ["logs", "metrics"] }
+opentelemetry_sdk = { version = "0.31", default-features = false, features = ["logs"] }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["grpc-tonic", "logs"] }
 async-trait = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 bytes = "1"

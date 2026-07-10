@@ -21,3 +21,11 @@ world node-bench {
   import wamn:nodebench/host@0.1.0;
   export wamn:node/handler@0.1.0;
 }
+
+/// Host-side bindgen world for the S5 `wamn:logging` plugin: the host
+/// IMPLEMENTS `wasi:logging/logging` (enrich + non-blocking enqueue + drop
+/// counter), routing guest logs to an OTLP LoggerProvider the plugin owns. See
+/// docs/p0-exit-criteria.md S5.
+world logging-plugin {
+  import wasi:logging/logging@0.1.0-draft;
+}

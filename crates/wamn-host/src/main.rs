@@ -7,6 +7,7 @@ mod bench;
 mod engine;
 mod flowbench;
 mod host;
+mod logbench;
 mod nodebench;
 mod pgbench;
 mod plugins;
@@ -40,6 +41,8 @@ enum Command {
     Nodebench(nodebench::NodeBenchArgs),
     /// Serve a wamn:node component over HTTP (S4 hop node host)
     ServeNode(nodebench::ServeNodeArgs),
+    /// Run the S5 logging-capture gates (overhead / loss / drops / enrichment)
+    Logbench(logbench::LogBenchArgs),
 }
 
 #[tokio::main]
@@ -58,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Flowbench(args) => flowbench::run(args).await,
         Command::Nodebench(args) => nodebench::run(args).await,
         Command::ServeNode(args) => nodebench::serve(args).await,
+        Command::Logbench(args) => logbench::run(args).await,
     };
 
     shutdown_observability();

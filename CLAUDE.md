@@ -120,6 +120,27 @@ kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
 kubectl -n wamn-system apply -f deploy/nodebench-job.yaml
 kubectl -n wamn-system logs -f job/nodebench
 
+# S5 gates (log() overhead / 10k-lines/s loss / drops-counted / enrichment).
+# Needs an OTel Collector + Loki (the collector bridges the host's OTLP-gRPC
+# logs to Loki's HTTP OTLP ingest). logspewer builds with the other guests.
+# Local iteration (throwaway loki + collector on a docker network):
+docker network create wamn-s5 2>/dev/null || true
+docker run -d --name wamn-s5-loki --network wamn-s5 -p 3100:3100 \
+  -v "$PWD/deploy/loki-local.yaml:/etc/loki/loki.yaml:ro" \
+  grafana/loki:3.4.2 -config.file=/etc/loki/loki.yaml
+docker run -d --name wamn-s5-otelcol --network wamn-s5 -p 4317:4317 -p 8888:8888 \
+  -v "$PWD/deploy/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
+  otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 RUST_LOG=error \
+  LOKI_URL=http://127.0.0.1:3100 COLLECTOR_METRICS_URL=http://127.0.0.1:8888/metrics \
+  ./target/release/wamn-host --log-level info logbench \
+  --logspewer components/target/wasm32-wasip2/release/logspewer.wasm --mode all
+# In-cluster gate of record (real Loki + collector; no cpu limit — the S2 lesson):
+kubectl -n wamn-system apply -f deploy/loki.yaml -f deploy/otel-collector.yaml
+kubectl -n wamn-system rollout status deploy/loki deploy/otel-collector --timeout=120s
+kubectl -n wamn-system apply -f deploy/logbench-job.yaml
+kubectl -n wamn-system logs -f job/logbench
+
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
 
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage

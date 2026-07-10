@@ -1,0 +1,105 @@
+# S5 logging sink: single-binary Loki 3.x with native OTLP ingest
+# (/otlp/v1/logs). The OTel Collector (deploy/otel-collector.yaml) forwards the
+# host's OTLP-gRPC logs here over otlphttp. Loki promotes `service.name` to the
+# `service_name` stream label and keeps the enrichment fields
+# (tenant/project/flow/run/node/run_label/seq) as structured metadata, which the
+# logbench LogQL filters on (`{service_name="wamn-host"} | run_label="…"`).
+#
+# Limits are set generously so a 10k lines/s burst is not rate-limited at the
+# ingester — the ONLY intentional drop point in S5 is the plugin's bounded front
+# queue (counted), so nothing downstream should silently drop.
+#
+#   kubectl -n wamn-system apply -f deploy/loki.yaml
+#   kubectl -n wamn-system rollout status deploy/loki --timeout=120s
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: wamn-system
+data:
+  loki.yaml: |
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9096
+      log_level: warn
+    common:
+      instance_addr: 127.0.0.1
+      path_prefix: /loki
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+    schema_config:
+      configs:
+        - from: 2024-01-01
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    limits_config:
+      allow_structured_metadata: true
+      volume_enabled: true
+      reject_old_samples: false
+      ingestion_rate_mb: 256
+      ingestion_burst_size_mb: 512
+      per_stream_rate_limit: 256MB
+      per_stream_rate_limit_burst: 512MB
+      max_streams_per_user: 0
+      max_entries_limit_per_query: 5000000
+      max_query_series: 100000
+    query_range:
+      results_cache:
+        cache:
+          embedded_cache:
+            enabled: true
+            max_size_mb: 100
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+  namespace: wamn-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: loki }
+  template:
+    metadata:
+      labels: { app: loki }
+    spec:
+      containers:
+        - name: loki
+          image: grafana/loki:3.4.2
+          args: ["-config.file=/etc/loki/loki.yaml"]
+          ports:
+            - { name: http, containerPort: 3100 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/loki }
+            - { name: data, mountPath: /loki }
+          resources:
+            # No CPU limit (CFS-quota tail artifact — the S2 lesson); the sink
+            # must not be throttled while accounting a 10k lines/s burst.
+            requests: { cpu: "1", memory: "512Mi" }
+            limits: { memory: "2Gi" }
+      volumes:
+        - name: config
+          configMap: { name: loki-config }
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  namespace: wamn-system
+spec:
+  selector: { app: loki }
+  ports:
+    - { name: http, port: 3100, targetPort: 3100 }

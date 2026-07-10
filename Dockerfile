@@ -30,5 +30,7 @@ COPY components/target/wasm32-wasip2/release/flowrunner.wasm /bench/flowrunner.w
 COPY components/target/wasm32-wasip2/release/node_rs.wasm /bench/node-rs.wasm
 COPY components/target/wasm32-wasip2/release/flow_composed.wasm /bench/flow-composed.wasm
 COPY components/node-ts/node-ts.wasm /bench/node-ts.wasm
+# S5 logging-capture fixture (imports wasi:logging, exports overhead+emit-batch).
+COPY components/target/wasm32-wasip2/release/logspewer.wasm /bench/logspewer.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]

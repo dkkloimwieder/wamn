@@ -402,6 +402,104 @@ interpreter default. Both held. Closing S4 unblocks the production custom-node
 work 5.6 (wamn-bd5) and feeds [P0-EXIT] wamn-2rl (D7 + note 9b now closable with
 data).
 
-## S5 — Logging capture (9.3) — pending
+## S5 — Logging capture (9.3) — **PASS** (2026-07-10)
+
+**Deliverable shipped:** a custom **`wamn:logging` host plugin**
+(`crates/wamn-host/src/plugins/wamn_logging.rs`) implementing `wasi:logging/logging`
+as the platform's log-capture path, plus a guest fixture
+(`components/logspewer`) and a `wamn-host logbench` subcommand
+(`crates/wamn-host/src/logbench.rs`) that drives it against a real **OTel
+Collector → Loki** pipeline (`deploy/otel-collector.yaml`, `deploy/loki.yaml`).
+The plugin replaces the vendored `TracingLogger`: it **enriches** every record
+with host-trusted `tenant`/`project` (from a component→claim map — a guest can
+*not* spoof its tenant) plus `flow`/`run`/`node` parsed from the guest's
+`context`, ships them as structured OTel log attributes, and **owns a bounded
+front queue + atomic drop counter** so a `log()` call is non-blocking and any
+rate-limit drop is *counted*, never silent.
+
+**Method:** the plugin owns its OWN `SdkLoggerProvider` (a generously sized
+batch processor → OTLP/gRPC → collector), independent of the vendored
+`observability.rs` logs pipeline whose fixed 2048-entry batch queue and
+`--log-level`-tied filter would bottleneck/misfilter a 10k lines/s bench. A
+collector is *required* between host and Loki (the host exporter is gRPC/tonic;
+Loki's OTLP ingest is HTTP) — it receives OTLP/gRPC and forwards to Loki's
+native `/otlp/v1/logs` over `otlphttp`. Loki promotes `service.name` to the
+`service_name` label and keeps the enrichment fields as structured metadata, so
+loss/enrichment are measured by exact LogQL counts
+(`sum(count_over_time({service_name="wamn-host"} | run_label="…" [Δ]))`), with
+the collector's internal `otelcol_exporter_sent_log_records` as a cross-check.
+The in-cluster Job (`deploy/logbench-job.yaml`, no CPU limit — the S2 CFS
+lesson) is the gate of record; local docker is for iteration.
+
+| Gate | In-cluster (kind) | Local (workstation) | Threshold | Verdict |
+|---|---|---|---|---|
+| Per-call `log()` overhead, guest-observed | **p99 5.78 µs** (max 12.5 µs, p50 1.6 µs) | p99 11.6 µs (max 28.3 µs, p50 4.3 µs) | < 50 µs | **PASS** |
+| Loss at 10k lines/s × 30s (300k lines) | **0 unaccounted / 300000 (0.0000%)**; delivered 300000, dropped 0 | 0 / 300000 (0.0000%) | < 0.1% unaccounted | **PASS** |
+| Rate-limit drops **counted, not silent** | **195699 dropped (visible)**, 0 unaccounted on a 200k burst | 195724 dropped, 0 unaccounted | drops > 0 & counted | **PASS** |
+| Enrichment (tenant/project/flow/run/node on every record) | **5000/5000 (100%)** | 5000/5000 (100%) | 100% | **PASS** |
+
+**How each gate is constructed:**
+
+- **Overhead (<50 µs):** the guest emits N `log()` calls, self-timing *each*
+  with `std::time::Instant` (works on wasm32-wasip2 — S3/S4), and returns the
+  per-call nanoseconds. Because the plugin's `log()` only enriches + `try_send`s
+  onto the front queue (the OTLP export is a background drain task), this is the
+  boundary + enrich + enqueue cost, not the export.
+- **Loss (<0.1% unaccounted):** the harness paces the guest to 10k lines/s for
+  30s (300k lines), each line carrying a unique `seq` + a per-run `run_label`.
+  After the front queue drains and the batch processor flushes, it queries Loki
+  for the exact delivered count and accounts
+  `unaccounted = emitted − delivered − dropped`, gating `unaccounted/emitted <
+  0.1%`. Everything downstream of the plugin's front queue is sized not to drop,
+  so the only intentional drop point is counted. In-cluster all 300000 lines
+  were delivered (0 lost, 0 dropped); the collector's cumulative
+  `sent_log_records` (302200 = 300000 + the 2200 overhead-phase calls)
+  independently corroborates the Loki count.
+- **Drops counted (not silent):** a saturation burst (200k lines) into a small
+  bounded queue (4096) draining at a throttled rate overflows the queue on
+  purpose; the plugin's atomic drop counter (also surfaced as OTel metric
+  `wamn.logging.dropped`) records every drop (195699 in-cluster), and the
+  accounting still closes exactly (`delivered + dropped = emitted`, 0
+  unaccounted).
+- **Enrichment (100%):** a Loki count of the run filtered to require all five
+  fields non-empty (`| tenant!="" | project!="" | …`) must equal the unfiltered
+  count — i.e. every delivered record is fully enriched (5000/5000).
+
+**Findings / decisions (feed [P0-EXIT] wamn-2rl):**
+
+1. **Logging capture is viable at v0 — no P1 buffer/agent redesign.** The
+   capture path sustains the target rate with 0 unaccounted loss and 100%
+   enrichment, so the S5 fail branch (logging becomes a P1 workstream) is **not
+   taken**. 9.3 production (wamn-yf3) proceeds on this shape.
+2. **Enrichment must be host-owned.** tenant/project are injected from a
+   host-trusted claim map (like the S2 `wamn:postgres` tenant claim), never from
+   the guest — a guest cannot forge its tenant. flow/run/node come from the
+   runner via the `context` string. This is the same identity S2/S3 already
+   plumb, so run history and logs share one enrichment source.
+3. **A collector is structurally required.** Host OTLP is gRPC/tonic; Loki OTLP
+   is HTTP. The OTel Collector is the bridge (and its internal metrics are a
+   convenient loss cross-check). This is a fixed piece of the 9.3 topology.
+4. **Drops are a first-class, counted signal.** The plugin's bounded front queue
+   is the single intentional drop point; overflow increments an atomic counter
+   surfaced as a metric. Rate-limiting is therefore observable, not silent —
+   satisfying the S5 requirement and giving 9.3 a back-pressure signal to alarm
+   on.
+
+**Method notes / PoC shortcuts and where the real work is tracked:** the guest
+`context` is a small JSON object the plugin parses for flow/run/node; the
+production runner supplies these on the real invocation context (5.2 path). The
+plugin owns a dedicated `SdkLoggerProvider` for the PoC to control batch sizing;
+9.3 production (wamn-yf3) folds this into the host's observability wiring
+(sizing the batch config from config rather than a second provider). Loki is a
+single-binary filesystem instance sized for the bench; production sink topology
+(retention, multitenancy, HA) is 9.x / control-plane work. A benign teardown log
+(`failed to shutdown meter provider`) prints after the PASS lines — it is the
+vendored `observability.rs` meter-provider shutdown racing process exit, not a
+capture-path fault.
+
+**Fail branch:** not taken — >0.1% unaccounted loss or <100% enrichment would
+have made logging a P1 workstream with a buffer/agent redesign (run history
+depends on the same enrichment). Both held. Closing S5 unblocks the production
+logging plugin 9.3 (wamn-yf3) and feeds [P0-EXIT] wamn-2rl.
 
 ## S6 — Test host plugin-swap (11.1) — pending

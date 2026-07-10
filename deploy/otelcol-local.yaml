@@ -1,0 +1,34 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+processors:
+  batch:
+    send_batch_size: 8192
+    send_batch_max_size: 16384
+    timeout: 200ms
+exporters:
+  otlphttp/loki:
+    logs_endpoint: http://wamn-s5-loki:3100/otlp/v1/logs
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      queue_size: 10000
+    retry_on_failure:
+      enabled: true
+service:
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/loki]

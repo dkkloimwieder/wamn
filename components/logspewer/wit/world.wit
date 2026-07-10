@@ -1,0 +1,36 @@
+// S5 logging-capture bench guest. Imports wasi:logging/logging (the real v0
+// contract) and exports two bench entry points driven by the `logbench`
+// harness. See docs/p0-exit-criteria.md S5.
+//
+//   overhead(n)   — emit `n` log() calls, self-timing EACH with the guest's own
+//                   monotonic clock, and return the per-call latencies (ns). The
+//                   <50us gate is a guest-observed number, so the guest must be
+//                   the one holding the stopwatch.
+//   emit-batch    — emit `count` log() calls whose `context` carries the
+//                   flow/run/node identity plus a per-line seq and a run label,
+//                   so the host plugin can enrich + the harness can count exactly
+//                   what reached Loki. The harness paces calls to hit a target
+//                   lines/sec; the guest just emits as told.
+//
+// tenant/project are deliberately NOT guest inputs — they are host-injected by
+// the wamn:logging plugin (a guest must not be able to spoof its tenant).
+package wamn:logbench-guest@0.1.0;
+
+world log-bench {
+  import wasi:logging/logging@0.1.0-draft;
+
+  /// Emit `n` info logs, timing each call in-guest; return per-call latency ns.
+  export overhead: func(n: u32) -> list<u64>;
+
+  /// Emit `count` info logs with seq in [seq-base, seq-base+count); the
+  /// `context` is JSON {flow,run,node,seq,run_label} for host enrichment +
+  /// exact loss accounting.
+  export emit-batch: func(
+    count: u32,
+    seq-base: u64,
+    run-label: string,
+    flow: string,
+    run: string,
+    node: string,
+  );
+}

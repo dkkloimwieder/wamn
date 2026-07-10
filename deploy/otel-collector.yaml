@@ -1,0 +1,91 @@
+# S5 log pipeline bridge. The wamn-host OTLP log exporter is gRPC/tonic; Loki's
+# OTLP ingest is HTTP — so a collector is REQUIRED between them. This one
+# receives OTLP/gRPC on :4317 and forwards to Loki's native OTLP endpoint over
+# otlphttp. Its own telemetry (otelcol_exporter_sent_log_records, …) is exposed
+# on :8888 for the logbench loss cross-check.
+#
+#   kubectl -n wamn-system apply -f deploy/otel-collector.yaml
+#   kubectl -n wamn-system rollout status deploy/otel-collector --timeout=120s
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: wamn-system
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 200ms
+    exporters:
+      otlphttp/loki:
+        # Loki native OTLP; otlphttp appends /v1/logs to this base.
+        logs_endpoint: http://loki:3100/otlp/v1/logs
+        tls:
+          insecure: true
+        sending_queue:
+          enabled: true
+          queue_size: 10000
+        retry_on_failure:
+          enabled: true
+    service:
+      telemetry:
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+      pipelines:
+        logs:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlphttp/loki]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: wamn-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: otel-collector }
+  template:
+    metadata:
+      labels: { app: otel-collector }
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.115.1
+          args: ["--config=/etc/otelcol/config.yaml"]
+          ports:
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: metrics, containerPort: 8888 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/otelcol }
+          resources:
+            # No CPU limit (CFS-quota tail artifact — the S2 lesson).
+            requests: { cpu: "1", memory: "256Mi" }
+            limits: { memory: "1Gi" }
+      volumes:
+        - name: config
+          configMap: { name: otel-collector-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: wamn-system
+spec:
+  selector: { app: otel-collector }
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: 4317 }
+    - { name: metrics, port: 8888, targetPort: 8888 }
