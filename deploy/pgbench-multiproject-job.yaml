@@ -1,0 +1,58 @@
+# [2.2] in-cluster gate of record: the production wamn:postgres plugin's
+# per-project pooling + credential resolution + per-project policy, plus the S2
+# security gates as regression on the refactored plugin. Same wamn-host image
+# the operator deploys; `--mode all` runs qps/saturation/chaos/rls/injection
+# (regression) and then the multiproject gate (which provisions two project
+# databases via the superuser admin url — wamn_app is NOSUPERUSER/NOCREATEDB,
+# as in production).
+#
+#   kubectl -n wamn-system apply -f deploy/pgbench-multiproject-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/pgbench-multiproject --timeout=300s
+#   kubectl -n wamn-system logs job/pgbench-multiproject
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pgbench-multiproject
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: pgbench-multiproject }
+    spec:
+      restartPolicy: Never
+      # Co-locate with Postgres: same single-host topology reasoning as the S2
+      # pgbench job — the regression p99 must not pick up a cross-node hop.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: postgres }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: pgbench-multiproject
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "error"
+            - "pgbench"
+            - "--pgprobe"
+            - "/bench/pgprobe.wasm"
+            - "--mode"
+            - "all"
+            - "--duration-secs"
+            - "10"
+            - "--concurrency"
+            - "16"
+          env:
+            - name: WAMN_PG_URL
+              value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+            # Superuser: provisions the ephemeral per-project databases only.
+            - name: WAMN_PG_ADMIN_URL
+              value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn
+          resources:
+            # No CPU limit on purpose (the S2 CFS lesson): a quota would throttle
+            # the runtime and inflate the regression p99 tail. Memory is capped.
+            requests: { cpu: "2", memory: "512Mi" }
+            limits: { memory: "1Gi" }

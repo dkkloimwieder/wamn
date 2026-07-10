@@ -29,5 +29,11 @@ world pgprobe {
   ///       batches, return the total rows drained.
   ///   6 = slow: hold a pooled connection for `arg` seconds (pg_sleep) — the
   ///       harness uses this to force pool saturation on purpose.
+  ///  10 = count-items: SELECT id FROM items (UNQUALIFIED name; resolves in the
+  ///       project DB this component is routed to). RLS confines it to this
+  ///       guest's tenant; subject to the project's row limit. Used by the
+  ///       [2.2] multi-project gate to prove per-project pooling + policy.
+  ///  11 = db-marker: SELECT n FROM marker — a distinct constant per project
+  ///       database, so the count proves which project the checkout routed to.
   export run: func(op: u32, arg: string) -> result<u64, string>;
 }

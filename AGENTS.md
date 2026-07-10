@@ -157,6 +157,21 @@ kubectl -n wamn-system create configmap pg-init --from-file=init.sql=deploy/post
 kubectl -n wamn-system apply -f deploy/postgres.yaml -f deploy/pgbench-job.yaml
 kubectl -n wamn-system logs -f job/pgbench
 
+# [2.2] production wamn:postgres — per-project pooling + credential resolution +
+# per-project policy (multiproject gate), with the S2 gates as regression. Needs
+# a Postgres AND a SUPERUSER url: the gate provisions two per-project databases
+# (wamn_app is NOSUPERUSER/NOCREATEDB, as in production). `--mode all` runs the
+# S2 gates then the multiproject gate; `--mode multiproject` runs only the new one.
+# Local iteration (same throwaway container as S2, plus WAMN_PG_ADMIN_URL):
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
+  ./target/release/wamn-host --log-level error pgbench \
+  --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
+# In-cluster gate of record (co-located, no cpu limit — S2 CFS lesson;
+# WAMN_PG_ADMIN_URL is the superuser used only to provision the project DBs):
+kubectl -n wamn-system apply -f deploy/pgbench-multiproject-job.yaml
+kubectl -n wamn-system logs -f job/pgbench-multiproject
+
 # S3 gates (dispatch p99, hot-reload, checkpoint/resume idempotency). The
 # dispatch gate is same-binary and needs no DB; hot-reload/resume use the s3.*
 # fixture tables (also in deploy/postgres-init.sql).

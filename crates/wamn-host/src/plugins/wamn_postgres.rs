@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use anyhow::Context as _;
 use chrono::{DateTime, SecondsFormat, Utc};
 use deadpool_postgres::{Manager, ManagerConfig, Object, Pool, RecyclingMethod, Runtime, Timeouts};
 use futures_util::TryStreamExt as _;
@@ -73,6 +74,15 @@ pub const TENANT_CONFIG_KEY: &str = "wamn.tenant";
 /// the guest), like the tenant claim.
 pub const SCHEMA_CONFIG_KEY: &str = "wamn.schema";
 
+/// Per-workload config key naming the project whose database this component
+/// uses. Optional: absent ⇒ the default project (single-DB deployments and the
+/// S2 bench). Set by the platform, not the guest.
+pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
+
+/// The project id used when a component names none — the single database a
+/// [`WamnPostgresConfig`] URL points at.
+pub const DEFAULT_PROJECT: &str = "default";
+
 // ---------------------------------------------------------------------------
 // Plugin configuration
 // ---------------------------------------------------------------------------
@@ -112,15 +122,151 @@ impl WamnPostgresConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Credential resolution (per-project connection + policy)
+// ---------------------------------------------------------------------------
+
+/// Resolved connection + policy for one project's database. In production one
+/// project = one database (plan 2.3); the pool, statement timeout, and row
+/// limit are all per-project so one noisy project cannot starve or over-fetch
+/// on behalf of another.
+#[derive(Clone, Debug)]
+pub struct ProjectConfig {
+    pub database_url: String,
+    pub pool_max_size: usize,
+    pub wait_timeout_ms: u64,
+    pub statement_timeout_ms: u32,
+    pub row_limit: u64,
+}
+
+impl ProjectConfig {
+    /// The default project's config, from the single-DB [`WamnPostgresConfig`].
+    fn from_global(url: String, cfg: &WamnPostgresConfig) -> Self {
+        Self {
+            database_url: url,
+            pool_max_size: cfg.pool_max_size,
+            wait_timeout_ms: cfg.wait_timeout_ms,
+            statement_timeout_ms: cfg.statement_timeout_ms,
+            row_limit: cfg.row_limit,
+        }
+    }
+}
+
+/// Resolves a project id to its database connection + policy. This is the seam
+/// that separates *which project am I* (a host-injected claim, non-spoofable)
+/// from *where does that project's data live* (a deployment/secret concern).
+/// v0 ships [`StaticCredentialProvider`]; [`K8sSecretProvider`] (2.2b,
+/// wamn-5x0.1) fills in live per-project Secret reads once 2.3 provisioning
+/// fixes the layout.
+pub trait CredentialProvider: Send + Sync {
+    /// `Ok(Some)` = resolved; `Ok(None)` = unknown project (the caller returns
+    /// `connection-unavailable`); `Err` = provider failure (also surfaced as
+    /// `connection-unavailable`, logged).
+    fn resolve(&self, project: &str) -> anyhow::Result<Option<ProjectConfig>>;
+}
+
+/// v0 provider: an in-memory project→config map plus an optional default used
+/// for any unlisted project (so a single-DB deployment and the S2 bench work
+/// with no map at all). The map is populated from `WAMN_PG_PROJECTS_FILE` (a
+/// JSON object mounted like a Secret/ConfigMap) or constructed directly.
+pub struct StaticCredentialProvider {
+    projects: HashMap<String, ProjectConfig>,
+    default: Option<ProjectConfig>,
+}
+
+impl StaticCredentialProvider {
+    pub fn new(projects: HashMap<String, ProjectConfig>, default: Option<ProjectConfig>) -> Self {
+        Self { projects, default }
+    }
+
+    /// Default-only provider (single database = the default project).
+    fn default_only(default: Option<ProjectConfig>) -> Self {
+        Self {
+            projects: HashMap::new(),
+            default,
+        }
+    }
+
+    /// Parse `{ "<project>": { "url": .., "row_limit"?: .., .. }, .. }`; unset
+    /// per-project fields fall back to `base`. Mirrors a mounted projects
+    /// Secret/ConfigMap.
+    fn projects_from_json(
+        text: &str,
+        base: &WamnPostgresConfig,
+    ) -> anyhow::Result<HashMap<String, ProjectConfig>> {
+        let v: serde_json::Value =
+            serde_json::from_str(text).context("parse WAMN_PG_PROJECTS_FILE json")?;
+        let obj = v
+            .as_object()
+            .context("WAMN_PG_PROJECTS_FILE must be a JSON object")?;
+        let mut out = HashMap::new();
+        for (name, entry) in obj {
+            let url = entry
+                .get("url")
+                .and_then(|u| u.as_str())
+                .with_context(|| format!("project {name:?} missing string \"url\""))?
+                .to_string();
+            let u64_or = |k: &str, d: u64| entry.get(k).and_then(|n| n.as_u64()).unwrap_or(d);
+            out.insert(
+                name.clone(),
+                ProjectConfig {
+                    database_url: url,
+                    pool_max_size: u64_or("pool_max_size", base.pool_max_size as u64) as usize,
+                    wait_timeout_ms: u64_or("wait_timeout_ms", base.wait_timeout_ms),
+                    statement_timeout_ms: u64_or(
+                        "statement_timeout_ms",
+                        base.statement_timeout_ms as u64,
+                    ) as u32,
+                    row_limit: u64_or("row_limit", base.row_limit),
+                },
+            );
+        }
+        Ok(out)
+    }
+}
+
+impl CredentialProvider for StaticCredentialProvider {
+    fn resolve(&self, project: &str) -> anyhow::Result<Option<ProjectConfig>> {
+        Ok(self
+            .projects
+            .get(project)
+            .cloned()
+            .or_else(|| self.default.clone()))
+    }
+}
+
+/// Seam for 2.2b (wamn-5x0.1): resolve `wamn-db-<project>` Secrets from the
+/// namespace via a K8s client. Deferred until 2.3 provisioning fixes the Secret
+/// layout — defined so the [`CredentialProvider`] wiring is real, but not yet
+/// functional (hence unconstructed in v0).
+#[allow(dead_code)]
+pub struct K8sSecretProvider {
+    pub namespace: String,
+}
+
+impl CredentialProvider for K8sSecretProvider {
+    fn resolve(&self, _project: &str) -> anyhow::Result<Option<ProjectConfig>> {
+        anyhow::bail!(
+            "K8sSecretProvider (namespace {:?}) is not implemented yet — see wamn-5x0.1 [2.2b]; use StaticCredentialProvider",
+            self.namespace
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
 
 pub struct WamnPostgres {
-    pool: Option<Pool>,
-    statement_timeout_ms: u32,
-    row_limit: u64,
+    /// Resolves a project id → its database connection + policy.
+    provider: Arc<dyn CredentialProvider>,
+    /// project id → live pool + policy, built lazily on first use and memoized
+    /// for the plugin's lifetime. Strict per-host caps (D5 hybrid v0/P1); a
+    /// pgBouncer tier, when added, sits under this map transparently.
+    pools: std::sync::RwLock<HashMap<String, Arc<ProjectPool>>>,
     /// component id → tenant claim.
     tenants: std::sync::RwLock<HashMap<String, String>>,
+    /// component id → project id (which database). Absent ⇒ the default project.
+    projects: std::sync::RwLock<HashMap<String, String>>,
     /// component id → `search_path` schema. Empty (the default) leaves the
     /// server's search_path alone — so S2/pgbench behaviour is unchanged. When
     /// set, the plugin injects `SET LOCAL search_path` alongside the tenant
@@ -129,6 +275,14 @@ pub struct WamnPostgres {
     schemas: std::sync::RwLock<HashMap<String, String>>,
     /// Connections destroyed instead of repooled (chaos-gate observability).
     destroyed: Arc<AtomicU64>,
+}
+
+/// A project's live connection pool plus its host-enforced policy (statement
+/// timeout + row limit travel with every call made against it).
+struct ProjectPool {
+    pool: Pool,
+    statement_timeout_ms: u32,
+    row_limit: u64,
 }
 
 /// Raw checkout state, observed before any claim injection. Gate probes use
@@ -151,6 +305,16 @@ fn valid_tenant(tenant: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// A project id. Used only as a map key and provider lookup (never embedded in
+/// SQL), so the charset just needs to be a sane, bounded identifier.
+fn valid_project(project: &str) -> bool {
+    !project.is_empty()
+        && project.len() <= 64
+        && project
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 /// A `search_path` schema name. Stricter than a tenant: no hyphens, so it is a
 /// bare unquoted SQL identifier that cannot escape the `SET LOCAL search_path`
 /// statement it is embedded in.
@@ -167,46 +331,106 @@ fn valid_schema(schema: &str) -> bool {
 }
 
 impl WamnPostgres {
+    /// Plugin over a single default database (the [`WamnPostgresConfig`] URL).
+    /// Pools are built lazily; `database_url: None` ⇒ every call returns
+    /// `connection-unavailable`.
     pub fn new(cfg: WamnPostgresConfig) -> anyhow::Result<Self> {
-        let pool = match &cfg.database_url {
-            Some(url) => {
-                let pg_config: tokio_postgres::Config = url
-                    .parse()
-                    .map_err(|e| anyhow::anyhow!("invalid database url: {e}"))?;
-                let mgr = Manager::from_config(
-                    pg_config,
-                    NoTls,
-                    ManagerConfig {
-                        recycling_method: RecyclingMethod::Fast,
-                    },
-                );
-                let timeout = std::time::Duration::from_millis(cfg.wait_timeout_ms);
-                Some(
-                    Pool::builder(mgr)
-                        .max_size(cfg.pool_max_size)
-                        .timeouts(Timeouts {
-                            wait: Some(timeout),
-                            create: Some(timeout),
-                            recycle: Some(timeout),
-                        })
-                        .runtime(Runtime::Tokio1)
-                        .build()?,
-                )
-            }
-            None => None,
-        };
-        Ok(Self {
-            pool,
-            statement_timeout_ms: cfg.statement_timeout_ms,
-            row_limit: cfg.row_limit,
-            tenants: std::sync::RwLock::new(HashMap::new()),
-            schemas: std::sync::RwLock::new(HashMap::new()),
-            destroyed: Arc::new(AtomicU64::new(0)),
-        })
+        let default = cfg
+            .database_url
+            .clone()
+            .map(|url| ProjectConfig::from_global(url, &cfg));
+        Ok(Self::with_provider(Arc::new(
+            StaticCredentialProvider::default_only(default),
+        )))
     }
 
+    /// Plugin over an explicit [`CredentialProvider`] (multi-project / tests).
+    pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
+        Self {
+            provider,
+            pools: std::sync::RwLock::new(HashMap::new()),
+            tenants: std::sync::RwLock::new(HashMap::new()),
+            projects: std::sync::RwLock::new(HashMap::new()),
+            schemas: std::sync::RwLock::new(HashMap::new()),
+            destroyed: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Build from the environment: the default project from
+    /// `DATABASE_URL`/`WAMN_PG_URL`, plus any explicit projects listed in the
+    /// JSON at `WAMN_PG_PROJECTS_FILE` (mounted like a Secret/ConfigMap).
     pub fn from_env() -> anyhow::Result<Self> {
-        Self::new(WamnPostgresConfig::from_env())
+        let cfg = WamnPostgresConfig::from_env();
+        let default = cfg
+            .database_url
+            .clone()
+            .map(|url| ProjectConfig::from_global(url, &cfg));
+        let mut projects = HashMap::new();
+        if let Ok(path) = std::env::var("WAMN_PG_PROJECTS_FILE") {
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("read WAMN_PG_PROJECTS_FILE {path}"))?;
+            projects = StaticCredentialProvider::projects_from_json(&text, &cfg)?;
+        }
+        Ok(Self::with_provider(Arc::new(
+            StaticCredentialProvider::new(projects, default),
+        )))
+    }
+
+    /// Build a deadpool pool for one project's connection config.
+    fn build_pool(cfg: &ProjectConfig) -> anyhow::Result<Pool> {
+        let pg_config: tokio_postgres::Config = cfg
+            .database_url
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid database url: {e}"))?;
+        let mgr = Manager::from_config(
+            pg_config,
+            NoTls,
+            ManagerConfig {
+                recycling_method: RecyclingMethod::Fast,
+            },
+        );
+        let timeout = std::time::Duration::from_millis(cfg.wait_timeout_ms);
+        Ok(Pool::builder(mgr)
+            .max_size(cfg.pool_max_size)
+            .timeouts(Timeouts {
+                wait: Some(timeout),
+                create: Some(timeout),
+                recycle: Some(timeout),
+            })
+            .runtime(Runtime::Tokio1)
+            .build()?)
+    }
+
+    /// Resolve + lazily build (memoized) the pool for a project. Unknown project
+    /// or a build/resolution failure ⇒ `connection-unavailable`.
+    fn ensure_pool(&self, project: &str) -> Result<Arc<ProjectPool>, PgError> {
+        if let Some(pp) = self.pools.read().expect("pools lock poisoned").get(project) {
+            return Ok(pp.clone());
+        }
+        let cfg = match self.provider.resolve(project) {
+            Ok(Some(c)) => c,
+            Ok(None) => {
+                tracing::warn!(project, "wamn:postgres: no credentials for project");
+                return Err(PgError::ConnectionUnavailable);
+            }
+            Err(e) => {
+                tracing::warn!(project, error = %e, "wamn:postgres: credential resolution failed");
+                return Err(PgError::ConnectionUnavailable);
+            }
+        };
+        let pp = match Self::build_pool(&cfg) {
+            Ok(pool) => Arc::new(ProjectPool {
+                pool,
+                statement_timeout_ms: cfg.statement_timeout_ms,
+                row_limit: cfg.row_limit,
+            }),
+            Err(e) => {
+                tracing::warn!(project, error = %e, "wamn:postgres: pool build failed");
+                return Err(PgError::ConnectionUnavailable);
+            }
+        };
+        let mut w = self.pools.write().expect("pools lock poisoned");
+        Ok(w.entry(project.to_string()).or_insert(pp).clone())
     }
 
     /// Register the tenant claim for a component id. The bench harness calls
@@ -229,6 +453,35 @@ impl WamnPostgres {
             .expect("tenants lock poisoned")
             .get(component_id)
             .cloned()
+    }
+
+    /// Register which project's database a component uses. The bench harness
+    /// calls this directly; the host path feeds it from the `wamn.project`
+    /// workload config. Absent ⇒ the default project.
+    pub fn set_project(&self, component_id: &str, project: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_project(project),
+            "invalid project {project:?}: 1-64 chars of [A-Za-z0-9_-] required"
+        );
+        self.projects
+            .write()
+            .expect("projects lock poisoned")
+            .insert(component_id.to_string(), project.to_string());
+        Ok(())
+    }
+
+    fn project_for(&self, component_id: &str) -> String {
+        self.projects
+            .read()
+            .expect("projects lock poisoned")
+            .get(component_id)
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_PROJECT.to_string())
+    }
+
+    /// Number of live (built) project pools — gate observability.
+    pub fn project_pool_count(&self) -> usize {
+        self.pools.read().expect("pools lock poisoned").len()
     }
 
     /// Register the `search_path` schema for a component id. When set, every
@@ -261,22 +514,37 @@ impl WamnPostgres {
         self.destroyed.load(Ordering::Relaxed)
     }
 
-    /// (size, available, waiting) of the pool, if configured.
-    pub fn pool_status(&self) -> Option<(usize, usize, usize)> {
-        self.pool.as_ref().map(|p| {
-            let s = p.status();
-            (s.size, s.available, s.waiting)
-        })
+    /// (size, available, waiting) of a project's pool, if it has been built.
+    pub fn pool_status_of(&self, project: &str) -> Option<(usize, usize, usize)> {
+        self.pools
+            .read()
+            .expect("pools lock poisoned")
+            .get(project)
+            .map(|pp| {
+                let s = pp.pool.status();
+                (s.size, s.available, s.waiting)
+            })
     }
 
-    /// Check out a raw connection and report its state *before* any claim
-    /// injection. Gate verification only — not reachable from guests.
+    /// Default-project pool status (single-DB benches).
+    pub fn pool_status(&self) -> Option<(usize, usize, usize)> {
+        self.pool_status_of(DEFAULT_PROJECT)
+    }
+
+    /// Check out a raw connection from the default project and report its state
+    /// *before* any claim injection. Gate verification only.
     pub async fn probe_checkout(&self) -> anyhow::Result<CheckoutProbe> {
-        let pool = self
-            .pool
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("no pool"))?;
-        let conn = pool.get().await?;
+        self.probe_checkout_of(DEFAULT_PROJECT).await
+    }
+
+    /// Check out a raw connection from a project's (lazily built) pool and
+    /// report its state *before* any claim injection. Gate verification only —
+    /// not reachable from guests.
+    pub async fn probe_checkout_of(&self, project: &str) -> anyhow::Result<CheckoutProbe> {
+        let pp = self
+            .ensure_pool(project)
+            .map_err(|_| anyhow::anyhow!("no pool for project {project:?}"))?;
+        let conn = pp.pool.get().await?;
         let row = conn
             .query_one(
                 "SELECT pg_backend_pid(), current_setting('app.tenant', true), \
@@ -295,15 +563,16 @@ impl WamnPostgres {
         destroy_connection(obj, &self.destroyed);
     }
 
-    async fn checkout(&self) -> Result<Object, PgError> {
-        let Some(pool) = &self.pool else {
-            tracing::warn!("wamn:postgres call with no database configured");
-            return Err(PgError::ConnectionUnavailable);
-        };
-        pool.get().await.map_err(|e| {
-            tracing::warn!(error = %e, "wamn:postgres pool checkout failed");
+    /// Check out a connection from a project's (lazily built) pool, returning
+    /// the pool handle too so its statement-timeout/row-limit policy travels
+    /// with the call.
+    async fn checkout(&self, project: &str) -> Result<(Object, Arc<ProjectPool>), PgError> {
+        let pp = self.ensure_pool(project)?;
+        let obj = pp.pool.get().await.map_err(|e| {
+            tracing::warn!(project, error = %e, "wamn:postgres pool checkout failed");
             PgError::ConnectionUnavailable
-        })
+        })?;
+        Ok((obj, pp))
     }
 
     /// `BEGIN` + claim/limit injection, one round trip. `tenant` is
@@ -317,6 +586,7 @@ impl WamnPostgres {
         conn: &Object,
         tenant: &str,
         schema: Option<&str>,
+        statement_timeout_ms: u32,
     ) -> Result<(), PgError> {
         debug_assert!(valid_tenant(tenant));
         if !valid_tenant(tenant) {
@@ -326,8 +596,7 @@ impl WamnPostgres {
             )));
         }
         let mut sql = format!(
-            "BEGIN; SET LOCAL app.tenant = '{tenant}'; SET LOCAL statement_timeout = {};",
-            self.statement_timeout_ms
+            "BEGIN; SET LOCAL app.tenant = '{tenant}'; SET LOCAL statement_timeout = {statement_timeout_ms};"
         );
         if let Some(schema) = schema {
             debug_assert!(valid_schema(schema));
@@ -365,10 +634,11 @@ impl WamnPostgres {
         want_rows: bool,
     ) -> Result<OneShotResult, PgError> {
         let tenant = self.require_tenant(component_id)?;
+        let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let conn = self.checkout().await?;
+        let (conn, pp) = self.checkout(&project).await?;
         if let Err(e) = self
-            .begin_with_claims(&conn, &tenant, schema.as_deref())
+            .begin_with_claims(&conn, &tenant, schema.as_deref(), pp.statement_timeout_ms)
             .await
         {
             // Claim injection failed: connection state is unknown — destroy.
@@ -376,7 +646,7 @@ impl WamnPostgres {
             return Err(e);
         }
         let result = if want_rows {
-            run_query(&conn, sql, params, self.row_limit)
+            run_query(&conn, sql, params, pp.row_limit)
                 .await
                 .map(OneShotResult::Rows)
         } else {
@@ -460,6 +730,15 @@ impl HostPlugin for WamnPostgres {
                 "component imports wamn:postgres but sets no {TENANT_CONFIG_KEY}; calls will be refused"
             );
         }
+        if let Some(project) = item.local_resources().config.get(PROJECT_CONFIG_KEY) {
+            let project = project.clone();
+            self.set_project(item.id(), &project)?;
+            tracing::debug!(
+                component = item.id(),
+                project,
+                "wamn:postgres project registered"
+            );
+        }
         if let Some(schema) = item.local_resources().config.get(SCHEMA_CONFIG_KEY) {
             let schema = schema.clone();
             self.set_schema(item.id(), &schema)?;
@@ -498,6 +777,8 @@ pub struct PgTransaction {
     state: SharedTxnState,
     destroyed: Arc<AtomicU64>,
     cursor_seq: u32,
+    /// Row limit of the project this transaction's connection belongs to.
+    row_limit: u64,
 }
 
 impl Drop for PgTransaction {
@@ -929,13 +1210,14 @@ impl client::Host for ActiveCtx<'_> {
             Ok(t) => t,
             Err(e) => return Ok(Err(e)),
         };
+        let project = plugin.project_for(&component_id);
         let schema = plugin.schema_for(&component_id);
-        let conn = match plugin.checkout().await {
+        let (conn, pp) = match plugin.checkout(&project).await {
             Ok(c) => c,
             Err(e) => return Ok(Err(e)),
         };
         if let Err(e) = plugin
-            .begin_with_claims(&conn, &tenant, schema.as_deref())
+            .begin_with_claims(&conn, &tenant, schema.as_deref(), pp.statement_timeout_ms)
             .await
         {
             plugin.destroy(conn);
@@ -948,6 +1230,7 @@ impl client::Host for ActiveCtx<'_> {
             })),
             destroyed: plugin.destroyed.clone(),
             cursor_seq: 0,
+            row_limit: pp.row_limit,
         };
         Ok(Ok(self.table.push(txn)?))
     }
@@ -960,9 +1243,8 @@ impl client::HostTransaction for ActiveCtx<'_> {
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-        let plugin = plugin_of(self)?;
-        let row_limit = plugin.row_limit;
         let txn = self.table.get(&rep)?;
+        let row_limit = txn.row_limit;
         let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
         Ok(with_txn_conn(&state, &destroyed, |conn| async move {
             let r = run_query(&conn, &sql, &params, row_limit).await;

@@ -20,12 +20,14 @@
 //!   injection  — SQL fragments in params round-trip byte-identically.
 //!   all        — every mode in sequence.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
+use tokio_postgres::NoTls;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::{
@@ -34,7 +36,10 @@ use wash_runtime::wasmtime::component::{
 use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 
 use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use crate::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use crate::plugins::wamn_postgres::{
+    self, CredentialProvider, ProjectConfig, StaticCredentialProvider, WamnPostgres,
+    WamnPostgresConfig,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
@@ -43,6 +48,8 @@ pub enum Mode {
     Chaos,
     Rls,
     Injection,
+    /// [2.2] per-project pooling + credential resolution + per-project policy.
+    Multiproject,
     All,
 }
 
@@ -55,6 +62,12 @@ pub struct PgBenchArgs {
     /// Postgres connection URL (overrides DATABASE_URL / WAMN_PG_URL)
     #[arg(long)]
     pub database_url: Option<String>,
+
+    /// Superuser URL for the [2.2] multiproject gate: provisions the per-project
+    /// databases (wamn_app is NOSUPERUSER/NOCREATEDB, like production). Only the
+    /// `multiproject` mode uses it.
+    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    pub admin_database_url: Option<String>,
 
     /// Which measurement/gate to run
     #[arg(long, value_enum, default_value_t = Mode::All)]
@@ -248,6 +261,17 @@ pub async fn run(args: PgBenchArgs) -> anyhow::Result<()> {
     }
     if run_all || args.mode == Mode::Injection {
         pass &= injection_phase(&harness, &args).await?;
+    }
+    if run_all || args.mode == Mode::Multiproject {
+        if args.admin_database_url.is_some() {
+            pass &= multiproject_phase(&guest, &cfg, &args).await?;
+        } else if args.mode == Mode::Multiproject {
+            bail!("multiproject mode needs --admin-database-url / WAMN_PG_ADMIN_URL");
+        } else {
+            println!(
+                "\n(skipping [2.2] multiproject gate: no --admin-database-url / WAMN_PG_ADMIN_URL)"
+            );
+        }
     }
 
     ticker.abort();
@@ -603,5 +627,174 @@ async fn injection_phase(harness: &Harness, args: &PgBenchArgs) -> anyhow::Resul
     println!("mismatches = {mismatches}, errors = {errors}, table intact = {table_ok}");
     let pass = mismatches == 0 && errors == 0 && table_ok;
     println!("PASS(injection: params are data, never SQL): {pass}");
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// [2.2] multiproject gate: per-project pooling + credential resolution + policy
+// ---------------------------------------------------------------------------
+
+const PROJ_A: &str = "proj-a";
+const PROJ_B: &str = "proj-b";
+const COMP_A: &str = "comp-a";
+const COMP_B: &str = "comp-b";
+const DB_A: &str = "wamn_p_a";
+const DB_B: &str = "wamn_p_b";
+const MARKER_A: i32 = 111;
+const MARKER_B: i32 = 222;
+
+/// Replace the database name (URL path) while preserving any `?params`.
+fn swap_db(url: &str, db: &str) -> anyhow::Result<String> {
+    let (base, query) = match url.split_once('?') {
+        Some((b, q)) => (b, Some(q)),
+        None => (url, None),
+    };
+    let slash = base.rfind('/').context("connection url has no path")?;
+    let mut out = format!("{}/{db}", &base[..slash]);
+    if let Some(q) = query {
+        out.push('?');
+        out.push_str(q);
+    }
+    Ok(out)
+}
+
+/// Provision one project database as superuser (idempotent): (re)create it,
+/// grant `wamn_app` CONNECT, then create the `marker` (routing witness) and
+/// `items` (FORCE-RLS) tables and seed them. Mirrors production, where the app
+/// role cannot create databases — only the operator can.
+async fn provision_project(
+    admin_url: &str,
+    db: &str,
+    marker: i32,
+    seeds: &[(&str, i32)],
+) -> anyhow::Result<()> {
+    // 1. (Re)create the database. CREATE/DROP DATABASE must each be their own
+    //    autocommit statement (they cannot run inside a transaction block).
+    {
+        let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
+            .await
+            .context("connect admin url")?;
+        let handle = tokio::spawn(conn);
+        client
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
+            .await?;
+        client
+            .batch_execute(&format!("CREATE DATABASE {db}"))
+            .await?;
+        client
+            .batch_execute(&format!("GRANT CONNECT ON DATABASE {db} TO wamn_app"))
+            .await?;
+        drop(client);
+        let _ = handle.await;
+    }
+    // 2. Tables + policies + seed, inside the new database (as superuser).
+    let db_admin_url = swap_db(admin_url, db)?;
+    let (client, conn) = tokio_postgres::connect(&db_admin_url, NoTls)
+        .await
+        .context("connect new project db")?;
+    let handle = tokio::spawn(conn);
+    let mut ddl = format!(
+        "CREATE TABLE marker (n int not null); \
+         INSERT INTO marker VALUES ({marker}); \
+         GRANT SELECT ON marker TO wamn_app; \
+         CREATE TABLE items (id bigserial primary key, tenant_id text not null, body text); \
+         ALTER TABLE items ENABLE ROW LEVEL SECURITY; \
+         ALTER TABLE items FORCE ROW LEVEL SECURITY; \
+         CREATE POLICY items_tenant ON items \
+           USING (tenant_id = current_setting('app.tenant', true)) \
+           WITH CHECK (tenant_id = current_setting('app.tenant', true)); \
+         GRANT SELECT, INSERT ON items TO wamn_app; \
+         GRANT USAGE ON SEQUENCE items_id_seq TO wamn_app;"
+    );
+    for (tenant, count) in seeds {
+        ddl.push_str(&format!(
+            " INSERT INTO items (tenant_id, body) SELECT '{tenant}', 'x' FROM generate_series(1,{count});"
+        ));
+    }
+    client.batch_execute(&ddl).await?;
+    drop(client);
+    let _ = handle.await;
+    Ok(())
+}
+
+/// The [2.2] gate: two projects on separate databases, resolved through a
+/// [`StaticCredentialProvider`], each with its own pool and its own row-limit
+/// policy. Proves (a) routing — each component reaches only its own database;
+/// (b) per-project policy — the two row limits are enforced independently;
+/// (c) RLS still confines within a project; (d) pool isolation — two distinct
+/// pools exist.
+async fn multiproject_phase(
+    guest: &[u8],
+    base_cfg: &WamnPostgresConfig,
+    args: &PgBenchArgs,
+) -> anyhow::Result<bool> {
+    println!("\n== [2.2] multiproject: per-project pooling + credentials + policy ==");
+    let admin_url = args
+        .admin_database_url
+        .as_ref()
+        .context("multiproject needs an admin url")?;
+    let base_url = base_cfg
+        .database_url
+        .as_ref()
+        .context("multiproject needs a base app url (WAMN_PG_URL)")?;
+
+    // Provision two separate project databases (10 rows for proj-a's tenant;
+    // proj-b holds 7 of its own tenant's rows plus 5 of a foreign tenant's, so
+    // RLS confinement is observable as 7-of-12).
+    provision_project(admin_url, DB_A, MARKER_A, &[("t-a", 10)]).await?;
+    provision_project(admin_url, DB_B, MARKER_B, &[("t-b", 7), ("t-x", 5)]).await?;
+
+    // Static provider: proj-a gets a SMALL row limit (4), proj-b a large one
+    // (1000). Same query, different per-project caps ⇒ the caps are per-project.
+    let mk = |url: String, row_limit: u64| ProjectConfig {
+        database_url: url,
+        pool_max_size: 8,
+        wait_timeout_ms: base_cfg.wait_timeout_ms,
+        statement_timeout_ms: base_cfg.statement_timeout_ms,
+        row_limit,
+    };
+    let mut projects = HashMap::new();
+    projects.insert(PROJ_A.to_string(), mk(swap_db(base_url, DB_A)?, 4));
+    projects.insert(PROJ_B.to_string(), mk(swap_db(base_url, DB_B)?, 1000));
+    let provider: Arc<dyn CredentialProvider> =
+        Arc::new(StaticCredentialProvider::new(projects, None));
+    let plugin = Arc::new(WamnPostgres::with_provider(provider));
+    plugin.set_tenant(COMP_A, "t-a")?;
+    plugin.set_project(COMP_A, PROJ_A)?;
+    plugin.set_tenant(COMP_B, "t-b")?;
+    plugin.set_project(COMP_B, PROJ_B)?;
+
+    let engine = build_engine(&[])?;
+    let harness = Harness::new(engine, guest, plugin.clone())?;
+    let mut wa = harness.worker(COMP_A, None).await?;
+    let mut wb = harness.worker(COMP_B, None).await?;
+
+    // Routing witness: each component reads its own database's marker.
+    let marker_a = wa.call(11, "").await?;
+    let marker_b = wb.call(11, "").await?;
+    // Per-project policy + RLS: proj-a's 10 rows trip its row-limit of 4;
+    // proj-b's tenant sees 7 of 12 rows (RLS) under its large limit.
+    let items_a = wa.call(10, "").await?;
+    let items_b = wb.call(10, "").await?;
+
+    let route_ok = marker_a == Ok(MARKER_A as u64) && marker_b == Ok(MARKER_B as u64);
+    let policy_ok = matches!(&items_a, Err(e) if e == "row-limit-exceeded:4");
+    let rls_ok = items_b == Ok(7);
+    let pools = plugin.project_pool_count();
+    let isolation_ok = pools == 2
+        && plugin.pool_status_of(PROJ_A).is_some()
+        && plugin.pool_status_of(PROJ_B).is_some();
+
+    println!(
+        "routing:   comp-a marker={marker_a:?} (want Ok({MARKER_A})), comp-b marker={marker_b:?} (want Ok({MARKER_B})) -> {route_ok}"
+    );
+    println!(
+        "policy:    comp-a count-items={items_a:?} (want row-limit-exceeded:4) -> {policy_ok}"
+    );
+    println!("rls:       comp-b count-items={items_b:?} (want Ok(7) of 12 rows) -> {rls_ok}");
+    println!("isolation: live pools={pools} (want 2, one per project) -> {isolation_ok}");
+
+    let pass = route_ok && policy_ok && rls_ok && isolation_ok;
+    println!("PASS([2.2] per-project pooling + credentials + policy): {pass}");
     Ok(pass)
 }

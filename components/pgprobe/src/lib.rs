@@ -163,6 +163,21 @@ impl Guest for Component {
                     Err(e) => Err(err_name(&e)),
                 }
             }
+            // count-items: unqualified name resolves in this component's project
+            // DB; RLS confines to its tenant; subject to the project's row limit.
+            10 => match client::query("SELECT id FROM items", &[]) {
+                Ok(rs) => Ok(rs.rows.len() as u64),
+                Err(e) => Err(err_name(&e)),
+            },
+            // db-marker: a distinct constant per project DB — proves routing.
+            11 => match client::query("SELECT n FROM marker", &[]) {
+                Ok(rs) => match rs.rows.first().and_then(|r| r.first()) {
+                    Some(SqlValue::Int32(n)) => Ok(*n as u64),
+                    Some(SqlValue::Int64(n)) => Ok(*n as u64),
+                    other => Err(format!("unexpected marker shape: {other:?}")),
+                },
+                Err(e) => Err(err_name(&e)),
+            },
             other => Err(format!("unknown op {other}")),
         }
     }
