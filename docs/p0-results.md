@@ -118,7 +118,101 @@ unblocked. Hard cancellation for wamn-node (design note 3): a short per-store
 deadline caps any invocation's runtime; kill-on-demand can later be layered on
 by tracking live stores — that needs no further upstream changes.
 
-## S2 — wamn:postgres plugin (2.1–2.2) — pending
+## S2 — wamn:postgres plugin (2.1–2.2) — **PASS** (2026-07-10)
+
+**Deliverable shipped:** the real `wamn:postgres` host plugin
+(`crates/wamn-host/src/plugins/wamn_postgres.rs`) implementing the full
+`wamn-postgres.wit` surface — `query`/`execute` (single statement in an
+implicit, claim-injected, auto-committed transaction), explicit `transaction`
+(query/execute/open-cursor/commit/rollback), and server-side `cursor` (bounded
+`fetch`). Backed by a `deadpool-postgres` pool over `tokio-postgres`. Driver
+choice (user): tokio-postgres + deadpool over sqlx — the plugin needs
+`Object::take` (destroy-never-repool) for the chaos gate and raw `SQLSTATE` +
+constraint names for the `pg-error` taxonomy, and D8's future user-authored SQL
+runs through the same parameterized path regardless. Host-enforced invariants,
+all verified below: guest never holds a socket (resource handles only); RLS
+claims come from workload identity (`Ctx::component_id` → tenant → `SET LOCAL
+app.tenant`) with no guest override; `statement_timeout` + row limit applied
+host-side; abnormal instance death destroys the connection; parameters are
+bound values only, never interpolated.
+
+**Method:** a new `wamn-host pgbench` subcommand instantiates the `pgprobe`
+guest (`components/pgprobe`, which imports `wamn:postgres/client`) into a
+hand-built `SharedCtx` store with the plugin linked, and drives its
+`run(op,arg)` export — "sustained qps from one component" per the spike. The
+same harness hosts the three security gates. The in-cluster Job
+(`deploy/pgbench-job.yaml`, co-located with the PoC Postgres by pod-affinity)
+is the gate of record; the local workstation run (docker `postgres:18`) is for
+iteration. PoC Postgres (user: `postgres:18`) runs as one pod in kind
+(`deploy/postgres.yaml`, fixture `deploy/postgres-init.sql`): app role
+`wamn_app` is `NOSUPERUSER`/`NOBYPASSRLS`, and every table has `FORCE ROW LEVEL
+SECURITY` with policies keyed on `current_setting('app.tenant', true)`.
+
+| Measure | In-cluster (kind pod, co-located) | Local (workstation) | Gate | Verdict |
+|---|---|---|---|---|
+| Throughput (1 component, 8-param single-statement, ≤10-row) | **20,427 qps** (16 workers) | 12,593 qps (24 workers) | ≥ 2,000 qps | **PASS** (~10×) |
+| Latency p50 | 710 µs | 1.83 ms | — | — |
+| Latency p90 | 1.13 ms | 2.46 ms | — | — |
+| Latency p99 | **1.98 ms** | 3.47 ms | < 10 ms | **PASS** |
+| Latency max | 23.0 ms | 22.4 ms | — | — |
+| Pool saturation (96 concurrent 1 s queries, 16-conn pool) | 33 served, **63 `connection-unavailable`**, 0 hangs, worst 3.0 s | same shape | graceful, no hang | **PASS** |
+
+**Security gates (all mandatory) — all PASS in-cluster:**
+
+- **Chaos** (epoch-kill mid-transaction 100×): the guest `begin()`s a
+  transaction, writes, then busy-loops; a per-store epoch deadline (the
+  wamn-4p3 carried patch) traps it as `Trap::Interrupt`. On store teardown the
+  `PgTransaction` `Drop` calls `deadpool Object::take` — removing the
+  connection from pool accounting before closing it, so it can never be reused
+  — and closing the socket makes the server abort the transaction. Result:
+  100/100 interrupted, **100/100 connections destroyed**, 93 distinct fresh
+  backend PIDs after the kills (pool churn observable), and **every** post-kill
+  checkout was claim-free and transaction-free (see the empty-string note
+  below).
+- **RLS** (10,000 randomized cross-tenant attempts, two identities on one
+  table): **0 rows leaked**; own-tenant sanity reads returned 1000/1000 each
+  (RLS is scoping, not blanket-denying); **984/984 cross-tenant writes were
+  `permission-denied`** (RLS `WITH CHECK` → the detail-free variant — no policy
+  reconnaissance).
+- **Injection** (10,000 param fragments incl. `'; DROP TABLE …`, `' OR '1'='1`,
+  quotes, unicode, `$$`): **0 mismatches** — every fragment round-tripped
+  byte-identically as data, and the scratch table was intact afterward. There
+  is no interpolation code path; `$1..$n` binding is the only way data reaches
+  the server.
+
+**Notes on method / findings that feed downstream:**
+
+1. **CFS throttling dominated the in-cluster p99 tail, not the plugin.** With a
+   `cpu` *limit* on the Job container, in-cluster p99 was 31–44 ms (p50/p90
+   stayed at 2/4 ms — the signature of quota exhaustion stalling the runtime
+   for the rest of each 100 ms window). Removing the CPU limit (Burstable QoS,
+   no quota) dropped p99 to 1.98 ms with no other change. **Operational
+   consequence for 2.2 / D5:** the DB-serving path must not run under a tight
+   CPU quota; size requests, don't cap. Cross-node placement added a smaller
+   tail (kind overlay hop, 44→31 ms), removed by co-locating the workload with
+   its pool — consistent with a node-local pooling topology.
+2. **Empty-claim reset is safe.** Postgres reverts a custom GUC (`app.tenant`)
+   to the empty string, not NULL, after a `SET LOCAL`, so an idle pooled
+   connection reads back `Some("")`. That grants nothing — RLS compares
+   `tenant_id = ''`, which no row satisfies — and every actual query runs
+   inside a fresh `BEGIN; SET LOCAL app.tenant='<tenant>'`. The chaos gate's
+   cleanliness check treats empty as claim-free; a non-empty residual would be
+   a leak.
+3. **D5 (pooling topology) input:** a per-host bounded pool returns
+   `connection-unavailable` (a retryable variant) the moment demand exceeds
+   capacity for longer than the checkout wait — it never hangs (63/96 excess
+   requests failed fast within the 2 s wait timeout; worst call 3.0 s = one
+   wait window plus a served 1 s query). This is the "graceful saturation"
+   behavior D5 needs to reason about.
+4. **Numeric fidelity (plan 3.3):** results decode in the binary wire format
+   with a manual binary-NUMERIC → canonical-string decoder (unit-tested) so
+   `numeric` values never touch `f64`; params travel in the text format so the
+   server parses each against its declared column type, and `timestamptz`
+   travels as an RFC-3339 string. No float coercion on the exact-decimal path.
+
+**Fail branch:** not taken — the platform thesis (safe in-process DB
+capability) holds. Closing S2 unblocks 2.2 (production plugin, wamn-ui3), D5
+(wamn-qwd), S3 (wamn-lsf), and [P0-EXIT] (wamn-2rl).
 
 ## S3 — Flow-runner PoC (5.2) — pending
 

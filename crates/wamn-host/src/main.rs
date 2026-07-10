@@ -6,6 +6,7 @@
 mod bench;
 mod engine;
 mod host;
+mod pgbench;
 mod plugins;
 
 use std::str::FromStr as _;
@@ -29,6 +30,8 @@ enum Command {
     Host(Box<host::HostArgs>),
     /// Run the S1 benchmark suite
     Bench(bench::BenchArgs),
+    /// Run the S2 wamn:postgres benchmark + security gates
+    Pgbench(pgbench::PgBenchArgs),
 }
 
 #[tokio::main]
@@ -43,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
     let result = match cli.command {
         Command::Host(args) => host::run(*args).await,
         Command::Bench(args) => bench::run(args).await,
+        Command::Pgbench(args) => pgbench::run(args).await,
     };
 
     shutdown_observability();

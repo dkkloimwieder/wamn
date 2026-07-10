@@ -1,0 +1,56 @@
+# S2 in-cluster benchmark + security gates. Runs the pgbench subcommand of the
+# same wamn-host image the operator deploys, against the in-cluster Postgres
+# (deploy/postgres.yaml). The p99 < 10ms acceptance gate is defined in-cluster,
+# so this Job is the gate of record; local docker runs are for iteration.
+#
+#   kubectl -n wamn-system apply -f deploy/pgbench-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/pgbench --timeout=300s
+#   kubectl -n wamn-system logs job/pgbench
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pgbench
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: pgbench }
+    spec:
+      restartPolicy: Never
+      # Co-locate with Postgres: the S2 gate measures a *single host*, so the
+      # workload and its database sit on one node (as a node-local pool would
+      # in production). Without this, kind schedules the Job on another node
+      # and every query takes a cross-node overlay hop that inflates the p99
+      # tail — an artifact of the test topology, not the plugin.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: postgres }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: pgbench
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "error"
+            - "pgbench"
+            - "--pgprobe"
+            - "/bench/pgprobe.wasm"
+            - "--mode"
+            - "all"
+            - "--duration-secs"
+            - "10"
+            - "--concurrency"
+            - "16"
+          env:
+            - name: WAMN_PG_URL
+              value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+          resources:
+            # No CPU limit on purpose: a CFS quota would throttle the runtime
+            # for the rest of each 100ms window once exhausted, producing exactly
+            # the multi-10ms p99 tail this gate must not have. Memory is capped.
+            requests: { cpu: "2", memory: "512Mi" }
+            limits: { memory: "1Gi" }

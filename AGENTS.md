@@ -145,6 +145,18 @@ cargo build --release -p wamn-host
   --memhog components/target/wasm32-wasip2/release/memhog.wasm \
   --busyloop components/target/wasm32-wasip2/release/busyloop.wasm
 
+# S2 gates (qps + p99, saturation, chaos/RLS/injection) — needs a Postgres.
+# Local iteration (throwaway container + the same fixture SQL):
+docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
+  -v "$PWD/deploy/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
+./target/release/wamn-host --log-level error pgbench \
+  --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
+# In-cluster gate of record (p99 is measured in-cluster):
+kubectl -n wamn-system create configmap pg-init --from-file=init.sql=deploy/postgres-init.sql
+kubectl -n wamn-system apply -f deploy/postgres.yaml -f deploy/pgbench-job.yaml
+kubectl -n wamn-system logs -f job/pgbench
+
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
 
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage

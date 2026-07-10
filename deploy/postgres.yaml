@@ -1,0 +1,83 @@
+# In-cluster PoC Postgres for the S2 wamn:postgres spike (the p99 acceptance
+# gate is measured in-cluster). Single pod, ephemeral storage — a benchmark
+# fixture, not a durable database.
+#
+# The init SQL lives in deploy/postgres-init.sql (single source of truth, also
+# used by the local docker container). Create its ConfigMap before applying:
+#
+#   kubectl -n wamn-system create configmap pg-init \
+#     --from-file=init.sql=deploy/postgres-init.sql
+#   kubectl -n wamn-system apply -f deploy/postgres.yaml
+#
+# wamn-host pods reach it at postgres.wamn-system.svc.cluster.local:5432; set
+# WAMN_PG_URL to postgres://wamn_app:wamn_app@postgres.wamn-system:5432/wamn
+# (the plugin connects as the non-superuser, non-BYPASSRLS app role).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: wamn-system
+  labels: { app: postgres }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18
+          env:
+            - name: POSTGRES_PASSWORD
+              value: postgres
+            # initdb runs the mounted script on first start.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          args:
+            # PoC throughput knobs; ephemeral pod, so durability is moot.
+            - "-c"
+            - "max_connections=200"
+            - "-c"
+            - "shared_buffers=256MB"
+            - "-c"
+            - "fsync=off"
+            - "-c"
+            - "synchronous_commit=off"
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "wamn"]
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          resources:
+            # No CPU limit: CFS throttling of the backends would show up as a
+            # query-latency tail. Memory is capped.
+            requests: { cpu: "1", memory: "512Mi" }
+            limits: { memory: "1Gi" }
+      volumes:
+        - name: init
+          configMap:
+            name: pg-init
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: wamn-system
+  labels: { app: postgres }
+spec:
+  selector: { app: postgres }
+  ports:
+    - port: 5432
+      targetPort: 5432

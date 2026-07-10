@@ -1,0 +1,33 @@
+package wamn:pgprobe@0.1.0;
+
+/// Guest bench/gate component for the S2 wamn:postgres spike. Imports the
+/// host Postgres capability and exports one repeatable entry point the
+/// `wamn-host pgbench` harness drives. The component's tenant identity comes
+/// from its workload identity (host-injected claim), NOT from any argument —
+/// there is deliberately no way for this guest to choose its own tenant.
+world pgprobe {
+  import wamn:postgres/types@0.1.0;
+  import wamn:postgres/client@0.1.0;
+
+  /// Run one operation. `op` selects behavior; `arg` carries a mode-specific
+  /// string (e.g. an injection fragment or a target-tenant label). Returns a
+  /// mode-specific u64 (rows seen / affected) or, on a host pg-error, the
+  /// error variant name as a string (so gates can assert on the taxonomy
+  /// without the guest inventing detail).
+  ///
+  /// op codes:
+  ///   0 = qps: one single-statement, 8-param query returning up to 10 rows.
+  ///   1 = chaos: begin an explicit transaction, do one write, then busy-loop
+  ///       forever (the harness epoch-kills it mid-transaction).
+  ///   2 = rls-count: SELECT count(*) of rows whose secret matches `arg`'s
+  ///       LIKE pattern; RLS must scope it to this guest's own tenant.
+  ///   3 = rls-write-other: attempt to INSERT a row tagged with tenant `arg`
+  ///       (a foreign tenant) — WITH CHECK must reject it as permission-denied.
+  ///   4 = injection: INSERT (k=`arg`-key, v=`arg`) via bound params, then read
+  ///       v back; returns 1 if the stored bytes equal `arg` exactly, else 0.
+  ///   5 = cursor: open a cursor over this tenant's bench rows, fetch in
+  ///       batches, return the total rows drained.
+  ///   6 = slow: hold a pooled connection for `arg` seconds (pg_sleep) — the
+  ///       harness uses this to force pool saturation on purpose.
+  export run: func(op: u32, arg: string) -> result<u64, string>;
+}

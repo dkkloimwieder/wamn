@@ -16,7 +16,7 @@ use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
 use crate::engine::build_engine;
-use crate::plugins::{WamnNodeControl, WamnPostgresStub};
+use crate::plugins::{WamnNodeControl, WamnPostgres};
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -136,7 +136,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         ))?
         .with_plugin(Arc::new(plugin::wasi_logging::TracingLogger::default()))?
         .with_plugin(Arc::new(plugin::wasi_otel::WasiOtel::default()))?
-        .with_plugin(Arc::new(WamnPostgresStub))?
+        // Pool config from DATABASE_URL / WAMN_PG_* env; without a URL the
+        // plugin still links and returns connection-unavailable on use.
+        .with_plugin(Arc::new(
+            WamnPostgres::from_env().context("wamn:postgres plugin init")?,
+        ))?
         .with_plugin(Arc::new(WamnNodeControl))?;
 
     if let Some(host_name) = &args.host_name {
@@ -162,7 +166,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let cluster_host = builder.build().context("failed to build cluster host")?;
     tracing::info!(
-        "wamn-host starting (plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres[stub], wamn:node/control[stub])"
+        "wamn-host starting (plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres, wamn:node/control[stub])"
     );
     let cleanup = wash_runtime::washlet::run_cluster_host(cluster_host)
         .await

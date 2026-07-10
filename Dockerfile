@@ -23,5 +23,6 @@ COPY --from=builder /build/target/release/wamn-host /usr/local/bin/wamn-host
 COPY components/target/wasm32-wasip2/release/hello.wasm /bench/hello.wasm
 COPY components/target/wasm32-wasip2/release/memhog.wasm /bench/memhog.wasm
 COPY components/target/wasm32-wasip2/release/busyloop.wasm /bench/busyloop.wasm
+COPY components/target/wasm32-wasip2/release/pgprobe.wasm /bench/pgprobe.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
