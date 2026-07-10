@@ -60,17 +60,37 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Build & Test
 
-_Add your build and test commands here_
+wamn-host builds against a **patched** wash-runtime — see `patches/README.md`
+for the carried-patch mechanism and the wasmCloud rev-bump procedure. The rev
+is pinned in one place: `workspace.dependencies.wash-runtime.rev` in the root
+`Cargo.toml`.
 
 ```bash
-# Example:
-# npm install
-# npm test
+./scripts/vendor-wasmcloud.sh   # once per clone / rev bump / patch change:
+                                # produces vendor/wasmcloud (pinned rev + patches)
+cargo build --release -p wamn-host
+(cd components && cargo build --release --target wasm32-wasip2)  # guest fixtures
+
+# S1/4p3 gates (instantiation, density, cap kill, epoch kill):
+./target/release/wamn-host --log-level warn bench \
+  --hello components/target/wasm32-wasip2/release/hello.wasm \
+  --memhog components/target/wasm32-wasip2/release/memhog.wasm \
+  --busyloop components/target/wasm32-wasip2/release/busyloop.wasm
+
+cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
+
+docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
 ```
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+wasmCloud-based managed low-code platform. `docs/` is the design source of
+truth (`platform-plan.md`, `p0-exit-criteria.md`, decision table, WIT
+contracts); `docs/p0-results.md` records spike measurements. `crates/wamn-host`
+is the custom host image (embeds `wash_runtime::washlet::ClusterHostBuilder`,
+deployed by the runtime-operator Helm chart with custom image values in
+`deploy/`); `components/` holds wasm32-wasip2 guest fixtures; `patches/` +
+`scripts/vendor-wasmcloud.sh` carry our wash-runtime modifications.
 
 ## Conventions & Patterns
 

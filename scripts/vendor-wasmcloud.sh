@@ -3,13 +3,20 @@
 # Cargo.toml, with our carried patches (patches/*.patch) applied. The root
 # Cargo.toml [patch] section points wash-runtime at this checkout, so run this
 # once before building (locally and in the Dockerfile). Idempotent: reruns
-# reset the checkout and reapply the patches.
+# reset the checkout and reapply the patches. See patches/README.md.
 set -euo pipefail
 
-REV=8b53285f33f9d8cdb3748ff75d3f951ba3be4f2f
 REPO_URL=https://github.com/wasmCloud/wasmCloud.git
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="$ROOT/vendor/wasmcloud"
+
+# Single source of truth for the pin: the wash-runtime rev in Cargo.toml.
+REV="$(sed -n 's/^wash-runtime = {.* rev = "\([0-9a-f]\{40\}\)".*/\1/p' "$ROOT/Cargo.toml")"
+if [ -z "$REV" ]; then
+    echo "error: could not read a 40-hex wash-runtime rev from $ROOT/Cargo.toml" >&2
+    exit 1
+fi
+echo "wasmCloud rev (from Cargo.toml): $REV"
 
 if [ ! -d "$VENDOR/.git" ]; then
     mkdir -p "$VENDOR"

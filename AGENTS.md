@@ -125,3 +125,37 @@ bd prime                # Refresh Beads context
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
+
+## Build & Test
+
+wamn-host builds against a **patched** wash-runtime — see `patches/README.md`
+for the carried-patch mechanism and the wasmCloud rev-bump procedure. The rev
+is pinned in one place: `workspace.dependencies.wash-runtime.rev` in the root
+`Cargo.toml`.
+
+```bash
+./scripts/vendor-wasmcloud.sh   # once per clone / rev bump / patch change:
+                                # produces vendor/wasmcloud (pinned rev + patches)
+cargo build --release -p wamn-host
+(cd components && cargo build --release --target wasm32-wasip2)  # guest fixtures
+
+# S1/4p3 gates (instantiation, density, cap kill, epoch kill):
+./target/release/wamn-host --log-level warn bench \
+  --hello components/target/wasm32-wasip2/release/hello.wasm \
+  --memhog components/target/wasm32-wasip2/release/memhog.wasm \
+  --busyloop components/target/wasm32-wasip2/release/busyloop.wasm
+
+cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
+
+docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
+```
+
+## Architecture Overview
+
+wasmCloud-based managed low-code platform. `docs/` is the design source of
+truth (`platform-plan.md`, `p0-exit-criteria.md`, decision table, WIT
+contracts); `docs/p0-results.md` records spike measurements. `crates/wamn-host`
+is the custom host image (embeds `wash_runtime::washlet::ClusterHostBuilder`,
+deployed by the runtime-operator Helm chart with custom image values in
+`deploy/`); `components/` holds wasm32-wasip2 guest fixtures; `patches/` +
+`scripts/vendor-wasmcloud.sh` carry our wash-runtime modifications.
