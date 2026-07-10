@@ -196,9 +196,9 @@ Decisions with real alternatives, their status, and the trigger to revisit:
 | D2 | Generated API | Custom per-project Wasm gateway | Per-project PostgREST/Hasura containers (buy the hardest part of Epic 4) | **Chosen, revisitable** — if Epic 4 slips in P1/P2, embed PostgREST for REST v1 and keep the Wasm gateway for GraphQL+in-process later |
 | D3 | Run queue | **Hybrid:** Postgres durability + NATS-core doorbells + shared dispatcher; reconciliation follows connection ownership (no cross-DB sweep) | Pure JetStream; raw SKIP LOCKED + polling | **Locked** (5.14); revisit only if a single project needs >~1k discrete runs/sec |
 | D4 | DB events | Outbox + dispatcher poller; NATS doorbell as hint; LISTEN/NOTIFY removed entirely | Raw LISTEN/NOTIFY; logical-replication CDC (Debezium-style) | **Locked for correctness**; CDC is the scale-up path |
-| D5 | Postgres pooling | TBD: pgBouncer transaction pooling vs per-host caps | — | **Open** (2.2); interacts with D4 and session-var injection |
+| D5 | Postgres pooling | **Hybrid:** strict per-host deadpool caps for v0/P1; add pgBouncer transaction-mode pooling when M×N connection pressure appears | pgBouncer from v0; or per-host caps only, permanently | **Chosen** (P0-EXIT, S2 data): per-host pool sustained 20427 qps / p99 1.98 ms with graceful saturation; transaction-mode pooling is safe (D4 removed LISTEN/NOTIFY, `SET LOCAL` claims reset at COMMIT); scale trigger = server-conn pressure from N host pods × M project DBs. DB path stays CPU-quota-uncapped (S2 CFS lesson) |
 | D6 | Postgres hosting | CloudNativePG in-cluster | RDS/Cloud SQL | **Open**; CNPG favored for on-prem parity (10.4) |
-| D7 | Custom-node invocation | In-cluster HTTP | wasmCloud component linking / NATS wRPC | **Chosen for v0**; revisit post-P0 benchmark |
+| D7 | Custom-node invocation | In-cluster HTTP | wasmCloud component linking / NATS wRPC | **Chosen for v0**; **CONFIRMED post-P0** (S4: in-cluster cross-pod hop p50 33 µs / p99 89 µs ≪ 2 ms) — no escalation to component-linking / wRPC |
 | D8 | Raw SQL in flows | TBD: generated-API-only vs raw-SQL node behind RLS + permission flag | — | **Open**; safety boundary decision, needed before 5.3 ships the Postgres node |
 | D9 | Ordering | Runner policy (`strict`/`partitioned`/`unordered`), no batch API | `run-batch` in contract | **Locked** |
 | D10 | Frontend strategy | BYO SPA + SDK | UI builder v1 | **Locked**; catalog reserves layout tables (6.6) |
@@ -206,7 +206,7 @@ Decisions with real alternatives, their status, and the trigger to revisit:
 | D12 | MQTT broker | TBD: platform-hosted vs customer-broker-only | — | **Open until MQTT tranche** (7.2) |
 | D13 | Observability store | Loki/Tempo/Prometheus | ClickHouse-backed (single store) | **Chosen**, low switching cost pre-GA |
 | D14 | Industrial ontology | Neutral core catalog + opinionated optional modules (7.4) | Bake unified lot/serial into core; defer entirely | **Locked** |
-| D15 | Sync webhook path | Direct dispatch; **write-ahead run row by default** (janitor marks orphans `infrastructure-failure`); reduced-audit fast path opt-in, policy-prohibitable | Full queue + response correlation; NATS telemetry pre-event (**rejected**: core NATS is the least durable link — an audit trail that fails when infrastructure is unhealthy is backwards; durable NATS = JetStream dependency; consumer must persist to a DB anyway = second weaker write path) | **Locked**; SLO numbers proposed, pending sign-off |
+| D15 | Sync webhook path | Direct dispatch; **write-ahead run row by default** (janitor marks orphans `infrastructure-failure`); reduced-audit fast path opt-in, policy-prohibitable | Full queue + response correlation; NATS telemetry pre-event (**rejected**: core NATS is the least durable link — an audit trail that fails when infrastructure is unhealthy is backwards; durable NATS = JetStream dependency; consumer must persist to a DB anyway = second weaker write path) | **Locked**; SLO numbers proposed, **sanity-checked vs S2+S3+S4** (P0-EXIT: > 5× headroom on measured latencies) — pending explicit product sign-off |
 
 ## Suggested Sequencing (phases)
 

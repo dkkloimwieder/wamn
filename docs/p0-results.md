@@ -1,8 +1,8 @@
 # P0 Spike Results — Raw Numbers
 
 Records measurements against `docs/p0-exit-criteria.md`. One section per spike;
-the cross-cutting exit (decision closure for D5/D7/design-note-9b) happens in
-[P0-EXIT] once all spikes report.
+the cross-cutting exit (decision closure for D5/D7/design-note-9b + the
+dispatch-SLO sanity-check) is the final section below.
 
 ## Bench environment
 
@@ -606,3 +606,76 @@ delay that could not be collapsed by virtual time, or an egress that escaped the
 spy would have weakened the thesis and forced a design-note 9 revision before
 Epic 11. All held. Closing S6 completes the P0 spike set (S1–S6) and unblocks
 [P0-EXIT] wamn-2rl (the last open P0 spike) and the 11.1 production test host.
+
+## Cross-cutting exit — P0 COMPLETE (2026-07-10)
+
+All six P0 spikes passed on their in-cluster gate of record; none took its fail
+branch. Per `docs/p0-exit-criteria.md` ("Cross-cutting exit"), P0 is done when
+every spike passes (or has a written fail-branch decision), the raw numbers are
+recorded here, and the data-dependent decisions (D5, D7, design-note 9b, and the
+proposed dispatch SLOs) are formally closable with that data. All conditions are
+met.
+
+### Six-spike verdict
+
+| Spike | What it gated | bd issue | Headline result (in-cluster) | Verdict |
+|---|---|---|---|---|
+| S1 | Custom host image | wamn-u1u | instantiation p99 < 10 ms; stable @100 components; clean 256 MiB cap kill | **PASS · closed** |
+| S2 | `wamn:postgres` plugin + security | wamn-czh | 20427 qps, p99 1.98 ms; chaos/RLS/injection gates all clean | **PASS · closed** |
+| S3 | Flow-runner (dispatch / reload / resume) | wamn-lsf | dispatch p99 0.83 µs; hot-reload < 1 s; idempotent resume 10/10 | **PASS · closed** |
+| S4 | Custom-node invocation + config parse | wamn-veg | hop p50 33 µs; I/O interpreted-vs-composed gap +2.8%; parse ~6% of cold | **PASS · closed** |
+| S5 | Logging capture | wamn-7gc | log() p99 5.78 µs; 0 unaccounted @10k lines/s; enrichment 100% | **PASS · closed** |
+| S6 | Test host plugin-swap | wamn-jy9 | same binary both hosts; 24h delay 4.06 ms wall; egress spy catches planted call | **PASS · closed** |
+
+No fail branch was taken. The S2 security gates (chaos / RLS / injection — the
+mandatory stop-the-line) all passed clean.
+
+### Decision closures
+
+**D5 — Postgres pooling topology → Hybrid (per-host now, pgBouncer later).**
+S2 shipped a deadpool per-host pool that sustained 20427 qps at p99 1.98 ms and
+degraded to graceful `connection-unavailable` under saturation. For v0/P1 that
+per-host cap is the pooling answer; pgBouncer **transaction-mode** pooling is
+added when M×N connection pressure (N host pods × M project DBs) appears against
+server `max_connections`. Transaction-mode is safe here because D4 removed
+LISTEN/NOTIFY entirely (no session-scoped listener) and claims are injected via
+`SET LOCAL`, which resets at COMMIT (session-mode pooling would leak the GUCs).
+The S2 CFS lesson stands: the DB-serving path must not be CPU-quota-capped.
+(bd wamn-qwd closed.)
+
+**D7 — Custom-node invocation → In-cluster HTTP, CONFIRMED.** S4 measured an
+in-cluster cross-pod HTTP hop at p50 33 µs / p99 89 µs — orders of magnitude
+under the 2 ms escalation threshold. No move to wasmCloud component linking /
+NATS wRPC; the post-P0 revisit is dropped.
+
+**Design-note 9b — config parse cost → keep memoize + constant-fold (benign).**
+S4 measured config JSON parse at ~6% of the *tightest* cold dispatch (~1.2 µs
+parse vs ~19 µs pooled instantiate+run) — marginally over the 5% gate line. The
+existing mitigation (memoize per `(flow-version, node-id)` in warm instances;
+`wac` constant-fold in frozen flows) stays; exposure is bounded and the share is
+≪1% once component load/compile is counted. Strict schema-validated JSON is
+retained. (docs/wamn-node-design-notes.md note 9b updated.)
+
+**Dispatch SLOs (5.14 / D15) — sanity-checked, consistent, > 5× headroom.** The
+proposed platform-overhead SLOs sanity-check cleanly against measured spike
+latencies:
+
+| Proposed SLO (5.14) | Target | Measured budget line | Headroom |
+|---|---|---|---|
+| Sync write-ahead p99 | < 15 ms | 1 durable INSERT (S2 p99 1.98 ms) + native node dispatch (S3 µs) | > 7× |
+| Sync fast-path p99 | < 10 ms | reduced-audit: node dispatch + optional pg ops | > 5× |
+| Async warm p50 / p99 | < 25 ms / < 100 ms | doorbell + INSERT + dispatch, all sub-ms | ≫ |
+| Async cold (parked wake) p99 | < 250 ms | wake + resume replay (S3/S6 mechanism) | ≫ |
+
+D15 stays **Locked; SLO numbers proposed** — the sanity-check is recorded here;
+the formal product sign-off remains a separate call and is deliberately left
+pending.
+
+### Exit statement
+
+**P0 exit criteria are met (2026-07-10).** All six spikes passed on their gate of
+record, raw numbers are recorded above, and every data-dependent decision (D5
+chosen, D7 confirmed, design-note 9b recorded, dispatch SLOs sanity-checked) is
+closed. The remaining open decisions (D6 hosting, D8 raw-SQL policy, D11/D12 MQTT
+tranche) are downstream of P0 and out of this scope. P0 is complete; P1
+production work is unblocked.
