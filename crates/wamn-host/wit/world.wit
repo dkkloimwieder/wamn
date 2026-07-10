@@ -1,0 +1,14 @@
+package wamn:host@0.1.0;
+
+/// Host-side bindgen world for the wamn:postgres plugin (S1: stub; real
+/// implementation lands with S2). Imports = interfaces the host implements.
+world postgres-plugin {
+  import wamn:postgres/types@0.1.0;
+  import wamn:postgres/client@0.1.0;
+}
+
+/// Host-side bindgen world for the wamn:node control interface (cooperative
+/// cancellation). payloads/credentials are deliberately not registered in S1.
+world node-plugin {
+  import wamn:node/control@0.1.0;
+}

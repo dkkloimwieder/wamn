@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["crates/wamn-host"]
+# Guest components are built separately for wasm32-wasip2 (see components/*).
+exclude = ["components"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# wash-runtime is publish=false upstream; pin to the exact monorepo rev we
+# validated against (wasmCloud 2.0, main @ 2026-07).
+# default-features off: `wasi-webgpu` pulls crates.io wasmtime alongside the
+# workspace's git-pinned one (two wasmtimes = linker typecheck failures upstream
+# solves with a [patch] we'd otherwise have to replicate).
+wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud.git", rev = "8b53285f33f9d8cdb3748ff75d3f951ba3be4f2f", default-features = false, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel"] }
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tracing = "0.1"
+async-trait = "0.1"
+
+[profile.release]
+lto = "thin"

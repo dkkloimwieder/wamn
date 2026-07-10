@@ -1,0 +1,36 @@
+# Helm values for the runtime-operator chart with the wamn custom host image
+# (S1). Install:
+#   helm upgrade --install --create-namespace -n wamn-system wamn \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
+#     -f deploy/values-wamn.yaml
+# (2.5.2 chart == the chart at our pinned runtime rev 8b53285 modulo version
+# strings; no 2.5.1 chart was published.)
+
+# Deprecated HTTP gateway off: its NodePort would collide with workload
+# Services on 30950; routing is EndpointSlice-based now.
+gateway:
+  enabled: false
+
+runtime:
+  image:
+    registry: ""              # bare local name, loaded via `kind load`
+    repository: wamn-host
+    tag: dev
+    pull_policy: Never
+  hostGroups:
+    - name: default
+      replicas: 3
+      service:
+        type: ClusterIP
+      http:
+        enabled: true
+        port: 80
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "250m"
+        limits:
+          # Roomy on purpose: the S1 density/cap-kill measurements must hit
+          # wasmtime's 256 MiB per-component cap, not the K8s OOM killer.
+          memory: "4Gi"
+          cpu: "2"

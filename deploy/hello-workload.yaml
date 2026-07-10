@@ -1,0 +1,40 @@
+# Smoke-test workload: proves the operator drives the wamn-host image
+# end-to-end (NATS command -> washlet -> OCI pull -> resolve -> serve) and
+# exposes it on NodePort 30950 (-> host port 80 via the kind port map).
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-world
+  namespace: wamn-system
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      nodePort: 30950
+      protocol: TCP
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: hello-world
+  namespace: wamn-system
+spec:
+  replicas: 1
+  template:
+    spec:
+      hostSelector:
+        hostgroup: default
+      kubernetes:
+        service:
+          name: hello-world
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: hello.localhost.direct
+      components:
+        - name: hello-world
+          image: ghcr.io/wasmcloud/components/http-hello-world-rust:0.1.0

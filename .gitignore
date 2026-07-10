@@ -4,3 +4,8 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Rust build artifacts
+/target
+/components/target
+*.wasm

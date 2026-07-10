@@ -1,0 +1,19 @@
+[package]
+name = "wamn-host"
+description = "wamn custom wasmCloud host: wash-runtime + wamn:postgres / wamn:node plugins (S1 PoC)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wash-runtime = { workspace = true }
+# Bench harness instantiates command components directly (CommandPre). Pinned
+# to the exact rev wash-runtime's workspace uses so the graph keeps a single
+# wasmtime; cargo unifies it with wash-runtime's own copy.
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["time", "fs"] }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+bytes = "1"

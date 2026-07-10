@@ -1,0 +1,6 @@
+/target
+.git
+.dolt
+.beads
+docs
+deploy

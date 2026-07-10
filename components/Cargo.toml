@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["hello", "memhog"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[profile.release]
+opt-level = "s"
+strip = true
