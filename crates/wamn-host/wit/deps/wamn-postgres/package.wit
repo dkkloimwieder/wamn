@@ -13,6 +13,18 @@ package wamn:postgres@0.1.0;
 /// - Abnormal instance death destroys the underlying connection (never
 ///   returned to the pool). See plan 2.2.
 /// - No LISTEN/NOTIFY surface (event delivery is outbox + dispatcher).
+/// - Schema selection is host-injected per-workload config (`wamn.schema`),
+///   like the tenant claim: the guest names tables unqualified and cannot
+///   choose its own schema. It is NOT part of this interface (validated in
+///   S6, where a test host swapped in an ephemeral schema with zero guest
+///   change).
+///
+/// STATUS: FROZEN 0.1.0 (2026-07-10). This interface passed the S2 spike
+/// (>=2k qps + chaos/RLS/injection security gates) and the S6 test-host spike
+/// UNCHANGED -- the plugin that cleared those gates binds this exact file.
+/// Compatibility rule: 0.1.x admits only additive or clarifying changes; any
+/// breaking change (a new/removed variant case or a changed signature) waits
+/// for 0.2.
 interface types {
   /// Typed SQL values. `numeric` and `timestamptz` travel as canonical
   /// strings to preserve exactness (plan 3.3: material quantities are
@@ -104,6 +116,10 @@ interface client {
   }
 }
 
-/// Note: prepared-statement caching is a host-side optimization keyed on
-/// (sql, connection) and is intentionally not surfaced in 0.1; add a
-/// `prepare` resource in 0.2 only if P0 benchmarks show it matters.
+/// Prepared-statement plans are cached HOST-SIDE, keyed on (sql, connection).
+/// P0 verdict (S2): that internal cache reached 20427 qps / p99 1.98 ms with
+/// NO guest-visible prepare surface, so an explicit `prepare` resource stays
+/// OUT of frozen 0.1. Revisit for 0.2 only if a workload needs guest-controlled
+/// plan lifetime (no P0 workload did); such a resource must invalidate plans on
+/// the connection-destroy path (the abnormal-death invariant above), so it is
+/// deliberately not a free addition.
