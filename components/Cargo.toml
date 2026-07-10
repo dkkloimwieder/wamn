@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["hello", "memhog"]
+members = ["busyloop", "hello", "memhog"]
 
 [workspace.package]
 version = "0.1.0"

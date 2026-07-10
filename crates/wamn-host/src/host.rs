@@ -90,6 +90,11 @@ pub struct HostArgs {
     /// Extra wasm proposals to enable on the engine (comma-separated)
     #[arg(long = "wasm-proposal", value_delimiter = ',')]
     pub wasm_proposals: Vec<WasmProposal>,
+
+    /// Epoch tick period in milliseconds (0 disables the ticker, so store
+    /// epoch deadlines never fire)
+    #[arg(long = "epoch-tick-ms", default_value_t = 10)]
+    pub epoch_tick_ms: u64,
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
@@ -109,6 +114,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     .context("failed to connect to scheduler NATS")?;
 
     let engine = build_engine(&args.wasm_proposals)?;
+    if args.epoch_tick_ms > 0 {
+        crate::engine::spawn_epoch_ticker(&engine, Duration::from_millis(args.epoch_tick_ms));
+    }
 
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,

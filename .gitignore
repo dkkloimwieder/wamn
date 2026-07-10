@@ -9,3 +9,6 @@
 /target
 /components/target
 *.wasm
+
+# Patched wasmCloud monorepo checkout (recreate with scripts/vendor-wasmcloud.sh)
+/vendor/

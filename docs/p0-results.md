@@ -56,8 +56,8 @@ the service traps; with `max_restarts: 0` the host logs and moves on.
    never set, and stores are created inside the crate (no injection point
    without a fork/PR). The S2 chaos test ("epoch-kill a component
    mid-transaction") and the platform's hard-cancellation layer
-   (wamn-node design note 3) **depend on this**; plan an upstream PR or a
-   carried patch before S2's chaos gate.
+   (wamn-node design note 3) **depend on this**. **RESOLVED** by carried
+   patch (wamn-4p3) — see the follow-up section below.
 2. **No per-component memory limits** — `LocalResources.memory_limit_mb` is
    carried but never plumbed into wasmtime; no `ResourceLimiter`/
    `Store::limiter` call sites. The 256 MiB cap here is the pooling
@@ -70,6 +70,53 @@ the service traps; with `max_restarts: 0` the host logs and moves on.
    `max_restarts` exhausted (state-accounting nit, cosmetic for S1).
 
 **Fail branch:** not taken.
+
+### Follow-up: epoch interruption via carried patch (wamn-4p3) — **DONE** (2026-07-10)
+
+**Decision (user): carried patch only, no upstream PR.** Only one of the three
+required pieces touches upstream code:
+
+1. *No patch* — `Config::epoch_interruption(true)` layers onto the engine via
+   `EngineBuilder::with_config` (base config; pooling/proposals stack on top) —
+   `crates/wamn-host/src/engine.rs`.
+2. *No patch* — a tokio task drives the public `Engine::increment_epoch()`
+   every 10 ms (`spawn_epoch_ticker`; `host` flag `--epoch-tick-ms`, 0 = off).
+3. *Patch* — `patches/0001-wash-runtime-store-epoch-deadline.patch` adds one
+   call in `new_store_from_templates` (`crates/wash-runtime/src/engine/
+   linked_call.rs`, the crate's single production store-creation site): each
+   store gets `set_epoch_deadline(ticks)` from the active component's
+   `wamn.epoch-deadline-ticks` config — plumbed end-to-end from the
+   WorkloadDeployment CRD's `localResources.config` — else the
+   `WAMN_EPOCH_DEADLINE_TICKS` env var, else effectively unbounded
+   (`u64::MAX / 2`; `u64::MAX` would wrap in wasmtime's
+   `current_epoch + delta`). Without the patch, stores keep wasmtime's
+   default deadline of 0 and trap on the first tick.
+
+Deadline semantics: stores are per-invocation (gap #3), so N ticks × tick
+period ≈ a wall-clock cap per invocation (per service run for services).
+
+**Build mechanics:** `scripts/vendor-wasmcloud.sh` clones the pinned monorepo
+rev into `vendor/wasmcloud` (gitignored) and applies `patches/*.patch`; the
+root `Cargo.toml` `[patch]` section redirects the git dep to that checkout
+(inside the real monorepo so `workspace = true` deps resolve — `vendor` is
+excluded from our workspace for the same reason). The Dockerfile runs the same
+script, so image builds are reproducible.
+`patches/0002-workspace-lints-warn-not-deny.patch` relaxes the monorepo's
+`-D warnings`: path deps don't get the `--cap-lints allow` that git deps get,
+and our feature subset legitimately leaves some upstream code unused.
+
+**Demo (bench phase 4):**
+
+| Measure | Local | In-cluster (kind pod) |
+|---|---|---|
+| busyloop raw store, deadline = 20 ticks × 10 ms | killed at 195 ms as `Trap::Interrupt` | killed at 190.9 ms as `Trap::Interrupt` |
+| busyloop service, `wamn.epoch-deadline-ticks: 100` | dies at ~1 s; heartbeat OK; host accepts new work | same |
+| hello + workloads under running ticker (default deadline) | unaffected; S1 numbers unchanged (p50 5.8 µs / p99 10.3 µs) | unaffected (p50 5.5 µs / p99 9.2 µs); 3 chart-deployed hosts READY with ticker on; hello serves HTTP 200 |
+
+The S2 chaos gate ("epoch-kill a component mid-transaction, 100×") is now
+unblocked. Hard cancellation for wamn-node (design note 3): a short per-store
+deadline caps any invocation's runtime; kill-on-demand can later be layered on
+by tracking live stores — that needs no further upstream changes.
 
 ## S2 — wamn:postgres plugin (2.1–2.2) — pending
 

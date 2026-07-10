@@ -8,6 +8,11 @@
 //! Phase 3 — 256 MiB cap kill: a service component allocating past the cap
 //!   must die while the host keeps serving (pass: clean kill, no host
 //!   restart).
+//! Phase 4 — epoch kill (wamn-4p3): with the carried wash-runtime patch and
+//!   the epoch ticker running, a busy-loop component must be hard-killed at
+//!   its epoch deadline (raw store: assertable Trap::Interrupt; host path:
+//!   `wamn.epoch-deadline-ticks` service config) while normal workloads run
+//!   unaffected.
 //!
 //! Runs locally and inside the host image (`kubectl run ... -- bench`).
 
@@ -22,11 +27,11 @@ use wash_runtime::types::{
     Component, LocalResources, Service, Workload, WorkloadStartRequest, WorkloadStatusRequest,
 };
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker, ResourceTable};
-use wash_runtime::wasmtime::{Engine as RawEngine, Store};
+use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
-use crate::engine::{MEMORY_CAP_BYTES, build_engine};
+use crate::engine::{DEFAULT_EPOCH_TICK, MEMORY_CAP_BYTES, build_engine, spawn_epoch_ticker};
 
 #[derive(Debug, Args)]
 pub struct BenchArgs {
@@ -37,6 +42,10 @@ pub struct BenchArgs {
     /// Path to the memory-hog component (cap-kill target)
     #[arg(long, default_value = "/bench/memhog.wasm")]
     pub memhog: PathBuf,
+
+    /// Path to the busy-loop component (epoch-kill target)
+    #[arg(long, default_value = "/bench/busyloop.wasm")]
+    pub busyloop: PathBuf,
 
     /// Timed instantiation iterations (after warmup)
     #[arg(long, default_value_t = 2000)]
@@ -72,6 +81,14 @@ impl WasiView for BenchCtx {
             table: &mut self.table,
         }
     }
+}
+
+/// Raw store with a generous epoch deadline. The engine enables epoch
+/// interruption, and a fresh store's deadline of 0 traps on the first check.
+fn bench_store(raw: &RawEngine) -> Store<BenchCtx> {
+    let mut store = Store::new(raw, BenchCtx::new());
+    store.set_epoch_deadline(u64::MAX / 2);
+    store
 }
 
 fn empty_resources() -> LocalResources {
@@ -110,6 +127,8 @@ pub async fn run(args: BenchArgs) -> anyhow::Result<()> {
         .with_context(|| format!("failed to read {}", args.hello.display()))?;
     let memhog_bytes = std::fs::read(&args.memhog)
         .with_context(|| format!("failed to read {}", args.memhog.display()))?;
+    let busyloop_bytes = std::fs::read(&args.busyloop)
+        .with_context(|| format!("failed to read {}", args.busyloop.display()))?;
 
     println!("# wamn-host S1 bench");
     println!(
@@ -122,6 +141,7 @@ pub async fn run(args: BenchArgs) -> anyhow::Result<()> {
     if !args.skip_capkill {
         capkill_phase(&host, &hello_bytes, &memhog_bytes).await?;
     }
+    epochkill_phase(&hello_bytes, &busyloop_bytes).await?;
     println!("\nbench complete");
     Ok(())
 }
@@ -140,7 +160,7 @@ async fn instantiation_phase(hello: &[u8], iterations: usize) -> anyhow::Result<
 
     // Sanity: the component actually runs.
     {
-        let mut store = Store::new(raw, BenchCtx::new());
+        let mut store = bench_store(raw);
         let cmd = cmd_pre.instantiate_async(&mut store).await?;
         cmd.wasi_cli_run()
             .call_run(&mut store)
@@ -149,14 +169,14 @@ async fn instantiation_phase(hello: &[u8], iterations: usize) -> anyhow::Result<
     }
 
     for _ in 0..50 {
-        let mut store = Store::new(raw, BenchCtx::new());
+        let mut store = bench_store(raw);
         let _ = cmd_pre.instantiate_async(&mut store).await?;
     }
 
     let mut samples = Vec::with_capacity(iterations);
     for _ in 0..iterations {
         let start = Instant::now();
-        let mut store = Store::new(raw, BenchCtx::new());
+        let mut store = bench_store(raw);
         let _instance = cmd_pre.instantiate_async(&mut store).await?;
         samples.push(start.elapsed());
     }
@@ -299,5 +319,123 @@ async fn capkill_phase(
     .context("host failed to start work after cap kill")?;
     println!("host accepted new workload after kill: true");
     println!("PASS(clean cap kill, host survives): true");
+    Ok(())
+}
+
+/// Phase 4: epoch kill (wamn-4p3). Raw path: busyloop under a short deadline
+/// must come back as `Trap::Interrupt` — the assertable hard kill. Host path:
+/// a busyloop *service* with `wamn.epoch-deadline-ticks` config (plumbed by
+/// the carried patch) dies at its deadline while the host keeps serving and
+/// a default-deadline workload runs unaffected under the same ticker.
+async fn epochkill_phase(hello: &[u8], busyloop: &[u8]) -> anyhow::Result<()> {
+    const KILL_TICKS: u64 = 20;
+
+    println!("\n## Phase 4 — epoch kill (carried patch + {DEFAULT_EPOCH_TICK:?} ticker)");
+    let engine = build_engine(&[])?;
+    let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
+
+    let raw_interrupted = {
+        let raw: &RawEngine = engine.inner();
+        let component = WasmtimeComponent::new(raw, busyloop)
+            .map_err(|e| anyhow::anyhow!("compile busyloop: {e}"))?;
+        let mut linker: Linker<BenchCtx> = Linker::new(raw);
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+        let cmd_pre = CommandPre::new(linker.instantiate_pre(&component)?)?;
+
+        let mut store = Store::new(raw, BenchCtx::new());
+        store.set_epoch_deadline(KILL_TICKS);
+        let cmd = cmd_pre.instantiate_async(&mut store).await?;
+        let started = Instant::now();
+        let result = cmd.wasi_cli_run().call_run(&mut store).await;
+        let elapsed = started.elapsed();
+
+        let (interrupted, detail) = match result {
+            Ok(_) => (
+                false,
+                "returned normally (busyloop must never exit)".to_string(),
+            ),
+            Err(e) => (
+                matches!(e.downcast_ref::<Trap>(), Some(Trap::Interrupt)),
+                e.to_string(),
+            ),
+        };
+        println!(
+            "busyloop raw store, deadline = {KILL_TICKS} ticks: killed after {elapsed:?} ({detail})"
+        );
+        interrupted
+    };
+    println!("PASS(raw epoch kill is Trap::Interrupt): {raw_interrupted}");
+
+    let host = HostBuilder::new().with_engine(engine).build()?;
+    let host = host.start().await?;
+
+    let mut resources = empty_resources();
+    resources
+        .config
+        .insert("wamn.epoch-deadline-ticks".to_string(), "100".to_string());
+    host.workload_start(WorkloadStartRequest {
+        workload_id: "epochkill".to_string(),
+        workload: Workload {
+            namespace: "bench".to_string(),
+            name: "busyloop".to_string(),
+            annotations: Default::default(),
+            service: Some(Service {
+                bytes: busyloop.to_vec().into(),
+                digest: Some("bench-busyloop".to_string()),
+                local_resources: resources,
+                max_restarts: 0,
+            }),
+            components: vec![],
+            host_interfaces: vec![],
+            volumes: vec![],
+        },
+    })
+    .await
+    .context("failed to start busyloop service")?;
+    println!(
+        "busyloop service started with wamn.epoch-deadline-ticks=100 (~1s); watch for the service-death log line"
+    );
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let status = host
+        .workload_status(WorkloadStatusRequest {
+            workload_id: "epochkill".to_string(),
+        })
+        .await?;
+    println!(
+        "busyloop workload status after deadline: {:?} (upstream keeps Running after service death — S1 gap #4)",
+        status.workload_status
+    );
+    println!(
+        "heartbeat after epoch kill: ok = {}",
+        host.heartbeat().await.is_ok()
+    );
+
+    // A default-deadline workload starts and runs fine under the ticker.
+    host.workload_start(WorkloadStartRequest {
+        workload_id: "post-epochkill".to_string(),
+        workload: Workload {
+            namespace: "bench".to_string(),
+            name: "post-epochkill".to_string(),
+            annotations: Default::default(),
+            service: None,
+            components: vec![Component {
+                name: "hello".to_string(),
+                bytes: hello.to_vec().into(),
+                digest: Some("bench-post-epochkill".to_string()),
+                local_resources: empty_resources(),
+                pool_size: 0,
+                max_invocations: 0,
+            }],
+            host_interfaces: vec![],
+            volumes: vec![],
+        },
+    })
+    .await
+    .context("host failed to start work after epoch kill")?;
+    println!("host accepted new workload after epoch kill: true");
+    ticker.abort();
+    println!("PASS(epoch kill, host survives): {raw_interrupted}");
     Ok(())
 }

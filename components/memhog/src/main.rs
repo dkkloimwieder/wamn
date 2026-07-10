@@ -16,5 +16,8 @@ fn main() {
         // stderr: the host's default WasiCtx inherits stderr but not stdout.
         eprintln!("memhog: {} MiB", total / (1024 * 1024));
     }
-    eprintln!("memhog: reached {} MiB without being killed (CAP FAILED)", total / (1024 * 1024));
+    eprintln!(
+        "memhog: reached {} MiB without being killed (CAP FAILED)",
+        total / (1024 * 1024)
+    );
 }

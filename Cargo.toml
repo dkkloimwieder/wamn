@@ -1,8 +1,10 @@
 [workspace]
 resolver = "2"
 members = ["crates/wamn-host"]
-# Guest components are built separately for wasm32-wasip2 (see components/*).
-exclude = ["components"]
+# Guest components are built separately for wasm32-wasip2 (see components/*);
+# vendor holds the patched wasmCloud monorepo checkout, which is its own
+# workspace (excluding it keeps its `workspace = true` deps resolving there).
+exclude = ["components", "vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -23,3 +25,11 @@ async-trait = "0.1"
 
 [profile.release]
 lto = "thin"
+
+# Carried patch: wamn needs epoch interruption (S2 chaos gate, hard
+# cancellation) and upstream never gives stores an epoch deadline. The vendor
+# checkout is produced by scripts/vendor-wasmcloud.sh (clone of the pinned rev
+# above + patches/*.patch applied); pointing into the real monorepo checkout
+# keeps wash-runtime's `workspace = true` deps resolving.
+[patch."https://github.com/wasmCloud/wasmCloud.git"]
+wash-runtime = { path = "vendor/wasmcloud/crates/wash-runtime" }
