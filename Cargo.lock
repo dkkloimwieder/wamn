@@ -3893,6 +3893,7 @@ dependencies = [
  "clap",
  "deadpool-postgres",
  "futures-util",
+ "hyper",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -3902,6 +3903,7 @@ dependencies = [
  "tracing",
  "wash-runtime",
  "wasmtime-wasi",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]

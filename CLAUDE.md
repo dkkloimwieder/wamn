@@ -141,6 +141,24 @@ kubectl -n wamn-system rollout status deploy/loki deploy/otel-collector --timeou
 kubectl -n wamn-system apply -f deploy/logbench-job.yaml
 kubectl -n wamn-system logs -f job/logbench
 
+# S6 gates (test-host plugin-swap: sameness / 24h-delay under virtual time /
+# egress spy / S3 regression). Needs a Postgres. The test host provisions a
+# FRESH ephemeral schema through the SUPERUSER url (the runner's wamn_app role
+# is NOSUPERUSER/NOCREATEDB and cannot create schemas). The extended flowrunner
+# (delay + http-call nodes, unqualified table names resolved via host-injected
+# search_path) builds with the other guests — no extra fixture.
+# Local iteration (throwaway container + the same fixture SQL):
+docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
+  -v "$PWD/deploy/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
+./target/release/wamn-host --log-level error testhostbench \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn --mode all
+# In-cluster gate of record (co-located with Postgres, no cpu limit — S2 lesson;
+# WAMN_PG_ADMIN_URL is the superuser used only to provision the ephemeral schema):
+kubectl -n wamn-system apply -f deploy/testhostbench-job.yaml
+kubectl -n wamn-system logs -f job/testhostbench
+
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
 
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage

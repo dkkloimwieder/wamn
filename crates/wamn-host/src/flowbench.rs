@@ -185,6 +185,9 @@ impl Harness {
             .map_err(|e| anyhow::anyhow!("compile flowrunner: {e}"))?;
         let mut linker: Linker<SharedCtx> = Linker::new(raw);
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+        // The runner also imports wasi:http (the S6 http-call node). The S3
+        // flows never call it, but the import must be linkable to instantiate.
+        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
         wamn_postgres::add_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self {
@@ -259,9 +262,12 @@ pub async fn run(args: FlowBenchArgs) -> anyhow::Result<()> {
 
     println!("# wamn-host S3 flowbench");
 
-    // The plugin outlives every store; register the runner's tenant identity.
+    // The plugin outlives every store; register the runner's tenant identity
+    // and its schema. The runner uses unqualified table names; the S3 fixture
+    // tables live in schema `s3`, so the host injects `search_path = s3`.
     let plugin = Arc::new(WamnPostgres::new(cfg.clone())?);
     plugin.set_tenant(FLOW_TENANT, FLOW_TENANT)?;
+    plugin.set_schema(FLOW_TENANT, "s3")?;
 
     if db_needed {
         preflight(&plugin).await.context("preflight failed")?;

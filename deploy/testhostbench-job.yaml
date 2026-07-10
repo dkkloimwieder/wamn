@@ -1,0 +1,58 @@
+# S6 in-cluster test-host plugin-swap gates. Runs the testhostbench subcommand
+# of the same wamn-host image the operator deploys, against the in-cluster
+# Postgres (deploy/postgres.yaml). This Job is the gate of record; local docker
+# runs are for iteration.
+#
+#   kubectl -n wamn-system apply -f deploy/testhostbench-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/testhostbench --timeout=300s
+#   kubectl -n wamn-system logs job/testhostbench
+#
+# The test host provisions a fresh ephemeral schema through the Postgres
+# superuser (WAMN_PG_ADMIN_URL) — the runner's wamn_app role is
+# NOSUPERUSER/NOCREATEDB and cannot create schemas, exactly as in production.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: testhostbench
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: testhostbench }
+    spec:
+      restartPolicy: Never
+      # Co-locate with Postgres: the delay/egress/regression gates make real DB
+      # round trips; pinning the Job to the Postgres node keeps those off the
+      # cross-node overlay hop (see the S2/S3 job rationale).
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: postgres }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: testhostbench
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "error"
+            - "testhostbench"
+            - "--flowrunner"
+            - "/bench/flowrunner.wasm"
+            - "--mode"
+            - "all"
+          env:
+            # Runner pool: the non-superuser, non-BYPASSRLS app role.
+            - name: WAMN_PG_URL
+              value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+            # Admin: superuser, used ONLY to provision/drop the ephemeral schema.
+            - name: WAMN_PG_ADMIN_URL
+              value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn
+          resources:
+            # No CPU limit on purpose: a CFS quota would throttle the runtime and
+            # inflate the dispatch tail of the regression gate with scheduler
+            # stalls rather than real work — the S2 CFS lesson. Memory is capped.
+            requests: { cpu: "2", memory: "512Mi" }
+            limits: { memory: "1Gi" }

@@ -68,6 +68,11 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
 /// platform, not the guest).
 pub const TENANT_CONFIG_KEY: &str = "wamn.tenant";
 
+/// Per-workload config key carrying the `search_path` schema. Optional: absent
+/// leaves the server's default search_path in place. Set by the platform (not
+/// the guest), like the tenant claim.
+pub const SCHEMA_CONFIG_KEY: &str = "wamn.schema";
+
 // ---------------------------------------------------------------------------
 // Plugin configuration
 // ---------------------------------------------------------------------------
@@ -116,6 +121,12 @@ pub struct WamnPostgres {
     row_limit: u64,
     /// component id → tenant claim.
     tenants: std::sync::RwLock<HashMap<String, String>>,
+    /// component id → `search_path` schema. Empty (the default) leaves the
+    /// server's search_path alone — so S2/pgbench behaviour is unchanged. When
+    /// set, the plugin injects `SET LOCAL search_path` alongside the tenant
+    /// claim, so unqualified table names resolve to a host-chosen schema (S6:
+    /// prod = the shared fixture schema, test = a per-run ephemeral schema).
+    schemas: std::sync::RwLock<HashMap<String, String>>,
     /// Connections destroyed instead of repooled (chaos-gate observability).
     destroyed: Arc<AtomicU64>,
 }
@@ -138,6 +149,21 @@ fn valid_tenant(tenant: &str) -> bool {
         && tenant
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// A `search_path` schema name. Stricter than a tenant: no hyphens, so it is a
+/// bare unquoted SQL identifier that cannot escape the `SET LOCAL search_path`
+/// statement it is embedded in.
+fn valid_schema(schema: &str) -> bool {
+    !schema.is_empty()
+        && schema.len() <= 63
+        && schema
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && schema
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 impl WamnPostgres {
@@ -174,6 +200,7 @@ impl WamnPostgres {
             statement_timeout_ms: cfg.statement_timeout_ms,
             row_limit: cfg.row_limit,
             tenants: std::sync::RwLock::new(HashMap::new()),
+            schemas: std::sync::RwLock::new(HashMap::new()),
             destroyed: Arc::new(AtomicU64::new(0)),
         })
     }
@@ -200,6 +227,31 @@ impl WamnPostgres {
         self.tenants
             .read()
             .expect("tenants lock poisoned")
+            .get(component_id)
+            .cloned()
+    }
+
+    /// Register the `search_path` schema for a component id. When set, every
+    /// transaction the plugin opens for that component also runs
+    /// `SET LOCAL search_path`, so the guest's unqualified table names resolve
+    /// to a host-chosen schema. The bench harness calls this directly; the host
+    /// path feeds it from the `wamn.schema` workload config.
+    pub fn set_schema(&self, component_id: &str, schema: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_schema(schema),
+            "invalid schema {schema:?}: 1-63 chars of [A-Za-z0-9_] starting with a letter/underscore required"
+        );
+        self.schemas
+            .write()
+            .expect("schemas lock poisoned")
+            .insert(component_id.to_string(), schema.to_string());
+        Ok(())
+    }
+
+    fn schema_for(&self, component_id: &str) -> Option<String> {
+        self.schemas
+            .read()
+            .expect("schemas lock poisoned")
             .get(component_id)
             .cloned()
     }
@@ -257,7 +309,15 @@ impl WamnPostgres {
     /// `BEGIN` + claim/limit injection, one round trip. `tenant` is
     /// host-derived and validated to a charset that cannot escape the quoted
     /// literal (no quotes, no backslashes), so literal embedding is safe.
-    async fn begin_with_claims(&self, conn: &Object, tenant: &str) -> Result<(), PgError> {
+    /// `schema`, when present, is a validated bare identifier embedded in
+    /// `SET LOCAL search_path` so unqualified names resolve to a host-chosen
+    /// schema (None leaves the server default untouched — the S2/pgbench path).
+    async fn begin_with_claims(
+        &self,
+        conn: &Object,
+        tenant: &str,
+        schema: Option<&str>,
+    ) -> Result<(), PgError> {
         debug_assert!(valid_tenant(tenant));
         if !valid_tenant(tenant) {
             return Err(PgError::QueryError((
@@ -265,10 +325,20 @@ impl WamnPostgres {
                 "invalid tenant identity".to_string(),
             )));
         }
-        let sql = format!(
+        let mut sql = format!(
             "BEGIN; SET LOCAL app.tenant = '{tenant}'; SET LOCAL statement_timeout = {};",
             self.statement_timeout_ms
         );
+        if let Some(schema) = schema {
+            debug_assert!(valid_schema(schema));
+            if !valid_schema(schema) {
+                return Err(PgError::QueryError((
+                    "WAMN0".to_string(),
+                    "invalid search_path schema".to_string(),
+                )));
+            }
+            sql.push_str(&format!(" SET LOCAL search_path = {schema};"));
+        }
         conn.batch_execute(&sql).await.map_err(|e| map_pg_error(&e))
     }
 
@@ -295,8 +365,12 @@ impl WamnPostgres {
         want_rows: bool,
     ) -> Result<OneShotResult, PgError> {
         let tenant = self.require_tenant(component_id)?;
+        let schema = self.schema_for(component_id);
         let conn = self.checkout().await?;
-        if let Err(e) = self.begin_with_claims(&conn, &tenant).await {
+        if let Err(e) = self
+            .begin_with_claims(&conn, &tenant, schema.as_deref())
+            .await
+        {
             // Claim injection failed: connection state is unknown — destroy.
             self.destroy(conn);
             return Err(e);
@@ -384,6 +458,15 @@ impl HostPlugin for WamnPostgres {
             tracing::warn!(
                 component = item.id(),
                 "component imports wamn:postgres but sets no {TENANT_CONFIG_KEY}; calls will be refused"
+            );
+        }
+        if let Some(schema) = item.local_resources().config.get(SCHEMA_CONFIG_KEY) {
+            let schema = schema.clone();
+            self.set_schema(item.id(), &schema)?;
+            tracing::debug!(
+                component = item.id(),
+                schema,
+                "wamn:postgres search_path schema registered"
             );
         }
         client::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
@@ -846,11 +929,15 @@ impl client::Host for ActiveCtx<'_> {
             Ok(t) => t,
             Err(e) => return Ok(Err(e)),
         };
+        let schema = plugin.schema_for(&component_id);
         let conn = match plugin.checkout().await {
             Ok(c) => c,
             Err(e) => return Ok(Err(e)),
         };
-        if let Err(e) = plugin.begin_with_claims(&conn, &tenant).await {
+        if let Err(e) = plugin
+            .begin_with_claims(&conn, &tenant, schema.as_deref())
+            .await
+        {
             plugin.destroy(conn);
             return Ok(Err(e));
         }

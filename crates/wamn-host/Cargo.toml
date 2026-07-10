@@ -11,6 +11,11 @@ wash-runtime = { workspace = true }
 # to the exact rev wash-runtime's workspace uses so the graph keeps a single
 # wasmtime; cargo unifies it with wash-runtime's own copy.
 wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+# S6 testhostbench: the extended flowrunner imports wasi:http/outgoing-handler
+# (the http-call node); the harness links it and reuses DefaultOutgoingHandler /
+# HostFutureIncomingResponse to build the prod egress path and the test spy.
+# Same git rev as wasmtime-wasi so the graph keeps a single wasmtime.
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "sync"] }
 serde_json = "1"
@@ -26,6 +31,9 @@ opentelemetry-otlp = { version = "0.31", default-features = false, features = ["
 async-trait = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 bytes = "1"
+# S6 egress spy / prod handler: the HostHandler::outgoing_request signature is
+# in terms of hyper::Request. Matches the hyper 1.x wasmtime-wasi-http uses.
+hyper = "1"
 # wamn:postgres plugin (S2): thin driver + pool with explicit connection
 # lifecycle (deadpool Object::take = destroy-never-repool on abnormal death).
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }

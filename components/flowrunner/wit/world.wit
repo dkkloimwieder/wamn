@@ -1,17 +1,37 @@
 package wamn:flowrunner@0.1.0;
 
-/// Guest flow-runner for the S3 spike (docs/p0-exit-criteria.md S3).
+/// Guest flow-runner for the S3 spike (docs/p0-exit-criteria.md S3), extended
+/// for the S6 test-host plugin-swap spike (docs/p0-exit-criteria.md S6).
 ///
 /// The runner IS a long-lived component; the STANDARD nodes (webhook-in,
 /// transform, pg-write, conditional, respond) are native Rust compiled into
 /// it, so dispatching a standard node is a same-binary call — that is the
 /// `< 50us` overhead the dispatch bench measures. The runner reads its flow
 /// IR from a catalog table, checkpoints run state, and writes an idempotent
-/// business sink, all through the host `wamn:postgres` capability under the
-/// tenant claim the host injects from workload identity.
+/// business sink, all through the host `wamn:postgres` capability.
+///
+/// S6 adds two more standard nodes that touch *non-deterministic* host
+/// capabilities so the test host can swap them at the boundary with zero guest
+/// changes (design-note 9): a `delay` node that reads wall-clock time and parks
+/// (the test host virtualizes time so a 24h delay resolves instantly), and an
+/// `http-call` node that makes an outbound `wasi:http` request (the test host
+/// interposes an egress spy). The SAME compiled binary runs under the prod host
+/// and the test host — only the host-injected capabilities differ.
+///
+/// The runner does not hard-code its schema: table names are unqualified and
+/// resolve through the host-injected `search_path` (prod = the shared fixture
+/// schema, test = a per-run ephemeral schema). The schema is a host concern,
+/// exactly like the tenant claim — another fixture the test host swaps.
 world flowrunner {
   import wamn:postgres/types@0.1.0;
   import wamn:postgres/client@0.1.0;
+  // S6: time enters the flow ONLY through wasi:clocks (design-note 9), so the
+  // test host can virtualize it. The delay node reads wall-clock now().
+  import wasi:clocks/wall-clock@0.2.12;
+  // S6: egress leaves the flow ONLY through wasi:http, so the test host can
+  // interpose a recording/stubbing egress spy. The http-call node uses it.
+  import wasi:http/types@0.2.12;
+  import wasi:http/outgoing-handler@0.2.12;
 
   /// Dispatch micro-benchmark. Runs `iterations` standard-only graph walks
   /// (webhook-in -> transform -> pg-write* -> conditional -> respond) entirely
@@ -45,4 +65,24 @@ world flowrunner {
   export sink-count: func(run-id: string) -> result<u64, string>;
   /// Delete run state + side effects for a run (clean slate between iters).
   export reset: func(run-id: string) -> result<u64, string>;
+
+  // -------------------------------------------------------------------------
+  // S6: delay + http-call flow (docs/p0-exit-criteria.md S6).
+  // -------------------------------------------------------------------------
+
+  /// Seed the S6 flow (flow_id `poc-s6`, version 1, active): the graph
+  /// webhook-in -> delay(delay-secs) -> http-call(http-url) -> pg-write ->
+  /// respond. `delay-secs` is the wall-clock wait the delay node parks for;
+  /// `http-url` is the absolute URL the http-call node fetches. Idempotent.
+  export seed-s6: func(delay-secs: u64, http-url: string) -> result<u32, string>;
+
+  /// Run the S6 flow for `run-id`, resuming from any checkpoint. The delay node
+  /// implements durable parked-wake: on first reach it records a wake deadline
+  /// (wall-clock now() + delay-secs) and returns *parked* without advancing;
+  /// a later call (after the host has advanced time past the deadline) resumes
+  /// and completes. Returns a tuple (outcome, http-status): outcome is
+  /// 0 = completed, 1 = parked-waiting (call again after time advances);
+  /// http-status is the status the http-call node observed (0 if not reached,
+  /// or if egress was refused by the host).
+  export run-s6: func(run-id: string, payload: string) -> result<tuple<u32, u32>, string>;
 }

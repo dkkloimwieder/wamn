@@ -11,6 +11,7 @@ mod logbench;
 mod nodebench;
 mod pgbench;
 mod plugins;
+mod testhostbench;
 
 use std::str::FromStr as _;
 
@@ -43,6 +44,8 @@ enum Command {
     ServeNode(nodebench::ServeNodeArgs),
     /// Run the S5 logging-capture gates (overhead / loss / drops / enrichment)
     Logbench(logbench::LogBenchArgs),
+    /// Run the S6 test-host plugin-swap gates (sameness / delay / egress / regression)
+    Testhostbench(testhostbench::TestHostBenchArgs),
 }
 
 #[tokio::main]
@@ -62,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Nodebench(args) => nodebench::run(args).await,
         Command::ServeNode(args) => nodebench::serve(args).await,
         Command::Logbench(args) => logbench::run(args).await,
+        Command::Testhostbench(args) => testhostbench::run(args).await,
     };
 
     shutdown_observability();

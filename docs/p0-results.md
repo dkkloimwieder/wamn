@@ -502,4 +502,107 @@ have made logging a P1 workstream with a buffer/agent redesign (run history
 depends on the same enrichment). Both held. Closing S5 unblocks the production
 logging plugin 9.3 (wamn-yf3) and feeds [P0-EXIT] wamn-2rl.
 
-## S6 — Test host plugin-swap (11.1) — pending
+## S6 — Test host plugin-swap (11.1) — **PASS** (2026-07-10)
+
+**Deliverable shipped:** the S3 flow-runner (`components/flowrunner`) extended
+with two nodes that touch *non-deterministic* host capabilities — a **`delay`**
+node (reads `wasi:clocks/wall-clock`, parks durably) and an **`http-call`** node
+(makes a `wasi:http/outgoing-handler` outbound request) — plus a `wamn-host
+testhostbench` subcommand (`crates/wamn-host/src/testhostbench.rs`) that compiles
+the extended runner **once** and instantiates the *identical bytes* into two
+stores that differ only in host-injected capabilities:
+
+- **PROD store** — real wall clock (default `WasiCtx`), a forward-all egress
+  handler, and `wamn:postgres` pointed at the shared fixture schema `s3`.
+- **TEST store** — a *virtual* wall clock the harness advances (via
+  `CtxBuilder::with_wasi_ctx`), an egress **spy** that records and denies
+  unexpected outbound calls (via `with_http_handler`), and `wamn:postgres`
+  pointed at a fresh **ephemeral schema** provisioned from the template DDL.
+
+The swap is a per-store wiring change; the guest is byte-identical. This is the
+mock-at-capability-boundary thesis (design-note 9): time enters the flow only
+through `wasi:clocks`, egress only through `wasi:http`, and durable state only
+through `wamn:postgres` — so the test host virtualizes each at the boundary with
+zero node changes. To make the schema itself a host-swapped fixture, the runner
+uses **unqualified** table names and each host injects the schema via
+`SET LOCAL search_path` (a new, optional `wamn:postgres` capability alongside the
+tenant claim) — prod → `s3`, test → the ephemeral schema.
+
+**Method:** the test host provisions the ephemeral schema through a **superuser**
+connection — the runner's `wamn_app` role is `NOSUPERUSER/NOCREATEDB` and cannot
+create schemas, exactly as in production; prod and test use **separate** pools so
+each pool's `search_path` is stable and prepared-statement plans never alias
+schemas. The 24h delay uses **parked-wake**: the delay node records a wake
+deadline (`now() + 24h`) in the run's checkpoint and returns *parked*; the
+harness advances the virtual clock past the deadline and re-runs, so the run
+completes — reusing the S3 checkpoint/resume machinery and testing the real
+durable-flow mechanism, not a test-only shortcut. The egress spy delegates
+*expected* calls to the same `DefaultOutgoingHandler` production uses (a real
+send to a loopback echo) and *denies* anything whose authority is not on the
+expectation list. The in-cluster Job (`deploy/testhostbench-job.yaml`, no CPU
+limit — the S2 CFS lesson) is the gate of record; local docker is for iteration.
+
+| Gate | In-cluster (kind) | Local (workstation) | Threshold | Verdict |
+|---|---|---|---|---|
+| Same binary runs under both host wirings | one component (fnv1a `0x196d7ec0f22a453a`) → prod + test, both complete, 1 sink row each | same digest, both complete | zero component changes | **PASS** |
+| 24h-delay flow completes < 1s wall under virtual time | 4.06 ms wall (parked → advance clock +86401s → completed); prod real clock stays parked | 31.6 ms wall; prod stays parked | < 1s | **PASS** |
+| Egress spy catches an intentionally-added unexpected call | planted `http://169.254.169.254/...` flagged + denied (http 0); expected echo call forwarded (200), not flagged | identical | planted call caught | **PASS** |
+| S3 regression on the extended binary (dispatch / hot-reload / resume) | dispatch p99 0.95 µs; hot-reload worst 741 µs; resume 10/10 single idempotent row | dispatch p99 0.91 µs; hot-reload 2.30 ms; resume 10/10 | S3 thresholds hold | **PASS** |
+
+**How each gate is constructed:**
+
+- **Sameness:** the harness compiles the component once into a single
+  `InstancePre` and instantiates it into both stores; a zero-delay delay+http
+  flow runs to completion under each, writing exactly one sink row. The
+  reported fnv1a digest is the same bytes both stores loaded — "no source diff"
+  is proven as "identical bytes," not merely an unchanged file.
+- **Delay (< 1s under virtual time):** the test store seeds a flow with a
+  24h delay node, runs it once (parks), advances the shared virtual clock past
+  the deadline, and runs again (completes) — all in real milliseconds. The prod
+  store runs the *same* flow under its real clock and stays parked (we do not
+  wait 24h), proving the delay is genuine and only virtual time collapses it.
+- **Egress spy (catch the planted call):** the test store's spy expects only the
+  loopback echo's authority. An expected call is recorded and forwarded (200); a
+  planted call to a link-local cloud-metadata endpoint (a classic SSRF target)
+  is flagged and denied without ever leaving the host (the guest observes
+  status 0). The expected/planted split is the "intentionally-added unexpected
+  outbound call."
+- **Regression:** the harness re-runs the full S3 flowbench (dispatch /
+  hot-reload / resume) against the *extended* binary, proving the added nodes and
+  the schema-via-search_path change did not regress S3.
+
+**Findings / decisions (feed [P0-EXIT] wamn-2rl):**
+
+1. **The mock-at-capability-boundary thesis holds — no design-note 9 rework.**
+   The identical flow binary runs unmodified under both hosts; time, egress, and
+   the durable store are each swappable at the boundary. The S6 fail branch (a
+   leaked ambient capability forcing determinism-rule changes before Epic 11) is
+   **not taken**.
+2. **Schema is a host-swapped fixture, like the tenant claim.** Making the
+   runner schema-agnostic (unqualified names + host-injected `search_path`) is
+   what lets the test host give each run a clean ephemeral schema with zero node
+   changes. This generalizes: the flow names *what* it wants (a table), the host
+   decides *where* it lives.
+3. **Parked-wake is the right durable-delay primitive.** Because the delay node
+   reads `wasi:clocks` and checkpoints rather than sleeping in-guest, the test
+   host virtualizes only `now()` — no timer/poll-subsystem virtualization — and
+   the same mechanism is what production uses for long waits (POC-F3 cron).
+4. **Egress is a host chokepoint.** Routing all outbound HTTP through one
+   `HostHandler` gives the platform a single point to record, allow-list, and
+   deny egress — the test spy and a production egress policy are the same seam.
+
+**Method notes / PoC shortcuts and where the real work is tracked:** the flow IR
+is the same minimal ad-hoc JSON as S3 (canonical schema → wamn-34t / 5.1); the
+ephemeral schema is created per testhostbench invocation (stable per pool for
+prepared-statement safety), which is the natural granularity — per-flow-run
+isolation is a production test-runner concern (11.x). The egress spy denies by
+authority allow-list; the production egress policy (per-tenant allowed-hosts,
+audit) is 8.x / control-plane work. The `wamn.schema` host-injected config key is
+wired end-to-end but only exercised by the bench here; 11.1 production consumes
+it from the test WorkloadDeployment.
+
+**Fail branch:** not taken — a binary that needed *any* change between hosts, a
+delay that could not be collapsed by virtual time, or an egress that escaped the
+spy would have weakened the thesis and forced a design-note 9 revision before
+Epic 11. All held. Closing S6 completes the P0 spike set (S1–S6) and unblocks
+[P0-EXIT] wamn-2rl (the last open P0 spike) and the 11.1 production test host.
