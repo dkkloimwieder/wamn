@@ -1,0 +1,228 @@
+# Plan: wasmCloud-Based Managed Low-Code Platform for Industrial Clients
+
+Working name: **"Wamn"** (placeholder). An opinionated n8n/Node-RED-style platform: visual dataflows + built-in Postgres + schema designer + generated REST/GraphQL APIs + hosted frontends, running on wasmCloud 2.x atop Kubernetes.
+
+---
+
+## 0. Architecture Summary (spec baseline)
+
+**Core thesis:** Every user-facing runtime unit (dataflow node, API layer, frontend server) is a WASI 0.2/0.3 component scheduled by the wasmCloud `runtime-operator`. Platform services that don't fit the sandbox (Postgres, the control-plane API, the visual editor backend) run as conventional containers.
+
+**Planes:**
+- **Control plane (containers):** Wamn API (tenant/project/schema/dataflow management), visual editor backend, artifact builder service, metadata catalog (in Postgres).
+- **Data plane (Wasm on wasmCloud hosts):** dataflow node components, generated API gateway component, static frontend server component, trigger components (HTTP/cron/MQTT).
+- **State plane:** Managed Postgres (one logical DB per tenant project; system schema + user schema), OCI registry for compiled artifacts, K8s etcd via CRDs for desired state.
+
+**Key custom infrastructure (biggest technical risks, front-load these):**
+1. **`wasi:postgres` host plugin** — wasmCloud 2.0 has no first-class relational DB capability. Build a custom host via `wash-runtime` (`HostBuilder.with_plugin()`) exposing a pooled, tenant-scoped Postgres interface (parameterized queries only; per-workload connection credentials injected via `secretFrom`). This is the single most important build-vs-wait decision.
+2. **Dataflow execution model** — flows compile to a *plan* executed by a generic "flow interpreter" component (fast iteration, no per-edit compile) rather than compiling each flow to a bespoke Wasm binary. Custom/user code nodes DO compile to individual components (sandboxed, deny-by-default `hostInterfaces`).
+3. **Generated API** — a per-project "API gateway" component that reads the metadata catalog at startup/refresh and serves REST + GraphQL over the tenant schema (PostgREST/Hasura-style, but in-process Wasm). RLS enforced in Postgres via non-owner roles + session claims.
+4. **Scale-to-zero economics** — ms component instantiation means idle projects park their gateway/runner/frontend at zero instances and wake on first request; this is the unit-economics answer for free/low tiers that containers can't match.
+
+**Decisions locked:** SaaS-first (on-prem/air-gapped is a later distribution profile); bring-your-own SPA + generated SDK for v1 (UI builder is a future epic); **no industrial protocols in v0** — HTTP/DB/webhook/cron only. MQTT is the first post-v0 connectivity add; OPC UA / Modbus / local-HTTP move to a future on-prem edge agent.
+
+**Tenancy:** shared multi-tenant cluster; isolation via K8s namespaces + wasmCloud `host-group` per tier + Postgres RLS + per-tenant DB roles. Optional dedicated host-groups/clusters for premium/regulated clients.
+
+---
+
+## Epic 1 — Platform Foundation & Infrastructure
+
+Goal: reproducible cluster with wasmCloud 2.x operator, custom host image, CI/CD, environments.
+
+- **1.1** Reference cluster IaC (Terraform/Pulumi): EKS/GKE + kind/k3d for local dev with the documented NodePort 30950→80 mapping.
+- **1.2** Deploy `runtime-operator` via Helm (OCI chart); pin versions; values overlays per env; separate control-plane vs data-plane NATS URLs.
+- **1.3** Build **custom host image** with `wash-runtime`: Wasmtime engine config (pooling allocator, memory limits), registered plugins (`wasi:http`, `wasi:config`, `wasi:keyvalue`, custom `wasi:postgres`), OTel enabled. Publish as OCI image; wire into Helm chart via custom args/env.
+- **1.4** OCI registry setup (GHCR/ECR) + `imagePullSecrets` automation per tenant namespace.
+- **1.5** GitOps pipeline (ArgoCD/Flux) for operator, CRDs, and platform services; CI for host image builds.
+- **1.6** Cluster sanitization/upgrade runbooks (ClusterRole conflicts, CRD cascade-delete hazards documented in research).
+
+## Epic 2 — Postgres Capability & Data Layer
+
+Goal: Postgres out of the box, safely reachable from Wasm.
+
+- **2.1** `wamn:postgres` WIT interface (drafted, see `wamn-postgres.wit`): typed `sql-value` params (exact-decimal `numeric` as canonical strings per 3.3), parameterized-only (no interpolation path), transaction + cursor resources with drop-rolls-back semantics, error taxonomy mapped to wamn:node retry semantics, host-injected claims with no guest override surface. No LISTEN/NOTIFY exposure — event delivery is outbox + dispatcher (5.14/D4); components never hold listener connections.
+- **2.2** Implement host plugin: connection pooling (per tenant-project), credential resolution from K8s Secrets, statement timeout + row limits, RLS session variable injection (`SET app.tenant_id / app.user_id / app.role`). **RLS correctness:** runtime connections use non-owner roles (or `FORCE ROW LEVEL SECURITY` on all tenant tables) — table owners bypass RLS by default and would make the isolation story decorative. **Pooling topology decision:** host-side pools × N host pods × M project DBs explodes connection counts; decide pgBouncer transaction pooling vs. strict per-host caps early. LISTEN/NOTIFY is fully removed from the architecture (D4), so transaction pooling has no listener conflict. **Connection hygiene invariant (hard, structural):** the guest holds only a resource handle; the connection lives in the plugin. On **abnormal** instance death (epoch-interruption kill, trap, panic) the connection is **destroyed, never reused** — TCP close aborts the open transaction server-side unconditionally, the pool replenishes; kills are rare so reconnect cost is noise, and the guarantee doesn't depend on cleanup code executing correctly during a kill (a `Drop`-impl `ROLLBACK` cannot await async I/O and is rejected). Sanitize-and-return (`ROLLBACK` + `DISCARD ALL`) applies only to normal completion paths. RLS claims are set via `SET LOCAL` inside the plugin-managed transaction so tenant identity dies with the transaction. **P0 chaos test:** kill a component mid-transaction; assert the next checkout is transaction-free and claim-free.
+- **2.3** Managed Postgres provisioning: CloudNativePG (or RDS) operator; one DB per project; automated backups, PITR.
+- **2.4** System schema v1: `users`, `roles`, `permissions`, `configurations`, `audit_log`, `api_keys`, plus platform metadata (`entities`, `fields`, `relations`, `flows`, `deployments`).
+- **2.5** Migration engine: versioned, forward-only migrations with dry-run and rollback plan; system-schema migrations shipped with platform releases.
+- **2.6** Egress/security review: plugin is the *only* DB path; components never get `wasi:sockets` to Postgres directly.
+
+## Epic 3 — Schema Designer
+
+Goal: users extend the system schema visually; changes are safe, versioned, and drive API generation.
+
+- **3.1** Metadata model: entity/field/relation/index/constraint definitions stored in catalog tables; system entities flagged read-only-structure but extensible (custom columns on `users`, etc.).
+- **3.2** DDL compiler: metadata diff → migration plan → reviewed/applied DDL (additive by default; destructive changes require explicit confirmation + backup checkpoint).
+- **3.3** Visual schema designer UI: ERD canvas, field type palette (incl. industrial-friendly types: timestamps w/ tz, unit-bound quantities backed by exact decimal (`numeric`) — floats disallowed for material quantities/formulations — enums), relation drawing, validation rules. Catalog expressiveness must cover what industrial modules need: composite uniqueness constraints and hierarchical/closure relations (genealogy, asset trees) — neutral primitives in core, opinionated models in modules (D14).
+- **3.4** Schema versioning & environments: draft → staged → applied; export/import (JSON) for promotion between dev/prod projects.
+- **3.5** RLS policy builder: per-entity access rules tied to roles (row ownership, tenant scoping) compiled to Postgres RLS.
+- **3.6** Seed-data & fixtures tooling.
+
+## Epic 4 — Generated REST/GraphQL API
+
+Goal: instant CRUD+ API from the catalog, consumed by frontends and dataflows.
+
+- **4.1** API gateway Wasm component, **one instance per project** (not shared multi-tenant — a shared gateway would hold every tenant's catalog + DB credentials, the worst blast radius in the system; Wasm density + scale-to-zero makes per-project nearly free). Reads catalog snapshot; serves `/api/rest/{entity}` (filter/sort/paginate/expand) and `/api/graphql`. **v1 scope fence:** CRUD + relation expansion only — no aggregations, no arbitrary joins, no computed views (post-GA).
+- **4.2** AuthN: JWT sessions (platform IdP, Epic 8) + API keys for machine clients; claims → RLS session vars via the Postgres plugin.
+- **4.3** AuthZ: role/permission checks from system schema pre-query; field-level read/write masks.
+- **4.4** Hot reload: catalog changes emit a NATS-core doorbell (via the dispatcher); gateway refreshes its catalog snapshot on hint + slow reconcile poll — no redeploy, no DB listeners.
+- **4.5** OpenAPI + GraphQL SDL generation, per-project docs endpoint, typed client generation (TS SDK) for frontends and custom nodes.
+- **4.6** Rate limiting, pagination limits, query-depth/cost limits (GraphQL), request tracing via built-in OTel spans.
+- **4.7** In-process invocation path so dataflow nodes call the API without an HTTP hop (component-to-component import) — stretch, validate feasibility early.
+
+## Epic 5 — Dataflow Engine (n8n/Node-RED core)
+
+### Execution model (decided): hybrid interpreter
+
+**A flow is data, not code.** There is no compile step for a standard flow. The visual editor emits a versioned JSON graph (nodes, edges, per-node config, credential refs) stored in the catalog. "Deploying" a flow = flipping the active-version pointer + a NATS doorbell. Deploys are milliseconds, edits are instantly testable.
+
+**The flow-runner IS a component; standard nodes are NOT.** One long-lived Wasm component per project ("flow-runner") embeds the standard node library as native library code compiled into its binary. It walks the graph, dispatches node logic, and holds the run state machine. Consequences to design around:
+- The runner's `hostInterfaces` grant is the **union** of everything the standard library needs (`wasi:http/outgoing-handler`, `wamn:postgres`, `wasi:config`, clocks). Per-node isolation inside the runner is therefore *logical*, enforced at dispatch time (e.g., the interpreter refuses egress from a node type that doesn't declare it, and `allowedHosts` is still enforced per-workload by the host).
+- Runner is stateless between steps where possible; run state checkpoints to Postgres so a rescheduled runner (4s finalizer recovery) resumes in-flight runs.
+
+**Custom code nodes ARE components.** User TS (via JCO) or Rust (`wasm32-wasip2`) is compiled by the builder service into an individual Wasm component implementing the `wamn:node` WIT world, pushed to OCI, and deployed as its own `WorkloadDeployment` with node-scoped `hostInterfaces` + `allowedHosts` (deny-by-default; a JSON-transform node gets *no* imports at all). The runner invokes it at the graph step. This gives untrusted user code hard sandbox isolation without paying build latency on every flow edit.
+
+**Triggers: two dispatch paths.** *Async* (cron, row events, fire-and-forget webhooks): transactional enqueue into the Postgres run queue + NATS-core doorbell; the shared **trigger dispatcher** (always-on control-plane service) owns cron schedules and outbox polling across ALL projects with adaptive intervals, waking parked (scale-to-zero) runners via doorbell — no per-project listeners, no polling herd. *Sync* (caller awaits the flow's response): **direct dispatch** — the webhook trigger invokes the runner request/response, bypassing the queue *machinery* (claim/doorbell/poll), not Postgres. **Default: write-ahead** — a single `INSERT runs(status='dispatched')` (~1–2ms, no claim, no doorbell) precedes invocation, updated on completion; a janitor sweep marks `dispatched` sync runs past their timeout as `infrastructure-failure` in the audit log, closing the attempt-audit gap (pod dies mid-execution → durable record still exists). **Opt-in fast path** (skip write-ahead) for latency-critical read-only endpoints, explicitly labeled reduced-audit and prohibitable by project policy (composes with 11.7 gates). Caller remains its own *delivery* durability either way (reset → retry; idempotency keys dedupe). Concurrency limits at the trigger, hard timeout on the held connection. Both trigger modes v1 scope.
+
+**Why not compile whole flows to components?** Per-edit build latency (seconds–minutes), OCI registry churn per save, and much harder step-level debugging — while the overhead it removes (graph dispatch: µs; custom-node HTTP hop: ~1–2ms) is dwarfed by node I/O (DB: 1–10ms, external HTTP: 50–500ms) and by the durability checkpoints both models need anyway. **Decision: flow JSON is an IR with two backends.** Interpreted is the default (instant deploys, full debug capture). "Frozen" flows are a second, opt-in backend — `wac`-composed into a single component with custom nodes statically linked (in-process calls) and `hostInterfaces` narrowed to exactly that flow's needs. Frozen mode targets hot, compute-bound, latency-sensitive flows (the future kHz MQTT/tag-processing workloads) and ships post-GA. Day-one constraint (deliberately cheap): standard nodes are authored against the same SDK node trait custom nodes use — interface purity enforced in review/CI — so later componentization is mechanical; the actual dual build target is deferred until frozen flows are scheduled.
+
+### Issues
+- **5.1** Flow JSON schema: nodes/edges/config/credential refs; versioning, import/export, diff format for the editor.
+- **5.2** Flow-runner component: graph walker, branch/merge, error paths, per-node timeouts & retries with backoff, **shared rate-limit throttles keyed by (node type, credential, target host)** honoring `rate-limited(retry-after)` from the node contract, concurrency limits per flow, backpressure on the run queue; hot-reload of flow definitions via NATS doorbell + reconcile polling.
+- **5.3** Standard node library v1 (compiled into runner): HTTP request, Postgres query (via generated API or `wamn:postgres`), transform/expression, conditional, loop/split/merge, delay, webhook response, email/notify. Includes the dispatch-time capability policy table (which node types may use which runner imports). **Purity enforcement is mechanical:** standard node crates depend on the SDK crate ONLY — never the runner crate — enforced as a Cargo workspace / CI dependency lint, so no node can circumvent the `wamn:node` interface and silently break the frozen-flow composition path (5.13).
+- **5.4** `wamn:node` WIT contract (drafted, see wamn-node.wit): `run(ctx: run-context, input: payload) -> result<payload, node-error>` with `payload = inline(json) | streamed(payload-ref)`; JSON config; lazy credential handles; error taxonomy incl. `cancelled`; optional `payloads`/`control`/`credentials` imports; versioning policy so old custom nodes keep working.
+- **5.5** Builder service: sandboxed build jobs (JCO / cargo), dependency allowlist, artifact signing + SBOM, OCI push, emit `WorkloadDeployment` with minimal `hostInterfaces`/`allowedHosts` derived from the node's declared WIT imports.
+- **5.6** Runner ↔ custom-node invocation path: **v0 = in-cluster HTTP** through operator-managed EndpointSlices (boring, debuggable). Spike wasmCloud component-to-component linking / NATS wRPC for a lower-latency in-process path later — treat as optimization, not dependency.
+- **5.7** Run state persistence: `runs` / `node_runs` tables; at-least-once semantics with idempotency keys; run history, replay from captured inputs, partial re-run from a failed node.
+- **5.8** Visual flow editor UI: canvas, node config panels, credential picker, test-run with live node I/O inspection, version diff.
+- **5.9** Credential vault: K8s Secrets per project, referenced (never inlined) in flow JSON; resolved by the runner at dispatch and injected only into the executing node's context.
+- **5.10** Payload store & limits: run-scoped, content-addressed store for streamed payloads (`inline` vs `streamed` per the wamn:node contract); global + per-flow size limits enforced at the host, plus **aggregate quotas** (bytes per project, write-rate limits) with admission backpressure against ingestion spikes, metered to billing; backend decision (object storage vs host-local spill) explicitly precedes edge-agent design (7.5); NDJSON record-stream framing for analytics workloads; run-history preview (head + size + hash) for streamed payloads.
+- **5.11** Ordering & concurrency policies: per-node `strict` / `partitioned(key)` / `unordered` dispatch in the runner; replaces any batch API — record streams amortize invocation overhead with order preserved.
+- **5.12** Cancellation: single control-plane `cancel(run, reason)` operation (user, policy, scheduler, sibling-failure, system initiators); hard layer via Wasmtime epoch interruption, cooperative layer via `control.cancelled()` polling; `cancelled` as distinct terminal run status recorded in audit log.
+- **5.13** *(Post-GA)* Frozen-flow compile backend: `wac` composition pipeline (flow IR → composed component → OCI → `WorkloadDeployment`), per-flow capability narrowing, reduced-instrumentation tracing mode, auto-suggest freezing from execution metrics. **Day-one constraint on 5.3 (cheap version):** standard nodes implement the SDK node trait; actual component build target deferred until this issue is scheduled.
+- **5.14** Durable run queue & runner scaling — **DECIDED: hybrid.** Postgres owns durability (`FOR UPDATE SKIP LOCKED` run queue + run state, one durability domain; outbox insert and enqueue can share a transaction with user writes). NATS core (not JetStream — no new state dependency) carries fire-and-forget doorbells: enqueue publishes a hint, runners poll on hint + slow reconciliation sweep (30s–5min) for lost hints; zero continuous polling. Shared trigger dispatcher (control plane) owns cron + outbox watching for all projects and wakes parked runners. Runner horizontal scaling: run-claim leases across replicas, per-partition ownership for `partitioned(key)`, checkpoint/resume on replica loss. **Dispatch SLOs (proposed):** sync write-ahead (default) p99 < 15ms platform overhead; sync fast path (reduced-audit opt-in) p99 < 10ms; async warm p50 < 25ms / p99 < 100ms; async cold (parked project wake) p99 < 250ms. **Throughput ceiling & revisit trigger:** a tuned single-table `SKIP LOCKED` queue (batch claims, fillfactor, aggressive vacuum) sustains ~1–5k run-state transitions/sec — per project DB, not platform-wide; the MQTT tranche batches tags into stream segments (~10–100 runs/sec), one to two orders below it. Revisit toward JetStream only if a workload genuinely needs >~1k discrete runs/sec in one project — which likely indicates a modeling problem (should be a stream) before a queue problem (D3).
+
+## Epic 6 — Frontend Hosting & App Serving
+
+Goal: each project ships a web app served by the platform.
+
+- **6.1** Static-site server component: serves built SPA assets from blobstore/OCI artifact; SPA fallback routing; cache headers.
+- **6.2** Build pipeline: user uploads repo/zip or connects Git → builder service produces assets + optional SSR component → publishes as OCI artifact → `WorkloadDeployment` rollout. **Same threat class as custom-node builds (5.5):** frontend builds run arbitrary `npm install` — isolated ephemeral build sandboxes, no cluster credentials, egress-restricted registry proxy, resource/time limits.
+- **6.3** Routing/domains: per-project subdomain (`{project}.wamn.example`), custom domains + TLS (cert-manager), Ingress/Gateway API integration with operator-managed EndpointSlices.
+- **6.4** Starter templates: admin dashboard, operator HMI-style dashboard, form apps — pre-wired to the generated TS SDK and auth. These are the v1 answer to "no UI builder yet": clone → customize → push.
+- **6.5** SDK polish is the priority given BYO-frontend v1: typed TS client, auth helpers, live-query hooks (outbox → dispatcher → NATS → SSE bridge; same event spine as triggers, no DB listeners).
+- **6.6** *(Future epic — UI builder)* Design the metadata catalog and SDK now so a drag-and-drop UI builder can later emit apps against the same generated API; capture layout/page metadata tables in the catalog schema from day one (empty in v1) to avoid a migration cliff.
+
+## Epic 7 — Industrial Connectivity (post-v0) & Future Edge Agent
+
+Goal: the reason manufacturing clients pick this over vanilla n8n. **v0 ships with HTTP/DB/webhook/cron connectivity only.** MQTT is the first connectivity tranche once the core is stable (clients bridge PLC data to a broker themselves — a pattern most plants already run via Ignition/HiveMQ/EMQX). Direct device protocols require an on-prem presence and come later.
+
+**Post-v0 tranche 1 (SaaS-reachable, MQTT):**
+- **7.1** MQTT capability plugin (host plugin, TLS, per-tenant broker credentials) + subscribe-trigger and publish nodes; Sparkplug B payload decoding node.
+- **7.2** Managed broker decision: offer optional platform-hosted MQTT broker (EMQX/NATS-MQTT) per tenant vs. connect-to-customer-broker only — spike + pricing implication.
+- **7.3** Time-series ingestion pattern: high-rate tag data → Timescale extension in project Postgres (or decision: separate TSDB); downsampling/retention; batching in the MQTT trigger to protect the DB.
+- **7.4** Optional system-schema modules: historian/asset model (sites, lines, machines, tags) and **traceability/genealogy** (lots, serials, consumption/production links). Modules may be opinionated (e.g., a unified lot/serial treatment); the core catalog stays ontology-neutral — clients whose ERP disagrees swap the module, not fight the platform (D14).
+
+**Deferred (requires on-prem edge agent — future epic):**
+- **7.5** Edge agent architecture spike: k3s or standalone custom `wash-runtime` host on plant hardware, joining the SaaS control plane over NATS leaf nodes; offline/degraded behavior spec; this is also the delivery vehicle for the later on-prem story (10.4). **Backlog sync requirement (from external review):** offline historian/tag backlogs sync as watermark-resumable bounded segments (per tag-partition, per time-window) — each segment its own payload/run with its own idempotency key, composing with `partitioned(key)` ordering. Never a single giant payload; platform payload caps are intentionally NOT raised for edge sync.
+- **7.6** OPC UA connector via the edge agent (likely containerized bridge — native OPC UA stacks don't compile cleanly to WASI yet).
+- **7.7** Modbus TCP + local HTTP polling nodes on the edge agent (`wasi:sockets` on WASI 0.3 / Wasmtime 46 — spike).
+
+## Epic 8 — Identity, Security & Multi-Tenancy
+
+- **8.1** Platform IdP: OIDC (bring-your-own SSO for enterprise) + local users; sessions/JWT issuance; maps to system `users`/`roles`. Includes **platform RBAC** (distinct from application roles): per-project builder/admin/viewer/deployer roles governing who may edit schemas, edit flows, manage credentials, and deploy — enforced by the control plane and recorded in audit (8.6).
+- **8.2** Tenant isolation model: namespace-per-tenant, host-group tiers, per-tenant DB roles + RLS, per-workload `hostInterfaces` allowlists, `allowedHosts` egress policy defaults (deny-all).
+- **8.3** SPIFFE/SPIRE workload identity rollout for host↔operator and service↔service auth.
+- **8.4** Partitioned NATS credentials (ctl vs rpc JWTs/seeds) per environment; no plaintext auth.
+- **8.5** Secrets lifecycle: rotation, audit, scoping; secret-file permission checks in dev tooling (mirrors `.wash/config.yaml` guardrails).
+- **8.6** Audit logging (schema changes, flow edits, deploys, data-admin actions, run outcomes incl. `infrastructure-failure` for orphaned write-ahead sync runs) + retention.
+- **8.7** Threat model & pen-test pass before GA (focus: custom-code nodes, generated API injection surface, cross-tenant egress).
+
+## Epic 9 — Observability & Logging
+
+Goal: three first-class signals (traces, logs, metrics), correlated by run ID, with per-tenant isolation. The wasmCloud host gives traces "for free" (it intercepts every WASI call); logs and the user-facing run-history experience are where we build.
+
+**Traces:**
+- **9.1** OTel trace pipeline: host-native spans → OTel Collector → Tempo. Enrich every span with `tenant`, `project`, `flow`, `run_id`, `node_id` attributes; a single trace threads trigger → runner → custom-node invocation → `wamn:postgres` spans → generated-API calls. HTTP status classes come free on `handle_http_request` spans.
+- **9.2** Trace context propagation contract: `run-context` carries W3C traceparent; SDK helpers propagate it, and the host plugins (`wasi:http` outgoing, `wamn:postgres`) **stamp trace context onto any outbound call that lacks it** — propagation is host-enforced, not authorship-dependent; broken traces from SDK-bypassing custom nodes are structurally impossible.
+
+**Logs:**
+- **9.3** Component logging plugin: implement/adopt `wasi:logging` in the custom host; capture component stdout/stderr + structured log calls; emit as OTel logs enriched with the same execution context → Loki. No sidecars, no per-component agents.
+- **9.4** Platform logs (operator, control plane, builder service) via standard Fluent Bit/Vector DaemonSet → same Loki, separate tenant streams.
+- **9.5** Log governance: per-tenant isolation and query scoping, retention tiers by plan, rate limits per component to protect the pipeline, secret-pattern scrubbing at the collector.
+
+**Run history & debugging UX (the n8n-parity feature):**
+- **9.6** Node-level I/O capture during runs: platform credentials are structurally absent (handles, per contract), but **user data flowing through nodes can still contain secrets** — so pattern scrubbing (9.5) is load-bearing here, plus size truncation and a per-flow "capture payloads" toggle (PII stance); streamed payloads captured as head-preview + size + hash (5.10); hot storage in Postgres (`node_runs`), cold in object storage; drives the editor's inspection panel and replay (5.7).
+- **9.7** Live tail: stream a test-run's node events to the editor over SSE/WebSocket.
+
+**Metrics, dashboards, alerting:**
+- **9.8** Metric set: flow executions/sec and success ratio, node duration p50/p99, run-queue depth, generated-API RPS + error rate, `wamn:postgres` pool saturation and query latency, per-component memory vs. the 256 MiB sandbox cap, host density per node.
+- **9.9** Dashboards: per-tenant Grafana folders (interface-level filtering via WIT-namespaced span names); internal SRE dashboards.
+- **9.10** Alerting: platform SLO alerts (burn rates); user-facing failure notifications — on-failure flow paths + email/webhook channels + a project alert-rules screen.
+- **9.11** Usage metering derived from the same metric stream (executions, API calls, storage, log volume) → billing events.
+- **9.12** SLOs + runbooks; document the finalizer-based ~4s workload rescheduling in the HA story; runner checkpoint/resume validation drill.
+
+## Epic 10 — Managed-Service Control Plane & GTM Readiness
+
+- **10.1** Wamn control-plane API + admin console: tenant/project provisioning (namespace, DB, registry creds, DNS) as an orchestrated saga.
+- **10.2** Plans/quotas enforcement (flows, executions/mo, DB size, edge nodes); billing integration.
+- **10.3** Backup/restore & project export (schema + flows + data) — critical for industrial procurement.
+- **10.4** *(Deferred, post-v1)* On-prem/air-gapped distribution profile: single-cluster installer, private registry mirroring, `--allowed-insecure` handling, license enforcement. Design constraint for v1: keep the control plane free of SaaS-only dependencies (no hard AWS-service coupling) so this stays feasible.
+- **10.5** Docs, quickstarts, 2 reference solutions: #1 = the POC (see `poc-material-receiving.md` — built once as the P1/P2 acceptance vehicle, shipped twice); #2 = OEE dashboard (post-GA, MQTT tranche showcase).
+
+## Epic 11 — Integrated Testing (flows first)
+
+Goal: testing as a native platform primitive, not a bolt-on. Architectural levers: the capability boundary doubles as the mock boundary (swap host plugins, not code), and flows + run history are already data (fixtures for free).
+
+- **11.1** Test host: `wash-runtime` build registering test-double plugins — ephemeral Postgres (per-test schema cloned from a template with system schema + seed data), stub/recording `wasi:http` outgoing handler, virtualized `wasi:clocks` (instant delays, fast-forwardable cron). Same runner binary as prod.
+- **11.2** Test cases as catalog data: versioned with the flow they test; a flow version and its suite promote together between environments.
+- **11.3** Record-and-replay fixtures: pin any run (from 9.6 capture) as a test case — secret redaction, timestamp/ID normalization, ignore-rules for volatile fields.
+- **11.4** Assertion library: node output matchers, final DB-state assertions, egress spies ("exactly these outbound calls, nothing else" — doubles as a security regression test), error-path assertions.
+- **11.5** Custom-node unit tests: user-supplied cases against the pure `run(ctx, input)` contract; executed by the builder service as a publish gate.
+- **11.6** Test execution UX: run suite from the flow editor with node-level pass/fail overlay on the canvas; branch/edge coverage indicator on the flow graph.
+- **11.7** Publish gates & policy: per-project rules (e.g., "prod deploys require green suite"); results recorded in audit log (8.6) — the compliance/change-control story for industrial clients.
+- **11.8** Schema-change impact analysis: catalog dependency graph (flow ↔ entity ↔ generated API) identifies affected flows when a migration is staged (3.2) and auto-runs their suites before DDL applies; report failing assertions in the schema designer.
+- **11.9** *(Later)* Ephemeral preview environments: full project clone (schema + flows + masked seed data) per branch/PR for integration testing.
+
+---
+
+## Decision Boundaries & Alternatives (denoted)
+
+Decisions with real alternatives, their status, and the trigger to revisit:
+
+| # | Decision | Chosen | Alternative(s) | Status / revisit trigger |
+|---|---|---|---|---|
+| D1 | Flow execution | Hybrid interpreter; flow JSON as IR | Compile every flow (`wac`); pure interpreter w/o component custom nodes | **Locked**; frozen-flow backend (5.13) covers the compile case |
+| D2 | Generated API | Custom per-project Wasm gateway | Per-project PostgREST/Hasura containers (buy the hardest part of Epic 4) | **Chosen, revisitable** — if Epic 4 slips in P1/P2, embed PostgREST for REST v1 and keep the Wasm gateway for GraphQL+in-process later |
+| D3 | Run queue | **Hybrid:** Postgres durability + NATS-core doorbells + shared dispatcher; reconciliation follows connection ownership (no cross-DB sweep) | Pure JetStream; raw SKIP LOCKED + polling | **Locked** (5.14); revisit only if a single project needs >~1k discrete runs/sec |
+| D4 | DB events | Outbox + dispatcher poller; NATS doorbell as hint; LISTEN/NOTIFY removed entirely | Raw LISTEN/NOTIFY; logical-replication CDC (Debezium-style) | **Locked for correctness**; CDC is the scale-up path |
+| D5 | Postgres pooling | TBD: pgBouncer transaction pooling vs per-host caps | — | **Open** (2.2); interacts with D4 and session-var injection |
+| D6 | Postgres hosting | CloudNativePG in-cluster | RDS/Cloud SQL | **Open**; CNPG favored for on-prem parity (10.4) |
+| D7 | Custom-node invocation | In-cluster HTTP | wasmCloud component linking / NATS wRPC | **Chosen for v0**; revisit post-P0 benchmark |
+| D8 | Raw SQL in flows | TBD: generated-API-only vs raw-SQL node behind RLS + permission flag | — | **Open**; safety boundary decision, needed before 5.3 ships the Postgres node |
+| D9 | Ordering | Runner policy (`strict`/`partitioned`/`unordered`), no batch API | `run-batch` in contract | **Locked** |
+| D10 | Frontend strategy | BYO SPA + SDK | UI builder v1 | **Locked**; catalog reserves layout tables (6.6) |
+| D11 | Time-series | Timescale in project Postgres | Separate TSDB | **Open until MQTT tranche** (7.3) |
+| D12 | MQTT broker | TBD: platform-hosted vs customer-broker-only | — | **Open until MQTT tranche** (7.2) |
+| D13 | Observability store | Loki/Tempo/Prometheus | ClickHouse-backed (single store) | **Chosen**, low switching cost pre-GA |
+| D14 | Industrial ontology | Neutral core catalog + opinionated optional modules (7.4) | Bake unified lot/serial into core; defer entirely | **Locked** |
+| D15 | Sync webhook path | Direct dispatch; **write-ahead run row by default** (janitor marks orphans `infrastructure-failure`); reduced-audit fast path opt-in, policy-prohibitable | Full queue + response correlation; NATS telemetry pre-event (**rejected**: core NATS is the least durable link — an audit trail that fails when infrastructure is unhealthy is backwards; durable NATS = JetStream dependency; consumer must persist to a DB anyway = second weaker write path) | **Locked**; SLO numbers proposed, pending sign-off |
+
+## Suggested Sequencing (phases)
+
+| Phase | Contents | Exit criterion |
+|---|---|---|
+| **P0 – Spikes (2–4 wk)** | 1.3 custom host, 2.1–2.2 Postgres plugin PoC, 5.2 runner PoC + 5.6 custom-node invocation spike, 9.3 wasi:logging capture spike, 11.1 test-host plugin-swap PoC (validates the mock-at-capability-boundary thesis), micro-benchmarks: config-parse share of cold dispatch (revisit only if >5%), connection-hygiene chaos test (2.2) | Wasm component queries Postgres via plugin in-cluster; toy flow runs a custom node; same flow passes in a test host with stubbed HTTP + virtual clock |
+| **P1 – Walking skeleton** | Epics 1, 2, minimal 3 (catalog+DDL, no UI), minimal 4 (REST only), 5.1–5.3 + triggers, **5.7 + 5.14 (run state, queue decision)**, 6.1, 8.1–8.2, 9.1/9.3 baseline telemetry | POC P1 slice (per `poc-material-receiving.md`): F1 receipt flow end-to-end via catalog API + generated REST, write-ahead audit demo; every run traceable and resumable |
+| **P2 – Product** | Schema/flow editors (3.3, 5.8), GraphQL, custom nodes (5.4–5.6), 5.10–5.12 (payload store, ordering, cancellation), 6.2–6.5, 9.6–9.10 (run history, dashboards, alerting), 11.1–11.6 (test host, fixtures, editor test UX) | POC acceptance script passes in full (`poc-material-receiving.md`) → design-partner pilot |
+| **P3 – Managed GA** | 8.3–8.7, 9.5/9.11–9.12, 10.1–10.3, 10.5, 11.7–11.8 (publish gates, schema impact analysis) | Paid pilots / GA gate |
+| **Post-GA** | Epic 7 tranche 1 (MQTT), 6.6 UI builder, edge agent (OPC UA/Modbus/local HTTP), 10.4 on-prem profile, 5.13 frozen flows, 11.9 preview environments | Driven by pilot demand |
+
+## Top Risks
+1. **Postgres plugin** maturity/perf under pooling + RLS — mitigate with early load tests (30k RPS host ceiling is for in-process caps; DB will bottleneck first).
+2. **Runner capability-union coarseness** — one runner holds the union of standard-library grants, so per-node isolation inside it is logical, not cryptographic. Mitigations: dispatch-time policy table (5.3), keep risky capabilities out of the standard library (push them to sandboxed custom-node components), and optionally split runners by capability class if audits demand it.
+3. **wasmCloud 2.x API churn** (young CRD surface, WASI 0.3 transition) — pin versions, abstract behind Wamn control plane.
+4. **Standard-library interface purity** — the frozen-flow path (5.13) stays viable only if standard nodes are pure implementations of the SDK node trait (no reach-arounds into runner internals). Enforce in review/CI; the dual component build target itself is deferred until frozen flows are scheduled. The runner ↔ custom-node HTTP path is low-risk; benchmark in P0 to confirm.
+5. **Log/payload capture volume** — node I/O snapshots are the biggest storage cost driver; truncation, sampling, and retention tiers (9.5–9.6) must be designed in, not bolted on.
+6. **Epic 4 scope creep** — a dynamic-schema REST+GraphQL engine is the largest single build in the plan; the v1 scope fence (CRUD + expansion only) and the D2 fallback (embed PostgREST) are the pressure valves. Watch it in P1.
+7. **Per-project resource floor** — DB + gateway + runner + frontend per project sets the cost floor per tenant; scale-to-zero for Wasm components mitigates compute, but per-project Postgres does not scale to zero — free tier likely needs schema-per-project on shared clusters (weakens isolation; a deliberate tier trade-off to decide in 10.2).

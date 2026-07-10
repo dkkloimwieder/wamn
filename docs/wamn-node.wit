@@ -1,0 +1,199 @@
+package wamn:node@0.1.0;
+
+/// Shared types for the node contract.
+interface types {
+  /// JSON-encoded string. Structured `value` variant deferred to a
+  /// future version; a string maximizes guest-language ergonomics
+  /// (serde_json / JSON.parse) at ~µs codec cost per hop.
+  type json = string;
+
+  /// How the bytes of a streamed payload are framed.
+  enum framing {
+    /// Newline-delimited JSON: an ordered stream of records. The
+    /// default for analytics / tag-data workloads.
+    ndjson,
+    /// Opaque bytes (files, binary blobs).
+    raw,
+  }
+
+  /// Reference into the run-scoped payload store. Content-addressed;
+  /// valid only within the owning run. Resolved via the `payloads`
+  /// import.
+  record payload-ref {
+    handle: string,
+    framing: framing,
+    size-hint: option<u64>,
+  }
+
+  /// Every node input and output is a payload. Inline for the common
+  /// small case (fast path, fully captured in run history); streamed
+  /// for large / record-stream data (run history captures preview +
+  /// size + hash). Inline size is capped by platform-global and
+  /// per-flow limits enforced by the host.
+  variant payload {
+    inline(json),
+    streamed(payload-ref),
+  }
+
+  /// Everything the runner knows that a node execution may need.
+  /// Deliberately contains NO secrets -- credentials are pulled lazily
+  /// through the `credentials` import so they never appear in captured
+  /// inputs (run history, fixtures, logs).
+  record run-context {
+    /// Unique id of this flow run (stable across retries of any node).
+    run-id: string,
+    flow-id: string,
+    flow-version: u32,
+    /// The node instance id within the flow graph.
+    node-id: string,
+    /// 0 on first execution, incremented per retry.
+    attempt: u32,
+    /// Runner-generated, stable across retries of this node in this
+    /// run. Forward to external systems supporting idempotency headers.
+    idempotency-key: string,
+    /// W3C trace context. Nodes making outbound calls MUST propagate.
+    traceparent: string,
+    tracestate: option<string>,
+    /// Remaining execution budget in ms. The runner enforces a hard
+    /// deadline regardless (Wasmtime epoch interruption); this lets
+    /// well-behaved nodes set client timeouts and fail gracefully.
+    deadline-ms: option<u64>,
+    /// Node configuration as a JSON document, template-expanded by the
+    /// runner; validated against the node's config JSON Schema (OCI
+    /// manifest) before dispatch. Secret-typed fields are replaced by
+    /// credential handles.
+    config: json,
+  }
+
+  record error-detail {
+    message: string,
+    /// Machine-readable code for editor display / error-branch
+    /// routing, e.g. "ECONNREFUSED", "HTTP_429", "SCHEMA_MISMATCH".
+    code: option<string>,
+    /// Optional structured payload surfaced in run history.
+    data: option<json>,
+  }
+
+  record rate-limit-detail {
+    detail: error-detail,
+    /// Source-authoritative delay (e.g. from a Retry-After header).
+    /// Absent = runner applies its own backoff curve.
+    retry-after-ms: option<u64>,
+  }
+
+  /// The runner decides retry-with-backoff vs error-branch routing vs
+  /// hard failure from this variant -- never from string matching.
+  variant node-error {
+    /// Transient; runner may retry per the node's retry policy.
+    retryable(error-detail),
+    /// The upstream system signaled throttling. Retryable, but with
+    /// source-authoritative delay and a SHARED runner throttle keyed
+    /// by (node type, credential handle, target host) -- parallel
+    /// executions against the same limited system back off together
+    /// instead of stampeding; unrelated flows are unaffected.
+    rate-limited(rate-limit-detail),
+    /// Permanent; runner routes to the flow's error path immediately.
+    terminal(error-detail),
+    /// Input contract violated; never retried, flagged distinctly in
+    /// run history (usually an upstream bug).
+    invalid-input(error-detail),
+    /// The node observed a cancellation request (via `control`) and
+    /// stopped cooperatively. Recorded as cancelled, not failed.
+    cancelled,
+  }
+}
+
+/// REQUIRED export. The entire node is a pure function of
+/// (ctx, input, granted host imports) -> output. This purity is what
+/// makes nodes unit-testable and frozen-flow composition possible.
+interface handler {
+  use types.{payload, run-context, node-error};
+  run: func(ctx: run-context, input: payload) -> result<payload, node-error>;
+}
+
+/// OPTIONAL host import: read/write streamed payloads. Only nodes that
+/// handle `streamed` payloads link this. The test host backs it with
+/// fixture files.
+interface payloads {
+  use types.{payload-ref, framing};
+  use wasi:io/streams@0.2.6.{input-stream, output-stream};
+
+  variant payload-error {
+    /// Handle unknown or belongs to another run.
+    not-found,
+    /// Per-flow or global size limit exceeded (enforced on write).
+    limit-exceeded(u64),
+    /// Backing store unavailable (retryable at the flow level).
+    unavailable,
+  }
+
+  /// Open an ordered read stream over a payload. NDJSON framing
+  /// guarantees records arrive in the order they were written.
+  read: func(ref: payload-ref) -> result<input-stream, payload-error>;
+
+  /// Create a new payload in the run's store; returns the ref to emit
+  /// as output and the stream to write into. Writes are limit-checked.
+  create: func(framing: framing) -> result<tuple<payload-ref, output-stream>, payload-error>;
+}
+
+/// OPTIONAL host import: lazy secret resolution. Every `get` is
+/// audit-logged by the host with (run-id, node-id, handle).
+interface credentials {
+  variant credential-error {
+    /// Handle exists but was not granted to this node execution.
+    not-granted,
+    /// Handle unknown in this project.
+    not-found,
+    /// Backing secret store unavailable (retryable at flow level).
+    unavailable,
+  }
+  get: func(handle: string) -> result<string, credential-error>;
+}
+
+/// OPTIONAL host import: cooperative cancellation. The platform can
+/// ALWAYS hard-kill an instance via epoch interruption regardless of
+/// whether a node links this; polling it lets well-behaved nodes abort
+/// in-flight external calls cleanly first. Cancellation is initiated
+/// through one control-plane operation regardless of source.
+interface control {
+  enum cancel-reason {
+    /// A user requested the stop (editor / API).
+    user,
+    /// Platform policy: quota breach, resource abuse, misbehavior.
+    policy,
+    /// Scheduled: maintenance window, run TTL, deadline exceeded.
+    deadline,
+    /// A parallel branch of the same run failed; siblings cancelled.
+    sibling-failure,
+    /// Host drain / rescheduling.
+    system,
+  }
+  /// Poll at checkpoints (loop iterations, between requests). Returns
+  /// the reason once cancellation has been requested.
+  cancelled: func() -> option<cancel-reason>;
+}
+
+/// The minimal world: a pure transform node over inline payloads.
+/// Imports nothing; the builder derives hostInterfaces=[] -- the node
+/// is physically incapable of I/O.
+world node {
+  export handler;
+}
+
+/// Illustrative: an analytics node consuming/producing record streams
+/// with cooperative cancellation.
+world stream-node {
+  import payloads;
+  import control;
+  export handler;
+}
+
+/// Illustrative: calls external HTTP APIs with stored credentials. The
+/// builder derives WorkloadDeployment grants directly from these
+/// imports; anything not listed is absent at runtime.
+world http-node {
+  import wasi:http/outgoing-handler@0.2.6;
+  import credentials;
+  import control;
+  export handler;
+}
