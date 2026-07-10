@@ -3893,6 +3893,7 @@ dependencies = [
  "clap",
  "deadpool-postgres",
  "futures-util",
+ "serde_json",
  "tokio",
  "tokio-postgres",
  "tracing",

@@ -1,0 +1,80 @@
+// Trimmed vendored copy of docs/wamn-node.wit for the S4 bench guests.
+// Only `types` + `handler` are kept: the `payloads`/`credentials`/`control`
+// interfaces (and the stream-node/http-node worlds) pull in wasi:io / wasi:http
+// and are out of scope for S4, whose nodes are the minimal `world node`
+// (export handler, no host I/O). The kept shapes are byte-for-byte the contract
+// so the canonical-ABI layout matches the host-side bindgen of the full copy in
+// crates/wamn-host/wit.
+package wamn:node@0.1.0;
+
+/// Shared types for the node contract.
+interface types {
+  /// JSON-encoded string. A string maximizes guest-language ergonomics
+  /// (serde_json / JSON.parse) at ~µs codec cost per hop.
+  type json = string;
+
+  /// How the bytes of a streamed payload are framed.
+  enum framing {
+    ndjson,
+    raw,
+  }
+
+  /// Reference into the run-scoped payload store.
+  record payload-ref {
+    handle: string,
+    framing: framing,
+    size-hint: option<u64>,
+  }
+
+  /// Every node input and output is a payload. Inline for the common
+  /// small case; streamed for large / record-stream data.
+  variant payload {
+    inline(json),
+    streamed(payload-ref),
+  }
+
+  /// Everything the runner knows that a node execution may need.
+  record run-context {
+    run-id: string,
+    flow-id: string,
+    flow-version: u32,
+    node-id: string,
+    attempt: u32,
+    idempotency-key: string,
+    traceparent: string,
+    tracestate: option<string>,
+    deadline-ms: option<u64>,
+    /// Node configuration as a JSON document. THIS is design-note 9b: a
+    /// dynamically-loaded custom node parses it (serde_json / JSON.parse);
+    /// standard nodes compiled into the runner never touch the codec.
+    config: json,
+  }
+
+  record error-detail {
+    message: string,
+    code: option<string>,
+    data: option<json>,
+  }
+
+  record rate-limit-detail {
+    detail: error-detail,
+    retry-after-ms: option<u64>,
+  }
+
+  /// The runner decides retry vs error-branch vs hard failure from this
+  /// variant -- never from string matching.
+  variant node-error {
+    retryable(error-detail),
+    rate-limited(rate-limit-detail),
+    terminal(error-detail),
+    invalid-input(error-detail),
+    cancelled,
+  }
+}
+
+/// REQUIRED export. A node is a pure function of (ctx, input, granted host
+/// imports) -> output.
+interface handler {
+  use types.{payload, run-context, node-error};
+  run: func(ctx: run-context, input: payload) -> result<payload, node-error>;
+}

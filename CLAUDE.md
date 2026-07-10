@@ -99,6 +99,27 @@ kubectl -n wamn-system logs -f job/pgbench
 kubectl -n wamn-system apply -f deploy/flowbench-job.yaml
 kubectl -n wamn-system logs -f job/flowbench
 
+# S4 gates (HTTP hop / interpreted-vs-composed gap / config parse). No DB.
+# Two extra fixtures need external tools (one-time installs):
+#   jco: npm i -g @bytecodealliance/jco    (JS/JCO interpreted node)
+#   wac: cargo install wac-cli             (composed frozen flow)
+# node-rs + flow-driver build with the other guests; the JS node and the wac
+# composition are extra steps:
+jco componentize components/node-ts/node.js --wit components/node-ts/wit \
+  --world-name node-bench --disable http --disable fetch-event \
+  -o components/node-ts/node-ts.wasm
+REL=components/target/wasm32-wasip2/release
+wac plug $REL/flow_driver.wasm --plug $REL/node_rs.wasm -o $REL/flow_composed.wasm
+./target/release/wamn-host --log-level error nodebench \
+  --node-rs $REL/node_rs.wasm --node-ts components/node-ts/node-ts.wasm \
+  --composed $REL/flow_composed.wasm --mode all
+# In-cluster gate of record (real cross-pod hop via the serve-node Service; the
+# gap/config gates run in-pod; no cpu limit — the S2 CFS lesson):
+kubectl -n wamn-system apply -f deploy/serve-node.yaml
+kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
+kubectl -n wamn-system apply -f deploy/nodebench-job.yaml
+kubectl -n wamn-system logs -f job/nodebench
+
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
 
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage

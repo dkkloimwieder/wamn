@@ -300,7 +300,107 @@ representation rethink; resume failure would have reworked checkpoint
 granularity. Both held. Closing S3 unblocks S4 (wamn-veg), S6 (wamn-jy9),
 [P0-EXIT] (wamn-2rl), and the production flow-runner 5.2 (wamn-uyd).
 
-## S4 — Custom-node invocation + config parse (5.6, D7, note 9b) — pending
+## S4 — Custom-node invocation + config parse (5.6, D7, note 9b) — **PASS** (2026-07-10)
+
+**Deliverable shipped:** one custom node in **two guest languages** implementing
+the minimal `wamn:node` contract (docs/wamn-node.wit) — `components/node-rs`
+(Rust) and `components/node-ts` (TypeScript/JS via **JCO** / ComponentizeJS /
+StarlingMonkey) — plus a **`wac`-composed** frozen 3-node flow
+(`components/flow-driver` + node-rs → `flow-composed.wasm`), driven by a new
+`wamn-host nodebench` subcommand (`crates/wamn-host/src/nodebench.rs`) and a
+`serve-node` HTTP node host. The node has three config-selected modes: `noop`
+(hop), `io` (a host `wait-ns` sleep modelling an outbound call), and `compute`
+(a bounded FNV-1a loop). Both guests call the **same** host `wait-ns` import, so
+the I/O floor is byte-identical across languages and the interpreted-vs-composed
+gap on the I/O-bound flow is pure framework overhead (the production outbound
+path is wasi:http, 5.6 / wamn-bd5).
+
+**Method:** the hop gate runs a real HTTP/1.1 round trip to a warm Rust `noop`
+node — in-cluster it targets a separate `serve-node` **pod** through a Service
+(`deploy/serve-node.yaml`), so it is a true cross-pod hop; locally it is an
+in-process loopback server. The gap and config gates run in-process (no HTTP
+noise): the harness instantiates each guest into a hand-built `SharedCtx` store
+with `wasi` + the `wait-ns` import linked (the flowbench/pgbench pattern, here
+using `bindgen!` for the typed `handler.run(ctx, input)`), and times the 3-node
+flow three ways — JS-dynamic (interpreted), Rust-dynamic, and Rust-composed
+(the `wac` artifact). The in-cluster Job (`deploy/nodebench-job.yaml`, no CPU
+limit — the S2 CFS lesson) is the gate of record.
+
+| Gate | In-cluster (kind) | Local (workstation) | Threshold | Verdict |
+|---|---|---|---|---|
+| HTTP hop p50 (D7) | **33 µs** (p99 89 µs), cross-pod | 37 µs (p99 104 µs) loopback | < 2 ms | **PASS** |
+| Interpreted-vs-composed gap, **I/O-bound** | **+2.8%** (composed 78.9 ms, JS 81.1 ms) | +2.6% (78.8 / 80.9 ms) | < 5% | **PASS** |
+| Interpreted-vs-composed gap, **compute-bound** | +27601% (~277×; 0.87 / 241 ms) | +51726% (~518×; 0.87 / 449 ms) | large *expected* | **as expected** |
+| Config-JSON-parse share of cold dispatch (9b) | 5.90% (parse 1156 ns / cold 19 µs) | 5.82% (1653 ns / 28 µs) | ≤ 5% | **decision (below)** |
+
+**How each gate is constructed:**
+
+- **HTTP hop (D7)**: 2000 sequential POST /run round trips on one keep-alive
+  connection to a warm `noop` node. With ~0 node compute the round trip *is* the
+  invoke overhead (invoke − compute ≈ invoke). In-cluster the client and the
+  `serve-node` server are separate pods reached through a ClusterIP Service, so
+  the number includes real pod-network + HTTP/1.1 framing + payload
+  (de)serialization + the wasm call.
+- **Interpreted-vs-composed gap**: the 3-node flow's total latency, warm, three
+  ways. The **I/O-bound** flow waits 25 ms/hop (a realistic outbound DB/API
+  call) so the interpreter's fixed per-invocation cost is a small fraction; the
+  **compute-bound** flow runs a CPU hashing loop where the JS interpreter is
+  hundreds of × slower than native. Gap = (interpreted − composed) / composed.
+- **Config-parse (9b)**: cold instantiate + first run of the Rust node, which
+  self-times its `serde_json` config parse (`parse_ns`) against the harness-timed
+  cold dispatch. The denominator is the *tightest honest* cold dispatch — a
+  pooled instantiate + one invoke of an already-compiled component (~19 µs) — so
+  the share is a conservative upper bound.
+
+**Findings / decisions (feed [P0-EXIT] wamn-2rl):**
+
+1. **D7 confirmed — in-cluster HTTP is the v0 invocation path.** The cross-pod
+   hop p50 is ~33 µs, ~60× under the 2 ms gate and far under the 5 ms escalation
+   line, so the component-linking / wRPC spike stays a *later* optimization, not
+   P1.
+2. **Interpreter default confirmed for I/O-bound flows.** On a realistically
+   sized I/O-bound flow the JS/JCO interpreter costs only ~2.8% more than a
+   `wac`-composed native flow — under the 5% gate. Since the vast majority of
+   real nodes are I/O-bound (API/DB calls), defaulting to the interpreted
+   authoring path is sound.
+3. **Frozen flows' post-GA slot sized.** On a compute-bound flow the interpreter
+   is a few hundred × slower than native — a large gap, *expected*, and exactly
+   the case `wac`-composed frozen flows (5.13) address. Not a gate; it confirms
+   frozen flows earn their post-GA slot for compute-heavy flows only. (The exact
+   multiple varies with CPU/JIT warmth — 277× in-cluster, 518× on the
+   workstation — but the order of magnitude is the point.)
+4. **Composition ≈ dynamic-native; the interpreter is the axis.** Rust-composed
+   and Rust-dynamic were within noise (±1%) on both workloads: `wac` composition
+   does not itself cut steady-state latency at these scales (its wins are single
+   instantiation + no dynamic dispatch + config constant-folding). The
+   language/authoring choice, not composition, dominates the gap.
+5. **Design-note 9b — decision: keep the mitigation.** Config parse is ~6% of
+   the tightest cold dispatch (pooled instantiate + first run, no compile) —
+   marginally *above* the 5% line. In absolute terms it is ~1.2 µs, and against a
+   realistic cold start (component fetch + JIT compile) it is «1%. So the
+   practical exposure is bounded, and note 9b's planned mitigation — memoize the
+   parse per `(flow-version, node-id)` and constant-fold config in frozen flows
+   — is **confirmed warranted and retained**, not dropped. Standard-library
+   nodes compiled into the runner never touch the JSON codec at all (S3), so
+   this cost is scoped to dynamically-loaded custom nodes.
+
+**Method notes / PoC shortcuts and where the real work is tracked:** I/O is a
+host `wait-ns` sleep, not real wasi:http — the decision rule only needs I/O to
+dominate; production outbound HTTP is the runner's job (5.6 / wamn-uyd,
+wamn-bd5). The tokio-timer granularity (~1 ms) floors any single wait, so the
+I/O-bound flow is sized at 25 ms/hop where that floor is negligible. The
+composed flow still passes config as JSON per hop (the inner node parses it), so
+the gap measures composition + single-instantiation, not config constant-
+folding; true frozen-flow constant-folding (5.13) removes even that, bounded by
+the 9b number above. StarlingMonkey's compute cost reflects the interpreter
+without a warmed JIT; a production JS runtime with JIT would narrow the
+compute-bound gap but not change the I/O-bound conclusion.
+
+**Fail branch:** not taken — hop p50 > 5 ms would have pulled the
+component-linking/wRPC spike into P1; a > 5% I/O-bound gap would have dropped the
+interpreter default. Both held. Closing S4 unblocks the production custom-node
+work 5.6 (wamn-bd5) and feeds [P0-EXIT] wamn-2rl (D7 + note 9b now closable with
+data).
 
 ## S5 — Logging capture (9.3) — pending
 

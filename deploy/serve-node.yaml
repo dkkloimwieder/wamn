@@ -1,0 +1,49 @@
+# S4 cross-pod HTTP node host. Warm-instantiates the Rust `wamn:node` node and
+# serves it over HTTP (POST /run) so the nodebench hop gate can measure a REAL
+# in-cluster pod-to-pod round trip — the truest D7 number (in-cluster HTTP as
+# the v0 custom-node invocation path). Same wamn-host image the operator ships.
+#
+#   kubectl -n wamn-system apply -f deploy/serve-node.yaml
+#   kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: serve-node
+  namespace: wamn-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: serve-node }
+  template:
+    metadata:
+      labels: { app: serve-node }
+    spec:
+      containers:
+        - name: serve-node
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "error"
+            - "serve-node"
+            - "--node"
+            - "/bench/node-rs.wasm"
+            - "--port"
+            - "8080"
+          ports:
+            - containerPort: 8080
+          resources:
+            # No CPU limit (CFS-quota tail artifact — see pgbench/flowbench).
+            requests: { cpu: "1", memory: "256Mi" }
+            limits: { memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: serve-node
+  namespace: wamn-system
+spec:
+  selector: { app: serve-node }
+  ports:
+    - port: 8080
+      targetPort: 8080

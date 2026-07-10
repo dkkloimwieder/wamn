@@ -7,6 +7,7 @@ mod bench;
 mod engine;
 mod flowbench;
 mod host;
+mod nodebench;
 mod pgbench;
 mod plugins;
 
@@ -35,6 +36,10 @@ enum Command {
     Pgbench(pgbench::PgBenchArgs),
     /// Run the S3 flow-runner gates (dispatch / hot-reload / resume)
     Flowbench(flowbench::FlowBenchArgs),
+    /// Run the S4 custom-node gates (HTTP hop / interpreted-vs-composed / config parse)
+    Nodebench(nodebench::NodeBenchArgs),
+    /// Serve a wamn:node component over HTTP (S4 hop node host)
+    ServeNode(nodebench::ServeNodeArgs),
 }
 
 #[tokio::main]
@@ -51,6 +56,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Bench(args) => bench::run(args).await,
         Command::Pgbench(args) => pgbench::run(args).await,
         Command::Flowbench(args) => flowbench::run(args).await,
+        Command::Nodebench(args) => nodebench::run(args).await,
+        Command::ServeNode(args) => nodebench::serve(args).await,
     };
 
     shutdown_observability();

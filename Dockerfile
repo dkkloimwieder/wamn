@@ -25,5 +25,10 @@ COPY components/target/wasm32-wasip2/release/memhog.wasm /bench/memhog.wasm
 COPY components/target/wasm32-wasip2/release/busyloop.wasm /bench/busyloop.wasm
 COPY components/target/wasm32-wasip2/release/pgprobe.wasm /bench/pgprobe.wasm
 COPY components/target/wasm32-wasip2/release/flowrunner.wasm /bench/flowrunner.wasm
+# S4 custom-node fixtures: the Rust node, the wac-composed frozen flow, and the
+# JS/JCO node (built by `jco componentize`, so it lives outside target/).
+COPY components/target/wasm32-wasip2/release/node_rs.wasm /bench/node-rs.wasm
+COPY components/target/wasm32-wasip2/release/flow_composed.wasm /bench/flow-composed.wasm
+COPY components/node-ts/node-ts.wasm /bench/node-ts.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]

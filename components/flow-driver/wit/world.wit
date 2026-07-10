@@ -1,0 +1,23 @@
+// S4 composed-arm socket. `flow-driver` imports the wamn:node handler and
+// exports a single `run-flow` that walks a linear N-node flow by invoking the
+// handler N times. `wac plug` fills the handler import with the Rust node
+// (components/node-rs), yielding ONE frozen component (flow-composed.wasm) that
+// the `nodebench` harness instantiates once and drives — the "composed" arm of
+// the interpreted-vs-composed measurement (docs/p0-exit-criteria.md S4).
+//
+// Note: config is still passed as JSON per hop (the inner node parses it), so
+// this measures composition + single-instantiation, not config constant-
+// folding. True frozen-flow constant-folding (5.13) would remove even the
+// parse; the config-parse-share number (design-note 9b) bounds what that saves.
+package wamn:flowdriver@0.1.0;
+
+world flow-driver {
+  import wamn:node/handler@0.1.0;
+  export run-flow: func(
+    input: string,
+    mode: string,
+    wait-ns: u64,
+    iters: u64,
+    hops: u32,
+  ) -> string;
+}

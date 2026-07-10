@@ -1,0 +1,16 @@
+// Bench-only host import for the S4 spike. NOT part of the wamn:node contract.
+package wamn:nodebench@0.1.0;
+
+/// Harness-provided host functions used only by the S4 bench nodes.
+interface host {
+  /// A real host-side asynchronous wait (implemented with tokio sleep). It
+  /// models an I/O-bound node UNIFORMLY across guest languages: both the Rust
+  /// and the JS node call it, so the I/O floor is byte-identical and the
+  /// interpreted-vs-composed gap on the I/O-bound flow measures framework
+  /// overhead, not the wait itself. Because the host impl is async and the
+  /// guest runs under wasmtime component-async, the call suspends the whole
+  /// guest at the wasm fiber boundary -- so even the JS (StarlingMonkey) node
+  /// "blocks" here without needing JSPI. The production outbound path is
+  /// wasi:http (5.6 / wamn-bd5); this keeps S4 free of an echo service.
+  wait-ns: func(ns: u64);
+}

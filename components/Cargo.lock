@@ -25,6 +25,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "flow-driver"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "flowrunner"
 version = "0.1.0"
 dependencies = [
@@ -197,6 +204,15 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "memhog"
 version = "0.1.0"
+
+[[package]]
+name = "node-rs"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
 
 [[package]]
 name = "once_cell"
