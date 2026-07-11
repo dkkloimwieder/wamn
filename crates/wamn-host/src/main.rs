@@ -16,6 +16,7 @@ mod nodebench;
 mod pgbench;
 mod plugins;
 mod publish_catalog;
+mod queuebench;
 mod testhostbench;
 
 use std::str::FromStr as _;
@@ -43,6 +44,8 @@ enum Command {
     Pgbench(pgbench::PgBenchArgs),
     /// Run the S3 flow-runner gates (dispatch / hot-reload / resume)
     Flowbench(flowbench::FlowBenchArgs),
+    /// Run the 5.14 durable-run-queue gates (dispatch SLOs / throughput / reclaim / janitor / doorbell)
+    Queuebench(queuebench::QueueBenchArgs),
     /// Run the S4 custom-node gates (HTTP hop / interpreted-vs-composed / config parse)
     Nodebench(nodebench::NodeBenchArgs),
     /// Serve a wamn:node component over HTTP (S4 hop node host)
@@ -75,6 +78,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Bench(args) => bench::run(args).await,
         Command::Pgbench(args) => pgbench::run(args).await,
         Command::Flowbench(args) => flowbench::run(args).await,
+        Command::Queuebench(args) => queuebench::run(args).await,
         Command::Nodebench(args) => nodebench::run(args).await,
         Command::ServeNode(args) => nodebench::serve(args).await,
         Command::Logbench(args) => logbench::run(args).await,

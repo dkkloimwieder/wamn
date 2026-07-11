@@ -41,6 +41,9 @@ http-body-util = "0.1"
 # for the ephemeral schema the api-gateway component queries.
 wamn-catalog = { path = "../wamn-catalog" }
 wamn-ddl = { path = "../wamn-ddl" }
+# 5.14 queuebench: the pure SKIP LOCKED claim / lease / janitor SQL builders +
+# decision logic the durable-queue gates drive over tokio_postgres.
+wamn-run-queue = { path = "../wamn-run-queue" }
 # wamn:postgres plugin (S2): thin driver + pool with explicit connection
 # lifecycle (deadpool Object::take = destroy-never-repool on abnormal death).
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }

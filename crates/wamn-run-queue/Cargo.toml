@@ -1,0 +1,27 @@
+[package]
+name = "wamn-run-queue"
+description = "wamn durable run queue + runner scaling (5.14, the D3 hybrid): the FOR UPDATE SKIP LOCKED claim/lease/janitor/reconciliation LOGIC + parameterized SQL builders as PURE functions over (queue rows, now, config). PURE — no DB, no wasm, no clock (now is always a passed-in millis); the driver (crates/wamn-host queuebench + dispatcher) supplies the wamn:postgres effects + NATS-core doorbell. Postgres owns durability (co-transacts with the 5.7 runs row); NATS carries fire-and-forget doorbells; a run-claim lease reclaims a dead replica's work. Owns its own run_queue table (deploy/run-queue.sql); reuses wamn-run-store's RunStatus for the write-ahead/janitor lifecycle."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The queue drives the 5.7 run lifecycle: the write-ahead pre-state
+# (RunStatus::Dispatched) and the janitor verdict (RunStatus::InfrastructureFailure)
+# are RunStatus values, not a redefined vocabulary — reuse them.
+wamn-run-store = { path = "../wamn-run-store" }
+# The queue records import/export as JSON (the read model / the pure decision
+# fixtures). No schemars — a store model, not a published contract (like
+# wamn-run-store / wamn-ddl / wamn-runner).
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# Tests round-trip the records as JSON.
+serde_json = "1"
+
+# No DB / wasm / clock dependency: every decision (claim eligibility, lease
+# expiry, janitor orphan-detection, reconciliation cadence) is a pure function of
+# (rows, now, config) — `now` is a passed-in millis, never read from a clock. The
+# host/dispatcher owns every effect (Postgres, NATS, the real clock). The optional
+# live-apply gate (tests/queue.rs) shells out to `psql`, so there is no database
+# dependency even in dev — the same pattern as wamn-run-store / wamn-ddl / wamn-rls.

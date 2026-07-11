@@ -4064,6 +4064,7 @@ dependencies = [
  "tracing",
  "wamn-catalog",
  "wamn-ddl",
+ "wamn-run-queue",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
@@ -4077,6 +4078,15 @@ dependencies = [
  "serde_json",
  "wamn-catalog",
  "wamn-ddl",
+]
+
+[[package]]
+name = "wamn-run-queue"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wamn-run-store",
 ]
 
 [[package]]
