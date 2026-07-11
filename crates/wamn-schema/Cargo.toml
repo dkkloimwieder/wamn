@@ -1,0 +1,15 @@
+[package]
+name = "wamn-schema"
+description = "wamn schema versioning & environments (3.4): the draft->staged->applied lifecycle state machine over catalog versions, first-class dev/prod environments, and JSON promotion between them (reuses wamn-ddl's additive/destructive confirmation gate)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 3.4 COMPOSES the two shipped E3 crates: the canonical catalog model + its diff
+# (3.1) and the DDL compiler + safety gate (3.2). It adds the lifecycle and
+# promotion policy on top; it emits no DDL of its own (it reuses Migration) and
+# defines no new persisted JSON contract (the promotion format is a Catalog,
+# already owned by wamn-catalog) — so no serde / schemars dependency here.
+wamn-catalog = { path = "../wamn-catalog" }
+wamn-ddl = { path = "../wamn-ddl" }

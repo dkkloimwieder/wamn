@@ -226,6 +226,31 @@ docker run -d --rm --name wamn-ddl-pg -p 5451:5432 -e POSTGRES_PASSWORD=postgres
 WAMN_DDL_PG_URL=postgres://postgres:postgres@127.0.0.1:5451/wamn cargo test -p wamn-ddl
 docker stop wamn-ddl-pg
 
+# [3.4] schema versioning & environments crate (crates/wamn-schema) — composes
+# wamn-catalog (3.1) + wamn-ddl (3.2). Owns the draft->staged->applied->superseded
+# LIFECYCLE state machine (pure transition table + Environment enforcing the two
+# cross-version guards: single-applied, and the stale-base rebase guard) and
+# PROMOTION between first-class dev/prod environments (promote(src_env,tgt_env) /
+# promote_catalog(src,tgt_applied?) -> PromotionPlan, reusing Migration +
+# Confirmation gate verbatim; the JSON promotion format is already Catalog::to/
+# from_json). Version numbers are GLOBALLY UNIQUE per catalog (promotion mints a
+# fresh version in the target env), so environment is an attribute, not identity.
+# Model + policy only — live apply=2.5, backup=2.3/10.3, designer UI=3.3, per-role
+# RLS=3.5. docs/schema-lifecycle.md. No JSON-schema to regen. Storage additions
+# (state/environment/base_version + single-applied partial-unique) are ADDITIVE to
+# the STANDALONE deploy/catalog-schema.sql (not postgres-init.sql).
+cargo test -p wamn-schema
+cargo clippy -p wamn-schema --all-targets && cargo fmt -p wamn-schema --check
+# optional storage check (the whole standalone schema re-applies on a throwaway
+# PG18; it assumes a pre-existing wamn_app role, as in production):
+docker run -d --rm --name wamn-cat-pg -p 5452:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+docker exec -i wamn-cat-pg psql -U postgres -d wamn -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+docker exec -i wamn-cat-pg psql -v ON_ERROR_STOP=1 -U postgres -d wamn \
+  < deploy/catalog-schema.sql
+docker stop wamn-cat-pg
+
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
 ```
 

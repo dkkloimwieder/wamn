@@ -25,18 +25,36 @@ GRANT USAGE ON SCHEMA catalog TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Catalog header: one row per (catalog_id, version) — the unit versioned and
--- promoted between environments (3.4). `active` flips like s3.flows.active:
--- exactly one version is the applied one. `schema_version` is the catalog-MODEL
--- format version (crates/wamn-catalog SCHEMA_VERSION), distinct from `version`.
+-- promoted between environments (3.4, crates/wamn-schema). `schema_version` is
+-- the catalog-MODEL format version (crates/wamn-catalog SCHEMA_VERSION),
+-- distinct from `version`.
+--
+-- Lifecycle (3.4): `state` carries the draft -> staged -> applied -> superseded
+-- lifecycle (generalizing the earlier `active` boolean); its values are exactly
+-- crates/wamn-schema State::as_sql, tied to the crate by a test. `environment`
+-- (dev/prod, = a project database in the 2.2/2.3 per-project-DB model) makes the
+-- deployment target first-class. Version numbers are GLOBALLY UNIQUE per catalog
+-- (promotion mints a fresh version in the target environment), so `environment`
+-- is an attribute of each version, not part of its identity. `base_version` is
+-- the applied version a draft/staged one was branched from — the stale-base
+-- (rebase) guard: a staged candidate may be applied only while its base is still
+-- the environment's current applied version.
+--
+-- The single-applied invariant is a partial UNIQUE INDEX: at most one `applied`
+-- version per (catalog, environment).
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.catalogs (
     tenant_id      text NOT NULL,
     catalog_id     text NOT NULL,
     version        int  NOT NULL,
+    environment    text NOT NULL DEFAULT 'default',
     schema_version text NOT NULL,
     name           text,
-    active         boolean NOT NULL DEFAULT false,
-    PRIMARY KEY (tenant_id, catalog_id, version)
+    state          text NOT NULL DEFAULT 'draft',
+    base_version   int,
+    PRIMARY KEY (tenant_id, catalog_id, version),
+    CONSTRAINT catalogs_state_check
+        CHECK (state IN ('draft', 'staged', 'applied', 'superseded'))
 );
 ALTER TABLE catalog.catalogs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.catalogs FORCE ROW LEVEL SECURITY;
@@ -44,6 +62,11 @@ CREATE POLICY catalogs_tenant ON catalog.catalogs
     USING (tenant_id = current_setting('app.tenant', true))
     WITH CHECK (tenant_id = current_setting('app.tenant', true));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.catalogs TO wamn_app;
+
+-- Single-applied invariant: exactly one live version per (catalog, environment).
+CREATE UNIQUE INDEX catalogs_one_applied_per_env
+    ON catalog.catalogs (tenant_id, catalog_id, environment)
+    WHERE state = 'applied';
 
 -- ---------------------------------------------------------------------------
 -- Entities. `is_system` = platform-provided, structure-locked but extensible.
