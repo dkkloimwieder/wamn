@@ -133,6 +133,93 @@ fn update_is_partial_and_binds_id_last() {
 }
 
 #[test]
+fn patch_empty_body_is_rejected() {
+    let cat = catalog();
+    let path = format!("/api/rest/suppliers/{A_UUID}");
+    // PATCH is a partial merge — a body with nothing to set is a 400.
+    let err = Router::new(&cat)
+        .compile(Method::Patch, &path, &[], Some(&json!({})))
+        .unwrap_err();
+    assert!(matches!(err, ApiError::InvalidRequest(_)), "{err:?}");
+    assert_eq!(err.status(), 400);
+}
+
+#[test]
+fn put_full_replace_resets_omitted_optional_fields_to_default() {
+    let cat = catalog();
+    let path = format!("/api/rest/suppliers/{A_UUID}");
+    // Only the required `name` is present; the two nullable, no-default fields
+    // are omitted → a full replace resets them to their column DEFAULT (NULL
+    // here), NOT left untouched as PATCH would.
+    let body = json!({ "name": "Renamed" });
+    let plan = Router::new(&cat)
+        .compile(Method::Put, &path, &[], Some(&body))
+        .unwrap();
+    assert_eq!(plan.kind, PlanKind::UpdateOne);
+    assert_eq!(plan.status, 200);
+    assert_eq!(
+        plan.query.sql,
+        "UPDATE \"suppliers\" SET \"name\" = $1, \"contact_email\" = DEFAULT, \
+         \"standard_cost\" = DEFAULT WHERE \"id\" = $2 \
+         RETURNING \"id\", \"name\", \"contact_email\", \"standard_cost\""
+    );
+    // DEFAULT is a keyword, not a param — only the present value + id are bound.
+    assert_eq!(
+        plan.query.params,
+        vec![
+            SqlValue::Text("Renamed".into()),
+            SqlValue::Uuid(A_UUID.to_string())
+        ]
+    );
+}
+
+#[test]
+fn put_rejects_missing_required_field() {
+    let cat = catalog();
+    let path = format!("/api/rest/suppliers/{A_UUID}");
+    // suppliers.name is NOT NULL with no default → a full replace that omits it
+    // is a 400, reported identically to the create path (InvalidValue{name}).
+    let body = json!({ "contact_email": "x@y.z" });
+    let err = Router::new(&cat)
+        .compile(Method::Put, &path, &[], Some(&body))
+        .unwrap_err();
+    assert!(
+        matches!(err, ApiError::InvalidValue { ref field, .. } if field == "name"),
+        "{err:?}"
+    );
+    assert_eq!(err.status(), 400);
+}
+
+#[test]
+fn put_with_all_fields_binds_each_as_a_param() {
+    let cat = catalog();
+    let path = format!("/api/rest/suppliers/{A_UUID}");
+    // Every writable field present → a normal UPDATE, each value a $n param and
+    // no DEFAULT keyword; id bound last.
+    let body = json!({ "name": "Acme", "contact_email": "a@acme.test", "standard_cost": "9.99" });
+    let plan = Router::new(&cat)
+        .compile(Method::Put, &path, &[], Some(&body))
+        .unwrap();
+    assert_eq!(plan.kind, PlanKind::UpdateOne);
+    assert!(!plan.query.sql.contains("DEFAULT"), "{}", plan.query.sql);
+    assert_eq!(
+        plan.query.sql,
+        "UPDATE \"suppliers\" SET \"name\" = $1, \"contact_email\" = $2, \
+         \"standard_cost\" = $3 WHERE \"id\" = $4 \
+         RETURNING \"id\", \"name\", \"contact_email\", \"standard_cost\""
+    );
+    assert_eq!(
+        plan.query.params,
+        vec![
+            SqlValue::Text("Acme".into()),
+            SqlValue::Text("a@acme.test".into()),
+            SqlValue::Numeric("9.99".into()),
+            SqlValue::Uuid(A_UUID.to_string())
+        ]
+    );
+}
+
+#[test]
 fn delete_returns_id_and_204() {
     let cat = catalog();
     let path = format!("/api/rest/suppliers/{A_UUID}");

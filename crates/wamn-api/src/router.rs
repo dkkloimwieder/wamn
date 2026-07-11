@@ -193,7 +193,8 @@ impl<'a> Router<'a> {
             }
             (Method::Put | Method::Patch, Some(id)) => {
                 let body = body.ok_or(ApiError::PayloadRequired)?;
-                self.compile_update(entity, id, body)
+                // PUT is a full replace, PATCH a partial merge (see compile_update).
+                self.compile_update(entity, id, body, matches!(method, Method::Put))
             }
             (Method::Delete, Some(id)) => self.compile_delete(entity, id),
             _ => Err(ApiError::MethodNotAllowed),
@@ -435,25 +436,52 @@ impl<'a> Router<'a> {
         })
     }
 
-    fn compile_update(&self, entity: &Entity, id: &str, body: &Value) -> Result<Plan, ApiError> {
+    /// Compile an update. `replace` selects the semantics:
+    ///
+    /// * **PATCH** (`replace = false`) is a partial merge — only the fields
+    ///   present in the body are `SET`; a body with no writable fields is a 400.
+    /// * **PUT** (`replace = true`) is a full replace — *every* writable field is
+    ///   `SET`. A present field is bound as a `$n` parameter; an omitted one is
+    ///   reset to its column `DEFAULT` (NULL for a nullable no-default column,
+    ///   else the declared default), and an omitted **required** field (not
+    ///   nullable, no default) is rejected exactly as create rejects it. `DEFAULT`
+    ///   is a SQL keyword, not user input, so this stays injection-safe.
+    fn compile_update(
+        &self,
+        entity: &Entity,
+        id: &str,
+        body: &Value,
+        replace: bool,
+    ) -> Result<Plan, ApiError> {
         require_uuid(id)?;
         let obj = body
             .as_object()
             .ok_or_else(|| ApiError::InvalidRequest("request body must be a JSON object".into()))?;
         self.reject_unknown_keys(entity, obj.keys(), "update")?;
-        if obj.is_empty() {
+        if !replace && obj.is_empty() {
             return Err(ApiError::InvalidRequest("no fields to update".into()));
         }
 
         let mut pb = ParamBuilder::new();
         let mut sets = Vec::new();
         for f in &entity.fields {
-            if let Some(v) = obj.get(&f.name) {
-                sets.push(format!(
+            match obj.get(&f.name) {
+                Some(v) => sets.push(format!(
                     "{} = {}",
                     quote_ident(&f.name),
                     pb.bind(value_for_field(f, v)?)
-                ));
+                )),
+                // PATCH leaves an omitted field untouched; PUT resets it.
+                None if replace => {
+                    if !f.nullable && f.default.is_none() {
+                        return Err(ApiError::InvalidValue {
+                            field: f.name.clone(),
+                            message: "required".into(),
+                        });
+                    }
+                    sets.push(format!("{} = DEFAULT", quote_ident(&f.name)));
+                }
+                None => {}
             }
         }
         let idp = pb.bind(SqlValue::Uuid(id.to_string()));

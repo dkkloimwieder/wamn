@@ -25,9 +25,16 @@ it (the NATS hot-reload doorbell is 4.4).
 GET    /api/rest/{entity}            list   (filter / sort / paginate / expand)
 GET    /api/rest/{entity}/{id}       get    (+ expand)
 POST   /api/rest/{entity}            create (body = JSON object) -> 201 + the row
-PATCH  /api/rest/{entity}/{id}       update (partial body)       -> 200 + the row
+PUT    /api/rest/{entity}/{id}       replace (full body)         -> 200 + the row
+PATCH  /api/rest/{entity}/{id}       update  (partial body)      -> 200 + the row
 DELETE /api/rest/{entity}/{id}       delete                      -> 204
 ```
+
+`PUT` is a **full replace**: every writable field is set, an omitted optional
+field is reset to its column `DEFAULT` (NULL for a nullable no-default column,
+else its declared default — a keyword, never a param), and an omitted *required*
+field is a `400` (rejected exactly as create rejects it). `PATCH` is a **partial
+merge**: only the fields present in the body are set (an empty body is a `400`).
 
 ### Query surface (list)
 
