@@ -3,6 +3,7 @@
 //! `host`  — ClusterHost driven by the runtime-operator over NATS.
 //! `bench` — S1 measurements (instantiation / density / cap-kill).
 
+mod apibench;
 mod bench;
 mod egressbench;
 mod engine;
@@ -49,6 +50,8 @@ enum Command {
     Testhostbench(testhostbench::TestHostBenchArgs),
     /// Run the 2.6 DB-path egress review gate (no shipped workload imports wasi:sockets)
     Egressbench(egressbench::EgressBenchArgs),
+    /// Run the 4.1 generated-REST-API-gateway gates (CRUD / expand / RLS / injection)
+    Apibench(apibench::ApiBenchArgs),
 }
 
 #[tokio::main]
@@ -70,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Logbench(args) => logbench::run(args).await,
         Command::Testhostbench(args) => testhostbench::run(args).await,
         Command::Egressbench(args) => egressbench::run(args).await,
+        Command::Apibench(args) => apibench::run(args).await,
     };
 
     shutdown_observability();

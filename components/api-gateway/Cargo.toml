@@ -1,0 +1,15 @@
+[package]
+name = "api-gateway"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wit-bindgen = "0.44"
+serde_json = "1"
+# The gateway logic (routing, injection-safe SQL compilation, JSON shaping) is
+# the pure `wamn-api` crate from the root workspace; this component is the thin
+# wasi:http <-> wamn:postgres shell around it.
+wamn-api = { path = "../../crates/wamn-api" }
+
+[lib]
+crate-type = ["cdylib"]

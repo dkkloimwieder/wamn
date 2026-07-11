@@ -32,5 +32,8 @@ COPY components/target/wasm32-wasip2/release/flow_composed.wasm /bench/flow-comp
 COPY components/node-ts/node-ts.wasm /bench/node-ts.wasm
 # S5 logging-capture fixture (imports wasi:logging, exports overhead+emit-batch).
 COPY components/target/wasm32-wasip2/release/logspewer.wasm /bench/logspewer.wasm
+# 4.1 generated REST API gateway (exports wasi:http/incoming-handler, imports
+# wamn:postgres; the apibench gate drives it via ProxyPre).
+COPY components/target/wasm32-wasip2/release/api_gateway.wasm /bench/api-gateway.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]

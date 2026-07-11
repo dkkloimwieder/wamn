@@ -1,0 +1,27 @@
+package wamn:api-gateway@0.1.0;
+
+/// Per-project generated REST API gateway (platform-plan 4.1, REST v1).
+///
+/// One gateway instance serves one project. It exports the standard
+/// `wasi:http/incoming-handler` (so wasmCloud routes HTTP straight to it) and
+/// reads/writes the project's data ONLY through the host `wamn:postgres`
+/// capability — every query runs under the host-injected `app.tenant` claim and
+/// the 3.2 tenant floor (RLS), so tenant isolation is the database's job.
+///
+/// The routing/SQL/shaping logic lives in the pure `wamn-api` crate (compiled
+/// in): a request becomes injection-safe parameterized SQL (values are `$n`
+/// params, identifiers are catalog-allowlisted), and the row-set becomes JSON.
+///
+/// The gateway reads its catalog SNAPSHOT from the project database (a single
+/// `wamn_catalog` row) on first use and memoizes it — the NATS hot-reload
+/// doorbell is 4.4. It imports no other capability: no `wasi:sockets`, no
+/// outbound `wasi:http` (so the 2.6 DB-path egress boundary holds).
+world api-gateway {
+  import wamn:postgres/types@0.1.0;
+  import wamn:postgres/client@0.1.0;
+  // Serving side only: the incoming-handler `handle` signature references the
+  // request/response resources defined in wasi:http/types.
+  import wasi:http/types@0.2.12;
+
+  export wasi:http/incoming-handler@0.2.12;
+}

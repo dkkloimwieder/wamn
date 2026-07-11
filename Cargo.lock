@@ -4006,6 +4006,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-api"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wamn-catalog",
+ "wamn-ddl",
+]
+
+[[package]]
 name = "wamn-catalog"
 version = "0.1.0"
 dependencies = [
@@ -4044,6 +4053,7 @@ dependencies = [
  "clap",
  "deadpool-postgres",
  "futures-util",
+ "http-body-util",
  "hyper",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -4052,6 +4062,8 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
+ "wamn-catalog",
+ "wamn-ddl",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",

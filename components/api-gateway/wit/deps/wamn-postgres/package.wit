@@ -1,0 +1,109 @@
+package wamn:postgres@0.1.0;
+
+/// Host-plugin interface for tenant-scoped Postgres access.
+/// Security invariants (enforced by the HOST, invisible to the guest):
+/// - The guest NEVER holds a socket; only resource handles. Connections
+///   live in the plugin's pool.
+/// - RLS claims (tenant/user/role) are derived from the executing
+///   workload's identity and injected by the plugin via SET LOCAL inside
+///   the plugin-managed transaction. There is deliberately NO way for a
+///   guest to set or override its own claims through this interface.
+/// - Statement timeout and row limits are applied host-side per project
+///   policy; guests cannot raise them.
+/// - Abnormal instance death destroys the underlying connection (never
+///   returned to the pool). See plan 2.2.
+/// - No LISTEN/NOTIFY surface (event delivery is outbox + dispatcher).
+interface types {
+  /// Typed SQL values. `numeric` and `timestamptz` travel as canonical
+  /// strings to preserve exactness (plan 3.3: material quantities are
+  /// exact-decimal; float coercion is forbidden for them).
+  variant sql-value {
+    null,
+    boolean(bool),
+    int32(s32),
+    int64(s64),
+    float64(f64),
+    text(string),
+    bytes(list<u8>),
+    /// Canonical decimal string, e.g. "12.3400". Maps to pg numeric.
+    numeric(string),
+    /// RFC 3339 with offset. Maps to pg timestamptz.
+    timestamptz(string),
+    /// JSON document string. Maps to pg jsonb.
+    json(string),
+    /// Canonical UUID string.
+    uuid(string),
+  }
+
+  record column {
+    name: string,
+    /// Postgres type name as reported (e.g. "numeric", "timestamptz").
+    type-name: string,
+  }
+
+  record row-set {
+    columns: list<column>,
+    rows: list<list<sql-value>>,
+  }
+
+  /// Error taxonomy mirrors the wamn:node retry semantics so SDKs can
+  /// map mechanically: serialization-failure / connection-unavailable
+  /// -> retryable; timeout -> retryable (bounded); the rest -> terminal
+  /// unless the node decides otherwise.
+  variant pg-error {
+    /// 40001 / 40P01: safe to retry the whole transaction.
+    serialization-failure,
+    /// Pool exhausted or backend unreachable (transient).
+    connection-unavailable,
+    /// Host-enforced statement timeout exceeded.
+    statement-timeout,
+    /// Host-enforced row limit exceeded (value = limit).
+    row-limit-exceeded(u64),
+    /// 23505 with constraint name.
+    unique-violation(string),
+    /// 23503 with constraint name.
+    foreign-key-violation(string),
+    /// 23514 with constraint name.
+    check-violation(string),
+    /// RLS or privilege denial. Deliberately carries no detail about
+    /// which policy denied (no cross-tenant reconnaissance).
+    permission-denied,
+    /// Anything else: sqlstate + message.
+    query-error(tuple<string, string>),
+  }
+}
+
+interface client {
+  use types.{sql-value, row-set, pg-error};
+
+  /// Single statement in an implicit transaction (claims injected,
+  /// committed on success). Parameterized ONLY -- there is no string
+  /// interpolation path; $1..$n binding is the sole way to pass data.
+  query: func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
+
+  /// Like query, for statements where only the affected count matters.
+  execute: func(sql: string, params: list<sql-value>) -> result<u64, pg-error>;
+
+  /// Explicit transaction. Dropping the resource without commit()
+  /// rolls back (host-side guarantee -- guest crash included).
+  resource transaction {
+    query: func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
+    execute: func(sql: string, params: list<sql-value>) -> result<u64, pg-error>;
+    /// Open a server-side cursor for large result sets; rows stream in
+    /// bounded batches instead of one row-set allocation.
+    open-cursor: func(sql: string, params: list<sql-value>) -> result<cursor, pg-error>;
+    commit: func() -> result<_, pg-error>;
+    rollback: func() -> result<_, pg-error>;
+  }
+
+  begin: func() -> result<transaction, pg-error>;
+
+  /// Bounded fetch over a server-side cursor. Empty batch = exhausted.
+  resource cursor {
+    fetch: func(max-rows: u32) -> result<row-set, pg-error>;
+  }
+}
+
+/// Note: prepared-statement caching is a host-side optimization keyed on
+/// (sql, connection) and is intentionally not surfaced in 0.1; add a
+/// `prepare` resource in 0.2 only if P0 benchmarks show it matters.

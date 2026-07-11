@@ -299,6 +299,37 @@ docker run -d --rm --name wamn-seed-pg -p 5454:5432 -e POSTGRES_PASSWORD=postgre
 WAMN_SEED_PG_URL=postgres://postgres:postgres@127.0.0.1:5454/wamn cargo test -p wamn-seed
 docker stop wamn-seed-pg
 
+# [4.1] REST API gateway (crates/wamn-api + components/api-gateway) — consumes
+# wamn-catalog (3.1) + wamn-ddl (3.2). crates/wamn-api is the PURE gateway logic:
+# Catalog -> route table + request -> (injection-safe parameterized SQL, params)
+# for CRUD + one-level relation expansion + filter/sort/paginate, and row-set ->
+# JSON (numeric = exact-decimal STRING, no float). Values are ALWAYS $n params;
+# identifiers are ALWAYS catalog-allowlisted + quote_ident'd (wamn_ddl::sql);
+# tenant_id on INSERT = current_setting('app.tenant', true) (server-side; RLS
+# floor does isolation). components/api-gateway is the thin
+# wasi:http/incoming-handler <-> wamn:postgres shell (loads the catalog snapshot
+# from the DB, memoized; no wasi:sockets, no outbound http). Pure-crate tests
+# cover CRUD/filter/sort/paginate/expand + injection/allowlist/exact-decimal
+# negatives. docs/api-gateway.md. No JSON-schema (routes are derived).
+cargo test -p wamn-api
+cargo clippy -p wamn-api --all-targets && cargo fmt -p wamn-api --check
+# the api-gateway component builds with the other guests (wasm32-wasip2); the
+# apibench gate drives it via wasi:http (ProxyPre) against a real PG. Local
+# iteration (throwaway container; the superuser provisions the ephemeral schema +
+# wamn_app + seeds two tenants + the catalog snapshot the gateway reads):
+docker run -d --rm --name wamn-api-pg -p 5455:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+REL=components/target/wasm32-wasip2/release
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5455/wamn \
+  ./target/release/wamn-host --log-level error apibench \
+  --api-gateway $REL/api_gateway.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5455/wamn --mode all
+docker stop wamn-api-pg
+# In-cluster gate of record (co-located with Postgres, no cpu limit — S2 lesson;
+# WAMN_PG_ADMIN_URL is the superuser used only to provision the ephemeral schema):
+kubectl -n wamn-system apply -f deploy/apibench-job.yaml
+kubectl -n wamn-system logs -f job/apibench
+
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
 ```
 
