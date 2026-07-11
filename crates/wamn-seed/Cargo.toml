@@ -1,0 +1,18 @@
+[package]
+name = "wamn-seed"
+description = "wamn seed-data & fixtures tooling (3.6): a typed dataset model (rows per entity, referenced by symbolic key) validated against the catalog (3.1) and compiled to tenant-scoped, idempotent INSERTs against the generated tables. Deterministic uuidv5 ids make re-seeding and test-host schema cloning stable."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Rows are typed against the canonical catalog (3.1); the compiler emits INSERTs
+# against the 3.2-generated tenant floor, reusing wamn-ddl's shared SQL quoting.
+wamn-catalog = { path = "../wamn-catalog" }
+wamn-ddl = { path = "../wamn-ddl" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Deterministic row ids: uuidv5(namespace, "tenant:entity:key"). v5 is sha1-based
+# and needs no randomness, so default-features are off (no getrandom) — a pure,
+# reproducible derivation that keeps re-seeds and test-host clones stable.
+uuid = { version = "1", default-features = false, features = ["v5"] }

@@ -228,3 +228,26 @@ CREATE POLICY rls_policies_tenant ON catalog.rls_policies
     USING (tenant_id = current_setting('app.tenant', true))
     WITH CHECK (tenant_id = current_setting('app.tenant', true));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.rls_policies TO wamn_app;
+
+-- ---------------------------------------------------------------------------
+-- Seed datasets (3.6, crates/wamn-seed). Reference/fixture data for a catalog —
+-- rows grouped by entity, referenced by symbolic key — authored once and
+-- compiled to tenant-scoped, idempotent INSERTs against the generated tables
+-- (deterministic uuidv5 ids keep re-seeds and test-host schema clones stable).
+-- The `dataset` jsonb is the Dataset document (the crate is the source of truth
+-- for its semantics); the compiler emits the INSERTs from it. These are the
+-- DEFINITIONS, not the seeded rows themselves.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.seed_datasets (
+    tenant_id  text NOT NULL,
+    catalog_id text NOT NULL,
+    dataset_id text NOT NULL,
+    dataset    jsonb NOT NULL,
+    PRIMARY KEY (tenant_id, catalog_id, dataset_id)
+);
+ALTER TABLE catalog.seed_datasets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.seed_datasets FORCE ROW LEVEL SECURITY;
+CREATE POLICY seed_datasets_tenant ON catalog.seed_datasets
+    USING (tenant_id = current_setting('app.tenant', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.seed_datasets TO wamn_app;

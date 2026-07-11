@@ -275,6 +275,30 @@ docker run -d --rm --name wamn-rls-pg -p 5453:5432 -e POSTGRES_PASSWORD=postgres
 WAMN_RLS_PG_URL=postgres://postgres:postgres@127.0.0.1:5453/wamn cargo test -p wamn-rls
 docker stop wamn-rls-pg
 
+# [3.6] seed-data & fixtures crate (crates/wamn-seed) — consumes wamn-catalog
+# (3.1) + wamn-ddl (3.2). A typed Dataset (rows per entity, each a symbolic KEY;
+# reference fields carry the TARGET KEY not a uuid) validated against a Catalog
+# (types incl exact-decimal/no-float, enum variants, uuid parse, referential
+# integrity vs seeded keys, required fields, composite-unique) and compiled to
+# tenant-scoped INSERTs. IDs are DETERMINISTIC uuidv5("tenant:entity:key") so
+# references resolve at compile time + re-seeding is stable; emits one INSERT/row
+# in FK-safe (topological) order with ON CONFLICT (id) DO NOTHING (idempotent —
+# test-host schema clone / re-seed = no-op). compile(dataset,catalog,tenant)->
+# MigrationPlan (reused from 3.2), all additive. deps + a small pure uuid(v5).
+# EMITS+CLASSIFIES only (live load=2.5/hosting/test-host 11.1; run fixtures=11.3;
+# masking=11.9 — carries the sensitive flag). docs/seed-data.md. Storage:
+# catalog.seed_datasets (dataset jsonb) ADDITIVE to the STANDALONE
+# deploy/catalog-schema.sql. No JSON-schema.
+cargo test -p wamn-seed
+cargo clippy -p wamn-seed --all-targets && cargo fmt -p wamn-seed --check
+# optional live-apply gate (floor + compiled seed on a throwaway PG; loads TWICE
+# and asserts the FK resolves + the re-apply is a no-op; superuser URL; skips
+# when unset):
+docker run -d --rm --name wamn-seed-pg -p 5454:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_SEED_PG_URL=postgres://postgres:postgres@127.0.0.1:5454/wamn cargo test -p wamn-seed
+docker stop wamn-seed-pg
+
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
 ```
 
