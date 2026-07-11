@@ -283,6 +283,38 @@ cargo clippy -p wamn-runner --all-targets && cargo fmt -p wamn-runner --check
 cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
   && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
 
+# [5.7] run-state persistence (crates/wamn-run-store) — durable runs/node_runs +
+# BRANCH-AWARE replay reconstruction + partial re-run. The PURE crate (model +
+# reconstruct + rerun planners; no DB/wasm/clock — the wamn-api/wamn-runner split)
+# drives two ADDITIVE wamn-runner primitives: Plan::resume(run_id,input,completed)
+# rebuilds the exact frontier by folding recorded emissions (an error-routed node is
+# recorded as an emission on the `error` port, so reconstruction needs no error
+# taxonomy), and Plan::seed_at(run_id,node,payload) for partial re-run. A replay /
+# partial-re-run is a NEW run linked via replay_of/root_run_id (immutable audit
+# lineage). docs/run-state.md. No JSON-schema (a store model, not a contract).
+cargo test -p wamn-run-store
+cargo test -p wamn-runner   # the resume/seed_at primitives (regression)
+cargo clippy -p wamn-run-store --all-targets && cargo fmt -p wamn-run-store --check
+# optional live-apply gate (deploy/run-state.sql on a throwaway PG; superuser URL
+# provisions wamn_app; asserts tenant RLS isolation + the idempotency index + the
+# node_runs FK cascade; skips cleanly when unset):
+docker run -d --rm --name wamn-runstore-pg -p 5458:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn cargo test -p wamn-run-store
+docker stop wamn-runstore-pg
+# The components/flowrunner GUEST now persists a node_runs row per node and RESUMES
+# branch-aware by reconstruction (retiring the S3 step_seq as the resume source;
+# `delay` parks via runs.state_json). The runs/node_runs tables are ADDITIVE to the
+# STANDALONE deploy/run-state.sql (production) AND to the s3 gate fixtures
+# (deploy/postgres-init.sql + the testhostbench ephemeral template) so the S3
+# flowbench + S6 testhostbench gates exercise the rewired runner — both PASS
+# (in-cluster gate of record + locally). Rebuild the guest, re-run those gates (the
+# S3/S6 commands above); the in-cluster postgres gains s3.runs/s3.node_runs
+# additively (kubectl exec psql — shared-cluster guardrail, never recreate the pod).
+(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)
+cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

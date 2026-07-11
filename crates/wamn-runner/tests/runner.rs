@@ -451,3 +451,266 @@ fn scheduler_enforces_per_flow_concurrency() {
         assert!(u.try_admit("x"));
     }
 }
+
+// ---- resume: branch-aware reconstruction from recorded steps --------------
+
+use wamn_runner::{Recorded, ResumeError, UnknownNode};
+
+/// A 4-node linear flow a -> b -> c -> d.
+fn linear4() -> Flow {
+    flow(
+        r#"{"schema-version":"0.1","flow-id":"lin4","version":1,
+            "trigger":{"type":"manual"},"entry":"a",
+            "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"echo"},
+                     {"id":"c","type":"echo"},{"id":"d","type":"echo"}],
+            "edges":[{"from":"a","to":"b"},{"from":"b","to":"c"},{"from":"c","to":"d"}]}"#,
+    )
+}
+
+/// A conditional that branches into two independent two-node subtrees, so a
+/// resume must place the frontier in exactly the taken branch.
+fn branchy() -> Flow {
+    flow(
+        r#"{"schema-version":"0.1","flow-id":"brc","version":1,
+            "trigger":{"type":"manual"},"entry":"cond",
+            "nodes":[{"id":"cond","type":"conditional"},
+                     {"id":"y1","type":"pg-write"},{"id":"y2","type":"respond"},
+                     {"id":"n1","type":"pg-write"},{"id":"n2","type":"respond"}],
+            "edges":[{"from":"cond","from-port":"true","to":"y1"},
+                     {"from":"y1","to":"y2"},
+                     {"from":"cond","from-port":"false","to":"n1"},
+                     {"from":"n1","to":"n2"}]}"#,
+    )
+}
+
+#[test]
+fn resume_reconstructs_a_linear_frontier_and_continues() {
+    let f = linear4();
+    let plan = Plan::compile(&f).unwrap();
+    // The run was killed after b committed: a and b are recorded, c/d are not.
+    let completed = [
+        Recorded::new("a", "main", json!({ "at": "a" })),
+        Recorded::new("b", "main", json!({ "at": "b" })),
+    ];
+    let mut st = plan
+        .resume("r1", json!({ "trigger": 1 }), &completed)
+        .unwrap();
+    assert_eq!(st.status(), RunStatus::Running);
+    assert_eq!(st.step_seq(), 2); // two steps folded
+
+    // The driver continues: the very next dispatch is c (not a re-run of a/b),
+    // and c sees b's recorded output as its input.
+    let mut resumed = Vec::new();
+    let status = plan.drive(
+        &mut st,
+        || 0,
+        |_, _| {},
+        |d| {
+            resumed.push(d.node.clone());
+            NodeOutcome::ok(json!({ "at": d.node }))
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(resumed, ["c", "d"]); // a and b are NOT re-dispatched
+}
+
+#[test]
+fn resume_is_branch_aware_only_the_taken_branch_is_outstanding() {
+    let f = branchy();
+    let plan = Plan::compile(&f).unwrap();
+    // cond took the "true" port; y1 (pg-write) committed but the run was killed
+    // before y2 was recorded. Reconstruction must leave the frontier at y2 and
+    // NEVER touch the false branch (n1/n2).
+    let completed = [
+        Recorded::new("cond", "true", json!({ "picked": "true" })),
+        Recorded::new("y1", "main", json!({ "wrote": "y" })),
+    ];
+    let mut st = plan.resume("r1", json!({}), &completed).unwrap();
+    let mut resumed = Vec::new();
+    let status = plan.drive(
+        &mut st,
+        || 0,
+        |_, _| {},
+        |d| {
+            resumed.push(d.node.clone());
+            NodeOutcome::ok(json!({ "at": d.node }))
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(resumed, ["y2"]); // only the taken branch's remainder; n1/n2 never run
+}
+
+#[test]
+fn resume_kill_mid_branch_then_resume_completes_the_correct_branch() {
+    // End-to-end at the engine level: run the branchy flow, kill it right after
+    // the branch's pg-write, reconstruct from what was recorded, and assert the
+    // resumed run finishes the SAME branch exactly once (the branch-aware
+    // kill-mid-branch -> resume proof).
+    let f = branchy();
+    let plan = Plan::compile(&f).unwrap();
+
+    // Original run: cond picks "false"; capture records up to the killed node.
+    let mut records: Vec<Recorded> = Vec::new();
+    let mut st = plan.start("orig", json!({}));
+    // Walk manually, recording each success, and "kill" right after n1.
+    loop {
+        match plan.next(&mut st, 0) {
+            Step::Dispatch(d) => {
+                let (payload, port) = match d.node.as_str() {
+                    "cond" => (json!({ "picked": "false" }), "false".to_string()),
+                    other => (json!({ "at": other }), "main".to_string()),
+                };
+                records.push(Recorded::new(d.node.clone(), port.clone(), payload.clone()));
+                plan.apply(&mut st, &d, NodeOutcome::Success { payload, port }, 0);
+                if d.node == "n1" {
+                    break; // killed after n1 committed, before n2
+                }
+            }
+            _ => panic!("unexpected step"),
+        }
+    }
+    assert_eq!(
+        records.iter().map(|r| r.node.as_str()).collect::<Vec<_>>(),
+        ["cond", "n1"]
+    );
+
+    // Resume a fresh state from the records; only n2 remains.
+    let mut st2 = plan.resume("resumed", json!({}), &records).unwrap();
+    let mut resumed = Vec::new();
+    let status = plan.drive(
+        &mut st2,
+        || 0,
+        |_, _| {},
+        |d| {
+            resumed.push(d.node.clone());
+            NodeOutcome::ok(json!({ "at": d.node }))
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(resumed, ["n2"]); // the false branch completes; y1/y2 never run
+}
+
+#[test]
+fn resume_reconstructs_an_error_routed_branch() {
+    // A node that failed and was routed to its error path is recorded as an
+    // emission on ERROR_PORT carrying the error payload — so reconstruction
+    // rebuilds the error branch with no error taxonomy.
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"err","version":1,
+            "trigger":{"type":"manual"},"entry":"a",
+            "nodes":[{"id":"a","type":"http-call"},{"id":"h","type":"notify"},
+                     {"id":"ok","type":"respond"}],
+            "edges":[{"from":"a","to":"ok"},{"from":"a","from-port":"error","to":"h"}]}"#,
+    );
+    let plan = Plan::compile(&f).unwrap();
+    let completed = [Recorded::new(
+        "a",
+        "error",
+        json!({ "error": { "message": "boom" } }),
+    )];
+    let mut st = plan.resume("r1", json!({}), &completed).unwrap();
+    let mut resumed = Vec::new();
+    let status = plan.drive(
+        &mut st,
+        || 0,
+        |_, _| {},
+        |d| {
+            resumed.push(d.node.clone());
+            NodeOutcome::ok(d.payload.clone())
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(resumed, ["h"]); // the error branch, not the success node "ok"
+}
+
+#[test]
+fn resume_detects_history_drift() {
+    let f = linear4();
+    let plan = Plan::compile(&f).unwrap();
+    // The first recorded step names "b", but the flow dispatches "a" first.
+    let completed = [Recorded::new("b", "main", json!({}))];
+    let err = plan.resume("r1", json!({}), &completed).unwrap_err();
+    assert_eq!(
+        err,
+        ResumeError::Mismatch {
+            recorded: "b".into(),
+            dispatched: "a".into()
+        }
+    );
+}
+
+#[test]
+fn resume_rejects_more_records_than_the_flow_walks() {
+    let f = linear4();
+    let plan = Plan::compile(&f).unwrap();
+    // Five records for a four-node flow: the fifth overruns the terminal state.
+    let completed: Vec<Recorded> = ["a", "b", "c", "d", "e"]
+        .iter()
+        .map(|n| Recorded::new(*n, "main", json!({})))
+        .collect();
+    let err = plan.resume("r1", json!({}), &completed).unwrap_err();
+    assert_eq!(err, ResumeError::Overrun { node: "e".into() });
+}
+
+#[test]
+fn resume_of_a_fully_recorded_run_is_complete_and_idempotent() {
+    let f = linear4();
+    let plan = Plan::compile(&f).unwrap();
+    let completed: Vec<Recorded> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|n| Recorded::new(*n, "main", json!({ "at": n })))
+        .collect();
+    let mut st = plan.resume("r1", json!({}), &completed).unwrap();
+    // Nothing remains: the driver's first step completes without re-dispatching.
+    let mut resumed = Vec::new();
+    let status = plan.drive(
+        &mut st,
+        || 0,
+        |_, _| {},
+        |d| {
+            resumed.push(d.node.clone());
+            NodeOutcome::ok(d.payload.clone())
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert!(resumed.is_empty());
+}
+
+// ---- seed_at: partial re-run from a chosen node ---------------------------
+
+#[test]
+fn seed_at_runs_only_the_downstream_subtree() {
+    let f = linear4();
+    let plan = Plan::compile(&f).unwrap();
+    // Partial re-run from c with its captured input: a and b are NOT re-run.
+    let mut st = plan
+        .seed_at("rerun-1", "c", json!({ "captured": "c-input" }))
+        .unwrap();
+    assert_eq!(st.status(), RunStatus::Running);
+    let mut seen = Vec::new();
+    let status = plan.drive(
+        &mut st,
+        || 0,
+        |_, _| {},
+        |d| {
+            seen.push((d.node.clone(), d.payload.clone()));
+            NodeOutcome::ok(json!({ "at": d.node }))
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(
+        seen,
+        [
+            ("c".to_string(), json!({ "captured": "c-input" })),
+            ("d".to_string(), json!({ "at": "c" })),
+        ]
+    );
+}
+
+#[test]
+fn seed_at_unknown_node_is_rejected() {
+    let f = linear4();
+    let plan = Plan::compile(&f).unwrap();
+    let err = plan.seed_at("r", "nope", json!({})).unwrap_err();
+    assert_eq!(err, UnknownNode("nope".into()));
+}

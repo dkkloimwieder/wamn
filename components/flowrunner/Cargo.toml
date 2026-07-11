@@ -12,6 +12,9 @@ serde_json = "1"
 # it against wamn:postgres + the native standard nodes (the wamn-api pattern).
 wamn-flow = { path = "../../crates/wamn-flow" }
 wamn-runner = { path = "../../crates/wamn-runner" }
+# Durable run state (5.7): the runs/node_runs model + branch-aware reconstruction
+# this component persists into and resumes from (replacing the S3 step_seq).
+wamn-run-store = { path = "../../crates/wamn-run-store" }
 
 [lib]
 crate-type = ["cdylib"]

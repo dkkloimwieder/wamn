@@ -393,8 +393,11 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 // ---------------------------------------------------------------------------
 
 /// The template DDL for the flow tables, cloned into `schema`. Mirrors the s3
-/// fixture (deploy/postgres-init.sql): same columns, idempotency key, and RLS
-/// shape, so the ephemeral schema is a faithful stand-in.
+/// fixture (deploy/postgres-init.sql): flows / flow_runs / sink plus the 5.7
+/// run-state tables (runs / node_runs — the runner's branch-aware reconstruction
+/// source), same columns, idempotency keys, and RLS shape, so the ephemeral
+/// schema is a faithful stand-in. (`flow_runs` is retained but unused: the runner
+/// now checkpoints per node into node_runs.)
 fn template_ddl(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.flows (\
@@ -427,7 +430,33 @@ fn template_ddl(schema: &str) -> String {
          CREATE POLICY sink_tenant ON {schema}.sink \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.sink TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.sink TO wamn_app;\
+         CREATE TABLE {schema}.runs (\
+            tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
+            flow_version int NOT NULL, status text NOT NULL DEFAULT 'running', \
+            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
+            idempotency_key text, replay_of text, root_run_id text, \
+            fail_kind text, fail_node text, fail_reason text, \
+            PRIMARY KEY (tenant_id, run_id));\
+         ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
+         ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
+         CREATE POLICY runs_tenant ON {schema}.runs \
+            USING (tenant_id = current_setting('app.tenant', true)) \
+            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
+         CREATE TABLE {schema}.node_runs (\
+            tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
+            occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
+            status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
+            error_kind text, error_detail jsonb, resume_at timestamptz, \
+            PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
+            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
+         ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\
+         ALTER TABLE {schema}.node_runs FORCE ROW LEVEL SECURITY;\
+         CREATE POLICY node_runs_tenant ON {schema}.node_runs \
+            USING (tenant_id = current_setting('app.tenant', true)) \
+            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.node_runs TO wamn_app;"
     )
 }
 

@@ -53,6 +53,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-flow",
+ "wamn-run-store",
  "wamn-runner",
  "wit-bindgen",
 ]
@@ -431,6 +432,15 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "wamn-run-store"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wamn-runner",
 ]
 
 [[package]]

@@ -183,3 +183,60 @@ CREATE POLICY sink_tenant ON s3.sink
     USING (tenant_id = current_setting('app.tenant', true))
     WITH CHECK (tenant_id = current_setting('app.tenant', true));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s3.sink TO wamn_app;
+
+-- Production run state (5.7): the runner now checkpoints per NODE into node_runs
+-- and resumes branch-aware by reconstructing the frontier from these rows (the
+-- pure logic is crates/wamn-run-store; the canonical production schema is
+-- deploy/run-state.sql). This s3-schema copy lets the flowbench/testhostbench
+-- gates exercise the rewired runner. `s3.flow_runs` above is retained but unused
+-- (the single step_seq checkpoint it held is superseded by node_runs).
+CREATE TABLE s3.runs (
+    tenant_id       text NOT NULL,
+    run_id          text NOT NULL,
+    flow_id         text NOT NULL,
+    flow_version    int  NOT NULL,
+    status          text NOT NULL DEFAULT 'running',
+    trigger_source  text,
+    input_json      jsonb,
+    result_json     jsonb,
+    state_json      jsonb,
+    idempotency_key text,
+    replay_of       text,
+    root_run_id     text,
+    fail_kind       text,
+    fail_node       text,
+    fail_reason     text,
+    PRIMARY KEY (tenant_id, run_id)
+);
+ALTER TABLE s3.runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE s3.runs FORCE ROW LEVEL SECURITY;
+CREATE POLICY runs_tenant ON s3.runs
+    USING (tenant_id = current_setting('app.tenant', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+GRANT SELECT, INSERT, UPDATE, DELETE ON s3.runs TO wamn_app;
+
+-- One row per node execution; the (tenant_id, run_id, node_id, occurrence)
+-- idempotency key + seq ordering are what reconstruction replays.
+CREATE TABLE s3.node_runs (
+    tenant_id     text NOT NULL,
+    run_id        text NOT NULL,
+    node_id       text NOT NULL,
+    occurrence    int  NOT NULL DEFAULT 0,
+    seq           int  NOT NULL,
+    attempt       int  NOT NULL DEFAULT 0,
+    status        text NOT NULL,
+    output_port   text,
+    output_json   jsonb,
+    input_json    jsonb,
+    error_kind    text,
+    error_detail  jsonb,
+    resume_at     timestamptz,
+    PRIMARY KEY (tenant_id, run_id, node_id, occurrence),
+    FOREIGN KEY (tenant_id, run_id) REFERENCES s3.runs (tenant_id, run_id) ON DELETE CASCADE
+);
+ALTER TABLE s3.node_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE s3.node_runs FORCE ROW LEVEL SECURITY;
+CREATE POLICY node_runs_tenant ON s3.node_runs
+    USING (tenant_id = current_setting('app.tenant', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+GRANT SELECT, INSERT, UPDATE, DELETE ON s3.node_runs TO wamn_app;

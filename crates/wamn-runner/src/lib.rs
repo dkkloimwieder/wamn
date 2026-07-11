@@ -36,13 +36,17 @@
 //! ## Scope (5.2) vs siblings
 //! Owns: the ported-edge walk, branch/merge, error-path routing, the
 //! retry/backoff loop, the shared per-target throttle key + per-flow concurrency
-//! accounting ([`throttle`]), and the hot-reload *consumer* seam (recompile a
-//! [`Plan`] on a new flow version). Does **not** own: the `wamn:node` taxonomy
-//! (5.4 — mirrored here as [`NodeError`]), the durable `runs`/`node_runs` schema
-//! and branch-aware replay (5.7), per-node ordering (5.11), the cancel operation
-//! (5.12), the durable queue + NATS doorbell + dispatcher (5.14), the payload
-//! store (5.10), the standard node contents (5.3), or the custom-node transport
-//! (5.6). The driver (`components/flowrunner`) wires those in.
+//! accounting ([`throttle`]), the hot-reload *consumer* seam (recompile a
+//! [`Plan`] on a new flow version), and the pure **reconstruction primitives**
+//! [`resume`](Plan::resume) (rebuild a run's frontier from its recorded steps —
+//! branch-aware) and [`seed_at`](Plan::seed_at) (partial re-run from one node).
+//! Does **not** own: the `wamn:node` taxonomy (5.4 — mirrored here as
+//! [`NodeError`]), the durable `runs`/`node_runs` **schema, persistence, and
+//! run-history read model** (5.7 — `wamn-run-store` drives these primitives over
+//! the store), per-node ordering (5.11), the cancel operation (5.12), the durable
+//! queue + NATS doorbell + dispatcher (5.14), the payload store (5.10), the
+//! standard node contents (5.3), or the custom-node transport (5.6). The driver
+//! (`components/flowrunner`) wires those in.
 
 mod engine;
 mod outcome;
@@ -50,7 +54,9 @@ mod plan;
 mod retry;
 mod throttle;
 
-pub use engine::{Dispatch, FailKind, Failure, RunState, RunStatus, Step};
+pub use engine::{
+    Dispatch, FailKind, Failure, Recorded, ResumeError, RunState, RunStatus, Step, UnknownNode,
+};
 pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
 pub use plan::{EngineError, Plan};
 pub use retry::RetryPolicy;

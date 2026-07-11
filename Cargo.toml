@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/wamn-host", "crates/wamn-flow", "crates/wamn-catalog", "crates/wamn-ddl", "crates/wamn-schema", "crates/wamn-rls", "crates/wamn-seed", "crates/wamn-api", "crates/wamn-runner"]
+members = ["crates/wamn-host", "crates/wamn-flow", "crates/wamn-catalog", "crates/wamn-ddl", "crates/wamn-schema", "crates/wamn-rls", "crates/wamn-seed", "crates/wamn-api", "crates/wamn-runner", "crates/wamn-run-store"]
 # Guest components are built separately for wasm32-wasip2 (see components/*);
 # vendor holds the patched wasmCloud monorepo checkout, which is its own
 # workspace (excluding it keeps its `workspace = true` deps resolving there).

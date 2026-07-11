@@ -163,6 +163,90 @@ pub struct Dispatch {
     pub deadline_ms: Option<u64>,
 }
 
+/// One completed node execution, replayed to reconstruct a run's frontier on
+/// resume (5.7). The engine folds each as a `Success { payload, port }` through
+/// [`Plan::apply`], so an **error-routed** node is recorded as an emission on
+/// [`ERROR_PORT`](crate::ERROR_PORT) carrying the `{"error": …}` payload:
+/// reconstruction needs no error taxonomy, only the `(node, port, payload)` the
+/// run actually emitted, and a node with a persisted record is never
+/// re-dispatched (its effect does not repeat).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Recorded {
+    /// The node that completed.
+    pub node: String,
+    /// The port it emitted on (`MAIN_PORT`, a branch port, or `ERROR_PORT`).
+    pub port: String,
+    /// The payload it emitted (the next token's payload downstream).
+    pub payload: Value,
+}
+
+impl Recorded {
+    pub fn new(node: impl Into<String>, port: impl Into<String>, payload: Value) -> Recorded {
+        Recorded {
+            node: node.into(),
+            port: port.into(),
+            payload,
+        }
+    }
+}
+
+/// Why a run could not be reconstructed from its recorded steps
+/// ([`Plan::resume`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResumeError {
+    /// A recorded step named a node the engine did not dispatch at that point:
+    /// the persisted history diverged from the flow's walk (a reconstruction bug
+    /// or a flow-version mismatch). Carries the recorded node and the node the
+    /// engine actually dispatched.
+    Mismatch {
+        recorded: String,
+        dispatched: String,
+    },
+    /// A recorded step remained after the run already reached a terminal status —
+    /// more history than the flow walks (a corrupt or duplicated record).
+    Overrun { node: String },
+    /// The engine asked to wait (a scheduled retry) mid-reconstruction; recorded
+    /// steps are terminal emissions and must never wait.
+    UnexpectedWait { node: String },
+}
+
+impl std::fmt::Display for ResumeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResumeError::Mismatch {
+                recorded,
+                dispatched,
+            } => write!(
+                f,
+                "recorded step for node {recorded:?} but the flow dispatched {dispatched:?}"
+            ),
+            ResumeError::Overrun { node } => {
+                write!(f, "recorded step for node {node:?} past the end of the run")
+            }
+            ResumeError::UnexpectedWait { node } => {
+                write!(
+                    f,
+                    "unexpected retry wait at node {node:?} during reconstruction"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ResumeError {}
+
+/// A node id that does not resolve in the plan, given to [`Plan::seed_at`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnknownNode(pub String);
+
+impl std::fmt::Display for UnknownNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown node {:?}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownNode {}
+
 impl<'f> Plan<'f> {
     /// Start a run: the entry node holds the trigger payload.
     pub fn start(&self, run_id: impl Into<String>, input: Value) -> RunState {
@@ -367,5 +451,89 @@ impl<'f> Plan<'f> {
                 }
             }
         }
+    }
+
+    /// Reconstruct a run's state by replaying its `completed` node executions —
+    /// the **branch-aware durable resume** the driver uses instead of the S3
+    /// linear `step_seq` (5.7). Each [`Recorded`] step is folded as a success
+    /// emission through [`apply`](Self::apply), so the rebuilt frontier is exactly
+    /// what the original walk left outstanding: the same branch was taken, the
+    /// same merges arrived, error-routed nodes re-entered their error branch. The
+    /// returned [`RunState`] is positioned to continue — the driver calls
+    /// [`next`](Self::next)/[`apply`](Self::apply) from there, re-dispatching only
+    /// nodes that have no record (so their effects run at-least-once, deduped by
+    /// the node's own idempotency).
+    ///
+    /// `completed` must be in the run's original dispatch order (persist a
+    /// monotonic sequence). A record that names a different node than the flow
+    /// dispatches is a [`ResumeError::Mismatch`] — a drift guard against a
+    /// corrupt history or a flow-version skew.
+    pub fn resume(
+        &self,
+        run_id: impl Into<String>,
+        input: Value,
+        completed: &[Recorded],
+    ) -> Result<RunState, ResumeError> {
+        let mut state = self.start(run_id, input);
+        for rec in completed {
+            match self.next(&mut state, 0) {
+                Step::Dispatch(d) => {
+                    if d.node != rec.node {
+                        return Err(ResumeError::Mismatch {
+                            recorded: rec.node.clone(),
+                            dispatched: d.node,
+                        });
+                    }
+                    self.apply(
+                        &mut state,
+                        &d,
+                        NodeOutcome::Success {
+                            payload: rec.payload.clone(),
+                            port: rec.port.clone(),
+                        },
+                        0,
+                    );
+                }
+                Step::Wait { node, .. } => return Err(ResumeError::UnexpectedWait { node }),
+                Step::Done(_) => {
+                    return Err(ResumeError::Overrun {
+                        node: rec.node.clone(),
+                    });
+                }
+            }
+        }
+        Ok(state)
+    }
+
+    /// Seed a fresh run whose frontier is a single token at `node` carrying
+    /// `payload` — the **partial re-run** entry point (5.7). Upstream nodes are
+    /// *not* re-executed; the driver walks the downstream subtree from here,
+    /// typically with a failed node's captured input so a fixed transient error
+    /// resumes without re-firing already-committed upstream effects. `run_id`
+    /// should be a fresh run (the caller links it to the original via
+    /// `replay_of`/`root_run_id`), keeping the original run's history immutable.
+    pub fn seed_at(
+        &self,
+        run_id: impl Into<String>,
+        node: &str,
+        payload: Value,
+    ) -> Result<RunState, UnknownNode> {
+        if self.node(node).is_none() {
+            return Err(UnknownNode(node.to_string()));
+        }
+        let mut frontier = VecDeque::new();
+        frontier.push_back(Token {
+            node: node.to_string(),
+            payload,
+        });
+        Ok(RunState {
+            run_id: run_id.into(),
+            status: RunStatus::Running,
+            frontier,
+            current: None,
+            step_seq: 0,
+            result: Value::Null,
+            failure: None,
+        })
     }
 }

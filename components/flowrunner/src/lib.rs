@@ -23,14 +23,20 @@
 //! the test host virtualizes/interposes — the SAME compiled binary runs under
 //! both hosts.
 //!
-//! ## Checkpoint / resume
-//! The engine re-walks from `entry` on every invocation; the DB `step_seq` (the
-//! node's index in the flow) is the checkpoint. An effectful node (`pg-write`,
-//! `http-call`) whose index is `<= step_seq` skips its effect on replay; `pg-write`
-//! is additionally idempotent by `(run_id, step)`, so a crash in the window
-//! between its commit and its checkpoint replays cleanly (exactly-once effect).
-//! Branch-aware durable resume (persisting the frontier) is 5.7; the linear
-//! fixture flows resume exactly on `step_seq`.
+//! ## Checkpoint / resume (5.7)
+//! Durable run state is the `runs` / `node_runs` tables (`deploy/run-state.sql`):
+//! a `runs` row per execution and a `node_runs` row per completed node. On every
+//! invocation the runner **reconstructs** the in-memory `RunState` by replaying
+//! the persisted `node_runs` through the pure engine (`wamn-run-store`) — the
+//! branch-aware durable resume that supersedes the S3 linear `step_seq`. A node
+//! with a persisted record is never re-dispatched (its effect does not repeat);
+//! a node with none is outstanding and re-runs, so an effect that committed in
+//! the crash window between its DB write and its `node_runs` row replays
+//! at-least-once and is absorbed by the node's own idempotency (`pg-write`'s
+//! `sink` `ON CONFLICT DO NOTHING`). `delay` parks by recording a wake deadline
+//! in `runs.state_json` without writing a `node_runs` row, so it re-enters on the
+//! next invocation — the durable parked-wake the S6 24-hour test exercises under
+//! virtual time. A resumed run finishes down exactly the branch it took.
 
 wit_bindgen::generate!({
     world: "flowrunner",
@@ -42,6 +48,7 @@ use std::time::Instant;
 
 use serde_json::Value;
 use wamn_flow::Flow;
+use wamn_run_store::{NodeRunRecord, RunRecord};
 use wamn_runner::{Dispatch, NodeOutcome, Plan, RunStatus, Step};
 
 use wamn::postgres::client::{self};
@@ -70,6 +77,12 @@ fn text(s: impl Into<String>) -> SqlValue {
 }
 fn int32(v: i32) -> SqlValue {
     SqlValue::Int32(v)
+}
+/// Encode a payload `Value` for a `jsonb` column (trigger input / node I/O).
+/// Sent as a text param the server parses into jsonb — the same path the S3
+/// `state_json` write used — so the engine's `serde_json::Value` round-trips.
+fn jsonb(v: &Value) -> SqlValue {
+    SqlValue::Text(v.to_string())
 }
 
 /// Name a pg-error by its variant (no host detail beyond the taxonomy tag), so
@@ -132,8 +145,9 @@ fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
     )
 }
 
-/// The node's index in the flow — the durable `step` key for checkpoints and
-/// `pg-write` idempotency (stable per flow version).
+/// The node's index in the flow — the stable `step` key for `pg-write`'s `sink`
+/// idempotency (stable per flow version). Run-state checkpointing is now per-node
+/// into `node_runs`; this remains the business-effect idempotency key.
 fn node_index(flow: &Flow, node_id: &str) -> i32 {
     flow.nodes
         .iter()
@@ -177,30 +191,66 @@ fn load_active_flow(flow_id: &str) -> Result<Flow, String> {
     Flow::from_json(&raw).map_err(|e| format!("flow parse: {e}"))
 }
 
-/// Upsert the run row (fresh runs start at step_seq -1) and return the highest
-/// completed step. Idempotent: a resumed run keeps its recorded progress.
-fn open_run(run_id: &str, flow_id: &str, flow_version: u32) -> Result<i32, String> {
+/// Open (or re-open) the run row: a fresh run records its trigger input and
+/// `running` status; a resumed run is a no-op (ON CONFLICT DO NOTHING) — its
+/// node_runs history is the durable progress.
+fn open_run(run_id: &str, flow_id: &str, flow_version: u32, input: &Value) -> Result<(), String> {
     client::execute(
-        "INSERT INTO flow_runs (tenant_id, run_id, flow_id, flow_version, step_seq, status) \
-         VALUES (current_setting('app.tenant', true), $1, $2, $3, -1, 'running') \
+        "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status, input_json) \
+         VALUES (current_setting('app.tenant', true), $1, $2, $3, 'running', $4) \
          ON CONFLICT (tenant_id, run_id) DO NOTHING",
-        &[text(run_id), text(flow_id), int32(flow_version as i32)],
+        &[
+            text(run_id),
+            text(flow_id),
+            int32(flow_version as i32),
+            jsonb(input),
+        ],
     )
     .map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Load a run's already-completed node executions in dispatch (`seq`) order — the
+/// branch-aware reconstruction source. Only `success`/`error` rows are completed
+/// steps; a `parked`/`running` row is an outstanding node the walk re-dispatches.
+/// An error-routed node was recorded as an emission on the `error` port, so
+/// reconstruction needs no error taxonomy here.
+fn load_completed(run_id: &str) -> Result<Vec<NodeRunRecord>, String> {
     let rs = client::query(
-        "SELECT step_seq FROM flow_runs WHERE run_id = $1",
+        "SELECT node_id, seq, output_port, output_json::text FROM node_runs \
+         WHERE run_id = $1 AND status IN ('success', 'error') ORDER BY seq",
         &[text(run_id)],
     )
     .map_err(|e| err_name(&e))?;
-    match rs.rows.first().and_then(|r| r.first()) {
-        Some(SqlValue::Int32(n)) => Ok(*n),
-        Some(SqlValue::Int64(n)) => Ok(*n as i32),
-        other => Err(format!("unexpected step_seq shape: {other:?}")),
+    let mut out = Vec::with_capacity(rs.rows.len());
+    for row in &rs.rows {
+        let node_id = match row.first() {
+            Some(SqlValue::Text(s)) => s.clone(),
+            other => return Err(format!("node_runs.node_id shape: {other:?}")),
+        };
+        let seq = match row.get(1) {
+            Some(SqlValue::Int32(n)) => *n as u32,
+            Some(SqlValue::Int64(n)) => *n as u32,
+            other => return Err(format!("node_runs.seq shape: {other:?}")),
+        };
+        let port = match row.get(2) {
+            Some(SqlValue::Text(s)) => s.clone(),
+            _ => "main".to_string(),
+        };
+        let output = match row.get(3) {
+            Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => {
+                serde_json::from_str(s).map_err(|e| format!("node_runs.output_json parse: {e}"))?
+            }
+            _ => Value::Null,
+        };
+        out.push(NodeRunRecord::success(run_id, node_id, seq, port, output));
     }
+    Ok(out)
 }
 
-/// The pg-write side effect: exactly-once per (run, step) by the idempotency
-/// key. On replay after a resume this is a no-op (ON CONFLICT DO NOTHING).
+/// The pg-write side effect: exactly-once per (run, step) by the sink idempotency
+/// key. `step` is the node's stable index. On an at-least-once replay this is a
+/// no-op (ON CONFLICT DO NOTHING).
 fn pg_write(run_id: &str, step: i32, payload: &str) -> Result<(), String> {
     client::execute(
         "INSERT INTO sink (tenant_id, run_id, step, payload) \
@@ -212,21 +262,42 @@ fn pg_write(run_id: &str, step: i32, payload: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Checkpoint: record that `step` completed. Written after the step's effect
-/// commits, so a crash between the effect and here re-runs the step on resume.
-fn checkpoint(run_id: &str, step: i32) -> Result<(), String> {
+/// Record a completed node execution — the durable per-node checkpoint, written
+/// after the node's effect commits. Idempotent by (run_id, node_id, occurrence).
+/// v1 writes `occurrence = 0`: exact for the acyclic fixture flows; a flow that
+/// revisits a node would compute occurrence from its prior visits (the schema +
+/// `wamn-run-store` reconstruction already accommodate that — see docs/run-state.md).
+fn record_node_run(
+    run_id: &str,
+    node_id: &str,
+    seq: i32,
+    port: &str,
+    output: &Value,
+    input: &Value,
+) -> Result<(), String> {
     client::execute(
-        "UPDATE flow_runs SET step_seq = $2 WHERE run_id = $1",
-        &[text(run_id), int32(step)],
+        "INSERT INTO node_runs \
+           (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json) \
+         VALUES (current_setting('app.tenant', true), $1, $2, 0, $3, 'success', $4, $5, $6) \
+         ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING",
+        &[
+            text(run_id),
+            text(node_id),
+            int32(seq),
+            text(port),
+            jsonb(output),
+            jsonb(input),
+        ],
     )
     .map_err(|e| err_name(&e))?;
     Ok(())
 }
 
-fn mark_completed(run_id: &str) -> Result<(), String> {
+/// Mark the run completed and record its result payload.
+fn mark_completed(run_id: &str, result: &Value) -> Result<(), String> {
     client::execute(
-        "UPDATE flow_runs SET status = 'completed' WHERE run_id = $1",
-        &[text(run_id)],
+        "UPDATE runs SET status = 'completed', result_json = $2 WHERE run_id = $1",
+        &[text(run_id), jsonb(result)],
     )
     .map_err(|e| err_name(&e))?;
     Ok(())
@@ -246,7 +317,7 @@ fn wall_now_secs() -> u64 {
 /// `state_json`, if any.
 fn load_wake(run_id: &str) -> Result<Option<u64>, String> {
     let rs = client::query(
-        "SELECT state_json::text FROM flow_runs WHERE run_id = $1",
+        "SELECT state_json::text FROM runs WHERE run_id = $1",
         &[text(run_id)],
     )
     .map_err(|e| err_name(&e))?;
@@ -262,7 +333,7 @@ fn load_wake(run_id: &str) -> Result<Option<u64>, String> {
 /// Persist the parked-wake deadline for the run.
 fn save_wake(run_id: &str, wake_secs: u64) -> Result<(), String> {
     client::execute(
-        "UPDATE flow_runs SET state_json = $2 WHERE run_id = $1",
+        "UPDATE runs SET state_json = $2 WHERE run_id = $1",
         &[text(run_id), text(format!(r#"{{"wake":{wake_secs}}}"#))],
     )
     .map_err(|e| err_name(&e))?;
@@ -330,16 +401,17 @@ struct RunOutcome {
     http_status: u32,
 }
 
-/// Dispatch one node — the native standard-node library. Pure nodes recompute
-/// (free, idempotent); effectful nodes (`pg-write`, `http-call`) skip their
-/// effect on replay (`step <= done`). `pg-write` in `kill_after_write` mode spins
-/// after committing, before the caller checkpoints — the crash window the resume
-/// gate exercises.
+/// Dispatch one node — the native standard-node library. A node reached here is
+/// OUTSTANDING (reconstruction never re-dispatches a node that already has a
+/// `node_runs` row), so effectful nodes run their effect unconditionally,
+/// deduped by their own idempotency: `pg-write`'s `sink` `ON CONFLICT DO NOTHING`
+/// absorbs the at-least-once replay of a node killed after its write but before
+/// its `node_runs` row. `kill_after_write` spins right after `pg-write` commits
+/// (before that row is written) — the crash window the resume gate exercises.
 fn dispatch_node(
     d: &Dispatch,
-    step: i32,
-    done: i32,
     run_id: &str,
+    flow: &Flow,
     kill_after_write: bool,
     http_status: &mut u32,
 ) -> Result<NodeAction, String> {
@@ -359,36 +431,32 @@ fn dispatch_node(
             Ok(NodeAction::Emit(NodeOutcome::ok(Value::String(out))))
         }
         // Records a branch decision but keeps the fixture's linear main path;
-        // true branching is exercised in the wamn-runner engine tests.
+        // true branching is exercised in the wamn-runner / wamn-run-store tests.
         "conditional" | "respond" => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
         "pg-write" => {
-            if step > done {
-                pg_write(run_id, step, value_str(&d.payload))?;
-                if kill_after_write {
-                    // Side effect committed; progress NOT yet checkpointed. Spin
-                    // until the host epoch-kills this store; on resume the write
-                    // replays and ON CONFLICT DO NOTHING absorbs the duplicate.
-                    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
-                    loop {
-                        x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
-                        core::hint::black_box(x);
-                    }
+            pg_write(run_id, node_index(flow, &d.node), value_str(&d.payload))?;
+            if kill_after_write {
+                // Side effect committed; the node_runs row NOT yet written. Spin
+                // until the host epoch-kills this store; on resume the node is
+                // outstanding, the write replays, and ON CONFLICT absorbs it.
+                let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+                loop {
+                    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                    core::hint::black_box(x);
                 }
             }
             Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
         }
         "delay" => {
-            if step <= done {
-                return Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())));
-            }
             let delay_secs = d
                 .config
                 .get("delay-secs")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
             let now = wall_now_secs();
-            // First reach records the deadline and parks WITHOUT checkpointing, so
-            // a resume re-enters this node; later reaches compare against it.
+            // First reach records the deadline in the run's state_json and parks
+            // WITHOUT writing a node_runs row, so a resume re-enters this node;
+            // later reaches compare against it.
             let wake = match load_wake(run_id)? {
                 Some(w) => w,
                 None => {
@@ -404,31 +472,43 @@ fn dispatch_node(
             }
         }
         "http-call" => {
-            if step > done {
-                let url = d.config.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                *http_status = http_get(url);
-            }
+            let url = d.config.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            *http_status = http_get(url);
             Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
         }
         other => Err(format!("unknown node type: {other}")),
     }
 }
 
-/// Walk the active flow from the first uncompleted step via the engine.
-/// `kill_after_write` makes the runner busy-loop right after `pg-write` commits
-/// and before its checkpoint (the pod-death window). Returns the version, the
-/// outcome (0 = completed, 1 = parked), and the last observed HTTP status.
+/// Walk the active flow via the engine, resuming branch-aware from the persisted
+/// `node_runs` (5.7). `kill_after_write` makes the runner busy-loop right after
+/// `pg-write` commits and before its `node_runs` row is written (the pod-death
+/// window). Returns the version, the outcome (0 = completed, 1 = parked), and the
+/// last observed HTTP status.
 fn execute(
     run_id: &str,
     payload: &str,
     kill_after_write: bool,
     flow_id: &str,
 ) -> Result<RunOutcome, String> {
+    // v1 reconstructs against the ACTIVE flow version (safe while a flow's
+    // versions stay structurally compatible — `Plan::resume` raises Mismatch if
+    // not); pinning a resume to the run's persisted `flow_version` is a follow-up
+    // (docs/run-state.md).
     let flow = load_active_flow(flow_id)?;
     let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
     let version = plan.version();
-    let done = open_run(run_id, flow_id, version)?;
-    let mut st = plan.start(run_id, Value::String(payload.to_string()));
+    let input = Value::String(payload.to_string());
+    open_run(run_id, flow_id, version, &input)?;
+
+    // Reconstruct the frontier from what already completed (empty on a fresh run
+    // => a plain start); the driver continues from there, re-dispatching only
+    // outstanding nodes. `seq` continues past the completed count.
+    let completed = load_completed(run_id)?;
+    let mut next_seq = completed.len() as i32;
+    let run_rec = RunRecord::new(run_id, flow_id, version, input);
+    let mut st =
+        wamn_run_store::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
     let mut http_status: u32 = 0;
 
     loop {
@@ -436,7 +516,7 @@ fn execute(
         // never returns Wait; `delay` parks via NodeAction::Park instead.
         match plan.next(&mut st, 0) {
             Step::Done(RunStatus::Completed) => {
-                mark_completed(run_id)?;
+                mark_completed(run_id, st.result())?;
                 return Ok(RunOutcome {
                     version,
                     outcome: 0,
@@ -446,12 +526,13 @@ fn execute(
             Step::Done(status) => return Err(format!("run ended in {status:?}")),
             Step::Wait { node, .. } => return Err(format!("unexpected retry wait at {node}")),
             Step::Dispatch(d) => {
-                let step = node_index(&flow, &d.node);
-                match dispatch_node(&d, step, done, run_id, kill_after_write, &mut http_status)? {
+                match dispatch_node(&d, run_id, &flow, kill_after_write, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
-                        // Record newly-completed progress after the effect commits.
-                        if step > done {
-                            checkpoint(run_id, step)?;
+                        // Record the completed node (after its effect commits) so a
+                        // later invocation reconstructs past it.
+                        if let NodeOutcome::Success { payload, port } = &outcome {
+                            record_node_run(run_id, &d.node, next_seq, port, payload, &d.payload)?;
+                            next_seq += 1;
                         }
                         plan.apply(&mut st, &d, outcome, 0);
                     }
@@ -621,7 +702,8 @@ impl Guest for Component {
     fn reset(run_id: String) -> Result<u64, String> {
         let a = client::execute("DELETE FROM sink WHERE run_id = $1", &[text(&run_id)])
             .map_err(|e| err_name(&e))?;
-        let b = client::execute("DELETE FROM flow_runs WHERE run_id = $1", &[text(&run_id)])
+        // Deleting the run cascades its node_runs (FK ON DELETE CASCADE).
+        let b = client::execute("DELETE FROM runs WHERE run_id = $1", &[text(&run_id)])
             .map_err(|e| err_name(&e))?;
         Ok(a + b)
     }

@@ -1,0 +1,25 @@
+[package]
+name = "wamn-run-store"
+description = "wamn run-state persistence (5.7): the runs/node_runs model + branch-aware replay reconstruction and partial-re-run planning over the wamn-runner engine (5.2). PURE — no DB, no wasm, no clock; the driver (components/flowrunner) supplies the wamn:postgres effects. Reconstruction rebuilds the exact frontier from persisted node_runs; a replay/partial-re-run is a new run linked to its origin (immutable lineage)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The reconstruction/partial-re-run planners drive the pure engine's resume/
+# seed_at primitives; the model persists its RunStatus/FailKind/NodeError taxonomy.
+wamn-runner = { path = "../wamn-runner" }
+# The run/node-run records import/export as JSON (run-history read model);
+# payloads are opaque JSON. No schemars — this is a store model, not a published
+# contract (like wamn-ddl / wamn-api / wamn-runner).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+# Tests build real flows and compile Plans to drive reconstruction end-to-end.
+wamn-flow = { path = "../wamn-flow" }
+
+# No DB / wasm / clock dependency: reconstruction is a pure function of
+# (plan, run record, node-run rows). The component owns every effect. The
+# optional live-apply gate (tests/store.rs) shells out to `psql`, so there is no
+# database dependency even in dev — the same pattern as wamn-ddl / wamn-rls / wamn-seed.
