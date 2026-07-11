@@ -106,7 +106,8 @@ no Postgres touched. Its result is identical in-cluster and locally, so unlike
 the timing/DB gates there is **no separate in-cluster Job of record**; it runs in
 CI / locally / in the image build.
 
-Result (local, `flowrunner` + custom-node / probe / trivial shapes):
+Result (local, `flowrunner` + custom-node / probe / trivial shapes + the 4.1
+api-gateway serving workload):
 
 ```
 # wamn-host 2.6 egressbench — DB-path egress review (static)
@@ -125,13 +126,19 @@ Result (local, `flowrunner` + custom-node / probe / trivial shapes):
   component    .../hello.wasm
     egress imports: allowed=[] raw-socket=[] other=[]
     PASS: no raw-socket surface
+  component    .../api_gateway.wasm
+    egress imports: allowed=["wamn:postgres", "wasi:http"] raw-socket=[] other=[]
+    PASS: no raw-socket surface
 
 egressbench complete — overall PASS: true
 ```
 
 The flow-runner's only egress is `wamn:postgres` (the DB plugin) and `wasi:http`
-(the `allowed_hosts`-gated, egress-spied S6 chokepoint) — both host-mediated. No
-shipped workload has a raw-socket surface. The gate's FAIL path is unit-tested
+(the `allowed_hosts`-gated, egress-spied S6 chokepoint) — both host-mediated. The
+4.1 **api-gateway** serving workload has the same surface (`wamn:postgres` +
+`wasi:http`, no raw sockets), so a future import regression there — e.g. adding
+`wasi:sockets` or an unexpected host-plugin egress — now fails the standing gate.
+No shipped workload has a raw-socket surface. The gate's FAIL path is unit-tested
 (`egressbench::tests`): a `wasi:sockets` import, an unexpected egress import, and
 a DB workload missing `wamn:postgres` each correctly fail — the assertion is not
 vacuous.

@@ -184,7 +184,8 @@ REL=components/target/wasm32-wasip2/release
 ./target/release/wamn-host --log-level warn egressbench \
   --flowrunner $REL/flowrunner.wasm \
   --component $REL/pgprobe.wasm --component $REL/node_rs.wasm \
-  --component $REL/flow_composed.wasm --component $REL/hello.wasm
+  --component $REL/flow_composed.wasm --component $REL/hello.wasm \
+  --component $REL/api_gateway.wasm  # 4.1 serving workload: {wamn:postgres,wasi:http}
 
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
 
