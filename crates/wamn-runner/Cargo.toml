@@ -1,0 +1,18 @@
+[package]
+name = "wamn-runner"
+description = "wamn flow-runner engine (5.2): a pure, synchronous reducer over a wamn-flow graph — ported-edge walk, branch/merge, error-path routing, and retry/backoff keyed mechanically off the wamn:node error taxonomy. Effects (node dispatch, durable state, the clock) are the driver's; the engine only decides."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The engine walks the canonical flow graph (5.1) and relies on its structural
+# validation guarantees (unique node ids, resolved edges, resolved entry).
+wamn-flow = { path = "../wamn-flow" }
+# Payloads and opaque node config are JSON; no schema of its own (this is an
+# engine, not a contract — like wamn-ddl / wamn-api, no schemars).
+serde_json = "1"
+
+# No DB / host / wasm / clock dependency: the reducer is a pure function of
+# (state, node outcome, now_ms). The component (components/flowrunner) owns every
+# effect — dispatching nodes, wamn:postgres checkpoints, sleeping, the doorbell.

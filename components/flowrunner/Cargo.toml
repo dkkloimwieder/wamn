@@ -7,6 +7,11 @@ edition.workspace = true
 wit-bindgen = "0.44"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The production runner (5.2) is the pure `wamn-runner` engine reducer over the
+# canonical `wamn-flow` (5.1) graph; this component is the thin shell that drives
+# it against wamn:postgres + the native standard nodes (the wamn-api pattern).
+wamn-flow = { path = "../../crates/wamn-flow" }
+wamn-runner = { path = "../../crates/wamn-runner" }
 
 [lib]
 crate-type = ["cdylib"]

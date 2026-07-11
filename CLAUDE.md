@@ -198,6 +198,23 @@ cargo clippy -p wamn-flow --all-targets && cargo fmt -p wamn-flow --check
 # regenerate the published JSON Schema contract after changing the types:
 cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
 
+# [5.2] production flow-runner engine (crates/wamn-runner) — the PURE, synchronous
+# reducer over a wamn-flow (5.1) graph: ported-edge walk from `entry`, branch/merge,
+# error-path routing, and retry/backoff keyed MECHANICALLY off the wamn:node error
+# taxonomy (retryable/rate-limited/terminal/invalid-input/cancelled), plus the shared
+# per-(node-type,credential,host) throttle + per-flow concurrency accounting. No
+# host/DB/wasm/clock — the whole engine is unit-tested with no cluster (the wamn-api
+# split). docs/flow-runner.md. No JSON-schema (an engine, not a contract).
+cargo test -p wamn-runner
+cargo clippy -p wamn-runner --all-targets && cargo fmt -p wamn-runner --check
+# The components/flowrunner GUEST now DRIVES the engine (adopts the wamn-flow schema,
+# replacing the S3 ad-hoc IR); the S3 flowbench + S6 testhostbench gates (below) are
+# its regression, unchanged — both PASS on the engine-driven runner in-cluster and
+# locally. Rebuild the guest (part of the guest build above), then re-run those gates:
+(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)
+cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

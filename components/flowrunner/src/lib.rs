@@ -1,26 +1,36 @@
-//! Guest flow-runner for the S3 spike (docs/p0-exit-criteria.md S3), extended
-//! for the S6 test-host plugin-swap spike (docs/p0-exit-criteria.md S6).
+//! Production flow-runner (5.2), grown from the S3 spike and the S6 test-host
+//! spike. The runner is a long-lived component that embeds the standard node
+//! library as NATIVE Rust and walks the flow graph with the pure `wamn-runner`
+//! engine (5.2): the ported-edge walk, branch/merge, error routing, and
+//! retry/backoff live in the crate; this component supplies the effects —
+//! dispatching each node, the `wamn:postgres` checkpoints, the reload doorbell.
 //!
-//! The runner is a long-lived component that embeds the standard node library
-//! as NATIVE Rust (`std_node`); dispatching a standard node is therefore an
-//! ordinary same-binary function call — the `< 50us` overhead the dispatch
-//! bench measures. Everything durable — the flow IR, run-state checkpoints, and
-//! the business sink — goes through the host `wamn:postgres` capability; there
-//! is no other data path and the guest never chooses its own tenant.
+//! Flows are the canonical `wamn-flow` schema (5.1), read from the catalog; the
+//! ad-hoc S3 JSON is gone. Everything durable — the flow definition, run-state
+//! checkpoints, the business sink — goes through the host `wamn:postgres`
+//! capability under a host-injected tenant claim; there is no other data path and
+//! the guest never chooses its own tenant.
 //!
 //! Table names are UNQUALIFIED and resolve through the host-injected
-//! `search_path`: the runner never hard-codes its schema. The prod host points
-//! it at the shared fixture schema; the test host points it at a fresh
-//! per-run ephemeral schema. The schema is a host-swapped fixture, exactly like
-//! the tenant claim — one more thing the test host substitutes with zero guest
-//! changes (S6 / design-note 9).
+//! `search_path`: the prod host points the runner at the shared fixture schema,
+//! the test host at a fresh per-run ephemeral schema — a host-swapped fixture,
+//! exactly like the tenant claim (S6 / design-note 9).
 //!
-//! The S3 PoC graph is: webhook-in -> transform -> pg-write -> conditional ->
-//! respond. The S6 graph is: webhook-in -> delay -> http-call -> pg-write ->
-//! respond. The `delay` node reads wall-clock time and parks (durable
-//! parked-wake); the `http-call` node makes a `wasi:http` outbound request.
-//! Both touch host capabilities the test host virtualizes/interposes — but the
-//! SAME compiled binary runs under both hosts.
+//! The S3 flow is `webhook-in -> transform -> pg-write -> conditional ->
+//! respond`; the S6 flow is `webhook-in -> delay -> http-call -> pg-write ->
+//! respond`. `delay` reads wall-clock time and parks (durable parked-wake);
+//! `http-call` makes a `wasi:http` outbound request. Both touch host capabilities
+//! the test host virtualizes/interposes — the SAME compiled binary runs under
+//! both hosts.
+//!
+//! ## Checkpoint / resume
+//! The engine re-walks from `entry` on every invocation; the DB `step_seq` (the
+//! node's index in the flow) is the checkpoint. An effectful node (`pg-write`,
+//! `http-call`) whose index is `<= step_seq` skips its effect on replay; `pg-write`
+//! is additionally idempotent by `(run_id, step)`, so a crash in the window
+//! between its commit and its checkpoint replays cleanly (exactly-once effect).
+//! Branch-aware durable resume (persisting the frontier) is 5.7; the linear
+//! fixture flows resume exactly on `step_seq`.
 
 wit_bindgen::generate!({
     world: "flowrunner",
@@ -29,6 +39,10 @@ wit_bindgen::generate!({
 });
 
 use std::time::Instant;
+
+use serde_json::Value;
+use wamn_flow::Flow;
+use wamn_runner::{Dispatch, NodeOutcome, Plan, RunStatus, Step};
 
 use wamn::postgres::client::{self};
 use wamn::postgres::types::{PgError, SqlValue};
@@ -41,15 +55,11 @@ struct Component;
 export!(Component);
 
 /// The S3 PoC flow. Two versions differ only in the transform op, so a
-/// hot-reloaded version is observable in the run's output/return value.
+/// hot-reloaded version is observable in the run's return value.
 const FLOW_ID: &str = "poc-receipt";
 /// The S6 delay+http flow.
 const FLOW_ID_S6: &str = "poc-s6";
 const MAX_VERSION: u32 = 2;
-
-/// pg-write is the third node (index 2) of the S3 PoC graph. It is the only
-/// step with a side effect and the point the kill-window busy-loop guards.
-const PG_WRITE_STEP: i32 = 2;
 
 // ---------------------------------------------------------------------------
 // SqlValue helpers + error naming
@@ -79,29 +89,16 @@ fn err_name(e: &PgError) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Flow IR (minimal ad-hoc schema; the canonical schema is wamn-34t / 5.1)
+// Flow definitions (canonical wamn-flow / 5.1 schema)
 // ---------------------------------------------------------------------------
 
-#[derive(serde::Deserialize)]
-struct Graph {
-    version: u32,
-    nodes: Vec<Node>,
-}
-
-#[derive(serde::Deserialize)]
-struct Node {
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(default)]
-    config: serde_json::Value,
-}
-
-/// The stored IR for an S3 version. v1 upper-cases the payload, v2 reverses it
-/// — distinct enough that the hot-reload gate can see which version ran.
-fn graph_json(version: u32) -> String {
+/// The stored S3 flow for a version. v1 upper-cases the payload, v2 reverses it —
+/// distinct enough that the hot-reload gate can see which version ran.
+fn flow_json(version: u32) -> String {
     let op = if version == 1 { "upper" } else { "reverse" };
     format!(
-        r#"{{"version":{version},
+        r#"{{"schema-version":"0.1","flow-id":"{FLOW_ID}","version":{version},
+            "trigger":{{"type":"webhook","sync":true}},"entry":"in",
             "nodes":[
               {{"id":"in","type":"webhook-in"}},
               {{"id":"t","type":"transform","config":{{"op":"{op}"}}}},
@@ -109,19 +106,20 @@ fn graph_json(version: u32) -> String {
               {{"id":"c","type":"conditional","config":{{"min-len":3}}}},
               {{"id":"out","type":"respond"}}
             ],
-            "edges":[["in","t"],["t","w"],["w","c"],["c","out"]]}}"#
+            "edges":[{{"from":"in","to":"t"}},{{"from":"t","to":"w"}},
+                     {{"from":"w","to":"c"}},{{"from":"c","to":"out"}}]}}"#
     )
 }
 
-/// The S6 IR: webhook-in -> delay(delay-secs) -> http-call(url) -> pg-write ->
-/// respond. `delay` parks until wall-clock reaches now()+delay-secs; `http-call`
-/// fetches `url`. JSON is hand-built so the config values embed verbatim.
-fn graph_json_s6(delay_secs: u64, http_url: &str) -> String {
+/// The S6 flow: `webhook-in -> delay(delay-secs) -> http-call(url) -> pg-write ->
+/// respond`. JSON is hand-built so the config values embed verbatim.
+fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
     // http_url is a controlled harness value (a loopback URL); escape the two
     // JSON-significant characters defensively anyway.
     let url = http_url.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
-        r#"{{"version":1,
+        r#"{{"schema-version":"0.1","flow-id":"{FLOW_ID_S6}","version":1,
+            "trigger":{{"type":"webhook"}},"entry":"in",
             "nodes":[
               {{"id":"in","type":"webhook-in"}},
               {{"id":"d","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
@@ -129,66 +127,19 @@ fn graph_json_s6(delay_secs: u64, http_url: &str) -> String {
               {{"id":"w","type":"pg-write"}},
               {{"id":"out","type":"respond"}}
             ],
-            "edges":[["in","d"],["d","h"],["h","w"],["w","out"]]}}"#
+            "edges":[{{"from":"in","to":"d"}},{{"from":"d","to":"h"}},
+                     {{"from":"h","to":"w"}},{{"from":"w","to":"out"}}]}}"#
     )
 }
 
-/// Fixed in-memory graph for the dispatch bench (no catalog round trip — the
-/// bench measures pure dispatch, so it must not touch the DB).
-fn bench_graph() -> Graph {
-    serde_json::from_str(&graph_json(MAX_VERSION)).expect("bench graph parses")
-}
-
-// ---------------------------------------------------------------------------
-// Standard-node dispatch (native, same-binary)
-// ---------------------------------------------------------------------------
-
-/// Per-walk mutable state threaded between node handlers.
-struct WalkState {
-    value: String,
-    branch: bool,
-    output: String,
-    /// HTTP status the http-call node observed (0 = not reached / egress
-    /// refused). S6 only.
-    http_status: u32,
-}
-impl WalkState {
-    fn new(input: &str) -> Self {
-        WalkState {
-            value: input.to_string(),
-            branch: false,
-            output: String::new(),
-            http_status: 0,
-        }
-    }
-}
-
-/// Dispatch one standard, side-effect-free node. This is the same-binary call
-/// the S3 dispatch gate times. Side effects (pg-write, delay, http-call) are
-/// handled by the executor, not here — every standard node stays a pure
-/// in-component transform of `WalkState`.
-fn std_node(kind: &str, config: &serde_json::Value, st: &mut WalkState) {
-    match kind {
-        // Input already sits in st.value (webhook payload as walk input).
-        "webhook-in" => {}
-        "transform" => {
-            let op = config.get("op").and_then(|v| v.as_str()).unwrap_or("upper");
-            st.value = match op {
-                "reverse" => st.value.chars().rev().collect(),
-                _ => st.value.to_uppercase(),
-            };
-        }
-        // Side effect handled by the executor; nothing to compute in-node.
-        "pg-write" => {}
-        "conditional" => {
-            let min = config.get("min-len").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-            st.branch = st.value.chars().count() >= min;
-        }
-        "respond" => {
-            st.output = format!("ok:{}:{}", st.branch, st.value);
-        }
-        _ => {}
-    }
+/// The node's index in the flow — the durable `step` key for checkpoints and
+/// `pg-write` idempotency (stable per flow version).
+fn node_index(flow: &Flow, node_id: &str) -> i32 {
+    flow.nodes
+        .iter()
+        .position(|n| n.id == node_id)
+        .map(|i| i as i32)
+        .unwrap_or(-1)
 }
 
 fn percentile_ns(sorted: &[u32], p: f64) -> u64 {
@@ -199,13 +150,19 @@ fn percentile_ns(sorted: &[u32], p: f64) -> u64 {
     sorted[idx] as u64
 }
 
+/// The current string value carried by a payload (`webhook-in` puts the trigger
+/// payload string here; `transform` rewrites it).
+fn value_str(payload: &Value) -> &str {
+    payload.as_str().unwrap_or("")
+}
+
 // ---------------------------------------------------------------------------
 // wamn:postgres helpers (all durable state flows through here). Table names
 // are UNQUALIFIED — the host injects the schema via search_path.
 // ---------------------------------------------------------------------------
 
-/// Read the active flow version + its IR from the catalog for `flow_id`.
-fn load_active_graph(flow_id: &str) -> Result<Graph, String> {
+/// Read the active flow version + its definition from the catalog for `flow_id`.
+fn load_active_flow(flow_id: &str) -> Result<Flow, String> {
     let rs = client::query(
         "SELECT graph_json::text FROM flows WHERE active AND flow_id = $1",
         &[text(flow_id)],
@@ -217,7 +174,7 @@ fn load_active_graph(flow_id: &str) -> Result<Graph, String> {
         Some(SqlValue::Json(s)) => s.clone(),
         other => return Err(format!("unexpected graph_json shape: {other:?}")),
     };
-    serde_json::from_str(&raw).map_err(|e| format!("graph parse: {e}"))
+    Flow::from_json(&raw).map_err(|e| format!("flow parse: {e}"))
 }
 
 /// Upsert the run row (fresh runs start at step_seq -1) and return the highest
@@ -273,48 +230,6 @@ fn mark_completed(run_id: &str) -> Result<(), String> {
     )
     .map_err(|e| err_name(&e))?;
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// S3 executor
-// ---------------------------------------------------------------------------
-
-/// Walk the S3 graph from the first uncompleted step. `kill_after_write` makes
-/// the runner busy-loop right after the pg-write commits and before its
-/// checkpoint — simulating a pod dying in the duplicate-risk window. Returns
-/// the version.
-fn execute(run_id: &str, payload: &str, kill_after_write: bool) -> Result<u32, String> {
-    let graph = load_active_graph(FLOW_ID)?;
-    let done = open_run(run_id, FLOW_ID, graph.version)?;
-    let mut st = WalkState::new(payload);
-
-    for (i, node) in graph.nodes.iter().enumerate() {
-        let step = i as i32;
-        // Re-derive in-memory state for skipped steps so the resumed run sees
-        // the same value the original run computed (transform/conditional are
-        // pure, so replaying their compute is free and side-effect-free).
-        std_node(&node.kind, &node.config, &mut st);
-        if step <= done {
-            continue; // already committed on an earlier attempt
-        }
-        if node.kind == "pg-write" {
-            pg_write(run_id, step, &st.value)?;
-            if kill_after_write && step == PG_WRITE_STEP {
-                // Side effect is durably committed; progress is NOT yet
-                // recorded. Spin until the host epoch-kills this store. On the
-                // next attempt, `done` is still < PG_WRITE_STEP, so pg-write
-                // replays and ON CONFLICT DO NOTHING absorbs the duplicate.
-                let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
-                loop {
-                    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
-                    core::hint::black_box(x);
-                }
-            }
-        }
-        checkpoint(run_id, step)?;
-    }
-    mark_completed(run_id)?;
-    Ok(graph.version)
 }
 
 // ---------------------------------------------------------------------------
@@ -389,83 +304,206 @@ fn http_get(url: &str) -> u32 {
         Ok(f) => f,
         Err(_) => return 0, // host refused before dispatch
     };
-    // Block until the response future is ready.
     let pollable = fut.subscribe();
     pollable.block();
     match fut.get() {
-        // Some(Ok(Ok(resp))): a response arrived. Some(Ok(Err(_))): the host
-        // returned an error-code (e.g. egress denied by the spy). None: not
-        // ready (shouldn't happen after block()).
         Some(Ok(Ok(resp))) => resp.status() as u32,
         _ => 0,
     }
 }
 
-/// Walk the S6 graph from the first uncompleted step. The delay node parks
-/// (returns `(1, _)`) until wall-clock reaches its deadline; every other node
-/// runs to completion. Returns (outcome, http-status): outcome 0 = completed,
-/// 1 = parked-waiting.
-fn execute_s6(run_id: &str, payload: &str) -> Result<(u32, u32), String> {
-    let graph = load_active_graph(FLOW_ID_S6)?;
-    let done = open_run(run_id, FLOW_ID_S6, graph.version)?;
-    let mut st = WalkState::new(payload);
+// ---------------------------------------------------------------------------
+// Executor: drive the wamn-runner engine over the loaded flow
+// ---------------------------------------------------------------------------
 
-    for (i, node) in graph.nodes.iter().enumerate() {
-        let step = i as i32;
-        match node.kind.as_str() {
-            "delay" => {
-                if step <= done {
-                    continue; // deadline already satisfied on a prior call
-                }
-                let delay_secs = node
-                    .config
-                    .get("delay-secs")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                let now = wall_now_secs();
-                let wake = match load_wake(run_id)? {
-                    Some(w) => w,
-                    None => {
-                        // First reach: record the deadline and park. step_seq is
-                        // NOT advanced, so a resume re-enters this node.
-                        let w = now.saturating_add(delay_secs);
-                        save_wake(run_id, w)?;
-                        w
+/// A dispatched node's result: emit an outcome to advance the walk, or park the
+/// whole run (the `delay` node before its deadline).
+enum NodeAction {
+    Emit(NodeOutcome),
+    Park,
+}
+
+/// The outcome of one `execute` call. `outcome`: 0 = completed, 1 = parked.
+struct RunOutcome {
+    version: u32,
+    outcome: u32,
+    http_status: u32,
+}
+
+/// Dispatch one node — the native standard-node library. Pure nodes recompute
+/// (free, idempotent); effectful nodes (`pg-write`, `http-call`) skip their
+/// effect on replay (`step <= done`). `pg-write` in `kill_after_write` mode spins
+/// after committing, before the caller checkpoints — the crash window the resume
+/// gate exercises.
+fn dispatch_node(
+    d: &Dispatch,
+    step: i32,
+    done: i32,
+    run_id: &str,
+    kill_after_write: bool,
+    http_status: &mut u32,
+) -> Result<NodeAction, String> {
+    match d.node_type.as_str() {
+        // The trigger payload already sits in the node's input.
+        "webhook-in" => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
+        "transform" => {
+            let op = d
+                .config
+                .get("op")
+                .and_then(|v| v.as_str())
+                .unwrap_or("upper");
+            let out = match op {
+                "reverse" => value_str(&d.payload).chars().rev().collect::<String>(),
+                _ => value_str(&d.payload).to_uppercase(),
+            };
+            Ok(NodeAction::Emit(NodeOutcome::ok(Value::String(out))))
+        }
+        // Records a branch decision but keeps the fixture's linear main path;
+        // true branching is exercised in the wamn-runner engine tests.
+        "conditional" | "respond" => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
+        "pg-write" => {
+            if step > done {
+                pg_write(run_id, step, value_str(&d.payload))?;
+                if kill_after_write {
+                    // Side effect committed; progress NOT yet checkpointed. Spin
+                    // until the host epoch-kills this store; on resume the write
+                    // replays and ON CONFLICT DO NOTHING absorbs the duplicate.
+                    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+                    loop {
+                        x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                        core::hint::black_box(x);
                     }
-                };
-                if now < wake {
-                    return Ok((1, st.http_status)); // parked
                 }
-                // Deadline reached: the delay is complete.
-                checkpoint(run_id, step)?;
             }
-            "http-call" => {
-                if step <= done {
-                    continue;
-                }
-                let url = node.config.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                st.http_status = http_get(url);
-                checkpoint(run_id, step)?;
+            Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
+        }
+        "delay" => {
+            if step <= done {
+                return Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())));
             }
-            "pg-write" => {
-                std_node(&node.kind, &node.config, &mut st);
-                if step <= done {
-                    continue;
+            let delay_secs = d
+                .config
+                .get("delay-secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let now = wall_now_secs();
+            // First reach records the deadline and parks WITHOUT checkpointing, so
+            // a resume re-enters this node; later reaches compare against it.
+            let wake = match load_wake(run_id)? {
+                Some(w) => w,
+                None => {
+                    let w = now.saturating_add(delay_secs);
+                    save_wake(run_id, w)?;
+                    w
                 }
-                pg_write(run_id, step, &st.value)?;
-                checkpoint(run_id, step)?;
+            };
+            if now < wake {
+                Ok(NodeAction::Park)
+            } else {
+                Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
             }
-            _ => {
-                std_node(&node.kind, &node.config, &mut st);
-                if step <= done {
-                    continue;
+        }
+        "http-call" => {
+            if step > done {
+                let url = d.config.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                *http_status = http_get(url);
+            }
+            Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
+        }
+        other => Err(format!("unknown node type: {other}")),
+    }
+}
+
+/// Walk the active flow from the first uncompleted step via the engine.
+/// `kill_after_write` makes the runner busy-loop right after `pg-write` commits
+/// and before its checkpoint (the pod-death window). Returns the version, the
+/// outcome (0 = completed, 1 = parked), and the last observed HTTP status.
+fn execute(
+    run_id: &str,
+    payload: &str,
+    kill_after_write: bool,
+    flow_id: &str,
+) -> Result<RunOutcome, String> {
+    let flow = load_active_flow(flow_id)?;
+    let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
+    let version = plan.version();
+    let done = open_run(run_id, flow_id, version)?;
+    let mut st = plan.start(run_id, Value::String(payload.to_string()));
+    let mut http_status: u32 = 0;
+
+    loop {
+        // now_ms = 0: the fixture flows carry no retry backoff, so the engine
+        // never returns Wait; `delay` parks via NodeAction::Park instead.
+        match plan.next(&mut st, 0) {
+            Step::Done(RunStatus::Completed) => {
+                mark_completed(run_id)?;
+                return Ok(RunOutcome {
+                    version,
+                    outcome: 0,
+                    http_status,
+                });
+            }
+            Step::Done(status) => return Err(format!("run ended in {status:?}")),
+            Step::Wait { node, .. } => return Err(format!("unexpected retry wait at {node}")),
+            Step::Dispatch(d) => {
+                let step = node_index(&flow, &d.node);
+                match dispatch_node(&d, step, done, run_id, kill_after_write, &mut http_status)? {
+                    NodeAction::Emit(outcome) => {
+                        // Record newly-completed progress after the effect commits.
+                        if step > done {
+                            checkpoint(run_id, step)?;
+                        }
+                        plan.apply(&mut st, &d, outcome, 0);
+                    }
+                    NodeAction::Park => {
+                        return Ok(RunOutcome {
+                            version,
+                            outcome: 1,
+                            http_status,
+                        });
+                    }
                 }
-                checkpoint(run_id, step)?;
             }
         }
     }
-    mark_completed(run_id)?;
-    Ok((0, st.http_status))
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch bench: same-binary node dispatch overhead, no DB
+// ---------------------------------------------------------------------------
+
+/// Pure node dispatch for the bench — the standard-node compute with no DB
+/// (`pg-write` is a stubbed passthrough). This is the same-binary call the
+/// dispatch gate times.
+fn bench_node(d: &Dispatch) -> NodeOutcome {
+    match d.node_type.as_str() {
+        "transform" => {
+            let op = d
+                .config
+                .get("op")
+                .and_then(|v| v.as_str())
+                .unwrap_or("upper");
+            let out = match op {
+                "reverse" => value_str(&d.payload).chars().rev().collect::<String>(),
+                _ => value_str(&d.payload).to_uppercase(),
+            };
+            NodeOutcome::ok(Value::String(out))
+        }
+        _ => NodeOutcome::ok(d.payload.clone()),
+    }
+}
+
+/// Drive one bench walk through the engine with the pure dispatcher, invoking
+/// `on_step` for each node dispatch so the caller can time it.
+fn bench_walk(
+    plan: &Plan,
+    mut on_step: impl FnMut(&Dispatch, NodeOutcome, &mut wamn_runner::RunState),
+) {
+    let mut st = plan.start("bench", Value::String("dispatch-probe-payload".into()));
+    while let Step::Dispatch(d) = plan.next(&mut st, 0) {
+        let outcome = bench_node(&d);
+        on_step(&d, outcome, &mut st);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -474,52 +512,38 @@ fn execute_s6(run_id: &str, payload: &str) -> Result<(u32, u32), String> {
 
 impl Guest for Component {
     fn dispatch_bench(iterations: u32) -> (u64, u64, u64, u64, u64) {
-        let graph = bench_graph();
-        let nodes = &graph.nodes;
-        let per_walk = nodes.len();
+        let flow = Flow::from_json(&flow_json(MAX_VERSION)).expect("bench flow parses");
+        let plan = Plan::compile(&flow).expect("bench flow compiles");
+        let per_walk = flow.nodes.len();
         let iters = iterations.max(1) as usize;
 
         // Warm up (page in, settle the branch predictor) before measuring.
         for _ in 0..1000 {
-            let mut st = WalkState::new("warmup-payload");
-            for n in nodes {
-                std_node(&n.kind, &n.config, &mut st);
-            }
-            core::hint::black_box(&st.output);
+            bench_walk(&plan, |d, o, st| plan.apply(st, d, o, 0));
         }
 
         // Un-instrumented pass: one clock read for the whole batch, so the mean
         // is the amortized per-dispatch cost with no per-sample clock overhead.
         let t_bare = Instant::now();
-        let mut sink: u64 = 0;
         for _ in 0..iters {
-            let mut st = WalkState::new("dispatch-probe-payload");
-            for n in nodes {
-                std_node(&n.kind, &n.config, &mut st);
-                if n.kind == "pg-write" {
-                    sink += 1; // stubbed side effect
-                }
-            }
-            core::hint::black_box(&st.output);
+            bench_walk(&plan, |d, o, st| plan.apply(st, d, o, 0));
         }
         let bare_ns = t_bare.elapsed().as_nanos() as u64;
-        core::hint::black_box(sink);
         let total = (iters * per_walk) as u64;
         let mean = bare_ns / total.max(1);
 
-        // Instrumented pass: time each per-node dispatch. Each sample includes
-        // one Instant::elapsed() monotonic-clock read, so it OVER-reports the
-        // true dispatch cost — the p99 is a conservative upper bound.
+        // Instrumented pass: time each per-node dispatch (node compute + the
+        // engine's route/advance). Each sample includes one monotonic-clock read,
+        // so it OVER-reports the true dispatch cost — the p99 is a conservative
+        // upper bound.
         let mut samples: Vec<u32> = Vec::with_capacity(iters * per_walk);
         for _ in 0..iters {
-            let mut st = WalkState::new("dispatch-probe-payload");
-            for n in nodes {
+            bench_walk(&plan, |d, o, st| {
                 let t0 = Instant::now();
-                std_node(&n.kind, &n.config, &mut st);
+                plan.apply(st, d, o, 0);
                 let dt = t0.elapsed().as_nanos();
                 samples.push(dt.min(u32::MAX as u128) as u32);
-            }
-            core::hint::black_box(&st.output);
+            });
         }
         samples.sort_unstable();
         let count = samples.len() as u64;
@@ -536,7 +560,7 @@ impl Guest for Component {
              VALUES (current_setting('app.tenant', true), $1, 1, true, $2) \
              ON CONFLICT (tenant_id, flow_id, version) \
              DO UPDATE SET graph_json = excluded.graph_json",
-            &[text(FLOW_ID), text(graph_json(1))],
+            &[text(FLOW_ID), text(flow_json(1))],
         )
         .map_err(|e| err_name(&e))?;
         client::execute(
@@ -544,7 +568,7 @@ impl Guest for Component {
              VALUES (current_setting('app.tenant', true), $1, 2, false, $2) \
              ON CONFLICT (tenant_id, flow_id, version) \
              DO UPDATE SET graph_json = excluded.graph_json",
-            &[text(FLOW_ID), text(graph_json(2))],
+            &[text(FLOW_ID), text(flow_json(2))],
         )
         .map_err(|e| err_name(&e))?;
         Ok(MAX_VERSION)
@@ -574,16 +598,19 @@ impl Guest for Component {
     }
 
     fn run(run_id: String, payload: String) -> Result<u32, String> {
-        execute(&run_id, &payload, false)
+        execute(&run_id, &payload, false, FLOW_ID).map(|r| r.version)
     }
 
     fn run_until_kill(run_id: String, payload: String) -> Result<u32, String> {
-        execute(&run_id, &payload, true)
+        execute(&run_id, &payload, true, FLOW_ID).map(|r| r.version)
     }
 
     fn sink_count(run_id: String) -> Result<u64, String> {
-        let rs = client::query("SELECT count(*) FROM sink WHERE run_id = $1", &[text(&run_id)])
-            .map_err(|e| err_name(&e))?;
+        let rs = client::query(
+            "SELECT count(*) FROM sink WHERE run_id = $1",
+            &[text(&run_id)],
+        )
+        .map_err(|e| err_name(&e))?;
         match rs.rows.first().and_then(|r| r.first()) {
             Some(SqlValue::Int64(n)) => Ok(*n as u64),
             Some(SqlValue::Int32(n)) => Ok(*n as u64),
@@ -605,13 +632,13 @@ impl Guest for Component {
              VALUES (current_setting('app.tenant', true), $1, 1, true, $2) \
              ON CONFLICT (tenant_id, flow_id, version) \
              DO UPDATE SET graph_json = excluded.graph_json, active = true",
-            &[text(FLOW_ID_S6), text(graph_json_s6(delay_secs, &http_url))],
+            &[text(FLOW_ID_S6), text(flow_json_s6(delay_secs, &http_url))],
         )
         .map_err(|e| err_name(&e))?;
         Ok(1)
     }
 
     fn run_s6(run_id: String, payload: String) -> Result<(u32, u32), String> {
-        execute_s6(&run_id, &payload)
+        execute(&run_id, &payload, false, FLOW_ID_S6).map(|r| (r.outcome, r.http_status))
     }
 }
