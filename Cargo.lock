@@ -4009,6 +4009,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-ddl"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wamn-catalog",
+]
+
+[[package]]
 name = "wamn-flow"
 version = "0.1.0"
 dependencies = [

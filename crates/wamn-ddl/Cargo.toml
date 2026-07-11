@@ -1,0 +1,15 @@
+[package]
+name = "wamn-ddl"
+description = "wamn DDL compiler (3.2): catalog / catalog-diff -> migration plan -> Postgres DDL. Additive by default; destructive changes gated behind explicit confirmation + a backup checkpoint."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The compiler consumes the canonical catalog model (3.1) and its diff.
+wamn-catalog = { path = "../wamn-catalog" }
+serde_json = "1"
+
+# No DB dependency: this crate EMITS SQL, it does not execute it (the live apply
+# path is the migration engine 2.5 / hosting). The apply-verification test shells
+# out to `psql` against a throwaway Postgres, gated on WAMN_DDL_PG_URL.

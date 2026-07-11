@@ -278,6 +278,22 @@ cargo clippy -p wamn-catalog --all-targets && cargo fmt -p wamn-catalog --check
 # regenerate the published JSON Schema contract after changing the types:
 cargo run -p wamn-catalog --example print-schema > docs/catalog-model.schema.json
 
+# [3.2] DDL compiler crate (crates/wamn-ddl) — consumes wamn-catalog: whole
+# Catalog -> CREATE, or catalog diff() -> ordered MigrationPlan of ALTERs. Emits
+# the tenant floor (id uuid PK + tenant_id + FORCE RLS + app.tenant policy;
+# tenant-scoped uniqueness/indexes). Each op classified additive/destructive;
+# plan.sql(Confirmation) refuses destructive DDL unless ConfirmedWithBackup.
+# EMITS+CLASSIFIES only (live apply=2.5, backup=2.3/10.3, lifecycle=3.4,
+# per-role RLS=3.5). docs/ddl-compiler.md. No JSON-schema to regen.
+cargo test -p wamn-ddl
+cargo clippy -p wamn-ddl --all-targets && cargo fmt -p wamn-ddl --check
+# optional live-apply gate (emitted SQL against a throwaway PG; superuser URL —
+# provisions wamn_app + an ephemeral schema; skips cleanly when unset):
+docker run -d --rm --name wamn-ddl-pg -p 5451:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_DDL_PG_URL=postgres://postgres:postgres@127.0.0.1:5451/wamn cargo test -p wamn-ddl
+docker stop wamn-ddl-pg
+
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
 ```
 
