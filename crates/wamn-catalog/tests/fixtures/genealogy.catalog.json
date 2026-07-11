@@ -1,0 +1,42 @@
+{
+  "schema-version": "0.1",
+  "catalog-id": "genealogy-demo",
+  "version": 1,
+  "name": "Lot genealogy & asset tree (D14 hierarchical/closure)",
+  "entities": [
+    {
+      "id": "lots",
+      "name": "lots",
+      "fields": [
+        { "id": "lot_code", "name": "lot_code", "type": { "kind": "text", "max-len": 64 } },
+        { "id": "parent_lot_id", "name": "parent_lot_id", "type": { "kind": "reference", "entity": "lots" }, "nullable": true },
+        { "id": "produced_at", "name": "produced_at", "type": { "kind": "timestamptz" } }
+      ],
+      "constraints": [
+        { "kind": "unique", "name": "lots_code_uniq", "fields": ["lot_code"] }
+      ]
+    },
+    {
+      "id": "assets",
+      "name": "assets",
+      "fields": [
+        { "id": "tag", "name": "tag", "type": { "kind": "text" } },
+        { "id": "parent_asset_id", "name": "parent_asset_id", "type": { "kind": "reference", "entity": "assets" }, "nullable": true }
+      ]
+    },
+    {
+      "id": "lot_consumption",
+      "name": "lot_consumption",
+      "description": "Join entity: which lots were consumed to produce which lots (genealogy edges).",
+      "fields": [
+        { "id": "consumed_lot_id", "name": "consumed_lot_id", "type": { "kind": "reference", "entity": "lots" } },
+        { "id": "produced_lot_id", "name": "produced_lot_id", "type": { "kind": "reference", "entity": "lots" } }
+      ]
+    }
+  ],
+  "relations": [
+    { "id": "lot_tree", "name": "parent", "cardinality": "hierarchical", "from": "lots", "to": "lots", "from-field": "parent_lot_id" },
+    { "id": "asset_tree", "name": "parent", "cardinality": "hierarchical", "from": "assets", "to": "assets", "from-field": "parent_asset_id" },
+    { "id": "lot_genealogy", "name": "consumption", "cardinality": "many-to-many", "from": "lots", "to": "lots", "through": "lot_consumption" }
+  ]
+}

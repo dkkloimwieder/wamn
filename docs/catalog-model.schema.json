@@ -1,0 +1,523 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "Cardinality": {
+      "description": "A relation's cardinality. `hierarchical` is a self-referential tree (the closure/genealogy / asset-tree shape D14 requires industrial modules to be able to express).",
+      "enum": [
+        "one-to-many",
+        "many-to-many",
+        "hierarchical"
+      ],
+      "type": "string"
+    },
+    "Constraint": {
+      "description": "A table-level constraint. Kept to neutral primitives — composite uniqueness (the POC's `(receipt-no, supplier-id)`) and a boolean check. Opinionated domain constraints belong in modules (D14).",
+      "oneOf": [
+        {
+          "description": "Composite (or single-column) uniqueness over the named fields.",
+          "properties": {
+            "fields": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "unique"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "fields",
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A boolean check expression, interpreted by the DDL compiler (3.2).",
+          "properties": {
+            "expression": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "check"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "expression",
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Entity": {
+      "additionalProperties": false,
+      "description": "A table in the model.\n\n**System entities** (`is_system`) are provided by the platform (e.g. `users`): their *system* fields are structure-locked — the designer may not drop or retype them — but the entity stays **extensible**, so a project may add its own custom (non-system) fields (the POC's `users.cert_level`). A system field on a non-system entity is contradictory and rejected.",
+      "properties": {
+        "constraints": {
+          "description": "Table-level constraints (composite uniqueness, checks).",
+          "items": {
+            "$ref": "#/definitions/Constraint"
+          },
+          "type": "array"
+        },
+        "description": {
+          "description": "Human-readable description (editor).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fields": {
+          "description": "The fields (columns) of the entity.",
+          "items": {
+            "$ref": "#/definitions/Field"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "Unique within the catalog.",
+          "type": "string"
+        },
+        "indexes": {
+          "description": "Secondary indexes on the entity's fields.",
+          "items": {
+            "$ref": "#/definitions/Index"
+          },
+          "type": "array"
+        },
+        "is-system": {
+          "description": "`true` for a platform-provided entity whose system fields are structure-locked but which remains extensible with custom fields.",
+          "type": "boolean"
+        },
+        "label": {
+          "description": "Human-readable label (editor).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Logical name (the DDL compiler maps it to a physical table name).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields",
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Field": {
+      "additionalProperties": false,
+      "description": "A column in an entity.",
+      "properties": {
+        "default": {
+          "description": "Optional default — an opaque JSON literal or SQL expression string, interpreted by the DDL compiler (3.2), not by this crate."
+        },
+        "description": {
+          "description": "Human-readable description (editor).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Unique within the entity.",
+          "type": "string"
+        },
+        "is-system": {
+          "description": "`true` for a structure-locked field of a system entity (cannot be dropped or retyped). Requires the owning entity to be `is_system`.",
+          "type": "boolean"
+        },
+        "label": {
+          "description": "Human-readable label (editor).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Logical name (the DDL compiler maps it to a physical column name).",
+          "type": "string"
+        },
+        "nullable": {
+          "description": "`true` if the column is nullable. Defaults to `false` (NOT NULL) — a schema designer states nullability explicitly.",
+          "type": "boolean"
+        },
+        "sensitive": {
+          "description": "`true` if the field holds sensitive data (e.g. supplier pricing). A neutral flag the field-level mask (4.3) keys on; this crate does not enforce masking.",
+          "type": "boolean"
+        },
+        "type": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/FieldType"
+            }
+          ],
+          "description": "The field's type. See [`FieldType`]."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "FieldType": {
+      "description": "The field type system (3.1 owns this; 3.3 is the palette UI over it).\n\nIndustrial-friendly by construction: timestamps carry a time zone, quantities are **exact decimals** with an optional unit — there is deliberately **no float type**, because floats are disallowed for material quantities and formulations (a hard POC requirement). References are foreign keys to another entity's managed primary key.",
+      "oneOf": [
+        {
+          "description": "Variable-length text, optionally length-capped.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "text"
+              ],
+              "type": "string"
+            },
+            "max_len": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "32-bit signed integer.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "int"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "64-bit signed integer.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "big-int"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Boolean.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "bool"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "UUID.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "uuid"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Arbitrary JSON document (`jsonb`).",
+          "properties": {
+            "kind": {
+              "enum": [
+                "json"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Calendar date (no time).",
+          "properties": {
+            "kind": {
+              "enum": [
+                "date"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Instant with time zone (`timestamptz`) — the only timestamp type.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "timestamptz"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Enumeration over a fixed set of string variants.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "enum"
+              ],
+              "type": "string"
+            },
+            "variants": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "variants"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "**Exact-decimal** numeric with fixed `precision`/`scale` and an optional unit (e.g. `kg`, `pct`). Floats are intentionally not representable.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "numeric"
+              ],
+              "type": "string"
+            },
+            "precision": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "scale": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "precision",
+            "scale"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Foreign key to another entity's managed primary key.",
+          "properties": {
+            "entity": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "reference"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "entity",
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Index": {
+      "additionalProperties": false,
+      "description": "A secondary index on one or more of an entity's fields.",
+      "properties": {
+        "fields": {
+          "description": "The fields covered, in order (by [`Field::id`]).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Unique within the entity.",
+          "type": "string"
+        },
+        "unique": {
+          "description": "`true` for a unique index.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "fields",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Relation": {
+      "additionalProperties": false,
+      "description": "A relation between entities — navigational metadata over the physical foreign keys (a `Reference` [`Field`] is the FK column itself), used by the API generator (4.1) for nested expansion and by the ERD (3.3).",
+      "properties": {
+        "cardinality": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Cardinality"
+            }
+          ],
+          "description": "The relation's cardinality."
+        },
+        "description": {
+          "description": "Human-readable description (editor).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from": {
+          "description": "The owning / child side. For `one-to-many` this is the entity holding the foreign key; for `hierarchical` it is the self-referential entity (so `from == to`).",
+          "type": "string"
+        },
+        "from-field": {
+          "description": "The foreign-key field on `from` backing the relation (a `Reference` field). Optional — the DDL compiler may manage it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Unique within the catalog.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Logical name (editor / API accessor name).",
+          "type": "string"
+        },
+        "through": {
+          "description": "The join entity for a `many-to-many` relation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to": {
+          "description": "The referenced / parent side.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cardinality",
+        "from",
+        "id",
+        "name",
+        "to"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "One version of a catalog — the unit stored, versioned, and promoted between environments (3.4).\n\nEvery entity is assumed to carry a platform-managed surrogate primary key (an `id`, injected by the DDL compiler 3.2); references therefore target an *entity*, not a named column, and natural keys are expressed as [`Constraint::Unique`].",
+  "properties": {
+    "catalog-id": {
+      "description": "Stable identifier shared across every version of this catalog (typically per project).",
+      "type": "string"
+    },
+    "entities": {
+      "description": "The entities (tables) of the model.",
+      "items": {
+        "$ref": "#/definitions/Entity"
+      },
+      "type": "array"
+    },
+    "name": {
+      "description": "Human-readable label (editor).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "relations": {
+      "description": "Relations between entities (navigational / API-expansion metadata over the physical foreign keys, plus many-to-many and hierarchical trees).",
+      "items": {
+        "$ref": "#/definitions/Relation"
+      },
+      "type": "array"
+    },
+    "schema-version": {
+      "description": "The catalog-model format version (e.g. `\"0.1\"`). See [`SCHEMA_VERSION`].",
+      "type": "string"
+    },
+    "version": {
+      "description": "Monotonic version of this catalog (>= 1).",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "catalog-id",
+    "entities",
+    "schema-version",
+    "version"
+  ],
+  "title": "Catalog",
+  "type": "object"
+}

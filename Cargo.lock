@@ -3999,6 +3999,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-catalog"
+version = "0.1.0"
+dependencies = [
+ "boon",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "wamn-flow"
 version = "0.1.0"
 dependencies = [

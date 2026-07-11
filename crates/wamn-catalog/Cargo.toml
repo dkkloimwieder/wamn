@@ -1,0 +1,20 @@
+[package]
+name = "wamn-catalog"
+description = "Canonical wamn metadata catalog schema (3.1): entity/field/relation/index/constraint model, validation, import/export, version diff. Neutral primitives; opinionated models live in modules (D14)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The published JSON Schema contract (docs/catalog-model.schema.json) is
+# GENERATED from these types (single source of truth); a drift test keeps them
+# in lockstep. Same setup as crates/wamn-flow (5.1).
+schemars = "0.8"
+
+[dev-dependencies]
+# tests validate each fixture catalog against the generated JSON Schema, tying
+# the language-neutral contract to the Rust types. boon is a pure-Rust validator
+# with no network/reqwest dependency (same choice as wamn-flow).
+boon = "0.6"

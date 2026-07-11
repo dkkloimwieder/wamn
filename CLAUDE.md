@@ -197,6 +197,19 @@ cargo clippy -p wamn-flow --all-targets && cargo fmt -p wamn-flow --check
 # regenerate the published JSON Schema contract after changing the types:
 cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
 
+# [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
+# JSON: entity/field/relation/index/constraint types + is_system, validation,
+# import/export, version diff. Field type system incl. exact-decimal
+# numeric(precision,scale)+unit (NO float), enum, reference; system entities are
+# structure-locked but extensible. Pure Rust, no host/DB. Tests: POC-model +
+# genealogy fixtures round-trip/validate/JSON-Schema-conform (boon)/drift-guard/
+# diff. docs/catalog-model.md + docs/catalog-model.schema.json; catalog table
+# DDL deploy/catalog-schema.sql (standalone; not wired into postgres-init.sql).
+cargo test -p wamn-catalog
+cargo clippy -p wamn-catalog --all-targets && cargo fmt -p wamn-catalog --check
+# regenerate the published JSON Schema contract after changing the types:
+cargo run -p wamn-catalog --example print-schema > docs/catalog-model.schema.json
+
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
 ```
 
