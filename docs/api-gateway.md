@@ -127,6 +127,91 @@ The in-cluster gate of record is `deploy/apibench-job.yaml` (co-located with
 Postgres, no CPU limit — the S2 CFS lesson; `WAMN_PG_ADMIN_URL` is the superuser
 used only to provision the ephemeral schema).
 
+## Serving (4.1b)
+
+`apibench` drives the component *in-process* (via `ProxyPre`, the exact mechanism
+wash-runtime uses) to prove the SQL/CRUD/RLS semantics. 4.1b makes it actually
+**serve over the network**: the gateway is deployed as a real `wasi:http`
+`WorkloadDeployment`, one instance per project.
+
+**No new serving code is needed.** wash-runtime ships an inbound HTTP server
+(`--http-addr`, on port 80 in `deploy/values-wamn.yaml`); its `DynamicRouter`
+routes a request whose `Host` header matches a workload's
+`hostInterfaces[].config.host` to that component's `wasi:http/incoming-handler`
+export. So the gateway deploys exactly like `deploy/hello-workload.yaml` — a
+`Service` + a `WorkloadDeployment` — with the DB claims in
+`components[].localResources.config`:
+
+- `wamn.tenant` → the `app.tenant` claim the plugin injects (RLS isolation);
+- `wamn.project` → the per-project pool (`default` → `WAMN_PG_URL`);
+- `wamn.schema` → the `search_path` the gateway's unqualified queries resolve in.
+
+These are host-injected at `on_workload_item_bind` and non-spoofable by the guest.
+
+### Component packaging (local OCI registry)
+
+The operator pulls `components[].image` through wash-runtime's own OCI client
+(not containerd), so a `kind load`ed image is invisible to it — the component
+must live in a registry the host pods can reach. `deploy/registry.yaml` is a
+plain-HTTP registry at `registry.wamn-system.svc.cluster.local:5000`; the host
+runs with `--allow-insecure-registries` (a wamn-host flag wired through
+`deploy/values-wamn.yaml` `hostGroups[].extraArgs`) so it can pull over HTTP. The
+registry addresses artifacts by repo path (hostname-independent), so you `wash
+push` via a port-forwarded `localhost` and the host pulls via the Service DNS
+name at the same repo path.
+
+### Catalog snapshot (`publish-catalog`)
+
+The gateway loads its catalog from `SELECT document::text FROM wamn_catalog LIMIT
+1` (RLS-scoped, `search_path`-resolved). In production the schema-designer→gateway
+seam writes that row on catalog apply/promote (3.4); the `publish-catalog`
+subcommand provides the mechanism: it reads a catalog JSON, `Catalog::to_json`s
+the canonical document, and UPSERTs it under the project's tenant via a superuser
+connection (bypassing the snapshot table's RLS + the runtime role's SELECT-only
+grant). `--provision` additionally stands up the schema + the 3.2 tenant floor
+when absent, and `--seed` loads the bundled two-tenant demo rows — everything
+**additive** (`CREATE SCHEMA IF NOT EXISTS`, a dedicated `api_proof` schema, no
+drops), so it is safe on a shared, durable Postgres.
+
+### Proof of record (`apiproof`)
+
+`apiproof` drives the **deployed** gateway over real HTTP (same assertions as
+`apibench`, over the Service — routed on the `Host` header), from the same
+`wamn-host` image (no external client image to pull), mirroring the S4
+`nodebench --hop-url` cross-pod gate. `apibench` (in-process) stays the
+exhaustive value-semantics regression; `apiproof` proves the network serving path
+end to end.
+
+```sh
+# In-cluster proof (needs the kind 'wamn' cluster + operator + postgres):
+docker build -t wamn-host:dev . && kind load docker-image wamn-host:dev --name wamn
+kind load docker-image registry:2 --name wamn
+kubectl -n wamn-system apply -f deploy/registry.yaml
+kubectl -n wamn-system rollout status deploy/registry --timeout=60s
+kubectl -n wamn-system port-forward svc/registry 5000:5000 &
+wash push localhost:5000/wamn/api-gateway:dev \
+  components/target/wasm32-wasip2/release/api_gateway.wasm --insecure
+# The host group gains --allow-insecure-registries + WAMN_PG_URL:
+helm upgrade --install -n wamn-system wamn \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
+  -f deploy/values-wamn.yaml
+kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=120s
+# Provision the project schema/floor + seed + publish the snapshot:
+kubectl -n wamn-system create configmap proof-catalog \
+  --from-file=proof-catalog.json=deploy/proof-catalog.json
+kubectl -n wamn-system apply -f deploy/publish-catalog-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/publish-catalog --timeout=120s
+# Deploy the gateway workload, then prove it serves:
+kubectl -n wamn-system apply -f deploy/api-gateway-workload.yaml
+kubectl -n wamn-system apply -f deploy/apiproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
+kubectl -n wamn-system logs job/apiproof
+```
+
+Scope: v1 reads the snapshot once (4.4 adds the hot-reload doorbell); it is
+tenant-scoped, not user-authenticated (4.2); it points at the shared Postgres as
+a single default project (per-project provisioning is 2.3/10.x).
+
 ## References
 
 - Plan: `docs/platform-plan.md` §Epic 4 (4.1), §POC (POC-F1).

@@ -1,0 +1,24 @@
+{
+  "schema-version": "0.1",
+  "catalog-id": "apibench",
+  "version": 1,
+  "entities": [
+    { "id": "suppliers", "name": "suppliers", "fields": [
+      { "id": "name", "name": "name", "type": { "kind": "text" } },
+      { "id": "standard_cost", "name": "standard_cost", "type": { "kind": "numeric", "precision": 12, "scale": 2 }, "nullable": true }
+    ] },
+    { "id": "receipts", "name": "receipts", "fields": [
+      { "id": "receipt_no", "name": "receipt_no", "type": { "kind": "text", "max-len": 64 } },
+      { "id": "supplier_id", "name": "supplier_id", "type": { "kind": "reference", "entity": "suppliers" } },
+      { "id": "received_at", "name": "received_at", "type": { "kind": "timestamptz" } }
+    ] },
+    { "id": "receipt_lines", "name": "receipt_lines", "fields": [
+      { "id": "receipt_id", "name": "receipt_id", "type": { "kind": "reference", "entity": "receipts" } },
+      { "id": "quantity", "name": "quantity", "type": { "kind": "numeric", "precision": 12, "scale": 3 } }
+    ] }
+  ],
+  "relations": [
+    { "id": "receipt_supplier", "name": "supplier", "cardinality": "one-to-many", "from": "receipts", "to": "suppliers", "from-field": "supplier_id" },
+    { "id": "receipt_lines_rel", "name": "lines", "cardinality": "one-to-many", "from": "receipt_lines", "to": "receipts", "from-field": "receipt_id" }
+  ]
+}

@@ -4,6 +4,8 @@
 //! `bench` — S1 measurements (instantiation / density / cap-kill).
 
 mod apibench;
+mod apifixture;
+mod apiproof;
 mod bench;
 mod egressbench;
 mod engine;
@@ -13,6 +15,7 @@ mod logbench;
 mod nodebench;
 mod pgbench;
 mod plugins;
+mod publish_catalog;
 mod testhostbench;
 
 use std::str::FromStr as _;
@@ -52,6 +55,10 @@ enum Command {
     Egressbench(egressbench::EgressBenchArgs),
     /// Run the 4.1 generated-REST-API-gateway gates (CRUD / expand / RLS / injection)
     Apibench(apibench::ApiBenchArgs),
+    /// Write a project's catalog snapshot into the wamn_catalog table (4.1b)
+    PublishCatalog(publish_catalog::PublishCatalogArgs),
+    /// Run the 4.1b in-cluster proof against a deployed api-gateway over HTTP
+    Apiproof(apiproof::ApiProofArgs),
 }
 
 #[tokio::main]
@@ -74,6 +81,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Testhostbench(args) => testhostbench::run(args).await,
         Command::Egressbench(args) => egressbench::run(args).await,
         Command::Apibench(args) => apibench::run(args).await,
+        Command::PublishCatalog(args) => publish_catalog::run(args).await,
+        Command::Apiproof(args) => apiproof::run(args).await,
     };
 
     shutdown_observability();

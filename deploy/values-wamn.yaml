@@ -25,6 +25,16 @@ runtime:
       http:
         enabled: true
         port: 80
+      # [4.1b] The default project's Postgres URL: the wamn:postgres plugin's
+      # from_env() default pool connects as this non-superuser role, so a
+      # per-project api-gateway workload (project=default) can serve its catalog.
+      env:
+        - name: WAMN_PG_URL
+          value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+      # [4.1b] Allow plain-HTTP OCI pulls so the host can pull locally-built
+      # component images from the in-cluster registry (deploy/registry.yaml).
+      extraArgs:
+        - "--allow-insecure-registries"
       resources:
         requests:
           memory: "256Mi"

@@ -398,6 +398,53 @@ docker stop wamn-api-pg
 kubectl -n wamn-system apply -f deploy/apibench-job.yaml
 kubectl -n wamn-system logs -f job/apibench
 
+# [4.1b] api-gateway SERVING deployment + catalog snapshot (crates/wamn-host:
+# publish-catalog + apiproof subcommands + apifixture shared demo fixture;
+# deploy/registry.yaml + api-gateway-workload.yaml + publish-catalog-job.yaml +
+# apiproof-job.yaml + proof-catalog.json). 4.1 built the component + the
+# in-process apibench gate; 4.1b runs it as a real wasi:http WorkloadDeployment.
+# wash-runtime ships the inbound HTTP server (--http-addr, port 80); DynamicRouter
+# routes by Host header to the component's incoming-handler — NO serve-api
+# subcommand; the gateway deploys like deploy/hello-workload.yaml. wamn:postgres
+# is a host PLUGIN, so it MUST be declared in the workload hostInterfaces
+# (the plugin allowlist; wasi:http is a built-in and bypasses it) or the
+# component fails to instantiate. Component images are OCI-pulled by wash-runtime's
+# own client (NOT kind-loaded): a local plain-HTTP registry (deploy/registry.yaml)
+# holds api_gateway.wasm; the host runs with --allow-insecure-registries +
+# WAMN_PG_URL (deploy/values-wamn.yaml hostGroups[].extraArgs/env). publish-catalog
+# writes the wamn_catalog snapshot (superuser, RLS-scoped, $n::text::jsonb) +
+# optional --provision (3.2 floor) + --seed (demo rows) — additive only (CREATE
+# SCHEMA IF NOT EXISTS, dedicated api_proof schema, never drops). Claims
+# wamn.tenant/project/schema via components[].localResources.config (host-injected,
+# non-spoofable). apiproof drives the DEPLOYED gateway over real HTTP (apibench's
+# assertions, over the Service). apifixture is the shared demo catalog/ids/seed
+# (= proof-catalog.json, drift-guarded). docs/api-gateway.md § serving.
+cargo test -p wamn-host   # apifixture drift-guard + publish-catalog ident test
+cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
+# In-cluster proof of record (needs the kind 'wamn' cluster + operator + postgres):
+docker build -t wamn-host:dev . && kind load docker-image wamn-host:dev --name wamn
+kind load docker-image registry:2 --name wamn
+kubectl -n wamn-system apply -f deploy/registry.yaml
+kubectl -n wamn-system rollout status deploy/registry --timeout=60s
+kubectl -n wamn-system port-forward svc/registry 5000:5000 &
+wash push localhost:5000/wamn/api-gateway:dev \
+  components/target/wasm32-wasip2/release/api_gateway.wasm --insecure
+# The host group gains --allow-insecure-registries + WAMN_PG_URL:
+helm upgrade --install -n wamn-system wamn \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
+  -f deploy/values-wamn.yaml
+kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
+# Provision the project schema/floor + seed + publish the snapshot:
+kubectl -n wamn-system create configmap proof-catalog \
+  --from-file=proof-catalog.json=deploy/proof-catalog.json
+kubectl -n wamn-system apply -f deploy/publish-catalog-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/publish-catalog --timeout=120s
+# Deploy the gateway workload, then prove it serves over the network:
+kubectl -n wamn-system apply -f deploy/api-gateway-workload.yaml
+kubectl -n wamn-system apply -f deploy/apiproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
+kubectl -n wamn-system logs job/apiproof
+
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
 ```
 

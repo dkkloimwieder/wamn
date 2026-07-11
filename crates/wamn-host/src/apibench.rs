@@ -46,6 +46,7 @@ use wasmtime_wasi_http::p2::WasiHttpView;
 use wasmtime_wasi_http::p2::bindings::ProxyPre;
 use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
 
+use crate::apifixture::{self, CATALOG_JSON, S_ACME, S_OTHER, TENANT_A, as_array, check, has_name};
 use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use crate::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
@@ -90,48 +91,8 @@ pub struct ApiBenchArgs {
 
 /// The component identity the gateway runs under (maps to the tenant + schema).
 const BENCH_ID: &str = "api-gateway-bench";
-/// The tenant the gateway is scoped to.
-const TENANT_A: &str = "tenant-a";
-/// A second tenant whose rows must stay invisible (the RLS witness).
-const TENANT_B: &str = "tenant-b";
 /// The per-run ephemeral schema the gate provisions.
 const EPH_SCHEMA: &str = "api_test";
-
-// Deterministic seed ids so the gates can address rows directly.
-const S_ACME: &str = "a0000000-0000-0000-0000-000000000001";
-const S_GLOBEX: &str = "a0000000-0000-0000-0000-000000000002";
-const S_OTHER: &str = "b0000000-0000-0000-0000-000000000003";
-const R1: &str = "c0000000-0000-0000-0000-000000000001";
-const L1: &str = "d0000000-0000-0000-0000-000000000001";
-const L2: &str = "d0000000-0000-0000-0000-000000000002";
-
-/// The gate's catalog: suppliers ← receipts ← receipt_lines, with a to-one
-/// relation `supplier` (receipts→suppliers) and a to-many relation `lines`
-/// (receipt_lines→receipts). Stored as the snapshot the gateway loads.
-const CATALOG_JSON: &str = r#"{
-  "schema-version": "0.1",
-  "catalog-id": "apibench",
-  "version": 1,
-  "entities": [
-    { "id": "suppliers", "name": "suppliers", "fields": [
-      { "id": "name", "name": "name", "type": { "kind": "text" } },
-      { "id": "standard_cost", "name": "standard_cost", "type": { "kind": "numeric", "precision": 12, "scale": 2 }, "nullable": true }
-    ] },
-    { "id": "receipts", "name": "receipts", "fields": [
-      { "id": "receipt_no", "name": "receipt_no", "type": { "kind": "text", "max-len": 64 } },
-      { "id": "supplier_id", "name": "supplier_id", "type": { "kind": "reference", "entity": "suppliers" } },
-      { "id": "received_at", "name": "received_at", "type": { "kind": "timestamptz" } }
-    ] },
-    { "id": "receipt_lines", "name": "receipt_lines", "fields": [
-      { "id": "receipt_id", "name": "receipt_id", "type": { "kind": "reference", "entity": "receipts" } },
-      { "id": "quantity", "name": "quantity", "type": { "kind": "numeric", "precision": 12, "scale": 3 } }
-    ] }
-  ],
-  "relations": [
-    { "id": "receipt_supplier", "name": "supplier", "cardinality": "one-to-many", "from": "receipts", "to": "suppliers", "from-field": "supplier_id" },
-    { "id": "receipt_lines_rel", "name": "lines", "cardinality": "one-to-many", "from": "receipt_lines", "to": "receipts", "from-field": "receipt_id" }
-  ]
-}"#;
 
 /// The compiled + linked gateway component, driven through its wasi:http export.
 struct Harness {
@@ -296,9 +257,17 @@ async fn provision(admin_url: &str, floor_ddl: &str) -> anyhow::Result<()> {
             )
             .await
             .context("create wamn_catalog table")?;
-        // Seed as superuser (bypasses RLS): the catalog snapshot + two tenants.
+        // Seed as superuser (bypasses RLS): the catalog snapshot the gateway
+        // loads (CATALOG_JSON has no single quotes, so it embeds safely as a SQL
+        // literal), then the two-tenant demo rows.
         client
-            .batch_execute(&seed_sql())
+            .batch_execute(&format!(
+                "INSERT INTO wamn_catalog (tenant_id, document) VALUES ('{TENANT_A}', '{CATALOG_JSON}'::jsonb);"
+            ))
+            .await
+            .context("seed catalog snapshot")?;
+        client
+            .batch_execute(&apifixture::entity_seed_sql())
             .await
             .context("seed rows")?;
         anyhow::Ok(())
@@ -307,22 +276,6 @@ async fn provision(admin_url: &str, floor_ddl: &str) -> anyhow::Result<()> {
     drop(client);
     let _ = conn_task.await;
     result
-}
-
-fn seed_sql() -> String {
-    // CATALOG_JSON has no single quotes, so it embeds safely as a SQL literal.
-    format!(
-        "INSERT INTO wamn_catalog (tenant_id, document) VALUES ('{TENANT_A}', '{CATALOG_JSON}'::jsonb); \
-         INSERT INTO suppliers (id, tenant_id, name, standard_cost) VALUES \
-           ('{S_ACME}', '{TENANT_A}', 'Acme', 12.50), \
-           ('{S_GLOBEX}', '{TENANT_A}', 'Globex', 99.99), \
-           ('{S_OTHER}', '{TENANT_B}', 'OtherTenantCo', 5.00); \
-         INSERT INTO receipts (id, tenant_id, receipt_no, supplier_id, received_at) VALUES \
-           ('{R1}', '{TENANT_A}', 'R-001', '{S_ACME}', '2026-01-01T00:00:00Z'); \
-         INSERT INTO receipt_lines (id, tenant_id, receipt_id, quantity) VALUES \
-           ('{L1}', '{TENANT_A}', '{R1}', 3.000), \
-           ('{L2}', '{TENANT_A}', '{R1}', 5.500);"
-    )
 }
 
 async fn drop_schema(admin_url: &str) -> anyhow::Result<()> {
@@ -340,21 +293,6 @@ async fn drop_schema(admin_url: &str) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 // Gates
 // ---------------------------------------------------------------------------
-
-/// Print a check line and fold it into the running pass flag.
-fn check(pass: &mut bool, label: &str, ok: bool) {
-    println!("  [{}] {label}", if ok { "PASS" } else { "FAIL" });
-    *pass &= ok;
-}
-
-fn as_array(v: &Value) -> Vec<Value> {
-    v.as_array().cloned().unwrap_or_default()
-}
-
-fn has_name(rows: &[Value], name: &str) -> bool {
-    rows.iter()
-        .any(|r| r.get("name").and_then(Value::as_str) == Some(name))
-}
 
 async fn crud_phase(h: &Harness, pg: &Arc<WamnPostgres>) -> anyhow::Result<bool> {
     println!("\n## crud");
@@ -557,13 +495,8 @@ pub async fn run(args: ApiBenchArgs) -> anyhow::Result<()> {
 
     let run_all = args.mode == Mode::All;
 
-    // Emit the 3.2 tenant floor for the gate's catalog.
-    let catalog = wamn_catalog::Catalog::from_json(CATALOG_JSON)
-        .map_err(|e| anyhow::anyhow!("gate catalog parse: {e}"))?;
-    let floor_ddl = wamn_ddl::Migration::create(&catalog)
-        .map_err(|e| anyhow::anyhow!("floor compile: {e}"))?
-        .sql(wamn_ddl::Confirmation::None)
-        .map_err(|e| anyhow::anyhow!("floor sql: {e}"))?;
+    // Emit the 3.2 tenant floor for the gate's catalog (shared fixture).
+    let floor_ddl = apifixture::floor_ddl()?;
 
     // Plugin (wamn_app pool), scoped to the gate tenant + ephemeral schema.
     let mut cfg = WamnPostgresConfig::from_env();

@@ -1,0 +1,77 @@
+# [4.1b] The per-project generated-REST-API gateway, deployed as a running
+# wasi:http workload. The runtime-operator schedules the component onto a
+# host-group pod; wash-runtime's built-in HTTP server routes requests whose
+# Host header matches hostInterfaces[].config.host to the component's
+# wasi:http/incoming-handler export (the same mechanism apibench mirrors
+# in-process). One gateway instance per project.
+#
+# Prereqs (see docs/api-gateway.md § serving):
+#   1. deploy/registry.yaml applied + api_gateway.wasm pushed to it.
+#   2. The host group deployed with --allow-insecure-registries + WAMN_PG_URL
+#      (deploy/values-wamn.yaml).
+#   3. The project's schema provisioned + snapshot published
+#      (deploy/publish-catalog-job.yaml).
+#
+#   kubectl -n wamn-system apply -f deploy/api-gateway-workload.yaml
+#   kubectl -n wamn-system get workloaddeployment api-gateway
+#
+# The claims below are host-injected and non-spoofable (the postgres plugin
+# reads them at on_workload_item_bind): wamn.tenant scopes RLS (app.tenant),
+# wamn.project selects the per-project pool (default), wamn.schema is the
+# search_path the gateway's unqualified queries resolve in.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: wamn-system
+  labels: { app: api-gateway }
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: api-gateway
+  namespace: wamn-system
+spec:
+  replicas: 1
+  template:
+    spec:
+      hostSelector:
+        hostgroup: default
+      kubernetes:
+        service:
+          name: api-gateway
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: api.localhost.direct
+        # The host's hostInterfaces are the ALLOWLIST for host plugins (wasi
+        # built-ins like http bypass it) — bind_plugins only binds a plugin whose
+        # interface is declared here. The gateway imports wamn:postgres, so it
+        # must be listed or the component fails to instantiate ("matching
+        # implementation was not found in the linker"). The tenant/project/schema
+        # claims live in components[].localResources.config, not here.
+        - namespace: wamn
+          package: postgres
+          version: "0.1.0"
+          interfaces: [types, client]
+      components:
+        - name: api-gateway
+          image: registry.wamn-system.svc.cluster.local:5000/wamn/api-gateway:dev
+          # Mutable :dev tag — always re-pull so a re-pushed component is picked
+          # up on the next workload start.
+          imagePullPolicy: Always
+          localResources:
+            config:
+              wamn.tenant: tenant-a
+              wamn.project: default
+              wamn.schema: api_proof

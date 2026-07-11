@@ -1,0 +1,43 @@
+# [4.1b] The in-cluster proof of record: drive the DEPLOYED api-gateway over real
+# HTTP and assert the CRUD / expansion / RLS / injection-safety results end to
+# end. Runs the apiproof subcommand of the same wamn-host image (no external
+# client image to pull); it opens TCP to the api-gateway Service and sends the
+# Host header the operator routes on (api.localhost.direct), so the request
+# traverses the full path: host HTTP server -> DynamicRouter -> the component ->
+# wamn:postgres under the injected app.tenant claim -> Postgres -> response.
+#
+# Prereqs: the api-gateway WorkloadDeployment is Ready and the publish-catalog
+# Job has run (the snapshot + seed exist).
+#
+#   kubectl -n wamn-system apply -f deploy/apiproof-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
+#   kubectl -n wamn-system logs job/apiproof
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: apiproof
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: apiproof }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: apiproof
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "error"
+            - "apiproof"
+            - "--url"
+            - "http://api-gateway.wamn-system.svc.cluster.local:80"
+            - "--host"
+            - "api.localhost.direct"
+            - "--mode"
+            - "all"
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { memory: "512Mi" }

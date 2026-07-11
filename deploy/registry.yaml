@@ -1,0 +1,73 @@
+# In-cluster OCI registry for locally-built wasm component images (4.1b).
+#
+# The runtime-operator pulls a WorkloadDeployment's components[].image via the
+# wasm-runtime's own OCI client (NOT containerd), so a `kind load`ed image is not
+# visible to it — component artifacts must live in a registry the host pods can
+# reach. This is a plain-HTTP registry at
+# registry.wamn-system.svc.cluster.local:5000; the host must run with
+# `--allow-insecure-registries` to pull from it (deploy/values-wamn.yaml).
+#
+# Push flow (from a machine with `wash`):
+#   kubectl -n wamn-system port-forward svc/registry 5000:5000 &
+#   wash push localhost:5000/wamn/api-gateway:dev \
+#     components/target/wasm32-wasip2/release/api_gateway.wasm --insecure
+# The registry addresses artifacts by repo path (hostname-independent), so
+# pushing via localhost:5000 and pulling via the Service DNS name at the SAME
+# repo path (wamn/api-gateway:dev) resolve to the same manifest/blobs.
+#
+# Storage is ephemeral (emptyDir): a proof registry, not a durable one. If the
+# pod restarts, re-push before starting a workload with imagePullPolicy: Always.
+#
+#   kind load docker-image registry:2 --name wamn   # so the pod starts offline
+#   kubectl -n wamn-system apply -f deploy/registry.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: wamn-system
+  labels: { app: registry }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: registry }
+  template:
+    metadata:
+      labels: { app: registry }
+    spec:
+      containers:
+        - name: registry
+          image: registry:2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+          env:
+            - name: REGISTRY_HTTP_ADDR
+              value: "0.0.0.0:5000"
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { memory: "256Mi" }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: wamn-system
+  labels: { app: registry }
+spec:
+  selector: { app: registry }
+  ports:
+    - port: 5000
+      targetPort: 5000
