@@ -1,0 +1,17 @@
+[package]
+name = "wamn-rls"
+description = "wamn RLS policy builder (3.5): per-entity access rules tied to roles (row ownership, role command gates, custom predicates) compiled to Postgres RLS. Emits AS RESTRICTIVE policies that AND within the 3.2 tenant floor."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The rule model resolves against the canonical catalog (3.1), and compiles to a
+# wamn-ddl MigrationPlan reusing its Operation/Safety and the confirmation gate
+# (3.2) — plus wamn-ddl's shared SQL quoting so RLS and DDL quote identically.
+wamn-catalog = { path = "../wamn-catalog" }
+wamn-ddl = { path = "../wamn-ddl" }
+serde = { version = "1", features = ["derive"] }
+# The rule model is import/export-able (AccessPolicy::from_json/to_json) and is
+# stored as jsonb in catalog.rls_policies; no DB dependency (emits SQL only).
+serde_json = "1"

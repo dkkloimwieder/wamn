@@ -319,6 +319,30 @@ docker exec -i wamn-cat-pg psql -v ON_ERROR_STOP=1 -U postgres -d wamn \
   < deploy/catalog-schema.sql
 docker stop wamn-cat-pg
 
+# [3.5] RLS policy builder crate (crates/wamn-rls) — consumes wamn-catalog (3.1)
+# + wamn-ddl (3.2). Compiles per-entity access rules tied to ROLES to Postgres
+# RLS: row-ownership (owner col = app.user_id, exempt roles), role command gates
+# (which roles may INSERT/UPDATE/DELETE; reads open within tenant), custom
+# per-role predicate (escape hatch, emitted verbatim). Every policy is AS
+# RESTRICTIVE so it ANDs within — never widens — the 3.2 tenant floor (permissive
+# = OR would break isolation). Keys on app.role (COALESCE'd) + app.user_id
+# (NULLIF(...)::uuid) claims injected by the plugin (2.2/4.2); absent claim ->
+# safe deny. Reuses wamn-ddl MigrationPlan/Operation/Confirmation + its shared
+# sql::{quote_ident,quote_literal} (newly public). compile()->MigrationPlan, all
+# additive (a note flags restriction-can-deny-until-claims). EMITS+CLASSIFIES
+# only (live apply=2.5, claim inject=2.2/4.2, authN=8.1, field masks=4.3; tenant
+# floor stays 3.2). docs/rls-builder.md. Storage: catalog.rls_policies (rule
+# jsonb) ADDITIVE to the STANDALONE deploy/catalog-schema.sql. No JSON-schema.
+cargo test -p wamn-rls
+cargo clippy -p wamn-rls --all-targets && cargo fmt -p wamn-rls --check
+# optional live-apply gate (floor + compiled policy on a throwaway PG; asserts
+# the restrictive policy actually FILTERS rows — owner sees own, exempt sees all,
+# no-user-claim denies all; superuser URL provisions wamn_app; skips when unset):
+docker run -d --rm --name wamn-rls-pg -p 5453:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_RLS_PG_URL=postgres://postgres:postgres@127.0.0.1:5453/wamn cargo test -p wamn-rls
+docker stop wamn-rls-pg
+
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
 ```
 

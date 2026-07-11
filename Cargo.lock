@@ -4051,6 +4051,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-rls"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wamn-catalog",
+ "wamn-ddl",
+]
+
+[[package]]
 name = "wamn-schema"
 version = "0.1.0"
 dependencies = [

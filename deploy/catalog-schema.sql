@@ -202,3 +202,29 @@ CREATE POLICY constraints_tenant ON catalog.constraints
     USING (tenant_id = current_setting('app.tenant', true))
     WITH CHECK (tenant_id = current_setting('app.tenant', true));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.constraints TO wamn_app;
+
+-- ---------------------------------------------------------------------------
+-- RLS access rules (3.5, crates/wamn-rls). Per-entity access rules tied to
+-- roles — row ownership, role command gates, custom per-role predicates —
+-- authored against a catalog and compiled to Postgres RLS policies that layer
+-- AS RESTRICTIVE on top of the 3.2 tenant floor. Each `rule` is the Rule JSON
+-- (the crate is the source of truth for its semantics; the RLS compiler
+-- interprets this jsonb via the wamn-rls types rather than this schema
+-- enumerating every rule kind). These are the DEFINITIONS; the compiler emits
+-- the CREATE POLICY statements applied to the project data tables. Not tied to
+-- a specific catalog *version*: policies attach to the live schema.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.rls_policies (
+    tenant_id  text NOT NULL,
+    catalog_id text NOT NULL,
+    policy_id  text NOT NULL,
+    entity_id  text NOT NULL,
+    rule       jsonb NOT NULL,
+    PRIMARY KEY (tenant_id, catalog_id, policy_id)
+);
+ALTER TABLE catalog.rls_policies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.rls_policies FORCE ROW LEVEL SECURITY;
+CREATE POLICY rls_policies_tenant ON catalog.rls_policies
+    USING (tenant_id = current_setting('app.tenant', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.rls_policies TO wamn_app;

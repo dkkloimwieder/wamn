@@ -17,14 +17,15 @@ use crate::plan::{MigrationPlan, Operation, Safety};
 /// these names.
 pub(crate) const RESERVED_COLUMNS: &[&str] = &["id", "tenant_id"];
 
-/// Quote a SQL identifier.
+/// Quote a SQL identifier. Delegates to the shared [`crate::sql`] helpers so DDL
+/// and RLS-policy emission (3.5) quote identically.
 fn q(ident: &str) -> String {
-    format!("\"{}\"", ident.replace('"', "\"\""))
+    crate::sql::quote_ident(ident)
 }
 
 /// Quote a SQL string literal.
 fn lit(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
+    crate::sql::quote_literal(s)
 }
 
 /// The Postgres column type for a field type. A `reference` is stored as the

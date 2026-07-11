@@ -29,6 +29,7 @@
 
 mod emit;
 mod plan;
+pub mod sql;
 
 pub use plan::{Confirmation, MigrationPlan, Operation, RequiresConfirmation, Safety};
 
