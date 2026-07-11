@@ -4,6 +4,7 @@
 //! `bench` — S1 measurements (instantiation / density / cap-kill).
 
 mod bench;
+mod egressbench;
 mod engine;
 mod flowbench;
 mod host;
@@ -46,6 +47,8 @@ enum Command {
     Logbench(logbench::LogBenchArgs),
     /// Run the S6 test-host plugin-swap gates (sameness / delay / egress / regression)
     Testhostbench(testhostbench::TestHostBenchArgs),
+    /// Run the 2.6 DB-path egress review gate (no shipped workload imports wasi:sockets)
+    Egressbench(egressbench::EgressBenchArgs),
 }
 
 #[tokio::main]
@@ -66,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ServeNode(args) => nodebench::serve(args).await,
         Command::Logbench(args) => logbench::run(args).await,
         Command::Testhostbench(args) => testhostbench::run(args).await,
+        Command::Egressbench(args) => egressbench::run(args).await,
     };
 
     shutdown_observability();

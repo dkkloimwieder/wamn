@@ -242,6 +242,18 @@ docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
 kubectl -n wamn-system apply -f deploy/testhostbench-job.yaml
 kubectl -n wamn-system logs -f job/testhostbench
 
+# [2.6] DB-path egress review — STATIC gate: no shipped workload imports
+# wasi:sockets, so the wamn:postgres plugin (+ the allowed_hosts-gated, S6
+# egress-spied wasi:http) is the only egress. Pure wasm-import introspection —
+# no DB, no network — so it is identical in-cluster and locally: NO in-cluster
+# Job of record. FAIL path is unit-tested (cargo test -p wamn-host egressbench).
+# See docs/security-db-path.md.
+REL=components/target/wasm32-wasip2/release
+./target/release/wamn-host --log-level warn egressbench \
+  --flowrunner $REL/flowrunner.wasm \
+  --component $REL/pgprobe.wasm --component $REL/node_rs.wasm \
+  --component $REL/flow_composed.wasm --component $REL/hello.wasm
+
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
 
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
