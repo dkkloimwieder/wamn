@@ -188,6 +188,15 @@ REL=components/target/wasm32-wasip2/release
 
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
 
+# [5.1] flow-graph schema crate (crates/wamn-flow) — canonical flow JSON: types,
+# validation, import/export, version diff. Pure Rust, no host/DB. Tests cover
+# fixture round-trip, structural validation, JSON-Schema conformance (boon),
+# schema drift-guard, and diff. docs/flow-schema.md + docs/flow-schema.schema.json.
+cargo test -p wamn-flow
+cargo clippy -p wamn-flow --all-targets && cargo fmt -p wamn-flow --check
+# regenerate the published JSON Schema contract after changing the types:
+cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
+
 docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
 ```
 

@@ -1,0 +1,18 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "disposition-recorded",
+  "version": 1,
+  "name": "F4 disposition-recorded (outbox row-event)",
+  "trigger": { "type": "row-event", "table": "dispositions", "event": "insert" },
+  "entry": "recommend",
+  "nodes": [
+    { "id": "recommend", "type": "custom", "label": "F2 disposition recommendation", "config": { "component": "disposition-recommendation" } },
+    { "id": "callback", "type": "http-request", "label": "POST ERP callback", "config": { "method": "POST", "idempotency-key": "${run.id}", "allowed-hosts": ["erp.example"] }, "credential": "erp-callback" }
+  ],
+  "edges": [
+    { "from": "recommend", "to": "callback" }
+  ],
+  "credentials": [
+    { "name": "erp-callback", "kind": "api-key", "description": "ERP disposition callback" }
+  ]
+}

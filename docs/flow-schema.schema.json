@@ -1,0 +1,268 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "CredentialRef": {
+      "additionalProperties": false,
+      "description": "A credential the flow references by logical name; the vault (5.9) resolves it to a lazy handle at run time. No secret material is ever stored in flow data.",
+      "properties": {
+        "description": {
+          "description": "Human-readable description (editor).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "Optional hint for the editor's credential picker (e.g. `http-basic`, `api-key`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Logical name referenced by [`Node::credential`].",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Edge": {
+      "additionalProperties": false,
+      "description": "A wire from one node's output port to a downstream node. Branch = several edges from distinct ports of one node; merge = several edges into one node.",
+      "properties": {
+        "from": {
+          "description": "Source node id.",
+          "type": "string"
+        },
+        "from-port": {
+          "description": "Source output port. Defaults to [`MAIN_PORT`]; [`ERROR_PORT`] is the error path; node-library node types may define others (e.g. a `conditional`'s `true`/`false`).",
+          "type": "string"
+        },
+        "to": {
+          "description": "Target node id.",
+          "type": "string"
+        },
+        "to-port": {
+          "description": "Target input port. Defaults to the node's single input; present only for future multi-input node types.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "description": "A single graph step.",
+      "properties": {
+        "config": {
+          "description": "Opaque per-node configuration — a JSON object typed by the node library (5.3), not by this crate."
+        },
+        "credential": {
+          "description": "Optional reference to a declared credential by [`CredentialRef::name`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Unique within the flow.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Human-readable label (editor).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The node type — an open string the runner's node library (5.3) resolves (e.g. `postgres-query`, `transform`, `http-request`, `conditional`, `respond`, `delay`, `custom`). Structural validation here does not constrain it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RowEvent": {
+      "description": "The row mutation a [`Trigger::RowEvent`] fires on.",
+      "enum": [
+        "insert",
+        "update",
+        "delete"
+      ],
+      "type": "string"
+    },
+    "Trigger": {
+      "description": "How a flow is invoked. The dispatcher (5.14) registers cron and row-event triggers; webhook triggers are routed by the API gateway.",
+      "oneOf": [
+        {
+          "description": "HTTP webhook. `sync` = respond within the request (write-ahead default, D15); otherwise fire-and-forget.",
+          "properties": {
+            "path": {
+              "description": "Optional path suffix under the flow's webhook route.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sync": {
+              "default": false,
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "webhook"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Scheduled invocation (cron expression). Dispatcher-owned; wakes parked projects (F3).",
+          "properties": {
+            "schedule": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "cron"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "schedule",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Fires from a durable row event (outbox), e.g. F4 on `dispositions` insert — the outbox + doorbell path (D4, 5.14).",
+          "properties": {
+            "event": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/RowEvent"
+                }
+              ],
+              "default": "insert"
+            },
+            "table": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "row-event"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "table",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Manual / test-run invocation (editor test-run).",
+          "properties": {
+            "type": {
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "description": "One version of a flow — the unit stored in the catalog and pointed at by the active-version pointer (deploying = flipping that pointer + a NATS doorbell, 5.14).",
+  "properties": {
+    "credentials": {
+      "description": "Credentials the flow needs, declared by logical name and resolved by the vault (5.9) at run time. Nodes reference these by [`Node::credential`]; secrets never appear in flow data.",
+      "items": {
+        "$ref": "#/definitions/CredentialRef"
+      },
+      "type": "array"
+    },
+    "edges": {
+      "description": "The wiring between node output ports and downstream nodes.",
+      "items": {
+        "$ref": "#/definitions/Edge"
+      },
+      "type": "array"
+    },
+    "entry": {
+      "description": "The node the trigger payload enters the graph at.",
+      "type": "string"
+    },
+    "flow-id": {
+      "description": "Stable identifier shared across every version of this flow.",
+      "type": "string"
+    },
+    "name": {
+      "description": "Human-readable label (editor).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "nodes": {
+      "description": "The nodes of the graph.",
+      "items": {
+        "$ref": "#/definitions/Node"
+      },
+      "type": "array"
+    },
+    "schema-version": {
+      "description": "The flow-schema format version (e.g. `\"0.1\"`). See [`SCHEMA_VERSION`].",
+      "type": "string"
+    },
+    "trigger": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Trigger"
+        }
+      ],
+      "description": "How the flow is invoked. Exactly one."
+    },
+    "version": {
+      "description": "Monotonic version of this flow (>= 1).",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "entry",
+    "flow-id",
+    "nodes",
+    "schema-version",
+    "trigger",
+    "version"
+  ],
+  "title": "Flow",
+  "type": "object"
+}

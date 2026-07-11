@@ -1,0 +1,20 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "escalate-stale-holds",
+  "version": 1,
+  "name": "F3 escalate-stale-holds (nightly cron)",
+  "trigger": { "type": "cron", "schedule": "0 2 * * *" },
+  "entry": "query",
+  "nodes": [
+    { "id": "query", "type": "postgres-query", "label": "holds open > 48h", "config": { "op": "select" } },
+    { "id": "escalate", "type": "postgres-query", "label": "mark escalated", "config": { "op": "update", "set": { "status": "escalated" } } },
+    { "id": "notify", "type": "http-request", "label": "notify manager", "config": { "method": "POST", "allowed-hosts": ["notify.example"] }, "credential": "notify-webhook" }
+  ],
+  "edges": [
+    { "from": "query", "to": "escalate" },
+    { "from": "escalate", "to": "notify" }
+  ],
+  "credentials": [
+    { "name": "notify-webhook", "kind": "api-key", "description": "manager notification endpoint" }
+  ]
+}
