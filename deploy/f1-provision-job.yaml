@@ -1,0 +1,61 @@
+# POC-F1 provisioning: publish-catalog stands up the poc_f1 project schema —
+# 3.2 floor for the POC catalog + wamn_catalog snapshot + run-state storage
+# (runs/node_runs) + flow registry + wamn-seed business rows + the registered,
+# ACTIVE receipt-received flow. Everything additive (shared-cluster guardrail).
+# Fixtures come from the f1-fixtures ConfigMap:
+#   kubectl -n wamn-system create configmap f1-fixtures \
+#     --from-file=poc-receiving.catalog.json=crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json \
+#     --from-file=f1-flow.json=deploy/f1-flow.json \
+#     --from-file=f1-seed.dataset.json=deploy/f1-seed.dataset.json
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: f1-provision
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: f1-provision
+    spec:
+      restartPolicy: Never
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: postgres
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: f1-provision
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            [
+              "--log-level", "error",
+              "publish-catalog",
+              "--catalog", "/fixtures/poc-receiving.catalog.json",
+              "--tenant", "f1-tenant",
+              "--schema", "poc_f1",
+              "--provision",
+              "--runstate",
+              "--seed-dataset", "/fixtures/f1-seed.dataset.json",
+              "--flow", "/fixtures/f1-flow.json",
+            ]
+          env:
+            - name: WAMN_PG_ADMIN_URL
+              value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn
+          volumeMounts:
+            - name: fixtures
+              mountPath: /fixtures
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"
+      volumes:
+        - name: fixtures
+          configMap:
+            name: f1-fixtures

@@ -4047,6 +4047,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-f1"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wamn-flow",
+]
+
+[[package]]
 name = "wamn-flow"
 version = "0.1.0"
 dependencies = [
@@ -4082,6 +4091,7 @@ dependencies = [
  "wamn-ddl",
  "wamn-flow",
  "wamn-run-queue",
+ "wamn-seed",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",

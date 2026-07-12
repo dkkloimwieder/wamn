@@ -49,6 +49,7 @@ wamn-run-queue = { path = "../wamn-run-queue" }
 # 5.14 dispatcher: the trigger registry is the flows table's graph_json — the
 # dispatcher parses each active flow and registers its cron / row-event trigger.
 wamn-flow = { path = "../wamn-flow" }
+wamn-seed = { path = "../wamn-seed" }
 # 5.14 dispatcher: holds the doorbell client (wash_runtime::washlet::connect_nats
 # returns async_nats::Client). Same version req as wash-runtime's so cargo
 # unifies to ONE crate instance (type identity) — the S5 OTel-crates pattern.

@@ -1,0 +1,24 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "receipt-received",
+  "version": 1,
+  "name": "F1 receipt-received (sync webhook, write-ahead)",
+  "trigger": { "type": "webhook", "sync": true, "path": "/receipts" },
+  "entry": "validate",
+  "nodes": [
+    { "id": "validate", "type": "validate-receipt", "label": "validate payload + resolve business keys" },
+    { "id": "upsert", "type": "upsert-receipt", "label": "upsert receipt + lines", "config": { "transaction": true } },
+    { "id": "evaluate", "type": "evaluate-specs", "label": "evaluate lines vs material specs", "config": { "compare": "exact-decimal" } },
+    { "id": "holds", "type": "create-holds", "label": "create quality_holds" },
+    { "id": "respond-ok", "type": "respond", "config": { "status": 200 } },
+    { "id": "respond-bad", "type": "respond", "config": { "status": 400, "error": "invalid-input" } }
+  ],
+  "edges": [
+    { "from": "validate", "to": "upsert" },
+    { "from": "validate", "from-port": "error", "to": "respond-bad" },
+    { "from": "upsert", "to": "evaluate" },
+    { "from": "evaluate", "from-port": "out-of-spec", "to": "holds" },
+    { "from": "evaluate", "to": "respond-ok" },
+    { "from": "holds", "to": "respond-ok" }
+  ]
+}

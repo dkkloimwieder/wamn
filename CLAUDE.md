@@ -185,7 +185,8 @@ REL=components/target/wasm32-wasip2/release
   --flowrunner $REL/flowrunner.wasm \
   --component $REL/pgprobe.wasm --component $REL/node_rs.wasm \
   --component $REL/flow_composed.wasm --component $REL/hello.wasm \
-  --component $REL/api_gateway.wasm  # 4.1 serving workload: {wamn:postgres,wasi:http}
+  --component $REL/api_gateway.wasm \
+  --component $REL/webhook_entry.wasm  # 4.1/F1 serving workloads: {wamn:postgres,wasi:http}
 
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
 
@@ -642,6 +643,84 @@ kubectl -n wamn-system apply -f deploy/api-gateway-workload.yaml
 kubectl -n wamn-system apply -f deploy/apiproof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
 kubectl -n wamn-system logs job/apiproof
+
+# [POC-F1] receipt-received sync flow end-to-end (P1 exit, wamn-067) — the D15
+# sync path LIVE: NEW components/webhook-entry (exports wasi:http/incoming-
+# handler, imports wamn:postgres ONLY — 2.6-clean) matches POST /receipts
+# against the ACTIVE sync-webhook flow (flows registry, re-read per request),
+# WRITE-AHEADS a runs row (server-minted run id, status 'dispatched',
+# trigger_source 'webhook', input_json VERBATIM — a non-JSON body still gets
+# its run and its 400) BEFORE any effect, drives the 5.2 engine over
+# deploy/f1-flow.json (fixture topology, F1-shaped node types: validate-receipt
+# [shape + no-float + business-key resolution + spec prefetch; every client
+# fault => invalid-input => error edge => 400 with the issue list],
+# upsert-receipt [ONE wamn:postgres tx: composite-natural-key upsert + replace
+# lines], evaluate-specs [pure exact-decimal, boundary equality IN-spec,
+# branches port 'out-of-spec'], create-holds [quality_holds status 'open',
+# RETURNING ids], respond [status from config; 503 override when the error
+# payload's code isn't the configured one]), records node_runs per node in the
+# 5.7 shape (an errored node = an 'error'-port emission carrying the engine's
+# {"error":...} payload, recorded ONLY when the node HAS an error edge — an
+# error row for an edge-less node would reconstruct a failed run as completed;
+# taxonomy in error_kind/error_detail), and answers {receipt_id, holds:[...]}
+# in-request; infra-failure bodies are GENERIC (pg detail stays in the run
+# history, never echoed to the caller; create-holds is ONE tx — no partial
+# holds; flows read is ORDER BY flow_id — deterministic on path collisions). PURE logic
+# in NEW crates/wamn-f1 (decimal/payload/evaluate/sql/shapes; does NOT decide
+# D8 — no raw-SQL node ships; 5.3 stays wamn-r13-blocked). STORAGE: NEW
+# deploy/flows.sql gives the flow registry its production home (ADDITIVE to
+# run-state.sql; the a52 stand-in shape, now canonical); publish-catalog is the
+# one project-provisioning tool: --runstate (applies the CANONICAL
+# deploy/run-state.sql + flows.sql — include_str!'d, dot-anchored
+# 'wamn_run'->schema rewrite; .dockerignore now ships deploy/ into the image
+# build) + --seed-dataset (wamn-seed compile) + --flow (validate + register +
+# ACTIVATE, deactivating prior versions; flows.flow_id minted from the graph =>
+# the wi4 column==graph guard holds by construction). f1bench provisions its
+# ephemeral schema through the SAME helpers, so the flags are gated too.
+# V1 caveats (docs/poc-f1.md): ERP retries mint new runs (duplicate holds /
+# FK-blocked line replace under holds); orphaned sync runs stay 'running' (the
+# 5.14 janitor only sees QUEUED runs); auth = tenant claim (4.2 pending).
+cargo test -p wamn-f1        # decimal/payload/evaluate/shapes + catalog & flow drift-guards
+cargo clippy -p wamn-f1 --all-targets && cargo fmt -p wamn-f1 --check
+(cd components && cargo build --release --target wasm32-wasip2 -p webhook-entry)
+cargo clippy --manifest-path components/webhook-entry/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/webhook-entry/Cargo.toml --check
+cargo test -p wamn-host      # f1fixture coherence (burst = 20 receipts / 3 out-of-spec /
+                             # 4 holds) + the publish-catalog schema-rewrite drift-guard
+# f1bench GATE (in-proc ProxyPre: webhook-entry + the 4.1 api-gateway over ONE
+# ephemeral schema wamn_f1_bench, provisioned via the publish-catalog helpers;
+# modes happy/holds/invalid/burst/rest — sync 200s, write-ahead audit, node_runs
+# traces incl the error port, quality_holds rows, RLS isolation, generated-REST
+# cross-check incl expand=line). Local iteration (throwaway PG; superuser
+# provisions the ephemeral schema):
+docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
+  -v "$PWD/deploy/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
+REL=components/target/wasm32-wasip2/release
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
+  ./target/release/wamn-host --log-level error f1bench \
+  --webhook-entry $REL/webhook_entry.wasm --api-gateway $REL/api_gateway.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
+# In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS
+# lesson; ephemeral schema => shared-PG safe; bench Jobs run SEQUENTIALLY):
+kubectl -n wamn-system apply -f deploy/f1bench-job.yaml
+kubectl -n wamn-system logs -f job/f1bench
+# DEPLOYED proof over real networking: push the component (via the 4.1b
+# registry port-forward), provision poc_f1, deploy the two workloads
+# (webhook-entry routed f1.localhost.direct + an api-gateway instance routed
+# api-f1.localhost.direct, both claiming wamn.schema=poc_f1), then f1proof
+# (sync + burst + DB audit + REST):
+wash push localhost:5000/wamn/webhook-entry:dev \
+  components/target/wasm32-wasip2/release/webhook_entry.wasm --insecure
+kubectl -n wamn-system create configmap f1-fixtures \
+  --from-file=poc-receiving.catalog.json=crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json \
+  --from-file=f1-flow.json=deploy/f1-flow.json \
+  --from-file=f1-seed.dataset.json=deploy/f1-seed.dataset.json
+kubectl -n wamn-system apply -f deploy/f1-provision-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/f1-provision --timeout=120s
+kubectl -n wamn-system apply -f deploy/f1-workloads.yaml
+kubectl -n wamn-system apply -f deploy/f1proof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/f1proof --timeout=180s
+kubectl -n wamn-system logs job/f1proof
 
 docker build -t wamn-host:dev .   # fetches the fork git dep in its builder stage
 ```

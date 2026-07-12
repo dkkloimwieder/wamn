@@ -1,0 +1,41 @@
+# POC-F1 over-the-network proof: drives the DEPLOYED webhook-entry Service
+# (sync + burst) and the DEPLOYED F1 api-gateway (generated REST) through their
+# operator routes, and audits runs/node_runs/quality_holds in the database.
+# Needs deploy/f1-provision-job.yaml + deploy/f1-workloads.yaml applied first.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: f1proof
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: f1proof
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: f1proof
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            [
+              "--log-level", "error",
+              "f1proof",
+              "--url", "http://webhook-entry.wamn-system.svc.cluster.local:80",
+              "--host", "f1.localhost.direct",
+              "--rest-url", "http://api-gateway-f1.wamn-system.svc.cluster.local:80",
+              "--rest-host", "api-f1.localhost.direct",
+              "--schema", "poc_f1",
+              "--mode", "all",
+            ]
+          env:
+            - name: WAMN_PG_ADMIN_URL
+              value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"

@@ -15,6 +15,18 @@
 //! gateway real data to serve. Everything is **additive**: the schema is created
 //! `IF NOT EXISTS`, the floor is applied only when missing, and no existing object
 //! is ever dropped or altered (the shared-cluster guardrail).
+//!
+//! POC-F1 extended this into the one project-provisioning tool: `--runstate`
+//! applies the run-state storage (`deploy/run-state.sql`: runs/node_runs) and
+//! the flow registry (`deploy/flows.sql`) into the project schema — the
+//! canonical deploy files, embedded at compile time and rewritten from
+//! `wamn_run` to the target schema — when their tables are absent;
+//! `--seed-dataset` compiles a wamn-seed (3.6) dataset against the catalog and
+//! applies it (deterministic ids, `ON CONFLICT DO NOTHING` — idempotent); and
+//! `--flow` validates a wamn-flow (5.1) graph and registers it ACTIVE in the
+//! registry (deactivating prior versions of the same flow). The flows-table
+//! `flow_id` column is written from the graph's own embedded flow-id, so the
+//! column==graph equality the dispatcher enforces (wi4) holds by construction.
 
 use std::path::PathBuf;
 
@@ -54,14 +66,33 @@ pub struct PublishCatalogArgs {
     /// bundled `deploy/proof-catalog.json`; idempotent). Implies the floor.
     #[arg(long)]
     pub seed: bool,
+
+    /// Also apply the run-state storage (runs/node_runs, `deploy/run-state.sql`)
+    /// and the flow registry (`deploy/flows.sql`) into the schema when their
+    /// tables are absent. Additive: never drops or alters.
+    #[arg(long)]
+    pub runstate: bool,
+
+    /// Seed dataset JSON (wamn-seed, 3.6) compiled against the catalog and
+    /// applied under `--tenant` (deterministic ids; idempotent re-apply).
+    #[arg(long)]
+    pub seed_dataset: Option<PathBuf>,
+
+    /// Flow graph JSON (wamn-flow, 5.1) to validate, register, and ACTIVATE in
+    /// the flow registry (repeatable; prior versions of the flow deactivate).
+    #[arg(long)]
+    pub flow: Vec<PathBuf>,
 }
 
-/// A bare SQL identifier safe to embed after validating: starts with a letter or
-/// `_`, then letters/digits/`_`. Mirrors the `wamn:postgres` schema check.
+/// A bare SQL identifier safe to embed after validating: starts with a
+/// LOWERCASE letter or `_`, then lowercase letters/digits/`_`. Lowercase-only
+/// on purpose: the run-state rewrite emits the schema UNQUOTED (Postgres would
+/// case-fold an uppercase name there while the quoted `publish` statements
+/// preserved it — two different schemas). Mirrors the `wamn:postgres` check.
 fn valid_ident(s: &str) -> bool {
     let mut chars = s.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
@@ -194,6 +225,40 @@ async fn publish(
         println!("seeded demo rows in schema {schema}");
     }
 
+    // Optionally apply the run-state storage + flow registry (POC-F1).
+    if args.runstate {
+        if ensure_runstate(client, schema).await? {
+            println!("applied run-state storage (runs/node_runs) in schema {schema}");
+        } else {
+            println!("run-state storage already present in schema {schema}; skipping");
+        }
+        if ensure_flow_registry(client, schema).await? {
+            println!("applied flow registry (flows) in schema {schema}");
+        } else {
+            println!("flow registry already present in schema {schema}; skipping");
+        }
+    }
+
+    // Optionally compile + apply a wamn-seed dataset against this catalog.
+    if let Some(path) = &args.seed_dataset {
+        let src = std::fs::read_to_string(path)
+            .with_context(|| format!("read seed dataset {}", path.display()))?;
+        let sql = seed_dataset_sql(&src, cat, &args.tenant)?;
+        client
+            .batch_execute(&sql)
+            .await
+            .context("apply seed dataset")?;
+        println!("applied seed dataset {} in schema {schema}", path.display());
+    }
+
+    // Optionally register + activate flow graphs in the registry.
+    for path in &args.flow {
+        let src = std::fs::read_to_string(path)
+            .with_context(|| format!("read flow {}", path.display()))?;
+        let (flow_id, version) = register_flow(client, &args.tenant, &src).await?;
+        println!("registered flow {flow_id} v{version} (active) in schema {schema}");
+    }
+
     // Snapshot UPSERT: replace this tenant's row. The document (arbitrary jsonb)
     // is a bound parameter — never string-interpolated — so it can carry no SQL;
     // the superuser connection bypasses the RLS WITH CHECK + the SELECT-only grant.
@@ -218,9 +283,151 @@ async fn publish(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Run-state / flow-registry provisioning + flow registration. Shared with the
+// f1bench gate so the bench provisions through the same code path production
+// provisioning uses.
+// ---------------------------------------------------------------------------
+
+/// The canonical deploy DDL, embedded at compile time and rewritten from the
+/// `wamn_run` schema to the target project schema. The dot-anchored replace
+/// leaves prose mentions like `wamn_run_store` untouched; `schema` has already
+/// passed [`valid_ident`], so bare interpolation is safe.
+fn rewrite_schema(ddl: &str, schema: &str) -> String {
+    ddl.replace("wamn_run.", &format!("{schema}."))
+        .replace("SCHEMA wamn_run", &format!("SCHEMA {schema}"))
+}
+
+/// Apply `deploy/run-state.sql` (runs + node_runs) into `schema` when its
+/// `runs` table is absent. Returns whether it applied (false = already there).
+pub(crate) async fn ensure_runstate(
+    client: &tokio_postgres::Client,
+    schema: &str,
+) -> anyhow::Result<bool> {
+    if table_exists(client, schema, "runs").await? {
+        return Ok(false);
+    }
+    let ddl = rewrite_schema(include_str!("../../../deploy/run-state.sql"), schema);
+    client
+        .batch_execute(&ddl)
+        .await
+        .context("apply run-state")?;
+    Ok(true)
+}
+
+/// Apply `deploy/flows.sql` (the flow registry) into `schema` when its `flows`
+/// table is absent. Returns whether it applied.
+pub(crate) async fn ensure_flow_registry(
+    client: &tokio_postgres::Client,
+    schema: &str,
+) -> anyhow::Result<bool> {
+    if table_exists(client, schema, "flows").await? {
+        return Ok(false);
+    }
+    let ddl = rewrite_schema(include_str!("../../../deploy/flows.sql"), schema);
+    client
+        .batch_execute(&ddl)
+        .await
+        .context("apply flow registry")?;
+    Ok(true)
+}
+
+async fn table_exists(
+    client: &tokio_postgres::Client,
+    schema: &str,
+    table: &str,
+) -> anyhow::Result<bool> {
+    Ok(client
+        .query_one(
+            "SELECT EXISTS ( SELECT FROM information_schema.tables \
+             WHERE table_schema = $1 AND table_name = $2 )",
+            &[&schema, &table],
+        )
+        .await
+        .with_context(|| format!("probe {schema}.{table}"))?
+        .get(0))
+}
+
+/// Compile a wamn-seed dataset against the catalog into idempotent INSERTs.
+pub(crate) fn seed_dataset_sql(
+    dataset_json: &str,
+    cat: &wamn_catalog::Catalog,
+    tenant: &str,
+) -> anyhow::Result<String> {
+    let dataset = wamn_seed::Dataset::from_json(dataset_json).context("parse seed dataset")?;
+    let plan = wamn_seed::compile(&dataset, cat, tenant)
+        .map_err(|e| anyhow::anyhow!("seed compile: {e}"))?;
+    plan.sql(wamn_ddl::Confirmation::None)
+        .map_err(|e| anyhow::anyhow!("seed sql: {e}"))
+}
+
+/// Validate a flow graph and register it ACTIVE under `tenant` (assumes the
+/// session `search_path` already points at the project schema). Prior versions
+/// of the same flow deactivate; re-registering a version refreshes its graph.
+/// The `flow_id` column is written from the graph's embedded id, so the
+/// dispatcher's column==graph equality guard (wi4) holds by construction. The
+/// superuser connection bypasses RLS, hence the explicit tenant predicates.
+pub(crate) async fn register_flow(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    graph_json: &str,
+) -> anyhow::Result<(String, u32)> {
+    let flow =
+        wamn_flow::Flow::from_json(graph_json).map_err(|e| anyhow::anyhow!("flow parse: {e}"))?;
+    let issues = flow.issues();
+    if issues
+        .iter()
+        .any(|i| i.severity == wamn_flow::Severity::Error)
+    {
+        bail!("flow {} does not validate: {issues:?}", flow.flow_id);
+    }
+    let version = i32::try_from(flow.version).context("flow version")?;
+    client
+        .execute(
+            "UPDATE flows SET active = false, updated_at = now() \
+             WHERE tenant_id = $1 AND flow_id = $2",
+            &[&tenant, &flow.flow_id],
+        )
+        .await
+        .context("deactivate prior versions")?;
+    client
+        .execute(
+            "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
+             VALUES ($1, $2, $3, true, $4::text::jsonb) \
+             ON CONFLICT (tenant_id, flow_id, version) \
+               DO UPDATE SET graph_json = EXCLUDED.graph_json, active = true, updated_at = now()",
+            &[&tenant, &flow.flow_id, &version, &graph_json],
+        )
+        .await
+        .context("register flow")?;
+    Ok((flow.flow_id.clone(), flow.version))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::valid_ident;
+    use super::{rewrite_schema, valid_ident};
+
+    /// The embedded deploy DDL is the canonical file (include_str!), and the
+    /// schema rewrite must touch only schema references: qualified names and
+    /// the schema header — never prose like `wamn_run_store`.
+    #[test]
+    fn schema_rewrite_is_dot_anchored() {
+        let run_state = include_str!("../../../deploy/run-state.sql");
+        let flows = include_str!("../../../deploy/flows.sql");
+        for (ddl, table) in [(run_state, "runs"), (flows, "flows")] {
+            let out = rewrite_schema(ddl, "poc_f1");
+            assert!(
+                out.contains(&format!("CREATE TABLE poc_f1.{table}")),
+                "{table}"
+            );
+            assert!(!out.contains("wamn_run."), "no qualified wamn_run left");
+            assert!(!out.contains("SCHEMA wamn_run"), "schema header rewritten");
+        }
+        // The prose mention of the wamn_run_store crate must survive verbatim.
+        assert!(rewrite_schema(run_state, "poc_f1").contains("wamn_run_store"));
+        // node_runs rides along with runs in run-state.sql.
+        assert!(rewrite_schema(run_state, "poc_f1").contains("CREATE TABLE poc_f1.node_runs"));
+    }
 
     #[test]
     fn identifier_validation() {
@@ -232,5 +439,9 @@ mod tests {
         assert!(!valid_ident("has-hyphen"));
         assert!(!valid_ident("drop table x; --"));
         assert!(!valid_ident("a b"));
+        // Uppercase rejected: the unquoted run-state rewrite would case-fold
+        // it into a DIFFERENT schema than the quoted publish statements.
+        assert!(!valid_ident("Poc"));
+        assert!(!valid_ident("POC_F1"));
     }
 }

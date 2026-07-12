@@ -426,6 +426,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-f1"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "wamn-flow"
 version = "0.1.0"
 dependencies = [
@@ -483,6 +491,17 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "webhook-entry"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wamn-f1",
+ "wamn-flow",
+ "wamn-runner",
+ "wit-bindgen",
 ]
 
 [[package]]

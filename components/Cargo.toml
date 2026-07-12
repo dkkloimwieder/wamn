@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["api-gateway", "busyloop", "flow-driver", "flowrunner", "hello", "logspewer", "memhog", "node-rs", "pgprobe"]
+members = ["api-gateway", "busyloop", "flow-driver", "flowrunner", "hello", "logspewer", "memhog", "node-rs", "pgprobe", "webhook-entry"]
 
 [workspace.package]
 version = "0.1.0"

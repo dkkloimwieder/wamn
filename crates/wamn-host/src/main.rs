@@ -11,6 +11,9 @@ mod dispatch;
 mod dispatchbench;
 mod egressbench;
 mod engine;
+mod f1bench;
+mod f1fixture;
+mod f1proof;
 mod failoverbench;
 mod flowbench;
 mod host;
@@ -71,6 +74,10 @@ enum Command {
     PublishCatalog(publish_catalog::PublishCatalogArgs),
     /// Run the 4.1b in-cluster proof against a deployed api-gateway over HTTP
     Apiproof(apiproof::ApiProofArgs),
+    /// Run the POC-F1 receipt-received gates (happy / holds / invalid / burst / rest)
+    F1bench(f1bench::F1BenchArgs),
+    /// Run the POC-F1 proof against the deployed webhook-entry + api-gateway over HTTP
+    F1proof(f1proof::F1ProofArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -113,6 +120,8 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Apibench(args) => apibench::run(args).await,
         Command::PublishCatalog(args) => publish_catalog::run(args).await,
         Command::Apiproof(args) => apiproof::run(args).await,
+        Command::F1bench(args) => f1bench::run(args).await,
+        Command::F1proof(args) => f1proof::run(args).await,
     };
 
     shutdown_observability();

@@ -318,7 +318,9 @@ identity is a tracked follow-up — the runtime cert maps to an
 allow-all-subjects user). The Secret is deliberately a SEPARATE manifest
 (`deploy/dispatcher-projects.example.yaml`, demo values pointing at the
 `wamn_dispatch_demo` schema — production run-state.sql + run-queue.sql objects
-plus a stand-in `flows` registry, provisioned additively): re-applying the
+plus the `flows` registry, whose production DDL is now `deploy/flows.sql`
+(POC-F1; applied per-project by `publish-catalog --runstate`), provisioned
+additively): re-applying the
 Deployment must not clobber customized project entries, and real per-project
 entries land with hosting/2.3 provisioning. Shutdown: the dispatcher handles
 SIGTERM explicitly (PID 1 gets no default disposition) and exits in
