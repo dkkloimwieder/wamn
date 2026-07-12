@@ -542,10 +542,12 @@ async fn failover_phase(harness: &Harness, app_url: &str, iters: usize) -> anyho
 
         // --- replica A: dispatch, claim, mark running, then killed mid-effect ---
         enqueue(&mut a_conn, &run_id).await?; // write-ahead 'dispatched' + queue row
+        // attempts counts crash evidence only (wamn-fqg.5): the first claim of a
+        // never-leased row is FREE, so A claims with attempts == 0.
         let got_a = a_conn.query(&claim, &[&"replica-A", &short_ttl]).await?;
         if got_a.len() == 1
             && got_a[0].get::<_, String>("run_id") == run_id
-            && got_a[0].get::<_, i32>("attempts") == 1
+            && got_a[0].get::<_, i32>("attempts") == 0
         {
             a_claimed_ok += 1;
         }
@@ -573,10 +575,14 @@ async fn failover_phase(harness: &Harness, app_url: &str, iters: usize) -> anyho
         tokio::time::sleep(Duration::from_millis(short_ttl as u64 + 300)).await;
 
         // --- replica B: reclaim (attempts bumped), resume via reconstruction ---
+        // B's reclaim of the expired lease is the FIRST counted unit of crash
+        // evidence: attempts == 1. (It was 2 under the pre-fqg.5 count-every-claim
+        // semantics; the new value is the point of the fix, not a regression —
+        // A's death is the run's first and only crash.)
         let reclaimed = b_conn.query(&claim, &[&"replica-B", &long_ttl]).await?;
         if reclaimed.len() == 1
             && reclaimed[0].get::<_, String>("run_id") == run_id
-            && reclaimed[0].get::<_, i32>("attempts") == 2
+            && reclaimed[0].get::<_, i32>("attempts") == 1
         {
             b_reclaimed_ok += 1;
         }
@@ -638,7 +644,7 @@ async fn failover_phase(harness: &Harness, app_url: &str, iters: usize) -> anyho
         "A claimed = {a_claimed_ok}/{iters}, clean kills = {clean_kills}/{iters}, side effect committed pre-kill = {committed_pre}/{iters}"
     );
     println!(
-        "B reclaimed (attempts==2) = {b_reclaimed_ok}/{iters}, resumed-to-single-row = {exactly_once}/{iters}, reconstruct skipped prefix (pg-write seq==2) = {reconstructed_ok}/{iters}"
+        "B reclaimed (attempts==1, the first counted crash) = {b_reclaimed_ok}/{iters}, resumed-to-single-row = {exactly_once}/{iters}, reconstruct skipped prefix (pg-write seq==2) = {reconstructed_ok}/{iters}"
     );
     println!(
         "ended completed = {completed_status}/{iters}, janitor left completed run alone = {janitor_safe}/{iters}"

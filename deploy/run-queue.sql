@@ -33,8 +33,11 @@
 -- run_queue: one row per pending/in-flight run. `available_at` gates visibility
 -- (future = a delayed/parked/backed-off run); a live `lease_expires_at` marks a
 -- row a replica currently owns, and once it expires another replica may reclaim
--- it (crash-safe failover). `attempts` bumps on every claim; once it reaches
--- `max_attempts` and the lease is long expired, the janitor marks the run
+-- it (crash-safe failover). `attempts` counts CRASH EVIDENCE only: a claim bumps
+-- it iff it reclaims an expired lease (the prior owner died holding the run) — a
+-- first claim and a park->wake re-claim (park releases the lease) are free, so a
+-- flow may park unboundedly without spending redelivery budget. Once `attempts`
+-- reaches `max_attempts` and the lease is long expired, the janitor marks the run
 -- `infrastructure-failure` and removes the row. The FK to `runs` ON DELETE CASCADE
 -- ties the claim machinery to the run's immutable history. Status/lifecycle live
 -- on `runs` (5.7) — the queue is the claim/lease layer, not a second run-state.

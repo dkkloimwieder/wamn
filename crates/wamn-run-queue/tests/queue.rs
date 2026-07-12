@@ -79,7 +79,7 @@ fn plan_claim_orders_by_available_then_run_id_and_limits() {
     let one = plan_claim(&rows, 1_000, 1, 60_000);
     assert_eq!(one.claimed.len(), 1);
     assert_eq!(one.claimed[0].run_id, "a");
-    assert_eq!(one.claimed[0].attempts, 1); // bumped
+    assert_eq!(one.claimed[0].attempts, 0); // never leased -> first claim is FREE (crash evidence only)
     assert_eq!(one.claimed[0].lease_expires_at, 1_000 + 60_000);
 
     // limit 10 -> all three Ready rows in (available_at, run_id) order; the
@@ -176,7 +176,13 @@ fn claim_sql_is_skip_locked_and_bounded() {
     assert!(sql.contains("c.lease_expires_at IS NULL OR c.lease_expires_at <= now()"));
     // The redelivery-budget guard: a spent row is left for the janitor, not re-leased.
     assert!(sql.contains("c.attempts < c.max_attempts"));
-    assert!(sql.contains("attempts = q.attempts + 1"));
+    // Crash-evidence increment: attempts bumps ONLY on an expired-lease reclaim (the
+    // predicate established expired-or-NULL, so IS NOT NULL = the prior owner died).
+    // A first claim and a park->wake re-claim (park releases the lease) are free —
+    // an unconditional `+ 1` here burns the redelivery budget on every wake.
+    assert!(sql.contains(
+        "attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END"
+    ));
     assert!(sql.contains("RETURNING q.run_id, q.attempts, q.lease_expires_at"));
     // The global claim leaves partitioned runs to the per-partition path.
     assert!(sql.contains("c.partition_key IS NULL"));
@@ -210,6 +216,11 @@ fn partition_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(claim.contains("(b.available_at, b.run_id) < (c.available_at, c.run_id)"));
     assert!(claim.contains("FOR UPDATE OF c SKIP LOCKED"));
     assert!(claim.contains("LIMIT 8"));
+    // Same crash-evidence increment as the global claim: a parked head is re-claimed
+    // on EVERY wake, so this path would burn the budget fastest unconditionally.
+    assert!(claim.contains(
+        "attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END"
+    ));
     assert!(claim.contains("RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at"));
 
     // Acquire / renew / release / gc carry an explicit tenant claim. (The head
@@ -272,6 +283,130 @@ fn global_claim_skips_partitioned_rows() {
     let plan = plan_claim(&rows, 1_000, 10, 60_000);
     let ids: Vec<&str> = plan.claimed.iter().map(|c| c.run_id.as_str()).collect();
     assert_eq!(ids, ["plain"]);
+}
+
+// ---- crash-evidence attempts (park/wake is free) -----------------------------
+
+#[test]
+fn park_wake_cycles_never_consume_the_redelivery_budget() {
+    // A delay-loop flow with max_attempts = 1 parks N times and stays claimable at
+    // EVERY wake: park releases the lease, so the wake re-claim sees no crash
+    // evidence and attempts stays 0. Before the fix each claim bumped attempts, so
+    // the second wake already classified the run Exhausted — a run that never
+    // failed, killed for sleeping.
+    let mut entry = QueueEntry::ready("t1", "r", 0, 1); // budget: ONE crash allowed
+    let mut now = 100;
+    for wake in 0..10 {
+        assert_eq!(
+            claim_state(&entry, now),
+            ClaimState::Ready,
+            "wake {wake}: a parked-and-woken run must stay claimable"
+        );
+        let plan = plan_claim(std::slice::from_ref(&entry), now, 1, 1_000);
+        assert_eq!(plan.claimed.len(), 1);
+        assert_eq!(plan.claimed[0].attempts, 0, "wake {wake}: re-claim is free");
+        // The runner parks (park_sql: lease released, available_at pushed out).
+        entry = QueueEntry {
+            attempts: plan.claimed[0].attempts,
+            ..QueueEntry::ready("t1", "r", now + 500, 1)
+        };
+        now += 1_000; // the wake: available_at has arrived
+    }
+}
+
+#[test]
+fn crash_loop_exhausts_at_exactly_max_attempts() {
+    // Repeated expired-lease reclaims each count one unit of crash evidence; the
+    // row classifies Exhausted (left for the janitor) exactly when attempts reaches
+    // max_attempts. max_attempts = "how many times may a runner die holding this
+    // run": the first dispatch is free, so a budget of N tolerates N deaths
+    // (N+1 deliveries) — crash-loops still retire.
+    let max = 3;
+    let mut entry = QueueEntry::ready("t1", "r", 0, max);
+    let mut now = 100;
+    let mut deliveries = 0;
+    while is_claimable(&entry, now) {
+        let plan = plan_claim(std::slice::from_ref(&entry), now, 1, 1_000);
+        deliveries += 1;
+        // The claimant crashes: its lease expires unreleased (crash evidence).
+        entry = QueueEntry {
+            lease_owner: Some(format!("dead-{deliveries}")),
+            lease_expires_at: Some(plan.claimed[0].lease_expires_at),
+            attempts: plan.claimed[0].attempts,
+            ..entry
+        };
+        now = plan.claimed[0].lease_expires_at + 1;
+    }
+    assert_eq!(entry.attempts, max, "spent at exactly max_attempts");
+    assert_eq!(claim_state(&entry, now), ClaimState::Exhausted);
+    assert_eq!(
+        deliveries,
+        max + 1,
+        "first dispatch free + max counted reclaims"
+    );
+}
+
+#[test]
+fn park_wake_crash_reclaim_costs_one_unit_not_three() {
+    // claim -> park -> wake-claim -> crash -> reclaim: only the crash counts.
+    let fresh = QueueEntry::ready("t1", "r", 0, 20);
+    let first = plan_claim(std::slice::from_ref(&fresh), 100, 1, 1_000);
+    assert_eq!(first.claimed[0].attempts, 0); // first dispatch: free
+
+    // The runner parks; at wake the re-claim is free too.
+    let parked = QueueEntry {
+        attempts: first.claimed[0].attempts,
+        ..QueueEntry::ready("t1", "r", 5_000, 20)
+    };
+    let woken = plan_claim(std::slice::from_ref(&parked), 6_000, 1, 1_000);
+    assert_eq!(woken.claimed[0].attempts, 0); // wake re-claim: free
+
+    // The runner CRASHES holding the run: its lease expires unreleased, and the
+    // reclaim counts exactly one unit — not three.
+    let crashed = QueueEntry {
+        lease_owner: Some("dead".into()),
+        lease_expires_at: Some(woken.claimed[0].lease_expires_at),
+        attempts: woken.claimed[0].attempts,
+        ..QueueEntry::ready("t1", "r", 5_000, 20)
+    };
+    let reclaimed = plan_claim(std::slice::from_ref(&crashed), 60_000, 1, 1_000);
+    assert_eq!(reclaimed.claimed[0].attempts, 1);
+
+    // The partition head claim mirrors the same rule (both claim paths).
+    let owned: HashSet<&str> = ["site-1"].into_iter().collect();
+    let fresh_head = QueueEntry::ready_partition("t1", "s1-0", "site-1", 0, 20);
+    let plan = plan_partition_claim(std::slice::from_ref(&fresh_head), &owned, 100, 10, 1_000);
+    assert_eq!(plan.claimed[0].attempts, 0); // first head claim: free
+    let crashed_head = QueueEntry {
+        lease_owner: Some("dead".into()),
+        lease_expires_at: Some(50),
+        ..fresh_head.clone()
+    };
+    let plan = plan_partition_claim(std::slice::from_ref(&crashed_head), &owned, 100, 10, 1_000);
+    assert_eq!(plan.claimed[0].attempts, 1); // expired-lease reclaim: counted
+
+    // A NONZERO base pins the ADDITIVE term of the partition mirror: prior crash
+    // evidence accumulates (2 + 1), so a "set to 1 on reclaim" implementation —
+    // indistinguishable from 0 + 1 in every from-zero assert above — fails here.
+    let repeat_crash = QueueEntry {
+        attempts: 2,
+        ..crashed_head
+    };
+    let plan = plan_partition_claim(std::slice::from_ref(&repeat_crash), &owned, 100, 10, 1_000);
+    assert_eq!(plan.claimed[0].attempts, 3);
+    // And a free wake-claim preserves (never resets) accumulated crash evidence.
+    let parked_after_crashes = QueueEntry {
+        attempts: 2,
+        ..fresh_head
+    };
+    let plan = plan_partition_claim(
+        std::slice::from_ref(&parked_after_crashes),
+        &owned,
+        100,
+        10,
+        1_000,
+    );
+    assert_eq!(plan.claimed[0].attempts, 2);
 }
 
 // ---- per-partition ownership -----------------------------------------------
@@ -338,7 +473,7 @@ fn plan_partition_claim_takes_head_of_owned_partitions_only() {
     let ids: Vec<&str> = plan.claimed.iter().map(|c| c.run_id.as_str()).collect();
     // site-1 head only; site-2 blocked (in-flight); site-3 not owned.
     assert_eq!(ids, ["s1-0"]);
-    assert_eq!(plan.claimed[0].attempts, 1); // bumped
+    assert_eq!(plan.claimed[0].attempts, 0); // never leased -> first claim is FREE (crash evidence only)
     assert_eq!(plan.claimed[0].lease_expires_at, 1_000 + 60_000);
 }
 
@@ -848,6 +983,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // bug in claim_batch_sql / janitor_sweep_sql / the partition builders is caught here.
     let claim_sql = claim_batch_sql(10);
     let janitor_sql = janitor_sweep_sql();
+    let park_stmt_sql = park_sql();
     let acquire_sql = acquire_partitions_sql(10);
     let claim_head_sql = claim_partition_head_sql(10);
     // The trigger dispatcher's builders (cron/outbox/wake).
@@ -955,18 +1091,31 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // The REAL SKIP LOCKED claim via PREPARE/EXECUTE: takes the Ready rows
     // (rq-ready, rq-expired, rq-reclaim, rq-healthy); skips rq-parked (future),
     // rq-leased (still 'X'), and rq-spent (budget spent -> left for the janitor).
+    // attempts counts CRASH EVIDENCE only: the never-leased rq-ready/rq-healthy are
+    // claimed for free, while the expired-lease rq-expired/rq-reclaim (their owner
+    // died) are bumped — and a park->wake re-claim through the REAL park_sql is
+    // free too (park releases the lease, so the claim sees no crash evidence).
     script.push_str(&format!(
         "BEGIN;\n\
          SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
          PREPARE claim_stmt (text, bigint) AS {claim_sql};\n\
+         PREPARE park_stmt (text, bigint) AS {park_stmt_sql};\n\
          EXECUTE claim_stmt('c1', 60000);\n\
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM run_queue WHERE lease_owner='c1') = 4, 'claimed the 4 Ready rows'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='rq-leased') = 'X', 'live lease not stolen'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='rq-parked') IS NULL, 'parked row not claimed'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='rq-spent') = 'dead', 'budget-spent row not claimed'; \
-           ASSERT (SELECT attempts FROM run_queue WHERE run_id='rq-expired') = 1, 'expired row reclaimed + bumped'; \
-           ASSERT (SELECT attempts FROM run_queue WHERE run_id='rq-reclaim') = 2, 'reclaimable row reclaimed + bumped'; \
+           ASSERT (SELECT attempts FROM run_queue WHERE run_id='rq-ready') = 0, 'first claim of a never-leased row is FREE'; \
+           ASSERT (SELECT attempts FROM run_queue WHERE run_id='rq-healthy') = 0, 'first claim of a never-leased row is FREE'; \
+           ASSERT (SELECT attempts FROM run_queue WHERE run_id='rq-expired') = 1, 'expired-lease reclaim counts crash evidence'; \
+           ASSERT (SELECT attempts FROM run_queue WHERE run_id='rq-reclaim') = 2, 'expired-lease reclaim counts crash evidence'; \
+         END $$;\n\
+         EXECUTE park_stmt('rq-healthy', 0);\n\
+         EXECUTE claim_stmt('c2', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='rq-healthy') = 'c2', 'a parked-and-due row is re-claimed at wake'; \
+           ASSERT (SELECT attempts FROM run_queue WHERE run_id='rq-healthy') = 0, 'a park->wake re-claim burns NO redelivery budget'; \
          END $$;\n\
          COMMIT;\n"
     ));
@@ -989,6 +1138,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          DO $$ BEGIN \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-0') = 'R1', 'site-a head pa-0 claimed'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pb-0') = 'R1', 'site-b head pb-0 claimed'; \
+           ASSERT (SELECT attempts FROM run_queue WHERE run_id='pa-0') = 0, 'first head claim is FREE (crash evidence only)'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-1') IS NULL, 'pa-1 blocked (one in flight per key)'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-2') IS NULL, 'pa-2 blocked behind the head'; \
          END $$;\n\
@@ -1021,6 +1171,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          EXECUTE claimhead_stmt('R1', 60000);\n\
          DO $$ BEGIN \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-1') = 'R1', 'site-a advances to pa-1 in order after pa-0 dequeues'; \
+           ASSERT (SELECT attempts FROM run_queue WHERE run_id='pa-1') = 0, 'advancing to the next never-leased head is FREE'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-2') IS NULL, 'pa-2 still blocked behind pa-1'; \
          END $$;\n\
          COMMIT;\n"

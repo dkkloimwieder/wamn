@@ -41,14 +41,25 @@ pub fn enqueue_sql() -> String {
 /// The `FOR UPDATE SKIP LOCKED` batch claim for **unpartitioned** runs: atomically
 /// lease up to `limit` claimable rows (visible, unleased or lease-expired,
 /// **redelivery budget not spent**) for `$1` lease_owner with a `$2` lease_ttl_ms
-/// visibility timeout, bumping `attempts`. `SKIP LOCKED` lets concurrent replicas
-/// claim disjoint rows without blocking. The `attempts < max_attempts` guard is what
-/// lets the janitor win the race for a crash-looping run: once the budget is spent
-/// the claim path stops re-grabbing (and re-leasing) the row, so its lease ages out
-/// and the janitor reaps it to `infrastructure-failure` — without it, each reclaim
-/// would refresh the lease and the janitor window would never open. Returns each
-/// claimed `run_id`, its new `attempts`, and `lease_expires_at`. `limit` is a
-/// numeric literal (a `usize`, not user text).
+/// visibility timeout. `SKIP LOCKED` lets concurrent replicas claim disjoint rows
+/// without blocking.
+///
+/// `attempts` counts **crash evidence only**: the `CASE` bumps it iff the claim
+/// reclaims an *expired* lease — the prior owner died holding the run (it never
+/// completed, parked, or dequeued). The claim predicate has already established
+/// expired-or-NULL, so `lease_expires_at IS NOT NULL` *is* "expired lease". A first
+/// claim of a never-leased row and a park→wake re-claim ([`park_sql`] releases the
+/// lease) are free, so a delay-loop flow parks unboundedly without burning
+/// redelivery budget, while a crash-loop still exhausts at `max_attempts`
+/// (`max_attempts` = how many times a runner may die holding this run).
+///
+/// The `attempts < max_attempts` guard is what lets the janitor win the race for a
+/// crash-looping run: once the budget is spent the claim path stops re-grabbing
+/// (and re-leasing) the row, so its lease ages out and the janitor reaps it to
+/// `infrastructure-failure` — without it, each reclaim would refresh the lease and
+/// the janitor window would never open. Returns each claimed `run_id`, its new
+/// `attempts`, and `lease_expires_at`. `limit` is a numeric literal (a `usize`,
+/// not user text).
 ///
 /// The `partition_key IS NULL` guard leaves partitioned runs to the per-partition
 /// ownership path ([`claim_partition_head_sql`]) so they are never dispatched out of
@@ -58,7 +69,7 @@ pub fn claim_batch_sql(limit: usize) -> String {
         "UPDATE run_queue AS q \
             SET lease_owner = $1, \
                 lease_expires_at = now() + ($2::bigint * interval '1 millisecond'), \
-                attempts = q.attempts + 1 \
+                attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
           WHERE (q.tenant_id, q.run_id) IN ( \
               SELECT c.tenant_id, c.run_id FROM run_queue AS c \
                WHERE c.partition_key IS NULL \
@@ -107,6 +118,9 @@ pub fn dequeue_sql() -> String {
 /// Park a claimed run for a later wake (a `delay` node / backoff): push
 /// `available_at` out by `$2` ms and release the lease so no replica holds it while
 /// it sleeps. Param `$1` run_id. Reconciliation/doorbell picks it up at wake.
+/// Releasing the lease (rather than letting it expire) is also what makes the wake
+/// re-claim FREE: the claim's crash-evidence `CASE` sees `lease_expires_at IS NULL`
+/// and leaves `attempts` alone — parking is proof of life, not a crash.
 pub fn park_sql() -> String {
     "UPDATE run_queue \
         SET available_at = now() + ($2::bigint * interval '1 millisecond'), \
@@ -325,11 +339,16 @@ pub fn release_partition_sql() -> String {
 /// Within the partitions `$1` owns (a live `partition_owner` lease), claim the
 /// **head** of each — the earliest-`(available_at, run_id)` run that is ready, has no
 /// earlier ready sibling, and whose partition has **no run in flight** — leasing it
-/// for `$2` ttl_ms and bumping `attempts`. Because the `NOT EXISTS` reduces each
-/// partition to a single head candidate, `FOR UPDATE OF c SKIP LOCKED` is legal (no
-/// `DISTINCT`) and takes the globally-earliest heads across owned partitions up to
-/// `limit`. One-in-flight-per-partition + head-first is what keeps a key in order:
-/// its next run becomes claimable only once the current one completes and dequeues.
+/// for `$2` ttl_ms. Because the `NOT EXISTS` reduces each partition to a single head
+/// candidate, `FOR UPDATE OF c SKIP LOCKED` is legal (no `DISTINCT`) and takes the
+/// globally-earliest heads across owned partitions up to `limit`. One-in-flight-per-
+/// partition + head-first is what keeps a key in order: its next run becomes
+/// claimable only once the current one completes and dequeues.
+///
+/// `attempts` counts **crash evidence only**, exactly as in [`claim_batch_sql`]: the
+/// `CASE` bumps it iff this claim reclaims an *expired* lease. This matters most
+/// here — a parked partitioned head is re-claimed head-first on *every* wake, so an
+/// unconditional bump would burn the redelivery budget fastest on this path.
 /// Returns each claimed `run_id`, its `partition_key`, new `attempts`, and
 /// `lease_expires_at`. `limit` is a numeric literal.
 pub fn claim_partition_head_sql(limit: usize) -> String {
@@ -337,7 +356,7 @@ pub fn claim_partition_head_sql(limit: usize) -> String {
         "UPDATE run_queue AS q \
             SET lease_owner = $1, \
                 lease_expires_at = now() + ($2::bigint * interval '1 millisecond'), \
-                attempts = q.attempts + 1 \
+                attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
           WHERE (q.tenant_id, q.run_id) IN ( \
               SELECT c.tenant_id, c.run_id \
                 FROM run_queue AS c \

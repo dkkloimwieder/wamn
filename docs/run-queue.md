@@ -34,7 +34,7 @@ completion, while the `runs` row is audit history that lives forever.
 | `tenant_id`, `run_id` | PK; FK → `wamn_run.runs` `ON DELETE CASCADE` |
 | `available_at` | visibility gate — future = a delayed / parked / backed-off run |
 | `lease_owner`, `lease_expires_at` | the replica currently holding the run; past expiry it is reclaimable (crash-safe failover) |
-| `attempts`, `max_attempts` | redelivery budget; spent + long-expired ⇒ the janitor gives up |
+| `attempts`, `max_attempts` | redelivery budget — `attempts` counts **crash evidence** (expired-lease reclaims) only; spent + long-expired ⇒ the janitor gives up |
 | `partition_key`, `priority` | the per-partition-ownership dispatch key (see *Per-partition ownership*); `priority` remains reserved |
 
 The table sits on the house tenant floor — `FORCE ROW LEVEL SECURITY` keyed on
@@ -55,16 +55,25 @@ verdict) — so 5.14 adds a table but changes no existing schema.
    link by design, so a lost hint is not a lost run:
 3. **Claim.** `claim_batch_sql` atomically leases up to *N* claimable rows (visible,
    unleased or lease-expired, **and within their redelivery budget**) for the runner
-   with a visibility timeout, bumping `attempts`; `FOR UPDATE SKIP LOCKED` lets
-   concurrent replicas take **disjoint** rows without blocking. A claimed run flips
-   `runs.status` → `running`. The `attempts < max_attempts` guard is what lets the
+   with a visibility timeout; `FOR UPDATE SKIP LOCKED` lets concurrent replicas take
+   **disjoint** rows without blocking. A claimed run flips `runs.status` →
+   `running`. `attempts` counts **crash evidence only**: a claim bumps it iff it
+   reclaims an *expired* lease — the prior owner died holding the run (it never
+   completed, parked, or dequeued). The first dispatch is free (a first-dispatch
+   crash costs its unit on the *reclaim*), and a park→wake re-claim is free (park
+   releases the lease — parking is proof of life), so `max_attempts` means "how many
+   times may a runner die holding this run": a delay-loop flow parks unboundedly
+   without spending budget while a crash-loop still exhausts. Both claim paths
+   (the global claim and the partition head claim) apply the same rule. The
+   `attempts < max_attempts` guard is what lets the
    janitor win the race for a crash-looping run: once the budget is spent the claim
    path stops re-grabbing (and re-leasing) the row, so its lease ages out and step 6
    reaps it — without the guard, every reclaim would refresh the lease and the
    janitor window would never open.
 4. **Heartbeat / complete.** The runner renews its lease while it works and
    dequeues the row on completion (the `runs` history stays). A `delay` node parks
-   the row (push `available_at` out, release the lease) for a later wake.
+   the row (push `available_at` out, release the lease) for a later wake — without
+   consuming redelivery budget.
 5. **Reconciliation.** A slow periodic claim (30 s–5 min) backstops any lost
    doorbell hint, guaranteeing eventual pickup with zero continuous polling.
 6. **Janitor.** A run whose lease expired more than a grace period ago **and**
@@ -136,7 +145,8 @@ an operator intervenes) is an ordering **policy** decision that belongs to 5.11 
 
 Failover composes the two halves 5.14 and 5.7 already built: the run-queue **lease
 reclaim** (a dead runner's lease ages out and `claim_batch_sql` re-claims the row,
-bumping `attempts`) and 5.7 **branch-aware reconstruction**. When a runner dies
+counting one unit of crash evidence on `attempts`) and 5.7 **branch-aware
+reconstruction**. When a runner dies
 mid-run, a second replica reclaims the run and drives the *same* flowrunner guest,
 which rebuilds the outstanding frontier from `node_runs`
 (`wamn_run_store::reconstruct` + `Plan::resume`) and completes. Because an effectful
@@ -364,7 +374,10 @@ follow-up.
   (queue + partition + outbox) — all off-cluster.
 - **live-apply** (`WAMN_RUN_QUEUE_PG_URL`) — applies `run-state.sql` +
   `run-queue.sql` to a throwaway Postgres and asserts the SKIP LOCKED claim
-  predicate (Ready claimed, Parked/Leased skipped, expired reclaimed), the janitor
+  predicate (Ready claimed, Parked/Leased skipped, expired reclaimed), the
+  **crash-evidence `attempts` rule** on both claim paths (a never-leased row and a
+  park→wake re-claim through the real `park_sql` claim for free; an expired-lease
+  reclaim bumps), the janitor
   sweep (including the **completion-vs-failover race guard** — a `completed` run with
   a stale expired+spent queue row is *not* relabeled, a real orphan still is), tenant
   RLS isolation, the FK cascade, and — via the *real* builders through
@@ -382,7 +395,10 @@ follow-up.
   against a superuser-provisioned ephemeral schema): the D15 dispatch SLOs
   (write-ahead p99 < 15 ms, fast-path p99 < 10 ms), SKIP LOCKED **exactly-once +
   completeness** under concurrent claimers at ~1–5k claims/s, **lease-expiry
-  reclaim** (crash-safe failover), the **janitor** sweep, the **NATS-core
+  reclaim** (crash-safe failover), the **park** mode (park/wake budget-neutrality:
+  a flow parking 10× with `max_attempts = 3` completes on **both** claim paths
+  with `attempts` still 0 and a janitor sweep retires nothing — the wamn-fqg.5
+  regression), the **janitor** sweep, the **NATS-core
   doorbell** async-warm latency (p50 < 25 ms / p99 < 100 ms), and the **partition**
   mode: `partitioned(key)` runs dispatched **in order per key** across concurrent
   replicas (per-key serialization + exactly-once) plus in-order partition failover.
@@ -391,7 +407,8 @@ follow-up.
 - **`failoverbench`** — checkpoint/resume on replica loss, against a superuser-
   provisioned ephemeral schema that unions the flow tables with `run_queue`. The
   `failover` mode kills replica A mid-effect, lets its lease expire, reclaims the
-  run on replica B (`attempts == 2`) and resumes the *same* unchanged flowrunner
+  run on replica B (`attempts == 1` — A's first claim was free, its death is the
+  first counted crash) and resumes the *same* unchanged flowrunner
   guest via reconstruction — asserting **exactly one** side effect, that the
   exactly-once came from **reconstruction** and not just the sink constraint
   (pg-write's `node_runs.seq == 2`: the completed prefix was skipped, not

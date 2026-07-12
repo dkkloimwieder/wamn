@@ -54,13 +54,15 @@ pub fn is_claimable(entry: &QueueEntry, now: Millis) -> bool {
     claim_state(entry, now) == ClaimState::Ready
 }
 
-/// The result of claiming one row: the new lease deadline and post-increment
-/// attempt the `claim_batch_sql` UPDATE writes.
+/// The result of claiming one row: the new lease deadline and the attempt count
+/// the `claim_batch_sql` UPDATE writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Claimed {
     pub tenant_id: String,
     pub run_id: String,
-    /// `attempts` after the claim's `+ 1`.
+    /// `attempts` after the claim. Counts **crash evidence only**: bumped iff the
+    /// claim reclaimed an *expired* lease (the prior owner died holding the run);
+    /// a first claim and a park→wake re-claim (park releases the lease) are free.
     pub attempts: i32,
     /// `now + lease_ttl` — the new visibility timeout.
     pub lease_expires_at: Millis,
@@ -102,7 +104,9 @@ pub fn plan_claim(
         .map(|e| Claimed {
             tenant_id: e.tenant_id.clone(),
             run_id: e.run_id.clone(),
-            attempts: e.attempts + 1,
+            // Crash evidence only: a claimable row's lease is NULL or expired, so a
+            // present lease IS an expired one — the prior owner died holding the run.
+            attempts: e.attempts + i32::from(e.lease_expires_at.is_some()),
             lease_expires_at: now + lease_ttl,
         })
         .collect();

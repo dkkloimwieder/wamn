@@ -17,6 +17,10 @@
 //!                (completeness), sustaining ~1–5k claims/s.
 //!   reclaim    — a claimant's lease expires; another replica reclaims the run
 //!                (crash-safe failover), and not before the lease expires.
+//!   park       — park/wake cycles are budget-free: `attempts` counts crash
+//!                evidence (expired-lease reclaims) only, so a flow that parks far
+//!                more times than `max_attempts` still completes — on BOTH claim
+//!                paths — and the janitor retires nothing.
 //!   janitor    — an abandoned (expired-lease, budget-spent) run is swept to
 //!                `infrastructure-failure` and dequeued; a healthy run is untouched.
 //!   doorbell   — enqueue publishes a NATS-core hint; a subscriber wakes and
@@ -38,7 +42,7 @@ use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 use wamn_run_queue::{
     acquire_partitions_sql, claim_batch_sql, claim_partition_head_sql, dequeue_sql, enqueue_sql,
-    janitor_sweep_sql, mark_running_sql, write_ahead_run_sql,
+    janitor_sweep_sql, mark_running_sql, park_sql, write_ahead_run_sql,
 };
 
 const SCHEMA: &str = "wamn_queue_bench";
@@ -50,6 +54,7 @@ pub enum Mode {
     Dispatch,
     Throughput,
     Reclaim,
+    Park,
     Janitor,
     Doorbell,
     Partition,
@@ -297,6 +302,9 @@ pub async fn run(args: QueueBenchArgs) -> anyhow::Result<()> {
         if run_all || args.mode == Mode::Reclaim {
             pass &= reclaim_phase(&app_url, &admin_url).await?;
         }
+        if run_all || args.mode == Mode::Park {
+            pass &= park_phase(&app_url, &admin_url).await?;
+        }
         if run_all || args.mode == Mode::Janitor {
             pass &= janitor_phase(&app_url, &admin_url).await?;
         }
@@ -484,25 +492,139 @@ async fn reclaim_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
 
     let short_ttl: i64 = 400;
     let claim = claim_batch_sql(10);
+    // attempts counts crash evidence only (wamn-fqg.5): A's first claim of the
+    // never-leased row is FREE (attempts stays 0)…
     let got_a = a.query(&claim, &[&"A", &short_ttl]).await?;
-    let a_ok = got_a.len() == 1 && got_a[0].get::<_, String>("run_id") == "rc-1";
+    let a_ok = got_a.len() == 1
+        && got_a[0].get::<_, String>("run_id") == "rc-1"
+        && got_a[0].get::<_, i32>("attempts") == 0;
 
     // B cannot steal a live lease.
     let blocked = b.query(&claim, &[&"B", &short_ttl]).await?;
     let b_blocked = blocked.is_empty();
 
-    // After the lease expires, B reclaims it — attempts bumped to 2.
+    // …and after the lease expires, B's reclaim of the expired lease is the first
+    // counted unit of crash evidence: attempts == 1 (it was 2 under the pre-fqg.5
+    // count-every-claim semantics — the new value is the point, not a regression).
     tokio::time::sleep(Duration::from_millis(short_ttl as u64 + 250)).await;
     let reclaimed = b.query(&claim, &[&"B", &short_ttl]).await?;
     let b_reclaimed = reclaimed.len() == 1
         && reclaimed[0].get::<_, String>("run_id") == "rc-1"
-        && reclaimed[0].get::<_, i32>("attempts") == 2;
+        && reclaimed[0].get::<_, i32>("attempts") == 1;
 
     println!(
         "A claimed={a_ok}, B blocked while lease live={b_blocked}, B reclaimed after expiry={b_reclaimed}"
     );
     let pass = a_ok && b_blocked && b_reclaimed;
     println!("PASS(lease failover): {pass}");
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// park: park/wake cycles are budget-free (attempts counts crash evidence only)
+// ---------------------------------------------------------------------------
+
+/// A delay-loop flow parks and wakes far more times than its `max_attempts`, on
+/// BOTH claim paths (the global claim and the partition head claim — a parked
+/// partitioned head is re-claimed on every wake). Every wake re-claim must be
+/// FREE: park releases the lease, so the claim's crash-evidence `CASE` sees no
+/// expired lease and leaves `attempts` at 0. The runs complete with the full
+/// redelivery budget intact and a janitor sweep retires nothing. Before the
+/// wamn-fqg.5 fix each claim bumped `attempts`, so 10 parks with max_attempts=3
+/// classified the runs Exhausted mid-loop — killed having failed zero times —
+/// and this phase fails at the first post-budget wake.
+async fn park_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
+    const PARKS: usize = 10;
+    const MAX_ATTEMPTS: i32 = 3;
+    println!(
+        "\n## park — {PARKS} park/wake cycles with max_attempts={MAX_ATTEMPTS} complete on both claim paths"
+    );
+    reset(admin_url).await?;
+
+    let (mut client, _h) = connect_app(app_url).await?;
+    enqueue(&mut client, "pk-global", 0).await?;
+    enqueue_partitioned(&mut client, "pk-part", "pk", 0).await?;
+    // The tight budget that made claim-counting fatal: >3 parks would exhaust it.
+    client
+        .execute("UPDATE run_queue SET max_attempts = $1", &[&MAX_ATTEMPTS])
+        .await?;
+
+    let claim = claim_batch_sql(10);
+    let acquire = acquire_partitions_sql(4);
+    let claim_head = claim_partition_head_sql(4);
+    let park = park_sql();
+    let ttl: i64 = 60_000;
+    let park_ms: i64 = 5;
+
+    // Global path: claim -> park -> wake -> re-claim, PARKS times over.
+    let mut global_free = true;
+    for cycle in 0..PARKS {
+        let got = client.query(&claim, &[&"P1", &ttl]).await?;
+        if got.len() != 1 || got[0].get::<_, i32>("attempts") != 0 {
+            println!(
+                "global cycle {cycle}: claimed {} rows, attempts {:?} (want 1 row, attempts 0)",
+                got.len(),
+                got.first().map(|r| r.get::<_, i32>("attempts"))
+            );
+            global_free = false;
+            break;
+        }
+        client.execute(&park, &[&"pk-global", &park_ms]).await?;
+        tokio::time::sleep(Duration::from_millis(park_ms as u64 + 10)).await;
+    }
+
+    // Partition path: the parked head is re-claimed head-first on every wake.
+    // (P1's partition lease is taken once and stays live across the cycles.)
+    client.query(&acquire, &[&"P1", &ttl]).await?;
+    let mut part_free = true;
+    for cycle in 0..PARKS {
+        let got = client.query(&claim_head, &[&"P1", &ttl]).await?;
+        if got.len() != 1 || got[0].get::<_, i32>("attempts") != 0 {
+            println!(
+                "partition cycle {cycle}: claimed {} rows, attempts {:?} (want 1 row, attempts 0)",
+                got.len(),
+                got.first().map(|r| r.get::<_, i32>("attempts"))
+            );
+            part_free = false;
+            break;
+        }
+        client.execute(&park, &[&"pk-part", &park_ms]).await?;
+        tokio::time::sleep(Duration::from_millis(park_ms as u64 + 10)).await;
+    }
+
+    // While both runs sit parked (leases released), a zero-grace janitor sweep must
+    // retire nothing: the cycles never made anything reap-eligible.
+    client.execute(&janitor_sweep_sql(), &[&0i64]).await?;
+    let infra_q = "SELECT count(*) FROM runs WHERE status='infrastructure-failure'";
+    let infra_mid: i64 = client.query_one(infra_q, &[]).await?.get(0);
+    let queued: i64 = client
+        .query_one("SELECT count(*) FROM run_queue", &[])
+        .await?
+        .get(0);
+    let janitor_clean = infra_mid == 0 && queued == 2;
+
+    // The final wakes complete both runs — full redelivery budget intact.
+    let done = client.query(&claim, &[&"P1", &ttl]).await?;
+    let global_done = done.len() == 1 && done[0].get::<_, i32>("attempts") == 0;
+    client.execute(&mark_running_sql(), &[&"pk-global"]).await?;
+    client.execute(&dequeue_sql(), &[&"pk-global"]).await?;
+    let done = client.query(&claim_head, &[&"P1", &ttl]).await?;
+    let part_done = done.len() == 1 && done[0].get::<_, i32>("attempts") == 0;
+    client.execute(&mark_running_sql(), &[&"pk-part"]).await?;
+    client.execute(&dequeue_sql(), &[&"pk-part"]).await?;
+
+    let infra_end: i64 = client.query_one(infra_q, &[]).await?.get(0);
+    let drained: i64 = client
+        .query_one("SELECT count(*) FROM run_queue", &[])
+        .await?
+        .get(0);
+    let completed = global_done && part_done && infra_end == 0 && drained == 0;
+
+    println!(
+        "global wakes free={global_free} | partition wakes free={part_free} | janitor retired nothing={janitor_clean} | both completed with budget intact={completed}"
+    );
+    let pass = global_free && part_free && janitor_clean && completed;
+    println!("PASS(park/wake never consumes the redelivery budget): {pass}");
     Ok(pass)
 }
 
@@ -881,11 +1003,13 @@ async fn partition_failover(app_url: &str, admin_url: &str) -> anyhow::Result<bo
     tokio::time::sleep(Duration::from_millis(short_ttl as u64 + 250)).await;
 
     // B reacquires pf and drains it in order (reclaiming the abandoned pf-0). The
-    // reclaimed head arrives with attempts==2 (A's claim was attempt 1) — proof it is
-    // the SAME abandoned in-flight run redelivered, not a fresh/duplicate dispatch.
-    // Together with B being blocked while A's lease was live (b_blocked_claim), this
-    // is the exactly-once-in-flight guarantee: pf-0 was never dispatched to two owners
-    // at once, and it is delivered again only after the first owner provably released.
+    // reclaimed head arrives with attempts==1 (A's first claim was FREE — attempts
+    // counts crash evidence, and A dying holding the lease is the first unit) —
+    // proof it is the SAME abandoned in-flight run redelivered, not a
+    // fresh/duplicate dispatch. Together with B being blocked while A's lease was
+    // live (b_blocked_claim), this is the exactly-once-in-flight guarantee: pf-0 was
+    // never dispatched to two owners at once, and it is delivered again only after
+    // the first owner provably released.
     let b_reacq = b.query(&acquire, &[&"B", &600_000i64]).await?;
     let b_got = b_reacq
         .iter()
@@ -908,7 +1032,7 @@ async fn partition_failover(app_url: &str, admin_url: &str) -> anyhow::Result<bo
         }
     }
     let in_order = order == ["pf-0", "pf-1", "pf-2"];
-    let reclaimed_once = pf0_reclaim_attempts == 2;
+    let reclaimed_once = pf0_reclaim_attempts == 1;
 
     let pass = a_owns
         && a_got_head

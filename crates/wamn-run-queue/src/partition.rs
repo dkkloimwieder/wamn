@@ -106,7 +106,10 @@ pub fn plan_partition_claim(
         .map(|e| Claimed {
             tenant_id: e.tenant_id.clone(),
             run_id: e.run_id.clone(),
-            attempts: e.attempts + 1,
+            // Crash evidence only, mirroring `claim_batch_sql`: bump iff this claim
+            // reclaims an expired lease. A parked head is re-claimed on every wake,
+            // so this path would burn the redelivery budget fastest otherwise.
+            attempts: e.attempts + i32::from(e.lease_expires_at.is_some()),
             lease_expires_at: now + lease_ttl,
         })
         .collect();

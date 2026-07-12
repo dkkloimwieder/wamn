@@ -15,7 +15,8 @@ pub type Millis = i64;
 /// One row of `run_queue`: a run waiting to be (or being) dispatched. `available_at`
 /// is when the row becomes claimable — future for a delayed/parked/backed-off run;
 /// a live lease (`lease_expires_at` in the future) marks a row a runner currently
-/// owns. `attempts` bumps on every claim (redelivery budget vs `max_attempts`).
+/// owns. `attempts` counts crash evidence — it bumps only when a claim reclaims an
+/// expired lease (redelivery budget vs `max_attempts`); parks/wakes are free.
 /// `partition_key` is reserved for the per-partition ownership follow-up (5.14
 /// scaling); the walking skeleton leaves it null.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,7 +42,9 @@ pub struct QueueEntry {
     /// past that it is reclaimable by another replica (crash-safe failover).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_expires_at: Option<Millis>,
-    /// How many times this row has been claimed (redelivery count).
+    /// Crash-evidence count: how many times a claim has reclaimed this row's
+    /// *expired* lease (the prior owner died holding it). First claims and
+    /// park→wake re-claims do not count — parking is proof of life.
     #[serde(default)]
     pub attempts: i32,
     /// The redelivery budget: once `attempts >= max_attempts` and the lease is

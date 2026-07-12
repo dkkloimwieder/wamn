@@ -351,7 +351,11 @@ docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres 
 WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-queue
 # queuebench GATE (crates/wamn-host, PURE host-side tokio_postgres claimers — NO wasm
 # guest): D15 dispatch SLOs (write-ahead p99<15ms / fast-path p99<10ms), SKIP LOCKED
-# throughput (exactly-once + completeness, ~1-5k/s), lease-expiry reclaim, janitor,
+# throughput (exactly-once + completeness, ~1-5k/s), lease-expiry reclaim, park
+# (park/wake budget-neutrality: attempts counts CRASH EVIDENCE only — a claim bumps
+# it iff it reclaims an expired lease, so a first claim + every park->wake re-claim
+# are free and a flow parking 10x with max_attempts=3 completes on BOTH claim paths;
+# wamn-fqg.5), janitor,
 # NATS-core doorbell (async warm p50<25ms/p99<100ms), partition (partitioned(key)
 # in-order per key across concurrent replicas + exactly-once + in-order failover).
 # Provisions an EPHEMERAL schema (runs + run_queue + partition_owner) via the SUPERUSER
@@ -374,7 +378,8 @@ kubectl -n wamn-system logs -f job/queuebench
 # [5.14] checkpoint/resume on replica loss — first-class FAILOVER (wamn-fqg.2): the
 # run-queue lease RECLAIM (5.14) + 5.7 branch-aware RECONSTRUCTION composed into one
 # path. A runner dies mid-effect, its run lease ages out, a SECOND replica reclaims the
-# run (claim_batch_sql, attempts+1) and drives the SAME unchanged flowrunner GUEST,
+# run (claim_batch_sql; the expired-lease reclaim is what bumps attempts — crash
+# evidence, wamn-fqg.5) and drives the SAME unchanged flowrunner GUEST,
 # which reconstructs from node_runs + completes with EXACTLY ONE side effect, ending
 # `completed` (never infrastructure-failure). Guest byte-UNCHANGED + host-orchestrated
 # (guest-self-claim is fqg.4); the hardening is host-side + in the PURE crate:
