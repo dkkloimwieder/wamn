@@ -156,7 +156,7 @@ Goal: three first-class signals (traces, logs, metrics), correlated by run ID, w
 - **9.7** Live tail: stream a test-run's node events to the editor over SSE/WebSocket.
 
 **Metrics, dashboards, alerting:**
-- **9.8** Metric set: flow executions/sec and success ratio, node duration p50/p99, run-queue depth, generated-API RPS + error rate, `wamn:postgres` pool saturation and query latency, per-component memory vs. the 256 MiB sandbox cap, host density per node.
+- **9.8** Metric set: flow executions/sec and success ratio, node duration p50/p99, run-queue depth, generated-API RPS + error rate, `wamn:postgres` pool saturation and query latency, per-component **linear-memory** high-water vs. its budget + the 256 MiB ceiling (D16; source: the fork limiter's `wamn::memory` denial/high-water events — compiled-code residency, stacks, and host-side buffers live under separate engine config), host density per node.
 - **9.9** Dashboards: per-tenant Grafana folders (interface-level filtering via WIT-namespaced span names); internal SRE dashboards.
 - **9.10** Alerting: platform SLO alerts (burn rates); user-facing failure notifications — on-failure flow paths + email/webhook channels + a project alert-rules screen.
 - **9.11** Usage metering derived from the same metric stream (executions, API calls, storage, log volume) → billing events.
@@ -207,6 +207,7 @@ Decisions with real alternatives, their status, and the trigger to revisit:
 | D13 | Observability store | Loki/Tempo/Prometheus | ClickHouse-backed (single store) | **Chosen**, low switching cost pre-GA |
 | D14 | Industrial ontology | Neutral core catalog + opinionated optional modules (7.4) | Bake unified lot/serial into core; defer entirely | **Locked** |
 | D15 | Sync webhook path | Direct dispatch; **write-ahead run row by default** (janitor marks orphans `infrastructure-failure`); reduced-audit fast path opt-in, policy-prohibitable | Full queue + response correlation; NATS telemetry pre-event (**rejected**: core NATS is the least durable link — an audit trail that fails when infrastructure is unhealthy is backwards; durable NATS = JetStream dependency; consumer must persist to a DB anyway = second weaker write path) | **Locked**; SLO numbers proposed, **sanity-checked vs S2+S3+S4** (P0-EXIT: > 5× headroom on measured latencies) — pending explicit product sign-off |
+| D16 | Per-component memory | Two-tier: pooling `max_memory_size` = platform **ceiling**; fork per-store `ResourceLimiter` enforces the per-component **linear-memory budget** (`memory_limit_mb` / `wamn.memory-limit-mb`) below it; budget > ceiling = hard store-creation error, never a clamp; no budget = no limiter (byte-identical) | Engine-uniform cap only (contradicts 8.2 host-group tiering); wait for upstream to plumb its own dead field (no signal it will) | **Locked** (wamn-bp4.1); carried fork commit with exit condition — docs/wash-runtime-fork.md; bench phase 5 (64/192 differentiation) is the gate |
 
 ## Suggested Sequencing (phases)
 

@@ -62,7 +62,15 @@ the service traps; with `max_restarts: 0` the host logs and moves on.
    carried but never plumbed into wasmtime; no `ResourceLimiter`/
    `Store::limiter` call sites. The 256 MiB cap here is the pooling
    allocator's engine-wide `max_memory_size` — uniform across all components
-   on a host, not per-workload-differentiable.
+   on a host, not per-workload-differentiable. **RESOLVED** by the fork's
+   memory-limiter commit (wamn-bp4.1, `5b158ff`, D16): two-tier — the pooling
+   cap is the platform *ceiling*, and a per-store `ResourceLimiter` enforces
+   the per-component *linear-memory* budget (`memory_limit_mb` /
+   `wamn.memory-limit-mb`) below it; budget > ceiling is a hard store-creation
+   error; denials are logged + counted (`wamn::memory`). Gate: bench phase 5 —
+   concurrent 64/192 MiB budgets under the 256 ceiling trapped at 56/184 MiB
+   respectively, unbudgeted unchanged at 248, over-ceiling never allocated
+   (docs/wash-runtime-fork.md).
 3. **Stores and `InstancePre` are built per invocation**; `Component.pool_size`
    / `max_invocations` are dead TODOs upstream. Fine at current numbers
    (instantiation is µs-scale), relevant to S3 dispatch-overhead budgeting.

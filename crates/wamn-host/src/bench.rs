@@ -13,6 +13,11 @@
 //!   its epoch deadline (raw store: assertable Trap::Interrupt; host path:
 //!   `wamn.epoch-deadline-ticks` service config) while normal workloads run
 //!   unaffected.
+//! Phase 5 — per-component memory budgets (wamn-bp4.1, fork ResourceLimiter):
+//!   concurrent memhogs budgeted 64 / 192 MiB under the 256 MiB ceiling each
+//!   trap at their own number (differentiation — closes S1 finding #2), an
+//!   unbudgeted one still traps at the ceiling, and a budget above the
+//!   ceiling hard-fails without allocating (error, never a silent clamp).
 //!
 //! Runs locally and inside the host image (`kubectl run ... -- bench`).
 
@@ -24,7 +29,8 @@ use anyhow::Context as _;
 use clap::Args;
 use wash_runtime::host::{HostApi, HostBuilder};
 use wash_runtime::types::{
-    Component, LocalResources, Service, Workload, WorkloadStartRequest, WorkloadStatusRequest,
+    Component, HostPathVolume, LocalResources, Service, Volume, VolumeMount, VolumeType, Workload,
+    WorkloadStartRequest, WorkloadStatusRequest,
 };
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker, ResourceTable};
 use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
@@ -142,6 +148,7 @@ pub async fn run(args: BenchArgs) -> anyhow::Result<()> {
         capkill_phase(&host, &hello_bytes, &memhog_bytes).await?;
     }
     epochkill_phase(&hello_bytes, &busyloop_bytes).await?;
+    membudget_phase(&hello_bytes, &memhog_bytes).await?;
     println!("\nbench complete");
     Ok(())
 }
@@ -437,5 +444,157 @@ async fn epochkill_phase(hello: &[u8], busyloop: &[u8]) -> anyhow::Result<()> {
     println!("host accepted new workload after epoch kill: true");
     ticker.abort();
     println!("PASS(epoch kill, host survives): {raw_interrupted}");
+    Ok(())
+}
+
+/// Start memhog as a service with the given memory budget (0 = unbudgeted)
+/// and a host-path volume at /report where it rewrites its running total
+/// after every allocation step.
+async fn start_memhog(
+    host: &Arc<wash_runtime::host::Host>,
+    memhog: &[u8],
+    id: &str,
+    budget_mb: i32,
+    report_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let mut resources = empty_resources();
+    resources.memory_limit_mb = budget_mb;
+    resources.environment.insert(
+        "MEMHOG_REPORT_PATH".to_string(),
+        "/report/achieved".to_string(),
+    );
+    resources.volume_mounts = vec![VolumeMount {
+        name: "report".to_string(),
+        mount_path: "/report".to_string(),
+        read_only: false,
+    }];
+    host.workload_start(WorkloadStartRequest {
+        workload_id: id.to_string(),
+        workload: Workload {
+            namespace: "bench".to_string(),
+            name: id.to_string(),
+            annotations: Default::default(),
+            service: Some(Service {
+                bytes: memhog.to_vec().into(),
+                digest: Some(format!("bench-{id}")),
+                local_resources: resources,
+                max_restarts: 0,
+            }),
+            components: vec![],
+            host_interfaces: vec![],
+            volumes: vec![Volume {
+                name: "report".to_string(),
+                volume_type: VolumeType::HostPath(HostPathVolume {
+                    local_path: report_dir.to_string_lossy().into_owned(),
+                }),
+            }],
+        },
+    })
+    .await
+    .with_context(|| format!("failed to start {id}"))?;
+    Ok(())
+}
+
+/// Last running total (MiB) a memhog managed to report before it was killed.
+fn read_report_mib(dir: &std::path::Path) -> Option<u64> {
+    std::fs::read_to_string(dir.join("achieved"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Phase 5: per-component memory budgets (wamn-bp4.1, fork ResourceLimiter).
+/// Three memhogs run concurrently through the production store path: budgets
+/// of 64 and 192 MiB under the 256 MiB ceiling must each trap at their own
+/// number (the differentiation S1 finding #2 asked for), an unbudgeted one
+/// must still trap at the ceiling (regression: no budget = ceiling), and a
+/// budget above the ceiling must hard-fail before its first allocation
+/// (strictness: error, never a silent clamp). Enforcement is read back
+/// through each memhog's mounted report file: the last total it wrote is the
+/// high-water the limiter allowed.
+async fn membudget_phase(hello: &[u8], memhog: &[u8]) -> anyhow::Result<()> {
+    println!("\n## Phase 5 — per-component memory budgets (fork limiter, wamn-bp4.1)");
+    let engine = build_engine(&[])?;
+    let host = HostBuilder::new().with_engine(engine).build()?;
+    let host = host.start().await?;
+
+    let base = std::env::temp_dir().join(format!("wamn-bench-mem-{}", std::process::id()));
+    let dirs: Vec<PathBuf> = ["b64", "b192", "unbudgeted", "over"]
+        .iter()
+        .map(|n| base.join(n))
+        .collect();
+    for d in &dirs {
+        std::fs::create_dir_all(d)?;
+    }
+
+    start_memhog(&host, memhog, "mem-64", 64, &dirs[0]).await?;
+    start_memhog(&host, memhog, "mem-192", 192, &dirs[1]).await?;
+    start_memhog(&host, memhog, "mem-unbudgeted", 0, &dirs[2]).await?;
+    // Budget above the ceiling: depending on where instantiation happens the
+    // hard error can surface at workload start or at the service's first
+    // memory creation — either way it must never allocate a step.
+    match start_memhog(&host, memhog, "mem-over", 512, &dirs[3]).await {
+        Ok(()) => println!(
+            "mem-over (512 MiB budget > 256 MiB ceiling): accepted; must die at first memory creation"
+        ),
+        Err(e) => {
+            println!("mem-over (512 MiB budget > 256 MiB ceiling): rejected at start ({e:#})")
+        }
+    }
+
+    // Let all three allocate to their caps and die.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+
+    let a = read_report_mib(&dirs[0]);
+    let b = read_report_mib(&dirs[1]);
+    let c = read_report_mib(&dirs[2]);
+    let o = read_report_mib(&dirs[3]);
+    println!(
+        "achieved: budget-64 = {a:?} MiB, budget-192 = {b:?} MiB, unbudgeted (ceiling 256) = {c:?} MiB, over-ceiling = {o:?} MiB"
+    );
+
+    let pass_a = matches!(a, Some(v) if (32..=64).contains(&v));
+    let pass_b = matches!(b, Some(v) if (160..=192).contains(&v));
+    let pass_c = matches!(c, Some(v) if (208..=256).contains(&v));
+    let pass_o = o.is_none();
+    println!("PASS(64 MiB budget honored): {pass_a}");
+    println!("PASS(192 MiB budget honored beside it — differentiation): {pass_b}");
+    println!("PASS(unbudgeted unchanged, dies at the 256 MiB ceiling): {pass_c}");
+    println!("PASS(budget > ceiling never allocates — hard error, no clamp): {pass_o}");
+
+    // Host must still accept and run work after three budget kills.
+    println!(
+        "heartbeat after budget kills: ok = {}",
+        host.heartbeat().await.is_ok()
+    );
+    host.workload_start(WorkloadStartRequest {
+        workload_id: "post-membudget".to_string(),
+        workload: Workload {
+            namespace: "bench".to_string(),
+            name: "post-membudget".to_string(),
+            annotations: Default::default(),
+            service: None,
+            components: vec![Component {
+                name: "hello".to_string(),
+                bytes: hello.to_vec().into(),
+                digest: Some("bench-post-membudget".to_string()),
+                local_resources: empty_resources(),
+                pool_size: 0,
+                max_invocations: 0,
+            }],
+            host_interfaces: vec![],
+            volumes: vec![],
+        },
+    })
+    .await
+    .context("host failed to start work after budget kills")?;
+    println!("host accepted new workload after budget kills: true");
+    let _ = std::fs::remove_dir_all(&base);
+
+    println!(
+        "PASS(memory budget differentiation): {}",
+        pass_a && pass_b && pass_c && pass_o
+    );
     Ok(())
 }

@@ -7,7 +7,7 @@ to consume it; the fork is where our carried commits live.
 
 - **Branch naming:** `wamn/X.Y.Z` = upstream release `runtime-operator/vX.Y.Z`
   + the carried wamn commits on top. Current: `wamn/2.5.2` = upstream v2.5.2
-  (`ec012da`) + the epoch-deadline commit.
+  (`ec012da`) + the epoch-deadline and memory-limiter commits.
 - **The pin:** `workspace.dependencies.wash-runtime.rev` in the root
   `Cargo.toml` — the **single source of truth**. Pin a **rev** (immutable),
   never a branch name (branches move); the branch's existence on the fork is
@@ -37,6 +37,7 @@ condition**: the upstream change that makes it deletable.
 | Commit (on `wamn/2.5.2`) | What / why | Exit condition |
 |---|---|---|
 | `94bf77f` "wamn: plumb per-store epoch deadline in new_store_from_templates" | Functional. `new_store_from_templates` (the crate's single production store-creation site, `crates/wash-runtime/src/engine/linked_call.rs`) gives every store an epoch deadline: the active component's `wamn.epoch-deadline-ticks` config (from the WorkloadDeployment CRD's `localResources.config`), else `WAMN_EPOCH_DEADLINE_TICKS` env, else effectively unbounded (`u64::MAX / 2` — `u64::MAX` would wrap in `current_epoch + delta`). Without it stores keep wasmtime's default deadline of 0 and trap on the first tick, so epoch interruption (S2 chaos gate, hard cancellation) is unusable. One call site by design, to minimize rebase drift. | upstream ships native epoch-deadline support — delete the commit (the wamn-host ticker/config side stays as-is) |
+| `5b158ff` "wamn: enforce per-component memory budgets via a store ResourceLimiter" | Functional (D16, wamn-bp4.1). Same store-creation site + `engine/ctx.rs`: resolves a per-component budget — the spec's first-class `memory_limit_mb` (upstream's dead field), else `wamn.memory-limit-mb` config, else `WAMN_MEMORY_LIMIT_MB` env — and, only when one is configured, attaches a `WamnStoreLimiter` via `Store::limiter`. Grow past the budget is denied (in-guest failure → allocator abort → service trap, the same failure shape as the engine cap); a budget above the host-advertised `WAMN_MEMORY_CEILING_MB` (set by wamn-host from its pooling cap; the allocator cap is not introspectable and `memory_growing`'s `maximum` is only the declared max) fails store creation with a descriptive error — never a silent clamp; denials are logged + counted (target `wamn::memory`); a fixed table-elements cap rides along. v0 is per-linear-memory, not store-cumulative. Unbudgeted stores attach no limiter — byte-identical to upstream. The most upstreamable commit we carry (implements their own carried-but-dead field). | upstream plumbs `memory_limit_mb` into a Store limiter — delete this commit |
 
 Everything else epoch-related lives **unforked** in wamn-host:
 `Config::epoch_interruption(true)` layers in via `EngineBuilder::with_config`,
@@ -49,8 +50,6 @@ lint set; as a git dep cargo builds the crate with `--cap-lints allow`, so the
 lint relaxation is automatic. Only re-add (as a fork commit) if `-D warnings`
 ever actually fires from the dependency build.
 
-Planned next carried commit: the per-component memory `ResourceLimiter`
-(wamn-bp4.1) — same file, same ledger rules.
 
 ## Sync runbook
 
@@ -92,7 +91,11 @@ behaviors:
 - **S2:** the chaos gate (epoch-kill mid-transaction ×100; destroy-never-repool)
   (`pgbench`).
 - **S3:** kill/resume idempotency (`flowbench`).
-- the **ResourceLimiter differentiation phase** once wamn-bp4.1 lands.
+- **bench phase 5:** the ResourceLimiter differentiation gate (concurrent
+  64/192 MiB budgets each trap at their own number; unbudgeted at the
+  ceiling; over-ceiling never allocates) — the regression that the limiter
+  commit is present *and functional*: on upstream, the budgeted memhogs
+  would run to the ceiling and the phase fails loudly.
 
 **Record per sync** (in the fork branch's final commit message or a
 `docs/p0-results.md` addendum): date, base rev old→new, commits
@@ -117,3 +120,4 @@ runtime-maintainer status as a decision-table entry.
 | Date | Base | Carried | Gates |
 |---|---|---|---|
 | 2026-07-12 | `8b53285` (pre-2.5.2, vendored+patched) → v2.5.2 `ec012da` (fork `wamn/2.5.2` @ `94bf77f`) | epoch commit (was patch 0001; byte-identical diff); patch 0002 retired (git-dep `--cap-lints`); upstream wash-runtime delta = 1 commit (P3 `wasi:http/handler` routing fix `5ad4841`) | all PASS (debug build): S1 instantiation p99 367µs + cap-kill + epoch-kill (carried commit functional); S2 chaos ×100; S3 resume 10/10 (wamn-bp4.2) |
+| 2026-07-12 | base unchanged (v2.5.2); fork `wamn/2.5.2` advanced `94bf77f` → `5b158ff` | + memory-limiter commit (wamn-bp4.1/D16) | all PASS (debug build): bench phases 1–5 incl. the new differentiation gate (budget-64 → 56 MiB, budget-192 → 184 MiB, unbudgeted → 248 MiB at the ceiling, over-ceiling never allocated); S2 chaos + S3 resume regression |

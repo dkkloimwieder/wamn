@@ -5,7 +5,11 @@ use std::time::Duration;
 use wash_runtime::engine::{Engine, WasmProposal};
 use wash_runtime::wasmtime::{Config, PoolingAllocationConfig};
 
-/// Per-component linear-memory cap (S1 acceptance: 256 MiB, enforced).
+/// Platform memory ceiling (S1 acceptance: 256 MiB, enforced): the pooling
+/// allocator's engine-wide `max_memory_size`, the largest budget any
+/// component may hold. Per-component budgets (`memory_limit_mb` /
+/// `wamn.memory-limit-mb`) are enforced BELOW this by the fork's per-store
+/// ResourceLimiter (docs/wash-runtime-fork.md).
 pub const MEMORY_CAP_BYTES: usize = 256 << 20;
 
 /// Pooling-allocator slot counts. Slots are per *live instance* (stores are
@@ -18,12 +22,14 @@ const POOL_SLOTS: u32 = 512;
 pub const DEFAULT_EPOCH_TICK: Duration = Duration::from_millis(10);
 
 /// Build the engine every wamn-host mode uses: pooling allocator with the
-/// 256 MiB per-memory cap, epoch interruption enabled. wash-runtime wires no
-/// ResourceLimiter (upstream gap, recorded in p0-results), so the pooling cap
-/// is the only memory-enforcement mechanism. Epoch interruption is our
-/// hard-cancellation layer: [`spawn_epoch_ticker`] advances the epoch and the
-/// carried wash-runtime patch (patches/) gives every store a deadline
-/// (`wamn.epoch-deadline-ticks` config / WAMN_EPOCH_DEADLINE_TICKS env).
+/// 256 MiB memory ceiling, epoch interruption enabled. Memory enforcement is
+/// two-tier: this pooling cap is the platform ceiling, and the fork's
+/// per-store ResourceLimiter enforces per-component budgets below it
+/// (carried commit, docs/wash-runtime-fork.md; bench phase 5 is the gate).
+/// Epoch interruption is our hard-cancellation layer: [`spawn_epoch_ticker`]
+/// advances the epoch and the carried epoch commit gives every store a
+/// deadline (`wamn.epoch-deadline-ticks` config / WAMN_EPOCH_DEADLINE_TICKS
+/// env).
 pub fn build_engine(proposals: &[WasmProposal]) -> anyhow::Result<Engine> {
     let mut pooling = PoolingAllocationConfig::default();
     pooling.max_memory_size(MEMORY_CAP_BYTES);

@@ -62,15 +62,16 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 wamn-host builds against wash-runtime consumed as a **git dependency from our
 fork** (dkkloimwieder/wasmCloud, branch `wamn/2.5.2` = upstream v2.5.2 + the
-carried epoch commit) — see `docs/wash-runtime-fork.md` for the carried-commit
-ledger, sync runbook, and rev-bump procedure. The rev is pinned in one place:
+carried epoch-deadline and memory-limiter commits) — see
+`docs/wash-runtime-fork.md` for the carried-commit ledger, sync runbook, and
+rev-bump procedure. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
 
 ```bash
 cargo build --release -p wamn-host
 (cd components && cargo build --release --target wasm32-wasip2)  # guest fixtures
 
-# S1/4p3 gates (instantiation, density, cap kill, epoch kill):
+# S1/4p3/bp4.1 gates (instantiation, density, cap kill, epoch kill, memory budgets):
 ./target/release/wamn-host --log-level warn bench \
   --hello components/target/wasm32-wasip2/release/hello.wasm \
   --memhog components/target/wasm32-wasip2/release/memhog.wasm \

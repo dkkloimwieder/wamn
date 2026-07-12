@@ -73,8 +73,22 @@ enum Command {
     Apiproof(apiproof::ApiProofArgs),
 }
 
+fn main() -> anyhow::Result<()> {
+    // Advertise the platform memory ceiling to the fork's per-store limiter
+    // (docs/wash-runtime-fork.md): a workload budget above this is a hard
+    // store-creation error, never a silent clamp. SAFETY: set before the
+    // tokio runtime exists — no other threads are reading the environment.
+    unsafe {
+        std::env::set_var(
+            "WAMN_MEMORY_CEILING_MB",
+            (engine::MEMORY_CAP_BYTES >> 20).to_string(),
+        );
+    }
+    async_main()
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn async_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let level = tracing::Level::from_str(&cli.log_level)
         .map_err(|_| anyhow::anyhow!("invalid log level: {}", cli.log_level))?;
