@@ -48,6 +48,18 @@ pub enum CompileError {
     /// the trigger function's dollar-quoted body, so anything beyond
     /// `[A-Za-z_][A-Za-z0-9_]*` is refused rather than quoted.
     InvalidOutboxSchema { schema: String },
+    /// The migration's table renames form a cycle (a swap: A -> B and B -> A
+    /// in one version bump). No order of plain renames can apply it — split
+    /// the evolution into two version bumps (rename one table aside first).
+    TableRenameCycle { names: Vec<String> },
+    /// One entity's column renames form a cycle (a swap) — the column-level
+    /// analog of [`CompileError::TableRenameCycle`]; split it into two
+    /// version bumps.
+    ColumnRenameCycle { entity: String, names: Vec<String> },
+    /// A dropped table's name is reclaimed by this migration, and the
+    /// transient aside-name the plan needs (`wamn_mig_drop_<name>`) is itself
+    /// a real table in the old or new catalog.
+    TempNameCollision { name: String },
 }
 
 impl std::fmt::Display for CompileError {
@@ -71,6 +83,20 @@ impl std::fmt::Display for CompileError {
                 f,
                 "outbox schema {schema:?} is not a bare identifier ([A-Za-z_][A-Za-z0-9_]*)"
             ),
+            CompileError::TableRenameCycle { names } => write!(
+                f,
+                "table renames form a cycle ({}): split the evolution into two version bumps",
+                names.join(" -> ")
+            ),
+            CompileError::ColumnRenameCycle { entity, names } => write!(
+                f,
+                "column renames on entity {entity:?} form a cycle ({}): split the evolution into two version bumps",
+                names.join(" -> ")
+            ),
+            CompileError::TempNameCollision { name } => write!(
+                f,
+                "cannot rename a dropped table aside: transient name {name:?} is already a table in the catalog"
+            ),
         }
     }
 }
@@ -91,10 +117,19 @@ impl Migration {
     /// Compile the migration from `old` to `new` (driven by the catalog diff).
     /// Both versions must be valid; the resulting plan may contain destructive
     /// operations (gated by [`MigrationPlan::sql`]).
+    ///
+    /// Operations are additive-first / destructive-last, EXCEPT a name-freeing
+    /// preamble: tables, indexes, and unique-constraint backing indexes share
+    /// one Postgres relation namespace, so when this migration both frees a
+    /// name (rename / drop) and reclaims it (create / add), the freeing side
+    /// is hoisted ahead of the adds — a dropped-and-reclaimed table is renamed
+    /// aside (its `DROP TABLE` stays last, keeping FK unwind order), and ALL
+    /// table renames run first, dependency-ordered. A rename cycle (a swap)
+    /// is rejected with [`CompileError::TableRenameCycle`].
     pub fn migrate(old: &Catalog, new: &Catalog) -> Result<MigrationPlan, CompileError> {
         check(old)?;
         check(new)?;
-        Ok(emit::migrate_plan(old, new))
+        emit::migrate_plan(old, new)
     }
 
     /// The outbox row-event trigger plan (5.14 / D4 producer side): one shared

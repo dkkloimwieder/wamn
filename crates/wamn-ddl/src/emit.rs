@@ -6,16 +6,21 @@
 //! are tenant-scoped (prefixed with `tenant_id`). Per-role row rules are layered
 //! on later by the RLS policy builder (3.5).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 use wamn_catalog::{Catalog, Constraint, Entity, FieldType, Index};
 
+use crate::CompileError;
 use crate::plan::{MigrationPlan, Operation, Safety};
 
 /// The managed columns every generated table carries. A user field may not reuse
 /// these names.
 pub(crate) const RESERVED_COLUMNS: &[&str] = &["id", "tenant_id"];
+
+/// Transient-name prefix for a dropped table (and its indexes) renamed aside
+/// because the name is reclaimed in the same migration (see [`migrate_plan`]).
+pub(crate) const TEMP_DROP_PREFIX: &str = "wamn_mig_drop_";
 
 /// Quote a SQL identifier. Delegates to the shared [`crate::sql`] helpers so DDL
 /// and RLS-policy emission (3.5) quote identically.
@@ -300,7 +305,44 @@ pub(crate) fn create_plan(catalog: &Catalog) -> MigrationPlan {
 }
 
 /// Migration plan from `old` -> `new`, driven by the catalog diff.
-pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> MigrationPlan {
+///
+/// Operations are additive-first / destructive-last, EXCEPT the name-freeing
+/// preamble. Postgres tables, indexes, and unique-constraint backing indexes
+/// share ONE relation namespace, and one migration may both free a name
+/// (rename / drop) and reclaim it (create / add) — the freeing side must run
+/// first or the add fails (42P07/42710) and the whole transactional apply
+/// (2.5) rolls back. Plan order:
+///
+/// 1. dropped tables whose name — or one of whose index / unique-constraint
+///    names — is reclaimed are renamed aside ([`TEMP_DROP_PREFIX`]); their
+///    `DROP TABLE` stays last, so FK unwind order is intact (foreign keys
+///    follow a rename);
+/// 2. dropped indexes and dropped constraints with reclaimed names. Both are
+///    pure name-freeing: `DROP INDEX` references no table name, and a
+///    constraint drop references its table by the PRE-rename name — a
+///    rename's own target may be freed by exactly such a drop, so neither
+///    may wait for the renames. An entity that hoists a column drop (step 4)
+///    hoists ALL its constraint/index drops here: the hoisted `DROP COLUMN`
+///    implicitly drops objects involving the column, and a tail drop would
+///    then fail on the missing object;
+/// 3. ALL table renames, dependency-ordered (a rename claiming a name freed
+///    by another rename waits for it; a cycle — a swap — is rejected), each
+///    followed by its implicit `<table>_pkey` rename: index names do not
+///    follow a table rename, and letting the pkey name go stale both drifts
+///    the recreated table's pkey (Postgres silently suffixes) and lets a
+///    LATER migration's aside-rename grab a live table's index. Hoisting
+///    every rename also keeps this plan's later `ALTER TABLE <new name>`
+///    operations on the same entity valid;
+/// 4. per-entity column-namespace freeing: dropped columns whose name is
+///    re-added drop now, and ALL column renames run here, dependency-ordered
+///    within their table (a swap cycle is rejected). Columns are
+///    table-scoped, but the same free-before-claim rule applies (42701
+///    otherwise). These reference the table post-rename, hence after step 3;
+/// 5. the additive-first / destructive-last steps as before.
+///
+/// Plans that free no reused name and rename nothing are byte-identical to
+/// the preamble-free order.
+pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan, CompileError> {
     let names = entity_names(new);
     let old_by_id: HashMap<&str, &Entity> =
         old.entities.iter().map(|e| (e.id.as_str(), e)).collect();
@@ -309,6 +351,259 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> MigrationPlan {
 
     let d = wamn_catalog::diff(old, new);
     let mut plan = MigrationPlan::default();
+
+    // ---- Name-reuse analysis: relation names claimed by this plan's adds.
+    let mut claimed: HashSet<&str> = HashSet::new();
+    for id in &d.entities_added {
+        let e = new_by_id[id.as_str()];
+        claimed.insert(e.name.as_str());
+        claimed.extend(e.indexes.iter().map(|i| i.name.as_str()));
+        claimed.extend(e.constraints.iter().filter_map(unique_constraint_name));
+    }
+    let renames: Vec<(&Entity, &Entity)> = d
+        .entities_changed
+        .iter()
+        .map(|ch| (old_by_id[ch.id.as_str()], new_by_id[ch.id.as_str()]))
+        .filter(|(o, n)| o.name != n.name)
+        .collect();
+    claimed.extend(renames.iter().map(|(_, n)| n.name.as_str()));
+    for ch in &d.entities_changed {
+        let old_e = old_by_id[ch.id.as_str()];
+        let new_e = new_by_id[ch.id.as_str()];
+        claimed.extend(
+            new_e
+                .indexes
+                .iter()
+                .filter(|i| !old_e.indexes.iter().any(|o| o == *i))
+                .map(|i| i.name.as_str()),
+        );
+        claimed.extend(
+            new_e
+                .constraints
+                .iter()
+                .filter(|c| !old_e.constraints.iter().any(|o| o == *c))
+                .filter_map(unique_constraint_name),
+        );
+    }
+
+    // ---- Preamble 1: rename doomed tables (and their indexes — index names
+    // do NOT follow a table rename) aside where a name is reclaimed. Every
+    // synthesized aside name must be free in the SHARED relation namespace
+    // (tables, indexes, unique-constraint backing indexes, implicit pkeys),
+    // checked conservatively against both catalog versions.
+    let all_relnames: HashSet<String> = old
+        .entities
+        .iter()
+        .chain(new.entities.iter())
+        .flat_map(|e| {
+            std::iter::once(e.name.clone())
+                .chain(std::iter::once(format!("{}_pkey", e.name)))
+                .chain(e.indexes.iter().map(|i| i.name.clone()))
+                .chain(
+                    e.constraints
+                        .iter()
+                        .filter_map(unique_constraint_name)
+                        .map(str::to_string),
+                )
+        })
+        .collect();
+    let mut temp_named: HashMap<&str, String> = HashMap::new();
+    for id in &d.entities_removed {
+        let e = old_by_id[id.as_str()];
+        let table_reclaimed = claimed.contains(e.name.as_str());
+        // Index names that must move aside with (or without) the table: when
+        // the TABLE name is reclaimed, ALL of them — the recreated table's
+        // indexes (including its implicit `<table>_pkey`) must get their
+        // canonical names instead of colliding or silently drifting; when
+        // only an index name is reclaimed, just those.
+        let index_asides: Vec<String> = if table_reclaimed {
+            std::iter::once(format!("{}_pkey", e.name))
+                .chain(e.indexes.iter().map(|i| i.name.clone()))
+                .chain(
+                    e.constraints
+                        .iter()
+                        .filter_map(unique_constraint_name)
+                        .map(str::to_string),
+                )
+                .collect()
+        } else {
+            e.indexes
+                .iter()
+                .map(|i| i.name.as_str())
+                .chain(e.constraints.iter().filter_map(unique_constraint_name))
+                .filter(|n| claimed.contains(*n))
+                .map(str::to_string)
+                .collect()
+        };
+        let mut aside_sources: Vec<&str> = Vec::new();
+        if table_reclaimed {
+            aside_sources.push(e.name.as_str());
+        }
+        aside_sources.extend(index_asides.iter().map(String::as_str));
+        for src in &aside_sources {
+            let tmp = format!("{TEMP_DROP_PREFIX}{src}");
+            if all_relnames.contains(&tmp) {
+                return Err(CompileError::TempNameCollision { name: tmp });
+            }
+        }
+        if table_reclaimed {
+            let tmp = format!("{TEMP_DROP_PREFIX}{}", e.name);
+            plan.push(temp_rename_table_op(e, &tmp));
+            temp_named.insert(e.id.as_str(), tmp);
+        }
+        for n in &index_asides {
+            plan.push(temp_rename_index_op(e, n));
+        }
+    }
+
+    // ---- Column-namespace analysis (emitted in preamble 4 below, but the
+    // partition in preamble 2 needs to know which entities hoist a column
+    // drop): a dropped column whose name is re-added — or claimed by a column
+    // rename — must drop before the claims.
+    let mut col_renames_by: HashMap<&str, Vec<(&str, &str, &str)>> = HashMap::new();
+    let mut hoisted_columns: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let mut hoisted_col_fields: HashMap<&str, Vec<&wamn_catalog::Field>> = HashMap::new();
+    for ch in &d.entities_changed {
+        let old_e = old_by_id[ch.id.as_str()];
+        let new_e = new_by_id[ch.id.as_str()];
+        let col_renames: Vec<(&str, &str, &str)> = ch
+            .fields_changed
+            .iter()
+            .filter_map(|fc| {
+                fc.name_changed
+                    .as_ref()
+                    .map(|(f, t)| (fc.id.as_str(), f.as_str(), t.as_str()))
+            })
+            .collect();
+        let mut claimed_cols: HashSet<&str> = ch
+            .fields_added
+            .iter()
+            .filter_map(|fid| field_by_id(new_e, fid))
+            .map(|f| f.name.as_str())
+            .collect();
+        claimed_cols.extend(col_renames.iter().map(|(_, _, t)| *t));
+        for fid in &ch.fields_removed {
+            let f = field_by_id(old_e, fid).expect("removed field exists in old");
+            if claimed_cols.contains(f.name.as_str()) {
+                hoisted_columns
+                    .entry(ch.id.as_str())
+                    .or_default()
+                    .insert(fid.as_str());
+                hoisted_col_fields
+                    .entry(ch.id.as_str())
+                    .or_default()
+                    .push(f);
+            }
+        }
+        if !col_renames.is_empty() {
+            col_renames_by.insert(ch.id.as_str(), col_renames);
+        }
+    }
+
+    // ---- Preamble 2: partition changed entities' dropped constraints /
+    // indexes into hoisted (emitted here) and plain (kept in the destructive
+    // tail). Hoisted are: name-freeing drops — a rename's own target may be a
+    // name freed only here, so they must precede the renames (DROP INDEX
+    // references no table name; a constraint drop references its table by the
+    // OLD, pre-rename name, which is what the table is still called at this
+    // point) — plus ALL drops of an entity that hoists a column drop: the
+    // hoisted DROP COLUMN implicitly drops constraints/indexes involving the
+    // column, and a tail drop would then fail on the missing object.
+    let mut retained_constraints: HashMap<&str, Vec<&Constraint>> = HashMap::new();
+    let mut retained_indexes: HashMap<&str, Vec<&Index>> = HashMap::new();
+    for ch in &d.entities_changed {
+        let old_e = old_by_id[ch.id.as_str()];
+        let new_e = new_by_id[ch.id.as_str()];
+        let entity_hoists_a_column = hoisted_columns.contains_key(ch.id.as_str());
+        // Constraint names are also table-scoped (pg_constraint): a same-table
+        // redefinition (same name, changed definition) diffs as drop + add and
+        // must drop first even when no backing index is involved (CHECK).
+        let readded: HashSet<&str> = new_e
+            .constraints
+            .iter()
+            .filter(|c| !old_e.constraints.iter().any(|o| o == *c))
+            .map(|c| c.name())
+            .collect();
+        for c in dropped_constraints(old_e, new_e) {
+            let hoist = entity_hoists_a_column
+                || readded.contains(c.name())
+                || unique_constraint_name(c).is_some_and(|n| claimed.contains(n));
+            if hoist {
+                plan.push(drop_constraint_op(old_e, c));
+            } else {
+                retained_constraints
+                    .entry(ch.id.as_str())
+                    .or_default()
+                    .push(c);
+            }
+        }
+        for i in dropped_indexes(old_e, new_e) {
+            if entity_hoists_a_column || claimed.contains(i.name.as_str()) {
+                plan.push(drop_index_op(new_e, i));
+            } else {
+                retained_indexes.entry(ch.id.as_str()).or_default().push(i);
+            }
+        }
+    }
+
+    // ---- Preamble 3: ALL table renames, dependency-ordered — a rename whose
+    // target name is freed by another pending rename waits for it. A cycle
+    // (a swap) has no rename-only order and is rejected. Each rename takes
+    // its implicit pkey along (index names do not follow a table rename;
+    // keeping `<table>_pkey` canonical prevents the recreated table's pkey
+    // silently drifting to a suffixed name and a LATER migration's
+    // aside-rename grabbing a live table's index).
+    let mut pending = renames;
+    while !pending.is_empty() {
+        let held: HashSet<&str> = pending.iter().map(|(o, _)| o.name.as_str()).collect();
+        let (ready, blocked): (Vec<_>, Vec<_>) = pending
+            .into_iter()
+            .partition(|(_, n)| !held.contains(n.name.as_str()));
+        if ready.is_empty() {
+            return Err(CompileError::TableRenameCycle {
+                names: blocked.iter().map(|(o, _)| o.name.clone()).collect(),
+            });
+        }
+        for (o, n) in ready {
+            plan.push(rename_table_op(o, n));
+            plan.push(rename_pkey_op(o, n));
+        }
+        pending = blocked;
+    }
+
+    // ---- Preamble 4: per-entity column-namespace freeing (analysis above).
+    // Same free-before-claim rule one level down (columns are table-scoped):
+    // the hoisted column drops run now, and ALL column renames run here,
+    // dependency-ordered within their table — a same-name redefinition would
+    // otherwise ADD before DROP (42701), and a rename into a freed name would
+    // run after its claimer. These reference the table by its post-rename
+    // name, hence after the table renames above.
+    for ch in &d.entities_changed {
+        let new_e = new_by_id[ch.id.as_str()];
+        for f in hoisted_col_fields.get(ch.id.as_str()).into_iter().flatten() {
+            plan.push(drop_column_op(new_e, f));
+        }
+        let mut pending = col_renames_by.remove(ch.id.as_str()).unwrap_or_default();
+        while !pending.is_empty() {
+            let held: HashSet<&str> = pending.iter().map(|(_, from, _)| *from).collect();
+            let (ready, blocked): (Vec<_>, Vec<_>) = pending
+                .into_iter()
+                .partition(|(_, _, to)| !held.contains(to));
+            if ready.is_empty() {
+                return Err(CompileError::ColumnRenameCycle {
+                    entity: new_e.id.clone(),
+                    names: blocked
+                        .iter()
+                        .map(|(_, from, _)| from.to_string())
+                        .collect(),
+                });
+            }
+            for (fid, from, to) in ready {
+                plan.push(rename_column_op(new_e, fid, from, to));
+            }
+            pending = blocked;
+        }
+    }
 
     // 1) New entities (tables first, then all their attachments).
     for id in &d.entities_added {
@@ -327,7 +622,8 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> MigrationPlan {
         emit_additive_changes(&mut plan, old_e, new_e, ch, &names);
     }
 
-    // 3) Column alters (rename / retype / nullability / default).
+    // 3) Column alters (retype / nullability / default — renames ran in the
+    //    preamble).
     for ch in &d.entities_changed {
         let new_e = new_by_id[ch.id.as_str()];
         emit_column_alters(&mut plan, new_e, ch);
@@ -335,24 +631,153 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> MigrationPlan {
 
     // 4) Destructive removals — drop constraints/indexes, then columns, then
     //    (last) tables, so dependencies unwind cleanly.
+    let no_hoisted: HashSet<&str> = HashSet::new();
     for ch in &d.entities_changed {
         let old_e = old_by_id[ch.id.as_str()];
         let new_e = new_by_id[ch.id.as_str()];
-        emit_destructive_changes(&mut plan, old_e, new_e, ch);
+        emit_destructive_changes(
+            &mut plan,
+            old_e,
+            new_e,
+            ch,
+            retained_constraints
+                .get(ch.id.as_str())
+                .map_or(&[][..], |v| v.as_slice()),
+            retained_indexes
+                .get(ch.id.as_str())
+                .map_or(&[][..], |v| v.as_slice()),
+            hoisted_columns.get(ch.id.as_str()).unwrap_or(&no_hoisted),
+        );
     }
     for id in &d.entities_removed {
         let e = old_by_id[id.as_str()];
+        let (drop_ident, note) = match temp_named.get(id.as_str()) {
+            Some(tmp) => (
+                tmp.as_str(),
+                "drops the table and all its data (renamed aside at the top of this plan to free its reused name)",
+            ),
+            None => (e.name.as_str(), "drops the table and all its data"),
+        };
         plan.push(Operation {
             summary: format!("drop table {}", e.name),
-            sql: format!("DROP TABLE {}", q(&e.name)),
+            sql: format!("DROP TABLE {}", q(drop_ident)),
             safety: Safety::Destructive,
             entity: e.id.clone(),
             field: None,
-            note: Some("drops the table and all its data".into()),
+            note: Some(note.into()),
         });
     }
 
-    plan
+    Ok(plan)
+}
+
+/// Unique constraints create a backing index carrying the constraint's name,
+/// so they live in the schema-wide relation namespace (with tables and
+/// indexes); CHECK constraints are table-scoped and do not.
+fn unique_constraint_name(c: &Constraint) -> Option<&str> {
+    match c {
+        Constraint::Unique { name, .. } => Some(name),
+        Constraint::Check { .. } => None,
+    }
+}
+
+/// Constraints present in `old_e` but not in `new_e` (identity = whole value).
+fn dropped_constraints<'a>(old_e: &'a Entity, new_e: &Entity) -> Vec<&'a Constraint> {
+    old_e
+        .constraints
+        .iter()
+        .filter(|c| !new_e.constraints.iter().any(|n| n == *c))
+        .collect()
+}
+
+/// Indexes present in `old_e` but not in `new_e` (identity = whole value).
+fn dropped_indexes<'a>(old_e: &'a Entity, new_e: &Entity) -> Vec<&'a Index> {
+    old_e
+        .indexes
+        .iter()
+        .filter(|i| !new_e.indexes.iter().any(|n| n == *i))
+        .collect()
+}
+
+/// A changed entity's table rename — hoisted into the plan preamble (see
+/// [`migrate_plan`]): the old name is freed for reuse before any add, and
+/// every later `ALTER TABLE` on this entity validly references the new name.
+fn rename_table_op(old_e: &Entity, new_e: &Entity) -> Operation {
+    Operation {
+        summary: format!("rename table {} -> {}", old_e.name, new_e.name),
+        sql: format!(
+            "ALTER TABLE {} RENAME TO {}",
+            q(&old_e.name),
+            q(&new_e.name)
+        ),
+        safety: Safety::Destructive,
+        entity: new_e.id.clone(),
+        field: None,
+        note: Some("breaks generated API / flows referencing the old name".into()),
+    }
+}
+
+/// Rename a dropped table aside so its name can be reclaimed by an add in the
+/// same plan. The actual `DROP TABLE` stays last — foreign keys follow a
+/// rename, so the destructive tail's FK unwind order is untouched.
+fn temp_rename_table_op(e: &Entity, tmp: &str) -> Operation {
+    Operation {
+        summary: format!("rename table {} aside as {tmp} (name reused)", e.name),
+        sql: format!("ALTER TABLE {} RENAME TO {}", q(&e.name), q(tmp)),
+        safety: Safety::Destructive,
+        entity: e.id.clone(),
+        field: None,
+        note: Some(
+            "frees the name for reuse; the renamed-aside table is dropped at the end of this plan"
+                .into(),
+        ),
+    }
+}
+
+/// The implicit `<table>_pkey` follows its table's hoisted rename. Index names
+/// do not follow a table rename on their own; left stale, the recreated
+/// same-named table's pkey silently drifts to a suffixed name (Postgres
+/// auto-avoids implicit-name collisions rather than erroring) and a LATER
+/// migration's aside-rename of `<table>_pkey` would grab a LIVE table's
+/// index. `IF EXISTS` because a pre-drifted pkey keeps its earlier name; a
+/// colliding target fails loudly inside the one-transaction apply.
+fn rename_pkey_op(old_e: &Entity, new_e: &Entity) -> Operation {
+    Operation {
+        summary: format!(
+            "rename index {}_pkey -> {}_pkey (follows the table rename)",
+            old_e.name, new_e.name
+        ),
+        sql: format!(
+            "ALTER INDEX IF EXISTS {} RENAME TO {}",
+            q(&format!("{}_pkey", old_e.name)),
+            q(&format!("{}_pkey", new_e.name)),
+        ),
+        safety: Safety::Destructive,
+        entity: new_e.id.clone(),
+        field: None,
+        note: Some("keeps the implicit primary-key index name canonical".into()),
+    }
+}
+
+/// Rename a dropped table's index (or unique-constraint backing index) aside:
+/// index names do NOT follow a table rename and share the table namespace, so
+/// a recreated same-named table's indexes — including its implicit
+/// `<table>_pkey` — would otherwise collide or silently drift. `IF EXISTS`
+/// because an index created under an earlier table name keeps that name; a
+/// skipped rename then fails loudly at the claiming CREATE.
+fn temp_rename_index_op(e: &Entity, name: &str) -> Operation {
+    Operation {
+        summary: format!("rename index {name} aside (dropped with table {})", e.name),
+        sql: format!(
+            "ALTER INDEX IF EXISTS {} RENAME TO {}",
+            q(name),
+            q(&format!("{TEMP_DROP_PREFIX}{name}"))
+        ),
+        safety: Safety::Destructive,
+        entity: e.id.clone(),
+        field: None,
+        note: None,
+    }
 }
 
 fn field_by_id<'a>(entity: &'a Entity, id: &str) -> Option<&'a wamn_catalog::Field> {
@@ -405,25 +830,42 @@ fn emit_additive_changes(
     }
 }
 
-/// Column renames, retypes, nullability, and default changes.
+/// A column rename — hoisted into the plan preamble (see [`migrate_plan`]):
+/// the old column name is freed before any add claims it, and renames within
+/// a table are dependency-ordered there.
+fn rename_column_op(new_e: &Entity, field_id: &str, from: &str, to: &str) -> Operation {
+    Operation {
+        summary: format!("rename column {}.{from} -> {to}", new_e.name),
+        sql: format!(
+            "ALTER TABLE {} RENAME COLUMN {} TO {}",
+            q(&new_e.name),
+            q(from),
+            q(to)
+        ),
+        safety: Safety::Destructive,
+        entity: new_e.id.clone(),
+        field: Some(field_id.to_string()),
+        note: Some("breaks generated API / flows referencing the old name".into()),
+    }
+}
+
+/// Drop a column (and its data).
+fn drop_column_op(new_e: &Entity, f: &wamn_catalog::Field) -> Operation {
+    Operation {
+        summary: format!("drop column {}.{}", new_e.name, f.name),
+        sql: format!("ALTER TABLE {} DROP COLUMN {}", q(&new_e.name), q(&f.name)),
+        safety: Safety::Destructive,
+        entity: new_e.id.clone(),
+        field: Some(f.id.clone()),
+        note: Some("drops the column and its data".into()),
+    }
+}
+
+/// Column retypes, nullability, and default changes (renames run in the plan
+/// preamble — see [`migrate_plan`]).
 fn emit_column_alters(plan: &mut MigrationPlan, new_e: &Entity, ch: &wamn_catalog::EntityChange) {
     for fc in &ch.fields_changed {
         let f = field_by_id(new_e, &fc.id).expect("changed field exists in new");
-        if let Some((from, to)) = &fc.name_changed {
-            plan.push(Operation {
-                summary: format!("rename column {}.{from} -> {to}", new_e.name),
-                sql: format!(
-                    "ALTER TABLE {} RENAME COLUMN {} TO {}",
-                    q(&new_e.name),
-                    q(from),
-                    q(to)
-                ),
-                safety: Safety::Destructive,
-                entity: new_e.id.clone(),
-                field: Some(fc.id.clone()),
-                note: Some("breaks generated API / flows referencing the old name".into()),
-            });
-        }
         if fc.type_changed.is_some() {
             let ty = sql_type(&f.field_type);
             plan.push(Operation {
@@ -483,73 +925,63 @@ fn emit_column_alters(plan: &mut MigrationPlan, new_e: &Entity, ch: &wamn_catalo
     }
 }
 
-/// Dropped columns, dropped indexes, dropped constraints, table renames.
+/// Drop a table constraint (removes a guarantee — needs review).
+fn drop_constraint_op(new_e: &Entity, c: &Constraint) -> Operation {
+    Operation {
+        summary: format!("drop constraint {} on {}", c.name(), new_e.name),
+        sql: format!(
+            "ALTER TABLE {} DROP CONSTRAINT {}",
+            q(&new_e.name),
+            q(c.name())
+        ),
+        safety: Safety::Destructive,
+        entity: new_e.id.clone(),
+        field: None,
+        note: Some("removes a data-integrity guarantee".into()),
+    }
+}
+
+/// Drop an index: a unique index drop relaxes a guarantee (destructive); a
+/// plain index drop is data-safe (additive).
+fn drop_index_op(new_e: &Entity, idx: &Index) -> Operation {
+    Operation {
+        summary: format!("drop index {}", idx.name),
+        sql: format!("DROP INDEX {}", q(&idx.name)),
+        safety: if idx.unique {
+            Safety::Destructive
+        } else {
+            Safety::Additive
+        },
+        entity: new_e.id.clone(),
+        field: None,
+        note: idx.unique.then(|| "removes a uniqueness guarantee".into()),
+    }
+}
+
+/// Dropped columns plus the retained (non-name-freeing) constraint and index
+/// drops. Name-freeing drops, hoisted column drops, and the table/column
+/// renames run in the plan preamble ([`migrate_plan`]).
 fn emit_destructive_changes(
     plan: &mut MigrationPlan,
     old_e: &Entity,
     new_e: &Entity,
     ch: &wamn_catalog::EntityChange,
+    retained_constraints: &[&Constraint],
+    retained_indexes: &[&Index],
+    hoisted_columns: &HashSet<&str>,
 ) {
-    // Dropped constraints (removes a guarantee — needs review).
-    for c in &old_e.constraints {
-        if !new_e.constraints.iter().any(|n| n == c) {
-            plan.push(Operation {
-                summary: format!("drop constraint {} on {}", c.name(), new_e.name),
-                sql: format!(
-                    "ALTER TABLE {} DROP CONSTRAINT {}",
-                    q(&new_e.name),
-                    q(c.name())
-                ),
-                safety: Safety::Destructive,
-                entity: new_e.id.clone(),
-                field: None,
-                note: Some("removes a data-integrity guarantee".into()),
-            });
-        }
+    for c in retained_constraints {
+        plan.push(drop_constraint_op(new_e, c));
     }
-    // Dropped indexes: a unique index drop relaxes a guarantee (destructive); a
-    // plain index drop is data-safe (additive).
-    for idx in &old_e.indexes {
-        if !new_e.indexes.iter().any(|n| n == idx) {
-            plan.push(Operation {
-                summary: format!("drop index {}", idx.name),
-                sql: format!("DROP INDEX {}", q(&idx.name)),
-                safety: if idx.unique {
-                    Safety::Destructive
-                } else {
-                    Safety::Additive
-                },
-                entity: new_e.id.clone(),
-                field: None,
-                note: idx.unique.then(|| "removes a uniqueness guarantee".into()),
-            });
-        }
+    for idx in retained_indexes {
+        plan.push(drop_index_op(new_e, idx));
     }
-    // Dropped columns.
+    // Dropped columns (minus those hoisted to free a reused name).
     for fid in &ch.fields_removed {
+        if hoisted_columns.contains(fid.as_str()) {
+            continue;
+        }
         let f = field_by_id(old_e, fid).expect("removed field exists in old");
-        plan.push(Operation {
-            summary: format!("drop column {}.{}", new_e.name, f.name),
-            sql: format!("ALTER TABLE {} DROP COLUMN {}", q(&new_e.name), q(&f.name)),
-            safety: Safety::Destructive,
-            entity: new_e.id.clone(),
-            field: Some(f.id.clone()),
-            note: Some("drops the column and its data".into()),
-        });
-    }
-    // Table rename.
-    if old_e.name != new_e.name {
-        plan.push(Operation {
-            summary: format!("rename table {} -> {}", old_e.name, new_e.name),
-            sql: format!(
-                "ALTER TABLE {} RENAME TO {}",
-                q(&old_e.name),
-                q(&new_e.name)
-            ),
-            safety: Safety::Destructive,
-            entity: new_e.id.clone(),
-            field: None,
-            note: Some("breaks generated API / flows referencing the old name".into()),
-        });
+        plan.push(drop_column_op(new_e, f));
     }
 }

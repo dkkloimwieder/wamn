@@ -41,7 +41,9 @@ plan.sql(Confirmation::ConfirmedWithBackup)?; // prefixes a backup-checkpoint ma
 
 `Migration::create` / `migrate` first run the catalog through 3.1 validation and
 reject reserved managed-column collisions (`id` / `tenant_id`), returning
-`CompileError` rather than emitting unsafe DDL.
+`CompileError` rather than emitting unsafe DDL. `migrate` additionally rejects a
+table- or column-rename cycle (a swap) and an aside-name collision — see
+*Migration ordering & name reuse* below.
 
 Two further entry points emit the **outbox row-event triggers** (see the
 dedicated section below):
@@ -113,6 +115,68 @@ destructive plan; `ConfirmedWithBackup` prefixes the script with a
 
 Relations are navigational metadata; only a `reference` **field** produces a
 foreign key. A relation-only change emits no DDL.
+
+## Migration ordering & name reuse
+
+`Migration::migrate` orders operations additive-first / destructive-last —
+**except a name-freeing preamble**. Postgres tables, indexes, and
+unique-constraint backing indexes share one relation namespace (and column /
+constraint names are table-scoped namespaces of their own), and a single
+version bump may both *free* a name (rename / drop) and *reclaim* it (create /
+add); the freeing side must execute first or the add fails (42P07 / 42710 /
+42701) and the whole transactional apply (2.5) rolls back. Plan order:
+
+1. **Dropped tables whose name is reclaimed are renamed aside**
+   (`wamn_mig_drop_<name>`), together with their indexes — index names
+   (including the implicit `<table>_pkey`) do **not** follow a table rename,
+   so the recreated table's canonical index names would otherwise collide or
+   silently drift. A doomed table whose *index* name (only) is reclaimed moves
+   just those indexes aside. The actual `DROP TABLE` stays **last** (targeting
+   the aside name), so the destructive tail's FK unwind order is untouched —
+   foreign keys follow a rename. Every synthesized aside name is checked
+   against the full relation namespace of both catalog versions
+   (`CompileError::TempNameCollision`), conservatively: a collision rejects
+   even when the holder is itself renamed away in the same bump.
+2. **Hoisted constraint and index drops**: drops that free a reclaimed name —
+   plus *all* constraint/index drops of an entity whose column drop is hoisted
+   in step 4 (the `DROP COLUMN` implicitly drops objects involving the column,
+   and a tail drop would then fail on the missing object). A same-name
+   redefinition (same name, changed definition) diffs as drop + add and lands
+   here. These run **before** the renames — a rename's own target may be a
+   name freed only by such a drop — so a hoisted constraint drop references
+   its table by the *pre-rename* name (`DROP INDEX` references no table name).
+3. **All table renames**, dependency-ordered: a rename claiming a name freed
+   by another rename runs after it (`a -> b` waits for `b -> c`). A cycle — a
+   swap, `a -> b` **and** `b -> a` in one bump — has no rename-only order and
+   is rejected (`CompileError::TableRenameCycle`); split it into two version
+   bumps. Each rename takes its implicit pkey along
+   (`ALTER INDEX IF EXISTS "<old>_pkey" RENAME TO "<new>_pkey"`): left stale,
+   the recreated same-named table's pkey silently drifts to a suffixed name
+   (Postgres auto-avoids implicit-name collisions rather than erroring) and a
+   *later* migration's aside-rename of `<table>_pkey` would grab a live
+   table's index. Hoisting *every* rename (not only name-freeing ones) also
+   keeps the plan's later `ALTER TABLE <new name>` operations on the same
+   entity valid.
+4. **Per-entity column-namespace freeing** — the same rule one level down:
+   a dropped column whose name is re-added (or claimed by a column rename)
+   drops now, and all column renames run here, dependency-ordered within
+   their table; a column-rename swap is rejected
+   (`CompileError::ColumnRenameCycle`). These reference the table post-rename,
+   hence after step 3.
+5. The additive-first / destructive-last steps as before: creates + RLS,
+   attachments, additive adds, column alters (retype / nullability /
+   default), then the destructive tail.
+
+Plans that free no reused name and rename nothing are unchanged by the
+preamble, and hoisted operations keep their destructive classification — the
+confirmation gate is order-independent. Known limits: two *dropped* tables
+linked by a foreign key still drop in diff order (drop the referencing table's
+entity in an earlier bump — pre-existing); index names that drifted outside
+the catalog before this ordering existed (an index created under an earlier
+table name keeps that name) are moved aside with `ALTER INDEX IF EXISTS`, so a
+drifted source skips the move and a colliding claim fails loudly at apply
+rather than silently — the pkey-follows-rename rule keeps names canonical so
+drift no longer accumulates.
 
 ## Outbox row-event triggers (5.14 / D4 producers)
 
@@ -187,13 +251,27 @@ for demos and manual project setup.
 ## Verification
 
 `cargo test -p wamn-ddl` checks emitted SQL for the POC catalog (tenant floor,
-composite unique, enum checks, unit comments, FKs), the safety gate, and the
-outbox-trigger plans (coverage/shape, schema-option validation, the gated drop,
+composite unique, enum checks, unit comments, FKs), the safety gate, the
+migration ordering (name reuse via rename and via drop-and-re-add — reclaimed
+by a create *and* by a rename — three-hop rename chains, swap and
+aside-name-collision rejection incl. index aside-targets, same-named
+constraint/index redefinition on kept and renamed tables, a rename into a
+constraint-freed name, cross-table unique-name moves, pkey-follows-rename,
+column-name reuse / column-rename chains and swap rejection, the
+implicit-drop force-hoist, and collision-free plans staying preamble-free —
+each ordering rule is mutation-tested), and the outbox-trigger plans
+(coverage/shape, schema-option validation, the gated drop,
 and a drift guard pinning the emitted column set + event vocabulary against
-`deploy/run-queue.sql`). Two optional live-apply tests run against a throwaway
+`deploy/run-queue.sql`). Three optional live-apply tests run against a throwaway
 Postgres, gated on `WAMN_DDL_PG_URL` (a superuser URL; the harness provisions
-the `wamn_app` role and ephemeral schemas): the CREATE/migrate script, and the
-outbox triggers behaviorally — a `wamn_app` write emits exactly one event row
+the `wamn_app` role and ephemeral schemas): the CREATE/migrate script; the
+name-reuse migrations applied for real (a rename into a reused name with other
+changes on the same entity, a remove-and-re-add under the same table/index
+names over a live inbound FK with canonical pkey names asserted on both sides,
+in-place constraint/index redefinitions on kept and renamed tables, and a
+same-named column redefinition — each failed 42P07 / 42P01 / 42710 / 42701
+before the preamble); and the outbox triggers
+behaviorally — a `wamn_app` write emits exactly one event row
 in the same transaction with the exact-decimal payload preserved, a superuser
 seed fires with the row's tenant, outbox RLS isolates tenants, a conflict no-op
 emits nothing, a re-applied plan stacks no duplicate trigger, and the confirmed

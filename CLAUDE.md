@@ -449,6 +449,22 @@ cargo run -p wamn-catalog --example print-schema > docs/catalog-model.schema.jso
 # the tenant floor (id uuid PK + tenant_id + FORCE RLS + app.tenant policy;
 # tenant-scoped uniqueness/indexes). Each op classified additive/destructive;
 # plan.sql(Confirmation) refuses destructive DDL unless ConfirmedWithBackup.
+# migrate() is NAME-REUSE-SAFE: a name-freeing preamble precedes the additive-
+# first tail — (1) dropped-reclaimed tables renamed aside wamn_mig_drop_* WITH
+# their indexes [index names don't follow a table rename; aside targets
+# collision-checked across the full relation namespace], (2) reclaimed
+# constraint/index drops PRE-rename on old table names [+ force-hoist of an
+# entity's drops when its column drop hoists: DROP COLUMN implicitly drops
+# dependent objects], (3) ALL table renames dependency-ordered, each pkey
+# following its rename [prevents silent pkey suffix-drift + a later aside-
+# rename grabbing a live table's index], (4) per-entity column-namespace
+# freeing [hoisted column drops + column renames dependency-ordered]. So
+# rename/drop-and-re-add name reuse, same-named constraint/index/column
+# redefinition, and rename chains all apply under the 2.5 one-txn apply; the
+# DROP TABLE of an aside table stays LAST (FK unwind intact); table/column
+# rename swap cycles + aside-name collisions rejected (CompileError::
+# TableRenameCycle / ColumnRenameCycle / TempNameCollision). All ordering
+# rules are mutation-tested (13 mutants killed).
 # PLUS the 5.14/D4 row-event PRODUCERS: Migration::outbox_triggers(catalog,
 # &OutboxOptions{schema:"wamn_run"}) — a SEPARATE opt-in all-additive plan (one
 # shared plpgsql fn + a CONSTANT-named AFTER INSERT/UPDATE/DELETE trigger per

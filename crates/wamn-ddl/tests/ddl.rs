@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use wamn_catalog::{Catalog, Entity, Field, FieldType, Index};
+use wamn_catalog::{Catalog, Constraint, Entity, Field, FieldType, Index};
 use wamn_ddl::{CompileError, Confirmation, Migration, OutboxOptions};
 
 /// The POC catalog fixture lives in the sibling wamn-catalog crate.
@@ -26,6 +26,47 @@ fn text_field(id: &str) -> Field {
         id: id.into(),
         name: id.into(),
         field_type: FieldType::Text { max_len: None },
+        nullable: true,
+        default: None,
+        sensitive: false,
+        is_system: false,
+        label: None,
+        description: None,
+    }
+}
+
+/// A minimal user entity for the name-reuse tests.
+fn entity(id: &str, name: &str, fields: Vec<Field>) -> Entity {
+    Entity {
+        id: id.into(),
+        name: name.into(),
+        is_system: false,
+        label: None,
+        description: None,
+        fields,
+        indexes: vec![],
+        constraints: vec![],
+    }
+}
+
+fn mini(version: u32, entities: Vec<Entity>) -> Catalog {
+    Catalog {
+        schema_version: "0.1".into(),
+        catalog_id: "k56-name-reuse".into(),
+        version,
+        name: None,
+        entities,
+        relations: vec![],
+    }
+}
+
+fn reference_field(id: &str, target_entity: &str) -> Field {
+    Field {
+        id: id.into(),
+        name: id.into(),
+        field_type: FieldType::Reference {
+            entity: target_entity.into(),
+        },
         nullable: true,
         default: None,
         sensitive: false,
@@ -145,6 +186,667 @@ fn renamed_field_is_destructive() {
     );
     assert_eq!(op.entity, "quality_holds");
     assert_eq!(op.field.as_deref(), Some("status"));
+}
+
+#[test]
+fn reused_name_via_rename_is_freed_before_create() {
+    // v1{B:'receipts'} -> v2{B -> 'receipts_old', NEW D named 'receipts'}: the
+    // name-freeing rename must precede the CREATE that reclaims the name —
+    // 42P07 otherwise, and the whole 2.5 transactional apply rolls back.
+    let v1 = mini(1, vec![entity("b", "receipts", vec![text_field("val")])]);
+    let v2 = mini(
+        2,
+        vec![
+            entity("b", "receipts_old", vec![text_field("val")]),
+            entity("d", "receipts", vec![text_field("other")]),
+        ],
+    );
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    assert!(plan.requires_confirmation(), "rename stays gated");
+    let sql = plan
+        .sql(Confirmation::ConfirmedWithBackup)
+        .expect("confirmed");
+    let rename = sql
+        .find("ALTER TABLE \"receipts\" RENAME TO \"receipts_old\"")
+        .expect("rename op");
+    let create = sql.find("CREATE TABLE \"receipts\"").expect("create op");
+    assert!(
+        rename < create,
+        "the name-freeing rename must precede the CREATE reclaiming it:\n{sql}"
+    );
+}
+
+#[test]
+fn reused_name_via_drop_renames_aside_and_drops_last() {
+    // Remove-and-re-add of 'audit' in one bump. The doomed table is renamed
+    // aside — WITH its indexes: index names (incl. the implicit pkey) do not
+    // follow a table rename, so the recreated table's canonical index names
+    // would otherwise collide or drift. The DROP TABLE stays LAST, so the FK
+    // unwind of the destructive tail is untouched: log's reference column
+    // (the inbound FK on the doomed table) drops before the aside table does.
+    let mut x = entity("x", "audit", vec![text_field("val")]);
+    x.indexes.push(Index {
+        name: "audit_by_val".into(),
+        fields: vec!["val".into()],
+        unique: false,
+    });
+    x.constraints.push(Constraint::Unique {
+        name: "audit_val_uniq".into(),
+        fields: vec!["val".into()],
+    });
+    let mut y1 = entity("y", "log", vec![text_field("msg")]);
+    y1.fields.push(reference_field("audit_ref", "x"));
+    let v1 = mini(1, vec![x.clone(), y1]);
+
+    let mut e = x.clone();
+    e.id = "e".into();
+    let v2 = mini(2, vec![e, entity("y", "log", vec![text_field("msg")])]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan
+        .sql(Confirmation::ConfirmedWithBackup)
+        .expect("confirmed");
+
+    let aside = sql
+        .find("ALTER TABLE \"audit\" RENAME TO \"wamn_mig_drop_audit\"")
+        .expect("aside rename");
+    let pkey = sql
+        .find("ALTER INDEX IF EXISTS \"audit_pkey\" RENAME TO \"wamn_mig_drop_audit_pkey\"")
+        .expect("pkey moved aside");
+    let idx = sql
+        .find("ALTER INDEX IF EXISTS \"audit_by_val\"")
+        .expect("index moved aside");
+    let uniq = sql
+        .find("ALTER INDEX IF EXISTS \"audit_val_uniq\"")
+        .expect("unique backing index moved aside");
+    let create = sql.find("CREATE TABLE \"audit\"").expect("create");
+    let fk_unwind = sql
+        .find("ALTER TABLE \"log\" DROP COLUMN \"audit_ref\"")
+        .expect("inbound FK column drop");
+    let final_drop = sql
+        .find("DROP TABLE \"wamn_mig_drop_audit\"")
+        .expect("final drop targets the aside name");
+    assert!(aside < create && pkey < create && idx < create && uniq < create);
+    assert!(
+        create < fk_unwind && fk_unwind < final_drop,
+        "FK unwind must precede the aside table's final drop:\n{sql}"
+    );
+    // The review surface keeps the real table name.
+    let drop_op = plan
+        .operations
+        .iter()
+        .find(|o| o.sql.starts_with("DROP TABLE"))
+        .unwrap();
+    assert_eq!(drop_op.summary, "drop table audit");
+    assert!(!sql.contains("DROP TABLE \"audit\""));
+}
+
+#[test]
+fn rename_chain_orders_name_freeing_first() {
+    // a -> b, b -> c, c -> d in one bump (diff order deliberately worst-case):
+    // each rename's target is freed by the next, so the emission order must be
+    // fully reversed — a single ready/blocked pass is not enough (the blocked
+    // remainder must be re-ordered too, which needs the full loop).
+    let v1 = mini(
+        1,
+        vec![
+            entity("ea", "a", vec![text_field("v")]),
+            entity("eb", "b", vec![text_field("v")]),
+            entity("ec", "c", vec![text_field("v")]),
+        ],
+    );
+    let v2 = mini(
+        2,
+        vec![
+            entity("ea", "b", vec![text_field("v")]),
+            entity("eb", "c", vec![text_field("v")]),
+            entity("ec", "d", vec![text_field("v")]),
+        ],
+    );
+    let plan = Migration::migrate(&v1, &v2).expect("a chain compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let free_d = sql
+        .find("ALTER TABLE \"c\" RENAME TO \"d\"")
+        .expect("tail rename");
+    let free_c = sql
+        .find("ALTER TABLE \"b\" RENAME TO \"c\"")
+        .expect("middle rename");
+    let claim_b = sql
+        .find("ALTER TABLE \"a\" RENAME TO \"b\"")
+        .expect("head rename");
+    assert!(
+        free_d < free_c && free_c < claim_b,
+        "the chain must emit fully reversed (freeing first):\n{sql}"
+    );
+}
+
+#[test]
+fn pkey_follows_a_table_rename() {
+    // Index names do not follow a table rename. Left stale, the recreated
+    // table in the headline scenario silently gets a suffixed pkey
+    // (receipts_pkey1 — Postgres auto-avoids rather than erroring), and a
+    // LATER migration's aside-rename of "receipts_pkey" would grab the LIVE
+    // renamed table's index. Each hoisted rename takes its pkey along.
+    let v1 = mini(1, vec![entity("b", "receipts", vec![text_field("val")])]);
+    let v2 = mini(
+        2,
+        vec![
+            entity("b", "receipts_old", vec![text_field("val")]),
+            entity("d", "receipts", vec![text_field("other")]),
+        ],
+    );
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let rename = sql
+        .find("ALTER TABLE \"receipts\" RENAME TO \"receipts_old\"")
+        .expect("table rename");
+    let pkey = sql
+        .find("ALTER INDEX IF EXISTS \"receipts_pkey\" RENAME TO \"receipts_old_pkey\"")
+        .expect("pkey follows the rename");
+    let create = sql.find("CREATE TABLE \"receipts\"").expect("create");
+    assert!(
+        rename < pkey && pkey < create,
+        "the pkey rename must free the canonical name before the CREATE:\n{sql}"
+    );
+}
+
+#[test]
+fn reused_name_via_drop_reclaimed_by_a_rename() {
+    // The freed name is reclaimed by a RENAME, not a CREATE — the rename
+    // TARGETS (not sources) must drive the claim analysis: v1{x:'n' removed,
+    // y:'y_old'} -> v2{y renamed to 'n'}. The doomed x must move aside before
+    // the rename, and the final drop must target the aside name.
+    let v1 = mini(
+        1,
+        vec![
+            entity("x", "n", vec![text_field("v")]),
+            entity("y", "y_old", vec![text_field("v")]),
+        ],
+    );
+    let v2 = mini(2, vec![entity("y", "n", vec![text_field("v")])]);
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let aside = sql
+        .find("ALTER TABLE \"n\" RENAME TO \"wamn_mig_drop_n\"")
+        .expect("doomed table moved aside");
+    let rename = sql
+        .find("ALTER TABLE \"y_old\" RENAME TO \"n\"")
+        .expect("claiming rename");
+    let final_drop = sql
+        .find("DROP TABLE \"wamn_mig_drop_n\"")
+        .expect("final drop targets the aside name");
+    assert!(
+        aside < rename && rename < final_drop,
+        "aside first, then the claiming rename:\n{sql}"
+    );
+}
+
+#[test]
+fn doomed_table_keeping_its_name_moves_reclaimed_index_names_aside() {
+    // The doomed table's NAME is not reused, but a NEW table claims its index
+    // and unique-constraint names — they alone must move aside; the table
+    // keeps its name until the final drop.
+    let mut x = entity("x", "audit", vec![text_field("v")]);
+    x.indexes.push(Index {
+        name: "hot_idx".into(),
+        fields: vec!["v".into()],
+        unique: false,
+    });
+    x.constraints.push(Constraint::Unique {
+        name: "uq_shared".into(),
+        fields: vec!["v".into()],
+    });
+    let v1 = mini(1, vec![x]);
+    let mut m = entity("m", "metrics", vec![text_field("v")]);
+    m.indexes.push(Index {
+        name: "hot_idx".into(),
+        fields: vec!["v".into()],
+        unique: false,
+    });
+    m.constraints.push(Constraint::Unique {
+        name: "uq_shared".into(),
+        fields: vec!["v".into()],
+    });
+    let v2 = mini(2, vec![m]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let idx_aside = sql
+        .find("ALTER INDEX IF EXISTS \"hot_idx\" RENAME TO \"wamn_mig_drop_hot_idx\"")
+        .expect("reclaimed index moved aside");
+    let uq_aside = sql
+        .find("ALTER INDEX IF EXISTS \"uq_shared\" RENAME TO \"wamn_mig_drop_uq_shared\"")
+        .expect("reclaimed unique backing index moved aside");
+    let claim = sql
+        .find("CREATE INDEX \"hot_idx\"")
+        .expect("claiming index add");
+    let uq_claim = sql
+        .find("ADD CONSTRAINT \"uq_shared\"")
+        .expect("claiming constraint add");
+    assert!(idx_aside < claim && uq_aside < uq_claim);
+    // The table itself keeps its real name to the end.
+    assert!(sql.contains("DROP TABLE \"audit\""));
+    assert!(!sql.contains("ALTER TABLE \"audit\" RENAME"));
+}
+
+#[test]
+fn unique_constraint_name_moving_across_tables_drops_before_add() {
+    // A UNIQUE constraint name migrating from one CHANGED entity to another:
+    // the per-entity re-add set cannot see it — only the cross-entity claimed
+    // set can — and the freeing drop must precede the claiming add.
+    let mut a1 = entity("ea", "alpha", vec![text_field("v")]);
+    a1.constraints.push(Constraint::Unique {
+        name: "uq_moved".into(),
+        fields: vec!["v".into()],
+    });
+    let b1 = entity("eb", "beta", vec![text_field("v")]);
+    let v1 = mini(1, vec![a1, b1]);
+
+    let a2 = entity("ea", "alpha", vec![text_field("v"), text_field("w")]);
+    let mut b2 = entity("eb", "beta", vec![text_field("v")]);
+    b2.constraints.push(Constraint::Unique {
+        name: "uq_moved".into(),
+        fields: vec!["v".into()],
+    });
+    let v2 = mini(2, vec![a2, b2]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let drop = sql
+        .find("ALTER TABLE \"alpha\" DROP CONSTRAINT \"uq_moved\"")
+        .expect("freeing drop");
+    let add = sql
+        .find("ALTER TABLE \"beta\" ADD CONSTRAINT \"uq_moved\"")
+        .expect("claiming add");
+    assert!(
+        drop < add,
+        "the cross-table name move must drop first:\n{sql}"
+    );
+}
+
+#[test]
+fn reused_column_name_frees_before_the_add() {
+    // The column-namespace sibling: dropping field id f1 (name 'amount') and
+    // adding f2 with the SAME name is a valid evolution (field identity = id);
+    // the DROP COLUMN must precede the ADD COLUMN (42701 otherwise). Same for
+    // a column RENAME into a dropped column's name, and rename chains order
+    // within the table.
+    let v1 = mini(
+        1,
+        vec![entity(
+            "t",
+            "t",
+            vec![text_field("amount"), text_field("k")],
+        )],
+    );
+    let mut t2 = entity("t", "t", vec![text_field("k")]);
+    t2.fields.push(Field {
+        id: "amount2".into(),
+        name: "amount".into(),
+        field_type: FieldType::Int,
+        nullable: true,
+        default: None,
+        sensitive: false,
+        is_system: false,
+        label: None,
+        description: None,
+    });
+    let v2 = mini(2, vec![t2]);
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    assert!(
+        sql.find("DROP COLUMN \"amount\"").unwrap() < sql.find("ADD COLUMN \"amount\"").unwrap(),
+        "same-named column redefinition must drop first:\n{sql}"
+    );
+
+    // Column rename chain within a table: a -> b while b -> c (and b's old
+    // name reclaimed) must emit the freeing rename first.
+    let mut ta = text_field("a");
+    ta.id = "fa".into();
+    let mut tb = text_field("b");
+    tb.id = "fb".into();
+    let v3 = mini(3, vec![entity("t", "t", vec![ta, tb])]);
+    let mut ta4 = text_field("b");
+    ta4.id = "fa".into();
+    let mut tb4 = text_field("c");
+    tb4.id = "fb".into();
+    let v4 = mini(4, vec![entity("t", "t", vec![ta4, tb4])]);
+    let plan = Migration::migrate(&v3, &v4).expect("column chain compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let free = sql
+        .find("RENAME COLUMN \"b\" TO \"c\"")
+        .expect("freeing column rename");
+    let claim = sql
+        .find("RENAME COLUMN \"a\" TO \"b\"")
+        .expect("claiming column rename");
+    assert!(free < claim, "column chain orders freeing first:\n{sql}");
+}
+
+#[test]
+fn implicitly_dropped_objects_hoist_with_the_column() {
+    // A hoisted DROP COLUMN implicitly drops constraints/indexes involving
+    // the column (verified on PG 18: a later explicit drop then errors
+    // 42704), so an entity that hoists a column drop must hoist ALL its
+    // constraint/index drops ahead of it — even ones that free no reused
+    // name and would otherwise sit in the destructive tail.
+    let mut t1 = entity("t", "t", vec![text_field("amount"), text_field("k")]);
+    t1.constraints.push(Constraint::Unique {
+        name: "uq_amount".into(),
+        fields: vec!["amount".into()],
+    });
+    let v1 = mini(1, vec![t1]);
+    // amount dropped-and-re-added (new field id, no constraint this time):
+    // the column drop hoists; uq_amount is dropped but NOT re-added.
+    let mut t2 = entity("t", "t", vec![text_field("k")]);
+    t2.fields.push(Field {
+        id: "amount2".into(),
+        name: "amount".into(),
+        field_type: FieldType::Int,
+        nullable: true,
+        default: None,
+        sensitive: false,
+        is_system: false,
+        label: None,
+        description: None,
+    });
+    let v2 = mini(2, vec![t2]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let con_drop = sql
+        .find("DROP CONSTRAINT \"uq_amount\"")
+        .expect("constraint drop");
+    let col_drop = sql.find("DROP COLUMN \"amount\"").expect("column drop");
+    assert!(
+        con_drop < col_drop,
+        "the constraint drop must precede the column drop that would implicitly consume it:\n{sql}"
+    );
+}
+
+#[test]
+fn column_rename_swap_is_rejected() {
+    let mut fa = text_field("a");
+    fa.id = "fa".into();
+    let mut fb = text_field("b");
+    fb.id = "fb".into();
+    let v1 = mini(1, vec![entity("t", "t", vec![fa, fb])]);
+    let mut fa2 = text_field("b");
+    fa2.id = "fa".into();
+    let mut fb2 = text_field("a");
+    fb2.id = "fb".into();
+    let v2 = mini(2, vec![entity("t", "t", vec![fa2, fb2])]);
+    match Migration::migrate(&v1, &v2) {
+        Err(CompileError::ColumnRenameCycle { entity, names }) => {
+            assert_eq!(entity, "t");
+            assert!(names.contains(&"a".to_string()) && names.contains(&"b".to_string()));
+        }
+        other => panic!("expected ColumnRenameCycle, got {other:?}"),
+    }
+}
+
+#[test]
+fn rename_swap_cycle_is_rejected() {
+    // a <-> b in one bump: no order of plain renames applies it — rejected,
+    // split into two version bumps.
+    let v1 = mini(
+        1,
+        vec![
+            entity("ea", "a", vec![text_field("v")]),
+            entity("eb", "b", vec![text_field("v")]),
+        ],
+    );
+    let v2 = mini(
+        2,
+        vec![
+            entity("ea", "b", vec![text_field("v")]),
+            entity("eb", "a", vec![text_field("v")]),
+        ],
+    );
+    match Migration::migrate(&v1, &v2) {
+        Err(CompileError::TableRenameCycle { names }) => {
+            assert!(names.contains(&"a".to_string()) && names.contains(&"b".to_string()));
+        }
+        other => panic!("expected TableRenameCycle, got {other:?}"),
+    }
+}
+
+#[test]
+fn rename_with_other_changes_renames_first() {
+    // A renamed table with any other change used to emit
+    // `ALTER TABLE <new name> ...` BEFORE the rename executed (42P01); the
+    // hoisted rename must precede the entity's other operations.
+    let v1 = mini(1, vec![entity("b", "receipts", vec![text_field("val")])]);
+    let v2 = mini(
+        2,
+        vec![entity(
+            "b",
+            "receipts2",
+            vec![text_field("val"), text_field("note")],
+        )],
+    );
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let rename = sql
+        .find("ALTER TABLE \"receipts\" RENAME TO \"receipts2\"")
+        .expect("rename");
+    let add = sql
+        .find("ALTER TABLE \"receipts2\" ADD COLUMN \"note\" text")
+        .expect("add column on the NEW name");
+    assert!(
+        rename < add,
+        "the rename must precede other ALTERs on the renamed table:\n{sql}"
+    );
+}
+
+#[test]
+fn constraint_and_index_redefinition_drop_before_add() {
+    // Changing a constraint's or index's definition while KEEPING its name
+    // diffs as drop + add; the drop must run first (42710 / 42P07 otherwise).
+    let mut e1 = entity(
+        "r",
+        "receipts",
+        vec![text_field("val"), text_field("other")],
+    );
+    e1.constraints.push(Constraint::Unique {
+        name: "u_val".into(),
+        fields: vec!["val".into()],
+    });
+    e1.indexes.push(Index {
+        name: "i_val".into(),
+        fields: vec!["val".into()],
+        unique: false,
+    });
+    let v1 = mini(1, vec![e1]);
+
+    let mut e2 = entity(
+        "r",
+        "receipts",
+        vec![text_field("val"), text_field("other")],
+    );
+    e2.constraints.push(Constraint::Unique {
+        name: "u_val".into(),
+        fields: vec!["val".into(), "other".into()],
+    });
+    e2.indexes.push(Index {
+        name: "i_val".into(),
+        fields: vec!["val".into(), "other".into()],
+        unique: false,
+    });
+    let v2 = mini(2, vec![e2]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    assert!(
+        sql.find("DROP CONSTRAINT \"u_val\"").unwrap()
+            < sql.find("ADD CONSTRAINT \"u_val\"").unwrap(),
+        "same-named constraint redefinition must drop first:\n{sql}"
+    );
+    assert!(
+        sql.find("DROP INDEX \"i_val\"").unwrap() < sql.find("CREATE INDEX \"i_val\"").unwrap(),
+        "same-named index redefinition must drop first:\n{sql}"
+    );
+}
+
+#[test]
+fn constraint_redefinition_on_renamed_table_drops_before_the_rename() {
+    // A hoisted (name-freeing) constraint drop references its table by the
+    // PRE-rename name and runs BEFORE the renames: a rename's own target may
+    // be a name freed only by such a drop (a unique constraint's backing
+    // index shares the relation namespace), so the drops cannot wait for the
+    // renames. The re-add then references the post-rename name.
+    let mut e1 = entity(
+        "r",
+        "receipts",
+        vec![text_field("val"), text_field("other")],
+    );
+    e1.constraints.push(Constraint::Unique {
+        name: "u_val".into(),
+        fields: vec!["val".into()],
+    });
+    let v1 = mini(1, vec![e1]);
+
+    let mut e2 = entity(
+        "r",
+        "receipts2",
+        vec![text_field("val"), text_field("other")],
+    );
+    e2.constraints.push(Constraint::Unique {
+        name: "u_val".into(),
+        fields: vec!["val".into(), "other".into()],
+    });
+    let v2 = mini(2, vec![e2]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let drop = sql
+        .find("ALTER TABLE \"receipts\" DROP CONSTRAINT \"u_val\"")
+        .expect("hoisted drop on the PRE-rename name");
+    let rename = sql
+        .find("ALTER TABLE \"receipts\" RENAME TO \"receipts2\"")
+        .expect("rename");
+    let add = sql
+        .find("ALTER TABLE \"receipts2\" ADD CONSTRAINT \"u_val\"")
+        .expect("re-add on the post-rename name");
+    assert!(
+        drop < rename && rename < add,
+        "the hoisted drop, then the rename, then the re-add:\n{sql}"
+    );
+}
+
+#[test]
+fn rename_into_name_freed_by_a_constraint_drop_applies() {
+    // The review's headline counterexample: A renamed INTO a name freed only
+    // by another table's dropped unique constraint (its backing index holds
+    // the relation-namespace name). The drop must precede the rename.
+    let mut b1 = entity("eb", "b", vec![text_field("v")]);
+    b1.constraints.push(Constraint::Unique {
+        name: "target".into(),
+        fields: vec!["v".into()],
+    });
+    let v1 = mini(1, vec![entity("ea", "a", vec![text_field("v")]), b1]);
+    let v2 = mini(
+        2,
+        vec![
+            entity("ea", "target", vec![text_field("v")]),
+            entity("eb", "b", vec![text_field("v")]),
+        ],
+    );
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let drop = sql
+        .find("ALTER TABLE \"b\" DROP CONSTRAINT \"target\"")
+        .expect("freeing constraint drop");
+    let rename = sql
+        .find("ALTER TABLE \"a\" RENAME TO \"target\"")
+        .expect("claiming rename");
+    assert!(
+        drop < rename,
+        "the constraint drop frees the rename's target name:\n{sql}"
+    );
+}
+
+#[test]
+fn collision_free_plans_have_no_preamble() {
+    // The name-reuse machinery must not perturb ordinary migrations: an
+    // add-column + drop-column evolution has no preamble ops and keeps the
+    // additive-first / destructive-last shape.
+    let v1 = poc();
+    let mut v2 = v1.clone();
+    v2.version = 2;
+    let materials = v2
+        .entities
+        .iter_mut()
+        .find(|e| e.id == "materials")
+        .unwrap();
+    materials.fields.push(text_field("grade"));
+    let suppliers = v2
+        .entities
+        .iter_mut()
+        .find(|e| e.id == "suppliers")
+        .unwrap();
+    suppliers.fields.retain(|f| f.id != "contact_email");
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    assert!(
+        plan.operations
+            .iter()
+            .all(|o| !o.sql.contains("wamn_mig_drop_") && !o.sql.contains("RENAME TO"))
+    );
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    assert!(
+        sql.find("ADD COLUMN \"grade\"").unwrap()
+            < sql.find("DROP COLUMN \"contact_email\"").unwrap(),
+        "additive-first shape intact:\n{sql}"
+    );
+}
+
+#[test]
+fn temp_name_collision_is_rejected() {
+    // Absurd but loud: the aside-name the plan needs is itself a real table.
+    let v1 = mini(
+        1,
+        vec![
+            entity("x", "audit", vec![text_field("v")]),
+            entity("t", "wamn_mig_drop_audit", vec![text_field("v")]),
+        ],
+    );
+    let v2 = mini(
+        2,
+        vec![
+            entity("e", "audit", vec![text_field("v")]),
+            entity("t", "wamn_mig_drop_audit", vec![text_field("v")]),
+        ],
+    );
+    match Migration::migrate(&v1, &v2) {
+        Err(CompileError::TempNameCollision { name }) => {
+            assert_eq!(name, "wamn_mig_drop_audit")
+        }
+        other => panic!("expected TempNameCollision, got {other:?}"),
+    }
+
+    // The check spans the whole relation namespace: an INDEX aside-target
+    // colliding with a real index is rejected too (indexes share pg_class
+    // with tables).
+    let mut x = entity("x", "audit", vec![text_field("v")]);
+    x.indexes.push(Index {
+        name: "ix".into(),
+        fields: vec!["v".into()],
+        unique: false,
+    });
+    let mut t = entity("t", "keeper", vec![text_field("v")]);
+    t.indexes.push(Index {
+        name: "wamn_mig_drop_ix".into(),
+        fields: vec!["v".into()],
+        unique: false,
+    });
+    let v1 = mini(1, vec![x, t.clone()]);
+    let v2 = mini(2, vec![entity("e", "audit", vec![text_field("v")]), t]);
+    match Migration::migrate(&v1, &v2) {
+        Err(CompileError::TempNameCollision { name }) => {
+            assert_eq!(name, "wamn_mig_drop_ix")
+        }
+        other => panic!("expected TempNameCollision for the index aside, got {other:?}"),
+    }
 }
 
 #[test]
@@ -381,6 +1083,255 @@ fn emitted_sql_applies_on_postgres() {
     script.push_str(&add.sql(Confirmation::None).unwrap());
     script.push_str(&drop.sql(Confirmation::ConfirmedWithBackup).unwrap());
     script.push_str("DROP SCHEMA wamn_ddl_test CASCADE;\n");
+
+    let mut child = Command::new("psql")
+        .arg(&url)
+        .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn psql (is it installed?)");
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Live verification of the name-reuse ordering fix on a throwaway Postgres
+/// (gated on `WAMN_DDL_PG_URL`, skips cleanly when unset): one migration that
+/// renames a table into a reused name (with other changes on the same entity),
+/// removes-and-re-adds a table under the same name (same index names, an
+/// inbound FK with live data), and then a second migration redefining a
+/// constraint and an index while keeping their names. Every one of these
+/// failed to apply (42P07 / 42P01 / 42710) before the preamble ordering.
+#[test]
+fn migration_with_name_reuse_applies_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_DDL_PG_URL") else {
+        eprintln!(
+            "skipping migration_with_name_reuse_applies_on_postgres (set WAMN_DDL_PG_URL to run)"
+        );
+        return;
+    };
+
+    let audit_shape = |eid: &str| {
+        let mut e = entity(eid, "audit", vec![text_field("val"), text_field("extra")]);
+        e.indexes.push(Index {
+            name: "audit_by_val".into(),
+            fields: vec!["val".into()],
+            unique: false,
+        });
+        e.constraints.push(Constraint::Unique {
+            name: "audit_val_uniq".into(),
+            fields: vec!["val".into()],
+        });
+        e
+    };
+
+    // v1: receipts + audit (indexes/unique) + log with a reference -> audit.
+    let mut log1 = entity("y", "log", vec![text_field("msg")]);
+    log1.fields.push(reference_field("audit_ref", "x"));
+    let v1 = mini(
+        1,
+        vec![
+            entity("b", "receipts", vec![text_field("val")]),
+            audit_shape("x"),
+            log1,
+        ],
+    );
+
+    // v2: receipts renamed aside AND extended; a NEW receipts; audit removed
+    // and re-added (new entity id, same table/index/constraint names); log's
+    // reference removed (the inbound-FK unwind).
+    let v2 = mini(
+        2,
+        vec![
+            entity(
+                "b",
+                "receipts_old",
+                vec![text_field("val"), text_field("note")],
+            ),
+            entity("d", "receipts", vec![text_field("other")]),
+            audit_shape("e"),
+            entity("y", "log", vec![text_field("msg")]),
+        ],
+    );
+
+    // v3: redefine the recreated audit's index and unique constraint KEEPING
+    // their names (drop-before-add ordering).
+    let mut audit3 = entity("e", "audit", vec![text_field("val"), text_field("extra")]);
+    audit3.indexes.push(Index {
+        name: "audit_by_val".into(),
+        fields: vec!["val".into(), "extra".into()],
+        unique: false,
+    });
+    audit3.constraints.push(Constraint::Unique {
+        name: "audit_val_uniq".into(),
+        fields: vec!["val".into(), "extra".into()],
+    });
+    let v3 = mini(
+        3,
+        vec![
+            entity(
+                "b",
+                "receipts_old",
+                vec![text_field("val"), text_field("note")],
+            ),
+            entity("d", "receipts", vec![text_field("other")]),
+            audit3,
+            entity("y", "log", vec![text_field("msg")]),
+        ],
+    );
+
+    // v4: rename audit -> audit_log WHILE redefining its unique constraint
+    // under the kept name — the hoisted drop must follow the rename (42P01
+    // otherwise).
+    let mut audit4 = entity(
+        "e",
+        "audit_log",
+        vec![text_field("val"), text_field("extra")],
+    );
+    audit4.indexes.push(Index {
+        name: "audit_by_val".into(),
+        fields: vec!["val".into(), "extra".into()],
+        unique: false,
+    });
+    audit4.constraints.push(Constraint::Unique {
+        name: "audit_val_uniq".into(),
+        fields: vec!["val".into()],
+    });
+    let v4 = mini(
+        4,
+        vec![
+            entity(
+                "b",
+                "receipts_old",
+                vec![text_field("val"), text_field("note")],
+            ),
+            entity("d", "receipts", vec![text_field("other")]),
+            audit4,
+            entity("y", "log", vec![text_field("msg")]),
+        ],
+    );
+
+    // v5: column-namespace reuse on the renamed table — drop field id 'val'
+    // and re-add the same column NAME with a different type (the index and
+    // unique constraint must re-key onto the new field id, which also
+    // exercises the implicit-drop force-hoist).
+    let mut audit5 = entity("e", "audit_log", vec![text_field("extra")]);
+    audit5.fields.push(Field {
+        id: "val2".into(),
+        name: "val".into(),
+        field_type: FieldType::Int,
+        nullable: true,
+        default: None,
+        sensitive: false,
+        is_system: false,
+        label: None,
+        description: None,
+    });
+    audit5.indexes.push(Index {
+        name: "audit_by_val".into(),
+        fields: vec!["val2".into(), "extra".into()],
+        unique: false,
+    });
+    audit5.constraints.push(Constraint::Unique {
+        name: "audit_val_uniq".into(),
+        fields: vec!["val2".into()],
+    });
+    let v5 = mini(
+        5,
+        vec![
+            entity(
+                "b",
+                "receipts_old",
+                vec![text_field("val"), text_field("note")],
+            ),
+            entity("d", "receipts", vec![text_field("other")]),
+            audit5,
+            entity("y", "log", vec![text_field("msg")]),
+        ],
+    );
+
+    let create = Migration::create(&v1).unwrap();
+    let reuse = Migration::migrate(&v1, &v2).unwrap();
+    let redefine = Migration::migrate(&v2, &v3).unwrap();
+    let rename_redefine = Migration::migrate(&v3, &v4).unwrap();
+    let column_reuse = Migration::migrate(&v4, &v5).unwrap();
+
+    let mut script = String::new();
+    script.push_str(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
+         BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
+         DROP SCHEMA IF EXISTS wamn_ddl_reuse_test CASCADE;\n\
+         CREATE SCHEMA wamn_ddl_reuse_test AUTHORIZATION CURRENT_USER;\n\
+         GRANT USAGE ON SCHEMA wamn_ddl_reuse_test TO wamn_app;\n\
+         SET search_path TO wamn_ddl_reuse_test;\n",
+    );
+    script.push_str(&create.sql(Confirmation::None).unwrap());
+    // Live data: the audit row is referenced by log (a real inbound FK), and
+    // receipts carries a row that must survive its rename.
+    script.push_str(
+        "INSERT INTO receipts (tenant_id, val) VALUES ('t1', 'keep-me');\n\
+         INSERT INTO audit (tenant_id, val, extra) VALUES ('t1', 'old-audit', 'x');\n\
+         INSERT INTO log (tenant_id, msg, audit_ref) SELECT 't1', 'ref', id FROM audit;\n",
+    );
+    // The heart of the gate: this apply hit 42P07 before the fix.
+    script.push_str(&reuse.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(
+        "DO $$ BEGIN\n\
+             ASSERT (SELECT count(*) FROM receipts_old WHERE val = 'keep-me') = 1, 'renamed table kept its data';\n\
+             ASSERT (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'wamn_ddl_reuse_test' AND table_name = 'receipts_old' AND column_name = 'note') = 1, 'rename + add-column on one entity applied';\n\
+             ASSERT (SELECT count(*) FROM receipts) = 0, 'reclaimed receipts is the fresh table';\n\
+             ASSERT (SELECT count(*) FROM audit) = 0, 'reclaimed audit is the fresh table';\n\
+             ASSERT (SELECT count(*) FROM pg_indexes WHERE schemaname = 'wamn_ddl_reuse_test' AND tablename = 'audit' AND indexname = 'audit_pkey') = 1, 'recreated audit owns the canonical pkey name';\n\
+             ASSERT (SELECT count(*) FROM pg_indexes WHERE schemaname = 'wamn_ddl_reuse_test' AND tablename = 'audit' AND indexname = 'audit_by_val') = 1, 'recreated audit owns the reclaimed index name';\n\
+             ASSERT (SELECT count(*) FROM pg_indexes WHERE schemaname = 'wamn_ddl_reuse_test' AND tablename = 'receipts_old' AND indexname = 'receipts_old_pkey') = 1, 'renamed table pkey followed the rename';\n\
+             ASSERT (SELECT count(*) FROM pg_indexes WHERE schemaname = 'wamn_ddl_reuse_test' AND tablename = 'receipts' AND indexname = 'receipts_pkey') = 1, 'recreated receipts owns the canonical pkey name (no silent suffix drift)';\n\
+             ASSERT to_regclass('wamn_ddl_reuse_test.wamn_mig_drop_audit') IS NULL, 'the renamed-aside table was dropped';\n\
+             ASSERT (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'wamn_ddl_reuse_test' AND table_name = 'log' AND column_name = 'audit_ref') = 0, 'inbound FK column unwound';\n\
+         END $$;\n",
+    );
+    // Same-named constraint/index redefinition: hit 42710 / 42P07 before.
+    script.push_str(&redefine.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(
+        "DO $$ BEGIN\n\
+             ASSERT (SELECT indexdef FROM pg_indexes WHERE schemaname = 'wamn_ddl_reuse_test' AND indexname = 'audit_by_val') LIKE '%extra%', 'index redefined in place under its name';\n\
+             ASSERT (SELECT count(*) FROM pg_constraint WHERE conname = 'audit_val_uniq') = 1, 'unique constraint redefined under its name';\n\
+         END $$;\n",
+    );
+    // Rename + same-named constraint redefinition in ONE bump: the hoisted
+    // drop references the PRE-rename table name and precedes the rename.
+    script.push_str(
+        &rename_redefine
+            .sql(Confirmation::ConfirmedWithBackup)
+            .unwrap(),
+    );
+    script.push_str(
+        "DO $$ BEGIN\n\
+             ASSERT to_regclass('wamn_ddl_reuse_test.audit_log') IS NOT NULL, 'audit renamed to audit_log';\n\
+             ASSERT (SELECT count(*) FROM pg_constraint WHERE conname = 'audit_val_uniq' AND conrelid = 'wamn_ddl_reuse_test.audit_log'::regclass) = 1, 'constraint redefined on the renamed table';\n\
+         END $$;\n",
+    );
+    // Column-namespace reuse: drop field id 'val' and re-add the same column
+    // name with a different type on audit_log (42701 before the fix).
+    script.push_str(&column_reuse.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(
+        "DO $$ BEGIN\n\
+             ASSERT (SELECT data_type FROM information_schema.columns WHERE table_schema = 'wamn_ddl_reuse_test' AND table_name = 'audit_log' AND column_name = 'val') = 'integer', 'column redefined in place under its name';\n\
+         END $$;\n\
+         DROP SCHEMA wamn_ddl_reuse_test CASCADE;\n",
+    );
 
     let mut child = Command::new("psql")
         .arg(&url)
