@@ -66,7 +66,8 @@ including the collision rejection.
 ## Node semantics (F1-shaped, **not** D8)
 
 These are named, catalog-pinned nodes; the generic raw-SQL `postgres-query`
-node stays 5.3, blocked on the D8 policy decision (wamn-r13).
+node lands with 5.3 under the D8 decision (wamn-r13, decided: raw-SQL node
+behind a per-project permission flag, default OFF — see the decision table).
 
 - **validate-receipt** — payload shape (unknown keys rejected; decimals as
   exact-decimal STRINGS or JSON integers, JSON floats refused; RFC 3339

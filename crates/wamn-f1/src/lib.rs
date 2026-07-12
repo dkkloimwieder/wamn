@@ -12,8 +12,8 @@
 //! `node_runs.output_json` records and what 5.7 reconstruction replays).
 //!
 //! Deliberately F1-SCOPED: these are named, catalog-pinned nodes, not a generic
-//! `postgres-query` node — the raw-SQL node vocabulary is 5.3, gated on the D8
-//! policy decision (wamn-r13), which this crate does NOT pre-empt.
+//! `postgres-query` node — the raw-SQL node lands with 5.3 under the D8
+//! decision (wamn-r13: flag-gated raw-SQL node, default OFF; decision table).
 //!
 //! See `docs/poc-f1.md`; the flow graph itself is `deploy/f1-flow.json`
 //! (drift-guarded by this crate's tests).
