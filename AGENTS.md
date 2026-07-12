@@ -481,8 +481,18 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
 docker stop wamn-rq-pg wamn-rq-nats
 # The production service is `wamn-host dispatch --projects-file <json>` (one entry
 # per project: {"name": {"url", "tenant", "schema"}}) or --database-url/--tenant/
-# --schema for one project; a deploy manifest lands with hosting/2.x once real
-# project DBs are provisioned. In-cluster gate of record (co-located with postgres,
+# --schema for one project. Production manifest = deploy/dispatcher.yaml (2-replica
+# Deployment + PDB, no leader — replicas collapse on the write-ahead ON CONFLICT;
+# SIGTERM handled explicitly [PID 1] so pods terminate in ms; rollout guarded by
+# maxUnavailable:0 + minReadySeconds since there is no readiness endpoint; projects
+# file from the wamn-dispatch-projects Secret — example values in the SEPARATE
+# deploy/dispatcher-projects.example.yaml [re-apply must not clobber real config]
+# pointing at the additive wamn_dispatch_demo schema; mTLS NATS via
+# wasmcloud-runtime-tls [publish-only identity = tracked follow-up]; real
+# per-project entries land with hosting/2.3 provisioning). Cron anchor recovery is
+# served by the ADDITIVE partial index runs_cron_anchor in deploy/run-state.sql
+# (drift-guarded by wamn-run-store; live-applied by the wamn-run-queue gate).
+# In-cluster gate of record (co-located with postgres,
 # NO cpu limit — S2 CFS lesson; nats via the operator chart's mTLS cert mount). A
 # HOST change => full docker rebuild (docker build -t wamn-host:dev . && kind load
 # docker-image wamn-host:dev --name wamn):

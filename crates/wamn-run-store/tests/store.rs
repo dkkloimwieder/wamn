@@ -389,6 +389,14 @@ fn run_state_sql_matches_the_model() {
     assert!(sql.contains("PRIMARY KEY (tenant_id, run_id, node_id, occurrence)"));
     assert!(sql.contains("runs_idempotency"));
     assert!(sql.contains("REFERENCES wamn_run.runs"));
+    // The 5.14 dispatcher's cron anchor recovery (cron_last_run_sql: per-flow
+    // max(run_id) over cron runs) is served by this partial index. The column
+    // ORDER is load-bearing (equality prefix + max column last = backward
+    // index-only scan), so pin the whole statement head, not just the name.
+    assert!(
+        sql.contains("CREATE INDEX runs_cron_anchor ON wamn_run.runs (tenant_id, flow_id, run_id)")
+    );
+    assert!(sql.contains("WHERE trigger_source = 'cron'"));
     // Reserved 5.10 / 9.6 seams.
     for seam in [
         "input_ref",

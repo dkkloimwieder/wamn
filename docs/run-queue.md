@@ -294,8 +294,33 @@ decay while every other project keeps its own cadence.
 
 Deployment shape: `wamn-host dispatch --projects-file <json>` (one entry per
 project: `url` + `tenant` + `schema` — the 2.2 projects-file pattern) or the
-single-project flags; a production manifest lands with hosting/2.x once real
-project DBs are provisioned.
+single-project flags. The production manifest is `deploy/dispatcher.yaml`: a
+2-replica Deployment (no leader — replicas race and collapse on the write-ahead
+`ON CONFLICT`, the dispatchbench `race` gate; scale-out is safe by the same
+argument) + a PodDisruptionBudget, with the projects file mounted from the
+`wamn-dispatch-projects` Secret and the doorbell's mTLS NATS material from
+`wasmcloud-runtime-tls` (the queuebench-job pattern; a publish-only NATS
+identity is a tracked follow-up — the runtime cert maps to an
+allow-all-subjects user). The Secret is deliberately a SEPARATE manifest
+(`deploy/dispatcher-projects.example.yaml`, demo values pointing at the
+`wamn_dispatch_demo` schema — production run-state.sql + run-queue.sql objects
+plus a stand-in `flows` registry, provisioned additively): re-applying the
+Deployment must not clobber customized project entries, and real per-project
+entries land with hosting/2.3 provisioning. Shutdown: the dispatcher handles
+SIGTERM explicitly (PID 1 gets no default disposition) and exits in
+milliseconds; even SIGKILL mid-sweep is safe — a sweep is one transaction, so
+abrupt death rolls back and redelivers. Rollouts are guarded without a
+readiness endpoint (`maxUnavailable: 0` + `minReadySeconds`): a new pod with a
+bad Secret crashes inside its fatal-dial timeout and stalls the rollout
+instead of replacing healthy replicas. Cron anchor recovery at production
+`runs`-table scale is served by the partial index `runs_cron_anchor` on
+`runs (tenant_id, flow_id, run_id) WHERE trigger_source = 'cron'`
+(deploy/run-state.sql) — an index-only backward scan for `cron_last_run_sql`'s
+per-flow `max(run_id)` instead of a seq scan. Proven live in-cluster
+(2026-07-12): two replicas against the demo project minted 4 consecutive 20s
+cron ticks exactly once each, fired + acked the seeded outbox row with its
+payload spliced verbatim, `EXPLAIN` confirmed the anchor query uses
+`runs_cron_anchor`, and SIGTERM shutdown measured 13 ms.
 
 ## Scope (5.14) vs. siblings
 

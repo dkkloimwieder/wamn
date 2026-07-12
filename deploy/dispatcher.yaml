@@ -1,0 +1,147 @@
+# 5.14 shared trigger dispatcher — the always-on control-plane loop (cron +
+# outbox row-events + parked-run wakes for every project it serves). Runs the
+# `dispatch` subcommand of the same wamn-host image the operator deploys.
+#
+#   kubectl -n wamn-system apply -f deploy/dispatcher-projects.example.yaml  # once
+#   kubectl -n wamn-system apply -f deploy/dispatcher.yaml
+#   kubectl -n wamn-system rollout status deploy/dispatcher --timeout=120s
+#   kubectl -n wamn-system logs -l app=dispatcher --tail=20
+#
+# The wamn-dispatch-projects Secret is DELIBERATELY NOT in this file: it is
+# per-environment config (real entries land with hosting/2.3 provisioning),
+# and bundling it here would clobber a customized Secret back to the example
+# values on every re-apply. deploy/dispatcher-projects.example.yaml carries a
+# demo-project example of the shape.
+#
+# TWO REPLICAS, NO LEADER: replicas race each trigger and collapse on the
+# write-ahead ON CONFLICT (deterministic run ids {flow}:cron:{tick} /
+# {flow}:outbox:{seq}) — exactly-once minting with no leader election, proven
+# by the dispatchbench `race` mode. Scale-out is safe by the same argument.
+#
+# CRASH SAFETY + SHUTDOWN: a sweep is one transaction (poll -> fire -> ack); a
+# killed pod rolls it back and the surviving replica (or the restarted pod)
+# redelivers, so even SIGKILL mid-sweep is the crash the design absorbs. The
+# dispatcher also handles SIGTERM explicitly (PID 1 gets no default signal
+# disposition) and exits cleanly in milliseconds — a rollout never waits out
+# the grace period.
+#
+# STARTUP + ROLLOUTS: the initial dial of every project is fatal on failure
+# (the pod restarts until its projects' DBs are reachable — the wait-deps init
+# container keeps that quiet). Because there is no readiness endpoint, the
+# rollout is guarded by maxUnavailable: 0 + minReadySeconds: a new pod with a
+# bad projects Secret crashes within its dial timeout and never counts as
+# available, so a bad rollout stalls with the old replicas still running
+# instead of replacing them. NATS is optional (no doorbell = reconciliation
+# sweeps still guarantee pickup), so the init container waits for it only
+# BOUNDED — an absent NATS delays startup by at most ~30s instead of wedging
+# it.
+#
+# CREDENTIAL SCOPE (residual risk, tracked as a follow-up bead): the doorbell
+# publishes over the operator chart's mTLS NATS using the SAME
+# wasmcloud-runtime-tls cert the host groups use, whose CN maps to an
+# allow-all-subjects NATS user. The dispatcher only ever PUBLISHES on
+# wamn.doorbell.<tenant>; a publish-only NATS identity (own cert + scoped
+# verify_and_map user in the chart config) is the right long-term shape.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dispatcher
+  namespace: wamn-system
+  labels: { app: dispatcher }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: dispatcher }
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  # A crash-looping new pod (bad Secret, unreachable project DB) must stay up
+  # this long before it replaces a healthy replica. The fatal initial dial
+  # fails within its 10s connect timeout, well inside this window.
+  minReadySeconds: 30
+  template:
+    metadata:
+      labels: { app: dispatcher }
+    spec:
+      # The dispatcher never talks to the Kubernetes API — don't hand each
+      # replica the default ServiceAccount token as idle attack surface.
+      automountServiceAccountToken: false
+      # Prefer spreading the HA pair across nodes (soft: a one-node cluster
+      # still schedules both).
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: dispatcher }
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            # Postgres is a hard dependency (initial dial is fatal); NATS is
+            # best-effort (the dispatcher runs hint-less without it), so its
+            # wait is bounded rather than a startup wedge.
+            - >-
+              until nc -z postgres 5432; do echo waiting for postgres; sleep 1; done;
+              i=0; until nc -z nats 4222 || [ $i -ge 30 ]; do i=$((i+1)); echo waiting for nats; sleep 1; done
+      volumes:
+        # The operator NATS uses mTLS (verify_and_map). Reuse the runtime cert
+        # the host groups connect with (CN maps to the wasmcloud-runtime NATS
+        # user) so the doorbell subject is permitted — the queuebench-job
+        # pattern. See the credential-scope note above.
+        - name: runtime-cert
+          secret:
+            secretName: wasmcloud-runtime-tls
+            defaultMode: 420
+        - name: projects
+          secret:
+            secretName: wamn-dispatch-projects
+            defaultMode: 420
+      containers:
+        - name: dispatcher
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: runtime-cert
+              mountPath: /runtime-cert
+              readOnly: true
+            - name: projects
+              mountPath: /etc/wamn
+              readOnly: true
+          args:
+            - "--log-level"
+            - "info"
+            - "dispatch"
+            - "--projects-file"
+            - "/etc/wamn/projects.json"
+            - "--nats-url"
+            - "nats://nats.wamn-system.svc.cluster.local:4222"
+            - "--nats-tls-ca"
+            - "/runtime-cert/ca.crt"
+            - "--nats-tls-cert"
+            - "/runtime-cert/tls.crt"
+            - "--nats-tls-key"
+            - "/runtime-cert/tls.key"
+          resources:
+            # No CPU limit on purpose (the S2 CFS lesson): a quota would stall
+            # the sweep loop with scheduler throttles. Requests are modest —
+            # this is an adaptive polling loop, not a bench; it idles at the
+            # max interval when projects are quiet.
+            requests: { cpu: "100m", memory: "64Mi" }
+            limits: { memory: "256Mi" }
+---
+# Voluntary disruptions (node drain) keep at least one replica sweeping.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dispatcher
+  namespace: wamn-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: dispatcher }

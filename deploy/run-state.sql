@@ -72,6 +72,13 @@ CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (tenant_id, idempotency_ke
 -- History listing / lineage traversal.
 CREATE INDEX runs_flow ON wamn_run.runs (tenant_id, flow_id, created_at);
 CREATE INDEX runs_root ON wamn_run.runs (tenant_id, root_run_id) WHERE root_run_id IS NOT NULL;
+-- Cron anchor recovery (5.14 dispatcher): a restarted dispatcher recovers each
+-- cron flow's last-fired tick from max(run_id) over that flow's cron runs
+-- (crates/wamn-run-queue cron_last_run_sql). This partial index serves that as
+-- a backward index scan instead of a seq scan at production runs-table scale,
+-- and stays small — only cron-triggered runs enter it.
+CREATE INDEX runs_cron_anchor ON wamn_run.runs (tenant_id, flow_id, run_id)
+    WHERE trigger_source = 'cron';
 ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_tenant ON wamn_run.runs

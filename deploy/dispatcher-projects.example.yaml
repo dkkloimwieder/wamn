@@ -1,0 +1,31 @@
+# EXAMPLE projects Secret for the 5.14 trigger dispatcher
+# (deploy/dispatcher.yaml). Kept OUT of dispatcher.yaml on purpose: the Secret
+# is per-environment config, and re-applying the Deployment manifest must not
+# clobber customized project entries back to these demo values.
+#
+# The example points at the shared in-cluster Postgres with the
+# wamn_dispatch_demo schema (production run-state.sql + run-queue.sql objects
+# plus a stand-in `flows` registry, provisioned additively for the live
+# smoke). Real per-project entries — one per provisioned project DB — land
+# with hosting/2.3 provisioning.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-dispatch-projects
+  namespace: wamn-system
+type: Opaque
+stringData:
+  # {"<project>": {"url": "...", "tenant": "...", "schema": "..."}} — the shape
+  # DispatchArgs::projects_file parses (crates/wamn-host/src/dispatch.rs).
+  # `url` is the project's app-role (NOSUPERUSER, NOBYPASSRLS) connection;
+  # `tenant` becomes the session's app.tenant RLS claim; `schema` its
+  # search_path. Tenant/schema are charset-guarded at startup (they go into
+  # session SET literals).
+  projects.json: |
+    {
+      "demo": {
+        "url": "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn",
+        "tenant": "demo-tenant",
+        "schema": "wamn_dispatch_demo"
+      }
+    }

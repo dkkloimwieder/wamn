@@ -741,9 +741,27 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         "shared trigger dispatcher up (cron + outbox + parked-wake)"
     );
 
+    // SIGTERM must be handled explicitly: in-container the dispatcher is PID 1,
+    // which gets NO default signal disposition — an unhandled SIGTERM is
+    // IGNORED, so every pod termination would hang the full grace period and
+    // die by SIGKILL. (Abrupt death is still safe — a sweep is one transaction
+    // — but a rollout should not take 30s per pod.)
     let (tx, rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
+        let mut sigterm =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "dispatcher: no SIGTERM handler; Ctrl-C only");
+                    let _ = tokio::signal::ctrl_c().await;
+                    let _ = tx.send(true);
+                    return;
+                }
+            };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = sigterm.recv() => {}
+        }
         let _ = tx.send(true);
     });
     dispatcher.run_loop(rx).await
