@@ -66,6 +66,12 @@ the node's own idempotency (`pg-write`'s `sink` `ON CONFLICT DO NOTHING`), so a
 killed-and-resumed run leaves exactly one side effect. This is the kill-mid-run
 gate, now flowing through reconstruction rather than `step_seq`.
 
+The same reconstruction is the resume half of **checkpoint/resume on replica loss**
+(5.14): when a runner dies, a second replica reclaims the run from the durable queue
+(the 5.14 lease-expiry reclaim) and resumes it here — the kill-mid-run guarantee
+carried across a replica boundary. See docs/run-queue.md § *Checkpoint/resume on
+replica loss*.
+
 ## Partial re-run & replay
 
 Both mint a **new** run linked to its origin (`replay_of` + `root_run_id`), leaving

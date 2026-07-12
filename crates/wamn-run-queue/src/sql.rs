@@ -118,6 +118,17 @@ pub fn park_sql() -> String {
 /// The janitor sweep: in one statement, dequeue every abandoned row (lease expired
 /// more than `$1` grace_ms ago and the redelivery budget spent) and mark its run
 /// `infrastructure-failure`. RLS scopes both tables to the current tenant.
+///
+/// The `r.status IN ('dispatched', 'running')` guard on the status update is the
+/// completion-vs-failover race guard (checkpoint/resume on replica loss): a run a
+/// second replica successfully reclaimed and drove to a terminal state — `completed`
+/// above all, but also `failed`/`cancelled` — must never be relabeled
+/// `infrastructure-failure` by a janitor that fires in the window between the
+/// completion write and the host's dequeue. The stale queue row is still cleaned up
+/// (the `DELETE` is unguarded — a terminal run has no business holding a queue row),
+/// but only a still-in-flight run's *status* is reconciled. Without the guard, a
+/// reclaimed-and-completed run whose fresh lease lapsed past grace would be flipped
+/// back to a failure — the janitor would overwrite a genuine success.
 pub fn janitor_sweep_sql() -> String {
     format!(
         "WITH orphaned AS ( \
@@ -129,8 +140,11 @@ pub fn janitor_sweep_sql() -> String {
          ) \
          UPDATE runs r SET status = '{infra}' \
            FROM orphaned o \
-          WHERE r.tenant_id = o.tenant_id AND r.run_id = o.run_id",
-        infra = RunStatus::InfrastructureFailure.as_sql()
+          WHERE r.tenant_id = o.tenant_id AND r.run_id = o.run_id \
+            AND r.status IN ('{dispatched}', '{running}')",
+        infra = RunStatus::InfrastructureFailure.as_sql(),
+        dispatched = RunStatus::Dispatched.as_sql(),
+        running = RunStatus::Running.as_sql(),
     )
 }
 

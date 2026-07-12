@@ -371,6 +371,46 @@ docker stop wamn-rq-pg wamn-rq-nats
 kubectl -n wamn-system apply -f deploy/queuebench-job.yaml
 kubectl -n wamn-system logs -f job/queuebench
 
+# [5.14] checkpoint/resume on replica loss — first-class FAILOVER (wamn-fqg.2): the
+# run-queue lease RECLAIM (5.14) + 5.7 branch-aware RECONSTRUCTION composed into one
+# path. A runner dies mid-effect, its run lease ages out, a SECOND replica reclaims the
+# run (claim_batch_sql, attempts+1) and drives the SAME unchanged flowrunner GUEST,
+# which reconstructs from node_runs + completes with EXACTLY ONE side effect, ending
+# `completed` (never infrastructure-failure). Guest byte-UNCHANGED + host-orchestrated
+# (guest-self-claim is fqg.4); the hardening is host-side + in the PURE crate:
+# janitor_sweep_sql gained `AND r.status IN ('dispatched','running')` so the janitor
+# never relabels a reclaimed-and-completed run (completion-vs-failover race guard; the
+# host also dequeues AFTER completion); the REVERSE ordering (janitor reaps a
+# still-running slow resume first) is covered by the runner's deliberately
+# UNCONDITIONAL completion write overriding the verdict. NEW
+# crates/wamn-host/src/failoverbench.rs (failover / janitor-guard / reverse-race
+# modes) provisions an EPHEMERAL schema unioning the flow tables
+# (flows/flow_runs/sink/runs/node_runs) with run_queue via the SUPERUSER url. The
+# failover mode also proves the exactly-once came from RECONSTRUCTION, not just the
+# sink constraint (pg-write node_runs.seq==2 = prefix skipped, not replayed) and runs
+# the janitor INSIDE the completion->dequeue window (queue row forced reap-eligible).
+# All three race/reconstruction assertions are MUTATION-TESTED (broken reconstruct,
+# guarded mark_completed, unguarded janitor each FAIL the gate). The guard is also
+# unit-shape-tested + live-apply-behavioral-tested (a 'completed' run with a stale
+# expired+spent queue row is NOT relabeled, a real orphan is) and queuebench's janitor
+# mode is regression; the guest is unchanged so flowbench/testhostbench regress by
+# non-change. docs/run-queue.md § Checkpoint/resume on replica loss.
+cargo test -p wamn-run-queue   # incl the janitor completion-race guard (shape + live-apply)
+cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --check
+# Local iteration (reuse the throwaway PG above [wamn-rq-pg on 5459, wamn_app created by
+# the run-queue live-apply gate]; failoverbench needs NO NATS, and the guest is UNCHANGED
+# so NO wasm rebuild — reuse the built flowrunner.wasm):
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
+  ./target/release/wamn-host --log-level error failoverbench \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn --mode all
+# In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS lesson;
+# WAMN_PG_ADMIN_URL is the superuser that provisions the ephemeral schema; no NATS). A
+# HOST change => full docker rebuild (docker build -t wamn-host:dev . && kind load
+# docker-image wamn-host:dev --name wamn):
+kubectl -n wamn-system apply -f deploy/failoverbench-job.yaml
+kubectl -n wamn-system logs -f job/failoverbench
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

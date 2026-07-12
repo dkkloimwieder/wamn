@@ -67,7 +67,11 @@ verdict) — so 5.14 adds a table but changes no existing schema.
    doorbell hint, guaranteeing eventual pickup with zero continuous polling.
 6. **Janitor.** A run whose lease expired more than a grace period ago **and**
    whose redelivery budget is spent is swept in one statement to
-   `infrastructure-failure`, its queue row removed.
+   `infrastructure-failure`, its queue row removed — but only if the run is still
+   *in flight* (`status IN ('dispatched', 'running')`): a run a replica reclaimed
+   and drove to a terminal state is never relabeled (the completion-vs-failover
+   race guard, under *Checkpoint/resume on replica loss* below), though its stale
+   queue row is still cleaned up.
 
 Because each `wamn:postgres` call is its own transaction, the lease is not bound
 to the node writes; claim, heartbeat, and node checkpoints are independent commits
@@ -126,17 +130,59 @@ whether a *terminal* failure should instead **wedge** the key (block later runs 
 an operator intervenes) is an ordering **policy** decision that belongs to 5.11 —
 5.14 ships the mechanism.
 
+## Checkpoint/resume on replica loss
+
+Failover composes the two halves 5.14 and 5.7 already built: the run-queue **lease
+reclaim** (a dead runner's lease ages out and `claim_batch_sql` re-claims the row,
+bumping `attempts`) and 5.7 **branch-aware reconstruction**. When a runner dies
+mid-run, a second replica reclaims the run and drives the *same* flowrunner guest,
+which rebuilds the outstanding frontier from `node_runs`
+(`wamn_run_store::reconstruct` + `Plan::resume`) and completes. Because an effectful
+node re-runs only while it is *outstanding* and its effect is idempotent
+(`pg-write`'s `sink ON CONFLICT`, the `runs`/`node_runs` `ON CONFLICT`), the
+killed-and-reclaimed run leaves **exactly one side effect** — the kill-mid-run
+guarantee, now across a replica boundary. The guest is unchanged and queue-agnostic
+(it takes a `run_id`); the host orchestrates claim → reclaim → resume.
+
+**Completion vs. the janitor.** A run a replica reclaims on its final budget unit
+(`attempts` bumped to `max_attempts`) is, the instant its fresh lease lapses past
+grace, exactly the run the janitor is eligible to reap. Two host-side guards keep a
+successfully-reclaimed run from being mislabeled: the host **dequeues after
+completion** (a completed run's queue row is gone, out of the janitor's reach), and
+`janitor_sweep_sql` relabels only a **still-in-flight** run (`status IN
+('dispatched', 'running')`) — so a run that reached a terminal state (above all
+`completed`) is never overwritten with `infrastructure-failure` in the window
+between the completion write and the dequeue. The stale queue row is still cleaned
+up; only the *status* of a terminal run is left alone. The guard lives in the pure
+`wamn_run_queue` builder, so the guest stays byte-identical.
+
+The race has a **reverse ordering** the guard cannot cover: the janitor fires while
+the reclaimed run is still `running` (a slow resume whose lease lapsed past grace at
+the budget boundary) and legitimately reaps it — then the resume completes anyway.
+There the backstop is the runner's completion write being deliberately
+**unconditional** (`UPDATE runs SET status = 'completed' WHERE run_id = …`, no
+status precondition): the genuine success overrides the janitor's premature
+verdict, and both orderings converge on `completed`. Each ordering is gated and
+mutation-tested (`failover`/`janitor-guard` for the guard direction, `reverse-race`
+for the completion-wins backstop).
+
+For a `partitioned(key)` run the failover is the per-partition path above (the
+partition lease expires, another replica reacquires the key and reclaims the
+abandoned in-flight run in order). Guest-*self*-claim from the queue remains a
+follow-up (fqg.4); today the host orchestrates the claim/reclaim.
+
 ## Scope (5.14) vs. siblings
 
 This issue built the D3 hybrid queue: the SKIP LOCKED queue, the write-ahead / fast
-path, single-owner leases + reclaim, the janitor, the reconciliation cadence, and
-**per-partition ownership** for `partitioned(key)` (above), all proven by
-`queuebench`. It deliberately does **not** ship (tracked as follow-ups):
+path, single-owner leases + reclaim, the janitor, the reconciliation cadence,
+**per-partition ownership** for `partitioned(key)`, and **checkpoint/resume on
+replica loss** (all above), proven by `queuebench` + `failoverbench`. It
+deliberately does **not** ship (tracked as follow-ups):
 
 | Deferred | Where |
 |---|---|
-| **Checkpoint/resume on replica loss** as a first-class failover primitive | 5.14 follow-up (reclaim + 5.7 reconstruction are the pieces) |
 | The shared **cron + outbox trigger dispatcher** for all projects | 5.14 follow-up |
+| Wiring the runner to **claim its own work** from the queue (guest-self-claim) | 5.14 follow-up (fqg.4) |
 
 And it does not own: the engine walk / retry / reconstruction (5.2 + 5.7 — the
 claimed run drives them); the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
@@ -158,7 +204,9 @@ follow-up.
 - **live-apply** (`WAMN_RUN_QUEUE_PG_URL`) — applies `run-state.sql` +
   `run-queue.sql` to a throwaway Postgres and asserts the SKIP LOCKED claim
   predicate (Ready claimed, Parked/Leased skipped, expired reclaimed), the janitor
-  sweep, tenant RLS isolation, the FK cascade, and — via the *real* builders through
+  sweep (including the **completion-vs-failover race guard** — a `completed` run with
+  a stale expired+spent queue row is *not* relabeled, a real orphan still is), tenant
+  RLS isolation, the FK cascade, and — via the *real* builders through
   `PREPARE`/`EXECUTE` — the partition path: partition-lease arbitration (a second
   replica cannot steal a live-owned key), head-only claim (one in flight per key),
   and in-order advance once the head dequeues.
@@ -172,5 +220,21 @@ follow-up.
   replicas (per-key serialization + exactly-once) plus in-order partition failover.
   Runs co-located with Postgres, no CPU limit (the S2 CFS lesson), locally and
   in-cluster.
+- **`failoverbench`** — checkpoint/resume on replica loss, against a superuser-
+  provisioned ephemeral schema that unions the flow tables with `run_queue`. The
+  `failover` mode kills replica A mid-effect, lets its lease expire, reclaims the
+  run on replica B (`attempts == 2`) and resumes the *same* unchanged flowrunner
+  guest via reconstruction — asserting **exactly one** side effect, that the
+  exactly-once came from **reconstruction** and not just the sink constraint
+  (pg-write's `node_runs.seq == 2`: the completed prefix was skipped, not
+  replayed), that `runs.status` ends `completed` (never
+  `infrastructure-failure`), and that a janitor sweep fired **inside** the
+  completion→dequeue window (queue row forced reap-eligible) leaves it alone. The
+  `janitor-guard` mode deterministically proves the same guard on static fixtures
+  (a reclaimed+completed run is not reaped; a real orphan is); the `reverse-race`
+  mode proves the other ordering (the janitor reaps a still-`running` run first,
+  the resume's unconditional completion write still wins). All three assertions
+  are mutation-tested. Same co-located, no-CPU-limit topology as `queuebench`,
+  locally and in-cluster.
 - **`flowbench` (S3) + `testhostbench` (S6)** — regression: the flowrunner guest is
   unchanged, so both stay green.

@@ -9,6 +9,7 @@ mod apiproof;
 mod bench;
 mod egressbench;
 mod engine;
+mod failoverbench;
 mod flowbench;
 mod host;
 mod logbench;
@@ -46,6 +47,8 @@ enum Command {
     Flowbench(flowbench::FlowBenchArgs),
     /// Run the 5.14 durable-run-queue gates (dispatch SLOs / throughput / reclaim / janitor / doorbell)
     Queuebench(queuebench::QueueBenchArgs),
+    /// Run the 5.14 failover gates (checkpoint/resume on replica loss / janitor completion-race guard)
+    Failoverbench(failoverbench::FailoverBenchArgs),
     /// Run the S4 custom-node gates (HTTP hop / interpreted-vs-composed / config parse)
     Nodebench(nodebench::NodeBenchArgs),
     /// Serve a wamn:node component over HTTP (S4 hop node host)
@@ -79,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Pgbench(args) => pgbench::run(args).await,
         Command::Flowbench(args) => flowbench::run(args).await,
         Command::Queuebench(args) => queuebench::run(args).await,
+        Command::Failoverbench(args) => failoverbench::run(args).await,
         Command::Nodebench(args) => nodebench::run(args).await,
         Command::ServeNode(args) => nodebench::serve(args).await,
         Command::Logbench(args) => logbench::run(args).await,

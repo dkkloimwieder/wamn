@@ -376,6 +376,16 @@ fn lifecycle_sql_uses_run_status_literals() {
     assert!(sweep.contains(&format!("'{}'", RunStatus::InfrastructureFailure.as_sql())));
     // The sweep is a plain CTE, not a locking claim.
     assert!(!sweep.contains("SKIP LOCKED"));
+    // The completion-vs-failover race guard: the status update only touches a
+    // still-in-flight run, so a reclaimed-and-completed run is never relabeled.
+    assert!(
+        sweep.contains(&format!(
+            "r.status IN ('{}', '{}')",
+            RunStatus::Dispatched.as_sql(),
+            RunStatus::Running.as_sql()
+        )),
+        "janitor sweep must guard the status update on a non-terminal run: {sweep}"
+    );
 }
 
 #[test]
@@ -530,6 +540,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
            ('t1','rq-reclaim','f',1,'dispatched'), \
            ('t1','rq-spent','f',1,'dispatched'), \
            ('t1','rq-healthy','f',1,'dispatched'), \
+           ('t1','rq-completed','f',1,'completed'), \
            ('t2','rq-other','f',1,'dispatched');\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, available_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
@@ -541,6 +552,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
            ('t1','rq-reclaim', now() - interval '1 min','dead', now() - interval '1 min',  1,  20), \
            ('t1','rq-spent',   now() - interval '1 min','dead', now() - interval '1 min',  20, 20), \
            ('t1','rq-healthy', now(),                    NULL,  NULL,                     0,  20), \
+           ('t1','rq-completed',now()- interval '3 hour','dead',now() - interval '2 hour', 20, 20), \
            ('t2','rq-other',   now(),                    NULL,  NULL,                     0,  20);\n",
     );
 
@@ -560,12 +572,12 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
            ('t1','pb-1','site-b', now(), 0, 20);\n",
     );
 
-    // RLS isolation: t1 sees its queue rows (8 unpartitioned rq-* + 5 partitioned
-    // pa-*/pb-* = 13); no claim -> zero.
+    // RLS isolation: t1 sees its queue rows (9 unpartitioned rq-* + 5 partitioned
+    // pa-*/pb-* = 14); no claim -> zero.
     script.push_str(
         "BEGIN;\n\
          SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM run_queue) = 13, 't1 sees its 13 queue rows'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM run_queue) = 14, 't1 sees its 14 queue rows'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run;\n\
@@ -589,6 +601,8 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
            ASSERT (SELECT status FROM runs WHERE run_id='rq-reclaim') = 'dispatched', 'reclaimable run untouched'; \
            ASSERT (SELECT count(*) FROM run_queue WHERE run_id='rq-spent') = 1, 'budget-spent within grace NOT swept'; \
            ASSERT (SELECT status FROM runs WHERE run_id='rq-healthy') = 'dispatched', 'healthy run untouched'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='rq-completed') = 'completed', 'janitor does NOT relabel a reclaimed-and-completed run (completion-vs-failover race guard)'; \
+           ASSERT (SELECT count(*) FROM run_queue WHERE run_id='rq-completed') = 0, 'a completed run''s stale queue row is still cleaned up'; \
          END $$;\n\
          COMMIT;\n"
     ));
