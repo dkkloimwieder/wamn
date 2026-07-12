@@ -6,7 +6,9 @@
 -- matching), and the flowrunner guest (`load_active_flow`). Registration is the
 -- deploy tooling's job (`wamn-host publish-catalog --flow`, which also enforces
 -- that the column `flow_id` equals the graph's embedded flow-id — run ids are
--- minted from the column, so the 5.1 slug rule extends to it by equality).
+-- minted from the column, so the 5.1 slug rule extends to it by equality — and
+-- rejects a webhook path already served by another ACTIVE flow; the
+-- flows_active_webhook_path unique index below is the race-proof backstop).
 --
 -- STANDALONE ARTIFACT, ADDITIVE to deploy/run-state.sql: same convention as
 -- run-queue.sql / catalog-schema.sql — deliberately NOT included by
@@ -30,6 +32,17 @@ CREATE TABLE wamn_run.flows (
 );
 -- The registry scan: active versions only (dispatcher sweep + ingress routing).
 CREATE INDEX flows_active ON wamn_run.flows (tenant_id, flow_id) WHERE active;
+-- At most ONE active flow per webhook path per tenant (any webhook trigger,
+-- sync or async): the ingress routes a request path to a single flow, so a
+-- second active claimant would be silently shadowed (the read is ORDER BY
+-- flow_id — deterministic, but arbitrary). register_flow pre-checks and
+-- rejects with a named error; this expression index is the guarantee under
+-- concurrent registration. Pathless webhook triggers are unconstrained.
+CREATE UNIQUE INDEX flows_active_webhook_path ON wamn_run.flows
+    (tenant_id, (graph_json->'trigger'->>'path'))
+    WHERE active
+      AND graph_json->'trigger'->>'type' = 'webhook'
+      AND graph_json->'trigger'->>'path' IS NOT NULL;
 ALTER TABLE wamn_run.flows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.flows FORCE ROW LEVEL SECURITY;
 CREATE POLICY flows_tenant ON wamn_run.flows

@@ -733,7 +733,7 @@ kubectl -n wamn-system logs job/apiproof
 # taxonomy in error_kind/error_detail), and answers {receipt_id, holds:[...]}
 # in-request; infra-failure bodies are GENERIC (pg detail stays in the run
 # history, never echoed to the caller; create-holds is ONE tx — no partial
-# holds; flows read is ORDER BY flow_id — deterministic on path collisions). PURE logic
+# holds; flows read is ORDER BY flow_id). PURE logic
 # in NEW crates/wamn-f1 (decimal/payload/evaluate/sql/shapes; does NOT decide
 # D8 — no raw-SQL node ships; 5.3 stays wamn-r13-blocked). STORAGE: NEW
 # deploy/flows.sql gives the flow registry its production home (ADDITIVE to
@@ -742,9 +742,14 @@ kubectl -n wamn-system logs job/apiproof
 # deploy/run-state.sql + flows.sql — include_str!'d, dot-anchored
 # 'wamn_run'->schema rewrite; .dockerignore now ships deploy/ into the image
 # build) + --seed-dataset (wamn-seed compile) + --flow (validate + register +
-# ACTIVATE, deactivating prior versions; flows.flow_id minted from the graph =>
-# the wi4 column==graph guard holds by construction). f1bench provisions its
-# ephemeral schema through the SAME helpers, so the flags are gated too.
+# ACTIVATE in ONE txn, deactivating prior versions; flows.flow_id minted from
+# the graph => the wi4 column==graph guard holds by construction; a webhook
+# path another ACTIVE flow serves is REJECTED before any write [wamn-i7i] —
+# the flows_active_webhook_path partial-unique expression index in
+# deploy/flows.sql is the race-proof backstop, and a failed insert rolls the
+# deactivate back). f1bench provisions its ephemeral schema through the SAME
+# helpers, so the flags are gated too — incl the collision rejection (named
+# pre-check error + raw-insert index violation + different-path acceptance).
 # V1 caveats (docs/poc-f1.md): ERP retries mint new runs (duplicate holds /
 # FK-blocked line replace under holds); orphaned sync runs stay 'running' (the
 # 5.14 janitor only sees QUEUED runs); auth = tenant claim (4.2 pending).

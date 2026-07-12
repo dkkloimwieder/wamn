@@ -674,9 +674,10 @@ fn error_body(code: &str, message: &str) -> Value {
 /// The project's active flows (RLS-scoped to the injected tenant, resolved in
 /// the injected schema). A row whose graph fails to parse is skipped — this
 /// ingress serves the flows it understands; registration (`publish-catalog
-/// --flow`) validates before activating. Ordered by flow_id so that if two
-/// active flows ever claim the same webhook path the route pick is at least
-/// DETERMINISTIC (registration-time collision rejection is a follow-up).
+/// --flow`) validates before activating. Registration rejects a webhook path
+/// another active flow already serves (pre-check + the
+/// flows_active_webhook_path unique index — wamn-i7i), so a collision can only
+/// be pre-index residue; ORDER BY flow_id keeps even that pick deterministic.
 fn load_active_flows() -> Result<Vec<Flow>, String> {
     let rs = client::query(
         "SELECT graph_json::text FROM flows WHERE active ORDER BY flow_id",

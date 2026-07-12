@@ -26,15 +26,23 @@ to the project schema; `.dockerignore` now ships `deploy/` into the image
 build) + `--seed-dataset` (a wamn-seed dataset compiled against the catalog) +
 `--flow` (validate, register, ACTIVATE — deactivating prior versions; the
 `flow_id` column is written from the graph's embedded id, so the dispatcher's
-column==graph guard holds by construction). The f1bench gate provisions its
-ephemeral schema through the SAME helpers, so the flags are gated too.
+column==graph guard holds by construction). Registration REJECTS a webhook
+path another active flow of the tenant already serves (any webhook trigger,
+sync or async): `register_flow` pre-checks with a named error before any
+write, the `flows_active_webhook_path` partial-unique expression index in
+`deploy/flows.sql` backstops concurrent registration, and
+deactivate-prior + insert run in ONE transaction so a losing race never
+strands a flow with no active version. The f1bench gate provisions its
+ephemeral schema through the SAME helpers, so the flags are gated too —
+including the collision rejection.
 
 ## Request lifecycle (D15 sync)
 
 1. **Route** — active flows are re-read per request (the S3 hot-reload
    discipline); the POST path must match an active flow's
-   `webhook{sync:true, path}` trigger. No match → 404; non-POST → 405. Neither
-   mints a run.
+   `webhook{sync:true, path}` trigger. Path→flow is unambiguous: registration
+   rejects a path another active flow serves (pre-check + unique index,
+   wamn-i7i). No match → 404; non-POST → 405. Neither mints a run.
 2. **Write-ahead** — one INSERT creates the audit row *before any effect*:
    server-minted `run_id` (`gen_random_uuid()`), `status='dispatched'`,
    `trigger_source='webhook'`, `input_json` = the payload **verbatim** (a

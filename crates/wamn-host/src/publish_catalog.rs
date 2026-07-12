@@ -367,6 +367,11 @@ pub(crate) fn seed_dataset_sql(
 /// The `flow_id` column is written from the graph's embedded id, so the
 /// dispatcher's column==graph equality guard (wi4) holds by construction. The
 /// superuser connection bypasses RLS, hence the explicit tenant predicates.
+///
+/// A webhook path already served by another ACTIVE flow of the tenant is
+/// rejected before any write (the ingress routes a path to ONE flow — a second
+/// claimant would be silently shadowed); the flows_active_webhook_path unique
+/// index backstops the check under concurrent registration.
 pub(crate) async fn register_flow(
     client: &tokio_postgres::Client,
     tenant: &str,
@@ -382,24 +387,66 @@ pub(crate) async fn register_flow(
         bail!("flow {} does not validate: {issues:?}", flow.flow_id);
     }
     let version = i32::try_from(flow.version).context("flow version")?;
+    if let wamn_flow::Trigger::Webhook {
+        path: Some(path), ..
+    } = &flow.trigger
+    {
+        let holder = client
+            .query_opt(
+                "SELECT flow_id FROM flows \
+                 WHERE tenant_id = $1 AND flow_id <> $2 AND active \
+                   AND graph_json->'trigger'->>'type' = 'webhook' \
+                   AND graph_json->'trigger'->>'path' = $3",
+                &[&tenant, &flow.flow_id, &path],
+            )
+            .await
+            .context("webhook path collision pre-check")?;
+        if let Some(row) = holder {
+            let holder: String = row.get(0);
+            bail!(
+                "webhook path collision: active flow {holder:?} already serves path {path:?} \
+                 for tenant {tenant:?}; deactivate it or change the path before registering {:?}",
+                flow.flow_id
+            );
+        }
+    }
+    // Deactivate-prior + insert are ONE transaction: a failed insert (e.g. the
+    // collision index catching a racing registration) must roll the deactivate
+    // back, never stranding the flow with no active version.
     client
-        .execute(
-            "UPDATE flows SET active = false, updated_at = now() \
-             WHERE tenant_id = $1 AND flow_id = $2",
-            &[&tenant, &flow.flow_id],
-        )
+        .batch_execute("BEGIN")
         .await
-        .context("deactivate prior versions")?;
+        .context("begin registration")?;
+    let writes = async {
+        client
+            .execute(
+                "UPDATE flows SET active = false, updated_at = now() \
+                 WHERE tenant_id = $1 AND flow_id = $2",
+                &[&tenant, &flow.flow_id],
+            )
+            .await
+            .context("deactivate prior versions")?;
+        client
+            .execute(
+                "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
+                 VALUES ($1, $2, $3, true, $4::text::jsonb) \
+                 ON CONFLICT (tenant_id, flow_id, version) \
+                   DO UPDATE SET graph_json = EXCLUDED.graph_json, active = true, updated_at = now()",
+                &[&tenant, &flow.flow_id, &version, &graph_json],
+            )
+            .await
+            .context("register flow")?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(e) = writes {
+        let _ = client.batch_execute("ROLLBACK").await;
+        return Err(e);
+    }
     client
-        .execute(
-            "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
-             VALUES ($1, $2, $3, true, $4::text::jsonb) \
-             ON CONFLICT (tenant_id, flow_id, version) \
-               DO UPDATE SET graph_json = EXCLUDED.graph_json, active = true, updated_at = now()",
-            &[&tenant, &flow.flow_id, &version, &graph_json],
-        )
+        .batch_execute("COMMIT")
         .await
-        .context("register flow")?;
+        .context("commit registration")?;
     Ok((flow.flow_id.clone(), flow.version))
 }
 
@@ -427,6 +474,12 @@ mod tests {
         assert!(rewrite_schema(run_state, "poc_f1").contains("wamn_run_store"));
         // node_runs rides along with runs in run-state.sql.
         assert!(rewrite_schema(run_state, "poc_f1").contains("CREATE TABLE poc_f1.node_runs"));
+        // The webhook-path collision backstop rewrites into the project schema
+        // (register_flow's pre-check relies on this index existing there).
+        assert!(
+            rewrite_schema(flows, "poc_f1")
+                .contains("CREATE UNIQUE INDEX flows_active_webhook_path ON poc_f1.flows")
+        );
     }
 
     #[test]

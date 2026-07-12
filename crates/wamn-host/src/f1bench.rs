@@ -316,6 +316,65 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .await?
             .get(0);
         anyhow::ensure!(active == 1, "re-registration must leave ONE active row");
+
+        // Registration-time webhook-path collision (wamn-i7i): a DIFFERENT flow
+        // claiming the SAME active path must be rejected by the friendly
+        // pre-check, leaving the registry untouched — and even bypassing
+        // register_flow entirely, the flows_active_webhook_path unique index
+        // must refuse the row (the race-proof DB backstop).
+        let mut graph: serde_json::Value = serde_json::from_str(F1_FLOW_JSON)?;
+        graph["flow-id"] = serde_json::json!("receipt-received-b");
+        let collider = serde_json::to_string(&graph)?;
+        let err = publish_catalog::register_flow(&client, F1_TENANT, &collider)
+            .await
+            .expect_err("same-path registration must fail");
+        // State intact FIRST (under a pre-check-dropped mutant this pins the
+        // one-txn rollback: the index aborts the insert, so the deactivate
+        // must not survive), THEN the friendly named error (kills that mutant).
+        let active_id: String = client
+            .query_one(
+                "SELECT flow_id FROM flows WHERE tenant_id = $1 AND active",
+                &[&F1_TENANT],
+            )
+            .await
+            .context("exactly one active flow must survive the failed registration")?
+            .get(0);
+        anyhow::ensure!(
+            active_id == flow_id,
+            "failed collision registration must leave {flow_id:?} active (got {active_id:?})"
+        );
+        anyhow::ensure!(
+            format!("{err:#}").contains("webhook path collision"),
+            "collision must be rejected by the NAMED pre-check error, got: {err:#}"
+        );
+        let index_err = client
+            .execute(
+                "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
+                 VALUES ($1, 'receipt-received-b', 1, true, $2::text::jsonb)",
+                &[&F1_TENANT, &collider],
+            )
+            .await
+            .expect_err("raw same-path insert must violate the collision index");
+        anyhow::ensure!(
+            index_err
+                .as_db_error()
+                .is_some_and(|db| db.message().contains("flows_active_webhook_path")),
+            "raw insert must fail on the unique index, got: {index_err}"
+        );
+        // A DIFFERENT path registers cleanly (the constraint is per-path, not
+        // per-tenant); deactivate it again to keep the routing world single-flow.
+        graph["flow-id"] = serde_json::json!("receipt-received-alt");
+        graph["trigger"]["path"] = serde_json::json!("/receipts-alt");
+        let alt = serde_json::to_string(&graph)?;
+        publish_catalog::register_flow(&client, F1_TENANT, &alt).await?;
+        client
+            .execute(
+                "UPDATE flows SET active = false \
+                 WHERE tenant_id = $1 AND flow_id = 'receipt-received-alt'",
+                &[&F1_TENANT],
+            )
+            .await?;
+        println!("  collision rejected (pre-check + index backstop); different path accepted");
         println!("  provisioned {EPH_SCHEMA}: flow {flow_id} v{version} active");
         anyhow::Ok(())
     }
