@@ -128,14 +128,13 @@ bd prime                # Refresh Beads context
 
 ## Build & Test
 
-wamn-host builds against a **patched** wash-runtime — see `patches/README.md`
-for the carried-patch mechanism and the wasmCloud rev-bump procedure. The rev
-is pinned in one place: `workspace.dependencies.wash-runtime.rev` in the root
-`Cargo.toml`.
+wamn-host builds against wash-runtime consumed as a **git dependency from our
+fork** (dkkloimwieder/wasmCloud, branch `wamn/2.5.2` = upstream v2.5.2 + the
+carried epoch commit) — see `docs/wash-runtime-fork.md` for the carried-commit
+ledger, sync runbook, and rev-bump procedure. The rev is pinned in one place:
+`workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
 
 ```bash
-./scripts/vendor-wasmcloud.sh   # once per clone / rev bump / patch change:
-                                # produces vendor/wasmcloud (pinned rev + patches)
 cargo build --release -p wamn-host
 (cd components && cargo build --release --target wasm32-wasip2)  # guest fixtures
 
@@ -706,7 +705,7 @@ kubectl -n wamn-system apply -f deploy/apiproof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
 kubectl -n wamn-system logs job/apiproof
 
-docker build -t wamn-host:dev .   # runs the vendor script in its builder stage
+docker build -t wamn-host:dev .   # fetches the fork git dep in its builder stage
 ```
 
 ## Architecture Overview
@@ -716,5 +715,5 @@ truth (`platform-plan.md`, `p0-exit-criteria.md`, decision table, WIT
 contracts); `docs/p0-results.md` records spike measurements. `crates/wamn-host`
 is the custom host image (embeds `wash_runtime::washlet::ClusterHostBuilder`,
 deployed by the runtime-operator Helm chart with custom image values in
-`deploy/`); `components/` holds wasm32-wasip2 guest fixtures; `patches/` +
-`scripts/vendor-wasmcloud.sh` carry our wash-runtime modifications.
+`deploy/`); `components/` holds wasm32-wasip2 guest fixtures; our wash-runtime
+modifications are carried commits on the fork (`docs/wash-runtime-fork.md`).

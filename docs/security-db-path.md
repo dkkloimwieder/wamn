@@ -30,7 +30,8 @@ changes in 2.6, which stays a review.
 ## How egress actually works in the runtime
 
 Three mechanisms govern whether a component can reach the network. Verified
-against the vendored wash-runtime (`vendor/wasmcloud/crates/wash-runtime`).
+against the pinned wash-runtime (fork `wamn/2.5.2`, `crates/wash-runtime` —
+see `docs/wash-runtime-fork.md`).
 
 | Mechanism | What it gates | Default / behavior | The DB path |
 |---|---|---|---|

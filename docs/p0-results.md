@@ -95,15 +95,17 @@ required pieces touches upstream code:
 Deadline semantics: stores are per-invocation (gap #3), so N ticks × tick
 period ≈ a wall-clock cap per invocation (per service run for services).
 
-**Build mechanics:** `scripts/vendor-wasmcloud.sh` clones the pinned monorepo
-rev into `vendor/wasmcloud` (gitignored) and applies `patches/*.patch`; the
-root `Cargo.toml` `[patch]` section redirects the git dep to that checkout
-(inside the real monorepo so `workspace = true` deps resolve — `vendor` is
-excluded from our workspace for the same reason). The Dockerfile runs the same
-script, so image builds are reproducible.
-`patches/0002-workspace-lints-warn-not-deny.patch` relaxes the monorepo's
-`-D warnings`: path deps don't get the `--cap-lints allow` that git deps get,
-and our feature subset legitimately leaves some upstream code unused.
+**Build mechanics** *(historical — superseded 2026-07-12: wash-runtime is now
+consumed as a git dep from the fork, the patch carried as a commit; see
+`docs/wash-runtime-fork.md`)*: `scripts/vendor-wasmcloud.sh` cloned the pinned
+monorepo rev into `vendor/wasmcloud` (gitignored) and applied
+`patches/*.patch`; the root `Cargo.toml` `[patch]` section redirected the git
+dep to that checkout (inside the real monorepo so `workspace = true` deps
+resolve — `vendor` was excluded from our workspace for the same reason). The
+Dockerfile ran the same script, so image builds were reproducible.
+`patches/0002-workspace-lints-warn-not-deny.patch` relaxed the monorepo's
+`-D warnings`: path deps don't get the `--cap-lints allow` that git deps get
+(retired with the switch — the git dep gets it automatically).
 
 **Demo (bench phase 4):**
 

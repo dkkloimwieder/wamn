@@ -1,10 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/wamn-host", "crates/wamn-flow", "crates/wamn-catalog", "crates/wamn-ddl", "crates/wamn-schema", "crates/wamn-rls", "crates/wamn-seed", "crates/wamn-api", "crates/wamn-runner", "crates/wamn-run-store", "crates/wamn-run-queue"]
-# Guest components are built separately for wasm32-wasip2 (see components/*);
-# vendor holds the patched wasmCloud monorepo checkout, which is its own
-# workspace (excluding it keeps its `workspace = true` deps resolving there).
-exclude = ["components", "vendor"]
+# Guest components are built separately for wasm32-wasip2 (see components/*).
+exclude = ["components"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,12 +10,15 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-# wash-runtime is publish=false upstream; pin to the exact monorepo rev we
-# validated against (wasmCloud 2.0, main @ 2026-07).
+# wash-runtime is publish=false upstream; consumed from our fork
+# (dkkloimwieder/wasmCloud). Branch wamn/2.5.2 = upstream runtime-operator
+# v2.5.2 (ec012da) + the carried epoch-deadline commit. Pin a REV, never a
+# branch (immutable; the branch's existence keeps the SHA fetchable). Carried-
+# commit ledger + sync runbook: docs/wash-runtime-fork.md.
 # default-features off: `wasi-webgpu` pulls crates.io wasmtime alongside the
 # workspace's git-pinned one (two wasmtimes = linker typecheck failures upstream
 # solves with a [patch] we'd otherwise have to replicate).
-wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud.git", rev = "8b53285f33f9d8cdb3748ff75d3f951ba3be4f2f", default-features = false, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel"] }
+wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "94bf77f101574ac8c0f0a0e5cbea775314672e06", default-features = false, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel"] }
 anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tracing = "0.1"
@@ -25,11 +26,3 @@ async-trait = "0.1"
 
 [profile.release]
 lto = "thin"
-
-# Carried patch: wamn needs epoch interruption (S2 chaos gate, hard
-# cancellation) and upstream never gives stores an epoch deadline. The vendor
-# checkout is produced by scripts/vendor-wasmcloud.sh (clone of the pinned rev
-# above + patches/*.patch applied); pointing into the real monorepo checkout
-# keeps wash-runtime's `workspace = true` deps resolving.
-[patch."https://github.com/wasmCloud/wasmCloud.git"]
-wash-runtime = { path = "vendor/wasmcloud/crates/wash-runtime" }

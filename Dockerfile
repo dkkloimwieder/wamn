@@ -7,11 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compil
 WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
-COPY patches ./patches
-COPY scripts ./scripts
-# vendor/wasmcloud: the pinned wasmCloud monorepo with our carried patches
-# applied — the [patch] section in Cargo.toml points wash-runtime at it.
-RUN ./scripts/vendor-wasmcloud.sh
+# wash-runtime resolves as a git dep from the fork pinned in Cargo.toml
+# (docs/wash-runtime-fork.md); cargo fetches it during the build.
 # rust-toolchain.toml would force a rustup download inside the container;
 # the base image already ships the right version.
 RUN rm rust-toolchain.toml && cargo build --release -p wamn-host
