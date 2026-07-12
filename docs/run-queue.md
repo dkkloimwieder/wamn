@@ -242,12 +242,16 @@ One sweep of one project:
    (`{flow}:outbox:{seq}`) collapse the redelivery to no-ops. A row no flow is
    registered on is acked as consumed-with-no-op (an unmatched backlog must not
    pin the oldest-first poll window); a **held** row (step 1) redelivers. The
-   **producer** writes outbox rows in its *own* transaction
-   (`outbox_insert_sql`) — D4's "outbox insert and enqueue can share a
-   transaction with user writes" — so an event is durable iff the write it
-   announces is. The table lives in [`deploy/run-queue.sql`](../deploy/run-queue.sql)
-   beside `run_queue`; wiring the 3.2-generated tables' triggers to insert
-   events is a follow-up. (`seq` is the poll's oldest-first order, not a
+   **producer** writes outbox rows in its *own* transaction — D4's "outbox
+   insert and enqueue can share a transaction with user writes" — so an event
+   is durable iff the write it announces is. In production the producers are
+   the 3.2-emitted per-table row triggers (`Migration::outbox_triggers`,
+   `docs/ddl-compiler.md` § outbox triggers): every generated entity table
+   fires `insert|update|delete` events carrying the row as jsonb payload,
+   inside the user's transaction; applications can also insert directly
+   (`outbox_insert_sql`). The table lives in
+   [`deploy/run-queue.sql`](../deploy/run-queue.sql) beside `run_queue`.
+   (`seq` is the poll's oldest-first order, not a
    cross-replica dispatch-order guarantee — per-key ordering is the 5.11
    `partition_key` seam.)
 4. **Wake / reconciliation.** One read-only scan (`parked_due_sql`) surfaces
@@ -334,7 +338,6 @@ parked-wake, all above), proven by `queuebench` + `failoverbench` +
 | Deferred | Where |
 |---|---|
 | Wiring the runner to **claim its own work** from the queue (guest-self-claim) | 5.14 follow-up (fqg.4) |
-| 3.2-generated per-table **outbox triggers** (production event producers) | with the generated-schema work (the gate and applications insert directly) |
 
 And it does not own: the engine walk / retry / reconstruction (5.2 + 5.7 — the
 claimed run drives them); the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts

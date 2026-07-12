@@ -517,12 +517,23 @@ cargo run -p wamn-catalog --example print-schema > docs/catalog-model.schema.jso
 # the tenant floor (id uuid PK + tenant_id + FORCE RLS + app.tenant policy;
 # tenant-scoped uniqueness/indexes). Each op classified additive/destructive;
 # plan.sql(Confirmation) refuses destructive DDL unless ConfirmedWithBackup.
-# EMITS+CLASSIFIES only (live apply=2.5, backup=2.3/10.3, lifecycle=3.4,
-# per-role RLS=3.5). docs/ddl-compiler.md. No JSON-schema to regen.
+# PLUS the 5.14/D4 row-event PRODUCERS: Migration::outbox_triggers(catalog,
+# &OutboxOptions{schema:"wamn_run"}) — a SEPARATE opt-in all-additive plan (one
+# shared plpgsql fn + a CONSTANT-named AFTER INSERT/UPDATE/DELETE trigger per
+# entity table; CREATE OR REPLACE = idempotent + rename-safe) inserting the
+# outbox row (event=lower(TG_OP), tenant from the ROW, payload=to_jsonb(NEW/OLD)
+# — jsonb numerics exact, no-float rule holds) INSIDE the user's txn; NOT folded
+# into create()/migrate() (their consumers' schemas have no outbox); gated
+# destructive drop_outbox_triggers counterpart; emit-outbox example prints a
+# provisioning script. EMITS+CLASSIFIES only (live apply=2.5, backup=2.3/10.3,
+# lifecycle=3.4, per-role RLS=3.5; dispatcher consumer=5.14 docs/run-queue.md).
+# docs/ddl-compiler.md. No JSON-schema to regen.
 cargo test -p wamn-ddl
 cargo clippy -p wamn-ddl --all-targets && cargo fmt -p wamn-ddl --check
-# optional live-apply gate (emitted SQL against a throwaway PG; superuser URL —
-# provisions wamn_app + an ephemeral schema; skips cleanly when unset):
+# optional live-apply gates (emitted SQL + outbox-trigger behavior [same-txn
+# event, exact-decimal payload, RLS isolation, conflict no-op fires nothing,
+# re-apply stacks no duplicate, confirmed drop silences] against a throwaway PG;
+# superuser URL — provisions wamn_app + ephemeral schemas; skips when unset):
 docker run -d --rm --name wamn-ddl-pg -p 5451:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
 WAMN_DDL_PG_URL=postgres://postgres:postgres@127.0.0.1:5451/wamn cargo test -p wamn-ddl

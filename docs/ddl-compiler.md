@@ -43,6 +43,16 @@ plan.sql(Confirmation::ConfirmedWithBackup)?; // prefixes a backup-checkpoint ma
 reject reserved managed-column collisions (`id` / `tenant_id`), returning
 `CompileError` rather than emitting unsafe DDL.
 
+Two further entry points emit the **outbox row-event triggers** (see the
+dedicated section below):
+
+```rust
+use wamn_ddl::OutboxOptions;
+
+let plan = Migration::outbox_triggers(&catalog, &OutboxOptions::default())?; // all additive
+let plan = Migration::drop_outbox_triggers(&catalog)?;                       // destructive (gated)
+```
+
 ## Generated table shape (the tenant floor)
 
 Every entity becomes a table with a managed surrogate key and the S2 / 2.2
@@ -104,14 +114,90 @@ destructive plan; `ConfirmedWithBackup` prefixes the script with a
 Relations are navigational metadata; only a `reference` **field** produces a
 foreign key. A relation-only change emits no DDL.
 
+## Outbox row-event triggers (5.14 / D4 producers)
+
+`Migration::outbox_triggers(&catalog, &OutboxOptions { schema })` emits the
+production **row-event producers**: one shared plpgsql function plus one
+`AFTER INSERT OR UPDATE OR DELETE ... FOR EACH ROW` trigger per entity table,
+inserting one row into `<schema>.outbox` (default `wamn_run`,
+[`deploy/run-queue.sql`](../deploy/run-queue.sql)) **inside the user's
+transaction** — D4's "outbox insert and enqueue can share a transaction with
+user writes": the event is durable iff the write it announces is. The trigger
+dispatcher (5.14, `docs/run-queue.md`) polls these rows, matches
+`(table_name, event)` against active `row-event` flows, and splices
+`payload::text` into the run input **verbatim**.
+
+Shape and invariants:
+
+- **Event vocabulary** is `lower(TG_OP COLLATE "C")` → `insert|update|delete`,
+  exactly the outbox `event` CHECK and the wamn-flow `row-event` strings;
+  `TG_TABLE_NAME` is the physical table name row-event flows declare. The `"C"`
+  collation pin matters: under a Turkish/Azeri database default collation,
+  `lower('INSERT')` is `ınsert` (dotless ı), which would fail the CHECK and —
+  the trigger sharing the user's transaction — abort the user write itself.
+- **Tenant from the row, not the claim**: `NEW.tenant_id` / `OLD.tenant_id`
+  (the tenant-floor column) — correct under superuser seeds, which carry no
+  `app.tenant`. For a `wamn_app` write the entity floor's `WITH CHECK` already
+  pinned the row's tenant to the claim, so the outbox policy passes by
+  construction.
+- **Payload**: `to_jsonb(NEW)` for insert/update, `to_jsonb(OLD)` for delete.
+  Postgres jsonb numerics are exact, so an exact-decimal column (`12.50`)
+  survives into the payload and from there verbatim into the run input — the
+  no-float rule holds structurally end to end. An `ON CONFLICT DO NOTHING`
+  no-op (a 3.6 re-seed) inserts no row and fires nothing; a *first* seed fires.
+  Caveat: Postgres special values serialize as JSON *strings* (`'NaN'::numeric`
+  → `"NaN"`, `'infinity'::timestamptz` → `"infinity"`); excluding them from
+  entity columns is tracked follow-up validation work (wamn-oj7).
+- **Runtime precondition**: the plan applies cleanly even where the outbox does
+  not exist (plpgsql bodies are not plan-checked at `CREATE FUNCTION`) and
+  fails only on the first subsequent row write — so the function operation's
+  summary names the target (`… events -> "wamn_run"."outbox"`) and its note
+  states the precondition, keeping a mis-targeted or schema-drifted apply
+  visible on the plan review surface.
+- **Opt-in and uniform**: a separate plan covering ALL entity tables — the
+  dispatcher acks rows no flow is registered on cheaply. It is deliberately
+  not folded into `create`/`migrate`: their consumers' schemas (3.4/3.5/3.6
+  gates, the 4.1 gateway fixtures) have no outbox, and every row write would
+  fail once a trigger references it. Provisioning composes both plans for
+  project databases that carry the run schema.
+- **Idempotent + rename-safe**: `CREATE OR REPLACE` on the function and a
+  CONSTANT trigger name (`wamn_outbox_event`; trigger names are per-table)
+  make the plan safe to re-apply on every catalog version — added entities
+  gain their trigger, a renamed table keeps exactly one (the trigger follows
+  the rename and re-apply replaces it instead of stacking a second), and
+  `DROP TABLE` takes its trigger with it.
+- **Classification**: all additive. The opt-out plan
+  (`Migration::drop_outbox_triggers`) is destructive — no data is lost, but
+  row-event flows on these tables silently stop firing — so it is gated
+  behind `Confirmation::ConfirmedWithBackup`. Its final `DROP FUNCTION` is
+  deliberately RESTRICT (no CASCADE): if a table *outside* the passed catalog
+  still carries the trigger (version drift), it fails loudly rather than
+  silently killing that table's events; re-run with the catalog version whose
+  triggers were actually applied. The shared-function operations are
+  catalog-scoped and carry an empty `entity` attribution.
+- The `OutboxOptions::schema` must be a bare identifier
+  (`[A-Za-z_][A-Za-z0-9_]*`) — it is embedded inside the function body's
+  dollar-quoted block, where quoting cannot protect against a value containing
+  the dollar tag — else `CompileError::InvalidOutboxSchema`.
+
+`cargo run -p wamn-ddl --example emit-outbox -- <catalog.json> [schema]
+[--create]` prints the plan (with `--create`, a complete provisioning script)
+for demos and manual project setup.
+
 ## Verification
 
 `cargo test -p wamn-ddl` checks emitted SQL for the POC catalog (tenant floor,
-composite unique, enum checks, unit comments, FKs) and the safety gate. An
-optional live-apply test runs the emitted CREATE + an additive migration + a
-confirmed destructive migration against a throwaway Postgres, gated on
-`WAMN_DDL_PG_URL` (a superuser URL; the harness provisions the `wamn_app` role
-and an ephemeral schema):
+composite unique, enum checks, unit comments, FKs), the safety gate, and the
+outbox-trigger plans (coverage/shape, schema-option validation, the gated drop,
+and a drift guard pinning the emitted column set + event vocabulary against
+`deploy/run-queue.sql`). Two optional live-apply tests run against a throwaway
+Postgres, gated on `WAMN_DDL_PG_URL` (a superuser URL; the harness provisions
+the `wamn_app` role and ephemeral schemas): the CREATE/migrate script, and the
+outbox triggers behaviorally — a `wamn_app` write emits exactly one event row
+in the same transaction with the exact-decimal payload preserved, a superuser
+seed fires with the row's tenant, outbox RLS isolates tenants, a conflict no-op
+emits nothing, a re-applied plan stacks no duplicate trigger, and the confirmed
+drop plan silences emission:
 
 ```sh
 docker run -d --rm --name wamn-ddl-pg -p 5451:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18

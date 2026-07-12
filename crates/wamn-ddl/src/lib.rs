@@ -28,9 +28,11 @@
 //! ```
 
 mod emit;
+mod outbox;
 mod plan;
 pub mod sql;
 
+pub use outbox::OutboxOptions;
 pub use plan::{Confirmation, MigrationPlan, Operation, RequiresConfirmation, Safety};
 
 use wamn_catalog::{Catalog, Issue};
@@ -42,6 +44,10 @@ pub enum CompileError {
     InvalidCatalog(Vec<Issue>),
     /// A user field reuses a reserved managed column name (`id` / `tenant_id`).
     ReservedColumn { entity: String, field: String },
+    /// The outbox schema option is not a bare identifier. It is embedded inside
+    /// the trigger function's dollar-quoted body, so anything beyond
+    /// `[A-Za-z_][A-Za-z0-9_]*` is refused rather than quoted.
+    InvalidOutboxSchema { schema: String },
 }
 
 impl std::fmt::Display for CompileError {
@@ -60,6 +66,10 @@ impl std::fmt::Display for CompileError {
             CompileError::ReservedColumn { entity, field } => write!(
                 f,
                 "entity {entity:?} field {field:?} reuses a reserved managed column name (id / tenant_id)"
+            ),
+            CompileError::InvalidOutboxSchema { schema } => write!(
+                f,
+                "outbox schema {schema:?} is not a bare identifier ([A-Za-z_][A-Za-z0-9_]*)"
             ),
         }
     }
@@ -85,6 +95,40 @@ impl Migration {
         check(old)?;
         check(new)?;
         Ok(emit::migrate_plan(old, new))
+    }
+
+    /// The outbox row-event trigger plan (5.14 / D4 producer side): one shared
+    /// trigger function + one `AFTER INSERT OR UPDATE OR DELETE` trigger per
+    /// entity table, inserting the event row into `<options.schema>.outbox`
+    /// inside the user's transaction. Opt-in and uniform — a separate plan the
+    /// provisioning path composes with [`Migration::create`] for projects whose
+    /// database carries the run schema (deploy/run-state.sql + run-queue.sql);
+    /// deliberately not part of `create`/`migrate`, whose consumers' schemas
+    /// have no outbox. All additive and idempotent (`CREATE OR REPLACE` +
+    /// constant trigger name), so re-apply it on every catalog version: added
+    /// entities gain their trigger, renamed tables keep exactly one, and
+    /// dropped tables take theirs with them. The function-create operation is
+    /// catalog-scoped and carries an empty `entity` attribution.
+    pub fn outbox_triggers(
+        catalog: &Catalog,
+        options: &OutboxOptions,
+    ) -> Result<MigrationPlan, CompileError> {
+        check(catalog)?;
+        if !outbox::valid_bare_ident(&options.schema) {
+            return Err(CompileError::InvalidOutboxSchema {
+                schema: options.schema.clone(),
+            });
+        }
+        Ok(outbox::outbox_triggers_plan(catalog, options))
+    }
+
+    /// The opt-out counterpart of [`Migration::outbox_triggers`]: drop every
+    /// entity table's row-event trigger, then the shared function. Destructive
+    /// (row-event flows registered on these tables silently stop firing), so
+    /// the plan is gated behind [`Confirmation::ConfirmedWithBackup`].
+    pub fn drop_outbox_triggers(catalog: &Catalog) -> Result<MigrationPlan, CompileError> {
+        check(catalog)?;
+        Ok(outbox::drop_outbox_triggers_plan(catalog))
     }
 }
 
