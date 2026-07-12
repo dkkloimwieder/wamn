@@ -21,7 +21,7 @@ A `Flow` is **one version** of a flow (the unit stored in the catalog):
 | Field | Type | Notes |
 |---|---|---|
 | `schema-version` | string | Flow-schema **format** version, e.g. `"0.1"`. Distinct from `version`. |
-| `flow-id` | string | Stable across every version of this flow. |
+| `flow-id` | string | Stable across every version of this flow. Lowercase slug: `[a-z0-9-]`, starting/ending alphanumeric (see Validation). |
 | `version` | u32 | Monotonic version (≥ 1). |
 | `name` | string? | Editor label. |
 | `trigger` | Trigger | How the flow is invoked (exactly one). |
@@ -96,7 +96,13 @@ minimal and re-import to an identical value (round-trip).
 [`Issue`]s with a stable machine `code` and a JSON path. Severity: only
 `error` makes a flow invalid; `warning` flags editor-fixable smells.
 
-- **Errors:** unsupported `schema-version`, empty `flow-id`, `version < 1`,
+- **Errors:** unsupported `schema-version`, empty `flow-id`, `flow-id` not a
+  lowercase slug (`[a-z0-9-]`, starting and ending alphanumeric — flow ids are
+  embedded verbatim into the 5.14 deterministic trigger run ids
+  `{flow}:cron:{tick}` / `{flow}:outbox:{seq}`, so excluding `:` keeps the
+  flow-id prefix unambiguous to parse and ASCII-only keeps id ordering
+  collation-independent; enforced here in `validate()`, not in the published
+  JSON Schema — the `0.1` contract stays additive), `version < 1`,
   empty/duplicate node id, empty node `type`, no nodes, duplicate credential
   name, node referencing an undeclared credential, `entry` not a node, edge
   endpoint not a node, self-loop, empty `cron` schedule / `row-event` table.

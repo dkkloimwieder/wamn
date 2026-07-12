@@ -87,6 +87,18 @@ pub fn validate(flow: &Flow) -> Vec<Issue> {
             "flow_id",
             "flow_id is required",
         ));
+    } else if !is_slug(&flow.flow_id) {
+        issues.push(Issue::error(
+            "invalid-flow-id",
+            "flow_id",
+            format!(
+                "flow_id {:?} must be a lowercase slug: [a-z0-9-], starting and \
+                 ending alphanumeric (trigger run ids embed the flow id with ':' \
+                 separators — {}:cron:{{tick}} / {}:outbox:{{seq}} — so the charset \
+                 keeps those ids unambiguous to parse and collation-stable to sort)",
+                flow.flow_id, flow.flow_id, flow.flow_id
+            ),
+        ));
     }
     if flow.version < 1 {
         issues.push(Issue::error(
@@ -262,6 +274,19 @@ fn compatible(v: &str) -> Compat {
     }
 }
 
+/// A flow id is a lowercase slug: `[a-z0-9-]`, starting and ending
+/// alphanumeric. Flow ids are embedded verbatim into deterministic trigger run
+/// ids (`{flow}:cron:{tick}` / `{flow}:outbox:{seq}`, 5.14), so the charset
+/// guarantees `:` terminates the flow-id prefix (unambiguous exact-prefix
+/// parse) and keeps id ordering collation-independent (every byte is ASCII).
+fn is_slug(id: &str) -> bool {
+    let alnum = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    let bytes = id.as_bytes();
+    bytes.iter().all(|&b| alnum(b) || b == b'-')
+        && bytes.first().copied().is_some_and(alnum)
+        && bytes.last().copied().is_some_and(alnum)
+}
+
 impl Flow {
     /// All validation issues (errors and warnings).
     pub fn issues(&self) -> Vec<Issue> {
@@ -335,6 +360,48 @@ mod tests {
         let f = minimal();
         assert!(f.is_valid(), "issues: {:?}", f.issues());
         assert!(f.validate().is_ok());
+    }
+
+    #[test]
+    fn flow_id_must_be_a_lowercase_slug() {
+        // The poison shapes the 5.14 cron-lens review proved dangerous: a ':'
+        // inside a flow id would make `{flow}:cron:{tick}` ambiguous to parse.
+        for bad in [
+            "my:cron:5",
+            "up:down",
+            "Poc-Receipt", // uppercase
+            "poc_receipt", // underscore
+            "poc receipt", // whitespace
+            "poc.receipt", // dot
+            "-leading",
+            "trailing-",
+            "-",
+            "béta", // non-ASCII
+        ] {
+            let mut f = minimal();
+            f.flow_id = bad.into();
+            assert!(
+                codes(&f).contains(&"invalid-flow-id"),
+                "{bad:?} should be rejected"
+            );
+            assert!(!f.is_valid());
+        }
+        // Existing-style ids (and a single-char id) all pass.
+        for good in ["f", "poc-receipt", "b-nightly", "lin4", "s3-demo", "0x9"] {
+            let mut f = minimal();
+            f.flow_id = good.into();
+            assert!(
+                f.is_valid(),
+                "{good:?} should be accepted: {:?}",
+                f.issues()
+            );
+        }
+        // Empty stays its own, earlier error (charset check is skipped).
+        let mut f = minimal();
+        f.flow_id = "".into();
+        let c = codes(&f);
+        assert!(c.contains(&"empty-flow-id"));
+        assert!(!c.contains(&"invalid-flow-id"));
     }
 
     #[test]

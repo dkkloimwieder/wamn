@@ -199,6 +199,12 @@ One sweep of one project:
    `(table, event)` is **held**: its outbox rows stay pending rather than being
    consumed, so a version-skewed flow (an older dispatcher binary meeting a
    newer flow schema) degrades to *delayed* delivery, never silent event loss.
+   A row whose `flows.flow_id` **column** differs from the graph's validated
+   `flow-id` is treated the same way (skipped, held if a row event): run ids
+   are minted from the column, so the equality requirement extends the 5.1
+   flow-id slug charset — which `validate()` enforces only on the graph field
+   — to the id that is actually embedded in `{flow}:cron:{tick}` /
+   `{flow}:outbox:{seq}`.
 2. **Cron.** The due tick is the *latest* scheduled tick since the anchor —
    misfire collapse: an outage fires the latest missed tick once, never a
    burst. The anchor is recovered from the run ids themselves,

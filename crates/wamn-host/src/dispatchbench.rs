@@ -492,7 +492,7 @@ async fn outbox_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     const N: i64 = 5;
     println!(
         "\n## outbox — {N} rows × 2 matching flows fire once each; unmatched consumed; \
-         skew held; redelivery + ghost dedupe; co-txn traps both ways"
+         skew + id-mismatch held; redelivery + ghost dedupe; co-txn traps both ways"
     );
     reset(admin_url, SCHEMA_A).await?;
     let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
@@ -534,6 +534,16 @@ async fn outbox_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
             "entry": "n1", "nodes": [{"id": "n1", "type": "noop"}],
         })
         .to_string(),
+    )
+    .await?;
+    // An ID-MISMATCHED row (column flow_id != graph flow-id): the graph
+    // validates fine — both ids are legal slugs — but run ids are minted from
+    // the COLUMN, which the slug rule never saw, so the dispatcher must treat
+    // the mismatch as invalid: skipped, its (mismatched, insert) events HELD.
+    seed_flow(
+        &seeder,
+        "mismatch-col",
+        &row_event_flow_json("mismatch-graph", "mismatched", "insert"),
     )
     .await?;
 
@@ -719,6 +729,23 @@ async fn outbox_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     let fire_recovered = d.tick_project(0, BASE_MS + 5_000).await?;
     let fire_refired = fire_recovered.outbox_fired.len() == 2;
 
+    // ID-MISMATCH hold: land an event for the mismatched flow's table — the
+    // sweep must neither mint a run (under EITHER id) nor consume the row.
+    insert_outbox(&seeder, "mismatched", "insert", Some("{\"id\": \"m-1\"}")).await?; // seq 11
+    d.tick_project(0, BASE_MS + 6_000).await?;
+    let mismatch_held = scalar_i64(
+        &seeder,
+        "SELECT count(*) FROM outbox WHERE seq = 11 AND dispatched_at IS NULL",
+    )
+    .await?
+        == 1;
+    let mismatch_no_run = scalar_i64(
+        &seeder,
+        "SELECT count(*) FROM runs WHERE run_id LIKE 'mismatch-%'",
+    )
+    .await?
+        == 0;
+
     let pass = fired
         && runs_total == 2 * N
         && payload_kept == 2 // both flows carry row 3's payload
@@ -735,18 +762,21 @@ async fn outbox_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
         && fire_tick_failed
         && fire_trap_pending
         && fire_trap_runs
-        && fire_refired;
+        && fire_refired
+        && mismatch_held
+        && mismatch_no_run;
     println!(
         "fired={} runs={runs_total} payload_kept={payload_kept} deterministic_ids={ids_deterministic} \
          held(pending={held_pending}, total_pending={pending_after}) \
          redelivery(no_dup={no_dup}, runs_after={runs_after}, reacked={}, no_ghost={no_ghost}) \
          ack_trap(failed={tick_failed}, no_half_state={no_half_state}, refired={refired}) \
-         fire_trap(failed={fire_tick_failed}, still_pending={fire_trap_pending}, no_run={fire_trap_runs}, refired={fire_refired})",
+         fire_trap(failed={fire_tick_failed}, still_pending={fire_trap_pending}, no_run={fire_trap_runs}, refired={fire_refired}) \
+         id_mismatch(held={mismatch_held}, no_run={mismatch_no_run})",
         report.outbox_fired.len(),
         reacked == 0
     );
     println!(
-        "PASS(outbox fire + consume + skew-hold + ghost-guard + co-txn traps both ways): {pass}"
+        "PASS(outbox fire + consume + skew-hold + id-mismatch-hold + ghost-guard + co-txn traps both ways): {pass}"
     );
     Ok(pass)
 }

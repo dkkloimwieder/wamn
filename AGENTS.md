@@ -431,7 +431,10 @@ kubectl -n wamn-system logs -f job/failoverbench
 # run's queue row — the ghost-dispatch guard], and acks everything not HELD — ALL IN
 # ONE txn: crash = redeliver AND retract atomically. A skipped-unparseable active
 # row-event flow's (table,event) is HELD: pending, not consumed — version skew
-# degrades to delayed delivery, never silent loss). The runs table IS the cron
+# degrades to delayed delivery, never silent loss; likewise a flows.flow_id
+# column that differs from the graph's validated flow-id [run ids are minted
+# from the COLUMN, so the 5.1 slug rule is extended to it by equality]). The
+# runs table IS the cron
 # state: cron_last_run_sql recovers the last tick from the FLOW-EXCLUSIVE
 # max(run_id) (flow_id + trigger_source='cron' — never a lexical id range: flow
 # ids are user text, text order is collation-dependent, a range leaks foreign

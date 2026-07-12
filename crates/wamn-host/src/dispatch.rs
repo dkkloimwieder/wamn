@@ -252,6 +252,14 @@ struct Registry {
     held: Vec<(String, String)>,
 }
 
+fn event_str(event: &wamn_flow::RowEvent) -> &'static str {
+    match event {
+        wamn_flow::RowEvent::Insert => "insert",
+        wamn_flow::RowEvent::Update => "update",
+        wamn_flow::RowEvent::Delete => "delete",
+    }
+}
+
 /// Parse the active-flows scan. A flow that fails to parse or validate is
 /// skipped with a warning — but if its `trigger` is still readable at the JSON
 /// level as a row event, the `(table, event)` is held so its outbox rows stay
@@ -290,17 +298,30 @@ fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
                 continue;
             }
         };
+        // The run ids embed the registry id ({flow}:cron:{tick} /
+        // {flow}:outbox:{seq}) taken from the flows-table COLUMN, while the
+        // slug charset rule just validated only the graph's embedded flow-id.
+        // Requiring the two to be EQUAL extends the charset guarantee to the
+        // id that is actually minted; a mismatched row is skipped (held if a
+        // row event) exactly like any other invalid flow.
+        if flow.flow_id != flow_id {
+            if let Trigger::RowEvent { table, event } = &flow.trigger {
+                reg.held.push((table.clone(), event_str(event).to_string()));
+                tracing::warn!(project = %project, %flow_id, graph_flow_id = %flow.flow_id,
+                    "dispatcher: flows.flow_id != graph flow-id — row-event flow skipped, its events are HELD, not consumed");
+            } else {
+                tracing::warn!(project = %project, %flow_id, graph_flow_id = %flow.flow_id,
+                    "dispatcher: flows.flow_id != graph flow-id — flow skipped");
+            }
+            continue;
+        }
         match &flow.trigger {
             Trigger::Cron { schedule } => reg.crons.push((flow_id, version, schedule.clone())),
             Trigger::RowEvent { table, event } => reg.row_events.push(RowEventFlow {
                 flow_id,
                 flow_version: version,
                 table: table.clone(),
-                event: match event {
-                    wamn_flow::RowEvent::Insert => "insert".to_string(),
-                    wamn_flow::RowEvent::Update => "update".to_string(),
-                    wamn_flow::RowEvent::Delete => "delete".to_string(),
-                },
+                event: event_str(event).to_string(),
             }),
             // Webhook is routed by the API gateway; manual by the editor.
             Trigger::Webhook { .. } | Trigger::Manual => {}
