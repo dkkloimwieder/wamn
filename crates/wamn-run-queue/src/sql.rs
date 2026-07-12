@@ -38,17 +38,21 @@ pub fn enqueue_sql() -> String {
         .to_string()
 }
 
-/// The `FOR UPDATE SKIP LOCKED` batch claim: atomically lease up to `limit`
-/// claimable rows (visible, unleased or lease-expired, **redelivery budget not
-/// spent**) for `$1` lease_owner with a `$2` lease_ttl_ms visibility timeout,
-/// bumping `attempts`. `SKIP LOCKED` lets concurrent replicas claim disjoint rows
-/// without blocking. The `attempts < max_attempts` guard is what lets the janitor
-/// win the race for a crash-looping run: once the budget is spent the claim path
-/// stops re-grabbing (and re-leasing) the row, so its lease ages out and the
-/// janitor reaps it to `infrastructure-failure` — without it, each reclaim would
-/// refresh the lease and the janitor window would never open. Returns each claimed
-/// `run_id`, its new `attempts`, and `lease_expires_at`. `limit` is a numeric
-/// literal (a `usize`, not user text).
+/// The `FOR UPDATE SKIP LOCKED` batch claim for **unpartitioned** runs: atomically
+/// lease up to `limit` claimable rows (visible, unleased or lease-expired,
+/// **redelivery budget not spent**) for `$1` lease_owner with a `$2` lease_ttl_ms
+/// visibility timeout, bumping `attempts`. `SKIP LOCKED` lets concurrent replicas
+/// claim disjoint rows without blocking. The `attempts < max_attempts` guard is what
+/// lets the janitor win the race for a crash-looping run: once the budget is spent
+/// the claim path stops re-grabbing (and re-leasing) the row, so its lease ages out
+/// and the janitor reaps it to `infrastructure-failure` — without it, each reclaim
+/// would refresh the lease and the janitor window would never open. Returns each
+/// claimed `run_id`, its new `attempts`, and `lease_expires_at`. `limit` is a
+/// numeric literal (a `usize`, not user text).
+///
+/// The `partition_key IS NULL` guard leaves partitioned runs to the per-partition
+/// ownership path ([`claim_partition_head_sql`]) so they are never dispatched out of
+/// order by the order-agnostic global claim.
 pub fn claim_batch_sql(limit: usize) -> String {
     format!(
         "UPDATE run_queue AS q \
@@ -57,7 +61,8 @@ pub fn claim_batch_sql(limit: usize) -> String {
                 attempts = q.attempts + 1 \
           WHERE (q.tenant_id, q.run_id) IN ( \
               SELECT c.tenant_id, c.run_id FROM run_queue AS c \
-               WHERE c.available_at <= now() \
+               WHERE c.partition_key IS NULL \
+                 AND c.available_at <= now() \
                  AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now()) \
                  AND c.attempts < c.max_attempts \
                ORDER BY c.available_at, c.run_id \
@@ -127,4 +132,133 @@ pub fn janitor_sweep_sql() -> String {
           WHERE r.tenant_id = o.tenant_id AND r.run_id = o.run_id",
         infra = RunStatus::InfrastructureFailure.as_sql()
     )
+}
+
+// ---------------------------------------------------------------------------
+// Per-partition ownership (5.14 scaling): `partitioned(key)` runs dispatch
+// in-order per key across replicas. A replica leases a partition (a
+// `partition_owner` row) and then claims that partition's runs head-first, one in
+// flight at a time; on owner death the partition lease expires and another replica
+// reacquires the key and continues in order. See `crate::partition`.
+// ---------------------------------------------------------------------------
+
+/// Lease up to `limit` **acquirable** partitions to `$1` lease_owner for a `$2`
+/// lease_ttl_ms: the distinct keys that have a claimable run and are not currently
+/// held by a live partition lease (unowned, or the owner's lease expired = failover).
+/// The `INSERT … ON CONFLICT (tenant_id, partition_key) DO UPDATE … WHERE
+/// lease_expires_at <= now()` makes the `partition_owner` PK the single arbitration
+/// point: two replicas racing for the same key serialize on its row, and the
+/// `WHERE` only lets an **expired** lease be stolen, so exactly one wins — no
+/// `FOR UPDATE` on `run_queue` needed (and `SELECT DISTINCT` forbids it anyway).
+/// The `NOT EXISTS` prefilter just avoids pointlessly contending live-owned keys.
+/// Returns the partitions this replica now owns. `limit` is a numeric literal.
+pub fn acquire_partitions_sql(limit: usize) -> String {
+    format!(
+        "INSERT INTO partition_owner AS o (tenant_id, partition_key, lease_owner, lease_expires_at) \
+         SELECT current_setting('app.tenant', true), cand.partition_key, $1, \
+                now() + ($2::bigint * interval '1 millisecond') \
+           FROM ( \
+               SELECT DISTINCT q.partition_key FROM run_queue q \
+                WHERE q.partition_key IS NOT NULL \
+                  AND q.available_at <= now() \
+                  AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
+                  AND q.attempts < q.max_attempts \
+                  AND NOT EXISTS ( \
+                      SELECT 1 FROM partition_owner p \
+                       WHERE p.tenant_id = current_setting('app.tenant', true) \
+                         AND p.partition_key = q.partition_key \
+                         AND p.lease_expires_at > now() \
+                  ) \
+                ORDER BY q.partition_key \
+                LIMIT {limit} \
+           ) cand \
+         ON CONFLICT (tenant_id, partition_key) DO UPDATE \
+             SET lease_owner = EXCLUDED.lease_owner, \
+                 lease_expires_at = EXCLUDED.lease_expires_at, \
+                 acquired_at = now() \
+           WHERE o.lease_expires_at <= now() \
+         RETURNING o.partition_key, o.lease_owner, o.lease_expires_at"
+    )
+}
+
+/// Heartbeat a held partition lease: extend it by `$2` ttl_ms. Only the current
+/// owner (`$3`) may renew (`$1` partition_key), so a reacquired partition is not
+/// resurrected by a straggler who lost it.
+pub fn renew_partition_sql() -> String {
+    "UPDATE partition_owner \
+        SET lease_expires_at = now() + ($2::bigint * interval '1 millisecond') \
+      WHERE tenant_id = current_setting('app.tenant', true) \
+        AND partition_key = $1 AND lease_owner = $3"
+        .to_string()
+}
+
+/// Release a held partition lease (a drained key, or a graceful step-down). Owner-
+/// guarded (`$2`) so a straggler cannot delete a lease another replica reacquired.
+/// Params: `$1` partition_key, `$2` lease_owner.
+pub fn release_partition_sql() -> String {
+    "DELETE FROM partition_owner \
+      WHERE tenant_id = current_setting('app.tenant', true) \
+        AND partition_key = $1 AND lease_owner = $2"
+        .to_string()
+}
+
+/// Within the partitions `$1` owns (a live `partition_owner` lease), claim the
+/// **head** of each — the earliest-`(available_at, run_id)` run that is ready, has no
+/// earlier ready sibling, and whose partition has **no run in flight** — leasing it
+/// for `$2` ttl_ms and bumping `attempts`. Because the `NOT EXISTS` reduces each
+/// partition to a single head candidate, `FOR UPDATE OF c SKIP LOCKED` is legal (no
+/// `DISTINCT`) and takes the globally-earliest heads across owned partitions up to
+/// `limit`. One-in-flight-per-partition + head-first is what keeps a key in order:
+/// its next run becomes claimable only once the current one completes and dequeues.
+/// Returns each claimed `run_id`, its `partition_key`, new `attempts`, and
+/// `lease_expires_at`. `limit` is a numeric literal.
+pub fn claim_partition_head_sql(limit: usize) -> String {
+    format!(
+        "UPDATE run_queue AS q \
+            SET lease_owner = $1, \
+                lease_expires_at = now() + ($2::bigint * interval '1 millisecond'), \
+                attempts = q.attempts + 1 \
+          WHERE (q.tenant_id, q.run_id) IN ( \
+              SELECT c.tenant_id, c.run_id \
+                FROM run_queue AS c \
+                JOIN partition_owner AS o \
+                  ON o.tenant_id = c.tenant_id AND o.partition_key = c.partition_key \
+               WHERE c.partition_key IS NOT NULL \
+                 AND o.lease_owner = $1 AND o.lease_expires_at > now() \
+                 AND c.available_at <= now() \
+                 AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now()) \
+                 AND c.attempts < c.max_attempts \
+                 AND NOT EXISTS ( \
+                     SELECT 1 FROM run_queue b \
+                      WHERE b.tenant_id = c.tenant_id \
+                        AND b.partition_key = c.partition_key \
+                        AND b.run_id <> c.run_id \
+                        AND ( \
+                            (b.lease_expires_at IS NOT NULL AND b.lease_expires_at > now()) \
+                            OR (b.available_at <= now() AND b.attempts < b.max_attempts \
+                                AND (b.lease_expires_at IS NULL OR b.lease_expires_at <= now()) \
+                                AND (b.available_at, b.run_id) < (c.available_at, c.run_id)) \
+                        ) \
+                 ) \
+               ORDER BY c.available_at, c.run_id \
+               FOR UPDATE OF c SKIP LOCKED \
+               LIMIT {limit} \
+          ) \
+          RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at"
+    )
+}
+
+/// Garbage-collect partition leases with nothing left to own: an **expired** lease
+/// whose partition has no remaining `run_queue` rows (the key drained, or all its
+/// runs were retired). Expired leases whose partition still has runs are left for
+/// reacquisition (failover), not deleted. No params.
+pub fn gc_orphan_partitions_sql() -> String {
+    "DELETE FROM partition_owner o \
+      WHERE o.tenant_id = current_setting('app.tenant', true) \
+        AND o.lease_expires_at <= now() \
+        AND NOT EXISTS ( \
+            SELECT 1 FROM run_queue q \
+             WHERE q.tenant_id = o.tenant_id AND q.partition_key = o.partition_key \
+        )"
+    .to_string()
 }

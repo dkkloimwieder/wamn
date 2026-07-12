@@ -24,7 +24,9 @@ pub struct QueueEntry {
     pub tenant_id: String,
     pub run_id: String,
     /// Per-partition ownership key (`partitioned(key)`, 5.11 semantics / 5.14
-    /// ownership). Null = unpartitioned. Reserved: the skeleton claims globally.
+    /// ownership). Null = unpartitioned (claimed by the global claim). A non-null
+    /// key is dispatched only through the per-partition ownership path
+    /// ([`crate::plan_partition_claim`]) so the key's runs stay in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition_key: Option<String>,
     /// Dispatch priority tiebreaker (claim orders by `available_at` first).
@@ -65,6 +67,57 @@ impl QueueEntry {
             lease_expires_at: None,
             attempts: 0,
             max_attempts,
+        }
+    }
+
+    /// A fresh, immediately-claimable entry bound to a partition (`partitioned(key)`
+    /// dispatch — claimed only through the per-partition ownership path, never the
+    /// global claim).
+    pub fn ready_partition(
+        tenant_id: impl Into<String>,
+        run_id: impl Into<String>,
+        partition_key: impl Into<String>,
+        available_at: Millis,
+        max_attempts: i32,
+    ) -> QueueEntry {
+        QueueEntry {
+            partition_key: Some(partition_key.into()),
+            ..QueueEntry::ready(tenant_id, run_id, available_at, max_attempts)
+        }
+    }
+}
+
+/// A partition lease: the row of `partition_owner` that grants a replica exclusive
+/// dispatch rights over one `(tenant_id, partition_key)` stream. While a replica
+/// holds a live lease it is the *only* replica that claims the partition's runs, so
+/// ordering within the key is preserved; when the lease expires (the owner died or
+/// stepped down) another replica reacquires the whole key and continues in order.
+/// This is the *decision view* the pure acquire/claim logic reasons over — the DB
+/// row (`deploy/run-queue.sql`) also carries `acquired_at`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct PartitionOwner {
+    pub tenant_id: String,
+    pub partition_key: String,
+    /// The replica holding the partition lease.
+    pub lease_owner: String,
+    /// The partition-lease visibility timeout. Past it, the partition is reacquirable.
+    pub lease_expires_at: Millis,
+}
+
+impl PartitionOwner {
+    /// A partition leased to `owner` until `lease_expires_at`.
+    pub fn new(
+        tenant_id: impl Into<String>,
+        partition_key: impl Into<String>,
+        lease_owner: impl Into<String>,
+        lease_expires_at: Millis,
+    ) -> PartitionOwner {
+        PartitionOwner {
+            tenant_id: tenant_id.into(),
+            partition_key: partition_key.into(),
+            lease_owner: lease_owner.into(),
+            lease_expires_at,
         }
     }
 }

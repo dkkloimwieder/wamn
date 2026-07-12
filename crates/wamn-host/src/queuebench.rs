@@ -21,19 +21,24 @@
 //!                `infrastructure-failure` and dequeued; a healthy run is untouched.
 //!   doorbell   — enqueue publishes a NATS-core hint; a subscriber wakes and
 //!                claims with no polling (async warm p50 < 25 ms / p99 < 100 ms).
+//!   partition  — `partitioned(key)` runs dispatch in-order per key across
+//!                concurrent replicas (per-key serialization + in-order +
+//!                exactly-once), and a partition fails over in order when its owner
+//!                dies (the dedicated `partition_owner` lease).
 //!   all        — every mode in sequence.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 use wamn_run_queue::{
-    claim_batch_sql, dequeue_sql, enqueue_sql, janitor_sweep_sql, mark_running_sql,
-    write_ahead_run_sql,
+    acquire_partitions_sql, claim_batch_sql, claim_partition_head_sql, dequeue_sql, enqueue_sql,
+    janitor_sweep_sql, mark_running_sql, write_ahead_run_sql,
 };
 
 const SCHEMA: &str = "wamn_queue_bench";
@@ -47,6 +52,7 @@ pub enum Mode {
     Reclaim,
     Janitor,
     Doorbell,
+    Partition,
     All,
 }
 
@@ -134,12 +140,24 @@ fn queue_ddl(schema: &str) -> String {
             PRIMARY KEY (tenant_id, run_id), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, lease_expires_at);\
+         CREATE INDEX run_queue_partition ON {schema}.run_queue (tenant_id, partition_key) WHERE partition_key IS NOT NULL;\
          ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
          CREATE POLICY run_queue_tenant ON {schema}.run_queue \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;\
+         CREATE TABLE {schema}.partition_owner (\
+            tenant_id text NOT NULL, partition_key text NOT NULL, \
+            lease_owner text NOT NULL, lease_expires_at timestamptz NOT NULL, \
+            acquired_at timestamptz NOT NULL DEFAULT now(), \
+            PRIMARY KEY (tenant_id, partition_key));\
+         ALTER TABLE {schema}.partition_owner ENABLE ROW LEVEL SECURITY;\
+         ALTER TABLE {schema}.partition_owner FORCE ROW LEVEL SECURITY;\
+         CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
+            USING (tenant_id = current_setting('app.tenant', true)) \
+            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;"
     )
 }
 
@@ -229,6 +247,26 @@ async fn enqueue(client: &mut Client, run_id: &str, delay_ms: i64) -> anyhow::Re
     Ok(())
 }
 
+/// Enqueue a run bound to a partition (the `partitioned(key)` path). Same
+/// write-ahead + queue-row transaction as [`enqueue`], but with a `partition_key`.
+async fn enqueue_partitioned(
+    client: &mut Client,
+    run_id: &str,
+    partition_key: &str,
+    delay_ms: i64,
+) -> anyhow::Result<()> {
+    let tx = client.transaction().await?;
+    tx.execute(&write_ahead_run_sql(), &[&run_id, &"f", &1i32])
+        .await?;
+    tx.execute(
+        &enqueue_sql(),
+        &[&run_id, &Some(partition_key), &0i32, &delay_ms],
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn run(args: QueueBenchArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
@@ -265,6 +303,9 @@ pub async fn run(args: QueueBenchArgs) -> anyhow::Result<()> {
         if run_all || args.mode == Mode::Doorbell {
             pass &=
                 doorbell_phase(&app_url, &admin_url, &args, args.mode == Mode::Doorbell).await?;
+        }
+        if run_all || args.mode == Mode::Partition {
+            pass &= partition_phase(&app_url, &admin_url, &args).await?;
         }
         anyhow::Ok(())
     }
@@ -642,5 +683,243 @@ async fn doorbell_phase(
     );
     let pass = s.len() == n && p50 < Duration::from_millis(25) && p99 < Duration::from_millis(100);
     println!("PASS(doorbell async-warm SLO): {pass}");
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// partition: per-partition ownership — partitioned(key) runs dispatch in-order per
+// key across concurrent replicas (per-key serialization + in-order + exactly-once),
+// and a partition fails over in order when its owner dies.
+// ---------------------------------------------------------------------------
+
+async fn partition_phase(
+    app_url: &str,
+    admin_url: &str,
+    args: &QueueBenchArgs,
+) -> anyhow::Result<bool> {
+    const P: i32 = 6; // partitions (ordered streams)
+    const K: i32 = 20; // runs per partition
+    let tasks_n = args.concurrency.min(P as usize).max(2);
+    let total = (P * K) as usize;
+
+    println!(
+        "\n## partition — {tasks_n} claimers over {P} partitions × {K} ordered runs (in-order per key)"
+    );
+    reset(admin_url).await?;
+
+    // Seed P ordered streams as superuser. run_id = pt-<p>-<seq3>, so lexical order
+    // within a partition == the enqueue sequence (all available now, so the
+    // dispatch key (available_at, run_id) orders by run_id = seq).
+    {
+        let (client, conn) = tokio_postgres::connect(admin_url, NoTls).await?;
+        let conn_task = tokio::spawn(conn);
+        let r = client
+            .batch_execute(&format!(
+                "INSERT INTO {SCHEMA}.runs (tenant_id, run_id, flow_id, flow_version, status) \
+                   SELECT '{TENANT}', 'pt-'||p||'-'||to_char(g,'FM000'), 'f', 1, 'dispatched' \
+                     FROM generate_series(0,{P}-1) p, generate_series(0,{K}-1) g; \
+                 INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id, partition_key, priority, available_at) \
+                   SELECT '{TENANT}', 'pt-'||p||'-'||to_char(g,'FM000'), 'part-'||p, 0, now() \
+                     FROM generate_series(0,{P}-1) p, generate_series(0,{K}-1) g;"
+            ))
+            .await;
+        drop(client);
+        let _ = conn_task.await;
+        r.context("seed partition streams")?;
+    }
+
+    let acquire_sql = Arc::new(acquire_partitions_sql(2));
+    let claim_sql = Arc::new(claim_partition_head_sql(P as usize));
+    let mark_running = Arc::new(mark_running_sql());
+    let dequeue = Arc::new(dequeue_sql());
+    let part_ttl: i64 = 600_000; // long: no expiry during the gate (failover is below)
+    let run_ttl: i64 = 600_000;
+
+    // Shared dispatch log: (partition_key, seq, monotonic stamp), recorded at claim.
+    let log: Arc<Mutex<Vec<(String, u32, u64)>>> = Arc::new(Mutex::new(Vec::with_capacity(total)));
+    let stamp = Arc::new(AtomicU64::new(0));
+
+    let mut set = tokio::task::JoinSet::new();
+    for w in 0..tasks_n {
+        let app_url = app_url.to_string();
+        let (acquire_sql, claim_sql) = (acquire_sql.clone(), claim_sql.clone());
+        let (mark_running, dequeue) = (mark_running.clone(), dequeue.clone());
+        let (log, stamp) = (log.clone(), stamp.clone());
+        let owner = format!("pw-{w}");
+        set.spawn(async move {
+            let (client, _h) = connect_app(&app_url).await?;
+            let count_sql = "SELECT count(*) FROM run_queue";
+            let mut idle = 0u32;
+            loop {
+                // Lease acquirable partitions, then claim the head of each I own.
+                let acq = client
+                    .query(acquire_sql.as_str(), &[&owner, &part_ttl])
+                    .await?;
+                let claimed = client
+                    .query(claim_sql.as_str(), &[&owner, &run_ttl])
+                    .await?;
+                if claimed.is_empty() {
+                    let remaining: i64 = client.query_one(count_sql, &[]).await?.get(0);
+                    if remaining == 0 {
+                        break;
+                    }
+                    // Nothing to do this round (others own the remaining partitions);
+                    // back off briefly and retry until the queue drains.
+                    if acq.is_empty() {
+                        idle += 1;
+                        if idle > 50_000 {
+                            anyhow::bail!("partition gate stalled with {remaining} runs left");
+                        }
+                        tokio::time::sleep(Duration::from_millis(2)).await;
+                    }
+                    continue;
+                }
+                idle = 0;
+                for row in &claimed {
+                    let run_id: String = row.get("run_id");
+                    let part: String = row.get("partition_key");
+                    let seq: u32 = run_id
+                        .rsplit('-')
+                        .next()
+                        .unwrap_or("")
+                        .parse()
+                        .unwrap_or(u32::MAX);
+                    let s = stamp.fetch_add(1, Ordering::SeqCst);
+                    log.lock().unwrap().push((part, seq, s));
+                    // "Process" the run: mark running, then dequeue so the partition's
+                    // next head unblocks (one in flight per key).
+                    client.execute(mark_running.as_str(), &[&run_id]).await?;
+                    client.execute(dequeue.as_str(), &[&run_id]).await?;
+                }
+            }
+            anyhow::Ok(())
+        });
+    }
+    while let Some(res) = set.join_next().await {
+        res??;
+    }
+
+    // Completeness (every run dispatched, no gap) and per-key IN-ORDER dispatch (each
+    // partition's stamps are the strict sequence 0..K) across the racing replicas.
+    // (No-concurrent-dispatch / exactly-once-in-flight — two owners never running the
+    // same key's runs at once — is the failover check below + the live-apply in-flight
+    // gate; here a single owner drains each key and dequeues before its next claim, so
+    // the unique check is a completeness cross-check, not a duplicate detector.)
+    let recs = log.lock().unwrap().clone();
+    let unique: HashSet<(&str, u32)> = recs.iter().map(|(p, s, _)| (p.as_str(), *s)).collect();
+    let complete = recs.len() == total && unique.len() == total;
+
+    let mut in_order = true;
+    for p in 0..P {
+        let key = format!("part-{p}");
+        let mut seqs: Vec<(u64, u32)> = recs
+            .iter()
+            .filter(|(pk, _, _)| *pk == key)
+            .map(|(_, s, st)| (*st, *s))
+            .collect();
+        seqs.sort_by_key(|&(st, _)| st);
+        let ordered: Vec<u32> = seqs.iter().map(|&(_, s)| s).collect();
+        let expected: Vec<u32> = (0..K as u32).collect();
+        if ordered != expected {
+            in_order = false;
+            println!("partition {key} dispatched out of order: {ordered:?}");
+        }
+    }
+    println!(
+        "dispatched {} (unique {}), complete={complete}, in_order={in_order}",
+        recs.len(),
+        unique.len()
+    );
+
+    // In-order failover: a partition's owner dies mid-stream; another replica takes
+    // the whole key and finishes it in order.
+    let failover = partition_failover(app_url, admin_url).await?;
+
+    let pass = complete && in_order && failover;
+    println!("PASS(partition in-order + exactly-once + failover): {pass}");
+    Ok(pass)
+}
+
+/// Owner A leases partition `pf` and claims its head, then dies (never renews, never
+/// completes). While A's partition lease is live, replica B can neither acquire `pf`
+/// nor claim its runs; once the lease expires B reacquires the whole key and drains
+/// it in order, reclaiming the abandoned head.
+async fn partition_failover(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
+    println!("## partition failover — owner dies mid-stream; another replica finishes in order");
+    reset(admin_url).await?;
+    let (mut a, _ha) = connect_app(app_url).await?;
+    let (b, _hb) = connect_app(app_url).await?;
+
+    // One partition with three ordered runs.
+    for seq in 0..3 {
+        enqueue_partitioned(&mut a, &format!("pf-{seq}"), "pf", 0).await?;
+    }
+
+    let acquire = acquire_partitions_sql(4);
+    let claim = claim_partition_head_sql(4);
+    let mark_running = mark_running_sql();
+    let dequeue = dequeue_sql();
+    let short_ttl: i64 = 500;
+
+    // A leases pf and claims the head pf-0, then abandons it (no renew, no dequeue).
+    let a_owned = a.query(&acquire, &[&"A", &short_ttl]).await?;
+    let a_owns = a_owned
+        .iter()
+        .any(|r| r.get::<_, String>("partition_key") == "pf");
+    let a_head = a.query(&claim, &[&"A", &short_ttl]).await?;
+    let a_got_head = a_head.len() == 1 && a_head[0].get::<_, String>("run_id") == "pf-0";
+
+    // While A's partition lease is live, B can neither acquire pf nor claim its runs.
+    let b_try = b.query(&acquire, &[&"B", &short_ttl]).await?;
+    let b_blocked_acq = !b_try
+        .iter()
+        .any(|r| r.get::<_, String>("partition_key") == "pf");
+    let b_head = b.query(&claim, &[&"B", &short_ttl]).await?;
+    let b_blocked_claim = b_head.is_empty();
+
+    // A dies: wait past both the partition lease and the abandoned run lease.
+    tokio::time::sleep(Duration::from_millis(short_ttl as u64 + 250)).await;
+
+    // B reacquires pf and drains it in order (reclaiming the abandoned pf-0). The
+    // reclaimed head arrives with attempts==2 (A's claim was attempt 1) — proof it is
+    // the SAME abandoned in-flight run redelivered, not a fresh/duplicate dispatch.
+    // Together with B being blocked while A's lease was live (b_blocked_claim), this
+    // is the exactly-once-in-flight guarantee: pf-0 was never dispatched to two owners
+    // at once, and it is delivered again only after the first owner provably released.
+    let b_reacq = b.query(&acquire, &[&"B", &600_000i64]).await?;
+    let b_got = b_reacq
+        .iter()
+        .any(|r| r.get::<_, String>("partition_key") == "pf");
+    let mut order: Vec<String> = Vec::new();
+    let mut pf0_reclaim_attempts: i32 = 0;
+    loop {
+        let claimed = b.query(&claim, &[&"B", &600_000i64]).await?;
+        if claimed.is_empty() {
+            break;
+        }
+        for row in &claimed {
+            let run_id: String = row.get("run_id");
+            if run_id == "pf-0" {
+                pf0_reclaim_attempts = row.get("attempts");
+            }
+            order.push(run_id.clone());
+            b.execute(&mark_running, &[&run_id]).await?;
+            b.execute(&dequeue, &[&run_id]).await?;
+        }
+    }
+    let in_order = order == ["pf-0", "pf-1", "pf-2"];
+    let reclaimed_once = pf0_reclaim_attempts == 2;
+
+    let pass = a_owns
+        && a_got_head
+        && b_blocked_acq
+        && b_blocked_claim
+        && b_got
+        && in_order
+        && reclaimed_once;
+    println!(
+        "A owns pf={a_owns} claims head={a_got_head} | B blocked (acq={b_blocked_acq}, claim={b_blocked_claim}) | B reacquired={b_got} order={order:?} pf-0 reclaim attempts={pf0_reclaim_attempts}"
+    );
+    println!("PASS(partition failover in-order + exactly-once reclaim): {pass}");
     Ok(pass)
 }

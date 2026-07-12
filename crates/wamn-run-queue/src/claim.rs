@@ -73,19 +73,24 @@ pub struct ClaimPlan {
 }
 
 /// Model a `claim_batch_sql(limit)` over a candidate row set: take the claimable
-/// rows in `(available_at, run_id)` order (the SQL's `ORDER BY`), up to `limit`,
-/// each with a fresh lease deadline `now + lease_ttl` and its attempt bumped. The
-/// real SQL additionally `SKIP LOCKED`s rows another transaction already holds —
-/// a concurrency property only the live queue (queuebench) exercises; this models
-/// the eligibility + ordering + limit a single claimer sees.
+/// **unpartitioned** rows in `(available_at, run_id)` order (the SQL's `ORDER BY`),
+/// up to `limit`, each with a fresh lease deadline `now + lease_ttl` and its attempt
+/// bumped. Partitioned rows (`partition_key` set) are skipped — the global claim's
+/// `partition_key IS NULL` guard leaves them to the per-partition ownership path
+/// ([`crate::plan_partition_claim`]). The real SQL additionally `SKIP LOCKED`s rows
+/// another transaction already holds — a concurrency property only the live queue
+/// (queuebench) exercises; this models the eligibility + ordering + limit a single
+/// claimer sees.
 pub fn plan_claim(
     candidates: &[QueueEntry],
     now: Millis,
     limit: usize,
     lease_ttl: Millis,
 ) -> ClaimPlan {
-    let mut eligible: Vec<&QueueEntry> =
-        candidates.iter().filter(|e| is_claimable(e, now)).collect();
+    let mut eligible: Vec<&QueueEntry> = candidates
+        .iter()
+        .filter(|e| e.partition_key.is_none() && is_claimable(e, now))
+        .collect();
     eligible.sort_by(|a, b| {
         a.available_at
             .cmp(&b.available_at)

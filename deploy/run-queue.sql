@@ -19,10 +19,13 @@
 -- injects with SET LOCAL. FORCE RLS keyed on current_setting('app.tenant', true),
 -- NULL (=> zero rows) when no claim was injected.
 --
--- SCOPE (walking skeleton): the SKIP LOCKED queue + write-ahead + single-owner
--- leases + janitor + reconciliation. `partition_key` + `priority` are reserved
--- (nullable / default) for the deferred per-partition-ownership follow-up; the
--- skeleton claims globally in `available_at` order.
+-- SCOPE: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
+-- reconciliation, plus PER-PARTITION OWNERSHIP (the `partition_owner` lease table
+-- below) so `partitioned(key)` runs dispatch in-order per key across replicas.
+-- Unpartitioned runs (`partition_key IS NULL`) claim globally in `available_at`
+-- order; a run with a `partition_key` is dispatched only through the partition
+-- path (crates/wamn-run-queue `acquire_partitions_sql` + `claim_partition_head_sql`).
+-- `priority` remains reserved (default 0).
 
 -- ---------------------------------------------------------------------------
 -- run_queue: one row per pending/in-flight run. `available_at` gates visibility
@@ -50,7 +53,8 @@ CREATE TABLE wamn_run.run_queue (
 );
 -- The claim scan: visible rows in dispatch order, filtered on lease liveness.
 CREATE INDEX run_queue_claimable ON wamn_run.run_queue (tenant_id, available_at, lease_expires_at);
--- Reserved for per-partition ownership (deferred 5.14 scaling follow-up).
+-- Per-partition ownership: the acquire candidate scan (distinct partition keys with
+-- a claimable run) and the head-of-partition claim both key on (tenant, partition).
 CREATE INDEX run_queue_partition ON wamn_run.run_queue (tenant_id, partition_key)
     WHERE partition_key IS NOT NULL;
 ALTER TABLE wamn_run.run_queue ENABLE ROW LEVEL SECURITY;
@@ -59,3 +63,30 @@ CREATE POLICY run_queue_tenant ON wamn_run.run_queue
     USING (tenant_id = current_setting('app.tenant', true))
     WITH CHECK (tenant_id = current_setting('app.tenant', true));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.run_queue TO wamn_app;
+
+-- ---------------------------------------------------------------------------
+-- partition_owner: one lease per (tenant, partition_key). A runner replica leases a
+-- partition and, while the lease is live, is the ONLY replica that dispatches that
+-- key's runs (claiming them head-first, one in flight at a time — see
+-- crates/wamn-run-queue `partition`), so ordering within the key is preserved under
+-- horizontal scaling. When the owner dies the lease expires and another replica
+-- reacquires the whole key and continues in order (crash-safe failover). This is a
+-- coarse coordination row, not run state: it is NOT FK'd to run_queue (partition_key
+-- is not unique there) and is garbage-collected when the partition drains
+-- (`gc_orphan_partitions_sql`). The run lifecycle stays on `runs` (5.7); the
+-- per-run lease stays on run_queue above.
+-- ---------------------------------------------------------------------------
+CREATE TABLE wamn_run.partition_owner (
+    tenant_id        text NOT NULL,
+    partition_key    text NOT NULL,
+    lease_owner      text NOT NULL,
+    lease_expires_at timestamptz NOT NULL,
+    acquired_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, partition_key)
+);
+ALTER TABLE wamn_run.partition_owner ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.partition_owner FORCE ROW LEVEL SECURITY;
+CREATE POLICY partition_owner_tenant ON wamn_run.partition_owner
+    USING (tenant_id = current_setting('app.tenant', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.partition_owner TO wamn_app;

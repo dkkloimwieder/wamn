@@ -252,7 +252,15 @@ cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target
 # the 5.7 runs row (ONE durability domain) + D15 write-ahead (runs.status='dispatched')
 # + janitor (orphan -> 'infrastructure-failure') + single-owner leases + reclaim +
 # reconciliation-due timing + a minimal NATS-core doorbell (publish hint / subscribe-
-# claim). PURE crate (claim/lease/janitor/reconcile decisions + parameterized $n SQL
+# claim) + PER-PARTITION OWNERSHIP (deploy/run-queue.sql partition_owner lease table +
+# acquire_partitions_sql / claim_partition_head_sql: partitioned(key) runs dispatch
+# in-order per key across replicas — a replica leases a partition [INSERT..ON CONFLICT
+# arbitration, only an expired lease is stolen] then claims that key's runs head-first,
+# one in flight at a time; global claim_batch_sql gains `partition_key IS NULL` so
+# partitioned runs go ONLY through the ownership path; in-order failover via partition-
+# lease expiry+reacquire; ordering key (available_at, run_id); wedge-on-terminal-failure
+# is a 5.11 policy seam). PURE crate (claim/lease/janitor/reconcile/partition decisions
+# + parameterized $n SQL
 # builders; NO DB/NATS/clock — now is a passed-in millis; the wamn-run-store split);
 # reuses wamn-run-store RunStatus (Dispatched/InfrastructureFailure — the seam 5.7
 # reserved) rather than redefining the run lifecycle. run_queue is a SEPARATE table
@@ -260,23 +268,26 @@ cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target
 # CASCADE); the 5.7 runs.status CHECK already lists dispatched/infrastructure-failure
 # so there is NO 5.7 schema change. The flowrunner GUEST is UNCHANGED (host-side queue)
 # so flowbench (S3) + testhostbench (S6) stay green as regression. DEFERRED to follow-
-# up beads: per-partition ownership, checkpoint/resume-on-replica-loss, the shared
-# cron+outbox dispatcher, and the guest-claims-from-queue rewire. docs/run-queue.md.
+# up beads: checkpoint/resume-on-replica-loss, the shared cron+outbox dispatcher, and
+# the guest-claims-from-queue rewire. docs/run-queue.md.
 # No JSON-schema (a store model, not a contract).
 cargo test -p wamn-run-queue
 cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --check
 # optional live-apply gate (deploy/run-state.sql + run-queue.sql on a throwaway PG;
 # superuser URL provisions wamn_app; asserts the SKIP LOCKED claim predicate [Ready
 # claimed, Parked/Leased skipped, expired-lease reclaimed] + janitor sweep + tenant
-# RLS isolation + FK cascade; skips cleanly when unset):
+# RLS isolation + FK cascade + partition acquire/head-claim via the real builders;
+# skips cleanly when unset):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
 WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-queue
 # queuebench GATE (crates/wamn-host, PURE host-side tokio_postgres claimers — NO wasm
 # guest): D15 dispatch SLOs (write-ahead p99<15ms / fast-path p99<10ms), SKIP LOCKED
 # throughput (exactly-once + completeness, ~1-5k/s), lease-expiry reclaim, janitor,
-# NATS-core doorbell (async warm p50<25ms/p99<100ms). Provisions an EPHEMERAL schema
-# (runs + run_queue) via the SUPERUSER url (wamn_app is NOSUPERUSER). Reuse the
+# NATS-core doorbell (async warm p50<25ms/p99<100ms), partition (partitioned(key)
+# in-order per key across concurrent replicas + exactly-once + in-order failover).
+# Provisions an EPHEMERAL schema (runs + run_queue + partition_owner) via the SUPERUSER
+# url (wamn_app is NOSUPERUSER). Reuse the
 # throwaway PG above (the live-apply gate created wamn_app) + a throwaway NATS:
 docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \

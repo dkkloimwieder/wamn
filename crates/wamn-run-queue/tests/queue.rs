@@ -3,11 +3,15 @@
 //! optional live-apply gate (the SKIP-LOCKED claim predicate, lease-expiry
 //! reclaim, janitor sweep, RLS isolation, and FK cascade on a real Postgres).
 
+use std::collections::HashSet;
+
 use wamn_run_queue::{
-    ClaimState, JanitorVerdict, QueueEntry, RunStatus, claim_batch_sql, claim_state, dequeue_sql,
-    enqueue_sql, is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live,
-    mark_running_sql, next_reconcile, orphans, park_sql, plan_claim, reconcile_due,
-    renew_lease_sql, should_renew, write_ahead_run_sql,
+    ClaimState, JanitorVerdict, PartitionOwner, QueueEntry, RunStatus, acquire_partitions_sql,
+    claim_batch_sql, claim_partition_head_sql, claim_state, dequeue_sql, enqueue_sql,
+    gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline,
+    lease_live, mark_running_sql, next_reconcile, orphans, park_sql, partition_lease_live,
+    plan_acquire, plan_claim, plan_partition_claim, reconcile_due, release_partition_sql,
+    renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
 };
 
 // ---- claim eligibility -----------------------------------------------------
@@ -170,6 +174,63 @@ fn claim_sql_is_skip_locked_and_bounded() {
     assert!(sql.contains("c.attempts < c.max_attempts"));
     assert!(sql.contains("attempts = q.attempts + 1"));
     assert!(sql.contains("RETURNING q.run_id, q.attempts, q.lease_expires_at"));
+    // The global claim leaves partitioned runs to the per-partition path.
+    assert!(sql.contains("c.partition_key IS NULL"));
+}
+
+#[test]
+fn partition_sql_builders_are_shaped_and_tenant_scoped() {
+    // Acquire: PK-arbitrated INSERT ... ON CONFLICT, only stealing an expired lease.
+    let acq = acquire_partitions_sql(5);
+    assert!(acq.contains("INSERT INTO partition_owner"));
+    assert!(acq.contains("SELECT DISTINCT q.partition_key FROM run_queue q"));
+    assert!(acq.contains("q.partition_key IS NOT NULL"));
+    assert!(acq.contains("ON CONFLICT (tenant_id, partition_key) DO UPDATE"));
+    // Only an expired partition lease may be stolen (the arbitration guard).
+    assert!(acq.contains("WHERE o.lease_expires_at <= now()"));
+    assert!(acq.contains("LIMIT 5"));
+    assert!(acq.contains("RETURNING o.partition_key"));
+
+    // Claim head: owned partitions only, one-in-flight + head-first, SKIP LOCKED.
+    let claim = claim_partition_head_sql(8);
+    assert!(claim.contains("JOIN partition_owner AS o"));
+    assert!(claim.contains("o.lease_owner = $1 AND o.lease_expires_at > now()"));
+    assert!(claim.contains("c.partition_key IS NOT NULL"));
+    // The NOT EXISTS reduces each partition to a single head candidate, which is
+    // what makes FOR UPDATE OF c (no DISTINCT) legal. Its two disjuncts are the two
+    // ordering guards: a live-leased sibling (one-in-flight) and an earlier ready
+    // sibling (head-first). The behavioral live-apply gate proves the in-flight
+    // branch is the SOLE blocker of a successor while its head is live-leased.
+    assert!(claim.contains("NOT EXISTS"));
+    assert!(claim.contains("b.lease_expires_at IS NOT NULL AND b.lease_expires_at > now()"));
+    assert!(claim.contains("(b.available_at, b.run_id) < (c.available_at, c.run_id)"));
+    assert!(claim.contains("FOR UPDATE OF c SKIP LOCKED"));
+    assert!(claim.contains("LIMIT 8"));
+    assert!(claim.contains("RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at"));
+
+    // Acquire / renew / release / gc carry an explicit tenant claim. (The head
+    // claim, like the global claim_batch_sql, is tenant-scoped purely by RLS on
+    // run_queue + partition_owner — it writes no explicit app.tenant literal.)
+    for sql in [
+        acquire_partitions_sql(1),
+        renew_partition_sql(),
+        release_partition_sql(),
+        gc_orphan_partitions_sql(),
+    ] {
+        assert!(
+            sql.contains("current_setting('app.tenant', true)"),
+            "not tenant-scoped: {sql}"
+        );
+    }
+    // The head claim relies on RLS, not an explicit tenant literal (like claim_batch_sql).
+    assert!(!claim_partition_head_sql(1).contains("current_setting"));
+    assert!(renew_partition_sql().contains("lease_owner = $3"));
+    assert!(release_partition_sql().contains("DELETE FROM partition_owner"));
+    assert!(release_partition_sql().contains("lease_owner = $2"));
+    // GC removes only expired leases whose partition has drained.
+    let gc = gc_orphan_partitions_sql();
+    assert!(gc.contains("o.lease_expires_at <= now()"));
+    assert!(gc.contains("NOT EXISTS"));
 }
 
 #[test]
@@ -193,6 +254,114 @@ fn plan_claim_skips_budget_spent_rows() {
     let plan = plan_claim(&rows, 1_000, 10, 60_000);
     let ids: Vec<&str> = plan.claimed.iter().map(|c| c.run_id.as_str()).collect();
     assert_eq!(ids, ["retryable"]);
+}
+
+#[test]
+fn global_claim_skips_partitioned_rows() {
+    // The global claim only takes unpartitioned runs; a partitioned run (even a
+    // ready one) is left for the per-partition ownership path so it is never
+    // dispatched out of order.
+    let rows = vec![
+        QueueEntry::ready("t1", "plain", 100, 20),
+        QueueEntry::ready_partition("t1", "part-run", "site-1", 100, 20),
+    ];
+    let plan = plan_claim(&rows, 1_000, 10, 60_000);
+    let ids: Vec<&str> = plan.claimed.iter().map(|c| c.run_id.as_str()).collect();
+    assert_eq!(ids, ["plain"]);
+}
+
+// ---- per-partition ownership -----------------------------------------------
+
+#[test]
+fn partition_lease_liveness() {
+    let o = PartitionOwner::new("t1", "site-1", "replica-A", 500);
+    assert!(partition_lease_live(&o, 100));
+    assert!(!partition_lease_live(&o, 500)); // boundary: expiry == now is not live
+    assert!(!partition_lease_live(&o, 600));
+}
+
+#[test]
+fn plan_acquire_takes_unowned_keys_with_claimable_runs() {
+    let rows = vec![
+        // site-1: a claimable head -> acquirable.
+        QueueEntry::ready_partition("t1", "s1-0", "site-1", 100, 20),
+        QueueEntry::ready_partition("t1", "s1-1", "site-1", 100, 20),
+        // site-2: live-owned by someone else -> NOT acquirable.
+        QueueEntry::ready_partition("t1", "s2-0", "site-2", 100, 20),
+        // site-3: only a parked run (future) -> no claimable head -> NOT acquirable.
+        QueueEntry::ready_partition("t1", "s3-0", "site-3", 9_999, 20),
+        // an unpartitioned run is never a partition to acquire.
+        QueueEntry::ready("t1", "plain", 100, 20),
+    ];
+    let owners = vec![
+        PartitionOwner::new("t1", "site-2", "other", 9_999), // live
+        PartitionOwner::new("t1", "site-4", "stale", 50),    // expired -> irrelevant (no runs)
+    ];
+
+    let keys = plan_acquire(&rows, &owners, 1_000, 10);
+    assert_eq!(keys, ["site-1"]); // site-2 live-owned, site-3 parked, plain unpartitioned
+
+    // A site-2 whose lease has expired becomes acquirable again (failover).
+    let expired = vec![PartitionOwner::new("t1", "site-2", "dead", 50)];
+    let keys = plan_acquire(&rows, &expired, 1_000, 10);
+    assert_eq!(keys, ["site-1", "site-2"]);
+
+    // limit caps the number of partitions taken (key order).
+    let one = plan_acquire(&rows, &expired, 1_000, 1);
+    assert_eq!(one, ["site-1"]);
+}
+
+#[test]
+fn plan_partition_claim_takes_head_of_owned_partitions_only() {
+    let owned: HashSet<&str> = ["site-1", "site-2"].into_iter().collect();
+    let rows = vec![
+        // site-1: three ready runs -> only the head (s1-0) is claimable.
+        QueueEntry::ready_partition("t1", "s1-0", "site-1", 100, 20),
+        QueueEntry::ready_partition("t1", "s1-1", "site-1", 100, 20),
+        QueueEntry::ready_partition("t1", "s1-2", "site-1", 100, 20),
+        // site-2: an EARLIER run is in flight -> the whole partition is blocked.
+        QueueEntry {
+            lease_owner: Some("me".into()),
+            lease_expires_at: Some(9_999),
+            ..QueueEntry::ready_partition("t1", "s2-0", "site-2", 100, 20)
+        },
+        QueueEntry::ready_partition("t1", "s2-1", "site-2", 100, 20),
+        // site-3: ready head, but NOT owned by this replica -> skipped.
+        QueueEntry::ready_partition("t1", "s3-0", "site-3", 100, 20),
+    ];
+
+    let plan = plan_partition_claim(&rows, &owned, 1_000, 10, 60_000);
+    let ids: Vec<&str> = plan.claimed.iter().map(|c| c.run_id.as_str()).collect();
+    // site-1 head only; site-2 blocked (in-flight); site-3 not owned.
+    assert_eq!(ids, ["s1-0"]);
+    assert_eq!(plan.claimed[0].attempts, 1); // bumped
+    assert_eq!(plan.claimed[0].lease_expires_at, 1_000 + 60_000);
+}
+
+#[test]
+fn plan_partition_claim_advances_in_order_and_limits_across_partitions() {
+    let owned: HashSet<&str> = ["a", "b"].into_iter().collect();
+    // Both partitions have a free (no in-flight) head; a claim takes one head each.
+    let rows = vec![
+        QueueEntry::ready_partition("t1", "a-0", "a", 100, 20),
+        QueueEntry::ready_partition("t1", "a-1", "a", 100, 20),
+        QueueEntry::ready_partition("t1", "b-0", "b", 200, 20),
+        QueueEntry::ready_partition("t1", "b-1", "b", 200, 20),
+    ];
+    let both = plan_partition_claim(&rows, &owned, 1_000, 10, 60_000);
+    let mut ids: Vec<&str> = both.claimed.iter().map(|c| c.run_id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["a-0", "b-0"]); // the head of each owned partition
+
+    // limit 1 -> the globally-earliest head (a-0, available_at 100 < b-0's 200).
+    let one = plan_partition_claim(&rows, &owned, 1_000, 1, 60_000);
+    assert_eq!(one.claimed.len(), 1);
+    assert_eq!(one.claimed[0].run_id, "a-0");
+
+    // Simulate a-0 done + dequeued: now a-1 is the head of partition a.
+    let after: Vec<QueueEntry> = rows.into_iter().filter(|e| e.run_id != "a-0").collect();
+    let next = plan_partition_claim(&after, &owned, 1_000, 1, 60_000);
+    assert_eq!(next.claimed[0].run_id, "a-1"); // in order
 }
 
 #[test]
@@ -288,6 +457,18 @@ fn run_queue_sql_matches_the_model() {
     ] {
         assert!(sql.contains(col), "run-queue.sql missing column {col}");
     }
+
+    // The per-partition ownership lease table + its tenant floor + PK.
+    assert!(sql.contains("CREATE TABLE wamn_run.partition_owner"));
+    assert!(sql.contains("PRIMARY KEY (tenant_id, partition_key)"));
+    assert!(
+        sql.contains(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.partition_owner TO wamn_app"
+        )
+    );
+    assert!(sql.contains("CREATE POLICY partition_owner_tenant ON wamn_run.partition_owner"));
+    // The partition index the acquire/claim path scans on.
+    assert!(sql.contains("CREATE INDEX run_queue_partition"));
 }
 
 // ---- live-apply gate (optional) --------------------------------------------
@@ -316,9 +497,11 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
         .expect("read deploy/run-queue.sql");
 
     // Exercise the REAL builders (not hand-copied SQL) via PREPARE/EXECUTE, so a
-    // bug in claim_batch_sql / janitor_sweep_sql is caught here.
+    // bug in claim_batch_sql / janitor_sweep_sql / the partition builders is caught here.
     let claim_sql = claim_batch_sql(10);
     let janitor_sql = janitor_sweep_sql();
+    let acquire_sql = acquire_partitions_sql(10);
+    let claim_head_sql = claim_partition_head_sql(10);
 
     let mut script = String::new();
     // Provision wamn_app (NOSUPERUSER/NOBYPASSRLS, like production) + a fresh schema.
@@ -361,11 +544,28 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
            ('t2','rq-other',   now(),                    NULL,  NULL,                     0,  20);\n",
     );
 
-    // RLS isolation: t1 sees its eight queue rows; no claim -> zero.
+    // Partitioned runs: two ordered streams (site-a: pa-0<pa-1<pa-2, site-b:
+    // pb-0<pb-1), all ready now (order within a key = run_id). These exercise the
+    // per-partition ownership path; the global claim above skips them.
+    script.push_str(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+           ('t1','pa-0','f',1,'dispatched'),('t1','pa-1','f',1,'dispatched'),('t1','pa-2','f',1,'dispatched'), \
+           ('t1','pb-0','f',1,'dispatched'),('t1','pb-1','f',1,'dispatched');\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, partition_key, available_at, attempts, max_attempts) VALUES \
+           ('t1','pa-0','site-a', now(), 0, 20), \
+           ('t1','pa-1','site-a', now(), 0, 20), \
+           ('t1','pa-2','site-a', now(), 0, 20), \
+           ('t1','pb-0','site-b', now(), 0, 20), \
+           ('t1','pb-1','site-b', now(), 0, 20);\n",
+    );
+
+    // RLS isolation: t1 sees its queue rows (8 unpartitioned rq-* + 5 partitioned
+    // pa-*/pb-* = 13); no claim -> zero.
     script.push_str(
         "BEGIN;\n\
          SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM run_queue) = 8, 't1 sees its 8 queue rows'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM run_queue) = 13, 't1 sees its 13 queue rows'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run;\n\
@@ -408,6 +608,61 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='rq-spent') = 'dead', 'budget-spent row not claimed'; \
            ASSERT (SELECT attempts FROM run_queue WHERE run_id='rq-expired') = 1, 'expired row reclaimed + bumped'; \
            ASSERT (SELECT attempts FROM run_queue WHERE run_id='rq-reclaim') = 2, 'reclaimable row reclaimed + bumped'; \
+         END $$;\n\
+         COMMIT;\n"
+    ));
+
+    // Per-partition ownership via the REAL acquire_partitions_sql() +
+    // claim_partition_head_sql() (PREPARE/EXECUTE). Replica R1 leases the two
+    // partitions and claims the HEAD of each; a second replica R2 can neither steal a
+    // live-owned partition nor claim its runs; and a partition advances in order only
+    // once its head completes and dequeues.
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE acquire_stmt (text, bigint) AS {acquire_sql};\n\
+         PREPARE claimhead_stmt (text, bigint) AS {claim_head_sql};\n\
+         EXECUTE acquire_stmt('R1', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM partition_owner WHERE lease_owner='R1') = 2, 'R1 leases site-a + site-b'; \
+         END $$;\n\
+         EXECUTE claimhead_stmt('R1', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-0') = 'R1', 'site-a head pa-0 claimed'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pb-0') = 'R1', 'site-b head pb-0 claimed'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-1') IS NULL, 'pa-1 blocked (one in flight per key)'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-2') IS NULL, 'pa-2 blocked behind the head'; \
+         END $$;\n\
+         COMMIT;\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         EXECUTE acquire_stmt('R2', 60000);\n\
+         EXECUTE claimhead_stmt('R2', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM partition_owner WHERE lease_owner='R2') = 0, 'R2 cannot steal a live-owned partition'; \
+           ASSERT (SELECT count(*) FROM run_queue WHERE lease_owner='R2') = 0, 'R2 owns no partition, claims nothing'; \
+         END $$;\n\
+         COMMIT;\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         -- pa-0 is now LIVE-leased by R1 (committed) and STILL queued. A second head\n\
+         -- claim must NOT advance site-a: pa-1 is blocked SOLELY by the one-in-flight\n\
+         -- guard (a live-leased pa-0 is no longer an 'earlier READY sibling', so the\n\
+         -- head-first branch does not block pa-1). This fails if the in-flight branch\n\
+         -- [claim_partition_head_sql: b.lease_expires_at IS NOT NULL AND > now()] is removed.\n\
+         EXECUTE claimhead_stmt('R1', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-0') = 'R1', 'pa-0 still R1 (live lease, not re-claimed)'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-1') IS NULL, 'pa-1 blocked by one-in-flight while pa-0 live-leased-and-present'; \
+         END $$;\n\
+         COMMIT;\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         DELETE FROM run_queue WHERE run_id='pa-0';\n\
+         EXECUTE claimhead_stmt('R1', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-1') = 'R1', 'site-a advances to pa-1 in order after pa-0 dequeues'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pa-2') IS NULL, 'pa-2 still blocked behind pa-1'; \
          END $$;\n\
          COMMIT;\n"
     ));
