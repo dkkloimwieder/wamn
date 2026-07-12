@@ -12,10 +12,12 @@ runner's work. It is the dispatch half of what the run store
 happened*, 5.14 governs *what runs next and who runs it*.
 
 The split mirrors the rest of the platform: a **pure crate**
-(`crates/wamn-run-queue`) holds the claim/lease/janitor/reconciliation decisions
-and the parameterized SQL builders — no DB, no NATS, no clock (`now` is a passed-in
-millis), unit-tested off-cluster — and the **driver** (`crates/wamn-host`
-`queuebench`, and the production dispatcher) supplies the `wamn:postgres` effects
+(`crates/wamn-run-queue`) holds the claim/lease/janitor/reconciliation decisions —
+and the trigger dispatcher's: cron due-tick evaluation, outbox matching,
+deterministic run-id minting, the adaptive poll cadence — plus the parameterized
+SQL builders — no DB, no NATS, no clock (`now` is a passed-in millis), unit-tested
+off-cluster — and the **driver** (`crates/wamn-host` `queuebench`/`dispatchbench`,
+and the production `dispatch` service) supplies the `wamn:postgres` effects
 against the schema in [`deploy/run-queue.sql`](../deploy/run-queue.sql), the
 NATS-core doorbell, the real clock, and the replica identity.
 
@@ -33,7 +35,7 @@ completion, while the `runs` row is audit history that lives forever.
 | `available_at` | visibility gate — future = a delayed / parked / backed-off run |
 | `lease_owner`, `lease_expires_at` | the replica currently holding the run; past expiry it is reclaimable (crash-safe failover) |
 | `attempts`, `max_attempts` | redelivery budget; spent + long-expired ⇒ the janitor gives up |
-| `partition_key`, `priority` | reserved for the deferred per-partition-ownership follow-up (the skeleton claims globally in `available_at` order) |
+| `partition_key`, `priority` | the per-partition-ownership dispatch key (see *Per-partition ownership*); `priority` remains reserved |
 
 The table sits on the house tenant floor — `FORCE ROW LEVEL SECURITY` keyed on
 `current_setting('app.tenant', true)`, granted to the non-owner `wamn_app` role —
@@ -171,18 +173,137 @@ partition lease expires, another replica reacquires the key and reclaims the
 abandoned in-flight run in order). Guest-*self*-claim from the queue remains a
 follow-up (fqg.4); today the host orchestrates the claim/reclaim.
 
+## Trigger dispatcher (cron + outbox + parked-wake)
+
+The **shared trigger dispatcher** is the always-on control-plane loop that turns
+*time* and *data changes* into runs: it owns **cron schedules** (flows with a
+`cron` trigger, F3) and **outbox polling** (flows with a `row-event` trigger —
+D4: LISTEN/NOTIFY is removed entirely, events are durable outbox rows the
+dispatcher polls, F4) across **all projects**, and **wakes parked runners**
+whose `available_at` has arrived — one service, per-project connections (D3:
+reconciliation follows connection ownership, no cross-DB sweep), adaptive
+intervals, no per-project listeners, no polling herd. It is the second driver of
+this crate: the decisions — cron due-tick evaluation, outbox matching, run-id
+minting, the poll cadence — live in the pure `cron`/`outbox`/`dispatch` modules
+and take an injected `now`, so the `dispatchbench` gate fast-forwards a nightly
+cron and a three-day outage in milliseconds (the 11.1 fast-forwardable-cron
+discipline); `wamn-host dispatch` supplies the real clock.
+
+One sweep of one project:
+
+1. **Registry.** Scan active flows: the trigger lives *inside* `graph_json`
+   (wamn-flow `Flow.trigger`) — `cron` and `row-event` register here; `webhook`
+   is the gateway's, `manual` the editor's. A flow that fails to parse or
+   validate is skipped with a warning, never wedging the project's dispatch —
+   but if its trigger is still readable at the JSON level as a row event, that
+   `(table, event)` is **held**: its outbox rows stay pending rather than being
+   consumed, so a version-skewed flow (an older dispatcher binary meeting a
+   newer flow schema) degrades to *delayed* delivery, never silent event loss.
+2. **Cron.** The due tick is the *latest* scheduled tick since the anchor —
+   misfire collapse: an outage fires the latest missed tick once, never a
+   burst. The anchor is recovered from the run ids themselves,
+   **flow-exclusively**: `cron_last_run_sql` takes `max(run_id)` over the
+   flow's *own* cron runs (`flow_id = $1 AND trigger_source = 'cron'`) — never
+   a lexical run-id range, because flow ids are unconstrained user text and
+   `text` ordering is collation-dependent, so a range scan can leak a
+   *foreign* flow's ids into the max (a wrong anchor = silently lost ticks).
+   Within one flow the minted ticks are equal-length zero-padded digits, so
+   the max *is* the last fired tick (`cron_tick_of` parses it back by
+   exact-prefix strip) — the `runs` table is the dispatcher's only cron state,
+   and restarted or racing replicas agree by construction. A never-fired flow
+   starts from dispatcher-sight (no retroactive catch-up). A fire is the D15
+   write-ahead co-transaction with the trigger payload persisted
+   (`write_ahead_triggered_run_sql` — `input_json` is what a replay re-runs,
+   `trigger_source` the audit tag) + the enqueue + a doorbell hint. Schedules
+   are classic cron (5-field, optional leading seconds field) evaluated in
+   **UTC** (croner); per-project timezones are a later refinement. An
+   **unsatisfiable schedule** (e.g. `0 0 30 2 *` — Feb 30 never comes) is an
+   *error*, not a silent no-op: the schedule is quarantined per project
+   (warned once, skipped, excluded from the cron-aware sleep) so it can
+   neither wedge the sweep nor burn a full croner horizon walk every tick.
+3. **Outbox.** Poll pending rows oldest-first (`outbox_poll_sql`, `FOR UPDATE
+   SKIP LOCKED` — racing replicas take disjoint batches), **re-read the
+   registry inside the same transaction, strictly after the poll** (a flow
+   whose activation committed before a polled event's commit is always visible,
+   so an event can never be consumed as unmatched merely because it landed
+   after the sweep's first registry read — the flow-activation race), fire one
+   run per (registered flow × row) with the row payload spliced into the run
+   input **verbatim** (raw JSON, never a float-lossy parse/re-serialize — the
+   platform's no-float rule survives into `input_json`), and ack everything not
+   held (`plan_ack` + `outbox_ack_sql`) — **poll, fire, and ack in one
+   transaction**: a crash anywhere before the commit redelivers the batch and
+   retracts its enqueues atomically, and the deterministic ids
+   (`{flow}:outbox:{seq}`) collapse the redelivery to no-ops. A row no flow is
+   registered on is acked as consumed-with-no-op (an unmatched backlog must not
+   pin the oldest-first poll window); a **held** row (step 1) redelivers. The
+   **producer** writes outbox rows in its *own* transaction
+   (`outbox_insert_sql`) — D4's "outbox insert and enqueue can share a
+   transaction with user writes" — so an event is durable iff the write it
+   announces is. The table lives in [`deploy/run-queue.sql`](../deploy/run-queue.sql)
+   beside `run_queue`; wiring the 3.2-generated tables' triggers to insert
+   events is a follow-up. (`seq` is the poll's oldest-first order, not a
+   cross-replica dispatch-order guarantee — per-key ordering is the 5.11
+   `partition_key` seam.)
+4. **Wake / reconciliation.** One read-only scan (`parked_due_sql`) surfaces
+   every currently-due, unleased, budget-remaining queue row — a parked `delay`
+   wake, or a run whose enqueue-time hint was lost — and hints each on the
+   doorbell. Duplicate hints are harmless by design (the claim is the arbiter),
+   which is what lets one scan double as the lost-hint reconciliation backstop
+   of lifecycle step 5.
+5. **Cadence.** Per-project adaptive interval (`next_interval`): work tightens
+   it to `min` (default 250 ms), idleness decays it exponentially to `max`
+   (default 30 s — the reconciliation band's floor). The loop sleeps until the
+   earliest next sweep OR the earliest upcoming cron fire across projects, so an
+   idle project costs one cheap scan per `max` while a cron tick is never late
+   by a decayed interval — zero continuous polling, no herd.
+
+**Doorbell convention.** Hints are published on **`wamn.doorbell.{tenant}`**
+(NATS-core, fire-and-forget), payload = the run id — the subject the queuebench
+doorbell gate established. The dispatcher also runs *without* NATS (hints
+skipped, the reconciliation scan still guarantees pickup): a missing broker
+costs latency, not correctness.
+
+**Exactly-once without a leader.** Run ids are deterministic per firing — one
+run per (flow, cron tick) and per (flow, outbox row) — and both write-ahead and
+enqueue are `ON CONFLICT DO NOTHING`, so a restarted dispatcher, a crashed
+poll, and two replicas racing the same tick all collapse onto one run; HA needs
+no election (the dispatchbench `race` mode runs two live dispatchers over one
+project and asserts it, with the contention itself proven — the losing
+attempts are counted). A cron tick's identity is its *scheduled* instant
+truncated to the second, so replicas observing the same tick at different
+sub-second offsets mint the same id. A firing that **loses** the write-ahead
+skips its enqueue too: the winner's queue row was created in the winner's own
+transaction and is either still pending or was legitimately dequeued on
+completion — re-inserting it would resurrect a terminal run's queue row (a
+ghost dispatch).
+
+**Always-on hardening.** A dropped project connection is re-dialed on the next
+sweep (a Postgres restart must not permanently silence a project's triggers);
+every sweep runs under a deadline so a black-holed connection cannot wedge the
+other projects; and a failing sweep decays that project's cadence and clears
+its stale cron wake-hint (a past hint would otherwise pin the loop hot against
+a down DB — the durable anchor re-fires the tick exactly once on the next
+successful sweep). A failing project never wedges the loop: its errors log and
+decay while every other project keeps its own cadence.
+
+Deployment shape: `wamn-host dispatch --projects-file <json>` (one entry per
+project: `url` + `tenant` + `schema` — the 2.2 projects-file pattern) or the
+single-project flags; a production manifest lands with hosting/2.x once real
+project DBs are provisioned.
+
 ## Scope (5.14) vs. siblings
 
 This issue built the D3 hybrid queue: the SKIP LOCKED queue, the write-ahead / fast
 path, single-owner leases + reclaim, the janitor, the reconciliation cadence,
-**per-partition ownership** for `partitioned(key)`, and **checkpoint/resume on
-replica loss** (all above), proven by `queuebench` + `failoverbench`. It
-deliberately does **not** ship (tracked as follow-ups):
+**per-partition ownership** for `partitioned(key)`, **checkpoint/resume on
+replica loss**, and the **shared trigger dispatcher** (cron + outbox +
+parked-wake, all above), proven by `queuebench` + `failoverbench` +
+`dispatchbench`. It deliberately does **not** ship (tracked as follow-ups):
 
 | Deferred | Where |
 |---|---|
-| The shared **cron + outbox trigger dispatcher** for all projects | 5.14 follow-up |
 | Wiring the runner to **claim its own work** from the queue (guest-self-claim) | 5.14 follow-up (fqg.4) |
+| 3.2-generated per-table **outbox triggers** (production event producers) | with the generated-schema work (the gate and applications insert directly) |
 
 And it does not own: the engine walk / retry / reconstruction (5.2 + 5.7 — the
 claimed run drives them); the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
@@ -198,9 +319,15 @@ follow-up.
   eligibility (Ready/Leased/Parked/Exhausted), `plan_claim` ordering + limit (and
   that it skips partitioned rows), lease liveness + renewal, janitor orphan-detection,
   reconciliation cadence, **per-partition ownership** (`plan_acquire`,
-  `plan_partition_claim` head-first + one-in-flight), the SQL builders'
-  `SKIP LOCKED`/tenant-scoping/`RunStatus` literals, record JSON round-trip, and
-  the `deploy/run-queue.sql` drift guard — all off-cluster.
+  `plan_partition_claim` head-first + one-in-flight), the **dispatcher decisions**
+  (cron `next_fire`/`due_tick` incl. leap-day/short-month calendar edges,
+  sub-second tick canonicalization, misfire collapse; outbox matching + firing
+  envelopes with the payload spliced **verbatim** — no-float fidelity for
+  >2^53 ints and long decimals; ack planning incl. held rows; deterministic
+  run-id minting + ordering; the adaptive interval), the
+  SQL builders' `SKIP LOCKED`/tenant-scoping/`RunStatus` literals/`::text::jsonb`
+  binding, record JSON round-trip, and the `deploy/run-queue.sql` drift guards
+  (queue + partition + outbox) — all off-cluster.
 - **live-apply** (`WAMN_RUN_QUEUE_PG_URL`) — applies `run-state.sql` +
   `run-queue.sql` to a throwaway Postgres and asserts the SKIP LOCKED claim
   predicate (Ready claimed, Parked/Leased skipped, expired reclaimed), the janitor
@@ -209,7 +336,14 @@ follow-up.
   RLS isolation, the FK cascade, and — via the *real* builders through
   `PREPARE`/`EXECUTE` — the partition path: partition-lease arbitration (a second
   replica cannot steal a live-owned key), head-only claim (one in flight per key),
-  and in-order advance once the head dequeues.
+  and in-order advance once the head dequeues; plus the dispatcher's outbox path:
+  producer insert → RLS-scoped oldest-first poll → co-transacted fire + ack, the
+  **crash-rollback atomicity** (rollback = row redelivered AND enqueue retracted,
+  no half-state; the redelivery dedupes on the deterministic id), cron
+  last-tick recovery (flow-exclusive `max(run_id)` — cross-flow poison ids,
+  including a nested `{flow}:cron:` prefix in a *neighboring* flow id, never
+  leak into the anchor), and the wake scan
+  (due-unleased surfaced; future/leased not).
 - **`queuebench`** — the gate of record (pure host-side `tokio_postgres` claimers
   against a superuser-provisioned ephemeral schema): the D15 dispatch SLOs
   (write-ahead p99 < 15 ms, fast-path p99 < 10 ms), SKIP LOCKED **exactly-once +
@@ -236,5 +370,36 @@ follow-up.
   the resume's unconditional completion write still wins). All three assertions
   are mutation-tested. Same co-located, no-CPU-limit topology as `queuebench`,
   locally and in-cluster.
+- **`dispatchbench`** — the trigger dispatcher's gate of record (pure host-side,
+  no wasm guest), driving the *real* `Dispatcher` engine with **stepped time**
+  against two superuser-provisioned ephemeral project schemas. `cron`: a nightly
+  F3-shaped schedule fires exactly once per due tick — not early, once within a
+  tick's second, no duplicate across a dispatcher **restart** (anchor recovered
+  from the run ids), **misfire collapse** after a simulated three-day outage,
+  first-sight bootstrap, and the fire's write-ahead + enqueue co-transaction
+  proven atomic by an enqueue-side trap. `outbox`: one run per (matching flow ×
+  row) with the payload persisted as the run input, unmatched rows consumed, a
+  version-skewed flow's rows **held** (never wedging the sweep — junk/webhook
+  registry rows are also seeded), a redelivered row deduped on the
+  deterministic id **without resurrecting a completed run's queue row** (the
+  ghost-dispatch guard), and the poll/fire/ack co-transaction proven atomic by
+  traps on **both** sides (an ack-side trap kills the fire-first split-txn
+  mutant; a fire-side trap kills the ack-first lost-event mutant). `race`:
+  **two live dispatchers ticking concurrently** over one project — every cron
+  tick and outbox row still fires exactly once (won-insert count == distinct
+  runs) with the contention itself proven (losing attempts counted, both
+  replicas must win work), no leader. `fairness`: a 120-row backlog in project
+  A is batch-bounded per sweep **oldest-first** and does not starve project B's
+  first sweep; the adaptive intervals tighten/decay per project independently.
+  `wake`: a parked run is doorbell-hinted only once due; a firing's hint
+  carries the won run id and arrives only after its transaction committed.
+  `live`: the real `dispatch` run loop fires an outbox insert sub-500ms
+  **beside a permanently failing project** (isolation), survives its DB
+  connections being killed (reconnect), and honors the cron-aware sleep (a
+  tick under a fixed 5 s interval fires within ~1 s). Every load-bearing check
+  is mutation-tested (an observed-now tick identity, an ack-first split
+  transaction, an unconditional enqueue, and a cron-blind sleep each fail the
+  gate). Same co-located, no-CPU-limit topology as `queuebench`, locally and
+  in-cluster.
 - **`flowbench` (S3) + `testhostbench` (S6)** — regression: the flowrunner guest is
   unchanged, so both stay green.

@@ -6,12 +6,16 @@
 use std::collections::HashSet;
 
 use wamn_run_queue::{
-    ClaimState, JanitorVerdict, PartitionOwner, QueueEntry, RunStatus, acquire_partitions_sql,
-    claim_batch_sql, claim_partition_head_sql, claim_state, dequeue_sql, enqueue_sql,
-    gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline,
-    lease_live, mark_running_sql, next_reconcile, orphans, park_sql, partition_lease_live,
+    ClaimState, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, JanitorVerdict, OutboxRow,
+    PartitionOwner, QueueEntry, RowEventFlow, RunStatus, acquire_partitions_sql, active_flows_sql,
+    claim_batch_sql, claim_partition_head_sql, claim_state, cron_firing, cron_last_run_sql,
+    cron_tick_of, dequeue_sql, due_tick, enqueue_sql, gc_orphan_partitions_sql, is_claimable,
+    janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live, mark_running_sql, match_outbox,
+    mint_cron_run_id, next_fire, next_interval, next_reconcile, orphans, outbox_ack_sql,
+    outbox_insert_sql, outbox_poll_sql, park_sql, parked_due_sql, partition_lease_live, plan_ack,
     plan_acquire, plan_claim, plan_partition_claim, reconcile_due, release_partition_sql,
     renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
+    write_ahead_triggered_run_sql,
 };
 
 // ---- claim eligibility -----------------------------------------------------
@@ -411,6 +415,337 @@ fn enqueue_and_maintenance_sql_are_tenant_scoped_and_parameterized() {
     assert!(janitor_sweep_sql().contains("UPDATE runs"));
 }
 
+// ---- trigger dispatcher: cron ------------------------------------------------
+
+/// 2026-01-01 00:00:00 UTC.
+const JAN1_2026: i64 = 1_767_225_600_000;
+const HOUR: i64 = 3_600_000;
+const DAY: i64 = 86_400_000;
+
+#[test]
+fn cron_next_fire_is_strictly_after() {
+    // F3's canonical nightly schedule (0 2 * * *).
+    let two_am = JAN1_2026 + 2 * HOUR;
+    assert_eq!(next_fire("0 2 * * *", JAN1_2026).unwrap(), two_am);
+    // From exactly the tick, strictly-after means the NEXT day's tick.
+    assert_eq!(next_fire("0 2 * * *", two_am).unwrap(), two_am + DAY);
+    assert!(next_fire("not a cron", 0).is_err());
+}
+
+#[test]
+fn cron_calendar_edges() {
+    // Leap day: the next Feb 29 after 2026-01-01 is in 2028.
+    let feb29_2028: i64 = 1_835_395_200_000;
+    assert_eq!(next_fire("0 0 29 2 *", JAN1_2026).unwrap(), feb29_2028);
+    // Day-of-month 31 skips 30-day months: from 2026-04-01 the next 31st is May 31.
+    let apr1_2026 = JAN1_2026 + 90 * DAY;
+    assert_eq!(
+        next_fire("0 0 31 * *", apr1_2026).unwrap(),
+        apr1_2026 + 60 * DAY
+    );
+}
+
+#[test]
+fn due_tick_fires_latest_and_collapses_misfires() {
+    let schedule = "0 2 * * *";
+    let first_tick = JAN1_2026 + 2 * HOUR;
+    // Nothing due before the first tick after the anchor.
+    assert_eq!(
+        due_tick(schedule, JAN1_2026, JAN1_2026 + HOUR).unwrap(),
+        None
+    );
+    // Exactly at the tick — and anywhere within its second — the same canonical
+    // tick is due: replicas observing at different sub-second offsets agree.
+    assert_eq!(
+        due_tick(schedule, JAN1_2026, first_tick).unwrap(),
+        Some(first_tick)
+    );
+    assert_eq!(
+        due_tick(schedule, JAN1_2026, first_tick + 500).unwrap(),
+        Some(first_tick)
+    );
+    // Misfire collapse: three nightly ticks missed (dispatcher down) -> only the
+    // LATEST fires, one run per tick instant, no burst replay.
+    let now = JAN1_2026 + 3 * DAY + 12 * HOUR;
+    let latest = JAN1_2026 + 3 * DAY + 2 * HOUR;
+    assert_eq!(due_tick(schedule, first_tick, now).unwrap(), Some(latest));
+    // Re-anchored on the fired tick, nothing more is due until tomorrow.
+    assert_eq!(due_tick(schedule, latest, now).unwrap(), None);
+    assert!(due_tick("* * bogus", 0, 1).is_err());
+    // A parseable but UNSATISFIABLE schedule (Feb 30 never exists) is an ERROR,
+    // never a silent Ok(None): the driver quarantines it with a warning instead
+    // of leaving a flow that never fires with zero diagnostics.
+    assert!(due_tick("0 0 30 2 *", JAN1_2026, JAN1_2026 + DAY).is_err());
+    assert!(next_fire("0 0 30 2 *", JAN1_2026).is_err());
+}
+
+#[test]
+fn cron_run_ids_are_deterministic_and_ordered() {
+    let a = mint_cron_run_id("escalate-stale-holds", JAN1_2026);
+    let b = mint_cron_run_id("escalate-stale-holds", JAN1_2026 + DAY);
+    assert_eq!(a, "escalate-stale-holds:cron:1767225600000");
+    assert!(a < b); // zero-padded ticks: lexical order == chronological order
+    assert_eq!(cron_tick_of("escalate-stale-holds", &a), Some(JAN1_2026));
+    // Pre-1e12 ticks pad so the within-flow ordering property holds everywhere.
+    let small = mint_cron_run_id("f", 42);
+    assert_eq!(small, "f:cron:0000000000042");
+    assert_eq!(cron_tick_of("f", &small), Some(42));
+    // Non-cron ids don't parse back to a tick.
+    assert_eq!(cron_tick_of("f", "f:outbox:42"), None);
+    assert_eq!(cron_tick_of("f", "plain-run"), None);
+    // The parse is EXACT-prefix, never suffix-based: a FOREIGN flow's id — even
+    // one nesting ':cron:' inside its own flow id — must not read as this
+    // flow's anchor (a wrong anchor silently skips a due tick).
+    assert_eq!(cron_tick_of("a", "acron5:cron:0000000000042"), None);
+    assert_eq!(cron_tick_of("a", "a:cron:5x:cron:0000000000042"), None);
+    assert_eq!(
+        cron_tick_of("a:cron:5x", "a:cron:5x:cron:0000000000042"),
+        Some(42)
+    );
+
+    let f = cron_firing("escalate-stale-holds", 3, "0 2 * * *", JAN1_2026);
+    assert_eq!(f.run_id, a);
+    assert_eq!(f.flow_id, "escalate-stale-holds");
+    assert_eq!(f.flow_version, 3);
+    assert_eq!(f.trigger_source, "cron");
+    let v: serde_json::Value = serde_json::from_str(&f.input_json).unwrap();
+    assert_eq!(v["trigger"], "cron");
+    assert_eq!(v["schedule"], "0 2 * * *");
+    assert_eq!(v["fire-at-ms"], JAN1_2026);
+}
+
+// ---- trigger dispatcher: outbox ------------------------------------------------
+
+#[test]
+fn outbox_matching_fires_per_row_times_flow() {
+    let rows = vec![
+        OutboxRow {
+            seq: 7,
+            table: "dispositions".into(),
+            event: "insert".into(),
+            payload: Some("{\"id\": \"d-1\"}".to_string()),
+        },
+        OutboxRow {
+            seq: 8,
+            table: "receipts".into(),
+            event: "update".into(),
+            payload: None,
+        },
+        // No flow registered on deletes -> consumed with no firing.
+        OutboxRow {
+            seq: 9,
+            table: "receipts".into(),
+            event: "delete".into(),
+            payload: None,
+        },
+    ];
+    let flows = vec![
+        RowEventFlow {
+            flow_id: "disposition-recorded".into(),
+            flow_version: 2,
+            table: "dispositions".into(),
+            event: "insert".into(),
+        },
+        // Two flows on the same (table, event): both fire per row.
+        RowEventFlow {
+            flow_id: "disposition-audit".into(),
+            flow_version: 1,
+            table: "dispositions".into(),
+            event: "insert".into(),
+        },
+        RowEventFlow {
+            flow_id: "receipt-updated".into(),
+            flow_version: 1,
+            table: "receipts".into(),
+            event: "update".into(),
+        },
+    ];
+    let firings = match_outbox(&rows, &flows);
+    let ids: Vec<&str> = firings.iter().map(|f| f.run_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "disposition-recorded:outbox:7",
+            "disposition-audit:outbox:7",
+            "receipt-updated:outbox:8",
+        ]
+    );
+    assert_eq!(firings[0].trigger_source, "outbox:7");
+    let v: serde_json::Value = serde_json::from_str(&firings[0].input_json).unwrap();
+    assert_eq!(v["trigger"], "row-event");
+    assert_eq!(v["table"], "dispositions");
+    assert_eq!(v["event"], "insert");
+    assert_eq!(v["seq"], 7);
+    assert_eq!(v["payload"]["id"], "d-1");
+    // A payload-less event carries an explicit null (still a replayable input).
+    let v8: serde_json::Value = serde_json::from_str(&firings[2].input_json).unwrap();
+    assert_eq!(v8["payload"], serde_json::Value::Null);
+    // No flows registered -> nothing fires (rows are acked as consumed-no-op).
+    assert!(match_outbox(&rows, &[]).is_empty());
+}
+
+#[test]
+fn outbox_payload_is_spliced_verbatim_no_float_round_trip() {
+    // The platform's no-float rule end-to-end: a row_to_json payload carrying
+    // an int8 beyond 2^53 and a >15-significant-digit exact decimal must reach
+    // the run input BYTE-EXACT — a parse-through-f64 would rewrite both.
+    let rows = vec![OutboxRow {
+        seq: 1,
+        table: "receipts".into(),
+        event: "insert".into(),
+        payload: Some("{\"big\": 9007199254740993, \"qty\": 12345678901234567.89}".to_string()),
+    }];
+    let flows = vec![RowEventFlow {
+        flow_id: "f".into(),
+        flow_version: 1,
+        table: "receipts".into(),
+        event: "insert".into(),
+    }];
+    let firings = match_outbox(&rows, &flows);
+    assert_eq!(firings.len(), 1);
+    assert!(firings[0].input_json.contains("9007199254740993"));
+    assert!(firings[0].input_json.contains("12345678901234567.89"));
+}
+
+#[test]
+fn plan_ack_holds_a_skipped_flows_events() {
+    // A skew-held (table, event) stays pending; everything else — matched or
+    // unmatched — acks.
+    let rows = vec![
+        OutboxRow {
+            seq: 1,
+            table: "dispositions".into(),
+            event: "insert".into(),
+            payload: None,
+        },
+        OutboxRow {
+            seq: 2,
+            table: "skewed".into(),
+            event: "insert".into(),
+            payload: None,
+        },
+        // Same table, different event -> NOT held.
+        OutboxRow {
+            seq: 3,
+            table: "skewed".into(),
+            event: "delete".into(),
+            payload: None,
+        },
+    ];
+    let held = vec![("skewed".to_string(), "insert".to_string())];
+    assert_eq!(plan_ack(&rows, &held), [1, 3]);
+    assert_eq!(plan_ack(&rows, &[]), [1, 2, 3]);
+}
+
+// ---- trigger dispatcher: adaptive cadence ---------------------------------------
+
+#[test]
+fn adaptive_interval_tightens_on_work_and_decays_to_max() {
+    let (min, max) = (DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS);
+    // Work snaps the cadence to the tight bound, from anywhere.
+    assert_eq!(next_interval(max, true, min, max), min);
+    assert_eq!(next_interval(min, true, min, max), min);
+    // Idleness decays exponentially and caps at max (the reconciliation band).
+    assert_eq!(next_interval(min, false, min, max), 2 * min);
+    assert_eq!(next_interval(2 * min, false, min, max), 4 * min);
+    assert_eq!(next_interval(20_000, false, min, max), max); // 40k clamps to 30k
+    assert_eq!(next_interval(max, false, min, max), max);
+    // A degenerate current clamps up into the band.
+    assert_eq!(next_interval(0, false, min, max), min);
+}
+
+// ---- trigger dispatcher: SQL builders --------------------------------------------
+
+#[test]
+fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
+    // The triggered write-ahead persists the trigger payload (replayable input +
+    // audit source) and stays idempotent — the exactly-once anchor.
+    let wat = write_ahead_triggered_run_sql();
+    assert!(wat.contains("trigger_source, input_json"));
+    // ::text::jsonb, never a bare ::jsonb (the driver binds JSON as text).
+    assert!(wat.contains("$5::text::jsonb"));
+    assert!(wat.contains(&format!("'{}'", RunStatus::Dispatched.as_sql())));
+    assert!(wat.contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
+    assert!(wat.contains("current_setting('app.tenant', true)"));
+
+    // The poll: pending only, oldest-first, SKIP LOCKED (replica-disjoint batches).
+    let poll = outbox_poll_sql(64);
+    assert!(poll.contains("dispatched_at IS NULL"));
+    assert!(poll.contains("ORDER BY seq"));
+    assert!(!poll.contains("DESC")); // oldest-FIRST — a substring check alone would pass DESC
+    assert!(poll.contains("FOR UPDATE SKIP LOCKED"));
+    assert!(poll.contains("LIMIT 64"));
+
+    let ack = outbox_ack_sql();
+    assert!(ack.contains("SET dispatched_at = now()"));
+    assert!(ack.contains("seq = ANY($1)"));
+    assert!(ack.contains("current_setting('app.tenant', true)"));
+
+    let ins = outbox_insert_sql();
+    assert!(ins.contains("$3::text::jsonb"));
+    assert!(ins.contains("current_setting('app.tenant', true)"));
+
+    // Last-fired-tick recovery: FLOW-EXCLUSIVE (flow_id + trigger_source),
+    // never a lexical run-id range — flow ids are unconstrained user text and
+    // text ordering is collation-dependent, so a range scan can leak a foreign
+    // flow's ids into the max (the runs table IS the dispatcher's cron state).
+    let last = cron_last_run_sql();
+    assert!(last.contains("max(run_id)"));
+    assert!(last.contains("flow_id = $1"));
+    assert!(last.contains("trigger_source = 'cron'"));
+    assert!(!last.contains("run_id >="));
+    assert!(last.contains("current_setting('app.tenant', true)"));
+
+    // The registry scan: active flows only; the trigger lives in graph_json.
+    let flows = active_flows_sql();
+    assert!(flows.contains("WHERE active"));
+    assert!(flows.contains("graph_json::text"));
+
+    // The wake/reconciliation scan mirrors the claim predicate (due,
+    // unleased-or-expired, budget remaining) but is strictly read-only.
+    let wake = parked_due_sql(100);
+    assert!(wake.contains("available_at <= now()"));
+    assert!(wake.contains("lease_expires_at IS NULL OR lease_expires_at <= now()"));
+    assert!(wake.contains("attempts < max_attempts"));
+    assert!(wake.contains("ORDER BY available_at, run_id"));
+    assert!(wake.contains("LIMIT 100"));
+    assert!(!wake.contains("FOR UPDATE"));
+    assert!(!wake.contains("UPDATE "));
+}
+
+#[test]
+fn outbox_ddl_matches_the_model() {
+    let sql = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../deploy/run-queue.sql"
+    ))
+    .expect("read deploy/run-queue.sql");
+
+    assert!(sql.contains("CREATE TABLE wamn_run.outbox"));
+    for col in [
+        "seq",
+        "table_name",
+        "event",
+        "payload",
+        "created_at",
+        "dispatched_at",
+    ] {
+        assert!(
+            sql.contains(col),
+            "run-queue.sql outbox missing column {col}"
+        );
+    }
+    // The wamn-flow row-event vocabulary, verbatim.
+    assert!(sql.contains("CHECK (event IN ('insert', 'update', 'delete'))"));
+    assert!(sql.contains("PRIMARY KEY (tenant_id, seq)"));
+    // The pending partial index the poll scans.
+    assert!(sql.contains("CREATE INDEX outbox_pending"));
+    assert!(sql.contains("WHERE dispatched_at IS NULL"));
+    // House tenant floor.
+    assert!(sql.contains("CREATE POLICY outbox_tenant ON wamn_run.outbox"));
+    assert!(sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.outbox TO wamn_app"));
+}
+
 // ---- record JSON round-trip ------------------------------------------------
 
 #[test]
@@ -486,11 +821,14 @@ fn run_queue_sql_matches_the_model() {
 /// Apply `deploy/run-state.sql` + `deploy/run-queue.sql` to a throwaway Postgres
 /// and assert the queue's real behaviour: the `SKIP LOCKED` claim predicate
 /// (Ready claimed, Parked/Leased skipped), lease-expiry reclaim, the janitor sweep
-/// (orphan → `infrastructure-failure` + dequeued), tenant RLS isolation, and the
-/// FK cascade from `runs`. Gated on `WAMN_RUN_QUEUE_PG_URL` (a superuser URL — the
-/// harness provisions `wamn_app`); skips cleanly when unset. Mirrors the
-/// wamn-run-store / wamn-ddl / wamn-rls gates. (True concurrent-claimer contention
-/// is the queuebench gate; this asserts the schema + predicate on one session.)
+/// (orphan → `infrastructure-failure` + dequeued), tenant RLS isolation, the
+/// FK cascade from `runs`, and the trigger dispatcher's outbox path (producer
+/// insert → poll → co-transacted fire + ack, crash-rollback atomicity +
+/// redelivery dedupe, cron last-tick recovery, the wake scan). Gated on
+/// `WAMN_RUN_QUEUE_PG_URL` (a superuser URL — the harness provisions `wamn_app`);
+/// skips cleanly when unset. Mirrors the wamn-run-store / wamn-ddl / wamn-rls
+/// gates. (True concurrent contention is the queuebench/dispatchbench gates; this
+/// asserts the schema + predicates on one session.)
 #[test]
 fn run_queue_schema_applies_and_claims_on_postgres() {
     let Ok(url) = std::env::var("WAMN_RUN_QUEUE_PG_URL") else {
@@ -512,6 +850,13 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     let janitor_sql = janitor_sweep_sql();
     let acquire_sql = acquire_partitions_sql(10);
     let claim_head_sql = claim_partition_head_sql(10);
+    // The trigger dispatcher's builders (cron/outbox/wake).
+    let insert_sql = outbox_insert_sql();
+    let poll_sql = outbox_poll_sql(10);
+    let ack_sql = outbox_ack_sql();
+    let triggered_sql = write_ahead_triggered_run_sql();
+    let last_run_sql = cron_last_run_sql();
+    let parked_sql = parked_due_sql(50);
 
     let mut script = String::new();
     // Provision wamn_app (NOSUPERUSER/NOBYPASSRLS, like production) + a fresh schema.
@@ -690,6 +1035,126 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
                'FK ON DELETE CASCADE removed the queue row'; END $$;\n\
          COMMIT;\n",
     );
+    // The trigger dispatcher's outbox path via the REAL builders: a producer
+    // inserts events in its own transaction (outbox_insert_sql); the dispatcher
+    // polls pending rows oldest-first (outbox_poll_sql, SKIP LOCKED), fires the
+    // triggered write-ahead (write_ahead_triggered_run_sql), and acks
+    // (outbox_ack_sql) — all in ONE transaction. RLS isolates tenants' events.
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE outbox_ins (text, text, text) AS {insert_sql};\n\
+         EXECUTE outbox_ins('dispositions', 'insert', '{{\"id\": \"d-1\"}}');\n\
+         EXECUTE outbox_ins('dispositions', 'insert', NULL);\n\
+         COMMIT;\n\
+         INSERT INTO wamn_run.outbox (tenant_id, table_name, event, payload) \
+           VALUES ('t2', 'dispositions', 'insert', '{{\"id\": \"other\"}}');\n",
+    ));
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE outbox_poll AS {poll_sql};\n\
+         PREPARE outbox_ack (bigint[]) AS {ack_sql};\n\
+         PREPARE triggered_stmt (text, text, int, text, text) AS {triggered_sql};\n\
+         CREATE TEMP TABLE polled AS EXECUTE outbox_poll;\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM polled) = 2, 'poll returns t1''s 2 pending rows (t2''s is RLS-invisible)'; \
+           ASSERT (SELECT count(*) FROM polled WHERE table_name='dispositions' AND event='insert') = 2, 'poll carries table+event'; \
+           ASSERT (SELECT min(seq) FROM polled) = 1 AND (SELECT max(seq) FROM polled) = 2, 'poll is oldest-first over seq'; \
+         END $$;\n\
+         EXECUTE triggered_stmt('disposition-recorded:outbox:1', 'disposition-recorded', 1, 'outbox:1', '{{\"seq\": 1}}');\n\
+         EXECUTE triggered_stmt('disposition-recorded:outbox:2', 'disposition-recorded', 1, 'outbox:2', '{{\"seq\": 2}}');\n\
+         EXECUTE outbox_ack(ARRAY[1,2]::bigint[]);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM runs WHERE trigger_source='outbox:1' AND input_json IS NOT NULL) = 1, 'triggered write-ahead persists trigger_source + input_json'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='disposition-recorded:outbox:1') = 'dispatched', 'triggered run write-ahead is dispatched'; \
+           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at IS NULL) = 0, 'both t1 rows acked'; \
+         END $$;\n\
+         EXECUTE triggered_stmt('disposition-recorded:outbox:1', 'disposition-recorded', 1, 'outbox:1', '{{\"seq\": 1}}');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM runs WHERE run_id='disposition-recorded:outbox:1') = 1, 'a redelivered firing is a no-op (deterministic id + ON CONFLICT)'; \
+         END $$;\n\
+         COMMIT;\n",
+    ));
+
+    // Crash atomicity: a dispatcher that polls and fires but dies before commit
+    // leaves NO half-state — the enqueue is retracted with the ack, the row stays
+    // pending, and the redelivery re-mints the same run id (exactly-once).
+    script.push_str(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         EXECUTE outbox_ins('dispositions', 'insert', '{\"id\": \"d-4\"}');\n\
+         COMMIT;\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         CREATE TEMP TABLE polled_crash AS EXECUTE outbox_poll;\n\
+         EXECUTE triggered_stmt('disposition-recorded:outbox:4', 'disposition-recorded', 1, 'outbox:4', '{\"seq\": 4}');\n\
+         EXECUTE outbox_ack(ARRAY[4]::bigint[]);\n\
+         ROLLBACK;\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM runs WHERE run_id='disposition-recorded:outbox:4') = 0, 'crash before commit retracts the fire (no half-state)'; \
+           ASSERT (SELECT count(*) FROM outbox WHERE seq=4 AND dispatched_at IS NULL) = 1, 'crash before commit redelivers the row'; \
+         END $$;\n\
+         CREATE TEMP TABLE polled_redeliver AS EXECUTE outbox_poll;\n\
+         EXECUTE triggered_stmt('disposition-recorded:outbox:4', 'disposition-recorded', 1, 'outbox:4', '{\"seq\": 4}');\n\
+         EXECUTE outbox_ack(ARRAY[4]::bigint[]);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM polled_redeliver WHERE seq=4) = 1, 'redelivery re-polls the unacked row'; \
+           ASSERT (SELECT count(*) FROM runs WHERE run_id='disposition-recorded:outbox:4') = 1, 'redelivery fires exactly once'; \
+           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at IS NULL) = 0, 'redelivered row acked'; \
+         END $$;\n\
+         COMMIT;\n",
+    );
+
+    // Cron last-fired-tick recovery: FLOW-EXCLUSIVE (flow_id + trigger_source
+    // predicate, cron_last_run_sql) — foreign flows whose ids sort inside a
+    // lexical range under the deployed collation (or literally nest ':cron:' in
+    // their flow id) must never leak into another flow's anchor.
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE last_stmt (text) AS {last_run_sql};\n\
+         EXECUTE triggered_stmt('cronflow:cron:0000000000100', 'cronflow', 1, 'cron', '{{\"fire-at-ms\": 100}}');\n\
+         EXECUTE triggered_stmt('cronflow:cron:0000000000200', 'cronflow', 1, 'cron', '{{\"fire-at-ms\": 200}}');\n\
+         -- Foreign-anchor poison: a flow whose id embeds ':cron:' and a colon-free\n\
+         -- neighbor that sorts inside 'cronflow's lexical range under en_US-style\n\
+         -- collations, both with LATER ticks; and a non-cron run for the flow itself.\n\
+         EXECUTE triggered_stmt('cronflow:cron:5x:cron:0000000000999', 'cronflow:cron:5x', 1, 'cron', '{{\"fire-at-ms\": 999}}');\n\
+         EXECUTE triggered_stmt('cronflowx:cron:0000000000999', 'cronflowx', 1, 'cron', '{{\"fire-at-ms\": 999}}');\n\
+         EXECUTE triggered_stmt('cronflow:outbox:7', 'cronflow', 1, 'outbox:7', '{{\"seq\": 7}}');\n\
+         CREATE TEMP TABLE lastrun AS EXECUTE last_stmt('cronflow');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT max FROM lastrun) = 'cronflow:cron:0000000000200', 'last-fired recovery is flow-exclusive (no foreign/outbox leak)'; \
+         END $$;\n\
+         COMMIT;\n",
+    ));
+
+    // The wake/reconciliation scan (parked_due_sql): a due unleased row is
+    // surfaced for a doorbell hint; a future (parked) or live-leased row is not.
+    script.push_str(&format!(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+           ('t1','wk-due','f',1,'dispatched'), \
+           ('t1','wk-future','f',1,'dispatched'), \
+           ('t1','wk-leased','f',1,'dispatched');\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, available_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
+           ('t1','wk-due',    now() - interval '1 min', NULL, NULL,                      0, 20), \
+           ('t1','wk-future', now() + interval '1 hour',NULL, NULL,                      0, 20), \
+           ('t1','wk-leased', now() - interval '1 min','W',   now() + interval '1 hour', 1, 20);\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE parked_stmt AS {parked_sql};\n\
+         CREATE TEMP TABLE woken AS EXECUTE parked_stmt;\n\
+         DO $$ BEGIN \
+           ASSERT EXISTS (SELECT 1 FROM woken WHERE run_id='wk-due'), 'a due unleased row is surfaced for a wake hint'; \
+           ASSERT NOT EXISTS (SELECT 1 FROM woken WHERE run_id='wk-future'), 'a still-parked (future) row is not woken'; \
+           ASSERT NOT EXISTS (SELECT 1 FROM woken WHERE run_id='wk-leased'), 'a live-leased row is not woken'; \
+         END $$;\n\
+         COMMIT;\n",
+    ));
+
     script.push_str("DROP SCHEMA wamn_run CASCADE;\n");
 
     use std::io::Write;

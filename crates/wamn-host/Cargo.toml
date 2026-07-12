@@ -19,6 +19,8 @@ wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "sync"] }
 serde_json = "1"
+# 5.14 dispatcher: the projects-file entries deserialize straight into ProjectSpec.
+serde = { version = "1", features = ["derive"] }
 tracing = { workspace = true }
 # S5 wamn:logging plugin owns its OWN OTel LoggerProvider (generous batch queue
 # -> OTLP gRPC -> collector -> Loki), independent of the vendored
@@ -44,6 +46,13 @@ wamn-ddl = { path = "../wamn-ddl" }
 # 5.14 queuebench: the pure SKIP LOCKED claim / lease / janitor SQL builders +
 # decision logic the durable-queue gates drive over tokio_postgres.
 wamn-run-queue = { path = "../wamn-run-queue" }
+# 5.14 dispatcher: the trigger registry is the flows table's graph_json — the
+# dispatcher parses each active flow and registers its cron / row-event trigger.
+wamn-flow = { path = "../wamn-flow" }
+# 5.14 dispatcher: holds the doorbell client (wash_runtime::washlet::connect_nats
+# returns async_nats::Client). Same version req as wash-runtime's so cargo
+# unifies to ONE crate instance (type identity) — the S5 OTel-crates pattern.
+async-nats = { version = "0.47", default-features = false }
 # wamn:postgres plugin (S2): thin driver + pool with explicit connection
 # lifecycle (deadpool Object::take = destroy-never-repool on abnormal death).
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }

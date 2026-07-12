@@ -7,6 +7,8 @@ mod apibench;
 mod apifixture;
 mod apiproof;
 mod bench;
+mod dispatch;
+mod dispatchbench;
 mod egressbench;
 mod engine;
 mod failoverbench;
@@ -49,6 +51,10 @@ enum Command {
     Queuebench(queuebench::QueueBenchArgs),
     /// Run the 5.14 failover gates (checkpoint/resume on replica loss / janitor completion-race guard)
     Failoverbench(failoverbench::FailoverBenchArgs),
+    /// Run the shared trigger dispatcher (5.14): cron + outbox + parked-wake across all projects
+    Dispatch(dispatch::DispatchArgs),
+    /// Run the 5.14 dispatcher gates (cron / outbox / race / fairness / wake / live)
+    Dispatchbench(dispatchbench::DispatchBenchArgs),
     /// Run the S4 custom-node gates (HTTP hop / interpreted-vs-composed / config parse)
     Nodebench(nodebench::NodeBenchArgs),
     /// Serve a wamn:node component over HTTP (S4 hop node host)
@@ -83,6 +89,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Flowbench(args) => flowbench::run(args).await,
         Command::Queuebench(args) => queuebench::run(args).await,
         Command::Failoverbench(args) => failoverbench::run(args).await,
+        Command::Dispatch(args) => dispatch::run(args).await,
+        Command::Dispatchbench(args) => dispatchbench::run(args).await,
         Command::Nodebench(args) => nodebench::run(args).await,
         Command::ServeNode(args) => nodebench::serve(args).await,
         Command::Logbench(args) => logbench::run(args).await,

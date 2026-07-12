@@ -780,6 +780,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "croner"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aa42bcd3d846ebf66e15bd528d1087f75d1c6c1c66ebff626178a106353c576"
+dependencies = [
+ "chrono",
+ "derive_builder",
+ "strum",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3366,6 +3377,9 @@ name = "strum"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros",
+]
 
 [[package]]
 name = "strum_macros"
@@ -4047,6 +4061,7 @@ name = "wamn-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
  "async-trait",
  "bytes",
  "chrono",
@@ -4058,12 +4073,14 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-postgres",
  "tracing",
  "wamn-catalog",
  "wamn-ddl",
+ "wamn-flow",
  "wamn-run-queue",
  "wash-runtime",
  "wasmtime-wasi",
@@ -4084,6 +4101,8 @@ dependencies = [
 name = "wamn-run-queue"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "croner",
  "serde",
  "serde_json",
  "wamn-run-store",

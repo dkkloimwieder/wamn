@@ -411,6 +411,81 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
 kubectl -n wamn-system apply -f deploy/failoverbench-job.yaml
 kubectl -n wamn-system logs -f job/failoverbench
 
+# [5.14] shared trigger dispatcher — cron + outbox + parked-wake for ALL projects
+# (wamn-fqg.3): the always-on control-plane loop D3/D4 locked (LISTEN/NOTIFY removed
+# entirely — the outbox is POLLED with adaptive per-project intervals; NATS-core
+# doorbell hints on wamn.doorbell.{tenant}). PURE decisions in crates/wamn-run-queue:
+# cron.rs next_fire/due_tick over an INJECTED now (croner dep, UTC, misfire collapse =
+# fire only the latest missed tick; tick identity truncated to the second so racing
+# replicas agree), outbox.rs match_outbox + envelopes, dispatch.rs adaptive
+# next_interval + Firing. Run ids are DETERMINISTIC — {flow}:cron:{tick:013} /
+# {flow}:outbox:{seq} — so restart, redelivery, and two live replicas racing all
+# collapse on the write-ahead ON CONFLICT: exactly-once with NO leader election.
+# wamn_run.outbox is ADDITIVE to deploy/run-queue.sql (the PRODUCER inserts in ITS
+# OWN txn — D4 "outbox insert shares the user txn"; the dispatcher polls SKIP LOCKED,
+# RE-READS the registry INSIDE the txn after the poll [closes the flow-activation
+# race — an activated flow's events are never consumed as unmatched], fires
+# write_ahead_triggered_run_sql [persists input_json + trigger_source — what a 5.7
+# replay re-runs; payload spliced VERBATIM, no float-lossy round trip] + enqueue
+# ONLY when the write-ahead WON [a losing re-fire must not resurrect a completed
+# run's queue row — the ghost-dispatch guard], and acks everything not HELD — ALL IN
+# ONE txn: crash = redeliver AND retract atomically. A skipped-unparseable active
+# row-event flow's (table,event) is HELD: pending, not consumed — version skew
+# degrades to delayed delivery, never silent loss). The runs table IS the cron
+# state: cron_last_run_sql recovers the last tick from the FLOW-EXCLUSIVE
+# max(run_id) (flow_id + trigger_source='cron' — never a lexical id range: flow
+# ids are user text, text order is collation-dependent, a range leaks foreign
+# ids into the anchor); unsatisfiable schedules ERROR + are quarantined per
+# project. Host driver crates/wamn-host/src/dispatch.rs: long-lived
+# `dispatch` subcommand (per-project connections — D3 "reconciliation follows
+# connection ownership", no cross-DB sweep; registry = active flows' graph_json
+# parsed via wamn-flow; cron-aware adaptive sleep; always-on hardening: re-dial on
+# dropped connection, per-sweep deadline, stale-cron-hint clear on failure — a
+# failing project never wedges the loop) + the SAME tick engine driven by
+# dispatchbench with STEPPED time (the 11.1 fast-forwardable-cron discipline: a
+# nightly cron + a 3-day outage gate in ms). dispatchbench modes: cron (exactly-once
+# per tick, restart-no-dup via DB-recovered anchor, misfire collapse, bootstrap-
+# from-sight, enqueue-trap co-txn atomicity) / outbox (fire per flow×row, payload
+# verbatim, unmatched consumed, skew HELD, junk/webhook rows never wedge, redelivery
+# dedupes WITHOUT ghost resurrection, ack-trap + fire-trap co-txn atomicity BOTH
+# ways) / race (TWO live dispatchers ticking concurrently: won-inserts == distinct
+# runs AND contention proven — losing attempts counted, both replicas must win) /
+# fairness (2 projects: a 120-row backlog is batch-bounded OLDEST-FIRST + doesn't
+# starve the quiet project's first sweep; intervals adapt independently) / wake
+# (parked run hinted only once due; a firing's hint carries the WON run id, only
+# after commit) / live (the real run loop: sub-500ms fire BESIDE a permanently
+# failing project, reconnect after backend kill, cron-aware sleep under a fixed 5s
+# interval). All four gate-killing mutants verified: observed-now tick id, ack-first
+# split txn, unconditional enqueue, cron-blind sleep each FAIL the gate. Guest
+# UNCHANGED (flowbench/testhostbench regress by non-change). docs/run-queue.md §
+# Trigger dispatcher.
+cargo test -p wamn-run-queue   # incl cron calendar edges + outbox/adaptive decisions
+cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --check
+# optional live-apply gate (run-state.sql + run-queue.sql now incl the outbox; real
+# builders via PREPARE/EXECUTE: RLS-scoped poll, co-txn fire+ack, CRASH-ROLLBACK
+# atomicity + redelivery dedupe, cron last-tick recovery, wake scan; skips when unset):
+docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-queue
+# dispatchbench GATE (pure host-side, NO wasm guest; provisions TWO ephemeral project
+# schemas via the SUPERUSER url — reuse the throwaway PG above [wamn_app created by
+# the live-apply gate] + a throwaway NATS for the wake/live doorbell hints):
+docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
+  ./target/release/wamn-host --log-level error dispatchbench \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn \
+  --nats-url nats://127.0.0.1:4232 --mode all
+docker stop wamn-rq-pg wamn-rq-nats
+# The production service is `wamn-host dispatch --projects-file <json>` (one entry
+# per project: {"name": {"url", "tenant", "schema"}}) or --database-url/--tenant/
+# --schema for one project; a deploy manifest lands with hosting/2.x once real
+# project DBs are provisioned. In-cluster gate of record (co-located with postgres,
+# NO cpu limit — S2 CFS lesson; nats via the operator chart's mTLS cert mount). A
+# HOST change => full docker rebuild (docker build -t wamn-host:dev . && kind load
+# docker-image wamn-host:dev --name wamn):
+kubectl -n wamn-system apply -f deploy/dispatchbench-job.yaml
+kubectl -n wamn-system logs -f job/dispatchbench
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

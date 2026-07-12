@@ -30,14 +30,17 @@
 //! ```
 //!
 //! ## Scope (5.14) vs siblings
-//! Owns: the `run_queue` table + DDL (`deploy/run-queue.sql`), the `SKIP LOCKED`
-//! claim + batch claims, the D15 write-ahead / reduced-audit fast path, run-claim
-//! leases + reclaim, the janitor (orphan → `infrastructure-failure`), the
-//! reconciliation cadence, and **per-partition ownership** — the `partition_owner`
-//! lease + head-first claim ([`partition`]) that dispatches `partitioned(key)` runs
-//! in order per key across replicas. The **walking skeleton** deferred these to
-//! follow-ups; per-partition ownership is now delivered, leaving
-//! checkpoint/resume-on-replica-loss and the shared cron + outbox trigger dispatcher.
+//! Owns: the `run_queue` + `outbox` tables + DDL (`deploy/run-queue.sql`), the
+//! `SKIP LOCKED` claim + batch claims, the D15 write-ahead / reduced-audit fast
+//! path, run-claim leases + reclaim, the janitor (orphan →
+//! `infrastructure-failure`), the reconciliation cadence, **per-partition
+//! ownership** — the `partition_owner` lease + head-first claim ([`partition`])
+//! that dispatches `partitioned(key)` runs in order per key across replicas —
+//! and the **trigger dispatcher decisions** ([`cron`] / [`outbox`] /
+//! [`dispatch`]): cron due-tick evaluation over injected time, outbox
+//! matching, deterministic trigger run ids, and the adaptive per-project poll
+//! cadence. The **walking skeleton** deferred these to follow-ups; all are now
+//! delivered except the guest-self-claim rewire (fqg.4).
 //! Does **not** own: the engine walk / retry / reconstruction (5.2 + 5.7 — the
 //! claimed run drives them); the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
 //! and reuses the reserved `dispatched`/`infrastructure-failure` statuses via
@@ -46,23 +49,31 @@
 //! store (5.10).
 
 mod claim;
+mod cron;
+mod dispatch;
 mod janitor;
 mod lease;
 mod model;
+mod outbox;
 mod partition;
 mod reconcile;
 mod sql;
 
 pub use claim::{ClaimPlan, ClaimState, Claimed, claim_state, is_claimable, plan_claim};
+pub use cron::{CronError, cron_firing, cron_tick_of, due_tick, mint_cron_run_id, next_fire};
+pub use dispatch::{DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, Firing, next_interval};
 pub use janitor::{JanitorVerdict, janitor_verdict, orphans};
 pub use lease::{lease_deadline, lease_live, should_renew};
 pub use model::{Millis, PartitionOwner, QueueEntry};
+pub use outbox::{OutboxRow, RowEventFlow, match_outbox, mint_outbox_run_id, plan_ack};
 pub use partition::{partition_lease_live, plan_acquire, plan_partition_claim};
 pub use reconcile::{next_reconcile, reconcile_due};
 pub use sql::{
-    acquire_partitions_sql, claim_batch_sql, claim_partition_head_sql, dequeue_sql, enqueue_sql,
-    gc_orphan_partitions_sql, janitor_sweep_sql, mark_running_sql, park_sql, release_partition_sql,
-    renew_lease_sql, renew_partition_sql, write_ahead_run_sql,
+    acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_partition_head_sql,
+    cron_last_run_sql, dequeue_sql, enqueue_sql, gc_orphan_partitions_sql, janitor_sweep_sql,
+    mark_running_sql, outbox_ack_sql, outbox_insert_sql, outbox_poll_sql, park_sql, parked_due_sql,
+    release_partition_sql, renew_lease_sql, renew_partition_sql, write_ahead_run_sql,
+    write_ahead_triggered_run_sql,
 };
 
 // The queue drives the 5.7 run lifecycle rather than redefining it: the

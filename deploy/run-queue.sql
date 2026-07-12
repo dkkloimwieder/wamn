@@ -21,7 +21,9 @@
 --
 -- SCOPE: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
 -- reconciliation, plus PER-PARTITION OWNERSHIP (the `partition_owner` lease table
--- below) so `partitioned(key)` runs dispatch in-order per key across replicas.
+-- below) so `partitioned(key)` runs dispatch in-order per key across replicas,
+-- plus the trigger dispatcher's OUTBOX (the `outbox` table below — D4: row
+-- events are outbox rows polled by the dispatcher; LISTEN/NOTIFY removed).
 -- Unpartitioned runs (`partition_key IS NULL`) claim globally in `available_at`
 -- order; a run with a `partition_key` is dispatched only through the partition
 -- path (crates/wamn-run-queue `acquire_partitions_sql` + `claim_partition_head_sql`).
@@ -90,3 +92,46 @@ CREATE POLICY partition_owner_tenant ON wamn_run.partition_owner
     USING (tenant_id = current_setting('app.tenant', true))
     WITH CHECK (tenant_id = current_setting('app.tenant', true));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.partition_owner TO wamn_app;
+
+-- ---------------------------------------------------------------------------
+-- outbox: one row per durable row event (D4). A PRODUCER inserts the event row
+-- in ITS OWN transaction — "outbox insert and enqueue can share a transaction
+-- with user writes" (5.14) — so an event is durable iff the write it announces
+-- is; in production the 3.2-emitted per-table trigger or the application write
+-- path does the insert (crates/wamn-run-queue `outbox_insert_sql`). The trigger
+-- DISPATCHER polls pending rows oldest-first with FOR UPDATE SKIP LOCKED
+-- (`outbox_poll_sql`), fires one run per (matching row-event flow x row) via the
+-- write-ahead + enqueue co-transaction, and acks (`outbox_ack_sql`,
+-- dispatched_at) IN THAT SAME transaction: a crash before commit redelivers the
+-- batch and retracts its enqueues atomically, and the deterministic run ids
+-- ({flow}:outbox:{seq}) collapse the redelivery to no-ops. A row no flow is
+-- registered on is acked as consumed-with-no-op (an unmatched backlog must not
+-- pin the oldest-first poll window) — EXCEPT rows whose (table_name, event)
+-- belongs to an ACTIVE flow the dispatcher could not parse/validate (a version
+-- skew): those are HELD pending, so a skipped flow degrades to delayed
+-- delivery, never silent event loss. `seq` is the identity and the poll's
+-- oldest-first order; it is NOT a cross-replica dispatch-order guarantee
+-- (SKIP LOCKED batches commit independently and outbox runs enqueue
+-- unpartitioned — per-key ordering is the 5.11 `partition_key` seam). Acked
+-- rows are audit history (retention/pruning is an operational concern, not
+-- dispatch logic).
+-- ---------------------------------------------------------------------------
+CREATE TABLE wamn_run.outbox (
+    tenant_id     text NOT NULL,
+    seq           bigint GENERATED ALWAYS AS IDENTITY,
+    table_name    text NOT NULL,
+    event         text NOT NULL CHECK (event IN ('insert', 'update', 'delete')),
+    payload       jsonb,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    dispatched_at timestamptz,
+    PRIMARY KEY (tenant_id, seq)
+);
+-- The poll scan: pending rows only, oldest-first.
+CREATE INDEX outbox_pending ON wamn_run.outbox (tenant_id, seq)
+    WHERE dispatched_at IS NULL;
+ALTER TABLE wamn_run.outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.outbox FORCE ROW LEVEL SECURITY;
+CREATE POLICY outbox_tenant ON wamn_run.outbox
+    USING (tenant_id = current_setting('app.tenant', true))
+    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.outbox TO wamn_app;

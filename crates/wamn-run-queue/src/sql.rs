@@ -149,6 +149,112 @@ pub fn janitor_sweep_sql() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Trigger dispatcher (5.14): the always-on control-plane loop that fires cron
+// ticks and outbox row events into the queue and wakes parked runners. Each
+// firing is the same write-ahead + enqueue co-transaction as above, with the
+// trigger payload persisted (`write_ahead_triggered_run_sql`); the outbox is
+// polled (D4 — LISTEN/NOTIFY removed entirely) and acked in that SAME
+// transaction. See `crate::cron` / `crate::outbox` / `crate::dispatch`.
+// ---------------------------------------------------------------------------
+
+/// The dispatcher's write-ahead run row: [`write_ahead_run_sql`] plus the trigger
+/// payload — `input_json` (what a replay re-runs, 5.7) and the audit
+/// `trigger_source`. Params: `$1` run_id, `$2` flow_id, `$3` flow_version,
+/// `$4` trigger_source, `$5` input_json as JSON **text** (`$5::text::jsonb` —
+/// a bare `::jsonb` would type the param as jsonb, which the driver cannot bind
+/// a string into). Idempotent on redelivery: trigger run ids are deterministic
+/// (one per cron tick / outbox row), so a re-fired tick from a restarted or
+/// racing dispatcher is a no-op.
+pub fn write_ahead_triggered_run_sql() -> String {
+    format!(
+        "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status, trigger_source, input_json) \
+         VALUES (current_setting('app.tenant', true), $1, $2, $3, '{dispatched}', $4, $5::text::jsonb) \
+         ON CONFLICT (tenant_id, run_id) DO NOTHING",
+        dispatched = RunStatus::Dispatched.as_sql()
+    )
+}
+
+/// The dispatcher's trigger-registry scan: every active flow's graph JSON. The
+/// trigger lives INSIDE `graph_json` (wamn-flow `Flow.trigger`) — there is no
+/// trigger column — so the driver parses each flow and registers the `cron` /
+/// `row-event` ones (webhook is the gateway's, manual the editor's).
+/// Tenant-scoped purely by RLS, like the claims.
+pub fn active_flows_sql() -> String {
+    "SELECT flow_id, version, graph_json::text AS graph_json FROM flows WHERE active".to_string()
+}
+
+/// Poll the pending outbox batch, oldest-first. `FOR UPDATE SKIP LOCKED` gives
+/// two dispatcher replicas polling concurrently disjoint batches: each row stays
+/// locked until its poll transaction (fire + ack) commits, and a crashed
+/// poller's rows unlock and redeliver. `limit` is a numeric literal.
+pub fn outbox_poll_sql(limit: usize) -> String {
+    format!(
+        "SELECT seq, table_name, event, payload::text AS payload FROM outbox \
+          WHERE dispatched_at IS NULL \
+          ORDER BY seq \
+          FOR UPDATE SKIP LOCKED \
+          LIMIT {limit}"
+    )
+}
+
+/// Ack a polled outbox batch — CO-TRANSACTED with the write-ahead + enqueue of
+/// its firings (one durability domain, D3/D4): a crash before the commit
+/// redelivers the rows AND retracts their enqueues atomically, so there is no
+/// half-state to reconcile. Param: `$1` seq array (`bigint[]`).
+pub fn outbox_ack_sql() -> String {
+    "UPDATE outbox SET dispatched_at = now() \
+      WHERE tenant_id = current_setting('app.tenant', true) AND seq = ANY($1)"
+        .to_string()
+}
+
+/// The PRODUCER's outbox insert — runs in the producer's own transaction (D4:
+/// "outbox insert and enqueue can share a transaction with user writes"), so an
+/// event is durable iff the write it announces is. In production the 3.2-emitted
+/// per-table trigger or the application write path issues this; the gates issue
+/// it directly. Params: `$1` table_name, `$2` event (insert|update|delete),
+/// `$3` payload (JSON text, nullable).
+pub fn outbox_insert_sql() -> String {
+    "INSERT INTO outbox (tenant_id, table_name, event, payload) \
+     VALUES (current_setting('app.tenant', true), $1, $2, $3::text::jsonb)"
+        .to_string()
+}
+
+/// Recover a flow's last fired cron tick: the max run id among `$1`'s own
+/// cron-sourced runs. The predicate is FLOW-EXCLUSIVE (`flow_id` +
+/// `trigger_source = 'cron'`), never a lexical run-id range — flow ids are
+/// unconstrained user text and `text` ordering is collation-dependent, so a
+/// range scan can leak a *foreign* flow's ids into the max (a wrong anchor =
+/// silently lost ticks). Within one flow's cron ids the minted ticks are
+/// equal-length zero-padded digits ([`crate::mint_cron_run_id`]), so
+/// `max(run_id)` IS the latest tick under any collation. The `runs` table is
+/// the dispatcher's only cron state: restarted or concurrently racing
+/// dispatchers recover the same anchor by construction.
+pub fn cron_last_run_sql() -> String {
+    "SELECT max(run_id) FROM runs \
+      WHERE tenant_id = current_setting('app.tenant', true) \
+        AND flow_id = $1 AND trigger_source = 'cron'"
+        .to_string()
+}
+
+/// The wake / reconciliation scan: every currently-due, unleased (or
+/// lease-expired), budget-remaining queue row — a parked run whose
+/// `available_at` arrived, or a run whose enqueue-time doorbell hint was lost.
+/// The dispatcher publishes a doorbell hint per row; a duplicate hint is
+/// harmless (fire-and-forget — the claim is the arbiter), which is what lets one
+/// read-only scan double as both the parked-wake and the lost-hint
+/// reconciliation backstop. `limit` is a numeric literal.
+pub fn parked_due_sql(limit: usize) -> String {
+    format!(
+        "SELECT run_id FROM run_queue \
+          WHERE available_at <= now() + interval '250 milliseconds' \
+            AND (lease_expires_at IS NULL OR lease_expires_at <= now()) \
+            AND attempts < max_attempts \
+          ORDER BY available_at, run_id \
+          LIMIT {limit}"
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Per-partition ownership (5.14 scaling): `partitioned(key)` runs dispatch
 // in-order per key across replicas. A replica leases a partition (a
 // `partition_owner` row) and then claims that partition's runs head-first, one in
