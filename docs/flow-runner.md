@@ -111,13 +111,13 @@ exactly on `step_seq`.
 
 | Concern | Owner |
 |---|---|
-| The `node-error` taxonomy + SDK | 5.4 (mirrored here as `NodeError`) |
+| The `node-error` taxonomy + SDK | `wamn-node-sdk` (5.3, ahead of the 5.4 WIT freeze; re-exported here as `NodeError`) |
 | Durable `runs`/`node_runs` schema, at-least-once, branch-aware replay | 5.7 |
 | Per-node ordering (`strict`/`partitioned`/`unordered`) | 5.11 |
 | The `cancel(run, reason)` operation + its two enforcement layers | 5.12 |
 | The durable run queue (`FOR UPDATE SKIP LOCKED`) + NATS doorbell + dispatcher | 5.14 |
 | Payload store & byte quotas | 5.10 |
-| The standard node *contents* (incl. the Postgres/raw-SQL node, D8) | 5.3 |
+| The standard node *contents* (incl. the Postgres/raw-SQL node, D8) | 5.3 — SHIPPED: `wamn-nodes` (docs/node-library.md) |
 | The custom-node HTTP transport | 5.6 |
 
 The doorbell here is the consumer side only (recompile the `Plan` on a new active

@@ -1,0 +1,13 @@
+[package]
+name = "wamn-node-sdk"
+description = "wamn node authoring contract (5.3, ahead of the 5.4 WIT freeze): the Node trait, the run-context view, the capability facade every node effect flows through, and the wamn:node error taxonomy. Standard AND custom nodes are authored against this crate ONLY — never the runner — so frozen-flow componentization (5.13) stays mechanical."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Payloads, node config, and error data are JSON. Nothing else: the SDK is the
+# leaf of the node dependency graph (wamn-runner depends on it, not vice versa),
+# and it must stay light enough that a no-import transform node built against it
+# carries no platform baggage (5.13).
+serde_json = "1"

@@ -714,3 +714,15 @@ fn seed_at_unknown_node_is_rejected() {
     let err = plan.seed_at("r", "nope", json!({})).unwrap_err();
     assert_eq!(err, UnknownNode("nope".into()));
 }
+
+// ---------------------------------------------------------------------------
+// SDK contract drift-guards (5.3)
+// ---------------------------------------------------------------------------
+
+/// The SDK defines its own port constants (it must not depend on the flow
+/// schema crate); this pins them to the engine's `wamn_flow` values.
+#[test]
+fn sdk_port_constants_mirror_the_flow_schema() {
+    assert_eq!(wamn_node_sdk::MAIN_PORT, wamn_runner::MAIN_PORT);
+    assert_eq!(wamn_node_sdk::ERROR_PORT, wamn_runner::ERROR_PORT);
+}

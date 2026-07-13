@@ -15,6 +15,13 @@ wamn-runner = { path = "../../crates/wamn-runner" }
 # Durable run state (5.7): the runs/node_runs model + branch-aware reconstruction
 # this component persists into and resumes from (replacing the S3 step_seq).
 wamn-run-store = { path = "../../crates/wamn-run-store" }
+# The standard node library (5.3) + the SDK capability facade this component
+# implements over its real imports (wamn:postgres, wasi:http). The library is
+# pure — node behavior, taxonomy classification, and the dispatch-time
+# capability policy all live (and are tested) in the crates; this shell only
+# mirrors WIT values and performs the effects.
+wamn-node-sdk = { path = "../../crates/wamn-node-sdk" }
+wamn-nodes = { path = "../../crates/wamn-nodes" }
 
 [lib]
 crate-type = ["cdylib"]

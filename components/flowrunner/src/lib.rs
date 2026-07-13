@@ -1,9 +1,12 @@
 //! Production flow-runner (5.2), grown from the S3 spike and the S6 test-host
 //! spike. The runner is a long-lived component that embeds the standard node
-//! library as NATIVE Rust and walks the flow graph with the pure `wamn-runner`
-//! engine (5.2): the ported-edge walk, branch/merge, error routing, and
-//! retry/backoff live in the crate; this component supplies the effects —
-//! dispatching each node, the `wamn:postgres` checkpoints, the reload doorbell.
+//! library as NATIVE Rust — since 5.3 the `wamn-nodes` vocabulary, dispatched
+//! through the SDK capability facade under the policy table
+//! (docs/node-library.md), beside the S3/S6 fixture node shapes — and walks
+//! the flow graph with the pure `wamn-runner` engine (5.2): the ported-edge
+//! walk, branch/merge, error routing, and retry/backoff live in the crate;
+//! this component supplies the effects — dispatching each node, the
+//! `wamn:postgres` checkpoints, the reload doorbell.
 //!
 //! Flows are the canonical `wamn-flow` schema (5.1), read from the catalog; the
 //! ad-hoc S3 JSON is gone. Everything durable — the flow definition, run-state
@@ -46,17 +49,23 @@ wit_bindgen::generate!({
 
 use std::time::Instant;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use wamn_flow::Flow;
+use wamn_node_sdk as sdk;
+use wamn_node_sdk::NodeCtx;
 use wamn_run_store::{NodeRunRecord, RunRecord};
-use wamn_runner::{Dispatch, NodeOutcome, Plan, RunStatus, Step};
+use wamn_runner::{
+    Dispatch, ERROR_PORT, NodeError, NodeOutcome, Plan, RetryPolicy, RunStatus, Step,
+};
 
 use wamn::postgres::client::{self};
 use wamn::postgres::types::{PgError, SqlValue};
 
 use wasi::clocks::wall_clock;
 use wasi::http::outgoing_handler;
-use wasi::http::types::{Fields, Method, OutgoingRequest, Scheme};
+use wasi::http::types::{
+    ErrorCode, Fields, IncomingResponse, Method, OutgoingBody, OutgoingRequest, Scheme,
+};
 
 struct Component;
 export!(Component);
@@ -384,6 +393,332 @@ fn http_get(url: &str) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// Standard node library glue (5.3): the wamn-nodes vocabulary dispatched
+// through the SDK capability facade over this component's real imports. Node
+// behavior, taxonomy classification, and the capability policy table are all
+// in the PURE crates (tested there); this glue is 1:1 WIT-value mirrors plus
+// the two effects (wamn:postgres, wasi:http).
+// ---------------------------------------------------------------------------
+
+/// The runner's capability facade. The D8 raw-SQL flag is hard OFF here —
+/// per-project enablement wiring lands with the user-SQL role split
+/// (wamn-1nd), so a `postgres-query` dispatch dies with `capability-denied`
+/// before touching the database.
+struct GuestCtx;
+
+impl sdk::NodeCtx for GuestCtx {
+    fn http(&mut self, req: &sdk::HttpRequest) -> Result<sdk::HttpResponse, sdk::HttpCapError> {
+        http_request_full(req)
+    }
+
+    fn pg_query(
+        &mut self,
+        sql: &str,
+        params: &[sdk::PgValue],
+    ) -> Result<sdk::PgRows, sdk::PgCapError> {
+        let params: Vec<SqlValue> = params.iter().map(sdk_to_wit).collect();
+        let rs = client::query(sql, &params).map_err(wit_err_to_sdk)?;
+        Ok(sdk::PgRows {
+            columns: rs.columns.iter().map(|c| c.name.clone()).collect(),
+            rows: rs
+                .rows
+                .iter()
+                .map(|r| r.iter().map(wit_to_sdk).collect())
+                .collect(),
+        })
+    }
+
+    fn pg_execute(&mut self, sql: &str, params: &[sdk::PgValue]) -> Result<u64, sdk::PgCapError> {
+        let params: Vec<SqlValue> = params.iter().map(sdk_to_wit).collect();
+        client::execute(sql, &params).map_err(wit_err_to_sdk)
+    }
+
+    fn catalog_json(&mut self) -> Result<String, sdk::PgCapError> {
+        // The published project snapshot the api-gateway also reads (4.1b);
+        // unqualified, resolved through the host-injected search_path.
+        let rs = client::query("SELECT document::text FROM wamn_catalog LIMIT 1", &[])
+            .map_err(wit_err_to_sdk)?;
+        match rs.rows.first().and_then(|r| r.first()) {
+            Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => Ok(s.clone()),
+            _ => Err(sdk::PgCapError::QueryError {
+                code: String::new(),
+                message: "no catalog snapshot published for this project".into(),
+            }),
+        }
+    }
+
+    fn raw_sql_enabled(&self) -> bool {
+        false
+    }
+}
+
+/// SDK value → binding value (both are 1:1 mirrors of the WIT `sql-value`).
+fn sdk_to_wit(v: &sdk::PgValue) -> SqlValue {
+    match v {
+        sdk::PgValue::Null => SqlValue::Null,
+        sdk::PgValue::Bool(b) => SqlValue::Boolean(*b),
+        sdk::PgValue::Int32(n) => SqlValue::Int32(*n),
+        sdk::PgValue::Int64(n) => SqlValue::Int64(*n),
+        sdk::PgValue::Float64(f) => SqlValue::Float64(*f),
+        sdk::PgValue::Text(s) => SqlValue::Text(s.clone()),
+        sdk::PgValue::Bytes(b) => SqlValue::Bytes(b.clone()),
+        sdk::PgValue::Numeric(s) => SqlValue::Numeric(s.clone()),
+        sdk::PgValue::Timestamptz(s) => SqlValue::Timestamptz(s.clone()),
+        sdk::PgValue::Json(s) => SqlValue::Json(s.clone()),
+        sdk::PgValue::Uuid(s) => SqlValue::Uuid(s.clone()),
+    }
+}
+
+/// Binding value → SDK value.
+fn wit_to_sdk(v: &SqlValue) -> sdk::PgValue {
+    match v {
+        SqlValue::Null => sdk::PgValue::Null,
+        SqlValue::Boolean(b) => sdk::PgValue::Bool(*b),
+        SqlValue::Int32(n) => sdk::PgValue::Int32(*n),
+        SqlValue::Int64(n) => sdk::PgValue::Int64(*n),
+        SqlValue::Float64(f) => sdk::PgValue::Float64(*f),
+        SqlValue::Text(s) => sdk::PgValue::Text(s.clone()),
+        SqlValue::Bytes(b) => sdk::PgValue::Bytes(b.clone()),
+        SqlValue::Numeric(s) => sdk::PgValue::Numeric(s.clone()),
+        SqlValue::Timestamptz(s) => sdk::PgValue::Timestamptz(s.clone()),
+        SqlValue::Json(s) => sdk::PgValue::Json(s.clone()),
+        SqlValue::Uuid(s) => sdk::PgValue::Uuid(s.clone()),
+    }
+}
+
+/// Binding pg-error → SDK capability error (1:1; the node classifies).
+fn wit_err_to_sdk(e: PgError) -> sdk::PgCapError {
+    match e {
+        PgError::SerializationFailure => sdk::PgCapError::SerializationFailure,
+        PgError::ConnectionUnavailable => sdk::PgCapError::ConnectionUnavailable,
+        PgError::StatementTimeout => sdk::PgCapError::StatementTimeout,
+        PgError::RowLimitExceeded(n) => sdk::PgCapError::RowLimitExceeded(n),
+        PgError::UniqueViolation(c) => sdk::PgCapError::UniqueViolation(c),
+        PgError::ForeignKeyViolation(c) => sdk::PgCapError::ForeignKeyViolation(c),
+        PgError::CheckViolation(c) => sdk::PgCapError::CheckViolation(c),
+        PgError::PermissionDenied => sdk::PgCapError::PermissionDenied,
+        PgError::QueryError((code, message)) => sdk::PgCapError::QueryError { code, message },
+    }
+}
+
+/// Full outbound request for the standard `http-request` node (the fixture
+/// `http-call` keeps its own minimal GET above): method, headers, body,
+/// https — and the response body drained completely. Egress still leaves the
+/// flow ONLY via `wasi:http`, so the S6 egress spy interposes here too.
+fn http_request_full(req: &sdk::HttpRequest) -> Result<sdk::HttpResponse, sdk::HttpCapError> {
+    let (scheme, authority, path) = parse_url_any(&req.url)
+        .ok_or_else(|| sdk::HttpCapError::BadRequest(format!("unparseable url {:?}", req.url)))?;
+    let fields = Fields::new();
+    for (k, v) in &req.headers {
+        fields
+            .append(k, &v.clone().into_bytes())
+            .map_err(|e| sdk::HttpCapError::BadRequest(format!("header {k:?}: {e:?}")))?;
+    }
+    let out = OutgoingRequest::new(fields);
+    if out.set_method(&wasi_method(&req.method)).is_err()
+        || out.set_scheme(Some(&scheme)).is_err()
+        || out.set_authority(Some(&authority)).is_err()
+        || out.set_path_with_query(Some(&path)).is_err()
+    {
+        return Err(sdk::HttpCapError::BadRequest(
+            "request fields rejected".into(),
+        ));
+    }
+    let body = out
+        .body()
+        .map_err(|_| sdk::HttpCapError::BadRequest("body unavailable".into()))?;
+    if let Some(bytes) = &req.body {
+        let stream = body
+            .write()
+            .map_err(|_| sdk::HttpCapError::BadRequest("body stream unavailable".into()))?;
+        // blocking_write_and_flush accepts at most 4096 bytes per call.
+        for chunk in bytes.chunks(4096) {
+            if stream.blocking_write_and_flush(chunk).is_err() {
+                return Err(sdk::HttpCapError::Transport(
+                    "request body write failed".into(),
+                ));
+            }
+        }
+    }
+    if OutgoingBody::finish(body, None).is_err() {
+        return Err(sdk::HttpCapError::Transport(
+            "request body finish failed".into(),
+        ));
+    }
+    let fut = match outgoing_handler::handle(out, None) {
+        Ok(f) => f,
+        Err(code) => return Err(handle_err(code)), // host refused before dispatch
+    };
+    let pollable = fut.subscribe();
+    pollable.block();
+    match fut.get() {
+        Some(Ok(Ok(resp))) => {
+            let status = resp.status();
+            let headers = resp
+                .headers()
+                .entries()
+                .into_iter()
+                .map(|(k, v)| (k, String::from_utf8_lossy(&v).into_owned()))
+                .collect();
+            let body = read_incoming_body(resp)?;
+            Ok(sdk::HttpResponse {
+                status,
+                headers,
+                body,
+            })
+        }
+        Some(Ok(Err(code))) => Err(handle_err(code)),
+        _ => Err(sdk::HttpCapError::Transport("no response".into())),
+    }
+}
+
+/// A `wasi:http` refusal → SDK capability error: an explicit host denial (the
+/// allowedHosts policy / the S6 egress spy) is permanent; anything else is a
+/// transport failure the node classifies as retryable.
+fn handle_err(code: ErrorCode) -> sdk::HttpCapError {
+    match code {
+        ErrorCode::HttpRequestDenied => sdk::HttpCapError::Denied,
+        other => sdk::HttpCapError::Transport(format!("{other:?}")),
+    }
+}
+
+fn read_incoming_body(resp: IncomingResponse) -> Result<Vec<u8>, sdk::HttpCapError> {
+    let body = resp
+        .consume()
+        .map_err(|_| sdk::HttpCapError::Transport("body already consumed".into()))?;
+    let stream = body
+        .stream()
+        .map_err(|_| sdk::HttpCapError::Transport("body stream unavailable".into()))?;
+    let mut out = Vec::new();
+    loop {
+        match stream.blocking_read(64 * 1024) {
+            Ok(chunk) => out.extend_from_slice(&chunk),
+            Err(wasi::io::streams::StreamError::Closed) => break,
+            Err(e) => {
+                return Err(sdk::HttpCapError::Transport(format!("body read: {e:?}")));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn parse_url_any(url: &str) -> Option<(Scheme, String, String)> {
+    let (scheme, rest) = if let Some(r) = url.strip_prefix("http://") {
+        (Scheme::Http, r)
+    } else {
+        (Scheme::Https, url.strip_prefix("https://")?)
+    };
+    let split = rest.find(['/', '?']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(split);
+    if authority.is_empty() {
+        return None;
+    }
+    let path = if tail.is_empty() {
+        "/".to_string()
+    } else if tail.starts_with('?') {
+        format!("/{tail}")
+    } else {
+        tail.to_string()
+    };
+    Some((scheme, authority.to_string(), path))
+}
+
+fn wasi_method(m: &str) -> Method {
+    match m {
+        "GET" => Method::Get,
+        "HEAD" => Method::Head,
+        "POST" => Method::Post,
+        "PUT" => Method::Put,
+        "DELETE" => Method::Delete,
+        "CONNECT" => Method::Connect,
+        "OPTIONS" => Method::Options,
+        "TRACE" => Method::Trace,
+        "PATCH" => Method::Patch,
+        other => Method::Other(other.to_string()),
+    }
+}
+
+/// Whether the engine will ROUTE this error emission down the node's error
+/// edge (vs scheduling a retry, or cancelling the run) — the exact policy
+/// computation `Plan::apply` makes, mirrored so a recorded error row always
+/// matches the walk the engine actually took. Terminal / invalid-input route
+/// immediately; retryable / rate-limited route only once the retry budget is
+/// spent; a cancellation never fires error branches.
+fn will_error_route(err: &NodeError, d: &Dispatch) -> bool {
+    match err {
+        NodeError::Terminal(_) | NodeError::InvalidInput(_) => true,
+        NodeError::Retryable(_) | NodeError::RateLimited(_) => {
+            !RetryPolicy::from_config(&d.config).may_retry(d.attempt)
+        }
+        NodeError::Cancelled => false,
+    }
+}
+
+/// Record an error-ROUTED node as an emission on the `error` port carrying
+/// the same `{"error": {...}}` payload the engine routes — exactly what 5.7
+/// reconstruction replays (webhook-entry's shape verbatim); the taxonomy
+/// lands in `error_kind`/`error_detail` for the run history.
+fn record_error(
+    run_id: &str,
+    node_id: &str,
+    seq: i32,
+    err: &NodeError,
+    input: &Value,
+) -> Result<(), String> {
+    let (kind, detail) = match err {
+        NodeError::Retryable(d) => ("retryable", Some(d)),
+        NodeError::RateLimited(r) => ("rate-limited", Some(&r.detail)),
+        NodeError::Terminal(d) => ("terminal", Some(d)),
+        NodeError::InvalidInput(d) => ("invalid-input", Some(d)),
+        NodeError::Cancelled => ("cancelled", None),
+    };
+    let payload = detail
+        .map(|d| d.to_error_payload())
+        .unwrap_or_else(|| json!({ "error": {} }));
+    let detail_json = match detail {
+        Some(d) => json!({ "message": d.message, "code": d.code, "data": d.data }),
+        None => Value::Null,
+    };
+    client::execute(
+        "INSERT INTO node_runs \
+           (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json, \
+            error_kind, error_detail) \
+         VALUES (current_setting('app.tenant', true), $1, $2, 0, $3, 'error', 'error', $4, $5, $6, $7) \
+         ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING",
+        &[
+            text(run_id),
+            text(node_id),
+            int32(seq),
+            jsonb(&payload),
+            jsonb(input),
+            text(kind),
+            jsonb(&detail_json),
+        ],
+    )
+    .map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Record the run's failure verdict (audit parity with webhook-entry).
+fn mark_failed(run_id: &str, kind: &str, node: &str, reason: &str) -> Result<(), String> {
+    client::execute(
+        "UPDATE runs SET status = 'failed', fail_kind = $2, fail_node = $3, fail_reason = $4 \
+         WHERE run_id = $1",
+        &[text(run_id), text(kind), text(node), text(reason)],
+    )
+    .map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+fn fail_kind_sql(kind: &wamn_runner::FailKind) -> &'static str {
+    match kind {
+        wamn_runner::FailKind::Terminal => "terminal",
+        wamn_runner::FailKind::RetryExhausted => "retry-exhausted",
+        wamn_runner::FailKind::InvalidInput => "invalid-input",
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Executor: drive the wamn-runner engine over the loaded flow
 // ---------------------------------------------------------------------------
 
@@ -418,7 +753,10 @@ fn dispatch_node(
     match d.node_type.as_str() {
         // The trigger payload already sits in the node's input.
         "webhook-in" => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
-        "transform" => {
+        // An `expression` config routes to the standard library's JMESPath
+        // transform/conditional below; the S3 fixture shapes (`op`/`min-len`)
+        // keep their legacy semantics byte-identical.
+        "transform" if d.config.get("expression").is_none() => {
             let op = d
                 .config
                 .get("op")
@@ -432,7 +770,12 @@ fn dispatch_node(
         }
         // Records a branch decision but keeps the fixture's linear main path;
         // true branching is exercised in the wamn-runner / wamn-run-store tests.
-        "conditional" | "respond" => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
+        "conditional" if d.config.get("expression").is_none() => {
+            Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
+        }
+        // Passthrough terminal — identical to the standard library's respond
+        // (this driver has no HTTP response to answer; webhook-entry does).
+        "respond" => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
         "pg-write" => {
             pg_write(run_id, node_index(flow, &d.node), value_str(&d.payload))?;
             if kill_after_write {
@@ -475,6 +818,30 @@ fn dispatch_node(
             let url = d.config.get("url").and_then(|v| v.as_str()).unwrap_or("");
             *http_status = http_get(url);
             Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
+        }
+        // The standard node library (5.3): everything the library ships
+        // dispatches through the capability policy table over this
+        // component's real imports. A NodeError feeds the engine, which
+        // decides retry-vs-error-path-vs-fail mechanically from the variant.
+        t if wamn_nodes::node(t).is_some() => {
+            let run_ctx = sdk::RunContext {
+                run_id,
+                flow_id: &flow.flow_id,
+                flow_version: flow.version,
+                node_id: &d.node,
+                attempt: d.attempt,
+                idempotency_key: &d.idempotency_key,
+                deadline_ms: d.deadline_ms,
+                config: &d.config,
+            };
+            let mut ctx = GuestCtx;
+            let granted = wamn_nodes::granted_for(ctx.raw_sql_enabled());
+            Ok(NodeAction::Emit(
+                match wamn_nodes::dispatch(t, granted, &mut ctx, &run_ctx, &d.payload) {
+                    Ok(em) => NodeOutcome::ok_on(em.payload, em.port),
+                    Err(e) => NodeOutcome::Error(e),
+                },
+            ))
         }
         other => Err(format!("unknown node type: {other}")),
     }
@@ -523,16 +890,45 @@ fn execute(
                     http_status,
                 });
             }
-            Step::Done(status) => return Err(format!("run ended in {status:?}")),
+            Step::Done(status) => {
+                // Audit parity with webhook-entry: the failure verdict lands in
+                // runs.fail_* before the driver reports the error.
+                if let Some(f) = st.failure() {
+                    let _ = mark_failed(run_id, fail_kind_sql(&f.kind), &f.node, &f.detail.message);
+                }
+                return Err(format!("run ended in {status:?}"));
+            }
+            // Cross-invocation retry scheduling belongs to the queue layer
+            // (run_queue.available_at / park_sql — the fqg.4 guest-claim
+            // rewire); this per-invocation driver treats a scheduled retry
+            // wait defensively, like webhook-entry's sync path.
             Step::Wait { node, .. } => return Err(format!("unexpected retry wait at {node}")),
             Step::Dispatch(d) => {
                 match dispatch_node(&d, run_id, &flow, kill_after_write, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
-                        // Record the completed node (after its effect commits) so a
-                        // later invocation reconstructs past it.
-                        if let NodeOutcome::Success { payload, port } = &outcome {
-                            record_node_run(run_id, &d.node, next_seq, port, payload, &d.payload)?;
-                            next_seq += 1;
+                        match &outcome {
+                            // Record the completed node (after its effect
+                            // commits) so a later invocation reconstructs past it.
+                            NodeOutcome::Success { payload, port } => {
+                                record_node_run(
+                                    run_id, &d.node, next_seq, port, payload, &d.payload,
+                                )?;
+                                next_seq += 1;
+                            }
+                            // Record an error row ONLY when the engine will
+                            // ROUTE the emission (an error edge exists AND no
+                            // retry follows): 5.7 reconstruction folds every
+                            // recorded row as a routed emission, so a row for
+                            // a retried or edge-less failure would resume the
+                            // run down a path the live walk never took.
+                            NodeOutcome::Error(err)
+                                if will_error_route(err, &d)
+                                    && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
+                            {
+                                record_error(run_id, &d.node, next_seq, err, &d.payload)?;
+                                next_seq += 1;
+                            }
+                            NodeOutcome::Error(_) => {}
                         }
                         plan.apply(&mut st, &d, outcome, 0);
                     }

@@ -9,6 +9,11 @@ license.workspace = true
 # The engine walks the canonical flow graph (5.1) and relies on its structural
 # validation guarantees (unique node ids, resolved edges, resolved entry).
 wamn-flow = { path = "../wamn-flow" }
+# The wamn:node error taxonomy is DEFINED by the node authoring contract (5.3)
+# and re-exported from `outcome` — one definition shared by the engine, the
+# drivers, and every node crate, with the dependency pointing SDK-ward (node
+# crates never depend on the runner; the 5.13 purity rule).
+wamn-node-sdk = { path = "../wamn-node-sdk" }
 # Payloads and opaque node config are JSON; no schema of its own (this is an
 # engine, not a contract — like wamn-ddl / wamn-api, no schemars).
 serde_json = "1"

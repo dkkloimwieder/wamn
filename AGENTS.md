@@ -284,6 +284,43 @@ cargo clippy -p wamn-runner --all-targets && cargo fmt -p wamn-runner --check
 cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
   && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
 
+# [5.3] standard node library v1 (crates/wamn-node-sdk + crates/wamn-nodes) — the
+# production node vocabulary + the dispatch-time capability policy table.
+# wamn-node-sdk = the node authoring CONTRACT (Node trait, RunContext, the NodeCtx
+# capability facade, and the wamn:node error taxonomy — now DEFINED here and
+# re-exported by wamn-runner; the 5.4 freeze layers the WIT on top). wamn-nodes =
+# the library: transform + conditional (JMESPath — off-the-shelf frozen SPEC, no
+# language of our own; no arithmetic => the no-float rule holds through a
+# transform by construction; numbers ride serde_json::Number exactly, test-pinned),
+# http-request (mechanical status->taxonomy: 429->rate-limited w/ Retry-After +
+# target-host throttle key, 408/5xx->retryable, 4xx->terminal, egress-denial->
+# terminal), postgres entity ops (catalog-derived via the AUDITED 4.1 wamn-api
+# Router — allowlisted identifiers, $n params, server-side tenant; reads the
+# wamn_catalog snapshot), postgres-query (D8 raw SQL: $n-bound params, behind the
+# RawSql capability, DEFAULT OFF — dispatch dies capability-denied naming the
+# flag; enablement gated on wamn-1nd), respond (passthrough + pure status_for).
+# PURITY RULE (5.13) enforced MECHANICALLY: node crates depend on the SDK ONLY,
+# never the runner — tests/purity.rs walks cargo metadata's normal-edge closure +
+# pins the exact direct-dep allowlist. Policy enforced TWICE (grant check before
+# the node runs + a gated ctx that NotGrants undeclared calls). Loops are
+# STRUCTURAL v1 (cycles + conditional; split/merge nodes land with 5.11);
+# email/notify deferred (no email egress capability). components/flowrunner
+# ADOPTS the library (an `expression` config routes transform/conditional to it;
+# fixture shapes stay byte-identical; error rows recorded ONLY when the engine
+# will ROUTE the emission — will_error_route mirrors the exact RetryPolicy
+# computation; retry Wait stays defensive, queue-layer scheduling = fqg.4), so
+# flowbench/testhostbench/f1bench are its regression — all three re-ran PASS
+# in-cluster on the adopted guest (host unchanged => cheap overlay image).
+# Mutants killed: neutered grant check / allow-all gated ctx / pg taxonomy swap /
+# http taxonomy swap / runner-dep purity violation. docs/node-library.md.
+# No JSON-schema (config schemas land with the 5.4 contract freeze).
+cargo test -p wamn-nodes             # nodes + policy negatives + purity lint
+cargo test -p wamn-node-sdk
+cargo test -p wamn-runner            # taxonomy re-export + port drift-guard regression
+cargo clippy -p wamn-node-sdk -p wamn-nodes --all-targets \
+  && cargo fmt -p wamn-node-sdk -p wamn-nodes --check
+# guest adoption regression = the S3/S6/F1 gates above ([5.2]/[POC-F1] blocks)
+
 # [5.7] run-state persistence (crates/wamn-run-store) — durable runs/node_runs +
 # BRANCH-AWARE replay reconstruction + partial re-run. The PURE crate (model +
 # reconstruct + rerun planners; no DB/wasm/clock — the wamn-api/wamn-runner split)
@@ -807,3 +844,4 @@ is the custom host image (embeds `wash_runtime::washlet::ClusterHostBuilder`,
 deployed by the runtime-operator Helm chart with custom image values in
 `deploy/`); `components/` holds wasm32-wasip2 guest fixtures; our wash-runtime
 modifications are carried commits on the fork (`docs/wash-runtime-fork.md`).
+
