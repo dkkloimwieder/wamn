@@ -19,6 +19,7 @@ mod flowbench;
 mod logbench;
 mod nodebench;
 mod pgbench;
+mod provisionbench;
 mod publish_catalog_demo;
 mod queuebench;
 mod testhostbench;
@@ -44,6 +45,8 @@ enum Command {
     Bench(bench::BenchArgs),
     /// Run the S2 wamn:postgres benchmark + security gates
     Pgbench(pgbench::PgBenchArgs),
+    /// Run the 2.3 provisioning gate (per-project DB provisioning / credential resolution / isolation)
+    Provisionbench(provisionbench::ProvisionBenchArgs),
     /// Run the S3 flow-runner gates (dispatch / hot-reload / resume)
     Flowbench(flowbench::FlowBenchArgs),
     /// Run the 5.14 durable-run-queue gates (dispatch SLOs / throughput / reclaim / janitor / doorbell)
@@ -94,6 +97,7 @@ async fn async_main() -> anyhow::Result<()> {
     let result = match cli.command {
         Command::Bench(args) => bench::run(args).await,
         Command::Pgbench(args) => pgbench::run(args).await,
+        Command::Provisionbench(args) => provisionbench::run(args).await,
         Command::Flowbench(args) => flowbench::run(args).await,
         Command::Queuebench(args) => queuebench::run(args).await,
         Command::Failoverbench(args) => failoverbench::run(args).await,

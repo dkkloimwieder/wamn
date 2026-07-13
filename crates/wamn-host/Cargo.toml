@@ -43,6 +43,9 @@ http-body-util = "0.1"
 # for the ephemeral schema the api-gateway component queries.
 wamn-catalog = { path = "../wamn-catalog" }
 wamn-ddl = { path = "../wamn-ddl" }
+# 2.3 provision-project: the pure CREATE DATABASE / role / GRANT CONNECT builders
+# + project-id naming + credential Secret rendering the subcommand drives.
+wamn-provision = { path = "../wamn-provision" }
 # 5.14 queuebench: the pure SKIP LOCKED claim / lease / janitor SQL builders +
 # decision logic the durable-queue gates drive over tokio_postgres.
 wamn-run-queue = { path = "../wamn-run-queue" }

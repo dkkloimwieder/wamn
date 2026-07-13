@@ -4126,6 +4126,7 @@ dependencies = [
  "wamn-flow",
  "wamn-gate-harness",
  "wamn-host",
+ "wamn-provision",
  "wamn-run-queue",
  "wamn-seed",
  "wash-runtime",
@@ -4158,6 +4159,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-ddl",
  "wamn-flow",
+ "wamn-provision",
  "wamn-run-queue",
  "wamn-seed",
  "wash-runtime",
@@ -4199,6 +4201,13 @@ dependencies = [
  "serde_json",
  "wamn-api",
  "wamn-node-sdk",
+]
+
+[[package]]
+name = "wamn-provision"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

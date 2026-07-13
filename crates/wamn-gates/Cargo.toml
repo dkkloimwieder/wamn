@@ -33,6 +33,9 @@ http-body-util = "0.1"
 # ephemeral schemas.
 wamn-catalog = { path = "../wamn-catalog" }
 wamn-ddl = { path = "../wamn-ddl" }
+# provisionbench: the pure provisioning naming / SQL / Secret builders (2.3),
+# driven end-to-end through wamn_host::provision::provision_project.
+wamn-provision = { path = "../wamn-provision" }
 # queuebench/failoverbench/dispatchbench drive the pure queue/cron/outbox
 # builders over tokio_postgres.
 wamn-run-queue = { path = "../wamn-run-queue" }

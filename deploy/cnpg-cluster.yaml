@@ -1,0 +1,39 @@
+# The shared CloudNativePG cluster (D6): ONE Cluster, a database per project
+# (2.3 wamn-host provision-project). Stands up ALONGSIDE the guardrailed
+# deploy/postgres.yaml pod — the legacy S2–S6 gates keep running against that;
+# only the 2.3 provisionbench gate targets this cluster. Pinned operator:
+# deploy/cnpg-operator.yaml (CNPG 1.29.2).
+#
+# Cross-project isolation = per-project database + per-DB CONNECT (PUBLIC
+# revoked) + RLS within, under the single shared NOSUPERUSER `wamn_app` role
+# (roles are cluster-global). See docs/provisioning.md.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: wamn-pg
+  namespace: wamn-system
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  # provision-project connects as the `postgres` superuser to CREATE DATABASE /
+  # CREATE ROLE (the runtime `wamn_app` role is NOSUPERUSER/NOCREATEDB). CNPG
+  # disables the superuser password by default; enable it so the secret
+  # `wamn-pg-superuser` carries a usable admin URI.
+  enableSuperuserAccess: true
+  primaryUpdateStrategy: unsupervised
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    # NO cpu limit — the DB-serving path must not be CFS-throttled (S2 lesson).
+  storage:
+    size: 2Gi
+  postgresql:
+    # Allow non-TLS password connections from the pod network (the whole repo
+    # connects NoTls). Prepended to CNPG's default hostssl rules.
+    pg_hba:
+      - host all all all scram-sha-256
+  bootstrap:
+    initdb:
+      database: app
+      owner: app

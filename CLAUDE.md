@@ -104,6 +104,49 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
 kubectl -n wamn-system apply -f deploy/pgbench-multiproject-job.yaml
 kubectl -n wamn-system logs -f job/pgbench-multiproject
 
+# [2.3] managed Postgres provisioning — per-project database + credential on the
+# shared CloudNativePG cluster (D6). NEW crates/wamn-provision = PURE builders
+# (project-id slug validation + wamn-66x reserved-prefix reject; CREATE DATABASE /
+# ensure wamn_app role [NOSUPERUSER NOCREATEDB] / REVOKE CONNECT FROM PUBLIC + GRANT
+# to wamn_app; connection-URL composer; credential Secret + WAMN_PG_PROJECTS_FILE
+# renderers). NEW `wamn-host provision-project` subcommand (imperative CLI, the
+# publish-catalog precedent) drives them as superuser (idempotent + additive). NEW
+# `wamn-gates provisionbench` gate proves routing/resolution (via the plugin's
+# StaticCredentialProvider fed the emitted projects-file JSON) + database-level
+# isolation + least privilege + Secret layout. Isolation = per-project DATABASE +
+# per-DB CONNECT (PUBLIC revoked) + RLS within, under ONE shared cluster-global
+# wamn_app role. docs/provisioning.md.
+cargo test -p wamn-provision   # naming/slug/reserved-prefix + SQL shape + secret + live-apply
+cargo clippy -p wamn-provision --all-targets && cargo fmt -p wamn-provision --check
+# optional plain-PG live-apply (throwaway postgres:18; SUPERUSER url — CREATE
+# DATABASE/ROLE; asserts wamn_app CONNECT granted + PUBLIC revoked + least priv;
+# skips when unset):
+docker run -d --rm --name wamn-prov-pg -p 5460:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_PROVISION_PG_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn cargo test -p wamn-provision
+# provisionbench GATE (pure host-side tokio_postgres, NO wasm guest; provisions two
+# project databases via the REAL provision-project path). Substrate-agnostic — runs
+# locally against the SAME throwaway postgres:18 (superuser):
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn \
+  ./target/debug/wamn-gates --log-level error provisionbench
+docker stop wamn-prov-pg
+# The production tool is `wamn-host provision-project --project <id>
+# --admin-database-url <superuser> [--emit-secret -|<path>] [--emit-projects-file -]`.
+# In-cluster gate of record (against the shared CNPG cluster = the D6 substrate,
+# stood up ALONGSIDE the guardrailed deploy/postgres.yaml pod). CNPG operator +
+# cluster (pinned CNPG 1.29.2; superuser enabled for provisioning; non-TLS pg_hba;
+# NO cpu limit — S2 CFS lesson):
+kubectl apply --server-side -f deploy/cnpg-operator.yaml
+kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=150s
+kubectl apply -f deploy/cnpg-cluster.yaml
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=1 cluster/wamn-pg --timeout=300s
+# A HOST change => full docker rebuild (both --target stages + kind load BOTH images):
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system apply -f deploy/provisionbench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/provisionbench --timeout=180s
+kubectl -n wamn-system logs job/provisionbench
+
 # S3 gates (dispatch p99, hot-reload, checkpoint/resume idempotency). The
 # dispatch gate is same-binary and needs no DB; hot-reload/resume use the s3.*
 # fixture tables (also in deploy/postgres-init.sql).

@@ -11,7 +11,7 @@
 use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
-use wamn_host::{dispatch, host, publish_catalog};
+use wamn_host::{dispatch, host, provision, publish_catalog};
 
 #[derive(Parser)]
 #[command(name = "wamn-host", version, about)]
@@ -32,6 +32,8 @@ enum Command {
     Dispatch(dispatch::DispatchArgs),
     /// Write a project's catalog snapshot into the wamn_catalog table (4.1b)
     PublishCatalog(publish_catalog::PublishCatalogArgs),
+    /// Provision a per-project Postgres database + credential on the shared cluster (2.3)
+    ProvisionProject(provision::ProvisionProjectArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -52,6 +54,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Host(args) => host::run(*args).await,
         Command::Dispatch(args) => dispatch::run(args).await,
         Command::PublishCatalog(args) => publish_catalog::run(args).await,
+        Command::ProvisionProject(args) => provision::run(args).await,
     };
 
     shutdown_observability();

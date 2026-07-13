@@ -188,8 +188,10 @@ impl StaticCredentialProvider {
 
     /// Parse `{ "<project>": { "url": .., "row_limit"?: .., .. }, .. }`; unset
     /// per-project fields fall back to `base`. Mirrors a mounted projects
-    /// Secret/ConfigMap.
-    fn projects_from_json(
+    /// Secret/ConfigMap. Public so the 2.3 `provisionbench` gate can feed the
+    /// projects-file JSON that `provision-project` emits through the exact parse
+    /// path production uses (`from_env`), proving a provisioned project resolves.
+    pub fn projects_from_json(
         text: &str,
         base: &WamnPostgresConfig,
     ) -> anyhow::Result<HashMap<String, ProjectConfig>> {
