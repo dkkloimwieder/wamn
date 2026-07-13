@@ -132,7 +132,11 @@ out of order:
    releases it (`release_partition_sql`) on a graceful step-down.
 4. **Failover.** If the owner dies its partition lease expires; another replica
    reacquires the whole key (the expired-lease steal above) and continues in order,
-   reclaiming the abandoned in-flight run once its own run lease has expired.
+   reclaiming the abandoned in-flight run once its own run lease has expired. The
+   effective failover latency for a partitioned key is therefore
+   `max(partition-lease TTL, run-lease TTL)`: the successor must wait out the
+   *partition* lease to reacquire the key **and** the abandoned run's lease to
+   reclaim its in-flight run, so tuning only one TTL does not speed failover up.
 5. **GC.** `gc_orphan_partitions_sql` removes an *expired* partition lease whose key
    has drained (no `run_queue` rows left); an expired lease whose key still has runs
    is left for reacquisition, not deleted.
@@ -142,8 +146,14 @@ history, is **not** FK'd to `run_queue` (a `partition_key` is not unique there),
 is garbage-collected when the key drains. It sits on the same tenant floor
 (`FORCE ROW LEVEL SECURITY` on `app.tenant`).
 
-The dispatch key is `(available_at, run_id)` — a delayed / backed-off run parks (a
-later `available_at`) and waits its turn. A run that exhausts its retry budget is
+The dispatch key is `(available_at, run_id)`, but in-order dispatch holds only
+among the runs of a key that are **currently ready**: `claim_partition_head_sql`'s
+no-earlier-ready-sibling predicate ranks only ready siblings, so a parked or
+backed-off earlier run (a future `available_at`) **yields the head** and a
+later-but-ready run of the same key overtakes it, until the earlier one becomes due.
+Strict in-order-under-retry/park — whether an earlier not-yet-due run should *hold*
+the key rather than yield it — is an ordering **policy** deferred to 5.11 (wamn-1d4);
+5.14 ships only the mechanism. A run that exhausts its retry budget is
 retired by the janitor to `infrastructure-failure` and stops holding its partition;
 whether a *terminal* failure should instead **wedge** the key (block later runs until
 an operator intervenes) is an ordering **policy** decision that belongs to 5.11 —
@@ -272,6 +282,15 @@ One sweep of one project:
    (`seq` is the poll's oldest-first order, not a
    cross-replica dispatch-order guarantee — per-key ordering is the 5.11
    `partition_key` seam.)
+
+   > **Renaming a table silently stops its row-event flows.** Matching is by
+   > **table name**: the producer trigger follows a rename and emits the *new*
+   > `table_name`, but a `row-event` flow declares the *old* name and `match_outbox`
+   > compares them for equality — so after a rename, the flow no longer matches and
+   > its now-unmatched rows are **acked (consumed), not held**, so it silently stops
+   > firing until re-pointed at the new name. This is the named 11.8 schema-impact
+   > case (wamn-wvb); until it lands, re-point row-event flows as part of any table
+   > rename.
 4. **Wake / reconciliation.** One read-only scan (`parked_due_sql`) surfaces
    every currently-due, unleased, budget-remaining queue row — a parked `delay`
    wake, or a run whose enqueue-time hint was lost — and hints each on the

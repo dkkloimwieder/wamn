@@ -686,6 +686,13 @@ latencies:
 | Async warm p50 / p99 | < 25 ms / < 100 ms | doorbell + INSERT + dispatch, all sub-ms | ≫ |
 | Async cold (parked wake) p99 | < 250 ms | wake + resume replay (S3/S6 mechanism) | ≫ |
 
+Since P0, the 5.14 `queuebench` in-cluster gate of record has **measured** the
+dispatch path directly, and the numbers clear the proposed SLOs with wide margin:
+sync write-ahead **p99 1.11 ms** (vs < 15 ms proposed), reduced-audit fast-path
+**361 µs** (vs < 10 ms), and the async warm doorbell **300 / 300 delivered** at
+**p50 < 25 ms / p99 < 100 ms**. This records the data that makes the flag
+signable; it does not itself sign off.
+
 D15 stays **Locked; SLO numbers proposed** — the sanity-check is recorded here;
 the formal product sign-off remains a separate call and is deliberately left
 pending.

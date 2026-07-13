@@ -228,6 +228,15 @@ EXISTS`, so a drifted source skips the move and a colliding claim fails loudly
 at apply rather than silently — the pkey-follows-rename rule keeps names
 canonical so drift no longer accumulates.
 
+The whole plan — the name-freeing preamble and the additive-first tail — applies
+in **one transaction** (2.5). This is load-bearing for the preamble: a mid-plan
+failure rolls the aside renames back too, so there is never orphaned
+`wamn_mig_drop_*` residue and the preamble needs no separate compensation path.
+Its known expiry is `CREATE INDEX CONCURRENTLY`, which **cannot run inside a
+transaction block**: the first non-transactional migration step will need a
+residue janitor plus an apply journal to recover a half-applied plan. Recorded as
+a forward note on the migration engine (wamn-d8u, 2.5).
+
 ## Outbox row-event triggers (5.14 / D4 producers)
 
 `Migration::outbox_triggers(&catalog, &OutboxOptions { schema })` emits the
@@ -282,6 +291,17 @@ Shape and invariants:
   gain their trigger, a renamed table keeps exactly one (the trigger follows
   the rename and re-apply replaces it instead of stacking a second), and
   `DROP TABLE` takes its trigger with it.
+  - *Rename-safety is about the trigger **plumbing**, not flow **matching**.*
+    The trigger follows the rename and emits the **new** `TG_TABLE_NAME`
+    ([`crates/wamn-ddl/src/outbox.rs`](../crates/wamn-ddl/src/outbox.rs)), but a
+    registered `row-event` flow still declares the **old** table name, and the
+    dispatcher matches by name equality
+    ([`crates/wamn-run-queue/src/outbox.rs`](../crates/wamn-run-queue/src/outbox.rs)
+    `match_outbox`) and **acks an unmatched row rather than holding it** — so
+    renaming a table under active row-event flows silently stops them firing
+    until they are re-pointed at the new name. This is the named 11.8
+    schema-impact case (wamn-wvb); it is also flagged beside the matching logic
+    in `docs/run-queue.md`.
 - **Classification**: all additive. The opt-out plan
   (`Migration::drop_outbox_triggers`) is destructive — no data is lost, but
   row-event flows on these tables silently stop firing — so it is gated

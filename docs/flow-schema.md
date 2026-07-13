@@ -46,6 +46,10 @@ node. Cycles are allowed (loop/split/merge, 5.3).
 - `webhook` `{ sync, path? }` — HTTP; `sync` responds within the request
   (write-ahead default, D15). *(F1)*
 - `cron` `{ schedule }` — dispatcher-owned; wakes parked projects. *(F3)*
+  **Misfire collapse:** dispatcher downtime spanning several ticks fires only the
+  *latest* missed tick, never a catch-up burst — ticks are scheduling boundaries,
+  not durable work items. Per-flow catch-up (replaying every missed tick) is a
+  future ordering policy (rides wamn-1d4).
 - `row-event` `{ table, event }` — durable outbox row event (D4, 5.14). *(F4)*
 - `manual` — editor test-run.
 
