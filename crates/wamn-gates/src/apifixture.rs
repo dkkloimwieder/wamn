@@ -14,8 +14,6 @@
 //! (a drift-guard test asserts they match) so `publish-catalog` can read it as a
 //! file, exactly as it would read a real project's applied catalog.
 
-use serde_json::Value;
-
 /// The demo catalog, stored as the snapshot the gateway loads. Kept byte-for-byte
 /// identical to `deploy/proof-catalog.json` (see the drift-guard test).
 pub const CATALOG_JSON: &str = r#"{
@@ -94,25 +92,6 @@ pub fn entity_seed_sql() -> String {
            ('{L2}', '{TENANT_A}', '{R1}', 5.500) \
          ON CONFLICT (id) DO NOTHING;"
     )
-}
-
-// ---- shared assertion helpers (used by both gates) ------------------------
-
-/// Print a check line and fold it into the running pass flag.
-pub fn check(pass: &mut bool, label: &str, ok: bool) {
-    println!("  [{}] {label}", if ok { "PASS" } else { "FAIL" });
-    *pass &= ok;
-}
-
-/// A JSON value as an array of values (empty if not an array).
-pub fn as_array(v: &Value) -> Vec<Value> {
-    v.as_array().cloned().unwrap_or_default()
-}
-
-/// Whether any row has `.name == name`.
-pub fn has_name(rows: &[Value], name: &str) -> bool {
-    rows.iter()
-        .any(|r| r.get("name").and_then(Value::as_str) == Some(name))
 }
 
 #[cfg(test)]

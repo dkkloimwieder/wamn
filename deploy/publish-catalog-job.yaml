@@ -1,6 +1,5 @@
 # [4.1b] Provision the api-gateway's project data + publish its catalog snapshot.
-# Runs the publish-catalog subcommand of the same wamn-host image the operator
-# deploys. It connects as the Postgres SUPERUSER (WAMN_PG_ADMIN_URL) to:
+# Runs the publish-catalog subcommand of wamn-gates image (SR1: gates ride their own image layered on the prod host stage). It connects as the Postgres SUPERUSER (WAMN_PG_ADMIN_URL) to:
 #   * create the dedicated `api_proof` schema (additive: CREATE SCHEMA IF NOT
 #     EXISTS — never touches the S2/S3 fixtures or any existing object),
 #   * --provision the 3.2 tenant floor (suppliers/receipts/receipt_lines) when
@@ -35,7 +34,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: publish-catalog
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"

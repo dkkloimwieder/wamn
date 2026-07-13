@@ -1,7 +1,7 @@
 # [2.2] in-cluster gate of record: the production wamn:postgres plugin's
 # per-project pooling + credential resolution + per-project policy, plus the S2
-# security gates as regression on the refactored plugin. Same wamn-host image
-# the operator deploys; `--mode all` runs qps/saturation/chaos/rls/injection
+# security gates as regression on the refactored plugin. Same wamn-gates image
+# as the other gates; `--mode all` runs qps/saturation/chaos/rls/injection
 # (regression) and then the multiproject gate (which provisions two project
 # databases via the superuser admin url — wamn_app is NOSUPERUSER/NOCREATEDB,
 # as in production).
@@ -31,7 +31,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: pgbench-multiproject
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"

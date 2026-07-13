@@ -1,5 +1,5 @@
 # 4.1 in-cluster generated-REST-API-gateway gates. Runs the apibench subcommand
-# of the same wamn-host image the operator deploys, against the in-cluster
+# of the wamn-gates image (SR1: gates ride their own image layered on the prod host stage), against the in-cluster
 # Postgres (deploy/postgres.yaml). This Job is the gate of record; local docker
 # runs are for iteration.
 #
@@ -37,7 +37,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: apibench
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"

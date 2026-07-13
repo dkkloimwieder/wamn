@@ -9,7 +9,7 @@ the row-set is shaped back into JSON.
 - **Issue:** wamn-759 `[4.1]`; **Epic:** E4 Generated API.
 - **Crate:** `crates/wamn-api` — the pure gateway logic (no host, no DB, no Wasm).
 - **Component:** `components/api-gateway` — the `wasi:http` ⇆ `wamn:postgres` shell.
-- **Gate:** `wamn-host apibench` — drives the component end to end against Postgres.
+- **Gate:** `wamn-gates apibench` — drives the component end to end against Postgres.
 - **Consumers:** POC-F1 (the hold queue / disposition / ERP receipt flows), the
   SPA (6.x), and every generated-API consumer. Blocks 4.4/4.5/4.6/4.7.
 
@@ -124,7 +124,7 @@ docker run -d --rm --name wamn-api-pg -p 5455:5432 -e POSTGRES_PASSWORD=postgres
   -e POSTGRES_DB=wamn postgres:18
 REL=components/target/wasm32-wasip2/release
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5455/wamn \
-  ./target/release/wamn-host --log-level error apibench \
+  ./target/release/wamn-gates --log-level error apibench \
   --api-gateway $REL/api_gateway.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5455/wamn --mode all
 docker stop wamn-api-pg
@@ -191,7 +191,8 @@ end to end.
 
 ```sh
 # In-cluster proof (needs the kind 'wamn' cluster + operator + postgres):
-docker build -t wamn-host:dev . && kind load docker-image wamn-host:dev --name wamn
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev . \
+  && kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
 kind load docker-image registry:2 --name wamn
 kubectl -n wamn-system apply -f deploy/registry.yaml
 kubectl -n wamn-system rollout status deploy/registry --timeout=60s

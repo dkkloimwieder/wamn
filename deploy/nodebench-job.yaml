@@ -1,5 +1,5 @@
 # S4 in-cluster custom-node gates. Runs the nodebench subcommand of the same
-# wamn-host image the operator deploys. This is the gate of record for D7; local
+# wamn-gates image (SR1). This is the gate of record for D7; local
 # docker runs are for iteration.
 #
 # The hop gate points at the serve-node Service, so it measures a REAL cross-pod
@@ -33,7 +33,7 @@ spec:
             - "until nc -z serve-node 8080; do echo waiting for serve-node; sleep 1; done"
       containers:
         - name: nodebench
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"

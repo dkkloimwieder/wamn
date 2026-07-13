@@ -1,6 +1,5 @@
 # 5.14 in-cluster failover gate (gate of record): checkpoint/resume on replica
-# loss. Runs the failoverbench subcommand of the same wamn-host image the operator
-# deploys, against the in-cluster Postgres (deploy/postgres.yaml). Local docker
+# loss. Runs the failoverbench subcommand of wamn-gates image (SR1: gates ride their own image layered on the prod host stage), against the in-cluster Postgres (deploy/postgres.yaml). Local docker
 # runs are for iteration (throwaway Postgres).
 #
 #   kubectl -n wamn-system apply -f deploy/failoverbench-job.yaml
@@ -42,7 +41,7 @@ spec:
             - "until nc -z postgres 5432; do echo waiting for postgres; sleep 1; done"
       containers:
         - name: failoverbench
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"

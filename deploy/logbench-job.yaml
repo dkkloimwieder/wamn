@@ -1,5 +1,5 @@
 # S5 in-cluster logging-capture gates (gate of record). Runs the logbench
-# subcommand of the same wamn-host image the operator deploys, against the real
+# subcommand of the wamn-gates image (SR1: gates ride their own image layered on the prod host stage), against the real
 # Loki + OTel Collector. Local docker runs are for iteration.
 #
 # The guest logs via wasi:logging; the wamn:logging plugin enriches + ships OTLP
@@ -32,7 +32,7 @@ spec:
             - "until nc -z otel-collector 4317 && nc -z loki 3100; do echo waiting for collector+loki; sleep 1; done"
       containers:
         - name: logbench
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"

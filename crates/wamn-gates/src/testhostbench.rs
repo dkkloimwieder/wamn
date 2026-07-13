@@ -64,8 +64,8 @@ use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
-use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use crate::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {

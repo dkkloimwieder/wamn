@@ -28,7 +28,7 @@ use clap::Args;
 use wash_runtime::wasmtime::Engine as RawEngine;
 use wash_runtime::wasmtime::component::Component as WasmtimeComponent;
 
-use crate::engine::build_engine;
+use wamn_host::engine::build_engine;
 
 #[derive(Args)]
 pub struct EgressBenchArgs {

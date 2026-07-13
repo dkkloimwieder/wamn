@@ -21,7 +21,8 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 
-use crate::apifixture::{S_ACME, S_OTHER, as_array, check, has_name};
+use crate::apifixture::{S_ACME, S_OTHER};
+use wamn_gate_harness::{as_array, check, has_name};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {

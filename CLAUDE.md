@@ -68,11 +68,11 @@ rev-bump procedure. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
 
 ```bash
-cargo build --release -p wamn-host
+cargo build --release -p wamn-host -p wamn-gates   # prod host + gate suite (SR1 split)
 (cd components && cargo build --release --target wasm32-wasip2)  # guest fixtures
 
 # S1/4p3/bp4.1 gates (instantiation, density, cap kill, epoch kill, memory budgets):
-./target/release/wamn-host --log-level warn bench \
+./target/release/wamn-gates --log-level warn bench \
   --hello components/target/wasm32-wasip2/release/hello.wasm \
   --memhog components/target/wasm32-wasip2/release/memhog.wasm \
   --busyloop components/target/wasm32-wasip2/release/busyloop.wasm
@@ -81,7 +81,7 @@ cargo build --release -p wamn-host
 # Local iteration (throwaway container + the same fixture SQL):
 docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
   -v "$PWD/deploy/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
-./target/release/wamn-host --log-level error pgbench \
+./target/release/wamn-gates --log-level error pgbench \
   --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
 # In-cluster gate of record (p99 is measured in-cluster):
@@ -96,7 +96,7 @@ kubectl -n wamn-system logs -f job/pgbench
 # S2 gates then the multiproject gate; `--mode multiproject` runs only the new one.
 # Local iteration (same throwaway container as S2, plus WAMN_PG_ADMIN_URL):
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
-  ./target/release/wamn-host --log-level error pgbench \
+  ./target/release/wamn-gates --log-level error pgbench \
   --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
 # In-cluster gate of record (co-located, no cpu limit — S2 CFS lesson;
@@ -107,7 +107,7 @@ kubectl -n wamn-system logs -f job/pgbench-multiproject
 # S3 gates (dispatch p99, hot-reload, checkpoint/resume idempotency). The
 # dispatch gate is same-binary and needs no DB; hot-reload/resume use the s3.*
 # fixture tables (also in deploy/postgres-init.sql).
-./target/release/wamn-host --log-level error flowbench \
+./target/release/wamn-gates --log-level error flowbench \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
 # In-cluster (same co-located / no-cpu-limit Job topology as pgbench):
@@ -125,7 +125,7 @@ jco componentize components/samples/node-ts/node.js --wit components/samples/nod
   -o components/samples/node-ts/node-ts.wasm
 REL=components/target/wasm32-wasip2/release
 wac plug $REL/flow_driver.wasm --plug $REL/node_rs.wasm -o $REL/flow_composed.wasm
-./target/release/wamn-host --log-level error nodebench \
+./target/release/wamn-gates --log-level error nodebench \
   --node-rs $REL/node_rs.wasm --node-ts components/samples/node-ts/node-ts.wasm \
   --composed $REL/flow_composed.wasm --sample $REL/sample_node.wasm --mode all
 # In-cluster gate of record (real cross-pod hop via the serve-node Service; the
@@ -148,7 +148,7 @@ docker run -d --name wamn-s5-otelcol --network wamn-s5 -p 4317:4317 -p 8888:8888
   otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 RUST_LOG=error \
   LOKI_URL=http://127.0.0.1:3100 COLLECTOR_METRICS_URL=http://127.0.0.1:8888/metrics \
-  ./target/release/wamn-host --log-level info logbench \
+  ./target/release/wamn-gates --log-level info logbench \
   --logspewer components/target/wasm32-wasip2/release/logspewer.wasm --mode all
 # In-cluster gate of record (real Loki + collector; no cpu limit — the S2 lesson):
 kubectl -n wamn-system apply -f deploy/loki.yaml -f deploy/otel-collector.yaml
@@ -165,7 +165,7 @@ kubectl -n wamn-system logs -f job/logbench
 # Local iteration (throwaway container + the same fixture SQL):
 docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
   -v "$PWD/deploy/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
-./target/release/wamn-host --log-level error testhostbench \
+./target/release/wamn-gates --log-level error testhostbench \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
   --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn --mode all
@@ -178,10 +178,10 @@ kubectl -n wamn-system logs -f job/testhostbench
 # wasi:sockets, so the wamn:postgres plugin (+ the allowed_hosts-gated, S6
 # egress-spied wasi:http) is the only egress. Pure wasm-import introspection —
 # no DB, no network — so it is identical in-cluster and locally: NO in-cluster
-# Job of record. FAIL path is unit-tested (cargo test -p wamn-host egressbench).
+# Job of record. FAIL path is unit-tested (cargo test -p wamn-gates egressbench).
 # See docs/security-db-path.md.
 REL=components/target/wasm32-wasip2/release
-./target/release/wamn-host --log-level warn egressbench \
+./target/release/wamn-gates --log-level warn egressbench \
   --flowrunner $REL/flowrunner.wasm \
   --component $REL/pgprobe.wasm --component $REL/node_rs.wasm \
   --component $REL/flow_composed.wasm --component $REL/hello.wasm \
@@ -189,7 +189,8 @@ REL=components/target/wasm32-wasip2/release
   --component $REL/poc_webhook_f1.wasm \
   --component $REL/sample_node.wasm  # webhook/api: {wamn:postgres,wasi:http}; 5.4 sample node: ZERO egress
 
-cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
+cargo clippy -p wamn-host -p wamn-gates -p wamn-gate-harness --all-targets \
+  && cargo fmt -p wamn-host -p wamn-gates -p wamn-gate-harness --check
 
 # [5.1] flow-graph schema crate (crates/wamn-flow) — canonical flow JSON: types,
 # validation, import/export, version diff. Pure Rust, no host/DB. Tests cover
@@ -386,7 +387,7 @@ WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo tes
 # throwaway PG above (the live-apply gate created wamn_app) + a throwaway NATS:
 docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
-  ./target/release/wamn-host --log-level error queuebench \
+  ./target/release/wamn-gates --log-level error queuebench \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn \
   --nats-url nats://127.0.0.1:4232 --mode all
 docker stop wamn-rq-pg wamn-rq-nats
@@ -394,7 +395,9 @@ docker stop wamn-rq-pg wamn-rq-nats
 # WAMN_PG_ADMIN_URL is the superuser that provisions the ephemeral schema; nats is the
 # operator chart's mTLS Service [verify_and_map] — the job mounts the wasmcloud-runtime-
 # tls cert so the doorbell connects, no deploy/nats.yaml). A HOST change => full docker
-# rebuild (docker build -t wamn-host:dev . && kind load docker-image wamn-host:dev --name wamn):
+# rebuild (docker build --target host -t wamn-host:dev . && docker build --target gates
+# -t wamn-gates:dev . && kind load docker-image wamn-host:dev --name wamn &&
+# kind load docker-image wamn-gates:dev --name wamn):
 kubectl -n wamn-system apply -f deploy/queuebench-job.yaml
 kubectl -n wamn-system logs -f job/queuebench
 
@@ -429,13 +432,12 @@ cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --ch
 # the run-queue live-apply gate]; failoverbench needs NO NATS, and the guest is UNCHANGED
 # so NO wasm rebuild — reuse the built flowrunner.wasm):
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
-  ./target/release/wamn-host --log-level error failoverbench \
+  ./target/release/wamn-gates --log-level error failoverbench \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn --mode all
 # In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS lesson;
 # WAMN_PG_ADMIN_URL is the superuser that provisions the ephemeral schema; no NATS). A
-# HOST change => full docker rebuild (docker build -t wamn-host:dev . && kind load
-# docker-image wamn-host:dev --name wamn):
+# HOST change => full docker rebuild (both --target stages + kind load BOTH images):
 kubectl -n wamn-system apply -f deploy/failoverbench-job.yaml
 kubectl -n wamn-system logs -f job/failoverbench
 
@@ -503,7 +505,7 @@ WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo tes
 # the live-apply gate] + a throwaway NATS for the wake/live doorbell hints):
 docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
-  ./target/release/wamn-host --log-level error dispatchbench \
+  ./target/release/wamn-gates --log-level error dispatchbench \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn \
   --nats-url nats://127.0.0.1:4232 --mode all
 docker stop wamn-rq-pg wamn-rq-nats
@@ -522,8 +524,7 @@ docker stop wamn-rq-pg wamn-rq-nats
 # (drift-guarded by wamn-run-store; live-applied by the wamn-run-queue gate).
 # In-cluster gate of record (co-located with postgres,
 # NO cpu limit — S2 CFS lesson; nats via the operator chart's mTLS cert mount). A
-# HOST change => full docker rebuild (docker build -t wamn-host:dev . && kind load
-# docker-image wamn-host:dev --name wamn):
+# HOST change => full docker rebuild (both --target stages + kind load BOTH images):
 kubectl -n wamn-system apply -f deploy/dispatchbench-job.yaml
 kubectl -n wamn-system logs -f job/dispatchbench
 
@@ -678,7 +679,7 @@ docker run -d --rm --name wamn-api-pg -p 5455:5432 -e POSTGRES_PASSWORD=postgres
   -e POSTGRES_DB=wamn postgres:18
 REL=components/target/wasm32-wasip2/release
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5455/wamn \
-  ./target/release/wamn-host --log-level error apibench \
+  ./target/release/wamn-gates --log-level error apibench \
   --api-gateway $REL/api_gateway.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5455/wamn --mode all
 docker stop wamn-api-pg
@@ -702,16 +703,19 @@ kubectl -n wamn-system logs -f job/apibench
 # holds api_gateway.wasm; the host runs with --allow-insecure-registries +
 # WAMN_PG_URL (deploy/values-wamn.yaml hostGroups[].extraArgs/env). publish-catalog
 # writes the wamn_catalog snapshot (superuser, RLS-scoped, $n::text::jsonb) +
-# optional --provision (3.2 floor) + --seed (demo rows) — additive only (CREATE
+# optional --provision (3.2 floor); the demo-row --seed flag is GATES-side
+# (wamn-gates publish-catalog wraps the prod tool, SR1) — additive only (CREATE
 # SCHEMA IF NOT EXISTS, dedicated api_proof schema, never drops). Claims
 # wamn.tenant/project/schema via components[].localResources.config (host-injected,
 # non-spoofable). apiproof drives the DEPLOYED gateway over real HTTP (apibench's
 # assertions, over the Service). apifixture is the shared demo catalog/ids/seed
 # (= proof-catalog.json, drift-guarded). docs/api-gateway.md § serving.
-cargo test -p wamn-host   # apifixture drift-guard + publish-catalog ident test
-cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
+cargo test -p wamn-host -p wamn-gates   # publish-catalog ident test + apifixture drift-guard
+cargo clippy -p wamn-host -p wamn-gates --all-targets && cargo fmt -p wamn-host -p wamn-gates --check
 # In-cluster proof of record (needs the kind 'wamn' cluster + operator + postgres):
-docker build -t wamn-host:dev . && kind load docker-image wamn-host:dev --name wamn
+docker build --target host -t wamn-host:dev . \
+  && docker build --target gates -t wamn-gates:dev .   # cached; two tags, one build
+kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
 kind load docker-image registry:2 --name wamn
 kubectl -n wamn-system apply -f deploy/registry.yaml
 kubectl -n wamn-system rollout status deploy/registry --timeout=60s
@@ -780,7 +784,7 @@ cargo clippy -p wamn-f1 --all-targets && cargo fmt -p wamn-f1 --check
 (cd components && cargo build --release --target wasm32-wasip2 -p poc-webhook-f1)
 cargo clippy --manifest-path components/poc-webhook-f1/Cargo.toml --release --target wasm32-wasip2 \
   && cargo fmt --manifest-path components/poc-webhook-f1/Cargo.toml --check
-cargo test -p wamn-host      # f1fixture coherence (burst = 20 receipts / 3 out-of-spec /
+cargo test -p wamn-gates    # f1fixture coherence (burst = 20 receipts / 3 out-of-spec /
                              # 4 holds) + the publish-catalog schema-rewrite drift-guard
 # f1bench GATE (in-proc ProxyPre: poc-webhook-f1 + the 4.1 api-gateway over ONE
 # ephemeral schema wamn_f1_bench, provisioned via the publish-catalog helpers;
@@ -792,7 +796,7 @@ docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
   -v "$PWD/deploy/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
 REL=components/target/wasm32-wasip2/release
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
-  ./target/release/wamn-host --log-level error f1bench \
+  ./target/release/wamn-gates --log-level error f1bench \
   --webhook-entry $REL/poc_webhook_f1.wasm --api-gateway $REL/api_gateway.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
 # In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS
@@ -817,7 +821,8 @@ kubectl -n wamn-system apply -f deploy/f1proof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/f1proof --timeout=180s
 kubectl -n wamn-system logs job/f1proof
 
-docker build -t wamn-host:dev .   # fetches the fork git dep in its builder stage
+docker build --target host -t wamn-host:dev . \
+  && docker build --target gates -t wamn-gates:dev .   # fork git dep fetched in the builder stage
 ```
 
 ## Architecture Overview
@@ -825,10 +830,15 @@ docker build -t wamn-host:dev .   # fetches the fork git dep in its builder stag
 wasmCloud-based managed low-code platform. `docs/` is the design source of
 truth (`platform-plan.md`, `p0-exit-criteria.md`, decision table, WIT
 contracts); `docs/p0-results.md` records spike measurements. `crates/wamn-host`
-is the custom host image (embeds `wash_runtime::washlet::ClusterHostBuilder`,
-deployed by the runtime-operator Helm chart with custom image values in
-`deploy/`); `components/` holds wasm32-wasip2 guest fixtures; our wash-runtime
-modifications are carried commits on the fork (`docs/wash-runtime-fork.md`).
+is the production host library + thin binary/image (embeds
+`wash_runtime::washlet::ClusterHostBuilder`, deployed by the runtime-operator
+Helm chart with custom image values in `deploy/`); the gate suite is the
+separate `crates/wamn-gates` binary/image over the same lib, with shared
+measurement helpers in `crates/wamn-gate-harness` (SR1 — one Dockerfile, two
+`--target` stages); `components/` holds wasm32-wasip2 guests (production at
+the root, `fixtures/`+`samples/` beneath, `poc-` prefix for POC components);
+POC crates live under `poc/`; our wash-runtime modifications are carried
+commits on the fork (`docs/wash-runtime-fork.md`).
 
 ## Code Conventions
 

@@ -37,8 +37,8 @@ use wash_runtime::wasmtime::component::{
 };
 use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 
-use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use crate::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {

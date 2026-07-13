@@ -15,8 +15,8 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tokio_postgres::NoTls;
 
-use crate::apifixture::{as_array, check};
 use crate::f1fixture::{BURST_HOLDS, burst, in_spec_receipt, receipt};
+use wamn_gate_harness::{as_array, check};
 
 #[derive(Debug, Args)]
 pub struct F1ProofArgs {

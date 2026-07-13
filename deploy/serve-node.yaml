@@ -1,7 +1,7 @@
 # S4 cross-pod HTTP node host. Warm-instantiates the Rust `wamn:node` node and
 # serves it over HTTP (POST /run) so the nodebench hop gate can measure a REAL
 # in-cluster pod-to-pod round trip — the truest D7 number (in-cluster HTTP as
-# the v0 custom-node invocation path). Same wamn-host image the operator ships.
+# the v0 custom-node invocation path). Runs from the wamn-gates image (SR1).
 #
 #   kubectl -n wamn-system apply -f deploy/serve-node.yaml
 #   kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: serve-node
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"

@@ -17,7 +17,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: f1proof
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             [

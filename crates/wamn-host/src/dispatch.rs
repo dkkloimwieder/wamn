@@ -123,7 +123,7 @@ pub struct DispatchArgs {
 /// One project the dispatcher serves: where its flow/queue tables live
 /// (connection URL + search_path) and the tenant claim its session carries.
 #[derive(Debug, Clone, serde::Deserialize)]
-pub(crate) struct ProjectSpec {
+pub struct ProjectSpec {
     #[serde(skip)]
     pub name: String,
     pub url: String,
@@ -176,7 +176,7 @@ async fn dial(spec: &ProjectSpec) -> anyhow::Result<(Client, tokio::task::JoinHa
 
 /// A project's live state: its pinned connection and the adaptive-cadence /
 /// cron-anchor state the pure decisions fold over.
-pub(crate) struct ProjectState {
+pub struct ProjectState {
     pub spec: ProjectSpec,
     client: Client,
     _conn: tokio::task::JoinHandle<()>,
@@ -209,7 +209,7 @@ pub(crate) struct ProjectState {
 /// the losses, which is how the race gate proves two replicas genuinely
 /// contended.
 #[derive(Debug, Default)]
-pub(crate) struct TickReport {
+pub struct TickReport {
     pub cron_fired: Vec<String>,
     pub cron_lost: usize,
     pub outbox_fired: Vec<String>,
@@ -226,7 +226,7 @@ impl TickReport {
     }
 }
 
-pub(crate) struct DispatcherConfig {
+pub struct DispatcherConfig {
     pub min_interval_ms: i64,
     pub max_interval_ms: i64,
     pub batch: usize,
@@ -333,7 +333,7 @@ fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
 /// The dispatcher: per-project state + the optional doorbell client + the
 /// cadence config. One instance is one replica; running several is safe (the
 /// deterministic-id `ON CONFLICT` story — gated by dispatchbench `race`).
-pub(crate) struct Dispatcher {
+pub struct Dispatcher {
     pub projects: Vec<ProjectState>,
     nats: Option<async_nats::Client>,
     cfg: DispatcherConfig,
@@ -342,7 +342,7 @@ pub(crate) struct Dispatcher {
 impl Dispatcher {
     /// Connect every project (the per-project connections D3 requires:
     /// "reconciliation follows connection ownership — no cross-DB sweep").
-    pub(crate) async fn connect(
+    pub async fn connect(
         specs: &[ProjectSpec],
         nats: Option<async_nats::Client>,
         cfg: DispatcherConfig,
@@ -381,11 +381,7 @@ impl Dispatcher {
     /// folded over driver effects. `now_ms` is INJECTED (the run loop passes the
     /// real clock, the gate passes stepped time); the SQL's own `now()` instants
     /// are server-side timestamps and orthogonal to the trigger decisions.
-    pub(crate) async fn tick_project(
-        &mut self,
-        idx: usize,
-        now_ms: i64,
-    ) -> anyhow::Result<TickReport> {
+    pub async fn tick_project(&mut self, idx: usize, now_ms: i64) -> anyhow::Result<TickReport> {
         let (batch, min_ms, max_ms) = (
             self.cfg.batch,
             self.cfg.min_interval_ms,
@@ -566,7 +562,7 @@ impl Dispatcher {
     /// interval. Each sweep runs under a deadline (a black-holed connection
     /// must not wedge the other projects), and a failing project decays and
     /// retries — it never wedges the loop.
-    pub(crate) async fn run_loop(
+    pub async fn run_loop(
         &mut self,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
@@ -666,7 +662,7 @@ async fn fire(client: &mut Client, f: &Firing) -> anyhow::Result<bool> {
     Ok(inserted == 1)
 }
 
-pub(crate) fn epoch_ms() -> i64 {
+pub fn epoch_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)

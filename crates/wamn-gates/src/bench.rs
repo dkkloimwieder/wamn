@@ -37,7 +37,8 @@ use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
-use crate::engine::{DEFAULT_EPOCH_TICK, MEMORY_CAP_BYTES, build_engine, spawn_epoch_ticker};
+use wamn_gate_harness::percentile;
+use wamn_host::engine::{DEFAULT_EPOCH_TICK, MEMORY_CAP_BYTES, build_engine, spawn_epoch_ticker};
 
 #[derive(Debug, Args)]
 pub struct BenchArgs {
@@ -106,11 +107,6 @@ fn empty_resources() -> LocalResources {
         volume_mounts: vec![],
         allowed_hosts: Arc::from(vec![]),
     }
-}
-
-fn percentile(sorted: &[Duration], p: f64) -> Duration {
-    let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
-    sorted[idx]
 }
 
 fn rss_kib() -> anyhow::Result<u64> {

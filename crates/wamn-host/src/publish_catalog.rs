@@ -10,9 +10,10 @@
 //! `WITH CHECK` and the runtime role's SELECT-only grant.
 //!
 //! `--provision` additionally stands up the schema and the 3.2 tenant floor (the
-//! entity tables) when they are absent, and `--seed` loads the bundled two-tenant
-//! demo rows — both used by the in-cluster `apiproof` gate to give the deployed
-//! gateway real data to serve. Everything is **additive**: the schema is created
+//! entity tables) when they are absent — used by the in-cluster `apiproof` gate
+//! to give the deployed gateway real data to serve (the demo-row seeding rides
+//! the gates-side `wamn-gates publish-catalog --seed` wrapper; the prod tool
+//! carries no fixture content). Everything is **additive**: the schema is created
 //! `IF NOT EXISTS`, the floor is applied only when missing, and no existing object
 //! is ever dropped or altered (the shared-cluster guardrail).
 //!
@@ -33,8 +34,6 @@ use std::path::PathBuf;
 use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::NoTls;
-
-use crate::apifixture;
 
 #[derive(Debug, Args)]
 pub struct PublishCatalogArgs {
@@ -61,11 +60,6 @@ pub struct PublishCatalogArgs {
     /// entity tables) when they are absent. Additive: never drops or alters.
     #[arg(long)]
     pub provision: bool,
-
-    /// Also seed the bundled two-tenant demo rows (proof scaffolding matching the
-    /// bundled `deploy/proof-catalog.json`; idempotent). Implies the floor.
-    #[arg(long)]
-    pub seed: bool,
 
     /// Also apply the run-state storage (runs/node_runs, `deploy/run-state.sql`)
     /// and the flow registry (`deploy/flows.sql`) into the schema when their
@@ -125,8 +119,8 @@ pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
     result?;
 
     println!(
-        "published catalog snapshot: schema={} tenant={} (provision={}, seed={})",
-        args.schema, args.tenant, args.provision, args.seed
+        "published catalog snapshot: schema={} tenant={} (provision={})",
+        args.schema, args.tenant, args.provision
     );
     Ok(())
 }
@@ -216,15 +210,6 @@ async fn publish(
         }
     }
 
-    // Optionally seed the bundled two-tenant demo rows (ON CONFLICT DO NOTHING).
-    if args.seed {
-        client
-            .batch_execute(&apifixture::entity_seed_sql())
-            .await
-            .context("seed demo rows")?;
-        println!("seeded demo rows in schema {schema}");
-    }
-
     // Optionally apply the run-state storage + flow registry (POC-F1).
     if args.runstate {
         if ensure_runstate(client, schema).await? {
@@ -300,7 +285,7 @@ fn rewrite_schema(ddl: &str, schema: &str) -> String {
 
 /// Apply `deploy/run-state.sql` (runs + node_runs) into `schema` when its
 /// `runs` table is absent. Returns whether it applied (false = already there).
-pub(crate) async fn ensure_runstate(
+pub async fn ensure_runstate(
     client: &tokio_postgres::Client,
     schema: &str,
 ) -> anyhow::Result<bool> {
@@ -317,7 +302,7 @@ pub(crate) async fn ensure_runstate(
 
 /// Apply `deploy/flows.sql` (the flow registry) into `schema` when its `flows`
 /// table is absent. Returns whether it applied.
-pub(crate) async fn ensure_flow_registry(
+pub async fn ensure_flow_registry(
     client: &tokio_postgres::Client,
     schema: &str,
 ) -> anyhow::Result<bool> {
@@ -349,7 +334,7 @@ async fn table_exists(
 }
 
 /// Compile a wamn-seed dataset against the catalog into idempotent INSERTs.
-pub(crate) fn seed_dataset_sql(
+pub fn seed_dataset_sql(
     dataset_json: &str,
     cat: &wamn_catalog::Catalog,
     tenant: &str,
@@ -372,7 +357,7 @@ pub(crate) fn seed_dataset_sql(
 /// rejected before any write (the ingress routes a path to ONE flow — a second
 /// claimant would be silently shadowed); the flows_active_webhook_path unique
 /// index backstops the check under concurrent registration.
-pub(crate) async fn register_flow(
+pub async fn register_flow(
     client: &tokio_postgres::Client,
     tenant: &str,
     graph_json: &str,

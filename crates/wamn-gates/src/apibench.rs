@@ -46,9 +46,10 @@ use wasmtime_wasi_http::p2::WasiHttpView;
 use wasmtime_wasi_http::p2::bindings::ProxyPre;
 use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
 
-use crate::apifixture::{self, CATALOG_JSON, S_ACME, S_OTHER, TENANT_A, as_array, check, has_name};
-use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use crate::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use crate::apifixture::{self, CATALOG_JSON, S_ACME, S_OTHER, TENANT_A};
+use wamn_gate_harness::{as_array, check, has_name};
+use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {

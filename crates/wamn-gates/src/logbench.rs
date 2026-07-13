@@ -36,8 +36,8 @@ use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component, InstancePre, Linker, TypedFunc};
 
-use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use crate::plugins::wamn_logging::{self, WamnLogging, WamnLoggingConfig};
+use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_host::plugins::wamn_logging::{self, WamnLogging, WamnLoggingConfig};
 
 // ---------------------------------------------------------------------------
 // CLI

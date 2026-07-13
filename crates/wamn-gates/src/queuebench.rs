@@ -40,6 +40,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
+use wamn_gate_harness::percentile;
 use wamn_run_queue::{
     acquire_partitions_sql, claim_batch_sql, claim_partition_head_sql, dequeue_sql, enqueue_sql,
     janitor_sweep_sql, mark_running_sql, park_sql, write_ahead_run_sql,
@@ -106,14 +107,6 @@ pub struct QueueBenchArgs {
     /// Hint→claim samples for the doorbell gate.
     #[arg(long, default_value_t = 300)]
     pub doorbell_iters: usize,
-}
-
-fn percentile(sorted: &[Duration], p: f64) -> Duration {
-    if sorted.is_empty() {
-        return Duration::ZERO;
-    }
-    let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
-    sorted[idx]
 }
 
 /// The ephemeral-schema clone: the 5.7 `runs` (the write-ahead target + the FK)

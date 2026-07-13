@@ -85,7 +85,7 @@ the new workspace's line, `cargo update -p wash-runtime`, rebuild, and run the
 behaviors:
 
 - **S1:** instantiation p50/p99 + cap-kill + the epoch-deadline demo
-  (`wamn-host bench`) — phase 4 is the regression that the epoch commit is
+  (`wamn-gates bench`) — phase 4 is the regression that the epoch commit is
   present *and functional*: without the deadline, stores trap on the first
   tick, so a lost commit fails loudly.
 - **S2:** the chaos gate (epoch-kill mid-transaction ×100; destroy-never-repool)

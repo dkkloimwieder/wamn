@@ -1,5 +1,9 @@
-# wamn-host image (S1). Build args mirror the layout the runtime-operator
-# chart expects: ENTRYPOINT receives ["host", ...] / ["bench", ...] verbatim.
+# wamn images (SR1: one build, two final stages).
+#   docker build --target host  -t wamn-host:dev  .   # prod: host binary ONLY
+#   docker build --target gates -t wamn-gates:dev .   # gates: FROM host + suite + fixtures
+# The second invocation is fully layer-cached. The prod artifact ships no gate
+# tooling and no wasm fixtures; the gates image layers the suite on top of the
+# IDENTICAL prod stage so Jobs exercise the same host lib code they verify.
 FROM rust:1.97-trixie AS builder
 # libprotobuf-dev carries the well-known types (google/protobuf/*.proto)
 # that protobuf-compiler alone does not ship on Debian.
@@ -15,12 +19,19 @@ COPY deploy ./deploy
 # (docs/wash-runtime-fork.md); cargo fetches it during the build.
 # rust-toolchain.toml would force a rustup download inside the container;
 # the base image already ships the right version.
-RUN rm rust-toolchain.toml && cargo build --release -p wamn-host
+RUN rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-gates
 
-FROM debian:trixie-slim
+# ---- prod image: the host binary only ---------------------------------------
+FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/wamn-host /usr/local/bin/wamn-host
-# Bench fixtures baked in so `kubectl run ... -- bench` works in-cluster.
+ENV HOME=/tmp
+ENTRYPOINT ["/usr/local/bin/wamn-host"]
+
+# ---- gates image: the prod stage + the gate suite + wasm fixtures -----------
+FROM host AS gates
+COPY --from=builder /build/target/release/wamn-gates /usr/local/bin/wamn-gates
+# Bench fixtures baked in so the gate Jobs run with no volume plumbing.
 COPY components/target/wasm32-wasip2/release/hello.wasm /bench/hello.wasm
 COPY components/target/wasm32-wasip2/release/memhog.wasm /bench/memhog.wasm
 COPY components/target/wasm32-wasip2/release/busyloop.wasm /bench/busyloop.wasm
@@ -42,5 +53,4 @@ COPY components/target/wasm32-wasip2/release/api_gateway.wasm /bench/api-gateway
 # POC-F1 sync-webhook ingress (exports wasi:http/incoming-handler, imports
 # wamn:postgres, embeds the wamn-runner engine; the f1bench gate drives it).
 COPY components/target/wasm32-wasip2/release/poc_webhook_f1.wasm /bench/poc-webhook-f1.wasm
-ENV HOME=/tmp
-ENTRYPOINT ["/usr/local/bin/wamn-host"]
+ENTRYPOINT ["/usr/local/bin/wamn-gates"]

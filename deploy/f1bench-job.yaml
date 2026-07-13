@@ -29,7 +29,7 @@ spec:
           command: ["sh", "-c", "until nc -z postgres.wamn-system.svc.cluster.local 5432; do sleep 1; done"]
       containers:
         - name: f1bench
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             [

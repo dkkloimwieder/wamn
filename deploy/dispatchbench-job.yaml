@@ -1,5 +1,5 @@
 # 5.14 in-cluster shared-trigger-dispatcher gates (gate of record). Runs the
-# dispatchbench subcommand of the same wamn-host image the operator deploys,
+# dispatchbench subcommand of the wamn-gates image (SR1: gates ride their own image layered on the prod host stage),
 # against the in-cluster Postgres (deploy/postgres.yaml) and the operator NATS
 # (Service `nats`, port 4222). Local docker runs are for iteration (throwaway
 # Postgres + throwaway NATS).
@@ -53,7 +53,7 @@ spec:
             defaultMode: 420
       containers:
         - name: dispatchbench
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: runtime-cert

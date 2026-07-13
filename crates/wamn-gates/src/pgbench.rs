@@ -35,8 +35,9 @@ use wash_runtime::wasmtime::component::{
 };
 use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 
-use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use crate::plugins::wamn_postgres::{
+use wamn_gate_harness::percentile;
+use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_host::plugins::wamn_postgres::{
     self, CredentialProvider, ProjectConfig, StaticCredentialProvider, WamnPostgres,
     WamnPostgresConfig,
 };
@@ -202,14 +203,6 @@ impl Harness {
             instance.get_typed_func::<(u32, String), (Result<u64, String>,)>(&mut store, "run")?;
         Ok(Worker { store, func })
     }
-}
-
-fn percentile(sorted: &[Duration], p: f64) -> Duration {
-    if sorted.is_empty() {
-        return Duration::ZERO;
-    }
-    let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
-    sorted[idx]
 }
 
 pub async fn run(args: PgBenchArgs) -> anyhow::Result<()> {

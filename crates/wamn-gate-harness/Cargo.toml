@@ -1,0 +1,9 @@
+[package]
+name = "wamn-gate-harness"
+description = "Shared gate measurement/assertion vocabulary for the wamn-gates suite (SR1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json = "1"

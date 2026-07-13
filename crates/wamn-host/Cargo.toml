@@ -1,6 +1,6 @@
 [package]
 name = "wamn-host"
-description = "wamn custom wasmCloud host: wash-runtime + wamn:postgres / wamn:node plugins (S1 PoC)"
+description = "wamn production host: wash-runtime washlet + dispatcher + wamn:postgres / wamn:logging / wamn:node plugins (lib + thin binary; gates live in wamn-gates)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

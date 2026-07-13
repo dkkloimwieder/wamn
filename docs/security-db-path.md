@@ -94,7 +94,7 @@ raw sockets.
 ## Why the P1 guarantee holds today — the gate
 
 Because the boundary is "does the shipped component import `wasi:sockets`," it is
-directly checkable on the wasm artifacts. `wamn-host egressbench` compiles each
+directly checkable on the wasm artifacts. `wamn-gates egressbench` compiles each
 component and walks its import list, asserting:
 
 - the DB-touching **flow-runner** imports `wamn:postgres` (the DB path) and

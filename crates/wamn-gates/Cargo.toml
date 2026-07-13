@@ -1,0 +1,49 @@
+[package]
+name = "wamn-gates"
+description = "The wamn gate suite: bench/pgbench/…/f1proof over the wamn-host library (SR1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The production host library — gates construct the identical engines, hosts,
+# and plugins the prod binary runs.
+wamn-host = { path = "../wamn-host" }
+wamn-gate-harness = { path = "../wamn-gate-harness" }
+wash-runtime = { workspace = true }
+# Bench harnesses instantiate command components directly (CommandPre) and
+# drive wasi:http incoming handlers (ProxyPre). Pinned to the exact rev
+# wash-runtime's workspace uses so the graph keeps a single wasmtime.
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "sync"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+bytes = "1"
+# S6 egress spy / prod handler comparisons: HostHandler::outgoing_request is in
+# terms of hyper::Request.
+hyper = "1"
+# apibench/f1bench request bodies + response collection.
+http-body-util = "0.1"
+# apibench/f1bench build catalog snapshots + tenant-floor DDL for their
+# ephemeral schemas.
+wamn-catalog = { path = "../wamn-catalog" }
+wamn-ddl = { path = "../wamn-ddl" }
+# queuebench/failoverbench/dispatchbench drive the pure queue/cron/outbox
+# builders over tokio_postgres.
+wamn-run-queue = { path = "../wamn-run-queue" }
+wamn-flow = { path = "../wamn-flow" }
+# queuebench/dispatchbench doorbell hints (same version req as wash-runtime's
+# so cargo unifies to one crate instance).
+async-nats = { version = "0.47", default-features = false }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+# f1fixture coherence test compiles the committed seed dataset (3.6).
+wamn-seed = { path = "../wamn-seed" }

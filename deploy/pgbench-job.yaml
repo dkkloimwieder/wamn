@@ -1,5 +1,5 @@
 # S2 in-cluster benchmark + security gates. Runs the pgbench subcommand of the
-# same wamn-host image the operator deploys, against the in-cluster Postgres
+# wamn-gates image (SR1: gates ride their own image layered on the prod host stage), against the in-cluster Postgres
 # (deploy/postgres.yaml). The p99 < 10ms acceptance gate is defined in-cluster,
 # so this Job is the gate of record; local docker runs are for iteration.
 #
@@ -31,7 +31,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: pgbench
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"

@@ -4095,6 +4095,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-gate-harness"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "wamn-gates"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "clap",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "wamn-catalog",
+ "wamn-ddl",
+ "wamn-flow",
+ "wamn-gate-harness",
+ "wamn-host",
+ "wamn-run-queue",
+ "wamn-seed",
+ "wash-runtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+]
+
+[[package]]
 name = "wamn-host"
 version = "0.1.0"
 dependencies = [

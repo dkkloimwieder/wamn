@@ -67,8 +67,8 @@ use wash_runtime::wasmtime::component::{
 };
 use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 
-use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use crate::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 /// The ephemeral schema that unions the guest's flow tables (flows / runs /
 /// node_runs / sink) with the 5.14 `run_queue`, provisioned via superuser.

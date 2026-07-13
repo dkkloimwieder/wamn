@@ -1,6 +1,6 @@
 # [4.1b] The in-cluster proof of record: drive the DEPLOYED api-gateway over real
 # HTTP and assert the CRUD / expansion / RLS / injection-safety results end to
-# end. Runs the apiproof subcommand of the same wamn-host image (no external
+# end. Runs the apiproof subcommand of the wamn-gates image (no external
 # client image to pull); it opens TCP to the api-gateway Service and sends the
 # Host header the operator routes on (api.localhost.direct), so the request
 # traverses the full path: host HTTP server -> DynamicRouter -> the component ->
@@ -26,7 +26,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: apiproof
-          image: wamn-host:dev
+          image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"
