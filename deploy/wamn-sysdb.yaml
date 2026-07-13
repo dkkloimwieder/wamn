@@ -1,0 +1,74 @@
+# The T1 SYSTEM cluster (D6 four-tier topology, wamn-q3n.2) — the control-plane
+# CloudNativePG Cluster. Exactly one per platform environment (platform
+# dev/staging/prod each get their own; this manifest is the kind/dev instance).
+#
+# HOLDS (control-plane state only): the org/project/env registry (wamn-q3n.1
+# model -> wamn-q3n.3 tables), provisioning-saga state (10.1), platform RBAC
+# (8.1), plan/quota definitions, billing rollups, and platform-level audit.
+# EXCLUDES by design (docs/postgres-topology.md §T1): NO tenant data (catalogs,
+# run state, payloads, application users live in org/pool clusters), NO
+# credentials (R8b — the registry stores Secret *references*; actual material
+# lives in K8s Secrets resolved by RBAC-holding components), and NO request-path
+# reads (system-cluster-down freezes provisioning/promotions, never the data
+# plane).
+#
+# DISTINCT PLANE — this is a SEPARATE cluster from the T3 trials pool
+# (deploy/cnpg-cluster.yaml `wamn-pg`) and the legacy S2–S6 gate pod
+# (deploy/postgres.yaml). Two clusters, always: different blast radius, backup
+# posture, and security profile (control-plane state vs. real tenant data).
+# ADDITIVE — it stands up ALONGSIDE those; the shared-cluster guardrail means
+# `wamn-pg` and `postgres.yaml` are NEVER touched. Teardown of this experiment
+# = delete only this Cluster.
+#
+# HA DAY-ONE — unlike org clusters (where HA is a tier knob), T1 is shared
+# infrastructure and runs HA from the start (3 instances, one per kind node via
+# CNPG pod anti-affinity). Provisioned by Epic-1 Helm/IaC (kubectl apply): it
+# cannot be provisioned by the provisioner it backs.
+#
+# Pinned operator: deploy/cnpg-operator.yaml (CNPG 1.29.2).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: wamn-sysdb
+  namespace: wamn-system
+spec:
+  # HA day-one: 3 instances (one primary + 2 replicas), spread one per node.
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  # HA rolling updates perform an automatic switchover (no manual promotion).
+  primaryUpdateStrategy: unsupervised
+  # Spread instances across nodes so a node loss drops at most one instance.
+  # `preferred` keeps scheduling possible on a smaller cluster (kind = 3 nodes).
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: preferred
+  # The control plane's own admin path (registry DDL in wamn-q3n.3, saga
+  # bootstrapping) connects as the `postgres` superuser. CNPG disables the
+  # superuser password by default; enable it so the `wamn-sysdb-superuser`
+  # Secret carries a usable admin URI. (T1 holds no tenant credentials — this is
+  # the platform's own operational access, not a tenant secret.)
+  enableSuperuserAccess: true
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    # NO cpu limit — the DB-serving path must not be CFS-throttled (S2 lesson).
+  storage:
+    # Control-plane state is tiny and low-churn; each instance gets its own PVC.
+    # Production T1 sizing (WAL retention headroom for HA) is a platform-env knob.
+    size: 2Gi
+  postgresql:
+    # Allow non-TLS password connections from the pod network (the whole repo
+    # connects NoTls). Prepended to CNPG's default hostssl rules.
+    pg_hba:
+      - host all all all scram-sha-256
+  bootstrap:
+    initdb:
+      # An EMPTY bootstrapped system database + owner role. wamn-q3n.3 applies
+      # the registry schema (orgs/projects/project_envs + the four invariants)
+      # into this DB; .2 stops at "an HA control-plane Postgres exists with an
+      # empty bootstrapped system DB." The wamn_ prefix is platform-reserved
+      # (R9a/66x) and deliberately used here (platform-minted, like wamn_run).
+      database: wamn_system
+      owner: wamn_system

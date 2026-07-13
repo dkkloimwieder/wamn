@@ -594,6 +594,38 @@ kubectl -n wamn-system logs -f job/dispatchbench
 cargo test -p wamn-registry
 cargo clippy -p wamn-registry --all-targets && cargo fmt -p wamn-registry --check
 
+# [D6/wamn-q3n.2] T1 system cluster — the control-plane CloudNativePG Cluster
+# (deploy/wamn-sysdb.yaml). HA day-one (3 instances), a DISTINCT plane from the
+# T3 trials pool (deploy/cnpg-cluster.yaml wamn-pg) + the legacy S2–S6 gate pod
+# (deploy/postgres.yaml) — two clusters ALWAYS, ADDITIVE (shared-cluster
+# guardrail: NEVER touch wamn-pg or postgres.yaml; teardown deletes ONLY
+# wamn-sysdb). Exactly one T1 per platform env (this manifest = the kind/dev
+# instance); Helm/IaC-provisioned in E1 (it cannot be provisioned by the
+# provisioner it backs). HOLDS the registry (wamn-q3n.1 model -> .3 tables),
+# saga state, platform RBAC, quota/billing, platform audit; NO tenant data, NO
+# credentials (R8b — Secret REFERENCES only). Bootstraps an EMPTY wamn_system DB
+# + owner role (NOSUPERUSER LOGIN); .3 applies the registry DDL into it. INFRA
+# bead — NO cargo gate; verification is the live standup below (the gate of
+# record). enableSuperuserAccess (platform admin path, not a tenant credential);
+# NO cpu limit (S2 CFS lesson); non-TLS pg_hba (repo connects NoTls); preferred
+# pod anti-affinity (kind control-plane node is tainted, so 3 instances pack the
+# 2 schedulable workers — a prod T1 with >=3 schedulable nodes spreads one per
+# node); async streaming replication. docs/system-cluster.md.
+# Stand it up (needs the kind 'wamn' cluster + CNPG operator 1.29.2 =
+# deploy/cnpg-operator.yaml; ALONGSIDE wamn-pg, no host docker rebuild):
+kubectl apply -f deploy/wamn-sysdb.yaml
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=3 \
+  cluster/wamn-sysdb --timeout=300s
+# Verify (gate of record — HA + distinct plane + bootstrap + no cpu limit):
+kubectl -n wamn-system get cluster wamn-sysdb -o wide   # 3/3 healthy, primary wamn-sysdb-1
+kubectl -n wamn-system get svc,secret,pvc -l cnpg.io/cluster=wamn-sysdb  # own -rw/-ro/-r + wamn-sysdb-* + 3 PVCs
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
+  psql -U postgres -tAc "SELECT datname, pg_get_userbyid(datdba) FROM pg_database WHERE datname='wamn_system';"
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
+  psql -U postgres -tAc "SELECT application_name, state, sync_state FROM pg_stat_replication;"  # 2 streaming replicas
+# wamn-pg + postgres.yaml stay 1/1 healthy throughout (guardrail). Teardown:
+# kubectl -n wamn-system delete -f deploy/wamn-sysdb.yaml   # deletes ONLY wamn-sysdb
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

@@ -83,6 +83,12 @@ created, project promoted, env provisioned).
 (GitOps-idiomatic) is a later ergonomics option; saga state, RBAC, quotas, and
 billing don't fit etcd regardless, so this cluster exists either way.
 
+*Shipped (`wamn-q3n.2`):* the T1 cluster itself — `deploy/wamn-sysdb.yaml`, a 3-
+instance HA CNPG `Cluster` bootstrapping an empty `wamn_system` DB, standing up
+alongside the T3 pool. `docs/system-cluster.md`. The registry tables + the four
+testable invariants (references-only / no tenant data / request-path-free / dev
+≠ prod recovery domain) are `wamn-q3n.3`.
+
 ### T2 — Org clusters: the standard tier, **prod/dev split** (two per org)
 - **`<org>-prod`**: every project's `prod` env database — and `canary`, which
   is prod-shaped validation before rollout and deliberately shares prod's
