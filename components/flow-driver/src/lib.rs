@@ -27,13 +27,15 @@ impl Guest for Component {
                 node_id: format!("n{h}"),
                 attempt: 0,
                 idempotency_key: format!("composed-{h}"),
-                traceparent: String::new(),
+                traceparent: None,
                 tracestate: None,
                 deadline_ms: None,
                 config: config.clone(),
             };
             cur = match node_run(&ctx, &cur) {
-                Ok(p) => p,
+                // Frozen 0.1 (5.4): run returns an emission; the linear bench
+                // flow routes only the payload (absent port = "main").
+                Ok(e) => e.payload,
                 // The bench nodes never error on these inputs; surface it plainly.
                 Err(_) => return "{\"error\":\"node failed\"}".to_string(),
             };

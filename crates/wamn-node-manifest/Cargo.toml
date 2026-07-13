@@ -1,0 +1,20 @@
+[package]
+name = "wamn-node-manifest"
+description = "The wamn.node.manifest OCI annotation schema (5.4, design-note 8): registry-scannable node metadata — display name, config/input/output JSON Schemas, ordering-policy support, output ports."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The published JSON Schema contract (docs/wamn-node-manifest.schema.json) is
+# GENERATED from these types (single source of truth); a drift test keeps them
+# in lockstep.
+schemars = "0.8"
+
+[dev-dependencies]
+# tests validate the fixture manifest against the generated JSON Schema, tying
+# the language-neutral contract to the Rust types. boon is a pure-Rust
+# validator with no network/reqwest dependency.
+boon = "0.6"

@@ -29,7 +29,7 @@ use exports::wamn::node::handler::Guest;
 use wamn::nodebench::host::wait_ns;
 
 // The contract types live in their defining interface.
-use wamn::node::types::{ErrorDetail, NodeError, Payload, RunContext};
+use wamn::node::types::{Emission, ErrorDetail, NodeError, Payload, RunContext};
 
 struct Component;
 
@@ -75,11 +75,13 @@ fn compute(bytes: &[u8], iters: u64) -> u64 {
 }
 
 impl Guest for Component {
-    fn run(ctx: RunContext, input: Payload) -> Result<Payload, NodeError> {
+    fn run(ctx: RunContext, input: Payload) -> Result<Emission, NodeError> {
         let inline = match input {
             Payload::Inline(s) => s,
             Payload::Streamed(_) => {
-                return Err(terminal("streamed payloads out of scope for S4".to_string()));
+                return Err(terminal(
+                    "streamed payloads out of scope for S4".to_string(),
+                ));
             }
         };
 
@@ -104,7 +106,11 @@ impl Guest for Component {
             inline.len(),
             cfg.mode
         );
-        Ok(Payload::Inline(out))
+        // Frozen 0.1 (5.4): run returns an emission; absent port = "main".
+        Ok(Emission {
+            payload: Payload::Inline(out),
+            port: None,
+        })
     }
 }
 

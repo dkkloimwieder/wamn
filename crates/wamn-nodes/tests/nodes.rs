@@ -60,6 +60,8 @@ fn run<'a>(config: &'a Value) -> RunContext<'a> {
         attempt: 0,
         idempotency_key: "r-1:n",
         deadline_ms: None,
+        traceparent: None,
+        tracestate: None,
         config,
     }
 }

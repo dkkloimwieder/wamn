@@ -1,25 +1,31 @@
-// Trimmed vendored copy of docs/wamn-node.wit for the S4 bench guests.
-// Only `types` + `handler` are kept: the `payloads`/`credentials`/`control`
-// interfaces (and the stream-node/http-node worlds) pull in wasi:io / wasi:http
-// and are out of scope for S4, whose nodes are the minimal `world node`
-// (export handler, no host I/O). The kept shapes are byte-for-byte the contract
-// so the canonical-ABI layout matches the host-side bindgen of the full copy in
-// crates/wamn-host/wit.
+// Trimmed vendored copy of docs/wamn-node.wit (FROZEN 0.1.0) for guests that
+// need only the handler ABI. Only `types` + `handler` are kept: the
+// `payloads`/`credentials`/`control` interfaces (and the stream-node/http-node
+// worlds) pull in wasi:io / wasi:http and have no host implementation yet
+// (5.10/5.9/5.12). The kept blocks are verbatim the contract (drift-guarded by
+// crates/wamn-node-sdk/tests/wit_coherence.rs) so the canonical-ABI layout
+// matches the host-side bindgen of the full copy in crates/wamn-host/wit.
 package wamn:node@0.1.0;
 
 /// Shared types for the node contract.
 interface types {
-  /// JSON-encoded string. A string maximizes guest-language ergonomics
+  /// JSON-encoded string. Structured `value` variant deferred to a
+  /// future version; a string maximizes guest-language ergonomics
   /// (serde_json / JSON.parse) at ~µs codec cost per hop.
   type json = string;
 
   /// How the bytes of a streamed payload are framed.
   enum framing {
+    /// Newline-delimited JSON: an ordered stream of records. The
+    /// default for analytics / tag-data workloads.
     ndjson,
+    /// Opaque bytes (files, binary blobs).
     raw,
   }
 
-  /// Reference into the run-scoped payload store.
+  /// Reference into the run-scoped payload store. Content-addressed;
+  /// valid only within the owning run. Resolved via the `payloads`
+  /// import.
   record payload-ref {
     handle: string,
     framing: framing,
@@ -27,54 +33,103 @@ interface types {
   }
 
   /// Every node input and output is a payload. Inline for the common
-  /// small case; streamed for large / record-stream data.
+  /// small case (fast path, fully captured in run history); streamed
+  /// for large / record-stream data (run history captures preview +
+  /// size + hash). Inline size is capped by platform-global and
+  /// per-flow limits enforced by the host.
   variant payload {
     inline(json),
     streamed(payload-ref),
   }
 
   /// Everything the runner knows that a node execution may need.
+  /// Deliberately contains NO secrets -- credentials are pulled lazily
+  /// through the `credentials` import so they never appear in captured
+  /// inputs (run history, fixtures, logs).
   record run-context {
+    /// Unique id of this flow run (stable across retries of any node).
     run-id: string,
     flow-id: string,
     flow-version: u32,
+    /// The node instance id within the flow graph.
     node-id: string,
+    /// 0 on first execution, incremented per retry.
     attempt: u32,
+    /// Runner-generated, stable across retries of this node in this
+    /// run. Forward to external systems supporting idempotency headers.
     idempotency-key: string,
-    traceparent: string,
+    /// W3C trace context. Present once the host tracing plumbing (9.2) is
+    /// wired and a trace is active; nodes making outbound calls MUST
+    /// propagate it when present (SDKs do this invisibly).
+    traceparent: option<string>,
     tracestate: option<string>,
+    /// Remaining execution budget in ms. The runner enforces a hard
+    /// deadline regardless (Wasmtime epoch interruption); this lets
+    /// well-behaved nodes set client timeouts and fail gracefully.
     deadline-ms: option<u64>,
-    /// Node configuration as a JSON document. THIS is design-note 9b: a
-    /// dynamically-loaded custom node parses it (serde_json / JSON.parse);
-    /// standard nodes compiled into the runner never touch the codec.
+    /// Node configuration as a JSON document, template-expanded by the
+    /// runner; validated against the node's config JSON Schema (OCI
+    /// manifest) before dispatch. Secret-typed fields are replaced by
+    /// credential handles.
     config: json,
   }
 
   record error-detail {
     message: string,
+    /// Machine-readable code for editor display / error-branch
+    /// routing, e.g. "ECONNREFUSED", "HTTP_429", "SCHEMA_MISMATCH".
     code: option<string>,
+    /// Optional structured payload surfaced in run history.
     data: option<json>,
   }
 
   record rate-limit-detail {
     detail: error-detail,
+    /// Source-authoritative delay (e.g. from a Retry-After header).
+    /// Absent = runner applies its own backoff curve.
     retry-after-ms: option<u64>,
+    /// The throttled system's authority (host[:port]) -- the runner's
+    /// SHARED throttle key component the host cannot always observe
+    /// itself. Absent = throttle keyed by (node type, credential) only.
+    target-host: option<string>,
   }
 
-  /// The runner decides retry vs error-branch vs hard failure from this
-  /// variant -- never from string matching.
+  /// The runner decides retry-with-backoff vs error-branch routing vs
+  /// hard failure from this variant -- never from string matching.
   variant node-error {
+    /// Transient; runner may retry per the node's retry policy.
     retryable(error-detail),
+    /// The upstream system signaled throttling. Retryable, but with
+    /// source-authoritative delay and a SHARED runner throttle keyed
+    /// by (node type, credential handle, target host) -- parallel
+    /// executions against the same limited system back off together
+    /// instead of stampeding; unrelated flows are unaffected.
     rate-limited(rate-limit-detail),
+    /// Permanent; runner routes to the flow's error path immediately.
     terminal(error-detail),
+    /// Input contract violated; never retried, flagged distinctly in
+    /// run history (usually an upstream bug).
     invalid-input(error-detail),
+    /// The node observed a cancellation request (via `control`) and
+    /// stopped cooperatively. Recorded as cancelled, not failed.
     cancelled,
+  }
+
+  /// What a successful node execution produced: the output payload plus
+  /// the output port selecting which edges the engine routes it down
+  /// (`docs/flow-schema.md` ported edges). Absent port = "main". Branch
+  /// nodes emit named ports (a conditional's "true"/"false"); the
+  /// reserved "error" port is never emitted here -- errors travel as
+  /// node-error and the engine routes them.
+  record emission {
+    payload: payload,
+    port: option<string>,
   }
 }
 
 /// REQUIRED export. A node is a pure function of (ctx, input, granted host
 /// imports) -> output.
 interface handler {
-  use types.{payload, run-context, node-error};
-  run: func(ctx: run-context, input: payload) -> result<payload, node-error>;
+  use types.{payload, run-context, emission, node-error};
+  run: func(ctx: run-context, input: payload) -> result<emission, node-error>;
 }

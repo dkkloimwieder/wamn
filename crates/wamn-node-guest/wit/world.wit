@@ -1,0 +1,11 @@
+// The scaffolding crate's bindgen target: the contract's minimal `world node`
+// (docs/wamn-node.wit) — export the handler, import NOTHING. The builder
+// derives hostInterfaces=[] from it: a node built on this world is physically
+// incapable of I/O (design-note 7). Worlds needing the optional imports
+// (payloads/credentials/control) wait for their host implementations
+// (5.10/5.9/5.12).
+package wamn:node-guest@0.1.0;
+
+world node {
+  export wamn:node/handler@0.1.0;
+}

@@ -1,6 +1,32 @@
-# `wamn:node` Contract — Design Notes (v0.1 draft 2)
+# `wamn:node` Contract — Design Notes (v0.1 — FROZEN)
 
-Companion to `wamn-node.wit`. Load-bearing for runner dispatch (5.2/5.6), trace propagation (9.2), and testability (11.5). Draft 2 resolves the four open questions from draft 1.
+Companion to `wamn-node.wit`. Load-bearing for runner dispatch (5.2/5.6), trace propagation (9.2), and testability (11.5). Draft 2 resolved the four open questions from draft 1.
+
+**FROZEN 0.1.0 (2026-07-12, plan 5.4).** Three deltas the 5.3 standard library
+surfaced were folded in before the freeze, so the WIT and its Rust-native
+mirror (`crates/wamn-node-sdk`) coincide from day one:
+
+1. **`run` returns an `emission` record `{payload, port: option<string>}`**
+   (absent = `main`) — the engine routes ported edges (branch nodes emit
+   `"true"`/`"false"`); a bare payload could not express that. The reserved
+   `error` port is never emitted: errors travel as `node-error`.
+2. **`traceparent` is `option<string>`** — the host tracing plumbing (9.2) is
+   not wired yet; a required field every runner must fabricate would freeze a
+   lie. Present once a trace is active; SDKs propagate it invisibly.
+3. **`rate-limit-detail` gained `target-host: option<string>`** — the shared
+   throttle is keyed by (node type, credential, target host), and for a custom
+   node's own outbound calls the error is the only carrier of that host.
+
+Compatibility: 0.1.x is additive/clarifying only; breaking changes wait for
+0.2 (first candidate: the WASI 0.3 native-async revision, 5.16). The optional
+imports are frozen but have NO host implementations yet — `payloads` (5.10),
+`credentials` (5.9), `control` (5.12); linking one fails instantiation until
+its host side lands. Vendored copies of the WIT (three S4 guests, the
+`wamn-node-guest` scaffolding, the host bindgen copy) are drift-guarded by
+`crates/wamn-node-sdk/tests/wit_coherence.rs`, which also pins the exact WIT
+lines the SDK mirrors. The `nodebench` gate proves the ABI cross-language
+(Rust + JS/JCO + wac-composed) and drives the scaffolding-built sample node
+through every taxonomy variant, port selection, and the streamed refusal.
 
 ## Design decisions and rationale
 
@@ -39,7 +65,7 @@ Control-plane API: `cancel(run-id, reason, [node-scope])` — invoked identicall
 The builder reads the component's actual WIT imports and emits `hostInterfaces` (prompting for `allowedHosts` when `wasi:http/outgoing-handler` appears). World `node` imports nothing → empty grants → physically incapable of I/O. `payloads` and `control` are grants like any other.
 
 **8. Node metadata lives in OCI annotations, not a WIT export.**
-Display name, config JSON Schema, input/output schemas, declared ordering-policy support → `wamn.node.manifest` annotation. Registry-scannable node palette; no instantiation to browse.
+Display name, config JSON Schema, input/output schemas, declared ordering-policy support → `wamn.node.manifest` annotation. Registry-scannable node palette; no instantiation to browse. **SHIPPED (5.4):** `crates/wamn-node-manifest` is the annotation's canonical model (types, validation, `ANNOTATION_KEY`), with the language-neutral contract generated from it at `docs/wamn-node-manifest.schema.json` (the wamn-flow pattern: fixture round-trip + boon conformance + drift guard). Declared output ports ride along (edge affordances for the editor; `error` is reserved and rejected). Capability grants are deliberately NOT in the manifest — note 7: derived from actual imports, never declared twice. The builder (5.5) writes the annotation at push.
 
 **9a. Trace propagation is host-enforced, not convention.**
 Nodes SHOULD propagate `traceparent` (SDKs do it invisibly in their HTTP/DB helpers), but the guarantee doesn't depend on it: every outbound call already traverses a host plugin (`wasi:http/outgoing-handler`, `wamn:postgres`), and the host stamps trace context onto any outgoing request that lacks it, using the executing node's span. A user bypassing the SDK cannot break trace continuity — the capability boundary doubles as the telemetry boundary. SDK-set context is preferred (more precise parent spans); host injection is the floor.
@@ -48,7 +74,7 @@ Nodes SHOULD propagate `traceparent` (SDKs do it invisibly in their HTTP/DB help
 First, a clarification three external reviews have tripped on: **standard library nodes never touch the JSON codec.** They are compiled into the runner — same binary, no WIT boundary — and the runner parses flow config once at flow load (hot reload) into typed structs in the in-memory plan; dispatch passes references. The `json` config crosses a boundary only for dynamically loaded custom components, where it is the price of language neutrality. There, config is immutable per `(flow-version, node-id)` — both already in `run-context` — so SDKs parse once and memoize across invocations in a warm instance. In frozen flows, config is known at composition time and the `wac` pipeline constant-folds it into pre-parsed native structs: parse cost is zero exactly on the compute-bound hot paths where it would matter. Cold-start parse share was benchmark-gated in P0 (S4, 2026-07-10): config JSON parse measured ~6% of the *tightest* cold dispatch (~1.2 µs parse vs ~19 µs pooled instantiate+run) — marginally over the 5% line, so the memoize + constant-fold mitigation above **stays** (decision recorded, benign: exposure is bounded and the share is ≪1% once component load/compile is counted). See `docs/p0-results.md` S4. Schema-validated JSON stays; no contract loosening.
 
 **9. Determinism rules (testability contract).**
-Time only via `wasi:clocks`, randomness only via `wasi:random` — so the test host can virtualize time (24h delay resolves instantly) and seed randomness. Streamed-payload reads are deterministic given the fixture store. Builder lints imports against the allowlist.
+Time only via `wasi:clocks`, randomness only via `wasi:random` — so the test host can virtualize time (24h delay resolves instantly) and seed randomness. Streamed-payload reads are deterministic given the fixture store. Builder lints imports against the allowlist. **Specified at the 5.4 freeze:** the custom-node import allowlist v1 is `wamn:node/{payloads,credentials,control}` (inert until 5.10/5.9/5.12), `wasi:clocks`, `wasi:random`, `wasi:io`, the `wasi:cli`/`wasi:filesystem` std shims, and `wasi:http/outgoing-handler` (which prompts for `allowedHosts`); `wasi:sockets` is forbidden outright (the 2.6 DB-path boundary). The MECHANICAL lint lands with the 5.5 builder — `egressbench` (2.6) already does host-side artifact import classification and is the extension point / publish-gate backstop.
 
 ## Versioning policy
 
@@ -91,6 +117,16 @@ fn run(ctx: RunContext, input: Payload) -> Result<Payload, NodeError> {
 ```
 
 SDKs own: binding generation, payload inline/stream duality (same iterator API either way), JSON codec, error variants, traceparent propagation, deadline plumbing, cancellation polling inside iterators and HTTP clients.
+
+**Shipped at 5.4 (Rust):** `crates/wamn-node-guest` — a custom node implements
+the SAME `wamn_node_sdk::Node` trait the standard library uses, and
+`wamn_node_guest::export_node!(MyNode)` is the entire componentization
+(binding generation, JSON codec, taxonomy + port + run-context conversion,
+streamed-payload refusal until 5.10). `components/sample-node` is the
+reference node and conformance fixture; the `#[wamn_node]` macro sketch above
+is superseded by the trait + macro pair. The TS `defineNode` SDK is deferred
+to the builder (5.5) / POC-F2 — the S4 `node-ts` fixture already proves the
+jco path against the frozen ABI.
 
 ## Remaining open items (non-blocking for 0.1)
 

@@ -50,6 +50,8 @@ export const handler = {
     }
 
     const out = JSON.stringify({ parse_ns: -1, acc, n: inline.length, mode: cfg.mode });
-    return { tag: 'inline', val: out };
+    // Frozen 0.1 (5.4): run returns an emission record; an omitted `port`
+    // lowers to the absent option = the "main" port.
+    return { payload: { tag: 'inline', val: out } };
   },
 };

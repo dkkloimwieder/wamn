@@ -1,0 +1,25 @@
+{
+  "schema-version": "0.1",
+  "node-type": "sample-echo",
+  "name": "Sample Echo",
+  "description": "Reference zero-import custom node (5.4): echoes its input on a config-selected port; the frozen wamn:node 0.1 conformance fixture (components/sample-node).",
+  "version": "0.1.0",
+  "contract": "0.1.0",
+  "config-schema": {
+    "type": "object",
+    "properties": {
+      "port": { "type": "string" }
+    },
+    "additionalProperties": false
+  },
+  "input-schema": true,
+  "output-schema": {
+    "type": "object",
+    "properties": {
+      "echo": true,
+      "node": { "type": "string" },
+      "attempt": { "type": "integer" }
+    }
+  },
+  "ordering": ["unordered"]
+}

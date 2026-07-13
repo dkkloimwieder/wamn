@@ -55,7 +55,7 @@ mod bindings {
 }
 
 use bindings::NodeBench;
-use bindings::exports::wamn::node::handler::{Payload, RunContext};
+use bindings::exports::wamn::node::handler::{Emission, NodeError, Payload, RunContext};
 
 // ---------------------------------------------------------------------------
 // wait-ns host import: a real async sleep, uniform across guest languages.
@@ -81,6 +81,9 @@ pub enum Mode {
     Gap,
     /// Config-JSON-parse share of cold dispatch (design-note 9b).
     Config,
+    /// Frozen-contract conformance of the scaffolding-built sample node
+    /// (5.4): taxonomy variants, port selection, streamed-payload refusal.
+    Sample,
     /// Every gate in sequence.
     All,
 }
@@ -96,6 +99,10 @@ pub struct NodeBenchArgs {
     /// wac-composed frozen flow (flow-driver + node-rs).
     #[arg(long, default_value = "/bench/flow-composed.wasm")]
     pub composed: PathBuf,
+    /// Scaffolding-built zero-import sample node (components/sample-node);
+    /// the 5.4 frozen-contract conformance fixture. Skipped if absent.
+    #[arg(long, default_value = "/bench/sample-node.wasm")]
+    pub sample: PathBuf,
 
     #[arg(long, value_enum, default_value_t = Mode::All)]
     pub mode: Mode,
@@ -199,20 +206,38 @@ impl NodeInstance {
         Ok(Self { store, bench })
     }
 
-    /// One node execution. Returns the output payload JSON.
+    /// One node execution. Returns the output payload JSON (frozen 0.1: `run`
+    /// returns an emission; the bench nodes always emit on `main` = absent).
     async fn run(&mut self, config: &str, input: &str) -> anyhow::Result<String> {
-        let ctx = mk_ctx(config);
-        let payload = Payload::Inline(input.to_string());
         let res = self
+            .run_raw(config, Payload::Inline(input.to_string()))
+            .await?;
+        match res {
+            Ok(Emission {
+                payload: Payload::Inline(s),
+                ..
+            }) => Ok(s),
+            Ok(Emission {
+                payload: Payload::Streamed(_),
+                ..
+            }) => bail!("node returned a streamed payload"),
+            Err(e) => bail!("node error: {e:?}"),
+        }
+    }
+
+    /// One node execution with the full WIT-shaped result (the sample
+    /// conformance gate inspects ports and error variants).
+    async fn run_raw(
+        &mut self,
+        config: &str,
+        payload: Payload,
+    ) -> anyhow::Result<Result<Emission, NodeError>> {
+        let ctx = mk_ctx(config);
+        Ok(self
             .bench
             .wamn_node_handler()
             .call_run(&mut self.store, &ctx, &payload)
-            .await?;
-        match res {
-            Ok(Payload::Inline(s)) => Ok(s),
-            Ok(Payload::Streamed(_)) => bail!("node returned a streamed payload"),
-            Err(e) => bail!("node error: {e:?}"),
-        }
+            .await?)
     }
 }
 
@@ -224,7 +249,7 @@ fn mk_ctx(config: &str) -> RunContext {
         node_id: "n0".to_string(),
         attempt: 0,
         idempotency_key: "s4-key".to_string(),
-        traceparent: String::new(),
+        traceparent: None,
         tracestate: None,
         deadline_ms: None,
         config: config.to_string(),
@@ -304,6 +329,9 @@ pub async fn run(args: NodeBenchArgs) -> anyhow::Result<()> {
     }
     if run_all || args.mode == Mode::Gap {
         pass &= gap_phase(&engine, &args).await?;
+    }
+    if run_all || args.mode == Mode::Sample {
+        pass &= sample_phase(&engine, &args).await?;
     }
 
     ticker.abort();
@@ -795,4 +823,108 @@ async fn serve_connection_shared(sock: TcpStream, node: &mut NodeInstance) -> an
         reader.get_mut().flush().await?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// sample gate (5.4): frozen-contract conformance of the scaffolding-built node
+// ---------------------------------------------------------------------------
+
+/// Drives `components/sample-node` (built on the `wamn-node-guest`
+/// scaffolding over the FROZEN `wamn:node` 0.1 contract) through every
+/// conversion the scaffolding performs, over the real ABI: the five
+/// `node-error` taxonomy variants, port selection (absent = `main`), the
+/// echo round trip, and the streamed-payload refusal (payload store = 5.10).
+/// Topology-independent (pure in-proc ABI), so local == in-cluster.
+async fn sample_phase(
+    engine: &wash_runtime::engine::Engine,
+    args: &NodeBenchArgs,
+) -> anyhow::Result<bool> {
+    println!("\n## sample — frozen wamn:node 0.1 conformance (scaffolding-built sample node)");
+    if !args.sample.exists() {
+        println!("SKIP: {} not present", args.sample.display());
+        return Ok(true);
+    }
+    let bytes =
+        std::fs::read(&args.sample).with_context(|| format!("read {}", args.sample.display()))?;
+    let pre = node_pre(engine, &bytes)?;
+    let mut node = NodeInstance::instantiate(engine, &pre).await?;
+    let mut pass = true;
+    let mut check = |name: &str, ok: bool| {
+        println!("PASS({name}): {ok}");
+        pass &= ok;
+    };
+
+    // Echo: emission on the absent (= main) port, payload round-trips.
+    let res = node
+        .run_raw("{}", Payload::Inline("{\"x\": 7}".to_string()))
+        .await?;
+    match res {
+        Ok(Emission {
+            payload: Payload::Inline(s),
+            port,
+        }) => {
+            let v: serde_json::Value = serde_json::from_str(&s)?;
+            check("echo payload round-trips", v["echo"]["x"] == 7);
+            check("default port travels absent (= main)", port.is_none());
+        }
+        other => {
+            println!("echo returned {other:?}");
+            check("echo returns an inline emission", false);
+        }
+    }
+
+    // Port selection via config.
+    let res = node
+        .run_raw("{\"port\": \"true\"}", Payload::Inline("null".to_string()))
+        .await?;
+    check(
+        "named port travels present",
+        matches!(&res, Ok(e) if e.port.as_deref() == Some("true")),
+    );
+
+    // The five taxonomy variants, variant for variant.
+    let fail = |v: &str| Payload::Inline(format!("{{\"fail\": \"{v}\"}}"));
+    let res = node.run_raw("{}", fail("retryable")).await?;
+    check(
+        "retryable maps to retryable",
+        matches!(&res, Err(NodeError::Retryable(d)) if d.code.as_deref() == Some("SAMPLE_RETRY")),
+    );
+    let res = node.run_raw("{}", fail("rate-limited")).await?;
+    check(
+        "rate-limited carries retry-after + target-host",
+        matches!(&res, Err(NodeError::RateLimited(r))
+            if r.retry_after_ms == Some(1500) && r.target_host.as_deref() == Some("sample.example")),
+    );
+    let res = node.run_raw("{}", fail("terminal")).await?;
+    check(
+        "terminal maps to terminal",
+        matches!(&res, Err(NodeError::Terminal(_))),
+    );
+    let res = node.run_raw("{}", fail("invalid-input")).await?;
+    check(
+        "invalid-input maps to invalid-input",
+        matches!(&res, Err(NodeError::InvalidInput(_))),
+    );
+    let res = node.run_raw("{}", fail("cancelled")).await?;
+    check(
+        "cancelled maps to cancelled",
+        matches!(&res, Err(NodeError::Cancelled)),
+    );
+
+    // Streamed input: refused by the scaffolding until the payload store (5.10).
+    use bindings::wamn::node::types::{Framing, PayloadRef};
+    let streamed = Payload::Streamed(PayloadRef {
+        handle: "h".to_string(),
+        framing: Framing::Ndjson,
+        size_hint: None,
+    });
+    let res = node.run_raw("{}", streamed).await?;
+    check(
+        "streamed input refused (payload store = 5.10)",
+        matches!(&res, Err(NodeError::Terminal(d))
+            if d.code.as_deref() == Some("streamed-payload-unsupported")),
+    );
+
+    println!("PASS(sample conformance): {pass}");
+    Ok(pass)
 }

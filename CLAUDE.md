@@ -127,7 +127,7 @@ REL=components/target/wasm32-wasip2/release
 wac plug $REL/flow_driver.wasm --plug $REL/node_rs.wasm -o $REL/flow_composed.wasm
 ./target/release/wamn-host --log-level error nodebench \
   --node-rs $REL/node_rs.wasm --node-ts components/node-ts/node-ts.wasm \
-  --composed $REL/flow_composed.wasm --mode all
+  --composed $REL/flow_composed.wasm --sample $REL/sample_node.wasm --mode all
 # In-cluster gate of record (real cross-pod hop via the serve-node Service; the
 # gap/config gates run in-pod; no cpu limit — the S2 CFS lesson):
 kubectl -n wamn-system apply -f deploy/serve-node.yaml
@@ -186,7 +186,8 @@ REL=components/target/wasm32-wasip2/release
   --component $REL/pgprobe.wasm --component $REL/node_rs.wasm \
   --component $REL/flow_composed.wasm --component $REL/hello.wasm \
   --component $REL/api_gateway.wasm \
-  --component $REL/webhook_entry.wasm  # 4.1/F1 serving workloads: {wamn:postgres,wasi:http}
+  --component $REL/webhook_entry.wasm \
+  --component $REL/sample_node.wasm  # webhook/api: {wamn:postgres,wasi:http}; 5.4 sample node: ZERO egress
 
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
 
@@ -252,6 +253,58 @@ cargo test -p wamn-runner            # taxonomy re-export + port drift-guard reg
 cargo clippy -p wamn-node-sdk -p wamn-nodes --all-targets \
   && cargo fmt -p wamn-node-sdk -p wamn-nodes --check
 # guest adoption regression = the S3/S6/F1 gates above ([5.2]/[POC-F1] blocks)
+
+# [5.4] wamn:node contract 0.1 FROZEN + SDK scaffolding — docs/wamn-node.wit now
+# carries the wamn-postgres-style STATUS header (FROZEN 0.1.0, 0.1.x additive-
+# only, deferred-to-0.2 = the WASI-0.3 async revision [5.16]; additive candidate
+# = emit [5.15]). THREE 5.3-surfaced deltas folded in PRE-freeze so WIT == SDK
+# from day one: run() returns an emission record {payload, port: option<string>}
+# (absent = main — the engine's ported edges; branch nodes emit true/false),
+# traceparent is option<string> (9.2 tracing not wired; a required field every
+# runner must fabricate would freeze a lie), rate-limit-detail gained
+# target-host (the shared-throttle key only the erroring node can observe). The
+# OPTIONAL imports (payloads/credentials/control) are frozen but have NO host
+# impls yet (5.10/5.9/5.12) — linking one fails instantiation; the payloads
+# wasi:io version pin is provisional until 5.10 activates it. NEW
+# crates/wamn-node-guest = the custom-node componentization scaffolding: impl
+# the SAME wamn_node_sdk::Node trait the standard library uses, then
+# wamn_node_guest::export_node!(MyNode) is the ENTIRE componentization
+# (wit-bindgen wrapped via pub_export_macro; NoCapsCtx — the contract's minimal
+# `world node` imports NOTHING, so the node is physically incapable of I/O);
+# SEPARATE crate because the purity lint pins the SDK's deps == {serde_json}.
+# NEW components/sample-node = the reference custom node AND the frozen-contract
+# conformance fixture (the POC-F2 seed). NEW crates/wamn-node-manifest = the
+# wamn.node.manifest OCI annotation model (design-note 8: display name,
+# config/input/output JSON Schemas, ordering-policy support, output ports
+# ["error" reserved-rejected]; capability grants deliberately NOT here — note 7:
+# derived from actual WIT imports) + the published contract
+# docs/wamn-node-manifest.schema.json (schemars + boon + drift-guard, the
+# 5.1/3.1 pattern). Determinism-lint rules (note 9) SPECIFIED in the design
+# notes (import allowlist; wasi:sockets forbidden — 2.6); the MECHANICAL lint
+# lands with the 5.5 builder (egressbench is the precedent + backstop).
+# DRIFT-GUARDS (crates/wamn-node-sdk/tests/wit_coherence.rs): every vendored
+# WIT copy (3 S4 guests + wamn-node-guest + the host bindgen copy) must be an
+# in-order code-line subsequence of docs/wamn-node.wit, the 4 trimmed guest
+# copies byte-identical to each other, and the exact WIT lines the SDK mirrors
+# are pinned. GATES: nodebench gained a `sample` mode (frozen-contract
+# conformance through REAL wasm — all 5 taxonomy variants, port selection
+# [absent = main], echo round-trip, streamed-payload refusal; topology-
+# independent, runs in --mode all, skips if the fixture is absent) and the S4
+# hop/gap/config gates regress on the amended ABI (node-rs + jco node-ts + wac
+# flow_composed rebuilt on the emission signature); egressbench gains
+# sample_node (zero-import: egress=[]). TS defineNode SDK deferred to 5.5/F2
+# (the S4 node-ts fixture already proves the jco path). Mutants killed: frozen-
+# WIT line drift (both coherence guards), scaffolding taxonomy swap (unit test
+# + the sample gate through real wasm), manifest schema drift (schema_drift).
+cargo test -p wamn-node-sdk      # incl the wit_coherence drift-guards
+cargo test -p wamn-node-guest    # conversion glue + NoCapsCtx units
+cargo test -p wamn-node-manifest # fixture/negatives/conformance/drift
+cargo clippy -p wamn-node-guest -p wamn-node-manifest --all-targets \
+  && cargo fmt -p wamn-node-sdk -p wamn-node-guest -p wamn-node-manifest --check
+# regenerate the published manifest schema after changing the types:
+cargo run -p wamn-node-manifest --example print-schema > docs/wamn-node-manifest.schema.json
+# the sample node builds with the other guests (see the S4 block above for the
+# nodebench command incl --sample; the [2.6] egressbench command includes it)
 
 # [5.7] run-state persistence (crates/wamn-run-store) — durable runs/node_runs +
 # BRANCH-AWARE replay reconstruction + partial re-run. The PURE crate (model +

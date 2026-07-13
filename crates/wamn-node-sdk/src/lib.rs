@@ -1,10 +1,13 @@
-//! # wamn-node-sdk — the node authoring contract (5.3, ahead of the 5.4 freeze)
+//! # wamn-node-sdk — the node authoring contract (5.3/5.4)
 //!
-//! The Rust mirror of the drafted `wamn:node` WIT contract
-//! (`docs/wamn-node.wit`): the [`Node`] trait every standard-library node — and
-//! later every custom node — is authored against, the [`RunContext`] view of a
-//! dispatch, the [`NodeCtx`] capability facade all effects flow through, and
-//! the [`NodeError`] taxonomy the engine folds mechanically.
+//! The Rust mirror of the FROZEN `wamn:node` 0.1 WIT contract
+//! (`docs/wamn-node.wit`, frozen by 5.4): the [`Node`] trait every
+//! standard-library node — and every custom node, via the
+//! `wamn-node-guest` scaffolding — is authored against, the [`RunContext`]
+//! view of a dispatch, the [`NodeCtx`] capability facade all effects flow
+//! through, and the [`NodeError`] taxonomy the engine folds mechanically.
+//! `crates/wamn-node-sdk/tests/wit_coherence.rs` drift-guards the mirror
+//! against the WIT file and every vendored copy of it.
 //!
 //! **This crate is the purity boundary** (docs/platform-plan.md 5.3/5.13):
 //! node crates depend on the SDK ONLY — never on `wamn-runner` — enforced by a
@@ -12,12 +15,11 @@
 //! interface and silently break the frozen-flow composition path. `wamn-runner`
 //! depends on this crate and re-exports the taxonomy, keeping one definition.
 //!
-//! Two deliberate deltas from the WIT draft, to reconcile at the 5.4 freeze:
-//! - [`Emission`] carries an output **port** (the engine routes ported edges;
-//!   a branch node like `conditional` selects `"true"`/`"false"`), which the
-//!   drafted `run` result does not yet express.
-//! - Payloads are in-memory [`serde_json::Value`]s; the `streamed(payload-ref)`
-//!   arm waits for the payload store (5.10).
+//! One deliberate delta from the frozen WIT remains: payloads are in-memory
+//! [`serde_json::Value`]s — the `streamed(payload-ref)` arm waits for the
+//! payload store (5.10; the scaffolding refuses a streamed input with
+//! `terminal("streamed-payload-unsupported")` until then). [`Emission::port`]
+//! `== MAIN_PORT` corresponds to an ABSENT port in the WIT emission record.
 
 mod ctx;
 mod error;

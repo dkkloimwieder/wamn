@@ -1,6 +1,24 @@
 package wamn:node@0.1.0;
 
 /// Shared types for the node contract.
+///
+/// STATUS: FROZEN 0.1.0 (2026-07-12, plan 5.4). The handler ABI cleared the S4
+/// spike cross-language (Rust + JS/JCO + wac-composed; nodebench is the gate of
+/// record) and the Rust-native mirror (`crates/wamn-node-sdk`) shipped the 5.3
+/// standard library against it; three deltas the library surfaced were folded
+/// in BEFORE this freeze (the `emission` output port, `traceparent` as
+/// optional, `rate-limit-detail.target-host`).
+/// Compatibility rule: 0.1.x admits only additive or clarifying changes; any
+/// breaking change (a new/removed variant case or a changed signature) waits
+/// for 0.2. Deferred to 0.2: the WASI 0.3 native-async revision (5.16) and a
+/// structured `value` payload variant. Additive candidates within 0.1.x: the
+/// `emit` progress interface (5.15).
+/// Host-implementation status of the OPTIONAL imports (the interfaces are
+/// frozen; linking one fails instantiation until its host side lands):
+/// `payloads` = the payload store (5.10) -- its `wasi:io` version pin is
+/// provisional and will be aligned with the host's wasi:io when 5.10 activates
+/// the import (non-breaking while the import is inert); `credentials` = the
+/// vault (5.9); `control` = cooperative cancellation (5.12).
 interface types {
   /// JSON-encoded string. Structured `value` variant deferred to a
   /// future version; a string maximizes guest-language ergonomics
@@ -51,8 +69,10 @@ interface types {
     /// Runner-generated, stable across retries of this node in this
     /// run. Forward to external systems supporting idempotency headers.
     idempotency-key: string,
-    /// W3C trace context. Nodes making outbound calls MUST propagate.
-    traceparent: string,
+    /// W3C trace context. Present once the host tracing plumbing (9.2) is
+    /// wired and a trace is active; nodes making outbound calls MUST
+    /// propagate it when present (SDKs do this invisibly).
+    traceparent: option<string>,
     tracestate: option<string>,
     /// Remaining execution budget in ms. The runner enforces a hard
     /// deadline regardless (Wasmtime epoch interruption); this lets
@@ -79,6 +99,10 @@ interface types {
     /// Source-authoritative delay (e.g. from a Retry-After header).
     /// Absent = runner applies its own backoff curve.
     retry-after-ms: option<u64>,
+    /// The throttled system's authority (host[:port]) -- the runner's
+    /// SHARED throttle key component the host cannot always observe
+    /// itself. Absent = throttle keyed by (node type, credential) only.
+    target-host: option<string>,
   }
 
   /// The runner decides retry-with-backoff vs error-branch routing vs
@@ -101,14 +125,25 @@ interface types {
     /// stopped cooperatively. Recorded as cancelled, not failed.
     cancelled,
   }
+
+  /// What a successful node execution produced: the output payload plus
+  /// the output port selecting which edges the engine routes it down
+  /// (`docs/flow-schema.md` ported edges). Absent port = "main". Branch
+  /// nodes emit named ports (a conditional's "true"/"false"); the
+  /// reserved "error" port is never emitted here -- errors travel as
+  /// node-error and the engine routes them.
+  record emission {
+    payload: payload,
+    port: option<string>,
+  }
 }
 
 /// REQUIRED export. The entire node is a pure function of
 /// (ctx, input, granted host imports) -> output. This purity is what
 /// makes nodes unit-testable and frozen-flow composition possible.
 interface handler {
-  use types.{payload, run-context, node-error};
-  run: func(ctx: run-context, input: payload) -> result<payload, node-error>;
+  use types.{payload, run-context, emission, node-error};
+  run: func(ctx: run-context, input: payload) -> result<emission, node-error>;
 }
 
 /// OPTIONAL host import: read/write streamed payloads. Only nodes that

@@ -832,6 +832,10 @@ fn dispatch_node(
                 attempt: d.attempt,
                 idempotency_key: &d.idempotency_key,
                 deadline_ms: d.deadline_ms,
+                // Host tracing (9.2) is not wired yet; the frozen WIT carries
+                // these as optional for exactly this reason.
+                traceparent: None,
+                tracestate: None,
                 config: &d.config,
             };
             let mut ctx = GuestCtx;

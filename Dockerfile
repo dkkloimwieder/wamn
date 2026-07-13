@@ -30,6 +30,9 @@ COPY components/target/wasm32-wasip2/release/flowrunner.wasm /bench/flowrunner.w
 COPY components/target/wasm32-wasip2/release/node_rs.wasm /bench/node-rs.wasm
 COPY components/target/wasm32-wasip2/release/flow_composed.wasm /bench/flow-composed.wasm
 COPY components/node-ts/node-ts.wasm /bench/node-ts.wasm
+# 5.4 frozen-contract conformance fixture: the scaffolding-built zero-import
+# sample node (nodebench --mode sample / the default `all`).
+COPY components/target/wasm32-wasip2/release/sample_node.wasm /bench/sample-node.wasm
 # S5 logging-capture fixture (imports wasi:logging, exports overhead+emit-batch).
 COPY components/target/wasm32-wasip2/release/logspewer.wasm /bench/logspewer.wasm
 # 4.1 generated REST API gateway (exports wasi:http/incoming-handler, imports

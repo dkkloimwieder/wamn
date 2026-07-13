@@ -136,9 +136,11 @@ Nodes never string-match; the maps are fixed and unit-pinned:
   sync rule). Cross-invocation retry scheduling belongs to the queue layer
   (`run_queue.available_at` / `park_sql`) and lands with the guest-claim
   rewire (wamn-fqg.4).
-- The SDK `Emission` carries an output **port** (branching), which the drafted
-  WIT `run` result does not yet express — a recorded delta to reconcile at the
-  5.4 freeze, alongside `streamed` payloads (5.10) and credentials (5.9).
+- The SDK `Emission` port is now IN the frozen contract: the 5.4 freeze
+  amended `run` to return an emission record `{payload, port: option<string>}`
+  (absent = `main`) before freezing 0.1 — WIT and SDK coincide, drift-guarded
+  by `crates/wamn-node-sdk/tests/wit_coherence.rs`. Remaining SDK-side
+  deferrals: `streamed` payloads (5.10) and the credentials facade (5.9).
 
 ## Gates
 

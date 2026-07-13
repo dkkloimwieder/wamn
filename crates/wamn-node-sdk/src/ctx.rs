@@ -29,10 +29,10 @@ pub enum Capability {
     RawSql,
 }
 
-/// Everything the runner knows that a node execution may need. Mirrors the WIT
-/// `run-context` (`docs/wamn-node.wit`), minus the trace-context fields (the
-/// tracing plumbing is not wired yet) and with `config` pre-parsed to JSON.
-/// Deliberately contains NO secrets — credentials resolve lazily (5.9).
+/// Everything the runner knows that a node execution may need. Mirrors the
+/// frozen WIT `run-context` (`docs/wamn-node.wit`, 0.1.0) with `config`
+/// pre-parsed to JSON. Deliberately contains NO secrets — credentials resolve
+/// lazily (5.9).
 #[derive(Debug, Clone, Copy)]
 pub struct RunContext<'a> {
     /// Unique id of this flow run (stable across retries of any node).
@@ -49,6 +49,11 @@ pub struct RunContext<'a> {
     /// Remaining execution budget in ms; lets well-behaved nodes set client
     /// timeouts and fail gracefully before the host's hard epoch deadline.
     pub deadline_ms: Option<u64>,
+    /// W3C trace context. Present once the host tracing plumbing (9.2) is
+    /// wired and a trace is active; nodes making outbound calls MUST
+    /// propagate it when present.
+    pub traceparent: Option<&'a str>,
+    pub tracestate: Option<&'a str>,
     /// Node configuration (already parsed; the flow graph carries it as JSON).
     pub config: &'a Value,
 }

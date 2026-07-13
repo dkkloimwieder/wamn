@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "OrderingPolicy": {
+      "description": "An ordering policy a node declares support for (design-note 2). The runner's dispatch honors the flow's per-node choice among the node's declared set; the node itself stays a pure function under all three.",
+      "oneOf": [
+        {
+          "description": "Total order: one in-flight execution per node.",
+          "enum": [
+            "strict"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Order per partition key, parallel across keys (the Kafka model).",
+          "enum": [
+            "partitioned"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Free parallelism up to the concurrency limit.",
+          "enum": [
+            "unordered"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "The `wamn.node.manifest` document.",
+  "properties": {
+    "config-schema": {
+      "description": "JSON Schema for the node's `config`; the runner validates config against it BEFORE dispatch. Absent = any config accepted."
+    },
+    "contract": {
+      "description": "The `wamn:node` contract version the component was built against (e.g. \"0.1.0\"). The runner instantiates against it and supports current + previous major (versioning policy, design notes).",
+      "type": "string"
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "input-schema": {
+      "description": "JSON Schema for the input payload (editor assistance / 11.5 checks)."
+    },
+    "name": {
+      "description": "Display name for the editor palette.",
+      "type": "string"
+    },
+    "node-type": {
+      "description": "The flow-graph node `type` this component implements — a lowercase slug (`[a-z0-9-]`, alphanumeric first/last), the flow-id rule.",
+      "type": "string"
+    },
+    "ordering": {
+      "description": "Ordering policies the node supports. Default: all three.",
+      "items": {
+        "$ref": "#/definitions/OrderingPolicy"
+      },
+      "type": "array"
+    },
+    "output-ports": {
+      "description": "Output ports the node can emit (edge affordances in the editor). Default `[\"main\"]`. `\"error\"` is reserved for the engine's error routing and never emitted by a node.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "output-schema": {
+      "description": "JSON Schema for the output payload."
+    },
+    "schema-version": {
+      "description": "Manifest schema version (\"0.1\"); 0.1.x admits additive changes only.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The node's own version (mirrors its OCI tag).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "contract",
+    "name",
+    "node-type",
+    "schema-version",
+    "version"
+  ],
+  "title": "NodeManifest",
+  "type": "object"
+}

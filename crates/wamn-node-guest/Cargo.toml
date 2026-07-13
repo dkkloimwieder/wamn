@@ -1,0 +1,17 @@
+[package]
+name = "wamn-node-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The wasm-guest scaffolding for CUSTOM nodes (5.4): wraps `wit-bindgen` over
+# the frozen `wamn:node` 0.1 contract so a custom node implements the SAME
+# `wamn_node_sdk::Node` trait the standard library uses and exports
+# `wamn:node/handler` with one macro invocation. Deliberately a SEPARATE crate
+# from `wamn-node-sdk`: the purity lint pins the SDK's dependency set to
+# exactly {serde_json}, and the bindgen machinery must not leak into it.
+
+[dependencies]
+wamn-node-sdk = { path = "../wamn-node-sdk" }
+wit-bindgen = "0.44"
+serde_json = "1"
