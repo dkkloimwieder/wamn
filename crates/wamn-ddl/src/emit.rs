@@ -649,9 +649,51 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan
             hoisted_columns.get(ch.id.as_str()).unwrap_or(&no_hoisted),
         );
     }
-    for id in &d.entities_removed {
-        let e = old_by_id[id.as_str()];
-        let (drop_ident, note) = match temp_named.get(id.as_str()) {
+    // 4b) Dropped tables, DEPENDENTS-FIRST. `d.entities_removed` arrives in
+    //     entity-id lexical order (a BTreeMap in the diff), which is FK-blind:
+    //     a removed child B whose `Reference` field targets a removed parent A
+    //     holds an FK B -> A, so dropping A before B fails 2BP01 (the
+    //     constraint on B depends on A) and the one-txn apply rolls back.
+    //     Topologically order the removed set on its inbound `Reference` edges
+    //     (Kahn rounds, mirroring the table-rename ordering in preamble 3) and
+    //     emit each table before the tables it references. Only edges WITHIN
+    //     the removed set matter: a `Reference` to a RETAINED table keeps its
+    //     FK on the retained side, and the new catalog cannot retain a
+    //     `Reference` to a removed table (validation rejects the dangling
+    //     target). A self-edge (a tree's parent pointer) drops with the table,
+    //     so it is ignored. A mutual-FK cycle among dropped tables has no
+    //     linearization and is rejected (`DropCycle`), as the rename cycles are.
+    let removed_set: HashSet<&str> = d.entities_removed.iter().map(String::as_str).collect();
+    let mut pending: Vec<&str> = d.entities_removed.iter().map(String::as_str).collect();
+    let mut drop_order: Vec<&str> = Vec::with_capacity(pending.len());
+    while !pending.is_empty() {
+        // A table is still held if any pending table references it — that
+        // referencer (the child) must drop first, so the parent is not ready.
+        let mut referenced: HashSet<&str> = HashSet::new();
+        for id in &pending {
+            for f in &old_by_id[*id].fields {
+                if let FieldType::Reference { entity: target } = &f.field_type {
+                    let t = target.as_str();
+                    if t != *id && removed_set.contains(t) {
+                        referenced.insert(t);
+                    }
+                }
+            }
+        }
+        let (ready, blocked): (Vec<&str>, Vec<&str>) = pending
+            .into_iter()
+            .partition(|id| !referenced.contains(*id));
+        if ready.is_empty() {
+            return Err(CompileError::DropCycle {
+                entities: blocked.iter().map(|s| s.to_string()).collect(),
+            });
+        }
+        drop_order.extend(ready);
+        pending = blocked;
+    }
+    for id in &drop_order {
+        let e = old_by_id[*id];
+        let (drop_ident, note) = match temp_named.get(*id) {
             Some(tmp) => (
                 tmp.as_str(),
                 "drops the table and all its data (renamed aside at the top of this plan to free its reused name)",

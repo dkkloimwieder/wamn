@@ -56,6 +56,12 @@ pub enum CompileError {
     /// analog of [`CompileError::TableRenameCycle`]; split it into two
     /// version bumps.
     ColumnRenameCycle { entity: String, names: Vec<String> },
+    /// The tables being dropped in this migration form a foreign-key cycle
+    /// (mutual `Reference`s among the removed set), so no `DROP TABLE` order
+    /// unwinds the FKs without dropping a constraint first. Rejected in v1 (as
+    /// the rename cycles are) — break the cycle by dropping one side's
+    /// reference field in an earlier version bump.
+    DropCycle { entities: Vec<String> },
     /// A dropped table's name is reclaimed by this migration, and the
     /// transient aside-name the plan needs (`wamn_mig_drop_<name>`) is itself
     /// a real table in the old or new catalog.
@@ -92,6 +98,11 @@ impl std::fmt::Display for CompileError {
                 f,
                 "column renames on entity {entity:?} form a cycle ({}): split the evolution into two version bumps",
                 names.join(" -> ")
+            ),
+            CompileError::DropCycle { entities } => write!(
+                f,
+                "dropped tables form a foreign-key cycle ({}): drop one side's reference field in an earlier version bump",
+                entities.join(" <-> ")
             ),
             CompileError::TempNameCollision { name } => write!(
                 f,

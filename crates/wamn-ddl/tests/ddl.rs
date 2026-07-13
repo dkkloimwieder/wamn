@@ -351,6 +351,85 @@ fn pkey_follows_a_table_rename() {
 }
 
 #[test]
+fn removed_entity_drops_are_fk_ordered() {
+    // v1: authors <- books (books.author_id references authors). v2 drops both.
+    // `entities_removed` arrives id-lexical (a_authors < b_books), so a
+    // dependency-blind emission would DROP "authors" before "books" — 2BP01,
+    // the FK constraint on books depends on authors, and the one-txn apply
+    // rolls back. The topological pass must emit the dependent child first.
+    let authors = entity("a_authors", "authors", vec![text_field("name")]);
+    let mut books = entity("b_books", "books", vec![text_field("title")]);
+    books.fields.push(reference_field("author_id", "a_authors"));
+    let v1 = mini(1, vec![authors, books]);
+    let v2 = mini(2, vec![]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    // Both table drops are destructive, so the whole plan is gated.
+    assert!(plan.requires_confirmation());
+    assert!(plan.sql(Confirmation::None).is_err());
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let drop_books = sql.find("DROP TABLE \"books\"").expect("drop books");
+    let drop_authors = sql.find("DROP TABLE \"authors\"").expect("drop authors");
+    assert!(
+        drop_books < drop_authors,
+        "the referencing child must drop before the referenced parent:\n{sql}"
+    );
+}
+
+#[test]
+fn removed_entity_drop_chain_orders_dependents_first() {
+    // A 3-table chain, authors <- books <- reviews (reviews -> books -> authors),
+    // all dropped in one bump. Ids are chosen so lexical order (e1, e2, e3) is
+    // the exact REVERSE of the safe drop order (reviews, books, authors) — a
+    // single ready/blocked pass would pull only the leaf out and leave the rest
+    // lexical, so the full Kahn loop is required.
+    let authors = entity("e1_root", "authors", vec![text_field("name")]);
+    let mut books = entity("e2_mid", "books", vec![text_field("title")]);
+    books.fields.push(reference_field("author_id", "e1_root"));
+    let mut reviews = entity("e3_leaf", "reviews", vec![text_field("body")]);
+    reviews.fields.push(reference_field("book_id", "e2_mid"));
+    let v1 = mini(1, vec![authors, books, reviews]);
+    let v2 = mini(2, vec![]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("a drop chain compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let drop_reviews = sql.find("DROP TABLE \"reviews\"").expect("drop reviews");
+    let drop_books = sql.find("DROP TABLE \"books\"").expect("drop books");
+    let drop_authors = sql.find("DROP TABLE \"authors\"").expect("drop authors");
+    assert!(
+        drop_reviews < drop_books && drop_books < drop_authors,
+        "the chain must drop fully dependents-first (leaf -> root):\n{sql}"
+    );
+}
+
+#[test]
+fn mutual_fk_among_dropped_tables_is_rejected() {
+    // Two tables each referencing the other, both dropped in one bump: no
+    // DROP TABLE order unwinds the FKs without a prior constraint drop, so v1
+    // rejects it (as the rename/column cycles are rejected) rather than emit a
+    // plan that cannot apply.
+    let mut a = entity("ea", "left", vec![text_field("v")]);
+    a.fields.push(reference_field("right_ref", "eb"));
+    let mut b = entity("eb", "right", vec![text_field("v")]);
+    b.fields.push(reference_field("left_ref", "ea"));
+    let v1 = mini(1, vec![a, b]);
+    let v2 = mini(2, vec![]);
+
+    match Migration::migrate(&v1, &v2) {
+        Err(CompileError::DropCycle { entities }) => {
+            assert_eq!(
+                entities.len(),
+                2,
+                "both cycle members reported: {entities:?}"
+            );
+            assert!(entities.iter().any(|e| e == "ea"));
+            assert!(entities.iter().any(|e| e == "eb"));
+        }
+        other => panic!("expected DropCycle, got {other:?}"),
+    }
+}
+
+#[test]
 fn reused_name_via_drop_reclaimed_by_a_rename() {
     // The freed name is reclaimed by a RENAME, not a CREATE — the rename
     // TARGETS (not sources) must drive the claim analysis: v1{x:'n' removed,
@@ -1331,6 +1410,83 @@ fn migration_with_name_reuse_applies_on_postgres() {
              ASSERT (SELECT data_type FROM information_schema.columns WHERE table_schema = 'wamn_ddl_reuse_test' AND table_name = 'audit_log' AND column_name = 'val') = 'integer', 'column redefined in place under its name';\n\
          END $$;\n\
          DROP SCHEMA wamn_ddl_reuse_test CASCADE;\n",
+    );
+
+    let mut child = Command::new("psql")
+        .arg(&url)
+        .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn psql (is it installed?)");
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Live verification of the removed-entity drop ordering (wamn-nqg) on a
+/// throwaway Postgres (gated on `WAMN_DDL_PG_URL`, skips cleanly when unset):
+/// a chain authors <- books <- reviews with live rows and real inbound FKs is
+/// dropped whole in one migration. The `DROP TABLE`s must emit dependents-first
+/// or Postgres fails 2BP01 (`constraint books_author_id_fkey on table books
+/// depends on table authors`) and the one-txn apply rolls back — the exact bug
+/// this closes. Runs in its OWN schema so it parallelizes with the other gates.
+#[test]
+fn removed_entity_drops_apply_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_DDL_PG_URL") else {
+        eprintln!("skipping removed_entity_drops_apply_on_postgres (set WAMN_DDL_PG_URL to run)");
+        return;
+    };
+
+    let authors = entity("e1_root", "authors", vec![text_field("name")]);
+    let mut books = entity("e2_mid", "books", vec![text_field("title")]);
+    books.fields.push(reference_field("author_id", "e1_root"));
+    let mut reviews = entity("e3_leaf", "reviews", vec![text_field("body")]);
+    reviews.fields.push(reference_field("book_id", "e2_mid"));
+    let v1 = mini(1, vec![authors, books, reviews]);
+    let v2 = mini(2, vec![]);
+
+    let create = Migration::create(&v1).unwrap();
+    let drop_all = Migration::migrate(&v1, &v2).unwrap();
+
+    let mut script = String::new();
+    script.push_str(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
+         BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
+         DROP SCHEMA IF EXISTS wamn_ddl_drop_order_test CASCADE;\n\
+         CREATE SCHEMA wamn_ddl_drop_order_test AUTHORIZATION CURRENT_USER;\n\
+         GRANT USAGE ON SCHEMA wamn_ddl_drop_order_test TO wamn_app;\n\
+         SET search_path TO wamn_ddl_drop_order_test;\n",
+    );
+    script.push_str(&create.sql(Confirmation::None).unwrap());
+    // Live rows exercising both FK edges (reviews -> books -> authors), so a
+    // wrong drop order fails on a real dependency, not just an empty catalog.
+    script.push_str(
+        "INSERT INTO authors (tenant_id, name) VALUES ('t1', 'Le Guin');\n\
+         INSERT INTO books (tenant_id, title, author_id) SELECT 't1', 'Earthsea', id FROM authors;\n\
+         INSERT INTO reviews (tenant_id, body, book_id) SELECT 't1', 'wizardly', id FROM books;\n",
+    );
+    // The heart of the gate: this apply hit 2BP01 before the topological order.
+    script.push_str(&drop_all.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(
+        "DO $$ BEGIN\n\
+             ASSERT to_regclass('wamn_ddl_drop_order_test.authors') IS NULL, 'authors dropped';\n\
+             ASSERT to_regclass('wamn_ddl_drop_order_test.books') IS NULL, 'books dropped';\n\
+             ASSERT to_regclass('wamn_ddl_drop_order_test.reviews') IS NULL, 'reviews dropped';\n\
+         END $$;\n\
+         DROP SCHEMA wamn_ddl_drop_order_test CASCADE;\n",
     );
 
     let mut child = Command::new("psql")

@@ -165,18 +165,29 @@ add); the freeing side must execute first or the add fails (42P07 / 42710 /
    hence after step 3.
 5. The additive-first / destructive-last steps as before: creates + RLS,
    attachments, additive adds, column alters (retype / nullability /
-   default), then the destructive tail.
+   default), then the destructive tail. Within that tail the **removed tables
+   drop dependents-first**: the diff yields `entities_removed` in entity-id
+   lexical order, which is FK-blind, so they are topologically ordered on
+   their inbound `Reference` edges *within the removed set* — a child holding
+   an FK to a removed parent drops before it — mirroring the step-3 rename
+   ordering. Otherwise `DROP TABLE parent` before its still-present child
+   fails 2BP01 (`constraint <child>_<fk>_fkey depends on table <parent>`) and
+   the one-txn apply rolls back. Only edges among removed tables matter: a
+   reference to a *retained* table keeps its FK on the retained side, and the
+   new catalog cannot retain a reference to a removed table (validation
+   rejects the dangling target). A mutual-FK cycle among dropped tables has no
+   drop-only order and is rejected (`CompileError::DropCycle`), as the rename
+   cycles are; break it by dropping one side's reference field in an earlier
+   bump.
 
 Plans that free no reused name and rename nothing are unchanged by the
 preamble, and hoisted operations keep their destructive classification — the
-confirmation gate is order-independent. Known limits: two *dropped* tables
-linked by a foreign key still drop in diff order (drop the referencing table's
-entity in an earlier bump — pre-existing); index names that drifted outside
-the catalog before this ordering existed (an index created under an earlier
-table name keeps that name) are moved aside with `ALTER INDEX IF EXISTS`, so a
-drifted source skips the move and a colliding claim fails loudly at apply
-rather than silently — the pkey-follows-rename rule keeps names canonical so
-drift no longer accumulates.
+confirmation gate is order-independent. Known limits: index names that drifted
+outside the catalog before this ordering existed (an index created under an
+earlier table name keeps that name) are moved aside with `ALTER INDEX IF
+EXISTS`, so a drifted source skips the move and a colliding claim fails loudly
+at apply rather than silently — the pkey-follows-rename rule keeps names
+canonical so drift no longer accumulates.
 
 ## Outbox row-event triggers (5.14 / D4 producers)
 
