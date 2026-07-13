@@ -110,6 +110,90 @@ fn create_rejects_missing_required_field() {
 }
 
 #[test]
+fn rejects_infinite_timestamps_at_both_value_paths() {
+    // `+/-infinity` are valid instants Postgres would serialize via `to_jsonb`
+    // as the JSON string "infinity" in a row-event outbox payload, silently
+    // changing the field's JSON type. The gateway rejects them at the edge
+    // (wamn-oj7), on both the JSON-body and query-filter value paths.
+    let cat = catalog();
+    let path = format!("/api/rest/receipts/{A_UUID}"); // receipts.received_at is timestamptz
+
+    // JSON body → value_for_field (PATCH types only the provided field).
+    for spelling in ["infinity", "-infinity", "Infinity", "inf", " infinity "] {
+        let err = Router::new(&cat)
+            .compile(
+                Method::Patch,
+                &path,
+                &[],
+                Some(&json!({ "received_at": spelling })),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, ApiError::InvalidValue { ref field, .. } if field == "received_at"),
+            "PATCH received_at={spelling:?}: {err:?}"
+        );
+        assert_eq!(err.status(), 400);
+    }
+    // A finite instant is accepted.
+    let ok = Router::new(&cat)
+        .compile(
+            Method::Patch,
+            &path,
+            &[],
+            Some(&json!({ "received_at": "2026-07-13T00:00:00Z" })),
+        )
+        .unwrap();
+    assert_eq!(ok.kind, PlanKind::UpdateOne);
+
+    // Query filter → value_for_field_str.
+    for spelling in ["infinity", "-infinity", "inf"] {
+        let err = Router::new(&cat)
+            .compile(
+                Method::Get,
+                "/api/rest/receipts",
+                &q(&[("received_at", spelling)]),
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, ApiError::InvalidValue { ref field, .. } if field == "received_at"),
+            "GET ?received_at={spelling}: {err:?}"
+        );
+    }
+    // A finite instant filters fine.
+    Router::new(&cat)
+        .compile(
+            Method::Get,
+            "/api/rest/receipts",
+            &q(&[("received_at", "2026-07-13T00:00:00Z")]),
+            None,
+        )
+        .expect("a finite timestamp filter compiles");
+}
+
+#[test]
+fn numeric_nan_is_still_rejected() {
+    // Regression: the gateway already rejects `NaN` on a numeric field (no
+    // oj7 change there — `validate_decimal` treats non-digit bytes as "not a
+    // number"). suppliers.standard_cost is numeric(12,2).
+    let cat = catalog();
+    let path = format!("/api/rest/suppliers/{A_UUID}");
+    let err = Router::new(&cat)
+        .compile(
+            Method::Patch,
+            &path,
+            &[],
+            Some(&json!({ "standard_cost": "NaN" })),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, ApiError::InvalidValue { ref field, .. } if field == "standard_cost"),
+        "{err:?}"
+    );
+    assert_eq!(err.status(), 400);
+}
+
+#[test]
 fn update_is_partial_and_binds_id_last() {
     let cat = catalog();
     let path = format!("/api/rest/suppliers/{A_UUID}");

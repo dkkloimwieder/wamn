@@ -102,14 +102,30 @@ Uniqueness and indexes are **tenant-scoped** (`tenant_id` is prepended), e.g.
 | `bool` | `boolean` |
 | `uuid` | `uuid` |
 | `json` | `jsonb` |
-| `date` / `timestamptz` | `date` / `timestamptz` |
+| `date` / `timestamptz` | `date` / `timestamptz` + `CHECK (col <> '[+-]infinity')` |
 | `enum` | `text` + `CHECK (col IN ('a','b',…))` |
-| `numeric` (`precision`,`scale`,`unit?`) | `numeric(p,s)` + `COMMENT … IS 'unit: …'` |
+| `numeric` (`precision`,`scale`,`unit?`) | `numeric(p,s)` + `CHECK (col <> 'NaN'::numeric)` + `COMMENT … IS 'unit: …'` |
 | `reference` | `uuid` + `FOREIGN KEY … REFERENCES <target> (id)` |
 
 Enums compile to a text column with a `CHECK` (migration-friendlier than a
 Postgres `enum` type). Units survive to the database as a column comment.
 Expression defaults are a 0.2 item — a `default` is emitted as a SQL literal.
+
+**Special-value exclusion (structural).** A numeric column carries
+`CHECK (col <> 'NaN'::numeric)` and a `date`/`timestamptz` column carries
+`CHECK (col <> 'infinity' AND col <> '-infinity')`. `to_jsonb` serializes these
+Postgres special values as JSON *strings* (`"NaN"`, `"infinity"`), so without
+the check a row-event outbox payload's field could silently change JSON type
+from number/instant to string and surprise a consumer branching on
+`jsonb_typeof`. `NaN` reaches a `numeric(p,s)` column only via flow-authored SQL
+(the 4.1 gateway already rejects it at the REST edge); the gateway also rejects
+an infinite timestamp there. `Infinity` on numeric is already blocked by the
+precision constraint, and `'NaN'::timestamptz` is invalid in Postgres — so the
+numeric check handles `NaN` and the date/timestamptz checks handle `±infinity`.
+The check rides `column_clause`, so it covers both `CREATE TABLE` and
+`ADD COLUMN`; a field is exactly one type, so it never collides with the enum
+`CHECK`. This is defense-in-depth with the gateway edge rejection, and it
+backstops a seed (3.6) that carried an infinite timestamp.
 
 ## Safety classification
 
@@ -243,9 +259,11 @@ Shape and invariants:
   survives into the payload and from there verbatim into the run input — the
   no-float rule holds structurally end to end. An `ON CONFLICT DO NOTHING`
   no-op (a 3.6 re-seed) inserts no row and fires nothing; a *first* seed fires.
-  Caveat: Postgres special values serialize as JSON *strings* (`'NaN'::numeric`
-  → `"NaN"`, `'infinity'::timestamptz` → `"infinity"`); excluding them from
-  entity columns is tracked follow-up validation work (wamn-oj7).
+  The JSON-type-changing special values are excluded at the source (wamn-oj7):
+  `to_jsonb` would serialize `'NaN'::numeric` and `'infinity'::timestamptz` as
+  JSON *strings* (`"NaN"`, `"infinity"`), but the generated-table floor now
+  forbids them (see [Type mapping](#type-mapping)), so a payload numeric is
+  always a JSON number and a payload instant always a finite string.
 - **Runtime precondition**: the plan applies cleanly even where the outbox does
   not exist (plpgsql bodies are not plan-checked at `CREATE FUNCTION`) and
   fails only on the first subsequent row write — so the function operation's

@@ -786,12 +786,14 @@ fn value_for_field(field: &Field, v: &Value) -> Result<SqlValue, ApiError> {
             let s = v
                 .as_str()
                 .ok_or_else(|| err("expected a date string".into()))?;
+            reject_nonfinite_timestamp(s).map_err(err)?;
             Ok(SqlValue::Text(s.to_string()))
         }
         FieldType::Timestamptz => {
             let s = v
                 .as_str()
                 .ok_or_else(|| err("expected a timestamp string".into()))?;
+            reject_nonfinite_timestamp(s).map_err(err)?;
             Ok(SqlValue::Timestamptz(s.to_string()))
         }
         FieldType::Enum { variants } => {
@@ -839,8 +841,14 @@ fn value_for_field_str(field: &Field, s: &str) -> Result<SqlValue, ApiError> {
         },
         FieldType::Uuid | FieldType::Reference { .. } => uuid_value(s).map_err(err),
         FieldType::Json => Ok(SqlValue::Json(s.to_string())),
-        FieldType::Date => Ok(SqlValue::Text(s.to_string())),
-        FieldType::Timestamptz => Ok(SqlValue::Timestamptz(s.to_string())),
+        FieldType::Date => {
+            reject_nonfinite_timestamp(s).map_err(err)?;
+            Ok(SqlValue::Text(s.to_string()))
+        }
+        FieldType::Timestamptz => {
+            reject_nonfinite_timestamp(s).map_err(err)?;
+            Ok(SqlValue::Timestamptz(s.to_string()))
+        }
         FieldType::Enum { variants } => enum_value(s, variants).map_err(err),
         FieldType::Numeric {
             precision, scale, ..
@@ -848,6 +856,23 @@ fn value_for_field_str(field: &Field, s: &str) -> Result<SqlValue, ApiError> {
             validate_decimal(s, *precision, *scale).map_err(err)?,
         )),
     }
+}
+
+/// Reject the infinite instants a `date`/`timestamptz` column can otherwise
+/// hold. Postgres accepts `[+-]infinity` (and the `inf` abbreviation) as a
+/// valid instant, but `to_jsonb` serializes it as the JSON **string**
+/// `"infinity"` — so a row-event outbox payload's field would silently change
+/// JSON type from instant to string. Rejecting it at the gateway edge (a clean
+/// 400) complements the generated-table floor CHECK (the DB-level backstop that
+/// also covers flow-authored SQL). `NaN` is not reachable here: it is invalid
+/// for `date`/`timestamptz` in Postgres.
+fn reject_nonfinite_timestamp(s: &str) -> Result<(), String> {
+    let t = s.trim().to_ascii_lowercase();
+    let bare = t.strip_prefix(['+', '-']).unwrap_or(&t);
+    if bare == "infinity" || bare == "inf" {
+        return Err("infinite timestamps are not allowed".into());
+    }
+    Ok(())
 }
 
 fn check_len(s: &str, max_len: Option<u32>) -> Result<(), String> {

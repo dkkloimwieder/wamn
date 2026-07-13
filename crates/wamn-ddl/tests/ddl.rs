@@ -127,6 +127,68 @@ fn create_plan_is_additive_and_tenant_safe() {
     assert!(sql.contains("FOREIGN KEY (\"supplier_id\") REFERENCES \"suppliers\" (id)"));
 }
 
+/// A field of an arbitrary type (for the special-value CHECK test).
+fn field_of(id: &str, field_type: FieldType) -> Field {
+    Field {
+        id: id.into(),
+        name: id.into(),
+        field_type,
+        nullable: true,
+        default: None,
+        sensitive: false,
+        is_system: false,
+        label: None,
+        description: None,
+    }
+}
+
+/// The floor forbids the JSON-type-changing special values (`NaN` on numeric,
+/// `+/-infinity` on date/timestamptz) that `to_jsonb` would serialize as JSON
+/// strings in a row-event outbox payload (wamn-oj7). Covers both `CREATE TABLE`
+/// (here) and `ADD COLUMN` (both call `column_clause`).
+#[test]
+fn numeric_and_timestamp_columns_exclude_special_values() {
+    let readings = entity(
+        "er",
+        "readings",
+        vec![
+            field_of(
+                "qty",
+                FieldType::Numeric {
+                    precision: 10,
+                    scale: 2,
+                    unit: None,
+                },
+            ),
+            field_of("d", FieldType::Date),
+            field_of("ts", FieldType::Timestamptz),
+        ],
+    );
+    let sql = Migration::create(&mini(1, vec![readings]))
+        .expect("compiles")
+        .sql(Confirmation::None)
+        .expect("additive");
+
+    assert!(
+        sql.contains("CHECK (\"qty\" <> 'NaN'::numeric)"),
+        "numeric column forbids NaN:\n{sql}"
+    );
+    assert!(
+        sql.contains("CHECK (\"d\" <> 'infinity'::date AND \"d\" <> '-infinity'::date)"),
+        "date column forbids +/-infinity:\n{sql}"
+    );
+    assert!(
+        sql.contains(
+            "CHECK (\"ts\" <> 'infinity'::timestamptz AND \"ts\" <> '-infinity'::timestamptz)"
+        ),
+        "timestamptz column forbids +/-infinity:\n{sql}"
+    );
+    // The base column types survive unchanged (the CHECK is appended).
+    assert!(sql.contains("\"qty\" numeric(10,2)"));
+    assert!(sql.contains("\"d\" date"));
+    assert!(sql.contains("\"ts\" timestamptz"));
+}
+
 #[test]
 fn added_column_is_additive() {
     let v1 = poc();
@@ -1715,6 +1777,95 @@ fn empty_tenant_claim_matches_no_row_on_postgres() {
          COMMIT;\n\
          DROP SCHEMA wamn_ddl_empty_tenant_test CASCADE;\n",
     );
+
+    let mut child = Command::new("psql")
+        .arg(&url)
+        .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn psql (is it installed?)");
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Live verification of the special-value floor CHECKs (wamn-oj7) on a throwaway
+/// Postgres (gated on `WAMN_DDL_PG_URL`, skips cleanly when unset). In its own
+/// schema so it parallelizes with the other gates. Proves that on a generated
+/// table a normal decimal / date / timestamp inserts fine, but `'NaN'::numeric`,
+/// `'infinity'::timestamptz`, and `'infinity'::date` are each rejected at the DB
+/// — the flow-authored-SQL path (the only way `NaN` reaches the column, since
+/// the gateway already blocks it) is blocked by the floor.
+#[test]
+fn special_values_are_rejected_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_DDL_PG_URL") else {
+        eprintln!("skipping special_values_are_rejected_on_postgres (set WAMN_DDL_PG_URL to run)");
+        return;
+    };
+
+    let readings = entity(
+        "er",
+        "readings",
+        vec![
+            field_of(
+                "qty",
+                FieldType::Numeric {
+                    precision: 10,
+                    scale: 2,
+                    unit: None,
+                },
+            ),
+            field_of("d", FieldType::Date),
+            field_of("ts", FieldType::Timestamptz),
+        ],
+    );
+    let create = Migration::create(&mini(1, vec![readings])).unwrap();
+
+    let mut script = String::new();
+    script.push_str(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
+         BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
+         DROP SCHEMA IF EXISTS wamn_ddl_special_values_test CASCADE;\n\
+         CREATE SCHEMA wamn_ddl_special_values_test AUTHORIZATION CURRENT_USER;\n\
+         GRANT USAGE ON SCHEMA wamn_ddl_special_values_test TO wamn_app;\n\
+         SET search_path TO wamn_ddl_special_values_test;\n",
+    );
+    script.push_str(&create.sql(Confirmation::None).unwrap());
+    // A normal decimal / date / timestamp inserts fine.
+    script.push_str(
+        "INSERT INTO readings (tenant_id, qty, d, ts) \
+         VALUES ('t1', '12.50', '2026-07-13', '2026-07-13T00:00:00Z');\n",
+    );
+    // Each special value is rejected by its CHECK (a check_violation).
+    for (col, val, label) in [
+        ("qty", "NaN", "NaN numeric"),
+        ("ts", "infinity", "infinity timestamptz"),
+        ("d", "infinity", "infinity date"),
+    ] {
+        script.push_str(&format!(
+            "DO $$ BEGIN\n\
+                 BEGIN\n\
+                     INSERT INTO readings (tenant_id, {col}) VALUES ('t1', '{val}');\n\
+                     RAISE EXCEPTION 'expected a check_violation but the {label} insert succeeded';\n\
+                 EXCEPTION WHEN check_violation THEN NULL;\n\
+                 END;\n\
+             END $$;\n",
+        ));
+    }
+    script.push_str("DROP SCHEMA wamn_ddl_special_values_test CASCADE;\n");
 
     let mut child = Command::new("psql")
         .arg(&url)

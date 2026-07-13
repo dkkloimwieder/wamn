@@ -27,12 +27,16 @@
 //! - **Payload**: `to_jsonb(NEW)` for insert/update, `to_jsonb(OLD)` for
 //!   delete. Postgres jsonb numerics are exact — an exact-decimal column
 //!   (`12.50`) survives into the payload, and from there verbatim into the run
-//!   input (the platform no-float rule holds structurally end to end). Caveat:
-//!   Postgres special values serialize as JSON *strings*, not numbers/instants
-//!   (`'NaN'::numeric` -> `"NaN"`, `'infinity'::timestamptz` -> `"infinity"`);
-//!   nothing in the 3.2 floor or the 4.1 gateway's timestamp pass-through
-//!   excludes them yet, so consumers branching on JSON type can be surprised
-//!   (tracked as follow-up validation work, not handled here).
+//!   input (the platform no-float rule holds structurally end to end). The
+//!   JSON-type-changing special values are excluded at the source (wamn-oj7):
+//!   `to_jsonb` would serialize `'NaN'::numeric` and `'infinity'::timestamptz`
+//!   as JSON *strings* (`"NaN"`, `"infinity"`), silently changing a payload
+//!   field's JSON type, but the generated-table floor now carries a
+//!   `CHECK (col <> 'NaN'::numeric)` on numeric columns and a
+//!   `CHECK (col <> '[+-]infinity')` on date/timestamptz columns (emitted by
+//!   `column_clause`), so such a value can never be written; the 4.1 gateway
+//!   also rejects an infinite timestamp at the REST edge. A payload numeric is
+//!   always a JSON number, a payload instant always a finite string.
 //!
 //! Emission is **opt-in and uniform**: [`crate::Migration::outbox_triggers`]
 //! is a separate plan covering ALL entity tables (the dispatcher acks rows no

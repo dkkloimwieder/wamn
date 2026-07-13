@@ -67,8 +67,37 @@ fn default_literal(v: &Value) -> String {
     }
 }
 
+/// A `CHECK` forbidding the JSON-type-changing special values a numeric or
+/// timestamp column can otherwise hold. `to_jsonb` serializes `'NaN'::numeric`
+/// and `'infinity'::timestamptz`/`date` as JSON **strings** (`"NaN"`,
+/// `"infinity"`), so a row-event outbox payload's field would silently change
+/// JSON type from number/instant to string; a consumer branching on
+/// `jsonb_typeof` mishandles it with no error. Forbidding the values at the
+/// column keeps every numeric/timestamp payload field a JSON number/string-
+/// instant. Returns `None` for field types that cannot hold such a value.
+///
+/// - `numeric`: `NaN` is accepted by `numeric(p,s)` (only via flow-authored
+///   SQL — the 4.1 gateway already blocks it). PG `NaN = NaN` is TRUE, so
+///   `col <> 'NaN'::numeric` is FALSE for `NaN` and rejects it; `Infinity` is
+///   already rejected by the precision constraint.
+/// - `date`/`timestamptz`: `+/-infinity` are valid instants; forbid both.
+///   (`'NaN'::timestamptz` is invalid in PG, so it never reaches `to_jsonb`.)
+fn finite_check(name: &str, ty: &FieldType) -> Option<String> {
+    let col = q(name);
+    match ty {
+        FieldType::Numeric { .. } => Some(format!("CHECK ({col} <> 'NaN'::numeric)")),
+        FieldType::Date => Some(format!(
+            "CHECK ({col} <> 'infinity'::date AND {col} <> '-infinity'::date)"
+        )),
+        FieldType::Timestamptz => Some(format!(
+            "CHECK ({col} <> 'infinity'::timestamptz AND {col} <> '-infinity'::timestamptz)"
+        )),
+        _ => None,
+    }
+}
+
 /// The column clause for a field, used by both `CREATE TABLE` and `ADD COLUMN`:
-/// `"name" <type> [NOT NULL] [DEFAULT ...] [CHECK (... IN (...))]`.
+/// `"name" <type> [NOT NULL] [DEFAULT ...] [CHECK (...)]`.
 fn column_clause(name: &str, field: &wamn_catalog::Field) -> String {
     let mut c = format!("{} {}", q(name), sql_type(&field.field_type));
     if !field.nullable {
@@ -84,6 +113,13 @@ fn column_clause(name: &str, field: &wamn_catalog::Field) -> String {
             .collect::<Vec<_>>()
             .join(", ");
         c.push_str(&format!(" CHECK ({} IN ({list}))", q(name)));
+    }
+    // Exclude the JSON-type-changing special values from numeric/timestamp
+    // columns (a field is exactly one type, so this never collides with the
+    // enum CHECK above).
+    if let Some(check) = finite_check(name, &field.field_type) {
+        c.push(' ');
+        c.push_str(&check);
     }
     c
 }

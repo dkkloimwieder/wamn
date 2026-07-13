@@ -69,6 +69,15 @@ decimal, enum not a variant), is rejected `4xx` **before any SQL is built**.
 - **`tenant_id` is never projected;** `numeric` stays an exact-decimal **string**
   end to end — in a bound parameter and in the response — honoring the 3.1
   no-float rule.
+- **Special values that change a payload's JSON type are rejected at the edge.**
+  A `numeric` field already rejects `NaN`/`Infinity` (`validate_decimal` treats
+  non-digit bytes as "not a number"). A `date`/`timestamptz` field rejects an
+  infinite instant (`[+-]infinity`, `inf`) on both value paths — the JSON body
+  (`value_for_field`) and a query filter (`value_for_field_str`) — with a `400`
+  (wamn-oj7). Postgres would accept `'infinity'::timestamptz` and serialize it
+  via `to_jsonb` as the JSON string `"infinity"`, silently changing a row-event
+  outbox payload's field from an instant to a string; the generated-table floor
+  CHECK (3.2) is the DB-level backstop that also covers flow-authored SQL.
 
 ## Catalog cross-references vs SQL identifiers
 
