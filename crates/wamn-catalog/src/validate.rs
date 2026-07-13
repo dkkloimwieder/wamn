@@ -59,6 +59,41 @@ impl std::fmt::Display for Issue {
     }
 }
 
+/// The reserved identifier prefix. The entire `wamn_` family is platform-owned —
+/// migration asides (`wamn_mig_drop_*`), the outbox trigger/function
+/// (`wamn_outbox_event`), and run-schema objects all live under it — so a
+/// user-authored name must never collide. Rejecting it at *design* time makes the
+/// rule clear up front and demotes wamn-ddl's `TempNameCollision` (which only
+/// fires at migration-compile time, and only on a colliding aside-rename) to
+/// defense-in-depth. (SR6 house rule; external review R9a.)
+const RESERVED_PREFIX: &str = "wamn_";
+
+/// Whether `name` begins with the reserved `wamn_` prefix, case-insensitively —
+/// the whole family is reserved, and future machinery could vary the case.
+/// Panic-safe on short or multibyte names: `get(..len)` yields `None` (not
+/// reserved) when byte `len` is past the end or not a char boundary.
+fn is_reserved(name: &str) -> bool {
+    name.get(..RESERVED_PREFIX.len())
+        .is_some_and(|p| p.eq_ignore_ascii_case(RESERVED_PREFIX))
+}
+
+/// Push a `reserved-name-prefix` error if `name` (a SQL-emitted identifier —
+/// entity/field/index/constraint `.name`) uses the reserved prefix. Safe to call
+/// unconditionally: an empty name is not reserved, so it never double-reports
+/// alongside the empty-name check.
+fn check_reserved(issues: &mut Vec<Issue>, path: String, kind: &str, name: &str) {
+    if is_reserved(name) {
+        issues.push(Issue::error(
+            "reserved-name-prefix",
+            path,
+            format!(
+                "{kind} name {name:?} begins with the reserved {RESERVED_PREFIX:?} prefix \
+                 (reserved for platform-generated identifiers)"
+            ),
+        ));
+    }
+}
+
 /// Every issue (errors and warnings) for a catalog, in a stable order.
 pub fn validate(catalog: &Catalog) -> Vec<Issue> {
     let mut issues = Vec::new();
@@ -127,6 +162,12 @@ pub fn validate(catalog: &Catalog) -> Vec<Issue> {
                 format!("entity name {:?} is not unique", e.name),
             ));
         }
+        check_reserved(
+            &mut issues,
+            format!("entities[{i}].name"),
+            "entity",
+            &e.name,
+        );
     }
 
     // Per-entity structure (fields, types, references, indexes, constraints).
@@ -163,6 +204,7 @@ pub fn validate(catalog: &Catalog) -> Vec<Issue> {
                     format!("field name {:?} is not unique in entity {:?}", f.name, e.id),
                 ));
             }
+            check_reserved(&mut issues, format!("{fp}.name"), "field", &f.name);
 
             // System-entity extension rule: a system field requires a system
             // entity. (Custom fields on a system entity are allowed — that is
@@ -208,6 +250,7 @@ pub fn validate(catalog: &Catalog) -> Vec<Issue> {
                     ),
                 ));
             }
+            check_reserved(&mut issues, format!("{ip}.name"), "index", &idx.name);
             if idx.fields.is_empty() {
                 issues.push(Issue::error(
                     "empty-index",
@@ -241,6 +284,7 @@ pub fn validate(catalog: &Catalog) -> Vec<Issue> {
                     ),
                 ));
             }
+            check_reserved(&mut issues, format!("{cp}.name"), "constraint", c.name());
             match c {
                 Constraint::Unique { fields, .. } => {
                     if fields.is_empty() {
@@ -686,5 +730,94 @@ mod tests {
         let mut c = minimal();
         c.schema_version = "1.0".into();
         assert!(codes(&c).contains(&"unsupported-schema-version"));
+    }
+
+    #[test]
+    fn reserved_wamn_prefix_is_rejected_on_every_named_object() {
+        // entity name
+        let mut c = minimal();
+        c.entities[0].name = "wamn_orders".into();
+        let reserved: Vec<_> = c
+            .issues()
+            .into_iter()
+            .filter(|i| i.code == "reserved-name-prefix")
+            .collect();
+        assert_eq!(reserved.len(), 1, "issues: {:?}", c.issues());
+        assert_eq!(reserved[0].path, "entities[0].name");
+        assert!(reserved[0].message.contains("entity name"));
+        assert!(!c.is_valid());
+
+        // field name (id is NOT checked — only the SQL-emitted .name)
+        let mut c = minimal();
+        c.entities[0].fields.push(field("wamn_col", FieldType::Int));
+        let issue = c
+            .issues()
+            .into_iter()
+            .find(|i| i.code == "reserved-name-prefix")
+            .expect("reserved field name should be rejected");
+        assert_eq!(issue.path, "entities[0].fields[1].name");
+        assert!(issue.message.contains("field name"));
+
+        // index name
+        let mut c = minimal();
+        c.entities[0].indexes.push(Index {
+            name: "wamn_idx".into(),
+            fields: vec!["label".into()],
+            unique: false,
+        });
+        let issue = c
+            .issues()
+            .into_iter()
+            .find(|i| i.code == "reserved-name-prefix")
+            .expect("reserved index name should be rejected");
+        assert_eq!(issue.path, "entities[0].indexes[0].name");
+        assert!(issue.message.contains("index name"));
+
+        // constraint name
+        let mut c = minimal();
+        c.entities[0].constraints.push(Constraint::Unique {
+            name: "wamn_uq".into(),
+            fields: vec!["label".into()],
+        });
+        let issue = c
+            .issues()
+            .into_iter()
+            .find(|i| i.code == "reserved-name-prefix")
+            .expect("reserved constraint name should be rejected");
+        assert_eq!(issue.path, "entities[0].constraints[0].name");
+        assert!(issue.message.contains("constraint name"));
+    }
+
+    #[test]
+    fn reserved_prefix_is_case_insensitive() {
+        let mut c = minimal();
+        c.entities[0].name = "WAMN_Orders".into();
+        assert!(codes(&c).contains(&"reserved-name-prefix"));
+        assert!(!c.is_valid());
+
+        let mut c = minimal();
+        c.entities[0].name = "Wamn_x".into();
+        assert!(codes(&c).contains(&"reserved-name-prefix"));
+    }
+
+    #[test]
+    fn non_reserved_names_are_fine() {
+        // merely CONTAINS "wamn" mid-string — not a leading prefix.
+        let mut c = minimal();
+        c.entities[0].name = "my_wamn_table".into();
+        assert!(c.is_valid(), "issues: {:?}", c.issues());
+        assert!(!codes(&c).contains(&"reserved-name-prefix"));
+
+        // "wamn" with no trailing underscore — not the reserved prefix.
+        let mut c = minimal();
+        c.entities[0].name = "wamn".into();
+        assert!(c.is_valid(), "issues: {:?}", c.issues());
+        assert!(!codes(&c).contains(&"reserved-name-prefix"));
+
+        // "wamning" — 5th byte is 'i', not '_'.
+        let mut c = minimal();
+        c.entities[0].name = "wamning".into();
+        assert!(c.is_valid());
+        assert!(!codes(&c).contains(&"reserved-name-prefix"));
     }
 }

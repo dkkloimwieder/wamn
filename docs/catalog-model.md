@@ -166,7 +166,11 @@ invalid; `warning` flags designer-fixable smells.
   **reference to an unknown entity**, unknown / duplicate / empty index,
   unknown / duplicate / empty constraint, empty check expression, duplicate
   relation id, relation endpoint (or `through`, or `from-field`) that does not
-  resolve, a `hierarchical` relation that is not self-referential.
+  resolve, a `hierarchical` relation that is not self-referential, and **a name
+  (entity, field, index, or constraint) beginning `wamn_`** (case-insensitive) —
+  that prefix is reserved for platform-generated identifiers (migration asides,
+  outbox artifacts, run-schema objects), so a designer name that collides is
+  rejected up front rather than at migration-compile time.
 - **Warnings:** entity with no fields; `many-to-many` relation with no join
   entity.
 

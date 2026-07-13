@@ -1063,8 +1063,14 @@ fn collision_free_plans_have_no_preamble() {
 }
 
 #[test]
-fn temp_name_collision_is_rejected() {
-    // Absurd but loud: the aside-name the plan needs is itself a real table.
+fn reserved_prefix_name_is_rejected_before_the_aside_collision() {
+    // wamn-66x: a user catalog can no longer carry a `wamn_`-prefixed name, so
+    // the pathological aside-name collision (k56's `TempNameCollision`) never
+    // reaches the migration compiler through the public `migrate()` — `check()`
+    // validates first and `validate()` rejects the reserved prefix with
+    // `reserved-name-prefix`. `TempNameCollision` survives as defense-in-depth on
+    // the internal, unvalidated `migrate_plan` (covered by the emit.rs unit test
+    // `migrate_plan_rejects_aside_name_collision`).
     let v1 = mini(
         1,
         vec![
@@ -1080,34 +1086,38 @@ fn temp_name_collision_is_rejected() {
         ],
     );
     match Migration::migrate(&v1, &v2) {
-        Err(CompileError::TempNameCollision { name }) => {
-            assert_eq!(name, "wamn_mig_drop_audit")
+        Err(CompileError::InvalidCatalog(issues)) => {
+            assert!(
+                issues.iter().any(|i| i.code == "reserved-name-prefix"
+                    && i.message.contains("wamn_mig_drop_audit")),
+                "expected reserved-name-prefix for the wamn_ entity name, got {issues:?}"
+            )
         }
-        other => panic!("expected TempNameCollision, got {other:?}"),
+        other => panic!("expected InvalidCatalog(reserved-name-prefix), got {other:?}"),
     }
 
-    // The check spans the whole relation namespace: an INDEX aside-target
-    // colliding with a real index is rejected too (indexes share pg_class
-    // with tables).
-    let mut x = entity("x", "audit", vec![text_field("v")]);
-    x.indexes.push(Index {
-        name: "ix".into(),
-        fields: vec!["v".into()],
-        unique: false,
-    });
+    // The same holds for a reserved INDEX name — the whole `wamn_` family is
+    // reserved, so an index aside-target can never be authored either.
     let mut t = entity("t", "keeper", vec![text_field("v")]);
     t.indexes.push(Index {
         name: "wamn_mig_drop_ix".into(),
         fields: vec!["v".into()],
         unique: false,
     });
-    let v1 = mini(1, vec![x, t.clone()]);
+    let v1 = mini(
+        1,
+        vec![entity("x", "audit", vec![text_field("v")]), t.clone()],
+    );
     let v2 = mini(2, vec![entity("e", "audit", vec![text_field("v")]), t]);
     match Migration::migrate(&v1, &v2) {
-        Err(CompileError::TempNameCollision { name }) => {
-            assert_eq!(name, "wamn_mig_drop_ix")
-        }
-        other => panic!("expected TempNameCollision for the index aside, got {other:?}"),
+        Err(CompileError::InvalidCatalog(issues)) => assert!(
+            issues
+                .iter()
+                .any(|i| i.code == "reserved-name-prefix"
+                    && i.message.contains("wamn_mig_drop_ix")),
+            "expected reserved-name-prefix for the wamn_ index name, got {issues:?}"
+        ),
+        other => panic!("expected InvalidCatalog for the index name, got {other:?}"),
     }
 }
 

@@ -1127,3 +1127,105 @@ fn emit_destructive_changes(
         plan.push(drop_column_op(new_e, f));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::migrate_plan;
+    use crate::CompileError;
+    use wamn_catalog::{Catalog, Entity, Field, FieldType, Index};
+
+    fn text_field(name: &str) -> Field {
+        Field {
+            id: name.into(),
+            name: name.into(),
+            field_type: FieldType::Text { max_len: None },
+            nullable: false,
+            default: None,
+            sensitive: false,
+            is_system: false,
+            label: None,
+            description: None,
+        }
+    }
+
+    fn entity(id: &str, name: &str, fields: Vec<Field>) -> Entity {
+        Entity {
+            id: id.into(),
+            name: name.into(),
+            is_system: false,
+            label: None,
+            description: None,
+            fields,
+            indexes: vec![],
+            constraints: vec![],
+        }
+    }
+
+    fn mini(version: u32, entities: Vec<Entity>) -> Catalog {
+        Catalog {
+            schema_version: "0.1".into(),
+            catalog_id: "c".into(),
+            version,
+            name: None,
+            entities,
+            relations: vec![],
+        }
+    }
+
+    /// Defense-in-depth: `migrate_plan` is the internal, UNVALIDATED entry
+    /// (`Migration::migrate` runs `check()` — hence `validate()` — first, so
+    /// wamn-66x's reserved-prefix rule now rejects any `wamn_`-prefixed name
+    /// before this point; see the integration test
+    /// `reserved_prefix_name_is_rejected_before_the_aside_collision`). This pins
+    /// the k56 aside-name collision guard for a caller that reaches `migrate_plan`
+    /// without validating — the aside the plan needs is itself a real relation.
+    #[test]
+    fn migrate_plan_rejects_aside_name_collision() {
+        // A dropped-and-reclaimed table whose aside `wamn_mig_drop_audit` is a
+        // real table.
+        let v1 = mini(
+            1,
+            vec![
+                entity("x", "audit", vec![text_field("v")]),
+                entity("t", "wamn_mig_drop_audit", vec![text_field("v")]),
+            ],
+        );
+        let v2 = mini(
+            2,
+            vec![
+                entity("e", "audit", vec![text_field("v")]),
+                entity("t", "wamn_mig_drop_audit", vec![text_field("v")]),
+            ],
+        );
+        match migrate_plan(&v1, &v2) {
+            Err(CompileError::TempNameCollision { name }) => {
+                assert_eq!(name, "wamn_mig_drop_audit")
+            }
+            other => panic!("expected TempNameCollision, got {other:?}"),
+        }
+
+        // The check spans the whole relation namespace: an INDEX aside-target
+        // colliding with a real index is rejected too (indexes share pg_class
+        // with tables).
+        let mut x = entity("x", "audit", vec![text_field("v")]);
+        x.indexes.push(Index {
+            name: "ix".into(),
+            fields: vec!["v".into()],
+            unique: false,
+        });
+        let mut t = entity("t", "keeper", vec![text_field("v")]);
+        t.indexes.push(Index {
+            name: "wamn_mig_drop_ix".into(),
+            fields: vec!["v".into()],
+            unique: false,
+        });
+        let v1 = mini(1, vec![x, t.clone()]);
+        let v2 = mini(2, vec![entity("e", "audit", vec![text_field("v")]), t]);
+        match migrate_plan(&v1, &v2) {
+            Err(CompileError::TempNameCollision { name }) => {
+                assert_eq!(name, "wamn_mig_drop_ix")
+            }
+            other => panic!("expected TempNameCollision for the index aside, got {other:?}"),
+        }
+    }
+}
