@@ -1,0 +1,10 @@
+[package]
+name = "wamn-registry"
+description = "Canonical wamn control-plane registry model (wamn-q3n.1): the (org, project, env) identity triple, org tier/cluster placement, and credential Secret references. A pure model — types, validation, import/export."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -571,6 +571,29 @@ docker stop wamn-rq-pg wamn-rq-nats
 kubectl -n wamn-system apply -f deploy/dispatchbench-job.yaml
 kubectl -n wamn-system logs -f job/dispatchbench
 
+# [D6/wamn-q3n.1] control-plane registry model crate (crates/wamn-registry) —
+# the canonical (org, project, env) identity TRIPLE + the system-DB registry
+# DATA MODEL for the four-tier topology (docs/postgres-topology.md, epic
+# wamn-q3n). PURE model (SR6 rule 1: no DB/clock/wasm; deps serde+serde_json):
+# Registry{orgs,projects,project_envs} + Org(tier + prod/dev ClusterRef) +
+# Project + ProjectEnv(Triple + db-secret SecretRef [a REFERENCE, never a
+# credential — R8b]); Triple{org,project,env} is the first-class control-plane
+# identity (host_label() derives <project>--<env>.<org> routing so tooling never
+# parses names); Env is a closed enum {dev,canary,prod} whose side() maps
+# canary/prod -> the prod cluster and dev -> the dev cluster (the T2 recovery-
+# domain split); Tier {trials,standard,dedicated}. validate()->Vec<Issue>
+# (lowercase-slug + reserved wamn prefix [66x] on org/project ids, uniqueness,
+# referential integrity, schema-version compat) + Registry::resolve(&Triple)->
+# Resolution{tier,cluster,secret}. validate()-only + serde from_json/to_json (a
+# store model, not a published contract — the wamn-run-store precedent; NO
+# JSON-schema). Load-bearing validation + routing mutation-tested (reserved
+# prefix / Env::side / referential integrity). SCOPE: .1 is the MODEL; live
+# system-DB tables + the four testable invariants = wamn-q3n.3; the 3.4
+# wamn-schema Environment amendment (triple + canary) = wamn-q3n.5; the T1
+# cluster infra = wamn-q3n.2. docs/registry-model.md.
+cargo test -p wamn-registry
+cargo clippy -p wamn-registry --all-targets && cargo fmt -p wamn-registry --check
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal
