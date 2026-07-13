@@ -116,6 +116,17 @@ destructive plan; `ConfirmedWithBackup` prefixes the script with a
 Relations are navigational metadata; only a `reference` **field** produces a
 foreign key. A relation-only change emits no DDL.
 
+A reference field's foreign key (`<table>_<field>_fkey`) is synthesized from
+the field, never modeled as a catalog constraint, so a **retype** carries it
+explicitly. When a field's type *leaves* `Reference` (to `uuid`, or a
+`Reference` re-pointed at a new target) the stale FK is dropped **before** the
+`ALTER COLUMN … TYPE` — a survivor would block an incompatible retype and any
+later `DROP TABLE` of a removed target (2BP01, `constraint <table>_<field>_fkey
+… depends on table <target>`); when a type *enters* `Reference` the FK is added
+**after** the retype (the column is `uuid` by then). The drop names the column
+by its pre-rename name if the same bump also renames it, since a constraint
+name does not follow a column rename.
+
 ## Migration ordering & name reuse
 
 `Migration::migrate` orders operations additive-first / destructive-last —
@@ -269,19 +280,26 @@ aside-name-collision rejection incl. index aside-targets, same-named
 constraint/index redefinition on kept and renamed tables, a rename into a
 constraint-freed name, cross-table unique-name moves, pkey-follows-rename,
 column-name reuse / column-rename chains and swap rejection, the
-implicit-drop force-hoist, and collision-free plans staying preamble-free —
-each ordering rule is mutation-tested), and the outbox-trigger plans
+implicit-drop force-hoist, collision-free plans staying preamble-free, the
+removed-entity dependents-first drop ordering with mutual-FK cycle rejection,
+and the reference-retype FK drop/add — each ordering rule is mutation-tested),
+and the outbox-trigger plans
 (coverage/shape, schema-option validation, the gated drop,
 and a drift guard pinning the emitted column set + event vocabulary against
-`deploy/run-queue.sql`). Three optional live-apply tests run against a throwaway
+`deploy/run-queue.sql`). Five optional live-apply tests run against a throwaway
 Postgres, gated on `WAMN_DDL_PG_URL` (a superuser URL; the harness provisions
-the `wamn_app` role and ephemeral schemas): the CREATE/migrate script; the
+the `wamn_app` role and ephemeral schemas — each test in its own schema so they
+parallelize): the CREATE/migrate script; the
 name-reuse migrations applied for real (a rename into a reused name with other
 changes on the same entity, a remove-and-re-add under the same table/index
 names over a live inbound FK with canonical pkey names asserted on both sides,
 in-place constraint/index redefinitions on kept and renamed tables, and a
 same-named column redefinition — each failed 42P07 / 42P01 / 42710 / 42701
-before the preamble); and the outbox triggers
+before the preamble); a whole FK-linked table chain dropped in one migration
+(dependents-first — 2BP01 before the ordering); the reference-retype FK
+lifecycle (a `Reference` retyped to `uuid` while its target table is removed —
+2BP01 before the drop — and a `uuid` retyped into a `Reference` whose added FK
+is proven to enforce); and the outbox triggers
 behaviorally — a `wamn_app` write emits exactly one event row
 in the same transaction with the exact-decimal payload preserved, a superuser
 seed fires with the row's tenant, outbox RLS isolates tenants, a conflict no-op

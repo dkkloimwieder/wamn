@@ -152,10 +152,18 @@ fn rls_op(entity: &Entity) -> Operation {
     }
 }
 
+/// The synthesized foreign-key constraint name for a reference field:
+/// `<table>_<field>_fkey`. A reference FK is emitted by [`fk_op`] and is never
+/// modeled as a catalog constraint, so the sites that add and drop it must
+/// agree on this one derivation.
+fn fk_constraint_name(table: &str, field_name: &str) -> String {
+    format!("{table}_{field_name}_fkey")
+}
+
 /// Foreign-key constraint for a `reference` field.
 fn fk_op(entity: &Entity, field: &wamn_catalog::Field, target_table: &str) -> Operation {
     let t = &entity.name;
-    let cname = format!("{t}_{}_fkey", field.name);
+    let cname = fk_constraint_name(t, &field.name);
     let sql = format!(
         "ALTER TABLE {tbl} ADD CONSTRAINT {c} FOREIGN KEY ({col}) REFERENCES {tgt} (id)",
         tbl = q(t),
@@ -626,7 +634,7 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan
     //    preamble).
     for ch in &d.entities_changed {
         let new_e = new_by_id[ch.id.as_str()];
-        emit_column_alters(&mut plan, new_e, ch);
+        emit_column_alters(&mut plan, new_e, ch, &names);
     }
 
     // 4) Destructive removals — drop constraints/indexes, then columns, then
@@ -905,10 +913,30 @@ fn drop_column_op(new_e: &Entity, f: &wamn_catalog::Field) -> Operation {
 
 /// Column retypes, nullability, and default changes (renames run in the plan
 /// preamble — see [`migrate_plan`]).
-fn emit_column_alters(plan: &mut MigrationPlan, new_e: &Entity, ch: &wamn_catalog::EntityChange) {
+fn emit_column_alters(
+    plan: &mut MigrationPlan,
+    new_e: &Entity,
+    ch: &wamn_catalog::EntityChange,
+    names: &HashMap<&str, &str>,
+) {
     for fc in &ch.fields_changed {
         let f = field_by_id(new_e, &fc.id).expect("changed field exists in new");
-        if fc.type_changed.is_some() {
+        if let Some((old_ty, _)) = &fc.type_changed {
+            // A reference field's FK is synthesized (fk_op), never a catalog
+            // constraint, so a retype does not carry it. Drop a stale FK when
+            // the type LEAVES Reference (before the retype: the FK depends on
+            // the column and the referenced table, and a survivor blocks both
+            // an incompatible retype and a later DROP of a removed target,
+            // 2BP01); add the FK when the type ENTERS Reference (after the
+            // retype: the column is uuid by then). A Reference re-pointed at a
+            // new target does both — drop the old-named FK, add the new one.
+            if matches!(old_ty, FieldType::Reference { .. }) {
+                let old_name = fc
+                    .name_changed
+                    .as_ref()
+                    .map_or(f.name.as_str(), |(o, _)| o.as_str());
+                plan.push(drop_reference_fk_op(new_e, old_name));
+            }
             let ty = sql_type(&f.field_type);
             plan.push(Operation {
                 summary: format!("retype column {}.{}", new_e.name, f.name),
@@ -922,6 +950,10 @@ fn emit_column_alters(plan: &mut MigrationPlan, new_e: &Entity, ch: &wamn_catalo
                 field: Some(fc.id.clone()),
                 note: Some("cast may fail or truncate existing values".into()),
             });
+            if let FieldType::Reference { entity: target } = &f.field_type {
+                let target_table = names.get(target.as_str()).copied().unwrap_or(target);
+                plan.push(fk_op(new_e, f, target_table));
+            }
         }
         if fc.nullable_changed {
             let (verb, safety, note) = if f.nullable {
@@ -964,6 +996,28 @@ fn emit_column_alters(plan: &mut MigrationPlan, new_e: &Entity, ch: &wamn_catalo
                 note: None,
             });
         }
+    }
+}
+
+/// Drop the synthesized FK of a reference field. Used when a retype LEAVES
+/// `Reference` (Reference -> non-Reference, or a Reference re-pointed at a new
+/// target): the FK is not carried by `ALTER COLUMN TYPE`, so a stale one would
+/// block an incompatible retype and any later `DROP TABLE` of the (possibly
+/// removed) referenced table (2BP01). `field_name` is the column's name as the
+/// FK was created under — the pre-rename name if this bump also renames it,
+/// since a constraint name does not follow a column rename.
+fn drop_reference_fk_op(new_e: &Entity, field_name: &str) -> Operation {
+    Operation {
+        summary: format!("drop foreign key {}.{field_name}", new_e.name),
+        sql: format!(
+            "ALTER TABLE {} DROP CONSTRAINT {}",
+            q(&new_e.name),
+            q(&fk_constraint_name(&new_e.name, field_name))
+        ),
+        safety: Safety::Destructive,
+        entity: new_e.id.clone(),
+        field: None,
+        note: Some("removes the foreign-key integrity guarantee".into()),
     }
 }
 

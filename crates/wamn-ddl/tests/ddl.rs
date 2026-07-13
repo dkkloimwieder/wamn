@@ -76,6 +76,23 @@ fn reference_field(id: &str, target_entity: &str) -> Field {
     }
 }
 
+/// A plain `uuid` field — the retyped-away-from/into shape for the FK-lifecycle
+/// tests (a `reference` and a `uuid` are both `uuid` columns; only the FK
+/// differs).
+fn uuid_field(id: &str) -> Field {
+    Field {
+        id: id.into(),
+        name: id.into(),
+        field_type: FieldType::Uuid,
+        nullable: true,
+        default: None,
+        sensitive: false,
+        is_system: false,
+        label: None,
+        description: None,
+    }
+}
+
 #[test]
 fn create_plan_is_additive_and_tenant_safe() {
     let plan = Migration::create(&poc()).expect("compiles");
@@ -427,6 +444,103 @@ fn mutual_fk_among_dropped_tables_is_rejected() {
         }
         other => panic!("expected DropCycle, got {other:?}"),
     }
+}
+
+#[test]
+fn reference_retype_to_uuid_drops_the_fk() {
+    // v1: audit + log(aref -> audit). v2: audit removed AND log.aref retyped
+    // from Reference to Uuid (same field id). The synthesized FK log_aref_fkey
+    // is not carried by ALTER COLUMN TYPE, so without an explicit drop it
+    // survives the retype and the later DROP TABLE "audit" fails 2BP01. The
+    // drop must precede the table drop.
+    let audit = entity("x", "audit", vec![text_field("val")]);
+    let mut log1 = entity("y", "log", vec![text_field("msg")]);
+    log1.fields.push(reference_field("aref", "x"));
+    let v1 = mini(1, vec![audit, log1]);
+
+    let mut log2 = entity("y", "log", vec![text_field("msg")]);
+    log2.fields.push(uuid_field("aref"));
+    let v2 = mini(2, vec![log2]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    assert!(plan.requires_confirmation());
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let drop_fk = sql
+        .find("ALTER TABLE \"log\" DROP CONSTRAINT \"log_aref_fkey\"")
+        .expect("stale reference FK dropped");
+    let drop_tbl = sql
+        .find("DROP TABLE \"audit\"")
+        .expect("target table dropped");
+    assert!(
+        drop_fk < drop_tbl,
+        "the FK must drop before its referenced table:\n{sql}"
+    );
+}
+
+#[test]
+fn retype_into_reference_adds_the_fk() {
+    // The converse: log.aref retyped from Uuid to Reference{audit}. No FK
+    // existed, so one must be ADDED (after the retype makes the column uuid),
+    // and nothing is dropped.
+    let audit = entity("x", "audit", vec![text_field("val")]);
+    let mut log1 = entity("y", "log", vec![text_field("msg")]);
+    log1.fields.push(uuid_field("aref"));
+    let v1 = mini(1, vec![audit.clone(), log1]);
+
+    let mut log2 = entity("y", "log", vec![text_field("msg")]);
+    log2.fields.push(reference_field("aref", "x"));
+    let v2 = mini(2, vec![audit, log2]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let retype = sql
+        .find("ALTER TABLE \"log\" ALTER COLUMN \"aref\" TYPE uuid")
+        .expect("retype");
+    let add_fk = sql
+        .find(
+            "ALTER TABLE \"log\" ADD CONSTRAINT \"log_aref_fkey\" \
+             FOREIGN KEY (\"aref\") REFERENCES \"audit\" (id)",
+        )
+        .expect("FK added on entering Reference");
+    assert!(
+        retype < add_fk,
+        "the FK is added after the column becomes uuid:\n{sql}"
+    );
+    assert!(
+        !sql.contains("DROP CONSTRAINT \"log_aref_fkey\""),
+        "nothing to drop when entering Reference:\n{sql}"
+    );
+}
+
+#[test]
+fn reference_retype_repoints_the_fk() {
+    // A Reference re-pointed at a NEW target (authors -> books) does both:
+    // drop the old-named FK, then add the new FK referencing books.
+    let authors = entity("a", "authors", vec![text_field("n")]);
+    let books = entity("b", "books", vec![text_field("t")]);
+    let mut log1 = entity("y", "log", vec![text_field("msg")]);
+    log1.fields.push(reference_field("aref", "a"));
+    let v1 = mini(1, vec![authors.clone(), books.clone(), log1]);
+
+    let mut log2 = entity("y", "log", vec![text_field("msg")]);
+    log2.fields.push(reference_field("aref", "b"));
+    let v2 = mini(2, vec![authors, books, log2]);
+
+    let plan = Migration::migrate(&v1, &v2).expect("compiles");
+    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let drop_fk = sql
+        .find("ALTER TABLE \"log\" DROP CONSTRAINT \"log_aref_fkey\"")
+        .expect("old FK dropped");
+    let add_fk = sql
+        .find(
+            "ALTER TABLE \"log\" ADD CONSTRAINT \"log_aref_fkey\" \
+             FOREIGN KEY (\"aref\") REFERENCES \"books\" (id)",
+        )
+        .expect("new FK references books");
+    assert!(
+        drop_fk < add_fk,
+        "the re-point drops the old FK before adding the new one:\n{sql}"
+    );
 }
 
 #[test]
@@ -1487,6 +1601,112 @@ fn removed_entity_drops_apply_on_postgres() {
              ASSERT to_regclass('wamn_ddl_drop_order_test.reviews') IS NULL, 'reviews dropped';\n\
          END $$;\n\
          DROP SCHEMA wamn_ddl_drop_order_test CASCADE;\n",
+    );
+
+    let mut child = Command::new("psql")
+        .arg(&url)
+        .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn psql (is it installed?)");
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Live verification of the reference-retype FK lifecycle (wamn-drb) on a
+/// throwaway Postgres (gated on `WAMN_DDL_PG_URL`, skips cleanly when unset).
+/// Two scenarios in one dedicated schema so it parallelizes with the other
+/// gates: (A) a Reference retyped to Uuid while its target table is removed —
+/// the synthesized FK must drop or the `DROP TABLE` fails 2BP01, and the
+/// referencing row must survive; (B) a Uuid retyped into a Reference — the
+/// added FK must be a real enforcing constraint (a bogus insert is rejected).
+#[test]
+fn reference_retype_fk_lifecycle_applies_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_DDL_PG_URL") else {
+        eprintln!(
+            "skipping reference_retype_fk_lifecycle_applies_on_postgres (set WAMN_DDL_PG_URL to run)"
+        );
+        return;
+    };
+
+    // Scenario A: audit <- log(aref); remove audit AND retype aref -> uuid.
+    let audit = entity("ea", "audit", vec![text_field("val")]);
+    let mut log_ref = entity("el", "log", vec![text_field("msg")]);
+    log_ref.fields.push(reference_field("aref", "ea"));
+    let a_v1 = mini(1, vec![audit, log_ref]);
+    let mut log_uuid = entity("el", "log", vec![text_field("msg")]);
+    log_uuid.fields.push(uuid_field("aref"));
+    let a_v2 = mini(2, vec![log_uuid]);
+    let create_a = Migration::create(&a_v1).unwrap();
+    let retype_drop = Migration::migrate(&a_v1, &a_v2).unwrap();
+
+    // Scenario B: people + tag(pid uuid); retype pid -> Reference{people}.
+    let people = entity("ep", "people", vec![text_field("name")]);
+    let mut tag_uuid = entity("et", "tag", vec![text_field("label")]);
+    tag_uuid.fields.push(uuid_field("pid"));
+    let b_v1 = mini(1, vec![people.clone(), tag_uuid]);
+    let mut tag_ref = entity("et", "tag", vec![text_field("label")]);
+    tag_ref.fields.push(reference_field("pid", "ep"));
+    let b_v2 = mini(2, vec![people, tag_ref]);
+    let create_b = Migration::create(&b_v1).unwrap();
+    let retype_add = Migration::migrate(&b_v1, &b_v2).unwrap();
+
+    let mut script = String::new();
+    script.push_str(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
+         BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
+         DROP SCHEMA IF EXISTS wamn_ddl_retype_fk_test CASCADE;\n\
+         CREATE SCHEMA wamn_ddl_retype_fk_test AUTHORIZATION CURRENT_USER;\n\
+         GRANT USAGE ON SCHEMA wamn_ddl_retype_fk_test TO wamn_app;\n\
+         SET search_path TO wamn_ddl_retype_fk_test;\n",
+    );
+    // Scenario A: seed a real inbound FK row, then the retype-and-drop apply.
+    script.push_str(&create_a.sql(Confirmation::None).unwrap());
+    script.push_str(
+        "INSERT INTO audit (tenant_id, val) VALUES ('t1', 'keep');\n\
+         INSERT INTO log (tenant_id, msg, aref) SELECT 't1', 'r', id FROM audit;\n",
+    );
+    // Hit 2BP01 before the fix — the FK survived the retype and blocked the drop.
+    script.push_str(&retype_drop.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(
+        "DO $$ BEGIN\n\
+             ASSERT to_regclass('wamn_ddl_retype_fk_test.audit') IS NULL, 'audit dropped';\n\
+             ASSERT (SELECT count(*) FROM log WHERE aref IS NOT NULL) = 1, 'referencing row survived the retype';\n\
+             ASSERT (SELECT count(*) FROM pg_constraint WHERE conname = 'log_aref_fkey') = 0, 'stale FK gone';\n\
+         END $$;\n",
+    );
+    // Scenario B: seed a valid row, retype into a Reference, then prove the
+    // added FK actually enforces.
+    script.push_str(&create_b.sql(Confirmation::None).unwrap());
+    script.push_str(
+        "INSERT INTO people (tenant_id, name) VALUES ('t1', 'p');\n\
+         INSERT INTO tag (tenant_id, pid) SELECT 't1', id FROM people;\n",
+    );
+    script.push_str(&retype_add.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(
+        "DO $$ BEGIN\n\
+             ASSERT (SELECT count(*) FROM pg_constraint WHERE conname = 'tag_pid_fkey') = 1, 'FK added on entering Reference';\n\
+             BEGIN\n\
+                 INSERT INTO tag (tenant_id, pid) VALUES ('t1', gen_random_uuid());\n\
+                 RAISE EXCEPTION 'expected a foreign_key_violation but the insert succeeded';\n\
+             EXCEPTION WHEN foreign_key_violation THEN NULL;\n\
+             END;\n\
+         END $$;\n\
+         DROP SCHEMA wamn_ddl_retype_fk_test CASCADE;\n",
     );
 
     let mut child = Command::new("psql")
