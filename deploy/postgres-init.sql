@@ -5,8 +5,10 @@
 -- Security shape under test: ONE application role (wamn_app, not owner, no
 -- BYPASSRLS) and tenant separation purely via the `app.tenant` claim the
 -- plugin injects with SET LOCAL. RLS policies key on
--- current_setting('app.tenant', true), which is NULL (=> zero rows) when no
--- claim was injected.
+-- NULLIF(current_setting('app.tenant', true), ''), which is NULL (=> zero rows)
+-- when no claim was injected — Postgres resets a custom GUC to '' (not NULL)
+-- after SET LOCAL, and CHECK (tenant_id <> '') forbids a ''-tenant row, so an
+-- empty claim matches nothing structurally.
 
 CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 
@@ -23,7 +25,7 @@ GRANT USAGE ON SCHEMA s2 TO wamn_app;
 -- ---------------------------------------------------------------------------
 CREATE TABLE s2.bench (
     id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tenant_id text NOT NULL,
+    tenant_id text NOT NULL CHECK (tenant_id <> ''),
     g       int NOT NULL,
     a       int NOT NULL,
     b       bigint NOT NULL,
@@ -50,8 +52,8 @@ CREATE INDEX bench_tenant_g_id ON s2.bench (tenant_id, g, id);
 ALTER TABLE s2.bench ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.bench FORCE ROW LEVEL SECURITY;
 CREATE POLICY bench_tenant ON s2.bench
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.bench TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -59,7 +61,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON s2.bench TO wamn_app;
 -- ---------------------------------------------------------------------------
 CREATE TABLE s2.rls_secrets (
     id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tenant_id text NOT NULL,
+    tenant_id text NOT NULL CHECK (tenant_id <> ''),
     secret    text NOT NULL
 );
 
@@ -71,8 +73,8 @@ FROM generate_series(1, 1000) gs,
 ALTER TABLE s2.rls_secrets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.rls_secrets FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_secrets_tenant ON s2.rls_secrets
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.rls_secrets TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -81,7 +83,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON s2.rls_secrets TO wamn_app;
 -- ---------------------------------------------------------------------------
 CREATE TABLE s2.scratch (
     id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tenant_id text NOT NULL,
+    tenant_id text NOT NULL CHECK (tenant_id <> ''),
     k         text NOT NULL,
     v         text,
     vb        bytea,
@@ -95,23 +97,23 @@ CREATE TABLE s2.scratch (
 ALTER TABLE s2.scratch ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.scratch FORCE ROW LEVEL SECURITY;
 CREATE POLICY scratch_tenant ON s2.scratch
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.scratch TO wamn_app;
 
 -- FK-violation fixture (FK checks run as table owner and bypass RLS; the
 -- guest only needs a way to trip 23503).
 CREATE TABLE s2.fkchild (
     id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tenant_id text NOT NULL,
+    tenant_id text NOT NULL CHECK (tenant_id <> ''),
     parent_id bigint NOT NULL CONSTRAINT fkchild_parent_fk REFERENCES s2.scratch (id)
 );
 
 ALTER TABLE s2.fkchild ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.fkchild FORCE ROW LEVEL SECURITY;
 CREATE POLICY fkchild_tenant ON s2.fkchild
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.fkchild TO wamn_app;
 
 -- Identity columns: inserts by wamn_app need the backing sequences.
@@ -133,7 +135,7 @@ GRANT USAGE ON SCHEMA s3 TO wamn_app;
 -- performs the flip (seed / set-active exports) so the whole gate exercises a
 -- single wamn:postgres path.
 CREATE TABLE s3.flows (
-    tenant_id  text NOT NULL,
+    tenant_id  text NOT NULL CHECK (tenant_id <> ''),
     flow_id    text NOT NULL,
     version    int  NOT NULL,
     active     boolean NOT NULL DEFAULT false,
@@ -143,15 +145,15 @@ CREATE TABLE s3.flows (
 ALTER TABLE s3.flows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.flows FORCE ROW LEVEL SECURITY;
 CREATE POLICY flows_tenant ON s3.flows
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s3.flows TO wamn_app;
 
 -- Run-state checkpoints. step_seq = highest COMPLETED step index (a checkpoint
 -- is written after each step commits; -1 means nothing done yet). Resume loads
 -- step_seq and continues from step_seq + 1.
 CREATE TABLE s3.flow_runs (
-    tenant_id    text NOT NULL,
+    tenant_id    text NOT NULL CHECK (tenant_id <> ''),
     run_id       text NOT NULL,
     flow_id      text NOT NULL,
     flow_version int  NOT NULL,
@@ -163,15 +165,15 @@ CREATE TABLE s3.flow_runs (
 ALTER TABLE s3.flow_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.flow_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY flow_runs_tenant ON s3.flow_runs
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s3.flow_runs TO wamn_app;
 
 -- Business side-effect sink. The idempotency key (tenant_id, run_id, step)
 -- makes the pg-write node's INSERT ... ON CONFLICT DO NOTHING a no-op on
 -- replay, so a killed+resumed run leaves exactly one row per step — never two.
 CREATE TABLE s3.sink (
-    tenant_id  text NOT NULL,
+    tenant_id  text NOT NULL CHECK (tenant_id <> ''),
     run_id     text NOT NULL,
     step       int  NOT NULL,
     payload    text NOT NULL,
@@ -180,8 +182,8 @@ CREATE TABLE s3.sink (
 ALTER TABLE s3.sink ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.sink FORCE ROW LEVEL SECURITY;
 CREATE POLICY sink_tenant ON s3.sink
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s3.sink TO wamn_app;
 
 -- Production run state (5.7): the runner now checkpoints per NODE into node_runs
@@ -191,7 +193,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON s3.sink TO wamn_app;
 -- gates exercise the rewired runner. `s3.flow_runs` above is retained but unused
 -- (the single step_seq checkpoint it held is superseded by node_runs).
 CREATE TABLE s3.runs (
-    tenant_id       text NOT NULL,
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     run_id          text NOT NULL,
     flow_id         text NOT NULL,
     flow_version    int  NOT NULL,
@@ -212,14 +214,14 @@ CREATE TABLE s3.runs (
 ALTER TABLE s3.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_tenant ON s3.runs
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s3.runs TO wamn_app;
 
 -- One row per node execution; the (tenant_id, run_id, node_id, occurrence)
 -- idempotency key + seq ordering are what reconstruction replays.
 CREATE TABLE s3.node_runs (
-    tenant_id     text NOT NULL,
+    tenant_id     text NOT NULL CHECK (tenant_id <> ''),
     run_id        text NOT NULL,
     node_id       text NOT NULL,
     occurrence    int  NOT NULL DEFAULT 0,
@@ -238,6 +240,6 @@ CREATE TABLE s3.node_runs (
 ALTER TABLE s3.node_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.node_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY node_runs_tenant ON s3.node_runs
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s3.node_runs TO wamn_app;

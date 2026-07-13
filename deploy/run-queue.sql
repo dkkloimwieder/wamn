@@ -16,8 +16,11 @@
 --
 -- Security shape mirrors the rest of the platform (runs/node_runs, s2/s3, catalog):
 -- tenant separation purely via the `app.tenant` claim the wamn:postgres plugin
--- injects with SET LOCAL. FORCE RLS keyed on current_setting('app.tenant', true),
--- NULL (=> zero rows) when no claim was injected.
+-- injects with SET LOCAL. FORCE RLS keyed on
+-- NULLIF(current_setting('app.tenant', true), ''), NULL (=> zero rows) when no
+-- claim was injected — PG resets a custom GUC to '' (not NULL) after SET LOCAL,
+-- and CHECK (tenant_id <> '') forbids a ''-tenant row, so an empty claim
+-- matches nothing structurally.
 --
 -- SCOPE: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
 -- reconciliation, plus PER-PARTITION OWNERSHIP (the `partition_owner` lease table
@@ -43,7 +46,7 @@
 -- on `runs` (5.7) — the queue is the claim/lease layer, not a second run-state.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.run_queue (
-    tenant_id        text NOT NULL,
+    tenant_id        text NOT NULL CHECK (tenant_id <> ''),
     run_id           text NOT NULL,
     partition_key    text,
     priority         int  NOT NULL DEFAULT 0,
@@ -65,8 +68,8 @@ CREATE INDEX run_queue_partition ON wamn_run.run_queue (tenant_id, partition_key
 ALTER TABLE wamn_run.run_queue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.run_queue FORCE ROW LEVEL SECURITY;
 CREATE POLICY run_queue_tenant ON wamn_run.run_queue
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.run_queue TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -82,7 +85,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.run_queue TO wamn_app;
 -- per-run lease stays on run_queue above.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.partition_owner (
-    tenant_id        text NOT NULL,
+    tenant_id        text NOT NULL CHECK (tenant_id <> ''),
     partition_key    text NOT NULL,
     lease_owner      text NOT NULL,
     lease_expires_at timestamptz NOT NULL,
@@ -92,8 +95,8 @@ CREATE TABLE wamn_run.partition_owner (
 ALTER TABLE wamn_run.partition_owner ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.partition_owner FORCE ROW LEVEL SECURITY;
 CREATE POLICY partition_owner_tenant ON wamn_run.partition_owner
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.partition_owner TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -120,7 +123,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.partition_owner TO wamn_app;
 -- dispatch logic).
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.outbox (
-    tenant_id     text NOT NULL,
+    tenant_id     text NOT NULL CHECK (tenant_id <> ''),
     seq           bigint GENERATED ALWAYS AS IDENTITY,
     table_name    text NOT NULL,
     event         text NOT NULL CHECK (event IN ('insert', 'update', 'delete')),
@@ -135,6 +138,6 @@ CREATE INDEX outbox_pending ON wamn_run.outbox (tenant_id, seq)
 ALTER TABLE wamn_run.outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.outbox FORCE ROW LEVEL SECURITY;
 CREATE POLICY outbox_tenant ON wamn_run.outbox
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.outbox TO wamn_app;

@@ -111,7 +111,13 @@ fn create_table_op(entity: &Entity) -> Operation {
     let t = &entity.name;
     let mut cols = vec![
         "id uuid PRIMARY KEY DEFAULT gen_random_uuid()".to_string(),
-        "tenant_id text NOT NULL".to_string(),
+        // `CHECK (tenant_id <> '')`: Postgres resets a custom GUC to the empty
+        // string (not NULL) once SET LOCAL scope ends, so `''` is the value an
+        // idle claimless pooled connection carries. The policy below reads it
+        // through NULLIF (=> NULL => matches no row); this CHECK makes the
+        // guarantee structural by forbidding a `''`-tenant row from ever
+        // existing (a superuser/BYPASSRLS write path could otherwise land one).
+        "tenant_id text NOT NULL CHECK (tenant_id <> '')".to_string(),
     ];
     for f in &entity.fields {
         cols.push(column_clause(&f.name, f));
@@ -133,11 +139,15 @@ fn rls_op(entity: &Entity) -> Operation {
     let t = &entity.name;
     let policy = format!("{t}_tenant");
     let sql = format!(
+        // NULLIF(..., '') so an empty `app.tenant` claim reads as NULL and
+        // matches no row — including a hypothetical `''`-tenant row (see the
+        // CHECK (tenant_id <> '') in create_table_op). Bare current_setting
+        // would let `''` match a `''`-tenant row that a superuser write left.
         "ALTER TABLE {tbl} ENABLE ROW LEVEL SECURITY;\n\
          ALTER TABLE {tbl} FORCE ROW LEVEL SECURITY;\n\
          CREATE POLICY {pol} ON {tbl}\n    \
-         USING (tenant_id = current_setting('app.tenant', true))\n    \
-         WITH CHECK (tenant_id = current_setting('app.tenant', true));\n\
+         USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))\n    \
+         WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));\n\
          GRANT SELECT, INSERT, UPDATE, DELETE ON {tbl} TO wamn_app",
         tbl = q(t),
         pol = q(&policy),

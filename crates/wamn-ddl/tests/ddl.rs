@@ -106,9 +106,16 @@ fn create_plan_is_additive_and_tenant_safe() {
     // Tenant floor + managed PK.
     assert!(sql.contains("CREATE TABLE \"receipts\""));
     assert!(sql.contains("id uuid PRIMARY KEY DEFAULT gen_random_uuid()"));
-    assert!(sql.contains("tenant_id text NOT NULL"));
+    // Tenant column is NOT NULL and structurally non-empty (an empty tenant_id
+    // collides with the '' a reset GUC carries — see wamn-a45).
+    assert!(sql.contains("tenant_id text NOT NULL CHECK (tenant_id <> '')"));
     assert!(sql.contains("FORCE ROW LEVEL SECURITY"));
-    assert!(sql.contains("current_setting('app.tenant', true)"));
+    // The policy reads the claim through NULLIF so an empty claim => NULL =>
+    // matches no row, in BOTH the USING and WITH CHECK clauses.
+    assert!(sql.contains("USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))"));
+    assert!(
+        sql.contains("WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''))")
+    );
     assert!(sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON \"receipts\" TO wamn_app"));
     // Composite unique is tenant-scoped.
     assert!(sql.contains("UNIQUE (tenant_id, \"receipt_no\", \"supplier_id\")"));
@@ -1626,6 +1633,112 @@ fn removed_entity_drops_apply_on_postgres() {
     );
 }
 
+/// Live verification of the empty-tenant floor hardening (wamn-a45) on a
+/// throwaway Postgres (gated on `WAMN_DDL_PG_URL`, skips cleanly when unset).
+/// Postgres resets a custom GUC to `''` (not NULL) once `SET LOCAL` scope ends,
+/// so an idle claimless pooled connection carries `app.tenant = ''`. This gate
+/// proves BOTH halves of the structural fix independently, in its own schema so
+/// it parallelizes with the other gates:
+///   (a) `CHECK (tenant_id <> '')` forbids a `''`-tenant row even for a
+///       superuser / BYPASSRLS writer (the exact attack path);
+///   (b) the policy's `NULLIF(current_setting('app.tenant', true), '')` hides a
+///       `''`-tenant row from an empty claim — proven after the CHECK is dropped
+///       so a `''`-row can actually be planted, isolating the policy read.
+#[test]
+fn empty_tenant_claim_matches_no_row_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_DDL_PG_URL") else {
+        eprintln!(
+            "skipping empty_tenant_claim_matches_no_row_on_postgres (set WAMN_DDL_PG_URL to run)"
+        );
+        return;
+    };
+
+    let notes = entity("en", "notes", vec![text_field("body")]);
+    let v1 = mini(1, vec![notes]);
+    let create = Migration::create(&v1).unwrap();
+
+    let mut script = String::new();
+    script.push_str(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
+         BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
+         DROP SCHEMA IF EXISTS wamn_ddl_empty_tenant_test CASCADE;\n\
+         CREATE SCHEMA wamn_ddl_empty_tenant_test AUTHORIZATION CURRENT_USER;\n\
+         GRANT USAGE ON SCHEMA wamn_ddl_empty_tenant_test TO wamn_app;\n\
+         SET search_path TO wamn_ddl_empty_tenant_test;\n",
+    );
+    script.push_str(&create.sql(Confirmation::None).unwrap());
+    // Seed one legitimate row (as superuser — BYPASSRLS; the CHECK still applies
+    // and 't1' <> '' passes).
+    script.push_str("INSERT INTO notes (tenant_id, body) VALUES ('t1', 'hello');\n");
+    // (a) The CHECK rejects a ''-tenant row even for a superuser writer.
+    script.push_str(
+        "DO $$ BEGIN\n\
+             BEGIN\n\
+                 INSERT INTO notes (tenant_id, body) VALUES ('', 'ghost');\n\
+                 RAISE EXCEPTION 'expected a check_violation but the empty-tenant insert succeeded';\n\
+             EXCEPTION WHEN check_violation THEN NULL;\n\
+             END;\n\
+         END $$;\n",
+    );
+    // An empty or unset claim (the reset-GUC value) sees no rows; a real claim
+    // sees its own — proving RLS is active and the table is not simply empty.
+    script.push_str(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app;\n\
+         SET LOCAL app.tenant = '';\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM notes) = 0, 'empty claim sees no rows'; END $$;\n\
+         COMMIT;\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM notes) = 0, 'unset claim sees no rows'; END $$;\n\
+         COMMIT;\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app;\n\
+         SET LOCAL app.tenant = 't1';\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM notes) = 1, 'legit claim sees its row'; END $$;\n\
+         COMMIT;\n",
+    );
+    // (b) Isolate the policy's NULLIF: drop the belt-and-braces CHECK (proven
+    // above), plant a ''-tenant row, and confirm an empty claim STILL sees
+    // nothing. Bare current_setting would match the ghost here; NULLIF => NULL
+    // => no match. This is what fails if rls_op loses its NULLIF.
+    script.push_str(
+        "ALTER TABLE notes DROP CONSTRAINT notes_tenant_id_check;\n\
+         INSERT INTO notes (tenant_id, body) VALUES ('', 'ghost');\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app;\n\
+         SET LOCAL app.tenant = '';\n\
+         DO $$ BEGIN\n\
+             ASSERT (SELECT count(*) FROM notes) = 0, 'empty claim hides a ''-tenant row (NULLIF, not just the CHECK)';\n\
+         END $$;\n\
+         COMMIT;\n\
+         DROP SCHEMA wamn_ddl_empty_tenant_test CASCADE;\n",
+    );
+
+    let mut child = Command::new("psql")
+        .arg(&url)
+        .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn psql (is it installed?)");
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// Live verification of the reference-retype FK lifecycle (wamn-drb) on a
 /// throwaway Postgres (gated on `WAMN_DDL_PG_URL`, skips cleanly when unset).
 /// Two scenarios in one dedicated schema so it parallelizes with the other
@@ -1817,7 +1930,7 @@ fn outbox_triggers_fire_on_postgres() {
     // drift-guarded by outbox_trigger_shape_matches_run_queue_deploy_file).
     script.push_str(
         "CREATE TABLE outbox (\n\
-             tenant_id     text NOT NULL,\n\
+             tenant_id     text NOT NULL CHECK (tenant_id <> ''),\n\
              seq           bigint GENERATED ALWAYS AS IDENTITY,\n\
              table_name    text NOT NULL,\n\
              event         text NOT NULL CHECK (event IN ('insert', 'update', 'delete')),\n\
@@ -1829,8 +1942,8 @@ fn outbox_triggers_fire_on_postgres() {
          ALTER TABLE outbox ENABLE ROW LEVEL SECURITY;\n\
          ALTER TABLE outbox FORCE ROW LEVEL SECURITY;\n\
          CREATE POLICY outbox_tenant ON outbox\n\
-             USING (tenant_id = current_setting('app.tenant', true))\n\
-             WITH CHECK (tenant_id = current_setting('app.tenant', true));\n\
+             USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))\n\
+             WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));\n\
          GRANT SELECT, INSERT, UPDATE, DELETE ON outbox TO wamn_app;\n",
     );
     script.push_str(&floor.sql(Confirmation::None).unwrap());

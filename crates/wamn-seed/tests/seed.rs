@@ -132,6 +132,23 @@ fn ids_are_deterministic_across_compiles() {
     );
 }
 
+#[test]
+fn rejects_empty_or_whitespace_tenant() {
+    // An empty tenant_id collides with the '' Postgres restores a reset GUC to;
+    // the tenant floor (NULLIF + CHECK (tenant_id <> '')) would reject or hide
+    // such rows, so compile() refuses it up front (wamn-a45).
+    assert_eq!(
+        compile(&poc_dataset(), &poc(), ""),
+        Err(CompileError::EmptyTenant)
+    );
+    assert_eq!(
+        compile(&poc_dataset(), &poc(), "   "),
+        Err(CompileError::EmptyTenant)
+    );
+    // A normal tenant still compiles.
+    assert!(compile(&poc_dataset(), &poc(), "t1").is_ok());
+}
+
 // --- validation ------------------------------------------------------------
 
 fn expect_codes(d: &Dataset, catalog: &Catalog, codes: &[&str]) {

@@ -23,6 +23,13 @@ use crate::validate;
 pub enum CompileError {
     /// The dataset failed structural validation against the catalog.
     InvalidDataset(Vec<Issue>),
+    /// The target tenant is empty or whitespace-only. An empty `tenant_id`
+    /// collides with the value Postgres restores a custom GUC to once
+    /// `SET LOCAL` scope ends (`''`, not NULL), which the tenant floor treats
+    /// as "no claim": the floor policy reads `app.tenant` through NULLIF and
+    /// forbids a `''`-tenant row via `CHECK (tenant_id <> '')`, so such a seed
+    /// would be rejected on apply. Refuse it up front instead.
+    EmptyTenant,
 }
 
 impl std::fmt::Display for CompileError {
@@ -38,6 +45,9 @@ impl std::fmt::Display for CompileError {
                 }
                 Ok(())
             }
+            CompileError::EmptyTenant => {
+                write!(f, "seed tenant is empty or whitespace-only")
+            }
         }
     }
 }
@@ -51,6 +61,9 @@ pub fn compile(
     catalog: &Catalog,
     tenant: &str,
 ) -> Result<MigrationPlan, CompileError> {
+    if tenant.trim().is_empty() {
+        return Err(CompileError::EmptyTenant);
+    }
     validate::validate(dataset, catalog).map_err(CompileError::InvalidDataset)?;
 
     let mut operations = Vec::new();

@@ -201,13 +201,22 @@ SECURITY` with policies keyed on `current_setting('app.tenant', true)`.
    CPU quota; size requests, don't cap. Cross-node placement added a smaller
    tail (kind overlay hop, 44→31 ms), removed by co-locating the workload with
    its pool — consistent with a node-local pooling topology.
-2. **Empty-claim reset is safe.** Postgres reverts a custom GUC (`app.tenant`)
-   to the empty string, not NULL, after a `SET LOCAL`, so an idle pooled
-   connection reads back `Some("")`. That grants nothing — RLS compares
-   `tenant_id = ''`, which no row satisfies — and every actual query runs
-   inside a fresh `BEGIN; SET LOCAL app.tenant='<tenant>'`. The chaos gate's
-   cleanliness check treats empty as claim-free; a non-empty residual would be
-   a leak.
+2. **Empty-claim reset is safe — now structurally, not by invariant.** Postgres
+   reverts a custom GUC (`app.tenant`) to the empty string, not NULL, after a
+   `SET LOCAL`, so an idle pooled connection reads back `Some("")`. Every actual
+   query runs inside a fresh `BEGIN; SET LOCAL app.tenant='<tenant>'`. In P0 the
+   empty claim granted nothing only because no row ever carried `tenant_id = ''`
+   — an invariant nothing enforced (a superuser / BYPASSRLS write path could
+   have landed such a row that an idle claimless connection would then see).
+   Since **wamn-a45** the tenant floor makes this structural: the policy reads
+   `NULLIF(current_setting('app.tenant', true), '')` (an empty claim folds to
+   NULL and matches no row, including a hypothetical `''`-tenant row) and
+   `CHECK (tenant_id <> '')` forbids a `''`-tenant row from existing at all.
+   Both halves are proven independently by a live-apply gate
+   (`empty_tenant_claim_matches_no_row_on_postgres`, `cargo test -p wamn-ddl`
+   with `WAMN_DDL_PG_URL`) and mirrored across the emitter and the five
+   hand-written run schemas. The chaos gate's cleanliness check still treats
+   empty as claim-free; a non-empty residual would be a leak.
 3. **D5 (pooling topology) input:** a per-host bounded pool returns
    `connection-unavailable` (a retryable variant) the moment demand exceeds
    capacity for longer than the checkout wait — it never hangs (63/96 excess

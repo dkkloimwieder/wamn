@@ -17,11 +17,12 @@
 -- the `wamn_app` role). Provisioning a per-project schema rewrites `wamn_run`
 -- to the project schema (`wamn-host publish-catalog --runstate`).
 --
--- Security shape mirrors the rest of the platform: FORCE RLS keyed on the
--- `app.tenant` claim the wamn:postgres plugin injects; NULL claim => zero rows.
+-- Security shape mirrors the rest of the platform: FORCE RLS keyed on
+-- NULLIF(current_setting('app.tenant', true), ''); an empty/absent claim reads
+-- as NULL => zero rows, and CHECK (tenant_id <> '') forbids a ''-tenant row.
 
 CREATE TABLE wamn_run.flows (
-    tenant_id  text NOT NULL,
+    tenant_id  text NOT NULL CHECK (tenant_id <> ''),
     flow_id    text NOT NULL,
     version    int  NOT NULL,
     active     boolean NOT NULL DEFAULT false,
@@ -46,6 +47,6 @@ CREATE UNIQUE INDEX flows_active_webhook_path ON wamn_run.flows
 ALTER TABLE wamn_run.flows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.flows FORCE ROW LEVEL SECURITY;
 CREATE POLICY flows_tenant ON wamn_run.flows
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.flows TO wamn_app;

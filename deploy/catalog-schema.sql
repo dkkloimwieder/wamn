@@ -15,8 +15,11 @@
 -- Security shape mirrors the rest of the platform (s2/s3): one application role
 -- (wamn_app, not owner, no BYPASSRLS) and tenant separation purely via the
 -- `app.tenant` claim the wamn:postgres plugin injects with SET LOCAL. Every
--- table FORCEs RLS keyed on current_setting('app.tenant', true), which is NULL
--- (=> zero rows) when no claim was injected. (In production the catalog may live
+-- table FORCEs RLS keyed on NULLIF(current_setting('app.tenant', true), ''),
+-- which is NULL (=> zero rows) when no claim was injected — Postgres resets a
+-- custom GUC to '' (not NULL) after SET LOCAL, and CHECK (tenant_id <> '')
+-- forbids a ''-tenant row, so an empty claim matches nothing structurally.
+-- (In production the catalog may live
 -- in the control plane rather than a project DB; the tenant-scoped RLS shape is
 -- the same either way.)
 
@@ -44,7 +47,7 @@ GRANT USAGE ON SCHEMA catalog TO wamn_app;
 -- version per (catalog, environment).
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.catalogs (
-    tenant_id      text NOT NULL,
+    tenant_id      text NOT NULL CHECK (tenant_id <> ''),
     catalog_id     text NOT NULL,
     version        int  NOT NULL,
     environment    text NOT NULL DEFAULT 'default',
@@ -59,8 +62,8 @@ CREATE TABLE catalog.catalogs (
 ALTER TABLE catalog.catalogs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.catalogs FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalogs_tenant ON catalog.catalogs
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.catalogs TO wamn_app;
 
 -- Single-applied invariant: exactly one live version per (catalog, environment).
@@ -72,7 +75,7 @@ CREATE UNIQUE INDEX catalogs_one_applied_per_env
 -- Entities. `is_system` = platform-provided, structure-locked but extensible.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.entities (
-    tenant_id       text NOT NULL,
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
     catalog_version int  NOT NULL,
     entity_id       text NOT NULL,
@@ -88,8 +91,8 @@ CREATE TABLE catalog.entities (
 ALTER TABLE catalog.entities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.entities FORCE ROW LEVEL SECURITY;
 CREATE POLICY entities_tenant ON catalog.entities
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.entities TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -100,7 +103,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.entities TO wamn_app;
 -- enumerating every variant as columns. `ordinal` preserves field order.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.fields (
-    tenant_id       text NOT NULL,
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
     catalog_version int  NOT NULL,
     entity_id       text NOT NULL,
@@ -122,8 +125,8 @@ CREATE TABLE catalog.fields (
 ALTER TABLE catalog.fields ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.fields FORCE ROW LEVEL SECURITY;
 CREATE POLICY fields_tenant ON catalog.fields
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.fields TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -132,7 +135,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.fields TO wamn_app;
 -- hierarchical; `through` is the join entity for many-to-many.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.relations (
-    tenant_id       text NOT NULL,
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
     catalog_version int  NOT NULL,
     relation_id     text NOT NULL,
@@ -152,15 +155,15 @@ CREATE TABLE catalog.relations (
 ALTER TABLE catalog.relations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.relations FORCE ROW LEVEL SECURITY;
 CREATE POLICY relations_tenant ON catalog.relations
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.relations TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Secondary indexes. `fields` is the ordered list of field_ids covered.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.indexes (
-    tenant_id       text NOT NULL,
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
     catalog_version int  NOT NULL,
     entity_id       text NOT NULL,
@@ -174,8 +177,8 @@ CREATE TABLE catalog.indexes (
 ALTER TABLE catalog.indexes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.indexes FORCE ROW LEVEL SECURITY;
 CREATE POLICY indexes_tenant ON catalog.indexes
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.indexes TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -183,7 +186,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.indexes TO wamn_app;
 -- covered field_ids for a unique constraint; `expression` the boolean check.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.constraints (
-    tenant_id       text NOT NULL,
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
     catalog_version int  NOT NULL,
     entity_id       text NOT NULL,
@@ -199,8 +202,8 @@ CREATE TABLE catalog.constraints (
 ALTER TABLE catalog.constraints ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.constraints FORCE ROW LEVEL SECURITY;
 CREATE POLICY constraints_tenant ON catalog.constraints
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.constraints TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -215,7 +218,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.constraints TO wamn_app;
 -- a specific catalog *version*: policies attach to the live schema.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.rls_policies (
-    tenant_id  text NOT NULL,
+    tenant_id  text NOT NULL CHECK (tenant_id <> ''),
     catalog_id text NOT NULL,
     policy_id  text NOT NULL,
     entity_id  text NOT NULL,
@@ -225,8 +228,8 @@ CREATE TABLE catalog.rls_policies (
 ALTER TABLE catalog.rls_policies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.rls_policies FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_policies_tenant ON catalog.rls_policies
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.rls_policies TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -239,7 +242,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.rls_policies TO wamn_app;
 -- DEFINITIONS, not the seeded rows themselves.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.seed_datasets (
-    tenant_id  text NOT NULL,
+    tenant_id  text NOT NULL CHECK (tenant_id <> ''),
     catalog_id text NOT NULL,
     dataset_id text NOT NULL,
     dataset    jsonb NOT NULL,
@@ -248,6 +251,6 @@ CREATE TABLE catalog.seed_datasets (
 ALTER TABLE catalog.seed_datasets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.seed_datasets FORCE ROW LEVEL SECURITY;
 CREATE POLICY seed_datasets_tenant ON catalog.seed_datasets
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.seed_datasets TO wamn_app;

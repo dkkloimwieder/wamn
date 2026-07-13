@@ -63,7 +63,7 @@ tenant-isolation shape:
 ```sql
 CREATE TABLE "receipts" (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id text NOT NULL,
+    tenant_id text NOT NULL CHECK (tenant_id <> ''),
     "receipt_no" varchar(64) NOT NULL,
     "supplier_id" uuid NOT NULL,
     "received_at" timestamptz NOT NULL
@@ -71,10 +71,22 @@ CREATE TABLE "receipts" (
 ALTER TABLE "receipts" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "receipts" FORCE ROW LEVEL SECURITY;
 CREATE POLICY "receipts_tenant" ON "receipts"
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON "receipts" TO wamn_app;
 ```
+
+**Empty-claim safety (structural).** Postgres resets a custom GUC to the empty
+string (not NULL) once `SET LOCAL` scope ends, so an idle claimless pooled
+connection carries `app.tenant = ''`. The policy reads the claim through
+`NULLIF(..., '')`, so an empty claim folds to NULL and matches **no** row; and
+`CHECK (tenant_id <> '')` forbids a `''`-tenant row from ever existing (a
+superuser / BYPASSRLS write path could otherwise land one that an idle
+connection would then see). Together these make "an empty claim sees nothing" a
+structural guarantee rather than an invariant that merely happens to hold. The
+same NULLIF + CHECK shape is mirrored in the hand-written run schemas
+(`deploy/run-state.sql`, `run-queue.sql`, `catalog-schema.sql`,
+`postgres-init.sql`, `flows.sql`).
 
 All tables are created first, then foreign keys, constraints, indexes, and unit
 comments are attached — so a foreign key never precedes its target table.

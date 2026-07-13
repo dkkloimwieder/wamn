@@ -18,8 +18,11 @@
 -- Security shape mirrors the rest of the platform (s2/s3, catalog): tenant
 -- separation purely via the `app.tenant` claim the wamn:postgres plugin injects
 -- with SET LOCAL. Every table FORCEs RLS keyed on
--- current_setting('app.tenant', true), which is NULL (=> zero rows) when no
--- claim was injected.
+-- NULLIF(current_setting('app.tenant', true), ''), which is NULL (=> zero rows)
+-- when no claim was injected. Postgres resets a custom GUC to '' (not NULL)
+-- after SET LOCAL scope ends, so NULLIF folds an empty claim to NULL; and
+-- CHECK (tenant_id <> '') forbids a ''-tenant row, so an empty claim matches
+-- nothing structurally, not just by convention.
 --
 -- SCOPE (what 5.7 does NOT own, reserved as nullable seams below): the durable
 -- run QUEUE + leases + doorbell (5.14) co-transact with these INSERTs but own
@@ -45,7 +48,7 @@ GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
 -- as_sql (tied to the crate by a drift-guard test).
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.runs (
-    tenant_id       text NOT NULL,
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     run_id          text NOT NULL,
     flow_id         text NOT NULL,
     flow_version    int  NOT NULL,
@@ -82,8 +85,8 @@ CREATE INDEX runs_cron_anchor ON wamn_run.runs (tenant_id, flow_id, run_id)
 ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_tenant ON wamn_run.runs
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -100,7 +103,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app;
 -- and 9.6 (capture policy) — 5.7 leaves them null and stores I/O inline.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.node_runs (
-    tenant_id     text NOT NULL,
+    tenant_id     text NOT NULL CHECK (tenant_id <> ''),
     run_id        text NOT NULL,
     node_id       text NOT NULL,
     occurrence    int  NOT NULL DEFAULT 0,
@@ -133,6 +136,6 @@ CREATE INDEX node_runs_seq ON wamn_run.node_runs (tenant_id, run_id, seq);
 ALTER TABLE wamn_run.node_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.node_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY node_runs_tenant ON wamn_run.node_runs
-    USING (tenant_id = current_setting('app.tenant', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant', true));
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.node_runs TO wamn_app;
