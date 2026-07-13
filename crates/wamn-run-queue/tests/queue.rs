@@ -174,8 +174,12 @@ fn claim_sql_is_skip_locked_and_bounded() {
     assert!(sql.contains("ORDER BY c.available_at, c.run_id"));
     assert!(sql.contains("c.available_at <= now()"));
     assert!(sql.contains("c.lease_expires_at IS NULL OR c.lease_expires_at <= now()"));
-    // The redelivery-budget guard: a spent row is left for the janitor, not re-leased.
-    assert!(sql.contains("c.attempts < c.max_attempts"));
+    // The redelivery-budget guard: a spent row is left for the janitor, UNLESS its
+    // lease was released by a park (NULL) — a woken budget-spent run wakes and
+    // completes (wamn-fqg.7), it is not wedged invisible. The `OR ... IS NULL` disjunct
+    // is the load-bearing drift-guard: the runtime gates are insensitive to some
+    // SQL-builder mutations, so this shape assert pins the predicate.
+    assert!(sql.contains("c.attempts < c.max_attempts OR c.lease_expires_at IS NULL"));
     // Crash-evidence increment: attempts bumps ONLY on an expired-lease reclaim (the
     // predicate established expired-or-NULL, so IS NOT NULL = the prior owner died).
     // A first claim and a park->wake re-claim (park releases the lease) are free —
@@ -200,6 +204,9 @@ fn partition_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(acq.contains("WHERE o.lease_expires_at <= now()"));
     assert!(acq.contains("LIMIT 5"));
     assert!(acq.contains("RETURNING o.partition_key"));
+    // A key with a woken budget-spent head (lease released by a park) is still
+    // acquirable — the same wamn-fqg.7 disjunct as the global claim.
+    assert!(acq.contains("q.attempts < q.max_attempts OR q.lease_expires_at IS NULL"));
 
     // Claim head: owned partitions only, one-in-flight + head-first, SKIP LOCKED.
     let claim = claim_partition_head_sql(8);
@@ -215,6 +222,11 @@ fn partition_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(claim.contains("b.lease_expires_at IS NOT NULL AND b.lease_expires_at > now()"));
     assert!(claim.contains("(b.available_at, b.run_id) < (c.available_at, c.run_id)"));
     assert!(claim.contains("FOR UPDATE OF c SKIP LOCKED"));
+    // wamn-fqg.7: the budget disjunct is on BOTH the head candidate `c` and the
+    // earlier-ready-sibling sub-check `b`, so a woken budget-spent head is claimable
+    // AND still blocks its later siblings (in-order preserved).
+    assert!(claim.contains("c.attempts < c.max_attempts OR c.lease_expires_at IS NULL"));
+    assert!(claim.contains("b.attempts < b.max_attempts OR b.lease_expires_at IS NULL"));
     assert!(claim.contains("LIMIT 8"));
     // Same crash-evidence increment as the global claim: a parked head is re-claimed
     // on EVERY wake, so this path would burn the budget fastest unconditionally.
@@ -283,6 +295,79 @@ fn global_claim_skips_partitioned_rows() {
     let plan = plan_claim(&rows, 1_000, 10, 60_000);
     let ids: Vec<&str> = plan.claimed.iter().map(|c| c.run_id.as_str()).collect();
     assert_eq!(ids, ["plain"]);
+}
+
+#[test]
+fn budget_spent_null_lease_wakes_but_expired_lease_stays_exhausted() {
+    // wamn-fqg.7: the wedge. A budget-spent run that PARKED (park released the lease,
+    // proving the last owner was alive) must WAKE — a NULL lease is never crash
+    // evidence. A budget-spent run still holding an *expired* lease (a crash after the
+    // budget was spent) stays Exhausted for the janitor. The one distinguishing signal
+    // is `lease_expires_at`: NULL = a live park (Ready), Some = crash evidence.
+    let now = 100;
+
+    // Woken: attempts at max, lease released by a park, due -> Ready (the fix).
+    let woken = QueueEntry {
+        attempts: 20,
+        ..QueueEntry::ready("t1", "wedge", 50, 20)
+    };
+    assert_eq!(claim_state(&woken, now), ClaimState::Ready);
+    assert!(is_claimable(&woken, now));
+
+    // Poison: attempts at max, lease EXPIRED (not released) -> Exhausted (janitor's).
+    let poison = QueueEntry {
+        lease_owner: Some("dead".into()),
+        lease_expires_at: Some(80),
+        attempts: 20,
+        ..QueueEntry::ready("t1", "poison", 50, 20)
+    };
+    assert_eq!(claim_state(&poison, now), ClaimState::Exhausted);
+    assert!(!is_claimable(&poison, now));
+
+    // Regression: an expired lease with budget REMAINING is still a plain reclaim.
+    let reclaim = QueueEntry {
+        lease_owner: Some("dead".into()),
+        lease_expires_at: Some(80),
+        attempts: 2,
+        ..QueueEntry::ready("t1", "reclaim", 50, 20)
+    };
+    assert_eq!(claim_state(&reclaim, now), ClaimState::Ready);
+
+    // plan_claim takes the woken row, and the crash-evidence CASE leaves its attempts
+    // UNCHANGED (a NULL lease is not bumped) — waking a park costs no redelivery budget.
+    let plan = plan_claim(std::slice::from_ref(&woken), now, 10, 60_000);
+    assert_eq!(plan.claimed.len(), 1);
+    assert_eq!(plan.claimed[0].run_id, "wedge");
+    assert_eq!(
+        plan.claimed[0].attempts, 20,
+        "waking a park does not bump attempts"
+    );
+    // ...and skips the poison row (left for the janitor).
+    assert!(
+        plan_claim(std::slice::from_ref(&poison), now, 10, 60_000)
+            .claimed
+            .is_empty()
+    );
+
+    // The partition path (is_claimable-routed) wakes a budget-spent NULL-lease head too,
+    // and an earlier such head still blocks its later sibling (in-order preserved).
+    let owned: HashSet<&str> = ["site-w"].into_iter().collect();
+    let woken_head = QueueEntry {
+        attempts: 20,
+        ..QueueEntry::ready_partition("t1", "pw-0", "site-w", 50, 20)
+    };
+    let later_sibling = QueueEntry::ready_partition("t1", "pw-1", "site-w", 60, 20);
+    let plan = plan_partition_claim(&[woken_head, later_sibling], &owned, now, 10, 60_000);
+    let ids: Vec<&str> = plan.claimed.iter().map(|c| c.run_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["pw-0"],
+        "the woken budget-spent head is claimed; its later sibling waits"
+    );
+    assert_eq!(
+        plan.claimed[0].attempts, 20,
+        "waking a partition head park does not bump attempts"
+    );
 }
 
 // ---- crash-evidence attempts (park/wake is free) -----------------------------
@@ -882,7 +967,9 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     let wake = parked_due_sql(100);
     assert!(wake.contains("available_at <= now()"));
     assert!(wake.contains("lease_expires_at IS NULL OR lease_expires_at <= now()"));
-    assert!(wake.contains("attempts < max_attempts"));
+    // Mirrors the claim predicate incl. the wamn-fqg.7 disjunct: a woken budget-spent
+    // (NULL-lease) run is surfaced for a doorbell hint, not left invisible.
+    assert!(wake.contains("attempts < max_attempts OR lease_expires_at IS NULL"));
     assert!(wake.contains("ORDER BY available_at, run_id"));
     assert!(wake.contains("LIMIT 100"));
     assert!(!wake.contains("FOR UPDATE"));
@@ -1346,6 +1433,75 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          COMMIT;\n",
     ));
+
+    // wamn-fqg.7: the wedge. A budget-spent run (attempts == max_attempts) whose lease
+    // a park RELEASED (NULL) must WAKE — a NULL lease is proof the last owner was alive
+    // (it parked, it did not crash), so the crash budget must not gate it. A budget-spent
+    // run still holding an EXPIRED lease (a crash after the budget was spent) stays
+    // terminal: not claimed, not woken, reaped by the janitor. Both are exercised through
+    // the REAL builders (claim_batch_sql / parked_due_sql / janitor_sweep_sql).
+    script.push_str(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+           ('t1','rq-wedge-woken','f',1,'running'), \
+           ('t1','rq-wedge-poison','f',1,'running');\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, available_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
+           ('t1','rq-wedge-woken', now() - interval '1 min', NULL,  NULL,                     20, 20), \
+           ('t1','rq-wedge-poison',now() - interval '1 min','dead', now() - interval '2 hour', 20, 20);\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         -- Read-only wake scan FIRST: the woken (NULL-lease) row is surfaced for a\n\
+         -- doorbell hint; the expired-lease poison row is NOT (the fix is narrow).\n\
+         CREATE TEMP TABLE wedge_woken AS EXECUTE parked_stmt;\n\
+         DO $$ BEGIN \
+           ASSERT EXISTS (SELECT 1 FROM wedge_woken WHERE run_id='rq-wedge-woken'), 'a woken budget-spent (NULL-lease) run is surfaced by the wake scan (wamn-fqg.7)'; \
+           ASSERT NOT EXISTS (SELECT 1 FROM wedge_woken WHERE run_id='rq-wedge-poison'), 'an expired-lease budget-spent run is NOT woken (poison stays terminal)'; \
+         END $$;\n\
+         -- The claim takes the woken row (attempts UNCHANGED — a NULL lease is not crash\n\
+         -- evidence) and leaves the poison row for the janitor.\n\
+         EXECUTE claim_stmt('cw', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='rq-wedge-woken') = 'cw', 'a woken budget-spent run is claimed (was invisible before wamn-fqg.7)'; \
+           ASSERT (SELECT attempts FROM run_queue WHERE run_id='rq-wedge-woken') = 20, 'waking a park burns NO redelivery budget'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='rq-wedge-poison') = 'dead', 'an expired-lease budget-spent run is NOT claimed (poison stays terminal)'; \
+         END $$;\n\
+         -- The janitor reaps the still-unclaimed poison row; the woken row, now\n\
+         -- live-leased by the claim, is left in flight.\n\
+         EXECUTE janitor_stmt(3600000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM run_queue WHERE run_id='rq-wedge-poison') = 0, 'poison row reaped'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='rq-wedge-poison') = 'infrastructure-failure', 'poison run marked infra-failure (max_attempts stays terminal)'; \
+           ASSERT (SELECT count(*) FROM run_queue WHERE run_id='rq-wedge-woken') = 1, 'the woken run progresses (not reaped)'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='rq-wedge-woken') = 'running', 'the woken run stays in flight (janitor leaves the live-leased claim)'; \
+         END $$;\n\
+         COMMIT;\n",
+    );
+
+    // wamn-fqg.7 (partition path): a woken budget-spent partition HEAD (NULL lease) is
+    // acquirable AND head-claimable, and an earlier such head still blocks its later
+    // sibling (in-order preserved). Exercises the `OR ... IS NULL` disjunct on all three
+    // partition builders (acquire candidate, head candidate `c`, sibling sub-check `b`).
+    script.push_str(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+           ('t1','pw-0','f',1,'running'),('t1','pw-1','f',1,'dispatched');\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, partition_key, available_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
+           ('t1','pw-0','site-w', now() - interval '1 min', NULL, NULL, 20, 20), \
+           ('t1','pw-1','site-w', now(),                    NULL, NULL, 0,  20);\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         EXECUTE acquire_stmt('RW', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM partition_owner WHERE partition_key='site-w' AND lease_owner='RW') = 1, 'a partition whose only head is a woken budget-spent run is acquirable (wamn-fqg.7)'; \
+         END $$;\n\
+         EXECUTE claimhead_stmt('RW', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pw-0') = 'RW', 'the woken budget-spent partition head is claimed'; \
+           ASSERT (SELECT attempts FROM run_queue WHERE run_id='pw-0') = 20, 'waking a partition head park burns NO redelivery budget'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='pw-1') IS NULL, 'the later sibling stays blocked behind the woken head (in-order preserved)'; \
+         END $$;\n\
+         COMMIT;\n",
+    );
 
     script.push_str("DROP SCHEMA wamn_run CASCADE;\n");
 

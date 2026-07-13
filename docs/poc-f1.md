@@ -163,8 +163,9 @@ trace (`node_runs.input_json`) and the response.
   `runs.idempotency_key` when a client supplies one — a 4.6/5.14 refinement.
 - **Orphaned sync runs stay `running`.** A host death mid-request leaves the
   write-ahead row in `dispatched`/`running`; the 5.14 janitor only retires
-  QUEUED runs. A runs-level sweep for unqueued sync runs is future work
-  (pairs with the wamn-fqg.7 wedge policy).
+  QUEUED runs. A runs-level sweep for unqueued sync runs is future work — a
+  distinct gap from the queued-run NULL-lease wedge, which is closed (wamn-fqg.7:
+  a released-lease budget-spent queue row now wakes).
 - **Auth is the tenant claim.** The ERP identity/API-key → `app.user_id`/
   `app.role` claims are 4.2 (wamn-0xd); v1 is tenant-scoped like the 4.1
   gateway.

@@ -20,7 +20,10 @@
 //!   park       — park/wake cycles are budget-free: `attempts` counts crash
 //!                evidence (expired-lease reclaims) only, so a flow that parks far
 //!                more times than `max_attempts` still completes — on BOTH claim
-//!                paths — and the janitor retires nothing.
+//!                paths — and the janitor retires nothing. Plus the wamn-fqg.7
+//!                corollary: a budget-spent run whose lease a park released (NULL)
+//!                still WAKES and completes (not wedged invisible), while a
+//!                budget-spent run holding an expired lease stays terminal.
 //!   janitor    — an abandoned (expired-lease, budget-spent) run is swept to
 //!                `infrastructure-failure` and dequeued; a healthy run is untouched.
 //!   doorbell   — enqueue publishes a NATS-core hint; a subscriber wakes and
@@ -526,6 +529,114 @@ async fn reclaim_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
 /// wamn-fqg.5 fix each claim bumped `attempts`, so 10 parks with max_attempts=3
 /// classified the runs Exhausted mid-loop — killed having failed zero times —
 /// and this phase fails at the first post-budget wake.
+/// wamn-fqg.7: the wedge. A budget-spent run (`attempts == max_attempts`) whose lease
+/// a park RELEASED (NULL) must WAKE and complete — a NULL lease is proof the last owner
+/// was alive (it parked), never crash evidence, so the crash budget must not gate it. A
+/// budget-spent run still holding an EXPIRED lease (a crash after the budget was spent)
+/// stays terminal: not claimed, reaped by the janitor. Proven on BOTH claim paths.
+async fn park_wedge_check(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
+    reset(admin_url).await?;
+    let (mut client, _h) = connect_app(app_url).await?;
+
+    // Global path: a woken and a poison budget-spent row.
+    enqueue(&mut client, "rq-wedge-woken", 0).await?;
+    enqueue(&mut client, "rq-wedge-poison", 0).await?;
+    // Partition path (site-w): a woken budget-spent HEAD and its ready later sibling.
+    enqueue_partitioned(&mut client, "pw-0", "site-w", 0).await?;
+    enqueue_partitioned(&mut client, "pw-1", "site-w", 0).await?;
+    // Spend the budget on the wedged rows; poison additionally holds an expired lease.
+    client
+        .batch_execute(
+            "UPDATE run_queue SET max_attempts = 3;\n\
+             UPDATE run_queue SET attempts = 3 \
+               WHERE run_id IN ('rq-wedge-woken', 'rq-wedge-poison', 'pw-0');\n\
+             UPDATE run_queue SET lease_owner = 'dead', lease_expires_at = now() - interval '1 hour' \
+               WHERE run_id = 'rq-wedge-poison';",
+        )
+        .await?;
+
+    let claim = claim_batch_sql(10);
+    let acquire = acquire_partitions_sql(4);
+    let claim_head = claim_partition_head_sql(4);
+    let ttl: i64 = 60_000;
+
+    // The global claim wakes the released-lease row (attempts UNCHANGED — a NULL lease
+    // is not crash evidence) and skips the expired-lease poison row.
+    client.query(&claim, &[&"CW", &ttl]).await?;
+    let woken = client
+        .query_one(
+            "SELECT lease_owner, attempts FROM run_queue WHERE run_id = 'rq-wedge-woken'",
+            &[],
+        )
+        .await?;
+    let woken_claimed =
+        woken.get::<_, Option<String>>(0).as_deref() == Some("CW") && woken.get::<_, i32>(1) == 3;
+    let poison_owner: Option<String> = client
+        .query_one(
+            "SELECT lease_owner FROM run_queue WHERE run_id = 'rq-wedge-poison'",
+            &[],
+        )
+        .await?
+        .get(0);
+    let poison_unclaimed = poison_owner.as_deref() == Some("dead");
+    // The woken run completes; then a zero-grace janitor retires the poison run only.
+    client
+        .execute(&mark_running_sql(), &[&"rq-wedge-woken"])
+        .await?;
+    client.execute(&dequeue_sql(), &[&"rq-wedge-woken"]).await?;
+    client.execute(&janitor_sweep_sql(), &[&0i64]).await?;
+    let poison_reaped: bool = client
+        .query_one(
+            "SELECT status = 'infrastructure-failure' AND \
+                    NOT EXISTS (SELECT 1 FROM run_queue q WHERE q.run_id = r.run_id) \
+               FROM runs r WHERE run_id = 'rq-wedge-poison'",
+            &[],
+        )
+        .await?
+        .get(0);
+
+    // Partition path: the woken budget-spent head is acquirable + head-claimed
+    // (attempts unchanged), and its later sibling stays blocked (in-order preserved).
+    client.query(&acquire, &[&"RW", &ttl]).await?;
+    let owns_w: i64 = client
+        .query_one(
+            "SELECT count(*) FROM partition_owner WHERE partition_key = 'site-w' AND lease_owner = 'RW'",
+            &[],
+        )
+        .await?
+        .get(0);
+    client.query(&claim_head, &[&"RW", &ttl]).await?;
+    let head = client
+        .query_one(
+            "SELECT lease_owner, attempts FROM run_queue WHERE run_id = 'pw-0'",
+            &[],
+        )
+        .await?;
+    let head_claimed =
+        head.get::<_, Option<String>>(0).as_deref() == Some("RW") && head.get::<_, i32>(1) == 3;
+    let sibling_owner: Option<String> = client
+        .query_one(
+            "SELECT lease_owner FROM run_queue WHERE run_id = 'pw-1'",
+            &[],
+        )
+        .await?
+        .get(0);
+    let sibling_blocked = sibling_owner.is_none();
+
+    let ok = woken_claimed
+        && poison_unclaimed
+        && poison_reaped
+        && owns_w == 1
+        && head_claimed
+        && sibling_blocked;
+    println!(
+        "wedge: woken claimed={woken_claimed} | poison not claimed={poison_unclaimed} | poison reaped={poison_reaped} | partition head woken+claimed={} (owns={owns_w}) | sibling blocked={sibling_blocked}",
+        head_claimed
+    );
+    println!("PASS(a woken budget-spent run wakes; a poison one stays terminal): {ok}");
+    Ok(ok)
+}
+
 async fn park_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     const PARKS: usize = 10;
     const MAX_ATTEMPTS: i32 = 3;
@@ -616,9 +727,15 @@ async fn park_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     println!(
         "global wakes free={global_free} | partition wakes free={part_free} | janitor retired nothing={janitor_clean} | both completed with budget intact={completed}"
     );
-    let pass = global_free && part_free && janitor_clean && completed;
-    println!("PASS(park/wake never consumes the redelivery budget): {pass}");
-    Ok(pass)
+    let budget_free = global_free && part_free && janitor_clean && completed;
+    println!("PASS(park/wake never consumes the redelivery budget): {budget_free}");
+
+    // wamn-fqg.7: the corollary — a budget-spent run that PARKED (NULL lease) is not
+    // wedged invisible; it wakes and completes, while an expired-lease poison stays
+    // terminal. (Its own reset, so it runs after the park-cycle results are captured.)
+    let wedge_ok = park_wedge_check(app_url, admin_url).await?;
+
+    Ok(budget_free && wedge_ok)
 }
 
 // ---------------------------------------------------------------------------

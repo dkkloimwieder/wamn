@@ -14,9 +14,11 @@ pub enum ClaimState {
     Leased,
     /// `available_at` is in the future — delayed/parked/backed-off, not yet visible.
     Parked,
-    /// Visible and lease-expired but the redelivery budget is spent
+    /// Visible, holding an **expired** lease, and the redelivery budget is spent
     /// (`attempts >= max_attempts`) — the claim path leaves it for the janitor to
-    /// retire to `infrastructure-failure`.
+    /// retire to `infrastructure-failure`. A budget-spent row with a *released*
+    /// (NULL) lease is NOT `Exhausted`: a NULL lease is proof the last owner parked
+    /// (was alive), never crash evidence, so it is `Ready` and wakes (wamn-fqg.7).
     Exhausted,
 }
 
@@ -33,16 +35,21 @@ impl ClaimState {
 }
 
 /// Classify a row's claimability at `now`. A future `available_at` is `Parked`; a
-/// live lease is `Leased`; a lease-expired row whose budget is spent is `Exhausted`
-/// (left for the janitor); anything else is `Ready`. Matches the `claim_batch_sql`
-/// predicate (`available_at <= now AND (lease_expires_at IS NULL OR
-/// lease_expires_at <= now) AND attempts < max_attempts`).
+/// live lease is `Leased`; a budget-spent row still holding an **expired** lease is
+/// `Exhausted` (left for the janitor); anything else — including a budget-spent row
+/// whose lease was *released* (NULL) by a park — is `Ready`. Matches the
+/// `claim_batch_sql` predicate (`available_at <= now AND (lease_expires_at IS NULL OR
+/// lease_expires_at <= now) AND (attempts < max_attempts OR lease_expires_at IS
+/// NULL)`). The `lease_expires_at IS NULL` disjunct is what wakes a parked
+/// budget-spent run (wamn-fqg.7): reaching the `Exhausted` branch means the lease is
+/// absent or expired, so a *present* lease there is an expired one (crash evidence),
+/// while a NULL lease is a released one (a live park) and stays `Ready`.
 pub fn claim_state(entry: &QueueEntry, now: Millis) -> ClaimState {
     if entry.available_at > now {
         ClaimState::Parked
     } else if entry.lease_expires_at.is_some_and(|t| t > now) {
         ClaimState::Leased
-    } else if entry.attempts >= entry.max_attempts {
+    } else if entry.lease_expires_at.is_some() && entry.attempts >= entry.max_attempts {
         ClaimState::Exhausted
     } else {
         ClaimState::Ready

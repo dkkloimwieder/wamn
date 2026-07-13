@@ -64,12 +64,20 @@ verdict) — so 5.14 adds a table but changes no existing schema.
    releases the lease — parking is proof of life), so `max_attempts` means "how many
    times may a runner die holding this run": a delay-loop flow parks unboundedly
    without spending budget while a crash-loop still exhausts. Both claim paths
-   (the global claim and the partition head claim) apply the same rule. The
-   `attempts < max_attempts` guard is what lets the
-   janitor win the race for a crash-looping run: once the budget is spent the claim
+   (the global claim and the partition head claim) apply the same rule. The budget
+   guard is `attempts < max_attempts OR lease_expires_at IS NULL`. The
+   `attempts < max_attempts` half is what lets the
+   janitor win the race for a crash-looping run: once the budget is spent **and a
+   (now-expired) lease is still held**, the claim
    path stops re-grabbing (and re-leasing) the row, so its lease ages out and step 6
-   reaps it — without the guard, every reclaim would refresh the lease and the
-   janitor window would never open.
+   reaps it — without it, every reclaim would refresh the lease and the
+   janitor window would never open. The `lease_expires_at IS NULL` half closes the
+   wamn-fqg.7 wedge: a budget-spent run whose lease was *released* by a park (a
+   NULL lease is proof the last owner was alive — it parked, it did not crash) still
+   **wakes and completes** rather than sitting invisible to claim, wake, and janitor
+   alike; waking it costs no budget (the crash-evidence bump skips a NULL lease).
+   Poison stays terminal: a crash *after* the budget is spent leaves a non-NULL
+   expired lease, which fails both halves and falls to the janitor.
 4. **Heartbeat / complete.** The runner renews its lease while it works and
    dequeues the row on completion (the `runs` history stays). A `delay` node parks
    the row (push `available_at` out, release the lease) for a later wake — without
@@ -362,7 +370,9 @@ follow-up.
 ## Gates
 
 - **`cargo test -p wamn-run-queue`** — the pure decisions + SQL shape: claim
-  eligibility (Ready/Leased/Parked/Exhausted), `plan_claim` ordering + limit (and
+  eligibility (Ready/Leased/Parked/Exhausted — incl. the wamn-fqg.7 rule that a
+  budget-spent row wakes iff its lease was released, not merely expired),
+  `plan_claim` ordering + limit (and
   that it skips partitioned rows), lease liveness + renewal, janitor orphan-detection,
   reconciliation cadence, **per-partition ownership** (`plan_acquire`,
   `plan_partition_claim` head-first + one-in-flight), the **dispatcher decisions**
@@ -379,7 +389,10 @@ follow-up.
   predicate (Ready claimed, Parked/Leased skipped, expired reclaimed), the
   **crash-evidence `attempts` rule** on both claim paths (a never-leased row and a
   park→wake re-claim through the real `park_sql` claim for free; an expired-lease
-  reclaim bumps), the janitor
+  reclaim bumps), the **wamn-fqg.7 wedge** (a budget-spent NULL-lease row is
+  surfaced by the wake scan, claimed with `attempts` unchanged, and left in flight by
+  the janitor, while a budget-spent expired-lease row is not claimed/woken and is
+  reaped — on both the global and partition-head paths), the janitor
   sweep (including the **completion-vs-failover race guard** — a `completed` run with
   a stale expired+spent queue row is *not* relabeled, a real orphan still is), tenant
   RLS isolation, the FK cascade, and — via the *real* builders through
@@ -400,7 +413,10 @@ follow-up.
   reclaim** (crash-safe failover), the **park** mode (park/wake budget-neutrality:
   a flow parking 10× with `max_attempts = 3` completes on **both** claim paths
   with `attempts` still 0 and a janitor sweep retires nothing — the wamn-fqg.5
-  regression), the **janitor** sweep, the **NATS-core
+  regression — plus the wamn-fqg.7 corollary: a budget-spent run whose lease a park
+  released **wakes and completes** on both claim paths, while a budget-spent run
+  holding an expired lease is not claimed and is reaped by the janitor), the
+  **janitor** sweep, the **NATS-core
   doorbell** async-warm latency (p50 < 25 ms / p99 < 100 ms), and the **partition**
   mode: `partitioned(key)` runs dispatched **in order per key** across concurrent
   replicas (per-key serialization + exactly-once) plus in-order partition failover.

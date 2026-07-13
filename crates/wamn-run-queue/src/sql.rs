@@ -53,13 +53,20 @@ pub fn enqueue_sql() -> String {
 /// redelivery budget, while a crash-loop still exhausts at `max_attempts`
 /// (`max_attempts` = how many times a runner may die holding this run).
 ///
-/// The `attempts < max_attempts` guard is what lets the janitor win the race for a
-/// crash-looping run: once the budget is spent the claim path stops re-grabbing
-/// (and re-leasing) the row, so its lease ages out and the janitor reaps it to
-/// `infrastructure-failure` — without it, each reclaim would refresh the lease and
-/// the janitor window would never open. Returns each claimed `run_id`, its new
-/// `attempts`, and `lease_expires_at`. `limit` is a numeric literal (a `usize`,
-/// not user text).
+/// The budget guard is `attempts < max_attempts OR lease_expires_at IS NULL`. The
+/// `attempts < max_attempts` half is what lets the janitor win the race for a
+/// crash-looping run: once the budget is spent AND a (now-expired) lease is still
+/// held, the claim path stops re-grabbing (and re-leasing) the row, so its lease ages
+/// out and the janitor reaps it to `infrastructure-failure` — without it, each
+/// reclaim would refresh the lease and the janitor window would never open. The
+/// `lease_expires_at IS NULL` half wakes a budget-spent run whose lease was *released*
+/// by a park (wamn-fqg.7): a NULL lease is proof the last owner was alive (it parked,
+/// it did not crash), so the crash budget must not exclude it — it is claimed, its
+/// `attempts` unchanged (the crash-evidence `CASE` does not bump a NULL lease). Poison
+/// stays terminal: a crash *after* the budget is spent leaves a non-NULL expired
+/// lease, which fails both halves and falls to the janitor. Returns each claimed
+/// `run_id`, its new `attempts`, and `lease_expires_at`. `limit` is a numeric literal
+/// (a `usize`, not user text).
 ///
 /// The `partition_key IS NULL` guard leaves partitioned runs to the per-partition
 /// ownership path ([`claim_partition_head_sql`]) so they are never dispatched out of
@@ -75,7 +82,7 @@ pub fn claim_batch_sql(limit: usize) -> String {
                WHERE c.partition_key IS NULL \
                  AND c.available_at <= now() \
                  AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now()) \
-                 AND c.attempts < c.max_attempts \
+                 AND (c.attempts < c.max_attempts OR c.lease_expires_at IS NULL) \
                ORDER BY c.available_at, c.run_id \
                FOR UPDATE SKIP LOCKED \
                LIMIT {limit} \
@@ -250,9 +257,11 @@ pub fn cron_last_run_sql() -> String {
         .to_string()
 }
 
-/// The wake / reconciliation scan: every currently-due, unleased (or
-/// lease-expired), budget-remaining queue row — a parked run whose
-/// `available_at` arrived, or a run whose enqueue-time doorbell hint was lost.
+/// The wake / reconciliation scan: every currently-due, unleased (or lease-expired)
+/// queue row that a claim would take — budget-remaining, OR budget-spent with a
+/// released (NULL) lease (a parked run that spent its crash budget still wakes,
+/// matching `claim_batch_sql`; wamn-fqg.7). A parked run whose `available_at`
+/// arrived, or a run whose enqueue-time doorbell hint was lost.
 /// The dispatcher publishes a doorbell hint per row; a duplicate hint is
 /// harmless (fire-and-forget — the claim is the arbiter), which is what lets one
 /// read-only scan double as both the parked-wake and the lost-hint
@@ -262,7 +271,7 @@ pub fn parked_due_sql(limit: usize) -> String {
         "SELECT run_id FROM run_queue \
           WHERE available_at <= now() + interval '250 milliseconds' \
             AND (lease_expires_at IS NULL OR lease_expires_at <= now()) \
-            AND attempts < max_attempts \
+            AND (attempts < max_attempts OR lease_expires_at IS NULL) \
           ORDER BY available_at, run_id \
           LIMIT {limit}"
     )
@@ -296,7 +305,7 @@ pub fn acquire_partitions_sql(limit: usize) -> String {
                 WHERE q.partition_key IS NOT NULL \
                   AND q.available_at <= now() \
                   AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
-                  AND q.attempts < q.max_attempts \
+                  AND (q.attempts < q.max_attempts OR q.lease_expires_at IS NULL) \
                   AND NOT EXISTS ( \
                       SELECT 1 FROM partition_owner p \
                        WHERE p.tenant_id = current_setting('app.tenant', true) \
@@ -349,6 +358,13 @@ pub fn release_partition_sql() -> String {
 /// `CASE` bumps it iff this claim reclaims an *expired* lease. This matters most
 /// here — a parked partitioned head is re-claimed head-first on *every* wake, so an
 /// unconditional bump would burn the redelivery budget fastest on this path.
+///
+/// The budget guard is `attempts < max_attempts OR lease_expires_at IS NULL` on both
+/// the head candidate `c` and the earlier-ready-sibling sub-check `b` (wamn-fqg.7): a
+/// budget-spent head whose lease a park released (NULL) is claimable and wakes, and
+/// an earlier such sibling still blocks the later head so in-order is preserved. A
+/// poison head (budget spent, lease *expired* not NULL) fails the guard on both — it
+/// is left to the janitor and does not block its partition's later runs.
 /// Returns each claimed `run_id`, its `partition_key`, new `attempts`, and
 /// `lease_expires_at`. `limit` is a numeric literal.
 pub fn claim_partition_head_sql(limit: usize) -> String {
@@ -366,7 +382,7 @@ pub fn claim_partition_head_sql(limit: usize) -> String {
                  AND o.lease_owner = $1 AND o.lease_expires_at > now() \
                  AND c.available_at <= now() \
                  AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now()) \
-                 AND c.attempts < c.max_attempts \
+                 AND (c.attempts < c.max_attempts OR c.lease_expires_at IS NULL) \
                  AND NOT EXISTS ( \
                      SELECT 1 FROM run_queue b \
                       WHERE b.tenant_id = c.tenant_id \
@@ -374,7 +390,8 @@ pub fn claim_partition_head_sql(limit: usize) -> String {
                         AND b.run_id <> c.run_id \
                         AND ( \
                             (b.lease_expires_at IS NOT NULL AND b.lease_expires_at > now()) \
-                            OR (b.available_at <= now() AND b.attempts < b.max_attempts \
+                            OR (b.available_at <= now() \
+                                AND (b.attempts < b.max_attempts OR b.lease_expires_at IS NULL) \
                                 AND (b.lease_expires_at IS NULL OR b.lease_expires_at <= now()) \
                                 AND (b.available_at, b.run_id) < (c.available_at, c.run_id)) \
                         ) \
