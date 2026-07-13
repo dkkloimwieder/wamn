@@ -26,25 +26,52 @@ use croner::Cron;
 use crate::dispatch::Firing;
 use crate::model::Millis;
 
-/// A cron schedule failed to parse or evaluate.
+/// A cron schedule failed to parse or evaluate. A structured enum (SR5, house
+/// rule 2) — never a stringly-typed error: one variant per failure mode. All
+/// three are pure evaluation faults; there is no I/O variant because `cron.rs`
+/// reads no clock and no connection (house rule 1) — the dispatcher's anchor
+/// read is the driver's own `tokio_postgres` error, not this type's concern.
+/// `Display` preserves the original `cron: …` log strings the dispatcher
+/// quarantine (dispatch.rs) records.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CronError(pub String);
+pub enum CronError {
+    /// The schedule string did not parse (croner rejected it).
+    InvalidExpression { schedule: String, detail: String },
+    /// An epoch-millis instant fell outside the representable `DateTime<Utc>`
+    /// range (an `i64` far past the calendar horizon).
+    OutOfRangeInstant { ms: Millis },
+    /// The schedule parsed but has no occurrence croner could find — an
+    /// unsatisfiable calendar (a Feb 30) or one that matches nowhere in the
+    /// search horizon. Silently returning "nothing due" would make such a flow
+    /// never fire with zero diagnostics, so this is an error, not `None`.
+    NoOccurrence { schedule: String, detail: String },
+}
 
 impl std::fmt::Display for CronError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "cron: {}", self.0)
+        match self {
+            CronError::InvalidExpression { schedule, detail } => {
+                write!(f, "cron: bad schedule {schedule:?}: {detail}")
+            }
+            CronError::OutOfRangeInstant { ms } => write!(f, "cron: out-of-range instant {ms}"),
+            CronError::NoOccurrence { schedule, detail } => {
+                write!(f, "cron: no occurrence for {schedule:?}: {detail}")
+            }
+        }
     }
 }
 
 impl std::error::Error for CronError {}
 
 fn parse(schedule: &str) -> Result<Cron, CronError> {
-    Cron::from_str(schedule).map_err(|e| CronError(format!("bad schedule {schedule:?}: {e}")))
+    Cron::from_str(schedule).map_err(|e| CronError::InvalidExpression {
+        schedule: schedule.to_string(),
+        detail: e.to_string(),
+    })
 }
 
 fn to_dt(ms: Millis) -> Result<DateTime<Utc>, CronError> {
-    DateTime::<Utc>::from_timestamp_millis(ms)
-        .ok_or_else(|| CronError(format!("out-of-range instant {ms}")))
+    DateTime::<Utc>::from_timestamp_millis(ms).ok_or(CronError::OutOfRangeInstant { ms })
 }
 
 /// The next scheduled fire **strictly after** `after` (epoch ms, UTC) — the
@@ -53,7 +80,10 @@ pub fn next_fire(schedule: &str, after: Millis) -> Result<Millis, CronError> {
     let cron = parse(schedule)?;
     let next = cron
         .find_next_occurrence(&to_dt(after)?, false)
-        .map_err(|e| CronError(format!("no next fire for {schedule:?}: {e}")))?;
+        .map_err(|e| CronError::NoOccurrence {
+            schedule: schedule.to_string(),
+            detail: e.to_string(),
+        })?;
     Ok(next.timestamp_millis())
 }
 
@@ -80,7 +110,10 @@ pub fn due_tick(schedule: &str, anchor: Millis, now: Millis) -> Result<Option<Mi
     // driver quarantines an erroring schedule instead).
     let prev = cron
         .find_previous_occurrence(&to_dt(now)?, true)
-        .map_err(|e| CronError(format!("no occurrence for {schedule:?}: {e}")))?;
+        .map_err(|e| CronError::NoOccurrence {
+            schedule: schedule.to_string(),
+            detail: e.to_string(),
+        })?;
     // Canonicalize: a self-match returns the observed instant sub-second included;
     // the tick's identity is the scheduled second.
     let tick = prev.timestamp_millis().div_euclid(1_000) * 1_000;

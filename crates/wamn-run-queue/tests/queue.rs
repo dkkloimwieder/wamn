@@ -6,15 +6,15 @@
 use std::collections::HashSet;
 
 use wamn_run_queue::{
-    ClaimState, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, JanitorVerdict, OutboxRow,
-    PartitionOwner, QueueEntry, RowEventFlow, RunStatus, acquire_partitions_sql, active_flows_sql,
-    claim_batch_sql, claim_partition_head_sql, claim_state, cron_firing, cron_last_run_sql,
-    cron_tick_of, dequeue_sql, due_tick, enqueue_sql, gc_orphan_partitions_sql, is_claimable,
-    janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live, mark_running_sql, match_outbox,
-    mint_cron_run_id, next_fire, next_interval, next_reconcile, orphans, outbox_ack_sql,
-    outbox_insert_sql, outbox_poll_sql, park_sql, parked_due_sql, partition_lease_live, plan_ack,
-    plan_acquire, plan_claim, plan_partition_claim, reconcile_due, release_partition_sql,
-    renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
+    ClaimState, CronError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, JanitorVerdict,
+    OutboxRow, PartitionOwner, QueueEntry, RowEventFlow, RunStatus, acquire_partitions_sql,
+    active_flows_sql, claim_batch_sql, claim_partition_head_sql, claim_state, cron_firing,
+    cron_last_run_sql, cron_tick_of, dequeue_sql, due_tick, enqueue_sql, gc_orphan_partitions_sql,
+    is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live, mark_running_sql,
+    match_outbox, mint_cron_run_id, next_fire, next_interval, next_reconcile, orphans,
+    outbox_ack_sql, outbox_insert_sql, outbox_poll_sql, park_sql, parked_due_sql,
+    partition_lease_live, plan_ack, plan_acquire, plan_claim, plan_partition_claim, reconcile_due,
+    release_partition_sql, renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
     write_ahead_triggered_run_sql,
 };
 
@@ -612,6 +612,47 @@ fn due_tick_fires_latest_and_collapses_misfires() {
     // of leaving a flow that never fires with zero diagnostics.
     assert!(due_tick("0 0 30 2 *", JAN1_2026, JAN1_2026 + DAY).is_err());
     assert!(next_fire("0 0 30 2 *", JAN1_2026).is_err());
+}
+
+#[test]
+fn cron_error_variants_pin_the_failure_mode() {
+    // SR5: CronError is a structured enum, one variant per failure mode, folded
+    // mechanically from the exact construction site — not a stringly-typed error.
+    // An unparseable schedule is INVALID-EXPRESSION (the parse() site).
+    assert!(matches!(
+        next_fire("not a cron", 0),
+        Err(CronError::InvalidExpression { .. })
+    ));
+    // A parseable-but-unsatisfiable calendar is NO-OCCURRENCE (croner's search
+    // fails), on BOTH the next_fire and due_tick paths.
+    assert!(matches!(
+        next_fire("0 0 30 2 *", JAN1_2026),
+        Err(CronError::NoOccurrence { .. })
+    ));
+    assert!(matches!(
+        due_tick("0 0 30 2 *", JAN1_2026, JAN1_2026 + DAY),
+        Err(CronError::NoOccurrence { .. })
+    ));
+    // An instant past the representable DateTime<Utc> horizon is OUT-OF-RANGE
+    // (the private to_dt() site, reached here via next_fire(after)).
+    assert!(matches!(
+        next_fire("* * * * *", i64::MAX),
+        Err(CronError::OutOfRangeInstant { ms }) if ms == i64::MAX
+    ));
+    // Display preserves the `cron: …` log shape the dispatcher quarantine records.
+    for e in [
+        CronError::InvalidExpression {
+            schedule: "x".into(),
+            detail: "bad".into(),
+        },
+        CronError::OutOfRangeInstant { ms: i64::MAX },
+        CronError::NoOccurrence {
+            schedule: "0 0 30 2 *".into(),
+            detail: "none".into(),
+        },
+    ] {
+        assert!(e.to_string().starts_with("cron: "), "{e}");
+    }
 }
 
 #[test]

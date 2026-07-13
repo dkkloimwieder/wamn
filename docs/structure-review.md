@@ -91,6 +91,8 @@ The plugin is the security-critical file in the repo and is approaching the size
 
 Every other error in the workspace is a structured enum whose variants an engine or gate folds mechanically (`NodeError`, `PgError`, `CompileError` ×3, `ReconstructError`, …). `CronError(pub String)` (run-queue `cron.rs`) breaks the pattern (M-STRONG-TYPES): callers can only log it, and dispatchbench can only string-match it. Replace with variants for its actual failure modes (invalid expression, tick computation overflow/ambiguity, anchor I/O passthrough) with `Display` preserved for logs. One-hour change, next dispatcher touch.
 
+**Done** (wamn-qfr.4). `CronError` is now a three-variant enum — `InvalidExpression { schedule, detail }` (the `parse` site), `OutOfRangeInstant { ms }` (`to_dt`), `NoOccurrence { schedule, detail }` (both `find_*_occurrence` sites) — folded mechanically from each construction point, with `Display` preserving the `cron: …` log strings the dispatcher quarantine records. The doc's listed "anchor I/O passthrough" mode is deliberately **not** a variant: `cron.rs` is pure (house rule 1), so the dispatcher's anchor read is the driver's own `tokio_postgres` error in `crates/wamn-host/src/dispatch.rs`, not this type's concern. Pure-crate change (`cargo test/clippy/fmt -p wamn-run-queue`); consumers compile unchanged. This closes the SR series.
+
 ---
 
 ## SR6 — Write down the conventions that are currently implicit
