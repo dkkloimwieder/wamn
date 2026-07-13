@@ -15,6 +15,14 @@ is *a provisioned, credentialed, `wamn_app`-roled, empty project database*.
 
 ## Topology (D6)
 
+> **Refined 2026-07-13 (wamn-o7v → epic `wamn-q3n`).** The topology has evolved
+> to a **four-tier model** (T1 control-plane system cluster / T2 per-org prod-dev
+> cluster pairs / T3 trials pool / T4 dedicated-per-env) with an
+> `(org, project, env)` identity triple. **What this section describes — the
+> shipped shared cluster, database-per-project — becomes the T3 trials pool**,
+> and `provision-project` splits into `provision-org` + `provision-project-env`.
+> See `docs/postgres-topology.md` for the decision and the trade-off analysis.
+
 **One shared CNPG `Cluster`, a database per project.** This matches the 2.2
 per-project pooling model (`CredentialProvider` → per-project `ProjectConfig`
 with its own pool + policy) and today's single-instance shape, and keeps a
