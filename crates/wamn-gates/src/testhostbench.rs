@@ -263,20 +263,12 @@ type RunS6Fn = TypedFunc<(String, String), (Result<(u32, u32), String>,)>;
 
 struct Worker {
     store: Store<SharedCtx>,
-    seed_s6: TypedFunc<(u64, String), (Result<u32, String>,)>,
     run_s6: RunS6Fn,
     reset: TypedFunc<(String,), (Result<u64, String>,)>,
     sink_count: TypedFunc<(String,), (Result<u64, String>,)>,
 }
 
 impl Worker {
-    async fn call_seed_s6(&mut self, delay_secs: u64, url: &str) -> anyhow::Result<u32> {
-        let (r,) = self
-            .seed_s6
-            .call_async(&mut self.store, (delay_secs, url.to_string()))
-            .await?;
-        r.map_err(|e| anyhow::anyhow!("seed-s6: {e}"))
-    }
     /// Returns (outcome, http-status): outcome 0 = completed, 1 = parked.
     async fn call_run_s6(&mut self, run_id: &str, payload: &str) -> anyhow::Result<(u32, u32)> {
         let (r,) = self
@@ -363,13 +355,11 @@ impl Harness {
                 instance.get_typed_func(&mut store, $name)?
             };
         }
-        let seed_s6 = f!("seed-s6");
         let run_s6 = f!("run-s6");
         let reset = f!("reset");
         let sink_count = f!("sink-count");
         Ok(Worker {
             store,
-            seed_s6,
             run_s6,
             reset,
             sink_count,
@@ -498,6 +488,30 @@ async fn drop_schema(admin_url: &str, schema: &str) -> anyhow::Result<()> {
     r.map(|_| ())
 }
 
+/// Seed the S6 flow (`poc-s6` v1, active) into `schema` host-side — the
+/// replacement for the guest's retired `seed-s6` export (SR2). `admin` is the
+/// persistent superuser connection (RLS-bypassing); `scope_session` pins its
+/// `search_path` to the target schema so the unqualified `flows` insert lands
+/// there. The flow JSON is the shared flowbench S6 fixture.
+async fn seed_s6_flow(
+    admin: &tokio_postgres::Client,
+    schema: &str,
+    delay_secs: u64,
+    url: &str,
+) -> anyhow::Result<()> {
+    wamn_gate_harness::scope_session(admin, TENANT, schema).await?;
+    wamn_gate_harness::seed_flow_version(
+        admin,
+        TENANT,
+        "poc-s6",
+        1,
+        true,
+        &crate::flowbench::flow_json_s6(delay_secs, url),
+        true,
+    )
+    .await
+}
+
 // ---------------------------------------------------------------------------
 // Loopback echo server (the real egress target for expected/prod calls)
 // ---------------------------------------------------------------------------
@@ -591,6 +605,17 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
         .context("provision ephemeral schema")?;
     println!("provisioned ephemeral schema {EPH_SCHEMA} from template DDL");
 
+    // A persistent superuser connection for host-side flow seeding (SR2: the
+    // guest's `seed-s6` export is retired). Superuser bypasses RLS; each seed
+    // re-scopes `search_path` so the flow lands in the target schema (`s3` for the
+    // prod wiring, `s6_test` for the test wiring).
+    let (admin, admin_conn) = tokio_postgres::connect(&admin_url, NoTls)
+        .await
+        .context("admin connect for host-side flow seeding")?;
+    let admin_handle = tokio::spawn(async move {
+        let _ = admin_conn.await;
+    });
+
     // ---- shared infra: engine, echo server, virtual clock, egress handlers ----
     let engine = build_engine(&[])?;
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
@@ -647,13 +672,29 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
     let mut pass = true;
 
     if run_all || args.mode == Mode::Sameness {
-        pass &= sameness_phase(&mut prod, &mut test, &echo_url, harness.digest).await?;
+        pass &= sameness_phase(&mut prod, &mut test, &admin, &echo_url, harness.digest).await?;
     }
     if run_all || args.mode == Mode::Delay {
-        pass &= delay_phase(&mut prod, &mut test, &vclock, &echo_url, args.delay_secs).await?;
+        pass &= delay_phase(
+            &mut prod,
+            &mut test,
+            &admin,
+            &vclock,
+            &echo_url,
+            args.delay_secs,
+        )
+        .await?;
     }
     if run_all || args.mode == Mode::Egress {
-        pass &= egress_phase(&mut test, &echo_url, &echo_authority, &spy_rec, &spy_flag).await?;
+        pass &= egress_phase(
+            &mut test,
+            &admin,
+            &echo_url,
+            &echo_authority,
+            &spy_rec,
+            &spy_flag,
+        )
+        .await?;
     }
 
     // Tear down stores (and their pools) before dropping the ephemeral schema.
@@ -661,6 +702,8 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
     drop(test);
     drop(prod_pg);
     drop(test_pg);
+    drop(admin);
+    admin_handle.abort();
     if let Err(e) = drop_schema(&admin_url, EPH_SCHEMA).await {
         tracing::warn!(error = %e, "ephemeral schema teardown failed (non-fatal)");
     }
@@ -685,16 +728,20 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
 async fn sameness_phase(
     prod: &mut Worker,
     test: &mut Worker,
+    admin: &tokio_postgres::Client,
     echo_url: &str,
     digest: u64,
 ) -> anyhow::Result<bool> {
     println!("\n## sameness — identical bytes (fnv1a {digest:#018x}) run under BOTH host wirings");
     // A zero-delay delay+http flow: completes in one call on each store.
     let mut ok = true;
-    for (label, w) in [("prod", &mut *prod), ("test", &mut *test)] {
+    for (label, schema, w) in [
+        ("prod", PROD_SCHEMA, &mut *prod),
+        ("test", EPH_SCHEMA, &mut *test),
+    ] {
         let run_id = format!("same-{label}");
         w.call_reset(&run_id).await?;
-        w.call_seed_s6(0, echo_url).await?;
+        seed_s6_flow(admin, schema, 0, echo_url).await?;
         let (outcome, http) = w.call_run_s6(&run_id, "receipt").await?;
         let sink = w.call_sink_count(&run_id).await?;
         let this = outcome == 0 && sink == 1;
@@ -716,6 +763,7 @@ async fn sameness_phase(
 async fn delay_phase(
     prod: &mut Worker,
     test: &mut Worker,
+    admin: &tokio_postgres::Client,
     vclock: &VirtualClock,
     echo_url: &str,
     delay_secs: u64,
@@ -729,7 +777,7 @@ async fn delay_phase(
     // clock past the deadline, run again (completes) — all in real milliseconds.
     let run_id = "delay-test";
     test.call_reset(run_id).await?;
-    test.call_seed_s6(delay_secs, echo_url).await?;
+    seed_s6_flow(admin, EPH_SCHEMA, delay_secs, echo_url).await?;
 
     let t0 = Instant::now();
     let (o1, _) = test.call_run_s6(run_id, "receipt").await?;
@@ -759,7 +807,7 @@ async fn delay_phase(
     // collapses it. (We do not wait 24h.)
     let prun = "delay-prod";
     prod.call_reset(prun).await?;
-    prod.call_seed_s6(delay_secs, echo_url).await?;
+    seed_s6_flow(admin, PROD_SCHEMA, delay_secs, echo_url).await?;
     let (po, _) = prod.call_run_s6(prun, "receipt").await?;
     let prod_parks = po == 1;
     println!(
@@ -781,6 +829,7 @@ async fn delay_phase(
 
 async fn egress_phase(
     test: &mut Worker,
+    admin: &tokio_postgres::Client,
     echo_url: &str,
     echo_authority: &str,
     records: &EgressLog,
@@ -794,7 +843,7 @@ async fn egress_phase(
     flagged.lock().expect("flag").clear();
     let a = "egress-expected";
     test.call_reset(a).await?;
-    test.call_seed_s6(0, echo_url).await?;
+    seed_s6_flow(admin, EPH_SCHEMA, 0, echo_url).await?;
     let (_, http_a) = test.call_run_s6(a, "receipt").await?;
     let flagged_a = flagged.lock().expect("flag").clone();
     let saw_expected = records
@@ -813,7 +862,7 @@ async fn egress_phase(
     flagged.lock().expect("flag").clear();
     let b = "egress-planted";
     test.call_reset(b).await?;
-    test.call_seed_s6(0, PLANTED_URL).await?;
+    seed_s6_flow(admin, EPH_SCHEMA, 0, PLANTED_URL).await?;
     let (outcome_b, http_b) = test.call_run_s6(b, "receipt").await?;
     let flagged_b = flagged.lock().expect("flag").clone();
     let caught = flagged_b.iter().any(|u| u.contains("169.254.169.254"));

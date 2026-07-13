@@ -283,6 +283,24 @@ async fn connect_app(app_url: &str) -> anyhow::Result<(Client, tokio::task::Join
     Ok((client, handle))
 }
 
+/// Seed the failover flow (`poc-receipt` v1, active) host-side — the replacement
+/// for the guest's retired `seed`/`set-active` exports (SR2). The flow JSON is the
+/// shared flowbench fixture; v1 is what the `run`/`run-until-kill` exports drive.
+/// `client` is a `connect_app` session, already scoped to `SCHEMA` + `TENANT`, so
+/// the unqualified `flows` insert lands in the ephemeral schema under the claim.
+async fn seed_failover_flow(client: &Client) -> anyhow::Result<()> {
+    wamn_gate_harness::seed_flow_version(
+        client,
+        TENANT,
+        FLOW_ID,
+        1,
+        true,
+        &crate::flowbench::flow_json(1),
+        true,
+    )
+    .await
+}
+
 /// The D15 write-ahead run row (`dispatched`, flow_id = the seeded flow) + the
 /// queue row, co-transacted — exactly the production dispatch path.
 async fn enqueue(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
@@ -304,8 +322,6 @@ async fn enqueue(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
 
 struct Worker {
     store: Store<SharedCtx>,
-    seed: TypedFunc<(), (Result<u32, String>,)>,
-    set_active: TypedFunc<(u32,), (Result<(), String>,)>,
     run: TypedFunc<(String, String), (Result<u32, String>,)>,
     run_until_kill: TypedFunc<(String, String), (Result<u32, String>,)>,
     sink_count: TypedFunc<(String,), (Result<u64, String>,)>,
@@ -313,14 +329,6 @@ struct Worker {
 }
 
 impl Worker {
-    async fn call_seed(&mut self) -> anyhow::Result<u32> {
-        let (r,) = self.seed.call_async(&mut self.store, ()).await?;
-        r.map_err(|e| anyhow::anyhow!("seed: {e}"))
-    }
-    async fn call_set_active(&mut self, v: u32) -> anyhow::Result<()> {
-        let (r,) = self.set_active.call_async(&mut self.store, (v,)).await?;
-        r.map_err(|e| anyhow::anyhow!("set-active: {e}"))
-    }
     async fn call_run(&mut self, run_id: &str, payload: &str) -> anyhow::Result<u32> {
         let (r,) = self
             .run
@@ -409,16 +417,12 @@ impl Harness {
                 instance.get_typed_func(&mut store, $name)?
             };
         }
-        let seed = f!("seed");
-        let set_active = f!("set-active");
         let run = f!("run");
         let run_until_kill = f!("run-until-kill");
         let sink_count = f!("sink-count");
         let reset = f!("reset");
         Ok(Worker {
             store,
-            seed,
-            set_active,
             run,
             run_until_kill,
             sink_count,
@@ -499,13 +503,13 @@ async fn failover_phase(harness: &Harness, app_url: &str, iters: usize) -> anyho
         "\n## failover — {iters} kill-mid-effect cycles, reclaimed + resumed on another replica"
     );
 
-    // A setup runner seeds the flow (v1 active) and provides the reset / sink-count
-    // reads; two persistent claimer connections model replica A and replica B.
+    // A setup runner provides the reset / sink-count reads; two persistent claimer
+    // connections model replica A and replica B. The flow (v1 active) is seeded
+    // host-side over replica A's connection (SR2: the guest's seed export is gone).
     let mut setup = harness.worker(None).await?;
-    setup.call_seed().await?;
-    setup.call_set_active(1).await?;
     let (mut a_conn, _ha) = connect_app(app_url).await?;
     let (b_conn, _hb) = connect_app(app_url).await?;
+    seed_failover_flow(&a_conn).await?;
 
     let claim = claim_batch_sql(1);
     let short_ttl: i64 = 800; // A's lease: held while A is alive, expires after it dies
@@ -679,10 +683,9 @@ async fn reverse_race_phase(
     );
 
     let mut setup = harness.worker(None).await?;
-    setup.call_seed().await?;
-    setup.call_set_active(1).await?;
     let (mut a_conn, _ha) = connect_app(app_url).await?;
     let (b_conn, _hb) = connect_app(app_url).await?;
+    seed_failover_flow(&a_conn).await?;
 
     let claim = claim_batch_sql(1);
     let short_ttl: i64 = 800;

@@ -38,6 +38,24 @@ Both tables sit on the house tenant floor — `FORCE ROW LEVEL SECURITY` keyed o
 so a missing claim sees zero rows. `node_runs` foreign-keys `runs`
 `ON DELETE CASCADE`.
 
+## SQL builders (single source, SR2)
+
+The `runs`/`node_runs` SQL is written **once**, in `wamn_run_store::sql` — pure
+`String` text builders in the house shape: values are always `$n` parameters,
+identifiers are pinned, table names are **unqualified** (the host injects the
+schema via `search_path`, the S6 schema-as-fixture pattern), the tenant comes from
+`current_setting('app.tenant', true)`, and every status literal interpolates from
+the `status` model enums so a builder cannot drift from the lifecycle it writes.
+The module carries no DB driver, clock, or `tokio` in its dependency closure, so it
+is **guest-compilable**: both wasm guests (`flowrunner`, `poc-webhook-f1`) bind
+these builders through `wamn:postgres`, while host drivers execute the identical
+text through `tokio_postgres`. Whoever holds the connection executes — there is
+never a second author of the schema's statements (docs/structure-review.md SR2).
+The load-bearing shapes (`ON CONFLICT` idempotency, the `dispatched`→`running`
+guard, the deliberately unconditional completion write, the `success`/`error`
+reconstruction filter) are pinned by shape unit tests in that module; the runtime
+`flowbench`/`failoverbench` gates prove the end-to-end behavior.
+
 ## Branch-aware replay (reconstruction)
 
 On every invocation the driver reconstructs the run rather than loading a linear

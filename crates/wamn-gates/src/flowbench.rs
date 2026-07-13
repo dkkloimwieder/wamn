@@ -325,6 +325,10 @@ pub async fn run(args: FlowBenchArgs) -> anyhow::Result<()> {
     if db_needed && cfg.database_url.is_none() {
         bail!("no database url: pass --database-url or set DATABASE_URL / WAMN_PG_URL");
     }
+    // The resolved URL (args OR env) — the host-side fixture seeding (SR2) opens
+    // its own connection with it, so it must accept the env form the in-cluster
+    // Jobs use, not just the --database-url flag.
+    let db_url = cfg.database_url.clone();
 
     println!("# wamn-host S3 flowbench");
 
@@ -348,10 +352,12 @@ pub async fn run(args: FlowBenchArgs) -> anyhow::Result<()> {
         pass &= dispatch_phase(&harness, &args).await?;
     }
     if run_all || args.mode == Mode::Hotreload {
-        pass &= hotreload_phase(&harness, &args).await?;
+        let url = db_url.as_deref().expect("db_needed guarantees a url");
+        pass &= hotreload_phase(&harness, &args, url).await?;
     }
     if run_all || args.mode == Mode::Resume {
-        pass &= resume_phase(&harness, &args).await?;
+        let url = db_url.as_deref().expect("db_needed guarantees a url");
+        pass &= resume_phase(&harness, &args, url).await?;
     }
 
     ticker.abort();
@@ -407,16 +413,16 @@ async fn dispatch_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Resu
 // hotreload
 // ---------------------------------------------------------------------------
 
-async fn hotreload_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Result<bool> {
+async fn hotreload_phase(
+    harness: &Harness,
+    args: &FlowBenchArgs,
+    db_url: &str,
+) -> anyhow::Result<bool> {
     println!(
         "\n## hotreload — {} catalog version flips, new version live < 1s",
         args.hotreload_iters
     );
     let mut w = harness.worker(None).await?;
-    let db_url = args
-        .database_url
-        .as_deref()
-        .context("hotreload needs --database-url")?;
     let (fix, _fix_task) = fixture_client(db_url).await?;
     seed_fixture_flows(&fix).await?;
 
@@ -469,16 +475,16 @@ async fn hotreload_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Res
 // resume
 // ---------------------------------------------------------------------------
 
-async fn resume_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Result<bool> {
+async fn resume_phase(
+    harness: &Harness,
+    args: &FlowBenchArgs,
+    db_url: &str,
+) -> anyhow::Result<bool> {
     println!(
         "\n## resume — {} kill-mid-run cycles, exactly-one side effect (idempotent)",
         args.resume_iters
     );
     // Deterministic version for the resume gate (host-side fixture, SR2).
-    let db_url = args
-        .database_url
-        .as_deref()
-        .context("resume needs --database-url")?;
     let (fix, fix_task) = fixture_client(db_url).await?;
     seed_fixture_flows(&fix).await?;
     drop(fix);
