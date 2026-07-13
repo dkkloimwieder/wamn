@@ -206,6 +206,7 @@ CREATE TABLE s3.runs (
     fail_kind       text,
     fail_node       text,
     fail_reason     text,
+    updated_at      timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, run_id)
 );
 ALTER TABLE s3.runs ENABLE ROW LEVEL SECURITY;

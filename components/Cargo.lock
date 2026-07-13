@@ -71,6 +71,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-flow",
+ "wamn-node-guest",
  "wamn-node-sdk",
  "wamn-nodes",
  "wamn-run-store",
@@ -303,6 +304,7 @@ dependencies = [
  "serde_json",
  "wamn-f1",
  "wamn-flow",
+ "wamn-run-store",
  "wamn-runner",
  "wit-bindgen",
 ]

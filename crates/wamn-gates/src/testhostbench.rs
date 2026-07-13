@@ -435,6 +435,7 @@ fn template_ddl(schema: &str) -> String {
             tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
             flow_version int NOT NULL, status text NOT NULL DEFAULT 'running', \
             trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
+            updated_at timestamptz NOT NULL DEFAULT now(), \
             idempotency_key text, replay_of text, root_run_id text, \
             fail_kind text, fail_node text, fail_reason text, \
             PRIMARY KEY (tenant_id, run_id));\

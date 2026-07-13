@@ -9,6 +9,9 @@ serde_json = "1"
 wamn-f1 = { path = "../../poc/f1" }
 wamn-flow = { path = "../../crates/wamn-flow" }
 wamn-runner = { path = "../../crates/wamn-runner" }
+# Run-state SQL single source (SR2): the runs/node_runs builders this ingress
+# executes through wamn:postgres.
+wamn-run-store = { path = "../../crates/wamn-run-store" }
 
 [lib]
 crate-type = ["cdylib"]

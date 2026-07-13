@@ -50,6 +50,9 @@
 mod model;
 mod reconstruct;
 mod rerun;
+/// Run-state SQL text builders (SR2): the single source both guests and
+/// host drivers execute.
+pub mod sql;
 mod status;
 
 pub use model::{NodeRunRecord, RunRecord};

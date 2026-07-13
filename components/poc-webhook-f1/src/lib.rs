@@ -44,6 +44,7 @@ use bindings::wasi::io::streams::StreamError;
 use serde_json::{Value, json};
 use wamn_f1 as f1;
 use wamn_flow::{Flow, Trigger};
+use wamn_run_store::sql as run_sql;
 use wamn_runner::{
     Dispatch, ERROR_PORT, ErrorDetail, NodeError, NodeOutcome, Plan, RunStatus, Step,
 };
@@ -478,10 +479,14 @@ fn resolve_material(name: &str) -> Result<Option<f1::LineSpec>, PgError> {
 /// POST is a distinct run.
 fn write_ahead(flow_id: &str, version: u32, input: &Value) -> Result<String, String> {
     let rs = client::query(
-        "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status, trigger_source, input_json) \
-         VALUES (current_setting('app.tenant', true), gen_random_uuid()::text, $1, $2, 'dispatched', 'webhook', $3) \
-         RETURNING run_id",
-        &[text(flow_id), SqlValue::Int32(version as i32), jsonb(input)],
+        &run_sql::insert_run_returning_id_sql(),
+        &[
+            text(flow_id),
+            SqlValue::Int32(version as i32),
+            text(wamn_run_store::RunStatus::Dispatched.as_sql()),
+            text("webhook"),
+            jsonb(input),
+        ],
     )
     .map_err(|e| pg_tag(&e))?;
     match rs.rows.first().and_then(|r| r.first()) {
@@ -491,19 +496,14 @@ fn write_ahead(flow_id: &str, version: u32, input: &Value) -> Result<String, Str
 }
 
 fn mark_running(run_id: &str) -> Result<(), String> {
-    client::execute(
-        "UPDATE runs SET status = 'running', updated_at = now() \
-         WHERE run_id = $1 AND status = 'dispatched'",
-        &[text(run_id)],
-    )
+    client::execute(&run_sql::update_run_running_sql(), &[text(run_id)])
     .map(|_| ())
     .map_err(|e| pg_tag(&e))
 }
 
 fn mark_completed(run_id: &str, result: &Value) -> Result<(), String> {
     client::execute(
-        "UPDATE runs SET status = 'completed', result_json = $2, updated_at = now() \
-         WHERE run_id = $1",
+        &run_sql::update_run_completed_sql(),
         &[text(run_id), jsonb(result)],
     )
     .map(|_| ())
@@ -512,8 +512,7 @@ fn mark_completed(run_id: &str, result: &Value) -> Result<(), String> {
 
 fn mark_failed(run_id: &str, kind: &str, node: &str, reason: &str) -> Result<(), String> {
     client::execute(
-        "UPDATE runs SET status = 'failed', fail_kind = $2, fail_node = $3, fail_reason = $4, \
-         updated_at = now() WHERE run_id = $1",
+        &run_sql::update_run_failed_sql(),
         &[text(run_id), text(kind), text(node), text(reason)],
     )
     .map(|_| ())
@@ -531,10 +530,7 @@ fn record_success(
     input: &Value,
 ) -> Result<(), String> {
     client::execute(
-        "INSERT INTO node_runs \
-           (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json) \
-         VALUES (current_setting('app.tenant', true), $1, $2, 0, $3, 'success', $4, $5, $6) \
-         ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING",
+        &run_sql::insert_node_run_success_sql(),
         &[
             text(run_id),
             text(node_id),
@@ -561,11 +557,7 @@ fn record_error(
 ) -> Result<(), String> {
     let (kind, detail) = error_parts(err);
     client::execute(
-        "INSERT INTO node_runs \
-           (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json, \
-            error_kind, error_detail) \
-         VALUES (current_setting('app.tenant', true), $1, $2, 0, $3, 'error', 'error', $4, $5, $6, $7) \
-         ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING",
+        &run_sql::insert_node_run_error_sql(),
         &[
             text(run_id),
             text(node_id),

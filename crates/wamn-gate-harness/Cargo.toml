@@ -7,3 +7,7 @@ license.workspace = true
 
 [dependencies]
 serde_json = "1"
+anyhow = { workspace = true }
+# The PG fixture/seed helpers (scope_session / seed_flow_version): gates hold
+# the connection, the harness holds the one copy of the fixture SQL.
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }

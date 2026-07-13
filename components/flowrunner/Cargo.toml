@@ -22,6 +22,10 @@ wamn-run-store = { path = "../../crates/wamn-run-store" }
 # mirrors WIT values and performs the effects.
 wamn-node-sdk = { path = "../../crates/wamn-node-sdk" }
 wamn-nodes = { path = "../../crates/wamn-nodes" }
+# The SHARED capability facade (SR2): CapsCtx + the WIT<->SDK mirrors over
+# wamn:postgres + outbound wasi:http live in the scaffolding crate's `caps`
+# feature — this shell links them instead of copying them.
+wamn-node-guest = { path = "../../crates/wamn-node-guest", features = ["caps"] }
 
 [lib]
 crate-type = ["cdylib"]

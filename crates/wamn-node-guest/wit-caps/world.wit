@@ -1,0 +1,14 @@
+package wamn:node-caps@0.1.0;
+
+/// The capability-bearing bindings world for the `caps` feature module: the
+/// imports a component granting nodes real capabilities links (wamn:postgres
+/// + outbound wasi:http). NOT part of the frozen wamn:node contract — this is
+/// scaffolding for the component SHELL side (the host-facing twin of the
+/// zero-import `world node`). A component using `caps::CapsCtx` must import
+/// these interfaces at these exact versions in its own world.
+world caps-node {
+  import wamn:postgres/types@0.1.0;
+  import wamn:postgres/client@0.1.0;
+  import wasi:http/types@0.2.12;
+  import wasi:http/outgoing-handler@0.2.12;
+}

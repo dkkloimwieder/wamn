@@ -61,3 +61,69 @@ mod tests {
         assert!(!pass, "a failed check must stick");
     }
 }
+
+// ---------------------------------------------------------------------------
+// PG fixture helpers (SR2): host-side flow-fixture seeding. The gates hold
+// the connection (app-role with claims, or superuser); the harness holds the
+// single copy of the fixture SQL — values always $n, jsonb via ::text::jsonb.
+// ---------------------------------------------------------------------------
+
+/// Scope a fixture session: the tenant claim (RLS) + the schema (search_path),
+/// both bound as parameters via set_config — no interpolation path.
+pub async fn scope_session(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    schema: &str,
+) -> anyhow::Result<()> {
+    client
+        .query(
+            "SELECT set_config('app.tenant', $1, false), set_config('search_path', $2, false)",
+            &[&tenant, &schema],
+        )
+        .await?;
+    Ok(())
+}
+
+/// Seed one flow-registry version row (idempotent). `activate_on_conflict`
+/// mirrors the two guest-era shapes: the S3 seed kept a re-seed from touching
+/// `active`; the S6 seed forced the row active.
+pub async fn seed_flow_version(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    flow_id: &str,
+    version: i32,
+    active: bool,
+    graph_json: &str,
+    activate_on_conflict: bool,
+) -> anyhow::Result<()> {
+    let tail = if activate_on_conflict {
+        "DO UPDATE SET graph_json = excluded.graph_json, active = true"
+    } else {
+        "DO UPDATE SET graph_json = excluded.graph_json"
+    };
+    let sql = format!(
+        "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
+         VALUES ($1, $2, $3, $4, $5::text::jsonb) \
+         ON CONFLICT (tenant_id, flow_id, version) {tail}"
+    );
+    client
+        .execute(&sql, &[&tenant, &flow_id, &version, &active, &graph_json])
+        .await?;
+    Ok(())
+}
+
+/// Flip the active flow version: exactly one active version per flow.
+pub async fn set_active_flow_version(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    flow_id: &str,
+    version: i32,
+) -> anyhow::Result<()> {
+    client
+        .execute(
+            "UPDATE flows SET active = (version = $3) WHERE tenant_id = $1 AND flow_id = $2",
+            &[&tenant, &flow_id, &version],
+        )
+        .await?;
+    Ok(())
+}

@@ -52,8 +52,7 @@ use std::time::Instant;
 use serde_json::{Value, json};
 use wamn_flow::Flow;
 use wamn_node_sdk as sdk;
-use wamn_node_sdk::NodeCtx;
-use wamn_run_store::{NodeRunRecord, RunRecord};
+use wamn_run_store::{NodeRunRecord, RunRecord, sql as run_sql};
 use wamn_runner::{
     Dispatch, ERROR_PORT, NodeError, NodeOutcome, Plan, RetryPolicy, RunStatus, Step,
 };
@@ -63,9 +62,7 @@ use wamn::postgres::types::{PgError, SqlValue};
 
 use wasi::clocks::wall_clock;
 use wasi::http::outgoing_handler;
-use wasi::http::types::{
-    ErrorCode, Fields, IncomingResponse, Method, OutgoingBody, OutgoingRequest, Scheme,
-};
+use wasi::http::types::{Fields, Method, OutgoingRequest, Scheme};
 
 struct Component;
 export!(Component);
@@ -75,7 +72,6 @@ export!(Component);
 const FLOW_ID: &str = "poc-receipt";
 /// The S6 delay+http flow.
 const FLOW_ID_S6: &str = "poc-s6";
-const MAX_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // SqlValue helpers + error naming
@@ -114,46 +110,6 @@ fn err_name(e: &PgError) -> String {
 // Flow definitions (canonical wamn-flow / 5.1 schema)
 // ---------------------------------------------------------------------------
 
-/// The stored S3 flow for a version. v1 upper-cases the payload, v2 reverses it —
-/// distinct enough that the hot-reload gate can see which version ran.
-fn flow_json(version: u32) -> String {
-    let op = if version == 1 { "upper" } else { "reverse" };
-    format!(
-        r#"{{"schema-version":"0.1","flow-id":"{FLOW_ID}","version":{version},
-            "trigger":{{"type":"webhook","sync":true}},"entry":"in",
-            "nodes":[
-              {{"id":"in","type":"webhook-in"}},
-              {{"id":"t","type":"transform","config":{{"op":"{op}"}}}},
-              {{"id":"w","type":"pg-write"}},
-              {{"id":"c","type":"conditional","config":{{"min-len":3}}}},
-              {{"id":"out","type":"respond"}}
-            ],
-            "edges":[{{"from":"in","to":"t"}},{{"from":"t","to":"w"}},
-                     {{"from":"w","to":"c"}},{{"from":"c","to":"out"}}]}}"#
-    )
-}
-
-/// The S6 flow: `webhook-in -> delay(delay-secs) -> http-call(url) -> pg-write ->
-/// respond`. JSON is hand-built so the config values embed verbatim.
-fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
-    // http_url is a controlled harness value (a loopback URL); escape the two
-    // JSON-significant characters defensively anyway.
-    let url = http_url.replace('\\', "\\\\").replace('"', "\\\"");
-    format!(
-        r#"{{"schema-version":"0.1","flow-id":"{FLOW_ID_S6}","version":1,
-            "trigger":{{"type":"webhook"}},"entry":"in",
-            "nodes":[
-              {{"id":"in","type":"webhook-in"}},
-              {{"id":"d","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
-              {{"id":"h","type":"http-call","config":{{"url":"{url}"}}}},
-              {{"id":"w","type":"pg-write"}},
-              {{"id":"out","type":"respond"}}
-            ],
-            "edges":[{{"from":"in","to":"d"}},{{"from":"d","to":"h"}},
-                     {{"from":"h","to":"w"}},{{"from":"w","to":"out"}}]}}"#
-    )
-}
-
 /// The node's index in the flow — the stable `step` key for `pg-write`'s `sink`
 /// idempotency (stable per flow version). Run-state checkpointing is now per-node
 /// into `node_runs`; this remains the business-effect idempotency key.
@@ -163,14 +119,6 @@ fn node_index(flow: &Flow, node_id: &str) -> i32 {
         .position(|n| n.id == node_id)
         .map(|i| i as i32)
         .unwrap_or(-1)
-}
-
-fn percentile_ns(sorted: &[u32], p: f64) -> u64 {
-    if sorted.is_empty() {
-        return 0;
-    }
-    let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
-    sorted[idx] as u64
 }
 
 /// The current string value carried by a payload (`webhook-in` puts the trigger
@@ -205,13 +153,13 @@ fn load_active_flow(flow_id: &str) -> Result<Flow, String> {
 /// node_runs history is the durable progress.
 fn open_run(run_id: &str, flow_id: &str, flow_version: u32, input: &Value) -> Result<(), String> {
     client::execute(
-        "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status, input_json) \
-         VALUES (current_setting('app.tenant', true), $1, $2, $3, 'running', $4) \
-         ON CONFLICT (tenant_id, run_id) DO NOTHING",
+        &run_sql::insert_run_sql(),
         &[
             text(run_id),
             text(flow_id),
             int32(flow_version as i32),
+            text(wamn_run_store::RunStatus::Running.as_sql()),
+            SqlValue::Null, // trigger_source: a direct driver, not a dispatcher
             jsonb(input),
         ],
     )
@@ -226,8 +174,7 @@ fn open_run(run_id: &str, flow_id: &str, flow_version: u32, input: &Value) -> Re
 /// reconstruction needs no error taxonomy here.
 fn load_completed(run_id: &str) -> Result<Vec<NodeRunRecord>, String> {
     let rs = client::query(
-        "SELECT node_id, seq, output_port, output_json::text FROM node_runs \
-         WHERE run_id = $1 AND status IN ('success', 'error') ORDER BY seq",
+        &run_sql::select_completed_node_runs_sql(),
         &[text(run_id)],
     )
     .map_err(|e| err_name(&e))?;
@@ -285,10 +232,7 @@ fn record_node_run(
     input: &Value,
 ) -> Result<(), String> {
     client::execute(
-        "INSERT INTO node_runs \
-           (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json) \
-         VALUES (current_setting('app.tenant', true), $1, $2, 0, $3, 'success', $4, $5, $6) \
-         ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING",
+        &run_sql::insert_node_run_success_sql(),
         &[
             text(run_id),
             text(node_id),
@@ -305,7 +249,7 @@ fn record_node_run(
 /// Mark the run completed and record its result payload.
 fn mark_completed(run_id: &str, result: &Value) -> Result<(), String> {
     client::execute(
-        "UPDATE runs SET status = 'completed', result_json = $2 WHERE run_id = $1",
+        &run_sql::update_run_completed_sql(),
         &[text(run_id), jsonb(result)],
     )
     .map_err(|e| err_name(&e))?;
@@ -326,7 +270,7 @@ fn wall_now_secs() -> u64 {
 /// `state_json`, if any.
 fn load_wake(run_id: &str) -> Result<Option<u64>, String> {
     let rs = client::query(
-        "SELECT state_json::text FROM runs WHERE run_id = $1",
+        &run_sql::select_run_state_sql(),
         &[text(run_id)],
     )
     .map_err(|e| err_name(&e))?;
@@ -342,7 +286,7 @@ fn load_wake(run_id: &str) -> Result<Option<u64>, String> {
 /// Persist the parked-wake deadline for the run.
 fn save_wake(run_id: &str, wake_secs: u64) -> Result<(), String> {
     client::execute(
-        "UPDATE runs SET state_json = $2 WHERE run_id = $1",
+        &run_sql::update_run_state_sql(),
         &[text(run_id), text(format!(r#"{{"wake":{wake_secs}}}"#))],
     )
     .map_err(|e| err_name(&e))?;
@@ -393,250 +337,12 @@ fn http_get(url: &str) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// Standard node library glue (5.3): the wamn-nodes vocabulary dispatched
-// through the SDK capability facade over this component's real imports. Node
-// behavior, taxonomy classification, and the capability policy table are all
-// in the PURE crates (tested there); this glue is 1:1 WIT-value mirrors plus
-// the two effects (wamn:postgres, wasi:http).
+// Standard node library glue (5.3): the wamn-nodes vocabulary dispatches
+// through the SHARED capability facade `wamn_node_guest::caps::CapsCtx`
+// (SR2) over this component's real imports — the WIT<->SDK mirrors and the
+// full outbound-HTTP path live there, not here. Egress still leaves the flow
+// ONLY via wasi:http, so the S6 egress spy interposes unchanged.
 // ---------------------------------------------------------------------------
-
-/// The runner's capability facade. The D8 raw-SQL flag is hard OFF here —
-/// per-project enablement wiring lands with the user-SQL role split
-/// (wamn-1nd), so a `postgres-query` dispatch dies with `capability-denied`
-/// before touching the database.
-struct GuestCtx;
-
-impl sdk::NodeCtx for GuestCtx {
-    fn http(&mut self, req: &sdk::HttpRequest) -> Result<sdk::HttpResponse, sdk::HttpCapError> {
-        http_request_full(req)
-    }
-
-    fn pg_query(
-        &mut self,
-        sql: &str,
-        params: &[sdk::PgValue],
-    ) -> Result<sdk::PgRows, sdk::PgCapError> {
-        let params: Vec<SqlValue> = params.iter().map(sdk_to_wit).collect();
-        let rs = client::query(sql, &params).map_err(wit_err_to_sdk)?;
-        Ok(sdk::PgRows {
-            columns: rs.columns.iter().map(|c| c.name.clone()).collect(),
-            rows: rs
-                .rows
-                .iter()
-                .map(|r| r.iter().map(wit_to_sdk).collect())
-                .collect(),
-        })
-    }
-
-    fn pg_execute(&mut self, sql: &str, params: &[sdk::PgValue]) -> Result<u64, sdk::PgCapError> {
-        let params: Vec<SqlValue> = params.iter().map(sdk_to_wit).collect();
-        client::execute(sql, &params).map_err(wit_err_to_sdk)
-    }
-
-    fn catalog_json(&mut self) -> Result<String, sdk::PgCapError> {
-        // The published project snapshot the api-gateway also reads (4.1b);
-        // unqualified, resolved through the host-injected search_path.
-        let rs = client::query("SELECT document::text FROM wamn_catalog LIMIT 1", &[])
-            .map_err(wit_err_to_sdk)?;
-        match rs.rows.first().and_then(|r| r.first()) {
-            Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => Ok(s.clone()),
-            _ => Err(sdk::PgCapError::QueryError {
-                code: String::new(),
-                message: "no catalog snapshot published for this project".into(),
-            }),
-        }
-    }
-
-    fn raw_sql_enabled(&self) -> bool {
-        false
-    }
-}
-
-/// SDK value → binding value (both are 1:1 mirrors of the WIT `sql-value`).
-fn sdk_to_wit(v: &sdk::PgValue) -> SqlValue {
-    match v {
-        sdk::PgValue::Null => SqlValue::Null,
-        sdk::PgValue::Bool(b) => SqlValue::Boolean(*b),
-        sdk::PgValue::Int32(n) => SqlValue::Int32(*n),
-        sdk::PgValue::Int64(n) => SqlValue::Int64(*n),
-        sdk::PgValue::Float64(f) => SqlValue::Float64(*f),
-        sdk::PgValue::Text(s) => SqlValue::Text(s.clone()),
-        sdk::PgValue::Bytes(b) => SqlValue::Bytes(b.clone()),
-        sdk::PgValue::Numeric(s) => SqlValue::Numeric(s.clone()),
-        sdk::PgValue::Timestamptz(s) => SqlValue::Timestamptz(s.clone()),
-        sdk::PgValue::Json(s) => SqlValue::Json(s.clone()),
-        sdk::PgValue::Uuid(s) => SqlValue::Uuid(s.clone()),
-    }
-}
-
-/// Binding value → SDK value.
-fn wit_to_sdk(v: &SqlValue) -> sdk::PgValue {
-    match v {
-        SqlValue::Null => sdk::PgValue::Null,
-        SqlValue::Boolean(b) => sdk::PgValue::Bool(*b),
-        SqlValue::Int32(n) => sdk::PgValue::Int32(*n),
-        SqlValue::Int64(n) => sdk::PgValue::Int64(*n),
-        SqlValue::Float64(f) => sdk::PgValue::Float64(*f),
-        SqlValue::Text(s) => sdk::PgValue::Text(s.clone()),
-        SqlValue::Bytes(b) => sdk::PgValue::Bytes(b.clone()),
-        SqlValue::Numeric(s) => sdk::PgValue::Numeric(s.clone()),
-        SqlValue::Timestamptz(s) => sdk::PgValue::Timestamptz(s.clone()),
-        SqlValue::Json(s) => sdk::PgValue::Json(s.clone()),
-        SqlValue::Uuid(s) => sdk::PgValue::Uuid(s.clone()),
-    }
-}
-
-/// Binding pg-error → SDK capability error (1:1; the node classifies).
-fn wit_err_to_sdk(e: PgError) -> sdk::PgCapError {
-    match e {
-        PgError::SerializationFailure => sdk::PgCapError::SerializationFailure,
-        PgError::ConnectionUnavailable => sdk::PgCapError::ConnectionUnavailable,
-        PgError::StatementTimeout => sdk::PgCapError::StatementTimeout,
-        PgError::RowLimitExceeded(n) => sdk::PgCapError::RowLimitExceeded(n),
-        PgError::UniqueViolation(c) => sdk::PgCapError::UniqueViolation(c),
-        PgError::ForeignKeyViolation(c) => sdk::PgCapError::ForeignKeyViolation(c),
-        PgError::CheckViolation(c) => sdk::PgCapError::CheckViolation(c),
-        PgError::PermissionDenied => sdk::PgCapError::PermissionDenied,
-        PgError::QueryError((code, message)) => sdk::PgCapError::QueryError { code, message },
-    }
-}
-
-/// Full outbound request for the standard `http-request` node (the fixture
-/// `http-call` keeps its own minimal GET above): method, headers, body,
-/// https — and the response body drained completely. Egress still leaves the
-/// flow ONLY via `wasi:http`, so the S6 egress spy interposes here too.
-fn http_request_full(req: &sdk::HttpRequest) -> Result<sdk::HttpResponse, sdk::HttpCapError> {
-    let (scheme, authority, path) = parse_url_any(&req.url)
-        .ok_or_else(|| sdk::HttpCapError::BadRequest(format!("unparseable url {:?}", req.url)))?;
-    let fields = Fields::new();
-    for (k, v) in &req.headers {
-        fields
-            .append(k, &v.clone().into_bytes())
-            .map_err(|e| sdk::HttpCapError::BadRequest(format!("header {k:?}: {e:?}")))?;
-    }
-    let out = OutgoingRequest::new(fields);
-    if out.set_method(&wasi_method(&req.method)).is_err()
-        || out.set_scheme(Some(&scheme)).is_err()
-        || out.set_authority(Some(&authority)).is_err()
-        || out.set_path_with_query(Some(&path)).is_err()
-    {
-        return Err(sdk::HttpCapError::BadRequest(
-            "request fields rejected".into(),
-        ));
-    }
-    let body = out
-        .body()
-        .map_err(|_| sdk::HttpCapError::BadRequest("body unavailable".into()))?;
-    if let Some(bytes) = &req.body {
-        let stream = body
-            .write()
-            .map_err(|_| sdk::HttpCapError::BadRequest("body stream unavailable".into()))?;
-        // blocking_write_and_flush accepts at most 4096 bytes per call.
-        for chunk in bytes.chunks(4096) {
-            if stream.blocking_write_and_flush(chunk).is_err() {
-                return Err(sdk::HttpCapError::Transport(
-                    "request body write failed".into(),
-                ));
-            }
-        }
-    }
-    if OutgoingBody::finish(body, None).is_err() {
-        return Err(sdk::HttpCapError::Transport(
-            "request body finish failed".into(),
-        ));
-    }
-    let fut = match outgoing_handler::handle(out, None) {
-        Ok(f) => f,
-        Err(code) => return Err(handle_err(code)), // host refused before dispatch
-    };
-    let pollable = fut.subscribe();
-    pollable.block();
-    match fut.get() {
-        Some(Ok(Ok(resp))) => {
-            let status = resp.status();
-            let headers = resp
-                .headers()
-                .entries()
-                .into_iter()
-                .map(|(k, v)| (k, String::from_utf8_lossy(&v).into_owned()))
-                .collect();
-            let body = read_incoming_body(resp)?;
-            Ok(sdk::HttpResponse {
-                status,
-                headers,
-                body,
-            })
-        }
-        Some(Ok(Err(code))) => Err(handle_err(code)),
-        _ => Err(sdk::HttpCapError::Transport("no response".into())),
-    }
-}
-
-/// A `wasi:http` refusal → SDK capability error: an explicit host denial (the
-/// allowedHosts policy / the S6 egress spy) is permanent; anything else is a
-/// transport failure the node classifies as retryable.
-fn handle_err(code: ErrorCode) -> sdk::HttpCapError {
-    match code {
-        ErrorCode::HttpRequestDenied => sdk::HttpCapError::Denied,
-        other => sdk::HttpCapError::Transport(format!("{other:?}")),
-    }
-}
-
-fn read_incoming_body(resp: IncomingResponse) -> Result<Vec<u8>, sdk::HttpCapError> {
-    let body = resp
-        .consume()
-        .map_err(|_| sdk::HttpCapError::Transport("body already consumed".into()))?;
-    let stream = body
-        .stream()
-        .map_err(|_| sdk::HttpCapError::Transport("body stream unavailable".into()))?;
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(chunk) => out.extend_from_slice(&chunk),
-            Err(wasi::io::streams::StreamError::Closed) => break,
-            Err(e) => {
-                return Err(sdk::HttpCapError::Transport(format!("body read: {e:?}")));
-            }
-        }
-    }
-    Ok(out)
-}
-
-fn parse_url_any(url: &str) -> Option<(Scheme, String, String)> {
-    let (scheme, rest) = if let Some(r) = url.strip_prefix("http://") {
-        (Scheme::Http, r)
-    } else {
-        (Scheme::Https, url.strip_prefix("https://")?)
-    };
-    let split = rest.find(['/', '?']).unwrap_or(rest.len());
-    let (authority, tail) = rest.split_at(split);
-    if authority.is_empty() {
-        return None;
-    }
-    let path = if tail.is_empty() {
-        "/".to_string()
-    } else if tail.starts_with('?') {
-        format!("/{tail}")
-    } else {
-        tail.to_string()
-    };
-    Some((scheme, authority.to_string(), path))
-}
-
-fn wasi_method(m: &str) -> Method {
-    match m {
-        "GET" => Method::Get,
-        "HEAD" => Method::Head,
-        "POST" => Method::Post,
-        "PUT" => Method::Put,
-        "DELETE" => Method::Delete,
-        "CONNECT" => Method::Connect,
-        "OPTIONS" => Method::Options,
-        "TRACE" => Method::Trace,
-        "PATCH" => Method::Patch,
-        other => Method::Other(other.to_string()),
-    }
-}
 
 /// Whether the engine will ROUTE this error emission down the node's error
 /// edge (vs scheduling a retry, or cancelling the run) — the exact policy
@@ -680,11 +386,7 @@ fn record_error(
         None => Value::Null,
     };
     client::execute(
-        "INSERT INTO node_runs \
-           (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json, \
-            error_kind, error_detail) \
-         VALUES (current_setting('app.tenant', true), $1, $2, 0, $3, 'error', 'error', $4, $5, $6, $7) \
-         ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING",
+        &run_sql::insert_node_run_error_sql(),
         &[
             text(run_id),
             text(node_id),
@@ -702,8 +404,7 @@ fn record_error(
 /// Record the run's failure verdict (audit parity with poc-webhook-f1).
 fn mark_failed(run_id: &str, kind: &str, node: &str, reason: &str) -> Result<(), String> {
     client::execute(
-        "UPDATE runs SET status = 'failed', fail_kind = $2, fail_node = $3, fail_reason = $4 \
-         WHERE run_id = $1",
+        &run_sql::update_run_failed_sql(),
         &[text(run_id), text(kind), text(node), text(reason)],
     )
     .map_err(|e| err_name(&e))?;
@@ -838,8 +539,8 @@ fn dispatch_node(
                 tracestate: None,
                 config: &d.config,
             };
-            let mut ctx = GuestCtx;
-            let granted = wamn_nodes::granted_for(ctx.raw_sql_enabled());
+            let mut ctx = wamn_node_guest::caps::CapsCtx::default();
+            let granted = wamn_nodes::granted_for(sdk::NodeCtx::raw_sql_enabled(&ctx));
             Ok(NodeAction::Emit(
                 match wamn_nodes::dispatch(t, granted, &mut ctx, &run_ctx, &d.payload) {
                     Ok(em) => NodeOutcome::ok_on(em.payload, em.port),
@@ -992,10 +693,9 @@ fn bench_walk(
 // ---------------------------------------------------------------------------
 
 impl Guest for Component {
-    fn dispatch_bench(iterations: u32) -> (u64, u64, u64, u64, u64) {
-        let flow = Flow::from_json(&flow_json(MAX_VERSION)).expect("bench flow parses");
-        let plan = Plan::compile(&flow).expect("bench flow compiles");
-        let per_walk = flow.nodes.len();
+    fn dispatch_bench(iterations: u32, flow_json: String) -> Result<(u64, Vec<u32>), String> {
+        let flow = Flow::from_json(&flow_json).map_err(|e| format!("bench flow: {e}"))?;
+        let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
         let iters = iterations.max(1) as usize;
 
         // Warm up (page in, settle the branch predictor) before measuring.
@@ -1003,21 +703,20 @@ impl Guest for Component {
             bench_walk(&plan, |d, o, st| plan.apply(st, d, o, 0));
         }
 
-        // Un-instrumented pass: one clock read for the whole batch, so the mean
-        // is the amortized per-dispatch cost with no per-sample clock overhead.
+        // Un-instrumented pass: one clock read for the whole batch — the
+        // harness derives the amortized per-dispatch mean from the total.
         let t_bare = Instant::now();
         for _ in 0..iters {
             bench_walk(&plan, |d, o, st| plan.apply(st, d, o, 0));
         }
         let bare_ns = t_bare.elapsed().as_nanos() as u64;
-        let total = (iters * per_walk) as u64;
-        let mean = bare_ns / total.max(1);
 
         // Instrumented pass: time each per-node dispatch (node compute + the
-        // engine's route/advance). Each sample includes one monotonic-clock read,
-        // so it OVER-reports the true dispatch cost — the p99 is a conservative
-        // upper bound.
-        let mut samples: Vec<u32> = Vec::with_capacity(iters * per_walk);
+        // engine's route/advance). Each sample includes one monotonic-clock
+        // read, so it OVER-reports the true dispatch cost. Raw samples go
+        // back to the harness; percentiles are computed host-side
+        // (wamn-gate-harness — the guest carries no stats code, SR2).
+        let mut samples: Vec<u32> = Vec::with_capacity(iters * flow.nodes.len());
         for _ in 0..iters {
             bench_walk(&plan, |d, o, st| {
                 let t0 = Instant::now();
@@ -1026,43 +725,7 @@ impl Guest for Component {
                 samples.push(dt.min(u32::MAX as u128) as u32);
             });
         }
-        samples.sort_unstable();
-        let count = samples.len() as u64;
-        let p50 = percentile_ns(&samples, 0.50);
-        let p99 = percentile_ns(&samples, 0.99);
-        let max = samples.last().copied().unwrap_or(0) as u64;
-        (count, mean, p50, p99, max)
-    }
-
-    fn seed() -> Result<u32, String> {
-        // v1 active by default; re-seed refreshes graph_json but not `active`.
-        client::execute(
-            "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
-             VALUES (current_setting('app.tenant', true), $1, 1, true, $2) \
-             ON CONFLICT (tenant_id, flow_id, version) \
-             DO UPDATE SET graph_json = excluded.graph_json",
-            &[text(FLOW_ID), text(flow_json(1))],
-        )
-        .map_err(|e| err_name(&e))?;
-        client::execute(
-            "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
-             VALUES (current_setting('app.tenant', true), $1, 2, false, $2) \
-             ON CONFLICT (tenant_id, flow_id, version) \
-             DO UPDATE SET graph_json = excluded.graph_json",
-            &[text(FLOW_ID), text(flow_json(2))],
-        )
-        .map_err(|e| err_name(&e))?;
-        Ok(MAX_VERSION)
-    }
-
-    fn set_active(version: u32) -> Result<(), String> {
-        // Exactly one active version per flow: set active = (version = $1).
-        client::execute(
-            "UPDATE flows SET active = (version = $1) WHERE flow_id = $2",
-            &[int32(version as i32), text(FLOW_ID)],
-        )
-        .map_err(|e| err_name(&e))?;
-        Ok(())
+        Ok((bare_ns, samples))
     }
 
     fn active_version() -> Result<u32, String> {
@@ -1106,18 +769,6 @@ impl Guest for Component {
         let b = client::execute("DELETE FROM runs WHERE run_id = $1", &[text(&run_id)])
             .map_err(|e| err_name(&e))?;
         Ok(a + b)
-    }
-
-    fn seed_s6(delay_secs: u64, http_url: String) -> Result<u32, String> {
-        client::execute(
-            "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
-             VALUES (current_setting('app.tenant', true), $1, 1, true, $2) \
-             ON CONFLICT (tenant_id, flow_id, version) \
-             DO UPDATE SET graph_json = excluded.graph_json, active = true",
-            &[text(FLOW_ID_S6), text(flow_json_s6(delay_secs, &http_url))],
-        )
-        .map_err(|e| err_name(&e))?;
-        Ok(1)
     }
 
     fn run_s6(run_id: String, payload: String) -> Result<(u32, u32), String> {

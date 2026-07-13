@@ -4098,7 +4098,9 @@ dependencies = [
 name = "wamn-gate-harness"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde_json",
+ "tokio-postgres",
 ]
 
 [[package]]

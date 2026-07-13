@@ -26,6 +26,9 @@
 use serde_json::Value;
 use wamn_node_sdk::{Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse};
 
+#[cfg(feature = "caps")]
+pub mod caps;
+
 pub mod bindings {
     wit_bindgen::generate!({
         world: "node",

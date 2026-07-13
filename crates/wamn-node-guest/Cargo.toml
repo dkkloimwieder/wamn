@@ -15,3 +15,9 @@ license.workspace = true
 wamn-node-sdk = { path = "../wamn-node-sdk" }
 wit-bindgen = "0.44"
 serde_json = "1"
+
+[features]
+# The capability-bearing shell facade (caps.rs): CapsCtx + the WIT<->SDK value
+# mirrors over wamn:postgres + outbound wasi:http. OFF by default so the
+# zero-import custom-node scaffolding stays physically incapable of I/O.
+caps = []

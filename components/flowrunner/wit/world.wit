@@ -33,23 +33,18 @@ world flowrunner {
   import wasi:http/types@0.2.12;
   import wasi:http/outgoing-handler@0.2.12;
 
-  /// Dispatch micro-benchmark. Runs `iterations` standard-only graph walks
-  /// (webhook-in -> transform -> pg-write* -> conditional -> respond) entirely
-  /// in-component; the pg-write node's side effect is stubbed to an in-process
-  /// counter (*), so no DB and no host boundary is crossed. Each per-node
-  /// dispatch is timed in-component; returns a tuple of
-  /// (dispatch-count, mean-ns, p50-ns, p99-ns, max-ns). mean-ns comes from a
-  /// separate un-instrumented pass (amortized, boundary-free); p50/p99/max come
-  /// from the timed pass and each include one monotonic-clock read, so they
-  /// over-report the true dispatch cost (conservative).
-  export dispatch-bench: func(iterations: u32) -> tuple<u64, u64, u64, u64, u64>;
+  /// Dispatch micro-benchmark. Runs `iterations` walks of the supplied
+  /// canonical flow (the fixture JSON now lives with the gates, SR2)
+  /// entirely in-component; effectful nodes are stubbed. Returns the
+  /// un-instrumented total wall time in ns (for the amortized mean) plus one
+  /// RAW per-dispatch sample (ns) per node visit from a second instrumented
+  /// pass — each sample includes one monotonic-clock read, so derived
+  /// percentiles over-report (conservative). Stats are computed host-side.
+  export dispatch-bench: func(iterations: u32, flow-json: string) -> result<tuple<u64, list<u32>>, string>;
 
-  /// Seed the catalog with flow versions v1 and v2 (idempotent). Returns the
-  /// highest version seeded. v1 is left active by default.
-  export seed: func() -> result<u32, string>;
-  /// Flip the active flow version in the catalog ("deploy" the version).
-  export set-active: func(version: u32) -> result<_, string>;
-  /// Read the currently-active flow version from the catalog.
+  /// Read the currently-active flow version from the catalog — the guest-side
+  /// observation point the hot-reload gate polls (seeding/flipping versions is
+  /// host-side fixture work, SR2).
   export active-version: func() -> result<u32, string>;
 
   /// Execute a run to completion, RESUMING from the last checkpoint if the run
@@ -69,12 +64,6 @@ world flowrunner {
   // -------------------------------------------------------------------------
   // S6: delay + http-call flow (docs/p0-exit-criteria.md S6).
   // -------------------------------------------------------------------------
-
-  /// Seed the S6 flow (flow_id `poc-s6`, version 1, active): the graph
-  /// webhook-in -> delay(delay-secs) -> http-call(http-url) -> pg-write ->
-  /// respond. `delay-secs` is the wall-clock wait the delay node parks for;
-  /// `http-url` is the absolute URL the http-call node fetches. Idempotent.
-  export seed-s6: func(delay-secs: u64, http-url: string) -> result<u32, string>;
 
   /// Run the S6 flow for `run-id`, resuming from any checkpoint. The delay node
   /// implements durable parked-wake: on first reach it records a wake deadline

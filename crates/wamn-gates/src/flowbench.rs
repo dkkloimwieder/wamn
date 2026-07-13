@@ -37,6 +37,8 @@ use wash_runtime::wasmtime::component::{
 };
 use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 
+use tokio_postgres::NoTls;
+use wamn_gate_harness::{percentile, scope_session, seed_flow_version, set_active_flow_version};
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
@@ -94,16 +96,92 @@ const FLOW_TENANT: &str = "flow-tenant";
 /// promptly. ~600 ms at the 10 ms tick, versus ~15 ms of DB round trips.
 const KILL_TICKS: u64 = 60;
 
-/// The dispatch bench's return tuple: (dispatch-count, mean-ns, p50-ns,
-/// p99-ns, max-ns).
-type DispatchStats = (u64, u64, u64, u64, u64);
+/// The S3 fixture flow id (the guest's `run`/`active-version` exports drive
+/// this flow; the JSON now lives HERE — a production component carries no
+/// bench fixtures, SR2).
+pub const FIXTURE_FLOW_ID: &str = "poc-receipt";
+
+/// The stored S3 flow for a version. v1 upper-cases the payload, v2 reverses
+/// it — distinct enough that the hot-reload gate can see which version ran.
+pub fn flow_json(version: u32) -> String {
+    let op = if version == 1 { "upper" } else { "reverse" };
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"{FIXTURE_FLOW_ID}","version":{version},
+            "trigger":{{"type":"webhook","sync":true}},"entry":"in",
+            "nodes":[
+              {{"id":"in","type":"webhook-in"}},
+              {{"id":"t","type":"transform","config":{{"op":"{op}"}}}},
+              {{"id":"w","type":"pg-write"}},
+              {{"id":"c","type":"conditional","config":{{"min-len":3}}}},
+              {{"id":"out","type":"respond"}}
+            ],
+            "edges":[{{"from":"in","to":"t"}},{{"from":"t","to":"w"}},
+                     {{"from":"w","to":"c"}},{{"from":"c","to":"out"}}]}}"#
+    )
+}
+
+/// The S6 fixture flow: `webhook-in -> delay(delay-secs) -> http-call(url) ->
+/// pg-write -> respond` (used by testhostbench through this module).
+pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
+    // http_url is a controlled harness value (a loopback URL); escape the two
+    // JSON-significant characters defensively anyway.
+    let url = http_url.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,
+            "trigger":{{"type":"webhook"}},"entry":"in",
+            "nodes":[
+              {{"id":"in","type":"webhook-in"}},
+              {{"id":"d","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
+              {{"id":"h","type":"http-call","config":{{"url":"{url}"}}}},
+              {{"id":"w","type":"pg-write"}},
+              {{"id":"out","type":"respond"}}
+            ],
+            "edges":[{{"from":"in","to":"d"}},{{"from":"d","to":"h"}},
+                     {{"from":"h","to":"w"}},{{"from":"w","to":"out"}}]}}"#
+    )
+}
+
+/// Open a fixture-scoped app connection (tenant claim + s3 search_path) and
+/// seed the two S3 flow versions with v1 active — the host-side replacement
+/// for the guest's retired `seed`/`set-active` exports.
+async fn fixture_client(
+    db_url: &str,
+) -> anyhow::Result<(tokio_postgres::Client, tokio::task::JoinHandle<()>)> {
+    let (client, conn) = tokio_postgres::connect(db_url, NoTls)
+        .await
+        .context("fixture connect")?;
+    let task = tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    scope_session(&client, FLOW_TENANT, "s3").await?;
+    Ok((client, task))
+}
+
+async fn seed_fixture_flows(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    for v in [1, 2] {
+        seed_flow_version(
+            client,
+            FLOW_TENANT,
+            FIXTURE_FLOW_ID,
+            v,
+            v == 1,
+            &flow_json(v as u32),
+            false,
+        )
+        .await?;
+    }
+    set_active_flow_version(client, FLOW_TENANT, FIXTURE_FLOW_ID, 1).await?;
+    Ok(())
+}
+
+/// The dispatch bench's raw return: (bare-total-ns, per-dispatch samples ns).
+/// Stats are computed HERE via the harness (the guest carries none, SR2).
+type DispatchRaw = (u64, Vec<u32>);
 
 /// A flowrunner instance with its export table resolved.
 struct Worker {
     store: Store<SharedCtx>,
-    dispatch_bench: TypedFunc<(u32,), (DispatchStats,)>,
-    seed: TypedFunc<(), (Result<u32, String>,)>,
-    set_active: TypedFunc<(u32,), (Result<(), String>,)>,
+    dispatch_bench: TypedFunc<(u32, String), (Result<DispatchRaw, String>,)>,
     active_version: TypedFunc<(), (Result<u32, String>,)>,
     run: TypedFunc<(String, String), (Result<u32, String>,)>,
     run_until_kill: TypedFunc<(String, String), (Result<u32, String>,)>,
@@ -112,20 +190,12 @@ struct Worker {
 }
 
 impl Worker {
-    async fn dispatch(&mut self, iters: u32) -> anyhow::Result<DispatchStats> {
-        let (t,) = self
+    async fn dispatch(&mut self, iters: u32, flow_json: &str) -> anyhow::Result<DispatchRaw> {
+        let (r,) = self
             .dispatch_bench
-            .call_async(&mut self.store, (iters,))
+            .call_async(&mut self.store, (iters, flow_json.to_string()))
             .await?;
-        Ok(t)
-    }
-    async fn call_seed(&mut self) -> anyhow::Result<u32> {
-        let (r,) = self.seed.call_async(&mut self.store, ()).await?;
-        r.map_err(|e| anyhow::anyhow!("seed: {e}"))
-    }
-    async fn call_set_active(&mut self, v: u32) -> anyhow::Result<()> {
-        let (r,) = self.set_active.call_async(&mut self.store, (v,)).await?;
-        r.map_err(|e| anyhow::anyhow!("set-active: {e}"))
+        r.map_err(|e| anyhow::anyhow!("dispatch-bench: {e}"))
     }
     async fn call_active_version(&mut self) -> anyhow::Result<u32> {
         let (r,) = self.active_version.call_async(&mut self.store, ()).await?;
@@ -221,8 +291,6 @@ impl Harness {
             };
         }
         let dispatch_bench = f!("dispatch-bench");
-        let seed = f!("seed");
-        let set_active = f!("set-active");
         let active_version = f!("active-version");
         let run = f!("run");
         let run_until_kill = f!("run-until-kill");
@@ -231,8 +299,6 @@ impl Harness {
         Ok(Worker {
             store,
             dispatch_bench,
-            seed,
-            set_active,
             active_version,
             run,
             run_until_kill,
@@ -312,7 +378,18 @@ async fn dispatch_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Resu
         args.dispatch_iters
     );
     let mut w = harness.worker(None).await?;
-    let (count, mean, p50, p99, max) = w.dispatch(args.dispatch_iters).await?;
+    // The bench walks the v2 fixture flow; the JSON rides in from HERE (SR2).
+    let (bare_ns, mut samples) = w.dispatch(args.dispatch_iters, &flow_json(2)).await?;
+    let count = samples.len() as u64;
+    let mean = bare_ns / count.max(1);
+    samples.sort_unstable();
+    let sorted: Vec<Duration> = samples
+        .iter()
+        .map(|&ns| Duration::from_nanos(ns as u64))
+        .collect();
+    let p50 = percentile(&sorted, 0.50).as_nanos() as u64;
+    let p99 = percentile(&sorted, 0.99).as_nanos() as u64;
+    let max = sorted.last().copied().unwrap_or(Duration::ZERO).as_nanos() as u64;
     println!(
         "dispatches = {count}, mean = {mean} ns (amortized), p50 = {p50} ns, p99 = {p99} ns, max = {max} ns"
     );
@@ -336,8 +413,12 @@ async fn hotreload_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Res
         args.hotreload_iters
     );
     let mut w = harness.worker(None).await?;
-    w.call_seed().await?;
-    w.call_set_active(1).await?;
+    let db_url = args
+        .database_url
+        .as_deref()
+        .context("hotreload needs --database-url")?;
+    let (fix, _fix_task) = fixture_client(db_url).await?;
+    seed_fixture_flows(&fix).await?;
 
     // Sanity: v1 active, a run executes v1, then flip to v2 and confirm the run
     // executes v2 — proving the flip changes real behavior, not just a pointer.
@@ -355,7 +436,7 @@ async fn hotreload_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Res
     for i in 0..args.hotreload_iters {
         let target = if i % 2 == 0 { 2 } else { 1 };
         let flip = Instant::now();
-        w.call_set_active(target).await?;
+        set_active_flow_version(&fix, FLOW_TENANT, FIXTURE_FLOW_ID, target as i32).await?;
         // Doorbell PoC: re-read the active version until the flip is observed.
         loop {
             if w.call_active_version().await? == target {
@@ -393,10 +474,16 @@ async fn resume_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Result
         "\n## resume — {} kill-mid-run cycles, exactly-one side effect (idempotent)",
         args.resume_iters
     );
-    // Deterministic version for the resume gate.
+    // Deterministic version for the resume gate (host-side fixture, SR2).
+    let db_url = args
+        .database_url
+        .as_deref()
+        .context("resume needs --database-url")?;
+    let (fix, fix_task) = fixture_client(db_url).await?;
+    seed_fixture_flows(&fix).await?;
+    drop(fix);
+    let _ = fix_task.await;
     let mut setup = harness.worker(None).await?;
-    setup.call_seed().await?;
-    setup.call_set_active(1).await?;
 
     let mut clean_kills = 0usize; // epoch trap actually fired
     let mut duplicate_absorbed = 0usize; // side effect committed pre-kill, then re-run absorbed
