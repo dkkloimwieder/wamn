@@ -28,7 +28,7 @@ tracing = { workspace = true }
 # bottleneck a 10k/s bench). Pinned to the exact 0.31 line wash-runtime uses so
 # cargo unifies to a single crate instance (shared global meter provider).
 opentelemetry = { version = "0.31", default-features = false, features = ["logs", "metrics"] }
-opentelemetry_sdk = { version = "0.31", default-features = false, features = ["logs"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["logs"] }
 opentelemetry-otlp = { version = "0.31", default-features = false, features = ["grpc-tonic", "logs"] }
 async-trait = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
