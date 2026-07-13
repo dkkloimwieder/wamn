@@ -15,8 +15,8 @@ Three new pieces, each in the house shape:
 
 | Piece | What it is |
 |---|---|
-| `crates/wamn-f1` | PURE F1 node logic: payload validation (no-float rule), exact-decimal arithmetic + spec evaluation, the parameterized SQL text the DB nodes run, inter-node/response JSON shapes. Unit-tested with no cluster. |
-| `components/webhook-entry` | The sync-webhook ingress: exports `wasi:http/incoming-handler` (deployed like the 4.1b gateway, routed by Host header), imports **only** `wamn:postgres` (2.6-clean), embeds the wamn-runner (5.2) engine and the five F1 node implementations. |
+| `poc/f1` | PURE F1 node logic: payload validation (no-float rule), exact-decimal arithmetic + spec evaluation, the parameterized SQL text the DB nodes run, inter-node/response JSON shapes. Unit-tested with no cluster. |
+| `components/poc-webhook-f1` | The sync-webhook ingress: exports `wasi:http/incoming-handler` (deployed like the 4.1b gateway, routed by Host header), imports **only** `wamn:postgres` (2.6-clean), embeds the wamn-runner (5.2) engine and the five F1 node implementations. |
 | `deploy/flows.sql` | The flow registry's production home (`flows`: tenant, flow_id, version, active, graph_json — the shape the dispatcher's `active_flows_sql` and the flowrunner already read; the a52 smoke's stand-in DDL is retired). Standalone + additive to `run-state.sql`. |
 
 `publish-catalog` grew into the one project-provisioning tool: `--provision`
@@ -139,7 +139,7 @@ trace (`node_runs.input_json`) and the response.
 - `cargo test -p wamn-host` — fixture coherence (burst = 20 receipts, 3
   out-of-spec, 4 holds) + the schema-rewrite guard.
 - **f1bench** (in-cluster Job of record `deploy/f1bench-job.yaml`; local via a
-  throwaway PG) — drives `webhook_entry.wasm` in-proc via ProxyPre and
+  throwaway PG) — drives `poc_webhook_f1.wasm` in-proc via ProxyPre and
   cross-checks through `api_gateway.wasm` over ONE ephemeral schema. Modes:
   `happy` (sync 200 + write-ahead + 4-node trace + persisted rows), `holds`
   (out-of-spec → response holds + `quality_holds` rows + `out-of-spec`-port

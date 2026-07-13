@@ -12,8 +12,8 @@ edition.workspace = true
 
 [dependencies]
 serde_json = "1"
-wamn-node-sdk = { path = "../../crates/wamn-node-sdk" }
-wamn-node-guest = { path = "../../crates/wamn-node-guest" }
+wamn-node-sdk = { path = "../../../crates/wamn-node-sdk" }
+wamn-node-guest = { path = "../../../crates/wamn-node-guest" }
 
 [lib]
 crate-type = ["cdylib"]

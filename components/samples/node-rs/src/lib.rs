@@ -2,7 +2,7 @@
 //! (docs/wamn-node.wit) with three workload modes, driven entirely by the
 //! JSON `config` on the run-context. This is the "composed"/native arm's node
 //! (also usable dynamically, as the Rust-dynamic reference column). Its JS twin
-//! is `components/node-ts`.
+//! is `components/samples/node-ts`.
 //!
 //! Modes (config `{"mode": ..., "wait_ns": N, "iters": N}`):
 //!   noop    — return the input unchanged. Used for the HTTP-hop gate so the

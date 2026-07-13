@@ -346,7 +346,7 @@ fn sql_is_parameterized_and_unqualified() {
 fn catalog_drift_guard() {
     let src = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../wamn-catalog/tests/fixtures/poc-receiving.catalog.json"
+        "/../../crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json"
     ))
     .expect("read poc-receiving catalog fixture");
     let cat: Value = serde_json::from_str(&src).unwrap();

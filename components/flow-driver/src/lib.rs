@@ -1,7 +1,7 @@
 //! S4 composed-arm driver. Walks a linear `hops`-node flow by calling the
 //! imported `wamn:node` handler once per hop, threading each node's output into
 //! the next node's input. `wac plug` binds the handler import to the Rust node
-//! (components/node-rs) to produce a single frozen `flow-composed.wasm`.
+//! (components/samples/node-rs) to produce a single frozen `flow-composed.wasm`.
 
 wit_bindgen::generate!({
     world: "flow-driver",

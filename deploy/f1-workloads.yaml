@@ -1,4 +1,4 @@
-# POC-F1 serving workloads: the webhook-entry sync ingress + an F1 instance of
+# POC-F1 serving workloads: the poc-webhook-f1 sync ingress + an F1 instance of
 # the 4.1 api-gateway, both over the poc_f1 project schema (provisioned by
 # deploy/f1-provision-job.yaml). Same shape as api-gateway-workload.yaml:
 # wasi:http is a built-in (the DynamicRouter routes on the Host header given in
@@ -9,14 +9,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: webhook-entry
+  name: poc-webhook-f1
   namespace: wamn-system
   labels:
-    app: webhook-entry
+    app: poc-webhook-f1
 spec:
   type: ClusterIP
   selector:
-    app: webhook-entry
+    app: poc-webhook-f1
   ports:
     - name: http
       port: 80
@@ -26,7 +26,7 @@ spec:
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:
-  name: webhook-entry
+  name: poc-webhook-f1
   namespace: wamn-system
 spec:
   replicas: 1
@@ -36,7 +36,7 @@ spec:
         hostgroup: default
       kubernetes:
         service:
-          name: webhook-entry
+          name: poc-webhook-f1
       hostInterfaces:
         - namespace: wasi
           package: http
@@ -48,8 +48,8 @@ spec:
           version: "0.1.0"
           interfaces: [types, client]
       components:
-        - name: webhook-entry
-          image: registry.wamn-system.svc.cluster.local:5000/wamn/webhook-entry:dev
+        - name: poc-webhook-f1
+          image: registry.wamn-system.svc.cluster.local:5000/wamn/poc-webhook-f1:dev
           imagePullPolicy: Always
           localResources:
             config:

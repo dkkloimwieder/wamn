@@ -23,7 +23,7 @@
 //! guest languages call, so the I/O floor is identical and the gap on the
 //! I/O-bound flow is pure framework overhead. The production outbound path is
 //! wasi:http (5.6 / wamn-bd5); keeping it a host import keeps S4 free of an echo
-//! service. See `components/node-rs`, `components/node-ts`, `components/
+//! service. See `components/samples/node-rs`, `components/samples/node-ts`, `components/
 //! flow-driver` (+ the `wac`-plugged `flow-composed.wasm`).
 
 use std::collections::HashMap;
@@ -99,7 +99,7 @@ pub struct NodeBenchArgs {
     /// wac-composed frozen flow (flow-driver + node-rs).
     #[arg(long, default_value = "/bench/flow-composed.wasm")]
     pub composed: PathBuf,
-    /// Scaffolding-built zero-import sample node (components/sample-node);
+    /// Scaffolding-built zero-import sample node (components/samples/sample-node);
     /// the 5.4 frozen-contract conformance fixture. Skipped if absent.
     #[arg(long, default_value = "/bench/sample-node.wasm")]
     pub sample: PathBuf,
@@ -829,7 +829,7 @@ async fn serve_connection_shared(sock: TcpStream, node: &mut NodeInstance) -> an
 // sample gate (5.4): frozen-contract conformance of the scaffolding-built node
 // ---------------------------------------------------------------------------
 
-/// Drives `components/sample-node` (built on the `wamn-node-guest`
+/// Drives `components/samples/sample-node` (built on the `wamn-node-guest`
 /// scaffolding over the FROZEN `wamn:node` 0.1 contract) through every
 /// conversion the scaffolding performs, over the real ABI: the five
 /// `node-error` taxonomy variants, port selection (absent = `main`), the

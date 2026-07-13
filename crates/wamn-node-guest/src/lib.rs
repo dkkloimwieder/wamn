@@ -21,7 +21,7 @@
 //!
 //! Every WIT<->SDK conversion this crate performs is a pure function,
 //! unit-tested here and gate-tested end-to-end through real wasm by the
-//! `nodebench` sample mode (`components/sample-node`).
+//! `nodebench` sample mode (`components/samples/sample-node`).
 
 use serde_json::Value;
 use wamn_node_sdk::{Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse};

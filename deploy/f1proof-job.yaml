@@ -1,4 +1,4 @@
-# POC-F1 over-the-network proof: drives the DEPLOYED webhook-entry Service
+# POC-F1 over-the-network proof: drives the DEPLOYED poc-webhook-f1 Service
 # (sync + burst) and the DEPLOYED F1 api-gateway (generated REST) through their
 # operator routes, and audits runs/node_runs/quality_holds in the database.
 # Needs deploy/f1-provision-job.yaml + deploy/f1-workloads.yaml applied first.
@@ -23,7 +23,7 @@ spec:
             [
               "--log-level", "error",
               "f1proof",
-              "--url", "http://webhook-entry.wamn-system.svc.cluster.local:80",
+              "--url", "http://poc-webhook-f1.wamn-system.svc.cluster.local:80",
               "--host", "f1.localhost.direct",
               "--rest-url", "http://api-gateway-f1.wamn-system.svc.cluster.local:80",
               "--rest-host", "api-f1.localhost.direct",

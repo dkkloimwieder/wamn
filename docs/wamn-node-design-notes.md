@@ -122,7 +122,7 @@ SDKs own: binding generation, payload inline/stream duality (same iterator API e
 the SAME `wamn_node_sdk::Node` trait the standard library uses, and
 `wamn_node_guest::export_node!(MyNode)` is the entire componentization
 (binding generation, JSON codec, taxonomy + port + run-context conversion,
-streamed-payload refusal until 5.10). `components/sample-node` is the
+streamed-payload refusal until 5.10). `components/samples/sample-node` is the
 reference node and conformance fixture; the `#[wamn_node]` macro sketch above
 is superseded by the trait + macro pair. The TS `defineNode` SDK is deferred
 to the builder (5.5) / POC-F2 — the S4 `node-ts` fixture already proves the

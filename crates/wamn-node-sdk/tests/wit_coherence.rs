@@ -33,8 +33,8 @@ fn vendored_wit_copies_match_the_frozen_contract() {
     let docs_lines = code_lines(&docs);
 
     let trimmed_paths = [
-        "../../components/node-rs/wit/deps/wamn-node/package.wit",
-        "../../components/node-ts/wit/deps/wamn-node/package.wit",
+        "../../components/samples/node-rs/wit/deps/wamn-node/package.wit",
+        "../../components/samples/node-ts/wit/deps/wamn-node/package.wit",
         "../../components/flow-driver/wit/deps/wamn-node/package.wit",
         "../wamn-node-guest/wit/deps/wamn-node/package.wit",
     ];

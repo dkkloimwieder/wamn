@@ -76,7 +76,7 @@ enum Command {
     Apiproof(apiproof::ApiProofArgs),
     /// Run the POC-F1 receipt-received gates (happy / holds / invalid / burst / rest)
     F1bench(f1bench::F1BenchArgs),
-    /// Run the POC-F1 proof against the deployed webhook-entry + api-gateway over HTTP
+    /// Run the POC-F1 proof against the deployed poc-webhook-f1 + api-gateway over HTTP
     F1proof(f1proof::F1ProofArgs),
 }
 

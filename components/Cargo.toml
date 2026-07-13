@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["api-gateway", "busyloop", "flow-driver", "flowrunner", "hello", "logspewer", "memhog", "node-rs", "pgprobe", "sample-node", "webhook-entry"]
+# Tiering (docs/structure-review.md SR3): the components/ ROOT is the
+# production tier; bench fixtures live under fixtures/, reference/sample
+# nodes under samples/, and POC components carry a `poc-` name prefix.
+members = ["api-gateway", "flow-driver", "flowrunner", "poc-webhook-f1", "fixtures/busyloop", "fixtures/hello", "fixtures/logspewer", "fixtures/memhog", "fixtures/pgprobe", "samples/node-rs", "samples/sample-node"]
 
 [workspace.package]
 version = "0.1.0"

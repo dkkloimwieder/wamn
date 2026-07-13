@@ -130,9 +130,9 @@ Nodes never string-match; the maps are fixed and unit-pinned:
   `RetryPolicy` computation `Plan::apply` makes). A row for a retried or
   edge-less failure would make 5.7 reconstruction resume the run down a path
   the live walk never took. Run failures land in `runs.fail_*` (audit parity
-  with webhook-entry).
+  with poc-webhook-f1).
 - **Retry waits**: a scheduled retry surfaces as `Step::Wait`; this
-  per-invocation driver treats it defensively as a failed run (webhook-entry's
+  per-invocation driver treats it defensively as a failed run (poc-webhook-f1's
   sync rule). Cross-invocation retry scheduling belongs to the queue layer
   (`run_queue.available_at` / `park_sql`) and lands with the guest-claim
   rewire (wamn-fqg.4).

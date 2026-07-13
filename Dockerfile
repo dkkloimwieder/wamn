@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compil
 WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+COPY poc ./poc
 # The canonical deploy DDL (run-state.sql / flows.sql) is include_str!'d by
 # publish-catalog's provisioning helpers — single source of truth, no clones.
 COPY deploy ./deploy
@@ -29,7 +30,7 @@ COPY components/target/wasm32-wasip2/release/flowrunner.wasm /bench/flowrunner.w
 # JS/JCO node (built by `jco componentize`, so it lives outside target/).
 COPY components/target/wasm32-wasip2/release/node_rs.wasm /bench/node-rs.wasm
 COPY components/target/wasm32-wasip2/release/flow_composed.wasm /bench/flow-composed.wasm
-COPY components/node-ts/node-ts.wasm /bench/node-ts.wasm
+COPY components/samples/node-ts/node-ts.wasm /bench/node-ts.wasm
 # 5.4 frozen-contract conformance fixture: the scaffolding-built zero-import
 # sample node (nodebench --mode sample / the default `all`).
 COPY components/target/wasm32-wasip2/release/sample_node.wasm /bench/sample-node.wasm
@@ -40,6 +41,6 @@ COPY components/target/wasm32-wasip2/release/logspewer.wasm /bench/logspewer.was
 COPY components/target/wasm32-wasip2/release/api_gateway.wasm /bench/api-gateway.wasm
 # POC-F1 sync-webhook ingress (exports wasi:http/incoming-handler, imports
 # wamn:postgres, embeds the wamn-runner engine; the f1bench gate drives it).
-COPY components/target/wasm32-wasip2/release/webhook_entry.wasm /bench/webhook-entry.wasm
+COPY components/target/wasm32-wasip2/release/poc_webhook_f1.wasm /bench/poc-webhook-f1.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]

@@ -8,4 +8,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
-wamn-flow = { path = "../wamn-flow" }
+wamn-flow = { path = "../../crates/wamn-flow" }

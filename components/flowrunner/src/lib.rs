@@ -656,7 +656,7 @@ fn will_error_route(err: &NodeError, d: &Dispatch) -> bool {
 
 /// Record an error-ROUTED node as an emission on the `error` port carrying
 /// the same `{"error": {...}}` payload the engine routes — exactly what 5.7
-/// reconstruction replays (webhook-entry's shape verbatim); the taxonomy
+/// reconstruction replays (poc-webhook-f1's shape verbatim); the taxonomy
 /// lands in `error_kind`/`error_detail` for the run history.
 fn record_error(
     run_id: &str,
@@ -699,7 +699,7 @@ fn record_error(
     Ok(())
 }
 
-/// Record the run's failure verdict (audit parity with webhook-entry).
+/// Record the run's failure verdict (audit parity with poc-webhook-f1).
 fn mark_failed(run_id: &str, kind: &str, node: &str, reason: &str) -> Result<(), String> {
     client::execute(
         "UPDATE runs SET status = 'failed', fail_kind = $2, fail_node = $3, fail_reason = $4 \
@@ -774,7 +774,7 @@ fn dispatch_node(
             Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
         }
         // Passthrough terminal — identical to the standard library's respond
-        // (this driver has no HTTP response to answer; webhook-entry does).
+        // (this driver has no HTTP response to answer; poc-webhook-f1 does).
         "respond" => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
         "pg-write" => {
             pg_write(run_id, node_index(flow, &d.node), value_str(&d.payload))?;
@@ -895,7 +895,7 @@ fn execute(
                 });
             }
             Step::Done(status) => {
-                // Audit parity with webhook-entry: the failure verdict lands in
+                // Audit parity with poc-webhook-f1: the failure verdict lands in
                 // runs.fail_* before the driver reports the error.
                 if let Some(f) = st.failure() {
                     let _ = mark_failed(run_id, fail_kind_sql(&f.kind), &f.node, &f.detail.message);
@@ -905,7 +905,7 @@ fn execute(
             // Cross-invocation retry scheduling belongs to the queue layer
             // (run_queue.available_at / park_sql — the fqg.4 guest-claim
             // rewire); this per-invocation driver treats a scheduled retry
-            // wait defensively, like webhook-entry's sync path.
+            // wait defensively, like poc-webhook-f1's sync path.
             Step::Wait { node, .. } => return Err(format!("unexpected retry wait at {node}")),
             Step::Dispatch(d) => {
                 match dispatch_node(&d, run_id, &flow, kill_after_write, &mut http_status)? {

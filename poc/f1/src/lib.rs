@@ -1,5 +1,5 @@
 //! POC-F1 `receipt-received` node semantics — the PURE logic behind the
-//! `webhook-entry` component's F1-shaped nodes (`validate-receipt`,
+//! `poc-webhook-f1` component's F1-shaped nodes (`validate-receipt`,
 //! `upsert-receipt`, `evaluate-specs`, `create-holds`, `respond`).
 //!
 //! The wamn-api split, applied to flow nodes: everything that does not need the
@@ -31,7 +31,7 @@ pub use shapes::{
     EvalBranchOut, HoldEntry, LineSpec, OutOfSpec, UpsertOut, ValidateOut, ok_body, respond_status,
 };
 
-/// Node types the F1 flow uses and the `webhook-entry` component implements.
+/// Node types the F1 flow uses and the `poc-webhook-f1` component implements.
 /// `deploy/f1-flow.json` must reference only these (drift-guarded in tests).
 pub const NODE_TYPES: [&str; 5] = [
     "validate-receipt",

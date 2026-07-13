@@ -188,13 +188,13 @@ kubectl -n wamn-system logs -f job/flowbench
 #   wac: cargo install wac-cli             (composed frozen flow)
 # node-rs + flow-driver build with the other guests; the JS node and the wac
 # composition are extra steps:
-jco componentize components/node-ts/node.js --wit components/node-ts/wit \
+jco componentize components/samples/node-ts/node.js --wit components/samples/node-ts/wit \
   --world-name node-bench --disable http --disable fetch-event \
-  -o components/node-ts/node-ts.wasm
+  -o components/samples/node-ts/node-ts.wasm
 REL=components/target/wasm32-wasip2/release
 wac plug $REL/flow_driver.wasm --plug $REL/node_rs.wasm -o $REL/flow_composed.wasm
 ./target/release/wamn-host --log-level error nodebench \
-  --node-rs $REL/node_rs.wasm --node-ts components/node-ts/node-ts.wasm \
+  --node-rs $REL/node_rs.wasm --node-ts components/samples/node-ts/node-ts.wasm \
   --composed $REL/flow_composed.wasm --sample $REL/sample_node.wasm --mode all
 # In-cluster gate of record (real cross-pod hop via the serve-node Service; the
 # gap/config gates run in-pod; no cpu limit — the S2 CFS lesson):
@@ -254,7 +254,7 @@ REL=components/target/wasm32-wasip2/release
   --component $REL/pgprobe.wasm --component $REL/node_rs.wasm \
   --component $REL/flow_composed.wasm --component $REL/hello.wasm \
   --component $REL/api_gateway.wasm \
-  --component $REL/webhook_entry.wasm \
+  --component $REL/poc_webhook_f1.wasm \
   --component $REL/sample_node.wasm  # webhook/api: {wamn:postgres,wasi:http}; 5.4 sample node: ZERO egress
 
 cargo clippy -p wamn-host --all-targets && cargo fmt -p wamn-host --check
@@ -340,7 +340,7 @@ cargo clippy -p wamn-node-sdk -p wamn-nodes --all-targets \
 # (wit-bindgen wrapped via pub_export_macro; NoCapsCtx — the contract's minimal
 # `world node` imports NOTHING, so the node is physically incapable of I/O);
 # SEPARATE crate because the purity lint pins the SDK's deps == {serde_json}.
-# NEW components/sample-node = the reference custom node AND the frozen-contract
+# NEW components/samples/sample-node = the reference custom node AND the frozen-contract
 # conformance fixture (the POC-F2 seed). NEW crates/wamn-node-manifest = the
 # wamn.node.manifest OCI annotation model (design-note 8: display name,
 # config/input/output JSON Schemas, ordering-policy support, output ports
@@ -803,7 +803,7 @@ kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
 kubectl -n wamn-system logs job/apiproof
 
 # [POC-F1] receipt-received sync flow end-to-end (P1 exit, wamn-067) — the D15
-# sync path LIVE: NEW components/webhook-entry (exports wasi:http/incoming-
+# sync path LIVE: NEW components/poc-webhook-f1 (exports wasi:http/incoming-
 # handler, imports wamn:postgres ONLY — 2.6-clean) matches POST /receipts
 # against the ACTIVE sync-webhook flow (flows registry, re-read per request),
 # WRITE-AHEADS a runs row (server-minted run id, status 'dispatched',
@@ -824,7 +824,7 @@ kubectl -n wamn-system logs job/apiproof
 # in-request; infra-failure bodies are GENERIC (pg detail stays in the run
 # history, never echoed to the caller; create-holds is ONE tx — no partial
 # holds; flows read is ORDER BY flow_id). PURE logic
-# in NEW crates/wamn-f1 (decimal/payload/evaluate/sql/shapes; does NOT decide
+# in NEW poc/f1 (decimal/payload/evaluate/sql/shapes; does NOT decide
 # D8 — no raw-SQL node ships; 5.3 stays wamn-r13-blocked). STORAGE: NEW
 # deploy/flows.sql gives the flow registry its production home (ADDITIVE to
 # run-state.sql; the a52 stand-in shape, now canonical); publish-catalog is the
@@ -845,12 +845,12 @@ kubectl -n wamn-system logs job/apiproof
 # 5.14 janitor only sees QUEUED runs); auth = tenant claim (4.2 pending).
 cargo test -p wamn-f1        # decimal/payload/evaluate/shapes + catalog & flow drift-guards
 cargo clippy -p wamn-f1 --all-targets && cargo fmt -p wamn-f1 --check
-(cd components && cargo build --release --target wasm32-wasip2 -p webhook-entry)
-cargo clippy --manifest-path components/webhook-entry/Cargo.toml --release --target wasm32-wasip2 \
-  && cargo fmt --manifest-path components/webhook-entry/Cargo.toml --check
+(cd components && cargo build --release --target wasm32-wasip2 -p poc-webhook-f1)
+cargo clippy --manifest-path components/poc-webhook-f1/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/poc-webhook-f1/Cargo.toml --check
 cargo test -p wamn-host      # f1fixture coherence (burst = 20 receipts / 3 out-of-spec /
                              # 4 holds) + the publish-catalog schema-rewrite drift-guard
-# f1bench GATE (in-proc ProxyPre: webhook-entry + the 4.1 api-gateway over ONE
+# f1bench GATE (in-proc ProxyPre: poc-webhook-f1 + the 4.1 api-gateway over ONE
 # ephemeral schema wamn_f1_bench, provisioned via the publish-catalog helpers;
 # modes happy/holds/invalid/burst/rest — sync 200s, write-ahead audit, node_runs
 # traces incl the error port, quality_holds rows, RLS isolation, generated-REST
@@ -861,7 +861,7 @@ docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
 REL=components/target/wasm32-wasip2/release
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
   ./target/release/wamn-host --log-level error f1bench \
-  --webhook-entry $REL/webhook_entry.wasm --api-gateway $REL/api_gateway.wasm \
+  --webhook-entry $REL/poc_webhook_f1.wasm --api-gateway $REL/api_gateway.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
 # In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS
 # lesson; ephemeral schema => shared-PG safe; bench Jobs run SEQUENTIALLY):
@@ -869,11 +869,11 @@ kubectl -n wamn-system apply -f deploy/f1bench-job.yaml
 kubectl -n wamn-system logs -f job/f1bench
 # DEPLOYED proof over real networking: push the component (via the 4.1b
 # registry port-forward), provision poc_f1, deploy the two workloads
-# (webhook-entry routed f1.localhost.direct + an api-gateway instance routed
+# (poc-webhook-f1 routed f1.localhost.direct + an api-gateway instance routed
 # api-f1.localhost.direct, both claiming wamn.schema=poc_f1), then f1proof
 # (sync + burst + DB audit + REST):
-wash push localhost:5000/wamn/webhook-entry:dev \
-  components/target/wasm32-wasip2/release/webhook_entry.wasm --insecure
+wash push localhost:5000/wamn/poc-webhook-f1:dev \
+  components/target/wasm32-wasip2/release/poc_webhook_f1.wasm --insecure
 kubectl -n wamn-system create configmap f1-fixtures \
   --from-file=poc-receiving.catalog.json=crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json \
   --from-file=f1-flow.json=deploy/f1-flow.json \

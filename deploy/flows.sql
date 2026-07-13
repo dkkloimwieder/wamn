@@ -2,7 +2,7 @@
 -- of a project's flow graphs: `graph_json` is the canonical wamn-flow (5.1)
 -- document, `active` marks the version the runtime serves. Consumers: the
 -- trigger dispatcher's registry sweep (`active_flows_sql`, crates/wamn-run-queue
--- — cron + row-event flows), the webhook-entry ingress (sync webhook route
+-- — cron + row-event flows), the poc-webhook-f1 ingress (sync webhook route
 -- matching), and the flowrunner guest (`load_active_flow`). Registration is the
 -- deploy tooling's job (`wamn-host publish-catalog --flow`, which also enforces
 -- that the column `flow_id` equals the graph's embedded flow-id — run ids are

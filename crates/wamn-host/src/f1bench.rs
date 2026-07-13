@@ -1,5 +1,5 @@
 //! f1bench — the POC-F1 gate (wamn-067, the P1 exit criterion). Drives the
-//! `webhook-entry` component in-proc through `wasi:http/incoming-handler`
+//! `poc-webhook-f1` component in-proc through `wasi:http/incoming-handler`
 //! (ProxyPre, the apibench pattern) against a real Postgres, and cross-checks
 //! the results through the 4.1 `api-gateway` component over the SAME schema —
 //! the generated-REST half of "end-to-end via catalog API + generated REST".
@@ -53,8 +53,8 @@ use crate::publish_catalog;
 
 #[derive(Debug, Args)]
 pub struct F1BenchArgs {
-    /// Path to webhook_entry.wasm (the sync-webhook ingress component).
-    #[arg(long, default_value = "/bench/webhook-entry.wasm")]
+    /// Path to poc_webhook_f1.wasm (the sync-webhook ingress component).
+    #[arg(long, default_value = "/bench/poc-webhook-f1.wasm")]
     pub webhook_entry: PathBuf,
 
     /// Path to api_gateway.wasm (the 4.1 generated-REST component, for the

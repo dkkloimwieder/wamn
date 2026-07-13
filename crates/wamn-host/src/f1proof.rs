@@ -1,5 +1,5 @@
 //! f1proof — the POC-F1 over-the-network proof (the apiproof pattern): drives
-//! the DEPLOYED `webhook-entry` WorkloadDeployment through its Service with a
+//! the DEPLOYED `poc-webhook-f1` WorkloadDeployment through its Service with a
 //! hand-rolled HTTP/1.1 client, cross-checks the holds through the DEPLOYED
 //! F1 api-gateway instance (generated REST over the same `poc_f1` schema), and
 //! audits the write-ahead runs / node_runs / quality_holds directly in the
@@ -20,12 +20,12 @@ use crate::f1fixture::{BURST_HOLDS, burst, in_spec_receipt, receipt};
 
 #[derive(Debug, Args)]
 pub struct F1ProofArgs {
-    /// The deployed webhook-entry Service, e.g.
-    /// http://webhook-entry.wamn-system.svc.cluster.local:80
+    /// The deployed poc-webhook-f1 Service, e.g.
+    /// http://poc-webhook-f1.wamn-system.svc.cluster.local:80
     #[arg(long)]
     pub url: String,
 
-    /// Host header routing to the webhook-entry component.
+    /// Host header routing to the poc-webhook-f1 component.
     #[arg(long, default_value = "f1.localhost.direct")]
     pub host: String,
 

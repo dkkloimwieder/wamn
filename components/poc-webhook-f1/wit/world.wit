@@ -1,6 +1,6 @@
-package wamn:webhook-entry@0.1.0;
+package wamn:poc-webhook-f1@0.1.0;
 
-world webhook-entry {
+world poc-webhook-f1 {
   import wamn:postgres/types@0.1.0;
   import wamn:postgres/client@0.1.0;
   // Serving side only: the incoming-handler `handle` signature references the

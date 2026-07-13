@@ -1,4 +1,4 @@
-//! webhook-entry — the sync-webhook ingress component (POC-F1, D15 sync path).
+//! poc-webhook-f1 — the sync-webhook ingress component (POC-F1, D15 sync path).
 //!
 //! Exports `wasi:http/incoming-handler` (deployed exactly like the 4.1b
 //! api-gateway: one WorkloadDeployment per project, routed by Host header) and
@@ -21,14 +21,14 @@
 //!
 //! The F1 node semantics (`validate-receipt` / `upsert-receipt` /
 //! `evaluate-specs` / `create-holds` / `respond`) are the thin DB shell around
-//! the PURE crates/wamn-f1 logic — see that crate and docs/poc-f1.md. The
+//! the PURE poc/f1 logic — see that crate and docs/poc-f1.md. The
 //! tenant and schema come from the host-injected claims (`wamn.tenant` /
 //! `wamn.schema` via localResources.config): the guest never chooses either.
 
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
-        world: "webhook-entry",
+        world: "poc-webhook-f1",
         path: "wit",
         generate_all,
     });

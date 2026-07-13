@@ -1,4 +1,4 @@
-//! S5 logging-capture bench guest (`components/logspewer`).
+//! S5 logging-capture bench guest (`components/fixtures/logspewer`).
 //!
 //! Imports `wasi:logging/logging` and exports two entry points the `logbench`
 //! harness drives (docs/p0-exit-criteria.md S5):

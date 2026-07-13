@@ -1,4 +1,4 @@
-# POC-F1 in-cluster gate of record: f1bench drives webhook_entry.wasm +
+# POC-F1 in-cluster gate of record: f1bench drives poc_webhook_f1.wasm +
 # api_gateway.wasm in-proc (ProxyPre) against the shared postgres, provisioning
 # its own EPHEMERAL schema (wamn_f1_bench) through the superuser url — no
 # shared-schema mutation. Co-located with postgres, NO cpu limit (the S2 CFS
@@ -35,7 +35,7 @@ spec:
             [
               "--log-level", "error",
               "f1bench",
-              "--webhook-entry", "/bench/webhook-entry.wasm",
+              "--webhook-entry", "/bench/poc-webhook-f1.wasm",
               "--api-gateway", "/bench/api-gateway.wasm",
               "--mode", "all",
             ]
