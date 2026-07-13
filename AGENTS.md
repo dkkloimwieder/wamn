@@ -898,3 +898,36 @@ deployed by the runtime-operator Helm chart with custom image values in
 `deploy/`); `components/` holds wasm32-wasip2 guest fixtures; our wash-runtime
 modifications are carried commits on the fork (`docs/wash-runtime-fork.md`).
 
+## Code Conventions
+
+House rules (docs/structure-review.md SR6), each with its load-bearing reason:
+
+1. **Pure core / effect shell.** Decision logic is clock-free, connection-free,
+   unit-testable; effects (DB, wasm, network, time) live in drivers. `now` is a
+   passed-in value, never read inside a decision crate. (wamn-runner,
+   wamn-run-store, wamn-run-queue, wamn-f1, wamn-api all comply; new subsystems
+   follow.)
+2. **Errors are enums mirroring WIT variants,** folded mechanically by engines
+   and gates — a deliberate deviation from struct-error guidance, justified
+   because the WIT boundary dictates variant shape and the runner's retry
+   semantics consume it. Keep it a decision, not a habit: new error types get
+   variants per failure mode, never `Error(String)`.
+3. **SQL is pure text builders + `$n` params in crates;** whoever holds the
+   connection executes. Values are ALWAYS `$n` binds; identifiers are ALWAYS
+   pinned or allowlist-quoted. No inline SQL in components or drivers (SR2
+   completes the regime for run-state).
+4. **Components are shells** — ≤ a few hundred lines of dispatch glue binding
+   WIT imports/exports to crate logic; logic lives in crates (the wamn-api /
+   wamn-runner precedent).
+5. **The bench/fixture/proof triple is the gate pattern:** a host-side gate
+   subcommand + wasm fixtures + (when deployed) a proof Job, asserted against a
+   real backend and mutation-tested where load-bearing. Gates live in the gates
+   binary, shared measurement code in the gate harness (SR1).
+6. **Naming:** the `wamn_` SQL-identifier prefix is platform-reserved
+   (R9a/wamn-66x); env vars are `WAMN_*`; POC components carry a `poc-` prefix
+   and POC crates live under `poc/` (SR3) — the tree states the tier.
+7. **Drift guards over duplication bans:** where two representations must
+   coexist (WIT ↔ SDK mirror, docs WIT ↔ vendored copies, schema literals ↔
+   DDL files, fixture consts ↔ committed JSON), a coherence/drift test pins
+   them — copy the pattern (`wit_coherence.rs`, `schema_drift`, storage
+   drift-guards) rather than banning the second copy.
