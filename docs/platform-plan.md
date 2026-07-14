@@ -23,11 +23,13 @@ Working name: **"Wamn"** (placeholder). An opinionated n8n/Node-RED-style platfo
 
 **Tenancy:** shared multi-tenant cluster; isolation via K8s namespaces + wasmCloud `host-group` per tier + Postgres RLS + per-tenant DB roles. Optional dedicated host-groups/clusters for premium/regulated clients.
 
+**Environments & control-plane identity:** the control plane keys on the **`(org, project, env)` triple** — the canonical identity every subsystem speaks (registry rows, provisioning, subdomain routing, dispatcher registration, promotion tooling). The default env set is **`dev` / `canary` / `prod`**: canary lives prod-side (prod-shaped validation deliberately sharing prod's failure domain), preview/scratch envs are dev-side and disposable. Routing is *derived* from the triple, never parsed from a provisioned name — `<project>--<env>.<org>` under the platform base domain. Placement follows the four-tier Postgres topology (D6): the **T1 control-plane system cluster** holds the registry and control-plane state (references-only, request-path-free), org data lives on **T2** prod/dev cluster pairs (with **T3** trials pool and **T4** dedicated-per-env). The topology note is the source of truth — see `docs/postgres-topology.md` and the D6 row below.
+
 ---
 
 ## Epic 1 — Platform Foundation & Infrastructure
 
-Goal: reproducible cluster with wasmCloud 2.x operator, custom host image, CI/CD, environments.
+Goal: reproducible cluster with wasmCloud 2.x operator, custom host image, CI/CD, environments, and the **T1 control-plane system cluster** (D6 four-tier topology — provisioned here by Helm/IaC because it cannot be provisioned by the provisioner it backs).
 
 - **1.1** Reference cluster IaC (Terraform/Pulumi): EKS/GKE + kind/k3d for local dev with the documented NodePort 30950→80 mapping.
 - **1.2** Deploy `runtime-operator` via Helm (OCI chart); pin versions; values overlays per env; separate control-plane vs data-plane NATS URLs.
@@ -54,7 +56,7 @@ Goal: users extend the system schema visually; changes are safe, versioned, and 
 - **3.1** Metadata model: entity/field/relation/index/constraint definitions stored in catalog tables; system entities flagged read-only-structure but extensible (custom columns on `users`, etc.).
 - **3.2** DDL compiler: metadata diff → migration plan → reviewed/applied DDL (additive by default; destructive changes require explicit confirmation + backup checkpoint).
 - **3.3** Visual schema designer UI: ERD canvas, field type palette (incl. industrial-friendly types: timestamps w/ tz, unit-bound quantities backed by exact decimal (`numeric`) — floats disallowed for material quantities/formulations — enums), relation drawing, validation rules. Catalog expressiveness must cover what industrial modules need: composite uniqueness constraints and hierarchical/closure relations (genealogy, asset trees) — neutral primitives in core, opinionated models in modules (D14).
-- **3.4** Schema versioning & environments: draft → staged → applied; export/import (JSON) for promotion between dev/prod projects.
+- **3.4** Schema versioning & environments: draft → staged → applied; export/import (JSON) for promotion between the `(org, project, env)` triples of the *same application* (canary/prod share a failure domain; dev is its own recovery domain). Promotion tooling keys on the triple to know which project-envs are the same app; version numbers stay globally unique per catalog, so environment is an attribute, not identity. **This is the plan text; the `wamn-schema` crate amendment for the full triple + the `canary` env is `wamn-q3n.5`.**
 - **3.5** RLS policy builder: per-entity access rules tied to roles (row ownership, tenant scoping) compiled to Postgres RLS.
 - **3.6** Seed-data & fixtures tooling.
 
@@ -108,7 +110,7 @@ Goal: each project ships a web app served by the platform.
 
 - **6.1** Static-site server component: serves built SPA assets from blobstore/OCI artifact; SPA fallback routing; cache headers.
 - **6.2** Build pipeline: user uploads repo/zip or connects Git → builder service produces assets + optional SSR component → publishes as OCI artifact → `WorkloadDeployment` rollout. **Same threat class as custom-node builds (5.5):** frontend builds run arbitrary `npm install` — isolated ephemeral build sandboxes, no cluster credentials, egress-restricted registry proxy, resource/time limits.
-- **6.3** Routing/domains: per-project subdomain (`{project}.wamn.example`), custom domains + TLS (cert-manager), Ingress/Gateway API integration with operator-managed EndpointSlices.
+- **6.3** Routing/domains: per-project-env subdomain **derived from the `(org, project, env)` triple** (`<project>--<env>.<org>.wamn.example` — derived, never parsed from a provisioned name), custom domains + TLS (cert-manager), Ingress/Gateway API integration with operator-managed EndpointSlices.
 - **6.4** Starter templates: admin dashboard, operator HMI-style dashboard, form apps — pre-wired to the generated TS SDK and auth. These are the v1 answer to "no UI builder yet": clone → customize → push.
 - **6.5** SDK polish is the priority given BYO-frontend v1: typed TS client, auth helpers, live-query hooks (outbox → dispatcher → NATS → SSE bridge; same event spine as triggers, no DB listeners).
 - **6.6** *(Future epic — UI builder)* Design the metadata catalog and SDK now so a drag-and-drop UI builder can later emit apps against the same generated API; capture layout/page metadata tables in the catalog schema from day one (empty in v1) to avoid a migration cliff.
@@ -130,7 +132,7 @@ Goal: the reason manufacturing clients pick this over vanilla n8n. **v0 ships wi
 
 ## Epic 8 — Identity, Security & Multi-Tenancy
 
-- **8.1** Platform IdP: OIDC (bring-your-own SSO for enterprise) + local users; sessions/JWT issuance; maps to system `users`/`roles`. Includes **platform RBAC** (distinct from application roles): per-project builder/admin/viewer/deployer roles governing who may edit schemas, edit flows, manage credentials, and deploy — enforced by the control plane and recorded in audit (8.6).
+- **8.1** Platform IdP: OIDC (bring-your-own SSO for enterprise) + local users; sessions/JWT issuance; maps to system `users`/`roles`. Includes **platform RBAC** (distinct from application roles): per-project builder/admin/viewer/deployer roles governing who may edit schemas, edit flows, manage credentials, and deploy — enforced by the control plane and recorded in audit (8.6). **Platform RBAC state lives on the T1 system cluster; application users are per-project, in each project-env's own system schema** (`docs/postgres-topology.md` §T1) — two deliberately distinct role planes.
 - **8.2** Tenant isolation model: namespace-per-tenant, host-group tiers, per-tenant DB roles + RLS, per-workload `hostInterfaces` allowlists, `allowedHosts` egress policy defaults (deny-all).
 - **8.3** SPIFFE/SPIRE workload identity rollout for host↔operator and service↔service auth.
 - **8.4** Partitioned NATS credentials (ctl vs rpc JWTs/seeds) per environment; no plaintext auth.
@@ -164,9 +166,9 @@ Goal: three first-class signals (traces, logs, metrics), correlated by run ID, w
 
 ## Epic 10 — Managed-Service Control Plane & GTM Readiness
 
-- **10.1** Wamn control-plane API + admin console: tenant/project provisioning (namespace, DB, registry creds, DNS) as an orchestrated saga.
+- **10.1** Wamn control-plane API + admin console: org/project/**env** provisioning (namespace, DB, registry creds, DNS) as an orchestrated saga keyed by the `(org, project, env)` triple; provisioning splits into `provision-org` + `provision-project-env` (D6, `docs/postgres-topology.md`). **Saga state (exactly-once, resumable) lives in the T1 system DB** (`provisioning.sagas`, `deploy/system-schema.sql`), not etcd.
 - **10.2** Plans/quotas enforcement (flows, executions/mo, DB size, edge nodes); billing integration.
-- **10.3** Backup/restore & project export (schema + flows + data) — critical for industrial procurement.
+- **10.3** Backup/restore & project export (schema + flows + data) — critical for industrial procurement. The export artifact is the **per-project-env logical dump** (`pg_dump -Fd` → object storage) that also delivers tenant-scoped restore-to-last-dump; native per-customer PITR covers T2/T4 (D6 backup architecture, `docs/postgres-topology.md`). Reshaped WAL/PITR work is `wamn-e1g`.
 - **10.4** *(Deferred, post-v1)* On-prem/air-gapped distribution profile: single-cluster installer, private registry mirroring, `--allowed-insecure` handling, license enforcement. Design constraint for v1: keep the control plane free of SaaS-only dependencies (no hard AWS-service coupling) so this stays feasible.
 - **10.5** Docs, quickstarts, 2 reference solutions: #1 = the POC (see `poc-material-receiving.md` — built once as the P1/P2 acceptance vehicle, shipped twice); #2 = OEE dashboard (post-GA, MQTT tranche showcase).
 
@@ -175,14 +177,14 @@ Goal: three first-class signals (traces, logs, metrics), correlated by run ID, w
 Goal: testing as a native platform primitive, not a bolt-on. Architectural levers: the capability boundary doubles as the mock boundary (swap host plugins, not code), and flows + run history are already data (fixtures for free).
 
 - **11.1** Test host: `wash-runtime` build registering test-double plugins — ephemeral Postgres (per-test schema cloned from a template with system schema + seed data), stub/recording `wasi:http` outgoing handler, virtualized `wasi:clocks` (instant delays, fast-forwardable cron). Same runner binary as prod.
-- **11.2** Test cases as catalog data: versioned with the flow they test; a flow version and its suite promote together between environments.
+- **11.2** Test cases as catalog data: versioned with the flow they test; a flow version and its suite promote together between the `(org, project, env)` environments of the same application (the 3.4 promotion tooling).
 - **11.3** Record-and-replay fixtures: pin any run (from 9.6 capture) as a test case — secret redaction, timestamp/ID normalization, ignore-rules for volatile fields.
 - **11.4** Assertion library: node output matchers, final DB-state assertions, egress spies ("exactly these outbound calls, nothing else" — doubles as a security regression test), error-path assertions.
 - **11.5** Custom-node unit tests: user-supplied cases against the pure `run(ctx, input)` contract; executed by the builder service as a publish gate.
 - **11.6** Test execution UX: run suite from the flow editor with node-level pass/fail overlay on the canvas; branch/edge coverage indicator on the flow graph.
 - **11.7** Publish gates & policy: per-project rules (e.g., "prod deploys require green suite"); results recorded in audit log (8.6) — the compliance/change-control story for industrial clients.
 - **11.8** Schema-change impact analysis: catalog dependency graph (flow ↔ entity ↔ generated API) identifies affected flows when a migration is staged (3.2) and auto-runs their suites before DDL applies; report failing assertions in the schema designer.
-- **11.9** *(Later)* Ephemeral preview environments: full project clone (schema + flows + masked seed data) per branch/PR for integration testing.
+- **11.9** *(Later)* Ephemeral preview environments: full project clone (schema + flows + masked seed data) per branch/PR for integration testing. Preview envs are **dev-side and disposable** — they resolve to the org's dev cluster (T2) or the trials pool (T3), never prod's recovery domain (D6, `docs/postgres-topology.md` §Environments).
 
 ---
 
