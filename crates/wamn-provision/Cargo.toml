@@ -12,6 +12,13 @@ license.workspace = true
 # provisioning tool, not a published contract.
 serde_json = "1"
 
+# wamn-q3n.6 provision-org: the org Cluster-PAIR renderer takes the registry's
+# Org / Tier / Side vocabulary and derives cluster names via `cluster_name`, so
+# the rendered clusters and the org's registry.orgs row name the same clusters.
+# A lean pure→pure edge (wamn-registry deps serde + serde_json only) — unlike
+# wamn-ddl, it pulls in no schemars/catalog closure.
+wamn-registry = { path = "../wamn-registry" }
+
 # NO DB / K8s / tokio / clock dependency: the builders are pure text and the
 # renderers are pure JSON. The `provision-project` driver (wamn-host) holds the
 # tokio_postgres connection; the optional live-apply gate (tests/provision.rs)

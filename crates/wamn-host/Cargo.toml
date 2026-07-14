@@ -46,6 +46,10 @@ wamn-ddl = { path = "../wamn-ddl" }
 # 2.3 provision-project: the pure CREATE DATABASE / role / GRANT CONNECT builders
 # + project-id naming + credential Secret rendering the subcommand drives.
 wamn-provision = { path = "../wamn-provision" }
+# wamn-q3n.6 provision-org: the control-plane registry model — Org / Tier / the
+# cluster-name derivation the org-pair renderer shares with the registry row, and
+# the registry.orgs upsert SQL (SR2 single-source) the subcommand writes.
+wamn-registry = { path = "../wamn-registry" }
 # 5.14 queuebench: the pure SKIP LOCKED claim / lease / janitor SQL builders +
 # decision logic the durable-queue gates drive over tokio_postgres.
 wamn-run-queue = { path = "../wamn-run-queue" }

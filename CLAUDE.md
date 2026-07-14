@@ -671,6 +671,68 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn
   -tAc "SELECT schemaname||'.'||tablename FROM pg_tables \
         WHERE schemaname IN ('registry','provisioning') ORDER BY 1;"  # 5 control-plane tables
 
+# [D6/wamn-q3n.6] provision-org — render the T2 org Cluster PAIR (prod/dev) +
+# register the org (crates/wamn-provision org.rs renderer + crates/wamn-registry
+# cluster_name/sql.rs + crates/wamn-host provision-org subcommand). The four-tier
+# split of provision-project: a PAYING org (T2 standard / T4 dedicated) is placed
+# on a CNPG Cluster PAIR — <org>-prod (HA per tier: standard 2 / dedicated 3
+# instances, pod anti-affinity spread, holds prod+canary) + <org>-dev (ONE
+# hibernation-managed instance: the cnpg.io/hibernation annotation set 'off' so it
+# comes up ready, the off-hours scheduler flips it 'on'; holds dev/preview, its
+# own recovery domain). NEW crates/wamn-provision/src/org.rs = the PURE renderer
+# render_org_cluster_pair(&Org)->(prod CR, dev CR) as serde_json::Value (the
+# render_secret_manifest precedent; both carry enableSuperuserAccess + non-TLS
+# pg_hba + NO cpu limit [S2 CFS lesson] + NO backup stanza [deferred wamn-e1g] +
+# a neutral app/app initdb; a trials tier has no pair -> ProvisionError::
+# TierHasNoDedicatedPair) + prod_instances(tier). Cluster NAMES come from the SR2
+# single-source wamn_registry::cluster_name(org,side)=<org>-prod/<org>-dev +
+# Org::for_pair, so the rendered clusters and the registry row name the SAME
+# clusters (what resolve() relies on). NEW crates/wamn-registry/src/sql.rs
+# upsert_org_sql() = registry.orgs INSERT ... ON CONFLICT (id) DO UPDATE ($n
+# params, applied AS wamn_system; SR2 registry-SQL-with-the-model), drift-guarded
+# vs system-schema.sql columns + a live idempotent-upsert proof spliced into the
+# .3 storage gate. NEW crates/wamn-host provision-org subcommand (imperative
+# shell, the provision-project precedent): validate the one-org registry, render,
+# emit the two CRs (--emit-prod/--emit-dev, - = stdout), and idempotently record
+# the org row via --system-database-url/WAMN_SYSTEM_ADMIN_URL (SET ROLE
+# wamn_system). RENDERER + DB WRITER only — the runbook/Job kubectl-applies the
+# CRs (no K8s client, the Secret precedent). SCOPE: cluster shape + registry row
+# ONLY — per-project-env DB/role (the CNPG Database CRD + managed.roles, RECORDED
+# as the .7 mechanism) = wamn-q3n.7; backup = wamn-e1g; provisionbench org
+# extension = wamn-q3n.8; T3 = wamn-q3n.9. Mutants killed (apply/test/restore,
+# debug builds): tier->instances swap / dev-missing-hibernation / prod-missing-HA
+# affinity / org-row ON CONFLICT dropped (live gate) / cluster_name side swap —
+# each fails a NAMED test. docs/provisioning.md §provision-org +
+# docs/postgres-topology.md §Provisioning rework.
+cargo test -p wamn-registry -p wamn-provision -p wamn-host   # renderer shape + org-row SQL + drift/subcommand units
+cargo clippy -p wamn-registry -p wamn-provision -p wamn-host --all-targets \
+  && cargo fmt -p wamn-registry -p wamn-provision -p wamn-host --check
+# The wamn-registry live-apply gate (WAMN_REGISTRY_PG_URL, the .3 block above) now
+# also runs upsert_org_sql twice = the idempotent-upsert proof (kills the ON
+# CONFLICT mutant). Render CRs locally (no cluster/DB needed):
+./target/debug/wamn-host provision-org --org demo --tier standard \
+  --emit-prod /tmp/demo-prod.json --emit-dev /tmp/demo-dev.json
+# IN-CLUSTER live standup = the gate of record (the wamn-q3n.2 infra precedent;
+# needs kind 'wamn' + CNPG 1.29.2 + wamn-sysdb from .2 with the .3 registry
+# applied). NO docker rebuild — run the real subcommand locally against a
+# port-forwarded wamn-sysdb, then kubectl-apply the emitted CRs ADDITIVELY:
+kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5463:5432 &
+SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
+WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5463/wamn_system?sslmode=disable" \
+  ./target/debug/wamn-host provision-org --org demo --tier standard \
+  --emit-prod /tmp/demo-prod.json --emit-dev /tmp/demo-dev.json   # renders + writes registry.orgs
+kubectl apply -f /tmp/demo-prod.json -f /tmp/demo-dev.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=2 cluster/demo-prod --timeout=300s
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=1 cluster/demo-dev  --timeout=300s
+# Verify (gate of record): HA (demo-prod-2 streaming replica + anti-affinity spread
+# across nodes), dev hibernation annotation present / prod absent, distinct plane
+# (own -rw/-ro/-r Services + Secrets + PVCs), registry.orgs cluster names == live
+# cluster names. Guardrail: wamn-pg/wamn-sysdb/postgres.yaml UNTOUCHED. Teardown
+# deletes ONLY the new pair + its row:
+kubectl -n wamn-system delete cluster demo-prod demo-dev
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
+  psql -U postgres -d wamn_system -c "DELETE FROM registry.orgs WHERE id='demo';"
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

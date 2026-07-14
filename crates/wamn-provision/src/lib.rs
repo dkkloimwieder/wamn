@@ -9,10 +9,12 @@
 //!
 //! This crate is the pure core (SR3 / house rule 1): identifier naming, the
 //! `CREATE DATABASE` / role-bootstrap / `GRANT CONNECT` text builders, the
-//! per-project credential Secret renderer, and the connection-URL composer — no
-//! DB, no K8s client, no clock. The effects live in the `provision-project`
-//! subcommand (`wamn-host`); the `provisionbench` gate (`wamn-gates`) drives the
-//! whole path against a real cluster.
+//! per-project credential Secret renderer, the connection-URL composer, and —
+//! for the four-tier topology (wamn-q3n.6) — the org [`Cluster`
+//! PAIR](crate::org) renderer (`<org>-prod` HA + `<org>-dev` hibernation-managed)
+//! — no DB, no K8s client, no clock. The effects live in the `provision-project`
+//! / `provision-org` subcommands (`wamn-host`); the `provisionbench` gate
+//! (`wamn-gates`) drives the whole path against a real cluster.
 //!
 //! # Isolation model
 //!
@@ -33,6 +35,7 @@
 
 mod error;
 mod name;
+pub mod org;
 pub mod secret;
 pub mod sql;
 
@@ -41,3 +44,4 @@ pub use name::{
     APP_ROLE, DB_PREFIX, MAX_PROJECT_ID_LEN, compose_url, database_name, secret_name,
     validate_project_id,
 };
+pub use org::{prod_instances, render_org_cluster_pair};

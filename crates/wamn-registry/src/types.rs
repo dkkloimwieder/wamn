@@ -117,6 +117,19 @@ pub enum Side {
     Dev,
 }
 
+/// The CNPG `Cluster` name holding a paying org's databases on `side`:
+/// `<org>-prod` (prod + canary) or `<org>-dev` (dev). This is the **single
+/// source** both the cluster-CR renderer (`wamn-provision`, wamn-q3n.6) and the
+/// org's `registry.orgs` row derive their cluster names from, so a provisioned
+/// pair and its registry row always name the same clusters — what
+/// [`Registry::resolve`](crate::Registry::resolve) relies on.
+pub fn cluster_name(org: &str, side: Side) -> String {
+    match side {
+        Side::Prod => format!("{org}-prod"),
+        Side::Dev => format!("{org}-dev"),
+    }
+}
+
 /// A reference to a CNPG `Cluster` that holds project-env databases. A name, not
 /// the cluster itself — the registry records placement, not infrastructure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,6 +218,21 @@ pub struct Org {
 }
 
 impl Org {
+    /// A paying (T2 standard / T4 dedicated) org placed on its own
+    /// `<org>-prod` / `<org>-dev` cluster pair, with the cluster refs derived from
+    /// [`cluster_name`] — the single source the CR renderer (wamn-q3n.6) and this
+    /// row agree on. A `trials` org instead shares the pool (both refs point at
+    /// it); it is not provisioned as a pair (T3 provisioning is wamn-q3n.9).
+    pub fn for_pair(id: impl Into<String>, tier: Tier) -> Org {
+        let id = id.into();
+        Org {
+            prod_cluster: ClusterRef::new(cluster_name(&id, Side::Prod)),
+            dev_cluster: ClusterRef::new(cluster_name(&id, Side::Dev)),
+            id,
+            tier,
+        }
+    }
+
     /// The cluster holding envs on `side` — the T2 prod/dev split, collapsed to
     /// one cluster for a T3 pool org (where both refs point at the pool).
     pub fn cluster(&self, side: Side) -> &ClusterRef {
@@ -273,6 +301,24 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::{Env, Tier};
+
+    /// A paying org's clusters are `<org>-prod` / `<org>-dev`, and `Org::for_pair`
+    /// stamps exactly those refs — the single source the CR renderer and the
+    /// `registry.orgs` row share (so `resolve` finds the provisioned cluster).
+    #[test]
+    fn cluster_names_follow_the_org_pair_shape() {
+        use super::{Org, Side, cluster_name};
+        assert_eq!(cluster_name("acme", Side::Prod), "acme-prod");
+        assert_eq!(cluster_name("acme", Side::Dev), "acme-dev");
+        let org = Org::for_pair("acme", Tier::Standard);
+        assert_eq!(org.id, "acme");
+        assert_eq!(org.prod_cluster.name, "acme-prod");
+        assert_eq!(org.dev_cluster.name, "acme-dev");
+        // prod/canary route to the prod cluster; dev to the dev cluster.
+        assert_eq!(org.cluster(Env::Prod.side()).name, "acme-prod");
+        assert_eq!(org.cluster(Env::Canary.side()).name, "acme-prod");
+        assert_eq!(org.cluster(Env::Dev.side()).name, "acme-dev");
+    }
 
     /// `as_str()` must equal the serde wire form for every variant: the system-DB
     /// `tier` / `env` CHECK literals are drift-guarded against `as_str()`, and a

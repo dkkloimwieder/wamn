@@ -21,12 +21,13 @@
 //! `wamn-run-store` — there is no generated JSON-Schema file.
 
 mod resolve;
+pub mod sql;
 mod types;
 mod validate;
 
 pub use resolve::{RegistryError, Resolution};
 pub use types::{
     ClusterRef, Env, Org, OrgId, Project, ProjectEnv, ProjectId, Registry, SCHEMA_VERSION,
-    SecretRef, Side, Tier, Triple,
+    SecretRef, Side, Tier, Triple, cluster_name,
 };
 pub use validate::{Issue, Severity, validate};

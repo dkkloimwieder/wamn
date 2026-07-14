@@ -88,6 +88,25 @@ fn system_schema_sql_mirrors_the_model() {
     assert!(sql.contains("'provision-org'") && sql.contains("'provision-project-env'"));
 }
 
+/// The org-row builder (`wamn_registry::sql::upsert_org_sql`, wamn-q3n.6) must
+/// target exactly the `registry.orgs` columns the storage DDL declares — a
+/// drift guard tying the builder to `deploy/system-schema.sql` (SR2: registry
+/// SQL lives with the model, pinned to the schema it writes).
+#[test]
+fn upsert_org_sql_matches_the_orgs_columns() {
+    let sql = code_only(&system_schema_sql());
+    let builder = wamn_registry::sql::upsert_org_sql();
+    assert!(builder.contains("registry.orgs"));
+    assert!(builder.contains("ON CONFLICT (id)"));
+    for col in ["id", "tier", "prod_cluster", "dev_cluster"] {
+        assert!(
+            sql.contains(col),
+            "orgs table (system-schema.sql) missing {col}"
+        );
+        assert!(builder.contains(col), "upsert builder missing {col}");
+    }
+}
+
 /// Invariant 4 (dev ≠ prod recovery domain) is a CHECK whose *expression* is
 /// pinned, not just its name — the drift-guard lesson: a name-only assertion
 /// lets a weakened predicate slip through.
@@ -192,6 +211,26 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     script.push_str(&ddl);
     script.push('\n');
     script.push_str(ASSERTIONS);
+    // Exercise the REAL wamn-registry org-row builder (wamn-q3n.6) via
+    // PREPARE/EXECUTE: two upserts of the same id must collapse to ONE row (the
+    // second refreshing the tier), proving `ON CONFLICT (id) DO UPDATE` — a plain
+    // INSERT would fail the second EXECUTE with a PK unique_violation and, under
+    // ON_ERROR_STOP, fail this gate (kills the "ON CONFLICT dropped" mutant).
+    script.push_str(&format!(
+        "PREPARE up (text,text,text,text) AS {upsert};\n\
+         EXECUTE up('demo','standard','demo-prod','demo-dev');\n\
+         EXECUTE up('demo','dedicated','demo-prod','demo-dev');\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM registry.orgs WHERE id='demo')=1,\n\
+             'upsert_org_sql is idempotent — one row after two upserts';\n\
+           ASSERT (SELECT tier FROM registry.orgs WHERE id='demo')='dedicated',\n\
+             'the second upsert refreshed the tier (ON CONFLICT DO UPDATE)';\n\
+         END $$;\n\
+         DEALLOCATE up;\n",
+        upsert = wamn_registry::sql::upsert_org_sql(),
+    ));
+    script.push_str("DROP SCHEMA registry CASCADE;\n");
+    script.push_str("DROP SCHEMA provisioning CASCADE;\n");
     script.push_str("RESET ROLE;\n");
 
     use std::io::Write;
@@ -320,7 +359,4 @@ DO $$ BEGIN
   ASSERT (SELECT count(*) FROM registry.projects WHERE org='acme')=0, 'projects cascade';
   ASSERT (SELECT count(*) FROM registry.project_envs WHERE org='acme')=0, 'project-envs cascade';
 END $$;
-
-DROP SCHEMA registry CASCADE;
-DROP SCHEMA provisioning CASCADE;
 "#;

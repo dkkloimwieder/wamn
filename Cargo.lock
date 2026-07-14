@@ -4160,6 +4160,7 @@ dependencies = [
  "wamn-ddl",
  "wamn-flow",
  "wamn-provision",
+ "wamn-registry",
  "wamn-run-queue",
  "wamn-seed",
  "wash-runtime",
@@ -4208,6 +4209,7 @@ name = "wamn-provision"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "wamn-registry",
 ]
 
 [[package]]

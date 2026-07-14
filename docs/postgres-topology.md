@@ -157,6 +157,16 @@ control-plane model, and the registry schema):
    only the thin imperative CONNECT-revoke/GRANT/RLS step (fact 3). The
    `Database` CRD's declarative `connectionLimit` doubles as per-project-env
    noisy-neighbour governance *within* an org cluster.
+
+   *Shipped (`wamn-q3n.6`):* the org **cluster-pair renderer**
+   (`wamn_provision::org` — `<org>-prod` HA-per-tier + `<org>-dev`
+   hibernation-managed, as `serde_json` CNPG `Cluster` CRs), the `provision-org`
+   subcommand (render + emit CRs + idempotent `registry.orgs` upsert as the
+   `wamn_system` owner), and a live one-org-pair standup as the gate of record.
+   The `Database` CRD + `.spec.managed.roles` adoption above is **recorded here as
+   the mechanism `.7` uses** — `.6` renders the cluster shape only and does not
+   build the per-project-env renderer. Backup config (a `backup` stanza + object
+   store prefix) is deferred to `wamn-e1g`. `docs/provisioning.md`.
 2. **`provision-project-env`**: create the project-env database + roles
    (declarative) + privilege step (imperative-lite) on the org's appropriate
    cluster — or the trials pool for T3 tenants.

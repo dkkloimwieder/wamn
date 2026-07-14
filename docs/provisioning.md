@@ -134,6 +134,59 @@ The gate is **substrate-agnostic** — it needs only a superuser URL — so it r
 locally against a throwaway `postgres:18` (fast iteration) and in-cluster against
 the CNPG cluster (the gate of record).
 
+## `wamn-host provision-org` (wamn-q3n.6, the four-tier split)
+
+The four-tier topology (`docs/postgres-topology.md`) splits `provision-project`
+into `provision-org` + `provision-project-env`. **`provision-org`** renders the
+CNPG `Cluster` **pair** a paying org (T2 `standard` / T4 `dedicated`) is placed
+on and records the org in the T1 control-plane registry:
+
+- **`<org>-prod`** — HA (2 instances for `standard`, 3 for the regulated
+  `dedicated` tier), pod anti-affinity spread, holds every project's `prod` env
+  (and `canary`, which shares prod's failure domain);
+- **`<org>-dev`** — a single, **hibernation-managed** instance (the
+  `cnpg.io/hibernation` annotation, set `off` so it comes up ready; the platform
+  off-hours scheduler flips it `on`, roughly halving the cost of two clusters per
+  org), holds `dev` and preview/scratch envs (its own recovery domain).
+
+Both clusters carry `enableSuperuserAccess` (the per-project-env path connects as
+superuser), a non-TLS `pg_hba`, and **no cpu limit** (the S2 CFS lesson). The
+cluster **names** come from `wamn_registry::cluster_name` — the single source the
+renderer and the `registry.orgs` row share, so `Registry::resolve` finds the
+provisioned cluster.
+
+| Flag | Purpose |
+|---|---|
+| `--org <id>` | Org id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric). Names `<org>-prod` / `<org>-dev`; the reserved `wamn` prefix is rejected. |
+| `--tier standard\|dedicated` | Paying tier. A `trials` org shares the pool (not a pair) and is not provisioned here — T3 provisioning is wamn-q3n.9. |
+| `--system-database-url` / `WAMN_SYSTEM_ADMIN_URL` | Superuser URL to the T1 `wamn_system` DB, where the org row is recorded. Omit to render CRs only. |
+| `--emit-prod` / `--emit-dev` `<path>` | Write the prod / dev `Cluster` CR (JSON; `-` = stdout, the default) — `kubectl apply -f`. |
+
+Like `provision-project`, it is a **renderer + DB writer only** — it does NOT
+apply the CRs (the runbook/Job `kubectl apply`s them and waits ready, as the
+Secret pattern) and does NOT create per-project-env databases. The org row is an
+**idempotent upsert** into `registry.orgs` (`ON CONFLICT (id) DO UPDATE`), written
+as the `wamn_system` owner; the builder lives with the registry model
+(`wamn_registry::sql::upsert_org_sql`, SR2 single-source).
+
+**Scope (wamn-q3n.6): the cluster SHAPE + the registry row only.** Per-project-env
+database/role creation is `provision-project-env` (wamn-q3n.7). The rework
+**adopts the CNPG `Database` CRD + `.spec.managed.roles`** for that declarative
+DB/role creation (keeping only the thin imperative `CONNECT`-revoke / `GRANT` /
+RLS step CRDs don't cover; the CRD's `connectionLimit` doubles as per-project-env
+noisy-neighbour governance) — the mechanism `.7` will use, but `.6` does not build
+the unused renderer. Live **WAL/PITR backup** config (a `backup` stanza + an
+object-store prefix) is `wamn-e1g` — the rendered clusters carry no `backup`
+stanza yet.
+
+The gate of record is a **live one-org-pair standup** (the wamn-q3n.2 infra
+precedent): render + record via the real subcommand against the T1 `wamn-sysdb`,
+`kubectl apply` the pair alongside the guardrailed clusters, wait ready, and
+assert HA (a streaming replica + anti-affinity spread), the dev hibernation
+annotation, the distinct plane (own Services / Secrets / PVCs), and that the
+registry row's cluster names equal the live cluster names. Teardown deletes
+**only** the new pair (never `wamn-pg` / `postgres.yaml` / `wamn-sysdb`).
+
 ## Deferred (follow-up beads)
 
 - **WAL archiving / PITR** — a fast-follow `[2.3]` bead (needs an in-cluster

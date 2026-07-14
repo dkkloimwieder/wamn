@@ -20,6 +20,13 @@ pub enum ProvisionError {
         /// The offending id.
         id: String,
     },
+    /// The tier has no dedicated cluster pair to render (wamn-q3n.6): a `trials`
+    /// org lives on the shared pool, not a `<org>-prod` / `<org>-dev` pair (T3
+    /// provisioning is wamn-q3n.9). Only `standard` / `dedicated` orgs get one.
+    TierHasNoDedicatedPair {
+        /// The tier that has no pair (`trials`).
+        tier: &'static str,
+    },
 }
 
 impl fmt::Display for ProvisionError {
@@ -31,6 +38,11 @@ impl fmt::Display for ProvisionError {
             ProvisionError::ReservedProjectId { id } => write!(
                 f,
                 "reserved project id {id:?}: the `wamn` prefix is platform-reserved"
+            ),
+            ProvisionError::TierHasNoDedicatedPair { tier } => write!(
+                f,
+                "tier {tier:?} has no dedicated cluster pair: a trials org shares the pool \
+                 (T3 provisioning is wamn-q3n.9)"
             ),
         }
     }
