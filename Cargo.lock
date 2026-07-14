@@ -4264,6 +4264,7 @@ version = "0.1.0"
 dependencies = [
  "wamn-catalog",
  "wamn-ddl",
+ "wamn-registry",
 ]
 
 [[package]]

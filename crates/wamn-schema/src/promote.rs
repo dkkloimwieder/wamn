@@ -1,7 +1,9 @@
 //! Promotion between environments (3.4).
 //!
 //! Promotion moves a catalog's **applied** schema from one environment to
-//! another (typically `dev` → `prod`). The catalog *content* is a [`Catalog`],
+//! another of the **same application** along the `dev → canary → prod` order.
+//! [`promote`] refuses a cross-application move (a different `(org, project)`)
+//! and flags a non-forward environment order. The catalog *content* is a [`Catalog`],
 //! whose JSON is already the import/export format (`Catalog::from_json` /
 //! `to_json`, owned by 3.1) — this module does not re-invent serialization. What
 //! it adds is the *workflow*: diff the source's applied catalog against the
@@ -15,6 +17,7 @@
 
 use wamn_catalog::Catalog;
 use wamn_ddl::{CompileError, Confirmation, Migration, MigrationPlan, RequiresConfirmation};
+use wamn_registry::Env;
 
 use crate::environment::Environment;
 
@@ -26,6 +29,9 @@ pub enum PromoteError {
     Compile(CompileError),
     /// The source environment has no applied version to promote.
     NothingToPromote,
+    /// Source and target are different applications (different `(org, project)`)
+    /// — promotion moves a schema between environments of the *same* application.
+    DifferentApplication { source: String, target: String },
     /// Source and target track different catalogs.
     CatalogIdMismatch { source: String, target: String },
 }
@@ -37,6 +43,10 @@ impl std::fmt::Display for PromoteError {
             PromoteError::NothingToPromote => {
                 write!(f, "source environment has no applied version to promote")
             }
+            PromoteError::DifferentApplication { source, target } => write!(
+                f,
+                "cannot promote across applications: source {source:?} vs target {target:?}"
+            ),
             PromoteError::CatalogIdMismatch { source, target } => write!(
                 f,
                 "cannot promote across catalogs: source {source:?} vs target {target:?}"
@@ -152,16 +162,34 @@ pub fn promote_catalog(
     })
 }
 
-/// Plan a promotion of `source`'s applied schema into `target`. The source must
-/// have an applied version; the target may be empty (a first promotion). Both
-/// environments must track the same catalog.
+/// The position of `env` in the canonical `dev → canary → prod` promotion order.
+fn env_rank(env: Env) -> usize {
+    Env::ALL
+        .iter()
+        .position(|&e| e == env)
+        .expect("env is a member of Env::ALL")
+}
+
+/// Plan a promotion of `source`'s applied schema into `target`. Both must be the
+/// **same application** (same `(org, project)`) and track the same catalog; the
+/// source must have an applied version; the target may be empty (a first
+/// promotion).
 ///
 /// This is the first-class-environment entry point: `promote(dev, prod)` diffs
 /// `prod`'s applied catalog against `dev`'s applied catalog and compiles the
-/// migration. Applying the returned plan and recording the new version in
-/// `target` is the caller's step (see [`Environment::add_draft`] /
-/// [`Environment::apply`]).
+/// migration. A non-forward environment order (e.g. `prod → dev`) is not an
+/// error but adds a warning, since promotion normally runs `dev → canary → prod`.
+/// Applying the returned plan and recording the new version in `target` is the
+/// caller's step (see [`Environment::add_draft`] / [`Environment::apply`]).
 pub fn promote(source: &Environment, target: &Environment) -> Result<PromotionPlan, PromoteError> {
+    // Same application: promotion moves a schema between a single application's
+    // environments, never across `(org, project)` boundaries.
+    if source.org() != target.org() || source.project() != target.project() {
+        return Err(PromoteError::DifferentApplication {
+            source: format!("{}/{}", source.org(), source.project()),
+            target: format!("{}/{}", target.org(), target.project()),
+        });
+    }
     if source.catalog_id() != target.catalog_id() {
         return Err(PromoteError::CatalogIdMismatch {
             source: source.catalog_id().to_string(),
@@ -174,5 +202,14 @@ pub fn promote(source: &Environment, target: &Environment) -> Result<PromotionPl
         .catalog
         .clone();
     let tgt = target.applied().map(|r| &r.catalog);
-    promote_catalog(&src, tgt)
+    let mut plan = promote_catalog(&src, tgt)?;
+    // Environment-order advisory: promotion normally runs dev -> canary -> prod.
+    if env_rank(target.env()) <= env_rank(source.env()) {
+        plan.warnings.push(format!(
+            "promoting {} -> {} is not a forward environment promotion (dev -> canary -> prod)",
+            source.env(),
+            target.env()
+        ));
+    }
+    Ok(plan)
 }

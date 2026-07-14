@@ -3,13 +3,16 @@
 //! A catalog does not go straight from edited to live. It moves through a
 //! **lifecycle** — `draft → staged → applied` (with `superseded` for prior
 //! applied versions) — and is **promoted** between **environments** (`dev`,
-//! `prod`). This crate owns that lifecycle and promotion policy; it **composes**
-//! the two shipped E3 crates rather than duplicating them:
+//! `canary`, `prod`). This crate owns that lifecycle and promotion policy; it
+//! **composes** the shipped model crates rather than duplicating them:
 //!
 //! - [`wamn_catalog`] (3.1) — the canonical model, its version [`diff`], and the
 //!   JSON import/export that *is* the promotion format;
 //! - [`wamn_ddl`] (3.2) — the DDL compiler and its additive/destructive
-//!   confirmation gate, reused verbatim to compile a promotion's migration.
+//!   confirmation gate, reused verbatim to compile a promotion's migration;
+//! - [`wamn_registry`] (`wamn-q3n.1`) — the control-plane [`Triple`]
+//!   `(org, project, env)` and the closed [`Env`] set, so an environment's
+//!   identity and the "same application" promotion guard speak one vocabulary.
 //!
 //! It provides:
 //!
@@ -37,17 +40,18 @@
 //!
 //! ```
 //! use wamn_catalog::Catalog;
-//! use wamn_schema::{Environment, promote};
+//! use wamn_schema::{Environment, Env, Triple, promote};
 //!
 //! # fn go(dev_applied: Catalog) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut dev = Environment::new("dev", &dev_applied.catalog_id);
+//! let app = |env| Triple::new("acme", "receiving", env);
+//! let mut dev = Environment::new(app(Env::Dev), &dev_applied.catalog_id);
 //! dev.add_draft(dev_applied, None)?; // first version
 //! let v = dev.versions()[0].version();
 //! dev.stage(v)?;
 //! dev.apply(v)?; // now live in dev
 //!
-//! let prod = Environment::new("prod", dev.catalog_id());
-//! let plan = promote(&dev, &prod)?;   // prod is empty -> a fresh CREATE
+//! let prod = Environment::new(app(Env::Prod), dev.catalog_id());
+//! let plan = promote(&dev, &prod)?;   // same app, prod empty -> a fresh CREATE
 //! assert!(plan.is_additive());
 //! # Ok(())
 //! # }
@@ -64,3 +68,7 @@ pub use promote::{PromoteError, PromotionPlan, promote, promote_catalog};
 // Re-exported for convenience so callers can drive the safety gate without a
 // direct dependency on wamn-ddl.
 pub use wamn_ddl::{Confirmation, MigrationPlan};
+
+// Re-exported so callers construct environments and read the promotion
+// vocabulary without a direct dependency on wamn-registry.
+pub use wamn_registry::{Env, Triple};

@@ -2,18 +2,24 @@
 
 A catalog does not go straight from edited to live. Each version moves through a
 **lifecycle** — `draft → staged → applied` (with `superseded` for prior applied
-versions) — and is **promoted** between **environments** (`dev`, `prod`). This
-crate owns that lifecycle and promotion policy. It **composes** the two shipped
-Epic 3 crates rather than duplicating them:
+versions) — and is **promoted** between **environments** (`dev`, `canary`,
+`prod`) of the same application. This crate owns that lifecycle and promotion
+policy. It **composes** the shipped model crates rather than duplicating them:
 
 - [`wamn-catalog`](catalog-model.md) (3.1) — the canonical model, its version
   `diff`, and the JSON import/export that *is* the promotion format;
 - [`wamn-ddl`](ddl-compiler.md) (3.2) — the DDL compiler and its
   additive/destructive confirmation gate, reused verbatim to compile a
-  promotion's migration.
+  promotion's migration;
+- [`wamn-registry`](registry-model.md) (`wamn-q3n.1`) — the control-plane
+  `(org, project, env)` `Triple` and the closed `Env` set (`dev` / `canary` /
+  `prod`), so an environment's identity and the same-application promotion guard
+  speak one vocabulary.
 
-- **Issue:** wamn-d6d `[3.4]`; **Epic:** E3 Schema Designer.
-- **Crate:** `crates/wamn-schema` — depends on `wamn-catalog` + `wamn-ddl`.
+- **Issue:** wamn-d6d `[3.4]` + `wamn-q3n.5` (`(org, project, env)` triple +
+  `canary`); **Epic:** E3 Schema Designer / D6.
+- **Crate:** `crates/wamn-schema` — depends on `wamn-catalog` + `wamn-ddl` +
+  `wamn-registry`.
 - **Consumers:** the designer UI (3.3, drives the lifecycle), the migration
   engine (2.5, applies a promotion's plan), 11.8 (impact-analyzes a staged
   version before apply), the control plane (records versions per environment).
@@ -58,21 +64,25 @@ enforced by `Environment`:
 
 ## Environments
 
-An **environment** is a deployment target; in the per-project-database model
-(2.2 / 2.3) it is a project's database. Version numbers are **globally unique per
-catalog** (promotion mints a fresh version in the target environment), so
-`environment` is an *attribute* of each version rather than part of its identity.
+An **environment** is a deployment target identified by the `(org, project, env)`
+`Triple` (`wamn-q3n.1`); `env` is one of the closed set `dev` / `canary` / `prod`
+(`canary` is prod-shaped validation that shares prod's failure domain). In the
+per-project-database model (2.2 / 2.3) it is a project-env's database. Version
+numbers are **globally unique per catalog** (promotion mints a fresh version in
+the target environment), so `environment` is an *attribute* of each version
+rather than part of its identity.
 
 ```rust
-use wamn_schema::{Environment, promote, Confirmation};
+use wamn_schema::{Environment, Env, Triple, promote, Confirmation};
 
-let mut dev = Environment::new("dev", &catalog.catalog_id);
+let app = |env| Triple::new("acme", "receiving", env);
+let mut dev = Environment::new(app(Env::Dev), &catalog.catalog_id);
 dev.add_draft(catalog, None)?;   // first version (no base)
 dev.stage(1)?;
 dev.apply(1)?;                   // now live in dev
 
-let prod = Environment::new("prod", dev.catalog_id());
-let plan = promote(&dev, &prod)?;         // prod empty -> a fresh CREATE
+let prod = Environment::new(app(Env::Prod), dev.catalog_id());
+let plan = promote(&dev, &prod)?;         // same app, prod empty -> a fresh CREATE
 let sql = plan.sql(Confirmation::None)?;  // additive: no confirmation needed
 ```
 
@@ -80,11 +90,17 @@ let sql = plan.sql(Confirmation::None)?;  // additive: no confirmation needed
 
 `promote(source_env, target_env)` diffs the target environment's current applied
 catalog against the source's applied catalog and compiles the migration, reusing
-the 3.2 DDL compiler and its safety gate:
+the 3.2 DDL compiler and its safety gate. Both environments must be the **same
+application** (same `(org, project)`) and track the same catalog — a
+cross-application move is refused (`PromoteError::DifferentApplication`), so
+promotion only ever runs between one application's environments:
 
 - target empty → `Migration::create` (a fresh, all-additive `CREATE`);
 - target has an applied version → `Migration::migrate(target, source)` (a diff,
   which may be destructive).
+
+Promotion normally runs `dev → canary → prod`; a non-forward move (e.g.
+`prod → dev`) is not an error but adds a non-fatal env-order warning.
 
 The lower-level `promote_catalog(source, target_applied)` takes catalogs directly
 (the same call, environment-independent). Both return a `PromotionPlan`:
@@ -110,7 +126,10 @@ own beyond what `wamn-ddl` produces.
 - `state text` — the lifecycle state (`draft` / `staged` / `applied` /
   `superseded`), generalizing the earlier `active` boolean. Its values are
   exactly `wamn_schema::State::as_sql`, tied to the crate by a test.
-- `environment text` — the deployment target (first-class).
+- `environment text` — the deployment target (first-class), constrained by a
+  `CHECK (environment IN ('dev', 'canary', 'prod'))` whose literals are exactly
+  `wamn_registry::Env::as_str` (tied to the crate by a test) and defaulting to
+  `dev`.
 - `base_version int` — the applied version a draft/staged one was branched from
   (backs the stale-base guard).
 - a partial unique index enforcing single-applied:
@@ -126,9 +145,12 @@ cargo clippy -p wamn-schema --all-targets && cargo fmt -p wamn-schema --check
 ```
 
 Tests cover the transition table, the single-applied and stale-base guards,
-promotion (first `CREATE`, additive, gated destructive, environment-aware), and
-a drift guard tying `State` to the storage `CHECK` in `catalog-schema.sql`. The
-storage additions re-apply cleanly on a throwaway Postgres 18 (as with 3.1 / 3.2).
+promotion (first `CREATE`, additive, gated destructive, environment-aware — incl.
+the same-application guard and the `dev → canary → prod` env-order advisory), and
+drift guards tying `State` **and** `Env` to the storage `CHECK`s in
+`catalog-schema.sql`. The storage additions re-apply cleanly on a throwaway
+Postgres 18 (as with 3.1 / 3.2), where the `environment` `CHECK` accepts `canary`
+and rejects an out-of-set value.
 
 ## References
 

@@ -1,7 +1,10 @@
 //! First-class environments (3.4).
 //!
-//! An **environment** (`dev`, `prod`, …) is a deployment target — in the
-//! per-project-database model (2.2 / 2.3) it is a project's database. It holds
+//! An **environment** is a deployment target identified by the `(org, project,
+//! env)` [`Triple`] (`wamn-q3n.1`); `env` is one of the closed set [`Env::Dev`] /
+//! [`Env::Canary`] / [`Env::Prod`] (`canary` is prod-shaped validation that
+//! shares prod's failure domain). In the per-project-database model (2.2 / 2.3)
+//! an environment is a project-env's database. It holds
 //! the lifecycle of **one catalog's** versions: which versions exist, their
 //! [`State`], and which one is live. Two invariants live here, both of which
 //! need cross-version context the pure [`crate::lifecycle`] table cannot see:
@@ -21,6 +24,7 @@
 //! unique index on `(tenant_id, catalog_id, environment) WHERE state = 'applied'`.
 
 use wamn_catalog::Catalog;
+use wamn_registry::{Env, Triple};
 
 use crate::lifecycle::{Action, Outcome, State, transition};
 
@@ -95,27 +99,46 @@ impl VersionRecord {
     }
 }
 
-/// An environment tracking the lifecycle of one catalog's versions.
+/// An environment tracking the lifecycle of one catalog's versions within one
+/// `(org, project, env)` database.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
-    name: String,
+    triple: Triple,
     catalog_id: String,
     versions: Vec<VersionRecord>,
 }
 
 impl Environment {
-    /// A fresh, empty environment named `name` tracking catalog `catalog_id`.
-    pub fn new(name: impl Into<String>, catalog_id: impl Into<String>) -> Self {
+    /// A fresh, empty environment for the `(org, project, env)` `triple`,
+    /// tracking catalog `catalog_id`.
+    pub fn new(triple: Triple, catalog_id: impl Into<String>) -> Self {
         Self {
-            name: name.into(),
+            triple,
             catalog_id: catalog_id.into(),
             versions: Vec::new(),
         }
     }
 
-    /// The environment name (`dev`, `prod`, …).
-    pub fn name(&self) -> &str {
-        &self.name
+    /// The `(org, project, env)` identity of this environment.
+    pub fn triple(&self) -> &Triple {
+        &self.triple
+    }
+
+    /// The environment ([`Env::Dev`] / [`Env::Canary`] / [`Env::Prod`]).
+    pub fn env(&self) -> Env {
+        self.triple.env
+    }
+
+    /// The owning organization id — part of the application identity that
+    /// [`crate::promote`] holds constant.
+    pub fn org(&self) -> &str {
+        &self.triple.org
+    }
+
+    /// The owning project id — part of the application identity that
+    /// [`crate::promote`] holds constant.
+    pub fn project(&self) -> &str {
+        &self.triple.project
     }
 
     /// The catalog this environment tracks.

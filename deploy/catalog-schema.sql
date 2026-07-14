@@ -35,7 +35,8 @@ GRANT USAGE ON SCHEMA catalog TO wamn_app;
 -- Lifecycle (3.4): `state` carries the draft -> staged -> applied -> superseded
 -- lifecycle (generalizing the earlier `active` boolean); its values are exactly
 -- crates/wamn-schema State::as_sql, tied to the crate by a test. `environment`
--- (dev/prod, = a project database in the 2.2/2.3 per-project-DB model) makes the
+-- (dev/canary/prod = the closed wamn_registry::Env set, tied to the crate by a
+-- test; = a project-env database in the 2.2/2.3 per-project-DB model) makes the
 -- deployment target first-class. Version numbers are GLOBALLY UNIQUE per catalog
 -- (promotion mints a fresh version in the target environment), so `environment`
 -- is an attribute of each version, not part of its identity. `base_version` is
@@ -50,14 +51,16 @@ CREATE TABLE catalog.catalogs (
     tenant_id      text NOT NULL CHECK (tenant_id <> ''),
     catalog_id     text NOT NULL,
     version        int  NOT NULL,
-    environment    text NOT NULL DEFAULT 'default',
+    environment    text NOT NULL DEFAULT 'dev',
     schema_version text NOT NULL,
     name           text,
     state          text NOT NULL DEFAULT 'draft',
     base_version   int,
     PRIMARY KEY (tenant_id, catalog_id, version),
     CONSTRAINT catalogs_state_check
-        CHECK (state IN ('draft', 'staged', 'applied', 'superseded'))
+        CHECK (state IN ('draft', 'staged', 'applied', 'superseded')),
+    CONSTRAINT catalogs_environment_check
+        CHECK (environment IN ('dev', 'canary', 'prod'))
 );
 ALTER TABLE catalog.catalogs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.catalogs FORCE ROW LEVEL SECURITY;
