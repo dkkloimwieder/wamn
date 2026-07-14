@@ -18,6 +18,7 @@ pub mod provision;
 pub mod provision_org;
 pub mod provision_project_env;
 pub mod publish_catalog;
+pub mod restore_project_env;
 
 /// Advertise the platform memory ceiling to the fork's per-store limiter
 /// (docs/wash-runtime-fork.md): a workload budget above this is a hard

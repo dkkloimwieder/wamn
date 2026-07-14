@@ -398,6 +398,77 @@ dropping `-Fd`, a wrong object-key shape, a tier→schedule swap, a CronJob comm
 without `-Fd`, and `record_dump` `ON CONFLICT DO UPDATE`→`DO NOTHING` each fail a
 named test.
 
+## `wamn-host restore-project-env` (wamn-q3n.11)
+
+The **restore counterpart** of `dump-project-env`: `pg_restore` a `pg_dump -Fd`
+artifact back into a database. This is the *logical-dump* restore path (docs/
+postgres-topology.md §Backup architecture, restore runbook) — it restores from a
+dump, not from a base backup. Whole-cluster **PITR** (rewind an org cluster to an
+arbitrary instant, then carve one DB out) needs WAL/PITR and is wamn-e1g; this
+subcommand is cross-referenced from that runbook, not a substitute for it.
+
+The pure builder lives in `crates/wamn-provision/src/restore.rs` (the `dump.rs`
+precedent — no clock, no DB, no `pg_restore` invocation):
+
+- `pg_restore_argv(conninfo, dump_dir, clean)` — `--no-owner --no-privileges`
+  (restore the **data**, not the source roles/ACLs — the target is owned by
+  `wamn_app`, not the dump's roles), and, in place only, `--clean --if-exists`
+  (**drop** each object before recreating it, so a restore over the live populated
+  database replaces rather than appends);
+- `restore_scratch_db_name(triple)` — `wamn-restore-<org>--<project>--<env>`, a
+  name distinct from the live `wamn-db-…` so a scratch restore never shadows the
+  real database (length-bounded by `validate_restore_scratch_name`).
+
+`wamn-host restore-project-env` drives them:
+
+```
+restore-project-env --org <org> --project <p> --env <dev|canary|prod>
+  --database-url <superuser to the TARGET cluster>   # create scratch + pg_restore
+  [--system-database-url <sysdb>]        # read the dump catalog (restore-to-last-dump)
+  [--dump-dir <-Fd dir> | --object-key <key>]  # explicit dump; else the latest
+  [--dump-root <dir>]                    # local stage of the object store (until e1g)
+  [--in-place --confirm]                 # destructive: pg_restore --clean over the LIVE db
+```
+
+Two **targets**, the safe one the default:
+
+- **scratch** (default, non-destructive): restore into a fresh
+  `wamn-restore-…` database so the dump can be inspected or a single table carved
+  out without touching the live project-env DB — the sub-cluster carve-out path.
+  The scratch DB is left standing for inspection (the drop command is printed);
+- **in place** (`--in-place --confirm`, destructive): `pg_restore --clean` over the
+  live project-env database — restore-to-last-dump. `--confirm` is **required**
+  because it drops and replaces live data.
+
+**Which dump (the catalog, Q3 of .10 realized here):** an explicit `--dump-dir`
+wins; otherwise the dump **catalog** (`provisioning.dumps`) is read via
+`wamn_registry::sql::select_latest_dump_sql` (SR2 builder) for the latest recorded
+dump (or `--object-key`), so **restore-to-last-dump needs no manual key**. The dump
+directory is then `--dump-root/<timestamp>` (the object key's last segment — the
+`dump-project-env --run-now --out-dir` layout). The dump **bytes** are staged
+locally until the shared object store lands (**Q2**, wamn-e1g); the catalog decides
+*which* dump. `select_latest_dump_sql` orders `taken_at DESC, object_key DESC`
+(newest first, tiebroken by the timestamp-suffixed key); `select_dumps_sql` lists
+the window.
+
+**Verification.** The restore is validated **substrate-agnostically**: a
+`WAMN_RESTORE_PG_URL` round-trip gate (`crates/wamn-provision/tests/restore.rs`)
+seeds a database, dumps it with the real `pg_dump_argv`, restores with the real
+`pg_restore_argv` into a scratch DB, and asserts the seed (incl an exact-decimal
+column) survives — then restores **in place** (`clean = true`) over a database
+holding a stale row and asserts `--clean` dropped it (the restored state replaces,
+not appends). A live `select_latest_dump_sql` proof (newest-of-three, taken_at +
+object_key tiebreak) rides the wamn-q3n.3 storage gate. The **in-cluster gate of
+record** (the .6/.7/.9/.10 precedent — debug binary + `kubectl`, no image rebuild)
+provisions a real project-env database on the T3 pool `wamn-pg`, seeds + dumps it
+(recording the real `wamn-sysdb` catalog), restores **to-last-dump** into a scratch
+DB (round-trip asserted), and restores **in place** over the live DB after mutating
+it (the stale row gone) — teardown drops **only** the new database + scratch +
+registry rows (the dump record cascades). Mutation-tested (apply/test/restore,
+debug builds): `pg_restore_argv` dropping `--clean` or `--no-owner`,
+`select_latest` flipping `taken_at DESC`, and the in-place `--confirm` gate
+neutered each fail a named test.
+
 ## Deferred (follow-up beads)
 
 - **WAL archiving / PITR** — a fast-follow `[2.3]` bead (needs an in-cluster

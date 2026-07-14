@@ -241,6 +241,23 @@ infra) — the `.10` gate proves the artifact restorable substrate-agnostically
 §`dump-project-env`. The operator-facing **restore runbook** (below) + backup/
 restore gates are wamn-q3n.11.
 
+*Shipped (wamn-q3n.11):* the **logical-dump restore** — `wamn-host
+restore-project-env` `pg_restore`s a `pg_dump -Fd` artifact into either a
+non-destructive **scratch** database (`wamn-restore-<org>--<project>--<env>`, the
+default — the sub-cluster carve-out target) or, with `--in-place --confirm`, over
+the live project-env database (`pg_restore --clean`, restore-to-last-dump). It reads
+the dump **catalog** (`provisioning.dumps` via `select_latest_dump_sql`) so
+restore-to-last-dump needs no manual key; the dump bytes are staged locally until
+the shared store lands (e1g). The pure `pg_restore_argv` builder is validated
+substrate-agnostically (`WAMN_RESTORE_PG_URL` round-trip + in-place `--clean`
+replace) and by an in-cluster restore standup on `wamn-pg`. See docs/provisioning.md
+§`restore-project-env`. **Operator restore runbook:** (1) *restore-to-last-dump* —
+`restore-project-env` into scratch to verify, then `--in-place --confirm` to cut
+over; (2) *whole-cluster / arbitrary-instant PITR* and (3) *scratch-cluster
+carve-out* both need WAL/PITR and are **wamn-e1g** (below); the **audit-rewind
+caveat** (below) applies to any physical restore, and immutability is delivered by
+append-only platform-audit export (8.6), not the tenant database.
+
 **The scratch-cluster runbook** (v1's §runbook: bootstrap recovery cluster at
 `targetTime` → logical carve-out → drop) survives verbatim but demotes to two
 uses: T3 arbitrary-instant restores, and intra-cluster carve-outs on T2 (e.g.

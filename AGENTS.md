@@ -1132,6 +1132,101 @@ kubectl -n wamn-system exec wamn-pg-1 -c postgres -- psql -U postgres \
 kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
   -c "DELETE FROM registry.orgs WHERE id='t10gate';"
 
+# [D6/wamn-q3n.11] restore per-project-env logical dumps — the RESTORE counterpart
+# of the .10 dump producer (docs/postgres-topology.md §Backup architecture, restore
+# runbook). NEW crates/wamn-provision/src/restore.rs = PURE builders (the dump.rs
+# precedent, no clock/DB/pg_restore invocation): pg_restore_argv(conninfo,dump_dir,
+# clean) [--no-owner --no-privileges = restore DATA not the source roles/ACLs; +
+# --clean --if-exists IN PLACE ONLY = drop each object before recreating so a
+# restore over the live populated db REPLACES not appends] + restore_scratch_db_name
+# (wamn-restore-<org>--<project>--<env>, distinct from the live wamn-db-… so a
+# scratch restore never shadows it) + validate_restore_scratch_name (the longer
+# scratch prefix can overflow 63 where the live name fits). NEW crates/wamn-host/src/
+# restore_project_env.rs = the restore-project-env subcommand (the dump-project-env
+# precedent; +mod lib.rs +Command variant/arm main.rs): TWO targets, the safe one
+# DEFAULT — SCRATCH (non-destructive, into a fresh wamn-restore-… db = the
+# sub-cluster carve-out target, left standing for inspection) vs IN PLACE (--in-place
+# --confirm, DESTRUCTIVE, pg_restore --clean over the live db = restore-to-last-dump;
+# --confirm REQUIRED via the pure in_place_confirmed gate). WHICH dump: explicit
+# --dump-dir wins, else the dump CATALOG is read (select_latest_dump_sql, or
+# --object-key) so restore-to-last-dump needs NO manual key; the dir is
+# --dump-root/<ts> (ts = the object key's last segment = the --run-now --out-dir
+# layout). Dump BYTES staged locally until the shared store lands (Q2, e1g); the
+# catalog decides WHICH dump. NEW wamn_registry::sql::select_latest_dump_sql (ORDER
+# BY taken_at DESC, object_key DESC LIMIT 1) + select_dumps_sql (the window) — the
+# dump catalog .10 DEFERRED to .11 (SR2 builders, drift-guarded vs system-schema.sql
+# + a LIVE newest-of-three proof spliced into the .3 storage gate). WHOLE-CLUSTER
+# PITR (rewind an org cluster to an instant, carve one DB out) needs WAL/PITR = e1g
+# (runbook cross-ref, NOT this); audit-rewind caveat = 8.6 (docs). Mutants killed
+# (apply/test/restore, sha256, DEBUG builds): pg_restore_argv drops --clean / drops
+# --no-owner / select_latest taken_at DESC->ASC / in_place_confirmed->true — each
+# fails a NAMED test. docs/provisioning.md §restore-project-env + docs/postgres-
+# topology.md §Backup architecture 'Shipped (wamn-q3n.11)' + operator restore runbook.
+cargo test -p wamn-provision -p wamn-registry -p wamn-host   # restore builders + select_latest shape/drift + subcommand units
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-host --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-host --check
+# Render/plan locally (no cluster/DB needed — explicit --dump-dir, render only):
+./target/debug/wamn-host restore-project-env --org demo --project app --env dev \
+  --database-url postgres://postgres:postgres@127.0.0.1:5468/postgres \
+  --dump-dir /tmp/some-dump --help >/dev/null   # (see the subcommand flags)
+# optional live gates (throwaway postgres:18; superuser url): (a) the restore
+# ROUND-TRIP (WAMN_RESTORE_PG_URL — seed -> pg_dump -Fd -> pg_restore into a scratch
+# db asserts the seed round-trips + in-place --clean REPLACES a stale row; skips if
+# unset / no pg_restore); (b) the select_latest newest-of-three proof rides the
+# wamn-q3n.3 storage gate:
+docker run -d --rm --name wamn-restore-pg -p 5468:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_RESTORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5468/wamn \
+  cargo test -p wamn-provision --test restore
+WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5468/wamn cargo test -p wamn-registry
+docker stop wamn-restore-pg
+# IN-CLUSTER gate of record = a LIVE restore standup on the T3 pool (the .6/.7/.9/.10
+# precedent; T3 pool wamn-pg + T1 wamn-sysdb always up; provisioning.dumps applied in
+# wamn-sysdb from .10; NO docker rebuild — real debug subcommand + kubectl). PICK
+# CLEAN unused ports (check `ss -ltn | grep 547`):
+kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5476:5432 &
+kubectl -n wamn-system port-forward svc/wamn-pg-rw 5477:5432 &
+SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
+PGPW=$(kubectl -n wamn-system get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
+SYS="postgres://postgres:${SYSPW}@127.0.0.1:5476/wamn_system?sslmode=disable"
+PGADMIN="postgres://postgres:${PGPW}@127.0.0.1:5477/postgres?sslmode=disable"
+DB="wamn-db-t11gate--demo--dev"; DUMPROOT=$(mktemp -d)
+# Register a trials org + provision a project-env DB on wamn-pg (the .7/.9 path), seed:
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-org --org t11gate --tier trials --pool wamn-pg
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-project-env \
+  --org t11gate --project demo --env dev --connection-limit 10 \
+  --emit-database /tmp/t11-db.json --emit-role-sql /tmp/t11-role.sql \
+  --emit-privilege-sql /tmp/t11-priv.sql --emit-secret /tmp/t11-secret.json
+psql "$PGADMIN" -q -f /tmp/t11-role.sql
+kubectl apply -f /tmp/t11-db.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.applied}'=true database/$DB --timeout=90s
+psql "$PGADMIN" -q -f /tmp/t11-priv.sql
+psql "postgres://postgres:${PGPW}@127.0.0.1:5477/${DB}?sslmode=disable" \
+  -c "CREATE TABLE parts (id int primary key, sku text, weight_kg numeric(8,3)); INSERT INTO parts VALUES (1,'bolt',0.125),(2,'nut',0.050),(3,'washer',0.008);"
+# Dump it (records the REAL wamn-sysdb catalog), then RESTORE-to-last-dump into scratch:
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host dump-project-env --org t11gate --project demo --env dev \
+  --database-url "postgres://postgres:${PGPW}@127.0.0.1:5477/${DB}?sslmode=disable" --run-now --out-dir "$DUMPROOT"
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host restore-project-env --org t11gate --project demo --env dev \
+  --database-url "$PGADMIN" --dump-root "$DUMPROOT"   # reads the catalog -> scratch DB
+# Verify (gate of record): the scratch round-trips (3 parts, 0.183 kg); the catalog
+# read selected the right dump; then in-place --confirm over the live DB drops a stale
+# row (mutate live -> restore -> stale gone):
+psql "postgres://postgres:${PGPW}@127.0.0.1:5477/wamn-restore-t11gate--demo--dev?sslmode=disable" \
+  -tAc "SELECT count(*), sum(weight_kg) FROM parts;"
+psql "postgres://postgres:${PGPW}@127.0.0.1:5477/${DB}?sslmode=disable" -c "INSERT INTO parts VALUES (99,'STALE',9.999);"
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host restore-project-env --org t11gate --project demo --env dev \
+  --database-url "$PGADMIN" --dump-root "$DUMPROOT" --in-place --confirm
+psql "postgres://postgres:${PGPW}@127.0.0.1:5477/${DB}?sslmode=disable" -tAc "SELECT count(*) FROM parts;"  # 3 (stale gone)
+# Guardrail: wamn-pg/wamn-sysdb/postgres.yaml UNTOUCHED. Teardown deletes ONLY the new
+# resources (kill the port-forwards by EXACT pid — not pkill); the org delete cascades
+# projects+project_envs+dumps:
+kubectl -n wamn-system delete database $DB
+kubectl -n wamn-system exec wamn-pg-1 -c postgres -- psql -U postgres \
+  -c 'DROP DATABASE IF EXISTS "wamn-db-t11gate--demo--dev" WITH (FORCE);' \
+  -c 'DROP DATABASE IF EXISTS "wamn-restore-t11gate--demo--dev" WITH (FORCE);'
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
+  -c "DELETE FROM registry.orgs WHERE id='t11gate';"
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

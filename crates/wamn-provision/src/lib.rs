@@ -40,6 +40,7 @@ pub mod dump;
 mod error;
 mod name;
 pub mod org;
+pub mod restore;
 pub mod secret;
 pub mod sql;
 
@@ -55,4 +56,5 @@ pub use name::{
     validate_project_id,
 };
 pub use org::{prod_instances, render_org_cluster_pair};
+pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use secret::render_project_env_secret_manifest;

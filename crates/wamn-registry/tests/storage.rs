@@ -200,6 +200,17 @@ fn dumps_table_and_record_builder_match_the_columns() {
         assert!(sql.contains(col), "dumps table missing {col}");
         assert!(builder.contains(col), "record_dump builder missing {col}");
     }
+
+    // The wamn-q3n.11 dump-catalog READS (restore-to-last-dump + the window) target
+    // the same table and select the columns restore needs, newest first.
+    for reader in [
+        wamn_registry::sql::select_latest_dump_sql(),
+        wamn_registry::sql::select_dumps_sql(),
+    ] {
+        assert!(reader.contains("FROM provisioning.dumps"));
+        assert!(reader.contains("object_key"));
+        assert!(reader.contains("ORDER BY taken_at DESC, object_key DESC"));
+    }
 }
 
 /// Invariant 4 (dev ≠ prod recovery domain) is a CHECK whose *expression* is
@@ -369,6 +380,30 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          END $$;\n\
          DEALLOCATE rdump;\n",
         record = wamn_registry::sql::record_dump_sql(),
+    ));
+    // Exercise the REAL wamn-registry dump-catalog READ (wamn-q3n.11) —
+    // restore-to-last-dump. Seed 'demo/app/dev' with three dumps: an old one and
+    // two at the same (newer) time whose keys break the tie. `select_latest_dump_sql`
+    // must return the newest (taken_at DESC), and among the tie the greater key
+    // (object_key DESC). Run via `CREATE TABLE AS EXECUTE` so the REAL builder text
+    // is exercised verbatim. Flipping either ORDER direction returns a different
+    // row, failing here (kills the "select_latest ORDER" mutant, both keys).
+    script.push_str(&format!(
+        "DELETE FROM provisioning.dumps WHERE org='demo' AND project='app' AND env='dev';\n\
+         INSERT INTO provisioning.dumps (org,project,env,object_key,taken_at) VALUES\n\
+           ('demo','app','dev','dumps/demo/app/dev/aaa', now() - interval '2 hours'),\n\
+           ('demo','app','dev','dumps/demo/app/dev/bbb', now() - interval '1 hour'),\n\
+           ('demo','app','dev','dumps/demo/app/dev/ccc', now() - interval '1 hour');\n\
+         PREPARE latest (text,text,text) AS {latest};\n\
+         CREATE TEMP TABLE latest_probe AS EXECUTE latest('demo','app','dev');\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM latest_probe)=1,\n\
+             'select_latest_dump_sql returns exactly one row';\n\
+           ASSERT (SELECT object_key FROM latest_probe)='dumps/demo/app/dev/ccc',\n\
+             'select_latest_dump_sql returns the newest dump (taken_at DESC, object_key DESC)';\n\
+         END $$;\n\
+         DROP TABLE latest_probe; DEALLOCATE latest;\n",
+        latest = wamn_registry::sql::select_latest_dump_sql(),
     ));
     // Exercise the REAL wamn-registry saga builders (wamn-q3n.8) via PREPARE/EXECUTE:
     // creation is exactly-once (a second create of the same saga_id is a no-op),

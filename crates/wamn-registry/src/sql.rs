@@ -128,6 +128,38 @@ pub fn record_dump_sql() -> &'static str {
        taken_at = now()"
 }
 
+// --- dump catalog read (wamn-q3n.11) ---------------------------------------
+//
+// The restore side (`restore-project-env`) reads the dump catalog to pick which
+// dump to restore. `select_latest_dump_sql` powers **restore-to-last-dump** (no
+// manual key); `select_dumps_sql` lists the window. `ORDER BY taken_at DESC,
+// object_key DESC` — newest first, with the object key (which ends in the dump
+// timestamp) as a deterministic tiebreak. Columns are drift-guarded against the
+// storage DDL (`provisioning.dumps`).
+
+/// Select the **latest** recorded dump for a project-env — restore-to-last-dump
+/// picks it without an operator-supplied key. `ORDER BY taken_at DESC, object_key
+/// DESC LIMIT 1` (newest, tiebroken by the timestamp-suffixed key). Params: `$1`
+/// org, `$2` project, `$3` env. Columns: `object_key, format, byte_size, taken_at`.
+pub fn select_latest_dump_sql() -> &'static str {
+    "SELECT object_key, format, byte_size, taken_at \
+     FROM provisioning.dumps \
+     WHERE org = $1 AND project = $2 AND env = $3 \
+     ORDER BY taken_at DESC, object_key DESC \
+     LIMIT 1"
+}
+
+/// List all recorded dumps for a project-env, newest first (the restore window a
+/// point-in-time choice ranges over). `ORDER BY taken_at DESC, object_key DESC`.
+/// Params: `$1` org, `$2` project, `$3` env. Same columns as
+/// [`select_latest_dump_sql`], without the `LIMIT`.
+pub fn select_dumps_sql() -> &'static str {
+    "SELECT object_key, format, byte_size, taken_at \
+     FROM provisioning.dumps \
+     WHERE org = $1 AND project = $2 AND env = $3 \
+     ORDER BY taken_at DESC, object_key DESC"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +265,29 @@ mod tests {
         // place (a plain INSERT would error on the second record of the same key).
         assert!(sql.contains("ON CONFLICT (org, project, env, object_key) DO UPDATE"));
         assert!(sql.contains("byte_size = EXCLUDED.byte_size"));
+    }
+
+    #[test]
+    fn select_latest_dump_reads_the_newest_dump_for_a_project_env() {
+        let sql = select_latest_dump_sql();
+        assert!(sql.contains("FROM provisioning.dumps"));
+        // Keyed by the triple as $n params (never interpolated).
+        assert!(sql.contains("WHERE org = $1 AND project = $2 AND env = $3"));
+        // Newest first — taken_at DESC with the timestamp-suffixed key as tiebreak
+        // (a flipped ORDER would return the OLDEST dump).
+        assert!(sql.contains("ORDER BY taken_at DESC, object_key DESC"));
+        assert!(sql.contains("LIMIT 1"));
+        // Returns the columns restore needs (the key drives which dump to fetch).
+        assert!(sql.contains("object_key"));
+    }
+
+    #[test]
+    fn select_dumps_lists_the_window_newest_first() {
+        let sql = select_dumps_sql();
+        assert!(sql.contains("FROM provisioning.dumps"));
+        assert!(sql.contains("WHERE org = $1 AND project = $2 AND env = $3"));
+        // Same ordering as the latest read, but the whole window (no LIMIT).
+        assert!(sql.contains("ORDER BY taken_at DESC, object_key DESC"));
+        assert!(!sql.contains("LIMIT"));
     }
 }

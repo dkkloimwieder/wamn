@@ -13,7 +13,7 @@ use std::str::FromStr as _;
 use clap::{Parser, Subcommand};
 use wamn_host::{
     dispatch, dump_project_env, host, provision, provision_org, provision_project_env,
-    publish_catalog,
+    publish_catalog, restore_project_env,
 };
 
 #[derive(Parser)]
@@ -43,6 +43,8 @@ enum Command {
     ProvisionProjectEnv(provision_project_env::ProvisionProjectEnvArgs),
     /// Render/run per-project-env logical dumps (pg_dump -Fd → object storage; CronJob + on-demand) (wamn-q3n.10)
     DumpProjectEnv(dump_project_env::DumpProjectEnvArgs),
+    /// Restore a per-project-env logical dump (pg_restore -Fd → scratch DB or in-place) (wamn-q3n.11)
+    RestoreProjectEnv(restore_project_env::RestoreProjectEnvArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -67,6 +69,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ProvisionOrg(args) => provision_org::run(args).await,
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
         Command::DumpProjectEnv(args) => dump_project_env::run(args).await,
+        Command::RestoreProjectEnv(args) => restore_project_env::run(args).await,
     };
 
     shutdown_observability();
