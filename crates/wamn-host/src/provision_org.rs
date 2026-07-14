@@ -19,6 +19,14 @@
 //! `provision-project`'s Secret) and does NOT create per-project-env databases
 //! (the CNPG `Database` CRD + `.spec.managed.roles` path is wamn-q3n.7). Backups
 //! (WAL/PITR) are wamn-e1g.
+//!
+//! **T3 trials orgs (wamn-q3n.9):** a `trials` org shares the pre-contract pool
+//! (`deploy/cnpg-cluster.yaml` `wamn-pg`), so it has no dedicated cluster pair —
+//! there is nothing to render. `--tier trials` builds the org via
+//! [`Org::for_pool`](wamn_registry::Org::for_pool) (both cluster refs point at
+//! `--pool`) and records **only** the `registry.orgs` placement row; `.7`
+//! `provision-project-env` then reads that placement and provisions the org's
+//! project-env databases onto the pool via `env.side()` (no manual `--cluster`).
 
 use std::path::PathBuf;
 
@@ -28,11 +36,15 @@ use tokio_postgres::NoTls;
 
 use wamn_registry::{Org, Registry, SCHEMA_VERSION, Tier};
 
-/// The paying tiers `provision-org` renders a dedicated cluster pair for. A
-/// `trials` org lives on the shared pool (not a pair), so it is deliberately not
-/// selectable here — T3 provisioning is wamn-q3n.9.
+/// The hosting tier `provision-org` places an org on. The paying tiers
+/// (`standard` / `dedicated`) get a dedicated `<org>-prod` / `<org>-dev` cluster
+/// pair rendered here; a `trials` org shares the pre-contract pool and only has
+/// its placement row recorded (wamn-q3n.9).
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TierArg {
+    /// T3 trials (pre-contract): placed on the shared `--pool` cluster (no pair;
+    /// the RLS floor is load-bearing there).
+    Trials,
     /// T2 standard: `<org>-prod` HA (2 instances) + `<org>-dev` single instance.
     Standard,
     /// T4 dedicated (regulated): `<org>-prod` HA (3 instances) + `<org>-dev`.
@@ -42,6 +54,7 @@ pub enum TierArg {
 impl From<TierArg> for Tier {
     fn from(t: TierArg) -> Tier {
         match t {
+            TierArg::Trials => Tier::Trials,
             TierArg::Standard => Tier::Standard,
             TierArg::Dedicated => Tier::Dedicated,
         }
@@ -55,13 +68,20 @@ pub struct ProvisionOrgArgs {
     #[arg(long)]
     pub org: String,
 
-    /// Hosting tier: `standard` (T2) or `dedicated` (T4). A `trials` org shares
-    /// the pool, not a dedicated pair — it is not provisioned here (wamn-q3n.9).
+    /// Hosting tier: `trials` (T3, shared pool), `standard` (T2), or `dedicated`
+    /// (T4). A `standard`/`dedicated` org gets a dedicated cluster pair rendered
+    /// here; a `trials` org is placed on `--pool` and only recorded.
     #[arg(long, value_enum)]
     pub tier: TierArg,
 
+    /// The shared pool cluster a `trials` org is placed on (both its cluster refs
+    /// point at it). Ignored for `standard`/`dedicated` (they get a dedicated
+    /// pair). Default: the shipped `wamn-pg` T3 pool.
+    #[arg(long, default_value = "wamn-pg")]
+    pub pool: String,
+
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`), where the org
-    /// row is recorded. Env `WAMN_SYSTEM_ADMIN_URL`. Omit to render CRs only.
+    /// row is recorded. Env `WAMN_SYSTEM_ADMIN_URL`. Omit to render/plan only.
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
@@ -76,7 +96,9 @@ pub struct ProvisionOrgArgs {
 
 pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     let tier: Tier = args.tier.into();
-    let org = Org::for_pair(&args.org, tier);
+    // A trials org shares the `--pool` cluster (both refs); a paying org gets its
+    // own `<org>-prod` / `<org>-dev` pair.
+    let org = org_for(tier, &args.org, &args.pool);
 
     // Validate the org id (slug / reserved-prefix) + the derived cluster names by
     // running the one-org registry through the model's validator (a registry with
@@ -90,23 +112,34 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     reg.validate()
         .map_err(|issues| anyhow::anyhow!("invalid org: {}", fmt_issues(&issues)))?;
 
-    // Render the cluster pair (errors on a trials tier, which has no pair).
-    let (prod_cr, dev_cr) = wamn_provision::org::render_org_cluster_pair(&org)
-        .map_err(|e| anyhow::anyhow!("render org clusters: {e}"))?;
-
-    println!(
-        "org {id:?} (tier {tier}): {prod} ({pi} instances, HA) + {dev} (1 instance, hibernation-managed)",
-        id = org.id,
-        prod = org.prod_cluster.name,
-        dev = org.dev_cluster.name,
-        pi = prod_cr["spec"]["instances"],
-    );
-
-    // Emit the CRs (default: both to stdout) so the runbook/Job kubectl-applies them.
-    let emit_prod = args.emit_prod.unwrap_or_else(|| PathBuf::from("-"));
-    let emit_dev = args.emit_dev.unwrap_or_else(|| PathBuf::from("-"));
-    write_json(&emit_prod, &prod_cr).context("emit prod cluster CR")?;
-    write_json(&emit_dev, &dev_cr).context("emit dev cluster CR")?;
+    match tier {
+        // T3: no cluster pair to render — the trials org shares the pool. Record
+        // its placement only; `.7` provision-project-env creates the DBs on the pool.
+        Tier::Trials => {
+            println!(
+                "org {id:?} (tier trials): placed on the shared pool {pool:?} (no dedicated cluster pair)",
+                id = org.id,
+                pool = org.prod_cluster.name,
+            );
+        }
+        // T2/T4: render the dedicated cluster pair and emit the CRs to apply.
+        Tier::Standard | Tier::Dedicated => {
+            let (prod_cr, dev_cr) = wamn_provision::org::render_org_cluster_pair(&org)
+                .map_err(|e| anyhow::anyhow!("render org clusters: {e}"))?;
+            println!(
+                "org {id:?} (tier {tier}): {prod} ({pi} instances, HA) + {dev} (1 instance, hibernation-managed)",
+                id = org.id,
+                prod = org.prod_cluster.name,
+                dev = org.dev_cluster.name,
+                pi = prod_cr["spec"]["instances"],
+            );
+            // Emit the CRs (default: both to stdout) so the runbook kubectl-applies them.
+            let emit_prod = args.emit_prod.unwrap_or_else(|| PathBuf::from("-"));
+            let emit_dev = args.emit_dev.unwrap_or_else(|| PathBuf::from("-"));
+            write_json(&emit_prod, &prod_cr).context("emit prod cluster CR")?;
+            write_json(&emit_dev, &dev_cr).context("emit dev cluster CR")?;
+        }
+    }
 
     // Record the org in the T1 registry (idempotent), when a system-DB URL is given.
     match &args.system_database_url {
@@ -114,10 +147,21 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
             record_org(url, &org).await?;
             println!("recorded org {:?} in registry.orgs (wamn_system)", org.id);
         }
-        None => println!("(no --system-database-url: rendered CRs only; org not recorded)"),
+        None => println!("(no --system-database-url: org not recorded)"),
     }
 
     Ok(())
+}
+
+/// Build the org placement for a tier: a `trials` org shares the `pool` (both
+/// cluster refs, via [`Org::for_pool`]); a paying (`standard`/`dedicated`) org
+/// gets its own `<org>-prod` / `<org>-dev` pair (via [`Org::for_pair`]). The one
+/// decision that separates the T3 record-only path from the T2/T4 render path.
+fn org_for(tier: Tier, id: &str, pool: &str) -> Org {
+    match tier {
+        Tier::Trials => Org::for_pool(id, pool),
+        Tier::Standard | Tier::Dedicated => Org::for_pair(id, tier),
+    }
 }
 
 /// Upsert the org's placement row into `registry.orgs` on the T1 system DB.
@@ -193,8 +237,36 @@ mod tests {
 
     #[test]
     fn tier_arg_maps_to_the_registry_tier() {
+        assert_eq!(Tier::from(TierArg::Trials), Tier::Trials);
         assert_eq!(Tier::from(TierArg::Standard), Tier::Standard);
         assert_eq!(Tier::from(TierArg::Dedicated), Tier::Dedicated);
+    }
+
+    /// The one decision separating the T3 record-only path from the T2/T4 render
+    /// path: a trials tier places the org on the shared pool (both refs), a paying
+    /// tier on its own `<org>-prod` / `<org>-dev` pair.
+    #[test]
+    fn org_for_places_trials_on_the_pool_and_paying_on_a_pair() {
+        // Trials → both refs = the pool (shared, no dedicated pair).
+        let t = org_for(Tier::Trials, "trialco", "wamn-pg");
+        assert_eq!(t.tier, Tier::Trials);
+        assert_eq!(t.prod_cluster.name, "wamn-pg");
+        assert_eq!(t.dev_cluster.name, "wamn-pg");
+        assert!(one_org_registry(t).validate().is_ok());
+        // Standard → a dedicated `<org>-prod` / `<org>-dev` pair.
+        let s = org_for(Tier::Standard, "acme", "wamn-pg");
+        assert_eq!(s.tier, Tier::Standard);
+        assert_eq!(s.prod_cluster.name, "acme-prod");
+        assert_eq!(s.dev_cluster.name, "acme-dev");
+    }
+
+    /// A trials org has no dedicated pair to render — the render path is only
+    /// reached for paying tiers, and rendering a trials org would error (it is the
+    /// record-only path). This pins that the pool placement carries no cluster CRs.
+    #[test]
+    fn a_trials_org_renders_no_cluster_pair() {
+        let t = org_for(Tier::Trials, "trialco", "wamn-pg");
+        assert!(wamn_provision::org::render_org_cluster_pair(&t).is_err());
     }
 
     #[test]

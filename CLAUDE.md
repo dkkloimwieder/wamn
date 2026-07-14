@@ -893,6 +893,72 @@ for E in prod dev; do C=gate8-$E; \
 kubectl -n wamn-system delete database wamn-db-gate8--app--prod wamn-db-gate8--app--dev
 kubectl -n wamn-system delete cluster gate8-prod gate8-dev
 
+# [D6/wamn-q3n.9] demote the shipped shared cluster to the T3 trials pool —
+# register wamn-pg as the `trials` tier + reframe deploy/cnpg-cluster.yaml
+# (crates/wamn-registry Org::for_pool + crates/wamn-host provision-org --tier
+# trials). The FOURTH P2 provisioning child. The four-tier provisioning surface
+# was ASYMMETRIC: .6 provision-org renders T2/T4 cluster PAIRS and REJECTS trials
+# (render_org_cluster_pair -> TierHasNoDedicatedPair); .7 provision-project-env
+# ROUTES an EXISTING trials org to the pool (registry.org(org).cluster(env.side())
+# — a trials org's both refs = the pool) — but NOTHING created the trials org row
+# (.7's live standup INSERTED it by hand via psql). .9 makes the shared pool a
+# first-class PLACEMENT TARGET. NEW crates/wamn-registry Org::for_pool(id, pool) =
+# the for_pair counterpart: a Tier::Trials org with BOTH cluster refs = the pool
+# (env.side() collapses onto it; the recovery-domain invariant tier='trials' OR
+# prod<>dev admits the prod==dev collapse for trials only). provision-org gains
+# `--tier trials` + `--pool <cluster>` (default wamn-pg): the trials branch builds
+# the org via for_pool, validates it, renders NO cluster CRs (the pool exists),
+# and records ONLY the registry.orgs placement row (the same idempotent
+# upsert_org_sql path, wamn_system owner). NO system-schema.sql change — the org
+# row IS the registration (the model's stance: ClusterRef = placement, not
+# infrastructure; NO registry.pools table). One org_for(tier,id,pool) decision
+# separates the T3 record-only path from the T2/T4 render path (unchanged).
+# provision-project-env then routes a REGISTERED trials org's DBs onto the pool
+# via env.side() WITHOUT a manual --cluster. deploy/cnpg-cluster.yaml reframed as
+# the T3 trials pool (header: pre-contract / RLS floor load-bearing / conversion=
+# promotion cross-ref .13) + wamn.tier=trials / component=trials-pool LABELS in
+# the FILE (doc-of-intent; the live wamn-pg Cluster is NEVER re-applied). Mutants
+# killed (apply/test/restore, sha256-verified, DEBUG builds): for_pool wrong refs
+# (dev_cluster != pool) / org_for uses for_pair for trials — each fails a NAMED
+# test. docs/postgres-topology.md §T3 "Shipped (wamn-q3n.9)" + docs/provisioning.md
+# §provision-org T3 trials orgs. SCOPE: register the pool as a placement target
+# ONLY — the tier-move (promotion T3->T2) is wamn-q3n.13 (unblocked by .9); logical
+# dumps = .10; retiring the legacy postgres.yaml gate pod = wamn-689 (cross-ref).
+cargo test -p wamn-registry -p wamn-host   # Org::for_pool refs==pool + org_for trials-vs-pair + subcommand units
+cargo clippy -p wamn-registry -p wamn-host --all-targets \
+  && cargo fmt -p wamn-registry -p wamn-host --check
+# Render/plan a trials org locally (no DB needed — omit --system-database-url):
+./target/debug/wamn-host provision-org --org trialco --tier trials --pool wamn-pg
+# IN-CLUSTER gate of record = a LIVE T3 trials-org standup (the .6/.7 precedent; T3
+# pool wamn-pg + T1 wamn-sysdb are ALWAYS up). NO docker rebuild — the real debug
+# subcommand locally against a port-forwarded wamn-sysdb, then kubectl-apply the
+# emitted Database CR ADDITIVELY to wamn-pg. PICK A CLEAN unused port for the
+# port-forward (check `ss -ltn | grep 547` first):
+kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5473:5432 &
+SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
+WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5473/wamn_system?sslmode=disable" \
+  ./target/debug/wamn-host provision-org --org t3gate --tier trials --pool wamn-pg   # records registry.orgs (both refs=wamn-pg), NO CRs
+# provision-project-env WITHOUT --cluster reads placement from the registered row -> wamn-pg:
+WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5473/wamn_system?sslmode=disable" \
+  ./target/debug/wamn-host provision-project-env --org t3gate --project demo --env dev \
+  --connection-limit 15 --emit-database /tmp/t3-db.json --emit-role-sql /tmp/t3-role.sql \
+  --emit-privilege-sql /tmp/t3-priv.sql --emit-secret /tmp/t3-secret.json   # Database CR cluster == wamn-pg
+kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/t3-role.sql
+kubectl apply -f /tmp/t3-db.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.applied}'=true database/wamn-db-t3gate--demo--dev --timeout=90s
+kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/t3-priv.sql
+# Verify (gate of record): registry.orgs t3gate = trials/wamn-pg/wamn-pg; the Database
+# CR routed to wamn-pg FROM THE REGISTERED ROW (no --cluster); the db on wamn-pg owned
+# by wamn_app + connlimit 15, CONNECT confined (PUBLIC revoked), wamn_app NOSUPERUSER/
+# NOCREATEDB/NOBYPASSRLS; registry.projects + project_envs rows. Guardrail:
+# wamn-pg/wamn-sysdb/postgres.yaml UNTOUCHED. Teardown deletes ONLY the new trials
+# org's Database CR + DB + registry.orgs row (cascades projects + project_envs):
+kubectl -n wamn-system delete database wamn-db-t3gate--demo--dev
+kubectl -n wamn-system exec wamn-pg-1 -c postgres -- \
+  psql -U postgres -c 'DROP DATABASE IF EXISTS "wamn-db-t3gate--demo--dev" WITH (FORCE);'
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
+  psql -U postgres -d wamn_system -c "DELETE FROM registry.orgs WHERE id='t3gate';"
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

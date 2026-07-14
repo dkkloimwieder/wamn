@@ -120,6 +120,18 @@ restore in this tier is the v1 scratch-cluster runbook (below) or the nightly
 logical dump — acceptable for trial data. **Conversion = promotion** to a T2
 pair via the seam (§Reversibility).
 
+*Shipped (`wamn-q3n.9`):* the shipped shared cluster (`deploy/cnpg-cluster.yaml`
+`wamn-pg`) is reframed as this T3 pool (header + `wamn.tier=trials` /
+`component=trials-pool` labels; the live cluster is untouched — the file is
+doc-of-intent) and made a first-class **placement target**: `provision-org
+--tier trials --pool wamn-pg` records a trials org in `registry.orgs` with both
+cluster refs pointing at the pool (`Org::for_pool` — no cluster CRs; the pool
+already exists). `provision-project-env` then routes that org's project-env
+databases onto the pool via `env.side()` (the wamn-q3n.7 path, now from a
+registered row rather than a hand-inserted one). Conversion to a T2 pair is the
+tier-move (`wamn-q3n.13`); retiring the legacy `postgres.yaml` gate pod is a
+separate concern (`wamn-689`). `docs/provisioning.md`.
+
 ### T4 — Dedicated-per-env (the regulated promotion tier)
 `<org>-<project>-prod` etc. — cluster-per-environment for customers whose
 compliance regime demands maximal separation (independent PITR per env,

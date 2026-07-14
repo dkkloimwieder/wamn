@@ -158,9 +158,25 @@ provisioned cluster.
 | Flag | Purpose |
 |---|---|
 | `--org <id>` | Org id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric). Names `<org>-prod` / `<org>-dev`; the reserved `wamn` prefix is rejected. |
-| `--tier standard\|dedicated` | Paying tier. A `trials` org shares the pool (not a pair) and is not provisioned here — T3 provisioning is wamn-q3n.9. |
-| `--system-database-url` / `WAMN_SYSTEM_ADMIN_URL` | Superuser URL to the T1 `wamn_system` DB, where the org row is recorded. Omit to render CRs only. |
-| `--emit-prod` / `--emit-dev` `<path>` | Write the prod / dev `Cluster` CR (JSON; `-` = stdout, the default) — `kubectl apply -f`. |
+| `--tier trials\|standard\|dedicated` | Hosting tier. `standard`/`dedicated` render a dedicated cluster pair here; `trials` (T3) is placed on `--pool` and only recorded (wamn-q3n.9). |
+| `--pool <cluster>` | The shared pool cluster a `trials` org is placed on (both cluster refs point at it). Ignored for `standard`/`dedicated`. Default `wamn-pg`. |
+| `--system-database-url` / `WAMN_SYSTEM_ADMIN_URL` | Superuser URL to the T1 `wamn_system` DB, where the org row is recorded. Omit to render/plan only. |
+| `--emit-prod` / `--emit-dev` `<path>` | Write the prod / dev `Cluster` CR (JSON; `-` = stdout, the default) — `kubectl apply -f`. Not written for a `trials` org (no pair). |
+
+### T3 trials orgs (wamn-q3n.9)
+
+A `trials` org shares the pre-contract **trials pool** (`deploy/cnpg-cluster.yaml`
+`wamn-pg`, the T3 tier — `docs/postgres-topology.md` §T3), so it has **no
+dedicated cluster pair**: there is nothing to render. `--tier trials` builds the
+org via `wamn_registry::Org::for_pool(id, pool)` — both cluster refs point at
+`--pool` (the recovery-domain invariant `tier='trials' OR prod≠dev` admits that
+`prod == dev` collapse for trials only) — validates it, records **only** the
+`registry.orgs` placement row (the same idempotent `upsert_org_sql` path), and
+emits no CRs. `provision-project-env` then reads that placement and provisions the
+org's project-env databases onto the pool via `env.side()` — no manual `--cluster`
+(before wamn-q3n.9 the trials org row had to be hand-inserted via `psql`; now the
+subcommand is the one path for T2/T4 pairs **and** T3 pool orgs). Conversion to a
+dedicated T2 pair is the tier-move (`wamn-q3n.13`).
 
 Like `provision-project`, it is a **renderer + DB writer only** — it does NOT
 apply the CRs (the runbook/Job `kubectl apply`s them and waits ready, as the

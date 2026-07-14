@@ -233,6 +233,24 @@ impl Org {
         }
     }
 
+    /// A T3 `trials` org placed on the shared `pool` cluster: it has no dedicated
+    /// `<org>-prod` / `<org>-dev` pair (the pool already exists), so **both**
+    /// cluster refs point at the pool and every env's [`Side`] collapses onto it.
+    /// The `for_pair` counterpart for the pool tier — the placement
+    /// [`provision-project-env`](crate) reads to route a trials project-env onto
+    /// the pool via `env.side()`. The recovery-domain invariant
+    /// (`tier='trials' OR prod_cluster<>dev_cluster`, [`crate::validate`]) admits
+    /// this `prod == dev` collapse for `trials` only.
+    pub fn for_pool(id: impl Into<String>, pool: impl Into<String>) -> Org {
+        let pool = ClusterRef::new(pool);
+        Org {
+            id: id.into(),
+            tier: Tier::Trials,
+            prod_cluster: pool.clone(),
+            dev_cluster: pool,
+        }
+    }
+
     /// The cluster holding envs on `side` — the T2 prod/dev split, collapsed to
     /// one cluster for a T3 pool org (where both refs point at the pool).
     pub fn cluster(&self, side: Side) -> &ClusterRef {
@@ -318,6 +336,33 @@ mod tests {
         assert_eq!(org.cluster(Env::Prod.side()).name, "acme-prod");
         assert_eq!(org.cluster(Env::Canary.side()).name, "acme-prod");
         assert_eq!(org.cluster(Env::Dev.side()).name, "acme-dev");
+    }
+
+    /// A T3 trials org lives on the shared pool: `Org::for_pool` points **both**
+    /// cluster refs at the pool (so every env's side collapses onto it), and the
+    /// recovery-domain invariant admits `prod == dev` for the trials tier. This is
+    /// the placement `provision-project-env` reads to route a trials project-env
+    /// onto the pool.
+    #[test]
+    fn for_pool_places_a_trials_org_on_the_shared_pool() {
+        use super::{Org, Registry, SCHEMA_VERSION};
+        let org = Org::for_pool("acme", "wamn-pg");
+        assert_eq!(org.id, "acme");
+        assert_eq!(org.tier, Tier::Trials);
+        // Both refs = the pool; every env's side resolves to it.
+        assert_eq!(org.prod_cluster.name, "wamn-pg");
+        assert_eq!(org.dev_cluster.name, "wamn-pg");
+        assert_eq!(org.cluster(Env::Prod.side()).name, "wamn-pg");
+        assert_eq!(org.cluster(Env::Canary.side()).name, "wamn-pg");
+        assert_eq!(org.cluster(Env::Dev.side()).name, "wamn-pg");
+        // A one-org registry validates: invariant 4 admits prod==dev for trials.
+        let reg = Registry {
+            schema_version: SCHEMA_VERSION.to_string(),
+            orgs: vec![org],
+            projects: Vec::new(),
+            project_envs: Vec::new(),
+        };
+        assert!(reg.validate().is_ok());
     }
 
     /// `as_str()` must equal the serde wire form for every variant: the system-DB

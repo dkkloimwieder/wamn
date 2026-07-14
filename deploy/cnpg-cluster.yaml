@@ -1,10 +1,22 @@
-# The shared CloudNativePG cluster (D6): ONE Cluster, a database per project
-# (2.3 wamn-host provision-project). Stands up ALONGSIDE the guardrailed
-# deploy/postgres.yaml pod — the legacy S2–S6 gates keep running against that;
-# only the 2.3 provisionbench gate targets this cluster. Pinned operator:
-# deploy/cnpg-operator.yaml (CNPG 1.29.2).
+# The T3 TRIALS POOL (D6 four-tier topology, docs/postgres-topology.md §T3): ONE
+# shared CloudNativePG Cluster holding a database per project-env, the
+# PRE-CONTRACT tier — trials, demos, hobby evaluation. Pooled density where it
+# belongs: many small idle tenants who haven't paid for a dedicated instance.
+# The RLS floor (per-DB CONNECT + FORCE RLS within) is LOAD-BEARING here (it is
+# belt-and-braces on the isolated T2/T4 clusters). Registered as the `trials`
+# tier via `wamn-host provision-org --tier trials --pool wamn-pg` (wamn-q3n.9);
+# `provision-project-env` then creates a trials org's databases on this pool.
+# CONVERSION = promotion to a dedicated T2 pair (the tier-move, wamn-q3n.13).
 #
-# Cross-project isolation = per-project database + per-DB CONNECT (PUBLIC
+# Stands up ALONGSIDE the guardrailed deploy/postgres.yaml pod — the legacy S2–S6
+# gates keep running against that; the 2.3 provisionbench + the wamn-q3n
+# provisioning gates target this cluster. Pinned operator: deploy/cnpg-operator.yaml
+# (CNPG 1.29.2). SHARED-CLUSTER GUARDRAIL: this file is doc-of-intent — the live
+# `wamn-pg` Cluster is never re-applied/recreated (provisioning adds Databases to
+# it additively). Retiring the legacy postgres.yaml gate pod is a separate concern
+# (wamn-689).
+#
+# Cross-tenant isolation = per-project-env database + per-DB CONNECT (PUBLIC
 # revoked) + RLS within, under the single shared NOSUPERUSER `wamn_app` role
 # (roles are cluster-global). See docs/provisioning.md.
 apiVersion: postgresql.cnpg.io/v1
@@ -12,6 +24,12 @@ kind: Cluster
 metadata:
   name: wamn-pg
   namespace: wamn-system
+  # T3 identity (the org-cluster label convention; the pool hosts many orgs, so
+  # `wamn.org`/`wamn.side` do not apply — `wamn.tier` names its role instead).
+  labels:
+    app.kubernetes.io/managed-by: wamn
+    app.kubernetes.io/component: trials-pool
+    wamn.tier: trials
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:18
