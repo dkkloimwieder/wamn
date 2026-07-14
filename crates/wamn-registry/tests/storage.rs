@@ -140,6 +140,44 @@ fn upsert_project_and_project_env_sql_match_the_columns() {
     assert!(sel.contains("prod_cluster") && sel.contains("dev_cluster"));
 }
 
+/// The saga builders (`wamn_registry::sql::{create,advance,complete,fail}_saga_sql`,
+/// wamn-q3n.8) must target the `provisioning.sagas` columns and use only status
+/// literals the storage CHECK allows — the SR2 drift guard extended to the saga
+/// mechanism (status literals pinned to the DDL, the tier/env-literal pattern).
+#[test]
+fn saga_sql_builders_match_the_sagas_columns_and_status_check() {
+    let sql = code_only(&system_schema_sql());
+    assert!(sql.contains("CREATE TABLE provisioning.sagas"));
+
+    let create = wamn_registry::sql::create_saga_sql();
+    assert!(create.contains("provisioning.sagas"));
+    assert!(create.contains("ON CONFLICT (saga_id) DO NOTHING"));
+    for col in ["saga_id", "kind", "target", "total_steps"] {
+        assert!(sql.contains(col), "sagas table missing {col}");
+        assert!(create.contains(col), "create_saga builder missing {col}");
+    }
+
+    let advance = wamn_registry::sql::advance_saga_step_sql();
+    assert!(advance.contains("provisioning.sagas") && advance.contains("step = step + 1"));
+
+    // Every status literal a builder writes must be allowed by the status CHECK
+    // (a weakened builder literal is caught here + by the live-apply proof).
+    for (builder, status) in [
+        (advance, "running"),
+        (wamn_registry::sql::complete_saga_sql(), "completed"),
+        (wamn_registry::sql::fail_saga_sql(), "failed"),
+    ] {
+        assert!(
+            builder.contains(&format!("'{status}'")),
+            "builder is missing the {status:?} status literal"
+        );
+        assert!(
+            sql.contains(&format!("'{status}'")),
+            "sagas status CHECK (system-schema.sql) is missing {status:?}"
+        );
+    }
+}
+
 /// Invariant 4 (dev ≠ prod recovery domain) is a CHECK whose *expression* is
 /// pinned, not just its name — the drift-guard lesson: a name-only assertion
 /// lets a weakened predicate slip through.
@@ -287,6 +325,42 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          DEALLOCATE upp; DEALLOCATE upe;\n",
         up_project = wamn_registry::sql::upsert_project_sql(),
         up_env = wamn_registry::sql::upsert_project_env_sql(),
+    ));
+    // Exercise the REAL wamn-registry saga builders (wamn-q3n.8) via PREPARE/EXECUTE:
+    // creation is exactly-once (a second create of the same saga_id is a no-op),
+    // `step` is a durable resume checkpoint (two advances → 2), and complete/fail set
+    // the terminal status. Two creates collapsing to ONE row kills a "create ON
+    // CONFLICT dropped" mutant; a step that does not reach 2 kills a "step-advance
+    // neutered" mutant; the wrong terminal status kills a "complete/fail literal"
+    // mutant — all at the live layer, atop the pure shape guard.
+    script.push_str(&format!(
+        "PREPARE csaga (text,text,text,int) AS {create};\n\
+         PREPARE asaga (text) AS {advance};\n\
+         PREPARE dsaga (text) AS {complete};\n\
+         PREPARE fsaga (text,text) AS {fail};\n\
+         EXECUTE csaga('sg1','provision-org','demo', 3);\n\
+         EXECUTE csaga('sg1','provision-org','demo', 3);\n\
+         EXECUTE asaga('sg1');\n\
+         EXECUTE asaga('sg1');\n\
+         EXECUTE dsaga('sg1');\n\
+         EXECUTE csaga('sg2','provision-project-env','demo/app/dev', NULL);\n\
+         EXECUTE fsaga('sg2','boom');\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM provisioning.sagas WHERE saga_id='sg1')=1,\n\
+             'create_saga_sql is exactly-once via the saga_id PK';\n\
+           ASSERT (SELECT step FROM provisioning.sagas WHERE saga_id='sg1')=2,\n\
+             'advance_saga_step_sql advances the durable checkpoint (two advances → 2)';\n\
+           ASSERT (SELECT status FROM provisioning.sagas WHERE saga_id='sg1')='completed',\n\
+             'complete_saga_sql sets the terminal completed status';\n\
+           ASSERT (SELECT status FROM provisioning.sagas WHERE saga_id='sg2')='failed'\n\
+              AND (SELECT last_error FROM provisioning.sagas WHERE saga_id='sg2')='boom',\n\
+             'fail_saga_sql records the terminal failed status + the error';\n\
+         END $$;\n\
+         DEALLOCATE csaga; DEALLOCATE asaga; DEALLOCATE dsaga; DEALLOCATE fsaga;\n",
+        create = wamn_registry::sql::create_saga_sql(),
+        advance = wamn_registry::sql::advance_saga_step_sql(),
+        complete = wamn_registry::sql::complete_saga_sql(),
+        fail = wamn_registry::sql::fail_saga_sql(),
     ));
     script.push_str("DROP SCHEMA registry CASCADE;\n");
     script.push_str("DROP SCHEMA provisioning CASCADE;\n");

@@ -34,8 +34,10 @@ http-body-util = "0.1"
 wamn-catalog = { path = "../wamn-catalog" }
 wamn-ddl = { path = "../wamn-ddl" }
 # provisionbench: the pure provisioning naming / SQL / Secret builders (2.3),
-# driven end-to-end through wamn_host::provision::provision_project.
+# driven end-to-end through wamn_host::provision::provision_project. The org-pair
+# / T3 tier modes (wamn-q3n.8) also drive the registry model + saga SQL builders.
 wamn-provision = { path = "../wamn-provision" }
+wamn-registry = { path = "../wamn-registry" }
 # queuebench/failoverbench/dispatchbench drive the pure queue/cron/outbox
 # builders over tokio_postgres.
 wamn-run-queue = { path = "../wamn-run-queue" }

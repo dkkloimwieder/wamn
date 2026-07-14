@@ -50,6 +50,54 @@ pub fn upsert_project_env_sql() -> &'static str {
        secret_namespace = EXCLUDED.secret_namespace"
 }
 
+// --- provisioning sagas (wamn-q3n.8) ---------------------------------------
+//
+// The exactly-once / resumable state the provisioning orchestrator (10.1) drives
+// `provision-org` / `provision-project-env` through. wamn-q3n.8 ships the pure
+// builders (and the `provisionbench` gate that proves a saga row LANDS in the
+// system DB per provisioned tier); the orchestrator that drives them through the
+// real subcommands stays 10.1 (the `deploy/system-schema.sql` schema comment).
+// The `status` literals are pinned to the `provisioning.sagas` status CHECK
+// (drift-guarded against the storage DDL).
+
+/// Create a provisioning saga (exactly-once). `INSERT … ON CONFLICT (saga_id) DO
+/// NOTHING` — a redelivered create collapses onto the existing row, so a crash
+/// then retry never starts a second saga. Params: `$1` saga_id, `$2` kind
+/// (`provision-org` / `provision-project-env`), `$3` target (the org id or the
+/// `org/project/env` triple — decoupled text, not an FK), `$4` total_steps
+/// (nullable). The row starts `status='pending'`, `step=0` (schema defaults).
+pub fn create_saga_sql() -> &'static str {
+    "INSERT INTO provisioning.sagas (saga_id, kind, target, total_steps) \
+     VALUES ($1, $2, $3, $4) \
+     ON CONFLICT (saga_id) DO NOTHING"
+}
+
+/// Advance a saga's durable resume checkpoint by one step and mark it running.
+/// The orchestrator runs this in the SAME txn as each step's effect (the
+/// write-ahead pattern), so a crash-then-resume re-reads `step` and never
+/// re-applies a committed step. Param: `$1` saga_id.
+pub fn advance_saga_step_sql() -> &'static str {
+    "UPDATE provisioning.sagas \
+     SET step = step + 1, status = 'running', updated_at = now() \
+     WHERE saga_id = $1"
+}
+
+/// Mark a saga completed (terminal success). Param: `$1` saga_id.
+pub fn complete_saga_sql() -> &'static str {
+    "UPDATE provisioning.sagas \
+     SET status = 'completed', updated_at = now() \
+     WHERE saga_id = $1"
+}
+
+/// Mark a saga failed, recording the error (terminal failure; the per-step
+/// compensation ledger that unwinds it is 10.1's). Params: `$1` saga_id, `$2`
+/// last_error.
+pub fn fail_saga_sql() -> &'static str {
+    "UPDATE provisioning.sagas \
+     SET status = 'failed', last_error = $2, updated_at = now() \
+     WHERE saga_id = $1"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +145,41 @@ mod tests {
         // Idempotent + additive: refreshes the Secret reference on the triple PK.
         assert!(sql.contains("ON CONFLICT (org, project, env) DO UPDATE"));
         assert!(sql.contains("secret_name = EXCLUDED.secret_name"));
+    }
+
+    #[test]
+    fn create_saga_is_exactly_once_via_the_saga_id_pk() {
+        let sql = create_saga_sql();
+        assert!(sql.contains("INSERT INTO provisioning.sagas"));
+        for col in ["saga_id", "kind", "target", "total_steps"] {
+            assert!(sql.contains(col), "missing column {col}");
+        }
+        assert!(sql.contains("VALUES ($1, $2, $3, $4)"));
+        // Exactly-once: a redelivered create collapses onto the existing row.
+        assert!(sql.contains("ON CONFLICT (saga_id) DO NOTHING"));
+    }
+
+    #[test]
+    fn advance_step_increments_the_checkpoint_and_marks_running() {
+        let sql = advance_saga_step_sql();
+        assert!(sql.contains("UPDATE provisioning.sagas"));
+        // The durable resume checkpoint advances by exactly one.
+        assert!(sql.contains("step = step + 1"));
+        assert!(sql.contains("status = 'running'"));
+        assert!(sql.contains("WHERE saga_id = $1"));
+    }
+
+    #[test]
+    fn complete_and_fail_set_the_terminal_status() {
+        let done = complete_saga_sql();
+        assert!(done.contains("UPDATE provisioning.sagas"));
+        assert!(done.contains("status = 'completed'"));
+        assert!(done.contains("WHERE saga_id = $1"));
+
+        let failed = fail_saga_sql();
+        assert!(failed.contains("status = 'failed'"));
+        // The error is a $n param (never interpolated).
+        assert!(failed.contains("last_error = $2"));
+        assert!(failed.contains("WHERE saga_id = $1"));
     }
 }

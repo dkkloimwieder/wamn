@@ -188,6 +188,19 @@ control-plane model, and the registry schema):
 3. **`provisionbench`** extends to the org pair + a T3 path; the saga records
    land in the system DB.
 
+   *Shipped (`wamn-q3n.8`):* `provisionbench --mode` (`legacy`/`orgpair`/`t3`/
+   `saga`/`all`) — a T2-shaped org (two project-env databases, prod + dev) and a
+   T3 trials org (one), each asserting routing / per-database isolation /
+   least-priv / per-project-env `Secret` layout + the `registry` rows + a
+   provisioning saga (substrate-agnostic: the per-project-env DBs are created via
+   the real `.7` builders as a plain-SQL stand-in for the `Database` CRD, and the
+   registry / saga live in an ephemeral `wamn_system`-shaped schema). The saga
+   builders (`wamn_registry::sql::{create,advance,complete,fail}_saga_sql`, SR2)
+   ship here; the orchestrator that drives them through the real subcommands stays
+   `10.1`. The physical cross-**cluster** isolation of a real T2 pair (`Database`
+   CRs on `<org>-prod` vs `<org>-dev`, which needs the operator) is the live
+   org-pair standup gate of record. `docs/provisioning.md`.
+
 ## Backup architecture (reshapes wamn-e1g)
 
 Two complementary mechanisms, per tier:

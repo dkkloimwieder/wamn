@@ -4127,6 +4127,7 @@ dependencies = [
  "wamn-gate-harness",
  "wamn-host",
  "wamn-provision",
+ "wamn-registry",
  "wamn-run-queue",
  "wamn-seed",
  "wash-runtime",

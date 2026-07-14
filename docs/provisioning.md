@@ -263,6 +263,58 @@ substrate, the registry rows, and — via a T2-shaped org rendered without apply
 then drops the created database (the `retain` policy leaves it) — never `wamn-pg`
 / `postgres.yaml` / `wamn-sysdb`.
 
+## `provisionbench` — the four-tier extension (wamn-q3n.8)
+
+`provisionbench` gains `--mode` (the pgbench / queuebench precedent):
+
+- **`legacy`** — the 2.3 two-project flow above, kept as regression.
+- **`orgpair`** — a T2-shaped org (`Tier::Standard`, so `<org>-prod` ≠
+  `<org>-dev`) with two project-envs (`prod` + `dev`) as two per-project-env
+  databases (`wamn-db-<org>--<project>--<env>`). Off-cluster the CNPG `Database`
+  CRD is unavailable, so the databases are created with plain SQL through the
+  **real** wamn-q3n.7 builders (`ensure_app_role_sql` + `create_database_named_sql`
+  with the per-project-env name + `grant_connect_on_database_sql`) — honest
+  superuser scaffolding, the same shape the CRD reconciles to. Asserts per-database
+  routing + isolation + least-priv + the per-project-env `Secret` layout, records
+  the `registry.orgs`/`projects`/`project_envs` rows, and lands a provisioning
+  **saga** (create → step-per-env → complete).
+- **`t3`** — a `Tier::Trials` org (both cluster refs collapse onto the shared
+  pool) with one project-env; the same per-tier assertions.
+- **`saga`** — a focused proof of the saga builders: exactly-once create, durable
+  step advance, terminal complete + fail.
+- **`all`** — `legacy`, then (over one ephemeral registry schema) `saga`,
+  `orgpair`, `t3`.
+
+The tier / saga modes need the T1 registry, so the gate applies
+`deploy/system-schema.sql` into an ephemeral `registry` / `provisioning` schema
+pair on the same PG (dropped at teardown). It is still **substrate-agnostic** — a
+superuser URL — so `--mode all` runs locally against a throwaway `postgres:18`.
+
+**Saga builders (SR2, wamn-q3n.8):** `wamn_registry::sql::{create,advance,
+complete,fail}_saga_sql` — the exactly-once / resumable state the orchestrator
+(10.1) drives; `.8` ships the builders and proves a saga **lands in the system
+DB** per provisioned tier, but does **not** wire sagas into the real `provision-org`
+/ `provision-project-env` subcommands (that orchestrator stays 10.1). The `status`
+literals are drift-guarded against the `provisioning.sagas` CHECK, and a live
+exactly-once / step / complete / fail proof is spliced into the wamn-q3n.3 storage
+gate. Mutation-tested (apply/test/restore, debug builds): dropping the create
+`ON CONFLICT`, neutering the step advance, and a wrong terminal-status literal
+each fail a named unit test + the live proof (the step mutant also fails
+`--mode saga`).
+
+**The physical cross-CLUSTER isolation of a real T2 org pair needs the operator**,
+so the in-cluster **gate of record is a live org-pair standup** (the `.6`/`.7`
+precedent — the debug binary + `kubectl`, no image rebuild): `provision-org`
+renders and stands up a real `<org>-prod` (HA) / `<org>-dev` pair, then
+`provision-project-env --cluster …` renders a `Database` CR on **each** cluster
+(the prod env on `<org>-prod`, the dev env on `<org>-dev`). It proves each project-
+env database lives on a **different Postgres cluster** — `<org>-prod` holds only
+the prod database, `<org>-dev` only the dev database — with `wamn_app` owner,
+`CONNECT` confined, `NOBYPASSRLS`; plus the same `Database`-CRD path on the T3 pool
+(`wamn-pg`). Teardown deletes **only** the new pair + `Database` CRs (and drops the
+retained T3 database on `wamn-pg`) — never `wamn-pg` / `postgres.yaml` /
+`wamn-sysdb`.
+
 ## Deferred (follow-up beads)
 
 - **WAL archiving / PITR** — a fast-follow `[2.3]` bead (needs an in-cluster

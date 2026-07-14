@@ -41,19 +41,41 @@ pub fn ensure_app_role_sql(password: &str) -> String {
     )
 }
 
+/// `CREATE DATABASE "<database>"`, naming the database directly (not derived from
+/// a project id) — the per-project-env counterpart of [`create_database_sql`],
+/// mirroring [`grant_connect_on_database_sql`] taking an already-derived name.
+/// The name is double-quoted (a slug-derived name cannot contain a `"`, so it is
+/// injection-safe). Must run as its own autocommit statement (Postgres forbids
+/// `CREATE DATABASE` inside a transaction block).
+///
+/// Pass a name from [`project_env_database_name`](crate::project_env_database_name)
+/// (`wamn-db-<org>--<project>--<env>`). In production the CNPG `Database` CRD
+/// creates the per-project-env database; this is the plain-SQL equivalent the
+/// substrate-agnostic gate uses off-cluster (wamn-q3n.8).
+pub fn create_database_named_sql(database: &str) -> String {
+    format!("CREATE DATABASE {}", quote_ident(database))
+}
+
 /// `CREATE DATABASE "wamn-db-<project>"`. Must run as its own autocommit
 /// statement (Postgres forbids `CREATE DATABASE` inside a transaction block).
 pub fn create_database_sql(project: &str) -> String {
-    format!("CREATE DATABASE {}", quote_ident(&database_name(project)))
+    create_database_named_sql(&database_name(project))
+}
+
+/// `DROP DATABASE IF EXISTS "<database>" WITH (FORCE)`, naming the database
+/// directly — the per-project-env counterpart of [`drop_database_sql`] (teardown /
+/// gate only; destructive). Autocommit.
+pub fn drop_database_named_sql(database: &str) -> String {
+    format!(
+        "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+        quote_ident(database)
+    )
 }
 
 /// `DROP DATABASE IF EXISTS "wamn-db-<project>" WITH (FORCE)` — teardown / gate
 /// only (destructive; the production tool never drops). Autocommit.
 pub fn drop_database_sql(project: &str) -> String {
-    format!(
-        "DROP DATABASE IF EXISTS {} WITH (FORCE)",
-        quote_ident(&database_name(project))
-    )
+    drop_database_named_sql(&database_name(project))
 }
 
 /// Probe whether a database exists. The database **name** is the `$1`
@@ -117,6 +139,28 @@ mod tests {
         assert_eq!(
             drop_database_sql("acme-corp"),
             "DROP DATABASE IF EXISTS \"wamn-db-acme-corp\" WITH (FORCE)"
+        );
+    }
+
+    #[test]
+    fn named_database_ddl_targets_an_arbitrary_db_name_and_the_wrappers_delegate() {
+        // The per-project-env path (wamn-q3n.7/.8) passes a full triple-derived name.
+        assert_eq!(
+            create_database_named_sql("wamn-db-acme--billing--dev"),
+            "CREATE DATABASE \"wamn-db-acme--billing--dev\""
+        );
+        assert_eq!(
+            drop_database_named_sql("wamn-db-acme--billing--dev"),
+            "DROP DATABASE IF EXISTS \"wamn-db-acme--billing--dev\" WITH (FORCE)"
+        );
+        // The 2.3 project-taking wrappers delegate to the named builders.
+        assert_eq!(
+            create_database_sql("acme"),
+            create_database_named_sql("wamn-db-acme")
+        );
+        assert_eq!(
+            drop_database_sql("acme"),
+            drop_database_named_sql("wamn-db-acme")
         );
     }
 

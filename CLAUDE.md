@@ -818,6 +818,81 @@ kubectl -n wamn-system exec wamn-pg-1 -c postgres -- \
 kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
   psql -U postgres -d wamn_system -c "DELETE FROM registry.orgs WHERE id='demo';"
 
+# [D6/wamn-q3n.8] provisionbench four-tier extension — org pair (T2) + trials
+# pool (T3) + the saga mechanism (crates/wamn-gates provisionbench --mode +
+# crates/wamn-registry saga SQL builders + crates/wamn-provision
+# create_database_named_sql). The GATE/COVERAGE counterpart of the .6/.7
+# production paths. provisionbench gains --mode (legacy [the 2.3 2-project
+# regression] / orgpair / t3 / saga / all — the pgbench/queuebench precedent).
+# orgpair = a T2-shaped org (Tier::Standard, so <org>-prod != <org>-dev) with TWO
+# project-env databases (prod+dev, wamn-db-<org>--<project>--<env>); off-cluster
+# the CNPG Database CRD is unavailable so the DBs are created with plain SQL
+# through the REAL .7 builders (ensure_app_role_sql + NEW create_database_named_sql
+# [a sibling of grant_connect_on_database_sql taking an already-derived db name;
+# the 2.3 create_database_sql/drop_database_sql wrappers now DELEGATE to
+# create/drop_database_named_sql] + grant_connect_on_database_sql) = honest
+# superuser scaffolding, the shape the CRD reconciles to. Asserts per-DATABASE
+# routing (distinct markers) + isolation (a sibling's private table invisible =
+# 42P01) + least-priv + per-project-env Secret layout, RECORDS
+# registry.orgs/projects/project_envs, and lands a provisioning SAGA
+# (create->step-per-env->complete). t3 = a Tier::Trials org (both cluster refs
+# collapse onto the shared pool) with 1 env, same assertions. saga = a focused
+# proof of the saga builders (exactly-once create / durable step / complete /
+# fail). all = legacy then (over ONE ephemeral registry schema —
+# deploy/system-schema.sql applied via include_str! into a wamn_system-shaped
+# registry/provisioning pair on the same PG, dropped at teardown) saga, orgpair,
+# t3. NEW crates/wamn-registry/src/sql.rs saga builders (SR2 with the model):
+# create_saga_sql (exactly-once via saga_id PK ON CONFLICT DO NOTHING) /
+# advance_saga_step_sql (step=step+1, status='running' — the durable resume
+# checkpoint) / complete_saga_sql / fail_saga_sql; the orchestrator that drives
+# them through the REAL subcommands stays 10.1 (Q2a — .8 proves the saga MECHANISM
+# lands, does NOT change .6/.7). status literals drift-guarded vs the
+# provisioning.sagas CHECK + a live exactly-once/step/complete/fail proof spliced
+# into the .3 storage gate. Mutants killed (apply/test/restore, sha256, DEBUG
+# builds): create ON CONFLICT dropped / step-advance neutered / complete literal
+# 'completed'->'running' — each fails a NAMED wamn-registry unit test + the live
+# proof (the step mutant also fails --mode saga). docs/provisioning.md
+# §provisionbench four-tier extension + docs/postgres-topology.md §Provisioning
+# rework item 3.
+cargo test -p wamn-registry -p wamn-provision   # saga/named-db builders + drift-guards
+cargo clippy -p wamn-registry -p wamn-provision -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-registry -p wamn-provision -p wamn-gates --check
+# Local iteration (throwaway postgres:18; superuser url provisions wamn_app +
+# wamn_system + the per-project-env DBs + the ephemeral registry schema):
+docker run -d --rm --name wamn-prov-pg -p 5460:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn \
+  ./target/debug/wamn-gates --log-level error provisionbench --mode all
+# The saga live proof rides the wamn-registry live-apply gate (the .3 block):
+WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn cargo test -p wamn-registry
+docker stop wamn-prov-pg
+# IN-CLUSTER gate of record = a LIVE T2 ORG-PAIR STANDUP (the .6/.7 precedent; the
+# physical cross-CLUSTER isolation of a real pair needs the operator, so a single
+# --mode Job cannot show it). NO docker rebuild — the real debug binary locally +
+# kubectl apply the emitted CRs ADDITIVELY (needs kind 'wamn' + CNPG 1.29.2 +
+# wamn-pg + wamn-sysdb). --cluster given so the subcommands render WITHOUT a
+# registry read/write (the registry-write path is the .6/.7 gate of record):
+./target/debug/wamn-host provision-org --org gate8 --tier standard \
+  --emit-prod /tmp/gate8-prod.json --emit-dev /tmp/gate8-dev.json
+kubectl apply -f /tmp/gate8-prod.json -f /tmp/gate8-dev.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=2 cluster/gate8-prod --timeout=300s
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=1 cluster/gate8-dev  --timeout=180s
+for E in prod dev; do C=gate8-$E; \
+  ./target/debug/wamn-host provision-project-env --org gate8 --project app --env $E \
+    --cluster $C --emit-database /tmp/db-$E.json --emit-role-sql /tmp/role-$E.sql \
+    --emit-privilege-sql /tmp/priv-$E.sql --emit-secret /tmp/sec-$E.json; \
+  kubectl -n wamn-system exec -i $C-1 -c postgres -- psql -U postgres -f - < /tmp/role-$E.sql; \
+  kubectl apply -f /tmp/db-$E.json; \
+  kubectl -n wamn-system wait --for=jsonpath='{.status.applied}'=true database/wamn-db-gate8--app--$E --timeout=90s; \
+  kubectl -n wamn-system exec -i $C-1 -c postgres -- psql -U postgres -f - < /tmp/priv-$E.sql; done
+# Verify (gate of record): gate8-prod holds ONLY wamn-db-gate8--app--prod, gate8-dev
+# ONLY wamn-db-gate8--app--dev (physical cross-CLUSTER isolation) — each owned by
+# wamn_app, CONNECT confined (PUBLIC revoked), NOSUPERUSER/NOCREATEDB/NOBYPASSRLS.
+# The same Database-CRD path also serves the T3 pool (--cluster wamn-pg). Guardrail:
+# wamn-pg/wamn-sysdb/postgres.yaml UNTOUCHED. Teardown deletes ONLY the new pair:
+kubectl -n wamn-system delete database wamn-db-gate8--app--prod wamn-db-gate8--app--dev
+kubectl -n wamn-system delete cluster gate8-prod gate8-dev
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal
