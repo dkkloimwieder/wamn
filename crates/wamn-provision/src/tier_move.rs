@@ -57,17 +57,21 @@ pub fn validate_tier_upgrade(current: Tier, target: Tier) -> Result<(), Provisio
 /// contribution (dump before flip; restore before the registry cutover).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TierMoveStep {
-    /// Provision + wait-ready the target tier's new cluster pair (`provision-org`,
+    /// Provision + wait-ready the target tier's new cluster set (`provision-org`,
     /// render-only — the flip is deferred to the final [`FlipRegistry`] step).
+    /// `canary_cluster` is `Some` only for a T4 `dedicated` target (canary's own
+    /// cluster, wamn-q3n.14); `None` for a standard target (canary shares prod).
     ProvisionClusters {
         prod_cluster: String,
+        canary_cluster: Option<String>,
         dev_cluster: String,
         prod_instances: u32,
     },
     /// Snapshot one project-env's CURRENT database (`dump-project-env --run-now`).
     Dump { triple: Triple },
     /// Create the project-env database on the NEW cluster (`provision-project-env
-    /// --cluster <new>`), then restore into it.
+    /// --cluster <new>`), then restore into it. For a T4 target, a `canary` env's
+    /// `cluster` is the org's own `<org>-canary`, not the prod cluster.
     ProvisionEnv { triple: Triple, cluster: String },
     /// Restore the snapshot into the new database (`restore-project-env --in-place`).
     Restore { triple: Triple, cluster: String },
@@ -77,6 +81,7 @@ pub enum TierMoveStep {
     FlipRegistry {
         tier: Tier,
         prod_cluster: String,
+        canary_cluster: Option<String>,
         dev_cluster: String,
     },
 }
@@ -100,17 +105,22 @@ pub fn plan_tier_move(
     let target_org = Org::for_pair(org, target);
     let prod = target_org.prod_cluster.name.clone();
     let dev = target_org.dev_cluster.name.clone();
+    // Set only for a T4 dedicated target (canary its own cluster, wamn-q3n.14).
+    let canary = target_org.canary_cluster.as_ref().map(|c| c.name.clone());
 
     let mut steps = vec![TierMoveStep::ProvisionClusters {
         prod_cluster: prod.clone(),
+        canary_cluster: canary.clone(),
         dev_cluster: dev.clone(),
         prod_instances: crate::org::prod_instances(target).unwrap_or(1),
     }];
     for (project, env) in project_envs {
         let triple = Triple::new(org, project.as_str(), *env);
-        // The env's recovery-domain side picks which of the new pair holds it
-        // (prod/canary → <org>-prod; dev → <org>-dev).
-        let cluster = target_org.cluster(env.side()).name.clone();
+        // The per-env cluster: prod → <org>-prod, dev → <org>-dev, and canary →
+        // <org>-canary on a dedicated target (its own cluster) or <org>-prod
+        // otherwise (the T2 collapse). `cluster_for_env` supersedes routing by
+        // `env.side()`, which cannot express a dedicated org's canary domain.
+        let cluster = target_org.cluster_for_env(*env).name.clone();
         steps.push(TierMoveStep::Dump {
             triple: triple.clone(),
         });
@@ -123,6 +133,7 @@ pub fn plan_tier_move(
     steps.push(TierMoveStep::FlipRegistry {
         tier: target,
         prod_cluster: prod,
+        canary_cluster: canary,
         dev_cluster: dev,
     });
     Ok(steps)
@@ -175,11 +186,12 @@ mod tests {
         ];
         let steps = plan_tier_move("acme", Tier::Trials, Tier::Standard, &envs).unwrap();
 
-        // First: provision the new pair (standard prod = 2 instances).
+        // First: provision the new pair (standard prod = 2 instances, no canary).
         assert_eq!(
             steps[0],
             TierMoveStep::ProvisionClusters {
                 prod_cluster: "acme-prod".into(),
+                canary_cluster: None,
                 dev_cluster: "acme-dev".into(),
                 prod_instances: 2,
             }
@@ -190,6 +202,7 @@ mod tests {
             TierMoveStep::FlipRegistry {
                 tier: Tier::Standard,
                 prod_cluster: "acme-prod".into(),
+                canary_cluster: None,
                 dev_cluster: "acme-dev".into(),
             }
         );
@@ -223,19 +236,64 @@ mod tests {
         );
     }
 
-    /// T2→T4 (standard → dedicated) is the same code path, with a 3-instance prod
-    /// cluster (the dedicated HA shape).
+    /// T2→T4 (standard → dedicated) is the same code path, but with a 3-instance
+    /// prod cluster AND a dedicated `<org>-canary` cluster — and a `canary` env
+    /// routes to that own cluster, NOT the prod cluster (wamn-q3n.14).
     #[test]
-    fn t2_to_t4_provisions_a_three_instance_prod() {
-        let envs = vec![("app".to_string(), Env::Prod)];
+    fn t2_to_t4_provisions_a_dedicated_canary_cluster() {
+        let envs = vec![
+            ("app".to_string(), Env::Prod),
+            ("app".to_string(), Env::Canary),
+        ];
         let steps = plan_tier_move("acme", Tier::Standard, Tier::Dedicated, &envs).unwrap();
+        // The new set: 3-instance prod + a dedicated canary cluster.
         assert_eq!(
             steps[0],
             TierMoveStep::ProvisionClusters {
                 prod_cluster: "acme-prod".into(),
+                canary_cluster: Some("acme-canary".into()),
                 dev_cluster: "acme-dev".into(),
                 prod_instances: 3,
             }
+        );
+        // The cutover names the canary cluster too.
+        assert_eq!(
+            *steps.last().unwrap(),
+            TierMoveStep::FlipRegistry {
+                tier: Tier::Dedicated,
+                prod_cluster: "acme-prod".into(),
+                canary_cluster: Some("acme-canary".into()),
+                dev_cluster: "acme-dev".into(),
+            }
+        );
+        // The prod env routes to acme-prod; the canary env to its OWN acme-canary
+        // (not acme-prod) — the per-env routing that `cluster_for_env` gives.
+        assert_eq!(
+            &steps[1..7],
+            &[
+                TierMoveStep::Dump {
+                    triple: Triple::new("acme", "app", Env::Prod)
+                },
+                TierMoveStep::ProvisionEnv {
+                    triple: Triple::new("acme", "app", Env::Prod),
+                    cluster: "acme-prod".into(),
+                },
+                TierMoveStep::Restore {
+                    triple: Triple::new("acme", "app", Env::Prod),
+                    cluster: "acme-prod".into(),
+                },
+                TierMoveStep::Dump {
+                    triple: Triple::new("acme", "app", Env::Canary)
+                },
+                TierMoveStep::ProvisionEnv {
+                    triple: Triple::new("acme", "app", Env::Canary),
+                    cluster: "acme-canary".into(),
+                },
+                TierMoveStep::Restore {
+                    triple: Triple::new("acme", "app", Env::Canary),
+                    cluster: "acme-canary".into(),
+                },
+            ]
         );
     }
 

@@ -301,6 +301,7 @@ async fn t3_mode(admin_url: &str) -> anyhow::Result<()> {
         id: "gate-t3".into(),
         tier: Tier::Trials,
         prod_cluster: ClusterRef::new("wamn-pg"),
+        canary_cluster: None,
         dev_cluster: ClusterRef::new("wamn-pg"),
     };
     tier_scenario(
@@ -439,9 +440,13 @@ async fn tier_scenario(
     let org_id = org.id.as_str();
     let tier = org.tier.as_str();
     let prod = org.prod_cluster.name.as_str();
+    let canary = org.canary_cluster.as_ref().map(|c| c.name.as_str());
     let dev = org.dev_cluster.name.as_str();
     admin
-        .execute(reg_sql::upsert_org_sql(), &[&org_id, &tier, &prod, &dev])
+        .execute(
+            reg_sql::upsert_org_sql(),
+            &[&org_id, &tier, &prod, &canary, &dev],
+        )
         .await
         .context("upsert org")?;
     admin

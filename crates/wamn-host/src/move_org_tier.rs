@@ -128,6 +128,8 @@ async fn flip_registry(
 
     let target_org = Org::for_pair(org, target);
     let tier = target_org.tier.as_str();
+    // The canary cluster is set only for a T4 dedicated target (NULL otherwise).
+    let canary = target_org.canary_cluster.as_ref().map(|c| c.name.as_str());
     client
         .execute(
             wamn_registry::sql::upsert_org_sql(),
@@ -135,13 +137,17 @@ async fn flip_registry(
                 &target_org.id,
                 &tier,
                 &target_org.prod_cluster.name,
+                &canary,
                 &target_org.dev_cluster.name,
             ],
         )
         .await
         .context("flip registry.orgs to the new tier")?;
+    let canary_note = canary
+        .map(|c| format!(", canary {c:?}"))
+        .unwrap_or_default();
     println!(
-        "flipped org {org:?} to tier {tier} (prod {:?}, dev {:?}) in registry.orgs — cutover complete",
+        "flipped org {org:?} to tier {tier} (prod {:?}{canary_note}, dev {:?}) in registry.orgs — cutover complete",
         target_org.prod_cluster.name, target_org.dev_cluster.name,
     );
     Ok(())
@@ -219,15 +225,27 @@ fn print_runbook(
         match step {
             TierMoveStep::ProvisionClusters {
                 prod_cluster,
+                canary_cluster,
                 dev_cluster,
                 prod_instances,
-            } => println!(
-                "{n}. provision the new {target} cluster pair (render-only, then apply + wait ready):\n   \
-                 wamn-host provision-org --org {org} --tier {target} \\\n     \
-                 --emit-prod /tmp/{prod_cluster}.json --emit-dev /tmp/{dev_cluster}.json\n   \
-                 kubectl apply -f /tmp/{prod_cluster}.json -f /tmp/{dev_cluster}.json\n   \
-                 # wait: {prod_cluster} ({prod_instances} instances, HA) + {dev_cluster} (1)"
-            ),
+            } => {
+                // A dedicated (T4) target also renders + applies `<org>-canary`.
+                let (canary_emit, canary_apply, canary_wait) = match canary_cluster {
+                    Some(c) => (
+                        format!(" --emit-canary /tmp/{c}.json"),
+                        format!(" -f /tmp/{c}.json"),
+                        format!(" + {c} (HA, dedicated canary)"),
+                    ),
+                    None => (String::new(), String::new(), String::new()),
+                };
+                println!(
+                    "{n}. provision the new {target} cluster set (render-only, then apply + wait ready):\n   \
+                     wamn-host provision-org --org {org} --tier {target} \\\n     \
+                     --emit-prod /tmp/{prod_cluster}.json{canary_emit} --emit-dev /tmp/{dev_cluster}.json\n   \
+                     kubectl apply -f /tmp/{prod_cluster}.json{canary_apply} -f /tmp/{dev_cluster}.json\n   \
+                     # wait: {prod_cluster} ({prod_instances} instances, HA){canary_wait} + {dev_cluster} (1)"
+                );
+            }
             TierMoveStep::Dump { triple } => {
                 let old = if triple.env.side() == wamn_registry::Side::Prod {
                     cur_prod
@@ -315,5 +333,12 @@ mod tests {
         let org = Org::for_pair("acme", Tier::Standard);
         assert_eq!(org.prod_cluster.name, "acme-prod");
         assert_eq!(org.dev_cluster.name, "acme-dev");
+        assert_eq!(org.canary_cluster, None);
+        // A dedicated (T4) flip also carries the canary cluster (wamn-q3n.14).
+        let ded = Org::for_pair("acme", Tier::Dedicated);
+        assert_eq!(
+            ded.canary_cluster.as_ref().map(|c| c.name.as_str()),
+            Some("acme-canary")
+        );
     }
 }

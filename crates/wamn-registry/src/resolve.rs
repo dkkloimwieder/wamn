@@ -61,8 +61,10 @@ impl Registry {
     }
 
     /// Resolve a control-plane identity to its placement: tier + cluster + Secret
-    /// reference. The cluster is chosen by the env's recovery-domain
-    /// [`side`](crate::Env::side) (the T2 prod/dev split); the Secret is the
+    /// reference. The cluster is chosen **per-env** by
+    /// [`Org::cluster_for_env`](crate::Org::cluster_for_env) — a dedicated (T4)
+    /// org routes `canary` to its own cluster, while standard/trials orgs collapse
+    /// canary onto prod (the T2 recovery-domain split); the Secret is the
     /// reference recorded on the provisioned project-env.
     ///
     /// Fails if the org is not registered ([`RegistryError::UnknownOrg`]), the
@@ -84,7 +86,7 @@ impl Registry {
             .ok_or_else(|| RegistryError::UnknownProjectEnv(triple.clone()))?;
         Ok(Resolution {
             tier: org.tier,
-            cluster: org.cluster(triple.env.side()).clone(),
+            cluster: org.cluster_for_env(triple.env).clone(),
             secret: pe.db_secret.clone(),
         })
     }

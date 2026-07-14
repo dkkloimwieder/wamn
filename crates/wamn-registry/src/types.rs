@@ -36,9 +36,10 @@ pub enum Tier {
     Trials,
     /// T2 — a dedicated prod/dev cluster pair (the standard paying tier).
     Standard,
-    /// T4 — cluster-per-environment (the regulated tier). Per-env dedicated
-    /// clusters land with `wamn-q3n.14`; the v1 model places a dedicated org on
-    /// the same prod/dev pair shape as T2.
+    /// T4 — cluster-per-environment (the regulated tier). A dedicated org gives
+    /// `canary` its OWN cluster (`<org>-canary`, [`Org::canary_cluster`]) — a
+    /// third recovery domain with independent PITR, the §T4 maximal-separation
+    /// property (wamn-q3n.14). `prod` and `dev` follow the T2 pair shape.
     Dedicated,
 }
 
@@ -130,6 +131,18 @@ pub fn cluster_name(org: &str, side: Side) -> String {
     }
 }
 
+/// The CNPG `Cluster` name holding a **dedicated** (T4) org's `canary` env:
+/// `<org>-canary`. Unlike a standard (T2) org — where `canary` shares
+/// `<org>-prod` — a dedicated org gives `canary` its own recovery domain and
+/// independent PITR (wamn-q3n.14). The single source [`Org::for_pair`], the
+/// cluster-CR renderer, and the `registry.orgs` row derive the canary name from
+/// (a sibling of [`cluster_name`]); `canary` is deliberately not a [`Side`], since
+/// [`Env::side`] is the *T2 pair* collapse (canary → prod) and per-env dedicated
+/// placement is resolved by [`Org::cluster_for_env`] instead.
+pub fn canary_cluster_name(org: &str) -> String {
+    format!("{org}-canary")
+}
+
 /// A reference to a CNPG `Cluster` that holds project-env databases. A name, not
 /// the cluster itself — the registry records placement, not infrastructure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -209,11 +222,19 @@ impl std::fmt::Display for Triple {
 pub struct Org {
     pub id: OrgId,
     pub tier: Tier,
-    /// The cluster holding prod-side envs (`prod`, `canary`). For a T3 trials
-    /// org this is the shared pool; for T2/T4 it is `<org>-prod`.
+    /// The cluster holding prod-side envs (`prod`, and `canary` unless the org is
+    /// dedicated). For a T3 trials org this is the shared pool; for T2/T4 it is
+    /// `<org>-prod`.
     pub prod_cluster: ClusterRef,
+    /// The cluster holding the `canary` env — set **only** for a dedicated (T4)
+    /// org, where canary is its own recovery domain (`<org>-canary`, independent
+    /// PITR, wamn-q3n.14). `None` for standard/trials orgs, where canary shares
+    /// [`prod_cluster`](Org::prod_cluster) (the T2 collapse). Serde-omitted when
+    /// `None`, so T2/T3 rows round-trip unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canary_cluster: Option<ClusterRef>,
     /// The cluster holding dev-side envs (`dev`). For a T3 trials org this is
-    /// the shared pool (same as `prod_cluster`); for T2 it is `<org>-dev`.
+    /// the shared pool (same as `prod_cluster`); for T2/T4 it is `<org>-dev`.
     pub dev_cluster: ClusterRef,
 }
 
@@ -225,8 +246,14 @@ impl Org {
     /// it); it is not provisioned as a pair (T3 provisioning is wamn-q3n.9).
     pub fn for_pair(id: impl Into<String>, tier: Tier) -> Org {
         let id = id.into();
+        // A dedicated (T4) org gives `canary` its OWN cluster (a per-env recovery
+        // domain with independent PITR, wamn-q3n.14); a standard (T2) org shares
+        // canary with prod, so `canary_cluster` is None (the T2 collapse).
+        let canary_cluster =
+            matches!(tier, Tier::Dedicated).then(|| ClusterRef::new(canary_cluster_name(&id)));
         Org {
             prod_cluster: ClusterRef::new(cluster_name(&id, Side::Prod)),
+            canary_cluster,
             dev_cluster: ClusterRef::new(cluster_name(&id, Side::Dev)),
             id,
             tier,
@@ -247,16 +274,25 @@ impl Org {
             id: id.into(),
             tier: Tier::Trials,
             prod_cluster: pool.clone(),
+            canary_cluster: None,
             dev_cluster: pool,
         }
     }
 
-    /// The cluster holding envs on `side` — the T2 prod/dev split, collapsed to
-    /// one cluster for a T3 pool org (where both refs point at the pool).
-    pub fn cluster(&self, side: Side) -> &ClusterRef {
-        match side {
-            Side::Prod => &self.prod_cluster,
-            Side::Dev => &self.dev_cluster,
+    /// The cluster holding this org's `env` database. `dev` → the dev cluster,
+    /// `prod` → the prod cluster; `canary` → its own cluster on a dedicated (T4)
+    /// org ([`canary_cluster`](Org::canary_cluster)), falling back to the prod
+    /// cluster on a standard/trials org (the T2 recovery-domain collapse, where
+    /// `canary_cluster` is `None`).
+    ///
+    /// This is the per-env resolution [`Registry::resolve`](crate::Registry::resolve)
+    /// uses — it **supersedes** routing by [`Env::side`] (the T2-pair collapse),
+    /// which cannot express a dedicated org's third (canary) recovery domain.
+    pub fn cluster_for_env(&self, env: Env) -> &ClusterRef {
+        match env {
+            Env::Dev => &self.dev_cluster,
+            Env::Prod => &self.prod_cluster,
+            Env::Canary => self.canary_cluster.as_ref().unwrap_or(&self.prod_cluster),
         }
     }
 }
@@ -332,10 +368,37 @@ mod tests {
         assert_eq!(org.id, "acme");
         assert_eq!(org.prod_cluster.name, "acme-prod");
         assert_eq!(org.dev_cluster.name, "acme-dev");
+        // A standard (T2) org has NO dedicated canary cluster (canary shares prod).
+        assert_eq!(org.canary_cluster, None);
         // prod/canary route to the prod cluster; dev to the dev cluster.
-        assert_eq!(org.cluster(Env::Prod.side()).name, "acme-prod");
-        assert_eq!(org.cluster(Env::Canary.side()).name, "acme-prod");
-        assert_eq!(org.cluster(Env::Dev.side()).name, "acme-dev");
+        assert_eq!(org.cluster_for_env(Env::Prod).name, "acme-prod");
+        assert_eq!(org.cluster_for_env(Env::Canary).name, "acme-prod");
+        assert_eq!(org.cluster_for_env(Env::Dev).name, "acme-dev");
+    }
+
+    /// A dedicated (T4) org gives `canary` its OWN cluster (`<org>-canary`) — a
+    /// third recovery domain — so `cluster_for_env(Canary)` routes to it, NOT to
+    /// prod (the §T4 maximal-separation property, wamn-q3n.14). `Env::side` still
+    /// collapses canary onto prod (the T2-pair concept), which is exactly why
+    /// resolution goes through `cluster_for_env` rather than `Env::side`.
+    #[test]
+    fn dedicated_org_gives_canary_its_own_cluster() {
+        use super::{Org, Side, canary_cluster_name};
+        assert_eq!(canary_cluster_name("acme"), "acme-canary");
+        let org = Org::for_pair("acme", Tier::Dedicated);
+        assert_eq!(
+            org.canary_cluster.as_ref().map(|c| c.name.as_str()),
+            Some("acme-canary")
+        );
+        assert_eq!(org.cluster_for_env(Env::Prod).name, "acme-prod");
+        assert_eq!(org.cluster_for_env(Env::Canary).name, "acme-canary");
+        assert_eq!(org.cluster_for_env(Env::Dev).name, "acme-dev");
+        // Canary is its OWN recovery domain: distinct from both prod and dev.
+        let canary = org.cluster_for_env(Env::Canary).name.clone();
+        assert_ne!(canary, org.prod_cluster.name);
+        assert_ne!(canary, org.dev_cluster.name);
+        // Env::side is unchanged (the T2-pair collapse) — canary is prod-side.
+        assert_eq!(Env::Canary.side(), Side::Prod);
     }
 
     /// A T3 trials org lives on the shared pool: `Org::for_pool` points **both**
@@ -352,9 +415,10 @@ mod tests {
         // Both refs = the pool; every env's side resolves to it.
         assert_eq!(org.prod_cluster.name, "wamn-pg");
         assert_eq!(org.dev_cluster.name, "wamn-pg");
-        assert_eq!(org.cluster(Env::Prod.side()).name, "wamn-pg");
-        assert_eq!(org.cluster(Env::Canary.side()).name, "wamn-pg");
-        assert_eq!(org.cluster(Env::Dev.side()).name, "wamn-pg");
+        assert_eq!(org.canary_cluster, None);
+        assert_eq!(org.cluster_for_env(Env::Prod).name, "wamn-pg");
+        assert_eq!(org.cluster_for_env(Env::Canary).name, "wamn-pg");
+        assert_eq!(org.cluster_for_env(Env::Dev).name, "wamn-pg");
         // A one-org registry validates: invariant 4 admits prod==dev for trials.
         let reg = Registry {
             schema_version: SCHEMA_VERSION.to_string(),

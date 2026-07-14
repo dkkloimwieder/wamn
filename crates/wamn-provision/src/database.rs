@@ -10,7 +10,7 @@
 //!
 //! Rendered as a `serde_json::Value` (`kubectl apply -f` accepts JSON — the
 //! [`render_secret_manifest`](crate::secret::render_secret_manifest) /
-//! [`render_org_cluster_pair`](crate::org::render_org_cluster_pair) precedent);
+//! [`render_org_cluster_set`](crate::org::render_org_cluster_set) precedent);
 //! the `provision-project-env` driver emits it and the runbook/Job applies it and
 //! waits ready. This crate is pure — no K8s client.
 

@@ -4,10 +4,10 @@
 //!
 //! The four-tier counterpart of `provision-project`: identity is the `(org,
 //! project, env)` [`Triple`], and the database lives on the cluster the org's
-//! placement selects by the env's recovery-domain [`side`](wamn_registry::Env::side)
-//! — `<org>-prod` (prod, canary) / `<org>-dev` (dev) for a paying org, or the
-//! shared pool for a trials org (both cluster refs point at it, so one path
-//! serves T2 and T3).
+//! placement selects **per-env** — `<org>-prod` (prod), `<org>-dev` (dev), and
+//! `canary` on `<org>-prod` (standard/T2) or its OWN `<org>-canary` (dedicated/T4,
+//! wamn-q3n.14) — or the shared pool for a trials org (all cluster refs point at
+//! it, so one path serves T2, T3, and T4).
 //!
 //! An imperative CLI (the `provision-org` precedent). It **renders + records**;
 //! the runbook/Job applies the emitted artifacts, in this order:
@@ -43,7 +43,7 @@ use wamn_provision::{
     APP_ROLE, compose_url, project_env_database_name, project_env_secret_name,
     render_project_env_database, render_project_env_secret_manifest, sql, validate_project_env,
 };
-use wamn_registry::{Env, Side, Triple};
+use wamn_registry::{Env, Triple};
 
 /// The environment to provision. Mirrors `wamn_registry::Env` (the closed
 /// `dev`/`canary`/`prod` set) as a clap value enum.
@@ -76,8 +76,9 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub project: String,
 
-    /// Environment: `dev`, `canary`, or `prod`. Selects the target cluster by the
-    /// env's recovery-domain side (canary/prod → prod cluster; dev → dev cluster).
+    /// Environment: `dev`, `canary`, or `prod`. Selects the target cluster
+    /// per-env: dev → dev cluster, prod → prod cluster, and canary → its own
+    /// `<org>-canary` on a dedicated (T4) org, else the prod cluster (T2/T3).
     #[arg(long, value_enum)]
     pub env: EnvArg,
 
@@ -221,8 +222,9 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Read the org's placement from the registry and pick the target cluster by the
-/// env's recovery-domain side. Connects as the `wamn_system` owner (`SET ROLE`).
+/// Read the org's placement from the registry and pick the target cluster
+/// per-env (a dedicated org routes `canary` to its own cluster). Connects as the
+/// `wamn_system` owner (`SET ROLE`).
 async fn resolve_cluster(system_url: &str, org: &str, env: Env) -> anyhow::Result<String> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -253,9 +255,16 @@ async fn do_resolve_cluster(
                  trials pool (wamn-q3n.9), before provisioning a project-env"
             )
         })?;
-    let cluster: String = match env.side() {
-        Side::Prod => row.get("prod_cluster"),
-        Side::Dev => row.get("dev_cluster"),
+    // Route per-env: dev → dev cluster; prod → prod cluster; canary → its OWN
+    // cluster on a dedicated (T4) org (`canary_cluster`), falling back to the prod
+    // cluster on a standard/trials org (NULL `canary_cluster` = the T2 collapse).
+    let cluster: String = match env {
+        Env::Prod => row.get("prod_cluster"),
+        Env::Dev => row.get("dev_cluster"),
+        Env::Canary => {
+            let canary: Option<String> = row.get("canary_cluster");
+            canary.unwrap_or_else(|| row.get("prod_cluster"))
+        }
     };
     Ok(cluster)
 }
@@ -350,9 +359,14 @@ mod tests {
         assert!(validate_project_env("acme", "billing", Env::Prod).is_ok());
     }
 
+    /// This subcommand routes each env to a placement cluster per-env: dev → dev
+    /// cluster, prod → prod cluster, and canary → its OWN cluster on a dedicated
+    /// (T4) org (`canary_cluster`), else the prod cluster (the T2 collapse, where
+    /// `Env::side(Canary) == Prod`). The per-env dedicated canary routing is
+    /// proven live by the in-cluster gate; here we pin the unchanged T2 collapse.
     #[test]
-    fn env_side_selects_prod_for_canary_and_prod_dev_for_dev() {
-        // The cluster-selection contract this subcommand relies on.
+    fn env_side_is_the_t2_recovery_domain_collapse() {
+        use wamn_registry::Side;
         assert_eq!(Env::from(EnvArg::Prod).side(), Side::Prod);
         assert_eq!(Env::from(EnvArg::Canary).side(), Side::Prod);
         assert_eq!(Env::from(EnvArg::Dev).side(), Side::Dev);

@@ -7,11 +7,15 @@ use wamn_registry::{
     Triple,
 };
 
-/// A registry with a T2 (standard) org and a T3 (trials) org, each with a
-/// project provisioned across all three envs.
+/// A registry with a T2 (standard), a T3 (trials), and a T4 (dedicated) org,
+/// each with a project provisioned across all three envs.
 fn sample() -> Registry {
     let mut project_envs = Vec::new();
-    for (org, project, secret_prefix) in [("acme", "billing", "acme"), ("try", "demo", "try")] {
+    for (org, project, secret_prefix) in [
+        ("acme", "billing", "acme"),
+        ("try", "demo", "try"),
+        ("ded", "app", "ded"),
+    ] {
         for env in Env::ALL {
             project_envs.push(ProjectEnv {
                 triple: Triple::new(org, project, env),
@@ -26,6 +30,7 @@ fn sample() -> Registry {
                 id: "acme".into(),
                 tier: Tier::Standard,
                 prod_cluster: ClusterRef::new("acme-prod"),
+                canary_cluster: None,
                 dev_cluster: ClusterRef::new("acme-dev"),
             },
             Org {
@@ -33,7 +38,16 @@ fn sample() -> Registry {
                 tier: Tier::Trials,
                 // A trials org's prod and dev both live on the shared pool.
                 prod_cluster: ClusterRef::new("wamn-pg"),
+                canary_cluster: None,
                 dev_cluster: ClusterRef::new("wamn-pg"),
+            },
+            Org {
+                id: "ded".into(),
+                tier: Tier::Dedicated,
+                // A dedicated (T4) org gives canary its OWN cluster (wamn-q3n.14).
+                prod_cluster: ClusterRef::new("ded-prod"),
+                canary_cluster: Some(ClusterRef::new("ded-canary")),
+                dev_cluster: ClusterRef::new("ded-dev"),
             },
         ],
         projects: vec![
@@ -44,6 +58,10 @@ fn sample() -> Registry {
             Project {
                 org: "try".into(),
                 id: "demo".into(),
+            },
+            Project {
+                org: "ded".into(),
+                id: "app".into(),
             },
         ],
         project_envs,
@@ -118,6 +136,34 @@ fn resolve_routes_each_env_to_the_correct_cluster() {
         "dev has its own recovery domain"
     );
     assert_eq!(dev.secret, SecretRef::new("wamn-db-acme-dev"));
+}
+
+#[test]
+fn resolve_routes_dedicated_canary_to_its_own_cluster() {
+    let r = sample();
+    // A dedicated (T4) org: canary resolves to its OWN cluster (its own recovery
+    // domain / independent PITR), distinct from prod — the §T4 property that the
+    // T2 Env::side collapse cannot express (wamn-q3n.14).
+    let canary = r
+        .resolve(&Triple::new("ded", "app", Env::Canary))
+        .expect("resolves");
+    assert_eq!(canary.tier, Tier::Dedicated);
+    assert_eq!(canary.cluster, ClusterRef::new("ded-canary"));
+
+    let prod = r
+        .resolve(&Triple::new("ded", "app", Env::Prod))
+        .expect("resolves");
+    assert_eq!(prod.cluster, ClusterRef::new("ded-prod"));
+
+    let dev = r
+        .resolve(&Triple::new("ded", "app", Env::Dev))
+        .expect("resolves");
+    assert_eq!(dev.cluster, ClusterRef::new("ded-dev"));
+
+    assert_ne!(
+        canary.cluster, prod.cluster,
+        "a dedicated org's canary is its own recovery domain, not prod's"
+    );
 }
 
 #[test]

@@ -138,30 +138,35 @@ the CNPG cluster (the gate of record).
 
 The four-tier topology (`docs/postgres-topology.md`) splits `provision-project`
 into `provision-org` + `provision-project-env`. **`provision-org`** renders the
-CNPG `Cluster` **pair** a paying org (T2 `standard` / T4 `dedicated`) is placed
-on and records the org in the T1 control-plane registry:
+CNPG `Cluster` **set** a paying org (T2 `standard` / T4 `dedicated`) is placed on
+and records the org in the T1 control-plane registry:
 
 - **`<org>-prod`** — HA (2 instances for `standard`, 3 for the regulated
   `dedicated` tier), pod anti-affinity spread, holds every project's `prod` env
-  (and `canary`, which shares prod's failure domain);
+  (and, for a `standard` org, `canary`, which shares prod's failure domain);
+- **`<org>-canary`** — a **`dedicated` (T4) org only**: canary's own HA cluster
+  (2 instances, anti-affinity spread) — a *third* recovery domain with independent
+  PITR (`docs/postgres-topology.md` §T4, wamn-q3n.14). Absent for a `standard` org
+  (canary shares `<org>-prod`);
 - **`<org>-dev`** — a single, **hibernation-managed** instance (the
   `cnpg.io/hibernation` annotation, set `off` so it comes up ready; the platform
   off-hours scheduler flips it `on`, roughly halving the cost of two clusters per
   org), holds `dev` and preview/scratch envs (its own recovery domain).
 
-Both clusters carry `enableSuperuserAccess` (the per-project-env path connects as
+All clusters carry `enableSuperuserAccess` (the per-project-env path connects as
 superuser), a non-TLS `pg_hba`, and **no cpu limit** (the S2 CFS lesson). The
-cluster **names** come from `wamn_registry::cluster_name` — the single source the
-renderer and the `registry.orgs` row share, so `Registry::resolve` finds the
-provisioned cluster.
+cluster **names** come from `wamn_registry::cluster_name` /
+`wamn_registry::canary_cluster_name` — the single source the renderer and the
+`registry.orgs` row share, so `Registry::resolve` finds the provisioned cluster.
 
 | Flag | Purpose |
 |---|---|
 | `--org <id>` | Org id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric). Names `<org>-prod` / `<org>-dev`; the reserved `wamn` prefix is rejected. |
-| `--tier trials\|standard\|dedicated` | Hosting tier. `standard`/`dedicated` render a dedicated cluster pair here; `trials` (T3) is placed on `--pool` and only recorded (wamn-q3n.9). |
+| `--tier trials\|standard\|dedicated` | Hosting tier. `standard` renders a prod/dev pair; `dedicated` (T4) also renders `<org>-canary` (wamn-q3n.14); `trials` (T3) is placed on `--pool` and only recorded (wamn-q3n.9). |
 | `--pool <cluster>` | The shared pool cluster a `trials` org is placed on (both cluster refs point at it). Ignored for `standard`/`dedicated`. Default `wamn-pg`. |
 | `--system-database-url` / `WAMN_SYSTEM_ADMIN_URL` | Superuser URL to the T1 `wamn_system` DB, where the org row is recorded. Omit to render/plan only. |
 | `--emit-prod` / `--emit-dev` `<path>` | Write the prod / dev `Cluster` CR (JSON; `-` = stdout, the default) — `kubectl apply -f`. Not written for a `trials` org (no pair). |
+| `--emit-canary` `<path>` | Write the `<org>-canary` `Cluster` CR (JSON; `-` = stdout). Only rendered for a `dedicated` (T4) org; ignored otherwise. |
 
 ### T3 trials orgs (wamn-q3n.9)
 
@@ -177,6 +182,31 @@ org's project-env databases onto the pool via `env.side()` — no manual `--clus
 (before wamn-q3n.9 the trials org row had to be hand-inserted via `psql`; now the
 subcommand is the one path for T2/T4 pairs **and** T3 pool orgs). Conversion to a
 dedicated T2 pair is the tier-move (`wamn-q3n.13`).
+
+### T4 dedicated orgs (wamn-q3n.14)
+
+A `dedicated` (T4) org gives **`canary` its own cluster** — the §T4
+maximal-separation property (independent PITR per env). `--tier dedicated` builds
+the org via `Org::for_pair(id, Tier::Dedicated)`, which sets a third cluster ref
+`canary_cluster = <org>-canary` (via `wamn_registry::canary_cluster_name`; a
+`standard` org leaves it `None`, so canary shares `<org>-prod`). `provision-org`
+then renders **three** CRs — `<org>-prod` (HA-3) + `<org>-canary` (HA-2) +
+`<org>-dev` — emitting the canary CR to `--emit-canary`, and records the row with
+`canary_cluster` populated.
+
+The stored `registry.orgs.canary_cluster` (nullable) is the placement change: it
+is set **iff** the tier is `dedicated`, enforced by two DB CHECKs — a biconditional
+`(tier = 'dedicated') = (canary_cluster IS NOT NULL)` and a distinctness
+`canary_cluster IS NULL OR (canary_cluster <> prod_cluster AND <> dev_cluster)`
+(canary is its own recovery domain), both drift-guarded against
+`deploy/system-schema.sql`. Resolution moves from `Env::side` (the T2-pair collapse
+canary → prod, which cannot express a third domain) to
+`Org::cluster_for_env(env)`: `canary` → `<org>-canary` on a dedicated org, else the
+prod cluster. `provision-project-env --env canary` then routes to `<org>-canary`
+with no manual `--cluster`, and the `.13` T2→T4 tier move routes each env to its
+per-env cluster. The gate of record is a live dedicated-org standup (prod HA-3 +
+canary HA-2 + dev-1) asserting the canary DB lives on its own cluster, physically
+isolated from prod.
 
 Like `provision-project`, it is a **renderer + DB writer only** — it does NOT
 apply the CRs (the runbook/Job `kubectl apply`s them and waits ready, as the
@@ -208,12 +238,14 @@ registry row's cluster names equal the live cluster names. Teardown deletes
 The four-tier counterpart of `provision-project`: **`provision-project-env`**
 stands up one per-project-env Postgres database, keyed by the `(org, project,
 env)` `Triple`. Identity everywhere; the database lives on the cluster the org's
-placement selects by the env's recovery-domain **side** — `<org>-prod` (`prod`,
-`canary`) / `<org>-dev` (`dev`) for a paying org, or the shared **trials pool**
-for a T3 org (a trials org's two cluster refs both point at the pool, so one
-`registry.org(org).cluster(env.side())` path serves T2 and T3 by construction —
-it does **not** use `Registry::resolve`, which needs the project-env to already
-exist).
+placement selects **per-env** — `<org>-prod` (`prod`) / `<org>-dev` (`dev`), and
+`canary` on `<org>-prod` (standard/T2) or its own `<org>-canary` (dedicated/T4,
+wamn-q3n.14) — or the shared **trials pool** for a T3 org (a trials org's cluster
+refs all point at the pool, so one `Org::cluster_for_env(env)` path serves T2, T3,
+and T4 by construction — it does **not** use `Registry::resolve`, which needs the
+project-env to already exist). The subcommand reads all three placement columns
+(`select_org_clusters_sql`) and routes `canary` to `canary_cluster` when set,
+falling back to `prod_cluster`.
 
 **Per-project-env naming.** The database (and the K8s `Database` resource, and
 the credential Secret) is `wamn-db-<org>--<project>--<env>`. The **org** is

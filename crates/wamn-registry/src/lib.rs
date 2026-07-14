@@ -28,6 +28,6 @@ mod validate;
 pub use resolve::{RegistryError, Resolution};
 pub use types::{
     ClusterRef, Env, Org, OrgId, Project, ProjectEnv, ProjectId, Registry, SCHEMA_VERSION,
-    SecretRef, Side, Tier, Triple, cluster_name,
+    SecretRef, Side, Tier, Triple, canary_cluster_name, cluster_name,
 };
 pub use validate::{Issue, Severity, validate};

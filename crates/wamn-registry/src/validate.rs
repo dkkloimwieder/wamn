@@ -312,6 +312,7 @@ mod tests {
             id: id.into(),
             tier,
             prod_cluster: ClusterRef::new(prod),
+            canary_cluster: None,
             dev_cluster: ClusterRef::new(dev),
         }
     }

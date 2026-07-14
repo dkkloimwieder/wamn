@@ -1331,6 +1331,110 @@ kubectl -n wamn-system exec wamn-pg-1 -c postgres -- \
 kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
   psql -U postgres -d wamn_system -c "DELETE FROM registry.orgs WHERE id='t13gate';"
 
+# [D6/wamn-q3n.14] T4 dedicated-per-env regulated tier — canary gets its OWN
+# cluster (crates/wamn-registry canary_cluster_name/Org.canary_cluster/cluster_for_env
+# + deploy/system-schema.sql canary_cluster column + crates/wamn-provision org.rs
+# render_org_cluster_set + crates/wamn-host provision-org --emit-canary). The §T4
+# maximal-separation property: a dedicated org places `canary` on <org>-canary (a
+# THIRD recovery domain with independent PITR) — the T2 Env::side collapse
+# (canary->prod) cannot express it, so the model gains a STORED
+# registry.orgs.canary_cluster (set IFF tier=dedicated) and per-env resolution moves
+# from Env::side to Org::cluster_for_env. NEW wamn_registry::canary_cluster_name(org)
+# = <org>-canary (sibling of cluster_name) + Org.canary_cluster:Option<ClusterRef>
+# (serde-omitted when None so T2/T3 rows round-trip) set by for_pair for Dedicated;
+# NEW Org::cluster_for_env(env) (dev->dev, prod->prod, canary->canary_cluster.
+# unwrap_or(prod)) REPLACES the removed binary cluster(side) footgun; resolve() +
+# tier_move plan_tier_move + provision-project-env do_resolve_cluster all route via it
+# (Env::side stays the T2-pair concept, still tested). upsert_org_sql/
+# select_org_clusters_sql gain canary_cluster ($4 / read). deploy/system-schema.sql
+# registry.orgs += canary_cluster text + TWO CHECKs: biconditional
+# orgs_canary_dedicated_check ((tier='dedicated')=(canary_cluster IS NOT NULL)) +
+# distinctness orgs_canary_recovery_domain_check (canary NULL OR canary<>prod AND
+# canary<>dev), both drift-guarded (expression-pinned in tests/storage.rs) +
+# live-apply-proven (a dedicated-NULL-canary / standard-with-canary / canary=prod org
+# each REJECTED, a distinct-canary dedicated org ACCEPTED). NEW
+# wamn_provision::org::render_org_cluster_set -> OrgClusters{prod, canary:Option, dev}
+# (render_cluster keys HA off instances>=2 not Side==Prod + takes a role label;
+# canary HA-2) REPLACES render_org_cluster_pair; provision-org emits the 3rd CR via
+# --emit-canary (dedicated only); tier_move TierMoveStep::{ProvisionClusters,
+# FlipRegistry} gain canary_cluster + per-env route via cluster_for_env (a T2->T4
+# canary env routes to <org>-canary, NOT prod). Mutants killed (apply/test/restore,
+# sha256, DEBUG builds): cluster_for_env Canary->prod / for_pair canary->None /
+# render-set canary->None / drop the distinctness CHECK / plan per-env cluster->prod —
+# each fails a NAMED test. docs/postgres-topology.md §T4 'Shipped (wamn-q3n.14)' +
+# docs/provisioning.md §provision-org T4 dedicated orgs.
+cargo test -p wamn-registry -p wamn-provision -p wamn-host   # model/DDL drift + renderer + routing + subcommand units
+cargo clippy -p wamn-registry -p wamn-provision -p wamn-host -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-registry -p wamn-provision -p wamn-host -p wamn-gates --check
+# Render a dedicated org's 3 CRs locally (no cluster/DB needed):
+./target/debug/wamn-host provision-org --org demo --tier dedicated \
+  --emit-prod /tmp/demo-prod.json --emit-canary /tmp/demo-canary.json --emit-dev /tmp/demo-dev.json
+# optional live gates (throwaway postgres:18; superuser url): (a) the storage
+# live-apply gate proves the canary CHECKs reject bad orgs + the upsert refreshes
+# canary on conflict; (b) provisionbench --mode all is the .8 regression (the 5-param
+# upsert; standard/trials orgs carry canary NULL):
+docker run -d --rm --name wamn-reg-pg -p 5461:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5461/wamn cargo test -p wamn-registry
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5461/wamn \
+  ./target/debug/wamn-gates --log-level error provisionbench --mode all
+docker stop wamn-reg-pg
+# IN-CLUSTER gate of record = a LIVE dedicated-org standup (the .6/.8/.13 precedent;
+# T3 pool wamn-pg + T1 wamn-sysdb always up; NO docker rebuild — real debug subcommand
+# + kubectl; ~6 pods: prod HA-3 + canary HA-2 + dev-1, generous waits). FIRST apply the
+# ADDITIVE canary_cluster column + CHECKs into wamn-sysdb's registry AS wamn_system
+# (extending the T1 registry's OWN DB IS .14's job — the .3/.10 precedent; NEVER touch
+# wamn-pg/postgres.yaml). PICK A CLEAN port (ss -ltn | grep 548):
+kubectl -n wamn-system exec -i wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 <<'SQL'
+SET ROLE wamn_system;
+ALTER TABLE registry.orgs ADD COLUMN IF NOT EXISTS canary_cluster text;
+ALTER TABLE registry.orgs DROP CONSTRAINT IF EXISTS orgs_canary_dedicated_check;
+ALTER TABLE registry.orgs ADD CONSTRAINT orgs_canary_dedicated_check
+    CHECK ((tier = 'dedicated') = (canary_cluster IS NOT NULL));
+ALTER TABLE registry.orgs DROP CONSTRAINT IF EXISTS orgs_canary_recovery_domain_check;
+ALTER TABLE registry.orgs ADD CONSTRAINT orgs_canary_recovery_domain_check
+    CHECK (canary_cluster IS NULL OR (canary_cluster <> prod_cluster AND canary_cluster <> dev_cluster));
+SQL
+kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5481:5432 &
+SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
+SYS="postgres://postgres:${SYSPW}@127.0.0.1:5481/wamn_system?sslmode=disable"
+# Register a dedicated org -> records registry.orgs (canary_cluster=d14gate-canary) + emits 3 CRs:
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-org --org d14gate --tier dedicated \
+  --emit-prod /tmp/d14-prod.json --emit-canary /tmp/d14-canary.json --emit-dev /tmp/d14-dev.json
+kubectl apply -f /tmp/d14-prod.json -f /tmp/d14-canary.json -f /tmp/d14-dev.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=3 cluster/d14gate-prod   --timeout=360s
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=2 cluster/d14gate-canary --timeout=360s
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=1 cluster/d14gate-dev    --timeout=360s
+# Provision canary + prod project-env DBs WITHOUT --cluster (routing derives per-env from
+# the registry); for each: role SQL -> Database CR -> wait applied -> privilege SQL:
+for E in canary prod; do
+  WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-project-env --org d14gate --project app --env $E \
+    --connection-limit 10 --emit-role-sql /tmp/d14-$E-role.sql --emit-database /tmp/d14-$E-db.json \
+    --emit-privilege-sql /tmp/d14-$E-priv.sql --emit-secret /tmp/d14-$E-secret.json
+  CL=$(python3 -c "import json;print(json.load(open('/tmp/d14-$E-db.json'))['spec']['cluster']['name'])")
+  kubectl -n wamn-system exec -i ${CL}-1 -c postgres -- psql -U postgres -f - < /tmp/d14-$E-role.sql
+  kubectl apply -f /tmp/d14-$E-db.json
+  kubectl -n wamn-system wait --for=jsonpath='{.status.applied}'=true database/wamn-db-d14gate--app--$E --timeout=120s
+  kubectl -n wamn-system exec -i ${CL}-1 -c postgres -- psql -U postgres -f - < /tmp/d14-$E-priv.sql
+done
+# Verify (gate of record): canary routed to its OWN cluster (Database CR cluster
+# d14gate-canary != d14gate-prod); each cluster holds ONLY its env's DB (physical
+# cross-CLUSTER isolation), owned by wamn_app, CONNECT confined (PUBLIC revoked), wamn_app
+# NOSUPERUSER/NOCREATEDB/NOBYPASSRLS; registry.orgs d14gate = dedicated/d14gate-prod/
+# d14gate-canary/d14gate-dev + project_envs canary+prod rows:
+for CL in d14gate-canary d14gate-prod; do kubectl -n wamn-system exec ${CL}-1 -c postgres -- \
+  psql -U postgres -tAc "SELECT datname FROM pg_database WHERE datname LIKE 'wamn-db-d14gate%';"; done
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
+  -tAc "SELECT id,tier,prod_cluster,canary_cluster,dev_cluster FROM registry.orgs WHERE id='d14gate';"
+# Guardrail: wamn-pg/wamn-sysdb/postgres.yaml UNTOUCHED. Teardown deletes ONLY the new
+# clusters + Database CRs + the org row (kill the port-forward by EXACT pid — not pkill);
+# the org delete cascades projects+project_envs (the additive canary_cluster column STAYS
+# — it is the shipped schema):
+kubectl -n wamn-system delete database wamn-db-d14gate--app--canary wamn-db-d14gate--app--prod --ignore-not-found
+kubectl -n wamn-system delete cluster d14gate-prod d14gate-canary d14gate-dev
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
+  psql -U postgres -d wamn_system -c "DELETE FROM registry.orgs WHERE id='d14gate';"
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

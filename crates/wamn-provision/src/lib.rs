@@ -10,8 +10,9 @@
 //! This crate is the pure core (SR3 / house rule 1): identifier naming, the
 //! `CREATE DATABASE` / role-bootstrap / `GRANT CONNECT` text builders, the
 //! per-project credential Secret renderer, the connection-URL composer, and — for
-//! the four-tier topology — the org [`Cluster` PAIR](crate::org) renderer
-//! (`<org>-prod` HA + `<org>-dev` hibernation-managed, wamn-q3n.6) and the
+//! the four-tier topology — the org [`Cluster` SET](crate::org) renderer
+//! (`<org>-prod` HA + `<org>-dev` hibernation-managed, plus a dedicated
+//! `<org>-canary` for T4 — wamn-q3n.6/.14) and the
 //! per-project-env CNPG [`Database` CR](crate::database) renderer (wamn-q3n.7) —
 //! no DB, no K8s client, no clock. The effects live in the `provision-project` /
 //! `provision-org` / `provision-project-env` subcommands (`wamn-host`); the
@@ -56,7 +57,7 @@ pub use name::{
     project_env_database_name, project_env_secret_name, secret_name, validate_project_env,
     validate_project_id,
 };
-pub use org::{prod_instances, render_org_cluster_pair};
+pub use org::{OrgClusters, prod_instances, render_org_cluster_set};
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use secret::render_project_env_secret_manifest;
 pub use tier_move::{TierMoveStep, plan_tier_move, validate_tier_upgrade};

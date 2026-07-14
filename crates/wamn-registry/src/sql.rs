@@ -8,26 +8,31 @@
 
 /// Upsert an org's placement row into `registry.orgs` (idempotent + additive —
 /// re-running `provision-org` refreshes placement, never dropping). Params:
-/// `$1` id, `$2` tier, `$3` prod_cluster, `$4` dev_cluster (all `text`).
+/// `$1` id, `$2` tier, `$3` prod_cluster, `$4` canary_cluster (nullable `text` —
+/// the dedicated/T4 canary cluster, `NULL` for standard/trials), `$5`
+/// dev_cluster.
 ///
-/// The tier CHECK and the dev≠prod recovery-domain CHECK (invariant 4) are
-/// enforced by the schema, not re-checked here — a bad row is rejected by the DB.
+/// The tier CHECK, the dev≠prod recovery-domain CHECK, and the canary-cluster
+/// CHECKs (invariant 4, extended for T4) are enforced by the schema, not
+/// re-checked here — a bad row is rejected by the DB.
 pub fn upsert_org_sql() -> &'static str {
-    "INSERT INTO registry.orgs (id, tier, prod_cluster, dev_cluster) \
-     VALUES ($1, $2, $3, $4) \
+    "INSERT INTO registry.orgs (id, tier, prod_cluster, canary_cluster, dev_cluster) \
+     VALUES ($1, $2, $3, $4, $5) \
      ON CONFLICT (id) DO UPDATE SET \
        tier = EXCLUDED.tier, \
        prod_cluster = EXCLUDED.prod_cluster, \
+       canary_cluster = EXCLUDED.canary_cluster, \
        dev_cluster = EXCLUDED.dev_cluster"
 }
 
-/// Select an org's placement clusters (`prod_cluster`, `dev_cluster`) by id, so
-/// `provision-project-env` (wamn-q3n.7) can pick the target cluster by the env's
-/// recovery-domain [`side`](crate::Env::side) — without loading the whole
-/// registry or requiring the project-env to already exist (which is what
+/// Select an org's placement clusters (`prod_cluster`, `canary_cluster`,
+/// `dev_cluster`) by id, so `provision-project-env` (wamn-q3n.7) can pick the
+/// target cluster per-env — canary routes to `canary_cluster` on a dedicated
+/// (T4) org (`NULL` = shares prod on a standard/trials org) — without loading the
+/// whole registry or requiring the project-env to already exist (which is what
 /// [`resolve`](crate::Registry::resolve) needs). Param: `$1` org id.
 pub fn select_org_clusters_sql() -> &'static str {
-    "SELECT prod_cluster, dev_cluster FROM registry.orgs WHERE id = $1"
+    "SELECT prod_cluster, canary_cluster, dev_cluster FROM registry.orgs WHERE id = $1"
 }
 
 /// Select an org's `tier` by id, so `dump-project-env` (wamn-q3n.10) can pick the
@@ -178,20 +183,30 @@ mod tests {
     fn upsert_org_targets_the_orgs_columns_and_upserts() {
         let sql = upsert_org_sql();
         assert!(sql.contains("INSERT INTO registry.orgs"));
-        for col in ["id", "tier", "prod_cluster", "dev_cluster"] {
+        for col in [
+            "id",
+            "tier",
+            "prod_cluster",
+            "canary_cluster",
+            "dev_cluster",
+        ] {
             assert!(sql.contains(col), "missing column {col}");
         }
-        // Values are $n params (never interpolated).
-        assert!(sql.contains("VALUES ($1, $2, $3, $4)"));
+        // Values are $n params (never interpolated) — five now (canary_cluster).
+        assert!(sql.contains("VALUES ($1, $2, $3, $4, $5)"));
         // Idempotent + additive: ON CONFLICT (id) DO UPDATE, not a plain INSERT.
         assert!(sql.contains("ON CONFLICT (id) DO UPDATE"));
+        // The canary cluster is refreshed on conflict (a dedicated/T4 move sets it).
+        assert!(sql.contains("canary_cluster = EXCLUDED.canary_cluster"));
     }
 
     #[test]
-    fn select_org_clusters_reads_both_placement_clusters_by_id() {
+    fn select_org_clusters_reads_all_placement_clusters_by_id() {
         let sql = select_org_clusters_sql();
         assert!(sql.contains("registry.orgs"));
-        assert!(sql.contains("prod_cluster") && sql.contains("dev_cluster"));
+        for col in ["prod_cluster", "canary_cluster", "dev_cluster"] {
+            assert!(sql.contains(col), "missing column {col}");
+        }
         // Keyed by the org id as a $n param (never interpolated).
         assert!(sql.contains("WHERE id = $1"));
     }

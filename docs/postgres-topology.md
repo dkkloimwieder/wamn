@@ -133,10 +133,25 @@ tier-move (`wamn-q3n.13`); retiring the legacy `postgres.yaml` gate pod is a
 separate concern (`wamn-689`). `docs/provisioning.md`.
 
 ### T4 — Dedicated-per-env (the regulated promotion tier)
-`<org>-<project>-prod` etc. — cluster-per-environment for customers whose
-compliance regime demands maximal separation (independent PITR per env,
-separate upgrade windows even between a customer's own envs). Same seam, same
-mechanics as T2, more instances; priced accordingly. Not the default.
+Cluster-per-environment for customers whose compliance regime demands maximal
+separation (independent PITR per env, separate upgrade windows even between a
+customer's own envs). Same seam, same mechanics as T2, more instances; priced
+accordingly. Not the default.
+
+*Shipped (`wamn-q3n.14`):* a dedicated org gives **`canary` its own cluster** —
+`<org>-prod` (HA-3) + **`<org>-canary`** (HA-2, a *third* recovery domain with
+independent PITR) + `<org>-dev`. This is the property §T4 asks for and the T2
+`Env::side` collapse (canary → prod) cannot express, so the model gains a stored
+`registry.orgs.canary_cluster` (set **iff** the tier is `dedicated`; a DB
+biconditional CHECK + a distinctness CHECK, drift-guarded) and per-env resolution
+moves from `Env::side` to `Org::cluster_for_env` — `canary` routes to
+`<org>-canary` on a dedicated org, else to prod (standard/trials). `provision-org
+--tier dedicated` renders the third `<org>-canary` CR (`--emit-canary`);
+`provision-project-env --env canary` routes there with no manual `--cluster`; the
+`.13` T2→T4 tier move routes each env to its per-env cluster. Proven by a live
+in-cluster dedicated-org standup (prod HA-3 + canary HA-2 + dev-1 — canary's DB
+lives on its own cluster, physically isolated from prod). `docs/provisioning.md`
+§provision-org T4 dedicated orgs.
 
 ## Environments become a first-class platform dimension
 

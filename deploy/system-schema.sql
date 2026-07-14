@@ -37,8 +37,12 @@
 --       application users. The live-apply gate asserts the exact table set.
 --   (4) dev ≠ prod recovery domain — a DB CHECK on `orgs`: a paying org's
 --       prod-side and dev-side clusters MUST differ; only the T3 trials pool
---       deliberately collapses both onto the shared cluster. Mirrors the model's
---       Env::side / resolve() routing; a rejected bad-standard-org proves it.
+--       deliberately collapses both onto the shared cluster. Extended for T4
+--       (wamn-q3n.14): a dedicated org gives `canary` its OWN cluster
+--       (`canary_cluster`) — a third recovery domain distinct from prod and dev;
+--       standard/trials orgs leave `canary_cluster` NULL (canary shares prod).
+--       Mirrors the model's Org::cluster_for_env / resolve() routing; rejected
+--       bad orgs prove it.
 
 -- ---------------------------------------------------------------------------
 -- Schemas. `registry` = the identity/placement model (wamn-q3n.1); `provisioning`
@@ -76,17 +80,30 @@ INSERT INTO registry.meta (schema_version) VALUES ('0.1');
 -- INVARIANT 4 (dev ≠ prod recovery domain): `orgs_recovery_domain_check`. A
 -- paying org (standard/dedicated) MUST place prod and dev on different clusters
 -- so a dev restore never rewinds prod; only the T3 trials pool collapses both
--- onto the shared cluster (canary shares prod's cluster by the env→side routing,
--- not by column). Mirrors crates/wamn-registry Env::side / resolve().
+-- onto the shared cluster. Mirrors crates/wamn-registry Env::side / resolve().
+--
+-- INVARIANT 4, extended for T4 (wamn-q3n.14): `canary_cluster` is set IFF the
+-- org is `dedicated` — that org gives `canary` its own cluster (a third recovery
+-- domain with independent PITR). `orgs_canary_dedicated_check` ties the column to
+-- the tier (a biconditional: canary present ⟺ dedicated); `orgs_canary_recovery_
+-- domain_check` requires a set canary cluster to be distinct from BOTH prod and
+-- dev. A standard/trials org leaves it NULL — canary shares prod (the T2
+-- collapse). Mirrors crates/wamn-registry Org::cluster_for_env / resolve().
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.orgs (
-    id            text PRIMARY KEY,
-    tier          text NOT NULL,
-    prod_cluster  text NOT NULL,
-    dev_cluster   text NOT NULL,
+    id             text PRIMARY KEY,
+    tier           text NOT NULL,
+    prod_cluster   text NOT NULL,
+    canary_cluster text,
+    dev_cluster    text NOT NULL,
     CONSTRAINT orgs_tier_check CHECK (tier IN ('trials', 'standard', 'dedicated')),
     CONSTRAINT orgs_recovery_domain_check
-        CHECK (tier = 'trials' OR prod_cluster <> dev_cluster)
+        CHECK (tier = 'trials' OR prod_cluster <> dev_cluster),
+    CONSTRAINT orgs_canary_dedicated_check
+        CHECK ((tier = 'dedicated') = (canary_cluster IS NOT NULL)),
+    CONSTRAINT orgs_canary_recovery_domain_check
+        CHECK (canary_cluster IS NULL
+               OR (canary_cluster <> prod_cluster AND canary_cluster <> dev_cluster))
 );
 
 -- ---------------------------------------------------------------------------

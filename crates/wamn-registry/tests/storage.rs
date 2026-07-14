@@ -57,9 +57,14 @@ fn system_schema_sql_mirrors_the_model() {
     assert!(sql.contains("CREATE SCHEMA provisioning"));
 
     // Registry tables + the distinctive columns of the model
-    // (Org.prod_cluster/dev_cluster, ProjectEnv.secret_name/secret_namespace).
+    // (Org.prod_cluster/canary_cluster/dev_cluster, ProjectEnv.secret_name/
+    // secret_namespace).
     assert!(sql.contains("CREATE TABLE registry.orgs"));
-    assert!(sql.contains("prod_cluster") && sql.contains("dev_cluster"));
+    assert!(
+        sql.contains("prod_cluster")
+            && sql.contains("canary_cluster")
+            && sql.contains("dev_cluster")
+    );
     assert!(sql.contains("CREATE TABLE registry.projects"));
     assert!(sql.contains("CREATE TABLE registry.project_envs"));
     assert!(sql.contains("secret_name") && sql.contains("secret_namespace"));
@@ -98,7 +103,13 @@ fn upsert_org_sql_matches_the_orgs_columns() {
     let builder = wamn_registry::sql::upsert_org_sql();
     assert!(builder.contains("registry.orgs"));
     assert!(builder.contains("ON CONFLICT (id)"));
-    for col in ["id", "tier", "prod_cluster", "dev_cluster"] {
+    for col in [
+        "id",
+        "tier",
+        "prod_cluster",
+        "canary_cluster",
+        "dev_cluster",
+    ] {
         assert!(
             sql.contains(col),
             "orgs table (system-schema.sql) missing {col}"
@@ -134,10 +145,15 @@ fn upsert_project_and_project_env_sql_match_the_columns() {
         );
     }
 
-    // The cluster-selection read targets the orgs placement columns.
+    // The cluster-selection read targets the orgs placement columns (incl the
+    // T4 canary cluster, so provision-project-env can route canary per-env).
     let sel = wamn_registry::sql::select_org_clusters_sql();
     assert!(sel.contains("registry.orgs"));
-    assert!(sel.contains("prod_cluster") && sel.contains("dev_cluster"));
+    assert!(
+        sel.contains("prod_cluster")
+            && sel.contains("canary_cluster")
+            && sel.contains("dev_cluster")
+    );
 
     // The tier-move project-env enumeration (wamn-q3n.13) reads the same table,
     // ordered for a stable plan.
@@ -231,6 +247,23 @@ fn dev_ne_prod_recovery_domain_check_is_present() {
     assert!(
         sql.contains("tier = 'trials' OR prod_cluster <> dev_cluster"),
         "the dev≠prod recovery-domain CHECK expression must be present verbatim"
+    );
+}
+
+/// Invariant 4, extended for T4 (wamn-q3n.14): the canary-cluster CHECKs — the
+/// biconditional (canary present ⟺ dedicated) and the canary distinctness (a set
+/// canary cluster ≠ both prod and dev) — pinned by *expression*, not just name
+/// (the drift-guard lesson; the live-apply gate proves they reject bad orgs).
+#[test]
+fn canary_cluster_recovery_domain_checks_are_present() {
+    let sql = code_only(&system_schema_sql());
+    assert!(
+        sql.contains("(tier = 'dedicated') = (canary_cluster IS NOT NULL)"),
+        "the canary⟺dedicated biconditional CHECK expression must be present verbatim"
+    );
+    assert!(
+        sql.contains("canary_cluster <> prod_cluster AND canary_cluster <> dev_cluster"),
+        "the canary-distinctness CHECK expression must be present verbatim"
     );
 }
 
@@ -332,14 +365,16 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     // INSERT would fail the second EXECUTE with a PK unique_violation and, under
     // ON_ERROR_STOP, fail this gate (kills the "ON CONFLICT dropped" mutant).
     script.push_str(&format!(
-        "PREPARE up (text,text,text,text) AS {upsert};\n\
-         EXECUTE up('demo','standard','demo-prod','demo-dev');\n\
-         EXECUTE up('demo','dedicated','demo-prod','demo-dev');\n\
+        "PREPARE up (text,text,text,text,text) AS {upsert};\n\
+         EXECUTE up('demo','standard','demo-prod',NULL,'demo-dev');\n\
+         EXECUTE up('demo','dedicated','demo-prod','demo-canary','demo-dev');\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.orgs WHERE id='demo')=1,\n\
              'upsert_org_sql is idempotent — one row after two upserts';\n\
            ASSERT (SELECT tier FROM registry.orgs WHERE id='demo')='dedicated',\n\
              'the second upsert refreshed the tier (ON CONFLICT DO UPDATE)';\n\
+           ASSERT (SELECT canary_cluster FROM registry.orgs WHERE id='demo')='demo-canary',\n\
+             'the second (dedicated) upsert set the canary cluster (ON CONFLICT DO UPDATE)';\n\
          END $$;\n\
          DEALLOCATE up;\n",
         upsert = wamn_registry::sql::upsert_org_sql(),
@@ -526,13 +561,40 @@ DO $$ BEGIN BEGIN
   ASSERT false, 'a standard org with prod=dev must violate the recovery-domain CHECK';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, tier, prod_cluster, dev_cluster)
-    VALUES ('badded','dedicated','c','c');
+  INSERT INTO registry.orgs (id, tier, prod_cluster, canary_cluster, dev_cluster)
+    VALUES ('badded','dedicated','c','cn','c');
   ASSERT false, 'a dedicated org with prod=dev must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 -- ...but the T3 trials pool deliberately collapses both onto the shared cluster.
 DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.orgs WHERE id='try')=1,
   'a trials org collapses both sides onto the shared pool'; END $$;
+
+-- Invariant 4, extended for T4 (wamn-q3n.14): the canary-cluster CHECKs.
+-- A dedicated org with a distinct canary cluster is ACCEPTED (the happy path;
+-- a too-strict CHECK would reject it).
+INSERT INTO registry.orgs (id, tier, prod_cluster, canary_cluster, dev_cluster)
+  VALUES ('okded','dedicated','okded-prod','okded-canary','okded-dev');
+DO $$ BEGIN ASSERT (SELECT canary_cluster FROM registry.orgs WHERE id='okded')='okded-canary',
+  'a dedicated org records its own canary cluster'; END $$;
+-- A dedicated org with NO canary cluster is rejected (canary present ⟺ dedicated).
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, tier, prod_cluster, dev_cluster)
+    VALUES ('nocan','dedicated','p','d');
+  ASSERT false, 'a dedicated org MUST give canary its own cluster';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- A non-dedicated org carrying a canary cluster is rejected (the other direction).
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, tier, prod_cluster, canary_cluster, dev_cluster)
+    VALUES ('stdcan','standard','p','cn','d');
+  ASSERT false, 'only a dedicated org may carry a canary cluster';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- A dedicated org whose canary shares prod's cluster is rejected — canary is its
+-- OWN recovery domain, distinct from both prod and dev.
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, tier, prod_cluster, canary_cluster, dev_cluster)
+    VALUES ('badcan','dedicated','p','p','d');
+  ASSERT false, 'a dedicated org canary must differ from prod';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
 -- The tier / env CHECKs reject unknown values.
 DO $$ BEGIN BEGIN

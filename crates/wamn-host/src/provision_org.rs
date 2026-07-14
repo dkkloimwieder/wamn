@@ -1,15 +1,18 @@
-//! The `provision-org` subcommand (wamn-q3n.6): render a paying org's CNPG
-//! `Cluster` PAIR (`<org>-prod` HA + `<org>-dev` hibernation-managed) and record
-//! the org in the T1 control-plane registry.
+//! The `provision-org` subcommand (wamn-q3n.6, extended for T4 by wamn-q3n.14):
+//! render a paying org's CNPG `Cluster` SET (`<org>-prod` HA + `<org>-dev`
+//! hibernation-managed, plus a dedicated `<org>-canary` for a T4 `dedicated` org)
+//! and record the org in the T1 control-plane registry.
 //!
 //! An imperative CLI (the `provision-project` precedent), run as a Job or from a
 //! runbook. It:
 //!
-//! 1. builds the org's placement — `<org>-prod` / `<org>-dev` cluster refs via
-//!    [`wamn_registry::cluster_name`] — and validates the org id + names by
+//! 1. builds the org's placement — `<org>-prod` / (dedicated) `<org>-canary` /
+//!    `<org>-dev` cluster refs via [`wamn_registry::cluster_name`] /
+//!    [`wamn_registry::canary_cluster_name`] — and validates the org id + names by
 //!    running the one-org registry through `wamn-registry`'s validator;
-//! 2. renders the two CNPG `Cluster` CRs ([`wamn_provision::org`]) and emits them
-//!    as JSON — the runbook/Job `kubectl apply -f`s them and waits ready;
+//! 2. renders the CNPG `Cluster` CRs ([`wamn_provision::org`]) — two, or three for
+//!    a dedicated org — and emits them as JSON — the runbook/Job `kubectl apply
+//!    -f`s them and waits ready;
 //! 3. records the org row in `registry.orgs` in the T1 `wamn_system` DB
 //!    (idempotent upsert, as the `wamn_system` owner) when a system-DB URL is
 //!    given.
@@ -47,7 +50,8 @@ pub enum TierArg {
     Trials,
     /// T2 standard: `<org>-prod` HA (2 instances) + `<org>-dev` single instance.
     Standard,
-    /// T4 dedicated (regulated): `<org>-prod` HA (3 instances) + `<org>-dev`.
+    /// T4 dedicated (regulated): `<org>-prod` HA (3 instances) + `<org>-canary` HA
+    /// (canary its own recovery domain) + `<org>-dev` single instance.
     Dedicated,
 }
 
@@ -89,6 +93,12 @@ pub struct ProvisionOrgArgs {
     #[arg(long)]
     pub emit_prod: Option<PathBuf>,
 
+    /// Write the `<org>-canary` Cluster CR (JSON) here; `-` = stdout (default).
+    /// Only rendered for a `dedicated` (T4) org (canary its own cluster); ignored
+    /// otherwise.
+    #[arg(long)]
+    pub emit_canary: Option<PathBuf>,
+
     /// Write the `<org>-dev` Cluster CR (JSON) here; `-` = stdout (default).
     #[arg(long)]
     pub emit_dev: Option<PathBuf>,
@@ -122,22 +132,34 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
                 pool = org.prod_cluster.name,
             );
         }
-        // T2/T4: render the dedicated cluster pair and emit the CRs to apply.
+        // T2/T4: render the dedicated cluster set and emit the CRs to apply. A
+        // dedicated (T4) org also renders `<org>-canary` (canary its own cluster).
         Tier::Standard | Tier::Dedicated => {
-            let (prod_cr, dev_cr) = wamn_provision::org::render_org_cluster_pair(&org)
+            let set = wamn_provision::org::render_org_cluster_set(&org)
                 .map_err(|e| anyhow::anyhow!("render org clusters: {e}"))?;
+            let canary_note = match &org.canary_cluster {
+                Some(c) => format!(" + {} (HA, dedicated canary)", c.name),
+                None => String::new(),
+            };
             println!(
-                "org {id:?} (tier {tier}): {prod} ({pi} instances, HA) + {dev} (1 instance, hibernation-managed)",
+                "org {id:?} (tier {tier}): {prod} ({pi} instances, HA){canary_note} + {dev} (1 instance, hibernation-managed)",
                 id = org.id,
                 prod = org.prod_cluster.name,
                 dev = org.dev_cluster.name,
-                pi = prod_cr["spec"]["instances"],
+                pi = set.prod["spec"]["instances"],
             );
-            // Emit the CRs (default: both to stdout) so the runbook kubectl-applies them.
+            // Emit the CRs (default: to stdout) so the runbook kubectl-applies them.
             let emit_prod = args.emit_prod.unwrap_or_else(|| PathBuf::from("-"));
             let emit_dev = args.emit_dev.unwrap_or_else(|| PathBuf::from("-"));
-            write_json(&emit_prod, &prod_cr).context("emit prod cluster CR")?;
-            write_json(&emit_dev, &dev_cr).context("emit dev cluster CR")?;
+            write_json(&emit_prod, &set.prod).context("emit prod cluster CR")?;
+            if let Some(canary_cr) = &set.canary {
+                let emit_canary = args
+                    .emit_canary
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("-"));
+                write_json(&emit_canary, canary_cr).context("emit canary cluster CR")?;
+            }
+            write_json(&emit_dev, &set.dev).context("emit dev cluster CR")?;
         }
     }
 
@@ -188,6 +210,8 @@ async fn do_record_org(client: &tokio_postgres::Client, org: &Org) -> anyhow::Re
         .await
         .context("SET ROLE wamn_system")?;
     let tier = org.tier.as_str();
+    // The canary cluster is set only for a dedicated (T4) org; NULL otherwise.
+    let canary = org.canary_cluster.as_ref().map(|c| c.name.as_str());
     client
         .execute(
             wamn_registry::sql::upsert_org_sql(),
@@ -195,6 +219,7 @@ async fn do_record_org(client: &tokio_postgres::Client, org: &Org) -> anyhow::Re
                 &org.id,
                 &tier,
                 &org.prod_cluster.name,
+                &canary,
                 &org.dev_cluster.name,
             ],
         )
@@ -260,13 +285,13 @@ mod tests {
         assert_eq!(s.dev_cluster.name, "acme-dev");
     }
 
-    /// A trials org has no dedicated pair to render — the render path is only
+    /// A trials org has no dedicated set to render — the render path is only
     /// reached for paying tiers, and rendering a trials org would error (it is the
     /// record-only path). This pins that the pool placement carries no cluster CRs.
     #[test]
     fn a_trials_org_renders_no_cluster_pair() {
         let t = org_for(Tier::Trials, "trialco", "wamn-pg");
-        assert!(wamn_provision::org::render_org_cluster_pair(&t).is_err());
+        assert!(wamn_provision::org::render_org_cluster_set(&t).is_err());
     }
 
     #[test]
@@ -275,6 +300,24 @@ mod tests {
         assert_eq!(org.prod_cluster.name, "acme-prod");
         assert_eq!(org.dev_cluster.name, "acme-dev");
         assert!(one_org_registry(org).validate().is_ok());
+    }
+
+    /// A dedicated (T4) org's placement gives canary its own cluster, and
+    /// `render_org_cluster_set` renders the third CR — the render path
+    /// `provision-org --tier dedicated` emits (wamn-q3n.14).
+    #[test]
+    fn dedicated_org_places_and_renders_a_canary_cluster() {
+        let org = org_for(Tier::Dedicated, "acme", "wamn-pg");
+        assert_eq!(
+            org.canary_cluster.as_ref().map(|c| c.name.as_str()),
+            Some("acme-canary")
+        );
+        assert!(one_org_registry(org.clone()).validate().is_ok());
+        let set = wamn_provision::org::render_org_cluster_set(&org).unwrap();
+        assert_eq!(
+            set.canary.expect("dedicated renders a canary CR")["metadata"]["name"],
+            "acme-canary"
+        );
     }
 
     #[test]
