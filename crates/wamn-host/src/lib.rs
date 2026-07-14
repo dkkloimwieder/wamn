@@ -13,6 +13,7 @@ pub mod dispatch;
 pub mod dump_project_env;
 pub mod engine;
 pub mod host;
+pub mod move_org_tier;
 pub mod plugins;
 pub mod provision;
 pub mod provision_org;

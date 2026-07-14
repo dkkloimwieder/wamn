@@ -43,6 +43,7 @@ pub mod org;
 pub mod restore;
 pub mod secret;
 pub mod sql;
+pub mod tier_move;
 
 pub use database::render_project_env_database;
 pub use dump::{
@@ -58,3 +59,4 @@ pub use name::{
 pub use org::{prod_instances, render_org_cluster_pair};
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use secret::render_project_env_secret_manifest;
+pub use tier_move::{TierMoveStep, plan_tier_move, validate_tier_upgrade};

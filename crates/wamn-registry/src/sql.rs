@@ -45,6 +45,16 @@ pub fn upsert_project_sql() -> &'static str {
      ON CONFLICT (org, id) DO NOTHING"
 }
 
+/// List an org's provisioned project-envs (`project`, `env`, and the Secret
+/// reference), so a tier move (wamn-q3n.13) can plan one dump/restore per
+/// project-env without loading the whole registry. Ordered by `project, env` for a
+/// stable plan. Param: `$1` org id.
+pub fn select_org_project_envs_sql() -> &'static str {
+    "SELECT project, env, secret_name, secret_namespace \
+     FROM registry.project_envs WHERE org = $1 \
+     ORDER BY project, env"
+}
+
 /// Upsert a provisioned project-env row into `registry.project_envs`. Idempotent
 /// and additive — re-provisioning refreshes the credential Secret reference.
 /// Params: `$1` org, `$2` project, `$3` env, `$4` secret_name, and `$5`
@@ -201,6 +211,18 @@ mod tests {
         assert!(sql.contains("VALUES ($1, $2)"));
         // A project has no mutable placement — re-provisioning is a no-op.
         assert!(sql.contains("ON CONFLICT (org, id) DO NOTHING"));
+    }
+
+    #[test]
+    fn select_org_project_envs_lists_an_orgs_envs_ordered() {
+        let sql = select_org_project_envs_sql();
+        assert!(sql.contains("FROM registry.project_envs"));
+        for col in ["project", "env", "secret_name", "secret_namespace"] {
+            assert!(sql.contains(col), "missing column {col}");
+        }
+        // Keyed by the org id as a $n param (never interpolated); stable order.
+        assert!(sql.contains("WHERE org = $1"));
+        assert!(sql.contains("ORDER BY project, env"));
     }
 
     #[test]

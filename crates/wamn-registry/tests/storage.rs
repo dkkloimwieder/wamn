@@ -138,6 +138,15 @@ fn upsert_project_and_project_env_sql_match_the_columns() {
     let sel = wamn_registry::sql::select_org_clusters_sql();
     assert!(sel.contains("registry.orgs"));
     assert!(sel.contains("prod_cluster") && sel.contains("dev_cluster"));
+
+    // The tier-move project-env enumeration (wamn-q3n.13) reads the same table,
+    // ordered for a stable plan.
+    let list = wamn_registry::sql::select_org_project_envs_sql();
+    assert!(list.contains("FROM registry.project_envs"));
+    assert!(list.contains("WHERE org = $1") && list.contains("ORDER BY project, env"));
+    for col in ["project", "env", "secret_name", "secret_namespace"] {
+        assert!(list.contains(col), "project-env list builder missing {col}");
+    }
 }
 
 /// The saga builders (`wamn_registry::sql::{create,advance,complete,fail}_saga_sql`,

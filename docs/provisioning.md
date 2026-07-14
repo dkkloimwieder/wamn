@@ -469,6 +469,59 @@ debug builds): `pg_restore_argv` dropping `--clean` or `--no-owner`,
 `select_latest` flipping `taken_at DESC`, and the in-place `--confirm` gate
 neutered each fail a named test.
 
+## `wamn-host move-org-tier` (wamn-q3n.13)
+
+Promote an org to a higher-isolation tier — **T3 → T2** (a trial converting to a
+paying customer) or **T2 → T4** (a regulated upgrade). A tier move re-points the
+org onto the new tier's clusters through the 2.2 `CredentialProvider` seam
+(`docs/postgres-topology.md` §Reversibility): per project-env, dump the current
+database, provision it on the new cluster, restore the dump, then flip the registry
+placement row. It is a **scheduled operation**, not free at the data layer — a
+dump/restore window (or a logical-replication cutover for near-zero downtime).
+
+The pure core (`wamn_provision::tier_move`) validates the move is a strict
+**upgrade** (the lattice `trials < standard < dedicated` — a same-tier move is a
+no-op, a downgrade is rejected) and computes the ordered step plan
+(`plan_tier_move`: `provision clusters → per-env {dump, provision-on-new, restore}
+→ flip registry LAST`). The subcommand is the orchestrating shell:
+
+| Flag | Meaning |
+|---|---|
+| `--org` | The org to promote (must be registered). |
+| `--target-tier` | `standard` (T2) or `dedicated` (T4). Must be a strict upgrade. |
+| `--system-database-url` (env `WAMN_SYSTEM_ADMIN_URL`) | Superuser URL to the T1 `wamn_system` DB: read the current tier + placement + project-envs, and (with `--flip`) record the cutover. |
+| `--flip` | Execute the final **cutover** — flip `registry.orgs` to the new tier + cluster refs (idempotent `upsert_org_sql`). Run **after** the data move. Without it, the ordered runbook is printed and nothing is written. |
+| `--dump-root` | Local dump staging root (threaded into the printed `dump`/`restore` command hints). |
+
+In **plan mode** (no `--flip`) it prints the concrete, dependency-ordered runbook
+— the exact `provision-org` / `dump-project-env` / `provision-project-env` /
+`restore-project-env` invocations + `kubectl apply`s an operator (or `10.1`'s saga)
+runs. The org's registry row stays on the **old** tier throughout (each
+`provision-project-env` targets the new cluster by explicit `--cluster`), and
+`--flip` is the last, atomic cutover — so live traffic never routes to the new
+clusters before their data lands. `--flip` is **idempotent**: a re-flip after a
+committed cutover is a no-op (crash-retry safe), and a downgrade flip is rejected.
+
+The subcommand renders no CRs and runs no `pg_dump`/`pg_restore` itself (no K8s
+client — those are the reused subcommands' jobs, the `provision-org`
+render-not-apply precedent). The full resumable/compensating **saga** that would
+drive the plan automatically is `10.1`'s; `.13` ships the mechanism + this runbook.
+**CNPG `initdb.import`** (a `bootstrap.import` microservice import on the new
+`Database`/`Cluster`) is the documented CNPG-native alternative to the `.11`
+`pg_restore` path.
+
+*Verify.* The upgrade lattice, the step-plan ordering (flip last), and the per-env
+cluster routing (by `env.side()`) are unit + mutation tested (apply/test/restore,
+debug builds): the strict-`>` upgrade check, the tier rank, the flip position, the
+per-env side selection, and the project-env `SELECT` order each fail a named test.
+The **in-cluster gate of record** (the `.6`/`.7`/`.10`/`.11` precedent — debug
+binary + `kubectl`, no image rebuild) stands up a **real T2 pair** and moves seeded
+data cross-cluster from the T3 pool: register a trials org on `wamn-pg` (`.9`),
+provision + seed a project-env DB (`.7`), `dump` it (`.10`), provision the T2 pair
+(`.6`), restore into the new cluster (`.11`), `move-org-tier --flip`, and assert the
+data lives on the **new** cluster and the registry now resolves there — teardown
+drops **only** the new pair + databases + the org row (cascade).
+
 ## Deferred (follow-up beads)
 
 - **WAL archiving / PITR** — a fast-follow `[2.3]` bead (needs an in-cluster

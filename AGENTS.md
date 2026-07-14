@@ -1227,6 +1227,110 @@ kubectl -n wamn-system exec wamn-pg-1 -c postgres -- psql -U postgres \
 kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
   -c "DELETE FROM registry.orgs WHERE id='t11gate';"
 
+# [D6/wamn-q3n.13] tier-move / promotion tooling — T3->T2 + T2->T4 (crates/wamn-provision
+# tier_move.rs + crates/wamn-registry select_org_project_envs_sql + crates/wamn-host
+# move-org-tier subcommand). Promote an org to a higher-isolation tier by RE-POINTING it
+# onto the new tier's clusters via the 2.2 CredentialProvider seam (docs/postgres-
+# topology.md §Reversibility): per project-env, dump the current DB, provision it on the
+# new cluster, restore the dump, flip the registry row. A SCHEDULED operation (dump/restore
+# window; a logical-replication cutover = the near-zero-downtime follow-up). COMPOSES the
+# built pieces — .6 provision-org, .7 provision-project-env, .10 dump-project-env, .11
+# restore-project-env + the existing registry flip SQL (upsert_org_sql). NEW crates/wamn-
+# provision/src/tier_move.rs = the PURE core (SR6 rule 1, no DB/clock/K8s): validate_tier_
+# upgrade (the lattice trials<standard<dedicated via tier_rank; same-tier=TierMoveNoop,
+# downgrade=TierDowngrade — data never moves DOWN to a shared/lower tier) + plan_tier_move
+# -> ordered Vec<TierMoveStep> (ProvisionClusters -> per-env {Dump, ProvisionEnv, Restore}
+# -> FlipRegistry LAST; each env's cluster picked by env.side() off Org::for_pair(target),
+# the single-source cluster_name the CR renderer + flipped row also use). NEW crates/wamn-
+# registry/src/sql.rs select_org_project_envs_sql (SR2, enumerate an org's (project,env)
+# rows ORDER BY project,env; drift-guarded vs system-schema.sql). NEW ProvisionError::
+# TierMoveNoop / TierDowngrade. NEW crates/wamn-host/src/move_org_tier.rs = the orchestrating
+# shell (+mod lib.rs +Command variant/arm main.rs): reads the org's current tier+placement+
+# project-envs from the T1 registry; PLAN mode (default) prints the ordered runbook (the
+# exact provision-org / dump / provision-project-env / restore invocations + kubectl applies
+# in dependency order — the registry row STAYS on the OLD tier through the data move,
+# provision-project-env targets the new cluster by explicit --cluster, and the Database CR
+# name is triple-derived so the OLD CR is deleted [RETAIN keeps its data] before the new one;
+# --flip is the LAST atomic cutover); --flip executes the idempotent registry.orgs cutover
+# (upsert_org_sql to the new tier+pair; a re-flip = no-op [crash-retry safe], a downgrade
+# flip is rejected). RENDERER/DB-writer only — no K8s client, no pg_dump/pg_restore itself
+# (those are the reused subcommands' jobs, the provision-org render-not-apply precedent); the
+# full resumable/compensating SAGA that would drive the plan is 10.1. One mechanism, BOTH
+# directions (T3->T2 proven by a live cross-CLUSTER standup; T2->T4 the SAME code path, its
+# dedicated-per-env cluster shape = wamn-q3n.14, which BLOCKS on .13). CNPG initdb.import =
+# the documented CNPG-native restore alternative. Mutants killed (apply/test/restore, sha256,
+# DEBUG builds): validate strict '>'->'>=' / tier_rank standard<->dedicated swap / plan flip
+# pushed FIRST / per-env cluster ignores env.side / select_org_project_envs ORDER BY drop —
+# each fails a NAMED test. docs/provisioning.md §move-org-tier + docs/postgres-topology.md
+# §Reversibility 'Shipped (wamn-q3n.13)' + tier-move runbook.
+cargo test -p wamn-provision -p wamn-registry -p wamn-host   # tier_move validate/plan + project-env list SQL + subcommand units
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-host --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-host --check
+# Plan/flip locally (no cluster — a throwaway PG with the .3 registry applied + a seeded org):
+#   WAMN_SYSTEM_ADMIN_URL=<sysdb superuser> ./target/debug/wamn-host move-org-tier \
+#     --org <id> --target-tier standard          # PLAN mode: prints the ordered runbook
+#   WAMN_SYSTEM_ADMIN_URL=<sysdb superuser> ./target/debug/wamn-host move-org-tier \
+#     --org <id> --target-tier standard --flip    # CUTOVER: flip registry.orgs (idempotent)
+# IN-CLUSTER gate of record = a LIVE T3->T2 tier move across REAL clusters (the .6/.7/.9/.10/
+# .11 precedent; T3 pool wamn-pg + T1 wamn-sysdb always up; provisioning.dumps applied from
+# .10; NO docker rebuild — real debug subcommand + kubectl). PICK CLEAN ports (ss -ltn | grep 547):
+kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5478:5432 &
+kubectl -n wamn-system port-forward svc/wamn-pg-rw 5479:5432 &
+SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
+PGPW=$(kubectl -n wamn-system get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
+SYS="postgres://postgres:${SYSPW}@127.0.0.1:5478/wamn_system?sslmode=disable"; DUMPROOT=$(mktemp -d)
+# Register a trials org + provision + seed a project-env DB on wamn-pg (.7/.9), then dump it (.10):
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-org --org t13gate --tier trials --pool wamn-pg
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-project-env --org t13gate --project app --env prod \
+  --connection-limit 10 --emit-role-sql /tmp/t13-role.sql --emit-database /tmp/t13-db.json \
+  --emit-privilege-sql /tmp/t13-priv.sql --emit-secret /tmp/t13-secret.json
+kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/t13-role.sql
+kubectl apply -f /tmp/t13-db.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.applied}'=true database/wamn-db-t13gate--app--prod --timeout=90s
+kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/t13-priv.sql
+kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -d "wamn-db-t13gate--app--prod" \
+  -c "CREATE TABLE parts (id int primary key, sku text, weight_kg numeric(8,3)); INSERT INTO parts VALUES (1,'bolt',0.125),(2,'nut',0.050),(3,'washer',0.008);"
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host dump-project-env --org t13gate --project app --env prod \
+  --database-url "postgres://postgres:${PGPW}@127.0.0.1:5479/wamn-db-t13gate--app--prod?sslmode=disable" --run-now --out-dir "$DUMPROOT"
+# Plan the move, then provision the REAL T2 pair (render-only, NO flip yet):
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host move-org-tier --org t13gate --target-tier standard   # PLAN
+env -u WAMN_SYSTEM_ADMIN_URL ./target/debug/wamn-host provision-org --org t13gate --tier standard \
+  --emit-prod /tmp/t13-prod.json --emit-dev /tmp/t13-dev.json   # render-only (env -u => no --system-database-url => no early flip)
+kubectl apply -f /tmp/t13-prod.json -f /tmp/t13-dev.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=2 cluster/t13gate-prod --timeout=300s
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=1 cluster/t13gate-dev  --timeout=180s
+# Move prod onto the new cluster: delete the OLD Database CR (RETAIN keeps wamn-pg's copy) so the
+# triple-derived CR name is free, then provision the DB on t13gate-prod + restore the dump into it:
+NPPW=$(kubectl -n wamn-system get secret t13gate-prod-superuser -o jsonpath='{.data.password}' | base64 -d)
+kubectl -n wamn-system port-forward svc/t13gate-prod-rw 5480:5432 &
+NEWADMIN="postgres://postgres:${NPPW}@127.0.0.1:5480/postgres?sslmode=disable"
+kubectl -n wamn-system delete database wamn-db-t13gate--app--prod --ignore-not-found
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-project-env --org t13gate --project app --env prod \
+  --cluster t13gate-prod --emit-role-sql /tmp/n-role.sql --emit-database /tmp/n-db.json \
+  --emit-privilege-sql /tmp/n-priv.sql --emit-secret /tmp/n-secret.json
+kubectl -n wamn-system exec -i t13gate-prod-1 -c postgres -- psql -U postgres -f - < /tmp/n-role.sql
+kubectl apply -f /tmp/n-db.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.applied}'=true database/wamn-db-t13gate--app--prod --timeout=90s
+kubectl -n wamn-system exec -i t13gate-prod-1 -c postgres -- psql -U postgres -f - < /tmp/n-priv.sql
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host restore-project-env --org t13gate --project app --env prod \
+  --in-place --confirm --database-url "$NEWADMIN" --dump-root "$DUMPROOT"
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host move-org-tier --org t13gate --target-tier standard --flip   # CUTOVER
+# Verify (gate of record): the moved data lives on the NEW cluster t13gate-prod; the registry
+# now points there (resolve prod -> t13gate-prod), tier flipped standard:
+kubectl -n wamn-system exec t13gate-prod-1 -c postgres -- psql -U postgres -d "wamn-db-t13gate--app--prod" \
+  -tAc "SELECT count(*), sum(weight_kg) FROM parts;"   # 3 | 0.183 (exact decimals survived the cross-cluster move)
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
+  -tAc "SELECT id,tier,prod_cluster,dev_cluster FROM registry.orgs WHERE id='t13gate';"  # t13gate|standard|t13gate-prod|t13gate-dev
+# Guardrail: wamn-pg/wamn-sysdb/postgres.yaml UNTOUCHED. Teardown deletes ONLY the new pair +
+# DBs + the org row (kill the port-forwards by EXACT pid — not pkill); the org delete cascades
+# projects+project_envs+dumps:
+kubectl -n wamn-system delete database wamn-db-t13gate--app--prod --ignore-not-found
+kubectl -n wamn-system delete cluster t13gate-prod t13gate-dev
+kubectl -n wamn-system exec wamn-pg-1 -c postgres -- \
+  psql -U postgres -c 'DROP DATABASE IF EXISTS "wamn-db-t13gate--app--prod" WITH (FORCE);'
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
+  psql -U postgres -d wamn_system -c "DELETE FROM registry.orgs WHERE id='t13gate';"
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

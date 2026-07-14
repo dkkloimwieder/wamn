@@ -314,6 +314,39 @@ contract, and gates are substrate-agnostic. Tier moves are re-pointing:
   project across additional org-owned clusters — the "cells" pattern, aligned
   to customer boundaries, same seam.
 
+*Shipped (wamn-q3n.13):* the **tier-move mechanism** — `wamn-host
+move-org-tier --org <id> --target-tier <standard|dedicated>`. The pure core
+([`wamn_provision::tier_move`]) validates the move is a strict **upgrade** (the
+lattice `trials < standard < dedicated`; a same-tier move is a no-op, a
+downgrade is rejected — data never moves *down*) and computes the ordered step
+plan. The subcommand reads the org's current placement + project-envs from the
+T1 registry and, in **plan mode** (default), prints the ordered runbook — the
+exact `provision-org` / `dump-project-env` / `provision-project-env` /
+`restore-project-env` invocations + `kubectl apply`s in dependency order; with
+**`--flip`**, it executes the final control-plane cutover (the idempotent
+`registry.orgs` upsert to the new tier + cluster refs, run **after** the data
+move). The steps reuse the built pieces (`.6`/`.7`/`.10`/`.11`); the resumable/
+compensating **saga** that would drive the plan automatically is `10.1`'s. One
+mechanism serves **both** directions (T3→T2 proven by a live cross-cluster
+standup; T2→T4 the same code path, its dedicated-per-env cluster shape completed
+by `wamn-q3n.14`). See `docs/provisioning.md` §`move-org-tier`.
+
+**Tier-move runbook (scheduled operation):** the org's registry row stays on
+the **old** tier throughout the data move — `provision-project-env` targets the
+new cluster by explicit `--cluster`, and the `--flip` cutover is last, so live
+traffic never routes to the new clusters before their data is there. Per env:
+`pg_dump -Fd` the current database (`.10`), provision it on the new cluster
+(`.7`), `restore-project-env --in-place --confirm` the dump into it (`.11`).
+The dump/restore is a **downtime window**; the near-zero-downtime alternative is
+a **logical-replication cutover** (publication on the source, subscription on
+the new cluster, switch over once caught up) — a follow-up; the scheduled window
+is the shipped path. `restore-project-env` reuses `pg_restore`; **CNPG
+`initdb.import`** (a `bootstrap.import` microservice import on the new
+`Database`/`Cluster`) is the documented CNPG-native alternative. A physical
+restore carries the **audit-rewind caveat** (§Backup architecture): the moved
+`wamn_run` history rewinds with the data; immutability is the append-only
+platform-audit export (8.6), not the tenant database.
+
 ## Recommendation
 
 1. **Adopt the four-tier model**: T1 system cluster (HA, references-only,

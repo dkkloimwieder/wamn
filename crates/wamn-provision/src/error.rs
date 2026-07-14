@@ -36,6 +36,21 @@ pub enum ProvisionError {
         /// The maximum length (bytes).
         max: usize,
     },
+    /// A tier move (wamn-q3n.13) targets the SAME tier the org is already on — a
+    /// no-op, not a promotion.
+    TierMoveNoop {
+        /// The tier both sides share.
+        tier: &'static str,
+    },
+    /// A tier move (wamn-q3n.13) would DOWNGRADE the org to a lower-isolation tier.
+    /// Tier moves are one-way upgrades (T3→T2, T2→T4); data never moves down to a
+    /// shared or lower-isolation tier.
+    TierDowngrade {
+        /// The current (higher) tier.
+        from: &'static str,
+        /// The requested (lower) tier.
+        to: &'static str,
+    },
 }
 
 impl fmt::Display for ProvisionError {
@@ -58,6 +73,15 @@ impl fmt::Display for ProvisionError {
                 "provisioned name {name:?} is {} bytes, over the {max}-byte limit: \
                  shorten the org or project id",
                 name.len()
+            ),
+            ProvisionError::TierMoveNoop { tier } => write!(
+                f,
+                "tier move to {tier:?} is a no-op: the org is already on that tier"
+            ),
+            ProvisionError::TierDowngrade { from, to } => write!(
+                f,
+                "tier move {from:?} -> {to:?} is a downgrade: tier moves are one-way upgrades \
+                 (T3->T2, T2->T4), never to a lower-isolation tier"
             ),
         }
     }

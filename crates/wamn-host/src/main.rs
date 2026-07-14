@@ -12,8 +12,8 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_host::{
-    dispatch, dump_project_env, host, provision, provision_org, provision_project_env,
-    publish_catalog, restore_project_env,
+    dispatch, dump_project_env, host, move_org_tier, provision, provision_org,
+    provision_project_env, publish_catalog, restore_project_env,
 };
 
 #[derive(Parser)]
@@ -45,6 +45,8 @@ enum Command {
     DumpProjectEnv(dump_project_env::DumpProjectEnvArgs),
     /// Restore a per-project-env logical dump (pg_restore -Fd → scratch DB or in-place) (wamn-q3n.11)
     RestoreProjectEnv(restore_project_env::RestoreProjectEnvArgs),
+    /// Promote an org to a higher tier: T3→T2 / T2→T4 (dump→provision→restore→flip) (wamn-q3n.13)
+    MoveOrgTier(move_org_tier::MoveOrgTierArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -70,6 +72,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
         Command::DumpProjectEnv(args) => dump_project_env::run(args).await,
         Command::RestoreProjectEnv(args) => restore_project_env::run(args).await,
+        Command::MoveOrgTier(args) => move_org_tier::run(args).await,
     };
 
     shutdown_observability();
