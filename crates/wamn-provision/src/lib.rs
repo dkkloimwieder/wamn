@@ -36,6 +36,7 @@
 //! Per-project **distinct** roles/passwords (stronger credential isolation) are
 //! a hardening follow-up (8.2), not this MVP.
 
+pub mod backup;
 pub mod database;
 pub mod dump;
 mod error;
@@ -46,6 +47,11 @@ pub mod secret;
 pub mod sql;
 pub mod tier_move;
 
+pub use backup::{
+    BACKUP_PLUGIN_NAME, MINIO_ENDPOINT, OBJECT_STORE_SECRET, WAL_BUCKET, backup_enabled_for_role,
+    base_backup_schedule, cluster_backup_plugin, object_store_name, render_object_store,
+    render_scheduled_backup, scheduled_backup_name, wal_retention,
+};
 pub use database::render_project_env_database;
 pub use dump::{
     DEFAULT_BUCKET, dump_object_key, dump_resource_name, dump_schedule, pg_dump_argv,

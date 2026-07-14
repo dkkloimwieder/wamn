@@ -1435,6 +1435,92 @@ kubectl -n wamn-system delete cluster d14gate-prod d14gate-canary d14gate-dev
 kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
   psql -U postgres -d wamn_system -c "DELETE FROM registry.orgs WHERE id='d14gate';"
 
+# [D6/wamn-e1g] per-org WAL/PITR via the Barman Cloud plugin + the shared object
+# store (crates/wamn-provision/src/backup.rs renderer + org.rs wiring +
+# crates/wamn-host provision-org --emit-object-store/--emit-scheduled-backup +
+# deploy/minio.yaml + deploy/barman-cloud-plugin.yaml + the .10 dump upload made
+# LIVE). The FIRST backup mechanism (docs/postgres-topology.md §Backup
+# architecture): continuous WAL archiving + base backups to object storage for
+# WHOLE-CLUSTER point-in-time recovery. Build on the CloudNativePG Barman Cloud
+# PLUGIN (barman-cloud.cloudnative-pg.io; the in-tree .spec.backup.barmanObjectStore
+# provider is deprecated CNPG 1.26, removal slated 1.31) — a SEPARATE install
+# (deploy/barman-cloud-plugin.yaml, VENDORED+pinned v0.13.0, into cnpg-system) that
+# REQUIRES cert-manager (plugin<->operator mTLS); the shared object store =
+# deploy/minio.yaml (MinIO; buckets wamn-backups [WAL] + wamn-dumps [logical dumps]
+# + Secret wamn-object-store). NEW crates/wamn-provision/src/backup.rs = PURE
+# renderers + tier knobs (the org.rs/dump.rs precedent, no K8s client):
+# render_object_store (ObjectStore CR barmancloud.cnpg.io/v1: per-cluster WAL prefix
+# s3://wamn-backups/wal/<cluster> [each recovery domain isolated], endpointURL=MinIO,
+# s3Credentials->wamn-object-store, spec.retentionPolicy = wal_retention(tier) = the
+# PITR-SLA KNOB trials 7d / standard 14d / dedicated 30d), cluster_backup_plugin
+# (.spec.plugins WAL-archiver ref isWALArchiver:true barmanObjectName), and
+# render_scheduled_backup (base backup via method:plugin at base_backup_schedule(tier)
+# daily/12h/6h, immediate:true), gated by backup_enabled_for_role (prod|canary true,
+# dev off = "T2-dev optional", its restore path the logical dump). org.rs
+# render_org_cluster_set routes each role through the predicate; OrgClusters gains
+# object_stores + scheduled_backups; render_cluster attaches the plugin ref (uses
+# .spec.plugins NOT the deprecated in-tree .spec.backup). provision-org emits
+# --emit-object-store (a List, apply BEFORE the cluster — the plugin references it) /
+# --emit-scheduled-backup (AFTER the cluster exists). dump.rs completes the .10 upload
+# LIVE: the dump pod is initContainer(postgres:18 pg_dump -Fd into a shared volume) +
+# container(minio/mc `mc mirror` the dump dir CONTENTS to s3://wamn-dumps/<derivable
+# key> so .11 restore finds toc.dat), guarded on the S3 endpoint env. Mutants killed
+# (apply/test/restore, sha256, DEBUG builds): wal_retention swap / backup_enabled
+# dev->true / destinationPath drops the per-cluster prefix / scheduled_backup method
+# plugin->barmanObjectStore / base_backup_schedule swap / dump upload mc mirror->ls —
+# each fails a NAMED test. docs/postgres-topology.md §Backup architecture 'Shipped
+# (wamn-e1g)' + docs/provisioning.md §provision-org WAL/PITR.
+cargo test -p wamn-provision -p wamn-host   # backup renderer + tier knobs + org/dump wiring + subcommand units
+cargo clippy -p wamn-provision -p wamn-host -p wamn-registry -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-host -p wamn-registry -p wamn-gates --check
+# Render a standard org's backup CRs locally (no cluster/DB needed):
+./target/debug/wamn-host provision-org --org demo --tier standard \
+  --emit-prod /tmp/demo-prod.json --emit-dev /tmp/demo-dev.json \
+  --emit-object-store /tmp/demo-os.json --emit-scheduled-backup /tmp/demo-sb.json
+# IN-CLUSTER gate of record = a LIVE WAL/PITR standup (the .6/.14 precedent; T3 pool
+# wamn-pg + T1 wamn-sysdb always up; NO docker rebuild — real debug subcommand +
+# kubectl). FIRST install the backup infra ADDITIVELY (cert-manager is a HARD
+# prerequisite for the plugin; all three STAY as platform substrate — the operator
+# precedent — the shared-cluster guardrail forbids re-applying wamn-pg/wamn-sysdb):
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.21.0/cert-manager.yaml
+kubectl -n cert-manager wait --for=condition=Available deploy --all --timeout=180s
+kubectl apply -f deploy/barman-cloud-plugin.yaml
+kubectl -n cnpg-system rollout status deploy/barman-cloud --timeout=180s
+kubectl apply -f deploy/minio.yaml
+kubectl -n wamn-system rollout status deploy/minio --timeout=150s
+kubectl -n wamn-system wait --for=condition=complete job/minio-init --timeout=120s
+# Provision a standard org WITH backup (render-only — the PITR proof is the cluster +
+# backup CRs, not the registry row), apply ObjectStore -> Clusters -> ScheduledBackup:
+env -u WAMN_SYSTEM_ADMIN_URL ./target/debug/wamn-host provision-org --org e1gate --tier standard \
+  --emit-prod /tmp/e1-prod.json --emit-dev /tmp/e1-dev.json \
+  --emit-object-store /tmp/e1-os.json --emit-scheduled-backup /tmp/e1-sb.json
+kubectl apply -f /tmp/e1-os.json                             # ObjectStore BEFORE the cluster
+kubectl apply -f /tmp/e1-prod.json -f /tmp/e1-dev.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=2 cluster/e1gate-prod --timeout=300s
+kubectl apply -f /tmp/e1-sb.json                             # ScheduledBackup AFTER (immediate base backup)
+# Verify (gate of record): cluster condition ContinuousArchiving=True + a plugin base
+# backup completes to MinIO (kubectl get backup -l cnpg.io/cluster=e1gate-prod ->
+# phase completed). Then PROVE PITR to a precise instant: write row1; capture
+# T1=SELECT now() AFTER row1 commits AND its WAL is archived (poll
+# pg_stat_archiver.last_archived_wal); write row2; force WAL past T1 (pg_switch_wal
+# until pg_stat_archiver.last_archived_time > T1 — else recovery FATALs "recovery
+# ended before target reached"); then bootstrap a recovery Cluster with
+# bootstrap.recovery.recoveryTarget.targetTime=T1 + externalClusters[].plugin
+# {barmanObjectName:e1gate-prod-store, serverName:e1gate-prod} and assert it recovered
+# EXACTLY the pre-target state (row1 present, row2 excluded). The .10 dump upload is
+# proven live by a one-shot dump Job (dump-project-env --org e1gate --project app --env
+# prod --tier standard --emit-job) whose init pg_dump + mc-mirror lands toc.dat under
+# the derivable key in s3://wamn-dumps/dumps/e1gate/app/prod/<ts> (a project-env table
+# must be wamn_app-owned so the app credential can pg_dump it). Teardown deletes ONLY
+# the test org's clusters + ObjectStore + ScheduledBackup + dump Jobs + MinIO objects
+# (mc rm wal/e1gate-prod + dumps/e1gate); the backup infra (cert-manager / barman
+# plugin / MinIO) STAYS; wamn-pg/wamn-sysdb/postgres.yaml UNTOUCHED. wamn-sysdb (T1) +
+# wamn-pg (T3) get WAL/PITR by the same renderer at next (re)provision (the guardrail
+# forbids re-applying the running clusters here):
+kubectl -n wamn-system delete cluster e1gate-restore e1gate-prod e1gate-dev
+kubectl -n wamn-system delete objectstore e1gate-prod-store
+kubectl -n wamn-system delete scheduledbackup e1gate-prod-backup
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

@@ -1,0 +1,133 @@
+# The shared object store (wamn-e1g) — a single in-cluster MinIO (S3-compatible)
+# holding BOTH backup mechanisms' artifacts (docs/postgres-topology.md §Backup
+# architecture):
+#   * WAL + base backups (the Barman Cloud plugin) under bucket `wamn-backups`
+#     (per-cluster prefix `wal/<cluster>`) — crates/wamn-provision/src/backup.rs;
+#   * per-project-env logical dumps under bucket `wamn-dumps` (per-triple prefix)
+#     — crates/wamn-provision/src/dump.rs (the .10 upload, made live by e1g).
+#
+# Stands up ALONGSIDE the guardrailed clusters (the T3 pool, the T1 system
+# cluster, the legacy postgres.yaml pod), all ADDITIVE — this file never touches
+# them (and it is data-plane infra: it never references the T1 system DB). A dev
+# replica on an emptyDir (a kind/dev instance; a production object store is an
+# external/managed S3 or a replicated MinIO). NO cpu limit (the S2 CFS lesson is
+# for the DB path; MinIO is not on it, but requests-only keeps it uncapped too).
+#
+# The credentials Secret `wamn-object-store` is what the ObjectStore CR's
+# `s3Credentials` and the dump upload container reference (keys ACCESS_KEY_ID /
+# ACCESS_SECRET_KEY). MinIO's root user IS a valid S3 access key, so the same
+# pair drives the server and the S3 clients.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-object-store
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/managed-by: wamn
+    app.kubernetes.io/component: object-store
+type: Opaque
+stringData:
+  # The S3 access key pair (referenced by the ObjectStore + dump upload).
+  ACCESS_KEY_ID: wamn-object-store
+  ACCESS_SECRET_KEY: wamn-object-store-dev-secret
+  # MinIO server root credentials = the same pair (root is a valid S3 key).
+  MINIO_ROOT_USER: wamn-object-store
+  MINIO_ROOT_PASSWORD: wamn-object-store-dev-secret
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/managed-by: wamn
+    app.kubernetes.io/component: object-store
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: object-store
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: wamn
+        app.kubernetes.io/component: object-store
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          envFrom:
+            - secretRef:
+                name: wamn-object-store
+          ports:
+            - { name: s3, containerPort: 9000 }
+            - { name: console, containerPort: 9001 }
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            # NO cpu limit (requests only).
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: 9000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/managed-by: wamn
+    app.kubernetes.io/component: object-store
+spec:
+  selector:
+    app.kubernetes.io/component: object-store
+  ports:
+    - { name: s3, port: 9000, targetPort: 9000 }
+    - { name: console, port: 9001, targetPort: 9001 }
+---
+# Bucket bootstrap: create the two buckets the backup mechanisms write to. The
+# `mc` client waits for MinIO, then `mb -p` (idempotent) the WAL + dump buckets.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/managed-by: wamn
+    app.kubernetes.io/component: object-store
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: wamn
+        app.kubernetes.io/component: object-store
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+          envFrom:
+            - secretRef:
+                name: wamn-object-store
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              until mc alias set store http://minio.wamn-system.svc:9000 \
+                "$ACCESS_KEY_ID" "$ACCESS_SECRET_KEY" 2>/dev/null; do
+                echo "waiting for minio..."; sleep 3
+              done
+              mc mb -p store/wamn-backups store/wamn-dumps
+              mc ls store

@@ -16,25 +16,31 @@
 //! [`provisioning.dumps`](crate::sql) row) live in the `dump-project-env`
 //! subcommand (`wamn-host`) and the CronJob container at runtime.
 //!
-//! **Object store (wamn-q3n.10 scope call, Q2):** the upload command is *rendered*
-//! (its argv shape + object-key naming are unit-asserted) but the **live** S3
-//! upload is deferred to when the shared object store lands — the rendered CronJob
-//! runs `pg_dump` unconditionally and uploads only when the object-store CLI is
-//! present, so no store exists yet is not a runtime failure. The shared MinIO/S3
-//! is introduced with wamn-e1g (whose Barman WAL/PITR needs the same store); the
-//! `.10` round-trip gate proves the artifact is valid + restorable
-//! substrate-agnostically (`pg_dump -Fd` → `pg_restore` into a scratch DB).
+//! **Object store (wamn-q3n.10 rendered the upload; wamn-e1g makes it live):** the
+//! dump pod is now `initContainer`(`pg_dump -Fd` into a shared volume) +
+//! `container`(the MinIO client `mc` uploads that directory to the shared MinIO —
+//! [`crate::backup::MINIO_ENDPOINT`], credentials from
+//! [`crate::backup::OBJECT_STORE_SECRET`]). The upload stays **guarded** on the S3
+//! endpoint env, so no store configured is not a runtime failure (the `pg_dump`
+//! init step still runs). The `.10` round-trip gate proves the artifact valid +
+//! restorable substrate-agnostically (`pg_dump -Fd` → `pg_restore` into a scratch
+//! DB) — that path uses the pure [`pg_dump_argv`] builder, unaffected by the pod
+//! topology.
 
 use serde_json::{Value, json};
 use wamn_registry::{Tier, Triple};
 
+use crate::backup::{MINIO_ENDPOINT, OBJECT_STORE_SECRET};
 use crate::name::project_env_secret_name;
 
-/// The container image the dump runs in — it ships `pg_dump`/`pg_restore`
-/// (matches the org/pool/T1 cluster Postgres image). The object-store upload CLI
-/// (`aws`/`mc`) is bundled when the shared store lands (wamn-e1g); until then the
-/// rendered upload step is a no-op (guarded on the CLI being present).
+/// The container image the `pg_dump` step runs in — it ships `pg_dump`/`pg_restore`
+/// (matches the org/pool/T1 cluster Postgres image).
 const DUMP_IMAGE: &str = "ghcr.io/cloudnative-pg/postgresql:18";
+/// The image the object-store **upload** step runs in — the MinIO client (`mc`),
+/// which speaks S3 to the shared MinIO ([`MINIO_ENDPOINT`]). Pinned. wamn-e1g
+/// makes the upload live (wamn-q3n.10 rendered it, deferring the live upload to
+/// when the shared store landed).
+const MC_IMAGE: &str = "minio/mc:RELEASE.2025-08-13T08-35-41Z";
 /// The namespace dump CronJobs/Jobs live in (alongside the clusters + Secrets).
 const NAMESPACE: &str = "wamn-system";
 /// The default object-store bucket dumps are written under.
@@ -144,47 +150,73 @@ fn dump_labels(triple: &Triple) -> Value {
     })
 }
 
-/// The container command a dump pod runs: `pg_dump -Fd` of the project-env
-/// database (connection from the `DATABASE_URL` env, sourced from the credential
-/// Secret's `url` key) into an ephemeral volume, then the object-store upload —
-/// **guarded** on the upload CLI being present, so the dump succeeds whether or
-/// not the shared store is wired yet (Q2). The timestamp is computed in-container
-/// (`date -u +%s`, matching [`dump_object_key`]'s caller-supplied form).
-fn dump_command(triple: &Triple, bucket: &str) -> String {
+/// The **init**-container command: `pg_dump -Fd` of the project-env database
+/// (connection from `DATABASE_URL`, sourced from the credential Secret's `url`
+/// key) into `/dump/out`, recording the dump timestamp in `/dump/TS` so the
+/// upload container writes to the same object key (`date -u +%s`, matching
+/// [`dump_object_key`]'s caller-supplied form). Runs to completion before the
+/// upload container starts.
+fn dump_command() -> String {
+    "set -eu\n\
+     date -u +%s > /dump/TS\n\
+     rm -rf /dump/out\n\
+     pg_dump -Fd --no-password -f /dump/out -d \"$DATABASE_URL\"\n"
+        .to_string()
+}
+
+/// The **upload**-container command: `mc` copies the `pg_dump` directory
+/// (`/dump/out`) to the shared MinIO under the derivable object key
+/// [`dump_object_key`] = `<prefix>/<TS>`. `mc mirror` puts the dump directory's
+/// **contents** (`toc.dat`, the data files) directly under `<prefix>/<TS>/`, so
+/// the object key matches what `.11` restore derives (a `cp --recursive` would
+/// nest them one level deeper under `out/`). **Guarded** on the S3 endpoint env,
+/// so no store configured is not a runtime failure (the init `pg_dump` still
+/// ran). Credentials come from the [`OBJECT_STORE_SECRET`] env.
+fn upload_command(triple: &Triple, bucket: &str) -> String {
     let prefix = dump_key_prefix(triple);
-    // pg_dump into /dump/<ts>; upload that directory under <prefix>/<ts>/.
     format!(
         "set -eu\n\
-         TS=\"$(date -u +%s)\"\n\
-         OUT=\"/dump/$TS\"\n\
-         rm -rf \"$OUT\"\n\
-         pg_dump -Fd --no-password -f \"$OUT\" -d \"$DATABASE_URL\"\n\
-         # object store upload (wamn-q3n.10 Q2): rendered now, live when the shared\n\
-         # store lands (wamn-e1g). The pg_dump artifact is complete regardless.\n\
-         if command -v aws >/dev/null 2>&1; then\n\
-         \x20 aws s3 cp --recursive \"$OUT\" \"s3://{bucket}/{prefix}/$TS/\"\n\
-         else echo \"object store not configured (wamn-e1g); dump kept at $OUT\"; fi\n"
+         TS=\"$(cat /dump/TS)\"\n\
+         if [ -n \"${{S3_ENDPOINT:-}}\" ]; then\n\
+         \x20 mc alias set store \"$S3_ENDPOINT\" \"$ACCESS_KEY_ID\" \"$ACCESS_SECRET_KEY\"\n\
+         \x20 mc mirror /dump/out \"store/{bucket}/{prefix}/$TS\"\n\
+         else echo \"object store not configured; dump kept in the pod\"; fi\n"
     )
 }
 
 /// The shared pod `spec` a dump CronJob's jobTemplate and a one-shot dump Job both
-/// wrap: a single `postgres:18` container running [`dump_command`], the
-/// project-env credential Secret's `url` mounted as `DATABASE_URL`, and an
-/// ephemeral `/dump` scratch volume. `restartPolicy: OnFailure` (a transient dump
-/// failure retries; the CronJob/Job caps overall retries).
+/// wrap: an `initContainer` (`postgres:18` running [`dump_command`], the
+/// project-env credential Secret's `url` mounted as `DATABASE_URL`) that dumps to
+/// a shared `/dump` volume, then a `container` (`mc` running [`upload_command`],
+/// the shared object-store credentials + endpoint) that uploads it to MinIO. The
+/// init runs to completion first, so the dump exists before the upload. wamn-e1g
+/// makes the upload live (wamn-q3n.10 rendered it). `restartPolicy: OnFailure`.
 fn dump_pod_spec(triple: &Triple, bucket: &str) -> Value {
     let secret = project_env_secret_name(&triple.org, &triple.project, triple.env);
     json!({
         "spec": {
             "restartPolicy": "OnFailure",
-            "containers": [{
+            "initContainers": [{
                 "name": "dump",
                 "image": DUMP_IMAGE,
-                "command": ["/bin/sh", "-c", dump_command(triple, bucket)],
+                "command": ["/bin/sh", "-c", dump_command()],
                 "env": [{
                     "name": "DATABASE_URL",
                     "valueFrom": { "secretKeyRef": { "name": secret, "key": "url" } }
                 }],
+                "volumeMounts": [{ "name": "dump", "mountPath": "/dump" }],
+            }],
+            "containers": [{
+                "name": "upload",
+                "image": MC_IMAGE,
+                "command": ["/bin/sh", "-c", upload_command(triple, bucket)],
+                "env": [
+                    { "name": "S3_ENDPOINT", "value": MINIO_ENDPOINT },
+                    { "name": "ACCESS_KEY_ID", "valueFrom": {
+                        "secretKeyRef": { "name": OBJECT_STORE_SECRET, "key": "ACCESS_KEY_ID" } } },
+                    { "name": "ACCESS_SECRET_KEY", "valueFrom": {
+                        "secretKeyRef": { "name": OBJECT_STORE_SECRET, "key": "ACCESS_SECRET_KEY" } } },
+                ],
                 "volumeMounts": [{ "name": "dump", "mountPath": "/dump" }],
             }],
             "volumes": [{ "name": "dump", "emptyDir": {} }],
@@ -325,28 +357,45 @@ mod tests {
         // The schedule is the tier cadence; dumps never overlap.
         assert_eq!(cr["spec"]["schedule"], "0 3 * * *");
         assert_eq!(cr["spec"]["concurrencyPolicy"], "Forbid");
-        // The container runs `pg_dump -Fd` and the (guarded) object-store upload.
-        let cmd = cr["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["command"]
-            [2]
-        .as_str()
-        .unwrap();
-        assert!(cmd.contains("pg_dump -Fd"), "runs a directory-format dump");
+        let pod = &cr["spec"]["jobTemplate"]["spec"]["template"]["spec"];
+        // The init container runs `pg_dump -Fd`; its connection comes from the
+        // project-env credential Secret's `url` key.
+        let init = &pod["initContainers"][0];
+        let dump_cmd = init["command"][2].as_str().unwrap();
         assert!(
-            cmd.contains("aws s3 cp --recursive"),
-            "renders the object-store upload"
+            dump_cmd.contains("pg_dump -Fd"),
+            "init runs a directory-format dump"
         );
-        assert!(
-            cmd.contains("s3://wamn-dumps/dumps/acme/billing/dev/"),
-            "uploads under the derivable object key"
-        );
-        // The connection comes from the project-env credential Secret's `url` key.
-        let env = &cr["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["env"][0];
-        assert_eq!(env["name"], "DATABASE_URL");
+        let dburl = &init["env"][0];
+        assert_eq!(dburl["name"], "DATABASE_URL");
         assert_eq!(
-            env["valueFrom"]["secretKeyRef"]["name"],
+            dburl["valueFrom"]["secretKeyRef"]["name"],
             "wamn-db-acme--billing--dev"
         );
-        assert_eq!(env["valueFrom"]["secretKeyRef"]["key"], "url");
+        assert_eq!(dburl["valueFrom"]["secretKeyRef"]["key"], "url");
+        // The upload container runs `mc` against the shared MinIO under the
+        // derivable object key, with the shared object-store credentials.
+        let upload = &pod["containers"][0];
+        let up_cmd = upload["command"][2].as_str().unwrap();
+        assert!(
+            up_cmd.contains("mc mirror /dump/out"),
+            "uploads the dump's contents via the MinIO client"
+        );
+        assert!(
+            up_cmd.contains("store/wamn-dumps/dumps/acme/billing/dev/"),
+            "uploads under the derivable object key"
+        );
+        let up_env = &upload["env"];
+        assert_eq!(up_env[0]["name"], "S3_ENDPOINT");
+        assert_eq!(up_env[0]["value"], "http://minio.wamn-system.svc:9000");
+        assert_eq!(
+            up_env[1]["valueFrom"]["secretKeyRef"]["name"],
+            "wamn-object-store"
+        );
+        assert_eq!(
+            up_env[1]["valueFrom"]["secretKeyRef"]["key"],
+            "ACCESS_KEY_ID"
+        );
     }
 
     #[test]
@@ -359,11 +408,20 @@ mod tests {
             "wamn-dump-acme--billing--dev-"
         );
         assert!(job["metadata"]["name"].is_null());
-        // Same dump container as the scheduled path.
-        let cmd = job["spec"]["template"]["spec"]["containers"][0]["command"][2]
-            .as_str()
-            .unwrap();
-        assert!(cmd.contains("pg_dump -Fd"));
+        // Same init(pg_dump) + upload(mc) pod as the scheduled path.
+        let pod = &job["spec"]["template"]["spec"];
+        assert!(
+            pod["initContainers"][0]["command"][2]
+                .as_str()
+                .unwrap()
+                .contains("pg_dump -Fd")
+        );
+        assert!(
+            pod["containers"][0]["command"][2]
+                .as_str()
+                .unwrap()
+                .contains("mc mirror /dump/out")
+        );
     }
 
     #[test]

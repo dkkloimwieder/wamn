@@ -17,10 +17,13 @@
 //! precedent); the `provision-org` driver emits them and the runbook/Job applies
 //! them and waits ready. This crate is pure — no K8s client.
 //!
-//! **Scope:** the CLUSTER SHAPE only. Per-project-env database/role creation (the
-//! CNPG `Database` CRD + `.spec.managed.roles`) is wamn-q3n.7; live WAL/PITR
-//! backup config (a `backup` stanza + object-store prefix) is wamn-e1g — the
-//! rendered clusters deliberately carry no `backup` stanza yet.
+//! **Scope:** the CLUSTER SHAPE (+ WAL/PITR wiring) only. Per-project-env
+//! database/role creation (the CNPG `Database` CRD + `.spec.managed.roles`) is
+//! wamn-q3n.7. **WAL/PITR (wamn-e1g):** the backup-enabled clusters (`prod` +
+//! a dedicated `canary` — [`crate::backup::backup_enabled_for_role`]) carry a
+//! Barman Cloud plugin ref in `.spec.plugins`, and the set carries their
+//! [`ObjectStore`](crate::backup) + [`ScheduledBackup`](crate::backup) CRs; the
+//! knobs (retention window, cadence) are in [`crate::backup`].
 
 use serde_json::{Value, json};
 use wamn_registry::{Org, Tier};
@@ -54,6 +57,12 @@ const CANARY_INSTANCES: u32 = 2;
 /// `<org>-canary` (HA) for a **dedicated** (T4) org only, and `<org>-dev`
 /// (hibernation-managed). A standard (T2) org has `canary: None` — canary shares
 /// the prod cluster (the T2 recovery-domain collapse).
+///
+/// The WAL/PITR-enabled clusters (prod + canary — [`backup_enabled_for_role`])
+/// also carry a Barman Cloud plugin ref in their `.spec.plugins`, and the set
+/// carries the matching [`ObjectStore`](crate::backup::render_object_store) and
+/// [`ScheduledBackup`](crate::backup::render_scheduled_backup) CRs to apply
+/// alongside them (wamn-e1g).
 #[derive(Debug, Clone)]
 pub struct OrgClusters {
     /// The `<org>-prod` cluster CR (HA per tier).
@@ -62,6 +71,13 @@ pub struct OrgClusters {
     pub canary: Option<Value>,
     /// The `<org>-dev` cluster CR (single, hibernation-managed).
     pub dev: Value,
+    /// The `ObjectStore` CRs for the WAL/PITR-enabled clusters — applied
+    /// **before** their clusters (the plugin references them). One per backed
+    /// cluster (prod always; canary for a dedicated org).
+    pub object_stores: Vec<Value>,
+    /// The `ScheduledBackup` CRs for the WAL/PITR-enabled clusters — applied
+    /// **after** their clusters exist. One per backed cluster.
+    pub scheduled_backups: Vec<Value>,
 }
 
 /// Render an org's CNPG `Cluster` set — `<org>-prod`, the optional `<org>-canary`
@@ -79,15 +95,40 @@ pub fn render_org_cluster_set(org: &Org) -> Result<OrgClusters, ProvisionError> 
         prod_instances(org.tier).ok_or(ProvisionError::TierHasNoDedicatedPair {
             tier: org.tier.as_str(),
         })?;
-    let prod = render_cluster(&org.id, "prod", &org.prod_cluster.name, prod_instances);
-    let dev = render_cluster(&org.id, "dev", &org.dev_cluster.name, 1);
+    let mut object_stores = Vec::new();
+    let mut scheduled_backups = Vec::new();
+
+    // Build a cluster CR plus (when its role gets WAL/PITR — `prod`/`canary`, the
+    // `backup_enabled_for_role` predicate) its ObjectStore + ScheduledBackup CRs,
+    // attaching the Barman plugin ref to the cluster. `dev` gets none — its
+    // restore path is the logical dump ("T2-dev optional").
+    let mut render = |role: &str, name: &str, instances: u32| -> Value {
+        if crate::backup::backup_enabled_for_role(role) {
+            object_stores.push(crate::backup::render_object_store(name, org.tier));
+            scheduled_backups.push(crate::backup::render_scheduled_backup(name, org.tier));
+            let store = crate::backup::object_store_name(name);
+            render_cluster(&org.id, role, name, instances, Some(&store))
+        } else {
+            render_cluster(&org.id, role, name, instances, None)
+        }
+    };
+
+    let prod = render("prod", &org.prod_cluster.name, prod_instances);
     // A dedicated org's canary cluster — present iff `Org::canary_cluster` is set
     // (the model sets it only for the dedicated tier, wamn-q3n.14).
     let canary = org
         .canary_cluster
-        .as_ref()
-        .map(|c| render_cluster(&org.id, "canary", &c.name, CANARY_INSTANCES));
-    Ok(OrgClusters { prod, canary, dev })
+        .clone()
+        .map(|c| render("canary", &c.name, CANARY_INSTANCES));
+    let dev = render("dev", &org.dev_cluster.name, 1);
+
+    Ok(OrgClusters {
+        prod,
+        canary,
+        dev,
+        object_stores,
+        scheduled_backups,
+    })
 }
 
 /// Common labels stamped on every org cluster — platform ownership + identity
@@ -115,9 +156,20 @@ fn cluster_labels(org: &str, role: &str) -> Value {
 /// All: `enableSuperuserAccess` (the wamn-q3n.7 per-project-env provisioning path
 /// connects as superuser to CREATE the databases/roles), a non-TLS `pg_hba` (the
 /// repo connects `NoTls`), and **NO cpu limit** — requests only (the S2 CFS
-/// lesson: the DB-serving path must not be CFS-throttled). No `backup` stanza —
-/// WAL/PITR is wamn-e1g.
-fn render_cluster(org: &str, role: &str, name: &str, instances: u32) -> Value {
+/// lesson: the DB-serving path must not be CFS-throttled).
+///
+/// `backup_object_store` (wamn-e1g): when `Some`, the cluster carries a Barman
+/// Cloud plugin ref in `.spec.plugins` naming that ObjectStore — continuous
+/// WAL/PITR (the WAL/PITR-enabled `prod`/`canary` clusters). `None` for `dev`
+/// (its restore path is the logical dump). We use the plugin's `.spec.plugins`,
+/// not the deprecated in-tree `.spec.backup.barmanObjectStore`.
+fn render_cluster(
+    org: &str,
+    role: &str,
+    name: &str,
+    instances: u32,
+    backup_object_store: Option<&str>,
+) -> Value {
     let ha = instances >= 2;
     let mut metadata = json!({
         "name": name,
@@ -133,9 +185,13 @@ fn render_cluster(org: &str, role: &str, name: &str, instances: u32) -> Value {
         "storage": { "size": "2Gi" },
         "postgresql": { "pg_hba": ["host all all all scram-sha-256"] },
         // A neutral placeholder DB; the real per-project-env databases are created
-        // declaratively by wamn-q3n.7 (the CNPG Database CRD). No `backup` stanza.
+        // declaratively by wamn-q3n.7 (the CNPG Database CRD).
         "bootstrap": { "initdb": { "database": "app", "owner": "app" } },
     });
+    // WAL/PITR via the Barman Cloud plugin (wamn-e1g) for a backup-enabled cluster.
+    if let Some(store) = backup_object_store {
+        spec["plugins"] = json!([crate::backup::cluster_backup_plugin(store)]);
+    }
     if ha {
         spec["affinity"] = json!({
             "enablePodAntiAffinity": true,
@@ -250,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn all_clusters_have_no_cpu_limit_no_backup_and_superuser_access() {
+    fn all_clusters_have_no_cpu_limit_and_superuser_access() {
         // Check the full dedicated set — prod, canary, and dev.
         let set = render_org_cluster_set(&org(Tier::Dedicated)).unwrap();
         let canary = set.canary.clone().unwrap();
@@ -261,10 +317,11 @@ mod tests {
                 c["spec"]["resources"]["limits"].is_null(),
                 "the DB-serving path must not be CFS-throttled — no cpu/mem limit"
             );
-            // No `backup` stanza yet — WAL/PITR is wamn-e1g.
+            // WAL/PITR is via the plugin's `.spec.plugins`, never the deprecated
+            // in-tree `.spec.backup.barmanObjectStore` (removal slated CNPG 1.31).
             assert!(
                 c["spec"]["backup"].is_null(),
-                "backup config is deferred to wamn-e1g"
+                "no deprecated in-tree backup stanza — the plugin uses .spec.plugins"
             );
             // The .7 per-project-env path connects as superuser.
             assert_eq!(c["spec"]["enableSuperuserAccess"], true);
@@ -274,6 +331,62 @@ mod tests {
                 "host all all all scram-sha-256"
             );
         }
+    }
+
+    /// WAL/PITR (wamn-e1g): the backup-enabled clusters (`prod` + a dedicated
+    /// `canary`) carry the Barman plugin ref in `.spec.plugins` and the set emits
+    /// their ObjectStore + ScheduledBackup CRs; `dev` gets none (its restore path
+    /// is the logical dump — "T2-dev optional").
+    #[test]
+    fn backup_enabled_clusters_carry_the_plugin_and_get_backup_crs() {
+        // A standard org: prod is backed, dev is not, no canary.
+        let set = render_org_cluster_set(&org(Tier::Standard)).unwrap();
+        let prod_plugin = &set.prod["spec"]["plugins"][0];
+        assert_eq!(prod_plugin["name"], "barman-cloud.cloudnative-pg.io");
+        assert_eq!(
+            prod_plugin["parameters"]["barmanObjectName"],
+            "acme-prod-store"
+        );
+        assert!(
+            set.dev["spec"]["plugins"].is_null(),
+            "dev has no WAL/PITR plugin"
+        );
+        // One ObjectStore + one ScheduledBackup — for prod only.
+        assert_eq!(set.object_stores.len(), 1);
+        assert_eq!(set.scheduled_backups.len(), 1);
+        assert_eq!(set.object_stores[0]["metadata"]["name"], "acme-prod-store");
+        assert_eq!(
+            set.object_stores[0]["spec"]["retentionPolicy"], "14d",
+            "the standard-tier recovery window"
+        );
+        assert_eq!(
+            set.scheduled_backups[0]["spec"]["cluster"]["name"],
+            "acme-prod"
+        );
+
+        // A dedicated org: prod AND canary are backed (2 of each), dev is not.
+        let set = render_org_cluster_set(&org(Tier::Dedicated)).unwrap();
+        let canary = set.canary.clone().unwrap();
+        assert_eq!(
+            canary["spec"]["plugins"][0]["parameters"]["barmanObjectName"],
+            "acme-canary-store"
+        );
+        assert!(set.dev["spec"]["plugins"].is_null());
+        assert_eq!(set.object_stores.len(), 2, "prod + canary");
+        assert_eq!(set.scheduled_backups.len(), 2);
+        let stores: Vec<_> = set
+            .object_stores
+            .iter()
+            .map(|o| o["metadata"]["name"].as_str().unwrap())
+            .collect();
+        assert!(stores.contains(&"acme-prod-store"));
+        assert!(stores.contains(&"acme-canary-store"));
+        // Regulated tier keeps the 30d window.
+        assert!(
+            set.object_stores
+                .iter()
+                .all(|o| o["spec"]["retentionPolicy"] == "30d")
+        );
     }
 
     #[test]

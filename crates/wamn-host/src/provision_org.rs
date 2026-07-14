@@ -20,8 +20,14 @@
 //! Rendering the CRs and writing the registry row is **all** this tool does — it
 //! does NOT apply the CRs (no K8s client; the runbook does, like
 //! `provision-project`'s Secret) and does NOT create per-project-env databases
-//! (the CNPG `Database` CRD + `.spec.managed.roles` path is wamn-q3n.7). Backups
-//! (WAL/PITR) are wamn-e1g.
+//! (the CNPG `Database` CRD + `.spec.managed.roles` path is wamn-q3n.7).
+//!
+//! **WAL/PITR (wamn-e1g):** the paying-tier clusters that get continuous backup
+//! (`prod`, and a dedicated `canary`) carry a Barman Cloud plugin ref, and this
+//! tool also emits their `ObjectStore` (`--emit-object-store`) and
+//! `ScheduledBackup` (`--emit-scheduled-backup`) CRs. The runbook applies the
+//! ObjectStore **before** the cluster (the plugin references it) and the
+//! ScheduledBackup **after**.
 //!
 //! **T3 trials orgs (wamn-q3n.9):** a `trials` org shares the pre-contract pool
 //! (`deploy/cnpg-cluster.yaml` `wamn-pg`), so it has no dedicated cluster pair —
@@ -102,6 +108,17 @@ pub struct ProvisionOrgArgs {
     /// Write the `<org>-dev` Cluster CR (JSON) here; `-` = stdout (default).
     #[arg(long)]
     pub emit_dev: Option<PathBuf>,
+
+    /// Write the WAL/PITR `ObjectStore` CRs (a JSON `List`, wamn-e1g) here; `-` =
+    /// stdout (default). Apply these **before** the clusters — the Barman plugin
+    /// references them. Empty for a `trials` org (no dedicated clusters).
+    #[arg(long)]
+    pub emit_object_store: Option<PathBuf>,
+
+    /// Write the WAL/PITR `ScheduledBackup` CRs (a JSON `List`, wamn-e1g) here;
+    /// `-` = stdout (default). Apply these **after** the clusters exist.
+    #[arg(long)]
+    pub emit_scheduled_backup: Option<PathBuf>,
 }
 
 pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
@@ -148,6 +165,13 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
                 dev = org.dev_cluster.name,
                 pi = set.prod["spec"]["instances"],
             );
+            if !set.object_stores.is_empty() {
+                println!(
+                    "  WAL/PITR: {} backed cluster(s) (retention {}); apply the ObjectStore(s) before the clusters, the ScheduledBackup(s) after",
+                    set.object_stores.len(),
+                    wamn_provision::wal_retention(org.tier),
+                );
+            }
             // Emit the CRs (default: to stdout) so the runbook kubectl-applies them.
             let emit_prod = args.emit_prod.unwrap_or_else(|| PathBuf::from("-"));
             let emit_dev = args.emit_dev.unwrap_or_else(|| PathBuf::from("-"));
@@ -160,6 +184,15 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
                 write_json(&emit_canary, canary_cr).context("emit canary cluster CR")?;
             }
             write_json(&emit_dev, &set.dev).context("emit dev cluster CR")?;
+            // WAL/PITR backup CRs (wamn-e1g): ObjectStore(s) before the clusters,
+            // ScheduledBackup(s) after (the runbook orders the applies).
+            let emit_os = args.emit_object_store.unwrap_or_else(|| PathBuf::from("-"));
+            let emit_sb = args
+                .emit_scheduled_backup
+                .unwrap_or_else(|| PathBuf::from("-"));
+            write_json(&emit_os, &k8s_list(&set.object_stores)).context("emit ObjectStore CRs")?;
+            write_json(&emit_sb, &k8s_list(&set.scheduled_backups))
+                .context("emit ScheduledBackup CRs")?;
         }
     }
 
@@ -234,6 +267,17 @@ fn fmt_issues(issues: &[wamn_registry::Issue]) -> String {
         .map(|i| i.to_string())
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+/// Wrap CRs in a Kubernetes `v1` `List` so `kubectl apply -f` accepts the whole
+/// set from one file/stream (used for the WAL/PITR ObjectStore + ScheduledBackup
+/// CRs). An empty items list is a valid, harmless no-op apply.
+fn k8s_list(items: &[serde_json::Value]) -> serde_json::Value {
+    serde_json::json!({
+        "apiVersion": "v1",
+        "kind": "List",
+        "items": items,
+    })
 }
 
 fn write_json(path: &PathBuf, doc: &serde_json::Value) -> anyhow::Result<()> {
@@ -318,6 +362,28 @@ mod tests {
             set.canary.expect("dedicated renders a canary CR")["metadata"]["name"],
             "acme-canary"
         );
+    }
+
+    /// The render path emits WAL/PITR backup CRs for the backed clusters, wrapped
+    /// in a `List` (wamn-e1g). A standard org backs prod only; a dedicated org
+    /// backs prod + canary.
+    #[test]
+    fn render_path_emits_backup_crs_wrapped_in_a_list() {
+        let set =
+            wamn_provision::org::render_org_cluster_set(&Org::for_pair("acme", Tier::Standard))
+                .unwrap();
+        assert_eq!(set.object_stores.len(), 1);
+        let list = k8s_list(&set.object_stores);
+        assert_eq!(list["kind"], "List");
+        assert_eq!(list["items"][0]["kind"], "ObjectStore");
+        // A trials org has no dedicated clusters → an empty (harmless) List.
+        assert_eq!(k8s_list(&[])["items"].as_array().unwrap().len(), 0);
+
+        let ded =
+            wamn_provision::org::render_org_cluster_set(&Org::for_pair("acme", Tier::Dedicated))
+                .unwrap();
+        assert_eq!(ded.object_stores.len(), 2, "prod + canary");
+        assert_eq!(ded.scheduled_backups.len(), 2);
     }
 
     #[test]

@@ -221,9 +221,7 @@ database/role creation is `provision-project-env` (wamn-q3n.7). The rework
 DB/role creation (keeping only the thin imperative `CONNECT`-revoke / `GRANT` /
 RLS step CRDs don't cover; the CRD's `connectionLimit` doubles as per-project-env
 noisy-neighbour governance) — the mechanism `.7` will use, but `.6` does not build
-the unused renderer. Live **WAL/PITR backup** config (a `backup` stanza + an
-object-store prefix) is `wamn-e1g` — the rendered clusters carry no `backup`
-stanza yet.
+the unused renderer. Live **WAL/PITR backup** config is `wamn-e1g` (below).
 
 The gate of record is a **live one-org-pair standup** (the wamn-q3n.2 infra
 precedent): render + record via the real subcommand against the T1 `wamn-sysdb`,
@@ -232,6 +230,70 @@ assert HA (a streaming replica + anti-affinity spread), the dev hibernation
 annotation, the distinct plane (own Services / Secrets / PVCs), and that the
 registry row's cluster names equal the live cluster names. Teardown deletes
 **only** the new pair (never `wamn-pg` / `postgres.yaml` / `wamn-sysdb`).
+
+### WAL/PITR backups (wamn-e1g)
+
+`provision-org` also renders each paying cluster's **WAL/PITR backup** — continuous
+WAL archiving + base backups to the shared object store, giving whole-cluster
+point-in-time recovery. This is the first of the two backup mechanisms
+(docs/postgres-topology.md §Backup architecture); the per-project-env logical dump
+is the other (`dump-project-env` / `restore-project-env`, wamn-q3n.10/.11).
+
+**Mechanism = the CloudNativePG Barman Cloud plugin** (`barman-cloud.cloudnative-pg.io`).
+The in-tree `.spec.backup.barmanObjectStore` provider is deprecated in CNPG 1.26
+(removal slated 1.31), so this builds on the plugin — a CNPG-I sidecar the operator
+drives. It is a separate install (`deploy/barman-cloud-plugin.yaml`, pinned v0.13.0,
+into `cnpg-system`) and **requires cert-manager** (plugin↔operator mTLS); the shared
+object store is `deploy/minio.yaml` (MinIO — buckets `wamn-backups` for WAL,
+`wamn-dumps` for logical dumps).
+
+The pure renderers live in `crates/wamn-provision/src/backup.rs`. Per
+**backup-enabled** cluster (`backup_enabled_for_role`: `prod` always, a dedicated
+`canary` always, `dev` off — "T2-dev optional", whose restore path is the logical
+dump), the org's cluster set carries:
+
+* an **`ObjectStore`** CR — `destinationPath = s3://wamn-backups/wal/<cluster>` (a
+  per-cluster WAL prefix, each recovery domain isolated), `endpointURL` = the
+  in-cluster MinIO, `s3Credentials` → the shared `wamn-object-store` Secret, and
+  `spec.retentionPolicy` = the tier **recovery window** — the **PITR-SLA knob**:
+  `trials 7d` / `standard 14d` / `dedicated 30d`;
+* a **`.spec.plugins`** WAL-archiver ref on the `Cluster` (`isWALArchiver: true`,
+  `barmanObjectName` = the ObjectStore) — every WAL segment is shipped to the store;
+* a **`ScheduledBackup`** CR — a base backup at the tier cadence (`base_backup_schedule`:
+  daily / 12h / 6h) via `method: plugin`, `immediate: true` (opens the window at once).
+
+`provision-org` emits these via `--emit-object-store` (a `List`, apply **before** the
+cluster — the plugin references the ObjectStore) and `--emit-scheduled-backup` (apply
+**after** the cluster exists). Runbook order per backed cluster: `ObjectStore` →
+`Cluster` → `ScheduledBackup`.
+
+**Restore / PITR runbook.** To rewind an org cluster to an instant in its window,
+bootstrap a **recovery `Cluster`** whose `bootstrap.recovery` names an `externalClusters`
+entry that points at the ObjectStore via `plugin` (`barmanObjectName` + `serverName` =
+the source cluster) and a `recoveryTarget.targetTime`. The operator restores the base
+backup and replays archived WAL up to the target — a targetTime *beyond the last
+archived transaction* fails "recovery ended before target reached", so ensure WAL past
+the target is archived (`pg_stat_archiver.last_archived_time`). Whole-cluster PITR
+rewinds every project on the cluster; for **sub-cluster** granularity (one project on a
+shared cluster) carve the one database out of the recovery cluster with a logical dump
+(the scratch-cluster runbook, docs/postgres-topology.md). The formal restore **drill**
+is 10.3; the **audit-rewind caveat** (a physical restore rewinds that env's `wamn_run`
+history) applies.
+
+**The `.10` dump upload is now live** against the same MinIO: the dump pod is an
+`initContainer` (`pg_dump -Fd` into a shared volume) + a `container` (the MinIO client
+`mc mirror`s the dump directory's contents to `s3://wamn-dumps/<derivable-key>`), the
+upload guarded on the S3 endpoint env.
+
+The gate of record is a **live in-cluster WAL/PITR standup**: install cert-manager +
+the Barman plugin + MinIO, provision a standard org with backup, apply
+ObjectStore → Cluster → ScheduledBackup, confirm `ContinuousArchiving=True` + a plugin
+base backup in MinIO, then prove PITR by recovering a cluster to a `targetTime` between
+two writes and asserting it recovered exactly the pre-target row (the discriminating
+proof); plus a one-shot dump Job landing `toc.dat` under the derivable key. Teardown
+deletes **only** the test org's clusters / backup CRs / dump Jobs / objects; the backup
+infra (cert-manager / plugin / MinIO) stays as platform substrate, and the guardrailed
+clusters are never touched.
 
 ## `wamn-host provision-project-env` (wamn-q3n.7)
 

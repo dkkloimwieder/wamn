@@ -273,6 +273,32 @@ carve-out* both need WAL/PITR and are **wamn-e1g** (below); the **audit-rewind
 caveat** (below) applies to any physical restore, and immutability is delivered by
 append-only platform-audit export (8.6), not the tenant database.
 
+*Shipped (wamn-e1g):* the **WAL/PITR producer** — continuous WAL archiving + base
+backups to the shared object store (MinIO, `deploy/minio.yaml`; buckets
+`wamn-backups` for WAL, `wamn-dumps` for logical dumps) via the CloudNativePG
+**Barman Cloud plugin** (`deploy/barman-cloud-plugin.yaml`, pinned v0.13.0 — it needs
+its own operator Deployment in `cnpg-system` **and cert-manager** for
+plugin↔operator mTLS, both additive installs). `provision-org` renders, per
+**backup-enabled** cluster (`prod` always, a dedicated `canary` always, `dev` off —
+"T2-dev optional"), three CRs from `crates/wamn-provision/src/backup.rs`: an
+`ObjectStore` (per-cluster WAL prefix `s3://wamn-backups/wal/<cluster>`, and the tier
+**retention window** as `spec.retentionPolicy` — the PITR-SLA knob: **trials 7d /
+standard 14d / dedicated 30d**), a `.spec.plugins` WAL-archiver ref on the `Cluster`
+(the deprecated in-tree `.spec.backup.barmanObjectStore` is avoided — removal slated
+CNPG 1.31), and a `ScheduledBackup` (a base backup at the tier cadence via
+`method: plugin`). Emitted by `--emit-object-store` (apply **before** the cluster —
+the plugin references it) / `--emit-scheduled-backup` (**after**). Proven by a live
+in-cluster standup: a standard org's `prod` cluster reached `ContinuousArchiving=True`,
+took a plugin base backup to MinIO, and a recovery cluster restored to a `targetTime`
+**between two writes** recovered exactly the pre-target row (the discriminating PITR
+proof — the retention window works to a precise instant). The **.10 dump upload is now
+live** too (the dump pod is `initContainer`(`pg_dump -Fd`) + `container`(`mc mirror`
+to MinIO); proven by a one-shot dump Job landing `toc.dat` under the derivable key).
+Whole-cluster PITR + the scratch-cluster carve-out (below) are now executable; the
+formal restore **drill** stays 10.3. `wamn-sysdb` (T1) and `wamn-pg` (T3) get WAL/PITR
+by the same renderer at next (re)provision — the shared-cluster guardrail forbids
+re-applying the already-running clusters here. See docs/provisioning.md §`provision-org`.
+
 **The scratch-cluster runbook** (v1's §runbook: bootstrap recovery cluster at
 `targetTime` → logical carve-out → drop) survives verbatim but demotes to two
 uses: T3 arbitrary-instant restores, and intra-cluster carve-outs on T2 (e.g.
