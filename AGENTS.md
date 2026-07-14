@@ -694,6 +694,51 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
 # wamn-pg + postgres.yaml stay 1/1 healthy throughout (guardrail). Teardown:
 # kubectl -n wamn-system delete -f deploy/wamn-sysdb.yaml   # deletes ONLY wamn-sysdb
 
+# [D6/wamn-q3n.3] system-DB registry schema + the four invariants
+# (deploy/system-schema.sql) — the wamn-q3n.1 wamn-registry MODEL as TABLES in the
+# T1 wamn_system DB (the way deploy/catalog-schema.sql followed wamn-catalog).
+# STANDALONE (NOT in postgres-init.sql). PLATFORM-GLOBAL, NOT tenant-scoped: NO
+# app.tenant claim, NO RLS floor, NO NULLIF/CHECK(tenant_id<>'') — the top key is
+# org_id; APPLIED AS + owned by + used by the wamn_system owner (a superuser
+# driving the apply SET ROLEs to it; the 8.1 RBAC role is a GRANT seam). Two
+# schemas: registry (meta singleton schema_version + orgs[id,tier,prod_cluster,
+# dev_cluster] + projects[org,id] + project_envs[org,project,env,secret_name,
+# secret_namespace]) mirroring the model incl the tier/env CHECK literals
+# (Tier/Env::as_str), and provisioning (sagas: MINIMAL exactly-once/resumable —
+# saga_id PK = exactly-once create, step = durable resume checkpoint, target
+# decoupled text; the compensation ledger + RBAC/quota/billing/audit are separate
+# subsystems, their own beads = the Q1 scope call). THE FOUR INVARIANTS encoded +
+# tested (crates/wamn-registry/tests/storage.rs): (1) request-path-free = a static
+# grep asserting NO data-plane manifest references wamn-sysdb/wamn_system (only
+# wamn-sysdb.yaml may — an allowlist); (2) no-credentials/R8b = project_envs holds
+# a Secret REFERENCE, no credential column (drift-guard + live column-set); (3)
+# no-tenant-data = the live table set is exactly registry+provisioning; (4)
+# dev!=prod = orgs CHECK (tier='trials' OR prod_cluster<>dev_cluster), a rejected
+# bad-standard-org proves it (mirrors the .1 Env::side/resolve). NO new crate (.1
+# is the model, .3 is its storage); wamn-registry gained Tier::ALL/as_str (mirrors
+# Env) for the drift-guard. Load-bearing asserts MUTATION-TESTED (drop dev!=prod
+# CHECK / add credential column / add tenant table / break a drift-guard column —
+# all killed). docs/registry-model.md §Storage schema + docs/system-cluster.md.
+cargo test -p wamn-registry   # drift-guard + inv-1 grep + as_str coherence (live-apply skips)
+cargo clippy -p wamn-registry --all-targets && cargo fmt -p wamn-registry --check
+# optional throwaway-PG live-apply gate (WAMN_REGISTRY_PG_URL, superuser url — the
+# harness provisions the wamn_system owner + SET ROLEs to it; asserts invariants
+# 2/3/4 + FK integrity + saga exactly-once; skips when unset):
+docker run -d --rm --name wamn-reg-pg -p 5461:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5461/wamn cargo test -p wamn-registry
+docker stop wamn-reg-pg
+# IN-CLUSTER gate of record — apply system-schema.sql INTO wamn-sysdb's (wamn-q3n.2)
+# empty wamn_system DB AS the wamn_system owner (writing the NEW T1 cluster's own DB
+# IS .3's job; NEVER touch wamn-pg or postgres.yaml). Leaves the registry applied +
+# EMPTY, wamn_system-owned, ready for provisioning:
+{ echo "DROP SCHEMA IF EXISTS registry, provisioning CASCADE; SET ROLE wamn_system;"; \
+  cat deploy/system-schema.sql; } | kubectl -n wamn-system exec -i wamn-sysdb-1 \
+  -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 -f -
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
+  -tAc "SELECT schemaname||'.'||tablename FROM pg_tables \
+        WHERE schemaname IN ('registry','provisioning') ORDER BY 1;"  # 5 control-plane tables
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

@@ -14,7 +14,8 @@
 //!
 //! It is a **pure model** (SR6 rule 1: no DB, clock, or wasm): types +
 //! [`validate`] + [`Registry::from_json`] / [`Registry::to_json`]. The live
-//! system-DB tables and their DB-enforced invariants land with `wamn-q3n.3`; the
+//! system-DB tables that persist this model and their DB-enforced invariants are
+//! `deploy/system-schema.sql` (`wamn-q3n.3`, tied here by a drift guard); the
 //! `dev / canary / prod` lifecycle threads into `wamn-schema` (3.4) with
 //! `wamn-q3n.5`. This is a store model, not a published contract, so — like
 //! `wamn-run-store` — there is no generated JSON-Schema file.

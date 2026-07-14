@@ -42,6 +42,28 @@ pub enum Tier {
     Dedicated,
 }
 
+impl Tier {
+    /// Every tier. The order is presentational (ascending isolation).
+    pub const ALL: [Tier; 3] = [Tier::Trials, Tier::Standard, Tier::Dedicated];
+
+    /// The wire / identifier form (`trials` / `standard` / `dedicated`) — matches
+    /// the serde representation and the `tier` CHECK literals in the system-DB
+    /// schema (`deploy/system-schema.sql`, tied by a drift guard).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::Trials => "trials",
+            Tier::Standard => "standard",
+            Tier::Dedicated => "dedicated",
+        }
+    }
+}
+
+impl std::fmt::Display for Tier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A first-class environment. The default set is closed — `dev`, `canary`,
 /// `prod` (`docs/postgres-topology.md` §Environments). `canary` is prod-shaped
 /// validation that deliberately shares prod's failure domain; `dev` has its own
@@ -245,5 +267,29 @@ impl Registry {
     /// omitted, so a minimal registry round-trips minimally.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("registry serializes")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Env, Tier};
+
+    /// `as_str()` must equal the serde wire form for every variant: the system-DB
+    /// `tier` / `env` CHECK literals are drift-guarded against `as_str()`, and a
+    /// row is written from the serde value — the two must be the same string.
+    #[test]
+    fn as_str_matches_the_serde_wire_form() {
+        for t in Tier::ALL {
+            assert_eq!(
+                serde_json::to_string(&t).unwrap(),
+                format!("\"{}\"", t.as_str())
+            );
+        }
+        for e in Env::ALL {
+            assert_eq!(
+                serde_json::to_string(&e).unwrap(),
+                format!("\"{}\"", e.as_str())
+            );
+        }
     }
 }

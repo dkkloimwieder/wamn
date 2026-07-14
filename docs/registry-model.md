@@ -115,13 +115,64 @@ The reserved-prefix rule, the env→cluster routing (`Env::side`), and referenti
 integrity are the load-bearing behaviors; each is mutation-tested (apply / test /
 restore, debug builds).
 
+## Storage schema (wamn-q3n.3)
+
+`deploy/system-schema.sql` persists the model as tables in the **T1 system DB**
+(`wamn_system`, on the cluster `wamn-q3n.2` bootstraps) — the way
+`deploy/catalog-schema.sql` follows `wamn-catalog`. It is a **standalone
+artifact**, deliberately *not* wired into `deploy/postgres-init.sql` (which builds
+the S2–S6 *tenant-data* fixtures — a different plane entirely).
+
+The sharpest difference from `catalog-schema.sql`: the system DB is
+**platform-global, not tenant-scoped**. There is **no** `app.tenant` claim, **no**
+per-tenant RLS floor, **no** `NULLIF`/`CHECK (tenant_id <> '')` — the registry is
+the platform's own single-tenant control-plane state. The top-level key is
+`org_id`; it is **applied as, owned by, and used by** the `wamn_system` owner role
+(a superuser driving the apply `SET ROLE`s to it first), plus a future
+least-privilege control-plane role (the 8.1 RBAC `GRANT` seam).
+
+Two schemas, so each control-plane subsystem is namespaced and the no-tenant-data
+table set (invariant 3) is exactly what they hold:
+
+- **`registry`** — `meta` (singleton storage-format version), `orgs`
+  (`id`, `tier`, `prod_cluster`, `dev_cluster`), `projects` (`org`→org, `id`),
+  `project_envs` (`org`/`project`→project, `env`, `secret_name`,
+  `secret_namespace`). FK integrity + the composite keys mirror `validate()`;
+  the `tier`/`env` CHECK literals come from the model (`Tier::as_str` /
+  `Env::as_str`).
+- **`provisioning`** — `sagas`: a **minimal** exactly-once / resumable saga-state
+  table (consumed by `.6` provision-org / `.7`). `target` is decoupled text (a
+  provision-org saga runs *before* its org row exists); creation is exactly-once
+  via the `saga_id` PK; `step` is the durable resume checkpoint (the write-ahead
+  pattern — advanced in the same txn as each step's effect). The per-step
+  compensation *ledger* is 10.1's to elaborate. RBAC / quota / billing / audit
+  are separate subsystems that also live on T1 but land with their owners.
+
+### The four invariants — encoded and tested
+
+| # | Invariant | Encoding | Test |
+|---|---|---|---|
+| 1 | request-path-free | architectural (no DB constraint) | a static grep: no data-plane manifest references `wamn-sysdb`/`wamn_system` (only the cluster def + control-plane tooling may) |
+| 2 | no credentials (R8b) | `project_envs` holds a Secret **reference** (`secret_name`/`secret_namespace`), no credential column | drift-guard + live-apply column-set assertion |
+| 3 | no tenant data | the only tables are the control-plane set above | live-apply asserts the exact `registry`+`provisioning` table set |
+| 4 | dev ≠ prod recovery domain | `orgs` CHECK `tier = 'trials' OR prod_cluster <> dev_cluster` (T3 pool shares; T2/T4 must differ) | a rejected bad-standard-org insert; mirrors `Env::side`/`resolve()` |
+
+Tests live in `crates/wamn-registry/tests/storage.rs`: a DDL↔model **drift guard**
+(table/column shape, the tier/env/saga CHECK literals, `SCHEMA_VERSION`, the
+dev≠prod expression pinned verbatim), the invariant-1 grep, and a **live-apply
+gate** (`WAMN_REGISTRY_PG_URL`, applied as `wamn_system`; skips when unset) that
+proves invariants 2/3/4 + FK integrity + saga exactly-once. The load-bearing
+asserts are mutation-tested (drop the dev≠prod CHECK, add a credential column, add
+a tenant-data table, break a drift-guard column — each killed).
+
 ## Scope — what `.1` is *not*
 
 `.1` is the **model only**. Deliberately deferred to its own epic children:
 
 - **`.3`** — the live system-DB tables on the T1 cluster and the four testable
   invariants (DDL + storage), the way `deploy/catalog-schema.sql` followed
-  `wamn-catalog`.
+  `wamn-catalog`. **Shipped** — see §Storage schema above (`.3` also folds in a
+  minimal provisioning-saga table, its one deliberate step past this model).
 - **`.5`** — amend `wamn-schema` (3.4) `Environment` for the full triple + the
   `canary` env; `.1` defines the triple so `.5` is a clean extension.
 - **`.2`** — the T1 system cluster infrastructure (Helm/IaC).
