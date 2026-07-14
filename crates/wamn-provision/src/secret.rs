@@ -13,8 +13,9 @@
 //!   lookup key 5x0.1 reads. `stringData.url` is the app-role connection URL.
 
 use serde_json::{Value, json};
+use wamn_registry::Triple;
 
-use crate::name::{APP_ROLE, secret_name};
+use crate::name::{APP_ROLE, project_env_secret_name, secret_name};
 
 /// The `WAMN_PG_PROJECTS_FILE` entry for one project: `{ "url": <url> }`.
 /// Policy knobs (`row_limit`, timeouts) are optional and default from the
@@ -56,9 +57,41 @@ pub fn render_secret_manifest(project: &str, namespace: &str, url: &str) -> Valu
     })
 }
 
+/// Render the per-project-env credential `Secret` (wamn-q3n.7). Name
+/// `wamn-db-<org>--<project>--<env>` — the 5x0.1 lookup key recorded as the
+/// project-env's `SecretRef` in the registry. `stringData.url` is the app-role
+/// connection URL to the project-env database; the labels carry the full identity
+/// triple so tooling never parses the name.
+pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url: &str) -> Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": project_env_secret_name(&triple.org, &triple.project, triple.env),
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/managed-by": "wamn",
+                "app.kubernetes.io/component": "project-env-db-credentials",
+                "wamn.org": triple.org,
+                "wamn.project": triple.project,
+                "wamn.env": triple.env.as_str(),
+            },
+        },
+        "type": "Opaque",
+        "stringData": {
+            "url": url,
+            "org": triple.org,
+            "project": triple.project,
+            "env": triple.env.as_str(),
+            "role": APP_ROLE,
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_registry::Env;
 
     const URL: &str = "postgres://wamn_app:wamn_app@wamn-pg-rw:5432/wamn-db-acme";
 
@@ -81,6 +114,24 @@ mod tests {
         assert_eq!(s["type"], "Opaque");
         assert_eq!(s["stringData"]["url"], URL);
         assert_eq!(s["stringData"]["project"], "acme");
+        assert_eq!(s["stringData"]["role"], "wamn_app");
+    }
+
+    #[test]
+    fn project_env_secret_names_and_labels_carry_the_triple() {
+        let t = Triple::new("acme", "billing", Env::Dev);
+        let url = "postgres://wamn_app:wamn_app@acme-dev-rw:5432/wamn-db-acme--billing--dev";
+        let s = render_project_env_secret_manifest(&t, "wamn-system", url);
+        assert_eq!(s["kind"], "Secret");
+        assert_eq!(s["metadata"]["name"], "wamn-db-acme--billing--dev");
+        assert_eq!(s["metadata"]["namespace"], "wamn-system");
+        assert_eq!(s["metadata"]["labels"]["wamn.org"], "acme");
+        assert_eq!(s["metadata"]["labels"]["wamn.project"], "billing");
+        assert_eq!(s["metadata"]["labels"]["wamn.env"], "dev");
+        assert_eq!(s["stringData"]["url"], url);
+        assert_eq!(s["stringData"]["org"], "acme");
+        assert_eq!(s["stringData"]["project"], "billing");
+        assert_eq!(s["stringData"]["env"], "dev");
         assert_eq!(s["stringData"]["role"], "wamn_app");
     }
 }

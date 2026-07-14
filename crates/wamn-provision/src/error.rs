@@ -27,6 +27,15 @@ pub enum ProvisionError {
         /// The tier that has no pair (`trials`).
         tier: &'static str,
     },
+    /// The assembled per-project-env name `wamn-db-<org>--<project>--<env>`
+    /// (wamn-q3n.7) exceeds the Postgres identifier / DNS-1123 label limit.
+    /// Shorten the org or project id.
+    NameTooLong {
+        /// The over-long assembled name.
+        name: String,
+        /// The maximum length (bytes).
+        max: usize,
+    },
 }
 
 impl fmt::Display for ProvisionError {
@@ -43,6 +52,12 @@ impl fmt::Display for ProvisionError {
                 f,
                 "tier {tier:?} has no dedicated cluster pair: a trials org shares the pool \
                  (T3 provisioning is wamn-q3n.9)"
+            ),
+            ProvisionError::NameTooLong { name, max } => write!(
+                f,
+                "provisioned name {name:?} is {} bytes, over the {max}-byte limit: \
+                 shorten the org or project id",
+                name.len()
             ),
         }
     }

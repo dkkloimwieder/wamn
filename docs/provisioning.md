@@ -187,6 +187,82 @@ annotation, the distinct plane (own Services / Secrets / PVCs), and that the
 registry row's cluster names equal the live cluster names. Teardown deletes
 **only** the new pair (never `wamn-pg` / `postgres.yaml` / `wamn-sysdb`).
 
+## `wamn-host provision-project-env` (wamn-q3n.7)
+
+The four-tier counterpart of `provision-project`: **`provision-project-env`**
+stands up one per-project-env Postgres database, keyed by the `(org, project,
+env)` `Triple`. Identity everywhere; the database lives on the cluster the org's
+placement selects by the env's recovery-domain **side** — `<org>-prod` (`prod`,
+`canary`) / `<org>-dev` (`dev`) for a paying org, or the shared **trials pool**
+for a T3 org (a trials org's two cluster refs both point at the pool, so one
+`registry.org(org).cluster(env.side())` path serves T2 and T3 by construction —
+it does **not** use `Registry::resolve`, which needs the project-env to already
+exist).
+
+**Per-project-env naming.** The database (and the K8s `Database` resource, and
+the credential Secret) is `wamn-db-<org>--<project>--<env>`. The **org** is
+encoded — unlike the 2.3 `wamn-db-<project>` — because the shared trials pool
+hosts many orgs (two orgs' identically-named projects would otherwise collide on
+one cluster) and every cluster's `Database` resources share the one K8s
+namespace. `--` separates the identity components (the `Triple::host_label`
+convention). The assembled name is length-validated (`≤ 63` bytes — a legal
+Postgres identifier and DNS-1123 label).
+
+**Declarative DB + imperative privilege step.** The database is created
+declaratively via the CNPG **`Database` CRD** (`spec.name` / `spec.owner` /
+`spec.cluster.name` / `ensure: present` / `databaseReclaimPolicy: retain` so
+deleting the CR never drops tenant data / optional `connectionLimit` = the
+per-project-env noisy-neighbour cap). It is owned by the shared least-privilege
+`wamn_app` role, so no tenant database is superuser-owned. The thin imperative
+step the CRD does **not** cover (topology fact 3) stays SQL: **ensure the
+`wamn_app` role** (`NOSUPERUSER NOCREATEDB NOBYPASSRLS`) and **confine `CONNECT`**
+(`REVOKE … FROM PUBLIC` / `GRANT wamn_app`).
+
+**RLS floor at provision time.** There are no tables yet, so `.7` establishes the
+RLS-**enforceable substrate** only — `wamn_app` is `NOBYPASSRLS` (so RLS is
+enforced once tables exist) and `CONNECT` is confined. The per-table `FORCE ROW
+LEVEL SECURITY` floor is applied at **catalog-publish** (2.4/2.5), where the
+tables are created — load-bearing in T3, belt-and-braces in T2/T4.
+
+| Flag | Purpose |
+|---|---|
+| `--org` / `--project` / `--env dev\|canary\|prod` | The identity triple. The project id is a slug (reserved `wamn` prefix rejected). |
+| `--system-database-url` / `WAMN_SYSTEM_ADMIN_URL` | Superuser URL to the T1 `wamn_system` DB: read the org's placement (pick the cluster) and record the project + project-env. Omit + `--cluster` to render only. |
+| `--cluster` | Override the target cluster (else read from the registry). |
+| `--connection-limit` | The per-project-env `CONNECTION LIMIT`. Default: no limit. |
+| `--emit-database` / `--emit-role-sql` / `--emit-privilege-sql` / `--emit-secret` | Write each artifact (`-`/absent = stdout with a labeled header). |
+
+Like the other subcommands it is a **renderer + registry writer only** — it does
+not apply the CR or the SQL. It records `registry.projects` + `registry.project_envs`
+(idempotent, as the `wamn_system` owner; the builders `upsert_project_sql` /
+`upsert_project_env_sql` live with the registry model, SR2) and emits everything
+else. **The runbook/Job applies the emitted artifacts in order** (the role SQL
+must precede the CR — the CR's `owner` must exist — and the privilege SQL follows
+the database's creation):
+
+1. `psql` the **role SQL** to the target cluster (superuser) — ensures `wamn_app`;
+2. `kubectl apply -f` the **`Database` CR** and wait `.status.applied=true` — the
+   operator creates the database owned by `wamn_app`;
+3. `psql` the **privilege SQL** to the target cluster — `REVOKE`/`GRANT CONNECT`;
+4. `kubectl apply -f` the **credential Secret**.
+
+**Scope (wamn-q3n.7): the per-project-env DB + role + privilege step + the
+registry rows + the Secret.** It does **not** extend `provisionbench` to the org
+pair / T3 path (wamn-q3n.8), register the pool as the trials tier (wamn-q3n.9 —
+`.7` *routes* a trials org to the pool via `env → side`), emit per-project-env
+logical dumps (wamn-q3n.10), or configure WAL/PITR (wamn-e1g).
+
+The gate of record is a **live standup** on the T3 pool (`wamn-pg` is always up):
+seed a trials org, run the real subcommand (which reads the placement → `wamn-pg`
+and writes the registry rows), apply the role SQL + `Database` CR + privilege SQL,
+and assert the database exists owned by `wamn_app` with the connection limit,
+`CONNECT` confined (`PUBLIC` revoked, `wamn_app` granted), the `NOBYPASSRLS`
+substrate, the registry rows, and — via a T2-shaped org rendered without applying
+— that `env → side` selects `<org>-dev` for `dev` and `<org>-prod` for
+`canary`/`prod`. Teardown deletes **only** the new `Database` CR + registry rows,
+then drops the created database (the `retain` policy leaves it) — never `wamn-pg`
+/ `postgres.yaml` / `wamn-sysdb`.
+
 ## Deferred (follow-up beads)
 
 - **WAL archiving / PITR** — a fast-follow `[2.3]` bead (needs an in-cluster

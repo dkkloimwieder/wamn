@@ -7,6 +7,8 @@
 //! path, so one slug serves both the K8s (hyphen) and Postgres (quoted) domains
 //! without translation.
 
+use wamn_registry::Env;
+
 use crate::error::ProvisionError;
 
 /// The single shared, cluster-global application role. Every generated tenant
@@ -23,6 +25,12 @@ pub const DB_PREFIX: &str = "wamn-db-";
 /// Max project-id length. Keeps `wamn-db-<project>` within Postgres's 63-byte
 /// identifier limit (`63 - len("wamn-db-") = 55`) with comfortable margin.
 pub const MAX_PROJECT_ID_LEN: usize = 40;
+
+/// Max length (bytes) of a provisioned database / K8s resource name: Postgres's
+/// identifier limit (63) — also within the DNS-1123 **label** limit (63) that the
+/// CNPG `Database` resource name must satisfy. Per-project-env names encode the
+/// full triple, so the assembled length is validated (see [`validate_project_env`]).
+pub const MAX_DB_NAME_LEN: usize = 63;
 
 /// Validate a project id: a non-empty lowercase slug `[a-z0-9-]`, starting and
 /// ending alphanumeric, at most [`MAX_PROJECT_ID_LEN`] bytes, and not under the
@@ -77,6 +85,44 @@ pub fn database_name(project: &str) -> String {
 /// the future `K8sSecretProvider` (5x0.1) will look up.
 pub fn secret_name(project: &str) -> String {
     format!("{DB_PREFIX}{project}")
+}
+
+/// The per-project-env database name: `wamn-db-<org>--<project>--<env>`
+/// (wamn-q3n.7).
+///
+/// The **org** is encoded — unlike the 2.3 [`database_name`] — because the shared
+/// T3 trials pool hosts many orgs (two orgs' identically-named projects would
+/// otherwise collide on one cluster), and because every cluster's CNPG `Database`
+/// resources share the one K8s namespace, so the resource name must be unique
+/// there. `--` separates the identity components (the `Triple::host_label`
+/// convention). Validate the assembled length with [`validate_project_env`]
+/// before use; quote it in DDL (it contains hyphens) via [`crate::sql`].
+pub fn project_env_database_name(org: &str, project: &str, env: Env) -> String {
+    format!("{DB_PREFIX}{org}--{project}--{}", env.as_str())
+}
+
+/// The per-project-env credential Secret name — identical to the database name
+/// (`wamn-db-<org>--<project>--<env>`), the single lookup key the future
+/// `K8sSecretProvider` (5x0.1) reads and the registry records as the project-env's
+/// `SecretRef`.
+pub fn project_env_secret_name(org: &str, project: &str, env: Env) -> String {
+    project_env_database_name(org, project, env)
+}
+
+/// Validate that a `(org, project, env)` yields a safe provisioned database /
+/// Secret name: the project id is a slug (the org id is validated by the registry
+/// at org creation) and the assembled name fits [`MAX_DB_NAME_LEN`] — a legal
+/// Postgres identifier and a legal DNS-1123 label for the CNPG `Database` resource.
+pub fn validate_project_env(org: &str, project: &str, env: Env) -> Result<(), ProvisionError> {
+    validate_project_id(project)?;
+    let name = project_env_database_name(org, project, env);
+    if name.len() > MAX_DB_NAME_LEN {
+        return Err(ProvisionError::NameTooLong {
+            name,
+            max: MAX_DB_NAME_LEN,
+        });
+    }
+    Ok(())
 }
 
 /// Compose a libpq connection URL. Userinfo and the database path segment are
@@ -197,6 +243,57 @@ mod tests {
         assert_eq!(secret_name("acme-corp"), "wamn-db-acme-corp");
         // Database and Secret names are identical (one lookup key for 5x0.1).
         assert_eq!(database_name("p1"), secret_name("p1"));
+    }
+
+    #[test]
+    fn project_env_names_encode_the_full_triple() {
+        // The org is encoded (unlike the 2.3 project-only name) so identically
+        // named projects across orgs never collide on the shared T3 pool.
+        assert_eq!(
+            project_env_database_name("acme", "billing", Env::Dev),
+            "wamn-db-acme--billing--dev"
+        );
+        assert_eq!(
+            project_env_database_name("acme", "billing", Env::Prod),
+            "wamn-db-acme--billing--prod"
+        );
+        // canary and prod are distinct names (they co-reside on <org>-prod, so the
+        // env MUST be in the name to keep them apart).
+        assert_ne!(
+            project_env_database_name("acme", "billing", Env::Canary),
+            project_env_database_name("acme", "billing", Env::Prod)
+        );
+        // Two orgs, same project+env → different db names (the pool collision fix).
+        assert_ne!(
+            project_env_database_name("org-a", "demo", Env::Dev),
+            project_env_database_name("org-b", "demo", Env::Dev)
+        );
+        // Secret name == database name (one lookup key).
+        assert_eq!(
+            project_env_secret_name("acme", "billing", Env::Dev),
+            project_env_database_name("acme", "billing", Env::Dev)
+        );
+    }
+
+    #[test]
+    fn validate_project_env_slug_checks_and_bounds_the_name() {
+        assert!(validate_project_env("acme", "billing", Env::Prod).is_ok());
+        // A bad project id is rejected (the reason flows from validate_project_id).
+        assert!(matches!(
+            validate_project_env("acme", "Bad", Env::Dev),
+            Err(ProvisionError::InvalidProjectId { .. })
+        ));
+        assert!(matches!(
+            validate_project_env("acme", "wamn-x", Env::Dev),
+            Err(ProvisionError::ReservedProjectId { .. })
+        ));
+        // The assembled name must fit the Postgres / DNS-1123 63-byte limit.
+        let long_org = "o".repeat(40);
+        let long_proj = "p".repeat(40);
+        let err = validate_project_env(&long_org, &long_proj, Env::Canary).unwrap_err();
+        assert!(matches!(err, ProvisionError::NameTooLong { max: 63, .. }));
+        // A comfortably-sized triple is fine.
+        assert!(validate_project_env(&"o".repeat(20), &"p".repeat(20), Env::Prod).is_ok());
     }
 
     #[test]

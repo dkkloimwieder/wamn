@@ -9,12 +9,14 @@
 //!
 //! This crate is the pure core (SR3 / house rule 1): identifier naming, the
 //! `CREATE DATABASE` / role-bootstrap / `GRANT CONNECT` text builders, the
-//! per-project credential Secret renderer, the connection-URL composer, and —
-//! for the four-tier topology (wamn-q3n.6) — the org [`Cluster`
-//! PAIR](crate::org) renderer (`<org>-prod` HA + `<org>-dev` hibernation-managed)
-//! — no DB, no K8s client, no clock. The effects live in the `provision-project`
-//! / `provision-org` subcommands (`wamn-host`); the `provisionbench` gate
-//! (`wamn-gates`) drives the whole path against a real cluster.
+//! per-project credential Secret renderer, the connection-URL composer, and — for
+//! the four-tier topology — the org [`Cluster` PAIR](crate::org) renderer
+//! (`<org>-prod` HA + `<org>-dev` hibernation-managed, wamn-q3n.6) and the
+//! per-project-env CNPG [`Database` CR](crate::database) renderer (wamn-q3n.7) —
+//! no DB, no K8s client, no clock. The effects live in the `provision-project` /
+//! `provision-org` / `provision-project-env` subcommands (`wamn-host`); the
+//! `provisionbench` gate (`wamn-gates`) drives the whole path against a real
+//! cluster.
 //!
 //! # Isolation model
 //!
@@ -33,15 +35,19 @@
 //! Per-project **distinct** roles/passwords (stronger credential isolation) are
 //! a hardening follow-up (8.2), not this MVP.
 
+pub mod database;
 mod error;
 mod name;
 pub mod org;
 pub mod secret;
 pub mod sql;
 
+pub use database::render_project_env_database;
 pub use error::ProvisionError;
 pub use name::{
-    APP_ROLE, DB_PREFIX, MAX_PROJECT_ID_LEN, compose_url, database_name, secret_name,
+    APP_ROLE, DB_PREFIX, MAX_DB_NAME_LEN, MAX_PROJECT_ID_LEN, compose_url, database_name,
+    project_env_database_name, project_env_secret_name, secret_name, validate_project_env,
     validate_project_id,
 };
 pub use org::{prod_instances, render_org_cluster_pair};
+pub use secret::render_project_env_secret_manifest;

@@ -733,6 +733,91 @@ kubectl -n wamn-system delete cluster demo-prod demo-dev
 kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
   psql -U postgres -d wamn_system -c "DELETE FROM registry.orgs WHERE id='demo';"
 
+# [D6/wamn-q3n.7] provision-project-env — per-project-env database + role +
+# privilege step (crates/wamn-provision database.rs renderer + name.rs/sql.rs +
+# crates/wamn-registry sql.rs + crates/wamn-host provision-project-env subcommand).
+# The four-tier counterpart of provision-project: identity is the (org,project,env)
+# Triple; the database lives on the cluster the org's placement selects by the env's
+# recovery-domain SIDE — <org>-prod (prod,canary) / <org>-dev (dev) for a paying
+# org, or the shared T3 trials pool for a trials org (both refs point at the pool,
+# so ONE registry.org(org).cluster(env.side()) path serves T2 AND T3 by
+# construction — NOT resolve(), which needs the project-env to already exist). NEW
+# crates/wamn-provision/src/database.rs = the PURE renderer render_project_env_
+# database(triple,cluster,connlimit?)->serde_json Database CR (spec.name/owner=
+# wamn_app [no tenant db superuser-owned]/cluster.name/ensure present/
+# databaseReclaimPolicy RETAIN [CR delete never drops tenant data — guardrail]/
+# optional connectionLimit = per-project-env noisy-neighbour cap). NEW per-project-
+# env naming (name.rs) project_env_database_name/secret_name = wamn-db-<org>--
+# <project>--<env>: the ORG is encoded (unlike 2.3 wamn-db-<project>) — the shared
+# pool hosts many orgs (identically-named projects would collide on one cluster) +
+# every cluster's Database resources share the one K8s namespace; validate_project_
+# env length-checks the assembled name <=63 (PG identifier + DNS-1123 label; NEW
+# ProvisionError::NameTooLong). sql.rs grant_connect_on_database_sql(db) targets an
+# arbitrary db name (grant_connect_sql(project) delegates) = the thin imperative
+# CONNECT step the Database CRD does NOT cover. secret.rs render_project_env_secret_
+# manifest (triple-labeled Secret, name = the per-project-env db name). ROLE
+# MECHANISM (Q2a): IMPERATIVE ensure_app_role_sql (NOSUPERUSER NOCREATEDB
+# NOBYPASSRLS) — uniform across T2 org-clusters + the T3 pool, NO cluster-CR change.
+# RLS FLOOR (Q3a): at provision time there are NO tables, so .7 gives the RLS-
+# ENFORCEABLE SUBSTRATE only (wamn_app NOBYPASSRLS + per-DB CONNECT confinement); the
+# per-TABLE FORCE RLS floor is applied at catalog-publish (2.4/2.5). NEW crates/wamn-
+# registry/src/sql.rs upsert_project_sql (ON CONFLICT (org,id) DO NOTHING) + upsert_
+# project_env_sql (ON CONFLICT (org,project,env) DO UPDATE — refreshes the Secret
+# ref) + select_org_clusters_sql (read placement by env.side, not resolve) — SR2
+# registry-SQL-with-the-model, drift-guarded vs system-schema.sql + a LIVE idempotent
+# project/project_env proof spliced into the .3 storage gate. NEW crates/wamn-host
+# provision-project-env subcommand: read org from registry -> pick cluster by
+# env.side() -> render Database CR + emit role SQL + privilege SQL + Secret -> record
+# registry.projects + project_envs (SET ROLE wamn_system). RENDERER + DB WRITER only —
+# the runbook applies the artifacts IN ORDER (role SQL BEFORE the CR [its owner must
+# exist]; privilege SQL AFTER the DB is ready). SCOPE: per-project-env DB + role +
+# privilege + registry rows + Secret ONLY — provisionbench org/T3 extension =
+# wamn-q3n.8; register the pool AS the trials tier = wamn-q3n.9 (.7 ROUTES to it);
+# logical dumps = wamn-q3n.10; WAL/PITR = wamn-e1g. Mutants killed (apply/test/
+# restore, sha256 byte-verified, debug builds): db-name env-separator dropped / grant
+# omits REVOKE PUBLIC / renderer owner wrong / name length-check dropped / reclaim
+# retain->delete / project_env upsert DO UPDATE->DO NOTHING (shape guard + LIVE
+# secret-refresh proof) — each fails a NAMED test. docs/provisioning.md §provision-
+# project-env + docs/postgres-topology.md §Provisioning rework.
+cargo test -p wamn-provision -p wamn-registry -p wamn-host   # renderer/naming + project SQL + drift/subcommand units
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-host --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-host --check
+# The wamn-registry live-apply gate (WAMN_REGISTRY_PG_URL, the .3 block above) now
+# also runs upsert_project_sql/upsert_project_env_sql = the idempotent + secret-
+# refresh proof (kills the project_env ON CONFLICT mutant). Render artifacts locally
+# (--cluster given => no DB needed):
+./target/debug/wamn-host provision-project-env --org demo --project demo --env dev \
+  --cluster wamn-pg --emit-database - --emit-role-sql - --emit-privilege-sql - --emit-secret -
+# IN-CLUSTER live standup = the gate of record (T3 pool wamn-pg is ALWAYS up; the
+# wamn-q3n.2/.6 infra precedent; NO docker rebuild — real subcommand locally + kubectl
+# apply the emitted CR ADDITIVELY). Seed a trials org (org registration is .6/.9; .7
+# reads it), run the subcommand against a port-forwarded wamn-sysdb, then apply role
+# SQL -> Database CR -> privilege SQL in order:
+kubectl -n wamn-system exec -i wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
+  -c "SET ROLE wamn_system; INSERT INTO registry.orgs (id,tier,prod_cluster,dev_cluster) \
+      VALUES ('demo','trials','wamn-pg','wamn-pg') ON CONFLICT (id) DO NOTHING;"
+kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5470:5432 &
+SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
+WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5470/wamn_system?sslmode=disable" \
+  ./target/debug/wamn-host provision-project-env --org demo --project demo --env dev \
+  --connection-limit 20 --emit-database /tmp/db.json --emit-role-sql /tmp/role.sql \
+  --emit-privilege-sql /tmp/priv.sql --emit-secret /tmp/secret.json   # reads placement + writes rows
+kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/role.sql
+kubectl apply -f /tmp/db.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.applied}'=true database/wamn-db-demo--demo--dev --timeout=90s
+kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/priv.sql
+# Verify (gate of record): db exists owned by wamn_app + connlimit=20; CONNECT
+# confined (PUBLIC revoked, wamn_app granted); wamn_app NOBYPASSRLS substrate;
+# registry.projects + project_envs rows (secret ref, ns NULL); env->side selects
+# <org>-dev for dev / <org>-prod for canary+prod (render-only vs a T2-shaped org).
+# Guardrail: wamn-pg/wamn-sysdb/postgres.yaml UNTOUCHED. Teardown deletes ONLY the
+# new Database CR + rows, then DROPs the created db (retain leaves it):
+kubectl -n wamn-system delete database wamn-db-demo--demo--dev
+kubectl -n wamn-system exec wamn-pg-1 -c postgres -- \
+  psql -U postgres -c 'DROP DATABASE IF EXISTS "wamn-db-demo--demo--dev" WITH (FORCE);'
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
+  psql -U postgres -d wamn_system -c "DELETE FROM registry.orgs WHERE id='demo';"
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

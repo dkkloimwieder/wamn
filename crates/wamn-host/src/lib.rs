@@ -15,6 +15,7 @@ pub mod host;
 pub mod plugins;
 pub mod provision;
 pub mod provision_org;
+pub mod provision_project_env;
 pub mod publish_catalog;
 
 /// Advertise the platform memory ceiling to the fork's per-store limiter

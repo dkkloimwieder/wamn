@@ -63,18 +63,31 @@ pub fn database_exists_sql() -> &'static str {
     "SELECT EXISTS (SELECT FROM pg_database WHERE datname = $1)"
 }
 
-/// Restrict `CONNECT` on the project database to the shared app role: revoke it
-/// from `PUBLIC` (every new database grants `PUBLIC` `CONNECT` by default) and
-/// grant it to [`APP_ROLE`]. Both statements are idempotent; issue as one batch.
-/// This is defense-in-depth — the primary cross-project isolation is that a
-/// component is routed to exactly one project's database (see the crate docs).
-pub fn grant_connect_sql(project: &str) -> String {
-    let db = quote_ident(&database_name(project));
+/// Restrict `CONNECT` on a database — named by its full, already-derived name —
+/// to the shared app role: revoke it from `PUBLIC` (every new database grants
+/// `PUBLIC` `CONNECT` by default) and grant it to [`APP_ROLE`]. The name is
+/// double-quoted (a slug-derived name cannot contain a `"`, so it is
+/// injection-safe). Both statements are idempotent; issue as one batch.
+///
+/// This is the "thin imperative privilege step" the CNPG `Database` CRD does not
+/// cover (per-project-env provisioning, wamn-q3n.7): the CRD creates the database
+/// declaratively, but `REVOKE CONNECT FROM PUBLIC` / `GRANT` is run here. It is
+/// defense-in-depth — the primary cross-project isolation is that a component is
+/// routed to exactly one project's database (see the crate docs).
+pub fn grant_connect_on_database_sql(database: &str) -> String {
+    let db = quote_ident(database);
     format!(
         "REVOKE CONNECT ON DATABASE {db} FROM PUBLIC; \
          GRANT CONNECT ON DATABASE {db} TO {role};",
         role = quote_ident(APP_ROLE),
     )
+}
+
+/// Restrict `CONNECT` on the per-project database `wamn-db-<project>` (2.3) — a
+/// thin wrapper over [`grant_connect_on_database_sql`] with the project's derived
+/// database name.
+pub fn grant_connect_sql(project: &str) -> String {
+    grant_connect_on_database_sql(&database_name(project))
 }
 
 #[cfg(test)]
@@ -119,6 +132,25 @@ mod tests {
             .find("GRANT CONNECT ON DATABASE \"wamn-db-acme\" TO \"wamn_app\"")
             .expect("grant app role");
         assert!(revoke < grant);
+    }
+
+    #[test]
+    fn grant_connect_on_database_targets_an_arbitrary_db_name() {
+        // The per-project-env path (wamn-q3n.7) passes a full triple-derived name.
+        let sql = grant_connect_on_database_sql("wamn-db-acme--billing--dev");
+        assert!(
+            sql.contains("REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM PUBLIC")
+        );
+        assert!(
+            sql.contains(
+                "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_app\""
+            )
+        );
+        // The project-taking 2.3 wrapper delegates to it with the derived name.
+        assert_eq!(
+            grant_connect_sql("acme"),
+            grant_connect_on_database_sql("wamn-db-acme")
+        );
     }
 
     #[test]

@@ -11,7 +11,7 @@
 use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
-use wamn_host::{dispatch, host, provision, provision_org, publish_catalog};
+use wamn_host::{dispatch, host, provision, provision_org, provision_project_env, publish_catalog};
 
 #[derive(Parser)]
 #[command(name = "wamn-host", version, about)]
@@ -36,6 +36,8 @@ enum Command {
     ProvisionProject(provision::ProvisionProjectArgs),
     /// Render a paying org's CNPG Cluster PAIR (prod HA + dev hibernation) + record it in the T1 registry (wamn-q3n.6)
     ProvisionOrg(provision_org::ProvisionOrgArgs),
+    /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
+    ProvisionProjectEnv(provision_project_env::ProvisionProjectEnvArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -58,6 +60,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::PublishCatalog(args) => publish_catalog::run(args).await,
         Command::ProvisionProject(args) => provision::run(args).await,
         Command::ProvisionOrg(args) => provision_org::run(args).await,
+        Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
     };
 
     shutdown_observability();

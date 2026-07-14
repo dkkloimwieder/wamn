@@ -170,6 +170,21 @@ control-plane model, and the registry schema):
 2. **`provision-project-env`**: create the project-env database + roles
    (declarative) + privilege step (imperative-lite) on the org's appropriate
    cluster — or the trials pool for T3 tenants.
+
+   *Shipped (`wamn-q3n.7`):* the `provision-project-env` subcommand + the pure
+   `wamn_provision::database` renderer (the CNPG `Database` CR:
+   `wamn-db-<org>--<project>--<env>` owned by `wamn_app`, `ensure: present`,
+   `databaseReclaimPolicy: retain`, optional `connectionLimit`). The target
+   cluster is chosen by `registry.org(org).cluster(env.side())` — the one path
+   serves a T2 org pair *and* the T3 pool. The `Database` CRD creates the DB
+   declaratively; the thin imperative step (ensure `wamn_app` `NOBYPASSRLS`,
+   `REVOKE CONNECT FROM PUBLIC` / `GRANT`) is emitted SQL. It records
+   `registry.projects` + `registry.project_envs` (`upsert_project_sql` /
+   `upsert_project_env_sql`, SR2) and emits the credential Secret. The RLS floor
+   at this stage is the enforceable *substrate* (`NOBYPASSRLS` + `CONNECT`
+   confinement); the per-table `FORCE ROW LEVEL SECURITY` floor is applied at
+   catalog-publish (2.4/2.5). Gate of record = a live standup on the T3 pool.
+   `docs/provisioning.md`.
 3. **`provisionbench`** extends to the org pair + a T3 path; the saga records
    land in the system DB.
 

@@ -107,6 +107,39 @@ fn upsert_org_sql_matches_the_orgs_columns() {
     }
 }
 
+/// The project / project-env builders (`wamn_registry::sql::upsert_project_sql`
+/// / `upsert_project_env_sql` + `select_org_clusters_sql`, wamn-q3n.7) must target
+/// exactly the `registry.projects` / `registry.project_envs` columns the storage
+/// DDL declares — the SR2 drift guard extended to the .7 builders.
+#[test]
+fn upsert_project_and_project_env_sql_match_the_columns() {
+    let sql = code_only(&system_schema_sql());
+
+    let projects = wamn_registry::sql::upsert_project_sql();
+    assert!(projects.contains("registry.projects"));
+    assert!(projects.contains("ON CONFLICT (org, id) DO NOTHING"));
+
+    let envs = wamn_registry::sql::upsert_project_env_sql();
+    assert!(envs.contains("registry.project_envs"));
+    assert!(envs.contains("ON CONFLICT (org, project, env) DO UPDATE"));
+    assert!(sql.contains("CREATE TABLE registry.project_envs"));
+    for col in ["org", "project", "env", "secret_name", "secret_namespace"] {
+        assert!(
+            sql.contains(col),
+            "project_envs table (system-schema.sql) missing {col}"
+        );
+        assert!(
+            envs.contains(col),
+            "project_env upsert builder missing {col}"
+        );
+    }
+
+    // The cluster-selection read targets the orgs placement columns.
+    let sel = wamn_registry::sql::select_org_clusters_sql();
+    assert!(sel.contains("registry.orgs"));
+    assert!(sel.contains("prod_cluster") && sel.contains("dev_cluster"));
+}
+
 /// Invariant 4 (dev ≠ prod recovery domain) is a CHECK whose *expression* is
 /// pinned, not just its name — the drift-guard lesson: a name-only assertion
 /// lets a weakened predicate slip through.
@@ -228,6 +261,32 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          END $$;\n\
          DEALLOCATE up;\n",
         upsert = wamn_registry::sql::upsert_org_sql(),
+    ));
+    // Exercise the REAL wamn-registry project / project-env builders (wamn-q3n.7)
+    // against the 'demo' org just upserted. upsert_project is a no-op on conflict;
+    // upsert_project_env refreshes the Secret reference (DO UPDATE). Two upserts of
+    // each must collapse to ONE row, the project-env's secret_name reflecting the
+    // second call — killing a "project_env ON CONFLICT dropped / DO NOTHING" mutant.
+    script.push_str(&format!(
+        "PREPARE upp (text,text) AS {up_project};\n\
+         PREPARE upe (text,text,text,text,text) AS {up_env};\n\
+         EXECUTE upp('demo','app');\n\
+         EXECUTE upp('demo','app');\n\
+         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev-OLD', NULL);\n\
+         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev', NULL);\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM registry.projects WHERE org='demo' AND id='app')=1,\n\
+             'upsert_project_sql is idempotent — one project row after two upserts';\n\
+           ASSERT (SELECT count(*) FROM registry.project_envs\n\
+                     WHERE org='demo' AND project='app' AND env='dev')=1,\n\
+             'upsert_project_env_sql is idempotent — one project-env row';\n\
+           ASSERT (SELECT secret_name FROM registry.project_envs\n\
+                     WHERE org='demo' AND project='app' AND env='dev')='wamn-db-demo--app--dev',\n\
+             'the second project-env upsert refreshed the Secret reference (ON CONFLICT DO UPDATE)';\n\
+         END $$;\n\
+         DEALLOCATE upp; DEALLOCATE upe;\n",
+        up_project = wamn_registry::sql::upsert_project_sql(),
+        up_env = wamn_registry::sql::upsert_project_env_sql(),
     ));
     script.push_str("DROP SCHEMA registry CASCADE;\n");
     script.push_str("DROP SCHEMA provisioning CASCADE;\n");
