@@ -30,6 +30,13 @@ pub fn select_org_clusters_sql() -> &'static str {
     "SELECT prod_cluster, dev_cluster FROM registry.orgs WHERE id = $1"
 }
 
+/// Select an org's `tier` by id, so `dump-project-env` (wamn-q3n.10) can pick the
+/// dump cadence (frequency is a tier knob) without loading the whole registry.
+/// Param: `$1` org id.
+pub fn select_org_tier_sql() -> &'static str {
+    "SELECT tier FROM registry.orgs WHERE id = $1"
+}
+
 /// Upsert a project row into `registry.projects` (idempotent). Params: `$1` org,
 /// `$2` id. `ON CONFLICT (org, id) DO NOTHING` — a project carries no mutable
 /// placement of its own (placement is per-env), so re-provisioning is a no-op.
@@ -98,6 +105,29 @@ pub fn fail_saga_sql() -> &'static str {
      WHERE saga_id = $1"
 }
 
+// --- dump bookkeeping (wamn-q3n.10) ----------------------------------------
+//
+// The `provisioning.dumps` row a scheduled/on-demand per-project-env logical dump
+// records when it completes (docs/postgres-topology.md §Backup architecture). The
+// object key is derivable from the triple + timestamp — this row is bookkeeping,
+// not the source of truth for restore (the dump CATALOG that restore reads is
+// wamn-q3n.11). Columns are drift-guarded against the storage DDL.
+
+/// Record a completed per-project-env dump (idempotent + refreshing). `ON CONFLICT
+/// (org, project, env, object_key) DO UPDATE` refreshes the completed `byte_size`
+/// (known only after the dump finishes) and stamps a fresh `taken_at`, so a
+/// re-recorded dump updates in place rather than erroring. Params: `$1` org, `$2`
+/// project, `$3` env, `$4` object_key, `$5` format, `$6` byte_size (nullable
+/// `bigint`). `taken_at` is server-set (`now()`) — the clock stays in the DB.
+pub fn record_dump_sql() -> &'static str {
+    "INSERT INTO provisioning.dumps (org, project, env, object_key, format, byte_size) \
+     VALUES ($1, $2, $3, $4, $5, $6) \
+     ON CONFLICT (org, project, env, object_key) DO UPDATE SET \
+       format = EXCLUDED.format, \
+       byte_size = EXCLUDED.byte_size, \
+       taken_at = now()"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +151,13 @@ mod tests {
         assert!(sql.contains("registry.orgs"));
         assert!(sql.contains("prod_cluster") && sql.contains("dev_cluster"));
         // Keyed by the org id as a $n param (never interpolated).
+        assert!(sql.contains("WHERE id = $1"));
+    }
+
+    #[test]
+    fn select_org_tier_reads_the_tier_by_id() {
+        let sql = select_org_tier_sql();
+        assert!(sql.contains("SELECT tier FROM registry.orgs"));
         assert!(sql.contains("WHERE id = $1"));
     }
 
@@ -181,5 +218,20 @@ mod tests {
         // The error is a $n param (never interpolated).
         assert!(failed.contains("last_error = $2"));
         assert!(failed.contains("WHERE saga_id = $1"));
+    }
+
+    #[test]
+    fn record_dump_upserts_the_dumps_columns() {
+        let sql = record_dump_sql();
+        assert!(sql.contains("INSERT INTO provisioning.dumps"));
+        for col in ["org", "project", "env", "object_key", "format", "byte_size"] {
+            assert!(sql.contains(col), "missing column {col}");
+        }
+        // Values are $n params (never interpolated).
+        assert!(sql.contains("VALUES ($1, $2, $3, $4, $5, $6)"));
+        // Idempotent + refreshing: re-recording a dump key updates byte_size in
+        // place (a plain INSERT would error on the second record of the same key).
+        assert!(sql.contains("ON CONFLICT (org, project, env, object_key) DO UPDATE"));
+        assert!(sql.contains("byte_size = EXCLUDED.byte_size"));
     }
 }

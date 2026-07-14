@@ -230,6 +230,17 @@ topology. **WAL retention window** is the PITR-SLA lever and is a per-tier,
 per-org knob e1g must expose; RPO for dump-based restore = dump interval,
 likewise a tier knob, stated honestly in contracts.
 
+*Shipped (wamn-q3n.10):* the **logical-dump producer** — `wamn-host
+dump-project-env` renders a per-project-env `pg_dump -Fd` CronJob at the tier
+cadence (trials daily / standard 6h / dedicated hourly) plus a one-shot Job (the
+10.3 export / .13 pre-move snapshot), and `--run-now` dumps + records the dump in
+`provisioning.dumps` (system-schema.sql). The object-store upload is *rendered*
+but its live execution is deferred to when the shared store lands (e1g owns that
+infra) — the `.10` gate proves the artifact restorable substrate-agnostically
+(`pg_dump -Fd` → `pg_restore` into a scratch DB). See docs/provisioning.md
+§`dump-project-env`. The operator-facing **restore runbook** (below) + backup/
+restore gates are wamn-q3n.11.
+
 **The scratch-cluster runbook** (v1's §runbook: bootstrap recovery cluster at
 `targetTime` → logical carve-out → drop) survives verbatim but demotes to two
 uses: T3 arbitrary-instant restores, and intra-cluster carve-outs on T2 (e.g.

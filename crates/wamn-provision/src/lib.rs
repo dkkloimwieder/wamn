@@ -36,6 +36,7 @@
 //! a hardening follow-up (8.2), not this MVP.
 
 pub mod database;
+pub mod dump;
 mod error;
 mod name;
 pub mod org;
@@ -43,6 +44,10 @@ pub mod secret;
 pub mod sql;
 
 pub use database::render_project_env_database;
+pub use dump::{
+    DEFAULT_BUCKET, dump_object_key, dump_resource_name, dump_schedule, pg_dump_argv,
+    render_project_env_dump_cronjob, render_project_env_dump_job, validate_dump_resource_name,
+};
 pub use error::ProvisionError;
 pub use name::{
     APP_ROLE, DB_PREFIX, MAX_DB_NAME_LEN, MAX_PROJECT_ID_LEN, compose_url, database_name,

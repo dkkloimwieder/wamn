@@ -178,6 +178,30 @@ fn saga_sql_builders_match_the_sagas_columns_and_status_check() {
     }
 }
 
+/// The dump-record builder (`wamn_registry::sql::record_dump_sql`, wamn-q3n.10)
+/// must target the `provisioning.dumps` columns the storage DDL declares — the
+/// SR2 drift guard extended to the dump-bookkeeping mechanism. The table is a
+/// control-plane record of each per-project-env logical dump (object key + size +
+/// time), FK'd to the project-env it dumps.
+#[test]
+fn dumps_table_and_record_builder_match_the_columns() {
+    let sql = code_only(&system_schema_sql());
+
+    // The table exists, keyed by the triple + object key, FK'd to project_envs,
+    // and carries only the directory dump format (matches wamn_provision DUMP_FORMAT).
+    assert!(sql.contains("CREATE TABLE provisioning.dumps"));
+    assert!(sql.contains("REFERENCES registry.project_envs (org, project, env)"));
+    assert!(sql.contains("dumps_format_check") && sql.contains("format IN ('directory')"));
+
+    let builder = wamn_registry::sql::record_dump_sql();
+    assert!(builder.contains("provisioning.dumps"));
+    assert!(builder.contains("ON CONFLICT (org, project, env, object_key) DO UPDATE"));
+    for col in ["org", "project", "env", "object_key", "format", "byte_size"] {
+        assert!(sql.contains(col), "dumps table missing {col}");
+        assert!(builder.contains(col), "record_dump builder missing {col}");
+    }
+}
+
 /// Invariant 4 (dev ≠ prod recovery domain) is a CHECK whose *expression* is
 /// pinned, not just its name — the drift-guard lesson: a name-only assertion
 /// lets a weakened predicate slip through.
@@ -326,6 +350,26 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
         up_project = wamn_registry::sql::upsert_project_sql(),
         up_env = wamn_registry::sql::upsert_project_env_sql(),
     ));
+    // Exercise the REAL wamn-registry dump-record builder (wamn-q3n.10) against the
+    // 'demo/app/dev' project-env just upserted: recording the SAME object_key twice
+    // must collapse to ONE row whose byte_size reflects the SECOND record (the
+    // completed size is known only after the dump finishes) — proving `ON CONFLICT
+    // … DO UPDATE`. A "DO NOTHING" mutant leaves the stale first size, failing here.
+    script.push_str(&format!(
+        "PREPARE rdump (text,text,text,text,text,bigint) AS {record};\n\
+         EXECUTE rdump('demo','app','dev','dumps/demo/app/dev/1000','directory', 100);\n\
+         EXECUTE rdump('demo','app','dev','dumps/demo/app/dev/1000','directory', 200);\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM provisioning.dumps\n\
+                     WHERE object_key='dumps/demo/app/dev/1000')=1,\n\
+             'record_dump_sql is idempotent — one row after two records of one key';\n\
+           ASSERT (SELECT byte_size FROM provisioning.dumps\n\
+                     WHERE object_key='dumps/demo/app/dev/1000')=200,\n\
+             'the second record refreshed byte_size (ON CONFLICT DO UPDATE)';\n\
+         END $$;\n\
+         DEALLOCATE rdump;\n",
+        record = wamn_registry::sql::record_dump_sql(),
+    ));
     // Exercise the REAL wamn-registry saga builders (wamn-q3n.8) via PREPARE/EXECUTE:
     // creation is exactly-once (a second create of the same saga_id is a no-op),
     // `step` is a durable resume checkpoint (two advances → 2), and complete/fail set
@@ -401,6 +445,23 @@ INSERT INTO registry.project_envs (org, project, env, secret_name)
   VALUES ('acme','billing','prod','wamn-db-acme-prod'),
          ('acme','billing','dev','wamn-db-acme-dev');
 
+-- A dump record for that project-env (wamn-q3n.10 bookkeeping) — cascades with
+-- the org below, and its FK requires the project-env to exist.
+INSERT INTO provisioning.dumps (org, project, env, object_key, byte_size)
+  VALUES ('acme','billing','prod','dumps/acme/billing/prod/1', 42);
+-- A dump under an unregistered project-env is rejected (FK to project_envs).
+DO $$ BEGIN BEGIN
+  INSERT INTO provisioning.dumps (org, project, env, object_key)
+    VALUES ('acme','ghost','prod','dumps/acme/ghost/prod/1');
+  ASSERT false, 'a dump under an unknown project-env must be rejected';
+EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
+-- An unknown dump format is rejected (only directory-format dumps are recorded).
+DO $$ BEGIN BEGIN
+  INSERT INTO provisioning.dumps (org, project, env, object_key, format)
+    VALUES ('acme','billing','prod','dumps/acme/billing/prod/2','tar');
+  ASSERT false, 'an unknown dump format must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+
 -- A project under an unregistered org is rejected (FK).
 DO $$ BEGIN BEGIN
   INSERT INTO registry.projects (org, id) VALUES ('ghost','x');
@@ -461,7 +522,7 @@ DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
     INTO tbls FROM information_schema.tables
     WHERE table_schema IN ('registry','provisioning') AND table_type='BASE TABLE';
-  ASSERT tbls = 'provisioning.sagas,registry.meta,registry.orgs,registry.project_envs,registry.projects',
+  ASSERT tbls = 'provisioning.dumps,provisioning.sagas,registry.meta,registry.orgs,registry.project_envs,registry.projects',
     format('unexpected control-plane table set (invariant 3): %s', tbls);
 END $$;
 
@@ -486,10 +547,11 @@ DO $$ BEGIN BEGIN
   ASSERT false, 'an unknown saga status must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
--- Deleting an org cascades its projects and project-envs.
+-- Deleting an org cascades its projects, project-envs, and their dump records.
 DELETE FROM registry.orgs WHERE id='acme';
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM registry.projects WHERE org='acme')=0, 'projects cascade';
   ASSERT (SELECT count(*) FROM registry.project_envs WHERE org='acme')=0, 'project-envs cascade';
+  ASSERT (SELECT count(*) FROM provisioning.dumps WHERE org='acme')=0, 'dumps cascade';
 END $$;
 "#;

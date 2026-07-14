@@ -10,6 +10,7 @@
 //! verify.
 
 pub mod dispatch;
+pub mod dump_project_env;
 pub mod engine;
 pub mod host;
 pub mod plugins;

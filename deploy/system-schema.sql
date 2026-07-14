@@ -152,3 +152,32 @@ CREATE TABLE provisioning.sagas (
                           'compensating', 'compensated')),
     CONSTRAINT sagas_step_nonneg CHECK (step >= 0)
 );
+
+-- ---------------------------------------------------------------------------
+-- Dumps — bookkeeping for the scheduled per-project-env LOGICAL DUMPS
+-- (wamn-q3n.10, the second backup mechanism; docs/postgres-topology.md §Backup
+-- architecture). One row per dump taken: the object-store `object_key`
+-- (`dumps/<org>/<project>/<env>/<timestamp>` — derivable, this row is a record
+-- not the source), the dump `format` (`pg_dump -Fd` = directory), the completed
+-- `byte_size`, and when it was `taken_at`.
+--
+-- This is control-plane METADATA, not tenant data (invariant 3): no dump BYTES
+-- (those live in object storage), no credentials (invariant 2). Keyed by the
+-- (org, project, env) triple + object_key; FK to the project-env it dumps, so a
+-- de-provisioned project-env (or a deleted org, cascading through project_envs)
+-- drops its dump records. The dump CATALOG for RESTORE (find the latest dump)
+-- is wamn-q3n.11's restore tooling; .10 only RECORDS what it produces.
+-- ---------------------------------------------------------------------------
+CREATE TABLE provisioning.dumps (
+    org         text NOT NULL,
+    project     text NOT NULL,
+    env         text NOT NULL,
+    object_key  text NOT NULL,
+    format      text NOT NULL DEFAULT 'directory',
+    byte_size   bigint,
+    taken_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org, project, env, object_key),
+    FOREIGN KEY (org, project, env)
+        REFERENCES registry.project_envs (org, project, env) ON DELETE CASCADE,
+    CONSTRAINT dumps_format_check CHECK (format IN ('directory'))
+);

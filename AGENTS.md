@@ -1027,6 +1027,111 @@ kubectl -n wamn-system exec wamn-pg-1 -c postgres -- \
 kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
   psql -U postgres -d wamn_system -c "DELETE FROM registry.orgs WHERE id='t3gate';"
 
+# [D6/wamn-q3n.10] scheduled per-project-env logical dumps (= the 10.3 export
+# artifact) — the SECOND backup mechanism (docs/postgres-topology.md §Backup
+# architecture): pg_dump -Fd of one project-env database -> object storage; ONE
+# artifact serves tenant-scoped restore-to-last-dump AND the 10.3 project export;
+# RPO = dump interval, frequency a TIER KNOB. .10 is the DUMP PRODUCER — the
+# operator-facing RESTORE runbook + audit-rewind caveat + backupbench = wamn-q3n.11;
+# the tier-move cutover that consumes a dump = wamn-q3n.13; whole-cluster WAL/PITR
+# (the OTHER mechanism) = wamn-e1g (its shared object store interacts with Q2).
+# NEW crates/wamn-provision/src/dump.rs = PURE renderers + builders (SR3 rule 1, no
+# clock/DB/K8s client, the render_project_env_database precedent): render_project_env_
+# dump_cronjob (batch/v1 CronJob — postgres:18 pg_dump -Fd of wamn-db-<org>--<project>
+# --<env> with DATABASE_URL from the project-env credential Secret's `url` key,
+# concurrencyPolicy Forbid, the tier schedule) + render_project_env_dump_job (one-shot
+# generateName Job = the 10.3 export / .13 pre-move snapshot) + pure builders
+# pg_dump_argv (-Fd DIRECTORY FORMAT is LOAD-BEARING: parallel+selective restore, the
+# one artifact 10.3 reuses; --no-password) / dump_object_key (dumps/<org>/<project>/
+# <env>/<ts> — DERIVABLE so restore [.11] needs no registry read) / dump_schedule(tier)
+# (trials daily / standard 6h / dedicated hourly = "frequency is a tier knob") /
+# upload_argv / dump_resource_name (bounded <=52 for the CronJob-name limit). OBJECT
+# STORE (Q2, GENUINELY OPEN — NO store in the repo, e1g/Barman also needs one): the
+# CronJob RENDERS the upload (aws s3 cp --recursive under the object key) but GUARDS it
+# on the CLI being present, so no store yet is NOT a runtime failure; the LIVE S3 upload
+# is DEFERRED to the shared MinIO (e1g). NEW `wamn-host dump-project-env` subcommand
+# (the provision-project-env precedent, +mod lib.rs +Command variant/arm main.rs):
+# --emit-cronjob/--emit-job render; --run-now runs pg_dump -Fd against --database-url +
+# RECORDS the dump; tier via --tier OR read from the registry (select_org_tier_sql).
+# Q3 (user chose RECORD dump metadata): NEW provisioning.dumps table (deploy/system-
+# schema.sql, ADDITIVE — (org,project,env,object_key) PK, format CHECK ('directory'),
+# byte_size, taken_at, FK->registry.project_envs ON DELETE CASCADE) = control-plane
+# METADATA (invariant 3: NO dump BYTES [object storage], invariant 2: NO credentials)
+# + wamn_registry::sql::record_dump_sql (SR2 builder — ON CONFLICT DO UPDATE refreshes
+# byte_size, drift-guarded vs the DDL + a LIVE idempotent+refresh proof spliced into
+# the .3 storage gate) + select_org_tier_sql; the invariant-3 table set + the cascade
+# check are updated for dumps. VERIFY substrate-agnostic (Q2): a WAMN_DUMP_PG_URL
+# round-trip gate (crates/wamn-provision/tests/dump.rs) proves the artifact RESTORABLE
+# (seed -> pg_dump -Fd -> pg_restore into a scratch DB -> seed incl an exact-decimal
+# column round-trips). Mutants killed (apply/test/restore, sha256, DEBUG builds):
+# pg_dump drops -Fd / object-key wrong shape / tier->schedule swap / CronJob command
+# without -Fd / record_dump DO UPDATE->DO NOTHING — each fails a NAMED test.
+# docs/provisioning.md §dump-project-env + docs/postgres-topology.md §Backup
+# architecture 'Shipped (wamn-q3n.10)'.
+cargo test -p wamn-provision -p wamn-registry -p wamn-host   # renderers/builders + record_dump SQL + drift/subcommand units
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-host --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-host --check
+# Render locally (no DB — --tier gives the cadence without a registry read):
+./target/debug/wamn-host dump-project-env --org demo --project app --env prod \
+  --tier standard --emit-cronjob - --emit-job -
+# optional live gates (throwaway postgres:18; superuser url): (a) the ARTIFACT
+# round-trip (WAMN_DUMP_PG_URL — seeds a db, pg_dump -Fd, pg_restore into a scratch
+# db, asserts the seed round-trips; skips if unset / no pg_dump); (b) the record_dump
+# idempotent + byte_size-refresh proof rides the wamn-q3n.3 storage gate:
+docker run -d --rm --name wamn-dump-pg -p 5462:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_DUMP_PG_URL=postgres://postgres:postgres@127.0.0.1:5462/wamn \
+  cargo test -p wamn-provision --test dump
+WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5462/wamn cargo test -p wamn-registry
+docker stop wamn-dump-pg
+# IN-CLUSTER gate of record (the .6/.7/.9 precedent; T3 pool wamn-pg + T1 wamn-sysdb
+# always up; NO docker rebuild — real debug subcommand + kubectl). First apply the
+# ADDITIVE provisioning.dumps table into wamn-sysdb's wamn_system DB AS wamn_system
+# (writing the T1 registry's OWN DB IS .10's job; NEVER touch wamn-pg/postgres.yaml):
+awk '/^CREATE TABLE provisioning\.dumps/{f=1} f{print} f&&/^\);/{exit}' deploy/system-schema.sql \
+  | { echo "SET ROLE wamn_system;"; cat; } | kubectl -n wamn-system exec -i wamn-sysdb-1 \
+  -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 -f -
+# Register a trials org + provision a project-env DB on wamn-pg (the .7/.9 path), seed
+# it, then dump+restore. PICK CLEAN unused ports (check `ss -ltn | grep 547`):
+kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5474:5432 &
+kubectl -n wamn-system port-forward svc/wamn-pg-rw 5475:5432 &
+SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
+PGPW=$(kubectl -n wamn-system get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
+SYS="postgres://postgres:${SYSPW}@127.0.0.1:5474/wamn_system?sslmode=disable"
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-org --org t10gate --tier trials --pool wamn-pg
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-project-env \
+  --org t10gate --project demo --env dev --connection-limit 10 \
+  --emit-database /tmp/t10-db.json --emit-role-sql /tmp/t10-role.sql \
+  --emit-privilege-sql /tmp/t10-priv.sql --emit-secret /tmp/t10-secret.json
+kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/t10-role.sql
+kubectl apply -f /tmp/t10-db.json
+kubectl -n wamn-system wait --for=jsonpath='{.status.applied}'=true database/wamn-db-t10gate--demo--dev --timeout=90s
+kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/t10-priv.sql
+kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -d "wamn-db-t10gate--demo--dev" \
+  -c "CREATE TABLE parts (id int primary key, sku text, weight_kg numeric(8,3)); INSERT INTO parts VALUES (1,'bolt',0.125),(2,'nut',0.050),(3,'washer',0.008);"
+# Dump the REAL project-env DB (reads tier from wamn-sysdb -> trials daily), then restore:
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host dump-project-env --org t10gate --project demo --env dev \
+  --database-url "postgres://postgres:${PGPW}@127.0.0.1:5475/wamn-db-t10gate--demo--dev?sslmode=disable" \
+  --run-now --out-dir /tmp/t10-dump
+kubectl -n wamn-system exec wamn-pg-1 -c postgres -- psql -U postgres -c 'CREATE DATABASE wamn_dump_scratch_t10;'
+pg_restore --no-owner --no-privileges \
+  -d "postgres://postgres:${PGPW}@127.0.0.1:5475/wamn_dump_scratch_t10?sslmode=disable" /tmp/t10-dump/*/
+# Verify (gate of record): the seed round-trips in the scratch DB (3 parts, exact-decimal
+# weights intact) + the provisioning.dumps row in wamn-sysdb (fmt=directory, byte_size):
+kubectl -n wamn-system exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn_dump_scratch_t10 \
+  -tAc "SELECT count(*), sum(weight_kg) FROM parts;"
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
+  -tAc "SELECT object_key, format, byte_size FROM provisioning.dumps WHERE org='t10gate';"
+# Guardrail: wamn-pg/wamn-sysdb/postgres.yaml UNTOUCHED. Teardown deletes ONLY the new
+# resources (kill the port-forwards by EXACT pid — not pkill); the org delete cascades
+# projects+project_envs+dumps:
+kubectl -n wamn-system delete database wamn-db-t10gate--demo--dev
+kubectl -n wamn-system exec wamn-pg-1 -c postgres -- psql -U postgres \
+  -c 'DROP DATABASE IF EXISTS "wamn-db-t10gate--demo--dev" WITH (FORCE);' \
+  -c 'DROP DATABASE IF EXISTS wamn_dump_scratch_t10 WITH (FORCE);'
+kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
+  -c "DELETE FROM registry.orgs WHERE id='t10gate';"
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

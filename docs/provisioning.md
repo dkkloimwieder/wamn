@@ -331,6 +331,73 @@ the prod database, `<org>-dev` only the dev database — with `wamn_app` owner,
 retained T3 database on `wamn-pg`) — never `wamn-pg` / `postgres.yaml` /
 `wamn-sysdb`.
 
+## `wamn-host dump-project-env` (wamn-q3n.10)
+
+The **second backup mechanism** (docs/postgres-topology.md §Backup architecture):
+a scheduled `pg_dump -Fd` of one project-env database to object storage. **One
+artifact** serves tenant-scoped restore-to-last-dump *and* the 10.3 project
+export; the RPO is the dump interval, and the interval is a **tier knob**. This is
+the *dump producer* — the operator-facing RESTORE runbook + audit-rewind caveat +
+backup/restore gates are wamn-q3n.11; the tier-move cutover that consumes a dump
+is wamn-q3n.13; whole-cluster WAL/PITR is the *other* mechanism, wamn-e1g.
+
+The pure renderer + builders live in `crates/wamn-provision/src/dump.rs` (the
+`render_project_env_database` precedent — no clock, no DB, no K8s client):
+
+- `render_project_env_dump_cronjob(triple, schedule, bucket)` — a `batch/v1`
+  **CronJob** running `pg_dump -Fd` of the project-env database (connection from
+  the project-env credential Secret's `url`, so the target cluster is not named),
+  `concurrencyPolicy: Forbid`. The **object-store upload** is *rendered* into the
+  container command but **guarded** on the upload CLI being present — the dump
+  succeeds whether or not the shared store is wired yet (**Q2**: no store exists in
+  the repo; the shared MinIO/S3 lands with wamn-e1g, whose Barman WAL/PITR needs
+  the same store);
+- `render_project_env_dump_job(triple, bucket)` — a one-shot **Job** (`generateName`,
+  `kubectl create -f`) for the on-demand export / .13 pre-move snapshot;
+- pure builders: `pg_dump_argv` (`-Fd` **directory format** is load-bearing —
+  parallel + selective restore, the one artifact 10.3 reuses), `dump_object_key`
+  (`dumps/<org>/<project>/<env>/<timestamp>` — derivable, so restore needs no
+  registry read), `dump_schedule(tier)` (**trials** daily / **standard** every 6h /
+  **dedicated** hourly).
+
+`wamn-host dump-project-env` drives them:
+
+```
+dump-project-env --org <org> --project <p> --env <dev|canary|prod>
+  [--tier <trials|standard|dedicated> | --system-database-url <sysdb>]  # cadence
+  [--emit-cronjob <path|->] [--emit-job <path|->]     # render the manifests
+  [--run-now --database-url <project-env db> --out-dir <dir>]  # dump now + record
+```
+
+The cadence follows the org tier — an explicit `--tier` wins, otherwise it is read
+from the registry (`select_org_tier_sql`). `--run-now` runs `pg_dump -Fd`
+imperatively (the on-demand export) and **records** the dump in the T1 registry
+(`provisioning.dumps`).
+
+**Dump bookkeeping (Q3):** `provisioning.dumps` (system-schema.sql) records each
+dump — the object key, `format` (`directory`), completed `byte_size`, `taken_at` —
+FK'd to the project-env it dumps (a de-provisioned env, or a deleted org cascading
+through `project_envs`, drops its dump records). It is control-plane **metadata**,
+not tenant data (invariant 3) and holds no credentials (invariant 2); the dump
+**bytes** live in object storage and the dump **catalog for restore** is
+wamn-q3n.11's. `wamn_registry::sql::record_dump_sql` is the SR2 builder (drift-
+guarded against the DDL; a live idempotent + `byte_size`-refresh proof rides the
+wamn-q3n.3 storage gate).
+
+**Verification.** The artifact is validated **substrate-agnostically** (Q2): a
+`WAMN_DUMP_PG_URL` round-trip gate (`crates/wamn-provision/tests/dump.rs`) seeds a
+database, dumps it with the real `pg_dump_argv`, `pg_restore`s into a scratch DB,
+and asserts the seed (incl an exact-decimal column) survives. The **in-cluster
+gate of record** (the .6/.7/.9 precedent — debug binary + `kubectl`, no image
+rebuild) provisions a real project-env database on the T3 pool `wamn-pg`, seeds it,
+runs `dump-project-env --run-now` (reading the real `wamn-sysdb` registry),
+`pg_restore`s into a scratch DB, asserts the round-trip, and checks the
+`provisioning.dumps` row — teardown drops **only** the new database + scratch +
+registry rows. Mutation-tested (apply/test/restore, debug builds): `pg_dump`
+dropping `-Fd`, a wrong object-key shape, a tier→schedule swap, a CronJob command
+without `-Fd`, and `record_dump` `ON CONFLICT DO UPDATE`→`DO NOTHING` each fail a
+named test.
+
 ## Deferred (follow-up beads)
 
 - **WAL archiving / PITR** — a fast-follow `[2.3]` bead (needs an in-cluster
