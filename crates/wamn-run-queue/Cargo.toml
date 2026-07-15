@@ -12,21 +12,35 @@ license.workspace = true
 wamn-run-store = { path = "../wamn-run-store" }
 # The queue records import/export as JSON (the read model / the pure decision
 # fixtures). No schemars — a store model, not a published contract (like
-# wamn-run-store / wamn-ddl / wamn-runner).
+# wamn-run-store / wamn-ddl / wamn-runner). Always present: `model` (QueueEntry)
+# derives it and is part of the pure claim-path core the guest links.
 serde = { version = "1", features = ["derive"] }
 # The trigger dispatcher's firing envelopes (cron tick / outbox event input_json)
 # are built here so the drivers share one shape. raw_value: the outbox payload is
 # spliced into the envelope VERBATIM (never decoded through a float-lossy Value),
 # so exact-decimal / >2^53 numbers survive — the platform's no-float rule.
-serde_json = { version = "1", features = ["raw_value"] }
+# `dispatcher`-only (outbox/cron); optional so the guest wasm omits it.
+serde_json = { version = "1", features = ["raw_value"], optional = true }
 # Cron next-fire evaluation (5-field classic cron). Calendar math (DOM/DOW
 # intersection, month lengths, leap years) is a correctness trap — a vetted
 # evaluator over an INJECTED instant keeps the no-clock discipline: next_fire /
 # due_tick take `now: Millis`, never read a clock (the 11.1 fast-forwardable-cron
 # requirement). chrono is croner's time vocabulary; default-features off keeps
 # the clock feature out (we only convert epoch ms <-> DateTime<Utc>).
-croner = "3"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+# `dispatcher`-only (cron); optional so the guest wasm omits croner/chrono.
+croner = { version = "3", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
+
+[features]
+# The always-on core is the pure claim/lease/janitor/partition decisions + the
+# `sql.rs` builders (deps: wamn-run-store + serde). The `dispatcher` feature adds
+# the always-on control-plane trio — cron due-tick evaluation, outbox matching,
+# and the adaptive poll cadence (`cron`/`outbox`/`dispatch` modules, needing
+# croner + chrono + serde_json). The host + gates build with it (default); the
+# flowrunner guest deps `default-features = false` so it claims from the queue
+# (the pure builders) WITHOUT pulling croner/chrono into its wasm (fqg.4).
+default = ["dispatcher"]
+dispatcher = ["dep:serde_json", "dep:croner", "dep:chrono"]
 
 [dev-dependencies]
 

@@ -53,6 +53,10 @@ use serde_json::{Value, json};
 use wamn_flow::Flow;
 use wamn_node_sdk as sdk;
 use wamn_run_store::{NodeRunRecord, RunRecord, sql as run_sql};
+// The durable-queue claim-path builders (5.14). The guest deps wamn-run-queue
+// with default-features off, so only these pure `sql.rs` builders link — the
+// cron/outbox/dispatch trio (croner/chrono) never enters the wasm (fqg.4).
+use wamn_run_queue::{claim_batch_sql, dequeue_sql, mark_running_sql, park_sql, renew_lease_sql};
 use wamn_runner::{
     Dispatch, ERROR_PORT, NodeError, NodeOutcome, Plan, RetryPolicy, RunStatus, Step,
 };
@@ -82,6 +86,9 @@ fn text(s: impl Into<String>) -> SqlValue {
 }
 fn int32(v: i32) -> SqlValue {
     SqlValue::Int32(v)
+}
+fn int64(v: i64) -> SqlValue {
+    SqlValue::Int64(v)
 }
 /// Encode a payload `Value` for a `jsonb` column (trigger input / node I/O).
 /// Sent as a text param the server parses into jsonb — the same path the S3
@@ -652,6 +659,205 @@ fn execute(
 }
 
 // ---------------------------------------------------------------------------
+// Guest-side queue claim (fqg.4): claim -> drive (heartbeat) -> dequeue/park.
+// The production dispatch path, guest-side. The runner reads its OWN work from
+// run_queue instead of being handed a run_id — the same builders the host-side
+// dispatcher/claimers use (wamn-run-queue), called through wamn:postgres.
+// ---------------------------------------------------------------------------
+
+/// The claim-path result: `outcome` (0 = completed, 1 = parked, 2 = failed) plus
+/// the wake delay to park the queue row by when `outcome == 1`.
+struct ClaimOutcome {
+    outcome: u32,
+    park_ms: u64,
+}
+
+/// The host-injected durable-queue lease owner (`app.runner`, fqg.4). The plugin
+/// sets it per replica (`wamn.runner` config), so a run's lease + heartbeat are
+/// owner-scoped and a reclaim after a replica dies is attributable. Read fresh
+/// per claim (a `SET LOCAL` GUC lives for one transaction).
+fn read_runner_owner() -> Result<String, String> {
+    let rs = client::query("SELECT current_setting('app.runner', true)", &[])
+        .map_err(|e| err_name(&e))?;
+    match rs.rows.first().and_then(|r| r.first()) {
+        Some(SqlValue::Text(s)) if !s.is_empty() => Ok(s.clone()),
+        _ => Err("no runner identity: app.runner is unset (host must inject wamn.runner)".into()),
+    }
+}
+
+/// Claim ONE currently-claimable **unpartitioned** run for `owner`
+/// (`FOR UPDATE SKIP LOCKED`, `lease_ttl_ms` visibility). Returns its run_id, or
+/// None when the queue is drained. Partitioned runs stay on the per-partition
+/// ownership path (fqg.1) — the global claim skips `partition_key IS NOT NULL`;
+/// a guest-side partitioned claim is a follow-up.
+fn claim_one(owner: &str, ttl_ms: i64) -> Result<Option<String>, String> {
+    let rs = client::query(&claim_batch_sql(1), &[text(owner), int64(ttl_ms)])
+        .map_err(|e| err_name(&e))?;
+    match rs.rows.first().and_then(|r| r.first()) {
+        Some(SqlValue::Text(s)) => Ok(Some(s.clone())),
+        _ => Ok(None),
+    }
+}
+
+/// The claimed run's dispatch inputs — the flow it runs + the trigger input the
+/// dispatcher persisted (5.7). The claim path drives the RECORDED flow + input,
+/// never a fixture constant.
+fn read_run_dispatch(run_id: &str) -> Result<(String, Value), String> {
+    let rs = client::query(&run_sql::select_run_dispatch_sql(), &[text(run_id)])
+        .map_err(|e| err_name(&e))?;
+    let row = rs.rows.first().ok_or("claimed run row vanished")?;
+    let flow_id = match row.first() {
+        Some(SqlValue::Text(s)) => s.clone(),
+        other => return Err(format!("runs.flow_id shape: {other:?}")),
+    };
+    let input = match row.get(1) {
+        Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => {
+            serde_json::from_str(s).map_err(|e| format!("runs.input_json parse: {e}"))?
+        }
+        _ => Value::Null,
+    };
+    Ok((flow_id, input))
+}
+
+/// Flip a claimed run `dispatched` -> `running` (guarded, so a reclaim of an
+/// already-running run is a no-op).
+fn mark_running(run_id: &str) -> Result<(), String> {
+    client::execute(&mark_running_sql(), &[text(run_id)]).map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Heartbeat the lease by `ttl_ms` for `owner` (owner-guarded: a straggler whose
+/// row was reclaimed no-ops). Called per node so a live-but-slow runner's lease
+/// never lapses mid-walk.
+fn renew_lease(run_id: &str, ttl_ms: i64, owner: &str) -> Result<(), String> {
+    client::execute(
+        &renew_lease_sql(),
+        &[text(run_id), int64(ttl_ms), text(owner)],
+    )
+    .map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Remove a run's queue row on a terminal outcome (the `runs` history stays).
+fn dequeue(run_id: &str) -> Result<(), String> {
+    client::execute(&dequeue_sql(), &[text(run_id)]).map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Park a run for a later wake: push `available_at` by `park_ms` and RELEASE the
+/// lease so no replica holds it while it sleeps (the wake re-claim is free —
+/// wamn-fqg.5/.7). Reconciliation/doorbell re-offers it at `available_at`.
+fn park(run_id: &str, park_ms: u64) -> Result<(), String> {
+    let ms = i64::try_from(park_ms).unwrap_or(i64::MAX);
+    client::execute(&park_sql(), &[text(run_id), int64(ms)]).map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Drive a run CLAIMED from the queue: like [`execute`] but the flow + input come
+/// from the dispatcher-persisted `runs` row (not a fixture id / wrapped string),
+/// the lease is renewed per node, and terminal states become an `outcome` code
+/// (the caller dequeues/parks) rather than a `Result` return. The dispatcher
+/// already wrote the `runs` row and the claim flipped it `running`, so this does
+/// NOT re-open the run — it reconstructs from `node_runs` and continues.
+fn execute_claimed(
+    run_id: &str,
+    flow_id: &str,
+    input: Value,
+    owner: &str,
+    ttl_ms: i64,
+) -> Result<ClaimOutcome, String> {
+    let flow = load_active_flow(flow_id)?;
+    let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
+    let version = plan.version();
+    let completed = load_completed(run_id)?;
+    let mut next_seq = completed.len() as i32;
+    let run_rec = RunRecord::new(run_id, flow_id, version, input);
+    let mut st =
+        wamn_run_store::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
+    let mut http_status: u32 = 0;
+
+    loop {
+        match plan.next(&mut st, 0) {
+            Step::Done(RunStatus::Completed) => {
+                mark_completed(run_id, st.result())?;
+                return Ok(ClaimOutcome {
+                    outcome: 0,
+                    park_ms: 0,
+                });
+            }
+            Step::Done(status) => {
+                if let Some(f) = st.failure() {
+                    let _ = mark_failed(run_id, fail_kind_sql(&f.kind), &f.node, &f.detail.message);
+                }
+                let _ = status;
+                return Ok(ClaimOutcome {
+                    outcome: 2,
+                    park_ms: 0,
+                });
+            }
+            Step::Wait { node, .. } => return Err(format!("unexpected retry wait at {node}")),
+            Step::Dispatch(d) => {
+                // Heartbeat before each node so the lease outlives a long walk.
+                renew_lease(run_id, ttl_ms, owner)?;
+                match dispatch_node(&d, run_id, &flow, false, &mut http_status)? {
+                    NodeAction::Emit(outcome) => {
+                        match &outcome {
+                            NodeOutcome::Success { payload, port } => {
+                                record_node_run(
+                                    run_id, &d.node, next_seq, port, payload, &d.payload,
+                                )?;
+                                next_seq += 1;
+                            }
+                            NodeOutcome::Error(err)
+                                if will_error_route(err, &d)
+                                    && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
+                            {
+                                record_error(run_id, &d.node, next_seq, err, &d.payload)?;
+                                next_seq += 1;
+                            }
+                            NodeOutcome::Error(_) => {}
+                        }
+                        plan.apply(&mut st, &d, outcome, 0);
+                    }
+                    NodeAction::Park => {
+                        // The delay node recorded a wake deadline in state_json;
+                        // park the queue row until then (the wall clock is the
+                        // host's — the test host virtualizes it, so a 24h delay is
+                        // instant there and the wake is immediate).
+                        let now = wall_now_secs();
+                        let park_ms = load_wake(run_id)?
+                            .map(|wake| wake.saturating_sub(now).saturating_mul(1000))
+                            .unwrap_or(0);
+                        return Ok(ClaimOutcome {
+                            outcome: 1,
+                            park_ms,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One turn of the production dispatch loop: claim the next run, drive it with a
+/// per-node heartbeat, and dequeue (terminal) or park (delay). See the WIT doc.
+fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
+    let ttl = i64::try_from(lease_ttl_ms).map_err(|_| "lease-ttl-ms too large".to_string())?;
+    let owner = read_runner_owner()?;
+    let Some(run_id) = claim_one(&owner, ttl)? else {
+        return Ok((false, None, 0)); // queue drained
+    };
+    let (flow_id, input) = read_run_dispatch(&run_id)?;
+    mark_running(&run_id)?;
+    let claim = execute_claimed(&run_id, &flow_id, input, &owner, ttl)?;
+    match claim.outcome {
+        1 => park(&run_id, claim.park_ms)?, // parked -> re-offered at wake
+        _ => dequeue(&run_id)?,             // completed / failed -> terminal
+    }
+    Ok((true, Some(run_id), claim.outcome))
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch bench: same-binary node dispatch overhead, no DB
 // ---------------------------------------------------------------------------
 
@@ -744,6 +950,10 @@ impl Guest for Component {
 
     fn run(run_id: String, payload: String) -> Result<u32, String> {
         execute(&run_id, &payload, false, FLOW_ID).map(|r| r.version)
+    }
+
+    fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
+        run_next(lease_ttl_ms)
     }
 
     fn run_until_kill(run_id: String, payload: String) -> Result<u32, String> {

@@ -198,8 +198,66 @@ for the completion-wins backstop).
 
 For a `partitioned(key)` run the failover is the per-partition path above (the
 partition lease expires, another replica reacquires the key and reclaims the
-abandoned in-flight run in order). Guest-*self*-claim from the queue remains a
-follow-up (fqg.4); today the host orchestrates the claim/reclaim.
+abandoned in-flight run in order).
+
+## Guest-side queue claim (guest-self-claim, fqg.4)
+
+The `failover` path above has the *host* claim from the queue and hand the guest a
+`run_id`. The production dispatch path is the runner claiming its **own** work — and
+that is the flowrunner guest's `run-next` export (fqg.4). One invocation is one turn
+of the production dispatch loop:
+
+1. **Claim** one currently-claimable **unpartitioned** run for this replica
+   (`claim_batch_sql(1)`, `FOR UPDATE SKIP LOCKED`, an owner + lease TTL). Empty
+   queue → `claimed = false`, nothing to do. (Partitioned runs stay on the
+   per-partition ownership path; a guest-side partitioned claim is a follow-up.)
+2. **Read** the run's flow + trigger input from the dispatcher-persisted `runs`
+   row (`select_run_dispatch_sql` — the claim path drives the **recorded** flow +
+   input, never a fixture constant), and flip it `dispatched → running`
+   (`mark_running_sql`).
+3. **Drive** it with the 5.2 engine, reconstructing from `node_runs` (so a
+   reclaimed run resumes exactly), **renewing the lease per node**
+   (`renew_lease_sql`) so a live-but-slow runner is never reclaimed mid-walk.
+4. **Dequeue** on completion (`dequeue_sql`), or **park** on a `delay`
+   (`park_sql` — push `available_at` to the wake and *release* the lease, so the
+   wake re-claim is free; wamn-fqg.5/.7).
+
+**Claim-builder shape (bounded-lease correctness).** The guest is the first caller
+to run `claim_batch_sql` through the `wamn:postgres` plugin (host callers use raw
+`tokio_postgres`). Both claim builders therefore put the locking
+`SELECT … FOR UPDATE SKIP LOCKED LIMIT n` in a CTE **fenced `AS MATERIALIZED`**
+(`WITH claimed AS MATERIALIZED (…) UPDATE run_queue q … FROM claimed WHERE q.pk =
+claimed.pk`). This is the load-bearing fix: **neither** a `WHERE (pk) IN (subquery)`
+form **nor** a plain `FROM (subquery)` derived table is an evaluation fence — the
+planner may place the `LockRows` scan on the inner side of a nested-loop join and
+re-execute it once per outer row, and because `SKIP LOCKED` advances past
+already-locked rows on each rescan, one statement then leases **far more than `n`**
+rows (the classic Postgres `UPDATE … FOR UPDATE SKIP LOCKED LIMIT` gotcha). It
+surfaced only through the plugin's cached prepared-statement execution: a `LIMIT 1`
+guest claim intermittently (~plan-dependent) leased the whole batch and stranded the
+extras leased until their TTL. A first rewrite to the plain `FROM`-join did **not**
+fix it — which is exactly what pinned the cause to plan-driven subquery re-execution
+rather than the SQL join shape. `AS MATERIALIZED` forces Postgres to evaluate the
+CTE once into a tuplestore regardless of the join plan, so precisely `n` rows lock
+and update. The same fence is applied to the partition sibling
+(`claim_partition_head_sql`, wamn-fqg.10), which had the `IN (subquery)` form.
+
+The lease **owner** is *host-injected*: the `wamn:postgres` plugin sets an
+`app.runner` GUC (from the workload's `wamn.runner` config, per replica) alongside
+the tenant claim, and the guest reads `current_setting('app.runner', true)` — a
+non-spoofable per-replica identity to lease/renew under. The guest links
+`wamn-run-queue` with `default-features = false`, so only the pure claim-path
+builders enter its wasm (the cron/outbox/dispatch trio — croner/chrono — stays
+host-side behind the default `dispatcher` feature).
+
+**Honest scope caveat.** The `failoverbench` `claim`/`park`/`heartbeat` gates
+*seed* `run_queue` directly (the write-ahead + enqueue a dispatcher would do) and
+drive `run-next` — proving the guest claim path end-to-end against a real Postgres.
+The **live** dispatcher → queue → runner chain (a permanently-running runner pod
+looping `run-next`) closes only with a production **runner Deployment** (a
+`wamn-host` subcommand instantiating the flowrunner + looping `run-next`, plus its
+manifest — the a52-analog of the dispatcher Deployment); that is a filed follow-up,
+not this change.
 
 ## Trigger dispatcher (cron + outbox + parked-wake)
 
@@ -370,21 +428,22 @@ payload spliced verbatim, `EXPLAIN` confirmed the anchor query uses
 This issue built the D3 hybrid queue: the SKIP LOCKED queue, the write-ahead / fast
 path, single-owner leases + reclaim, the janitor, the reconciliation cadence,
 **per-partition ownership** for `partitioned(key)`, **checkpoint/resume on
-replica loss**, and the **shared trigger dispatcher** (cron + outbox +
-parked-wake, all above), proven by `queuebench` + `failoverbench` +
-`dispatchbench`. It deliberately does **not** ship (tracked as follow-ups):
+replica loss**, the **shared trigger dispatcher** (cron + outbox + parked-wake, all
+above), and the **guest-side queue claim** (`run-next`, above), proven by
+`queuebench` + `failoverbench` + `dispatchbench`. It deliberately does **not** ship
+(tracked as follow-ups):
 
 | Deferred | Where |
 |---|---|
-| Wiring the runner to **claim its own work** from the queue (guest-self-claim) | 5.14 follow-up (fqg.4) |
+| A permanently-running **runner Deployment** (a `wamn-host` subcommand looping `run-next` + its manifest — closes the live dispatcher → queue → runner chain) | 5.14 follow-up (a52-analog) |
+| **Guest-side partitioned claim** (`run-next` claims only unpartitioned runs today; partitioned runs stay on the per-partition ownership path) | 5.14 follow-up |
 
 And it does not own: the engine walk / retry / reconstruction (5.2 + 5.7 — the
 claimed run drives them); the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
 and reuses the reserved statuses); per-node ordering *semantics* (5.11 — 5.14
 provides the per-partition claim *mechanism*); the cancel operation (5.12); the
-payload byte store (5.10). The flowrunner guest is **unchanged** — the queue is a
-host-side path; wiring the runner to claim its own work from the queue is a
-follow-up.
+payload byte store (5.10). The guest's **direct** exports (`run`/`run-s6`) are
+unchanged; `run-next` is the additive claim path.
 
 ## Gates
 
@@ -455,9 +514,18 @@ follow-up.
   `janitor-guard` mode deterministically proves the same guard on static fixtures
   (a reclaimed+completed run is not reaped; a real orphan is); the `reverse-race`
   mode proves the other ordering (the janitor reaps a still-`running` run first,
-  the resume's unconditional completion write still wins). All three assertions
-  are mutation-tested. Same co-located, no-CPU-limit topology as `queuebench`,
-  locally and in-cluster.
+  the resume's unconditional completion write still wins). The `claim`/`park`/
+  `heartbeat` modes (fqg.4) drive the guest's own `run-next` claim path against
+  the same schema: `claim` proves a single runner **drains** the queue
+  (claim→drive→dequeue) and **N concurrent replicas drain it exactly-once**
+  (`SKIP LOCKED`, max one sink row per run), plus the **wrong-flow** guard (a run
+  recorded as `alt-flow` drives `alt-flow`'s reverse → sink `"tpiecer"`, not a
+  hard-coded `poc-receipt` → `"RECEIPT"`); `park` proves a `delay` run **parks
+  and releases its lease** then a later `run-next` re-claims and completes; and
+  `heartbeat` proves the per-node lease **renewal advances** `lease_expires_at`
+  across a long walk (deterministic — a lease-value poll, no steal race). All the
+  race/guard/claim assertions are mutation-tested. Same co-located, no-CPU-limit
+  topology as `queuebench`, locally and in-cluster.
 - **`dispatchbench`** — the trigger dispatcher's gate of record (pure host-side,
   no wasm guest), driving the *real* `Dispatcher` engine with **stepped time**
   against two superuser-provisioned ephemeral project schemas. `cron`: a nightly

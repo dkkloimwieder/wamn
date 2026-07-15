@@ -596,6 +596,79 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
 kubectl -n wamn-system apply -f deploy/failoverbench-job.yaml
 kubectl -n wamn-system logs -f job/failoverbench
 
+# [5.14] guest-self-claim — the flowrunner GUEST claims its own work from the queue
+# (wamn-fqg.4): the production dispatch path, guest-side (the 5.14 walking skeleton's
+# last deferred item). NEW guest export run-next(lease-ttl-ms)->tuple<claimed,run-id,
+# outcome> (components/flowrunner/wit/world.wit + src/lib.rs execute_claimed): ONE turn
+# of the dispatch loop — claim_batch_sql(1) [FOR UPDATE SKIP LOCKED, UNPARTITIONED] ->
+# read runs.flow_id + input_json (NEW wamn_run_store::sql::select_run_dispatch_sql — the
+# SR2 home, where fl3 adds `traceparent` next; drives the RECORDED flow, not a FLOW_ID
+# const) -> mark_running_sql (dispatched->running) -> drive the 5.2 engine reconstructing
+# from node_runs, RENEWING the lease PER NODE (renew_lease_sql — a live-but-slow runner is
+# never reclaimed) -> dequeue_sql on completion / park_sql on a delay (push available_at +
+# RELEASE the lease = free wake, fqg.5/.7). outcome 0=completed/1=parked/2=failed;
+# claimed=false = queue empty. OWNER is HOST-INJECTED: the wamn:postgres plugin
+# (crates/wamn-host/src/plugins/wamn_postgres.rs) sets a NEW app.runner GUC from the
+# wamn.runner config (per replica, mirroring app.tenant/search_path) that the guest reads
+# (current_setting('app.runner',true)) as its non-spoofable lease owner. The guest deps
+# wamn-run-queue default-features=false so ONLY the pure claim-path builders (sql.rs) enter
+# the wasm — cron/outbox/dispatch (croner/chrono) is gated behind the NEW default
+# `dispatcher` feature. BOUNDED-LEASE OVER-CLAIM FIX (the root cause the guest self-claim
+# exposed): running claim_batch_sql(1) through the plugin's cached prepared-statement path
+# intermittently leased the WHOLE batch on a LIMIT-1 claim — the classic Postgres
+# `FOR UPDATE SKIP LOCKED LIMIT n`-in-a-re-scannable-subquery over-claim (the planner puts
+# the LockRows subplan on the inner side of a nested-loop join and RESCANS it per outer row,
+# SKIP LOCKED advancing to fresh rows each rescan; plan-dependent, so it surfaced only
+# through the plugin path, not raw tokio_postgres). A first rewrite from `WHERE (pk) IN
+# (subquery)` to a plain `FROM (subquery)` derived table did NOT fix it (a derived table is
+# not an evaluation fence) — which is what pinned the cause to plan-driven subquery
+# re-execution, NOT the SQL shape. The fix fences the locking SELECT in a CTE `AS
+# MATERIALIZED` (single evaluation into a tuplestore regardless of plan), applied to BOTH
+# claim_batch_sql AND claim_partition_head_sql (the per-partition head claim = wamn-fqg.10,
+# which had the IN-subquery form). Verified: local failoverbench --mode all reproduced the
+# over-lock in ~50% of runs before the fix and 0 of 40 after (instrumented run_query showed
+# a single claim execution returning 10 rows); a direct psql proof + the wamn-run-queue
+# live-apply gate confirm both CTE builders lease exactly n on PG18. docs/run-queue.md §
+# Claim-builder shape. failoverbench gains claim/park/heartbeat modes driving run-next
+# against the SAME ephemeral schema: claim (single-drain + N-replica exactly-once via SKIP
+# LOCKED + wrong-flow: an alt-flow run drives reverse->"tpiecer" not "RECEIPT"), park (a
+# delay run parks+releases the lease, then wakes+completes), heartbeat (per-node renewal
+# ADVANCES lease_expires_at across a long walk — a DETERMINISTIC lease-value poll, no steal
+# race). The guest's DIRECT exports (run/run-s6) are byte-UNCHANGED so flowbench(S3)/
+# testhostbench(S6) regress by non-change. 4 guest MUTANTS killed (drop dequeue / read
+# FLOW_ID const / park->dequeue / drop per-node renew each FAIL a NAMED failoverbench mode)
+# + 3 fence MUTANTS (drop `AS MATERIALIZED` on claim_batch_sql / claim_partition_head_sql,
+# and inject a `FROM (` derived table, each FAIL a NAMED drift-guard).
+# SEED-vs-LIVE CAVEAT: the gates SEED run_queue directly (the write-ahead a dispatcher
+# does) — the LIVE dispatcher->queue->runner chain closes only with a runner Deployment
+# (a52-analog, FILED follow-up). docs/run-queue.md § Guest-side queue claim.
+cargo test -p wamn-run-store   # incl select_run_dispatch shape (fl3's traceparent seam)
+cargo build -p wamn-run-queue --no-default-features   # the guest's pure claim-path core builds alone
+cargo clippy -p wamn-host -p wamn-gates -p wamn-run-store -p wamn-run-queue --all-targets \
+  && cargo fmt -p wamn-host -p wamn-gates -p wamn-run-store -p wamn-run-queue --check
+(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)   # guest CHANGED
+cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
+# Local iteration (throwaway postgres:18 + wamn_app; failoverbench --mode all now includes
+# claim/park/heartbeat — the guest CHANGED so rebuild the wasm above first):
+docker run -d --rm --name wamn-fqg4-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+docker exec wamn-fqg4-pg psql -U postgres -d wamn -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
+  ./target/debug/wamn-gates --log-level error failoverbench \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn --mode all
+docker stop wamn-fqg4-pg
+# In-cluster gate of record (failoverbench-job runs claim/park/heartbeat + the failover/
+# janitor/reverse regression). A GUEST + HOST change => FULL docker rebuild BOTH --target
+# stages + kind load BOTH images (+ flowbench/testhostbench regress on the new guest):
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system apply -f deploy/failoverbench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/failoverbench --timeout=240s
+kubectl -n wamn-system logs job/failoverbench
+
 # [5.14] shared trigger dispatcher — cron + outbox + parked-wake for ALL projects
 # (wamn-fqg.3): the always-on control-plane loop D3/D4 locked (LISTEN/NOTIFY removed
 # entirely — the outbox is POLLED with adaptive per-project intervals; NATS-core

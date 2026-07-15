@@ -79,6 +79,15 @@ pub fn select_run_state_sql() -> String {
     "SELECT state_json::text FROM runs WHERE run_id = $1".to_string()
 }
 
+/// Read a claimed run's dispatch inputs — the flow it runs and the trigger
+/// input a dispatcher persisted — so a guest that claimed the run from the queue
+/// (fqg.4) drives the *recorded* flow + input, not a hard-coded fixture id. `$1`
+/// run_id; RLS scopes the tenant (like the other read builders). A per-run
+/// `traceparent` (wamn-fl3) is the natural next column added to this projection.
+pub fn select_run_dispatch_sql() -> String {
+    "SELECT flow_id, input_json::text FROM runs WHERE run_id = $1".to_string()
+}
+
 /// Persist the run's `state_json` (parking WITHOUT a `node_runs` row, so a
 /// resume re-enters the parked node). `$1` run_id, `$2` state_json.
 pub fn update_run_state_sql() -> String {
@@ -158,6 +167,20 @@ mod tests {
                 "{sql}"
             );
         }
+    }
+
+    #[test]
+    fn dispatch_read_projects_flow_and_input() {
+        // The claim path (fqg.4) resolves the flow + input from the recorded
+        // run, not a fixture constant; fl3 extends this exact projection with
+        // `traceparent`.
+        let sql = select_run_dispatch_sql();
+        assert!(sql.contains("SELECT flow_id, input_json::text"), "{sql}");
+        assert!(sql.contains("FROM runs WHERE run_id = $1"), "{sql}");
+        assert!(
+            !sql.contains("wamn_run."),
+            "schema must be unqualified: {sql}"
+        );
     }
 
     #[test]

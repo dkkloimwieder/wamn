@@ -74,6 +74,7 @@ dependencies = [
  "wamn-node-guest",
  "wamn-node-sdk",
  "wamn-nodes",
+ "wamn-run-queue",
  "wamn-run-store",
  "wamn-runner",
  "wit-bindgen",
@@ -549,6 +550,14 @@ dependencies = [
  "serde_json",
  "wamn-api",
  "wamn-node-sdk",
+]
+
+[[package]]
+name = "wamn-run-queue"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "wamn-run-store",
 ]
 
 [[package]]

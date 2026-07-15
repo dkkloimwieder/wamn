@@ -80,6 +80,16 @@ pub const SCHEMA_CONFIG_KEY: &str = "wamn.schema";
 /// S2 bench). Set by the platform, not the guest.
 pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 
+/// Per-workload config key carrying the runner's durable-queue LEASE OWNER
+/// identity (fqg.4). Optional: absent leaves `app.runner` unset (the S2..S6 and
+/// gateway paths never claim from the queue). When set, the plugin injects
+/// `SET LOCAL app.runner` alongside the tenant claim, so a flowrunner replica
+/// that claims its own work reads a stable, non-spoofable owner
+/// (`current_setting('app.runner', true)`) to lease/renew queue rows under —
+/// the per-replica identity the reclaim + owner-guarded heartbeat need. Set by
+/// the platform (the workload instance id), not the guest.
+pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
+
 /// The project id used when a component names none — the single database a
 /// [`WamnPostgresConfig`] URL points at.
 pub const DEFAULT_PROJECT: &str = "default";
@@ -276,6 +286,12 @@ pub struct WamnPostgres {
     /// claim, so unqualified table names resolve to a host-chosen schema (S6:
     /// prod = the shared fixture schema, test = a per-run ephemeral schema).
     schemas: std::sync::RwLock<HashMap<String, String>>,
+    /// component id → durable-queue lease owner (fqg.4). Absent (the default)
+    /// leaves `app.runner` unset — so every non-claiming path (S2..S6, the
+    /// gateway) is byte-unchanged. When set, the plugin injects
+    /// `SET LOCAL app.runner` so a flowrunner replica reads its owner identity to
+    /// claim/renew queue rows under.
+    runners: std::sync::RwLock<HashMap<String, String>>,
     /// Connections destroyed instead of repooled (chaos-gate observability).
     destroyed: Arc<AtomicU64>,
 }
@@ -318,6 +334,17 @@ fn valid_project(project: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// A durable-queue lease owner. Embedded in the quoted `SET LOCAL app.runner`
+/// literal (like the tenant claim), so the charset must not escape the quotes:
+/// bounded `[A-Za-z0-9_-]`, no quotes/backslashes.
+fn valid_runner(runner: &str) -> bool {
+    !runner.is_empty()
+        && runner.len() <= 128
+        && runner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 /// A `search_path` schema name. Stricter than a tenant: no hyphens, so it is a
 /// bare unquoted SQL identifier that cannot escape the `SET LOCAL search_path`
 /// statement it is embedded in.
@@ -355,6 +382,7 @@ impl WamnPostgres {
             tenants: std::sync::RwLock::new(HashMap::new()),
             projects: std::sync::RwLock::new(HashMap::new()),
             schemas: std::sync::RwLock::new(HashMap::new()),
+            runners: std::sync::RwLock::new(HashMap::new()),
             destroyed: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -512,6 +540,32 @@ impl WamnPostgres {
             .cloned()
     }
 
+    /// Register the durable-queue lease owner for a component id (fqg.4). When
+    /// set, every transaction the plugin opens for that component also runs
+    /// `SET LOCAL app.runner`, so a flowrunner replica reads a stable owner to
+    /// claim/renew queue rows under. The bench harness calls this directly (a
+    /// distinct owner per replica); the host path feeds it from the
+    /// `wamn.runner` workload config.
+    pub fn set_runner(&self, component_id: &str, runner: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_runner(runner),
+            "invalid runner owner {runner:?}: 1-128 chars of [A-Za-z0-9_-] required"
+        );
+        self.runners
+            .write()
+            .expect("runners lock poisoned")
+            .insert(component_id.to_string(), runner.to_string());
+        Ok(())
+    }
+
+    fn runner_for(&self, component_id: &str) -> Option<String> {
+        self.runners
+            .read()
+            .expect("runners lock poisoned")
+            .get(component_id)
+            .cloned()
+    }
+
     /// Connections destroyed instead of repooled since startup.
     pub fn destroyed_connections(&self) -> u64 {
         self.destroyed.load(Ordering::Relaxed)
@@ -589,6 +643,7 @@ impl WamnPostgres {
         conn: &Object,
         tenant: &str,
         schema: Option<&str>,
+        runner: Option<&str>,
         statement_timeout_ms: u32,
     ) -> Result<(), PgError> {
         debug_assert!(valid_tenant(tenant));
@@ -610,6 +665,19 @@ impl WamnPostgres {
                 )));
             }
             sql.push_str(&format!(" SET LOCAL search_path = {schema};"));
+        }
+        if let Some(runner) = runner {
+            debug_assert!(valid_runner(runner));
+            if !valid_runner(runner) {
+                return Err(PgError::QueryError((
+                    "WAMN0".to_string(),
+                    "invalid runner owner".to_string(),
+                )));
+            }
+            // fqg.4: the durable-queue lease owner a flowrunner replica reads
+            // via `current_setting('app.runner', true)`. Quoted like the tenant;
+            // `valid_runner` guarantees the literal cannot escape.
+            sql.push_str(&format!(" SET LOCAL app.runner = '{runner}';"));
         }
         conn.batch_execute(&sql).await.map_err(|e| map_pg_error(&e))
     }
@@ -639,9 +707,16 @@ impl WamnPostgres {
         let tenant = self.require_tenant(component_id)?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
+        let runner = self.runner_for(component_id);
         let (conn, pp) = self.checkout(&project).await?;
         if let Err(e) = self
-            .begin_with_claims(&conn, &tenant, schema.as_deref(), pp.statement_timeout_ms)
+            .begin_with_claims(
+                &conn,
+                &tenant,
+                schema.as_deref(),
+                runner.as_deref(),
+                pp.statement_timeout_ms,
+            )
             .await
         {
             // Claim injection failed: connection state is unknown — destroy.
@@ -749,6 +824,15 @@ impl HostPlugin for WamnPostgres {
                 component = item.id(),
                 schema,
                 "wamn:postgres search_path schema registered"
+            );
+        }
+        if let Some(runner) = item.local_resources().config.get(RUNNER_CONFIG_KEY) {
+            let runner = runner.clone();
+            self.set_runner(item.id(), &runner)?;
+            tracing::debug!(
+                component = item.id(),
+                runner,
+                "wamn:postgres runner lease-owner registered"
             );
         }
         client::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
@@ -1247,12 +1331,19 @@ impl client::Host for ActiveCtx<'_> {
         };
         let project = plugin.project_for(&component_id);
         let schema = plugin.schema_for(&component_id);
+        let runner = plugin.runner_for(&component_id);
         let (conn, pp) = match plugin.checkout(&project).await {
             Ok(c) => c,
             Err(e) => return Ok(Err(e)),
         };
         if let Err(e) = plugin
-            .begin_with_claims(&conn, &tenant, schema.as_deref(), pp.statement_timeout_ms)
+            .begin_with_claims(
+                &conn,
+                &tenant,
+                schema.as_deref(),
+                runner.as_deref(),
+                pp.statement_timeout_ms,
+            )
             .await
         {
             plugin.destroy(conn);

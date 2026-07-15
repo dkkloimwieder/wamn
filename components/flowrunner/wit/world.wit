@@ -51,6 +51,24 @@ world flowrunner {
   /// already exists (idempotent side effects). Returns the flow version it
   /// executed under, so a hot-reloaded version change is observable.
   export run: func(run-id: string, payload: string) -> result<u32, string>;
+
+  /// Claim, drive, and dequeue the NEXT available run from the durable
+  /// `run_queue` — the production dispatch path, guest-side (fqg.4). One
+  /// invocation: claim one unpartitioned, currently-claimable run
+  /// (`FOR UPDATE SKIP LOCKED`) for `lease-ttl-ms`; read its flow + trigger
+  /// input from the dispatcher-persisted `runs` row (NOT a fixture constant);
+  /// flip it `dispatched` -> `running`; walk it with the 5.2 engine, renewing
+  /// the lease per node so a live-but-slow runner is never reclaimed; then
+  /// dequeue on completion, or park (pushing `available_at` and RELEASING the
+  /// lease) on a `delay`. The lease OWNER is host-injected
+  /// (`app.runner`) — the caller supplies only the TTL. The queue empties
+  /// concurrently across replicas via `SKIP LOCKED`, so a runner loops this.
+  ///
+  /// Returns the record `(claimed, run-id, outcome)` as a tuple (the house
+  /// idiom, cf. `run-s6`): `claimed` is false when the queue was empty (nothing
+  /// to do, `run-id` absent); otherwise `run-id` is the claimed run and
+  /// `outcome` is 0 = completed, 1 = parked (re-claimable at wake), 2 = failed.
+  export run-next: func(lease-ttl-ms: u64) -> result<tuple<bool, option<string>, u32>, string>;
   /// Like `run`, but busy-loops after the side-effect write commits and BEFORE
   /// the checkpoint advances — the exact pod-death window. Never returns; the
   /// harness epoch-kills it, then calls `run` on a fresh instance to resume.

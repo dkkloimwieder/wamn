@@ -40,7 +40,10 @@
 //! [`dispatch`]): cron due-tick evaluation over injected time, outbox
 //! matching, deterministic trigger run ids, and the adaptive per-project poll
 //! cadence. The **walking skeleton** deferred these to follow-ups; all are now
-//! delivered except the guest-self-claim rewire (fqg.4).
+//! delivered, including the **guest-self-claim** (fqg.4): the flowrunner guest
+//! links the pure claim-path builders ([`sql`]) with `default-features = false`
+//! and claims its own work via `run-next` (the cron/outbox/dispatch trio stays
+//! host-side behind the default `dispatcher` feature).
 //! Does **not** own: the engine walk / retry / reconstruction (5.2 + 5.7 — the
 //! claimed run drives them); the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
 //! and reuses the reserved `dispatched`/`infrastructure-failure` statuses via
@@ -49,22 +52,32 @@
 //! store (5.10).
 
 mod claim;
+// The trigger-dispatcher trio (cron due-tick evaluation, outbox matching, the
+// adaptive poll cadence) needs croner + chrono + serde_json. It is gated behind
+// the default `dispatcher` feature so the flowrunner guest (fqg.4) can link the
+// pure claim-path builders (`sql`) WITHOUT those crates in its wasm.
+#[cfg(feature = "dispatcher")]
 mod cron;
+#[cfg(feature = "dispatcher")]
 mod dispatch;
 mod janitor;
 mod lease;
 mod model;
+#[cfg(feature = "dispatcher")]
 mod outbox;
 mod partition;
 mod reconcile;
 mod sql;
 
 pub use claim::{ClaimPlan, ClaimState, Claimed, claim_state, is_claimable, plan_claim};
+#[cfg(feature = "dispatcher")]
 pub use cron::{CronError, cron_firing, cron_tick_of, due_tick, mint_cron_run_id, next_fire};
+#[cfg(feature = "dispatcher")]
 pub use dispatch::{DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, Firing, next_interval};
 pub use janitor::{JanitorVerdict, janitor_verdict, orphans};
 pub use lease::{lease_deadline, lease_live, should_renew};
 pub use model::{Millis, PartitionOwner, QueueEntry};
+#[cfg(feature = "dispatcher")]
 pub use outbox::{OutboxRow, RowEventFlow, match_outbox, mint_outbox_run_id, plan_ack};
 pub use partition::{partition_lease_live, plan_acquire, plan_partition_claim};
 pub use reconcile::{next_reconcile, reconcile_due};

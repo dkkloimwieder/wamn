@@ -71,22 +71,49 @@ pub fn enqueue_sql() -> String {
 /// The `partition_key IS NULL` guard leaves partitioned runs to the per-partition
 /// ownership path ([`claim_partition_head_sql`]) so they are never dispatched out of
 /// order by the order-agnostic global claim.
+///
+/// The locking `SELECT ... FOR UPDATE SKIP LOCKED LIMIT n` lives in a CTE fenced
+/// `AS MATERIALIZED`, which is what makes the claim take **exactly** `n` rows.
+/// NEITHER a `WHERE (tenant_id, run_id) IN (subquery)` NOR a plain `FROM (subquery)`
+/// derived table is an evaluation fence: the planner may place the `LockRows` subplan
+/// on the inner side of a nested-loop join and RE-SCAN it once per outer row, and
+/// because `SKIP LOCKED` advances past already-locked rows on each re-scan a single
+/// statement then leases FAR MORE than `n` rows. This is a plan-dependent over-claim
+/// (the classic Postgres `UPDATE … FOR UPDATE SKIP LOCKED LIMIT` gotcha); it surfaced
+/// through the `wamn:postgres` plugin's cached prepared-statement execution —
+/// wamn-fqg.4's guest self-claim is the first caller to run this builder through the
+/// plugin, and it intermittently leased the whole batch on a `LIMIT 1` claim (a rewrite
+/// to the plain `FROM`-join did NOT fix it, which is what pinned the cause to plan-driven
+/// subquery re-execution rather than the SQL shape). `AS MATERIALIZED` forces Postgres
+/// to evaluate the CTE once into a tuplestore regardless of the join plan, so the lock
+/// happens exactly once — the canonical SKIP-LOCKED batch-claim shape.
 pub fn claim_batch_sql(limit: usize) -> String {
+    // The locking SELECT lives in a CTE fenced `AS MATERIALIZED` so Postgres
+    // evaluates `FOR UPDATE SKIP LOCKED LIMIT n` EXACTLY ONCE. A plain
+    // `FROM (subquery)` derived table is NOT a fence: the planner may put the
+    // LockRows subplan on the inner side of a nested-loop join and RESCAN it per
+    // outer row, and each rescan's SKIP LOCKED advances to fresh unlocked rows —
+    // so a `LIMIT 1` claim intermittently leases the WHOLE batch (plan-dependent,
+    // surfaced first by the fqg.4 guest self-claim through the plugin's cached
+    // prepared-statement path). MATERIALIZED forces single evaluation regardless
+    // of the join plan (the canonical SKIP LOCKED job-queue claim shape).
     format!(
-        "UPDATE run_queue AS q \
+        "WITH claimed AS MATERIALIZED ( \
+            SELECT c.tenant_id, c.run_id FROM run_queue AS c \
+             WHERE c.partition_key IS NULL \
+               AND c.available_at <= now() \
+               AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now()) \
+               AND (c.attempts < c.max_attempts OR c.lease_expires_at IS NULL) \
+             ORDER BY c.available_at, c.run_id \
+             FOR UPDATE SKIP LOCKED \
+             LIMIT {limit} \
+        ) \
+        UPDATE run_queue AS q \
             SET lease_owner = $1, \
                 lease_expires_at = now() + ($2::bigint * interval '1 millisecond'), \
                 attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
-          WHERE (q.tenant_id, q.run_id) IN ( \
-              SELECT c.tenant_id, c.run_id FROM run_queue AS c \
-               WHERE c.partition_key IS NULL \
-                 AND c.available_at <= now() \
-                 AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now()) \
-                 AND (c.attempts < c.max_attempts OR c.lease_expires_at IS NULL) \
-               ORDER BY c.available_at, c.run_id \
-               FOR UPDATE SKIP LOCKED \
-               LIMIT {limit} \
-          ) \
+           FROM claimed \
+          WHERE q.tenant_id = claimed.tenant_id AND q.run_id = claimed.run_id \
           RETURNING q.run_id, q.attempts, q.lease_expires_at"
     )
 }
@@ -368,12 +395,15 @@ pub fn release_partition_sql() -> String {
 /// Returns each claimed `run_id`, its `partition_key`, new `attempts`, and
 /// `lease_expires_at`. `limit` is a numeric literal.
 pub fn claim_partition_head_sql(limit: usize) -> String {
+    // Same evaluation-fence discipline as [`claim_batch_sql`]: the locking head
+    // selection lives in a CTE fenced `AS MATERIALIZED` so `FOR UPDATE OF c SKIP
+    // LOCKED LIMIT n` runs EXACTLY ONCE. The prior `WHERE (tenant_id, run_id) IN
+    // (subquery)` form leaves the LockRows scan re-executable per outer row, and a
+    // rescan's SKIP LOCKED advances to fresh rows — leasing more than `n` heads
+    // (the wamn-fqg.4 over-claim, in the per-partition builder = wamn-fqg.10). The
+    // fence makes it structurally exact regardless of plan.
     format!(
-        "UPDATE run_queue AS q \
-            SET lease_owner = $1, \
-                lease_expires_at = now() + ($2::bigint * interval '1 millisecond'), \
-                attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
-          WHERE (q.tenant_id, q.run_id) IN ( \
+        "WITH heads AS MATERIALIZED ( \
               SELECT c.tenant_id, c.run_id \
                 FROM run_queue AS c \
                 JOIN partition_owner AS o \
@@ -399,7 +429,13 @@ pub fn claim_partition_head_sql(limit: usize) -> String {
                ORDER BY c.available_at, c.run_id \
                FOR UPDATE OF c SKIP LOCKED \
                LIMIT {limit} \
-          ) \
+        ) \
+        UPDATE run_queue AS q \
+            SET lease_owner = $1, \
+                lease_expires_at = now() + ($2::bigint * interval '1 millisecond'), \
+                attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
+           FROM heads \
+          WHERE q.tenant_id = heads.tenant_id AND q.run_id = heads.run_id \
           RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at"
     )
 }

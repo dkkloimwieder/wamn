@@ -58,7 +58,7 @@ use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 use wamn_run_queue::{
     claim_batch_sql, dequeue_sql, enqueue_sql, janitor_sweep_sql, mark_running_sql,
-    write_ahead_run_sql,
+    write_ahead_run_sql, write_ahead_triggered_run_sql,
 };
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::plugin::HostPlugin;
@@ -91,6 +91,18 @@ pub enum Mode {
     Failover,
     JanitorGuard,
     ReverseRace,
+    /// fqg.4: the guest claims its own work — claim + drive + dequeue, single
+    /// runner draining the queue AND concurrent replicas draining it
+    /// exactly-once (SKIP LOCKED), plus the wrong-flow guard (the claim path
+    /// drives the RECORDED flow, not a fixture constant).
+    Claim,
+    /// fqg.4: a delay run the guest parks (releasing the lease) then a later
+    /// run-next re-claims and completes — the queue-driven parked-wake.
+    Park,
+    /// fqg.4: the per-node lease heartbeat — a live-but-slow runner keeps its
+    /// lease across a long walk (no spurious reclaim), even under a short TTL and
+    /// a contending replica.
+    Heartbeat,
     All,
 }
 
@@ -320,10 +332,15 @@ async fn enqueue(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
 // The guest side (flowrunner Harness/Worker) — mirrors flowbench.
 // ---------------------------------------------------------------------------
 
+/// The `run-next` export's typed signature — `(lease-ttl-ms) -> (claimed,
+/// run-id, outcome)` (factored out; the tuple-of-result is verbose inline).
+type RunNextFunc = TypedFunc<(u64,), (Result<(bool, Option<String>, u32), String>,)>;
+
 struct Worker {
     store: Store<SharedCtx>,
     run: TypedFunc<(String, String), (Result<u32, String>,)>,
     run_until_kill: TypedFunc<(String, String), (Result<u32, String>,)>,
+    run_next: RunNextFunc,
     sink_count: TypedFunc<(String,), (Result<u64, String>,)>,
     reset: TypedFunc<(String,), (Result<u64, String>,)>,
 }
@@ -335,6 +352,18 @@ impl Worker {
             .call_async(&mut self.store, (run_id.to_string(), payload.to_string()))
             .await?;
         r.map_err(|e| anyhow::anyhow!("run: {e}"))
+    }
+    /// One turn of the guest's production dispatch loop (fqg.4): claim + drive +
+    /// dequeue/park the next queued run. Returns (claimed, run_id, outcome).
+    async fn call_run_next(
+        &mut self,
+        lease_ttl_ms: u64,
+    ) -> anyhow::Result<(bool, Option<String>, u32)> {
+        let (r,) = self
+            .run_next
+            .call_async(&mut self.store, (lease_ttl_ms,))
+            .await?;
+        r.map_err(|e| anyhow::anyhow!("run-next: {e}"))
     }
     /// Returns the raw call result so the caller can distinguish an epoch trap
     /// (expected) from an unexpected return.
@@ -405,8 +434,30 @@ impl Harness {
 
     /// A fresh flowrunner instance (a "replica"): `deadline = Some(KILL_TICKS)` for
     /// the victim that will be epoch-killed mid-effect, `None` for a normal runner.
+    /// The component id is the shared `TENANT` (no `app.runner` registered — the
+    /// failover/reverse/janitor phases drive `run`/`run-until-kill`, not the claim
+    /// path).
     async fn worker(&self, deadline: Option<u64>) -> anyhow::Result<Worker> {
-        let ctx = Ctx::builder(TENANT.to_string(), TENANT.to_string())
+        self.build_worker(TENANT, deadline).await
+    }
+
+    /// A CLAIMER replica (fqg.4): a distinct component id so the plugin injects a
+    /// distinct `app.runner` lease owner (registered here to the component id
+    /// itself), while tenant + schema stay the shared `TENANT`/`SCHEMA` — so
+    /// concurrent claimers see one queue but lease under distinct owners.
+    async fn worker_claim(&self, owner: &str) -> anyhow::Result<Worker> {
+        self.plugin.set_tenant(owner, TENANT)?;
+        self.plugin.set_schema(owner, SCHEMA)?;
+        self.plugin.set_runner(owner, owner)?;
+        self.build_worker(owner, None).await
+    }
+
+    async fn build_worker(
+        &self,
+        component_id: &str,
+        deadline: Option<u64>,
+    ) -> anyhow::Result<Worker> {
+        let ctx = Ctx::builder(component_id.to_string(), component_id.to_string())
             .with_plugins(self.plugin_map())
             .build();
         let mut store = Store::new(self.engine.inner(), SharedCtx::new(ctx));
@@ -419,12 +470,14 @@ impl Harness {
         }
         let run = f!("run");
         let run_until_kill = f!("run-until-kill");
+        let run_next = f!("run-next");
         let sink_count = f!("sink-count");
         let reset = f!("reset");
         Ok(Worker {
             store,
             run,
             run_until_kill,
+            run_next,
             sink_count,
             reset,
         })
@@ -477,6 +530,15 @@ pub async fn run(args: FailoverBenchArgs) -> anyhow::Result<()> {
         }
         if run_all || args.mode == Mode::ReverseRace {
             pass &= reverse_race_phase(&harness, &app_url, args.iters).await?;
+        }
+        if run_all || args.mode == Mode::Claim {
+            pass &= claim_phase(&harness, &app_url, &admin_url, args.iters).await?;
+        }
+        if run_all || args.mode == Mode::Park {
+            pass &= park_phase(&harness, &app_url).await?;
+        }
+        if run_all || args.mode == Mode::Heartbeat {
+            pass &= heartbeat_phase(&harness, &app_url, &admin_url).await?;
         }
         anyhow::Ok(())
     }
@@ -842,5 +904,406 @@ async fn janitor_guard_phase(app_url: &str, admin_url: &str) -> anyhow::Result<b
         && orphan_status == "infrastructure-failure"
         && orphan_queued == 0;
     println!("PASS(janitor-guard: keeps a completed run, still reaps a real orphan): {pass}");
+    Ok(pass)
+}
+
+// ===========================================================================
+// fqg.4: the guest claims its own work from the queue (the production dispatch
+// path, guest-side). The flowrunner `run-next` export claims a run
+// (`FOR UPDATE SKIP LOCKED`), reads its flow + input from the dispatcher-
+// persisted `runs` row, flips it running, walks it renewing the lease per node,
+// and dequeues / parks. These phases drive that export against the SAME
+// ephemeral schema (`runs`/`node_runs`/`run_queue`/`flows`/`sink`) the failover
+// phases use — so the claim path is a gate-of-record path, not a sandbox.
+// ===========================================================================
+
+/// A second flow with a DISTINCT id + transform, so the wrong-flow guard can
+/// tell whether the claim path drove the RECORDED flow (reverse -> "tpiecer")
+/// or a hard-coded fixture id (upper -> "RECEIPT").
+const ALT_FLOW_ID: &str = "alt-flow";
+/// A `delay`-ending flow the park gate seeds (webhook-in -> delay -> pg-write ->
+/// respond — no http-call, so no egress is needed in this bench).
+const DELAY_FLOW_ID: &str = "poc-delay";
+/// A long transform chain (heartbeat gate): enough nodes that the walk spans
+/// several lease renewals.
+const HEARTBEAT_FLOW_ID: &str = "heartbeat";
+
+fn alt_flow_json() -> String {
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"{ALT_FLOW_ID}","version":1,
+            "trigger":{{"type":"webhook","sync":true}},"entry":"in",
+            "nodes":[
+              {{"id":"in","type":"webhook-in"}},
+              {{"id":"t","type":"transform","config":{{"op":"reverse"}}}},
+              {{"id":"w","type":"pg-write"}},
+              {{"id":"c","type":"conditional","config":{{"min-len":3}}}},
+              {{"id":"out","type":"respond"}}
+            ],
+            "edges":[{{"from":"in","to":"t"}},{{"from":"t","to":"w"}},
+                     {{"from":"w","to":"c"}},{{"from":"c","to":"out"}}]}}"#
+    )
+}
+
+fn delay_flow_json(delay_secs: u64) -> String {
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"{DELAY_FLOW_ID}","version":1,
+            "trigger":{{"type":"cron","schedule":"* * * * *"}},"entry":"in",
+            "nodes":[
+              {{"id":"in","type":"webhook-in"}},
+              {{"id":"d","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
+              {{"id":"w","type":"pg-write"}},
+              {{"id":"out","type":"respond"}}
+            ],
+            "edges":[{{"from":"in","to":"d"}},{{"from":"d","to":"w"}},
+                     {{"from":"w","to":"out"}}]}}"#
+    )
+}
+
+fn heartbeat_flow_json(n: usize) -> String {
+    let mut nodes = String::from(r#"{"id":"in","type":"webhook-in"}"#);
+    let mut edges = String::new();
+    let mut prev = String::from("in");
+    for i in 0..n {
+        let id = format!("t{i}");
+        nodes.push_str(&format!(
+            r#",{{"id":"{id}","type":"transform","config":{{"op":"upper"}}}}"#
+        ));
+        edges.push_str(&format!(r#"{{"from":"{prev}","to":"{id}"}},"#));
+        prev = id;
+    }
+    nodes.push_str(r#",{"id":"out","type":"respond"}"#);
+    edges.push_str(&format!(r#"{{"from":"{prev}","to":"out"}}"#));
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"{HEARTBEAT_FLOW_ID}","version":1,
+            "trigger":{{"type":"cron","schedule":"* * * * *"}},"entry":"in",
+            "nodes":[{nodes}],"edges":[{edges}]}}"#
+    )
+}
+
+/// Seed an active v1 flow host-side (the guest's `seed` export is retired, SR2).
+async fn seed_flow(client: &Client, flow_id: &str, json: &str) -> anyhow::Result<()> {
+    wamn_gate_harness::seed_flow_version(client, TENANT, flow_id, 1, true, json, true).await
+}
+
+/// `count(*)`-style scalar read (a free helper so it never holds a borrow of the
+/// seed connection across the `&mut` transactions `seed_claim_run` needs).
+async fn count_rows(client: &Client, sql: &str) -> anyhow::Result<i64> {
+    Ok(client.query_one(sql, &[]).await?.get(0))
+}
+
+/// Seed a run the way the DISPATCHER does: the write-ahead `dispatched` row with
+/// its `flow_id` + trigger `input_json`, co-transacted with the queue row — the
+/// exact producer state the guest claims (`write_ahead_triggered_run_sql` +
+/// `enqueue_sql`). `input_json` is JSON text (`"receipt"` = the string payload).
+async fn seed_claim_run(
+    client: &mut Client,
+    run_id: &str,
+    flow_id: &str,
+    input_json: &str,
+) -> anyhow::Result<()> {
+    let tx = client.transaction().await?;
+    tx.execute(
+        &write_ahead_triggered_run_sql(),
+        &[&run_id, &flow_id, &1i32, &"cron", &input_json],
+    )
+    .await?;
+    tx.execute(
+        &enqueue_sql(),
+        &[&run_id, &Option::<&str>::None, &0i32, &0i64],
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// claim: single runner drains the queue, concurrent replicas drain it
+// exactly-once (SKIP LOCKED), and the claim path drives the RECORDED flow.
+// ---------------------------------------------------------------------------
+
+async fn claim_phase(
+    harness: &Harness,
+    app_url: &str,
+    admin_url: &str,
+    iters: usize,
+) -> anyhow::Result<bool> {
+    println!(
+        "\n## claim — guest claims from run_queue: drive+dequeue, concurrent exactly-once, wrong-flow"
+    );
+    reset(admin_url).await?;
+    let (mut seed_conn, _h) = connect_app(app_url).await?;
+    seed_flow(&seed_conn, FLOW_ID, &crate::flowbench::flow_json(1)).await?;
+    seed_flow(&seed_conn, ALT_FLOW_ID, &alt_flow_json()).await?;
+
+    // Generous TTL: the lease never expires here, so claim/exactly-once are not
+    // clouded by reclaim noise (the heartbeat gate exercises renewal separately).
+    let ttl: u64 = 30_000;
+    let n = iters;
+
+    // --- (1) single runner drains N seeded runs, each driven exactly once ---
+    for i in 0..n {
+        seed_claim_run(
+            &mut seed_conn,
+            &format!("claim-{i}"),
+            FLOW_ID,
+            "\"receipt\"",
+        )
+        .await?;
+    }
+    let mut drainer = harness.worker_claim("drainer").await?;
+    let mut drained = 0usize;
+    loop {
+        let (claimed, _rid, outcome) = drainer.call_run_next(ttl).await?;
+        if !claimed {
+            break;
+        }
+        if outcome == 0 {
+            drained += 1;
+        }
+    }
+    let queued = count_rows(
+        &seed_conn,
+        &format!("SELECT count(*) FROM {SCHEMA}.run_queue WHERE run_id LIKE 'claim-%'"),
+    )
+    .await?;
+    let sinks = count_rows(
+        &seed_conn,
+        &format!("SELECT count(*) FROM {SCHEMA}.sink WHERE run_id LIKE 'claim-%'"),
+    )
+    .await?;
+    let done = count_rows(
+        &seed_conn,
+        &format!(
+            "SELECT count(*) FROM {SCHEMA}.runs WHERE run_id LIKE 'claim-%' AND status='completed'"
+        ),
+    )
+    .await?;
+    let single_drain = drained == n && queued == 0 && sinks as usize == n && done as usize == n;
+    println!(
+        "single drain: drained {drained}/{n}, queue drained = {} (rows={queued}), sinks={sinks}, completed={done} -> {single_drain}",
+        queued == 0
+    );
+
+    // --- (2) concurrent exactly-once: M replicas race one queue (SKIP LOCKED) ---
+    reset(admin_url).await?;
+    seed_flow(&seed_conn, FLOW_ID, &crate::flowbench::flow_json(1)).await?;
+    for i in 0..n {
+        seed_claim_run(&mut seed_conn, &format!("conc-{i}"), FLOW_ID, "\"receipt\"").await?;
+    }
+    const M: usize = 4;
+    let mut handles = Vec::new();
+    for w in 0..M {
+        let mut worker = harness.worker_claim(&format!("claimer-{w}")).await?;
+        handles.push(tokio::spawn(async move {
+            let mut c = 0usize;
+            loop {
+                match worker.call_run_next(ttl).await {
+                    Ok((true, _, _)) => c += 1,
+                    Ok((false, _, _)) => break,
+                    Err(e) => {
+                        tracing::error!("claimer error: {e}");
+                        break;
+                    }
+                }
+            }
+            c
+        }));
+    }
+    let mut total = 0usize;
+    for h in handles {
+        total += h.await.unwrap_or(0);
+    }
+    let conc_queued = count_rows(
+        &seed_conn,
+        &format!("SELECT count(*) FROM {SCHEMA}.run_queue WHERE run_id LIKE 'conc-%'"),
+    )
+    .await?;
+    // No run drove twice: the max sink rows for any single conc run is 1.
+    let conc_dup = count_rows(
+        &seed_conn,
+        &format!(
+            "SELECT COALESCE(MAX(c),0) FROM (SELECT count(*) c FROM {SCHEMA}.sink WHERE run_id LIKE 'conc-%' GROUP BY run_id) s"
+        ),
+    )
+    .await?;
+    let conc_done = count_rows(
+        &seed_conn,
+        &format!(
+            "SELECT count(*) FROM {SCHEMA}.runs WHERE run_id LIKE 'conc-%' AND status='completed'"
+        ),
+    )
+    .await?;
+    let exactly_once = total == n && conc_queued == 0 && conc_dup <= 1 && conc_done as usize == n;
+    println!(
+        "concurrent: {M} replicas drove {total}/{n} total, queue drained = {} (rows={conc_queued}), max sink rows/run = {conc_dup} (<=1), completed = {conc_done} -> {exactly_once}",
+        conc_queued == 0
+    );
+
+    // --- (3) wrong-flow: a run RECORDED as alt-flow must drive alt-flow (reverse),
+    // not a hard-coded fixture id (poc-receipt / upper). ---
+    reset(admin_url).await?;
+    seed_flow(&seed_conn, FLOW_ID, &crate::flowbench::flow_json(1)).await?;
+    seed_flow(&seed_conn, ALT_FLOW_ID, &alt_flow_json()).await?;
+    seed_claim_run(&mut seed_conn, "wrongflow", ALT_FLOW_ID, "\"receipt\"").await?;
+    let mut wf = harness.worker_claim("wf").await?;
+    let (wf_claimed, _rid, wf_outcome) = wf.call_run_next(ttl).await?;
+    let wf_payload: Option<String> = seed_conn
+        .query_opt(
+            &format!("SELECT payload FROM {SCHEMA}.sink WHERE run_id = 'wrongflow'"),
+            &[],
+        )
+        .await?
+        .map(|r| r.get(0));
+    let wrong_flow_ok = wf_claimed && wf_outcome == 0 && wf_payload.as_deref() == Some("tpiecer");
+    println!(
+        "wrong-flow: claimed={wf_claimed}, outcome={wf_outcome}, sink payload={wf_payload:?} (want 'tpiecer' = reverse of the RECORDED alt-flow, NOT 'RECEIPT') -> {wrong_flow_ok}"
+    );
+
+    let pass = single_drain && exactly_once && wrong_flow_ok;
+    println!(
+        "PASS(claim: guest drains the queue + concurrent exactly-once + drives the recorded flow): {pass}"
+    );
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// park: a delay run parks (releasing the lease) then a later run-next re-claims
+// and completes — the queue-driven parked-wake, guest-side.
+// ---------------------------------------------------------------------------
+
+async fn park_phase(harness: &Harness, app_url: &str) -> anyhow::Result<bool> {
+    println!("\n## park — a delay run parks (lease released), a later run-next completes it");
+    let (mut seed_conn, _h) = connect_app(app_url).await?;
+    seed_flow(&seed_conn, DELAY_FLOW_ID, &delay_flow_json(1)).await?; // 1s real-clock delay
+    let run_id = "park-1";
+    seed_claim_run(&mut seed_conn, run_id, DELAY_FLOW_ID, "\"x\"").await?;
+
+    let ttl: u64 = 30_000;
+    let mut worker = harness.worker_claim("parker").await?;
+
+    // First turn: the delay parks it. run-next returns outcome 1 (parked); the
+    // queue row survives with its lease RELEASED (NULL) and available_at pushed
+    // to the wake.
+    let (c1, _r1, out1) = worker.call_run_next(ttl).await?;
+    // query_opt: a mutant that dequeues instead of parking leaves NO row — the
+    // gate must print a clean `false`, not error on a missing row.
+    let lease_owner: Option<String> = seed_conn
+        .query_opt(
+            &format!("SELECT lease_owner FROM {SCHEMA}.run_queue WHERE run_id = $1"),
+            &[&run_id],
+        )
+        .await?
+        .and_then(|r| r.get(0));
+    let still_queued: i64 = seed_conn
+        .query_one(
+            &format!("SELECT count(*) FROM {SCHEMA}.run_queue WHERE run_id = $1"),
+            &[&run_id],
+        )
+        .await?
+        .get(0);
+    let parked = c1 && out1 == 1 && still_queued == 1 && lease_owner.is_none();
+    println!(
+        "park turn: claimed={c1}, outcome={out1} (1=parked), queue row kept={} lease released={} -> {parked}",
+        still_queued == 1,
+        lease_owner.is_none()
+    );
+
+    // Wait past the wake, then a run-next re-claims (a FREE wake — released lease)
+    // and completes.
+    tokio::time::sleep(Duration::from_millis(1300)).await;
+    let (c2, _r2, out2) = worker.call_run_next(ttl).await?;
+    let dequeued: i64 = seed_conn
+        .query_one(
+            &format!("SELECT count(*) FROM {SCHEMA}.run_queue WHERE run_id = $1"),
+            &[&run_id],
+        )
+        .await?
+        .get(0);
+    let status: String = seed_conn
+        .query_one(
+            &format!("SELECT status FROM {SCHEMA}.runs WHERE run_id = $1"),
+            &[&run_id],
+        )
+        .await?
+        .get(0);
+    let sink: i64 = seed_conn
+        .query_one(
+            &format!("SELECT count(*) FROM {SCHEMA}.sink WHERE run_id = $1"),
+            &[&run_id],
+        )
+        .await?
+        .get(0);
+    let woke = c2 && out2 == 0 && dequeued == 0 && status == "completed" && sink == 1;
+    println!(
+        "wake turn: claimed={c2}, outcome={out2} (0=completed), dequeued={} status={status} sink={sink} -> {woke}",
+        dequeued == 0
+    );
+
+    let pass = parked && woke;
+    println!("PASS(park: delay run parks + releases the lease, wakes and completes): {pass}");
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// heartbeat: the per-node lease renewal ADVANCES lease_expires_at across a long
+// walk (deterministic — no steal race). A dropped renew leaves it fixed at the
+// claim's value.
+// ---------------------------------------------------------------------------
+
+async fn heartbeat_phase(
+    harness: &Harness,
+    app_url: &str,
+    admin_url: &str,
+) -> anyhow::Result<bool> {
+    println!("\n## heartbeat — per-node lease renewal advances the lease during a long walk");
+    reset(admin_url).await?;
+    let (mut seed_conn, _h) = connect_app(app_url).await?;
+    seed_flow(&seed_conn, HEARTBEAT_FLOW_ID, &heartbeat_flow_json(20)).await?;
+    let run_id = "heartbeat-1";
+    seed_claim_run(&mut seed_conn, run_id, HEARTBEAT_FLOW_ID, "\"x\"").await?;
+
+    // Large TTL so the lease never EXPIRES (no steal); each per-node renew still
+    // moves lease_expires_at forward by the node's elapsed time.
+    let ttl: u64 = 60_000;
+    let mut worker = harness.worker_claim("hb").await?;
+    let drive = tokio::spawn(async move { worker.call_run_next(ttl).await });
+
+    // Poll the (committed) lease on a fresh connection while the guest walks.
+    let (poll_conn, _hp) = connect_app(app_url).await?;
+    let lease_q = format!("SELECT lease_expires_at FROM {SCHEMA}.run_queue WHERE run_id = $1");
+    let mut samples: Vec<std::time::SystemTime> = Vec::new();
+    for _ in 0..500 {
+        if let Some(row) = poll_conn.query_opt(&lease_q, &[&run_id]).await?
+            && let Some(ts) = row.get::<_, Option<std::time::SystemTime>>(0)
+        {
+            samples.push(ts);
+        }
+        if drive.is_finished() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let (claimed, _rid, outcome) = drive.await??;
+
+    // The lease advanced across the walk iff renewal fired per node: >= 2 samples
+    // and the max is strictly later than the min. A dropped per-node renew leaves
+    // every sample equal to the claim-time lease.
+    let advanced = samples.len() >= 2 && samples.iter().max() > samples.iter().min();
+    let sink: i64 = seed_conn
+        .query_one(
+            &format!("SELECT count(*) FROM {SCHEMA}.sink WHERE run_id = $1"),
+            &[&run_id],
+        )
+        .await?
+        .get(0);
+    // heartbeat flow has no pg-write, so completion is the signal it walked.
+    let completed = claimed && outcome == 0;
+    let _ = sink;
+    println!(
+        "heartbeat: {} lease samples, advanced = {advanced}, run completed = {completed}",
+        samples.len()
+    );
+    let pass = advanced && completed;
+    println!("PASS(heartbeat: per-node renewal advances the lease across the walk): {pass}");
     Ok(pass)
 }

@@ -190,6 +190,22 @@ fn claim_sql_is_skip_locked_and_bounded() {
     assert!(sql.contains("RETURNING q.run_id, q.attempts, q.lease_expires_at"));
     // The global claim leaves partitioned runs to the per-partition path.
     assert!(sql.contains("c.partition_key IS NULL"));
+    // The locking scan lives in a CTE fenced `AS MATERIALIZED` so `FOR UPDATE SKIP
+    // LOCKED LIMIT n` evaluates EXACTLY ONCE. Neither `WHERE (pk) IN (subquery)` nor a
+    // plain `FROM (subquery)` derived table is a fence: the planner can put the LockRows
+    // scan on the inner side of a nested-loop join and re-execute it per outer row, and
+    // each rescan's SKIP LOCKED advances to fresh rows — over-leasing the whole batch on
+    // a bounded claim (wamn-fqg.4; seen through the plugin's cached prepared-statement
+    // path — a plain FROM-join did NOT fix it). This shape assert is the load-bearing
+    // drift-guard: the over-claim is plan/timing-dependent so the runtime gate is FLAKY,
+    // but `AS MATERIALIZED` structurally leases exactly `limit`, so pin it — dropping the
+    // fence (or reverting to `IN`/plain-`FROM`) is caught here.
+    assert!(sql.contains("WITH claimed AS MATERIALIZED ("));
+    assert!(sql.contains("q.tenant_id = claimed.tenant_id AND q.run_id = claimed.run_id"));
+    // Neither of the two bug shapes: not a `WHERE (pk) IN (subquery)`, and not a bare
+    // `FROM (subquery)` derived table — both let the LockRows scan rescan and over-lease.
+    assert!(!sql.contains(") IN ("));
+    assert!(!sql.contains("FROM ("));
 }
 
 #[test]
@@ -234,6 +250,14 @@ fn partition_sql_builders_are_shaped_and_tenant_scoped() {
         "attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END"
     ));
     assert!(claim.contains("RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at"));
+    // The head selection is fenced `AS MATERIALIZED` (same over-lock fix as the global
+    // claim, wamn-fqg.10): `FOR UPDATE OF c SKIP LOCKED LIMIT n` runs once, then the
+    // outer UPDATE joins the materialized heads by PK — no re-scannable `IN (subquery)`
+    // that could lease more than `limit` heads under a nested-loop plan.
+    assert!(claim.contains("WITH heads AS MATERIALIZED ("));
+    assert!(claim.contains("q.tenant_id = heads.tenant_id AND q.run_id = heads.run_id"));
+    assert!(!claim.contains(") IN ("));
+    assert!(!claim.contains("FROM ("));
 
     // Acquire / renew / release / gc carry an explicit tenant claim. (The head
     // claim, like the global claim_batch_sql, is tenant-scoped purely by RLS on
