@@ -17,7 +17,7 @@ wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7
 # Same git rev as wasmtime-wasi so the graph keeps a single wasmtime.
 wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
 anyhow = { workspace = true }
-tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "sync"] }
+tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "rt-multi-thread", "macros", "signal", "sync"] }
 serde_json = "1"
 # 5.14 dispatcher: the projects-file entries deserialize straight into ProjectSpec.
 serde = { version = "1", features = ["derive"] }
