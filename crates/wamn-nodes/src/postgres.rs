@@ -234,7 +234,7 @@ fn not_found() -> NodeError {
 /// names a config/flow bug (`terminal`).
 pub(crate) fn classify_api(e: ApiError) -> NodeError {
     let detail = ErrorDetail {
-        message: e.message(),
+        message: e.message().into_owned(),
         code: Some(e.code().to_string()),
         data: None,
     };

@@ -6,6 +6,7 @@
 //! validation failures (bad uuid, non-exact decimal, enum not a variant, …).
 //! An unknown identifier can never reach the database.
 
+use std::borrow::Cow;
 use std::fmt;
 
 use serde_json::{Value, json};
@@ -57,19 +58,22 @@ impl ApiError {
     }
 
     /// A human-readable message for the error body.
-    pub fn message(&self) -> String {
+    ///
+    /// The static-message variants borrow a `&'static str` (no allocation); the
+    /// `format!`/`clone` variants own their `String`.
+    pub fn message(&self) -> Cow<'static, str> {
         match self {
-            ApiError::UnknownEntity(e) => format!("no such entity: {e}"),
+            ApiError::UnknownEntity(e) => format!("no such entity: {e}").into(),
             ApiError::UnknownField { entity, field } => {
-                format!("no such field on {entity}: {field}")
+                format!("no such field on {entity}: {field}").into()
             }
             ApiError::UnknownRelation { entity, relation } => {
-                format!("no such relation on {entity}: {relation}")
+                format!("no such relation on {entity}: {relation}").into()
             }
             ApiError::InvalidValue { field, message } => {
-                format!("invalid value for {field}: {message}")
+                format!("invalid value for {field}: {message}").into()
             }
-            ApiError::InvalidRequest(m) => m.clone(),
+            ApiError::InvalidRequest(m) => m.clone().into(),
             ApiError::PayloadRequired => "a request body is required".into(),
             ApiError::MethodNotAllowed => "method not allowed for this route".into(),
             ApiError::NotFound => "not found".into(),
@@ -89,3 +93,43 @@ impl fmt::Display for ApiError {
 }
 
 impl std::error::Error for ApiError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn static_messages_borrow_and_dynamic_messages_own() {
+        // Static-message variants must not allocate (Cow::Borrowed).
+        assert!(matches!(
+            ApiError::PayloadRequired.message(),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            ApiError::MethodNotAllowed.message(),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(ApiError::NotFound.message(), Cow::Borrowed(_)));
+
+        // The format!/clone variants own their String (Cow::Owned).
+        assert!(matches!(
+            ApiError::UnknownEntity("x".into()).message(),
+            Cow::Owned(_)
+        ));
+        assert!(matches!(
+            ApiError::InvalidRequest("bad".into()).message(),
+            Cow::Owned(_)
+        ));
+
+        // Rendered text is unchanged by the Cow move.
+        assert_eq!(ApiError::NotFound.message().as_ref(), "not found");
+        assert_eq!(
+            ApiError::UnknownEntity("widgets".into()).message().as_ref(),
+            "no such entity: widgets"
+        );
+        assert_eq!(
+            ApiError::NotFound.to_json(),
+            json!({ "error": { "code": "not-found", "message": "not found" } })
+        );
+    }
+}
