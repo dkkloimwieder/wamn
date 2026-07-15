@@ -799,7 +799,11 @@ fn require_uuid(id: &str) -> Result<(), ApiError> {
     }
 }
 
-/// Cheap structural UUID check (8-4-4-4-12 hex) — avoids a uuid dependency.
+/// Cheap **format** check (8-4-4-4-12 hex) — it accepts any hex in the
+/// version/variant nibbles, so it is not a variant/version-valid UUID check.
+/// The database column type is the real backstop that rejects a malformed
+/// value; this only screens the request shape at the edge. Avoids a `uuid`
+/// dependency.
 fn is_uuid(s: &str) -> bool {
     let b = s.as_bytes();
     if b.len() != 36 {
