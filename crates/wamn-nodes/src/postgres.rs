@@ -213,6 +213,13 @@ impl Node for PostgresEntity {
                 }
                 Value::Object(out)
             }
+            // PlanKind is #[non_exhaustive]; a future variant is terminal here.
+            _ => {
+                return Err(NodeError::Terminal(ErrorDetail::coded(
+                    "unsupported-plan",
+                    "unsupported plan kind",
+                )));
+            }
         };
         Ok(Emission::main(payload))
     }

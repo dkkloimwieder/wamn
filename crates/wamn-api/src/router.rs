@@ -27,6 +27,7 @@ pub const DEFAULT_PAGE_SIZE: u32 = 50;
 
 /// An HTTP method the gateway understands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Method {
     Get,
     Post,
@@ -78,6 +79,7 @@ impl Compiled {
 
 /// The direction of a one-level relation expansion relative to the resource.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ExpandDir {
     /// The resource holds the foreign key → embed the single parent it points at.
     ToOne,
@@ -138,6 +140,7 @@ impl Expand {
 /// What kind of operation a [`Plan`] carries (drives response cardinality:
 /// list → array, the singular kinds → object / 404 / 204).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PlanKind {
     List,
     GetOne,

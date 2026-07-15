@@ -127,6 +127,8 @@ fn execute(router: &Router, plan: &Plan) -> Result<(u16, Option<Value>), (u16, S
             }
             Ok((plan.status(), None)) // 204, no body
         }
+        // PlanKind is #[non_exhaustive]; a future variant is a graceful 500.
+        _ => Err((500, "unsupported-plan".into(), "unsupported plan kind".into())),
     }
 }
 

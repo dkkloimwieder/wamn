@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 /// A request that the gateway refuses to compile. Maps to a 4xx status.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ApiError {
     /// The `{entity}` path segment does not name a catalog entity.
     UnknownEntity(String),
