@@ -1,0 +1,22 @@
+{
+  "schema-version": "0.1",
+  "catalog-id": "poc-material-receiving",
+  "rules": [
+    {
+      "kind": "role-predicate",
+      "entity": "quality_holds",
+      "role": "inspector",
+      "command": "all",
+      "expression": "site_id = NULLIF(current_setting('app.site', true), '')::uuid",
+      "name": "quality_holds_inspector_site"
+    },
+    {
+      "kind": "role-commands",
+      "entity": "receipts",
+      "grants": [
+        { "command": "insert", "roles": ["erp", "quality-manager"] }
+      ],
+      "name": "receipts_insert"
+    }
+  ]
+}

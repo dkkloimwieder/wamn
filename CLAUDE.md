@@ -1755,6 +1755,42 @@ kubectl -n wamn-system apply -f deploy/apiproof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
 kubectl -n wamn-system logs job/apiproof
 
+# [POC-DM1] data model via the catalog API (wamn-521, P1 build) — the API-first
+# build of the Material Receiving data model (docs/poc-material-receiving.md §Data
+# model) + the end-to-end acceptance test of the 2.5 migration engine. NO new
+# engine code: the NEW poc/dm1 (wamn-dm1) crate COMPOSES the shipped tools over
+# three PROMOTED deploy/ artifacts — migrate-catalog (2.5) applies
+# deploy/poc-material-receiving.catalog.json (a promotion of the wamn-catalog
+# fixture, drift-guarded == it) LIVE (DDL + lifecycle advance + history, one txn);
+# wamn-rls (3.5) compiles deploy/poc-material-receiving.rls.json (inspector hold
+# site-scoping = a RolePredicate on quality_holds.site_id keyed on a NEW app.site
+# claim + the ERP receipts-insert RoleCommands gate); wamn-seed (3.6) compiles
+# deploy/poc-material-receiving.seed.dataset.json (sites/suppliers/materials +
+# inspector users carrying the cert_level extension); app_system (2.4,
+# deploy/app-schema.sql) seats the personas' roles + the ERP api-key.
+# wamn_dm1::provisioning_sql(tenant) composes migrate->RLS->seed. TWO CAVEATS: the
+# is-system users entity migrates to a DATA-SCHEMA users table carrying cert_level
+# (wamn-ddl emits CREATE not ALTER — the app_system.users unification is follow-up
+# wamn-5x0.3), and the role/site RLS claims are INERT until 4.2 injects them (the
+# plugin injects only app.tenant today — the 3.5 deploy-order hazard; the gate
+# proves them by SETting the claims by hand). The pricing field mask is 4.3 (the
+# sensitive flag is migrated). Mutants killed: site-scoping predicate / ERP gate
+# roles / an exact-decimal spec / promoted-catalog drift — each fails a NAMED test.
+# docs/poc-dm1.md. No JSON-schema (an integration deliverable, not a contract).
+cargo test -p wamn-dm1     # drift-guard + compile checks + live-apply gate (skips w/o WAMN_DM1_PG_URL)
+cargo clippy -p wamn-dm1 --all-targets && cargo fmt -p wamn-dm1 --check
+# optional throwaway-PG live-apply gate (superuser url — provisions wamn_app,
+# applies catalog-schema.sql + app-schema.sql, migrates the POC catalog + attaches
+# the RLS + seeds + seats the app_system personas, then asserts site-scoped RLS
+# reads/writes + the ERP receipts gate + composite unique + exact-decimal specs;
+# skips when unset):
+docker run -d --rm --name wamn-dm1-pg -p 5463:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_DM1_PG_URL=postgres://postgres:postgres@127.0.0.1:5463/wamn cargo test -p wamn-dm1
+docker stop wamn-dm1-pg
+# NOTHING in-cluster (a catalog + schema deliverable, the migrate/rls/seed
+# precedent; applying it in-cluster would mutate a shared DB — the guardrail).
+
 # [POC-F1] receipt-received sync flow end-to-end (P1 exit, wamn-067) — the D15
 # sync path LIVE: NEW components/poc-webhook-f1 (exports wasi:http/incoming-
 # handler, imports wamn:postgres ONLY — 2.6-clean) matches POST /receipts

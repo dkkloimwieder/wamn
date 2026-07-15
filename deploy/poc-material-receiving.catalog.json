@@ -1,0 +1,100 @@
+{
+  "schema-version": "0.1",
+  "catalog-id": "poc-material-receiving",
+  "version": 1,
+  "name": "Material Receiving w/ Quality Hold",
+  "entities": [
+    {
+      "id": "users",
+      "name": "users",
+      "is-system": true,
+      "label": "Users",
+      "description": "Platform system entity, extended with a custom field (the POC's hard path).",
+      "fields": [
+        { "id": "email", "name": "email", "type": { "kind": "text", "max-len": 320 }, "is-system": true },
+        { "id": "display_name", "name": "display_name", "type": { "kind": "text" }, "nullable": true, "is-system": true },
+        { "id": "cert_level", "name": "cert_level", "type": { "kind": "enum", "variants": ["L1", "L2"] }, "nullable": true, "description": "System-entity extension: inspector certification level." }
+      ]
+    },
+    {
+      "id": "sites",
+      "name": "sites",
+      "fields": [
+        { "id": "name", "name": "name", "type": { "kind": "text" } },
+        { "id": "code", "name": "code", "type": { "kind": "text", "max-len": 16 } }
+      ],
+      "constraints": [
+        { "kind": "unique", "name": "sites_code_uniq", "fields": ["code"] }
+      ]
+    },
+    {
+      "id": "suppliers",
+      "name": "suppliers",
+      "fields": [
+        { "id": "name", "name": "name", "type": { "kind": "text" } },
+        { "id": "contact_email", "name": "contact_email", "type": { "kind": "text" }, "nullable": true },
+        { "id": "standard_cost", "name": "standard_cost", "type": { "kind": "numeric", "precision": 12, "scale": 2, "unit": "USD" }, "nullable": true, "sensitive": true, "description": "Supplier pricing — masked from inspectors (4.3)." }
+      ]
+    },
+    {
+      "id": "materials",
+      "name": "materials",
+      "fields": [
+        { "id": "name", "name": "name", "type": { "kind": "text" } },
+        { "id": "moisture_max_pct", "name": "moisture_max_pct", "type": { "kind": "numeric", "precision": 5, "scale": 2, "unit": "pct" }, "description": "Spec: exact-decimal, unit-bound (no float)." },
+        { "id": "weight_tolerance_kg", "name": "weight_tolerance_kg", "type": { "kind": "numeric", "precision": 8, "scale": 3, "unit": "kg" } }
+      ]
+    },
+    {
+      "id": "receipts",
+      "name": "receipts",
+      "fields": [
+        { "id": "receipt_no", "name": "receipt_no", "type": { "kind": "text", "max-len": 64 } },
+        { "id": "supplier_id", "name": "supplier_id", "type": { "kind": "reference", "entity": "suppliers" } },
+        { "id": "site_id", "name": "site_id", "type": { "kind": "reference", "entity": "sites" } },
+        { "id": "received_at", "name": "received_at", "type": { "kind": "timestamptz" } }
+      ],
+      "constraints": [
+        { "kind": "unique", "name": "receipts_no_supplier_uniq", "fields": ["receipt_no", "supplier_id"] }
+      ]
+    },
+    {
+      "id": "receipt_lines",
+      "name": "receipt_lines",
+      "fields": [
+        { "id": "receipt_id", "name": "receipt_id", "type": { "kind": "reference", "entity": "receipts" } },
+        { "id": "material_id", "name": "material_id", "type": { "kind": "reference", "entity": "materials" } },
+        { "id": "quantity", "name": "quantity", "type": { "kind": "numeric", "precision": 12, "scale": 3, "unit": "kg" } }
+      ]
+    },
+    {
+      "id": "quality_holds",
+      "name": "quality_holds",
+      "fields": [
+        { "id": "line_id", "name": "line_id", "type": { "kind": "reference", "entity": "receipt_lines" } },
+        { "id": "site_id", "name": "site_id", "type": { "kind": "reference", "entity": "sites" } },
+        { "id": "status", "name": "status", "type": { "kind": "enum", "variants": ["open", "disposed", "escalated"] } },
+        { "id": "opened_at", "name": "opened_at", "type": { "kind": "timestamptz" } }
+      ],
+      "indexes": [
+        { "name": "quality_holds_site_idx", "fields": ["site_id"] }
+      ]
+    },
+    {
+      "id": "dispositions",
+      "name": "dispositions",
+      "fields": [
+        { "id": "hold_id", "name": "hold_id", "type": { "kind": "reference", "entity": "quality_holds" } },
+        { "id": "inspector_id", "name": "inspector_id", "type": { "kind": "reference", "entity": "users" } },
+        { "id": "decision", "name": "decision", "type": { "kind": "enum", "variants": ["accept", "reject", "use-as-is"] } },
+        { "id": "decided_at", "name": "decided_at", "type": { "kind": "timestamptz" } }
+      ]
+    }
+  ],
+  "relations": [
+    { "id": "receipt_lines_rel", "name": "lines", "cardinality": "one-to-many", "from": "receipt_lines", "to": "receipts", "from-field": "receipt_id" },
+    { "id": "line_material_rel", "name": "material", "cardinality": "one-to-many", "from": "receipt_lines", "to": "materials", "from-field": "material_id" },
+    { "id": "hold_line_rel", "name": "line", "cardinality": "one-to-many", "from": "quality_holds", "to": "receipt_lines", "from-field": "line_id" },
+    { "id": "disposition_hold_rel", "name": "hold", "cardinality": "one-to-many", "from": "dispositions", "to": "quality_holds", "from-field": "hold_id" }
+  ]
+}

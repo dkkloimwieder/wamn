@@ -1,0 +1,14 @@
+[package]
+name = "wamn-dm1"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wamn-catalog = { path = "../../crates/wamn-catalog" }
+wamn-migrate = { path = "../../crates/wamn-migrate" }
+wamn-rls = { path = "../../crates/wamn-rls" }
+wamn-seed = { path = "../../crates/wamn-seed" }
+
+[dev-dependencies]
+wamn-sysschema = { path = "../../crates/wamn-sysschema" }
+serde_json = "1"

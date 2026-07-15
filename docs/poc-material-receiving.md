@@ -19,6 +19,8 @@ Extends the **system schema** — deliberately including the hard path of adding
 - **RLS:** inspectors read/write holds only for their `site_id`; managers unrestricted; ERP API key can insert receipts and read dispositions only. Field-level mask: inspectors cannot see supplier pricing fields (4.3).
 - Built twice: first via catalog API directly (P1, no UI), rebuilt via the schema designer UI (P2) — same catalog state proves the designer emits what the API accepts.
 
+**Done (P1, wamn-521):** the API-first build ships as `poc/dm1` (`wamn-dm1`) — the promoted catalog + RLS policy + seed migrated live via 2.5 `migrate-catalog`, with a throwaway-Postgres gate proving site-scoped RLS, the ERP receipts gate, the composite unique, and exact-decimal specs (`docs/poc-dm1.md`). Two caveats carried: the `is-system` `users` extension lands as a data-schema table (follow-up wamn-5x0.3), and the role/site RLS claims are inert until the plugin injects them (4.2); the pricing field mask is 4.3.
+
 ## Flows (Epic 5 exercise)
 **F1 — `receipt-received` (sync webhook, write-ahead default, D15).** ERP POSTs a receipt. Flow: validate payload (`invalid-input` on malformed) → upsert receipt + lines (transaction via `wamn:postgres` node) → evaluate each line against material specs → create `quality_holds` for out-of-spec lines → **synchronous response** `{receipt_id, holds: [...]}`. Exercises: sync direct dispatch, write-ahead audit row, transactions, exact-decimal comparison, error taxonomy.
 

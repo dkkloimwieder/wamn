@@ -4076,6 +4076,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-dm1"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wamn-catalog",
+ "wamn-migrate",
+ "wamn-rls",
+ "wamn-seed",
+ "wamn-sysschema",
+]
+
+[[package]]
 name = "wamn-f1"
 version = "0.1.0"
 dependencies = [
