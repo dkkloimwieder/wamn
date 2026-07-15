@@ -54,9 +54,26 @@ impl Method {
 /// shaping keys the response object on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Compiled {
-    pub sql: String,
-    pub params: Vec<SqlValue>,
-    pub columns: Vec<String>,
+    pub(crate) sql: String,
+    pub(crate) params: Vec<SqlValue>,
+    pub(crate) columns: Vec<String>,
+}
+
+impl Compiled {
+    /// The primary SQL statement (with `$n` placeholders).
+    pub fn sql(&self) -> &str {
+        &self.sql
+    }
+
+    /// The bound parameters, in `$n` order.
+    pub fn params(&self) -> &[SqlValue] {
+        &self.params
+    }
+
+    /// The projected column names, in order.
+    pub fn columns(&self) -> &[String] {
+        &self.columns
+    }
 }
 
 /// The direction of a one-level relation expansion relative to the resource.
@@ -74,16 +91,48 @@ pub enum ExpandDir {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expand {
     /// Relation name — the response key the embedded record(s) land under.
-    pub name: String,
-    pub dir: ExpandDir,
+    pub(crate) name: String,
+    pub(crate) dir: ExpandDir,
     /// The primary-row column that supplies the join keys.
-    pub key_column: String,
+    pub(crate) key_column: String,
     /// The related table to read from.
-    pub target_table: String,
+    pub(crate) target_table: String,
     /// The related-table column that echoes the join key.
-    pub match_column: String,
+    pub(crate) match_column: String,
     /// The projected columns of the related table.
-    pub columns: Vec<String>,
+    pub(crate) columns: Vec<String>,
+}
+
+impl Expand {
+    /// Relation name — the response key the embedded record(s) land under.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The direction of the expansion relative to the resource.
+    pub fn dir(&self) -> ExpandDir {
+        self.dir
+    }
+
+    /// The primary-row column that supplies the join keys.
+    pub fn key_column(&self) -> &str {
+        &self.key_column
+    }
+
+    /// The related table to read from.
+    pub fn target_table(&self) -> &str {
+        &self.target_table
+    }
+
+    /// The related-table column that echoes the join key.
+    pub fn match_column(&self) -> &str {
+        &self.match_column
+    }
+
+    /// The projected columns of the related table.
+    pub fn columns(&self) -> &[String] {
+        &self.columns
+    }
 }
 
 /// What kind of operation a [`Plan`] carries (drives response cardinality:
@@ -101,10 +150,32 @@ pub enum PlanKind {
 /// afterward, and the HTTP status a success returns.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
-    pub kind: PlanKind,
-    pub query: Compiled,
-    pub expands: Vec<Expand>,
-    pub status: u16,
+    pub(crate) kind: PlanKind,
+    pub(crate) query: Compiled,
+    pub(crate) expands: Vec<Expand>,
+    pub(crate) status: u16,
+}
+
+impl Plan {
+    /// The kind of operation (drives response cardinality).
+    pub fn kind(&self) -> PlanKind {
+        self.kind
+    }
+
+    /// The primary compiled statement.
+    pub fn query(&self) -> &Compiled {
+        &self.query
+    }
+
+    /// The one-level expansions to run after the primary query.
+    pub fn expands(&self) -> &[Expand] {
+        &self.expands
+    }
+
+    /// The HTTP status a success returns.
+    pub fn status(&self) -> u16 {
+        self.status
+    }
 }
 
 /// Builds the `$n` parameter list, keeping placeholder numbers in lockstep with

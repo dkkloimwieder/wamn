@@ -35,21 +35,21 @@ fn list_projects_id_and_fields_but_not_tenant_id() {
     let plan = Router::new(&cat)
         .compile(Method::Get, "/api/rest/suppliers", &[], None)
         .unwrap();
-    assert_eq!(plan.kind, PlanKind::List);
+    assert_eq!(plan.kind(), PlanKind::List);
     // id + the three user fields, in order; tenant_id absent.
-    assert!(plan.query.sql.starts_with(
+    assert!(plan.query().sql().starts_with(
         "SELECT \"id\", \"name\", \"contact_email\", \"standard_cost\" FROM \"suppliers\""
     ));
-    assert!(!plan.query.sql.contains("tenant_id"));
+    assert!(!plan.query().sql().contains("tenant_id"));
     // default order + a capped page.
-    assert!(plan.query.sql.contains("ORDER BY \"id\" ASC"));
-    assert!(plan.query.sql.contains("LIMIT $1 OFFSET $2"));
+    assert!(plan.query().sql().contains("ORDER BY \"id\" ASC"));
+    assert!(plan.query().sql().contains("LIMIT $1 OFFSET $2"));
     assert_eq!(
-        plan.query.params,
+        plan.query().params(),
         vec![SqlValue::Int64(50), SqlValue::Int64(0)]
     );
     assert_eq!(
-        plan.query.columns,
+        plan.query().columns(),
         vec!["id", "name", "contact_email", "standard_cost"]
     );
 }
@@ -61,12 +61,15 @@ fn get_by_id_binds_uuid_param() {
     let plan = Router::new(&cat)
         .compile(Method::Get, &path, &[], None)
         .unwrap();
-    assert_eq!(plan.kind, PlanKind::GetOne);
+    assert_eq!(plan.kind(), PlanKind::GetOne);
     assert_eq!(
-        plan.query.sql,
+        plan.query().sql(),
         "SELECT \"id\", \"name\", \"contact_email\", \"standard_cost\" FROM \"suppliers\" WHERE \"id\" = $1"
     );
-    assert_eq!(plan.query.params, vec![SqlValue::Uuid(A_UUID.to_string())]);
+    assert_eq!(
+        plan.query().params(),
+        vec![SqlValue::Uuid(A_UUID.to_string())]
+    );
 }
 
 #[test]
@@ -76,17 +79,17 @@ fn create_sets_tenant_from_claim_and_returns_projection() {
     let plan = Router::new(&cat)
         .compile(Method::Post, "/api/rest/suppliers", &[], Some(&body))
         .unwrap();
-    assert_eq!(plan.kind, PlanKind::CreateOne);
-    assert_eq!(plan.status, 201);
+    assert_eq!(plan.kind(), PlanKind::CreateOne);
+    assert_eq!(plan.status(), 201);
     // tenant_id set server-side from the claim (not a param), user cols bound.
     assert_eq!(
-        plan.query.sql,
+        plan.query().sql(),
         "INSERT INTO \"suppliers\" (\"tenant_id\", \"name\", \"standard_cost\") \
          VALUES (current_setting('app.tenant', true), $1, $2) \
          RETURNING \"id\", \"name\", \"contact_email\", \"standard_cost\""
     );
     assert_eq!(
-        plan.query.params,
+        plan.query().params(),
         vec![
             SqlValue::Text("Acme".into()),
             SqlValue::Numeric("12.50".into())
@@ -143,7 +146,7 @@ fn rejects_infinite_timestamps_at_both_value_paths() {
             Some(&json!({ "received_at": "2026-07-13T00:00:00Z" })),
         )
         .unwrap();
-    assert_eq!(ok.kind, PlanKind::UpdateOne);
+    assert_eq!(ok.kind(), PlanKind::UpdateOne);
 
     // Query filter → value_for_field_str.
     for spelling in ["infinity", "-infinity", "inf"] {
@@ -201,14 +204,14 @@ fn update_is_partial_and_binds_id_last() {
     let plan = Router::new(&cat)
         .compile(Method::Patch, &path, &[], Some(&body))
         .unwrap();
-    assert_eq!(plan.kind, PlanKind::UpdateOne);
+    assert_eq!(plan.kind(), PlanKind::UpdateOne);
     assert_eq!(
-        plan.query.sql,
+        plan.query().sql(),
         "UPDATE \"suppliers\" SET \"contact_email\" = $1 WHERE \"id\" = $2 \
          RETURNING \"id\", \"name\", \"contact_email\", \"standard_cost\""
     );
     assert_eq!(
-        plan.query.params,
+        plan.query().params(),
         vec![
             SqlValue::Text("new@acme.test".into()),
             SqlValue::Uuid(A_UUID.to_string())
@@ -239,17 +242,17 @@ fn put_full_replace_resets_omitted_optional_fields_to_default() {
     let plan = Router::new(&cat)
         .compile(Method::Put, &path, &[], Some(&body))
         .unwrap();
-    assert_eq!(plan.kind, PlanKind::UpdateOne);
-    assert_eq!(plan.status, 200);
+    assert_eq!(plan.kind(), PlanKind::UpdateOne);
+    assert_eq!(plan.status(), 200);
     assert_eq!(
-        plan.query.sql,
+        plan.query().sql(),
         "UPDATE \"suppliers\" SET \"name\" = $1, \"contact_email\" = DEFAULT, \
          \"standard_cost\" = DEFAULT WHERE \"id\" = $2 \
          RETURNING \"id\", \"name\", \"contact_email\", \"standard_cost\""
     );
     // DEFAULT is a keyword, not a param — only the present value + id are bound.
     assert_eq!(
-        plan.query.params,
+        plan.query().params(),
         vec![
             SqlValue::Text("Renamed".into()),
             SqlValue::Uuid(A_UUID.to_string())
@@ -284,16 +287,20 @@ fn put_with_all_fields_binds_each_as_a_param() {
     let plan = Router::new(&cat)
         .compile(Method::Put, &path, &[], Some(&body))
         .unwrap();
-    assert_eq!(plan.kind, PlanKind::UpdateOne);
-    assert!(!plan.query.sql.contains("DEFAULT"), "{}", plan.query.sql);
+    assert_eq!(plan.kind(), PlanKind::UpdateOne);
+    assert!(
+        !plan.query().sql().contains("DEFAULT"),
+        "{}",
+        plan.query().sql()
+    );
     assert_eq!(
-        plan.query.sql,
+        plan.query().sql(),
         "UPDATE \"suppliers\" SET \"name\" = $1, \"contact_email\" = $2, \
          \"standard_cost\" = $3 WHERE \"id\" = $4 \
          RETURNING \"id\", \"name\", \"contact_email\", \"standard_cost\""
     );
     assert_eq!(
-        plan.query.params,
+        plan.query().params(),
         vec![
             SqlValue::Text("Acme".into()),
             SqlValue::Text("a@acme.test".into()),
@@ -310,13 +317,16 @@ fn delete_returns_id_and_204() {
     let plan = Router::new(&cat)
         .compile(Method::Delete, &path, &[], None)
         .unwrap();
-    assert_eq!(plan.kind, PlanKind::DeleteOne);
-    assert_eq!(plan.status, 204);
+    assert_eq!(plan.kind(), PlanKind::DeleteOne);
+    assert_eq!(plan.status(), 204);
     assert_eq!(
-        plan.query.sql,
+        plan.query().sql(),
         "DELETE FROM \"suppliers\" WHERE \"id\" = $1 RETURNING \"id\""
     );
-    assert_eq!(plan.query.params, vec![SqlValue::Uuid(A_UUID.to_string())]);
+    assert_eq!(
+        plan.query().params(),
+        vec![SqlValue::Uuid(A_UUID.to_string())]
+    );
 }
 
 // ---- filter / sort / paginate ---------------------------------------------
@@ -334,11 +344,11 @@ fn filter_operators_and_typed_values() {
         )
         .unwrap();
     assert!(
-        plan.query.sql.contains("WHERE \"status\" = $1"),
+        plan.query().sql().contains("WHERE \"status\" = $1"),
         "{}",
-        plan.query.sql
+        plan.query().sql()
     );
-    assert_eq!(plan.query.params[0], SqlValue::Text("open".into()));
+    assert_eq!(plan.query().params()[0], SqlValue::Text("open".into()));
 }
 
 #[test]
@@ -353,8 +363,8 @@ fn bare_value_is_eq_even_with_a_dot() {
             None,
         )
         .unwrap();
-    assert!(plan.query.sql.contains("\"standard_cost\" = $1"));
-    assert_eq!(plan.query.params[0], SqlValue::Numeric("12.50".into()));
+    assert!(plan.query().sql().contains("\"standard_cost\" = $1"));
+    assert_eq!(plan.query().params()[0], SqlValue::Numeric("12.50".into()));
 }
 
 #[test]
@@ -369,12 +379,12 @@ fn in_list_binds_one_param_per_value() {
         )
         .unwrap();
     assert!(
-        plan.query.sql.contains("\"status\" IN ($1, $2)"),
+        plan.query().sql().contains("\"status\" IN ($1, $2)"),
         "{}",
-        plan.query.sql
+        plan.query().sql()
     );
-    assert_eq!(plan.query.params[0], SqlValue::Text("open".into()));
-    assert_eq!(plan.query.params[1], SqlValue::Text("escalated".into()));
+    assert_eq!(plan.query().params()[0], SqlValue::Text("open".into()));
+    assert_eq!(plan.query().params()[1], SqlValue::Text("escalated".into()));
 }
 
 #[test]
@@ -393,14 +403,14 @@ fn sort_and_paginate_are_capped_and_parametrized() {
         )
         .unwrap();
     assert!(
-        plan.query
-            .sql
+        plan.query()
+            .sql()
             .contains("ORDER BY \"received_at\" ASC, \"receipt_no\" DESC")
     );
     // limit clamped to the max page size (100), offset passed through, both params.
-    let n = plan.query.params.len();
-    assert_eq!(plan.query.params[n - 2], SqlValue::Int64(100));
-    assert_eq!(plan.query.params[n - 1], SqlValue::Int64(40));
+    let n = plan.query().params().len();
+    assert_eq!(plan.query().params()[n - 2], SqlValue::Int64(100));
+    assert_eq!(plan.query().params()[n - 1], SqlValue::Int64(40));
 }
 
 #[test]
@@ -433,20 +443,20 @@ fn expand_to_one_parent_via_fk() {
             None,
         )
         .unwrap();
-    assert_eq!(plan.expands.len(), 1);
-    let ex = &plan.expands[0];
-    assert_eq!(ex.dir, ExpandDir::ToOne);
-    assert_eq!(ex.key_column, "line_id");
-    assert_eq!(ex.target_table, "receipt_lines");
-    assert_eq!(ex.match_column, "id");
+    assert_eq!(plan.expands().len(), 1);
+    let ex = &plan.expands()[0];
+    assert_eq!(ex.dir(), ExpandDir::ToOne);
+    assert_eq!(ex.key_column(), "line_id");
+    assert_eq!(ex.target_table(), "receipt_lines");
+    assert_eq!(ex.match_column(), "id");
 
     let keys = vec![SqlValue::Uuid(A_UUID.into()), SqlValue::Uuid(B_UUID.into())];
     let sub = Router::new(&cat).build_expand(ex, &keys);
     assert_eq!(
-        sub.sql,
+        sub.sql(),
         "SELECT \"id\", \"receipt_id\", \"material_id\", \"quantity\" FROM \"receipt_lines\" WHERE \"id\" IN ($1, $2)"
     );
-    assert_eq!(sub.params, keys);
+    assert_eq!(sub.params(), keys);
 }
 
 #[test]
@@ -461,11 +471,11 @@ fn expand_to_many_children_via_reverse_fk() {
             None,
         )
         .unwrap();
-    let ex = &plan.expands[0];
-    assert_eq!(ex.dir, ExpandDir::ToMany);
-    assert_eq!(ex.key_column, "id");
-    assert_eq!(ex.target_table, "receipt_lines");
-    assert_eq!(ex.match_column, "receipt_id");
+    let ex = &plan.expands()[0];
+    assert_eq!(ex.dir(), ExpandDir::ToMany);
+    assert_eq!(ex.key_column(), "id");
+    assert_eq!(ex.target_table(), "receipt_lines");
+    assert_eq!(ex.match_column(), "receipt_id");
 }
 
 #[test]
@@ -479,11 +489,11 @@ fn expand_merge_embeds_records() {
             None,
         )
         .unwrap();
-    let ex = &plan.expands[0];
+    let ex = &plan.expands()[0];
 
     // Two holds, both pointing at line A.
     let mut primary = shape_rows(
-        &plan.query.columns,
+        plan.query().columns(),
         &[vec![
             SqlValue::Uuid("hold-1".into()),
             SqlValue::Uuid(A_UUID.into()),
@@ -498,7 +508,7 @@ fn expand_merge_embeds_records() {
         SqlValue::Uuid("mat-1".into()),
         SqlValue::Numeric("3.000".into()),
     ]];
-    attach_expansion(&mut primary, ex, &ex.columns, &expanded_rows);
+    attach_expansion(&mut primary, ex, ex.columns(), &expanded_rows);
     let line = &primary[0]["line"];
     assert_eq!(line["id"], json!(A_UUID));
     assert_eq!(line["quantity"], json!("3.000")); // exact-decimal string, not a float
@@ -515,13 +525,13 @@ fn numeric_stays_an_exact_decimal_string_in_and_out() {
         .compile(Method::Post, "/api/rest/materials", &[], Some(&body))
         .unwrap();
     assert!(
-        plan.query
-            .params
+        plan.query()
+            .params()
             .contains(&SqlValue::Numeric("12.34".into()))
     );
     assert!(
-        plan.query
-            .params
+        plan.query()
+            .params()
             .contains(&SqlValue::Numeric("0.500".into()))
     );
     // Out: a Numeric cell shapes to a JSON string.
@@ -550,10 +560,10 @@ fn injection_value_is_a_bound_param_not_interpolated() {
         )
         .unwrap();
     // The malicious text never appears in the SQL — it is a parameter, verbatim.
-    assert!(!plan.query.sql.contains("DROP TABLE"));
-    assert!(!plan.query.sql.contains(evil));
-    assert!(plan.query.sql.contains("\"name\" = $1"));
-    assert_eq!(plan.query.params[0], SqlValue::Text(evil.to_string()));
+    assert!(!plan.query().sql().contains("DROP TABLE"));
+    assert!(!plan.query().sql().contains(evil));
+    assert!(plan.query().sql().contains("\"name\" = $1"));
+    assert_eq!(plan.query().params()[0], SqlValue::Text(evil.to_string()));
 }
 
 #[test]
@@ -564,9 +574,9 @@ fn injection_in_body_value_is_a_bound_param() {
     let plan = Router::new(&cat)
         .compile(Method::Post, "/api/rest/suppliers", &[], Some(&body))
         .unwrap();
-    assert!(!plan.query.sql.contains("DELETE FROM"));
-    assert!(!plan.query.sql.contains(evil));
-    assert_eq!(plan.query.params[0], SqlValue::Text(evil.to_string()));
+    assert!(!plan.query().sql().contains("DELETE FROM"));
+    assert!(!plan.query().sql().contains(evil));
+    assert_eq!(plan.query().params()[0], SqlValue::Text(evil.to_string()));
 }
 
 #[test]

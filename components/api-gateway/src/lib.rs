@@ -91,48 +91,48 @@ fn process(request: &IncomingRequest) -> (u16, Option<Vec<u8>>) {
 
 /// Execute a compiled plan against the database and shape the result.
 fn execute(router: &Router, plan: &Plan) -> Result<(u16, Option<Value>), (u16, String, String)> {
-    match plan.kind {
+    match plan.kind() {
         PlanKind::List => {
-            let rs = run_query(&plan.query)?;
-            let mut rows = shape_rows(&plan.query.columns, &api_rows(&rs));
-            apply_expands(router, &mut rows, &plan.query.columns, &rs, &plan.expands)?;
-            Ok((plan.status, Some(Value::Array(rows))))
+            let rs = run_query(plan.query())?;
+            let mut rows = shape_rows(plan.query().columns(), &api_rows(&rs));
+            apply_expands(router, &mut rows, plan.query().columns(), &rs, plan.expands())?;
+            Ok((plan.status(), Some(Value::Array(rows))))
         }
         PlanKind::GetOne => {
-            let rs = run_query(&plan.query)?;
+            let rs = run_query(plan.query())?;
             if rs.rows.is_empty() {
                 return Ok((404, Some(not_found())));
             }
-            let mut rows = shape_rows(&plan.query.columns, &api_rows(&rs));
-            apply_expands(router, &mut rows, &plan.query.columns, &rs, &plan.expands)?;
-            Ok((plan.status, rows.into_iter().next()))
+            let mut rows = shape_rows(plan.query().columns(), &api_rows(&rs));
+            apply_expands(router, &mut rows, plan.query().columns(), &rs, plan.expands())?;
+            Ok((plan.status(), rows.into_iter().next()))
         }
         PlanKind::CreateOne => {
-            let rs = run_query(&plan.query)?;
-            let row = shape_rows(&plan.query.columns, &api_rows(&rs)).into_iter().next();
-            Ok((plan.status, Some(row.unwrap_or(Value::Null))))
+            let rs = run_query(plan.query())?;
+            let row = shape_rows(plan.query().columns(), &api_rows(&rs)).into_iter().next();
+            Ok((plan.status(), Some(row.unwrap_or(Value::Null))))
         }
         PlanKind::UpdateOne => {
-            let rs = run_query(&plan.query)?;
+            let rs = run_query(plan.query())?;
             if rs.rows.is_empty() {
                 return Ok((404, Some(not_found())));
             }
-            let row = shape_rows(&plan.query.columns, &api_rows(&rs)).into_iter().next();
-            Ok((plan.status, Some(row.unwrap_or(Value::Null))))
+            let row = shape_rows(plan.query().columns(), &api_rows(&rs)).into_iter().next();
+            Ok((plan.status(), Some(row.unwrap_or(Value::Null))))
         }
         PlanKind::DeleteOne => {
-            let rs = run_query(&plan.query)?;
+            let rs = run_query(plan.query())?;
             if rs.rows.is_empty() {
                 return Ok((404, Some(not_found())));
             }
-            Ok((plan.status, None)) // 204, no body
+            Ok((plan.status(), None)) // 204, no body
         }
     }
 }
 
 /// Run the primary or an expansion query through `wamn:postgres`.
 fn run_query(c: &Compiled) -> Result<RowSet, (u16, String, String)> {
-    client::query(&c.sql, &pg_params(&c.params)).map_err(map_pg_error)
+    client::query(c.sql(), &pg_params(c.params())).map_err(map_pg_error)
 }
 
 /// Attach every one-level expansion to the already-shaped primary rows: gather
@@ -145,7 +145,7 @@ fn apply_expands(
     expands: &[Expand],
 ) -> Result<(), (u16, String, String)> {
     for ex in expands {
-        let Some(key_idx) = columns.iter().position(|c| c == &ex.key_column) else {
+        let Some(key_idx) = columns.iter().position(|c| c.as_str() == ex.key_column()) else {
             continue;
         };
         let mut seen = HashSet::new();
@@ -159,12 +159,12 @@ fn apply_expands(
             }
         }
         if keys.is_empty() {
-            attach_expansion(rows, ex, &ex.columns, &[]);
+            attach_expansion(rows, ex, ex.columns(), &[]);
             continue;
         }
         let sub = router.build_expand(ex, &keys);
         let rs = run_query(&sub)?;
-        attach_expansion(rows, ex, &ex.columns, &api_rows(&rs));
+        attach_expansion(rows, ex, ex.columns(), &api_rows(&rs));
     }
     Ok(())
 }

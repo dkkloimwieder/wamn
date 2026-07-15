@@ -188,18 +188,18 @@ impl Node for PostgresEntity {
         }
         .map_err(classify_api)?;
 
-        let params: Vec<PgValue> = plan.query.params.iter().map(api_to_pg).collect();
+        let params: Vec<PgValue> = plan.query().params().iter().map(api_to_pg).collect();
         let rows = ctx
-            .pg_query(&plan.query.sql, &params)
+            .pg_query(plan.query().sql(), &params)
             .map_err(classify_pg)?;
         let api_rows: Vec<Vec<SqlValue>> = rows
             .rows
             .iter()
             .map(|r| r.iter().map(pg_to_api).collect())
             .collect();
-        let shaped = shape_rows(&plan.query.columns, &api_rows);
+        let shaped = shape_rows(plan.query().columns(), &api_rows);
 
-        let payload = match plan.kind {
+        let payload = match plan.kind() {
             PlanKind::List => Value::Array(shaped),
             PlanKind::GetOne | PlanKind::CreateOne | PlanKind::UpdateOne => {
                 shaped.into_iter().next().ok_or_else(not_found)?
