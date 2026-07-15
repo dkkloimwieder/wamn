@@ -27,3 +27,9 @@ wamn-registry = { path = "../wamn-registry" }
 # The identifier/literal quoting helpers are inlined (2 lines each, mirroring the
 # canonical `wamn_ddl::sql`) rather than pulling wamn-ddl's transitive closure
 # (wamn-catalog + schemars) into this lean crate.
+
+[dev-dependencies]
+# Drift guard only (wamn-7nd.1): assert the inlined quote_ident/quote_literal stay
+# byte-identical to the canonical wamn_ddl::sql::* that back the injection-safety
+# argument. Dev-only, so the production dependency closure stays at serde_json.
+wamn-ddl = { path = "../wamn-ddl" }

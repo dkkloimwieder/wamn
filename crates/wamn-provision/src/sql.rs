@@ -204,4 +204,47 @@ mod tests {
             "SELECT EXISTS (SELECT FROM pg_database WHERE datname = $1)"
         );
     }
+
+    /// The escapers are inlined to keep the prod dep closure at `serde_json`, but
+    /// they MUST stay byte-identical to the canonical `wamn_ddl::sql::*` that back
+    /// the injection-safety argument (a slug cannot contain a `"`, so the derived
+    /// database/role DDL is safe). Assert over adversarial inputs plus an
+    /// exhaustive single-ASCII-char sweep so any future divergence in either copy
+    /// fails here. (`wamn-ddl` is a dev-dependency, so this costs the prod build
+    /// nothing.)
+    #[test]
+    fn inlined_escapers_match_canonical_wamn_ddl() {
+        let mut cases: Vec<String> = vec![
+            "".into(),
+            "a".into(),
+            "plain_ident".into(),
+            "a\"b".into(),
+            "\"\"".into(),
+            "a'b".into(),
+            "''".into(),
+            "a\"'b".into(),
+            "back\\slash".into(),
+            "tab\there".into(),
+            "new\nline".into(),
+            "nul\0byte".into(),
+            "münz".into(),
+            "wamn-db-acme--billing--dev".into(),
+            "'; DROP TABLE x; --".into(),
+        ];
+        for c in 0u8..=0x7f {
+            cases.push(format!("x{}y", c as char));
+        }
+        for s in &cases {
+            assert_eq!(
+                quote_ident(s),
+                wamn_ddl::sql::quote_ident(s),
+                "quote_ident drift on {s:?}"
+            );
+            assert_eq!(
+                quote_literal(s),
+                wamn_ddl::sql::quote_literal(s),
+                "quote_literal drift on {s:?}"
+            );
+        }
+    }
 }
