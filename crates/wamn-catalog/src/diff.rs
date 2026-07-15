@@ -99,7 +99,7 @@ pub fn diff(old: &Catalog, new: &Catalog) -> CatalogDiff {
 
     for (id, n) in &new_entities {
         match old_entities.get(id) {
-            None => d.entities_added.push((*id).to_string()),
+            None => d.entities_added.push((*id).into()),
             Some(o) => {
                 let change = entity_change(id, o, n);
                 if change.any() {
@@ -110,7 +110,7 @@ pub fn diff(old: &Catalog, new: &Catalog) -> CatalogDiff {
     }
     for id in old_entities.keys() {
         if !new_entities.contains_key(id) {
-            d.entities_removed.push((*id).to_string());
+            d.entities_removed.push((*id).into());
         }
     }
 
@@ -144,10 +144,10 @@ fn entity_change(id: &str, old: &Entity, new: &Entity) -> EntityChange {
     let mut fields_changed = Vec::new();
     for (fid, n) in &new_fields {
         match old_fields.get(fid) {
-            None => fields_added.push((*fid).to_string()),
+            None => fields_added.push((*fid).into()),
             Some(o) => {
                 let fc = FieldChange {
-                    id: (*fid).to_string(),
+                    id: (*fid).into(),
                     name_changed: (o.name != n.name).then(|| (o.name.clone(), n.name.clone())),
                     type_changed: (o.field_type != n.field_type)
                         .then(|| (o.field_type.clone(), n.field_type.clone())),
@@ -164,11 +164,11 @@ fn entity_change(id: &str, old: &Entity, new: &Entity) -> EntityChange {
     let fields_removed: Vec<FieldId> = old_fields
         .keys()
         .filter(|k| !new_fields.contains_key(*k))
-        .map(|k| k.to_string())
+        .map(|k| (*k).into())
         .collect();
 
     EntityChange {
-        id: id.to_string(),
+        id: id.into(),
         fields_added,
         fields_removed,
         fields_changed,

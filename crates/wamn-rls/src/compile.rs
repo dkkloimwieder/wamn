@@ -143,8 +143,8 @@ pub fn compile(policy: &AccessPolicy, catalog: &Catalog) -> Result<MigrationPlan
                     summary: format!("row-ownership RLS on {table}.{owner_col}"),
                     sql: policy_stmt(&name, &table, Command::All, Some(&pred), Some(&pred)),
                     safety: Safety::Additive,
-                    entity: entity.id.clone(),
-                    field: Some(owner_field.clone()),
+                    entity: entity.id.to_string(),
+                    field: Some(owner_field.to_string()),
                     note: Some(CLAIM_NOTE.into()),
                 });
             }
@@ -167,7 +167,7 @@ pub fn compile(policy: &AccessPolicy, catalog: &Catalog) -> Result<MigrationPlan
                             grant.command.has_check().then_some(pred.as_str()),
                         ),
                         safety: Safety::Additive,
-                        entity: entity.id.clone(),
+                        entity: entity.id.to_string(),
                         field: None,
                         note: Some(CLAIM_NOTE.into()),
                     });
@@ -200,7 +200,7 @@ pub fn compile(policy: &AccessPolicy, catalog: &Catalog) -> Result<MigrationPlan
                         command.has_check().then_some(pred.as_str()),
                     ),
                     safety: Safety::Additive,
-                    entity: entity.id.clone(),
+                    entity: entity.id.to_string(),
                     field: None,
                     note: Some(CLAIM_NOTE.into()),
                 });

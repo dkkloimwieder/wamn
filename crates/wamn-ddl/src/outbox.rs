@@ -150,7 +150,7 @@ pub(crate) fn outbox_triggers_plan(catalog: &Catalog, opts: &OutboxOptions) -> M
             summary: format!("emit row events from {t}"),
             sql,
             safety: Safety::Additive,
-            entity: e.id.clone(),
+            entity: e.id.to_string(),
             field: None,
             note: Some(
                 "row writes from now on emit outbox events (a first-time 3.6 seed fires; \
@@ -178,7 +178,7 @@ pub(crate) fn drop_outbox_triggers_plan(catalog: &Catalog) -> MigrationPlan {
                 crate::sql::quote_ident(t)
             ),
             safety: Safety::Destructive,
-            entity: e.id.clone(),
+            entity: e.id.to_string(),
             field: None,
             note: Some("row-event flows on this table stop firing".into()),
         });

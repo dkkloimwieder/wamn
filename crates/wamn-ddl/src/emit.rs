@@ -163,7 +163,7 @@ fn create_table_op(entity: &Entity) -> Operation {
         summary: format!("create table {t}"),
         sql,
         safety: Safety::Additive,
-        entity: entity.id.clone(),
+        entity: entity.id.to_string(),
         field: None,
         note: None,
     }
@@ -192,7 +192,7 @@ fn rls_op(entity: &Entity) -> Operation {
         summary: format!("enable tenant RLS on {t}"),
         sql,
         safety: Safety::Additive,
-        entity: entity.id.clone(),
+        entity: entity.id.to_string(),
         field: None,
         note: None,
     }
@@ -221,8 +221,8 @@ fn fk_op(entity: &Entity, field: &wamn_catalog::Field, target_table: &str) -> Op
         summary: format!("add foreign key {t}.{} -> {target_table}", field.name),
         sql,
         safety: Safety::Additive,
-        entity: entity.id.clone(),
-        field: Some(field.id.clone()),
+        entity: entity.id.to_string(),
+        field: Some(field.id.to_string()),
         note: None,
     }
 }
@@ -265,7 +265,7 @@ fn constraint_op(entity: &Entity, c: &Constraint) -> Operation {
         // Adding a constraint can fail on pre-existing violating rows, but it is
         // not data-losing — additive with a caveat.
         safety: Safety::Additive,
-        entity: entity.id.clone(),
+        entity: entity.id.to_string(),
         field: None,
         note: Some("fails if existing rows violate the constraint".into()),
     }
@@ -297,7 +297,7 @@ fn index_op(entity: &Entity, idx: &Index) -> Operation {
         ),
         sql,
         safety: Safety::Additive,
-        entity: entity.id.clone(),
+        entity: entity.id.to_string(),
         field: None,
         note: None,
     }
@@ -317,8 +317,8 @@ fn unit_comment_op(entity: &Entity, field: &wamn_catalog::Field, unit: &str) -> 
         summary: format!("comment unit on {t}.{}", field.name),
         sql,
         safety: Safety::Additive,
-        entity: entity.id.clone(),
-        field: Some(field.id.clone()),
+        entity: entity.id.to_string(),
+        field: Some(field.id.to_string()),
         note: None,
     }
 }
@@ -645,7 +645,7 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan
                 .partition(|(_, _, to)| !held.contains(to));
             if ready.is_empty() {
                 return Err(CompileError::ColumnRenameCycle {
-                    entity: new_e.id.clone(),
+                    entity: new_e.id.to_string(),
                     names: blocked
                         .iter()
                         .map(|(_, from, _)| from.to_string())
@@ -717,8 +717,8 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan
     //     target). A self-edge (a tree's parent pointer) drops with the table,
     //     so it is ignored. A mutual-FK cycle among dropped tables has no
     //     linearization and is rejected (`DropCycle`), as the rename cycles are.
-    let removed_set: HashSet<&str> = d.entities_removed.iter().map(String::as_str).collect();
-    let mut pending: Vec<&str> = d.entities_removed.iter().map(String::as_str).collect();
+    let removed_set: HashSet<&str> = d.entities_removed.iter().map(|e| e.as_str()).collect();
+    let mut pending: Vec<&str> = d.entities_removed.iter().map(|e| e.as_str()).collect();
     let mut drop_order: Vec<&str> = Vec::with_capacity(pending.len());
     while !pending.is_empty() {
         // A table is still held if any pending table references it — that
@@ -758,7 +758,7 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan
             summary: format!("drop table {}", e.name),
             sql: format!("DROP TABLE {}", q(drop_ident)),
             safety: Safety::Destructive,
-            entity: e.id.clone(),
+            entity: e.id.to_string(),
             field: None,
             note: Some(note.into()),
         });
@@ -807,7 +807,7 @@ fn rename_table_op(old_e: &Entity, new_e: &Entity) -> Operation {
             q(&new_e.name)
         ),
         safety: Safety::Destructive,
-        entity: new_e.id.clone(),
+        entity: new_e.id.to_string(),
         field: None,
         note: Some("breaks generated API / flows referencing the old name".into()),
     }
@@ -821,7 +821,7 @@ fn temp_rename_table_op(e: &Entity, tmp: &str) -> Operation {
         summary: format!("rename table {} aside as {tmp} (name reused)", e.name),
         sql: format!("ALTER TABLE {} RENAME TO {}", q(&e.name), q(tmp)),
         safety: Safety::Destructive,
-        entity: e.id.clone(),
+        entity: e.id.to_string(),
         field: None,
         note: Some(
             "frees the name for reuse; the renamed-aside table is dropped at the end of this plan"
@@ -849,7 +849,7 @@ fn rename_pkey_op(old_e: &Entity, new_e: &Entity) -> Operation {
             q(&format!("{}_pkey", new_e.name)),
         ),
         safety: Safety::Destructive,
-        entity: new_e.id.clone(),
+        entity: new_e.id.to_string(),
         field: None,
         note: Some("keeps the implicit primary-key index name canonical".into()),
     }
@@ -870,7 +870,7 @@ fn temp_rename_index_op(e: &Entity, name: &str) -> Operation {
             q(&format!("{TEMP_DROP_PREFIX}{name}"))
         ),
         safety: Safety::Destructive,
-        entity: e.id.clone(),
+        entity: e.id.to_string(),
         field: None,
         note: None,
     }
@@ -900,8 +900,8 @@ fn emit_additive_changes(
                 column_clause(&f.name, f)
             ),
             safety: Safety::Additive,
-            entity: new_e.id.clone(),
-            field: Some(f.id.clone()),
+            entity: new_e.id.to_string(),
+            field: Some(f.id.to_string()),
             note,
         });
         if let FieldType::Reference { entity: target } = &f.field_type {
@@ -939,7 +939,7 @@ fn rename_column_op(new_e: &Entity, field_id: &str, from: &str, to: &str) -> Ope
             q(to)
         ),
         safety: Safety::Destructive,
-        entity: new_e.id.clone(),
+        entity: new_e.id.to_string(),
         field: Some(field_id.to_string()),
         note: Some("breaks generated API / flows referencing the old name".into()),
     }
@@ -951,8 +951,8 @@ fn drop_column_op(new_e: &Entity, f: &wamn_catalog::Field) -> Operation {
         summary: format!("drop column {}.{}", new_e.name, f.name),
         sql: format!("ALTER TABLE {} DROP COLUMN {}", q(&new_e.name), q(&f.name)),
         safety: Safety::Destructive,
-        entity: new_e.id.clone(),
-        field: Some(f.id.clone()),
+        entity: new_e.id.to_string(),
+        field: Some(f.id.to_string()),
         note: Some("drops the column and its data".into()),
     }
 }
@@ -992,8 +992,8 @@ fn emit_column_alters(
                     col = q(&f.name),
                 ),
                 safety: Safety::Destructive,
-                entity: new_e.id.clone(),
-                field: Some(fc.id.clone()),
+                entity: new_e.id.to_string(),
+                field: Some(fc.id.to_string()),
                 note: Some("cast may fail or truncate existing values".into()),
             });
             if let FieldType::Reference { entity: target } = &f.field_type {
@@ -1019,8 +1019,8 @@ fn emit_column_alters(
                     q(&f.name)
                 ),
                 safety,
-                entity: new_e.id.clone(),
-                field: Some(fc.id.clone()),
+                entity: new_e.id.to_string(),
+                field: Some(fc.id.to_string()),
                 note,
             });
         }
@@ -1037,8 +1037,8 @@ fn emit_column_alters(
                     q(&f.name)
                 ),
                 safety: Safety::Additive,
-                entity: new_e.id.clone(),
-                field: Some(fc.id.clone()),
+                entity: new_e.id.to_string(),
+                field: Some(fc.id.to_string()),
                 note: None,
             });
         }
@@ -1061,7 +1061,7 @@ fn drop_reference_fk_op(new_e: &Entity, field_name: &str) -> Operation {
             q(&fk_constraint_name(&new_e.name, field_name))
         ),
         safety: Safety::Destructive,
-        entity: new_e.id.clone(),
+        entity: new_e.id.to_string(),
         field: None,
         note: Some("removes the foreign-key integrity guarantee".into()),
     }
@@ -1077,7 +1077,7 @@ fn drop_constraint_op(new_e: &Entity, c: &Constraint) -> Operation {
             q(c.name())
         ),
         safety: Safety::Destructive,
-        entity: new_e.id.clone(),
+        entity: new_e.id.to_string(),
         field: None,
         note: Some("removes a data-integrity guarantee".into()),
     }
@@ -1094,7 +1094,7 @@ fn drop_index_op(new_e: &Entity, idx: &Index) -> Operation {
         } else {
             Safety::Additive
         },
-        entity: new_e.id.clone(),
+        entity: new_e.id.to_string(),
         field: None,
         note: idx.unique.then(|| "removes a uniqueness guarantee".into()),
     }

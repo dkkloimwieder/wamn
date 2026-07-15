@@ -149,7 +149,7 @@ fn diff_detects_changes() {
 
     let d = wamn_catalog::diff(&v1, &v2);
     assert!(!d.is_empty());
-    assert!(d.entities_added.contains(&"audit_log".to_string()));
+    assert!(d.entities_added.iter().any(|e| e == "audit_log"));
     assert!(d.entities_removed.is_empty());
 
     let holds_change = d

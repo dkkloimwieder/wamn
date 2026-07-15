@@ -25,14 +25,97 @@ use serde_json::Value;
 /// waits for `0.2`.
 pub const SCHEMA_VERSION: &str = "0.1";
 
-/// A stable entity identifier, unique within a catalog. A logical slug; the DDL
-/// compiler (3.2) maps it to a physical table identifier.
-pub type EntityId = String;
+// Generates a schema-transparent string newtype for a catalog id. Each is a
+// near-drop-in for `String` — `Deref<Target = str>`, `as_str`, `Display`,
+// `From<&str>`/`From<String>`, and `PartialEq` against `str`/`&str`/`String` —
+// but a *distinct* type, so mixing an entity id with a field id is a compile
+// error (the confusion `wamn-api`'s router used to risk between
+// `Relation::from`/`to` and `Relation::from_field`). Two invariants:
+//
+//   - `Debug` delegates to the inner `String`, so a validation message that
+//     prints an id with `{:?}` reads `"foo"`, not `EntityId("foo")`.
+//   - schema-transparent: `#[serde(transparent)]` also drives schemars' own
+//     transparent derive (non-referenceable, inlined as a plain string), so the
+//     published `docs/catalog-model.schema.json` contract is byte-unchanged.
+macro_rules! id_newtype {
+    ($(#[$doc:meta])* $name:ident) => {
+        $(#[$doc])*
+        #[derive(
+            Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+        )]
+        #[serde(transparent)]
+        pub struct $name(String);
 
-/// A stable field identifier, unique within its entity. Logical; 3.2 maps it to
-/// a physical column identifier. Stable across renames, so a field rename is a
-/// *change* in the [`crate::diff`], not a remove + add.
-pub type FieldId = String;
+        impl $name {
+            /// The id as a string slice.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                std::fmt::Debug::fmt(&self.0, f)
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                std::fmt::Display::fmt(&self.0, f)
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = str;
+            fn deref(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl From<&str> for $name {
+            fn from(s: &str) -> Self {
+                Self(s.to_owned())
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(s: String) -> Self {
+                Self(s)
+            }
+        }
+
+        impl PartialEq<str> for $name {
+            fn eq(&self, other: &str) -> bool {
+                self.as_str() == other
+            }
+        }
+
+        impl PartialEq<&str> for $name {
+            fn eq(&self, other: &&str) -> bool {
+                self.as_str() == *other
+            }
+        }
+
+        impl PartialEq<String> for $name {
+            fn eq(&self, other: &String) -> bool {
+                self.as_str() == other.as_str()
+            }
+        }
+    };
+}
+
+id_newtype! {
+    /// A stable entity identifier, unique within a catalog. A logical slug; the DDL
+    /// compiler (3.2) maps it to a physical table identifier.
+    EntityId
+}
+
+id_newtype! {
+    /// A stable field identifier, unique within its entity. Logical; 3.2 maps it to
+    /// a physical column identifier. Stable across renames, so a field rename is a
+    /// *change* in the [`crate::diff`], not a remove + add.
+    FieldId
+}
 
 /// One version of a catalog — the unit stored, versioned, and promoted between
 /// environments (3.4).
@@ -266,4 +349,47 @@ impl Catalog {
 
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn id_debug_delegates_to_the_inner_string() {
+        // Load-bearing invariant: validation messages print ids with `{:?}` (see
+        // `validate.rs`), so an id must Debug as `"foo"`, NOT `EntityId("foo")` —
+        // a derived Debug would silently rewrite every such message.
+        assert_eq!(format!("{:?}", EntityId::from("foo")), "\"foo\"");
+        assert_eq!(format!("{:?}", FieldId::from("bar")), "\"bar\"");
+    }
+
+    #[test]
+    fn id_reads_as_the_plain_string() {
+        let e = EntityId::from("orders");
+        assert_eq!(e.to_string(), "orders"); // Display
+        assert_eq!(e.as_str(), "orders"); // inherent
+        assert_eq!(&*e, "orders"); // Deref<Target = str>
+        assert_eq!(e.len(), 6); // via Deref to str
+        assert!(e == "orders"); // PartialEq<&str>
+        assert!(e == *"orders"); // PartialEq<str>
+        let owned = String::from("orders");
+        assert!(e == owned); // PartialEq<String>
+        // From<String> and From<&str> agree.
+        assert_eq!(EntityId::from(String::from("x")), EntityId::from("x"));
+    }
+
+    #[test]
+    fn id_serializes_transparently_as_a_bare_string() {
+        // `#[serde(transparent)]` round-trips as a plain JSON string; it also
+        // drives schemars' transparent (inline, non-referenceable) derive that
+        // keeps docs/catalog-model.schema.json byte-unchanged (see the
+        // `committed_schema_matches_types` integration test).
+        let e = EntityId::from("sites");
+        assert_eq!(serde_json::to_string(&e).unwrap(), "\"sites\"");
+        assert_eq!(
+            serde_json::from_str::<EntityId>("\"sites\"").unwrap(),
+            EntityId::from("sites")
+        );
+    }
 }

@@ -187,7 +187,7 @@ fn check(catalog: &Catalog) -> Result<(), CompileError> {
         for f in &e.fields {
             if emit::RESERVED_COLUMNS.contains(&f.name.to_ascii_lowercase().as_str()) {
                 return Err(CompileError::ReservedColumn {
-                    entity: e.id.clone(),
+                    entity: e.id.to_string(),
                     field: f.name.clone(),
                 });
             }

@@ -117,7 +117,7 @@ fn row_insert(
         summary: format!("seed {}.{}", es.entity, row.key),
         sql,
         safety: Safety::Additive,
-        entity: entity.id.clone(),
+        entity: entity.id.to_string(),
         field: None,
         note: None,
     }
