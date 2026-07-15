@@ -1,0 +1,23 @@
+[package]
+name = "wamn-migrate"
+description = "wamn migration engine (2.5): the live, versioned, forward-only executor that wraps the shipped machinery — it reads the current applied catalog, computes the plan with the wamn-ddl compiler, and produces a ONE-TRANSACTION apply plan (DDL + the wamn-schema lifecycle advance + a migration-history row) plus a dry-run report and a generated rollback plan. Pure: no DB/clock — the driver (wamn-host migrate-catalog) executes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 2.5 COMPOSES the shipped model crates rather than re-deriving them: the
+# canonical catalog model + its JSON import/export + diff (3.1); the DDL compiler
+# + its additive/destructive confirmation gate (3.2, reused VERBATIM to compile a
+# migration and to honor the backup-checkpoint marker); and the lifecycle model
+# (3.4) — the single-applied + stale-base guards, reused as the validation oracle
+# so the live engine never diverges from them. This crate stays PURE (no DB,
+# clock, or wasm — the wamn-ddl/wamn-schema SR6 pure/effect precedent): it emits
+# `$n`-parameterized SQL text, and the driver holds the connection.
+wamn-catalog = { path = "../wamn-catalog" }
+wamn-ddl = { path = "../wamn-ddl" }
+wamn-schema = { path = "../wamn-schema" }
+
+[dev-dependencies]
+# The live-apply gate builds catalogs as structs and renders the apply plan into
+# a psql script; no JSON needed for the fixtures.

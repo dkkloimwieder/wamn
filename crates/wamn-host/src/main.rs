@@ -12,7 +12,7 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_host::{
-    dispatch, dump_project_env, host, move_org_tier, provision, provision_org,
+    dispatch, dump_project_env, host, migrate_catalog, move_org_tier, provision, provision_org,
     provision_project_env, publish_catalog, restore_project_env,
 };
 
@@ -47,6 +47,8 @@ enum Command {
     RestoreProjectEnv(restore_project_env::RestoreProjectEnvArgs),
     /// Promote an org to a higher tier: T3→T2 / T2→T4 (dump→provision→restore→flip) (wamn-q3n.13)
     MoveOrgTier(move_org_tier::MoveOrgTierArgs),
+    /// Apply a catalog to a project DB: versioned, forward-only migration + lifecycle + history (2.5)
+    MigrateCatalog(migrate_catalog::MigrateCatalogArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -73,6 +75,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::DumpProjectEnv(args) => dump_project_env::run(args).await,
         Command::RestoreProjectEnv(args) => restore_project_env::run(args).await,
         Command::MoveOrgTier(args) => move_org_tier::run(args).await,
+        Command::MigrateCatalog(args) => migrate_catalog::run(args).await,
     };
 
     shutdown_observability();

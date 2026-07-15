@@ -4160,6 +4160,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-ddl",
  "wamn-flow",
+ "wamn-migrate",
  "wamn-provision",
  "wamn-registry",
  "wamn-run-queue",
@@ -4167,6 +4168,15 @@ dependencies = [
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "wamn-migrate"
+version = "0.1.0"
+dependencies = [
+ "wamn-catalog",
+ "wamn-ddl",
+ "wamn-schema",
 ]
 
 [[package]]

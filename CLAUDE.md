@@ -1490,6 +1490,54 @@ docker run -d --rm --name wamn-as5-pg -p 5466:5432 -e POSTGRES_PASSWORD=postgres
 WAMN_SYSSCHEMA_PG_URL=postgres://postgres:postgres@127.0.0.1:5466/wamn cargo test -p wamn-sysschema
 docker stop wamn-as5-pg
 
+# [2.5] migration engine (crates/wamn-migrate + wamn-host migrate-catalog) — the
+# LIVE, versioned, forward-only executor that wraps the shipped machinery: it
+# reads the current applied catalog, computes the plan with 3.2 wamn-ddl
+# (Migration::create/migrate + the Confirmation gate REUSED VERBATIM — a
+# destructive plan is refused without --confirm-with-backup, the emitted DDL then
+# carries the "-- BACKUP CHECKPOINT REQUIRED" marker), validates the transition
+# against 3.4 wamn-schema (Environment::apply as the single-applied + stale-base
+# ORACLE), and produces a ONE-TRANSACTION ApplyPlan [DDL + demote-prior-applied +
+# promote-target-with-document + immutable schema_migrations history] + a --dry-run
+# report + a generated inverse RollbackPlan (migrate(target->current) + a
+# restore-to-last-dump [wamn-q3n.11] pointer). PURE crate (guards + $n SQL builders
+# + plan composition; NO DB/clock — the wamn-ddl/wamn-schema SR6 pure/effect
+# precedent); the thin `wamn-host migrate-catalog` subcommand is the effect shell
+# (superuser connect, read current [FOR UPDATE], execute the plan in one txn).
+# STORAGE (ADDITIVE to the STANDALONE deploy/catalog-schema.sql, NOT
+# postgres-init.sql): catalog.catalogs gains a `document jsonb` column (the applied
+# Catalog JSON = the diff source; 2.5 is its FIRST live writer) + a NEW
+# catalog.schema_migrations table (the immutable forward-only apply journal:
+# (from->to) version step, destructive flag, confirmation, op count, DDL checksum;
+# 3.2 floor + a45 hardening; wamn_app SELECT+INSERT only = append-only; PK
+# (tenant,catalog,env,to_version) forbids re-recording a version). The R9c one-txn
+# invariant keeps the wamn-ddl name-freeing preamble's zero-residue guarantee
+# (CREATE INDEX CONCURRENTLY = the deferred breaker: v1 emits no non-txn step, so
+# the residue-janitor + apply-journal are a follow-up). SCOPE: the TENANT catalog
+# engine (unblocks POC-DM1); the platform-release system-schema runner +
+# catalog-content shredding (3.3/11.8) = follow-up beads. Mutants killed
+# (scratchpad/mutate_d8u.py apply/test/restore, sha256, DEBUG): forward-only guard
+# / stale-base validation / the backup gate / the demote state literal / the
+# history statement — each fails a NAMED test. docs/migration-engine.md. No
+# JSON-schema (an engine, not a contract).
+cargo test -p wamn-migrate     # unit (guards/gate/dry-run/rollback) + drift-guard + live-apply
+cargo test -p wamn-host --lib migrate_catalog   # the subcommand's bare-ident + param-map units
+cargo clippy -p wamn-migrate -p wamn-host --all-targets \
+  && cargo fmt -p wamn-migrate -p wamn-host --check
+# optional live-apply gate (throwaway postgres:18; superuser url — provisions
+# wamn_app, applies catalog-schema.sql, then a REAL engine plan applies a first
+# materialization + a forward additive migration [document round-trip,
+# single-applied advance, history] + a gated destructive migration; skips when
+# unset):
+docker run -d --rm --name wamn-migrate-pg -p 5467:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_MIGRATE_PG_URL=postgres://postgres:postgres@127.0.0.1:5467/wamn cargo test -p wamn-migrate
+docker stop wamn-migrate-pg
+# The production tool is `wamn-host migrate-catalog --admin-database-url <superuser>
+# --tenant <t> --environment dev|canary|prod --schema <data schema> --target
+# <catalog.json> [--base <n>] [--dry-run] [--confirm-with-backup]` (reads current
+# applied, plans, applies in one txn; --dry-run touches nothing).
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

@@ -46,6 +46,11 @@ GRANT USAGE ON SCHEMA catalog TO wamn_app;
 --
 -- The single-applied invariant is a partial UNIQUE INDEX: at most one `applied`
 -- version per (catalog, environment).
+--
+-- `document` is the full catalog JSON (crates/wamn-catalog Catalog) for this
+-- version — written by the migration engine (2.5, crates/wamn-migrate) as the
+-- diff source: the next migration reads the applied version's `document` to diff
+-- a target against it. Nullable (populated for versions the engine applies).
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.catalogs (
     tenant_id      text NOT NULL CHECK (tenant_id <> ''),
@@ -56,6 +61,7 @@ CREATE TABLE catalog.catalogs (
     name           text,
     state          text NOT NULL DEFAULT 'draft',
     base_version   int,
+    document       jsonb,
     PRIMARY KEY (tenant_id, catalog_id, version),
     CONSTRAINT catalogs_state_check
         CHECK (state IN ('draft', 'staged', 'applied', 'superseded')),
@@ -73,6 +79,41 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.catalogs TO wamn_app;
 CREATE UNIQUE INDEX catalogs_one_applied_per_env
     ON catalog.catalogs (tenant_id, catalog_id, environment)
     WHERE state = 'applied';
+
+-- ---------------------------------------------------------------------------
+-- Migration history (2.5, crates/wamn-migrate). One IMMUTABLE row per applied
+-- migration — the versioned, forward-only apply journal the migration engine
+-- writes inside the SAME transaction as the DDL + the lifecycle advance. A row
+-- records the (from -> to) version step, whether it was destructive (so a
+-- confirmed backup checkpoint was required), the operation count, and a checksum
+-- of the applied DDL script (integrity/audit). `from_version` is NULL for the
+-- first materialization of a catalog. Forward-only: the PK forbids recording the
+-- same (catalog, environment, to_version) twice; wamn_app is granted SELECT +
+-- INSERT only (no UPDATE/DELETE) so history is append-only.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.schema_migrations (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id      text NOT NULL,
+    environment     text NOT NULL,
+    from_version    int,
+    to_version      int  NOT NULL,
+    confirmation    text NOT NULL,
+    statement_count int  NOT NULL,
+    destructive     boolean NOT NULL DEFAULT false,
+    checksum        text NOT NULL,
+    applied_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, catalog_id, environment, to_version),
+    CONSTRAINT schema_migrations_environment_check
+        CHECK (environment IN ('dev', 'canary', 'prod')),
+    CONSTRAINT schema_migrations_confirmation_check
+        CHECK (confirmation IN ('none', 'confirmed-with-backup'))
+);
+ALTER TABLE catalog.schema_migrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.schema_migrations FORCE ROW LEVEL SECURITY;
+CREATE POLICY schema_migrations_tenant ON catalog.schema_migrations
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT, INSERT ON catalog.schema_migrations TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Entities. `is_system` = platform-provided, structure-locked but extensible.
