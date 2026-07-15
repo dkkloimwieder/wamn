@@ -1,0 +1,16 @@
+[package]
+name = "wamn-sysschema"
+description = "The per-project system schema v1 (wamn-as5 / plan 2.4): the auth/RBAC/config table manifest — users, roles, permissions, configurations, audit_log, api_keys — the single source for the schema name and CHECK literals, drift-guarded against deploy/app-schema.sql."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+# The live-apply gate proves the schema's uuid/text claim columns are the right
+# targets for a REAL compiled 3.5 RLS policy — so it links the RLS builder and
+# its inputs (dev-only; the crate itself stays dependency-free).
+wamn-catalog = { path = "../wamn-catalog" }
+wamn-ddl = { path = "../wamn-ddl" }
+wamn-rls = { path = "../wamn-rls" }

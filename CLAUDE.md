@@ -1453,6 +1453,43 @@ kubectl -n wamn-system delete cluster e1gate-restore e1gate-prod e1gate-dev
 kubectl -n wamn-system delete objectstore e1gate-prod-store
 kubectl -n wamn-system delete scheduledbackup e1gate-prod-backup
 
+# [2.4] per-project system schema v1 (crates/wamn-sysschema + deploy/app-schema.sql)
+# — the auth/RBAC half of item 2.4: a per-project TENANT-SCOPED schema (schema
+# `app_system`) under the 3.2 RLS floor + a45 hardening (tenant_id NOT NULL CHECK
+# <> '' + FORCE RLS + NULLIF(current_setting('app.tenant',true),'') policies +
+# wamn_app grants — the catalog-schema.sql shape). SEVEN tables: users (id uuid =
+# the 3.5 app.user_id ownership target; status IN active/disabled/invited; NO
+# credential material), roles (name = the app.role gate target), user_roles
+# (user<->role linkage), permissions (role->permission string, 4.3 reads),
+# configurations (config_key->jsonb config_value), audit_log (actor_id BARE uuid
+# NOT FK'd — immutable history survives user deletion; indexed (tenant_id,
+# occurred_at)), api_keys (key_hash = one-way digest, raw key NEVER stored; FK
+# users ON DELETE CASCADE). The METADATA half (entities/fields/relations/flows) is
+# ALREADY shipped — catalog.* (deploy/catalog-schema.sql, 3.1) + wamn_run.flows
+# (deploy/flows.sql, POC-F1) — REFERENCED not redefined; a `deployments` table is
+# DEFERRED (a live WorkloadDeployment is a K8s CR). DISTINCT from the T1 registry
+# (deploy/system-schema.sql — PLATFORM-GLOBAL, wamn_system-owned, no RLS floor);
+# hence a different file, NOT named system-schema.sql. NEW crates/wamn-sysschema =
+# the PURE model (SCHEMA_NAME=app_system + TABLES manifest + UserStatus CHECK
+# literals + claim GUC names; ZERO deps) drift-guarded vs deploy/app-schema.sql.
+# NO password hashing / JWT / session mgmt (that is 4.2/8.1) — the SUBSTRATE only;
+# claims are injected by the plugin from a resolved session. STANDALONE DDL (NOT
+# in postgres-init.sql). Mutants killed (python apply/test/restore, sha256,
+# DEBUG): status literal / model literal / an FK cascade / the tenant policy
+# predicate / an added audit FK — each fails a NAMED test. docs/app-schema.md.
+cargo test -p wamn-sysschema     # unit (status literals + table manifest) + drift-guard
+cargo clippy -p wamn-sysschema --all-targets && cargo fmt -p wamn-sysschema --check
+# optional live-apply gate (throwaway postgres:18; superuser url provisions
+# wamn_app; applies app-schema.sql, asserts tenant RLS isolation across two
+# tenants + empty-claim fail-closed + FK cascade + audit-log immutability +
+# status/''-tenant CHECKs + users.id is uuid + a REAL compiled 3.5 policy filters
+# a data table by app.user_id [= a users.id] / app.role [= a roles.name]; skips
+# when unset):
+docker run -d --rm --name wamn-as5-pg -p 5466:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+WAMN_SYSSCHEMA_PG_URL=postgres://postgres:postgres@127.0.0.1:5466/wamn cargo test -p wamn-sysschema
+docker stop wamn-as5-pg
+
 # [3.1] metadata catalog schema crate (crates/wamn-catalog) — canonical model
 # JSON: entity/field/relation/index/constraint types + is_system, validation,
 # import/export, version diff. Field type system incl. exact-decimal

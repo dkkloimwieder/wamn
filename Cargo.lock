@@ -4282,6 +4282,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-sysschema"
+version = "0.1.0"
+dependencies = [
+ "wamn-catalog",
+ "wamn-ddl",
+ "wamn-rls",
+]
+
+[[package]]
 name = "want"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
