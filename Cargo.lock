@@ -4324,7 +4324,7 @@ dependencies = [
 [[package]]
 name = "wash-runtime"
 version = "2.5.2"
-source = "git+https://github.com/dkkloimwieder/wasmCloud?rev=5b158ffcb860de2a0b132e1df1ca79ea1788dee1#5b158ffcb860de2a0b132e1df1ca79ea1788dee1"
+source = "git+https://github.com/dkkloimwieder/wasmCloud?rev=d3d83f3152abe103fa49a538861cbc826c256d5e#d3d83f3152abe103fa49a538861cbc826c256d5e"
 dependencies = [
  "anyhow",
  "async-nats",

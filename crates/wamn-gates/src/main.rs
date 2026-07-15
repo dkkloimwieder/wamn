@@ -24,6 +24,7 @@ mod publish_catalog_demo;
 mod queuebench;
 mod testhostbench;
 mod tracebench;
+mod traceproof;
 
 use std::str::FromStr as _;
 
@@ -64,6 +65,10 @@ enum Command {
     Logbench(logbench::LogBenchArgs),
     /// Run the 9.1 OTel trace-pipeline gate (host spans → Tempo; enriched single trace)
     Tracebench(tracebench::TracebenchArgs),
+    /// Run the 9.2 deployed cross-pod traceparent-propagation proof (relay → serve-echo)
+    Traceproof(traceproof::TraceproofArgs),
+    /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
+    ServeEcho(traceproof::ServeEchoArgs),
     /// Run the S6 test-host plugin-swap gates (sameness / delay / egress / regression)
     Testhostbench(testhostbench::TestHostBenchArgs),
     /// Run the 2.6 DB-path egress review gate (no shipped workload imports wasi:sockets)
@@ -109,6 +114,8 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ServeNode(args) => nodebench::serve(args).await,
         Command::Logbench(args) => logbench::run(args).await,
         Command::Tracebench(args) => tracebench::run(args).await,
+        Command::Traceproof(args) => traceproof::run(args).await,
+        Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Testhostbench(args) => testhostbench::run(args).await,
         Command::Egressbench(args) => egressbench::run(args).await,
         Command::Apibench(args) => apibench::run(args).await,

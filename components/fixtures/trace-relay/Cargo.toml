@@ -1,0 +1,10 @@
+[package]
+name = "trace-relay"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wit-bindgen = "0.44"
+
+[lib]
+crate-type = ["cdylib"]

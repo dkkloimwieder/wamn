@@ -323,6 +323,62 @@ kubectl -n wamn-system apply -f deploy/tracebench-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/tracebench --timeout=180s
 kubectl -n wamn-system logs job/tracebench
 
+# [9.2] trace context propagation (host-stamped, wamn-rvd): the follow-on 9.1
+# deferred — a trace threads ACROSS a process boundary, HOST-ENFORCED. A CARRIED
+# FORK COMMIT (d3d83f3, 3rd on wamn/2.5.2; docs/wash-runtime-fork.md ledger)
+# injects the current W3C trace context in wash-runtime
+# DefaultOutgoingHandler::send_request — the SINGLE production outbound wasi:http
+# send path (guest -> CtxHttpHooks -> HttpServer::outgoing_request -> the default
+# handler), symmetric to the inbound extract the fork already did. Because EVERY
+# outbound wasi:http flows through this handler regardless of SDK use, an
+# SDK-bypassing custom node cannot break trace continuity (structural). A no-op
+# when observability is off. WAMN-SIDE: wamn-node-sdk RunContext::trace_headers/
+# apply_trace_context (the SDK propagation helper) + the wamn-nodes http-request
+# node forwards run.traceparent onto its outbound request (a config header of the
+# same name wins). wamn:postgres needs no change (no traceparent wire concept; the
+# 9.1 DB span nests by parentage). flowrunner is host-invoked (exported run(), no
+# inbound HTTP) so its RunContext.traceparent stays None (host inject still traces
+# its outbound); a per-run traceparent for host-invoked guests = follow-up
+# wamn-fl3. GATE = traceproof, a DEPLOYED cross-pod proof (the 9.1 in-proc
+# tracebench BYPASSES wash's HTTP server so cannot exercise the outbound send
+# path): NEW components/fixtures/trace-relay (wash-served; makes ONE BARE outbound
+# GET, no trace header) -> NEW serve-echo (wamn-gates subcommand; a plain server
+# reflecting the received traceparent as JSON) -> the relay returns serve-echo's
+# body -> traceproof asserts the reflected trace id == the one it sent (threaded
+# the boundary) + the span id differs (host minted a child client span, not a
+# blind copy). A traceparent reaching serve-echo can ONLY be host-injected (the
+# relay never sets one). 1 fork mutant killed (inject no-op -> serve-echo sees no
+# traceparent -> traceproof "downstream received traceparent" FAILS).
+# docs/tracing.md § Cross-pod propagation.
+cargo test -p wamn-node-sdk -p wamn-nodes   # trace_headers/apply + http-node forward + explicit-header-wins
+cargo test -p wamn-gates --bin wamn-gates traceproof   # w3c/header-parse units
+cargo clippy -p wamn-node-sdk -p wamn-nodes -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-node-sdk -p wamn-nodes -p wamn-gates --check
+(cd components && cargo build --release --target wasm32-wasip2 -p trace-relay)
+cargo clippy --manifest-path components/fixtures/trace-relay/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/fixtures/trace-relay/Cargo.toml --check
+# No local run: the fork inject fires ONLY on the real washlet outbound path
+# (in-proc gates bypass wash's HTTP server), so the deployed gate IS the proof.
+# In-cluster gate of record. A FORK rev bump => FULL docker rebuild (both --target
+# stages) + kind load BOTH images + roll the hostgroup (picks up the new
+# wash-runtime):
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system rollout restart deploy/hostgroup-default
+kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=180s
+# Push the relay component to the in-cluster registry (the 4.1b/POC-F1 pattern,
+# via the registry port-forward):
+kubectl -n wamn-system port-forward svc/registry 5000:5000 &
+wash push localhost:5000/wamn/trace-relay:dev \
+  components/target/wasm32-wasip2/release/trace_relay.wasm --insecure
+# Deploy pod B (serve-echo) + pod A (trace-relay), then run the proof:
+kubectl -n wamn-system apply -f deploy/serve-echo.yaml
+kubectl -n wamn-system rollout status deploy/serve-echo --timeout=120s
+kubectl -n wamn-system apply -f deploy/trace-relay-workload.yaml
+kubectl -n wamn-system apply -f deploy/traceproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/traceproof --timeout=180s
+kubectl -n wamn-system logs job/traceproof
+
 # S6 gates (test-host plugin-swap: sameness / 24h-delay under virtual time /
 # egress spy / S3 regression). Needs a Postgres. The test host provisions a
 # FRESH ephemeral schema through the SUPERUSER url (the runner's wamn_app role

@@ -1,0 +1,19 @@
+package wamn:trace-relay@0.1.0;
+
+/// trace-relay (9.2 traceproof fixture): a minimal wash-served component that,
+/// on any inbound HTTP request, makes ONE **bare** outbound `wasi:http` GET to
+/// an upstream (from the `x-relay-upstream` request header, else a compiled
+/// default) and returns the upstream's response body verbatim.
+///
+/// It exists to prove HOST-ENFORCED outbound `traceparent` injection across a
+/// pod boundary. wash-runtime extracts the inbound `traceparent` (continuing
+/// the caller's trace), the host stamps it onto this component's bare outbound
+/// call (9.2 — `DefaultOutgoingHandler`), and the upstream reflects the header
+/// it received. The relay itself NEVER sets a trace header, so if a header
+/// arrives downstream it can only have come from the host inject — the exact
+/// property the `traceproof` gate asserts (and a mutation of the inject breaks).
+world trace-relay {
+  import wasi:http/types@0.2.12;
+  import wasi:http/outgoing-handler@0.2.12;
+  export wasi:http/incoming-handler@0.2.12;
+}

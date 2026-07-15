@@ -42,7 +42,13 @@ impl Node for HttpRequestNode {
         run: &RunContext<'_>,
         input: &Value,
     ) -> Result<Emission, NodeError> {
-        let req = build_request(run.config, input)?;
+        let mut req = build_request(run.config, input)?;
+        // 9.2: forward the active W3C trace context so this request continues
+        // the run's trace. The host also stamps outbound `wasi:http` calls, so
+        // continuity holds regardless; forwarding here keeps `traceparent`
+        // present on the node's own request (a config header of the same name
+        // still wins — `apply_trace_context` skips keys already set).
+        run.apply_trace_context(&mut req.headers);
         let host = url_host(&req.url).unwrap_or_default().to_string();
         match ctx.http(&req) {
             Ok(resp) => classify_response(&host, &resp),

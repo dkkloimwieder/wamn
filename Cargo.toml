@@ -19,7 +19,7 @@ license = "Apache-2.0"
 # default-features off: `wasi-webgpu` pulls crates.io wasmtime alongside the
 # workspace's git-pinned one (two wasmtimes = linker typecheck failures upstream
 # solves with a [patch] we'd otherwise have to replicate).
-wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "5b158ffcb860de2a0b132e1df1ca79ea1788dee1", default-features = false, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel"] }
+wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "d3d83f3152abe103fa49a538861cbc826c256d5e", default-features = false, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel"] }
 anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tracing = "0.1"

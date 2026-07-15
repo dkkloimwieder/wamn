@@ -173,11 +173,8 @@ fn open_run(run_id: &str, flow_id: &str, flow_version: u32, input: &Value) -> Re
 /// An error-routed node was recorded as an emission on the `error` port, so
 /// reconstruction needs no error taxonomy here.
 fn load_completed(run_id: &str) -> Result<Vec<NodeRunRecord>, String> {
-    let rs = client::query(
-        &run_sql::select_completed_node_runs_sql(),
-        &[text(run_id)],
-    )
-    .map_err(|e| err_name(&e))?;
+    let rs = client::query(&run_sql::select_completed_node_runs_sql(), &[text(run_id)])
+        .map_err(|e| err_name(&e))?;
     let mut out = Vec::with_capacity(rs.rows.len());
     for row in &rs.rows {
         let node_id = match row.first() {
@@ -269,11 +266,8 @@ fn wall_now_secs() -> u64 {
 /// Load the parked-wake deadline (epoch seconds) recorded in the run's
 /// `state_json`, if any.
 fn load_wake(run_id: &str) -> Result<Option<u64>, String> {
-    let rs = client::query(
-        &run_sql::select_run_state_sql(),
-        &[text(run_id)],
-    )
-    .map_err(|e| err_name(&e))?;
+    let rs = client::query(&run_sql::select_run_state_sql(), &[text(run_id)])
+        .map_err(|e| err_name(&e))?;
     let raw = match rs.rows.first().and_then(|r| r.first()) {
         Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s.clone(),
         _ => return Ok(None), // NULL / absent
@@ -533,8 +527,15 @@ fn dispatch_node(
                 attempt: d.attempt,
                 idempotency_key: &d.idempotency_key,
                 deadline_ms: d.deadline_ms,
-                // Host tracing (9.2) is not wired yet; the frozen WIT carries
-                // these as optional for exactly this reason.
+                // 9.2: this guest is host-invoked (exported `run`), not served
+                // over `wasi:http`, so it has no inbound request to read a
+                // `traceparent` from. Its OUTBOUND calls are still traced — the
+                // host stamps the active trace context onto every outbound
+                // `wasi:http`/`wamn:postgres` call (host-enforced inject), and
+                // the standard http-request node forwards `run.traceparent`
+                // once a source exists. Surfacing a per-run traceparent to a
+                // host-invoked guest needs the queue/dispatch path to carry it
+                // (follow-up); until then this stays `None`.
                 traceparent: None,
                 tracestate: None,
                 config: &d.config,

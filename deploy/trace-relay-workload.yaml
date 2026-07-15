@@ -1,0 +1,56 @@
+# [9.2] The wash-served pod A of the traceproof cross-pod proof. On any inbound
+# request the trace-relay makes ONE BARE outbound wasi:http GET to serve-echo
+# (pod B) and returns serve-echo's body. wash extracts the inbound traceparent
+# (continuing the caller's trace) and the fork stamps it onto the bare outbound
+# call (9.2), so a traceparent reaching serve-echo can only be host-injected.
+#
+# The component image is OCI-pulled by wash-runtime from the in-cluster registry
+# (the 4.1b/POC-F1 pattern), so push it first:
+#   wash push localhost:5000/wamn/trace-relay:dev \
+#     components/target/wasm32-wasip2/release/trace_relay.wasm --insecure
+#
+#   kubectl -n wamn-system apply -f deploy/trace-relay-workload.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: trace-relay
+  namespace: wamn-system
+  labels: { app: trace-relay }
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: trace-relay
+  namespace: wamn-system
+spec:
+  replicas: 1
+  template:
+    spec:
+      hostSelector:
+        hostgroup: default
+      kubernetes:
+        service:
+          name: trace-relay
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: relay.localhost.direct
+      components:
+        - name: trace-relay
+          image: registry.wamn-system.svc.cluster.local:5000/wamn/trace-relay:dev
+          imagePullPolicy: Always
+          localResources:
+            # wasi:http egress is allow-list gated (empty = deny-all). Permit
+            # only the serve-echo upstream — the relay makes no other call.
+            allowedHosts:
+              - "serve-echo.wamn-system.svc.cluster.local:8091"
+              - "serve-echo:8091"

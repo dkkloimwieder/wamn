@@ -70,16 +70,65 @@ that is where 9.1 enriches them. A webhook's `run_id` is minted *inside the
 guest* and its per-node `node_id` lives inside the guest's node loop; surfacing
 those to host spans needs the guest→host run-context contract, which is 9.2.
 
-## Boundaries (9.2, not 9.1)
+## Cross-pod propagation (9.2)
 
-- **Cross-pod threading.** wash-runtime extracts an incoming `traceparent` but
-  does **not inject** one on outbound `wasi:http` / `wamn:postgres` calls — so a
-  trace threads within a process (via `tracing` parent/child → OTel) but breaks
-  across pods (a custom-node hop, the generated-API pod). Host-enforced
-  traceparent **stamping** on outbound calls is 9.2 (the `wamn:node`
-  `traceparent` field is frozen at 5.4 but unwired).
-- **Guest run context.** Guest-minted webhook `run_id` and per-node `node_id`
-  enrichment ride the same 9.2 contract.
+9.1 threads a trace *within* a process; 9.2 (wamn-rvd) makes it thread *across*
+one, **host-enforced**:
+
+- **Host-enforced outbound inject.** wash-runtime already *extracts* an incoming
+  `traceparent` (`handle_http_request`) but did not *inject* one on outbound
+  calls. 9.2 adds the symmetric inject in `DefaultOutgoingHandler::send_request`
+  (a carried fork commit — the single production outbound `wasi:http` send path;
+  see `docs/wash-runtime-fork.md`): it stamps the current W3C trace context onto
+  the outbound request before it leaves the process. Because **every** outbound
+  `wasi:http` call flows through this handler regardless of whether the guest
+  used an SDK, an SDK-bypassing custom node cannot break trace continuity — the
+  guarantee is structural, not authorship-dependent.
+- **SDK propagation helper.** `RunContext::trace_headers()` /
+  `apply_trace_context()` (`wamn-node-sdk`) return the active `traceparent` /
+  `tracestate` as header pairs, and the standard `http-request` node
+  (`wamn-nodes`) forwards them onto the outbound request it builds (a config
+  header of the same name still wins). The host inject makes this
+  belt-and-braces for continuity; it keeps `traceparent` present on the node's
+  own request and lets a node correlate on it.
+- **`wamn:postgres`** needs no wire change (Postgres has no `traceparent`
+  concept); the 9.1 DB span already nests under the current span, so the trace
+  context is captured by parentage.
+
+### The gate — `traceproof` (the deployed cross-pod proof)
+
+The 9.1 in-proc `tracebench` cannot exercise this: `ProxyPre` bypasses
+wash-runtime's HTTP server, so the outbound send path where the fork stamps the
+context never runs. `traceproof` (`crates/wamn-gates/src/traceproof.rs`) runs
+against **real deployed workloads**:
+
+```text
+  traceproof --GET, traceparent=00-T-S0-01--> trace-relay (wash pod A)
+       relay makes a BARE outbound GET (no trace header) --------+
+                                                                 v
+                                     serve-echo (plain pod B) reflects the
+                                     traceparent it received, as JSON
+       <-- relay returns serve-echo's body verbatim ------------ +
+```
+
+`trace-relay` (`components/fixtures/trace-relay`) is wash-served and makes ONE
+bare outbound call; it never sets a trace header, so a `traceparent` arriving at
+`serve-echo` can only have been host-injected. The proof asserts (each a NAMED
+failure a mutation of the inject flips): the downstream received a `traceparent`
+at all; its **trace id equals the one we sent** (the trace threaded the
+boundary); and its **span id differs** (the host minted a child client span, not
+a blind copy). In-cluster gate of record: `deploy/serve-echo.yaml` +
+`deploy/trace-relay-workload.yaml` + `deploy/traceproof-job.yaml`.
+
+### Deferred
+
+- **Guest-visible run context on host-invoked flows.** The `flowrunner` is
+  invoked via an exported `run()` (no inbound HTTP), so it has no request header
+  to source `RunContext.traceparent` from; its outbound calls are still traced
+  (host inject), but surfacing a per-run `traceparent` to it needs the
+  queue/dispatch path to carry one (follow-up).
+- **Guest-minted enrichment.** Webhook-minted `run_id` and per-node `node_id` on
+  host spans still await the guest→host run-context contract.
 
 ## The gate — `tracebench` (the S5 `logbench`→Loki analog)
 

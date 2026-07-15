@@ -257,6 +257,87 @@ fn http_request_null_body_expression_sends_no_body() {
     assert_eq!(em.payload["status"], 204);
 }
 
+/// 9.2: the SDK http-request node forwards the run's active W3C trace context
+/// onto the outbound request it builds.
+#[test]
+fn http_request_forwards_active_traceparent() {
+    let mut mock = Mock::default();
+    mock.http_results.push_back(ok_http(200, &[], "{}"));
+    let config = json!({"url": "http://api.test/x"});
+    let rc = RunContext {
+        run_id: "r-1",
+        flow_id: "f",
+        flow_version: 1,
+        node_id: "n",
+        attempt: 0,
+        idempotency_key: "r-1:n",
+        deadline_ms: None,
+        traceparent: Some("00-abc-def-01"),
+        tracestate: Some("vendor=1"),
+        config: &config,
+    };
+    dispatch(
+        "http-request",
+        granted_for(false),
+        &mut mock,
+        &rc,
+        &json!({}),
+    )
+    .unwrap();
+    let req = &mock.http_calls[0];
+    assert!(
+        req.headers
+            .iter()
+            .any(|(k, v)| k == "traceparent" && v == "00-abc-def-01"),
+        "http-request forwards the active traceparent (9.2); got {:?}",
+        req.headers
+    );
+    assert!(
+        req.headers
+            .iter()
+            .any(|(k, v)| k == "tracestate" && v == "vendor=1"),
+        "and tracestate alongside it"
+    );
+}
+
+/// An explicit config `traceparent` header must win over the run's context.
+#[test]
+fn http_request_explicit_traceparent_header_wins() {
+    let mut mock = Mock::default();
+    mock.http_results.push_back(ok_http(200, &[], "{}"));
+    let config = json!({
+        "url": "http://api.test/x",
+        "headers": {"traceparent": "00-explicit-01"}
+    });
+    let rc = RunContext {
+        run_id: "r-1",
+        flow_id: "f",
+        flow_version: 1,
+        node_id: "n",
+        attempt: 0,
+        idempotency_key: "r-1:n",
+        deadline_ms: None,
+        traceparent: Some("00-host-01"),
+        tracestate: None,
+        config: &config,
+    };
+    dispatch(
+        "http-request",
+        granted_for(false),
+        &mut mock,
+        &rc,
+        &json!({}),
+    )
+    .unwrap();
+    let tps: Vec<_> = mock.http_calls[0]
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("traceparent"))
+        .collect();
+    assert_eq!(tps.len(), 1, "exactly one traceparent header");
+    assert_eq!(tps[0].1, "00-explicit-01", "config header wins");
+}
+
 /// THE mechanical status → taxonomy map (docs/wamn-node.wit): 429 →
 /// rate-limited with the source delay + throttle host; 408/5xx → retryable;
 /// other 4xx → terminal; transport → retryable; host egress denial → terminal.

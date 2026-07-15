@@ -58,6 +58,38 @@ pub struct RunContext<'a> {
     pub config: &'a Value,
 }
 
+impl RunContext<'_> {
+    /// W3C trace headers to propagate on an outbound request: `traceparent`
+    /// (and `tracestate` when present). Empty when no trace is active.
+    ///
+    /// This is the SDK propagation helper (9.2). The host also *stamps*
+    /// outbound `wasi:http` calls, so trace continuity holds even for nodes
+    /// that ignore this; forwarding it explicitly keeps the header present on
+    /// the node's own request before it reaches the host handler.
+    pub fn trace_headers(&self) -> Vec<(String, String)> {
+        let mut hs = Vec::new();
+        if let Some(tp) = self.traceparent {
+            hs.push(("traceparent".to_string(), tp.to_string()));
+            // `tracestate` is only valid alongside `traceparent` (W3C), so it
+            // rides inside this arm.
+            if let Some(ts) = self.tracestate {
+                hs.push(("tracestate".to_string(), ts.to_string()));
+            }
+        }
+        hs
+    }
+
+    /// Append this run's trace headers to `headers`, skipping any key already
+    /// present (case-insensitive) so an explicit config header wins.
+    pub fn apply_trace_context(&self, headers: &mut Vec<(String, String)>) {
+        for (k, v) in self.trace_headers() {
+            if !headers.iter().any(|(hk, _)| hk.eq_ignore_ascii_case(&k)) {
+                headers.push((k, v));
+            }
+        }
+    }
+}
+
 /// An outbound HTTP request a node asks the runner to make.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct HttpRequest {
@@ -164,5 +196,74 @@ pub trait NodeCtx {
     /// the runner resolves it from host-injected project config.
     fn raw_sql_enabled(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn ctx<'a>(tp: Option<&'a str>, ts: Option<&'a str>, config: &'a Value) -> RunContext<'a> {
+        RunContext {
+            run_id: "r1",
+            flow_id: "f1",
+            flow_version: 1,
+            node_id: "n1",
+            attempt: 0,
+            idempotency_key: "r1:n1",
+            deadline_ms: None,
+            traceparent: tp,
+            tracestate: ts,
+            config,
+        }
+    }
+
+    #[test]
+    fn trace_headers_present_carry_traceparent_and_tracestate() {
+        let cfg = json!({});
+        let c = ctx(Some("00-abc-def-01"), Some("vendor=1"), &cfg);
+        assert_eq!(
+            c.trace_headers(),
+            vec![
+                ("traceparent".to_string(), "00-abc-def-01".to_string()),
+                ("tracestate".to_string(), "vendor=1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn trace_headers_absent_when_no_traceparent() {
+        // `tracestate` without `traceparent` is invalid W3C, so it is dropped.
+        let cfg = json!({});
+        assert!(ctx(None, Some("vendor=1"), &cfg).trace_headers().is_empty());
+    }
+
+    #[test]
+    fn apply_trace_context_appends_when_absent() {
+        let cfg = json!({});
+        let c = ctx(Some("00-abc-def-01"), None, &cfg);
+        let mut headers = vec![("x-token".to_string(), "t".to_string())];
+        c.apply_trace_context(&mut headers);
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "traceparent" && v == "00-abc-def-01")
+        );
+    }
+
+    #[test]
+    fn apply_trace_context_does_not_override_explicit_header() {
+        let cfg = json!({});
+        let c = ctx(Some("00-host-injected-01"), None, &cfg);
+        // A caller set `traceparent` explicitly (any case) — it must win.
+        let mut headers = vec![("TraceParent".to_string(), "00-explicit-01".to_string())];
+        c.apply_trace_context(&mut headers);
+        let tps: Vec<_> = headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case("traceparent"))
+            .collect();
+        assert_eq!(tps.len(), 1);
+        assert_eq!(tps[0].1, "00-explicit-01");
     }
 }
