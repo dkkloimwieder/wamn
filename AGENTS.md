@@ -93,6 +93,9 @@ When your changes create orphans:
 
 The test: Every changed line should trace directly to the user's request.
 
+### Rust
+Almost all code here is Rust — consult the `rust-guidelines` skill when writing, reviewing, or refactoring it. Where it conflicts with a project convention, the project wins (e.g. this repo uses error **enums** mirroring WIT variants, not the skill's error structs).
+
 ## Repository structure
 
 - `crates/wamn-host` — production host: the `wash-runtime` washlet embedding + wamn host plugins (`wamn:postgres`, logging) + imperative subcommands (`host`, `dispatch`, `provision-*`, `migrate-catalog`, `publish-catalog`). Thin binary over the lib.
