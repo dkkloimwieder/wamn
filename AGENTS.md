@@ -267,6 +267,62 @@ kubectl -n wamn-system rollout status deploy/loki deploy/otel-collector --timeou
 kubectl -n wamn-system apply -f deploy/logbench-job.yaml
 kubectl -n wamn-system logs -f job/logbench
 
+# [9.1] OTel trace pipeline (crates/wamn-gates tracebench + host spans +
+# deploy/tempo.yaml + a traces pipeline in deploy/otel-collector.yaml) —
+# host-native spans -> OTel Collector -> Tempo (D13), enriched with execution
+# context. The exporter + W3C propagator + wash-runtime's inbound/outbound HTTP
+# + component-invoke spans are ALREADY wired (the fork's initialize_observability,
+# active on OTEL_* — the S5 switch); 9.1 adds host-side, WAMN-SIDE (no fork
+# patch): a wamn.postgres DB span (plugins/wamn_postgres.rs db_span:
+# db.system/db.operation + tenant/project/component from the same non-spoofable
+# claim maps that inject app.tenant; wraps one-shot + txn query/execute) + a
+# wamn.trigger span (dispatch.rs trigger_span: flow/run_id/flow_version/
+# trigger_source/tenant — the HOST-KNOWN path where the dispatcher mints
+# flow/run_id; both cron + outbox fire sites) + deploy/tempo.yaml (single-binary
+# Tempo, OTLP-gRPC :4317 / TraceQL :3200) + the collector traces pipeline (otlp
+# -> otlp/tempo) (+ local variants tempo-local.yaml / otelcol-local.yaml).
+# tracebench drives pgprobe op 6 (SELECT pg_sleep(0), FIXTURE-FREE) UNDER the
+# real trigger_span so the plugin DB span nests, then queries Tempo's TraceQL
+# API asserting ONE trace threads trigger -> wamn:postgres, both enriched (the
+# S5 logbench->Loki analog, through the PRODUCTION span builders not gate
+# scaffolding). Cross-pod traceparent INJECTION + guest-minted run_id/node_id =
+# 9.2 (deferred; the wamn:node traceparent field is frozen [5.4] but unwired).
+# 4 mutants killed (DB-span tenant / trigger flow field / DB-span name / DB-span
+# parent-inheritance [threading]) each fail a NAMED tracebench assertion.
+# docs/tracing.md.
+cargo clippy -p wamn-host -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-host -p wamn-gates --check
+# Local iteration (throwaway Postgres + Tempo + collector on a docker network;
+# --log-level info is LOAD-BEARING — the OTLP trace filter is level-tied and the
+# spans are INFO):
+docker network create wamn-s5 2>/dev/null || true
+docker run -d --rm --name wamn-trace-pg --network wamn-s5 -p 5482:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+docker run -d --name wamn-s5-tempo --network wamn-s5 -p 3200:3200 \
+  -v "$PWD/deploy/tempo-local.yaml:/etc/tempo/tempo.yaml:ro" \
+  grafana/tempo:2.6.1 -config.file=/etc/tempo/tempo.yaml
+docker run -d --name wamn-s5-otelcol --network wamn-s5 -p 4317:4317 -p 8888:8888 \
+  -v "$PWD/deploy/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
+  otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
+  OTEL_BSP_SCHEDULE_DELAY=1000 RUST_LOG=error \
+  ./target/debug/wamn-gates --log-level info tracebench \
+  --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
+  --database-url postgres://postgres:postgres@127.0.0.1:5482/wamn \
+  --tempo-url http://127.0.0.1:3200
+docker stop wamn-trace-pg wamn-s5-tempo wamn-s5-otelcol
+# In-cluster gate of record (real Tempo + collector + Postgres, no cpu limit —
+# S2 lesson; pg_sleep is schema-free so it is ADDITIVE on the shared Postgres).
+# A HOST change (the plugin + dispatch spans) => FULL docker rebuild (both
+# --target stages + kind load BOTH images):
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system apply -f deploy/tempo.yaml -f deploy/otel-collector.yaml
+kubectl -n wamn-system rollout status deploy/tempo deploy/otel-collector --timeout=120s
+kubectl -n wamn-system apply -f deploy/tracebench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/tracebench --timeout=180s
+kubectl -n wamn-system logs job/tracebench
+
 # S6 gates (test-host plugin-swap: sameness / 24h-delay under virtual time /
 # egress spy / S3 regression). Needs a Postgres. The test host provisions a
 # FRESH ephemeral schema through the SUPERUSER url (the runner's wamn_app role

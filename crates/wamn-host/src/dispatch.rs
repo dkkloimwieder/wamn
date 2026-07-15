@@ -62,6 +62,7 @@ use std::time::Duration;
 use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::{Client, NoTls};
+use tracing::Instrument as _;
 use wamn_flow::{Flow, Trigger};
 use wamn_run_queue::{
     Firing, OutboxRow, RowEventFlow, active_flows_sql, cron_firing, cron_last_run_sql,
@@ -451,7 +452,8 @@ impl Dispatcher {
             };
             if let Some(tick) = due {
                 let firing = cron_firing(flow_id, *version, schedule, tick);
-                let won = fire(&mut p.client, &firing).await?;
+                let span = trigger_span(&firing, &p.spec.tenant);
+                let won = fire(&mut p.client, &firing).instrument(span).await?;
                 p.last_fired.insert(flow_id.clone(), tick);
                 if won {
                     doorbells.push(firing.run_id.clone());
@@ -474,6 +476,7 @@ impl Dispatcher {
         // domain — a crash redelivers the batch and retracts its enqueues
         // atomically; the deterministic ids dedupe the redelivery).
         {
+            let tenant = p.spec.tenant.clone();
             let tx = p.client.transaction().await?;
             let rows = tx.query(&outbox_poll_sql(batch), &[]).await?;
             if !rows.is_empty() {
@@ -499,6 +502,7 @@ impl Dispatcher {
                 let triggered = write_ahead_triggered_run_sql();
                 let enq = enqueue_sql();
                 for f in match_outbox(&polled, &reg.row_events) {
+                    let span = trigger_span(&f, &tenant);
                     let inserted = tx
                         .execute(
                             &triggered,
@@ -510,6 +514,7 @@ impl Dispatcher {
                                 &f.input_json,
                             ],
                         )
+                        .instrument(span)
                         .await?;
                     // Only the WINNING write-ahead enqueues: a losing id's
                     // queue row was created in the winner's transaction and is
@@ -637,6 +642,25 @@ impl Dispatcher {
 /// no-op, and in particular the enqueue is SKIPPED — the winner's queue row is
 /// either still pending or was legitimately dequeued on completion, and
 /// re-inserting it would resurrect a terminal run's queue row (ghost dispatch).
+/// [9.1] A `wamn.trigger` span rooting a dispatcher-fired run's trace, enriched
+/// with the run context the host mints right here — flow, run_id, flow_version,
+/// tenant, and the trigger source (`cron`/`row-event`). This is the
+/// host-known-path home for `flow`/`run_id` enrichment (a webhook's trigger is
+/// instead wash-runtime's inbound HTTP span; guest-minted webhook `run_id` and
+/// per-node `node_id` await the 9.2 guest→host run-context contract). The
+/// runner's `wamn.postgres` spans thread under this once a fired run executes;
+/// cross-replica threading over the queue is 9.2 (traceparent propagation).
+pub fn trigger_span(f: &Firing, tenant: &str) -> tracing::Span {
+    tracing::info_span!(
+        "wamn.trigger",
+        wamn.flow = %f.flow_id,
+        wamn.run_id = %f.run_id,
+        wamn.flow_version = f.flow_version,
+        wamn.trigger_source = %f.trigger_source,
+        wamn.tenant = %tenant,
+    )
+}
+
 async fn fire(client: &mut Client, f: &Firing) -> anyhow::Result<bool> {
     let tx = client.transaction().await?;
     let inserted = tx

@@ -34,6 +34,16 @@ data:
           queue_size: 10000
         retry_on_failure:
           enabled: true
+      # [9.1] traces → Tempo's OTLP-gRPC distributor (deploy/tempo.yaml).
+      otlp/tempo:
+        endpoint: tempo:4317
+        tls:
+          insecure: true
+        sending_queue:
+          enabled: true
+          queue_size: 10000
+        retry_on_failure:
+          enabled: true
     service:
       telemetry:
         metrics:
@@ -48,6 +58,11 @@ data:
           receivers: [otlp]
           processors: [batch]
           exporters: [otlphttp/loki]
+        # [9.1] host spans → Tempo.
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlp/tempo]
 ---
 apiVersion: apps/v1
 kind: Deployment

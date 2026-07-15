@@ -34,6 +34,7 @@ use futures_util::TryStreamExt as _;
 use tokio_postgres::NoTls;
 use tokio_postgres::types::{Format, IsNull, ToSql, Type, to_sql_checked};
 
+use tracing::Instrument as _;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -1169,6 +1170,28 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPost
     ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
 }
 
+/// [9.1] A `wamn.postgres` span over one guest DB call, enriched host-side with
+/// the executing component's tenant/project (the same claim maps that inject
+/// `app.tenant`; the guest cannot spoof them). Emitted through the process's
+/// global `tracing` subscriber, which the fork's `initialize_observability`
+/// bridges to OTel and exports over OTLP when `OTEL_*` is set — so the span
+/// nests under whatever span is current (a request handler, or a
+/// [`crate::dispatch::trigger_span`]) and threads into that trace. Enriching a
+/// host-created span keeps 9.1 wamn-side (no fork patch); `run_id`/`node_id`
+/// enrichment on this span awaits the 9.2 guest→host run-context contract.
+fn db_span(plugin: &WamnPostgres, component_id: &str, op: &'static str) -> tracing::Span {
+    let tenant = plugin.tenant_for(component_id).unwrap_or_default();
+    let project = plugin.project_for(component_id);
+    tracing::info_span!(
+        "wamn.postgres",
+        db.system = "postgresql",
+        db.operation = op,
+        wamn.tenant = %tenant,
+        wamn.project = %project,
+        wamn.component = %component_id,
+    )
+}
+
 impl client::Host for ActiveCtx<'_> {
     async fn query(
         &mut self,
@@ -1177,8 +1200,13 @@ impl client::Host for ActiveCtx<'_> {
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
         let plugin = plugin_of(self)?;
         let component_id = self.component_id.to_string();
+        let span = db_span(&plugin, &component_id, "query");
         Ok(
-            match plugin.one_shot(&component_id, &sql, &params, true).await {
+            match plugin
+                .one_shot(&component_id, &sql, &params, true)
+                .instrument(span)
+                .await
+            {
                 Ok(OneShotResult::Rows(rs)) => Ok(rs),
                 Ok(OneShotResult::Count(_)) => unreachable!("one_shot(want_rows) returns rows"),
                 Err(e) => Err(e),
@@ -1193,8 +1221,13 @@ impl client::Host for ActiveCtx<'_> {
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
         let plugin = plugin_of(self)?;
         let component_id = self.component_id.to_string();
+        let span = db_span(&plugin, &component_id, "execute");
         Ok(
-            match plugin.one_shot(&component_id, &sql, &params, false).await {
+            match plugin
+                .one_shot(&component_id, &sql, &params, false)
+                .instrument(span)
+                .await
+            {
                 Ok(OneShotResult::Count(n)) => Ok(n),
                 Ok(OneShotResult::Rows(_)) => unreachable!("one_shot(!want_rows) returns count"),
                 Err(e) => Err(e),
@@ -1245,6 +1278,8 @@ impl client::HostTransaction for ActiveCtx<'_> {
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
+        let plugin = plugin_of(self)?;
+        let span = db_span(&plugin, self.component_id.as_ref(), "txn.query");
         let txn = self.table.get(&rep)?;
         let row_limit = txn.row_limit;
         let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
@@ -1254,6 +1289,7 @@ impl client::HostTransaction for ActiveCtx<'_> {
             // fatal/statement distinction by probing conn liveness.
             (conn, flatten_mapped(r))
         })
+        .instrument(span)
         .await
         .and_then(|r| r))
     }
@@ -1264,12 +1300,15 @@ impl client::HostTransaction for ActiveCtx<'_> {
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
+        let plugin = plugin_of(self)?;
+        let span = db_span(&plugin, self.component_id.as_ref(), "txn.execute");
         let txn = self.table.get(&rep)?;
         let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
         Ok(with_txn_conn(&state, &destroyed, |conn| async move {
             let r = run_execute(&conn, &sql, &params).await;
             (conn, flatten_mapped(r))
         })
+        .instrument(span)
         .await
         .and_then(|r| r))
     }

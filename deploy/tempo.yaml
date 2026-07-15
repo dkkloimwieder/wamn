@@ -1,0 +1,92 @@
+# [9.1] Trace sink: single-binary Grafana Tempo (all-in-one, local storage).
+# The OTel Collector (deploy/otel-collector.yaml) forwards the host's OTLP-gRPC
+# spans here over the `otlp/tempo` exporter; Tempo's distributor receives them
+# on :4317. The query API (TraceQL `/api/search`, `/api/traces/<id>`) is on
+# :3200 — tracebench asserts against it (the S5 logbench→Loki analog). D13 store.
+#
+#   kubectl -n wamn-system apply -f deploy/tempo.yaml
+#   kubectl -n wamn-system rollout status deploy/tempo --timeout=120s
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: wamn-system
+data:
+  tempo.yaml: |
+    # TraceQL streaming/search over HTTP so `/api/search` returns full results.
+    stream_over_http_enabled: true
+    usage_report:
+      reporting_enabled: false
+    server:
+      http_listen_port: 3200
+      grpc_listen_port: 9095
+      log_level: warn
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+    ingester:
+      # Flush blocks quickly so a just-emitted trace is queryable within a
+      # bounded poll (tracebench waits on export + ingestion, not k8s readiness).
+      max_block_duration: 5m
+      complete_block_timeout: 10s
+    compactor:
+      compaction:
+        block_retention: 1h
+    storage:
+      trace:
+        backend: local
+        wal:
+          path: /var/tempo/wal
+        local:
+          path: /var/tempo/blocks
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: wamn-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: tempo }
+  template:
+    metadata:
+      labels: { app: tempo }
+    spec:
+      # Tempo runs as uid 10001; make the emptyDir writable by it.
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.6.1
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          ports:
+            - { name: http, containerPort: 3200 }
+            - { name: otlp-grpc, containerPort: 4317 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/tempo }
+            - { name: data, mountPath: /var/tempo }
+          resources:
+            # No CPU limit (CFS-quota tail artifact — the S2 lesson); the sink
+            # must not be throttled while ingesting a trace under assertion.
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits: { memory: "2Gi" }
+      volumes:
+        - name: config
+          configMap: { name: tempo-config }
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: wamn-system
+spec:
+  selector: { app: tempo }
+  ports:
+    - { name: http, port: 3200, targetPort: 3200 }
+    - { name: otlp-grpc, port: 4317, targetPort: 4317 }

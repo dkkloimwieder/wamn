@@ -1,0 +1,31 @@
+# [9.1] Local single-binary Tempo config (docker iteration). Mounted at
+# /etc/tempo/tempo.yaml; the same shape as deploy/tempo.yaml's ConfigMap.
+#   docker run -d --name wamn-s5-tempo --network wamn-s5 -p 3200:3200 \
+#     -v "$PWD/deploy/tempo-local.yaml:/etc/tempo/tempo.yaml:ro" \
+#     grafana/tempo:2.6.1 -config.file=/etc/tempo/tempo.yaml
+stream_over_http_enabled: true
+usage_report:
+  reporting_enabled: false
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+  log_level: warn
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+ingester:
+  max_block_duration: 5m
+  complete_block_timeout: 10s
+compactor:
+  compaction:
+    block_retention: 1h
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks

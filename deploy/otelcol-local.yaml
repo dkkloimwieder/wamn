@@ -18,6 +18,16 @@ exporters:
       queue_size: 10000
     retry_on_failure:
       enabled: true
+  # [9.1] traces → local Tempo (deploy/tempo-local.yaml).
+  otlp/tempo:
+    endpoint: wamn-s5-tempo:4317
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      queue_size: 10000
+    retry_on_failure:
+      enabled: true
 service:
   telemetry:
     metrics:
@@ -32,3 +42,7 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlphttp/loki]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo]
