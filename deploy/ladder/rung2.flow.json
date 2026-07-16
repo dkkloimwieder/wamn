@@ -1,0 +1,19 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "ladder-rung2",
+  "version": 1,
+  "name": "Exec-ladder rung 2: linear transform chain",
+  "trigger": { "type": "manual" },
+  "entry": "in",
+  "nodes": [
+    { "id": "in", "type": "webhook-in" },
+    { "id": "t1", "type": "transform", "config": { "op": "upper" } },
+    { "id": "t2", "type": "transform", "config": { "op": "reverse" } },
+    { "id": "out", "type": "respond" }
+  ],
+  "edges": [
+    { "from": "in", "to": "t1" },
+    { "from": "t1", "to": "t2" },
+    { "from": "t2", "to": "out" }
+  ]
+}
