@@ -1,6 +1,6 @@
 # Core Pivot Plan
 
-**Date:** 2026-07-15 · **Status:** active ordering (supersedes the "finish the tiering epic first" directive)
+**Date:** 2026-07-15 · **Updated:** 2026-07-16 · **Status:** active ordering (supersedes the "finish the tiering epic first" directive)
 
 ## Why
 
@@ -22,19 +22,31 @@ demonstrated by a graduated ladder of live POC flows.
 
 Keystone first — nothing runs live until it exists:
 
-- **`wamn-fqg.8` [P1]** — deploy the live runner (loop `run-next` + Deployment manifest,
-  the `a52`-analog). Closes dispatcher → queue → runner as a running service.
+- ~~**`wamn-fqg.8` [P1]** — deploy the live runner~~ **DONE 2026-07-16** (`c40ffef`) — the
+  dispatcher → queue → runner chain runs as a live service (`run-worker` + `deploy/runner.yaml`).
 
 Then climb (`wamn-ojm` epic — **auxiliary, capability-gated**; each rung a small *deployed*
 flow + execution gate):
 
-1. `wamn-ojm.1` — single-node flow live on the runner (webhook → respond)
-2. `wamn-ojm.2` — multi-node linear (transform chain), correct sequencing
-3. `wamn-ojm.3` — branching logic (conditional + merge), correct routing
-4. `wamn-24i` — **POC-F3** async cron escalation (parked wake)
+1. ~~`wamn-ojm.1` — single-node flow live on the runner~~ **DONE** (`1c60838`)
+2. ~~`wamn-ojm.2` — multi-node linear (transform chain)~~ **DONE** (`e5ff9da`)
+3. ~~`wamn-ojm.3` — branching logic (conditional + merge)~~ **DONE** (`8145bb7`) — the
+   conformance ladder is COMPLETE (`docs/exec-ladder.md`)
+4. `wamn-24i` — **POC-F3** async cron escalation — **PARKED 2026-07-16** (dkk): F3 leans on
+   three then-unbuilt platform pieces; build them first rather than paper over with caveats:
+   - ~~`wamn-17o` [5.9] credential vault~~ **DONE 2026-07-16** (`4ce52a7`,
+     `docs/credential-vault.md`) — incl. the fail-closed run-worker egress handler
+     (`--allowed-hosts`, empty = deny-all)
+   - `wamn-fqg.11` [5.14/2.6] egress governance on the run-worker path — **half-landed**
+     with 17o (host-level allowlist); remaining = per-FLOW allowlists (F3's
+     `allowedHosts=[notify.example]`) + provisioning-driven entries
+   - `wamn-fqg.12` [POC-F3] scale-to-zero / parked-wake proof (P3, deployment topology)
 5. `wamn-lxk` — **POC-F4** async row-event + 429 throttle
 6. `wamn-1ab` — **POC-F2** custom node ← `wamn-7j0.1` guard → `wamn-bd5` (5.6) → `wamn-0si` (5.5)
 7. `wamn-2ft` **POC-DEMO** + `wamn-3rj` **POC-TESTS** — receiving acceptance capstone
+
+Vault follow-up (not F3-blocking): `wamn-fqg.13` [5.9] live K8s Secret credential source
+(shares `wamn-5x0.1`'s client).
 
 Engine support pulled in only as a rung needs it: `wamn-1d4` (5.11 ordering),
 `wamn-dq5` (5.12 cancel), `wamn-sdp` (5.10 payload store).
@@ -71,12 +83,13 @@ Engine support pulled in only as a rung needs it: `wamn-1d4` (5.11 ordering),
 
 ## Suggested first picks
 
-`fqg.8` → ladder rungs → `POC-F4` / `POC-F3` → `4.4` hot-reload → (parallel) `2ib`.
+~~`fqg.8` → ladder rungs~~ (done) → **`fqg.11`** (unparks F3 with `fqg.12`) → `POC-F3` /
+`POC-F4` → `4.4` hot-reload → (parallel) `2ib`.
 
 ## bd encoding
 
-- **P1** = active pivot: `fqg.8`, `2ib`, `yf3`, and the active-track epic containers
-  (E2/E4/E5/E8/E9/POC).
+- **P1** = active pivot: `2ib`, `yf3`, and the active-track epic containers
+  (E2/E4/E5/E8/E9/POC). (`fqg.8` closed.)
 - **P3** = parked (above). Bump back anytime the plan changes.
 - The execution ladder (`wamn-ojm.*`) is P2 and **dependency-gated** behind `fqg.8` so it
   never surfaces as ready before the capability exists.
