@@ -1,0 +1,153 @@
+# 5.14 production flow runner (fqg.8) — the always-on service that CLOSES the
+# live dispatcher → run_queue → runner chain. The `run-worker` subcommand of the
+# same wamn-host image the operator deploys: it instantiates the flowrunner
+# component (baked into the prod image at /components/flowrunner.wasm) and loops
+# `run-next`, claiming runs the dispatcher (deploy/dispatcher.yaml) wrote-ahead +
+# enqueued and driving each to completion.
+#
+#   kubectl -n wamn-system apply -f deploy/runner-db.example.yaml   # once (per project)
+#   kubectl -n wamn-system apply -f deploy/runner.yaml
+#   kubectl -n wamn-system rollout status deploy/runner --timeout=120s
+#   kubectl -n wamn-system logs -l app=runner --tail=20
+#
+# SINGLE-PROJECT (one Deployment per project — the api-gateway analog): the
+# project's DB URL + tenant + schema are this Deployment's config. Real per-
+# project entries land with hosting/2.3 provisioning; the wamn-runner-db Secret
+# is a SEPARATE manifest (runner-db.example.yaml) so re-applying this file never
+# clobbers a customized Secret back to demo values. A multi-project runner (a
+# dispatcher-style projects file, N flowrunner instances) is a follow-up.
+#
+# TWO REPLICAS, NO LEADER: the durable-queue lease + `FOR UPDATE SKIP LOCKED`
+# make replicas + scale-out safe — each replica claims distinct runs under its
+# own `app.runner` owner (the pod name, injected via WAMN_RUNNER from the
+# downward API), and a dead replica's lease ages out for another to reclaim
+# (fqg.2). Scale replicas to the project's concurrency.
+#
+# CRASH SAFETY + SHUTDOWN: abrupt death is safe — an in-flight run's lease
+# simply expires and another replica reclaims + resumes it from `node_runs`
+# (branch-aware reconstruction, fqg.2), exactly-once via the sink idempotency.
+# The runner also handles SIGTERM explicitly (PID 1 gets no default disposition)
+# and exits in milliseconds, so a rollout never waits out the grace period.
+#
+# STARTUP + ROLLOUTS: there is no readiness endpoint, so the rollout is guarded
+# by maxUnavailable: 0 + minReadySeconds — a new pod with a bad DB Secret keeps
+# retrying its claim loop (drain errors are non-fatal, backed off) rather than
+# crash-looping, and never counts as available inside the window, so a bad
+# rollout stalls with the old replicas still draining. NATS is optional (no
+# doorbell = the poll-backoff reconcile still guarantees pickup), so the init
+# container waits for it only BOUNDED.
+#
+# CREDENTIAL SCOPE (same residual risk as the dispatcher, tracked as wamn-ngb):
+# the doorbell subscription uses the shared wasmcloud-runtime-tls cert, whose CN
+# maps to an allow-all-subjects NATS user. The runner only ever SUBSCRIBES to
+# wamn.doorbell.<tenant>; a scoped subscribe-only NATS identity is the long-term
+# shape.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runner
+  namespace: wamn-system
+  labels: { app: runner }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: runner }
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  # A new pod (bad Secret, unreachable DB) keeps retrying its drain loop; it must
+  # stay up this long before it replaces a healthy replica.
+  minReadySeconds: 30
+  template:
+    metadata:
+      labels: { app: runner }
+    spec:
+      # The runner never talks to the Kubernetes API — don't hand each replica
+      # the default ServiceAccount token as idle attack surface.
+      automountServiceAccountToken: false
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: runner }
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            # Postgres is the data path (the drain loop needs it); NATS is
+            # best-effort (the runner drains hint-less without it), so its wait
+            # is bounded rather than a startup wedge.
+            - >-
+              until nc -z postgres 5432; do echo waiting for postgres; sleep 1; done;
+              i=0; until nc -z nats 4222 || [ $i -ge 30 ]; do i=$((i+1)); echo waiting for nats; sleep 1; done
+      volumes:
+        # The operator NATS uses mTLS (verify_and_map). Reuse the runtime cert
+        # the host groups connect with so the doorbell subject is permitted —
+        # the dispatcher/queuebench pattern. See the credential-scope note above.
+        - name: runtime-cert
+          secret:
+            secretName: wasmcloud-runtime-tls
+            defaultMode: 420
+      containers:
+        - name: runner
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            # The lease owner (app.runner) MUST be stable per replica and distinct
+            # across replicas — the pod name is exactly that.
+            - name: WAMN_RUNNER
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # The project's app (wamn_app) database URL — per-project config, from
+            # the SEPARATE Secret (runner-db.example.yaml).
+            - name: WAMN_PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-runner-db
+                  key: url
+          volumeMounts:
+            - name: runtime-cert
+              mountPath: /runtime-cert
+              readOnly: true
+          args:
+            - "--log-level"
+            - "info"
+            - "run-worker"
+            - "--flowrunner"
+            - "/components/flowrunner.wasm"
+            - "--tenant"
+            - "demo-tenant"
+            - "--schema"
+            - "wamn_runner_demo"
+            - "--nats-url"
+            - "nats://nats.wamn-system.svc.cluster.local:4222"
+            - "--nats-tls-ca"
+            - "/runtime-cert/ca.crt"
+            - "--nats-tls-cert"
+            - "/runtime-cert/tls.crt"
+            - "--nats-tls-key"
+            - "/runtime-cert/tls.key"
+          resources:
+            # No CPU limit on purpose (the S2 CFS lesson): a quota would stall the
+            # guest walk with scheduler throttles. The runner idles at the max
+            # poll interval when its queue is empty.
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { memory: "384Mi" }
+---
+# Voluntary disruptions (node drain) keep at least one replica draining.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: runner
+  namespace: wamn-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: runner }

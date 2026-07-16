@@ -250,14 +250,47 @@ non-spoofable per-replica identity to lease/renew under. The guest links
 builders enter its wasm (the cron/outbox/dispatch trio — croner/chrono — stays
 host-side behind the default `dispatcher` feature).
 
-**Honest scope caveat.** The `failoverbench` `claim`/`park`/`heartbeat` gates
-*seed* `run_queue` directly (the write-ahead + enqueue a dispatcher would do) and
-drive `run-next` — proving the guest claim path end-to-end against a real Postgres.
-The **live** dispatcher → queue → runner chain (a permanently-running runner pod
-looping `run-next`) closes only with a production **runner Deployment** (a
-`wamn-host` subcommand instantiating the flowrunner + looping `run-next`, plus its
-manifest — the a52-analog of the dispatcher Deployment); that is a filed follow-up,
-not this change.
+The `failoverbench` `claim`/`park`/`heartbeat` gates *seed* `run_queue` directly
+(the write-ahead + enqueue a dispatcher would do) and drive `run-next` — proving
+the guest claim path end-to-end against a real Postgres. What consumes the queue as
+a **running service** is the production runner below.
+
+## Production runner (`run-worker`, fqg.8)
+
+The `run-worker` subcommand is the always-on service that **closes the live
+dispatcher → `run_queue` → runner chain**: a long-lived `wamn-host` process that
+instantiates the flowrunner component once (baked into the prod image at
+`/components/flowrunner.wasm`) and loops the guest's `run-next` export, so the runs
+the dispatcher write-ahead + enqueued are actually claimed and driven to
+completion. The loop core is `wamn_host::run_worker::RunWorker` — `instantiate`
+(inject the host-side `app.runner` owner + tenant + `search_path`), `drain` (pull
+every currently-claimable run — each `run-next` claims one and drives it terminal
+or parks it, so the claimable set strictly shrinks and the drain terminates), and
+`serve` (drain → wait → repeat).
+
+**Single-project** (one Deployment per project — the api-gateway analog,
+`deploy/runner.yaml`): one flowrunner instance whose plugin session carries this
+project's identity. The lease **owner** is per-replica (the pod name via
+`WAMN_RUNNER` from the downward API), so `FOR UPDATE SKIP LOCKED` + attributable
+leases make replicas and scale-out safe, and a dead replica's lease ages out for
+another to reclaim + resume (fqg.2). A multi-project runner (a dispatcher-style
+projects file, N instances) is a follow-up.
+
+**Idle handling** mirrors the dispatcher (NATS-optional): a doorbell hint on
+`wamn.doorbell.<tenant>` — the subject the dispatcher already publishes to — wakes
+an immediate drain, and a poll-with-backoff reconcile (the dispatcher's
+`next_interval` cadence) guarantees pickup even when a hint is lost or NATS is
+absent. **SIGTERM** is handled explicitly (PID 1 gets no default disposition) so a
+rollout exits in milliseconds; abrupt death is safe anyway — the lease ages out and
+another replica reconstructs from `node_runs`, exactly-once via the sink
+idempotency. A drain error is non-fatal (logged + backed off): the pool re-dials on
+the next call.
+
+The `runnerbench` gate drives the *production* `RunWorker` (not a gate-local
+worker) against an ephemeral schema seeded the dispatcher way, asserting it drains
+the queue to completion, reuses one instance across drains, and reports an empty
+drain — the local, repeatable, mutation-tested counterpart of the in-cluster
+dispatcher → queue → runner live smoke.
 
 ## Trigger dispatcher (cron + outbox + parked-wake)
 
@@ -429,13 +462,15 @@ This issue built the D3 hybrid queue: the SKIP LOCKED queue, the write-ahead / f
 path, single-owner leases + reclaim, the janitor, the reconciliation cadence,
 **per-partition ownership** for `partitioned(key)`, **checkpoint/resume on
 replica loss**, the **shared trigger dispatcher** (cron + outbox + parked-wake, all
-above), and the **guest-side queue claim** (`run-next`, above), proven by
-`queuebench` + `failoverbench` + `dispatchbench`. It deliberately does **not** ship
-(tracked as follow-ups):
+above), the **guest-side queue claim** (`run-next`, above), and the **production
+runner** (`run-worker` + `deploy/runner.yaml`, fqg.8 — closes the live
+dispatcher → queue → runner chain), proven by `queuebench` + `failoverbench` +
+`dispatchbench` + `runnerbench`. It deliberately does **not** ship (tracked as
+follow-ups):
 
 | Deferred | Where |
 |---|---|
-| A permanently-running **runner Deployment** (a `wamn-host` subcommand looping `run-next` + its manifest — closes the live dispatcher → queue → runner chain) | 5.14 follow-up (a52-analog) |
+| A **multi-project runner** (`run-worker` is single-project — one Deployment per project; a dispatcher-style projects file + N flowrunner instances) | 5.14 follow-up |
 | **Guest-side partitioned claim** (`run-next` claims only unpartitioned runs today; partitioned runs stay on the per-partition ownership path) | 5.14 follow-up |
 
 And it does not own: the engine walk / retry / reconstruction (5.2 + 5.7 — the

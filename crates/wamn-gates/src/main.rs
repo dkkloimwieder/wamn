@@ -22,6 +22,7 @@ mod pgbench;
 mod provisionbench;
 mod publish_catalog_demo;
 mod queuebench;
+mod runnerbench;
 mod testhostbench;
 mod tracebench;
 mod traceproof;
@@ -55,6 +56,8 @@ enum Command {
     Queuebench(queuebench::QueueBenchArgs),
     /// Run the 5.14 failover gates (checkpoint/resume on replica loss / janitor completion-race guard)
     Failoverbench(failoverbench::FailoverBenchArgs),
+    /// Run the fqg.8 production runner gate (RunWorker drains run_queue to completion; drive+reuse+empty)
+    Runnerbench(runnerbench::RunnerBenchArgs),
     /// Run the 5.14 dispatcher gates (cron / outbox / race / fairness / wake / live)
     Dispatchbench(dispatchbench::DispatchBenchArgs),
     /// Run the S4 custom-node gates (HTTP hop / interpreted-vs-composed / config parse)
@@ -109,6 +112,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Flowbench(args) => flowbench::run(args).await,
         Command::Queuebench(args) => queuebench::run(args).await,
         Command::Failoverbench(args) => failoverbench::run(args).await,
+        Command::Runnerbench(args) => runnerbench::run(args).await,
         Command::Dispatchbench(args) => dispatchbench::run(args).await,
         Command::Nodebench(args) => nodebench::run(args).await,
         Command::ServeNode(args) => nodebench::serve(args).await,

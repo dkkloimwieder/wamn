@@ -1,0 +1,17 @@
+# Example per-project DB Secret for the production flow runner (deploy/runner.yaml,
+# fqg.8). DELIBERATELY a separate manifest: it is per-environment config (real
+# entries land with hosting/2.3 provisioning), so re-applying runner.yaml never
+# clobbers a customized Secret back to this demo value.
+#
+# `url` is the project's app (wamn_app, NOSUPERUSER) connection string — the same
+# credential the dispatcher's projects.json entry carries for this project. The
+# runner claims from run_queue under the tenant + schema passed as runner.yaml
+# args (demo-tenant / wamn_runner_demo here); point them all at one project.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-runner-db
+  namespace: wamn-system
+type: Opaque
+stringData:
+  url: "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn?sslmode=disable"

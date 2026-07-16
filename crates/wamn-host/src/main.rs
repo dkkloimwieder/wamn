@@ -13,7 +13,7 @@ use std::str::FromStr as _;
 use clap::{Parser, Subcommand};
 use wamn_host::{
     dispatch, dump_project_env, host, migrate_catalog, move_org_tier, provision, provision_org,
-    provision_project_env, publish_catalog, restore_project_env,
+    provision_project_env, publish_catalog, restore_project_env, run_worker,
 };
 
 #[derive(Parser)]
@@ -33,6 +33,8 @@ enum Command {
     Host(Box<host::HostArgs>),
     /// Run the shared trigger dispatcher (5.14): cron + outbox + parked-wake across all projects
     Dispatch(dispatch::DispatchArgs),
+    /// Run the production flow runner (5.14): claim from run_queue + drive the flowrunner, looping (fqg.8)
+    RunWorker(run_worker::RunWorkerArgs),
     /// Write a project's catalog snapshot into the wamn_catalog table (4.1b)
     PublishCatalog(publish_catalog::PublishCatalogArgs),
     /// Provision a per-project Postgres database + credential on the shared cluster (2.3)
@@ -68,6 +70,7 @@ async fn async_main() -> anyhow::Result<()> {
     let result = match cli.command {
         Command::Host(args) => host::run(*args).await,
         Command::Dispatch(args) => dispatch::run(args).await,
+        Command::RunWorker(args) => run_worker::run(args).await,
         Command::PublishCatalog(args) => publish_catalog::run(args).await,
         Command::ProvisionProject(args) => provision::run(args).await,
         Command::ProvisionOrg(args) => provision_org::run(args).await,

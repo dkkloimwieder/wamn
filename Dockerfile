@@ -21,10 +21,14 @@ COPY deploy ./deploy
 # the base image already ships the right version.
 RUN rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-gates
 
-# ---- prod image: the host binary only ---------------------------------------
+# ---- prod image: the host binary + the flowrunner component -----------------
 FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/wamn-host /usr/local/bin/wamn-host
+# The flowrunner component is a PRODUCTION artifact, not a gate fixture: the
+# `run-worker` subcommand (fqg.8) instantiates it to drive claimed runs, so it
+# travels with the prod binary (default --flowrunner /components/flowrunner.wasm).
+COPY components/target/wasm32-wasip2/release/flowrunner.wasm /components/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
 

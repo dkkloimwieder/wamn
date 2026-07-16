@@ -393,6 +393,39 @@ kubectl -n wamn-system wait --for=condition=complete job/failoverbench --timeout
 kubectl -n wamn-system logs job/failoverbench
 ```
 
+### [5.14] production runner (run-worker, fqg.8)
+
+Docs: docs/run-queue.md · Manifests: deploy/runner.yaml + deploy/runner-db.example.yaml
+
+```bash
+cargo test -p wamn-host run_worker   # owner fallback + drain tally + idle backoff
+cargo clippy -p wamn-host -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-host -p wamn-gates --check
+# Local runnerbench (throwaway postgres:18 + wamn_app; guest UNCHANGED — no wasm rebuild):
+docker run -d --name wamn-fqg8-pg -p 5490:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+docker exec wamn-fqg8-pg psql -U postgres -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+./target/debug/wamn-gates --log-level warn runnerbench \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5490/postgres \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5490/postgres   # drain + reuse + empty
+docker rm -f wamn-fqg8-pg
+# In-cluster live smoke = gate of record (HOST changed — the run-worker module +
+# flowrunner.wasm baked into the prod image — so FULL rebuild BOTH stages + kind load):
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-host:dev --name wamn
+# Provision a demo schema (wamn_runner_demo: run-state.sql + run-queue.sql rewritten,
+# a flows table + a sink table) via kubectl exec psql, register a fast-cron flow, then:
+kubectl -n wamn-system apply -f deploy/dispatcher-projects.example.yaml   # (pointed at the demo)
+kubectl -n wamn-system apply -f deploy/dispatcher.yaml
+kubectl -n wamn-system apply -f deploy/runner-db.example.yaml
+kubectl -n wamn-system apply -f deploy/runner.yaml
+kubectl -n wamn-system rollout status deploy/runner --timeout=120s
+# Assert a dispatcher-fired cron run was CLAIMED by the runner and driven end-to-end:
+#   SELECT status FROM wamn_runner_demo.runs WHERE run_id LIKE 'runner-demo:cron:%'  -> completed
+#   + a wamn_runner_demo.sink row + wamn_runner_demo.node_runs rows.
+```
+
 ### [5.14] shared trigger dispatcher
 
 Docs: docs/run-queue.md
