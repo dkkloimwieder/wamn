@@ -426,6 +426,43 @@ kubectl -n wamn-system rollout status deploy/runner --timeout=120s
 #   + a wamn_runner_demo.sink row + wamn_runner_demo.node_runs rows.
 ```
 
+### [EXEC-LADDER.1] rung 1: single-node flow on the deployed runner (wamn-ojm.1)
+
+Docs: docs/exec-ladder.md · Fixture: deploy/ladder/rung1.flow.json · Manifest: deploy/ladderproof-job.yaml
+
+```bash
+cargo test -p wamn-gates ladderproof   # fixture drift-guard (parses + validates) + arg/poll units
+cargo clippy -p wamn-gates --all-targets && cargo fmt -p wamn-gates --check
+# Local end-to-end (throwaway postgres:18 + a background run-worker; guest + host
+# UNCHANGED — ladderproof is gates-only, no wasm/host rebuild). Start the runner
+# first; it error-drains until --setup provisions the schema + role, then claims:
+docker run -d --name wamn-ojm1-pg -p 5491:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5491/postgres ./target/debug/wamn-host \
+  --log-level info run-worker \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --tenant demo-tenant --schema wamn_ladder_local --runner local-runner \
+  --min-idle-ms 250 --max-idle-ms 1500 &                       # error-drains until setup
+./target/debug/wamn-gates ladderproof \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5491/postgres \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5491/postgres \
+  --schema wamn_ladder_local --tenant demo-tenant --setup   # provision + register + seed + assert
+# Mutation loop re-runs the client only (schema + runner stay up), e.g.:
+#   ./target/debug/wamn-gates ladderproof --database-url ... --schema wamn_ladder_local --tenant demo-tenant
+kill %1; docker rm -f wamn-ojm1-pg
+# In-cluster gate of record (GATES-ONLY: rebuild the gates image, host stage cached;
+# the runner reuses the fqg.8 wamn-host:dev):
+docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-gates:dev --name wamn
+# Provision the demo schema (sed 's/\bwamn_run\b/wamn_runner_demo/g' over
+# deploy/{run-state,run-queue,flows}.sql | kubectl exec psql) + register
+# deploy/ladder/rung1.flow.json active as tenant demo-tenant (superuser, RLS bypassed).
+kubectl -n wamn-system apply -f deploy/runner-db.example.yaml
+kubectl -n wamn-system apply -f deploy/runner.yaml
+kubectl -n wamn-system rollout status deploy/runner --timeout=120s
+kubectl -n wamn-system apply -f deploy/ladderproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/ladderproof --timeout=120s
+kubectl -n wamn-system logs job/ladderproof   # -> overall PASS: true
+```
+
 ### [5.14] shared trigger dispatcher
 
 Docs: docs/run-queue.md

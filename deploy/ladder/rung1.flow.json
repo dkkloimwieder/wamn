@@ -1,0 +1,15 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "ladder-rung1",
+  "version": 1,
+  "name": "Exec-ladder rung 1: single-node passthrough",
+  "trigger": { "type": "manual" },
+  "entry": "in",
+  "nodes": [
+    { "id": "in", "type": "webhook-in" },
+    { "id": "out", "type": "respond" }
+  ],
+  "edges": [
+    { "from": "in", "to": "out" }
+  ]
+}
