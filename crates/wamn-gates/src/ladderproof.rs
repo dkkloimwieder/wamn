@@ -10,8 +10,8 @@
 //! run was driven — only that the deployed runner produced the correct terminal
 //! state + per-node execution trace.
 //!
-//! The proof is rung-parameterised (`--rung`): each rung adds a case over the
-//! same seed/poll/assert client, climbing the ladder.
+//! The proof is rung-parameterised (`--rung`): each rung is a set of `RungCase`s
+//! over the same seed/poll/assert client, climbing the ladder.
 //!   * **Rung 1** (wamn-ojm.1) — `webhook-in -> respond`
 //!     (deploy/ladder/rung1.flow.json): a single meaningful node + a terminal,
 //!     both passthrough, so the run completes echoing its input.
@@ -20,6 +20,12 @@
 //!     multi-node chain that proves correct SEQUENCING (the `node_runs` seq
 //!     order) + payload THREADING (each node's recorded input is the prior
 //!     node's recorded output).
+//!   * **Rung 3** (wamn-ojm.3) — a conditional branch + merge
+//!     (deploy/ladder/rung3.flow.json): `in -> cond{true/false} -> yes|no ->
+//!     out`, driven TWICE (a true and a false input). Proves correct ROUTING —
+//!     the conditional's recorded port matches the predicate, ONLY the taken
+//!     branch executes (a node_run for the other branch would break the count),
+//!     and the taken branch's distinct output threads to the merged result.
 //!
 //! Each rung is a `manual`-trigger flow: nothing auto-fires it, so the proof
 //! seeds the run directly, isolating the RUNNER (the subject) from the trigger
@@ -27,7 +33,7 @@
 //!
 //! `--setup` provisions a fresh ephemeral schema + registers EVERY rung's flow
 //! (the LOCAL self-contained path, run once before the mutation loop) so one
-//! schema serves both rungs. Without it, ladderproof is a client against a
+//! schema serves the whole ladder. Without it, ladderproof is a client against a
 //! schema the deploy pipeline already provisioned — so re-runs never drop the
 //! schema out from under the live runner.
 
@@ -45,15 +51,16 @@ use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 /// pin that each file parses to the flow the proof asserts against).
 const RUNG1_FLOW_JSON: &str = include_str!("../../../deploy/ladder/rung1.flow.json");
 const RUNG2_FLOW_JSON: &str = include_str!("../../../deploy/ladder/rung2.flow.json");
+const RUNG3_FLOW_JSON: &str = include_str!("../../../deploy/ladder/rung3.flow.json");
 
-/// The rungs registered by `--setup` (so one ephemeral schema serves both).
-const ALL_RUNGS: [u8; 2] = [1, 2];
+/// The rungs registered by `--setup` (so one ephemeral schema serves them all).
+const ALL_RUNGS: [u8; 3] = [1, 2, 3];
 
 #[derive(Debug, Args)]
 pub struct LadderProofArgs {
     /// Which rung to prove (1 = single-node passthrough, 2 = linear transform
-    /// chain). The runner + schema are rung-agnostic; only the seeded flow and
-    /// the expected chain differ.
+    /// chain, 3 = conditional branch + merge). The runner + schema are
+    /// rung-agnostic; only the seeded flow(s) and the expected chain(s) differ.
     #[arg(long, default_value_t = 1)]
     pub rung: u8,
 
@@ -94,62 +101,104 @@ pub struct LadderProofArgs {
     pub timeout_secs: u64,
 }
 
-/// One rung's fixture + the exact execution trace the deployed runner must
-/// produce. `chain` is the ordered list of `(node_id, expected output payload)`
-/// in dispatch order — the sequencing spine; `input` is the seeded trigger
-/// payload (the entry node's incoming payload). Threading is then structural:
-/// node i's recorded input must equal the run input (i == 0) or the prior node's
-/// recorded output.
+/// One case's fixture + the exact execution trace the deployed runner must
+/// produce. `chain` is the ordered list of `(node_id, expected output payload,
+/// expected output port)` in dispatch order — the sequencing + routing spine;
+/// `input` is the seeded trigger payload (the entry node's incoming payload).
+/// Threading is then structural: node i's recorded input must equal the run
+/// input (i == 0) or the prior node's recorded output.
+///
+/// A rung is one or more cases: rungs 1/2 are a single linear case; rung 3 is
+/// two cases (true + false) proving both routing directions over one flow.
 struct RungCase {
     flow_json: &'static str,
     flow_id: &'static str,
+    /// A short human label distinguishing cases within a rung (printed per run).
+    label: &'static str,
     input: Value,
-    chain: Vec<(&'static str, Value)>,
+    chain: Vec<(&'static str, Value, &'static str)>,
 }
 
 impl RungCase {
     /// The run's final result is the last node's output.
     fn expected_result(&self) -> &Value {
-        &self.chain.last().expect("a rung has >= 1 node").1
+        &self.chain.last().expect("a rung case has >= 1 node").1
     }
 }
 
-/// Build the case for a rung. Rung 2's expected outputs are computed with the
+/// Build the case(s) for a rung. Rung 2's expected outputs are computed with the
 /// SAME `upper`/`reverse` the flowrunner's legacy `transform` arm applies over
-/// `payload.as_str()` — so the input must be a JSON STRING (an object would
-/// stringify to `""`). `"abcDEF"` -> `"ABCDEF"` -> `"FEDCBA"` is visibly
-/// distinct at every step (case change, then order flip), so a reordered or
-/// dropped node breaks the recorded chain even though `upper`/`reverse` happen
-/// to commute on the final result.
-fn rung_case(rung: u8) -> anyhow::Result<RungCase> {
+/// `payload.as_str()` — so its input is a JSON STRING. Rung 3's branch outputs
+/// are computed by plain JMESPath field extraction (`yes`/`no`), exactly what
+/// the standard-library `transform{expression}` node emits.
+fn rung_cases(rung: u8) -> anyhow::Result<Vec<RungCase>> {
     match rung {
         1 => {
             // A nested object proves the whole payload flows through both
             // passthrough nodes and back out as the run result.
             let input = json!({ "msg": "hello-ladder", "nested": { "n": 42 } });
-            Ok(RungCase {
+            Ok(vec![RungCase {
                 flow_json: RUNG1_FLOW_JSON,
                 flow_id: "ladder-rung1",
-                chain: vec![("in", input.clone()), ("out", input.clone())],
+                label: "passthrough",
+                chain: vec![
+                    ("in", input.clone(), "main"),
+                    ("out", input.clone(), "main"),
+                ],
                 input,
-            })
+            }])
         }
         2 => {
+            // `"abcDEF"` -> `"ABCDEF"` -> `"FEDCBA"` is visibly distinct at every
+            // step (case change, then order flip), so a reordered or dropped
+            // node breaks the recorded chain even though `upper`/`reverse` happen
+            // to commute on the final result.
             let s = "abcDEF";
             let upper = s.to_uppercase();
             let reversed: String = upper.chars().rev().collect();
             let input = Value::String(s.to_string());
-            Ok(RungCase {
+            Ok(vec![RungCase {
                 flow_json: RUNG2_FLOW_JSON,
                 flow_id: "ladder-rung2",
+                label: "linear-chain",
                 chain: vec![
-                    ("in", input.clone()),
-                    ("t1", Value::String(upper)),
-                    ("t2", Value::String(reversed.clone())),
-                    ("out", Value::String(reversed)),
+                    ("in", input.clone(), "main"),
+                    ("t1", Value::String(upper), "main"),
+                    ("t2", Value::String(reversed.clone()), "main"),
+                    ("out", Value::String(reversed), "main"),
                 ],
                 input,
-            })
+            }])
+        }
+        3 => {
+            // The conditional{take} routes the payload UNCHANGED onto the
+            // "true"/"false" port by JMESPath truthiness; the taken branch's
+            // transform extracts its own field (a DISTINCT output per path), and
+            // respond (the merge node) echoes it as the run result. Two cases
+            // exercise both directions: the routing proof is that cond records
+            // the right port AND only the taken branch produces a node_run.
+            let case = |take: bool| {
+                let input = json!({ "take": take, "yes": "took-yes", "no": "took-no" });
+                let (branch, out) = if take {
+                    ("yes", json!("took-yes"))
+                } else {
+                    ("no", json!("took-no"))
+                };
+                let port = if take { "true" } else { "false" };
+                RungCase {
+                    flow_json: RUNG3_FLOW_JSON,
+                    flow_id: "ladder-rung3",
+                    label: if take { "true-branch" } else { "false-branch" },
+                    chain: vec![
+                        ("in", input.clone(), "main"),
+                        ("cond", input.clone(), port),
+                        (branch, out.clone(), "main"),
+                        ("out", out, "main"),
+                    ],
+                    input,
+                }
+            };
+            Ok(vec![case(true), case(false)])
         }
         other => bail!("unknown rung {other} (supported: {ALL_RUNGS:?})"),
     }
@@ -280,13 +329,15 @@ async fn setup(admin_url: &str, app_url: &str, schema: &str, tenant: &str) -> an
 
     // Register every rung's flow via the app role, so the same RLS floor the
     // runner reads under is exercised at registration and one schema serves the
-    // whole ladder (flow ids are distinct, so all coexist active).
+    // whole ladder (flow ids are distinct, so all coexist active). Each rung's
+    // cases share one flow, so register the first case of each rung.
     let app = connect_app(app_url, schema, tenant).await?;
     for rung in ALL_RUNGS {
-        let case = rung_case(rung)?;
-        seed_flow_version(&app, tenant, case.flow_id, 1, true, case.flow_json, true)
+        let cases = rung_cases(rung)?;
+        let flow = &cases[0];
+        seed_flow_version(&app, tenant, flow.flow_id, 1, true, flow.flow_json, true)
             .await
-            .with_context(|| format!("register {}", case.flow_id))?;
+            .with_context(|| format!("register {}", flow.flow_id))?;
     }
     Ok(())
 }
@@ -335,53 +386,13 @@ fn is_terminal(status: &str) -> bool {
     )
 }
 
-pub async fn run(args: LadderProofArgs) -> anyhow::Result<()> {
-    if !valid_ident(&args.schema) {
-        bail!("invalid schema {:?}", args.schema);
-    }
-    let case = rung_case(args.rung)?;
-    let app_url = args
-        .database_url
-        .clone()
-        .or_else(|| std::env::var("WAMN_PG_URL").ok())
-        .or_else(|| std::env::var("DATABASE_URL").ok())
-        .context("no app database url: pass --database-url or set WAMN_PG_URL / DATABASE_URL")?;
-
-    println!(
-        "# wamn-gates ladderproof rung {} — deployed-runner conformance (schema {}, tenant {}, flow {})",
-        args.rung, args.schema, args.tenant, case.flow_id
-    );
-
-    if args.setup {
-        let admin_url = args.admin_database_url.clone().context(
-            "--setup needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL",
-        )?;
-        setup(&admin_url, &app_url, &args.schema, &args.tenant)
-            .await
-            .context("setup: provision schema + register flows")?;
-        println!("## setup — provisioned schema + registered rungs {ALL_RUNGS:?} (active)");
-    }
-
-    let input_text = serde_json::to_string(&case.input)?;
-
-    // A unique run id per invocation so re-runs never collide (the mutation loop
-    // re-runs the client many times against the same live schema + runner).
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let run_id = format!("ladder-{nanos}");
-
-    let mut client = connect_app(&app_url, &args.schema, &args.tenant).await?;
-    seed_run(&mut client, case.flow_id, &run_id, &input_text).await?;
-    println!(
-        "## seed — one manual run {run_id} written-ahead + enqueued; awaiting the deployed runner"
-    );
-
-    // Poll the run to terminal — the deployed runner claims + drives it. A
-    // directly-seeded run gets no doorbell, so the wait covers the runner's idle
-    // poll interval.
-    let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
+/// Poll a seeded run to a terminal status (or the deadline). A directly-seeded
+/// run gets no doorbell, so this covers the runner's idle poll interval.
+async fn poll_to_terminal(
+    client: &Client,
+    run_id: &str,
+    deadline: Instant,
+) -> anyhow::Result<String> {
     let mut status = "dispatched".to_string();
     loop {
         let row = client
@@ -398,8 +409,66 @@ pub async fn run(args: LadderProofArgs) -> anyhow::Result<()> {
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
+    Ok(status)
+}
 
-    let outcome = assert_run(&client, &run_id, &case, &status).await?;
+pub async fn run(args: LadderProofArgs) -> anyhow::Result<()> {
+    if !valid_ident(&args.schema) {
+        bail!("invalid schema {:?}", args.schema);
+    }
+    let cases = rung_cases(args.rung)?;
+    let app_url = args
+        .database_url
+        .clone()
+        .or_else(|| std::env::var("WAMN_PG_URL").ok())
+        .or_else(|| std::env::var("DATABASE_URL").ok())
+        .context("no app database url: pass --database-url or set WAMN_PG_URL / DATABASE_URL")?;
+
+    println!(
+        "# wamn-gates ladderproof rung {} — deployed-runner conformance (schema {}, tenant {}, {} case(s))",
+        args.rung,
+        args.schema,
+        args.tenant,
+        cases.len()
+    );
+
+    if args.setup {
+        let admin_url = args.admin_database_url.clone().context(
+            "--setup needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL",
+        )?;
+        setup(&admin_url, &app_url, &args.schema, &args.tenant)
+            .await
+            .context("setup: provision schema + register flows")?;
+        println!("## setup — provisioned schema + registered rungs {ALL_RUNGS:?} (active)");
+    }
+
+    let mut client = connect_app(&app_url, &args.schema, &args.tenant).await?;
+    let mut overall = true;
+
+    // Each case seeds its own manual run, waits for the deployed runner to drive
+    // it, and asserts the full trace. Rung 3's two cases prove both routing
+    // directions; overall PASS requires every case to pass.
+    for (i, case) in cases.iter().enumerate() {
+        let input_text = serde_json::to_string(&case.input)?;
+        // A unique run id per invocation + case so re-runs never collide (the
+        // mutation loop re-runs the client many times against the same schema).
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let run_id = format!("ladder-{nanos}-{i}");
+
+        seed_run(&mut client, case.flow_id, &run_id, &input_text).await?;
+        println!(
+            "\n## seed [{}] — manual run {run_id} written-ahead + enqueued; awaiting the deployed runner",
+            case.label
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
+        let status = poll_to_terminal(&client, &run_id, deadline).await?;
+        let outcome = assert_run(&client, &run_id, case, &status).await?;
+        overall = overall && outcome;
+    }
 
     if args.teardown
         && let Some(admin_url) = args.admin_database_url.clone()
@@ -408,27 +477,32 @@ pub async fn run(args: LadderProofArgs) -> anyhow::Result<()> {
     }
 
     println!(
-        "\nladderproof rung {} complete — overall PASS: {outcome}",
+        "\nladderproof rung {} complete — overall PASS: {overall}",
         args.rung
     );
-    if !outcome {
+    if !overall {
         bail!("ladderproof rung {} failed", args.rung);
     }
     Ok(())
 }
 
 /// Assert the deployed runner drove the seeded run correctly: terminal state,
-/// the final result, and — the ladder-rung-2 point — correct SEQUENCING (the
-/// `node_runs` are exactly `case.chain` in seq order) + payload THREADING (each
-/// node's recorded input is the run input at seq 0, else the prior node's
-/// recorded output).
+/// the final result, correct SEQUENCING + ROUTING (the `node_runs` are exactly
+/// `case.chain` in seq order, each on its expected port), and payload THREADING
+/// (each node's recorded input is the run input at seq 0, else the prior node's
+/// recorded output). For rung 3 the chain's ports carry the branch decision
+/// (`true`/`false` at `cond`) and the chain length pins that ONLY the taken
+/// branch executed.
 async fn assert_run(
     client: &Client,
     run_id: &str,
     case: &RungCase,
     final_status: &str,
 ) -> anyhow::Result<bool> {
-    println!("## assert — the deployed runner drove the run correctly");
+    println!(
+        "## assert [{}] — the deployed runner drove the run correctly",
+        case.label
+    );
     let mut ok = true;
 
     check(
@@ -469,17 +543,19 @@ async fn assert_run(
     check(
         &mut ok,
         &format!(
-            "node_runs count == chain length ({}) — got {}",
+            "node_runs count == chain length ({}) — got {} (only the taken path runs)",
             case.chain.len(),
             rows.len()
         ),
         rows.len() == case.chain.len(),
     );
-    // The per-node execution trace: each node succeeded on the main port, in
+    // The per-node execution trace: each node succeeded on its expected port, in
     // dispatch order, emitting the chain's expected payload, and receiving the
     // prior node's output (the threading proof).
     if rows.len() == case.chain.len() {
-        for (i, (row, (want_id, want_output))) in rows.iter().zip(case.chain.iter()).enumerate() {
+        for (i, (row, (want_id, want_output, want_port))) in
+            rows.iter().zip(case.chain.iter()).enumerate()
+        {
             let node_id: String = row.get(0);
             let seq: i32 = row.get(1);
             let status: String = row.get(2);
@@ -492,11 +568,11 @@ async fn assert_run(
                 .and_then(|s| serde_json::from_str::<Value>(&s).ok());
             check(
                 &mut ok,
-                &format!("node_run {want_id} @ seq {i}: id/seq/status/port"),
+                &format!("node_run {want_id} @ seq {i}: id/seq/status/port ({want_port})"),
                 node_id == *want_id
                     && seq == i as i32
                     && status == "success"
-                    && port.as_deref() == Some("main"),
+                    && port.as_deref() == Some(*want_port),
             );
             check(
                 &mut ok,
@@ -602,23 +678,113 @@ mod tests {
     /// relation the live assert checks.
     #[test]
     fn rung2_case_threads_upper_then_reverse() {
-        let case = rung_case(2).expect("rung 2 case");
+        let cases = rung_cases(2).expect("rung 2 cases");
+        assert_eq!(cases.len(), 1, "rung 2 is a single linear case");
+        let case = &cases[0];
         assert_eq!(case.flow_id, "ladder-rung2");
         assert_eq!(case.input, json!("abcDEF"));
-        let ids: Vec<&str> = case.chain.iter().map(|(id, _)| *id).collect();
+        let ids: Vec<&str> = case.chain.iter().map(|(id, _, _)| *id).collect();
         assert_eq!(ids, vec!["in", "t1", "t2", "out"]);
-        let outs: Vec<&Value> = case.chain.iter().map(|(_, o)| o).collect();
+        let outs: Vec<&Value> = case.chain.iter().map(|(_, o, _)| o).collect();
         assert_eq!(*outs[0], json!("abcDEF")); // in: passthrough
         assert_eq!(*outs[1], json!("ABCDEF")); // t1: upper
         assert_eq!(*outs[2], json!("FEDCBA")); // t2: reverse(upper)
         assert_eq!(*outs[3], json!("FEDCBA")); // out: passthrough
+        // Every node of a linear chain emits on the main port.
+        assert!(case.chain.iter().all(|(_, _, port)| *port == "main"));
         assert_eq!(case.expected_result(), &json!("FEDCBA"));
     }
 
     #[test]
+    fn rung3_fixture_is_the_branching_diamond() {
+        let v = assert_valid_fixture(RUNG3_FLOW_JSON, "ladder-rung3");
+        assert_eq!(v["entry"], json!("in"));
+        let nodes = v["nodes"].as_array().expect("nodes array");
+        assert_eq!(nodes.len(), 5, "rung 3 is in -> cond -> (yes|no) -> out");
+        // The conditional branches on a JMESPath predicate (the `expression`
+        // config routes to the branching standard-library node, NOT the legacy
+        // passthrough-on-main arm).
+        assert_eq!(nodes[1]["id"], json!("cond"));
+        assert_eq!(nodes[1]["type"], json!("conditional"));
+        assert_eq!(nodes[1]["config"]["expression"], json!("take"));
+        // The two branch transforms extract distinct fields.
+        assert_eq!(nodes[2]["id"], json!("yes"));
+        assert_eq!(nodes[2]["type"], json!("transform"));
+        assert_eq!(nodes[2]["config"]["expression"], json!("yes"));
+        assert_eq!(nodes[3]["id"], json!("no"));
+        assert_eq!(nodes[3]["type"], json!("transform"));
+        assert_eq!(nodes[3]["config"]["expression"], json!("no"));
+        assert_eq!(nodes[4]["id"], json!("out"));
+        assert_eq!(nodes[4]["type"], json!("respond"));
+
+        // The two cond edges carry the branch ports; out is the merge (2 inbound).
+        let edges: Vec<(String, Option<String>, String)> = v["edges"]
+            .as_array()
+            .expect("edges array")
+            .iter()
+            .map(|e| {
+                (
+                    e["from"].as_str().unwrap().to_string(),
+                    e.get("from-port")
+                        .and_then(|p| p.as_str())
+                        .map(String::from),
+                    e["to"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            edges,
+            vec![
+                ("in".into(), None, "cond".into()),
+                ("cond".into(), Some("true".into()), "yes".into()),
+                ("cond".into(), Some("false".into()), "no".into()),
+                ("yes".into(), None, "out".into()),
+                ("no".into(), None, "out".into()),
+            ]
+        );
+        // `out` is a merge: reached from both branches.
+        let into_out = edges.iter().filter(|(_, _, to)| to == "out").count();
+        assert_eq!(into_out, 2, "out is the merge node (two inbound edges)");
+    }
+
+    /// The two rung-3 cases route true and false: the conditional records the
+    /// matching port, only the taken branch node appears in the chain (count 4),
+    /// and the branch's distinct output threads to the result.
+    #[test]
+    fn rung3_cases_route_true_and_false() {
+        let cases = rung_cases(3).expect("rung 3 cases");
+        assert_eq!(cases.len(), 2, "rung 3 proves both routing directions");
+
+        let t = &cases[0];
+        assert_eq!(t.label, "true-branch");
+        assert_eq!(t.flow_id, "ladder-rung3");
+        assert_eq!(
+            t.input,
+            json!({ "take": true, "yes": "took-yes", "no": "took-no" })
+        );
+        let t_ids: Vec<&str> = t.chain.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(t_ids, vec!["in", "cond", "yes", "out"]);
+        let t_ports: Vec<&str> = t.chain.iter().map(|(_, _, p)| *p).collect();
+        assert_eq!(t_ports, vec!["main", "true", "main", "main"]);
+        assert_eq!(t.expected_result(), &json!("took-yes"));
+
+        let f = &cases[1];
+        assert_eq!(f.label, "false-branch");
+        assert_eq!(
+            f.input,
+            json!({ "take": false, "yes": "took-yes", "no": "took-no" })
+        );
+        let f_ids: Vec<&str> = f.chain.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(f_ids, vec!["in", "cond", "no", "out"]);
+        let f_ports: Vec<&str> = f.chain.iter().map(|(_, _, p)| *p).collect();
+        assert_eq!(f_ports, vec!["main", "false", "main", "main"]);
+        assert_eq!(f.expected_result(), &json!("took-no"));
+    }
+
+    #[test]
     fn unknown_rung_is_rejected() {
-        assert!(rung_case(3).is_err());
-        assert!(rung_case(0).is_err());
+        assert!(rung_cases(4).is_err());
+        assert!(rung_cases(0).is_err());
     }
 
     #[test]

@@ -1,0 +1,22 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "ladder-rung3",
+  "version": 1,
+  "name": "Exec-ladder rung 3: conditional branch + merge",
+  "trigger": { "type": "manual" },
+  "entry": "in",
+  "nodes": [
+    { "id": "in", "type": "webhook-in" },
+    { "id": "cond", "type": "conditional", "config": { "expression": "take" } },
+    { "id": "yes", "type": "transform", "config": { "expression": "yes" } },
+    { "id": "no", "type": "transform", "config": { "expression": "no" } },
+    { "id": "out", "type": "respond" }
+  ],
+  "edges": [
+    { "from": "in", "to": "cond" },
+    { "from": "cond", "from-port": "true", "to": "yes" },
+    { "from": "cond", "from-port": "false", "to": "no" },
+    { "from": "yes", "to": "out" },
+    { "from": "no", "to": "out" }
+  ]
+}

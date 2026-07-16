@@ -426,47 +426,52 @@ kubectl -n wamn-system rollout status deploy/runner --timeout=120s
 #   + a wamn_runner_demo.sink row + wamn_runner_demo.node_runs rows.
 ```
 
-### [EXEC-LADDER.1/2] rungs 1-2: single-node + linear transform chain on the deployed runner (wamn-ojm.1, wamn-ojm.2)
+### [EXEC-LADDER.1/2/3] rungs 1-3: single-node, linear chain, conditional branch on the deployed runner (wamn-ojm.1/2/3)
 
-Docs: docs/exec-ladder.md · Fixtures: deploy/ladder/rung{1,2}.flow.json · Manifest: deploy/ladderproof-job.yaml
+Docs: docs/exec-ladder.md · Fixtures: deploy/ladder/rung{1,2,3}.flow.json · Manifest: deploy/ladderproof-job.yaml
 
-`ladderproof --rung <N>` seeds one manual run of that rung's flow and waits for
-the deployed runner to drive it. Rung 1 is `webhook-in -> respond`; rung 2 is
-`webhook-in -> transform{upper} -> transform{reverse} -> respond`, proving
-correct SEQUENCING (`node_runs` seq order) + payload THREADING (each node's
-recorded input == the prior node's recorded output). `--setup` registers EVERY
-rung's flow so one schema serves the whole ladder.
+`ladderproof --rung <N>` seeds one manual run per case of that rung's flow and
+waits for the deployed runner to drive it. Rung 1 is `webhook-in -> respond`;
+rung 2 is `webhook-in -> transform{upper} -> transform{reverse} -> respond`
+(SEQUENCING + THREADING); rung 3 is a conditional branch + merge
+(`in -> cond{true/false} -> yes|no -> out`), driven TWICE (a true and a false
+input) to prove correct ROUTING — the conditional's recorded port matches the
+predicate, ONLY the taken branch produces a node_run, and its distinct output
+threads to the merged result. `--setup` registers EVERY rung's flow so one schema
+serves the whole ladder.
 
 ```bash
-cargo test -p wamn-gates ladderproof   # rung1 + rung2 fixture drift-guards (parse + validate) + chain/arg/poll units
+cargo test -p wamn-gates ladderproof   # rung1/2/3 fixture drift-guards (parse + validate) + chain/port/routing units
 cargo clippy -p wamn-gates --all-targets && cargo fmt -p wamn-gates --check
 # Local end-to-end (throwaway postgres:18 + a background run-worker; guest + host
 # UNCHANGED — ladderproof is gates-only, no wasm/host rebuild). Start the runner
 # first; it error-drains until --setup provisions the schema + role, then claims:
-docker run -d --name wamn-ojm2-pg -p 5491:5432 -e POSTGRES_PASSWORD=postgres postgres:18
-WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5491/postgres ./target/debug/wamn-host \
-  --log-level warn run-worker \
+docker run -d --name wamn-ojm3-pg -p 5491:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+WAMN_RUNNER=ojm3-local ./target/debug/wamn-host \
+  --log-level info run-worker \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --tenant demo-tenant --schema wamn_ladder_local --runner local-runner \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5491/wamn \
+  --tenant demo-tenant --schema wamn_ladder_local \
   --min-idle-ms 250 --max-idle-ms 1500 &                       # error-drains until setup
-./target/debug/wamn-gates ladderproof --rung 2 \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:5491/postgres \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5491/postgres \
-  --schema wamn_ladder_local --tenant demo-tenant --setup   # provision + register rungs + seed + assert
-# Rung-1 regression + the mutation loop re-run the client only (schema + runner stay up):
+./target/debug/wamn-gates ladderproof --rung 3 \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5491/wamn \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5491/wamn \
+  --schema wamn_ladder_local --tenant demo-tenant --setup   # provision + register rungs + seed both branches + assert
+# Rung-2/1 regressions + the mutation loop re-run the client only (schema + runner stay up):
+#   ./target/debug/wamn-gates ladderproof --rung 2 --database-url ... --schema wamn_ladder_local --tenant demo-tenant
 #   ./target/debug/wamn-gates ladderproof --rung 1 --database-url ... --schema wamn_ladder_local --tenant demo-tenant
-#   python3 scratchpad/mutate_ojm2.py   # 3 mutants: fixture drift-guard / gate chain assert / in-place graph reorder
-kill %1; docker rm -f wamn-ojm2-pg
+#   python3 scratchpad/mutate_ojm3.py   # 3 mutants: fixture drift-guard / gate port assert / in-place edge (routing) swap
+kill %1; docker rm -f wamn-ojm3-pg
 # In-cluster gate of record (GATES-ONLY: rebuild the gates image, host stage cached;
 # the runner reuses the fqg.8 wamn-host:dev):
 docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-gates:dev --name wamn
 # Provision the demo schema (sed 's/\bwamn_run\b/wamn_runner_demo/g' over
 # deploy/{run-state,run-queue,flows}.sql | kubectl exec psql) + register
-# deploy/ladder/rung{1,2}.flow.json active as tenant demo-tenant (superuser, RLS bypassed).
+# deploy/ladder/rung{1,2,3}.flow.json active as tenant demo-tenant (superuser, RLS bypassed).
 kubectl -n wamn-system apply -f deploy/runner-db.example.yaml
 kubectl -n wamn-system apply -f deploy/runner.yaml
 kubectl -n wamn-system rollout status deploy/runner --timeout=120s
-kubectl -n wamn-system apply -f deploy/ladderproof-job.yaml   # --rung 2 (rung-1 regression: edit --rung to 1)
+kubectl -n wamn-system apply -f deploy/ladderproof-job.yaml   # --rung 3 (rung-2/1 regressions: edit --rung to 2 / 1)
 kubectl -n wamn-system wait --for=condition=complete job/ladderproof --timeout=120s
 kubectl -n wamn-system logs job/ladderproof   # -> overall PASS: true
 ```
