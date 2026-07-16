@@ -4,12 +4,12 @@
 //! (docs/postgres-topology.md §Backup architecture): a scheduled `pg_dump -Fd`
 //! of one project-env database to object storage. **One artifact serves both**
 //! tenant-scoped restore-to-last-dump *and* the 10.3 project export — the RPO for
-//! dump-based restore is the dump interval, and the interval is a **tier knob**
-//! ([`dump_schedule`]). WAL/PITR (whole-cluster disaster recovery) is the
-//! *other* mechanism — wamn-e1g's Barman Cloud — not this.
+//! dump-based restore is the dump interval ([`DEFAULT_DUMP_SCHEDULE`]; a per-env
+//! cadence knob is a future additive column, D18). WAL/PITR (whole-cluster
+//! disaster recovery) is the *other* mechanism — wamn-e1g's Barman Cloud — not this.
 //!
 //! This module is **pure** (SR3 / house rule 1): pure builders (the `pg_dump`
-//! argv, the object-store key naming, the tier→schedule map, the upload argv) and
+//! argv, the object-store key naming, the default schedule, the upload argv) and
 //! K8s manifest renderers (`serde_json::Value` — `kubectl apply -f` accepts JSON,
 //! the [`crate::database`] / [`crate::org`] precedent). No DB, no clock, no K8s
 //! client, no `pg_dump` invocation — the effects (running the dump, recording the
@@ -28,7 +28,7 @@
 //! topology.
 
 use serde_json::{Value, json};
-use wamn_registry::{Tier, Triple};
+use wamn_registry::Triple;
 
 use crate::backup::{MINIO_ENDPOINT, OBJECT_STORE_SECRET};
 use crate::name::project_env_secret_name;
@@ -90,20 +90,12 @@ pub fn dump_object_key(triple: &Triple, timestamp: &str) -> String {
     format!("{}/{}", dump_key_prefix(triple), timestamp)
 }
 
-/// The scheduled-dump cadence for a tier, as a cron expression. **Frequency is a
-/// tier knob** (topology §Backup architecture) — the RPO for dump-based restore is
-/// this interval, stated in contracts:
-///
-/// * `trials` → **daily** (03:00) — loosest RPO, pre-contract;
-/// * `standard` → **every 6 hours**;
-/// * `dedicated` → **hourly** — the regulated tier, tightest RPO.
-pub fn dump_schedule(tier: Tier) -> &'static str {
-    match tier {
-        Tier::Trials => "0 3 * * *",
-        Tier::Standard => "0 */6 * * *",
-        Tier::Dedicated => "0 * * * *",
-    }
-}
+/// The default scheduled-dump cadence, a 5-field cron: **daily** (03:00). Under
+/// D18 the dump cadence is no longer a closed-tier knob — a per-env `dump_cadence`
+/// policy field is a future additive column (`docs/deployment-model.md` §Region:
+/// "the next placement axis is data"). Callers that want a per-env RPO pass their
+/// own schedule to [`render_project_env_dump_cronjob`].
+pub const DEFAULT_DUMP_SCHEDULE: &str = "0 3 * * *";
 
 /// The `pg_dump` argv for a project-env database. `-Fd` (**directory format**) is
 /// load-bearing — it produces the one artifact that serves restore-to-last-dump,
@@ -192,7 +184,7 @@ fn upload_command(triple: &Triple, bucket: &str) -> String {
 /// init runs to completion first, so the dump exists before the upload. wamn-e1g
 /// makes the upload live (wamn-q3n.10 rendered it). `restartPolicy: OnFailure`.
 fn dump_pod_spec(triple: &Triple, bucket: &str) -> Value {
-    let secret = project_env_secret_name(&triple.org, &triple.project, triple.env);
+    let secret = project_env_secret_name(&triple.org, &triple.project, triple.env.as_str());
     json!({
         "spec": {
             "restartPolicy": "OnFailure",
@@ -289,10 +281,9 @@ pub fn validate_dump_resource_name(triple: &Triple) -> Result<(), crate::Provisi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_registry::Env;
 
     fn t() -> Triple {
-        Triple::new("acme", "billing", Env::Dev)
+        Triple::new("acme", "billing", "dev")
     }
 
     #[test]
@@ -321,20 +312,20 @@ mod tests {
             "dumps/acme/billing/dev/1720000000"
         );
         // The prod and dev envs of one project never share a key prefix.
-        let prod = Triple::new("acme", "billing", Env::Prod);
+        let prod = Triple::new("acme", "billing", "prod");
         assert_ne!(dump_key_prefix(&t()), dump_key_prefix(&prod));
     }
 
     #[test]
-    fn schedule_is_a_tier_knob() {
-        // Frequency rises with the tier (tightest RPO on the regulated tier).
-        assert_eq!(dump_schedule(Tier::Trials), "0 3 * * *"); // daily
-        assert_eq!(dump_schedule(Tier::Standard), "0 */6 * * *"); // every 6h
-        assert_eq!(dump_schedule(Tier::Dedicated), "0 * * * *"); // hourly
-        // The three tiers map to three distinct cadences.
-        let all: Vec<_> = Tier::ALL.iter().map(|&x| dump_schedule(x)).collect();
-        let uniq: std::collections::HashSet<_> = all.iter().collect();
-        assert_eq!(uniq.len(), 3, "each tier has its own cadence");
+    fn default_dump_schedule_is_a_daily_cron() {
+        // D18: the cadence is no longer a closed-tier knob — a fixed daily default
+        // (a per-env dump_cadence policy field is a future additive column).
+        assert_eq!(DEFAULT_DUMP_SCHEDULE, "0 3 * * *");
+        assert_eq!(
+            DEFAULT_DUMP_SCHEDULE.split_whitespace().count(),
+            5,
+            "a 5-field cron"
+        );
     }
 
     #[test]
@@ -348,7 +339,7 @@ mod tests {
 
     #[test]
     fn cronjob_schedules_a_guarded_pg_dump_of_the_project_env() {
-        let cr = render_project_env_dump_cronjob(&t(), dump_schedule(Tier::Trials), DEFAULT_BUCKET);
+        let cr = render_project_env_dump_cronjob(&t(), DEFAULT_DUMP_SCHEDULE, DEFAULT_BUCKET);
         assert_eq!(cr["apiVersion"], "batch/v1");
         assert_eq!(cr["kind"], "CronJob");
         assert_eq!(cr["metadata"]["name"], "wamn-dump-acme--billing--dev");
@@ -428,7 +419,7 @@ mod tests {
     fn dump_resource_name_length_is_bounded() {
         assert!(validate_dump_resource_name(&t()).is_ok());
         // A pathologically long triple overflows the CronJob-name bound.
-        let long = Triple::new("o".repeat(30), "p".repeat(30), Env::Prod);
+        let long = Triple::new("o".repeat(30), "p".repeat(30), "prod");
         assert!(matches!(
             validate_dump_resource_name(&long),
             Err(crate::ProvisionError::NameTooLong { max: 52, .. })

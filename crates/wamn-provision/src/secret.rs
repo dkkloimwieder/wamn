@@ -67,7 +67,7 @@ pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url:
         "apiVersion": "v1",
         "kind": "Secret",
         "metadata": {
-            "name": project_env_secret_name(&triple.org, &triple.project, triple.env),
+            "name": project_env_secret_name(&triple.org, &triple.project, triple.env.as_str()),
             "namespace": namespace,
             "labels": {
                 "app.kubernetes.io/managed-by": "wamn",
@@ -91,7 +91,6 @@ pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_registry::Env;
 
     const URL: &str = "postgres://wamn_app:wamn_app@wamn-pg-rw:5432/wamn-db-acme";
 
@@ -119,7 +118,7 @@ mod tests {
 
     #[test]
     fn project_env_secret_names_and_labels_carry_the_triple() {
-        let t = Triple::new("acme", "billing", Env::Dev);
+        let t = Triple::new("acme", "billing", "dev");
         let url = "postgres://wamn_app:wamn_app@acme-dev-rw:5432/wamn-db-acme--billing--dev";
         let s = render_project_env_secret_manifest(&t, "wamn-system", url);
         assert_eq!(s["kind"], "Secret");

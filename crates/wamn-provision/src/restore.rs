@@ -97,10 +97,9 @@ pub fn pg_restore_argv(conninfo: &str, dump_dir: &str, clean: bool) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_registry::Env;
 
     fn t() -> Triple {
-        Triple::new("acme", "billing", Env::Dev)
+        Triple::new("acme", "billing", "dev")
     }
 
     #[test]
@@ -112,10 +111,10 @@ mod tests {
         // The scratch name never collides with the live `wamn-db-…` database.
         assert_ne!(
             restore_scratch_db_name(&t()),
-            crate::project_env_database_name("acme", "billing", Env::Dev)
+            crate::project_env_database_name("acme", "billing", "dev")
         );
         // The prod and dev envs of one project get distinct scratch names.
-        let prod = Triple::new("acme", "billing", Env::Prod);
+        let prod = Triple::new("acme", "billing", "prod");
         assert_ne!(
             restore_scratch_db_name(&t()),
             restore_scratch_db_name(&prod)
@@ -127,7 +126,7 @@ mod tests {
         assert!(validate_restore_scratch_name(&t()).is_ok());
         // A pathologically long triple overflows the identifier bound (the scratch
         // prefix is longer than the live `wamn-db-` prefix).
-        let long = Triple::new("o".repeat(30), "p".repeat(30), Env::Prod);
+        let long = Triple::new("o".repeat(30), "p".repeat(30), "prod");
         assert!(matches!(
             validate_restore_scratch_name(&long),
             Err(crate::ProvisionError::NameTooLong { max: 63, .. })

@@ -5,7 +5,7 @@
 
 use wamn_catalog::Catalog;
 use wamn_ddl::{Migration, MigrationPlan};
-use wamn_schema::{Env as SchemaEnv, Environment, LifecycleError, Triple};
+use wamn_schema::{Environment, LifecycleError, Triple};
 
 use crate::model::{
     ApplyPlan, MigrationError, MigrationReport, MigrationRequest, RollbackPlan, SqlStatement, Value,
@@ -93,7 +93,7 @@ fn validate_lifecycle(
     target: &Catalog,
     expected_base: Option<u32>,
 ) -> Result<(), MigrationError> {
-    let triple = Triple::new("wamn", "migrate", SchemaEnv::Dev);
+    let triple = Triple::new("wamn", "migrate", "dev");
     let mut env = Environment::new(triple, &target.catalog_id);
 
     // Replay the DB state: the current applied version, if any.

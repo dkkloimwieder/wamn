@@ -9,25 +9,25 @@
 //!   (a marker witness resolved through the plugin's own `StaticCredentialProvider`),
 //!   database-level isolation (no cross-database queries), least privilege
 //!   (`wamn_app` is `NOSUPERUSER NOCREATEDB`), and the emitted `Secret` layout.
-//! * **orgpair** — a T2-shaped org (`Tier::Standard`) with two project-envs
-//!   (`prod` + `dev`) as two per-project-env databases (`wamn-db-<org>--<project>--<env>`,
-//!   provisioned via the REAL wamn-q3n.7 role/create/grant builders as a plain-SQL
-//!   stand-in for the CNPG `Database` CRD, which needs the operator). Proves
-//!   per-database routing + isolation + least-priv + the per-project-env Secret
-//!   layout, records the `registry.orgs`/`projects`/`project_envs` rows, and lands a
-//!   provisioning **saga** in the (ephemeral) system DB.
-//! * **t3** — a `Tier::Trials` org (both cluster refs collapse onto the shared pool)
-//!   with one project-env, the same per-tier assertions.
+//! * **orgpair** — a **dedicated** org with two project-envs (`prod` + `dev`) as
+//!   two per-project-env databases (`wamn-db-<org>--<project>--<env>`, provisioned
+//!   via the REAL wamn-q3n.7 role/create/grant builders as a plain-SQL stand-in for
+//!   the CNPG `Database` CRD, which needs the operator). Proves per-database
+//!   routing / isolation / least-priv / the per-project-env Secret layout, records
+//!   the D18 `registry.orgs`/`projects`/`project_envs` rows (placement + env-FK), lands
+//!   a provisioning **saga** in the (ephemeral) system DB.
+//! * **t3** — a **pooled** org (every env collapses onto the shared pool) with one
+//!   project-env, the same per-placement assertions.
 //! * **saga** — a focused proof of the wamn-q3n.8 saga builders: exactly-once
 //!   create, durable step advance, terminal complete + fail.
 //! * **all** — legacy, then (over one ephemeral registry schema) saga, orgpair, t3.
 //!
 //! A pure host-side `tokio_postgres` gate (no wasm guest) — the queuebench /
 //! dispatchbench shape. Substrate-agnostic (a superuser URL — locally a throwaway
-//! `postgres:18`, in-cluster the shared CloudNativePG pool): the tier modes
+//! `postgres:18`, in-cluster the shared CloudNativePG pool): the placement modes
 //! **simulate** per-project-env DB creation with plain SQL and keep the registry /
 //! saga in an ephemeral `wamn_system`-shaped schema, since the CNPG `Database` CRD
-//! and the physical cross-CLUSTER isolation of a real T2 org pair need the operator.
+//! and the physical cross-CLUSTER isolation of a real dedicated org need the operator.
 //! That physical-isolation gate of record is the live org-pair standup runbook
 //! (docs/provisioning.md §provisionbench / CLAUDE.md).
 
@@ -43,7 +43,7 @@ use wamn_provision::{
     render_project_env_secret_manifest, secret, sql,
 };
 use wamn_registry::sql as reg_sql;
-use wamn_registry::{ClusterRef, Env, Org, Tier, Triple};
+use wamn_registry::{Org, Triple};
 
 /// The canonical T1 registry DDL (registry + provisioning schemas). Applied into
 /// an ephemeral schema on the throwaway/pool PG for the tier modes' registry +
@@ -260,29 +260,29 @@ async fn seed_witnesses(admin_url: &str, project: &str, marker: i32) -> anyhow::
 // tier modes (wamn-q3n.8) — org pair (T2) + trials pool (T3)
 // ============================================================================
 
-/// One env of a tier scenario: which environment, and the distinct routing
-/// marker its per-project-env database carries.
+/// One env of a placement scenario: which environment slug, and the distinct
+/// routing marker its per-project-env database carries.
 struct EnvSpec {
-    env: Env,
+    env: &'static str,
     marker: i32,
 }
 
-/// A T2-shaped org (`Tier::Standard`, so `<org>-prod` ≠ `<org>-dev`) with two
-/// project-envs — `prod` and `dev` — as two per-project-env databases.
+/// A **dedicated** org (owns per-recovery-domain clusters) with two project-envs —
+/// `prod` and `dev` — as two per-project-env databases.
 async fn orgpair_mode(admin_url: &str) -> anyhow::Result<()> {
-    let org = Org::for_pair("gate-t2", Tier::Standard);
+    let org = Org::dedicated("gate-t2");
     tier_scenario(
         admin_url,
-        "orgpair (T2)",
+        "dedicated (prod + dev)",
         &org,
         "app",
         &[
             EnvSpec {
-                env: Env::Prod,
+                env: "prod",
                 marker: 201,
             },
             EnvSpec {
-                env: Env::Dev,
+                env: "dev",
                 marker: 202,
             },
         ],
@@ -292,25 +292,16 @@ async fn orgpair_mode(admin_url: &str) -> anyhow::Result<()> {
     .await
 }
 
-/// A `Tier::Trials` org: both cluster refs collapse onto the shared pool (the
-/// recovery-domain CHECK allows `tier='trials'` with `prod == dev`). Constructed
-/// directly — `Org::for_pair` mints a `<org>-prod`/`<org>-dev` pair, which is the
-/// T2 shape.
+/// A **pooled** org: every env collapses onto the shared pool cluster.
 async fn t3_mode(admin_url: &str) -> anyhow::Result<()> {
-    let org = Org {
-        id: "gate-t3".into(),
-        tier: Tier::Trials,
-        prod_cluster: ClusterRef::new("wamn-pg"),
-        canary_cluster: None,
-        dev_cluster: ClusterRef::new("wamn-pg"),
-    };
+    let org = Org::pooled("gate-t3", "wamn-pg");
     tier_scenario(
         admin_url,
-        "t3 (trials pool)",
+        "pooled (shared pool)",
         &org,
         "demo",
         &[EnvSpec {
-            env: Env::Dev,
+            env: "dev",
             marker: 301,
         }],
         "gate-t3:provision-project-env",
@@ -366,7 +357,7 @@ async fn tier_scenario(
     let provider = StaticCredentialProvider::new(projects, None);
 
     // 2a. Routing witness: each resolved URL reaches its own project-env database.
-    let mut conns: Vec<(Env, Client, Conn)> = Vec::new();
+    let mut conns: Vec<(&'static str, Client, Conn)> = Vec::new();
     for spec in envs {
         let db = project_env_database_name(&org.id, project, spec.env);
         let cfg = provider
@@ -398,7 +389,7 @@ async fn tier_scenario(
         for (env, client, _) in &conns {
             for (other, _, _) in &conns {
                 if env != other {
-                    assert_invisible(client, &private_table(project, *other)).await?;
+                    assert_invisible(client, &private_table(project, other)).await?;
                 }
             }
         }
@@ -428,7 +419,7 @@ async fn tier_scenario(
     let ok_name = sec["metadata"]["name"] == db0;
     let ok_url = sec["stringData"]["url"] == url0;
     let ok_labels = sec["metadata"]["labels"]["wamn.org"] == org.id.as_str()
-        && sec["metadata"]["labels"]["wamn.env"] == envs[0].env.as_str();
+        && sec["metadata"]["labels"]["wamn.env"] == envs[0].env;
     if !ok_name || !ok_url || !ok_labels {
         bail!("secret layout FAIL: name={ok_name} url={ok_url} labels={ok_labels} ({sec})");
     }
@@ -438,14 +429,12 @@ async fn tier_scenario(
     //    in the (ephemeral) system DB.
     let (admin, admin_task) = connect(admin_url).await.context("registry connect")?;
     let org_id = org.id.as_str();
-    let tier = org.tier.as_str();
-    let prod = org.prod_cluster.name.as_str();
-    let canary = org.canary_cluster.as_ref().map(|c| c.name.as_str());
-    let dev = org.dev_cluster.name.as_str();
+    let placement_kind = org.placement.kind_str();
+    let pool = org.placement.pool();
     admin
         .execute(
             reg_sql::upsert_org_sql(),
-            &[&org_id, &tier, &prod, &canary, &dev],
+            &[&org_id, &placement_kind, &pool],
         )
         .await
         .context("upsert org")?;
@@ -455,7 +444,7 @@ async fn tier_scenario(
         .context("upsert project")?;
     for spec in envs {
         let db = project_env_database_name(&org.id, project, spec.env);
-        let env_s = spec.env.as_str();
+        let env_s = spec.env;
         let ns: Option<&str> = None;
         admin
             .execute(
@@ -578,7 +567,7 @@ async fn seed_env_witness(
     admin_url: &str,
     db: &str,
     project: &str,
-    env: Env,
+    env: &str,
     marker: i32,
 ) -> anyhow::Result<()> {
     let db_url = swap_db(admin_url, db)?;
@@ -623,8 +612,8 @@ async fn drop_env_dbs(
 
 /// The per-env private table name (distinct per env so a sibling's connection can
 /// prove it invisible across databases).
-fn private_table(project: &str, env: Env) -> String {
-    format!("only_in_{}_{}", project.replace('-', "_"), env.as_str())
+fn private_table(project: &str, env: &str) -> String {
+    format!("only_in_{}_{}", project.replace('-', "_"), env)
 }
 
 /// Compose the app-role connection URL for a project-env database, reusing the

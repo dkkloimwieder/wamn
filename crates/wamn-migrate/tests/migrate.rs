@@ -70,7 +70,7 @@ fn req<'a>(
 ) -> MigrationRequest<'a> {
     MigrationRequest {
         tenant: "t1",
-        environment: Env::Dev,
+        environment: Env::new("dev"),
         current,
         target,
         expected_base,
@@ -345,15 +345,11 @@ fn catalog_schema_sql_mirrors_the_engine() {
         wamn_migrate::sql::confirmation_sql(Confirmation::ConfirmedWithBackup)
     )));
 
-    // The environment CHECK literals must equal the closed Env set.
-    assert!(sql.contains("schema_migrations_environment_check"));
-    for env in Env::ALL {
-        assert!(
-            sql.contains(&format!("'{}'", env.as_str())),
-            "the environment CHECK must list {:?}",
-            env.as_str()
-        );
-    }
+    // `environment` is an open slug (D18): the closed CHECK is retired.
+    assert!(
+        !sql.contains("schema_migrations_environment_check"),
+        "the closed environment CHECK must be retired (env is an open slug)"
+    );
 
     // The lifecycle state literals the builders write must exist in the DDL CHECK.
     let demote = wamn_migrate::sql::demote_current_applied_sql();

@@ -1,20 +1,22 @@
-//! Storage-schema tests for the T1 control-plane registry (wamn-q3n.3).
+//! Storage-schema tests for the T1 control-plane registry (wamn-q3n.3;
+//! generalized in wamn-8df.3).
 //!
 //! Three layers, all pure/portable except the last:
 //! - a **drift guard** tying `deploy/system-schema.sql` to the `wamn-registry`
-//!   model (table/column shape, the tier/env CHECK literals, `SCHEMA_VERSION`,
-//!   the dev≠prod CHECK expression) — the `wamn-schema` /
+//!   model (table/column shape, the D18 placement CHECKs, the seeded `env_policies`
+//!   matching `EnvPolicy::defaults()`, `SCHEMA_VERSION`) — the `wamn-schema` /
 //!   `state_literals_match_catalog_schema_sql` pattern;
 //! - the **request-path-free** invariant (1): a static grep asserting no
 //!   data-plane manifest references the T1 cluster / system DB;
-//! - a **live-apply gate** (invariants 2/3/4 + FK integrity + the saga
-//!   exactly-once/resume checkpoint), gated on `WAMN_REGISTRY_PG_URL` (a
-//!   superuser URL — the harness provisions the `wamn_system` owner role) and
-//!   skipped cleanly when unset (mirrors wamn-ddl / wamn-run-store).
+//! - a **live-apply gate** (invariants 2/3 + placement/env FK integrity + the
+//!   seeded policies + the saga exactly-once/resume checkpoint), gated on
+//!   `WAMN_REGISTRY_PG_URL` (a superuser URL — the harness provisions the
+//!   `wamn_system` owner role) and skipped cleanly when unset (mirrors wamn-ddl /
+//!   wamn-run-store).
 
 use std::path::Path;
 
-use wamn_registry::{Env, SCHEMA_VERSION, Tier};
+use wamn_registry::{EnvPolicy, SCHEMA_VERSION};
 
 fn deploy_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy")
@@ -39,9 +41,9 @@ fn code_only(sql: &str) -> String {
 // --- drift guard: DDL ↔ model ----------------------------------------------
 
 /// `deploy/system-schema.sql` must mirror the `wamn-registry` model: the two
-/// control-plane schemas, the three registry tables and their distinctive
-/// columns, the tier/env CHECK literals (from the model's `as_str()`), the
-/// storage-format `SCHEMA_VERSION`, and the saga table.
+/// control-plane schemas, the registry tables and their distinctive columns (the
+/// D18 placement + env-policy shape), the seeded `env_policies` matching
+/// `EnvPolicy::defaults()`, the storage-format `SCHEMA_VERSION`, and the saga table.
 #[test]
 fn system_schema_sql_mirrors_the_model() {
     let sql = code_only(&system_schema_sql());
@@ -56,34 +58,60 @@ fn system_schema_sql_mirrors_the_model() {
     assert!(sql.contains("CREATE SCHEMA registry"));
     assert!(sql.contains("CREATE SCHEMA provisioning"));
 
-    // Registry tables + the distinctive columns of the model
-    // (Org.prod_cluster/canary_cluster/dev_cluster, ProjectEnv.secret_name/
-    // secret_namespace).
+    // Orgs carry the D18 placement (placement_kind + pool_cluster); the retired
+    // tier / *_cluster columns are gone.
     assert!(sql.contains("CREATE TABLE registry.orgs"));
+    assert!(sql.contains("placement_kind") && sql.contains("pool_cluster"));
     assert!(
-        sql.contains("prod_cluster")
-            && sql.contains("canary_cluster")
-            && sql.contains("dev_cluster")
+        !sql.contains("prod_cluster") && !sql.contains("canary_cluster"),
+        "the retired tier/canary cluster columns must be gone"
     );
+
+    // Env policies: the named-policy table + its distinctive columns.
+    assert!(sql.contains("CREATE TABLE registry.env_policies"));
+    for col in [
+        "recovery_domain",
+        "promotion_rank",
+        "instances",
+        "backup_cadence",
+        "wal_retention",
+        "hibernation",
+    ] {
+        assert!(sql.contains(col), "env_policies missing column {col}");
+    }
+
+    // Projects / project-envs, the latter FK'd to env_policies (env resolves a
+    // policy — the D18 referential-integrity replacement for the env CHECK).
     assert!(sql.contains("CREATE TABLE registry.projects"));
     assert!(sql.contains("CREATE TABLE registry.project_envs"));
     assert!(sql.contains("secret_name") && sql.contains("secret_namespace"));
+    assert!(
+        sql.contains("REFERENCES registry.env_policies (name)"),
+        "project_envs.env must FK to env_policies (the retired env CHECK's replacement)"
+    );
+    assert!(
+        !sql.contains("env IN ('dev', 'canary', 'prod')"),
+        "the closed env CHECK must be retired"
+    );
 
-    // Tier + Env CHECK literals come from the model (drift-guarded like State).
-    for t in Tier::ALL {
+    // The seed must carry the two default policies with the model's values — a
+    // drift guard tying the SQL seed to EnvPolicy::dev() / prod().
+    for p in EnvPolicy::defaults() {
         assert!(
-            sql.contains(&format!("'{}'", t.as_str())),
-            "system-schema.sql is missing tier literal {:?}",
-            t.as_str()
+            sql.contains(&format!("'{}'", p.name)),
+            "seed is missing the {:?} policy",
+            p.name
         );
+        for lit in [&p.image, &p.hibernation] {
+            assert!(
+                sql.contains(&format!("'{lit}'")),
+                "seed missing literal {lit:?}"
+            );
+        }
     }
-    for e in Env::ALL {
-        assert!(
-            sql.contains(&format!("'{}'", e.as_str())),
-            "system-schema.sql is missing env literal {:?}",
-            e.as_str()
-        );
-    }
+    // `own` recovery domain and prod's cadence/retention are seeded literally.
+    assert!(sql.contains("'\"own\"'::jsonb"));
+    assert!(sql.contains("'0 0 */6 * * *'") && sql.contains("'14d'"));
 
     // The storage-format version is recorded (singleton meta row).
     assert!(sql.contains(&format!("'{SCHEMA_VERSION}'")));
@@ -93,23 +121,17 @@ fn system_schema_sql_mirrors_the_model() {
     assert!(sql.contains("'provision-org'") && sql.contains("'provision-project-env'"));
 }
 
-/// The org-row builder (`wamn_registry::sql::upsert_org_sql`, wamn-q3n.6) must
-/// target exactly the `registry.orgs` columns the storage DDL declares — a
-/// drift guard tying the builder to `deploy/system-schema.sql` (SR2: registry
-/// SQL lives with the model, pinned to the schema it writes).
+/// The org-row builder (`wamn_registry::sql::upsert_org_sql`) must target exactly
+/// the `registry.orgs` placement columns the storage DDL declares — a drift guard
+/// tying the builder to `deploy/system-schema.sql` (SR2: registry SQL lives with
+/// the model, pinned to the schema it writes).
 #[test]
-fn upsert_org_sql_matches_the_orgs_columns() {
+fn upsert_org_sql_matches_the_placement_columns() {
     let sql = code_only(&system_schema_sql());
     let builder = wamn_registry::sql::upsert_org_sql();
     assert!(builder.contains("registry.orgs"));
     assert!(builder.contains("ON CONFLICT (id)"));
-    for col in [
-        "id",
-        "tier",
-        "prod_cluster",
-        "canary_cluster",
-        "dev_cluster",
-    ] {
+    for col in ["id", "placement_kind", "pool_cluster"] {
         assert!(
             sql.contains(col),
             "orgs table (system-schema.sql) missing {col}"
@@ -118,10 +140,10 @@ fn upsert_org_sql_matches_the_orgs_columns() {
     }
 }
 
-/// The project / project-env builders (`wamn_registry::sql::upsert_project_sql`
-/// / `upsert_project_env_sql` + `select_org_clusters_sql`, wamn-q3n.7) must target
-/// exactly the `registry.projects` / `registry.project_envs` columns the storage
-/// DDL declares — the SR2 drift guard extended to the .7 builders.
+/// The project / project-env builders (`upsert_project_sql`,
+/// `upsert_project_env_sql`, `select_org_placement_sql`) must target exactly the
+/// `registry.projects` / `registry.project_envs` / `registry.orgs` columns the
+/// storage DDL declares.
 #[test]
 fn upsert_project_and_project_env_sql_match_the_columns() {
     let sql = code_only(&system_schema_sql());
@@ -135,40 +157,33 @@ fn upsert_project_and_project_env_sql_match_the_columns() {
     assert!(envs.contains("ON CONFLICT (org, project, env) DO UPDATE"));
     assert!(sql.contains("CREATE TABLE registry.project_envs"));
     for col in ["org", "project", "env", "secret_name", "secret_namespace"] {
-        assert!(
-            sql.contains(col),
-            "project_envs table (system-schema.sql) missing {col}"
-        );
+        assert!(sql.contains(col), "project_envs table missing {col}");
         assert!(
             envs.contains(col),
             "project_env upsert builder missing {col}"
         );
     }
 
-    // The cluster-selection read targets the orgs placement columns (incl the
-    // T4 canary cluster, so provision-project-env can route canary per-env).
-    let sel = wamn_registry::sql::select_org_clusters_sql();
+    // The placement read targets the orgs placement columns (so provision-project-env
+    // can derive the cluster per-env via cluster_of).
+    let sel = wamn_registry::sql::select_org_placement_sql();
     assert!(sel.contains("registry.orgs"));
-    assert!(
-        sel.contains("prod_cluster")
-            && sel.contains("canary_cluster")
-            && sel.contains("dev_cluster")
-    );
+    assert!(sel.contains("placement_kind") && sel.contains("pool_cluster"));
 
-    // The tier-move project-env enumeration (wamn-q3n.13) reads the same table,
-    // ordered for a stable plan.
-    let list = wamn_registry::sql::select_org_project_envs_sql();
-    assert!(list.contains("FROM registry.project_envs"));
-    assert!(list.contains("WHERE org = $1") && list.contains("ORDER BY project, env"));
-    for col in ["project", "env", "secret_name", "secret_namespace"] {
-        assert!(list.contains(col), "project-env list builder missing {col}");
+    // The env-policy reads target env_policies (provision-org sizes clusters from
+    // the full policy set; provision-project-env reads one to derive the owner).
+    for reader in [
+        wamn_registry::sql::select_env_policies_sql(),
+        wamn_registry::sql::select_env_policy_sql(),
+    ] {
+        assert!(reader.contains("FROM registry.env_policies"));
+        assert!(reader.contains("recovery_domain::text"));
     }
+    assert!(wamn_registry::sql::select_env_policies_sql().contains("ORDER BY promotion_rank"));
 }
 
-/// The saga builders (`wamn_registry::sql::{create,advance,complete,fail}_saga_sql`,
-/// wamn-q3n.8) must target the `provisioning.sagas` columns and use only status
-/// literals the storage CHECK allows — the SR2 drift guard extended to the saga
-/// mechanism (status literals pinned to the DDL, the tier/env-literal pattern).
+/// The saga builders must target the `provisioning.sagas` columns and use only
+/// status literals the storage CHECK allows (the SR2 drift guard, unchanged by D18).
 #[test]
 fn saga_sql_builders_match_the_sagas_columns_and_status_check() {
     let sql = code_only(&system_schema_sql());
@@ -185,8 +200,6 @@ fn saga_sql_builders_match_the_sagas_columns_and_status_check() {
     let advance = wamn_registry::sql::advance_saga_step_sql();
     assert!(advance.contains("provisioning.sagas") && advance.contains("step = step + 1"));
 
-    // Every status literal a builder writes must be allowed by the status CHECK
-    // (a weakened builder literal is caught here + by the live-apply proof).
     for (builder, status) in [
         (advance, "running"),
         (wamn_registry::sql::complete_saga_sql(), "completed"),
@@ -203,17 +216,12 @@ fn saga_sql_builders_match_the_sagas_columns_and_status_check() {
     }
 }
 
-/// The dump-record builder (`wamn_registry::sql::record_dump_sql`, wamn-q3n.10)
-/// must target the `provisioning.dumps` columns the storage DDL declares — the
-/// SR2 drift guard extended to the dump-bookkeeping mechanism. The table is a
-/// control-plane record of each per-project-env logical dump (object key + size +
-/// time), FK'd to the project-env it dumps.
+/// The dump-record builder + the dump-catalog reads must target the
+/// `provisioning.dumps` columns the storage DDL declares (unchanged by D18).
 #[test]
 fn dumps_table_and_record_builder_match_the_columns() {
     let sql = code_only(&system_schema_sql());
 
-    // The table exists, keyed by the triple + object key, FK'd to project_envs,
-    // and carries only the directory dump format (matches wamn_provision DUMP_FORMAT).
     assert!(sql.contains("CREATE TABLE provisioning.dumps"));
     assert!(sql.contains("REFERENCES registry.project_envs (org, project, env)"));
     assert!(sql.contains("dumps_format_check") && sql.contains("format IN ('directory')"));
@@ -226,8 +234,6 @@ fn dumps_table_and_record_builder_match_the_columns() {
         assert!(builder.contains(col), "record_dump builder missing {col}");
     }
 
-    // The wamn-q3n.11 dump-catalog READS (restore-to-last-dump + the window) target
-    // the same table and select the columns restore needs, newest first.
     for reader in [
         wamn_registry::sql::select_latest_dump_sql(),
         wamn_registry::sql::select_dumps_sql(),
@@ -238,33 +244,29 @@ fn dumps_table_and_record_builder_match_the_columns() {
     }
 }
 
-/// Invariant 4 (dev ≠ prod recovery domain) is a CHECK whose *expression* is
-/// pinned, not just its name — the drift-guard lesson: a name-only assertion
-/// lets a weakened predicate slip through.
+/// The D18 placement structural CHECK is pinned by *expression*, not just its
+/// name (the drift-guard lesson: a name-only assertion lets a weakened predicate
+/// slip through). The retired tier/canary CHECKs must be gone.
 #[test]
-fn dev_ne_prod_recovery_domain_check_is_present() {
+fn placement_check_is_present_and_tier_checks_are_gone() {
     let sql = code_only(&system_schema_sql());
     assert!(
-        sql.contains("tier = 'trials' OR prod_cluster <> dev_cluster"),
-        "the dev≠prod recovery-domain CHECK expression must be present verbatim"
+        sql.contains("(placement_kind = 'pooled') = (pool_cluster IS NOT NULL)"),
+        "the pooled ⟺ pool_cluster CHECK expression must be present verbatim"
     );
-}
-
-/// Invariant 4, extended for T4 (wamn-q3n.14): the canary-cluster CHECKs — the
-/// biconditional (canary present ⟺ dedicated) and the canary distinctness (a set
-/// canary cluster ≠ both prod and dev) — pinned by *expression*, not just name
-/// (the drift-guard lesson; the live-apply gate proves they reject bad orgs).
-#[test]
-fn canary_cluster_recovery_domain_checks_are_present() {
-    let sql = code_only(&system_schema_sql());
-    assert!(
-        sql.contains("(tier = 'dedicated') = (canary_cluster IS NOT NULL)"),
-        "the canary⟺dedicated biconditional CHECK expression must be present verbatim"
-    );
-    assert!(
-        sql.contains("canary_cluster <> prod_cluster AND canary_cluster <> dev_cluster"),
-        "the canary-distinctness CHECK expression must be present verbatim"
-    );
+    assert!(sql.contains("placement_kind IN ('pooled', 'dedicated')"));
+    // The old tier/recovery-domain/canary CHECKs are retired (D18).
+    for gone in [
+        "orgs_tier_check",
+        "orgs_recovery_domain_check",
+        "orgs_canary_dedicated_check",
+        "prod_cluster <> dev_cluster",
+    ] {
+        assert!(
+            !sql.contains(gone),
+            "retired constraint still present: {gone}"
+        );
+    }
 }
 
 /// Invariant 2 (no credentials, R8b): the schema stores Secret *references* and
@@ -292,13 +294,9 @@ fn schema_holds_no_credential_column() {
 /// Invariant 1 (system cluster absent from ALL request paths): a static grep of
 /// the deploy manifests. Only the T1 cluster definition itself
 /// (`wamn-sysdb.yaml`) may reference the system cluster / DB; NO data-plane
-/// workload (gateway / runner / dispatcher / webhook) may. When control-plane
-/// provisioning tooling that legitimately connects to `wamn_system` lands
-/// (`.6`/`.7`), add its manifest to the allowlist — a conscious edit
-/// (drift-guard-over-ban).
+/// workload (gateway / runner / dispatcher / webhook) may.
 #[test]
 fn no_data_plane_manifest_references_the_system_cluster() {
-    // The only manifests permitted to name the T1 cluster / system DB.
     const ALLOWLIST: &[&str] = &["wamn-sysdb.yaml"];
 
     let mut offenders = Vec::new();
@@ -323,16 +321,11 @@ fn no_data_plane_manifest_references_the_system_cluster() {
     );
 }
 
-// --- live-apply gate: invariants 2/3/4 + FK + saga --------------------------
+// --- live-apply gate: invariants 2/3 + placement/env FK + seed + saga --------
 
 /// Apply `deploy/system-schema.sql` to a throwaway Postgres and assert the live,
 /// DB-enforced invariants. Set `WAMN_REGISTRY_PG_URL` to a superuser URL (the
 /// harness provisions the `wamn_system` owner role); skipped when unset.
-///
-/// The DDL + assertions run as `wamn_system` (`SET ROLE`), the way production
-/// applies it (the owner owns the DB): this proves the registry is owned by — and
-/// usable by — the control-plane owner role (what `.6` provision-org needs), not
-/// just applyable by a superuser.
 #[test]
 fn system_schema_applies_and_enforces_invariants_on_postgres() {
     let Ok(url) = std::env::var("WAMN_REGISTRY_PG_URL") else {
@@ -345,9 +338,6 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
 
     let ddl = system_schema_sql();
     let mut script = String::new();
-    // Provision the wamn_system owner role (the T1 cluster bootstraps it), a fresh
-    // pair of schemas, and grant it CREATE so it can own the schema (in-cluster it
-    // owns the DB); then apply + assert AS wamn_system.
     script.push_str(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN \
          CREATE ROLE wamn_system LOGIN PASSWORD 'wamn_system' NOSUPERUSER; END IF; END $$;\n\
@@ -358,32 +348,32 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     );
     script.push_str(&ddl);
     script.push('\n');
+    // The seeded env policies match the model's EnvPolicy::defaults() exactly — a
+    // live drift guard: a divergence between the SQL seed and the Rust defaults
+    // fails an ASSERT here (a name-only text guard cannot catch a value drift).
+    // Run BEFORE ASSERTIONS, which adds a 'staging' policy to prove env is data.
+    script.push_str(&env_policy_seed_assertions());
     script.push_str(ASSERTIONS);
-    // Exercise the REAL wamn-registry org-row builder (wamn-q3n.6) via
-    // PREPARE/EXECUTE: two upserts of the same id must collapse to ONE row (the
-    // second refreshing the tier), proving `ON CONFLICT (id) DO UPDATE` — a plain
-    // INSERT would fail the second EXECUTE with a PK unique_violation and, under
-    // ON_ERROR_STOP, fail this gate (kills the "ON CONFLICT dropped" mutant).
+    // Exercise the REAL org-row builder via PREPARE/EXECUTE: two upserts of the
+    // same id must collapse to ONE row (the second refreshing the placement),
+    // proving `ON CONFLICT (id) DO UPDATE`.
     script.push_str(&format!(
-        "PREPARE up (text,text,text,text,text) AS {upsert};\n\
-         EXECUTE up('demo','standard','demo-prod',NULL,'demo-dev');\n\
-         EXECUTE up('demo','dedicated','demo-prod','demo-canary','demo-dev');\n\
+        "PREPARE up (text,text,text) AS {upsert};\n\
+         EXECUTE up('demo','pooled','wamn-pg');\n\
+         EXECUTE up('demo','dedicated',NULL);\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.orgs WHERE id='demo')=1,\n\
              'upsert_org_sql is idempotent — one row after two upserts';\n\
-           ASSERT (SELECT tier FROM registry.orgs WHERE id='demo')='dedicated',\n\
-             'the second upsert refreshed the tier (ON CONFLICT DO UPDATE)';\n\
-           ASSERT (SELECT canary_cluster FROM registry.orgs WHERE id='demo')='demo-canary',\n\
-             'the second (dedicated) upsert set the canary cluster (ON CONFLICT DO UPDATE)';\n\
+           ASSERT (SELECT placement_kind FROM registry.orgs WHERE id='demo')='dedicated',\n\
+             'the second upsert refreshed the placement (ON CONFLICT DO UPDATE)';\n\
+           ASSERT (SELECT pool_cluster FROM registry.orgs WHERE id='demo') IS NULL,\n\
+             'the second (dedicated) upsert cleared the pool cluster';\n\
          END $$;\n\
          DEALLOCATE up;\n",
         upsert = wamn_registry::sql::upsert_org_sql(),
     ));
-    // Exercise the REAL wamn-registry project / project-env builders (wamn-q3n.7)
-    // against the 'demo' org just upserted. upsert_project is a no-op on conflict;
-    // upsert_project_env refreshes the Secret reference (DO UPDATE). Two upserts of
-    // each must collapse to ONE row, the project-env's secret_name reflecting the
-    // second call — killing a "project_env ON CONFLICT dropped / DO NOTHING" mutant.
+    // Exercise the REAL project / project-env builders against the 'demo' org just
+    // upserted. env 'dev' resolves the seeded policy (the FK holds).
     script.push_str(&format!(
         "PREPARE upp (text,text) AS {up_project};\n\
          PREPARE upe (text,text,text,text,text) AS {up_env};\n\
@@ -394,9 +384,6 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.projects WHERE org='demo' AND id='app')=1,\n\
              'upsert_project_sql is idempotent — one project row after two upserts';\n\
-           ASSERT (SELECT count(*) FROM registry.project_envs\n\
-                     WHERE org='demo' AND project='app' AND env='dev')=1,\n\
-             'upsert_project_env_sql is idempotent — one project-env row';\n\
            ASSERT (SELECT secret_name FROM registry.project_envs\n\
                      WHERE org='demo' AND project='app' AND env='dev')='wamn-db-demo--app--dev',\n\
              'the second project-env upsert refreshed the Secret reference (ON CONFLICT DO UPDATE)';\n\
@@ -405,19 +392,26 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
         up_project = wamn_registry::sql::upsert_project_sql(),
         up_env = wamn_registry::sql::upsert_project_env_sql(),
     ));
-    // Exercise the REAL wamn-registry dump-record builder (wamn-q3n.10) against the
-    // 'demo/app/dev' project-env just upserted: recording the SAME object_key twice
-    // must collapse to ONE row whose byte_size reflects the SECOND record (the
-    // completed size is known only after the dump finishes) — proving `ON CONFLICT
-    // … DO UPDATE`. A "DO NOTHING" mutant leaves the stale first size, failing here.
+    // Exercise the REAL env-policy read via `CREATE TABLE AS EXECUTE` — provision-
+    // project-env reads one policy by name to derive the cluster owner.
+    script.push_str(&format!(
+        "PREPARE getpol (text) AS {get};\n\
+         CREATE TEMP TABLE policy_probe AS EXECUTE getpol('dev');\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM policy_probe)=1,\n\
+             'select_env_policy_sql returns exactly one row';\n\
+           ASSERT (SELECT name FROM policy_probe)='dev',\n\
+             'select_env_policy_sql returns the named policy';\n\
+         END $$;\n\
+         DROP TABLE policy_probe; DEALLOCATE getpol;\n",
+        get = wamn_registry::sql::select_env_policy_sql(),
+    ));
+    // Exercise the REAL dump-record builder (unchanged by D18).
     script.push_str(&format!(
         "PREPARE rdump (text,text,text,text,text,bigint) AS {record};\n\
          EXECUTE rdump('demo','app','dev','dumps/demo/app/dev/1000','directory', 100);\n\
          EXECUTE rdump('demo','app','dev','dumps/demo/app/dev/1000','directory', 200);\n\
          DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM provisioning.dumps\n\
-                     WHERE object_key='dumps/demo/app/dev/1000')=1,\n\
-             'record_dump_sql is idempotent — one row after two records of one key';\n\
            ASSERT (SELECT byte_size FROM provisioning.dumps\n\
                      WHERE object_key='dumps/demo/app/dev/1000')=200,\n\
              'the second record refreshed byte_size (ON CONFLICT DO UPDATE)';\n\
@@ -425,37 +419,8 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          DEALLOCATE rdump;\n",
         record = wamn_registry::sql::record_dump_sql(),
     ));
-    // Exercise the REAL wamn-registry dump-catalog READ (wamn-q3n.11) —
-    // restore-to-last-dump. Seed 'demo/app/dev' with three dumps: an old one and
-    // two at the same (newer) time whose keys break the tie. `select_latest_dump_sql`
-    // must return the newest (taken_at DESC), and among the tie the greater key
-    // (object_key DESC). Run via `CREATE TABLE AS EXECUTE` so the REAL builder text
-    // is exercised verbatim. Flipping either ORDER direction returns a different
-    // row, failing here (kills the "select_latest ORDER" mutant, both keys).
-    script.push_str(&format!(
-        "DELETE FROM provisioning.dumps WHERE org='demo' AND project='app' AND env='dev';\n\
-         INSERT INTO provisioning.dumps (org,project,env,object_key,taken_at) VALUES\n\
-           ('demo','app','dev','dumps/demo/app/dev/aaa', now() - interval '2 hours'),\n\
-           ('demo','app','dev','dumps/demo/app/dev/bbb', now() - interval '1 hour'),\n\
-           ('demo','app','dev','dumps/demo/app/dev/ccc', now() - interval '1 hour');\n\
-         PREPARE latest (text,text,text) AS {latest};\n\
-         CREATE TEMP TABLE latest_probe AS EXECUTE latest('demo','app','dev');\n\
-         DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM latest_probe)=1,\n\
-             'select_latest_dump_sql returns exactly one row';\n\
-           ASSERT (SELECT object_key FROM latest_probe)='dumps/demo/app/dev/ccc',\n\
-             'select_latest_dump_sql returns the newest dump (taken_at DESC, object_key DESC)';\n\
-         END $$;\n\
-         DROP TABLE latest_probe; DEALLOCATE latest;\n",
-        latest = wamn_registry::sql::select_latest_dump_sql(),
-    ));
-    // Exercise the REAL wamn-registry saga builders (wamn-q3n.8) via PREPARE/EXECUTE:
-    // creation is exactly-once (a second create of the same saga_id is a no-op),
-    // `step` is a durable resume checkpoint (two advances → 2), and complete/fail set
-    // the terminal status. Two creates collapsing to ONE row kills a "create ON
-    // CONFLICT dropped" mutant; a step that does not reach 2 kills a "step-advance
-    // neutered" mutant; the wrong terminal status kills a "complete/fail literal"
-    // mutant — all at the live layer, atop the pure shape guard.
+    // Exercise the REAL saga builders (unchanged by D18): creation exactly-once,
+    // step a durable checkpoint, complete/fail terminal.
     script.push_str(&format!(
         "PREPARE csaga (text,text,text,int) AS {create};\n\
          PREPARE asaga (text) AS {advance};\n\
@@ -513,19 +478,62 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     );
 }
 
+/// Build the live env-policy seed assertions from the model, so a divergence
+/// between `deploy/system-schema.sql`'s seed and `EnvPolicy::dev()` / `prod()`
+/// fails the live gate. Both defaults are `own`, so the recovery-domain assertion
+/// is the literal `"own"`.
+fn env_policy_seed_assertions() -> String {
+    let mut s = String::from(
+        "DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.env_policies)=2,\n\
+           'exactly the two default policies are seeded'; END $$;\n",
+    );
+    for p in EnvPolicy::defaults() {
+        s.push_str(&format!(
+            "DO $$ BEGIN\n\
+               ASSERT (SELECT promotion_rank FROM registry.env_policies WHERE name='{name}')={rank},\n\
+                 'seed {name}.promotion_rank matches the model';\n\
+               ASSERT (SELECT instances FROM registry.env_policies WHERE name='{name}')={inst},\n\
+                 'seed {name}.instances matches the model';\n\
+               ASSERT (SELECT storage FROM registry.env_policies WHERE name='{name}')='{storage}',\n\
+                 'seed {name}.storage matches the model';\n\
+               ASSERT (SELECT image FROM registry.env_policies WHERE name='{name}')='{image}',\n\
+                 'seed {name}.image matches the model';\n\
+               ASSERT (SELECT backup_cadence FROM registry.env_policies WHERE name='{name}')='{backup}',\n\
+                 'seed {name}.backup_cadence matches the model';\n\
+               ASSERT (SELECT wal_retention FROM registry.env_policies WHERE name='{name}')='{wal}',\n\
+                 'seed {name}.wal_retention matches the model';\n\
+               ASSERT (SELECT hibernation FROM registry.env_policies WHERE name='{name}')='{hib}',\n\
+                 'seed {name}.hibernation matches the model';\n\
+               ASSERT (SELECT recovery_domain FROM registry.env_policies WHERE name='{name}')='\"own\"'::jsonb,\n\
+                 'seed {name}.recovery_domain is own';\n\
+             END $$;\n",
+            name = p.name,
+            rank = p.promotion_rank,
+            inst = p.instances,
+            storage = p.storage,
+            image = p.image,
+            backup = p.backup_cadence,
+            wal = p.wal_retention,
+            hib = p.hibernation,
+        ));
+    }
+    s
+}
+
 /// The live assertions (kept out of the Rust string plumbing for readability).
 const ASSERTIONS: &str = r#"
 -- FK integrity: an org + its project + two provisioned envs (references only).
-INSERT INTO registry.orgs (id, tier, prod_cluster, dev_cluster)
-  VALUES ('acme','standard','acme-prod','acme-dev'),
-         ('try','trials','wamn-pg','wamn-pg');
+-- env 'prod' / 'dev' resolve the seeded env_policies (the env FK holds).
+INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
+  VALUES ('acme','dedicated',NULL),
+         ('try','pooled','wamn-pg');
 INSERT INTO registry.projects (org, id) VALUES ('acme','billing'),('try','demo');
 INSERT INTO registry.project_envs (org, project, env, secret_name)
   VALUES ('acme','billing','prod','wamn-db-acme-prod'),
          ('acme','billing','dev','wamn-db-acme-dev');
 
--- A dump record for that project-env (wamn-q3n.10 bookkeeping) — cascades with
--- the org below, and its FK requires the project-env to exist.
+-- A dump record for that project-env — cascades with the org below, and its FK
+-- requires the project-env to exist.
 INSERT INTO provisioning.dumps (org, project, env, object_key, byte_size)
   VALUES ('acme','billing','prod','dumps/acme/billing/prod/1', 42);
 -- A dump under an unregistered project-env is rejected (FK to project_envs).
@@ -534,12 +542,6 @@ DO $$ BEGIN BEGIN
     VALUES ('acme','ghost','prod','dumps/acme/ghost/prod/1');
   ASSERT false, 'a dump under an unknown project-env must be rejected';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
--- An unknown dump format is rejected (only directory-format dumps are recorded).
-DO $$ BEGIN BEGIN
-  INSERT INTO provisioning.dumps (org, project, env, object_key, format)
-    VALUES ('acme','billing','prod','dumps/acme/billing/prod/2','tar');
-  ASSERT false, 'an unknown dump format must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
 -- A project under an unregistered org is rejected (FK).
 DO $$ BEGIN BEGIN
@@ -554,58 +556,38 @@ DO $$ BEGIN BEGIN
   ASSERT false, 'a project-env under an unknown project must be rejected';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
--- Invariant 4: a paying org must place prod and dev on DIFFERENT clusters.
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, tier, prod_cluster, dev_cluster)
-    VALUES ('badstd','standard','same','same');
-  ASSERT false, 'a standard org with prod=dev must violate the recovery-domain CHECK';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, tier, prod_cluster, canary_cluster, dev_cluster)
-    VALUES ('badded','dedicated','c','cn','c');
-  ASSERT false, 'a dedicated org with prod=dev must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- ...but the T3 trials pool deliberately collapses both onto the shared cluster.
-DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.orgs WHERE id='try')=1,
-  'a trials org collapses both sides onto the shared pool'; END $$;
-
--- Invariant 4, extended for T4 (wamn-q3n.14): the canary-cluster CHECKs.
--- A dedicated org with a distinct canary cluster is ACCEPTED (the happy path;
--- a too-strict CHECK would reject it).
-INSERT INTO registry.orgs (id, tier, prod_cluster, canary_cluster, dev_cluster)
-  VALUES ('okded','dedicated','okded-prod','okded-canary','okded-dev');
-DO $$ BEGIN ASSERT (SELECT canary_cluster FROM registry.orgs WHERE id='okded')='okded-canary',
-  'a dedicated org records its own canary cluster'; END $$;
--- A dedicated org with NO canary cluster is rejected (canary present ⟺ dedicated).
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, tier, prod_cluster, dev_cluster)
-    VALUES ('nocan','dedicated','p','d');
-  ASSERT false, 'a dedicated org MUST give canary its own cluster';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- A non-dedicated org carrying a canary cluster is rejected (the other direction).
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, tier, prod_cluster, canary_cluster, dev_cluster)
-    VALUES ('stdcan','standard','p','cn','d');
-  ASSERT false, 'only a dedicated org may carry a canary cluster';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- A dedicated org whose canary shares prod's cluster is rejected — canary is its
--- OWN recovery domain, distinct from both prod and dev.
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, tier, prod_cluster, canary_cluster, dev_cluster)
-    VALUES ('badcan','dedicated','p','p','d');
-  ASSERT false, 'a dedicated org canary must differ from prod';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-
--- The tier / env CHECKs reject unknown values.
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, tier, prod_cluster, dev_cluster)
-    VALUES ('bt','platinum','p','d');
-  ASSERT false, 'an unknown tier must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- D18: an env that names no seeded policy is rejected (the env FK — the retired
+-- env CHECK's replacement). 'staging' is not a seeded policy.
 DO $$ BEGIN BEGIN
   INSERT INTO registry.project_envs (org, project, env, secret_name)
     VALUES ('acme','billing','staging','s');
-  ASSERT false, 'an unknown env must be rejected';
+  ASSERT false, 'an env naming no policy must be rejected (env FK)';
+EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
+-- ...but adding the policy first lets it in (env is data, not a closed CHECK).
+INSERT INTO registry.env_policies (name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
+  VALUES ('staging', '"own"'::jsonb, 20, 1, '2Gi', '200m', '256Mi', 'ghcr.io/cloudnative-pg/postgresql:18');
+INSERT INTO registry.project_envs (org, project, env, secret_name)
+  VALUES ('acme','billing','staging','wamn-db-acme-staging');
+DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.project_envs
+    WHERE org='acme' AND project='billing' AND env='staging')=1,
+  'a project-env in a newly-added env resolves (env is data)'; END $$;
+
+-- D18 placement: the pooled ⟺ pool_cluster CHECK. A pooled org MUST name a pool.
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
+    VALUES ('badpool','pooled',NULL);
+  ASSERT false, 'a pooled org with no pool cluster must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- A dedicated org MUST NOT carry a pool (its clusters are derived).
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
+    VALUES ('baddedicated','dedicated','wamn-pg');
+  ASSERT false, 'a dedicated org must not carry a pool cluster';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- An unknown placement_kind is rejected.
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind) VALUES ('badkind','elastic');
+  ASSERT false, 'an unknown placement_kind must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
 -- Invariant 2 (no credentials, R8b): project_envs carries the Secret REFERENCE
@@ -623,27 +605,18 @@ DO $$ DECLARE bad int; BEGIN
 END $$;
 
 -- Invariant 3 (no tenant data): the ONLY tables in the system DB are the
--- control-plane set.
+-- control-plane set (now including env_policies).
 DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
     INTO tbls FROM information_schema.tables
     WHERE table_schema IN ('registry','provisioning') AND table_type='BASE TABLE';
-  ASSERT tbls = 'provisioning.dumps,provisioning.sagas,registry.meta,registry.orgs,registry.project_envs,registry.projects',
+  ASSERT tbls = 'provisioning.dumps,provisioning.sagas,registry.env_policies,registry.meta,registry.orgs,registry.project_envs,registry.projects',
     format('unexpected control-plane table set (invariant 3): %s', tbls);
 END $$;
 
--- Saga: creation is exactly-once via the saga_id PK; step is a durable resume
--- checkpoint; the kind/status CHECKs hold.
+-- Saga: creation is exactly-once via the saga_id PK; the kind/status CHECKs hold.
 INSERT INTO provisioning.sagas (saga_id, kind, target) VALUES ('s1','provision-org','acme')
   ON CONFLICT (saga_id) DO NOTHING;
-INSERT INTO provisioning.sagas (saga_id, kind, target) VALUES ('s1','provision-org','acme')
-  ON CONFLICT (saga_id) DO NOTHING;
-DO $$ BEGIN ASSERT (SELECT count(*) FROM provisioning.sagas WHERE saga_id='s1')=1,
-  'saga creation is exactly-once via the saga_id PK'; END $$;
-UPDATE provisioning.sagas SET step=step+1, status='running' WHERE saga_id='s1';
-UPDATE provisioning.sagas SET step=step+1 WHERE saga_id='s1';
-DO $$ BEGIN ASSERT (SELECT step FROM provisioning.sagas WHERE saga_id='s1')=2,
-  'saga step is a durable resume checkpoint'; END $$;
 DO $$ BEGIN BEGIN
   INSERT INTO provisioning.sagas (saga_id, kind, target) VALUES ('s2','provision-everything','x');
   ASSERT false, 'an unknown saga kind must be rejected';

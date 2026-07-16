@@ -4,10 +4,11 @@
 //!
 //! `pg_dump -Fd` of one project-env database → object storage. **One artifact**
 //! serves tenant-scoped restore-to-last-dump *and* the 10.3 project export; the
-//! RPO is the dump interval, and the interval is a **tier knob**
-//! ([`wamn_provision::dump_schedule`]). Two surfaces:
+//! RPO is the dump interval (`--schedule`, default
+//! [`wamn_provision::DEFAULT_DUMP_SCHEDULE`] — under D18 the cadence is no longer a
+//! closed-tier knob). Two surfaces:
 //!
-//! * a scheduled **CronJob** (`--emit-cronjob`) at the tier cadence, and a
+//! * a scheduled **CronJob** (`--emit-cronjob`) at the `--schedule` cadence, and a
 //!   **one-shot Job** (`--emit-job`) for on-demand exports — rendered here, applied
 //!   by the runbook (no K8s client, the `provision-*` precedent);
 //! * an imperative **`--run-now`** dump (against `--database-url`) — the on-demand
@@ -33,17 +34,15 @@ use clap::Args;
 use tokio_postgres::NoTls;
 
 use wamn_provision::{
-    DEFAULT_BUCKET, dump_object_key, dump_schedule, pg_dump_argv, render_project_env_dump_cronjob,
-    render_project_env_dump_job, validate_dump_resource_name, validate_project_env,
+    DEFAULT_BUCKET, DEFAULT_DUMP_SCHEDULE, dump_object_key, pg_dump_argv,
+    render_project_env_dump_cronjob, render_project_env_dump_job, validate_dump_resource_name,
+    validate_project_env,
 };
-use wamn_registry::{Env, Tier, Triple};
-
-use crate::provision_org::TierArg;
-use crate::provision_project_env::EnvArg;
+use wamn_registry::Triple;
 
 #[derive(Debug, Args)]
 pub struct DumpProjectEnvArgs {
-    /// Org id (must already be registered — `provision-org` / the T3 pool).
+    /// Org id (must already be registered — `provision-org` / the pool).
     #[arg(long)]
     pub org: String,
 
@@ -51,19 +50,19 @@ pub struct DumpProjectEnvArgs {
     #[arg(long)]
     pub project: String,
 
-    /// Environment: `dev`, `canary`, or `prod`.
-    #[arg(long, value_enum)]
-    pub env: EnvArg,
+    /// Environment slug (any `registry.env_policies` name; default set `dev`/`prod`).
+    #[arg(long)]
+    pub env: String,
 
-    /// Superuser Postgres URL to the T1 system DB (`wamn_system`): read the org's
-    /// tier (dump cadence) and record `--run-now` dumps. Env `WAMN_SYSTEM_ADMIN_URL`.
+    /// Superuser Postgres URL to the T1 system DB (`wamn_system`): record
+    /// `--run-now` dumps. Env `WAMN_SYSTEM_ADMIN_URL`.
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
-    /// Override the org tier (the dump cadence). When omitted, it is read from the
-    /// registry — which needs `--system-database-url`.
-    #[arg(long, value_enum)]
-    pub tier: Option<TierArg>,
+    /// The scheduled-dump cron (D18: the cadence is no longer a closed-tier knob —
+    /// a per-env `dump_cadence` policy field is a future additive column).
+    #[arg(long, default_value = DEFAULT_DUMP_SCHEDULE)]
+    pub schedule: String,
 
     /// Object-store bucket dumps are written under.
     #[arg(long, default_value = DEFAULT_BUCKET)]
@@ -95,33 +94,19 @@ pub struct DumpProjectEnvArgs {
 }
 
 pub async fn run(args: DumpProjectEnvArgs) -> anyhow::Result<()> {
-    let env: Env = args.env.into();
-    let triple = Triple::new(&args.org, &args.project, env);
+    let triple = Triple::new(&args.org, &args.project, args.env.as_str());
 
     // Name sanity: the db/Secret name (its length) and the CronJob resource name.
-    validate_project_env(&args.org, &args.project, env)
+    validate_project_env(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("project-env names: {e}"))?;
     validate_dump_resource_name(&triple).map_err(|e| anyhow::anyhow!("dump resource name: {e}"))?;
 
-    // The dump cadence follows the org tier: an explicit `--tier` wins; otherwise
-    // read it from the registry (frequency is a tier knob).
-    let tier: Tier = match args.tier {
-        Some(t) => t.into(),
-        None => {
-            let url = args.system_database_url.as_deref().context(
-                "pass --tier, or --system-database-url to read the org tier from the registry",
-            )?;
-            resolve_tier(url, &args.org).await?
-        }
-    };
-    let schedule = dump_schedule(tier);
-
+    let schedule = &args.schedule;
     let cronjob = render_project_env_dump_cronjob(&triple, schedule, &args.bucket);
     let job = render_project_env_dump_job(&triple, &args.bucket);
 
     println!(
-        "project-env {triple}: dump schedule {schedule:?} (tier {}), bucket {:?}",
-        tier.as_str(),
+        "project-env {triple}: dump schedule {schedule:?}, bucket {:?}",
         args.bucket
     );
 
@@ -185,39 +170,6 @@ async fn run_now(args: &DumpProjectEnvArgs, triple: &Triple) -> anyhow::Result<(
         None => println!("(no --system-database-url: dump produced but not recorded)"),
     }
     Ok(())
-}
-
-/// Read the org's tier from the registry (as the `wamn_system` owner).
-async fn resolve_tier(system_url: &str, org: &str) -> anyhow::Result<Tier> {
-    let (client, conn) = tokio_postgres::connect(system_url, NoTls)
-        .await
-        .context("system db connect")?;
-    let conn_task = tokio::spawn(conn);
-    let result = do_resolve_tier(&client, org).await;
-    drop(client);
-    let _ = conn_task.await;
-    result
-}
-
-async fn do_resolve_tier(client: &tokio_postgres::Client, org: &str) -> anyhow::Result<Tier> {
-    client
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
-    let row = client
-        .query_opt(wamn_registry::sql::select_org_tier_sql(), &[&org])
-        .await
-        .context("read org tier")?
-        .with_context(|| format!("org {org:?} is not registered (run provision-org first)"))?;
-    let tier: String = row.get("tier");
-    tier_from_str(&tier).with_context(|| format!("unknown tier {tier:?} in registry"))
-}
-
-fn tier_from_str(s: &str) -> anyhow::Result<Tier> {
-    Tier::ALL
-        .into_iter()
-        .find(|t| t.as_str() == s)
-        .ok_or_else(|| anyhow::anyhow!("not a tier: {s:?}"))
 }
 
 /// Record a completed dump in the registry (idempotent — refreshes byte_size on a
@@ -310,23 +262,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tier_from_str_round_trips_the_registry_literals() {
-        for t in Tier::ALL {
-            assert_eq!(tier_from_str(t.as_str()).unwrap(), t);
-        }
-        assert!(tier_from_str("platinum").is_err());
+    fn the_default_schedule_is_the_provision_default() {
+        // The dump cadence is the fixed D18 default (no closed-tier knob).
+        assert_eq!(DEFAULT_DUMP_SCHEDULE, "0 3 * * *");
     }
 
     #[test]
-    fn env_arg_and_tier_arg_map_to_the_registry_types() {
-        // The subcommand's clap enums map to the registry vocabulary the dump
-        // cadence + object key key off.
-        assert_eq!(Env::from(EnvArg::Prod), Env::Prod);
-        assert_eq!(Tier::from(TierArg::Dedicated), Tier::Dedicated);
-        // The cadence is derived from the tier (frequency is a tier knob).
-        assert_eq!(
-            dump_schedule(Tier::from(TierArg::Dedicated)),
-            dump_schedule(Tier::Dedicated)
-        );
+    fn a_dump_records_the_env_slug_verbatim() {
+        // The dump keys off the env slug (open D18 env), not a closed enum.
+        let t = Triple::new("acme", "billing", "staging");
+        assert_eq!(dump_object_key(&t, "1"), "dumps/acme/billing/staging/1");
     }
 }

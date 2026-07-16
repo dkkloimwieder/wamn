@@ -12,7 +12,7 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_host::{
-    dispatch, dump_project_env, host, migrate_catalog, move_org_tier, provision, provision_org,
+    dispatch, dump_project_env, host, migrate_catalog, provision, provision_org,
     provision_project_env, publish_catalog, restore_project_env, run_worker,
 };
 
@@ -39,7 +39,7 @@ enum Command {
     PublishCatalog(publish_catalog::PublishCatalogArgs),
     /// Provision a per-project Postgres database + credential on the shared cluster (2.3)
     ProvisionProject(provision::ProvisionProjectArgs),
-    /// Render a paying org's CNPG Cluster PAIR (prod HA + dev hibernation) + record it in the T1 registry (wamn-q3n.6)
+    /// Render a dedicated org's CNPG Cluster set (one per recovery domain, sized by env policy) + record it in the T1 registry (wamn-q3n.6 / D18)
     ProvisionOrg(provision_org::ProvisionOrgArgs),
     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
     ProvisionProjectEnv(provision_project_env::ProvisionProjectEnvArgs),
@@ -47,8 +47,6 @@ enum Command {
     DumpProjectEnv(dump_project_env::DumpProjectEnvArgs),
     /// Restore a per-project-env logical dump (pg_restore -Fd → scratch DB or in-place) (wamn-q3n.11)
     RestoreProjectEnv(restore_project_env::RestoreProjectEnvArgs),
-    /// Promote an org to a higher tier: T3→T2 / T2→T4 (dump→provision→restore→flip) (wamn-q3n.13)
-    MoveOrgTier(move_org_tier::MoveOrgTierArgs),
     /// Apply a catalog to a project DB: versioned, forward-only migration + lifecycle + history (2.5)
     MigrateCatalog(migrate_catalog::MigrateCatalogArgs),
 }
@@ -77,7 +75,6 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
         Command::DumpProjectEnv(args) => dump_project_env::run(args).await,
         Command::RestoreProjectEnv(args) => restore_project_env::run(args).await,
-        Command::MoveOrgTier(args) => move_org_tier::run(args).await,
         Command::MigrateCatalog(args) => migrate_catalog::run(args).await,
     };
 

@@ -37,13 +37,11 @@ use wamn_provision::{
     pg_restore_argv, project_env_database_name, restore_scratch_db_name, sql, validate_project_env,
     validate_restore_scratch_name,
 };
-use wamn_registry::{Env, Triple};
-
-use crate::provision_project_env::EnvArg;
+use wamn_registry::Triple;
 
 #[derive(Debug, Args)]
 pub struct RestoreProjectEnvArgs {
-    /// Org id (must already be registered — `provision-org` / the T3 pool).
+    /// Org id (must already be registered — `provision-org` / the pool).
     #[arg(long)]
     pub org: String,
 
@@ -51,9 +49,9 @@ pub struct RestoreProjectEnvArgs {
     #[arg(long)]
     pub project: String,
 
-    /// Environment: `dev`, `canary`, or `prod`.
-    #[arg(long, value_enum)]
-    pub env: EnvArg,
+    /// Environment slug (any `registry.env_policies` name; default set `dev`/`prod`).
+    #[arg(long)]
+    pub env: String,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): read the dump
     /// catalog (`provisioning.dumps`) to pick which dump to restore. Env
@@ -101,9 +99,8 @@ pub struct RestoreProjectEnvArgs {
 }
 
 pub async fn run(args: RestoreProjectEnvArgs) -> anyhow::Result<()> {
-    let env: Env = args.env.into();
-    let triple = Triple::new(&args.org, &args.project, env);
-    validate_project_env(&args.org, &args.project, env)
+    let triple = Triple::new(&args.org, &args.project, args.env.as_str());
+    validate_project_env(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("project-env names: {e}"))?;
 
     // Resolve which dump directory to restore (explicit dir, or the catalog).
@@ -246,7 +243,7 @@ async fn restore_in_place(
         in_place_confirmed(args.confirm),
         "--in-place drops and replaces the LIVE {triple} database — re-run with --confirm to proceed"
     );
-    let db_name = project_env_database_name(&args.org, &args.project, triple.env);
+    let db_name = project_env_database_name(&args.org, &args.project, triple.env.as_str());
     let conninfo = swap_db(admin_url, &db_name);
     run_pg_restore(&conninfo, dump_dir, true)?;
     println!("restored {triple} in place over the live database {db_name:?} (--clean)");

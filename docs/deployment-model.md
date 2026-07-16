@@ -33,6 +33,25 @@ itself is unchanged — see §"The four tiers survive as configurations".
    `scope: whole|subset` and `mode: snapshot|live-cutover` as first-class axes
    whose non-default cases are **specified here but built later**.
 
+**Landed — `wamn-8df.3` (code, 2026-07-16):** `Env`→slug newtype, `Tier` dropped,
+`Org`→`{id, placement}`, new `EnvPolicy` + `RecoveryDomain` + `cluster_of`, and
+`Registry.env_policies`; `deploy/system-schema.sql` (drop tier/canary CHECKs, add
+`env_policies` + `project_envs.env` FK + placement columns + seed `dev`/`prod`);
+`deploy/catalog-schema.sql` env CHECKs relaxed to an open slug; all consumers
+reworked (`provision-org` renders per-recovery-domain clusters sized by policy —
+**fixes cjv.21**; `provision-project-env` derives via `cluster_of`; `wamn-schema`
+`promote` is order-agnostic; dump/restore/migrate take an env slug); `move-org-tier`
+/ `tier_move.rs` **retired** (the `.5` unified `copy` reintroduces move/cutover).
+Fixes **cjv.20** (`validate()` enforces env-resolves-to-policy, org-id charset,
+placement, recovery-domain integrity on the in-memory `from_json` path).
+**Verified locally:** workspace build; the full test suite incl. every throwaway-PG
+live-apply gate; `provisionbench --mode all` on real Postgres; 5 mutants killed
+(model / validate / renderer / seed-drift / env-FK); clippy + fmt clean. **Deferred
+to the `.3` landing follow-up:** the in-cluster q3n gate re-run (the kind cluster was
+down) and the doc-of-record updates (`registry-model.md`, `provisioning.md`,
+`postgres-topology.md` §Environments pointer, `platform-plan.md` D6/D18 rows,
+`build-and-test.md`).
+
 ## Why reopen — the brittleness
 
 The shipped model hard-codes two closed dimensions and special-cases the third

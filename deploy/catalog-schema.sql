@@ -64,9 +64,10 @@ CREATE TABLE catalog.catalogs (
     document       jsonb,
     PRIMARY KEY (tenant_id, catalog_id, version),
     CONSTRAINT catalogs_state_check
-        CHECK (state IN ('draft', 'staged', 'applied', 'superseded')),
-    CONSTRAINT catalogs_environment_check
-        CHECK (environment IN ('dev', 'canary', 'prod'))
+        CHECK (state IN ('draft', 'staged', 'applied', 'superseded'))
+    -- `environment` is a validated slug (D18, wamn-8df.3) — no closed CHECK; the
+    -- default set (dev/prod) is data in the system registry's env_policies. A
+    -- tenant catalog DB cannot FK the system registry, so env is a free label here.
 );
 ALTER TABLE catalog.catalogs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.catalogs FORCE ROW LEVEL SECURITY;
@@ -103,8 +104,7 @@ CREATE TABLE catalog.schema_migrations (
     checksum        text NOT NULL,
     applied_at      timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, catalog_id, environment, to_version),
-    CONSTRAINT schema_migrations_environment_check
-        CHECK (environment IN ('dev', 'canary', 'prod')),
+    -- `environment` is a validated slug (D18, wamn-8df.3) — no closed CHECK.
     CONSTRAINT schema_migrations_confirmation_check
         CHECK (confirmation IN ('none', 'confirmed-with-backup'))
 );

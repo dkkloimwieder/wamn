@@ -7,39 +7,55 @@
 //! the statement as the registry owner.
 
 /// Upsert an org's placement row into `registry.orgs` (idempotent + additive —
-/// re-running `provision-org` refreshes placement, never dropping). Params:
-/// `$1` id, `$2` tier, `$3` prod_cluster, `$4` canary_cluster (nullable `text` —
-/// the dedicated/T4 canary cluster, `NULL` for standard/trials), `$5`
-/// dev_cluster.
+/// re-running `provision-org` refreshes placement, never dropping). Params: `$1`
+/// id, `$2` placement_kind (`pooled` / `dedicated`), `$3` pool_cluster (nullable
+/// `text` — the shared pool for a pooled org, `NULL` for a dedicated org whose
+/// clusters are derived, D18 [`cluster_of`](crate::cluster_of)).
 ///
-/// The tier CHECK, the dev≠prod recovery-domain CHECK, and the canary-cluster
-/// CHECKs (invariant 4, extended for T4) are enforced by the schema, not
-/// re-checked here — a bad row is rejected by the DB.
+/// The placement-kind CHECK and the `pooled ⟺ pool_cluster` structural CHECK are
+/// enforced by the schema, not re-checked here — a bad row is rejected by the DB.
 pub fn upsert_org_sql() -> &'static str {
-    "INSERT INTO registry.orgs (id, tier, prod_cluster, canary_cluster, dev_cluster) \
-     VALUES ($1, $2, $3, $4, $5) \
+    "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+     VALUES ($1, $2, $3) \
      ON CONFLICT (id) DO UPDATE SET \
-       tier = EXCLUDED.tier, \
-       prod_cluster = EXCLUDED.prod_cluster, \
-       canary_cluster = EXCLUDED.canary_cluster, \
-       dev_cluster = EXCLUDED.dev_cluster"
+       placement_kind = EXCLUDED.placement_kind, \
+       pool_cluster = EXCLUDED.pool_cluster"
 }
 
-/// Select an org's placement clusters (`prod_cluster`, `canary_cluster`,
-/// `dev_cluster`) by id, so `provision-project-env` (wamn-q3n.7) can pick the
-/// target cluster per-env — canary routes to `canary_cluster` on a dedicated
-/// (T4) org (`NULL` = shares prod on a standard/trials org) — without loading the
-/// whole registry or requiring the project-env to already exist (which is what
-/// [`resolve`](crate::Registry::resolve) needs). Param: `$1` org id.
-pub fn select_org_clusters_sql() -> &'static str {
-    "SELECT prod_cluster, canary_cluster, dev_cluster FROM registry.orgs WHERE id = $1"
+/// Select an org's placement (`placement_kind`, `pool_cluster`) by id, so
+/// `provision-project-env` (wamn-q3n.7) can derive the target cluster per-env via
+/// [`cluster_of`](crate::cluster_of) (placement + the env policy) — without
+/// loading the whole registry or requiring the project-env to already exist
+/// (which is what [`resolve`](crate::Registry::resolve) needs). Param: `$1` org id.
+pub fn select_org_placement_sql() -> &'static str {
+    "SELECT placement_kind, pool_cluster FROM registry.orgs WHERE id = $1"
 }
 
-/// Select an org's `tier` by id, so `dump-project-env` (wamn-q3n.10) can pick the
-/// dump cadence (frequency is a tier knob) without loading the whole registry.
-/// Param: `$1` org id.
-pub fn select_org_tier_sql() -> &'static str {
-    "SELECT tier FROM registry.orgs WHERE id = $1"
+// --- env policies (wamn-8df.3) ---------------------------------------------
+//
+// The named, self-contained [`EnvPolicy`](crate::EnvPolicy) rows (D18): sizing /
+// HA / backup / recovery-domain per env slug. `recovery_domain` is `jsonb`; the
+// reads cast it to `text` so the driver serde-parses it back into
+// `RecoveryDomain`. Seeded by `deploy/system-schema.sql`; columns drift-guarded
+// against the storage DDL. The full row is what `provision-org` sizes clusters
+// from and what `provision-project-env` derives the cluster owner from.
+
+/// The `registry.env_policies` column list, in the order both reads return and a
+/// row-mapper reads by index. `recovery_domain` is cast to `text` for serde.
+const ENV_POLICY_COLUMNS: &str = "name, recovery_domain::text, promotion_rank, instances, \
+     storage, cpu, memory, image, backup_cadence, wal_retention, hibernation";
+
+/// Select every env policy, ordered by `promotion_rank` (so `provision-org` sees
+/// `dev` before `prod`). Columns: [`ENV_POLICY_COLUMNS`].
+pub fn select_env_policies_sql() -> String {
+    format!("SELECT {ENV_POLICY_COLUMNS} FROM registry.env_policies ORDER BY promotion_rank")
+}
+
+/// Select one env policy by name — `provision-project-env` reads it to derive the
+/// project-env's cluster owner (and confirm the env resolves to a policy).
+/// Param: `$1` policy name (the env slug). Columns: [`ENV_POLICY_COLUMNS`].
+pub fn select_env_policy_sql() -> String {
+    format!("SELECT {ENV_POLICY_COLUMNS} FROM registry.env_policies WHERE name = $1")
 }
 
 /// Upsert a project row into `registry.projects` (idempotent). Params: `$1` org,
@@ -180,31 +196,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn upsert_org_targets_the_orgs_columns_and_upserts() {
+    fn upsert_org_targets_the_placement_columns_and_upserts() {
         let sql = upsert_org_sql();
         assert!(sql.contains("INSERT INTO registry.orgs"));
-        for col in [
-            "id",
-            "tier",
-            "prod_cluster",
-            "canary_cluster",
-            "dev_cluster",
-        ] {
+        for col in ["id", "placement_kind", "pool_cluster"] {
             assert!(sql.contains(col), "missing column {col}");
         }
-        // Values are $n params (never interpolated) — five now (canary_cluster).
-        assert!(sql.contains("VALUES ($1, $2, $3, $4, $5)"));
+        // Values are $n params (never interpolated) — three (D18 placement).
+        assert!(sql.contains("VALUES ($1, $2, $3)"));
         // Idempotent + additive: ON CONFLICT (id) DO UPDATE, not a plain INSERT.
         assert!(sql.contains("ON CONFLICT (id) DO UPDATE"));
-        // The canary cluster is refreshed on conflict (a dedicated/T4 move sets it).
-        assert!(sql.contains("canary_cluster = EXCLUDED.canary_cluster"));
+        // The pool cluster is refreshed on conflict (a placement change sets it).
+        assert!(sql.contains("pool_cluster = EXCLUDED.pool_cluster"));
+        // The retired tier / *_cluster columns are gone.
+        assert!(!sql.contains("tier"));
+        assert!(!sql.contains("prod_cluster"));
     }
 
     #[test]
-    fn select_org_clusters_reads_all_placement_clusters_by_id() {
-        let sql = select_org_clusters_sql();
+    fn select_org_placement_reads_the_placement_by_id() {
+        let sql = select_org_placement_sql();
         assert!(sql.contains("registry.orgs"));
-        for col in ["prod_cluster", "canary_cluster", "dev_cluster"] {
+        for col in ["placement_kind", "pool_cluster"] {
             assert!(sql.contains(col), "missing column {col}");
         }
         // Keyed by the org id as a $n param (never interpolated).
@@ -212,10 +225,31 @@ mod tests {
     }
 
     #[test]
-    fn select_org_tier_reads_the_tier_by_id() {
-        let sql = select_org_tier_sql();
-        assert!(sql.contains("SELECT tier FROM registry.orgs"));
-        assert!(sql.contains("WHERE id = $1"));
+    fn env_policy_reads_target_the_policy_columns() {
+        let all = select_env_policies_sql();
+        let one = select_env_policy_sql();
+        for sql in [&all, &one] {
+            assert!(sql.contains("FROM registry.env_policies"));
+            for col in [
+                "name",
+                "recovery_domain",
+                "promotion_rank",
+                "instances",
+                "storage",
+                "image",
+                "backup_cadence",
+                "wal_retention",
+                "hibernation",
+            ] {
+                assert!(sql.contains(col), "missing column {col}");
+            }
+            // recovery_domain is jsonb, read as text for serde.
+            assert!(sql.contains("recovery_domain::text"));
+        }
+        // The full-set read is ordered by promotion_rank (dev before prod).
+        assert!(all.contains("ORDER BY promotion_rank"));
+        // The single read is keyed by the env slug as a $n param.
+        assert!(one.contains("WHERE name = $1"));
     }
 
     #[test]

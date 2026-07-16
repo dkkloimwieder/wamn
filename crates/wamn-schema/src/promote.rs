@@ -1,9 +1,12 @@
 //! Promotion between environments (3.4).
 //!
 //! Promotion moves a catalog's **applied** schema from one environment to
-//! another of the **same application** along the `dev → canary → prod` order.
-//! [`promote`] refuses a cross-application move (a different `(org, project)`)
-//! and flags a non-forward environment order. The catalog *content* is a [`Catalog`],
+//! another of the **same application** (e.g. `dev → prod`). [`promote`] refuses a
+//! cross-application move (a different `(org, project)`). Environment *ordering*
+//! (which env promotes into which) is a policy concern — the D18
+//! `env_policies.promotion_rank`, which lives in the registry, not this pure crate
+//! — so a policy-aware caller (with the ranks) enforces forward order; `promote`
+//! itself is order-agnostic. The catalog *content* is a [`Catalog`],
 //! whose JSON is already the import/export format (`Catalog::from_json` /
 //! `to_json`, owned by 3.1) — this module does not re-invent serialization. What
 //! it adds is the *workflow*: diff the source's applied catalog against the
@@ -17,7 +20,6 @@
 
 use wamn_catalog::Catalog;
 use wamn_ddl::{CompileError, Confirmation, Migration, MigrationPlan, RequiresConfirmation};
-use wamn_registry::Env;
 
 use crate::environment::Environment;
 
@@ -162,14 +164,6 @@ pub fn promote_catalog(
     })
 }
 
-/// The position of `env` in the canonical `dev → canary → prod` promotion order.
-fn env_rank(env: Env) -> usize {
-    Env::ALL
-        .iter()
-        .position(|&e| e == env)
-        .expect("env is a member of Env::ALL")
-}
-
 /// Plan a promotion of `source`'s applied schema into `target`. Both must be the
 /// **same application** (same `(org, project)`) and track the same catalog; the
 /// source must have an applied version; the target may be empty (a first
@@ -177,10 +171,11 @@ fn env_rank(env: Env) -> usize {
 ///
 /// This is the first-class-environment entry point: `promote(dev, prod)` diffs
 /// `prod`'s applied catalog against `dev`'s applied catalog and compiles the
-/// migration. A non-forward environment order (e.g. `prod → dev`) is not an
-/// error but adds a warning, since promotion normally runs `dev → canary → prod`.
-/// Applying the returned plan and recording the new version in `target` is the
-/// caller's step (see [`Environment::add_draft`] / [`Environment::apply`]).
+/// migration. It is **order-agnostic** — enforcing forward environment order
+/// (via the D18 `env_policies.promotion_rank`) is a policy-aware caller's job, so
+/// this pure crate needs no env-ordering knowledge. Applying the returned plan and
+/// recording the new version in `target` is the caller's step (see
+/// [`Environment::add_draft`] / [`Environment::apply`]).
 pub fn promote(source: &Environment, target: &Environment) -> Result<PromotionPlan, PromoteError> {
     // Same application: promotion moves a schema between a single application's
     // environments, never across `(org, project)` boundaries.
@@ -202,14 +197,5 @@ pub fn promote(source: &Environment, target: &Environment) -> Result<PromotionPl
         .catalog
         .clone();
     let tgt = target.applied().map(|r| &r.catalog);
-    let mut plan = promote_catalog(&src, tgt)?;
-    // Environment-order advisory: promotion normally runs dev -> canary -> prod.
-    if env_rank(target.env()) <= env_rank(source.env()) {
-        plan.warnings.push(format!(
-            "promoting {} -> {} is not a forward environment promotion (dev -> canary -> prod)",
-            source.env(),
-            target.env()
-        ));
-    }
-    Ok(plan)
+    promote_catalog(&src, tgt)
 }

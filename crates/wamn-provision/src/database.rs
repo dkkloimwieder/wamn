@@ -29,9 +29,8 @@ const NAMESPACE: &str = "wamn-system";
 /// * `triple` — the `(org, project, env)` identity. The database and K8s resource
 ///   name is `wamn-db-<org>--<project>--<env>` ([`project_env_database_name`]).
 /// * `cluster` — the target CNPG `Cluster` name, chosen by the caller from the
-///   org's placement (`registry.org(org).cluster(env.side())` — `<org>-prod` /
-///   `<org>-dev` for T2, or the shared pool `wamn-pg` for a T3 trials org; the
-///   single `env → side` path serves both).
+///   org's placement via [`cluster_of`](wamn_registry::cluster_of) (D18): a
+///   dedicated org's `<org>-<owner(env)>`, or the shared pool for a pooled org.
 /// * `connection_limit` — the per-project-env `CONNECTION LIMIT`
 ///   (noisy-neighbour governance *within* a cluster); `None` ⇒ no limit (`-1`).
 ///
@@ -50,7 +49,7 @@ pub fn render_project_env_database(
     cluster: &str,
     connection_limit: Option<i64>,
 ) -> Value {
-    let name = project_env_database_name(&triple.org, &triple.project, triple.env);
+    let name = project_env_database_name(&triple.org, &triple.project, triple.env.as_str());
     let mut spec = json!({
         "name": name,
         "owner": APP_ROLE,
@@ -82,11 +81,10 @@ pub fn render_project_env_database(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_registry::Env;
 
     #[test]
     fn database_cr_names_the_db_owner_and_target_cluster() {
-        let t = Triple::new("acme", "billing", Env::Dev);
+        let t = Triple::new("acme", "billing", "dev");
         let cr = render_project_env_database(&t, "acme-dev", None);
         assert_eq!(cr["apiVersion"], "postgresql.cnpg.io/v1");
         assert_eq!(cr["kind"], "Database");
@@ -112,14 +110,14 @@ mod tests {
     fn reclaim_policy_retains_the_database_on_cr_deletion() {
         // Deleting the CR must NOT drop the tenant database (shared-cluster
         // guardrail): the reclaim policy is `retain`, never `delete`.
-        let t = Triple::new("acme", "billing", Env::Prod);
+        let t = Triple::new("acme", "billing", "prod");
         let cr = render_project_env_database(&t, "acme-prod", None);
         assert_eq!(cr["spec"]["databaseReclaimPolicy"], "retain");
     }
 
     #[test]
     fn connection_limit_is_omitted_by_default_and_set_when_given() {
-        let t = Triple::new("acme", "billing", Env::Prod);
+        let t = Triple::new("acme", "billing", "prod");
         // Default: no CONNECTION LIMIT (the field is absent → operator uses -1).
         let cr = render_project_env_database(&t, "acme-prod", None);
         assert!(cr["spec"]["connectionLimit"].is_null());
@@ -133,21 +131,15 @@ mod tests {
         // The renderer does not decide the cluster — the caller picks it by
         // env→side. canary and prod carry distinct db names but the SAME (prod)
         // cluster; dev carries the dev cluster.
-        let cr_prod = render_project_env_database(
-            &Triple::new("acme", "billing", Env::Prod),
-            "acme-prod",
-            None,
-        );
+        let cr_prod =
+            render_project_env_database(&Triple::new("acme", "billing", "prod"), "acme-prod", None);
         let cr_canary = render_project_env_database(
-            &Triple::new("acme", "billing", Env::Canary),
+            &Triple::new("acme", "billing", "canary"),
             "acme-prod",
             None,
         );
-        let cr_dev = render_project_env_database(
-            &Triple::new("acme", "billing", Env::Dev),
-            "acme-dev",
-            None,
-        );
+        let cr_dev =
+            render_project_env_database(&Triple::new("acme", "billing", "dev"), "acme-dev", None);
         assert_eq!(cr_prod["spec"]["cluster"]["name"], "acme-prod");
         assert_eq!(cr_canary["spec"]["cluster"]["name"], "acme-prod");
         assert_eq!(cr_dev["spec"]["cluster"]["name"], "acme-dev");

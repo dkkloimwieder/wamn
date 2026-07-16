@@ -10,14 +10,13 @@
 //! This crate is the pure core (SR3 / house rule 1): identifier naming, the
 //! `CREATE DATABASE` / role-bootstrap / `GRANT CONNECT` text builders, the
 //! per-project credential Secret renderer, the connection-URL composer, and — for
-//! the four-tier topology — the org [`Cluster` SET](crate::org) renderer
-//! (`<org>-prod` HA + `<org>-dev` hibernation-managed, plus a dedicated
-//! `<org>-canary` for T4 — wamn-q3n.6/.14) and the
-//! per-project-env CNPG [`Database` CR](crate::database) renderer (wamn-q3n.7) —
-//! no DB, no K8s client, no clock. The effects live in the `provision-project` /
-//! `provision-org` / `provision-project-env` subcommands (`wamn-host`); the
-//! `provisionbench` gate (`wamn-gates`) drives the whole path against a real
-//! cluster.
+//! the four-tier topology — the org [`Cluster` SET](crate::org) renderer (one
+//! cluster per recovery-domain owner, each sized by its env policy — D18, cjv.21)
+//! and the per-project-env CNPG [`Database` CR](crate::database) renderer
+//! (wamn-q3n.7) — no DB, no K8s client, no clock. The effects live in the
+//! `provision-project` / `provision-org` / `provision-project-env` subcommands
+//! (`wamn-host`); the `provisionbench` gate (`wamn-gates`) drives the whole path
+//! against a real cluster.
 //!
 //! # Isolation model
 //!
@@ -45,16 +44,14 @@ pub mod org;
 pub mod restore;
 pub mod secret;
 pub mod sql;
-pub mod tier_move;
 
 pub use backup::{
-    BACKUP_PLUGIN_NAME, MINIO_ENDPOINT, OBJECT_STORE_SECRET, WAL_BUCKET, backup_enabled_for_role,
-    base_backup_schedule, cluster_backup_plugin, object_store_name, render_object_store,
-    render_scheduled_backup, scheduled_backup_name, wal_retention,
+    BACKUP_PLUGIN_NAME, MINIO_ENDPOINT, OBJECT_STORE_SECRET, WAL_BUCKET, cluster_backup_plugin,
+    object_store_name, render_object_store, render_scheduled_backup, scheduled_backup_name,
 };
 pub use database::render_project_env_database;
 pub use dump::{
-    DEFAULT_BUCKET, dump_object_key, dump_resource_name, dump_schedule, pg_dump_argv,
+    DEFAULT_BUCKET, DEFAULT_DUMP_SCHEDULE, dump_object_key, dump_resource_name, pg_dump_argv,
     render_project_env_dump_cronjob, render_project_env_dump_job, validate_dump_resource_name,
 };
 pub use error::ProvisionError;
@@ -63,7 +60,6 @@ pub use name::{
     project_env_database_name, project_env_secret_name, secret_name, validate_project_env,
     validate_project_id,
 };
-pub use org::{OrgClusters, prod_instances, render_org_cluster_set};
+pub use org::{OrgClusters, render_org_cluster_set};
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use secret::render_project_env_secret_manifest;
-pub use tier_move::{TierMoveStep, plan_tier_move, validate_tier_upgrade};

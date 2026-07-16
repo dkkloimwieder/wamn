@@ -3,11 +3,11 @@
 //! T3 trials pool) and record it in the T1 control-plane registry.
 //!
 //! The four-tier counterpart of `provision-project`: identity is the `(org,
-//! project, env)` [`Triple`], and the database lives on the cluster the org's
-//! placement selects **per-env** — `<org>-prod` (prod), `<org>-dev` (dev), and
-//! `canary` on `<org>-prod` (standard/T2) or its OWN `<org>-canary` (dedicated/T4,
-//! wamn-q3n.14) — or the shared pool for a trials org (all cluster refs point at
-//! it, so one path serves T2, T3, and T4).
+//! project, env)` [`Triple`], and the database lives on the cluster **derived** by
+//! [`cluster_of`](wamn_registry::cluster_of) (D18) from the org's placement + the
+//! env's policy — a dedicated org's `<org>-<owner(env)>` (so `canary` sharing prod
+//! lands on `<org>-prod`, `canary` own on `<org>-canary`), or the shared pool for a
+//! pooled org. One derivation path serves every placement.
 //!
 //! An imperative CLI (the `provision-org` precedent). It **renders + records**;
 //! the runbook/Job applies the emitted artifacts, in this order:
@@ -36,33 +36,16 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use clap::{Args, ValueEnum};
+use clap::Args;
 use tokio_postgres::NoTls;
 
 use wamn_provision::{
     APP_ROLE, compose_url, project_env_database_name, project_env_secret_name,
     render_project_env_database, render_project_env_secret_manifest, sql, validate_project_env,
 };
-use wamn_registry::{Env, Triple};
+use wamn_registry::{Org, Placement, Triple, cluster_of};
 
-/// The environment to provision. Mirrors `wamn_registry::Env` (the closed
-/// `dev`/`canary`/`prod` set) as a clap value enum.
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum EnvArg {
-    Dev,
-    Canary,
-    Prod,
-}
-
-impl From<EnvArg> for Env {
-    fn from(e: EnvArg) -> Env {
-        match e {
-            EnvArg::Dev => Env::Dev,
-            EnvArg::Canary => Env::Canary,
-            EnvArg::Prod => Env::Prod,
-        }
-    }
-}
+use crate::env_policies::read_env_policy;
 
 #[derive(Debug, Args)]
 pub struct ProvisionProjectEnvArgs {
@@ -76,11 +59,11 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub project: String,
 
-    /// Environment: `dev`, `canary`, or `prod`. Selects the target cluster
-    /// per-env: dev → dev cluster, prod → prod cluster, and canary → its own
-    /// `<org>-canary` on a dedicated (T4) org, else the prod cluster (T2/T3).
-    #[arg(long, value_enum)]
-    pub env: EnvArg,
+    /// Environment slug: any policy in `registry.env_policies` (default `dev` /
+    /// `prod`; `canary`, `staging`, … are addable). Derives the target cluster via
+    /// `cluster_of` — a dedicated org's `<org>-<owner(env)>`, or the shared pool.
+    #[arg(long)]
+    pub env: String,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): read the org's
     /// placement (pick the target cluster) and record the project + project-env.
@@ -143,27 +126,26 @@ pub struct ProvisionProjectEnvArgs {
 }
 
 pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
-    let env: Env = args.env.into();
-    let triple = Triple::new(&args.org, &args.project, env);
+    let triple = Triple::new(&args.org, &args.project, args.env.as_str());
 
     // Validate the project id + the assembled `wamn-db-<org>--<project>--<env>`
     // name length before any effect.
-    validate_project_env(&args.org, &args.project, env)
+    validate_project_env(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("project-env names: {e}"))?;
 
     // Pick the target cluster: an explicit `--cluster` wins (render-only / manual);
-    // otherwise read the org's placement from the registry by the env's side.
+    // otherwise derive it from the org's placement + the env policy (`cluster_of`).
     let cluster = match &args.cluster {
         Some(c) => c.clone(),
         None => {
             let url = args.system_database_url.as_deref().context(
                 "pass --cluster, or --system-database-url to resolve the target cluster from the registry",
             )?;
-            resolve_cluster(url, &args.org, env).await?
+            resolve_cluster(url, &args.org, &args.env).await?
         }
     };
 
-    let db_name = project_env_database_name(&args.org, &args.project, env);
+    let db_name = project_env_database_name(&args.org, &args.project, &args.env);
     let app_host = args
         .app_host
         .clone()
@@ -208,7 +190,7 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     // DB URL is given. The Secret reference is what a triple resolves to.
     match &args.system_database_url {
         Some(url) => {
-            let secret_name = project_env_secret_name(&args.org, &args.project, env);
+            let secret_name = project_env_secret_name(&args.org, &args.project, &args.env);
             record_project_env(url, &triple, &secret_name, args.secret_namespace.as_deref())
                 .await?;
             println!(
@@ -222,10 +204,11 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Read the org's placement from the registry and pick the target cluster
-/// per-env (a dedicated org routes `canary` to its own cluster). Connects as the
-/// `wamn_system` owner (`SET ROLE`).
-async fn resolve_cluster(system_url: &str, org: &str, env: Env) -> anyhow::Result<String> {
+/// Read the org's placement + the env's policy from the registry and **derive**
+/// the target cluster via [`cluster_of`] (D18): a pooled org collapses onto its
+/// pool; a dedicated org owns `<org>-<owner(env)>`. Connects as the `wamn_system`
+/// owner (`SET ROLE`).
+async fn resolve_cluster(system_url: &str, org: &str, env: &str) -> anyhow::Result<String> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect")?;
@@ -239,34 +222,40 @@ async fn resolve_cluster(system_url: &str, org: &str, env: Env) -> anyhow::Resul
 async fn do_resolve_cluster(
     client: &tokio_postgres::Client,
     org: &str,
-    env: Env,
+    env: &str,
 ) -> anyhow::Result<String> {
     client
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("SET ROLE wamn_system")?;
     let row = client
-        .query_opt(wamn_registry::sql::select_org_clusters_sql(), &[&org])
+        .query_opt(wamn_registry::sql::select_org_placement_sql(), &[&org])
         .await
         .context("read org placement")?
         .with_context(|| {
             format!(
-                "org {org:?} is not registered: run provision-org (paying), or register it on the \
-                 trials pool (wamn-q3n.9), before provisioning a project-env"
+                "org {org:?} is not registered: run provision-org before provisioning a project-env"
             )
         })?;
-    // Route per-env: dev → dev cluster; prod → prod cluster; canary → its OWN
-    // cluster on a dedicated (T4) org (`canary_cluster`), falling back to the prod
-    // cluster on a standard/trials org (NULL `canary_cluster` = the T2 collapse).
-    let cluster: String = match env {
-        Env::Prod => row.get("prod_cluster"),
-        Env::Dev => row.get("dev_cluster"),
-        Env::Canary => {
-            let canary: Option<String> = row.get("canary_cluster");
-            canary.unwrap_or_else(|| row.get("prod_cluster"))
-        }
+    let placement_kind: String = row.get("placement_kind");
+    let pool: Option<String> = row.get("pool_cluster");
+    let placement = match placement_kind.as_str() {
+        "pooled" => Placement::Pooled {
+            pool: pool.context("pooled org row is missing its pool_cluster")?,
+        },
+        "dedicated" => Placement::Dedicated,
+        other => anyhow::bail!("unknown placement_kind {other:?} for org {org:?}"),
     };
-    Ok(cluster)
+    let org_obj = Org {
+        id: org.to_string(),
+        placement,
+    };
+    // The env must name a policy (its recovery domain drives the derivation); a
+    // pooled org ignores the policy but the env must still resolve.
+    let policy = read_env_policy(client, env).await?.with_context(|| {
+        format!("env {env:?} names no env policy — add it to registry.env_policies")
+    })?;
+    Ok(cluster_of(&org_obj, &policy).name)
 }
 
 /// Record the project and the provisioned project-env in the registry (idempotent).
@@ -344,31 +333,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn env_arg_maps_to_the_registry_env() {
-        assert_eq!(Env::from(EnvArg::Dev), Env::Dev);
-        assert_eq!(Env::from(EnvArg::Canary), Env::Canary);
-        assert_eq!(Env::from(EnvArg::Prod), Env::Prod);
-    }
-
-    #[test]
     fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
         // The name validation runs first — a reserved / non-slug project id fails
         // without touching the registry or emitting a CR.
-        assert!(validate_project_env("acme", "wamn-x", Env::Dev).is_err());
-        assert!(validate_project_env("acme", "Bad", Env::Prod).is_err());
-        assert!(validate_project_env("acme", "billing", Env::Prod).is_ok());
+        assert!(validate_project_env("acme", "wamn-x", "dev").is_err());
+        assert!(validate_project_env("acme", "Bad", "prod").is_err());
+        assert!(validate_project_env("acme", "billing", "prod").is_ok());
     }
 
-    /// This subcommand routes each env to a placement cluster per-env: dev → dev
-    /// cluster, prod → prod cluster, and canary → its OWN cluster on a dedicated
-    /// (T4) org (`canary_cluster`), else the prod cluster (the T2 collapse, where
-    /// `Env::side(Canary) == Prod`). The per-env dedicated canary routing is
-    /// proven live by the in-cluster gate; here we pin the unchanged T2 collapse.
+    /// The target cluster is DERIVED (D18 `cluster_of`) from the org's placement +
+    /// the env's policy: a dedicated org owns `<org>-<owner(env)>`, a pooled org
+    /// collapses every env onto its pool. (The live routing through the DB is
+    /// proven by the in-cluster gate; here we pin the pure derivation the
+    /// subcommand calls.)
     #[test]
-    fn env_side_is_the_t2_recovery_domain_collapse() {
-        use wamn_registry::Side;
-        assert_eq!(Env::from(EnvArg::Prod).side(), Side::Prod);
-        assert_eq!(Env::from(EnvArg::Canary).side(), Side::Prod);
-        assert_eq!(Env::from(EnvArg::Dev).side(), Side::Dev);
+    fn cluster_is_derived_by_placement_and_policy() {
+        use wamn_registry::EnvPolicy;
+        let ded = Org::dedicated("acme");
+        assert_eq!(cluster_of(&ded, &EnvPolicy::dev()).name, "acme-dev");
+        assert_eq!(cluster_of(&ded, &EnvPolicy::prod()).name, "acme-prod");
+        let pooled = Org::pooled("try", "wamn-pg");
+        assert_eq!(cluster_of(&pooled, &EnvPolicy::prod()).name, "wamn-pg");
     }
 }

@@ -11,8 +11,9 @@
 //! - [`wamn_ddl`] (3.2) — the DDL compiler and its additive/destructive
 //!   confirmation gate, reused verbatim to compile a promotion's migration;
 //! - [`wamn_registry`] (`wamn-q3n.1`) — the control-plane [`Triple`]
-//!   `(org, project, env)` and the closed [`Env`] set, so an environment's
-//!   identity and the "same application" promotion guard speak one vocabulary.
+//!   `(org, project, env)` and the validated [`Env`] slug (the D18 generic env
+//!   model), so an environment's identity and the "same application" promotion
+//!   guard speak one vocabulary.
 //!
 //! It provides:
 //!
@@ -40,17 +41,17 @@
 //!
 //! ```
 //! use wamn_catalog::Catalog;
-//! use wamn_schema::{Environment, Env, Triple, promote};
+//! use wamn_schema::{Environment, Triple, promote};
 //!
 //! # fn go(dev_applied: Catalog) -> Result<(), Box<dyn std::error::Error>> {
-//! let app = |env| Triple::new("acme", "receiving", env);
-//! let mut dev = Environment::new(app(Env::Dev), &dev_applied.catalog_id);
+//! let app = |env: &str| Triple::new("acme", "receiving", env);
+//! let mut dev = Environment::new(app("dev"), &dev_applied.catalog_id);
 //! dev.add_draft(dev_applied, None)?; // first version
 //! let v = dev.versions()[0].version();
 //! dev.stage(v)?;
 //! dev.apply(v)?; // now live in dev
 //!
-//! let prod = Environment::new(app(Env::Prod), dev.catalog_id());
+//! let prod = Environment::new(app("prod"), dev.catalog_id());
 //! let plan = promote(&dev, &prod)?;   // same app, prod empty -> a fresh CREATE
 //! assert!(plan.is_additive());
 //! # Ok(())

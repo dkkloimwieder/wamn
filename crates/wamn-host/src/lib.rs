@@ -12,9 +12,9 @@
 pub mod dispatch;
 pub mod dump_project_env;
 pub mod engine;
+mod env_policies;
 pub mod host;
 pub mod migrate_catalog;
-pub mod move_org_tier;
 pub mod plugins;
 pub mod provision;
 pub mod provision_org;

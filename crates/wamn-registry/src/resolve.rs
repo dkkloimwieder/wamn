@@ -1,17 +1,17 @@
 //! Resolving a control-plane identity to its placement.
 //!
 //! [`Registry::resolve`] is the reason the registry exists: given a [`Triple`],
-//! answer *where does this database live and how is it credentialed* — tier +
-//! cluster + Secret reference — without any tooling parsing a provisioned name.
+//! answer *where does this database live and how is it credentialed* — the CNPG
+//! cluster (derived by [`cluster_of`] from the org's placement + the env's
+//! policy) + Secret reference — without any tooling parsing a provisioned name.
 
-use crate::types::{ClusterRef, Org, Project, ProjectEnv, Registry, SecretRef, Tier, Triple};
+use crate::types::{ClusterRef, Org, Project, ProjectEnv, Registry, SecretRef, Triple, cluster_of};
 
-/// What a [`Triple`] resolves to: its tier, the CNPG cluster that physically
-/// holds the database, and a **reference** to its credential Secret (never the
-/// credential — R8b).
+/// What a [`Triple`] resolves to: the CNPG cluster that physically holds the
+/// database, and a **reference** to its credential Secret (never the credential —
+/// R8b).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolution {
-    pub tier: Tier,
     pub cluster: ClusterRef,
     pub secret: SecretRef,
 }
@@ -26,6 +26,10 @@ pub enum RegistryError {
     UnknownProject { org: String, project: String },
     /// No provisioned database for this exact `(org, project, env)`.
     UnknownProjectEnv(Triple),
+    /// The project-env's `env` slug names no [`EnvPolicy`](crate::EnvPolicy) — the
+    /// cluster cannot be derived. A malformed registry (`validate` flags it as
+    /// `unknown-env`).
+    UnknownEnvPolicy(String),
 }
 
 impl std::fmt::Display for RegistryError {
@@ -37,6 +41,9 @@ impl std::fmt::Display for RegistryError {
             }
             RegistryError::UnknownProjectEnv(t) => {
                 write!(f, "no provisioned database for {t}")
+            }
+            RegistryError::UnknownEnvPolicy(env) => {
+                write!(f, "env {env:?} names no env policy")
             }
         }
     }
@@ -60,17 +67,18 @@ impl Registry {
         self.project_envs.iter().find(|pe| &pe.triple == triple)
     }
 
-    /// Resolve a control-plane identity to its placement: tier + cluster + Secret
-    /// reference. The cluster is chosen **per-env** by
-    /// [`Org::cluster_for_env`](crate::Org::cluster_for_env) — a dedicated (T4)
-    /// org routes `canary` to its own cluster, while standard/trials orgs collapse
-    /// canary onto prod (the T2 recovery-domain split); the Secret is the
-    /// reference recorded on the provisioned project-env.
+    /// Resolve a control-plane identity to its placement: cluster + Secret
+    /// reference. The cluster is **derived** by [`cluster_of`] from the org's
+    /// [`Placement`](crate::Placement) and the env's [`EnvPolicy`](crate::EnvPolicy)
+    /// — a pooled org collapses onto its pool; a dedicated org owns one cluster
+    /// per recovery domain. The Secret is the reference recorded on the
+    /// provisioned project-env.
     ///
     /// Fails if the org is not registered ([`RegistryError::UnknownOrg`]), the
-    /// project is not registered under it ([`RegistryError::UnknownProject`]), or
-    /// the exact `(org, project, env)` has not been provisioned
-    /// ([`RegistryError::UnknownProjectEnv`]).
+    /// project is not registered under it ([`RegistryError::UnknownProject`]), the
+    /// exact `(org, project, env)` has not been provisioned
+    /// ([`RegistryError::UnknownProjectEnv`]), or the env names no policy
+    /// ([`RegistryError::UnknownEnvPolicy`]).
     pub fn resolve(&self, triple: &Triple) -> Result<Resolution, RegistryError> {
         let org = self
             .org(&triple.org)
@@ -84,9 +92,11 @@ impl Registry {
         let pe = self
             .project_env(triple)
             .ok_or_else(|| RegistryError::UnknownProjectEnv(triple.clone()))?;
+        let policy = self
+            .env_policy(&triple.env)
+            .ok_or_else(|| RegistryError::UnknownEnvPolicy(triple.env.to_string()))?;
         Ok(Resolution {
-            tier: org.tier,
-            cluster: org.cluster_for_env(triple.env).clone(),
+            cluster: cluster_of(org, policy),
             secret: pe.db_secret.clone(),
         })
     }

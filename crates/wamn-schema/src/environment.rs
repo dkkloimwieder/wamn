@@ -1,10 +1,10 @@
 //! First-class environments (3.4).
 //!
 //! An **environment** is a deployment target identified by the `(org, project,
-//! env)` [`Triple`] (`wamn-q3n.1`); `env` is one of the closed set [`Env::Dev`] /
-//! [`Env::Canary`] / [`Env::Prod`] (`canary` is prod-shaped validation that
-//! shares prod's failure domain). In the per-project-database model (2.2 / 2.3)
-//! an environment is a project-env's database. It holds
+//! env)` [`Triple`] (`wamn-q3n.1`); `env` is a validated [`Env`] slug resolving a
+//! named env policy (the D18 generic model — the default set is `dev` / `prod`,
+//! `canary` an addable policy). In the per-project-database model (2.2 / 2.3) an
+//! environment is a project-env's database. It holds
 //! the lifecycle of **one catalog's** versions: which versions exist, their
 //! [`State`], and which one is live. Two invariants live here, both of which
 //! need cross-version context the pure [`crate::lifecycle`] table cannot see:
@@ -124,9 +124,9 @@ impl Environment {
         &self.triple
     }
 
-    /// The environment ([`Env::Dev`] / [`Env::Canary`] / [`Env::Prod`]).
-    pub fn env(&self) -> Env {
-        self.triple.env
+    /// The environment slug (`dev` / `prod` / …).
+    pub fn env(&self) -> &Env {
+        &self.triple.env
     }
 
     /// The owning organization id — part of the application identity that

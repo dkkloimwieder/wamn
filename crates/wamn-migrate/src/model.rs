@@ -14,7 +14,7 @@ pub use wamn_schema::Env;
 /// `expected_base` is the applied version the caller asserts the target was
 /// branched from — the 3.4 stale-base guard checks it against the actual current
 /// applied version. `confirm` is the 3.2 backup gate, honored verbatim.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct MigrationRequest<'a> {
     pub tenant: &'a str,
     pub environment: Env,

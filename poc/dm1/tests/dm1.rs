@@ -86,7 +86,7 @@ fn poc_catalog_migrates_to_the_full_data_model() {
     let cat = catalog();
     let req = wamn_migrate::MigrationRequest {
         tenant: "t1",
-        environment: wamn_migrate::Env::Dev,
+        environment: wamn_migrate::Env::new("dev"),
         current: None,
         target: &cat,
         expected_base: None,

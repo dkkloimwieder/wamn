@@ -23,6 +23,14 @@
 -- what .6 provision-org connects as. A superuser driving the apply `SET ROLE
 -- wamn_system` first.
 --
+-- THE GENERIC DEPLOYMENT MODEL (D18, docs/deployment-model.md, wamn-8df.3):
+-- the closed tier/env CHECK enumerations are RETIRED. `env` is a validated slug
+-- resolving a named `registry.env_policies` row (referential integrity — the FK
+-- below — replaces the old `env IN ('dev','canary','prod')` CHECK), and an org
+-- carries a minimal placement (`pooled` | `dedicated`) from which clusters
+-- derive (crates/wamn-registry cluster_of). The default env set (`dev`, `prod`)
+-- is DATA seeded here, not a type; `canary` and others are addable policies.
+--
 -- THE FOUR INVARIANTS (docs/postgres-topology.md §T1), and how this schema
 -- encodes / makes each testable:
 --   (1) request-path-free  — an ARCHITECTURAL property, not a DB constraint. No
@@ -35,14 +43,13 @@
 --   (3) no tenant data — the only tables here are the control-plane set below
 --       (registry + provisioning). No catalogs, run state, payloads, or
 --       application users. The live-apply gate asserts the exact table set.
---   (4) dev ≠ prod recovery domain — a DB CHECK on `orgs`: a paying org's
---       prod-side and dev-side clusters MUST differ; only the T3 trials pool
---       deliberately collapses both onto the shared cluster. Extended for T4
---       (wamn-q3n.14): a dedicated org gives `canary` its OWN cluster
---       (`canary_cluster`) — a third recovery domain distinct from prod and dev;
---       standard/trials orgs leave `canary_cluster` NULL (canary shares prod).
---       Mirrors the model's Org::cluster_for_env / resolve() routing; rejected
---       bad orgs prove it.
+--   (4) dev ≠ prod recovery domain — under D18 this is enforced by the DERIVATION
+--       plus crates/wamn-registry validate(), not a per-org DB CHECK: two
+--       own-domain envs (dev, prod) derive distinct clusters (<org>-dev vs
+--       <org>-prod) by construction, so they never collapse; `canary` collapsing
+--       onto prod is an INTENTIONAL `recovery-domain: {shared-with: prod}` policy,
+--       and `canary` isolated (T4) is `recovery-domain: own` (→ <org>-canary). The
+--       structural CHECK that remains is only `pooled ⟺ pool_cluster present`.
 
 -- ---------------------------------------------------------------------------
 -- Schemas. `registry` = the identity/placement model (wamn-q3n.1); `provisioning`
@@ -73,38 +80,62 @@ CREATE TABLE registry.meta (
 INSERT INTO registry.meta (schema_version) VALUES ('0.1');
 
 -- ---------------------------------------------------------------------------
--- Orgs — the unit of isolation and billing. `tier` places the org
--- (trials/standard/dedicated); `prod_cluster` / `dev_cluster` are references (a
--- name) to the CNPG Clusters holding its prod-side and dev-side databases.
+-- Orgs — the unit of isolation and billing. Carries only the id and a minimal
+-- D18 PLACEMENT (crates/wamn-registry Placement): `placement_kind` is `pooled`
+-- (every env shares `pool_cluster`, the T3-style pool) or `dedicated` (the org
+-- owns one cluster per recovery domain, `<org>-<owner(env)>`, DERIVED by
+-- cluster_of — not stored). The retired `tier` / `prod_cluster` / `canary_cluster`
+-- / `dev_cluster` columns are gone; sizing/HA/backup are env-policy knobs.
 --
--- INVARIANT 4 (dev ≠ prod recovery domain): `orgs_recovery_domain_check`. A
--- paying org (standard/dedicated) MUST place prod and dev on different clusters
--- so a dev restore never rewinds prod; only the T3 trials pool collapses both
--- onto the shared cluster. Mirrors crates/wamn-registry Env::side / resolve().
---
--- INVARIANT 4, extended for T4 (wamn-q3n.14): `canary_cluster` is set IFF the
--- org is `dedicated` — that org gives `canary` its own cluster (a third recovery
--- domain with independent PITR). `orgs_canary_dedicated_check` ties the column to
--- the tier (a biconditional: canary present ⟺ dedicated); `orgs_canary_recovery_
--- domain_check` requires a set canary cluster to be distinct from BOTH prod and
--- dev. A standard/trials org leaves it NULL — canary shares prod (the T2
--- collapse). Mirrors crates/wamn-registry Org::cluster_for_env / resolve().
+-- The only structural CHECK is `pooled ⟺ pool_cluster present`: a pooled org
+-- names its shared pool; a dedicated org's clusters are derived, so pool is NULL.
+-- Invariant 4 (dev ≠ prod recovery domain) is now the derivation's + validate()'s
+-- job (header note), not a per-org CHECK.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.orgs (
     id             text PRIMARY KEY,
-    tier           text NOT NULL,
-    prod_cluster   text NOT NULL,
-    canary_cluster text,
-    dev_cluster    text NOT NULL,
-    CONSTRAINT orgs_tier_check CHECK (tier IN ('trials', 'standard', 'dedicated')),
-    CONSTRAINT orgs_recovery_domain_check
-        CHECK (tier = 'trials' OR prod_cluster <> dev_cluster),
-    CONSTRAINT orgs_canary_dedicated_check
-        CHECK ((tier = 'dedicated') = (canary_cluster IS NOT NULL)),
-    CONSTRAINT orgs_canary_recovery_domain_check
-        CHECK (canary_cluster IS NULL
-               OR (canary_cluster <> prod_cluster AND canary_cluster <> dev_cluster))
+    placement_kind text NOT NULL,
+    pool_cluster   text,
+    CONSTRAINT orgs_placement_kind_check
+        CHECK (placement_kind IN ('pooled', 'dedicated')),
+    CONSTRAINT orgs_pool_cluster_check
+        CHECK ((placement_kind = 'pooled') = (pool_cluster IS NOT NULL))
 );
+
+-- ---------------------------------------------------------------------------
+-- Env policies (D18, wamn-8df.3) — named, self-contained environment
+-- configurations (crates/wamn-registry EnvPolicy). The `name` IS the env slug: a
+-- project-env's `env` both identifies it in the triple and (via the FK below)
+-- resolves its policy. `recovery_domain` is `jsonb` (`"own"` | `{"shared-with":
+-- "<env>"}`) driving the cluster derivation; the rest are the sizing / HA /
+-- backup knobs `provision-org` renders each cluster from (fixing cjv.21). Standalone
+-- (no inheritance) — the template layer that stamps them is wamn-8df.4.
+--
+-- SEEDED with the two defaults (`dev`, `prod`). These MUST match the model's
+-- EnvPolicy::dev() / prod() (drift-guarded against crates/wamn-registry). `canary`
+-- is NOT built in — it is added as a policy (shared-with prod = T2, own = T4).
+-- ---------------------------------------------------------------------------
+CREATE TABLE registry.env_policies (
+    name            text PRIMARY KEY,
+    recovery_domain jsonb NOT NULL,
+    promotion_rank  int   NOT NULL,
+    instances       int   NOT NULL,
+    storage         text  NOT NULL,
+    cpu             text  NOT NULL,
+    memory          text  NOT NULL,
+    image           text  NOT NULL,
+    backup_cadence  text  NOT NULL DEFAULT '',
+    wal_retention   text  NOT NULL DEFAULT '',
+    hibernation     text  NOT NULL DEFAULT 'off'
+);
+INSERT INTO registry.env_policies
+    (name, recovery_domain, promotion_rank, instances,
+     storage, cpu, memory, image, backup_cadence, wal_retention, hibernation)
+VALUES
+    ('dev',  '"own"'::jsonb, 10, 1,
+     '2Gi', '200m', '256Mi', 'ghcr.io/cloudnative-pg/postgresql:18', '',              '',    'eligible'),
+    ('prod', '"own"'::jsonb, 30, 3,
+     '2Gi', '200m', '256Mi', 'ghcr.io/cloudnative-pg/postgresql:18', '0 0 */6 * * *', '14d', 'off');
 
 -- ---------------------------------------------------------------------------
 -- Projects — structure within an org. Unique per org (the composite PK);
@@ -119,7 +150,9 @@ CREATE TABLE registry.projects (
 -- ---------------------------------------------------------------------------
 -- Project-envs — the registry LEAF: one provisioned (org, project, env)
 -- database, keyed by the identity triple, with a REFERENCE to its credential
--- Secret. `env` is the closed set dev/canary/prod.
+-- Secret. `env` is a validated slug; the FK to `registry.env_policies (name)`
+-- enforces that it names a known policy (D18 — referential integrity replaces
+-- the retired `env IN ('dev','canary','prod')` CHECK).
 --
 -- INVARIANT 2 (no credentials, R8b): `secret_name` (+ optional
 -- `secret_namespace`) is a REFERENCE — the actual credential material lives in a
@@ -130,12 +163,11 @@ CREATE TABLE registry.projects (
 CREATE TABLE registry.project_envs (
     org              text NOT NULL,
     project          text NOT NULL,
-    env              text NOT NULL,
+    env              text NOT NULL REFERENCES registry.env_policies (name),
     secret_name      text NOT NULL,
     secret_namespace text,
     PRIMARY KEY (org, project, env),
-    FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
-    CONSTRAINT project_envs_env_check CHECK (env IN ('dev', 'canary', 'prod'))
+    FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE
 );
 
 -- ---------------------------------------------------------------------------

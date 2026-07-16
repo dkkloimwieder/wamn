@@ -82,7 +82,7 @@ pub fn provisioning_sql(tenant: &str) -> Result<String, Box<dyn std::error::Erro
     // 2.5 — migrate the catalog live.
     let request = MigrationRequest {
         tenant,
-        environment: Env::Dev,
+        environment: Env::new("dev"),
         current: None,
         target: &cat,
         expected_base: None,

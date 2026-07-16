@@ -2,14 +2,14 @@
 //! wamn-catalog's fixtures). Cover the state machine (legal transitions,
 //! single-applied, stale-base rebase guard) and promotion (first CREATE,
 //! additive, gated destructive, environment-aware incl. the same-application
-//! guard and the dev/canary/prod env-order advisory), plus the storage-literal
-//! drift guards tying State and Env to deploy/catalog-schema.sql.
+//! guard, promote being order-agnostic), plus the storage-literal drift guards
+//! tying State to deploy/catalog-schema.sql and asserting env is an open slug.
 
 use std::path::{Path, PathBuf};
 
 use wamn_catalog::{Catalog, Field, FieldType, Index};
 use wamn_schema::{
-    Action, Confirmation, Env, Environment, LifecycleError, PromoteError, State, Triple, promote,
+    Action, Confirmation, Environment, LifecycleError, PromoteError, State, Triple, promote,
     promote_catalog, transition,
 };
 
@@ -19,7 +19,7 @@ fn poc_fixture() -> PathBuf {
 }
 
 /// An environment for the canonical POC application (`acme/receiving`) at `env`.
-fn poc_env(env: Env) -> Environment {
+fn poc_env(env: &str) -> Environment {
     Environment::new(
         Triple::new("acme", "receiving", env),
         "poc-material-receiving",
@@ -73,7 +73,7 @@ fn poc_dropped_column(version: u32) -> Catalog {
 
 #[test]
 fn happy_path_draft_stage_apply() {
-    let mut env = poc_env(Env::Dev);
+    let mut env = poc_env("dev");
     env.add_draft(poc(1), None).expect("first draft");
     assert_eq!(env.state_of(1), Some(State::Draft));
 
@@ -87,7 +87,7 @@ fn happy_path_draft_stage_apply() {
 
 #[test]
 fn applying_demotes_prior_applied_to_superseded() {
-    let mut env = poc_env(Env::Dev);
+    let mut env = poc_env("dev");
     env.add_draft(poc(1), None).unwrap();
     env.stage(1).unwrap();
     env.apply(1).unwrap();
@@ -112,7 +112,7 @@ fn applying_demotes_prior_applied_to_superseded() {
 
 #[test]
 fn stale_base_guard_refuses_a_rebased_over_candidate() {
-    let mut env = poc_env(Env::Dev);
+    let mut env = poc_env("dev");
     env.add_draft(poc(1), None).unwrap();
     env.stage(1).unwrap();
     env.apply(1).unwrap();
@@ -144,7 +144,7 @@ fn stale_base_guard_refuses_a_rebased_over_candidate() {
 
 #[test]
 fn cannot_apply_an_unstaged_draft() {
-    let mut env = poc_env(Env::Dev);
+    let mut env = poc_env("dev");
     env.add_draft(poc(1), None).unwrap();
     let err = env.apply(1).unwrap_err();
     assert_eq!(
@@ -159,7 +159,7 @@ fn cannot_apply_an_unstaged_draft() {
 
 #[test]
 fn discard_removes_a_draft() {
-    let mut env = poc_env(Env::Dev);
+    let mut env = poc_env("dev");
     env.add_draft(poc(1), None).unwrap();
     env.discard(1).expect("discard draft");
     assert!(env.record(1).is_none());
@@ -168,7 +168,7 @@ fn discard_removes_a_draft() {
 
 #[test]
 fn add_draft_rejects_mismatched_catalog_and_duplicates() {
-    let mut env = poc_env(Env::Dev);
+    let mut env = poc_env("dev");
     // Fixture's catalog_id is not "other" — a mismatch.
     let mut wrong = poc(1);
     wrong.catalog_id = "other".into();
@@ -233,7 +233,7 @@ fn promotion_warns_on_version_regression() {
 #[test]
 fn environment_aware_promote_dev_to_prod() {
     // dev has v2 applied; prod is empty -> first CREATE.
-    let mut dev = poc_env(Env::Dev);
+    let mut dev = poc_env("dev");
     dev.add_draft(poc(1), None).unwrap();
     dev.stage(1).unwrap();
     dev.apply(1).unwrap();
@@ -241,7 +241,7 @@ fn environment_aware_promote_dev_to_prod() {
     dev.stage(2).unwrap();
     dev.apply(2).unwrap();
 
-    let prod = poc_env(Env::Prod);
+    let prod = poc_env("prod");
     let plan = promote(&dev, &prod).expect("promote to empty prod");
     assert_eq!(plan.source_version, 2);
     assert_eq!(plan.target_version, None);
@@ -255,19 +255,19 @@ fn environment_aware_promote_dev_to_prod() {
 
 #[test]
 fn promote_refuses_when_source_has_no_applied() {
-    let dev = poc_env(Env::Dev); // empty
-    let prod = poc_env(Env::Prod);
+    let dev = poc_env("dev"); // empty
+    let prod = poc_env("prod");
     assert_eq!(promote(&dev, &prod), Err(PromoteError::NothingToPromote));
 }
 
 #[test]
 fn promote_refuses_cross_catalog() {
-    let mut dev = poc_env(Env::Dev);
+    let mut dev = poc_env("dev");
     dev.add_draft(poc(1), None).unwrap();
     dev.stage(1).unwrap();
     dev.apply(1).unwrap();
     // Same application (acme/receiving), a different catalog -> CatalogIdMismatch.
-    let prod = Environment::new(Triple::new("acme", "receiving", Env::Prod), "other-catalog");
+    let prod = Environment::new(Triple::new("acme", "receiving", "prod"), "other-catalog");
     assert!(matches!(
         promote(&dev, &prod),
         Err(PromoteError::CatalogIdMismatch { .. })
@@ -279,12 +279,12 @@ fn promote_refuses_across_applications() {
     // Same catalog id, but a different (org, project) -> a different application.
     // The application guard runs before the catalog check, so this is
     // DifferentApplication, not CatalogIdMismatch.
-    let mut dev = poc_env(Env::Dev); // acme/receiving
+    let mut dev = poc_env("dev"); // acme/receiving
     dev.add_draft(poc(1), None).unwrap();
     dev.stage(1).unwrap();
     dev.apply(1).unwrap();
     let other = Environment::new(
-        Triple::new("globex", "receiving", Env::Prod),
+        Triple::new("globex", "receiving", "prod"),
         "poc-material-receiving",
     );
     assert_eq!(
@@ -297,42 +297,36 @@ fn promote_refuses_across_applications() {
 }
 
 #[test]
-fn canary_is_a_forward_promotion_target() {
-    // dev -> canary is a forward promotion within one application: no env-order
-    // warning, and canary is a first-class environment.
-    let mut dev = poc_env(Env::Dev);
+fn canary_is_a_first_class_promotion_target() {
+    // dev -> canary is a valid promotion within one application; `canary` is just
+    // another env slug (an addable policy, D18), no longer a built-in variant.
+    let mut dev = poc_env("dev");
     dev.add_draft(poc(1), None).unwrap();
     dev.stage(1).unwrap();
     dev.apply(1).unwrap();
 
-    let canary = poc_env(Env::Canary);
-    assert_eq!(canary.env(), Env::Canary);
+    let canary = poc_env("canary");
+    assert_eq!(canary.env().as_str(), "canary");
     let plan = promote(&dev, &canary).expect("promote dev -> canary");
     assert_eq!(plan.source_version, 1);
     assert!(plan.is_additive());
-    assert!(
-        !plan.warnings.iter().any(|w| w.contains("forward")),
-        "forward dev -> canary must not warn on env order: {:?}",
-        plan.warnings
-    );
 }
 
 #[test]
-fn promote_warns_on_backward_environment_order() {
-    // prod -> dev is a valid same-application move but not a forward promotion,
-    // so it carries a non-fatal env-order advisory.
-    let mut prod = poc_env(Env::Prod);
+fn promote_is_order_agnostic() {
+    // Environment ordering is a policy concern (env_policies.promotion_rank),
+    // enforced by a policy-aware caller — the pure crate's promote() is
+    // order-agnostic and adds no env-order warning in either direction.
+    let mut prod = poc_env("prod");
     prod.add_draft(poc(1), None).unwrap();
     prod.stage(1).unwrap();
     prod.apply(1).unwrap();
 
-    let dev = poc_env(Env::Dev);
-    let plan = promote(&prod, &dev).expect("promote prod -> dev (allowed, warned)");
+    let dev = poc_env("dev");
+    let plan = promote(&prod, &dev).expect("promote prod -> dev (same app, allowed)");
     assert!(
-        plan.warnings
-            .iter()
-            .any(|w| w.contains("prod -> dev") && w.contains("not a forward")),
-        "expected a backward-order warning, got: {:?}",
+        !plan.warnings.iter().any(|w| w.contains("forward")),
+        "promote is order-agnostic — no env-order warning: {:?}",
         plan.warnings
     );
 }
@@ -358,24 +352,21 @@ fn state_literals_match_catalog_schema_sql() {
     assert!(sql.contains("WHERE state = 'applied'"));
 }
 
-/// The `environment` CHECK literals must match `wamn_registry::Env::as_str` (the
-/// crate is the source of truth for the closed dev/canary/prod set).
+/// `environment` is an OPEN slug in the tenant catalog storage (D18): the column
+/// exists and defaults to `dev`, but the closed `environment IN (...)` CHECK is
+/// retired (env is data, resolved against the system registry's env_policies —
+/// which a tenant catalog DB cannot FK).
 #[test]
-fn environment_literals_match_catalog_schema_sql() {
+fn environment_is_an_open_slug_in_catalog_schema_sql() {
     let sql = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/catalog-schema.sql"),
     )
     .expect("read catalog-schema.sql");
-    for e in Env::ALL {
-        assert!(
-            sql.contains(&format!("'{}'", e.as_str())),
-            "deploy/catalog-schema.sql is missing environment literal {:?}",
-            e.as_str()
-        );
-    }
-    // The environment column is constrained to the closed set, defaulting to dev.
-    assert!(sql.contains("environment IN ('dev', 'canary', 'prod')"));
-    assert!(sql.contains("DEFAULT 'dev'"));
+    assert!(sql.contains("environment    text NOT NULL DEFAULT 'dev'"));
+    assert!(
+        !sql.contains("environment IN ("),
+        "the closed environment CHECK must be retired (D18 — env is an open slug)"
+    );
 }
 
 /// Sanity: the pure transition table agrees with the environment's behavior.

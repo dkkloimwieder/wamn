@@ -25,10 +25,9 @@ use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
 
 use wamn_migrate::{
-    Catalog, Confirmation, MigrationError, MigrationRequest, Value, dry_run, plan_migration, sql,
+    Catalog, Confirmation, Env, MigrationError, MigrationRequest, Value, dry_run, plan_migration,
+    sql,
 };
-
-use crate::provision_project_env::EnvArg;
 
 #[derive(Debug, Args)]
 pub struct MigrateCatalogArgs {
@@ -42,9 +41,9 @@ pub struct MigrateCatalogArgs {
     #[arg(long)]
     pub tenant: String,
 
-    /// Environment: `dev`, `canary`, or `prod`.
-    #[arg(long, value_enum, default_value = "dev")]
-    pub environment: EnvArg,
+    /// Environment slug the catalog version is tagged with (any slug; default `dev`).
+    #[arg(long, default_value = "dev")]
+    pub environment: String,
 
     /// The data schema the generated tables live in (unqualified DDL resolves
     /// here; the `catalog` metadata schema is fixed).
@@ -83,8 +82,8 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         .with_context(|| format!("read target catalog {}", args.target.display()))?;
     let target = Catalog::from_json(&target_json).context("parse target catalog JSON")?;
 
-    let env: wamn_registry::Env = args.environment.into();
-    let env_str = env.as_str();
+    let env = Env::new(&args.environment);
+    let env_str = env.as_str().to_string();
     let confirm = if args.confirm_with_backup {
         Confirmation::ConfirmedWithBackup
     } else {
