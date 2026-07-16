@@ -1,9 +1,16 @@
-# Control-plane registry model (wamn-q3n.1)
+# Control-plane registry model (wamn-q3n.1, generalized by wamn-8df.3 / D18)
 
 The registry is the platform's **system-of-record for identity and placement**.
-It is the foundation of the four-tier Postgres topology (`docs/postgres-topology.md`,
+It is the foundation of the Postgres topology (`docs/postgres-topology.md`,
 epic `wamn-q3n`): it names who exists and answers *where does this database live
 and how is it credentialed* — without any tooling parsing a provisioned name.
+
+`wamn-8df.3` replaced the original closed `Env` / `Tier` enums with the **D18
+generic deployment model** (`docs/deployment-model.md`): `env` is a validated
+slug resolving a named **env policy**, an org carries a minimal **placement**
+descriptor, and the concrete cluster is **derived** by one rule, `cluster_of`.
+This doc describes the model as shipped; the design rationale is
+`docs/deployment-model.md`.
 
 - **Issue:** `wamn-q3n.1` `[D6]` (epic `wamn-q3n`, foundation). **Gates**
   `wamn-q3n.3` (system-DB schema + invariants), `.4` (plan amendment), `.5`
@@ -40,38 +47,57 @@ precedent, SR7).
 
 ## Environments
 
-`Env` is a **closed enum** — `dev`, `canary`, `prod` — the default set from the
-topology note. It is not open-ended in v1; preview/scratch envs are a later
-extension (`docs/postgres-topology.md` §Environments notes them dev-side and
-disposable).
+`Env` is a **validated slug newtype** (D18) — the schema-transparent-newtype
+pattern, like the org/project ids. The default set `dev`, `prod` is **data** (two
+seeded `env_policies` rows), not a type; `canary`, `staging`, … are added as
+policies, never as enum variants. A project-env's `env` slug both identifies it
+in the `Triple` and **resolves its policy** — validity is: the slug is
+well-formed *and* names a known policy.
 
-Each env resolves to a **recovery-domain side** via `Env::side()`:
-
-| Env | Side | Cluster (T2) |
-|---|---|---|
-| `prod` | prod | `<org>-prod` |
-| `canary` | prod | `<org>-prod` (canary deliberately shares prod's failure domain) |
-| `dev` | dev | `<org>-dev` (its own recovery domain — "dev never rewinds prod") |
-
-The side is what makes the T2 prod/dev split load-bearing: `resolve()` uses it to
-pick which of an org's two clusters holds the database.
-
-## Tiers and placement
+### Env policies
 
 ```
-Org        { id, tier, prod_cluster: ClusterRef, dev_cluster: ClusterRef }
+EnvPolicy { name: Env, recovery_domain, promotion_rank,
+            instances, storage, cpu, memory, image,
+            backup_cadence, wal_retention, hibernation }
+RecoveryDomain = Own | SharedWith(Env)
+```
+
+A named, self-contained policy — the D18 replacement for the closed `Tier`
+sizing/backup semantics. `recovery_domain` drives placement: `own` = the env gets
+its own cluster on a dedicated org; `shared-with(x)` = it co-locates in env `x`'s
+recovery domain (`canary` shared-with `prod` reproduces the shipped T2 canary
+with no enum variant; `canary` own reproduces the T4 third cluster).
+`EnvPolicy::owner()` names the recovery-domain owner (itself when `own`, else the
+target). The remaining fields are the sizing / HA / backup / hibernation knobs
+`provision-org` renders each cluster from (the cjv.21 fix), and
+`promotion_rank` orders promotion (the retired `Env::ALL` order). Policies are
+**standalone** (no inheritance); the template layer that stamps them is
+`wamn-8df.4`.
+
+## Placement and cluster derivation
+
+```
+Org        { id, placement: Placement }
+Placement  = Pooled { pool } | Dedicated
 Project    { org, id }
 ProjectEnv { triple: Triple, db_secret: SecretRef }
-Registry   { schema_version, orgs, projects, project_envs }
+Registry   { schema_version, env_policies: Vec<EnvPolicy>, orgs, projects, project_envs }
 ```
 
-- **`Tier`** — `trials` (T3), `standard` (T2), `dedicated` (T4). The T1 system
-  cluster (which holds *this* registry) is not an org tier.
-- **`ClusterRef`** — a reference (a name) to a CNPG `Cluster`. An org holds two:
-  the prod-side and dev-side clusters. For a **T3 trials** org both point at the
-  shared pool (`wamn-pg`); for **T2 standard** they are `<org>-prod` /
-  `<org>-dev`. T4 dedicated (per-env clusters) is modeled on the same two-cluster
-  shape in v1 and refined by `wamn-q3n.14`.
+- **`Placement`** — the minimal descriptor replacing `Tier`: does this org share
+  the pool (`pooled(<pool>)`, the T3-style shared pool) or own its clusters
+  (`dedicated`)? Sizing / HA / backup are env-policy knobs, deliberately not
+  placement's.
+- **`cluster_of(org, env_policy) -> ClusterRef`** — the **one rule** replacing
+  `cluster_name` / `canary_cluster_name` / `Env::side` / `Org::for_pair` /
+  `Org::for_pool` / `Org::cluster_for_env`: a pooled org places every env on its
+  pool; a dedicated org's env lives on `<org>-<owner(policy)>`. Both the cluster
+  renderer (`wamn-provision`) and `resolve()` derive names from it, so a
+  provisioned cluster and a resolved triple always agree.
+- **`ClusterRef`** — a reference (a name) to a CNPG `Cluster`. Derived, no longer
+  stored per-org (the retired `prod_cluster`/`dev_cluster`/`canary_cluster`
+  columns); a pooled org stores only its `pool_cluster`.
 - **`SecretRef`** — a **reference** to the K8s Secret credentialing a project-env
   database (`name` + optional `namespace`), **never the credential itself**
   (R8b: the registry stores references; actual material lives in Secrets resolved
@@ -84,36 +110,49 @@ Registry   { schema_version, orgs, projects, project_envs }
 
 ```
 Registry::resolve(&Triple) -> Result<Resolution, RegistryError>
-Resolution { tier, cluster, secret }
+Resolution { cluster, secret }
 ```
 
-`resolve` is the reason the registry exists: it looks up the org (for tier +
-clusters), confirms the project and the provisioned project-env exist, picks the
-cluster by the env's side, and returns the placement. It fails with a typed
-`RegistryError` (`UnknownOrg` / `UnknownProject` / `UnknownProjectEnv`) — an enum
-mirroring the failure modes (SR6 rule 2), never `Error(String)`.
+`resolve` is the reason the registry exists: it looks up the org (for its
+placement), confirms the project and the provisioned project-env exist, derives
+the cluster via `cluster_of` (the org's placement + the env's policy), and
+returns the placement. It fails with a typed `RegistryError` (`UnknownOrg` /
+`UnknownProject` / `UnknownProjectEnv` / `UnknownEnvPolicy`) — an enum mirroring
+the failure modes (SR6 rule 2), never `Error(String)`.
 
 ## Validation
 
 `validate(&Registry) -> Vec<Issue>` (with `Registry::{issues, is_valid,
-validate}`) checks well-formedness — it is structural and pure; the *live*
-DB-enforced invariants (references-only, no tenant data, request-path-free, dev
-≠ prod recovery domain) are `wamn-q3n.3`'s job. Error codes:
+validate}`) checks well-formedness — it is structural and pure, and with the DB
+`CHECK` enumerations gone it is the enforcement that holds on the **in-memory
+`from_json` import path** (the cjv.20 fix); the *live* DB-enforced invariants
+(references-only, no tenant data, request-path-free) are `wamn-q3n.3`'s job.
+Error codes:
 
 - `bad-schema-version` / `unsupported-schema-version` — `0.1.x` additive-freeze
   compatibility (mirrors `wamn-flow`).
 - `empty-org-id` / `invalid-org-id` / `reserved-org-id` (and the `project`
   counterparts) — the slug + reserved-prefix discipline.
+- `empty-env-policy-name` / `invalid-env-policy-name` / `duplicate-env-policy` —
+  policy names are slugs, unique.
+- `unknown-shared-with-target` / `shared-with-cycle` — recovery-domain
+  integrity: a `shared-with(x)` targets an existing policy and the graph has no
+  cycle. Two `own`-domain envs can never collapse onto one cluster — the
+  derivation `<org>-<owner>` keys on the (unique) policy name, so "dev never
+  rewinds prod" holds by construction.
+- `empty-env` / `invalid-env` / `unknown-env` — a project-env's slug is
+  well-formed **and resolves to a policy** (the `CHECK IN (…)` replacement).
 - `duplicate-org` / `duplicate-project` (per org) / `duplicate-project-env`
   (per triple) — uniqueness.
 - `unknown-org` (a project names an unregistered org) / `unknown-project` (a
   project-env names an unregistered project) — referential integrity.
-- `empty-cluster-name` / `invalid-cluster-name` / `empty-secret-name` /
-  `invalid-secret-name` — the placement references are DNS-1123 labels.
+- `empty-cluster-name` / `invalid-cluster-name` (a pooled org's `pool_cluster`) /
+  `empty-secret-name` / `invalid-secret-name` — the placement references are
+  DNS-1123 labels.
 
-The reserved-prefix rule, the env→cluster routing (`Env::side`), and referential
-integrity are the load-bearing behaviors; each is mutation-tested (apply / test /
-restore, debug builds).
+The reserved-prefix rule, the env→policy resolution, the `cluster_of` derivation,
+and referential integrity are the load-bearing behaviors; each is mutation-tested
+(apply / test / restore, debug builds).
 
 ## Storage schema (wamn-q3n.3)
 
@@ -135,11 +174,15 @@ Two schemas, so each control-plane subsystem is namespaced and the no-tenant-dat
 table set (invariant 3) is exactly what they hold:
 
 - **`registry`** — `meta` (singleton storage-format version), `orgs`
-  (`id`, `tier`, `prod_cluster`, `dev_cluster`), `projects` (`org`→org, `id`),
-  `project_envs` (`org`/`project`→project, `env`, `secret_name`,
-  `secret_namespace`). FK integrity + the composite keys mirror `validate()`;
-  the `tier`/`env` CHECK literals come from the model (`Tier::as_str` /
-  `Env::as_str`).
+  (`id`, `placement_kind` `'pooled'|'dedicated'`, `pool_cluster` — set **iff**
+  pooled, a structural biconditional CHECK), `env_policies` (`name` PK = the env
+  slug, `recovery_domain` jsonb `"own" | {"shared-with": "<env>"}`,
+  `promotion_rank`, and the sizing/backup/hibernation knobs; **seeded** `dev` +
+  `prod`, drift-guarded against `EnvPolicy::dev()`/`prod()`), `projects`
+  (`org`→org, `id`), `project_envs` (`org`/`project`→project, `env` **FK →
+  `env_policies(name)`** — referential integrity replacing the retired
+  `CHECK IN (…)` literals, `secret_name`, `secret_namespace`). FK integrity +
+  the composite keys mirror `validate()`.
 - **`provisioning`** — `sagas`: a **minimal** exactly-once / resumable saga-state
   table (consumed by `.6` provision-org / `.7`). `target` is decoupled text (a
   provision-org saga runs *before* its org row exists); creation is exactly-once
@@ -155,15 +198,17 @@ table set (invariant 3) is exactly what they hold:
 | 1 | request-path-free | architectural (no DB constraint) | a static grep: no data-plane manifest references `wamn-sysdb`/`wamn_system` (only the cluster def + control-plane tooling may) |
 | 2 | no credentials (R8b) | `project_envs` holds a Secret **reference** (`secret_name`/`secret_namespace`), no credential column | drift-guard + live-apply column-set assertion |
 | 3 | no tenant data | the only tables are the control-plane set above | live-apply asserts the exact `registry`+`provisioning` table set |
-| 4 | dev ≠ prod recovery domain | `orgs` CHECK `tier = 'trials' OR prod_cluster <> dev_cluster` (T3 pool shares; T2/T4 must differ) | a rejected bad-standard-org insert; mirrors `Env::side`/`resolve()` |
+| 4 | dev ≠ prod recovery domain | the `cluster_of` derivation (distinct `own`-domain envs derive distinct `<org>-<owner>` clusters) + `validate()` recovery-domain integrity — no per-org CHECK (D18; a pooled org's collapse onto the pool is placement, not a domain violation) | `cluster_of` unit + mutation tests; `shared-with` integrity in `validate()` |
 
 Tests live in `crates/wamn-registry/tests/storage.rs`: a DDL↔model **drift guard**
-(table/column shape, the tier/env/saga CHECK literals, `SCHEMA_VERSION`, the
-dev≠prod expression pinned verbatim), the invariant-1 grep, and a **live-apply
-gate** (`WAMN_REGISTRY_PG_URL`, applied as `wamn_system`; skips when unset) that
-proves invariants 2/3/4 + FK integrity + saga exactly-once. The load-bearing
-asserts are mutation-tested (drop the dev≠prod CHECK, add a credential column, add
-a tenant-data table, break a drift-guard column — each killed).
+(table/column shape, the placement/saga CHECK literals, the `env_policies`
+seed pinned against `EnvPolicy::dev()`/`prod()`, `SCHEMA_VERSION`), the
+invariant-1 grep, and a **live-apply gate** (`WAMN_REGISTRY_PG_URL`, applied as
+`wamn_system`; skips when unset) that proves invariants 2/3 + the placement
+biconditional + the `project_envs.env` FK + the seed + FK integrity + saga
+exactly-once. The load-bearing asserts are mutation-tested (break the seed, drop
+the env FK, add a credential column, add a tenant-data table, break a drift-guard
+column — each killed).
 
 ## Scope — what `.1` is *not*
 
@@ -183,8 +228,9 @@ a tenant-data table, break a drift-guard column — each killed).
 
 ## Build & test
 
-See the `[D6/wamn-q3n.1]` block in `CLAUDE.md` / `AGENTS.md` for the exact
-commands (`cargo test -p wamn-registry` + clippy/fmt).
+See the `[D6/wamn-q3n.1]` / `[D6/wamn-q3n.3]` blocks in `docs/build-and-test.md`
+for the exact commands (`cargo test -p wamn-registry` + clippy/fmt + the
+live-apply gates).
 
 ## References
 

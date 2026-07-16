@@ -46,11 +46,23 @@ Fixes **cjv.20** (`validate()` enforces env-resolves-to-policy, org-id charset,
 placement, recovery-domain integrity on the in-memory `from_json` path).
 **Verified locally:** workspace build; the full test suite incl. every throwaway-PG
 live-apply gate; `provisionbench --mode all` on real Postgres; 5 mutants killed
-(model / validate / renderer / seed-drift / env-FK); clippy + fmt clean. **Deferred
-to the `.3` landing follow-up:** the in-cluster q3n gate re-run (the kind cluster was
-down) and the doc-of-record updates (`registry-model.md`, `provisioning.md`,
-`postgres-topology.md` §Environments pointer, `platform-plan.md` D6/D18 rows,
-`build-and-test.md`).
+(model / validate / renderer / seed-drift / env-FK); clippy + fmt clean.
+
+**Landed — `wamn-8df.6` (landing, 2026-07-16):** the in-cluster q3n gate re-run —
+the new `system-schema.sql` DROP+re-applied into `wamn-sysdb` (7 control-plane
+tables, `dev`/`prod` policies seeded); the rebuilt `wamn-gates` image's
+`provisionbench` job PASS on the D18 shape (legacy + saga + dedicated + pooled);
+and a live dedicated-org standup (`d18gate`) proving `cluster_of` derivation +
+env-policy sizing against real CNPG: prod HA-3 (anti-affinity, Barman plugin,
+`ContinuousArchiving=True`, immediate base backup completed) + dev-1
+(hibernation-eligible), per-env `Database` CRs derived with no `--cluster`
+(dev → `d18gate-dev`, prod → `d18gate-prod`), and a `canary` policy added **as
+data** (shared-with `prod`) routing `--env canary` to `d18gate-prod` — the
+retired q3n.14 special case reproduced by one policy row. Full teardown, zero
+residue, guardrail clusters untouched. Doc-of-record updated:
+`registry-model.md`, `provisioning.md` (`move-org-tier` marked retired),
+`postgres-topology.md` §Environments pointer + supersession markers,
+`platform-plan.md` D6 row + the D18 row, `build-and-test.md` q3n blocks.
 
 ## Why reopen — the brittleness
 

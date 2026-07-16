@@ -130,7 +130,10 @@ already exists). `provision-project-env` then routes that org's project-env
 databases onto the pool via `env.side()` (the wamn-q3n.7 path, now from a
 registered row rather than a hand-inserted one). Conversion to a T2 pair is the
 tier-move (`wamn-q3n.13`); retiring the legacy `postgres.yaml` gate pod is a
-separate concern (`wamn-689`). `docs/provisioning.md`.
+separate concern (`wamn-689`). `docs/provisioning.md`. *(Encoding superseded by
+D18, `wamn-8df.3`: the registration is now `provision-org --placement pooled
+--pool wamn-pg` — a `placement_kind='pooled'` row; routing derives via
+`cluster_of`, not `env.side()`.)*
 
 ### T4 — Dedicated-per-env (the regulated promotion tier)
 Cluster-per-environment for customers whose compliance regime demands maximal
@@ -151,9 +154,19 @@ moves from `Env::side` to `Org::cluster_for_env` — `canary` routes to
 `.13` T2→T4 tier move routes each env to its per-env cluster. Proven by a live
 in-cluster dedicated-org standup (prod HA-3 + canary HA-2 + dev-1 — canary's DB
 lives on its own cluster, physically isolated from prod). `docs/provisioning.md`
-§provision-org T4 dedicated orgs.
+§provision-org T4 dedicated orgs. *(Encoding superseded by D18, `wamn-8df.3`:
+the stored `canary_cluster` column, its CHECKs, and `Org::cluster_for_env` are
+retired — the T4 property is now a `canary` env policy with its **own**
+recovery domain, derived by `cluster_of`; see `docs/deployment-model.md`.)*
 
 ## Environments become a first-class platform dimension
+
+> **Encoding superseded (D18, `wamn-8df.3`):** the closed `dev / canary / prod`
+> env set and the `Tier` enum described below are re-expressed as **data** — a
+> validated env slug resolving a named policy row (`registry.env_policies`) and
+> a minimal org placement (`pooled` | `dedicated`), with the cluster derived by
+> `cluster_of`. See `docs/deployment-model.md`. The topology (T1–T4) is
+> unchanged as deployment reality; the tiers survive as configurations.
 
 This note introduces env structurally; the plan must follow (amendment to 3.4,
 control-plane model, and the registry schema):
@@ -203,7 +216,8 @@ control-plane model, and the registry schema):
    `wamn-db-<org>--<project>--<env>` owned by `wamn_app`, `ensure: present`,
    `databaseReclaimPolicy: retain`, optional `connectionLimit`). The target
    cluster is chosen by `registry.org(org).cluster(env.side())` — the one path
-   serves a T2 org pair *and* the T3 pool. The `Database` CRD creates the DB
+   serves a T2 org pair *and* the T3 pool *(since D18, `wamn-8df.3`: derived by
+   `cluster_of(org, env_policy)` instead)*. The `Database` CRD creates the DB
    declaratively; the thin imperative step (ensure `wamn_app` `NOBYPASSRLS`,
    `REVOKE CONNECT FROM PUBLIC` / `GRANT`) is emitted SQL. It records
    `registry.projects` + `registry.project_envs` (`upsert_project_sql` /
@@ -370,7 +384,11 @@ move). The steps reuse the built pieces (`.6`/`.7`/`.10`/`.11`); the resumable/
 compensating **saga** that would drive the plan automatically is `10.1`'s. One
 mechanism serves **both** directions (T3→T2 proven by a live cross-cluster
 standup; T2→T4 the same code path, its dedicated-per-env cluster shape completed
-by `wamn-q3n.14`). See `docs/provisioning.md` §`move-org-tier`.
+by `wamn-q3n.14`). See `docs/provisioning.md` §`move-org-tier`. *(Retired by
+D18, `wamn-8df.3`: `move-org-tier` / `tier_move` are removed with the `Tier`
+enum — a placement change becomes one case of the unified `copy(src → dst)`
+operation with a quiesce+verify cutover gate, `wamn-8df.5`; see
+`docs/deployment-model.md` §4.)*
 
 **Tier-move runbook (scheduled operation):** the org's registry row stays on
 the **old** tier throughout the data move — `provision-project-env` targets the
