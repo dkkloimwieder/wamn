@@ -547,7 +547,14 @@ fn dispatch_node(
                 tracestate: None,
                 config: &d.config,
             };
-            let mut ctx = wamn_node_guest::caps::CapsCtx::default();
+            // 5.9: the ctx is FRESH per dispatch and carries ONLY this node's
+            // declared credential name — the vault resolves it lazily via the
+            // wamn:node credentials import, so the secret is scoped to the
+            // executing node's context structurally (siblings never see it).
+            let mut ctx = wamn_node_guest::caps::CapsCtx {
+                credential: d.credential.clone(),
+                ..Default::default()
+            };
             let granted = wamn_nodes::granted_for(sdk::NodeCtx::raw_sql_enabled(&ctx));
             Ok(NodeAction::Emit(
                 match wamn_nodes::dispatch(t, granted, &mut ctx, &run_ctx, &d.payload) {

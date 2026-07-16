@@ -204,7 +204,7 @@ fn rung_cases(rung: u8) -> anyhow::Result<Vec<RungCase>> {
     }
 }
 
-fn valid_ident(s: &str) -> bool {
+pub(crate) fn valid_ident(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -213,7 +213,7 @@ fn valid_ident(s: &str) -> bool {
 /// The flow tables the runner walks + the 5.14 `run_queue` it claims from, in the
 /// house tenant floor (the runnerbench shape, minus the pg-write `sink` — the
 /// ladder flows have no pg-write node).
-fn ladder_ddl(schema: &str) -> String {
+pub(crate) fn ladder_ddl(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.flows (\
             tenant_id text NOT NULL, flow_id text NOT NULL, version int NOT NULL, \
@@ -275,7 +275,11 @@ fn ladder_ddl(schema: &str) -> String {
 /// A wamn_app connection pinned to the demo schema + tenant claim — the same RLS
 /// floor + search_path the deployed runner's plugin session runs under, so the
 /// seeder and the runner see each other's rows.
-async fn connect_app(app_url: &str, schema: &str, tenant: &str) -> anyhow::Result<Client> {
+pub(crate) async fn connect_app(
+    app_url: &str,
+    schema: &str,
+    tenant: &str,
+) -> anyhow::Result<Client> {
     let (client, conn) = tokio_postgres::connect(app_url, NoTls)
         .await
         .context("app (wamn_app) connect")?;
@@ -356,7 +360,7 @@ async fn teardown(admin_url: &str, schema: &str) -> anyhow::Result<()> {
 
 /// Seed ONE run the way the dispatcher does — the write-ahead `dispatched` row +
 /// the queue row, co-transacted (the exact producer state the runner claims).
-async fn seed_run(
+pub(crate) async fn seed_run(
     client: &mut Client,
     flow_id: &str,
     run_id: &str,
@@ -379,7 +383,7 @@ async fn seed_run(
     Ok(())
 }
 
-fn is_terminal(status: &str) -> bool {
+pub(crate) fn is_terminal(status: &str) -> bool {
     matches!(
         status,
         "completed" | "failed" | "cancelled" | "infrastructure-failure"
@@ -388,7 +392,7 @@ fn is_terminal(status: &str) -> bool {
 
 /// Poll a seeded run to a terminal status (or the deadline). A directly-seeded
 /// run gets no doorbell, so this covers the runner's idle poll interval.
-async fn poll_to_terminal(
+pub(crate) async fn poll_to_terminal(
     client: &Client,
     run_id: &str,
     deadline: Instant,

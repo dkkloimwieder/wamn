@@ -37,8 +37,8 @@ pub mod respond;
 pub use conditional::{FALSE_PORT, TRUE_PORT};
 pub use policy::{GRANTS_DEFAULT, GRANTS_WITH_RAW_SQL, granted_for};
 pub use wamn_node_sdk::{
-    Capability, Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse, Node, NodeCtx,
-    NodeError, PgCapError, PgRows, PgValue, RateLimitDetail, RunContext,
+    Capability, CredentialCapError, Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse,
+    Node, NodeCtx, NodeError, PgCapError, PgRows, PgValue, RateLimitDetail, RunContext,
 };
 
 use serde_json::Value;

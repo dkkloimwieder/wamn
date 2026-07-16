@@ -286,6 +286,16 @@ another replica reconstructs from `node_runs`, exactly-once via the sink
 idempotency. A drain error is non-fatal (logged + backed off): the pool re-dials on
 the next call.
 
+**Credentials + egress (5.9)** — the runner carries this project's credential
+vault (`--credentials-file` / `WAMN_CREDENTIALS_FILE`, a `{project: {name:
+secret}}` JSON mounted from a K8s Secret; `--project` picks the key) and the
+outbound-`wasi:http` egress handler its flows' http-request nodes need: the
+fork's `check_allowed_hosts` over `DefaultOutgoingHandler`, gated by
+`--allowed-hosts` / `WAMN_ALLOWED_HOSTS` — **EMPTY = DENY-ALL, fail-closed**
+(an unlisted host fails `egress-denied`; per-flow allowlists are the fqg.11
+refinement). Without a handler an outbound call would trap and poison the
+instance. See [credential-vault.md](credential-vault.md).
+
 The `runnerbench` gate drives the *production* `RunWorker` (not a gate-local
 worker) against an ephemeral schema seeded the dispatcher way, asserting it drains
 the queue to completion, reuses one instance across drains, and reports an empty

@@ -317,6 +317,59 @@ cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target
   && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
 ```
 
+### [5.9] credential vault (plugins/wamn_credentials + credproof)
+
+Docs: docs/credential-vault.md
+
+```bash
+# Pure units: the SDK facade + http-request injection/classification + the
+# guest per-dispatch scoping + the host vault resolution + the WIT coherence
+# drift-guards (the credentials copies) + the credproof fixture pins.
+cargo test -p wamn-node-sdk && cargo test -p wamn-nodes
+cargo test -p wamn-node-guest --all-features
+cargo test -p wamn-host wamn_credentials && cargo test -p wamn-gates credproof
+
+# Local end-to-end (throwaway PG + local serve-echo + a background run-worker
+# whose vault carries the demo secret; the run-worker needs the target on its
+# --allowed-hosts — EMPTY = deny-all, fail-closed):
+docker run -d --name wamn-cred-pg -p 5493:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+cat > /tmp/wamn-credentials.json <<'JSON'
+{ "default": { "notify-token": "wamn-cred-proof-7f3a9b2e41d05c68" } }
+JSON
+./target/debug/wamn-gates --log-level error serve-echo --port 8093 &
+WAMN_RUNNER=cred-local ./target/debug/wamn-host --log-level info run-worker \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5493/wamn \
+  --tenant demo-tenant --schema wamn_cred_local --project default \
+  --credentials-file /tmp/wamn-credentials.json \
+  --allowed-hosts 127.0.0.1:8093 --max-idle-ms 1500 &
+./target/debug/wamn-gates credproof \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5493/wamn \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5493/wamn \
+  --schema wamn_cred_local --tenant demo-tenant \
+  --echo-url http://127.0.0.1:8093 --setup
+# Mutation harness (apply/test/restore, sha256-verified): scratchpad mutate_17o.py
+# M1 http.rs injection neutered  -> unit http_request_sends_the_declared_credential
+# M2 host resolve wrong constant -> live DELIVERY digest mismatch
+# M3 CapsCtx scoping neutered    -> unit credential_without_a_declaration_...
+# M4 node leaks its credential   -> live CONTAINMENT (notify.output + status.input)
+
+# In-cluster gate of record (kind 'wamn'; FULL rebuild BOTH stages — host
+# changed [vault plugin + run-worker egress] AND the guest re-baked
+# [flowrunner imports wamn:node/credentials]):
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
+# provision wamn_runner_demo + register deploy/cred/notify.flow.json active
+# (the fqg.8/ojm recipe), then:
+kubectl -n wamn-system apply -f deploy/serve-echo.yaml
+kubectl -n wamn-system apply -f deploy/runner-credentials.example.yaml
+kubectl -n wamn-system apply -f deploy/runner-db.example.yaml -f deploy/runner.yaml
+kubectl -n wamn-system apply -f deploy/credproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=180s
+kubectl -n wamn-system logs job/credproof   # overall PASS: true
+```
+
 ### [5.14] durable run queue & runner scaling (crates/wamn-run-queue)
 
 Docs: docs/run-queue.md

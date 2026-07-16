@@ -1,0 +1,31 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "cred-notify",
+  "version": 1,
+  "name": "Credential-vault notify proof (5.9)",
+  "trigger": { "type": "manual" },
+  "entry": "in",
+  "credentials": [
+    {
+      "name": "notify-token",
+      "kind": "api-key",
+      "description": "The stored secret the notify step sends — resolved by the vault at dispatch, never inlined here."
+    }
+  ],
+  "nodes": [
+    { "id": "in", "type": "webhook-in" },
+    {
+      "id": "notify",
+      "type": "http-request",
+      "credential": "notify-token",
+      "config": { "method": "GET", "url": "{{echo}}" }
+    },
+    { "id": "status", "type": "transform", "config": { "expression": "status" } },
+    { "id": "out", "type": "respond" }
+  ],
+  "edges": [
+    { "from": "in", "to": "notify" },
+    { "from": "notify", "to": "status" },
+    { "from": "status", "to": "out" }
+  ]
+}

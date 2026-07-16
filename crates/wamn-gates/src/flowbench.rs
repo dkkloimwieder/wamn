@@ -259,6 +259,9 @@ impl Harness {
         // flows never call it, but the import must be linkable to instantiate.
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
         wamn_postgres::add_to_linker(&mut linker)?;
+        // 5.9: the runner imports wamn:node/credentials unconditionally; no
+        // S3 fixture declares one, so the linked vault stays unbacked.
+        wamn_host::plugins::wamn_credentials::add_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self {
             engine,

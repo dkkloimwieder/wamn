@@ -7,9 +7,12 @@
 //!   "method": "POST",                        // default GET
 //!   "url": "https://api.example/x/{{id}}",   // {{jmespath}} templating
 //!   "headers": {"x-token": "{{auth.token}}"},// values templated
-//!   "body": "payload"                        // OPTIONAL jmespath over the
+//!   "body": "payload",                       // OPTIONAL jmespath over the
 //!                                            // input; null result = no body;
 //!                                            // else sent as JSON
+//!   "credential-header": "x-api-key"         // OPTIONAL header the node's
+//!                                            // DECLARED credential (5.9) is
+//!                                            // sent as; default authorization
 //! }
 //! ```
 //! Success payload: `{"status": n, "headers": {...}, "body": <json-or-string>}`.
@@ -22,8 +25,8 @@
 
 use serde_json::{Map, Value};
 use wamn_node_sdk::{
-    Capability, Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse, Node, NodeCtx,
-    NodeError, RateLimitDetail, RunContext,
+    Capability, CredentialCapError, Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse,
+    Node, NodeCtx, NodeError, RateLimitDetail, RunContext,
 };
 
 use crate::expr::eval_to_value;
@@ -49,6 +52,10 @@ impl Node for HttpRequestNode {
         // present on the node's own request (a config header of the same name
         // still wins — `apply_trace_context` skips keys already set).
         run.apply_trace_context(&mut req.headers);
+        // 5.9: the node's DECLARED credential (`node.credential` in the flow)
+        // resolves through the vault and rides as a header. The secret never
+        // touches config or flow data — it exists only in this request.
+        apply_credential(ctx, run.config, &mut req.headers)?;
         let host = url_host(&req.url).unwrap_or_default().to_string();
         match ctx.http(&req) {
             Ok(resp) => classify_response(&host, &resp),
@@ -119,6 +126,41 @@ pub(crate) fn build_request(config: &Value, input: &Value) -> Result<HttpRequest
         headers,
         body,
     })
+}
+
+/// 5.9: resolve the node's declared credential and send it as a header.
+/// Header name from config `"credential-header"` (default `"authorization"`);
+/// an explicit config header of the same name wins (the trace-context rule).
+/// `NotGranted` means no credential is in this node's context (none declared)
+/// — not an error, the request proceeds bare. `not-found` is config-shaped
+/// (terminal); `unavailable` is the backing store (retryable, per the WIT
+/// annotation). The secret value never enters an error detail.
+fn apply_credential(
+    ctx: &mut dyn NodeCtx,
+    config: &Value,
+    headers: &mut Vec<(String, String)>,
+) -> Result<(), NodeError> {
+    let header = config
+        .get("credential-header")
+        .and_then(Value::as_str)
+        .unwrap_or("authorization");
+    match ctx.credential() {
+        Ok(secret) => {
+            if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(header)) {
+                headers.push((header.to_string(), secret));
+            }
+            Ok(())
+        }
+        Err(CredentialCapError::NotGranted) => Ok(()),
+        Err(CredentialCapError::NotFound) => Err(NodeError::Terminal(ErrorDetail::coded(
+            "credential-not-found",
+            "the node's declared credential is unknown in this project's vault",
+        ))),
+        Err(CredentialCapError::Unavailable) => Err(NodeError::Retryable(ErrorDetail::coded(
+            "credential-unavailable",
+            "the credential vault's backing store is unavailable",
+        ))),
+    }
 }
 
 /// The authority (host[:port]) of an absolute http(s) URL — the shared

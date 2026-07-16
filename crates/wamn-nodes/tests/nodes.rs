@@ -7,8 +7,8 @@ use std::collections::VecDeque;
 
 use serde_json::{Value, json};
 use wamn_nodes::{
-    Capability, HttpCapError, HttpRequest, HttpResponse, NodeCtx, NodeError, PgCapError, PgRows,
-    PgValue, RunContext, dispatch, granted_for, required_capabilities, respond,
+    Capability, CredentialCapError, HttpCapError, HttpRequest, HttpResponse, NodeCtx, NodeError,
+    PgCapError, PgRows, PgValue, RunContext, dispatch, granted_for, required_capabilities, respond,
 };
 
 // ---------------------------------------------------------------------------
@@ -28,6 +28,10 @@ struct Mock {
     http_results: VecDeque<Result<HttpResponse, HttpCapError>>,
     catalog: Option<String>,
     raw_sql: bool,
+    /// The vault's answer for this node's declared credential. `None` mirrors
+    /// the trait's fail-closed default (`NotGranted` — no credential is in
+    /// this node's context).
+    credential: Option<Result<String, CredentialCapError>>,
 }
 
 impl NodeCtx for Mock {
@@ -48,6 +52,11 @@ impl NodeCtx for Mock {
     }
     fn raw_sql_enabled(&self) -> bool {
         self.raw_sql
+    }
+    fn credential(&mut self) -> Result<String, CredentialCapError> {
+        self.credential
+            .clone()
+            .unwrap_or(Err(CredentialCapError::NotGranted))
     }
 }
 
@@ -336,6 +345,116 @@ fn http_request_explicit_traceparent_header_wins() {
         .collect();
     assert_eq!(tps.len(), 1, "exactly one traceparent header");
     assert_eq!(tps[0].1, "00-explicit-01", "config header wins");
+}
+
+/// 5.9: the node's DECLARED credential resolves through the vault and rides
+/// as the `authorization` header by default — the secret exists only in the
+/// outbound request, never in config or the emitted payload.
+#[test]
+fn http_request_sends_the_declared_credential() {
+    let mut mock = Mock {
+        credential: Some(Ok("Bearer s3cr3t-tok".into())),
+        ..Mock::default()
+    };
+    mock.http_results.push_back(ok_http(200, &[], "{}"));
+    let config = json!({"url": "http://notify.test/x"});
+    let em = go("http-request", &mut mock, &config, &json!({})).unwrap();
+    assert!(
+        mock.http_calls[0]
+            .headers
+            .iter()
+            .any(|(k, v)| k == "authorization" && v == "Bearer s3cr3t-tok"),
+        "declared credential sent as authorization; got {:?}",
+        mock.http_calls[0].headers
+    );
+    assert!(
+        !em.payload.to_string().contains("s3cr3t-tok"),
+        "the secret never enters the emitted payload"
+    );
+}
+
+/// The header the credential rides in is config-selectable
+/// (`credential-header`), and an explicit config header of the same name wins
+/// (the trace-context rule).
+#[test]
+fn http_request_credential_header_is_configurable_and_config_wins() {
+    let mut mock = Mock {
+        credential: Some(Ok("k-123".into())),
+        ..Mock::default()
+    };
+    mock.http_results.push_back(ok_http(200, &[], "{}"));
+    let config = json!({"url": "http://notify.test/x", "credential-header": "x-api-key"});
+    go("http-request", &mut mock, &config, &json!({})).unwrap();
+    let req = &mock.http_calls[0];
+    assert!(
+        req.headers
+            .iter()
+            .any(|(k, v)| k == "x-api-key" && v == "k-123"),
+        "credential rides the configured header; got {:?}",
+        req.headers
+    );
+    assert!(
+        !req.headers.iter().any(|(k, _)| k == "authorization"),
+        "no stray authorization header"
+    );
+
+    // An explicit config header of the credential's name wins outright.
+    let mut mock = Mock {
+        credential: Some(Ok("from-vault".into())),
+        ..Mock::default()
+    };
+    mock.http_results.push_back(ok_http(200, &[], "{}"));
+    let config = json!({
+        "url": "http://notify.test/x",
+        "headers": {"Authorization": "explicit"}
+    });
+    go("http-request", &mut mock, &config, &json!({})).unwrap();
+    let auths: Vec<_> = mock.http_calls[0]
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+        .collect();
+    assert_eq!(auths.len(), 1, "exactly one authorization header");
+    assert_eq!(auths[0].1, "explicit", "explicit config header wins");
+}
+
+/// A node that declared NO credential proceeds bare (`NotGranted` is the
+/// no-credential signal, not an error); vault failures classify mechanically —
+/// unknown name is config-shaped (terminal), a down store is retryable — and
+/// in both cases nothing leaves the node.
+#[test]
+fn http_request_credential_errors_classify_mechanically() {
+    // No declaration: request proceeds without a credential header.
+    let mut mock = Mock::default();
+    mock.http_results.push_back(ok_http(200, &[], "{}"));
+    let config = json!({"url": "http://notify.test/x"});
+    go("http-request", &mut mock, &config, &json!({})).unwrap();
+    assert!(
+        !mock.http_calls[0]
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("authorization")),
+        "no credential declared ⇒ bare request"
+    );
+
+    let mut mock = Mock {
+        credential: Some(Err(CredentialCapError::NotFound)),
+        ..Mock::default()
+    };
+    let e = go("http-request", &mut mock, &config, &json!({})).unwrap_err();
+    assert_eq!(terminal_code(&e), "credential-not-found");
+    assert!(mock.http_calls.is_empty(), "nothing left the node");
+
+    let mut mock = Mock {
+        credential: Some(Err(CredentialCapError::Unavailable)),
+        ..Mock::default()
+    };
+    let e = go("http-request", &mut mock, &config, &json!({})).unwrap_err();
+    assert!(
+        matches!(&e, NodeError::Retryable(d) if d.code.as_deref() == Some("credential-unavailable")),
+        "a down vault is retryable, got {e:?}"
+    );
+    assert!(mock.http_calls.is_empty(), "nothing left the node");
 }
 
 /// THE mechanical status → taxonomy map (docs/wamn-node.wit): 429 →

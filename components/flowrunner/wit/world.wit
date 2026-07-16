@@ -32,6 +32,12 @@ world flowrunner {
   // interpose a recording/stubbing egress spy. The http-call node uses it.
   import wasi:http/types@0.2.12;
   import wasi:http/outgoing-handler@0.2.12;
+  // 5.9: the credential vault. A node's DECLARED credential resolves lazily
+  // through this host import (the wamn-host wamn_credentials plugin) — the
+  // secret never rides flow data, node config, or run/node_run records. Must
+  // match the caps-node world's pin (the CapsCtx bindings unify with these at
+  // componentization).
+  import wamn:node/credentials@0.1.0;
 
   /// Dispatch micro-benchmark. Runs `iterations` walks of the supplied
   /// canonical flow (the fixture JSON now lives with the gates, SR2)

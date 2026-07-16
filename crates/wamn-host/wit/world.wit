@@ -8,9 +8,17 @@ world postgres-plugin {
 }
 
 /// Host-side bindgen world for the wamn:node control interface (cooperative
-/// cancellation). payloads/credentials are deliberately not registered in S1.
+/// cancellation). payloads is deliberately not registered (5.10); credentials
+/// is the vault plugin below (5.9).
 world node-plugin {
   import wamn:node/control@0.1.0;
+}
+
+/// Host-side bindgen world for the wamn:node credentials vault (5.9): the
+/// host IMPLEMENTS `get` — per-project resolution from a mounted static
+/// source, every get audit-logged. See plugins/wamn_credentials.rs.
+world credentials-plugin {
+  import wamn:node/credentials@0.1.0;
 }
 
 /// Host-side bindgen world for the S4 `nodebench` / `serve-node` harness: the

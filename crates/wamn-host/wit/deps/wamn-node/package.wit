@@ -17,8 +17,10 @@ package wamn:node@0.1.0;
 /// frozen; linking one fails instantiation until its host side lands):
 /// `payloads` = the payload store (5.10) -- its `wasi:io` version pin is
 /// provisional and will be aligned with the host's wasi:io when 5.10 activates
-/// the import (non-breaking while the import is inert); `credentials` = the
-/// vault (5.9); `control` = cooperative cancellation (5.12).
+/// the import (non-breaking while the import is inert); `credentials` =
+/// SHIPPED (5.9, wamn-17o): the wamn-host vault plugin implements `get`
+/// (per-project resolution from a mounted source + audit log) and the
+/// flowrunner links it; `control` = cooperative cancellation (5.12).
 interface types {
   /// JSON-encoded string. Structured `value` variant deferred to a
   /// future version; a string maximizes guest-language ergonomics
@@ -172,7 +174,9 @@ interface payloads {
 }
 
 /// OPTIONAL host import: lazy secret resolution. Every `get` is
-/// audit-logged by the host with (run-id, node-id, handle).
+/// audit-logged by the host with the executing component's identity, its
+/// project, and the handle (run/node attribution rides the runner's
+/// node_runs records; the host sees only the component on this path).
 interface credentials {
   variant credential-error {
     /// Handle exists but was not granted to this node execution.

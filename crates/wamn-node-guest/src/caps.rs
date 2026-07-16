@@ -23,6 +23,7 @@ mod bindings {
     });
 }
 
+use bindings::wamn::node::credentials as wit_credentials;
 use bindings::wamn::postgres::client;
 use bindings::wamn::postgres::types::{PgError, SqlValue};
 use bindings::wasi::http::outgoing_handler;
@@ -34,10 +35,19 @@ use bindings::wasi::http::types::{
 /// SDK-authored node) over the component's real imports. The D8 raw-SQL flag
 /// defaults OFF — per-project enablement wiring lands with the user-SQL role
 /// split (wamn-1nd).
+///
+/// Constructed FRESH per node dispatch: `credential` carries ONLY the
+/// executing node's declared credential name (`node.credential` in the flow),
+/// which is what makes "the secret is injected only into the executing node's
+/// context" structural — a sibling node's ctx never names it, so its
+/// `credential()` is `NotGranted` without the vault ever being asked.
 #[derive(Default)]
 pub struct CapsCtx {
     /// Whether the `RawSql` capability is granted (D8; default off).
     pub raw_sql: bool,
+    /// The executing node's DECLARED credential name (5.9). `None` = the node
+    /// declared none; `credential()` refuses without a host call.
+    pub credential: Option<String>,
 }
 
 impl sdk::NodeCtx for CapsCtx {
@@ -83,6 +93,20 @@ impl sdk::NodeCtx for CapsCtx {
 
     fn raw_sql_enabled(&self) -> bool {
         self.raw_sql
+    }
+
+    fn credential(&mut self) -> Result<String, sdk::CredentialCapError> {
+        // Only the DECLARED name ever reaches the host: no declaration, no
+        // vault call. The host resolves the handle within the component's
+        // project scope and audit-logs every get.
+        let Some(name) = self.credential.as_deref() else {
+            return Err(sdk::CredentialCapError::NotGranted);
+        };
+        wit_credentials::get(name).map_err(|e| match e {
+            wit_credentials::CredentialError::NotGranted => sdk::CredentialCapError::NotGranted,
+            wit_credentials::CredentialError::NotFound => sdk::CredentialCapError::NotFound,
+            wit_credentials::CredentialError::Unavailable => sdk::CredentialCapError::Unavailable,
+        })
     }
 }
 
@@ -317,6 +341,18 @@ mod tests {
             wit_err_to_sdk(PgError::QueryError(("22P02".into(), "m".into()))),
             sdk::PgCapError::QueryError { code, .. } if code == "22P02"
         ));
+    }
+
+    /// The per-dispatch credential scoping is LOCAL and fail-closed: a ctx
+    /// whose node declared no credential refuses without ever calling the
+    /// host vault import (this test runs on the host target, where a real
+    /// `credentials.get` call would abort — not returning `NotGranted` here
+    /// means the guard is gone).
+    #[test]
+    fn credential_without_a_declaration_is_not_granted_locally() {
+        use sdk::NodeCtx as _;
+        let mut ctx = CapsCtx::default();
+        assert_eq!(ctx.credential(), Err(sdk::CredentialCapError::NotGranted));
     }
 
     #[test]

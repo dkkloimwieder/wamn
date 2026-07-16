@@ -44,11 +44,21 @@ use clap::Args;
 use tokio::sync::watch;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
+use wash_runtime::engine::workload::ResolvedWorkload;
+use wash_runtime::host::allowed_hosts::AllowedHost;
+use wash_runtime::host::http::{
+    DefaultOutgoingHandler, HostHandler, OutgoingHandler as _, check_allowed_hosts,
+};
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker, TypedFunc};
+use wasmtime_wasi_http::p2::HttpResult;
+use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
+use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
+use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
 use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use crate::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
 use crate::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 /// Default in-image path of the flowrunner component (baked into the prod host
@@ -82,6 +92,29 @@ pub struct RunWorkerArgs {
     /// $HOSTNAME (the pod name in Kubernetes), then a fixed fallback.
     #[arg(long, env = "WAMN_RUNNER")]
     pub runner: Option<String>,
+
+    /// The credential-vault source (5.9): a JSON file `{project: {name:
+    /// secret}}` mounted from a K8s Secret — the WAMN_PG_PROJECTS_FILE
+    /// pattern. A missing file leaves the vault EMPTY (every resolution is
+    /// `unavailable`); a malformed file is a hard error.
+    #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
+    pub credentials_file: Option<PathBuf>,
+
+    /// The project whose credentials this runner's flows may read (the key
+    /// into the credentials file) — single-project, like --tenant/--schema.
+    #[arg(long, env = "WAMN_PROJECT", default_value = wamn_postgres::DEFAULT_PROJECT)]
+    pub project: String,
+
+    /// Hosts the runner's flows may reach over outbound wasi:http (repeatable;
+    /// `host[:port]`, `scheme://host`, `*.domain`, or `*`). EMPTY = DENY-ALL —
+    /// the production fail-closed posture; an http-request to an unlisted host
+    /// fails `egress-denied`. Per-flow governance is the fqg.11 refinement.
+    #[arg(
+        long = "allowed-hosts",
+        env = "WAMN_ALLOWED_HOSTS",
+        value_delimiter = ','
+    )]
+    pub allowed_hosts: Vec<String>,
 
     /// Lease TTL for a claimed run (ms). The guest renews it per node, so this
     /// need only exceed the longest single-node execution, not the whole walk.
@@ -135,6 +168,77 @@ impl DrainReport {
     }
 }
 
+/// The runner's outbound-`wasi:http` egress handler: enforce the host
+/// allowlist (the fork's [`check_allowed_hosts`] — EMPTY = DENY-ALL, the
+/// production fail-closed posture), then delegate transport to
+/// [`DefaultOutgoingHandler`] (which also stamps the 9.2 trace context).
+/// Without a handler on the store's `Ctx`, an outbound call TRAPS ("http
+/// client not available") and poisons the instance — so the runner wires this
+/// unconditionally; a denial is a clean `HttpRequestDenied` the node
+/// classifies as `egress-denied` (terminal). Host-LEVEL governance only;
+/// per-flow allowlists are the fqg.11 refinement.
+#[derive(Default)]
+struct RunnerEgress {
+    inner: DefaultOutgoingHandler,
+}
+
+#[async_trait::async_trait]
+impl HostHandler for RunnerEgress {
+    async fn start(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn stop(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn port(&self) -> u16 {
+        0
+    }
+    async fn on_workload_resolved(
+        &self,
+        _resolved: &ResolvedWorkload,
+        _component_id: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn on_workload_unbind(&self, _workload_id: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn outgoing_request(
+        &self,
+        workload_id: &str,
+        request: hyper::Request<HyperOutgoingBody>,
+        config: OutgoingRequestConfig,
+        allowed_hosts: &[AllowedHost],
+    ) -> HttpResult<HostFutureIncomingResponse> {
+        if let Err(e) = check_allowed_hosts(&request, allowed_hosts) {
+            tracing::warn!(
+                workload_id,
+                error = %e,
+                "run-worker outbound request denied by the allowed-hosts policy"
+            );
+            // A DENIAL, never a trap: the guest sees HttpRequestDenied and the
+            // node classifies it egress-denied (terminal); the instance lives.
+            return Ok(HostFutureIncomingResponse::ready(Ok(Err(
+                ErrorCode::HttpRequestDenied,
+            ))));
+        }
+        self.inner.send_request(workload_id, request, config)
+    }
+}
+
+/// The host-injected, non-spoofable identity one runner replica carries: the
+/// lease owner (== the component id), the tenant claim, the session
+/// search_path, and — 5.9 — the project whose vault credentials its flows may
+/// read. The guest reads these from its session; it never chooses them.
+#[derive(Debug, Clone, Copy)]
+pub struct RunnerIdentity<'a> {
+    pub owner: &'a str,
+    pub tenant: &'a str,
+    pub schema: Option<&'a str>,
+    pub project: &'a str,
+}
+
 /// The production flow runner: a single long-lived flowrunner instance whose
 /// plugin session carries the host-injected lease owner + tenant + schema.
 /// [`drain`] pulls every currently-claimable run to a terminal (or parked)
@@ -149,18 +253,25 @@ pub struct RunWorker {
 
 impl RunWorker {
     /// Instantiate the flowrunner component and inject this replica's identity.
-    /// `owner` is BOTH the component id and the `app.runner` lease owner (one
-    /// process = one project = one owner, the single-project shape). Mirrors the
-    /// failoverbench claimer store-build (SR1: the gate drives the same code).
+    /// `identity.owner` is BOTH the component id and the `app.runner` lease
+    /// owner (one process = one project = one owner, the single-project shape).
+    /// Mirrors the failoverbench claimer store-build (SR1: the gate drives the
+    /// same code).
     pub async fn instantiate(
         engine: &Engine,
         guest: &[u8],
         plugin: Arc<WamnPostgres>,
-        owner: &str,
-        tenant: &str,
-        schema: Option<&str>,
+        vault: Arc<WamnCredentials>,
+        identity: RunnerIdentity<'_>,
+        allowed_hosts: Arc<[AllowedHost]>,
         ttl_ms: u64,
     ) -> anyhow::Result<Self> {
+        let RunnerIdentity {
+            owner,
+            tenant,
+            schema,
+            project,
+        } = identity;
         // Non-spoofable, host-injected: the guest reads these from its session,
         // never chooses them. set_runner validates the owner charset.
         plugin.set_tenant(owner, tenant)?;
@@ -168,6 +279,9 @@ impl RunWorker {
             plugin.set_schema(owner, s)?;
         }
         plugin.set_runner(owner, owner)?;
+        // 5.9: the vault resolves per (project, name); the project is a
+        // host-injected claim like the tenant/schema/runner above.
+        vault.set_project(owner, project)?;
 
         let raw = engine.inner();
         let component = WasmtimeComponent::new(raw, guest)
@@ -176,6 +290,9 @@ impl RunWorker {
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
         wamn_postgres::add_to_linker(&mut linker)?;
+        // The flowrunner imports wamn:node/credentials unconditionally; the
+        // linker must satisfy it even when the vault is empty.
+        wamn_credentials::add_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
 
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
@@ -183,8 +300,16 @@ impl RunWorker {
             wamn_postgres::WAMN_POSTGRES_ID,
             plugin as Arc<dyn HostPlugin + Send + Sync>,
         );
+        plugins.insert(
+            WAMN_CREDENTIALS_ID,
+            vault as Arc<dyn HostPlugin + Send + Sync>,
+        );
+        // The egress handler is unconditional (an outbound call without one
+        // TRAPS); the allowlist gates it — empty = deny-all, fail-closed.
         let ctx = Ctx::builder(owner.to_string(), owner.to_string())
             .with_plugins(plugins)
+            .with_http_handler(Arc::new(RunnerEgress::default()))
+            .with_allowed_hosts(allowed_hosts)
             .build();
         let mut store = Store::new(raw, SharedCtx::new(ctx));
         // No kill semantics: a huge deadline so the epoch (which the ticker
@@ -341,6 +466,22 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
     cfg.database_url = Some(url);
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
 
+    // 5.9: the credential vault, sourced from the mounted file when present
+    // (a missing file = an empty vault, warned inside from_file).
+    let vault = Arc::new(match &args.credentials_file {
+        Some(path) => WamnCredentials::from_file(path)?,
+        None => WamnCredentials::empty(),
+    });
+
+    // The outbound egress allowlist (empty = deny-all, fail-closed).
+    let allowed_hosts: Arc<[AllowedHost]> = args
+        .allowed_hosts
+        .iter()
+        .map(|s| s.parse::<AllowedHost>())
+        .collect::<Result<Vec<_>, _>>()
+        .context("parse --allowed-hosts")?
+        .into();
+
     let engine = build_engine(&[])?;
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
 
@@ -348,9 +489,14 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
         &engine,
         &guest,
         plugin,
-        &owner,
-        &args.tenant,
-        args.schema.as_deref(),
+        vault,
+        RunnerIdentity {
+            owner: &owner,
+            tenant: &args.tenant,
+            schema: args.schema.as_deref(),
+            project: &args.project,
+        },
+        allowed_hosts,
         args.lease_ttl_ms,
     )
     .await?;

@@ -174,6 +174,22 @@ pub enum PgCapError {
     },
 }
 
+/// Why a credential resolution failed. Mirrors the frozen `wamn:node`
+/// `credential-error` (docs/wamn-node.wit, the 5.9 vault) plus the
+/// facade-level `NotGranted`; the node maps these into the error taxonomy
+/// mechanically (unavailable is retryable at the flow level, per the WIT
+/// annotation; not-found is config-shaped and terminal).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CredentialCapError {
+    /// No credential is in this node execution's context — the node declared
+    /// none in the flow (`node.credential`), or the vault refused the grant.
+    NotGranted,
+    /// The declared name is unknown in this project's vault.
+    NotFound,
+    /// The backing secret store is unavailable (retryable at flow level).
+    Unavailable,
+}
+
 /// The runner-implemented capability surface. Every node effect flows through
 /// here — which is what lets the test host swap fixtures for the world and the
 /// policy table refuse what a node type did not declare.
@@ -196,6 +212,19 @@ pub trait NodeCtx {
     /// the runner resolves it from host-injected project config.
     fn raw_sql_enabled(&self) -> bool {
         false
+    }
+
+    /// The secret material of the credential this node DECLARED in the flow
+    /// (`node.credential`, resolved by the vault — 5.9). Deliberately takes no
+    /// name: a node can only read its OWN declared credential, so the secret
+    /// is scoped to the executing node's context STRUCTURALLY (a sibling node
+    /// never observes it). The runner resolves the declared name through the
+    /// frozen `wamn:node` `credentials.get` host import lazily — the secret
+    /// never rides flow data, node config, or [`RunContext`].
+    ///
+    /// Fail-closed default: an implementation without a vault grants nothing.
+    fn credential(&mut self) -> Result<String, CredentialCapError> {
+        Err(CredentialCapError::NotGranted)
     }
 }
 

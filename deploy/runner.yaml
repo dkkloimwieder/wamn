@@ -94,6 +94,16 @@ spec:
           secret:
             secretName: wasmcloud-runtime-tls
             defaultMode: 420
+        # [5.9] The per-project credential vault source (a JSON file
+        # {project: {name: secret}}), from the SEPARATE Secret
+        # (runner-credentials.example.yaml). OPTIONAL: absent Secret = an
+        # empty vault (the run-worker warns and every resolution is
+        # `unavailable`) — a credential-less project deploys cleanly.
+        - name: credentials
+          secret:
+            secretName: wamn-runner-credentials
+            optional: true
+            defaultMode: 420
       containers:
         - name: runner
           image: wamn-host:dev
@@ -112,9 +122,16 @@ spec:
                 secretKeyRef:
                   name: wamn-runner-db
                   key: url
+            # [5.9] The vault reads the mounted credentials file; missing file
+            # (optional Secret absent) = empty vault, warned at startup.
+            - name: WAMN_CREDENTIALS_FILE
+              value: /etc/wamn/credentials/credentials.json
           volumeMounts:
             - name: runtime-cert
               mountPath: /runtime-cert
+              readOnly: true
+            - name: credentials
+              mountPath: /etc/wamn/credentials
               readOnly: true
           args:
             - "--log-level"
@@ -126,6 +143,11 @@ spec:
             - "demo-tenant"
             - "--schema"
             - "wamn_runner_demo"
+            # [5.9] Outbound egress allowlist (EMPTY = deny-all, fail-closed).
+            # serve-echo is the demo notify target the credproof gate drives;
+            # real per-project entries land with fqg.11/provisioning.
+            - "--allowed-hosts"
+            - "serve-echo:8091"
             - "--nats-url"
             - "nats://nats.wamn-system.svc.cluster.local:4222"
             - "--nats-tls-ca"

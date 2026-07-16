@@ -48,12 +48,30 @@ fn vendored_wit_copies_match_the_frozen_contract() {
         );
     }
 
+    // The 5.9 credentials copies (the caps-node bindings world + the
+    // flowrunner component): a SECOND trim — just the vault interface — that
+    // must stay byte-identical to each other and in-order within the contract.
+    let cred_paths = [
+        "../wamn-node-guest/wit-caps/deps/wamn-node/package.wit",
+        "../../components/flowrunner/wit/deps/wamn-node/package.wit",
+    ];
+    let cred_first = fs::read_to_string(root().join(cred_paths[0])).expect("cred copy reads");
+    for p in &cred_paths[1..] {
+        let other = fs::read_to_string(root().join(p)).expect("cred copy reads");
+        assert_eq!(
+            cred_first, other,
+            "credentials copies diverged: {p} != {}",
+            cred_paths[0]
+        );
+    }
+
     let mut copies: Vec<(&str, String)> = vec![(
         "crates/wamn-host/wit/deps/wamn-node/package.wit",
         fs::read_to_string(root().join("../wamn-host/wit/deps/wamn-node/package.wit"))
             .expect("host copy reads"),
     )];
     copies.push((trimmed_paths[0], first));
+    copies.push((cred_paths[0], cred_first));
 
     for (name, copy) in &copies {
         let mut docs_iter = docs_lines.iter();
@@ -131,5 +149,18 @@ fn sdk_mirrors_the_frozen_wit() {
         "data: option<json>,",
     ] {
         assert!(has(l), "error-detail field line missing: {l:?}");
+    }
+
+    // credentials (ctx.rs CredentialCapError + NodeCtx::credential — the 5.9
+    // vault; the SDK facade is deliberately no-arg over the DECLARED name,
+    // while the WIT `get` carries the handle across the component boundary).
+    for l in [
+        "interface credentials {",
+        "variant credential-error {",
+        "not-granted,",
+        "not-found,",
+        "get: func(handle: string) -> result<string, credential-error>;",
+    ] {
+        assert!(has(l), "credentials line missing: {l:?}");
     }
 }

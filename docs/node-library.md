@@ -53,7 +53,7 @@ note-9b refinement if profiles ever demand it.
 |---|---|---|---|
 | `transform` | — | `{"expression"}` | the expression's result on `main` |
 | `conditional` | — | `{"expression"}` | input unchanged on `"true"`/`"false"` by JMESPath truthiness (`0` is truthy; `[]`/`""`/`{}`/`null`/`false` falsy) |
-| `http-request` | `HttpEgress` | `{"method"?, "url" (templated), "headers"? (values templated), "body"? (jmespath; null ⇒ no body, else JSON)}` | `{"status", "headers", "body"}` on `main` |
+| `http-request` | `HttpEgress` | `{"method"?, "url" (templated), "headers"? (values templated), "body"? (jmespath; null ⇒ no body, else JSON), "credential-header"? (the header the node's DECLARED credential rides — 5.9 vault, default `authorization`; explicit config header wins)}` | `{"status", "headers", "body"}` on `main` |
 | `postgres` | `Postgres` | `{"entity", "op": create\|get\|update\|delete\|list, "id"? (jmespath, default `id`), "body"? (jmespath, default `@`; managed `id`/`tenant_id` stripped), "filters"?/"sort"?/"limit"?/"offset"?}` | the row / row array / `{"deleted", "id"}` |
 | `postgres-query` | `Postgres` + `RawSql` | `{"sql", "params"?: [jmespath per `$n`], "mode": query\|execute}` | `{"rows": [...]}` / `{"rows-affected": n}` |
 | `respond` | — | `{"status"?}` | input unchanged on `main`; the DRIVER answers with it, reading the status via the pure `respond::status_for` |

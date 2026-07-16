@@ -12,8 +12,8 @@
 //!    fail with `NotGranted` at the facade.
 
 use wamn_node_sdk::{
-    Capability, ErrorDetail, HttpCapError, HttpRequest, HttpResponse, NodeCtx, NodeError,
-    PgCapError, PgRows, PgValue,
+    Capability, CredentialCapError, ErrorDetail, HttpCapError, HttpRequest, HttpResponse, NodeCtx,
+    NodeError, PgCapError, PgRows, PgValue,
 };
 
 /// The default grant set a runner extends to standard-library dispatches.
@@ -108,6 +108,14 @@ impl NodeCtx for GatedCtx<'_> {
     fn raw_sql_enabled(&self) -> bool {
         self.inner.raw_sql_enabled()
     }
+
+    fn credential(&mut self) -> Result<String, CredentialCapError> {
+        // Not a Capability row: the grant is the flow-level declaration
+        // (`node.credential`, validated at 5.1) enforced by the runner's
+        // per-dispatch scoping — a node that declared none gets `NotGranted`
+        // from the facade itself. Pass through, like `raw_sql_enabled`.
+        self.inner.credential()
+    }
 }
 
 #[cfg(test)]
@@ -145,6 +153,9 @@ mod tests {
         }
         fn raw_sql_enabled(&self) -> bool {
             self.raw_flag
+        }
+        fn credential(&mut self) -> Result<String, CredentialCapError> {
+            Ok("open-secret".into())
         }
     }
 
@@ -191,6 +202,20 @@ mod tests {
         assert!(gated.raw_sql_enabled(), "flag is a passthrough, not a gate");
         assert_eq!(inner.http_hits, 1);
         assert_eq!(inner.pg_hits, 2);
+    }
+
+    /// `credential()` passes through the gate unconditionally — the grant is
+    /// the flow-level declaration enforced by the runner's per-dispatch
+    /// scoping, not a Capability row. A gated ctx must not mask the vault
+    /// behind the fail-closed trait default.
+    #[test]
+    fn gated_ctx_passes_credential_through_to_the_runner_facade() {
+        let mut inner = Open::default();
+        let mut gated = GatedCtx {
+            inner: &mut inner,
+            allowed: &[],
+        };
+        assert_eq!(gated.credential(), Ok("open-secret".into()));
     }
 
     /// The grant check names the D8 flag when the missing capability is RawSql.

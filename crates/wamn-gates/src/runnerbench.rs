@@ -252,10 +252,25 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         .await?;
 
         // Build the PRODUCTION runner struct (not a gate-local worker): this is the
-        // exact instantiate + claim loop the `run-worker` binary runs.
-        let mut worker =
-            RunWorker::instantiate(&engine, &guest, plugin.clone(), OWNER, TENANT, Some(SCHEMA), 30_000)
-                .await?;
+        // exact instantiate + claim loop the `run-worker` binary runs. The vault
+        // is EMPTY (no fixture here declares a credential; credproof gates the
+        // vault path) but must be present — the guest imports it unconditionally.
+        let vault = Arc::new(wamn_host::plugins::wamn_credentials::WamnCredentials::empty());
+        let mut worker = RunWorker::instantiate(
+            &engine,
+            &guest,
+            plugin.clone(),
+            vault,
+            wamn_host::run_worker::RunnerIdentity {
+                owner: OWNER,
+                tenant: TENANT,
+                schema: Some(SCHEMA),
+                project: "default",
+            },
+            std::sync::Arc::from([]), // no egress fixtures: deny-all
+            30_000,
+        )
+        .await?;
 
         let queued = format!("SELECT count(*) FROM {SCHEMA}.run_queue");
         let completed =

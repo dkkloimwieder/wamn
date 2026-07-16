@@ -25,8 +25,8 @@ mod ctx;
 mod error;
 
 pub use ctx::{
-    Capability, HttpCapError, HttpRequest, HttpResponse, NodeCtx, PgCapError, PgRows, PgValue,
-    RunContext,
+    Capability, CredentialCapError, HttpCapError, HttpRequest, HttpResponse, NodeCtx, PgCapError,
+    PgRows, PgValue, RunContext,
 };
 pub use error::{ErrorDetail, NodeError, RateLimitDetail};
 

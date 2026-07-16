@@ -42,8 +42,14 @@ pub struct ServeEchoArgs {
 
 /// A tiny HTTP/1.1 server (the `serve-node` hand-rolled pattern) that answers
 /// every request 200 with `{"traceparent": <received|null>, "tracestate":
-/// <received|null>}`. It reflects exactly the trace headers it was sent, so the
-/// proof can read what the host injected onto the relay's outbound call.
+/// <received|null>, "authorization-fnv1a": <hex-digest|null>}`. It reflects
+/// exactly the trace headers it was sent — so traceproof can read what the
+/// host injected onto the relay's outbound call — plus a ONE-WAY FNV-1a
+/// digest of the `authorization` header, which credproof (5.9) uses as the
+/// delivery witness for a vault-resolved credential. A digest (never the raw
+/// value) keeps the secret out of the flow's recorded payloads, so the
+/// credproof containment scan can be TOTAL — the secret must appear in no
+/// recorded row at all.
 pub async fn serve_echo(args: ServeEchoArgs) -> anyhow::Result<()> {
     let listener = TcpListener::bind(("0.0.0.0", args.port)).await?;
     println!(
@@ -69,7 +75,14 @@ async fn echo_connection(sock: TcpStream) -> anyhow::Result<()> {
         };
         let tp = header_of(&headers, "traceparent");
         let ts = header_of(&headers, "tracestate");
-        let body = serde_json::json!({ "traceparent": tp, "tracestate": ts }).to_string();
+        let auth_digest = header_of(&headers, "authorization")
+            .map(|a| format!("{:016x}", fnv1a_64(a.as_bytes())));
+        let body = serde_json::json!({
+            "traceparent": tp,
+            "tracestate": ts,
+            "authorization-fnv1a": auth_digest,
+        })
+        .to_string();
         let resp = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
             body.len(),
@@ -100,6 +113,18 @@ async fn read_request_head(
         }
         lines.push(trimmed);
     }
+}
+
+/// FNV-1a 64 (the house inline digest): the one-way witness serve-echo
+/// reflects for a received `authorization` header — proves the exact value
+/// arrived without echoing the secret back into recorded payloads.
+pub(crate) fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
 
 /// Case-insensitive header lookup over `Name: value` lines.
