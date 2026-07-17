@@ -76,6 +76,21 @@ Engine support pulled in only as a rung needs it: `wamn-1d4` (5.11 ordering),
   the execution ladder matures)
 - `wamn-jn6` — 9.8 metric set (also unblocks the deferred `q3n.12`)
 
+## Event-plane program (D19 candidate — measurement interleaves, overhaul sequenced)
+
+`docs/event-plane-jetstream.md` (v2.1) + the D19 decision-table row. The ladder stays
+primary; **no parallel overhaul of the dispatch machinery the ladder stands on.**
+
+- **Interleave OK (bounded bench work, measures existing mechanics):** C7 queuebench
+  ceiling mode + C2 outbox-trigger overhead (C2's GC sub-measure after `wamn-d8v`).
+  These retire folklore D3 already depends on — worth it regardless of D19's outcome.
+- **After (or alongside late ladder rungs):** C1 retained-events knee → **D19 decision
+  checkpoint**. JetStream build-out (Phases A–C) only past the checkpoint or on an
+  external driver (design partner fan-out/replay; high-rate ingest — MQTT de-scoped
+  2026-07-17, assume HTTP).
+- Prerequisites either branch: `wamn-d8v` (outbox GC), R6 decision (`wamn-1d4` — 5.11
+  needs it anyway), 5.10 scope change noted on `wamn-sdp`.
+
 ## Parked (demoted to P3)
 
 - **UI:** 3.3 designer (`wamn-ivi`), 5.8 flow editor (`wamn-8wg`), E6 frontend
@@ -87,8 +102,13 @@ Engine support pulled in only as a rung needs it: `wamn-1d4` (5.11 ordering),
 
 ## Suggested first picks
 
-~~`fqg.8` → ladder rungs~~ (done) → **`fqg.11`** (unparks F3 with `fqg.12`) → `POC-F3` /
-`POC-F4` → `4.4` hot-reload → (parallel) `2ib`.
+~~`fqg.8` → ladder rungs~~ (done) → **`fqg.11`** (unparks F3 with `fqg.12`) →
+**`1d4` R6 decision** (decide `blocking` now, while it's a decision not a rework — F4 is
+its first consumer, and it's load-bearing for the event plane too) → **`d8v` GC half**
+(small janitor-colocated pruner; F4's live outbox traffic needs it, and it unblocks
+`z7b.2`) → `POC-F3` / `POC-F4` → `4.4` hot-reload → (parallel) `2ib`.
+Bench days when convenient: `z7b.1` (C7) / `z7b.2` (C2) — measurement-only, safe to
+interleave. C1 + the D19 checkpoint (`z7b.3`/`z7b.4`) after F4.
 
 ## bd encoding
 
