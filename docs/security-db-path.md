@@ -200,6 +200,47 @@ of the settable GUC — so a guest `SET app.tenant` is inert. That work
 `wamn-1nd`, and **raw-SQL / custom-node enablement is gated behind it**. Until
 then the tenant claim is trusted only on the parameterized standard-node path.
 
+## Build-time DDL expression splicing (wamn-cjv.5)
+
+A sibling of the in-band claim vector, one layer up: two **author-supplied**
+expression fields are spliced verbatim into DDL that the migration/copy drivers
+apply through `batch_execute` (the simple protocol, which honours multiple
+`;`-separated statements) — a catalog `Constraint::Check`
+(`ADD CONSTRAINT … CHECK (<expr>)`, 3.2 `emit.rs`) and an RLS `RolePredicate`
+(`… OR (<expr>)`, 3.5 `wamn-rls/compile.rs`). Validation previously checked only
+non-emptiness, so a `Check` expression such as
+`1=1); DROP TABLE app_system.users; --` closed the wrapping paren early and
+chained arbitrary statements at **migration-role** privilege (blast radius = the
+migrate connection's grants, which reach `app_system`/`wamn_run` in the same DB).
+Not reachable on shipped default paths — catalog/policy authorship is trusted
+platform code today — but it goes live the moment a multi-author flow or a
+self-serve schema editor lets an untrusted author supply a `Check` or
+`RolePredicate` expression.
+
+**Shipped guard (cjv.5).** The authored expression **fragment** is validated at
+design time, before emission, by `wamn_catalog::unsafe_expression_reason` — a
+literal-aware lexical scan that rejects a top-level statement terminator,
+unbalanced parentheses, or a comment-open (`--` / `/*`), plus dollar-quoting and
+stray backslashes. A single boolean expression never legitimately contains any of
+these, and a `;` inside a string/identifier literal (`note <> 'a;b'`) stays legal.
+The guard fires from the two pure validators (`wamn-catalog` for `Check`,
+`wamn-rls` for `RolePredicate`), and `compile()`/`migrate()` validate first — so
+every consumer (migrate, copy, publish, dm1, poc) is covered and a rejected
+expression never reaches Postgres. Critically the guard targets the *fragment*,
+not the assembled `Operation.sql`: the 3.2/3.5 emitters deliberately pack several
+`;`-separated statements into one op, so a blanket "no `;` in op.sql" rule would
+break legitimate DDL.
+
+**Limitation — defense-in-depth, not the structural close.** Raw dynamic SQL
+(`DO` / `EXECUTE`) inside an expression could still build a chaining payload at
+runtime that a lexical scan cannot see (the fragment guard rejects `$`/`\` to
+blunt this, but does not parse SQL). The structural close is fix part 2 —
+applying migrations under a **least-privileged DDL/migrate role** with no
+`app_system`/`wamn_run` grants (a build-time mirror of `wamn-1nd`), so a chained
+statement cannot reach those tables regardless. That role work touches
+provisioning and both exec paths (migrate + copy) and is deferred to its own bead
+(an AR1 prerequisite for the multi-author-authorship future).
+
 ## Scope
 
 2.6 is the **DB-path** egress specifically. Out of scope, tracked elsewhere:
@@ -221,5 +262,12 @@ then the tenant claim is trusted only on the parameterized standard-node path.
   `statement_mutates_session` in `wamn_postgres.rs`; gate
   `crates/wamn-gates/src/pgbench.rs` (`--mode attack`) + pgprobe ops 7/8/9;
   structural close deferred to `wamn-1nd`.
+- Expression-chaining guard (cjv.5): `wamn_catalog::unsafe_expression_reason`
+  (`crates/wamn-catalog/src/validate.rs`), wired into the `Check` validator
+  (`wamn-catalog`) and the `RolePredicate` validator (`wamn-rls`); splice sites
+  `wamn-ddl/src/emit.rs` + `wamn-rls/src/compile.rs`; exec paths
+  `migrate_catalog.rs` + `copy_project_env.rs`; live proof
+  `crates/wamn-ddl/tests/ddl.rs::chaining_check_expression_never_reaches_postgres`;
+  least-privileged migrate role deferred to its own bead.
 - HTTP egress chokepoint: memory `wamn-s6-testhost-facts` (egress spy).
 - Gate: `crates/wamn-host/src/egressbench.rs`.

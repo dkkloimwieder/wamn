@@ -58,7 +58,7 @@ carries a `note` saying so.
 |---|---|
 | **RowOwnership** { entity, owner-field, exempt-roles } | `AS RESTRICTIVE FOR ALL`: `owner = app.user_id::uuid`, OR'd with an exempt-role check. The owner field must be uuid / reference. |
 | **RoleCommands** { entity, grants: [{command, roles}] } | one `AS RESTRICTIVE FOR <command>` per grant, gating on `app.role IN (roles)`. `USING` for SELECT/UPDATE/DELETE, `WITH CHECK` for INSERT/UPDATE. |
-| **RolePredicate** { entity, role, command, expression } | `AS RESTRICTIVE FOR <command>`: `app.role <> '<role>' OR (<expression>)` — constrains only that role; the expression is emitted **verbatim** (author owns its SQL). |
+| **RolePredicate** { entity, role, command, expression } | `AS RESTRICTIVE FOR <command>`: `app.role <> '<role>' OR (<expression>)` — constrains only that role; the expression is emitted **verbatim** (the author owns its *logic*, but a statement-chaining fragment is rejected at validate time — see below). |
 
 Reads (`SELECT`) stay open within the tenant floor unless a rule targets them, so
 absent claims still allow tenant-scoped reads while denying gated writes.
@@ -79,6 +79,17 @@ fields are uuid-typed, roles/expressions non-empty, names unique), returning
 `CompileError::InvalidPolicy` rather than emitting unsafe SQL. Output is a 3.2
 `MigrationPlan`, so all creation is additive and needs no confirmation — the note
 conveys that a new restriction can still deny access until claims flow.
+
+**RolePredicate expression safety (cjv.5).** A `RolePredicate` expression is
+spliced verbatim into `… OR (<expression>)` and applied through the simple
+protocol, so a fragment like `true); DROP TABLE app_system.users; --` would chain
+statements at migration-role privilege. Validation therefore rejects
+(code `unsafe-expression`) any expression that carries a top-level `;`, unbalanced
+parentheses, or a comment-open — the statement-chaining vectors — via the shared
+`wamn_catalog::unsafe_expression_reason` scanner (literal-aware, so a `;` inside a
+string stays legal). The author owns the predicate's *logic*, not the right to
+append statements; the mirror guard on catalog `Check` expressions lives in 3.2
+(`docs/ddl-compiler.md`).
 
 ## Storage
 

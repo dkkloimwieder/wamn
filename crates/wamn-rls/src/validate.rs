@@ -3,12 +3,16 @@
 //! Checks that rules resolve — the entity exists, an ownership field exists and
 //! is uuid-typed, roles and expressions are non-empty — reusing the catalog's
 //! [`Issue`] / [`Severity`] shape (3.1). It does **not** parse or evaluate a
-//! custom predicate's SQL: a [`Rule::RolePredicate`] expression is the author's
-//! responsibility (validated non-empty only), matching the escape-hatch intent.
+//! custom predicate's SQL: a [`Rule::RolePredicate`] expression's *logic* is the
+//! author's responsibility (the escape-hatch intent). It does, however, reject an
+//! expression that could **chain statements** when spliced into DDL
+//! (`wamn_catalog::unsafe_expression_reason` — a top-level `;`, unbalanced
+//! parens, a comment-open; review C1-1) — the author owns the predicate's logic,
+//! not the right to append statements.
 
 use std::collections::HashSet;
 
-use wamn_catalog::{Catalog, FieldType, Issue, Severity};
+use wamn_catalog::{Catalog, FieldType, Issue, Severity, unsafe_expression_reason};
 
 use crate::model::{AccessPolicy, CommandGrant, Rule, SCHEMA_VERSION};
 
@@ -136,6 +140,12 @@ pub fn validate(policy: &AccessPolicy, catalog: &Catalog) -> Result<(), Vec<Issu
                         "empty-expression",
                         format!("{path}.expression"),
                         "role predicate has an empty expression",
+                    ));
+                } else if let Some(reason) = unsafe_expression_reason(expression) {
+                    issues.push(error(
+                        "unsafe-expression",
+                        format!("{path}.expression"),
+                        format!("role predicate expression is not a safe boolean expression: it {reason}"),
                     ));
                 }
             }

@@ -94,6 +94,89 @@ fn check_reserved(issues: &mut Vec<Issue>, path: String, kind: &str, name: &str)
     }
 }
 
+/// Why an author-supplied SQL **expression fragment** is unsafe to splice into
+/// DDL, or `None` if it is safe.
+///
+/// A `Check` constraint expression (3.2 `emit.rs`) and an RLS `RolePredicate`
+/// expression (3.5 `wamn-rls`) are spliced **verbatim** into
+/// `ADD CONSTRAINT … CHECK (<expr>)` / `… OR (<expr>)` and applied through
+/// `batch_execute` — the simple protocol, which honours multiple `;`-separated
+/// statements. So an author-controlled fragment like
+/// `1=1); DROP TABLE app_system.users; --` closes the wrapping paren early and
+/// chains arbitrary statements at migration-role privilege (review C1-1, AR1).
+///
+/// A single boolean expression never legitimately contains a top-level statement
+/// terminator, unbalanced parentheses, or a comment-open — those are exactly the
+/// chaining vectors — so we reject them at *validate* time, before emission. The
+/// scan is literal-aware: `'…'` string and `"…"` quoted-identifier literals
+/// (with `''`/`""` doubling) are skipped, so a `;` inside a literal
+/// (`note <> 'a;b'`) stays legal. Dollar-quoting and backslashes outside a
+/// literal are rejected outright (both could smuggle a chaining payload past the
+/// scanner; neither appears in a legitimate boolean expression). The author still
+/// owns the expression's *logic* — this only forbids statement **chaining**.
+pub fn unsafe_expression_reason(expr: &str) -> Option<&'static str> {
+    let bytes = expr.as_bytes();
+    let mut depth: i32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                // Skip a string / quoted-identifier literal; the quote char is
+                // doubled ('' or "") to embed itself.
+                i += 1;
+                loop {
+                    match bytes.get(i) {
+                        None => return Some("unterminated string or quoted-identifier literal"),
+                        Some(&c) if c == quote => {
+                            if bytes.get(i + 1) == Some(&quote) {
+                                i += 2; // an embedded doubled quote
+                                continue;
+                            }
+                            break; // closing quote
+                        }
+                        Some(_) => i += 1,
+                    }
+                }
+            }
+            b';' => return Some("contains a statement terminator ';'"),
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return Some("has unbalanced parentheses (a ')' with no matching '(')");
+                }
+            }
+            b'-' if bytes.get(i + 1) == Some(&b'-') => {
+                return Some("contains a line-comment marker '--'");
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                return Some("contains a block-comment marker '/*'");
+            }
+            b'$' => return Some("contains '$' (dollar-quoting is not permitted)"),
+            b'\\' => return Some("contains a backslash outside a literal"),
+            _ => {}
+        }
+        i += 1;
+    }
+    if depth != 0 {
+        return Some("has unbalanced parentheses (an unclosed '(')");
+    }
+    None
+}
+
+/// Push an `unsafe-<kind>-expression` error if the author-supplied SQL
+/// `expression` could chain statements when spliced into DDL. Only checks
+/// non-empty expressions — an empty expression is reported separately.
+fn check_expression(issues: &mut Vec<Issue>, code: &'static str, path: String, expression: &str) {
+    if let Some(reason) = unsafe_expression_reason(expression) {
+        issues.push(Issue::error(
+            code,
+            path,
+            format!("expression is not a safe boolean expression: it {reason}"),
+        ));
+    }
+}
+
 /// Every issue (errors and warnings) for a catalog, in a stable order.
 pub fn validate(catalog: &Catalog) -> Vec<Issue> {
     let mut issues = Vec::new();
@@ -315,6 +398,13 @@ pub fn validate(catalog: &Catalog) -> Vec<Issue> {
                             format!("{cp}.expression"),
                             format!("check constraint {:?} has an empty expression", c.name()),
                         ));
+                    } else {
+                        check_expression(
+                            &mut issues,
+                            "unsafe-check-expression",
+                            format!("{cp}.expression"),
+                            expression,
+                        );
                     }
                 }
             }
@@ -819,5 +909,80 @@ mod tests {
         c.entities[0].name = "wamning".into();
         assert!(c.is_valid());
         assert!(!codes(&c).contains(&"reserved-name-prefix"));
+    }
+
+    // --- expression-chaining guard (cjv.5 / review C1-1) -------------------
+
+    fn with_check(name: &str, expression: &str) -> Catalog {
+        let mut c = minimal();
+        c.entities[0].constraints.push(Constraint::Check {
+            name: name.into(),
+            expression: expression.into(),
+        });
+        c
+    }
+
+    #[test]
+    fn safe_boolean_expressions_pass_the_chaining_guard() {
+        for expr in [
+            "moisture_max_pct <= 100",
+            "status IN ('a','b')",
+            "site_id = NULLIF(current_setting('app.site',true),'')::uuid",
+            "((a OR b) AND c)",
+            "note <> 'a;b'",       // a ';' inside a string literal stays legal
+            "\"weird col\" > 0",   // a quoted identifier
+            "qty - reserved >= 0", // a lone '-' is subtraction, not a comment
+            "total / 2 > 1",       // a lone '/' is division, not a block comment
+            "label <> 'it''s ok'", // a doubled-quote escape inside a literal
+        ] {
+            assert_eq!(
+                super::unsafe_expression_reason(expr),
+                None,
+                "expected safe: {expr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn statement_chaining_expressions_are_rejected() {
+        for expr in [
+            "1=1); DROP TABLE app_system.users; --", // the C1-1 exploit
+            "x)); DELETE FROM y; SELECT (1",
+            "a; b",              // a bare statement terminator
+            "a = 1 -- trailing", // a line comment
+            "a = 1 /* block */", // a block comment
+            "a) OR (1=1",        // transiently negative but net-balanced (paren escape)
+            "a)",                // unbalanced: a ')' with no '('
+            "(a",                // unbalanced: an unclosed '('
+            "a = $$x$$",         // dollar-quoting
+            "a = 'x' \\g",       // a backslash outside a literal
+        ] {
+            assert!(
+                super::unsafe_expression_reason(expr).is_some(),
+                "expected unsafe: {expr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn check_constraint_rejects_a_chaining_expression() {
+        let c = with_check("ck", "1=1); DROP TABLE app_system.users; --");
+        assert!(codes(&c).contains(&"unsafe-check-expression"));
+        assert!(!c.is_valid());
+    }
+
+    #[test]
+    fn check_constraint_accepts_a_safe_expression() {
+        let c = with_check("ck", "label <> 'a;b'");
+        assert!(c.is_valid(), "issues: {:?}", c.issues());
+        assert!(!codes(&c).contains(&"unsafe-check-expression"));
+    }
+
+    #[test]
+    fn empty_check_expression_reports_empty_not_unsafe() {
+        let c = with_check("ck", "   ");
+        let found = codes(&c);
+        assert!(found.contains(&"empty-check-expression"));
+        assert!(!found.contains(&"unsafe-check-expression"));
     }
 }

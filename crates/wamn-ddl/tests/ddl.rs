@@ -2241,3 +2241,151 @@ fn outbox_triggers_fire_on_postgres() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+// --- expression-chaining guard (cjv.5 / review C1-1) -----------------------
+
+/// A single-entity catalog whose only constraint is a `Check` carrying `expr`.
+fn check_catalog(name: &str, expr: &str) -> Catalog {
+    let mut e = entity(name, name, vec![text_field("code")]);
+    e.fields.push(Field {
+        id: "qty".into(),
+        name: "qty".into(),
+        field_type: FieldType::Int,
+        nullable: false,
+        default: None,
+        sensitive: false,
+        is_system: false,
+        label: None,
+        description: None,
+    });
+    e.constraints.push(Constraint::Check {
+        name: format!("{name}_ck"),
+        expression: expr.into(),
+    });
+    mini(1, vec![e])
+}
+
+fn run_psql(url: &str, script: &str) -> std::process::Output {
+    let mut child = Command::new("psql")
+        .arg(url)
+        .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn psql (is it installed?)");
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// `Migration::create`/`migrate` call `check()` → `catalog.validate()` first, so
+/// a `Check` expression that could chain statements is rejected before any SQL
+/// is emitted — it never reaches the exec path.
+#[test]
+fn check_constraint_with_a_chaining_expression_is_rejected_before_emission() {
+    let cat = check_catalog("gizmo", "1=1); DROP TABLE app_system.users; --");
+    match Migration::create(&cat) {
+        Err(CompileError::InvalidCatalog(issues)) => assert!(
+            issues.iter().any(|i| i.code == "unsafe-check-expression"),
+            "expected unsafe-check-expression, got {issues:?}"
+        ),
+        other => panic!("expected InvalidCatalog(unsafe-check-expression), got {other:?}"),
+    }
+}
+
+/// The guard passes a legitimate `Check` expression through to a working
+/// `ADD CONSTRAINT … CHECK (…)` — it forbids statement chaining, not the
+/// expression's logic.
+#[test]
+fn a_legitimate_check_constraint_still_compiles() {
+    let plan =
+        Migration::create(&check_catalog("gizmo", "qty >= 0")).expect("a safe Check compiles");
+    let sql = plan.sql(Confirmation::None).unwrap();
+    assert!(
+        sql.contains("ADD CONSTRAINT \"gizmo_ck\" CHECK (qty >= 0)"),
+        "emitted SQL missing the Check constraint:\n{sql}"
+    );
+}
+
+/// Live proof (gated on `WAMN_DDL_PG_URL`): a legitimate `Check` applies, and a
+/// chaining `Check` is rejected at compile time so its `DROP` never reaches
+/// Postgres. Were the guard neutered, `Migration::create` would return `Ok`, the
+/// emitted plan would chain the `DROP`, and this test applies it to demonstrate
+/// the danger and fail loudly. Skips cleanly when the env var is unset.
+#[test]
+fn chaining_check_expression_never_reaches_postgres() {
+    let Ok(url) = std::env::var("WAMN_DDL_PG_URL") else {
+        eprintln!(
+            "skipping chaining_check_expression_never_reaches_postgres (set WAMN_DDL_PG_URL to run)"
+        );
+        return;
+    };
+    const SCHEMA: &str = "wamn_ddl_expr_guard_test";
+
+    // Provision role + a fresh schema + the sentinel table the exploit targets,
+    // then apply a legitimate Check (proving the guard does not over-reject).
+    let mut setup = String::from(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
+         BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n",
+    );
+    setup.push_str(&format!(
+        "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;\n\
+         CREATE SCHEMA {SCHEMA} AUTHORIZATION CURRENT_USER;\n\
+         GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_app;\n\
+         SET search_path TO {SCHEMA};\n\
+         CREATE TABLE guard_sentinel (id int);\n\
+         INSERT INTO guard_sentinel VALUES (1);\n"
+    ));
+    let safe = Migration::create(&check_catalog("part", "qty >= 0")).expect("safe Check compiles");
+    setup.push_str(&safe.sql(Confirmation::None).unwrap());
+    let out = run_psql(&url, &setup);
+    assert!(
+        out.status.success(),
+        "setup psql failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The chaining Check is rejected before emission; a neutered guard is caught
+    // by applying the emitted plan (which chains a DROP) and failing.
+    let malicious = check_catalog("gizmo", "1=1); DROP TABLE guard_sentinel; --");
+    match Migration::create(&malicious) {
+        Err(CompileError::InvalidCatalog(issues)) => assert!(
+            issues.iter().any(|i| i.code == "unsafe-check-expression"),
+            "expected unsafe-check-expression, got {issues:?}"
+        ),
+        Ok(plan) => {
+            let sql = plan.sql(Confirmation::None).unwrap();
+            let _ = run_psql(&url, &format!("SET search_path TO {SCHEMA};\n{sql}"));
+            panic!(
+                "guard did not reject the chaining Check; the emitted plan chains a DROP:\n{sql}"
+            );
+        }
+        other => panic!("unexpected compile result: {other:?}"),
+    }
+
+    // The sentinel is untouched: the DROP never reached Postgres. (If it had, the
+    // SELECT would error under ON_ERROR_STOP.)
+    let verify = format!(
+        "SET search_path TO {SCHEMA};\n\
+         SELECT 'SENTINEL_COUNT=' || count(*) FROM guard_sentinel;\n\
+         DROP SCHEMA {SCHEMA} CASCADE;\n"
+    );
+    let out = run_psql(&url, &verify);
+    assert!(
+        out.status.success(),
+        "verify psql failed (the sentinel may have been dropped):\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("SENTINEL_COUNT=1"),
+        "sentinel row missing — the chained DROP must have run:\n{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}

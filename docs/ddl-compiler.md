@@ -127,6 +127,26 @@ The check rides `column_clause`, so it covers both `CREATE TABLE` and
 `CHECK`. This is defense-in-depth with the gateway edge rejection, and it
 backstops a seed (3.6) that carried an infinite timestamp.
 
+**Author-supplied `Check` expressions — trust boundary + chaining guard
+(cjv.5).** A catalog `Constraint::Check` carries an author-supplied expression
+that is emitted **verbatim** inside `ADD CONSTRAINT "<name>" CHECK (<expression>)`
+and applied through the migration driver's `batch_execute` (the simple protocol,
+which honours multiple `;`-separated statements). Catalog authorship is therefore
+**trusted to the migration-role level**: whoever writes a catalog can, in
+principle, influence the DDL that runs at migration privilege. As a
+defense-in-depth guard against statement *chaining* (e.g. an expression like
+`1=1); DROP TABLE app_system.users; --` that closes the wrapping paren early),
+validation (3.1 `wamn_catalog::unsafe_expression_reason`) rejects at design time
+any expression fragment containing a top-level statement terminator, unbalanced
+parentheses, or a comment-open — none of which a single boolean expression ever
+legitimately contains (string / quoted-identifier literals are skipped, so a `;`
+inside `note <> 'a;b'` stays legal). `Migration::create`/`migrate` run
+`catalog.validate()` first, so a rejected expression never reaches emission. The
+author still owns the expression's *logic*; the guard only forbids chaining. The
+complementary structural control — applying migrations under a least-privileged
+DDL/migrate role with no `app_system`/`wamn_run` grants (a build-time mirror of
+`wamn-1nd`) — is deferred to its own bead.
+
 ## Safety classification
 
 | Change | Classification |

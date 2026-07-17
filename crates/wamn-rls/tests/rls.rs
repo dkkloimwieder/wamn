@@ -209,6 +209,26 @@ fn empty_predicate_and_mismatched_catalog_are_rejected() {
 }
 
 #[test]
+fn role_predicate_rejects_a_statement_chaining_expression() {
+    // The predicate is spliced into `… OR (<expr>)`; a fragment that closes its
+    // wrapping paren early and appends a statement must be rejected at validate
+    // time, before compile emits SQL (review C1-1).
+    let p = policy(vec![Rule::RolePredicate {
+        entity: "quality_holds".into(),
+        role: "inspector".into(),
+        command: Command::All,
+        expression: "true); DROP TABLE app_system.users; --".into(),
+        name: None,
+    }]);
+    match compile(&p, &poc()) {
+        Err(CompileError::InvalidPolicy(issues)) => {
+            assert!(issues.iter().any(|i| i.code == "unsafe-expression"));
+        }
+        other => panic!("expected InvalidPolicy, got {other:?}"),
+    }
+}
+
+#[test]
 fn duplicate_explicit_name_and_empty_grant_roles_are_rejected() {
     let p = policy(vec![
         Rule::RolePredicate {

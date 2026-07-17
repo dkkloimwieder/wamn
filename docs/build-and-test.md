@@ -1106,6 +1106,10 @@ cargo test -p wamn-catalog
 cargo clippy -p wamn-catalog --all-targets && cargo fmt -p wamn-catalog --check
 # regenerate the published JSON Schema contract after changing the types:
 cargo run -p wamn-catalog --example print-schema > docs/catalog-model.schema.json
+# cjv.5 expression-chaining guard (unsafe_expression_reason): the Check (here) and
+# RolePredicate (wamn-rls) validators reject a top-level ';', unbalanced parens, or
+# a comment-open. Mutation harness (5 mutants, each fails a named test in
+# wamn-catalog/wamn-rls): scratchpad/mutate_cjv5.py.
 ```
 
 ### [3.2] DDL compiler crate (crates/wamn-ddl)
@@ -1121,6 +1125,10 @@ docker run -d --rm --name wamn-ddl-pg -p 5451:5432 -e POSTGRES_PASSWORD=postgres
   -e POSTGRES_DB=wamn postgres:18
 WAMN_DDL_PG_URL=postgres://postgres:postgres@127.0.0.1:5451/wamn cargo test -p wamn-ddl
 docker stop wamn-ddl-pg
+# The WAMN_DDL_PG_URL run includes the cjv.5 live proof
+# chaining_check_expression_never_reaches_postgres: a chaining Check is rejected at
+# compile time so its DROP never reaches Postgres (a neutered guard would apply it
+# and fail).
 ```
 
 ### [3.4] schema versioning & environments crate (crates/wamn-schema)
