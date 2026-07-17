@@ -17,7 +17,12 @@
 //!     queue, and writes one `sink` row per run;
 //!   * a second seed + drain on the SAME instance drains again (the serve loop
 //!     reuses one instance across many wakes);
-//!   * a drain of an empty queue claims nothing (the idle/backoff path's input).
+//!   * a drain of an empty queue claims nothing (the idle/backoff path's input);
+//!   * ANTI-WEDGE (cjv.4): a never-terminating cyclic flow ends `failed` with
+//!     `fail_kind = 'runaway-budget'` and DEQUEUES, and a run queued behind it
+//!     still drains — the runner is provably not wedged. The phase runs under
+//!     its own wall-clock timeout so a budget-removed mutant FAILS the gate
+//!     instead of hanging it.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,6 +44,24 @@ const TENANT: &str = "runner-tenant";
 const OWNER: &str = "runner-bench";
 /// The seeded flow the claim path drives (read from the recorded `runs` row).
 const FLOW_ID: &str = "poc-receipt";
+/// The cjv.4 anti-wedge fixture: a permitted 2-node cycle with no exit
+/// (`in → a → b → a → …`, pure transform nodes — no DB, no egress), so the
+/// only thing that can end it is the engine's dispatch budget.
+const RUNAWAY_FLOW_ID: &str = "runaway-loop";
+
+fn runaway_flow_json() -> String {
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"{RUNAWAY_FLOW_ID}","version":1,
+            "trigger":{{"type":"manual"}},"entry":"in",
+            "nodes":[
+              {{"id":"in","type":"webhook-in"}},
+              {{"id":"a","type":"transform","config":{{"op":"upper"}}}},
+              {{"id":"b","type":"transform","config":{{"op":"reverse"}}}}
+            ],
+            "edges":[{{"from":"in","to":"a"}},{{"from":"a","to":"b"}},
+                     {{"from":"b","to":"a"}}]}}"#
+    )
+}
 
 #[derive(Debug, Args)]
 pub struct RunnerBenchArgs {
@@ -191,10 +214,14 @@ async fn connect_app(app_url: &str) -> anyhow::Result<(Client, tokio::task::Join
 /// Seed a run the way the DISPATCHER does: the write-ahead `dispatched` row +
 /// the queue row, co-transacted — the exact producer state the runner claims.
 async fn seed_run(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
+    seed_flow_run(client, run_id, FLOW_ID).await
+}
+
+async fn seed_flow_run(client: &mut Client, run_id: &str, flow_id: &str) -> anyhow::Result<()> {
     let tx = client.transaction().await?;
     tx.execute(
         &write_ahead_triggered_run_sql(),
-        &[&run_id, &FLOW_ID, &1i32, &"cron", &"\"receipt\""],
+        &[&run_id, &flow_id, &1i32, &"cron", &"\"receipt\""],
     )
     .await?;
     tx.execute(
@@ -317,7 +344,68 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             r3.found_work()
         );
 
-        anyhow::Ok(drain1 && reuse && empty)
+        // --- (4) ANTI-WEDGE (cjv.4): a runaway cyclic run fails + dequeues and
+        // the run queued behind it still drains — the runner is not wedged. ---
+        wamn_gate_harness::seed_flow_version(
+            &seed_conn,
+            TENANT,
+            RUNAWAY_FLOW_ID,
+            1,
+            true,
+            &runaway_flow_json(),
+            true,
+        )
+        .await?;
+        // The runaway run first (earlier available_at → claimed first), then a
+        // normal run stuck behind it.
+        seed_flow_run(&mut seed_conn, "rw-loop", RUNAWAY_FLOW_ID).await?;
+        seed_run(&mut seed_conn, "rw-after").await?;
+        // The gate's own wall guard: with the engine budget in force the drain
+        // ends in seconds (10k dispatches, DB round trips dominating); a
+        // budget-removed mutant spins forever and FAILS here instead of
+        // hanging the harness.
+        let r4 = tokio::time::timeout(std::time::Duration::from_secs(180), worker.drain())
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "anti-wedge FAIL: drain did not terminate within 180s — the runaway run wedged the runner"
+                )
+            })??;
+        let q4 = count(&seed_conn, &queued).await?;
+        let verdict: (String, Option<String>) = {
+            let row = seed_conn
+                .query_one(
+                    &format!(
+                        "SELECT status, fail_kind FROM {SCHEMA}.runs WHERE run_id = 'rw-loop'"
+                    ),
+                    &[],
+                )
+                .await?;
+            (row.get(0), row.get(1))
+        };
+        let after_done = count(
+            &seed_conn,
+            &format!("SELECT count(*) FROM {SCHEMA}.runs WHERE run_id = 'rw-after' AND status = 'completed'"),
+        )
+        .await?;
+        let runaway = r4.claimed == 2
+            && r4.failed == 1
+            && r4.completed == 1
+            && q4 == 0
+            && verdict.0 == "failed"
+            && verdict.1.as_deref() == Some("runaway-budget")
+            && after_done == 1;
+        println!(
+            "## runaway — claimed {}/2, runaway run = {}/{} (want failed/runaway-budget), \
+             queue drained = {} (rows={q4}), run behind it completed = {} -> {runaway}",
+            r4.claimed,
+            verdict.0,
+            verdict.1.as_deref().unwrap_or("<null>"),
+            q4 == 0,
+            after_done == 1
+        );
+
+        anyhow::Ok(drain1 && reuse && empty && runaway)
     }
     .await;
 

@@ -60,6 +60,11 @@ pub enum FailKind {
     RetryExhausted,
     /// A node returned `invalid-input` (never retried) with no error path.
     InvalidInput,
+    /// The run spent its per-invocation node-execution budget
+    /// ([`Plan::set_dispatch_budget`](crate::Plan::set_dispatch_budget)) — a
+    /// permitted loop that never terminated (cjv.4). Unconditionally terminal:
+    /// never routed to an error path, which could itself be part of the loop.
+    RunawayBudget,
 }
 
 /// The recorded failure of a run.
@@ -100,6 +105,10 @@ pub struct RunState {
     frontier: VecDeque<Token>,
     current: Option<Active>,
     step_seq: u64,
+    /// Live dispatches [`Plan::next`] has handed out for this state — the
+    /// per-invocation counter the dispatch budget (cjv.4) is checked against.
+    /// Reconstruction ([`Plan::resume`]) does not count.
+    dispatched: u64,
     result: Value,
     failure: Option<Failure>,
 }
@@ -115,6 +124,11 @@ impl RunState {
     /// persists (and compares on resume).
     pub fn step_seq(&self) -> u64 {
         self.step_seq
+    }
+    /// Live node executions dispatched for this state this invocation (the
+    /// counter the dispatch budget is checked against; reconstruction exempt).
+    pub fn dispatched(&self) -> u64 {
+        self.dispatched
     }
     /// The payload of the last node that completed successfully (the run result on
     /// completion).
@@ -261,6 +275,7 @@ impl<'f> Plan<'f> {
             frontier,
             current: None,
             step_seq: 0,
+            dispatched: 0,
             result: Value::Null,
             failure: None,
         }
@@ -268,8 +283,19 @@ impl<'f> Plan<'f> {
 
     /// Decide the next [`Step`] from the current state. Promotes the next frontier
     /// token to the active slot when idle; a due active node dispatches, a
-    /// not-yet-due retry waits, an empty frontier completes the run.
+    /// not-yet-due retry waits, an empty frontier completes the run. Each
+    /// dispatch handed out counts against the per-invocation budget
+    /// ([`Plan::set_dispatch_budget`]); once spent, the run fails
+    /// [`FailKind::RunawayBudget`] — the runtime bound that keeps a permitted
+    /// cycle from running forever (cjv.4).
     pub fn next(&self, state: &mut RunState, now_ms: u64) -> Step {
+        self.next_counted(state, now_ms, true)
+    }
+
+    /// `next`, with the dispatch budget optionally exempted — the private
+    /// reconstruction path ([`Plan::resume`]) replays recorded steps without
+    /// counting them, so a resumed run's live walk gets the full budget.
+    fn next_counted(&self, state: &mut RunState, now_ms: u64, count_budget: bool) -> Step {
         if state.status.is_terminal() {
             return Step::Done(state.status);
         }
@@ -290,14 +316,39 @@ impl<'f> Plan<'f> {
                 }
             }
         }
-        let a = state.current.as_ref().expect("current set above");
-        if now_ms < a.retry_until_ms {
-            return Step::Wait {
-                node: a.node.clone(),
-                until_ms: a.retry_until_ms,
-                throttle: a.throttle.clone(),
-            };
+        {
+            let a = state.current.as_ref().expect("current set above");
+            if now_ms < a.retry_until_ms {
+                return Step::Wait {
+                    node: a.node.clone(),
+                    until_ms: a.retry_until_ms,
+                    throttle: a.throttle.clone(),
+                };
+            }
         }
+        if count_budget {
+            if state.dispatched >= self.dispatch_budget {
+                // Deliberately NOT error_or_fail: an error path could itself be
+                // part of the loop, so the budget verdict is unconditionally
+                // terminal.
+                let node = state.current.take().expect("current set above").node;
+                state.status = RunStatus::Failed;
+                state.failure = Some(Failure {
+                    node,
+                    kind: FailKind::RunawayBudget,
+                    detail: ErrorDetail::coded(
+                        "runaway-budget",
+                        format!(
+                            "node-execution budget of {} spent without terminating",
+                            self.dispatch_budget
+                        ),
+                    ),
+                });
+                return Step::Done(RunStatus::Failed);
+            }
+            state.dispatched += 1;
+        }
+        let a = state.current.as_ref().expect("current set above");
         Step::Dispatch(self.build_dispatch(state, a))
     }
 
@@ -476,7 +527,10 @@ impl<'f> Plan<'f> {
     ) -> Result<RunState, ResumeError> {
         let mut state = self.start(run_id, input);
         for rec in completed {
-            match self.next(&mut state, 0) {
+            // Reconstruction is exempt from the dispatch budget: recorded steps
+            // are history, not live work — the resumed walk gets the full
+            // per-invocation budget.
+            match self.next_counted(&mut state, 0, false) {
                 Step::Dispatch(d) => {
                     if d.node != rec.node {
                         return Err(ResumeError::Mismatch {
@@ -532,6 +586,7 @@ impl<'f> Plan<'f> {
             frontier,
             current: None,
             step_seq: 0,
+            dispatched: 0,
             result: Value::Null,
             failure: None,
         })

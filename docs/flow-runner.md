@@ -42,7 +42,23 @@ edges leaving that port.
 - **Fan-out** (several edges from one port) runs sequentially in frontier order
   (true per-node parallelism is 5.11).
 - **Cycles** are permitted by the schema; loop termination is the node/config's
-  concern (the engine does not force acyclicity).
+  concern (the engine does not force acyclicity) — but it is **bounded** by the
+  per-invocation dispatch budget (below), so a loop that never terminates fails
+  instead of running forever.
+
+### Dispatch budget (the runaway bound, cjv.4)
+
+`Plan::next` counts every node execution it hands out (retries included) for
+one `RunState`; once the budget is spent — `Plan::set_dispatch_budget`,
+default `DEFAULT_DISPATCH_BUDGET = 10_000` — the run fails with the terminal
+`FailKind::RunawayBudget`. The verdict is deliberately **not** routed to the
+flow's `error` port (an error path can itself be part of the loop): it is
+unconditionally terminal, so the driver's ordinary `Done(Failed)` handling
+(mark failed + dequeue) frees the runner. Reconstruction (`Plan::resume`) is
+exempt — recorded history never counts, so a parked-and-resumed long run gets
+the full budget for its live walk each invocation. A single node that never
+*returns* is outside the engine's reach (control never comes back); that host
+backstop (epoch deadline) is deferred to wamn-dq5 [5.12].
 
 ## Error taxonomy → runner action (mechanical, no string-matching)
 

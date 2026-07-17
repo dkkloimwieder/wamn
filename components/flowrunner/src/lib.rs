@@ -417,6 +417,7 @@ fn fail_kind_sql(kind: &wamn_runner::FailKind) -> &'static str {
         wamn_runner::FailKind::Terminal => "terminal",
         wamn_runner::FailKind::RetryExhausted => "retry-exhausted",
         wamn_runner::FailKind::InvalidInput => "invalid-input",
+        wamn_runner::FailKind::RunawayBudget => "runaway-budget",
     }
 }
 

@@ -40,7 +40,11 @@ schema. `credential` optionally references a declared `CredentialRef` by name.
 `error` is the reserved **error path** (5.2); node types may define others (a
 `conditional`'s `true`/`false`, an `evaluate`'s `out-of-spec`, …). **Branch** =
 several edges from distinct ports of one node; **merge** = several edges into one
-node. Cycles are allowed (loop/split/merge, 5.3).
+node. Cycles are allowed (loop/split/merge, 5.3) — validation rejects only a
+*self*-loop, never a longer cycle. Termination is bounded at **runtime**, not
+here: the engine's per-invocation dispatch budget (default 10 000 node
+executions, `docs/flow-runner.md` § *Dispatch budget*) fails a loop that never
+terminates with the terminal `runaway-budget` kind (cjv.4).
 
 **Trigger** — a tagged union (`"type"` discriminator):
 - `webhook` `{ sync, path? }` — HTTP; `sync` responds within the request

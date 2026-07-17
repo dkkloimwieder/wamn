@@ -314,6 +314,7 @@ fn status_sql_literals_round_trip() {
     );
     assert_eq!(NodeErrorKind::RateLimited.as_sql(), "rate-limited");
     assert_eq!(FailKind::RetryExhausted.as_sql(), "retry-exhausted");
+    assert_eq!(FailKind::RunawayBudget.as_sql(), "runaway-budget");
 }
 
 #[test]
@@ -329,6 +330,10 @@ fn status_maps_from_the_engine_taxonomy() {
     assert_eq!(
         FailKind::from(wamn_runner::FailKind::InvalidInput),
         FailKind::InvalidInput
+    );
+    assert_eq!(
+        FailKind::from(wamn_runner::FailKind::RunawayBudget),
+        FailKind::RunawayBudget
     );
     let detail = wamn_runner::ErrorDetail::msg("x");
     assert_eq!(

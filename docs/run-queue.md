@@ -268,6 +268,22 @@ every currently-claimable run — each `run-next` claims one and drives it termi
 or parks it, so the claimable set strictly shrinks and the drain terminates), and
 `serve` (drain → wait → repeat).
 
+Drain termination relies on each `run-next` itself terminating. A permitted graph
+**cycle** (loops are a flow feature; only self-loops are rejected at validation)
+could otherwise drive forever inside one `run-next` — renewing its lease per node
+so the janitor/failover never reclaim it, wedging the runner (cjv.4 / review
+C2-1). The bound is the engine's per-invocation **dispatch budget**
+(`wamn_runner::Plan::set_dispatch_budget`, default 10 000 node executions,
+retries included): once spent, the run fails with the terminal
+`runaway-budget` fail kind and **dequeues** through the ordinary
+`outcome = 2` path, freeing the runner. So every claimed run terminates, parks,
+or exhausts its budget — the drain always ends. Reconstruction on a resumed run
+is exempt (recorded history never counts against the live budget). The
+remaining gap — a single node that never returns (infinite compute inside one
+node) — is the run-worker's `set_epoch_deadline(u64::MAX / 2)` backstop
+deliberately deferred to wamn-dq5 [5.12], whose epoch-cancel machinery owns
+trap handling + re-instantiation.
+
 **Single-project** (one Deployment per project — the api-gateway analog,
 `deploy/runner.yaml`): one flowrunner instance whose plugin session carries this
 project's identity. The lease **owner** is per-replica (the pod name via

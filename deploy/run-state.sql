@@ -62,7 +62,7 @@ CREATE TABLE wamn_run.runs (
     idempotency_key text,
     replay_of       text,
     root_run_id     text,
-    fail_kind       text CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input')),
+    fail_kind       text CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input', 'runaway-budget')),
     fail_node       text,
     fail_reason     text,
     created_at      timestamptz NOT NULL DEFAULT now(),

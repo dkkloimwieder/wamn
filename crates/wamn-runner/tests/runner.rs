@@ -715,6 +715,177 @@ fn seed_at_unknown_node_is_rejected() {
     assert_eq!(err, UnknownNode("nope".into()));
 }
 
+// ---- dispatch budget: the runaway-loop runtime bound (cjv.4) --------------
+
+/// A permitted 2-node cycle with no exit: `in → a → b → a → …`. Loops are a
+/// flow feature (only self-loops are rejected), so termination is bounded at
+/// runtime by the dispatch budget, not at validate time.
+fn runaway_cycle() -> Flow {
+    flow(
+        r#"{"schema-version":"0.1","flow-id":"runaway","version":1,
+            "trigger":{"type":"manual"},"entry":"in",
+            "nodes":[{"id":"in","type":"echo"},{"id":"a","type":"echo"},
+                     {"id":"b","type":"echo"}],
+            "edges":[{"from":"in","to":"a"},{"from":"a","to":"b"},
+                     {"from":"b","to":"a"}]}"#,
+    )
+}
+
+/// Drive with a hard iteration ceiling so a budget-removed mutant FAILS the
+/// assert instead of hanging the test binary (the plain `run` helper loops
+/// until terminal, which a runaway mutant never reaches).
+fn run_bounded(plan: &Plan, st: &mut RunState, max_iters: usize) -> (Vec<String>, RunStatus) {
+    let mut dispatched = Vec::new();
+    for _ in 0..max_iters {
+        match plan.next(st, 0) {
+            Step::Done(s) => return (dispatched, s),
+            Step::Wait { .. } => panic!("unexpected wait in a budget test"),
+            Step::Dispatch(d) => {
+                dispatched.push(d.node.clone());
+                plan.apply(st, &d, NodeOutcome::ok(json!("loop")), 0);
+            }
+        }
+    }
+    panic!("no terminal status within {max_iters} iterations — the dispatch budget did not fire");
+}
+
+#[test]
+fn a_runaway_cycle_fails_at_exactly_the_budget() {
+    let f = runaway_cycle();
+    let mut plan = Plan::compile(&f).unwrap();
+    plan.set_dispatch_budget(5);
+    let mut st = plan.start("r1", json!("go"));
+    let (dispatched, status) = run_bounded(&plan, &mut st, 20);
+    // Exactly 5 node executions were allowed, then the run failed terminally.
+    assert_eq!(dispatched.len(), 5);
+    assert_eq!(st.dispatched(), 5);
+    assert_eq!(status, RunStatus::Failed);
+    let failure = st.failure().expect("failure recorded");
+    assert_eq!(failure.kind, FailKind::RunawayBudget);
+    // The failure names the node that would have run next (the 6th execution).
+    assert_eq!(failure.node, "a");
+    assert_eq!(failure.detail.code.as_deref(), Some("runaway-budget"));
+}
+
+#[test]
+fn a_flow_that_uses_exactly_the_budget_completes() {
+    // linear4 dispatches exactly 4 nodes; budget 4 must let it complete (the
+    // budget is "may execute N nodes", not "fails at N").
+    let f = linear4();
+    let mut plan = Plan::compile(&f).unwrap();
+    plan.set_dispatch_budget(4);
+    let mut st = plan.start("r1", json!("go"));
+    let (dispatched, status) = run_bounded(&plan, &mut st, 20);
+    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(dispatched.len(), 4);
+    assert!(st.failure().is_none());
+}
+
+#[test]
+fn retries_count_against_the_budget() {
+    // A node that never stops failing retryable would burn its retry budget —
+    // but with a dispatch budget below the retry allowance, the run fails
+    // RunawayBudget first: every execution (retries included) counts.
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"retryloop","version":1,
+            "trigger":{"type":"manual"},"entry":"x",
+            "nodes":[{"id":"x","type":"echo",
+                      "config":{"retry":{"max-attempts":10,"base-ms":0}}}],
+            "edges":[]}"#,
+    );
+    let mut plan = Plan::compile(&f).unwrap();
+    plan.set_dispatch_budget(3);
+    let mut st = plan.start("r1", json!("go"));
+    let mut executions = 0;
+    let status = loop {
+        if executions > 20 {
+            panic!("budget did not fire");
+        }
+        // Jump the clock past any scheduled backoff so every retry is due.
+        match plan.next(&mut st, u64::MAX / 2) {
+            Step::Done(s) => break s,
+            Step::Wait { .. } => panic!("retry should be due at a huge now"),
+            Step::Dispatch(d) => {
+                executions += 1;
+                plan.apply(
+                    &mut st,
+                    &d,
+                    NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg(
+                        "flaky",
+                    ))),
+                    u64::MAX / 2,
+                );
+            }
+        }
+    };
+    assert_eq!(executions, 3);
+    assert_eq!(status, RunStatus::Failed);
+    assert_eq!(st.failure().unwrap().kind, FailKind::RunawayBudget);
+}
+
+#[test]
+fn reconstruction_is_exempt_from_the_budget() {
+    // 4 recorded steps exceed a budget of 3, but resume folds history without
+    // counting: the resumed live walk (0 outstanding nodes here) completes.
+    let f = linear4();
+    let mut plan = Plan::compile(&f).unwrap();
+    plan.set_dispatch_budget(3);
+    let completed: Vec<Recorded> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|n| Recorded::new(*n, "main", json!({ "at": n })))
+        .collect();
+    let mut st = plan.resume("r1", json!("go"), &completed).unwrap();
+    assert_eq!(st.dispatched(), 0, "folded history must not count");
+    let (dispatched, status) = run_bounded(&plan, &mut st, 10);
+    assert_eq!(status, RunStatus::Completed);
+    assert!(dispatched.is_empty());
+
+    // A partially-recorded resume still gets the FULL budget for live work:
+    // 3 recorded + budget 1 leaves exactly the one outstanding node runnable.
+    let mut plan2 = Plan::compile(&f).unwrap();
+    plan2.set_dispatch_budget(1);
+    let mut st2 = plan2.resume("r2", json!("go"), &completed[..3]).unwrap();
+    let (live, status2) = run_bounded(&plan2, &mut st2, 10);
+    assert_eq!(status2, RunStatus::Completed);
+    assert_eq!(live, ["d"]);
+}
+
+#[test]
+fn the_budget_verdict_is_terminal_even_with_an_error_path() {
+    // The looping node has an error edge to a rescue node — which must NOT
+    // catch the budget verdict (an error path can itself be part of the loop).
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"looped-rescue","version":1,
+            "trigger":{"type":"manual"},"entry":"in",
+            "nodes":[{"id":"in","type":"echo"},{"id":"a","type":"echo"},
+                     {"id":"b","type":"echo"},{"id":"rescue","type":"echo"}],
+            "edges":[{"from":"in","to":"a"},{"from":"a","to":"b"},
+                     {"from":"b","to":"a"},
+                     {"from":"a","from-port":"error","to":"rescue"}]}"#,
+    );
+    let mut plan = Plan::compile(&f).unwrap();
+    plan.set_dispatch_budget(5);
+    let mut st = plan.start("r1", json!("go"));
+    let (dispatched, status) = run_bounded(&plan, &mut st, 20);
+    assert_eq!(status, RunStatus::Failed);
+    assert_eq!(st.failure().unwrap().kind, FailKind::RunawayBudget);
+    // The rescue node never ran: the verdict bypassed the error path.
+    assert!(!dispatched.iter().any(|n| n == "rescue"));
+}
+
+#[test]
+fn the_default_budget_is_generous_but_finite() {
+    let f = runaway_cycle();
+    let plan = Plan::compile(&f).unwrap();
+    assert_eq!(plan.dispatch_budget(), wamn_runner::DEFAULT_DISPATCH_BUDGET);
+    assert_eq!(wamn_runner::DEFAULT_DISPATCH_BUDGET, 10_000);
+    let mut st = plan.start("r1", json!("go"));
+    let (dispatched, status) = run_bounded(&plan, &mut st, 10_100);
+    assert_eq!(status, RunStatus::Failed);
+    assert_eq!(dispatched.len(), 10_000);
+    assert_eq!(st.failure().unwrap().kind, FailKind::RunawayBudget);
+}
+
 // ---------------------------------------------------------------------------
 // SDK contract drift-guards (5.3)
 // ---------------------------------------------------------------------------

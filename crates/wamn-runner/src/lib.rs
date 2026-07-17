@@ -58,6 +58,6 @@ pub use engine::{
     Dispatch, FailKind, Failure, Recorded, ResumeError, RunState, RunStatus, Step, UnknownNode,
 };
 pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
-pub use plan::{EngineError, Plan};
+pub use plan::{DEFAULT_DISPATCH_BUDGET, EngineError, Plan};
 pub use retry::RetryPolicy;
 pub use throttle::{Scheduler, ThrottleKey, ThrottleTable};

@@ -31,6 +31,11 @@ impl std::fmt::Display for EngineError {
 
 impl std::error::Error for EngineError {}
 
+/// Default per-invocation node-execution budget (see
+/// [`Plan::set_dispatch_budget`]): generous for a legitimate loop, but bounds a
+/// permitted cycle that never terminates (cjv.4 / review C2-1).
+pub const DEFAULT_DISPATCH_BUDGET: u64 = 10_000;
+
 /// A validated flow, indexed by node id and by `(from-node, from-port)` for edge
 /// routing. Borrows the flow for its lifetime.
 #[derive(Debug)]
@@ -40,6 +45,9 @@ pub struct Plan<'f> {
     /// All edges leaving a node, grouped by the from-node id (filtered by port at
     /// lookup — a node has only a handful of outgoing edges).
     out: HashMap<&'f str, Vec<&'f Edge>>,
+    /// Max node executions (including retries) `next` hands out per invocation
+    /// before the run fails `RunawayBudget`. See [`Plan::set_dispatch_budget`].
+    pub(crate) dispatch_budget: u64,
 }
 
 impl<'f> Plan<'f> {
@@ -60,7 +68,29 @@ impl<'f> Plan<'f> {
             out.entry(edge.from.as_str()).or_default().push(edge);
         }
 
-        Ok(Plan { flow, by_id, out })
+        Ok(Plan {
+            flow,
+            by_id,
+            out,
+            dispatch_budget: DEFAULT_DISPATCH_BUDGET,
+        })
+    }
+
+    /// Override the per-invocation node-execution budget (cjv.4). Cycles are a
+    /// flow feature, so termination is bounded at runtime instead: once `next`
+    /// has handed out this many dispatches (retries included) for one
+    /// [`RunState`], the run fails with the terminal
+    /// [`FailKind::RunawayBudget`](crate::FailKind::RunawayBudget) — never
+    /// routed to an error path, which could itself be part of the loop.
+    /// Reconstruction ([`Plan::resume`]) is exempt, so a parked-and-resumed
+    /// long run never trips the budget on its recorded history.
+    pub fn set_dispatch_budget(&mut self, budget: u64) {
+        self.dispatch_budget = budget;
+    }
+
+    /// The per-invocation node-execution budget in force.
+    pub fn dispatch_budget(&self) -> u64 {
+        self.dispatch_budget
     }
 
     /// The flow this plan was compiled from.

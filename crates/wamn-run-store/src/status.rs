@@ -76,13 +76,17 @@ pub enum FailKind {
     Terminal,
     RetryExhausted,
     InvalidInput,
+    /// The run spent its per-invocation node-execution budget (cjv.4) — a
+    /// permitted loop that never terminated.
+    RunawayBudget,
 }
 
 impl FailKind {
-    pub const ALL: [FailKind; 3] = [
+    pub const ALL: [FailKind; 4] = [
         FailKind::Terminal,
         FailKind::RetryExhausted,
         FailKind::InvalidInput,
+        FailKind::RunawayBudget,
     ];
 
     pub fn as_sql(self) -> &'static str {
@@ -90,6 +94,7 @@ impl FailKind {
             FailKind::Terminal => "terminal",
             FailKind::RetryExhausted => "retry-exhausted",
             FailKind::InvalidInput => "invalid-input",
+            FailKind::RunawayBudget => "runaway-budget",
         }
     }
 
@@ -104,6 +109,7 @@ impl From<wamn_runner::FailKind> for FailKind {
             wamn_runner::FailKind::Terminal => FailKind::Terminal,
             wamn_runner::FailKind::RetryExhausted => FailKind::RetryExhausted,
             wamn_runner::FailKind::InvalidInput => FailKind::InvalidInput,
+            wamn_runner::FailKind::RunawayBudget => FailKind::RunawayBudget,
         }
     }
 }
