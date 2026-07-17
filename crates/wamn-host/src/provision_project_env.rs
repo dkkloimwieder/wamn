@@ -59,8 +59,9 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub project: String,
 
-    /// Environment slug: any policy in `registry.env_policies` (default `dev` /
-    /// `prod`; `canary`, `staging`, … are addable). Derives the target cluster via
+    /// Environment slug: any policy in the ORG's `registry.env_policies` set
+    /// (stamped from its template — `dev`/`prod`, plus `canary` on the dedicated
+    /// templates; others are addable per org). Derives the target cluster via
     /// `cluster_of` — a dedicated org's `<org>-<owner(env)>`, or the shared pool.
     #[arg(long)]
     pub env: String,
@@ -250,10 +251,14 @@ async fn do_resolve_cluster(
         id: org.to_string(),
         placement,
     };
-    // The env must name a policy (its recovery domain drives the derivation); a
-    // pooled org ignores the policy but the env must still resolve.
-    let policy = read_env_policy(client, env).await?.with_context(|| {
-        format!("env {env:?} names no env policy — add it to registry.env_policies")
+    // The env must name a policy in the ORG's own set (8df.4 — its recovery
+    // domain drives the derivation); a pooled org ignores the policy but the env
+    // must still resolve.
+    let policy = read_env_policy(client, org, env).await?.with_context(|| {
+        format!(
+            "env {env:?} names none of org {org:?}'s env policies — provision-org stamps them \
+             from a template; customize/add rows in registry.env_policies"
+        )
     })?;
     Ok(cluster_of(&org_obj, &policy).name)
 }

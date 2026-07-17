@@ -26,9 +26,9 @@ pub enum RegistryError {
     UnknownProject { org: String, project: String },
     /// No provisioned database for this exact `(org, project, env)`.
     UnknownProjectEnv(Triple),
-    /// The project-env's `env` slug names no [`EnvPolicy`](crate::EnvPolicy) — the
-    /// cluster cannot be derived. A malformed registry (`validate` flags it as
-    /// `unknown-env`).
+    /// The project-env's `env` slug names no [`EnvPolicy`](crate::EnvPolicy) in
+    /// its org's set (policies are org-scoped, wamn-8df.4) — the cluster cannot
+    /// be derived. A malformed registry (`validate` flags it as `unknown-env`).
     UnknownEnvPolicy(String),
 }
 
@@ -93,7 +93,7 @@ impl Registry {
             .project_env(triple)
             .ok_or_else(|| RegistryError::UnknownProjectEnv(triple.clone()))?;
         let policy = self
-            .env_policy(&triple.env)
+            .env_policy(&triple.org, &triple.env)
             .ok_or_else(|| RegistryError::UnknownEnvPolicy(triple.env.to_string()))?;
         Ok(Resolution {
             cluster: cluster_of(org, policy),

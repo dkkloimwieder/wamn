@@ -131,9 +131,9 @@ databases onto the pool via `env.side()` (the wamn-q3n.7 path, now from a
 registered row rather than a hand-inserted one). Conversion to a T2 pair is the
 tier-move (`wamn-q3n.13`); retiring the legacy `postgres.yaml` gate pod is a
 separate concern (`wamn-689`). `docs/provisioning.md`. *(Encoding superseded by
-D18, `wamn-8df.3`: the registration is now `provision-org --placement pooled
---pool wamn-pg` — a `placement_kind='pooled'` row; routing derives via
-`cluster_of`, not `env.side()`.)*
+D18, `wamn-8df.3`/`.4`: the registration is now `provision-org --template trials
+--pool wamn-pg` — a `placement_kind='pooled'` row plus the org's stamped
+`dev`/`prod` policy rows; routing derives via `cluster_of`, not `env.side()`.)*
 
 ### T4 — Dedicated-per-env (the regulated promotion tier)
 Cluster-per-environment for customers whose compliance regime demands maximal

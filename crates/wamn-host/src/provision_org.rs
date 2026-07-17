@@ -1,38 +1,44 @@
-//! The `provision-org` subcommand (wamn-q3n.6, generalized to the D18 model by
-//! wamn-8df.3): render a **dedicated** org's CNPG `Cluster` set — one cluster per
-//! recovery-domain owner env, each sized by its env policy — and record the org's
-//! placement in the T1 control-plane registry.
+//! The `provision-org` subcommand (wamn-q3n.6; D18 model by wamn-8df.3;
+//! template-driven + org-scoped policies by wamn-8df.4): stamp an org from a
+//! named [`Template`] — its placement **and** its own env-policy set in one step
+//! — then render its CNPG `Cluster` set (one cluster per recovery-domain owner,
+//! each sized by the org's policy for that env).
 //!
 //! An imperative CLI (the `provision-project` precedent), run as a Job or from a
 //! runbook. It:
 //!
-//! 1. builds the org's D18 [`Placement`](wamn_registry::Placement) (`pooled` on a
-//!    shared `--pool`, or `dedicated`) and validates the org id + placement by
-//!    running the one-org registry through `wamn-registry`'s validator;
-//! 2. for a `dedicated` org, renders one CNPG `Cluster` CR per distinct
-//!    recovery-domain owner across the env policies ([`wamn_provision::org`]),
-//!    sized by each owner env's policy, and emits them (+ the WAL/PITR
-//!    `ObjectStore` / `ScheduledBackup` CRs) as JSON `List`s — the runbook/Job
-//!    `kubectl apply -f`s them and waits ready;
-//! 3. records the org's placement row in `registry.orgs` in the T1 `wamn_system`
-//!    DB (idempotent upsert, as the `wamn_system` owner) when a system-DB URL is
-//!    given.
+//! 1. looks up the `--template` preset (`trials` / `standard` / `dedicated` —
+//!    the `Tier` successor) and builds the org's [`Placement`](wamn_registry::Placement)
+//!    (`trials` places on the shared `--pool`); validates the org id, placement,
+//!    and stamped policy set by running the one-org registry through
+//!    `wamn-registry`'s validator;
+//! 2. records the org in the T1 `wamn_system` DB (when a system-DB URL is
+//!    given): the placement row (idempotent upsert) plus the template's policy
+//!    rows — **insert-if-absent**, so re-provisioning keeps the org's per-env
+//!    customizations and a richer template only adds missing envs — in one
+//!    transaction, as the `wamn_system` owner;
+//! 3. for a dedicated org, renders one CNPG `Cluster` CR per distinct
+//!    recovery-domain owner across the org's (post-stamp) policies
+//!    ([`wamn_provision::org`]), sized by each owner env's policy, and emits
+//!    them (+ the WAL/PITR `ObjectStore` / `ScheduledBackup` CRs) as JSON
+//!    `List`s — the runbook/Job `kubectl apply -f`s them and waits ready.
 //!
-//! Rendering the CRs and writing the registry row is **all** this tool does — it
-//! does NOT apply the CRs (no K8s client; the runbook does) and does NOT create
-//! per-project-env databases (the CNPG `Database` CRD path is wamn-q3n.7).
+//! Rendering the CRs and writing the registry rows is **all** this tool does —
+//! it does NOT apply the CRs (no K8s client; the runbook does) and does NOT
+//! create per-project-env databases (the CNPG `Database` CRD path is wamn-q3n.7).
 //!
-//! **Cluster sizing (D18, cjv.21):** each cluster is sized by the env policy of its
-//! recovery-domain owner (`instances`/`storage`/`cpu`/`memory`/`image`), and its
-//! WAL/PITR backup (retention window + cadence) reads the same policy. The policies
-//! come from `registry.env_policies` when a system-DB URL is given (so an operator's
-//! added `canary` policy is honored), else the built-in `dev`/`prod` defaults.
+//! **Cluster sizing (D18, cjv.21):** each cluster is sized by the env policy of
+//! its recovery-domain owner (`instances`/`storage`/`cpu`/`memory`/`image`), and
+//! its WAL/PITR backup (retention window + cadence) reads the same policy. The
+//! policies are the ORG'S OWN rows (read back after stamping) when a system-DB
+//! URL is given — so a customized org re-renders with its customizations — else
+//! the template's.
 //!
-//! **Pooled orgs (wamn-q3n.9):** a `pooled` org shares the pre-contract pool
+//! **Pooled orgs (wamn-q3n.9):** a `trials` org shares the pre-contract pool
 //! (`deploy/cnpg-cluster.yaml` `wamn-pg`), so it owns no clusters — there is
-//! nothing to render. `--placement pooled` records **only** the `registry.orgs`
-//! placement row; `.7` `provision-project-env` then reads that placement and
-//! derives the pool cluster via [`cluster_of`](wamn_registry::cluster_of).
+//! nothing to render; only its registry rows are recorded. `.7`
+//! `provision-project-env` then reads that placement and derives the pool
+//! cluster via [`cluster_of`](wamn_registry::cluster_of).
 
 use std::path::PathBuf;
 
@@ -40,20 +46,33 @@ use anyhow::Context as _;
 use clap::{Args, ValueEnum};
 use tokio_postgres::NoTls;
 
-use wamn_registry::{EnvPolicy, Org, Registry, SCHEMA_VERSION};
+use wamn_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
 
 use crate::env_policies::read_env_policies;
 
-/// How `provision-org` places an org (the D18 [`Placement`](wamn_registry::Placement)).
+/// The named org preset `provision-org` stamps (the `Tier` successor —
+/// [`wamn_registry::Template`]).
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum PlacementArg {
-    /// Placed on the shared `--pool` cluster (the pre-contract T3-style pool); owns
-    /// no clusters, only its placement row is recorded. The RLS floor is
-    /// load-bearing there.
-    Pooled,
-    /// Owns one cluster per recovery-domain owner env (`<org>-<owner>`), sized by
-    /// each owner env's policy. Rendered + emitted here.
+pub enum TemplateArg {
+    /// Pre-contract: placed on the shared `--pool` cluster (owns no clusters;
+    /// the RLS floor is load-bearing there); stamps `dev` + `prod`.
+    Trials,
+    /// Standard paying tier: owns per-recovery-domain clusters; stamps `dev` /
+    /// `prod` (own) + `canary` sharing prod's recovery domain (T2).
+    Standard,
+    /// Regulated tier: like standard, but `canary` owns its recovery domain — a
+    /// third cluster (T4).
     Dedicated,
+}
+
+impl TemplateArg {
+    fn template(self) -> Template {
+        match self {
+            TemplateArg::Trials => Template::trials(),
+            TemplateArg::Standard => Template::standard(),
+            TemplateArg::Dedicated => Template::dedicated(),
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -63,24 +82,24 @@ pub struct ProvisionOrgArgs {
     #[arg(long)]
     pub org: String,
 
-    /// Placement: `pooled` (shared `--pool`, record-only) or `dedicated` (owns
-    /// per-recovery-domain clusters, rendered here).
+    /// The template preset to stamp: `trials` (pooled, record-only), `standard`
+    /// (dedicated, canary shared-with prod), or `dedicated` (canary own).
     #[arg(long, value_enum)]
-    pub placement: PlacementArg,
+    pub template: TemplateArg,
 
-    /// The shared pool cluster a `pooled` org is placed on. Ignored for
-    /// `dedicated`. Default: the shipped `wamn-pg` pool.
+    /// The shared pool cluster a `trials` org is placed on. Ignored for
+    /// dedicated templates. Default: the shipped `wamn-pg` pool.
     #[arg(long, default_value = "wamn-pg")]
     pub pool: String,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`), where the org
-    /// row is recorded and the env policies are read (for cluster sizing). Env
-    /// `WAMN_SYSTEM_ADMIN_URL`. Omit to render/plan only (with default policies).
+    /// and its policy rows are recorded and read back (for cluster sizing). Env
+    /// `WAMN_SYSTEM_ADMIN_URL`. Omit to render/plan only (with template policies).
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
     /// Write the rendered `Cluster` CRs (a JSON `List`) here; `-` = stdout
-    /// (default). Empty for a `pooled` org (no owned clusters).
+    /// (default). Empty for a pooled org (no owned clusters).
     #[arg(long)]
     pub emit_clusters: Option<PathBuf>,
 
@@ -97,18 +116,15 @@ pub struct ProvisionOrgArgs {
 }
 
 pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
-    // A pooled org shares the `--pool`; a dedicated org owns per-recovery-domain
-    // clusters derived from its placement + the env policies.
-    let org = match args.placement {
-        PlacementArg::Pooled => Org::pooled(&args.org, &args.pool),
-        PlacementArg::Dedicated => Org::dedicated(&args.org),
-    };
+    // The template stamps the placement + the org's env-policy set in one step.
+    let template = args.template.template();
+    let (org, stamped) = template.stamp(&args.org, &args.pool);
 
-    // Validate the org id (slug / reserved-prefix) + placement by running the
-    // one-org registry through the model's validator.
+    // Validate the org id (slug / reserved-prefix), placement, and the stamped
+    // policy set by running the one-org registry through the model's validator.
     let reg = Registry {
         schema_version: SCHEMA_VERSION.to_string(),
-        env_policies: EnvPolicy::defaults(),
+        env_policies: stamped.clone(),
         orgs: vec![org.clone()],
         projects: Vec::new(),
         project_envs: Vec::new(),
@@ -116,8 +132,9 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     reg.validate()
         .map_err(|issues| anyhow::anyhow!("invalid org: {}", fmt_issues(&issues)))?;
 
-    // Connect to the system DB once (if given) — used both to read the env policies
-    // (cluster sizing) and to record the org row.
+    // Connect to the system DB once (if given) — used to record the org + stamp
+    // its policies, then read the org's (possibly customized) set back for
+    // cluster sizing.
     let client = match &args.system_database_url {
         Some(url) => {
             let (client, conn) = tokio_postgres::connect(url, NoTls)
@@ -128,22 +145,40 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         None => None,
     };
 
-    match args.placement {
-        // Pooled: no cluster set — the org shares the pool. Record placement only.
-        PlacementArg::Pooled => {
+    // Record FIRST (one txn: org row + policy stamps), so the render below reads
+    // the org's post-stamp truth — existing customizations kept (insert-if-
+    // absent), missing template envs added.
+    let policies = match &client {
+        Some((c, _)) => {
+            record_org(c, &org, &stamped).await?;
             println!(
-                "org {id:?} (pooled): placed on the shared pool {pool:?} (owns no clusters)",
+                "recorded org {id:?} (template {tpl:?}) in registry.orgs + {n} env \
+                 policy row(s) stamped insert-if-absent (wamn_system)",
                 id = org.id,
-                pool = args.pool,
+                tpl = template.name,
+                n = stamped.len(),
+            );
+            read_env_policies(c, &org.id).await?
+        }
+        None => {
+            println!("(no --system-database-url: org not recorded; template policies used)");
+            template.policies.clone()
+        }
+    };
+
+    match &org.placement {
+        // Pooled: no cluster set — the org shares the pool.
+        wamn_registry::Placement::Pooled { pool } => {
+            println!(
+                "org {id:?} (template {tpl:?}, pooled): placed on the shared pool {pool:?} \
+                 (owns no clusters)",
+                id = org.id,
+                tpl = template.name,
             );
         }
         // Dedicated: render one cluster per recovery-domain owner, sized by the
-        // owner env's policy, and emit the CRs to apply.
-        PlacementArg::Dedicated => {
-            let policies = match &client {
-                Some((c, _)) => read_env_policies(c).await?,
-                None => EnvPolicy::defaults(),
-            };
+        // org's policy for the owner env, and emit the CRs to apply.
+        wamn_registry::Placement::Dedicated => {
             let set = wamn_provision::org::render_org_cluster_set(&org, &policies)
                 .map_err(|e| anyhow::anyhow!("render org clusters: {e}"))?;
             let names: Vec<String> = set
@@ -152,8 +187,10 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
                 .map(|c| c["metadata"]["name"].as_str().unwrap_or("?").to_string())
                 .collect();
             println!(
-                "org {id:?} (dedicated): {n} cluster(s) [{names}], sized by env policy",
+                "org {id:?} (template {tpl:?}, dedicated): {n} cluster(s) [{names}], \
+                 sized by the org's env policies",
                 id = org.id,
+                tpl = template.name,
                 n = set.clusters.len(),
                 names = names.join(", "),
             );
@@ -175,30 +212,44 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         }
     }
 
-    // Record the org's placement row in the T1 registry (idempotent).
-    match client {
-        Some((c, conn_task)) => {
-            let result = do_record_org(&c, &org).await;
-            drop(c);
-            let _ = conn_task.await;
-            result?;
-            println!("recorded org {:?} in registry.orgs (wamn_system)", org.id);
-        }
-        None => println!("(no --system-database-url: org not recorded)"),
+    if let Some((c, conn_task)) = client {
+        drop(c);
+        let _ = conn_task.await;
     }
 
     Ok(())
 }
 
-/// Upsert the org's placement row into `registry.orgs`. Writes as the
-/// `wamn_system` owner (the registry owner role — the wamn-q3n.3 apply pattern),
-/// then runs the pure [`wamn_registry::sql::upsert_org_sql`] builder. Idempotent +
-/// additive (`ON CONFLICT (id) DO UPDATE`; the shared-cluster guardrail).
-async fn do_record_org(client: &tokio_postgres::Client, org: &Org) -> anyhow::Result<()> {
+/// Record the org (placement upsert) and stamp its template policy rows
+/// (insert-if-absent) in ONE transaction, as the `wamn_system` owner (the
+/// registry owner role — the wamn-q3n.3 apply pattern). A crash mid-stamp rolls
+/// the whole record back; re-running is idempotent (the shared-cluster
+/// guardrail: refresh placement, never clobber a customized policy).
+async fn record_org(
+    client: &tokio_postgres::Client,
+    org: &Org,
+    stamped: &[OrgEnvPolicy],
+) -> anyhow::Result<()> {
     client
-        .batch_execute("SET ROLE wamn_system")
+        .batch_execute("SET ROLE wamn_system; BEGIN")
         .await
-        .context("SET ROLE wamn_system")?;
+        .context("SET ROLE wamn_system + BEGIN")?;
+    let result = record_org_rows(client, org, stamped).await;
+    match result {
+        Ok(()) => client.batch_execute("COMMIT").await.context("COMMIT")?,
+        Err(e) => {
+            let _ = client.batch_execute("ROLLBACK").await;
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+async fn record_org_rows(
+    client: &tokio_postgres::Client,
+    org: &Org,
+    stamped: &[OrgEnvPolicy],
+) -> anyhow::Result<()> {
     let placement_kind = org.placement.kind_str();
     // The pool cluster is set only for a pooled org; NULL for a dedicated org.
     let pool = org.placement.pool();
@@ -209,6 +260,31 @@ async fn do_record_org(client: &tokio_postgres::Client, org: &Org) -> anyhow::Re
         )
         .await
         .context("upsert registry.orgs row")?;
+    for row in stamped {
+        let p: &EnvPolicy = &row.policy;
+        let name = p.name.as_str();
+        let recovery = serde_json::to_string(&p.recovery_domain).context("recovery json")?;
+        client
+            .execute(
+                wamn_registry::sql::stamp_env_policy_sql(),
+                &[
+                    &row.org,
+                    &name,
+                    &recovery,
+                    &p.promotion_rank,
+                    &p.instances,
+                    &p.storage,
+                    &p.cpu,
+                    &p.memory,
+                    &p.image,
+                    &p.backup_cadence,
+                    &p.wal_retention,
+                    &p.hibernation,
+                ],
+            )
+            .await
+            .with_context(|| format!("stamp env policy {name:?}"))?;
+    }
     Ok(())
 }
 
@@ -245,45 +321,83 @@ fn write_json(path: &PathBuf, doc: &serde_json::Value) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    fn one_org_registry(org: Org) -> Registry {
+    fn one_org_registry(template: &Template, org_id: &str) -> Registry {
+        let (org, stamped) = template.stamp(org_id, "wamn-pg");
         Registry {
             schema_version: SCHEMA_VERSION.to_string(),
-            env_policies: EnvPolicy::defaults(),
+            env_policies: stamped,
             orgs: vec![org],
             projects: Vec::new(),
             project_envs: Vec::new(),
         }
     }
 
-    /// A pooled org places on the shared pool (record-only); a dedicated org owns
-    /// per-recovery-domain clusters (rendered from the policies).
+    /// A trials org places on the shared pool (record-only); the dedicated
+    /// templates own per-recovery-domain clusters rendered from their policies —
+    /// `standard`'s canary collapses onto prod (2 clusters), `dedicated`'s canary
+    /// owns its domain (3 clusters). The one-field template difference is the
+    /// whole T2/T4 distinction.
     #[test]
-    fn pooled_records_only_dedicated_renders_clusters() {
-        let pooled = Org::pooled("trialco", "wamn-pg");
+    fn templates_drive_placement_and_cluster_shape() {
+        let (pooled, _) = Template::trials().stamp("trialco", "wamn-pg");
         assert_eq!(pooled.placement.kind_str(), "pooled");
         assert_eq!(pooled.placement.pool(), Some("wamn-pg"));
-        assert!(one_org_registry(pooled.clone()).validate().is_ok());
+        assert!(
+            one_org_registry(&Template::trials(), "trialco")
+                .validate()
+                .is_ok()
+        );
         // A pooled org owns no clusters (the render path errors — record-only).
         assert!(
-            wamn_provision::org::render_org_cluster_set(&pooled, &EnvPolicy::defaults()).is_err()
+            wamn_provision::org::render_org_cluster_set(&pooled, &Template::trials().policies)
+                .is_err()
         );
 
-        let ded = Org::dedicated("acme");
-        assert_eq!(ded.placement.kind_str(), "dedicated");
+        let (std_org, _) = Template::standard().stamp("acme", "wamn-pg");
+        assert_eq!(std_org.placement.kind_str(), "dedicated");
         let set =
-            wamn_provision::org::render_org_cluster_set(&ded, &EnvPolicy::defaults()).unwrap();
-        // Default policy set → two clusters (dev + prod), sized by policy.
-        assert_eq!(set.clusters.len(), 2);
+            wamn_provision::org::render_org_cluster_set(&std_org, &Template::standard().policies)
+                .unwrap();
+        assert_eq!(set.clusters.len(), 2, "standard: canary shares prod (T2)");
+
+        let (ded_org, _) = Template::dedicated().stamp("bigco", "wamn-pg");
+        let set =
+            wamn_provision::org::render_org_cluster_set(&ded_org, &Template::dedicated().policies)
+                .unwrap();
+        assert_eq!(
+            set.clusters.len(),
+            3,
+            "dedicated: canary owns its domain (T4)"
+        );
+        assert!(
+            set.clusters
+                .iter()
+                .any(|c| c["metadata"]["name"] == "bigco-canary")
+        );
+    }
+
+    /// Every shipped template's one-org stamp validates (placement + policy set
+    /// are self-consistent), and the TemplateArg CLI values map onto them.
+    #[test]
+    fn every_template_arg_stamps_a_valid_org() {
+        for (arg, name) in [
+            (TemplateArg::Trials, "trials"),
+            (TemplateArg::Standard, "standard"),
+            (TemplateArg::Dedicated, "dedicated"),
+        ] {
+            let t = arg.template();
+            assert_eq!(t.name, name);
+            let reg = one_org_registry(&t, "acme");
+            assert!(reg.validate().is_ok(), "{name}: {:?}", reg.issues());
+        }
     }
 
     /// The render path emits the Cluster + WAL/PITR CRs wrapped in `List`s (wamn-e1g).
     #[test]
     fn render_path_emits_lists() {
-        let set = wamn_provision::org::render_org_cluster_set(
-            &Org::dedicated("acme"),
-            &EnvPolicy::defaults(),
-        )
-        .unwrap();
+        let (org, _) = Template::standard().stamp("acme", "wamn-pg");
+        let set = wamn_provision::org::render_org_cluster_set(&org, &Template::standard().policies)
+            .unwrap();
         let clusters = k8s_list(&set.clusters);
         assert_eq!(clusters["kind"], "List");
         assert_eq!(clusters["items"][0]["kind"], "Cluster");
@@ -299,12 +413,14 @@ mod tests {
         // The `provision-org` id path runs through the same validator the registry
         // uses, so a reserved-prefix org id is refused before any effect.
         assert!(
-            one_org_registry(Org::dedicated("wamn-corp"))
+            one_org_registry(&Template::standard(), "wamn-corp")
                 .validate()
                 .is_err()
         );
         assert!(
-            one_org_registry(Org::dedicated("Acme")).validate().is_err(),
+            one_org_registry(&Template::standard(), "Acme")
+                .validate()
+                .is_err(),
             "an uppercase id is not a slug"
         );
     }

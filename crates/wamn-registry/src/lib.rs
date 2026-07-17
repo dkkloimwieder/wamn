@@ -17,7 +17,10 @@
 //! The generic deployment model (D18) replaces the closed `Env` / `Tier` enums:
 //! `env` is a validated [`Env`] slug resolving a named [`EnvPolicy`], and an org
 //! carries a minimal [`Placement`] (`pooled` | `dedicated`) from which clusters
-//! derive. The default env set (`dev`, `prod`) is data, not a type.
+//! derive. Policies are **org-scoped** ([`OrgEnvPolicy`], wamn-8df.4): a
+//! [`Template`] preset (`trials` / `standard` / `dedicated` — the `Tier`
+//! successor) stamps an org's placement + initial policy set in one step, and
+//! the org customizes its own rows per-env.
 //!
 //! It is a **pure model** (SR6 rule 1: no DB, clock, or wasm): types +
 //! [`validate`] + [`Registry::from_json`] / [`Registry::to_json`]. The live
@@ -29,12 +32,14 @@
 
 mod resolve;
 pub mod sql;
+mod template;
 mod types;
 mod validate;
 
 pub use resolve::{RegistryError, Resolution};
+pub use template::Template;
 pub use types::{
-    ClusterRef, DEFAULT_PG_IMAGE, Env, EnvPolicy, Org, OrgId, Placement, Project, ProjectEnv,
-    ProjectId, RecoveryDomain, Registry, SCHEMA_VERSION, SecretRef, Triple, cluster_of,
+    ClusterRef, DEFAULT_PG_IMAGE, Env, EnvPolicy, Org, OrgEnvPolicy, OrgId, Placement, Project,
+    ProjectEnv, ProjectId, RecoveryDomain, Registry, SCHEMA_VERSION, SecretRef, Triple, cluster_of,
 };
 pub use validate::{Issue, Severity, validate};

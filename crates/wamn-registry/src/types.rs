@@ -123,8 +123,10 @@ pub enum RecoveryDomain {
 /// A named, self-contained environment policy — the D18 replacement for the
 /// closed `Tier` sizing/backup semantics. The policy `name` **is** the env slug
 /// ([`Env`]); a project-env's `env` both identifies it in the [`Triple`] and
-/// resolves this policy. Standalone (no inheritance) — the template layer that
-/// stamps/parameterizes policies is `wamn-8df.4`.
+/// resolves this policy. Standalone (no inheritance). Policies are **org-scoped**
+/// (wamn-8df.4): each org owns its policy set ([`OrgEnvPolicy`]), stamped from a
+/// [`Template`](crate::Template) and then customized per-env — this value type
+/// stays org-free so templates can carry it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct EnvPolicy {
@@ -216,11 +218,26 @@ impl EnvPolicy {
         }
     }
 
-    /// The two policies seeded now (`dev`, `prod`). `canary` and others are added
-    /// as data, not built in.
+    /// The base `dev` + `prod` policy pair every shipped
+    /// [`Template`](crate::Template) builds on. `canary` and others are added as
+    /// data (template policies or per-org rows), not built in.
     pub fn defaults() -> Vec<EnvPolicy> {
         vec![EnvPolicy::dev(), EnvPolicy::prod()]
     }
+}
+
+/// One org's copy of an [`EnvPolicy`] — the wamn-8df.4 org-scoping. Policies are
+/// per-org rows (PK `(org, name)` in storage): a [`Template`](crate::Template)
+/// stamps an org's initial set at provision time, and the org customizes its own
+/// rows without touching any other org's. The nested shape (org + org-free policy
+/// value) mirrors [`ProjectEnv`]'s triple nesting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct OrgEnvPolicy {
+    /// The org this policy row belongs to.
+    pub org: OrgId,
+    /// The policy value (its `name` is the env slug, unique per org).
+    pub policy: EnvPolicy,
 }
 
 /// How an org's databases are placed — the minimal descriptor replacing the
@@ -392,7 +409,7 @@ pub struct ProjectEnv {
     pub db_secret: SecretRef,
 }
 
-/// The whole control-plane registry: the named [`EnvPolicy`] set plus org /
+/// The whole control-plane registry: the per-org [`OrgEnvPolicy`] rows plus org /
 /// project / project-env membership and placement. Import/export via
 /// [`Registry::from_json`] / [`Registry::to_json`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -400,7 +417,7 @@ pub struct ProjectEnv {
 pub struct Registry {
     pub schema_version: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub env_policies: Vec<EnvPolicy>,
+    pub env_policies: Vec<OrgEnvPolicy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub orgs: Vec<Org>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -421,9 +438,22 @@ impl Registry {
         }
     }
 
-    /// The policy named `name`, if defined.
-    pub fn env_policy(&self, name: &Env) -> Option<&EnvPolicy> {
-        self.env_policies.iter().find(|p| &p.name == name)
+    /// The policy named `name` in org `org`'s set, if defined (policies are
+    /// org-scoped — wamn-8df.4).
+    pub fn env_policy(&self, org: &str, name: &Env) -> Option<&EnvPolicy> {
+        self.env_policies
+            .iter()
+            .find(|p| p.org == org && &p.policy.name == name)
+            .map(|p| &p.policy)
+    }
+
+    /// Org `org`'s whole policy set, in declaration order.
+    pub fn org_env_policies(&self, org: &str) -> Vec<&EnvPolicy> {
+        self.env_policies
+            .iter()
+            .filter(|p| p.org == org)
+            .map(|p| &p.policy)
+            .collect()
     }
 
     /// Parse a registry from JSON (import).
@@ -441,7 +471,8 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClusterRef, Env, EnvPolicy, Org, RecoveryDomain, Registry, SCHEMA_VERSION, cluster_of,
+        ClusterRef, Env, EnvPolicy, Org, OrgEnvPolicy, RecoveryDomain, Registry, SCHEMA_VERSION,
+        cluster_of,
     };
 
     /// `cluster_of` reproduces the shipped naming for a dedicated org: `prod`(own)
@@ -536,12 +567,18 @@ mod tests {
     }
 
     /// A registry round-trips through JSON, and `env` serializes as a bare slug,
-    /// placement as a `{kind, ...}` object.
+    /// placement as a `{kind, ...}` object, policies as per-org rows.
     #[test]
     fn registry_json_round_trips() {
         let reg = Registry {
             schema_version: SCHEMA_VERSION.into(),
-            env_policies: EnvPolicy::defaults(),
+            env_policies: EnvPolicy::defaults()
+                .into_iter()
+                .map(|policy| OrgEnvPolicy {
+                    org: "acme".into(),
+                    policy,
+                })
+                .collect(),
             orgs: vec![Org::pooled("try", "wamn-pg"), Org::dedicated("acme")],
             projects: Vec::new(),
             project_envs: Vec::new(),
@@ -553,9 +590,17 @@ mod tests {
         assert!(json.contains("\"kind\": \"pooled\""));
         assert!(json.contains("\"pool\": \"wamn-pg\""));
         assert!(json.contains("\"kind\": \"dedicated\""));
-        // env-policies use kebab-case wire keys.
+        // env-policies are org-scoped rows with kebab-case wire keys.
         assert!(json.contains("\"env-policies\""));
+        assert!(json.contains("\"org\": \"acme\""));
         assert!(json.contains("\"promotion-rank\""));
+        // Lookups are keyed (org, name); another org has no policy rows.
+        assert_eq!(
+            reg.env_policy("acme", &Env::new("prod")).unwrap().instances,
+            3
+        );
+        assert!(reg.env_policy("try", &Env::new("prod")).is_none());
+        assert_eq!(reg.org_env_policies("acme").len(), 2);
     }
 
     /// `Env` behaves like a slug: Display / `as_str` / `==` against `&str`.

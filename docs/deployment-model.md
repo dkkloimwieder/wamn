@@ -48,6 +48,22 @@ placement, recovery-domain integrity on the in-memory `from_json` path).
 live-apply gate; `provisionbench --mode all` on real Postgres; 5 mutants killed
 (model / validate / renderer / seed-drift / env-FK); clippy + fmt clean.
 
+**Landed — `wamn-8df.4` (templates + org-scoped policies, 2026-07-16):** the
+`Tier` successor. `wamn_registry::Template` — three **code presets** (`trials` =
+pooled dev/prod; `standard` = dedicated, canary shared-with prod (T2);
+`dedicated` = canary own (T4)) — stamps an org's placement **and** its env-policy
+set in one step (`provision-org --template <name>`, replacing `--placement`).
+Policies are **org-scoped** (`OrgEnvPolicy`; storage PK `(org, name)`, cascading
+with the org; `project_envs` FK becomes the composite `(org, env)`), because the
+renderer consumes the whole policy set: under platform-global policies one
+`canary(own)` row would have forced a canary cluster on *every* dedicated org —
+T2 and T4 orgs could not coexist. Stamping is **instantiate-and-own**
+(`stamp_env_policy_sql`, insert-if-absent): an org customizes its own rows
+per-env, customizations survive re-provisioning, and a template edit never
+silently resizes an existing customer. The platform-global `dev`/`prod` seed is
+retired (templates carry the defaults); `provision-org` records-then-reads-back,
+so a customized org re-renders with its customizations. **Completes cjv.21.**
+
 **Landed — `wamn-8df.6` (landing, 2026-07-16):** the in-cluster q3n gate re-run —
 the new `system-schema.sql` DROP+re-applied into `wamn-sysdb` (7 control-plane
 tables, `dev`/`prod` policies seeded); the rebuilt `wamn-gates` image's
@@ -149,14 +165,17 @@ wants canary isolated instead defines/overrides canary with `recovery-domain:
 own`. The T2-vs-T4 canary distinction is now a **one-field policy difference**,
 not two code paths.
 
-Policies are **standalone** (no inheritance) for now. The **template** layer that
-would stamp/parameterize them (a named preset an org instantiates and customizes
-per-env) is `wamn-8df.4` — the real successor to `Tier`.
+Policies are **standalone** (no inheritance). The **template** layer that stamps
+them (a named preset an org instantiates and customizes per-env) shipped with
+`wamn-8df.4` — the real successor to `Tier` (`wamn_registry::Template`; see the
+Status block).
 
-Scope note: policies are platform-global for now (the `recovery-domain` /
-`promotion-rank` / sizing knobs are org-independent; the concrete cluster is
-derived per-org at resolve time — §3). Org-scoped overrides land with templates
-(`.4`).
+Scope note (revised by `.4`): policies are **org-scoped** — each org owns its
+policy rows (`(org, name)`-keyed), stamped from a template at `provision-org`
+time and customized per-env without touching any other org. (The `.2`/.3` interim
+"platform-global for now" stance is retired: the renderer consumes the whole
+policy set, so global policies could not let a T2 org and a T4 org — differing
+only in canary's recovery domain — coexist.)
 
 ### 3. Org placement + cluster derivation (Tier dropped)
 
@@ -296,8 +315,10 @@ insert). `validate()` gains:
   domain** becomes "no two `own`-domain envs collapse to one cluster" — enforced by
   the derivation, and asserted in `validate()` rather than a per-org DB `CHECK`.
 
-DB-side, referential integrity replaces the `CHECK`: `project_envs.env` **FK →
-`env_policies(name)`**. The removed `orgs_*_check` constraints (tier / recovery-
+DB-side, referential integrity replaces the `CHECK`: `project_envs` **FK
+`(org, env)` → `env_policies(org, name)`** (composite since `.4` — policies are
+org-scoped, so another org's policy never satisfies it). The removed
+`orgs_*_check` constraints (tier / recovery-
 domain / canary-biconditional / canary-distinctness) are subsumed by the derivation
 rule + `validate()`. A schema drift-guard pins `env_policies` / the `orgs`
 placement columns against the model (the existing storage-drift-guard pattern),
@@ -307,7 +328,7 @@ replacing the retired `Tier::as_str`/`Env::as_str` literal guards.
 
 `docs/postgres-topology.md`'s T1–T4 topology is **unchanged as deployment reality**;
 only its *encoding* changes. The tiers become **configurations** of the generic
-model — and, with `wamn-8df.4`, named **template presets**:
+model — and, since `wamn-8df.4`, named **template presets**:
 
 | Old tier | Generic-model expression |
 |---|---|
@@ -316,8 +337,9 @@ model — and, with `wamn-8df.4`, named **template presets**:
 | T4 dedicated | `placement_kind: dedicated`; `canary`(own) |
 | T1 system | out of scope — the control-plane cluster, not an org placement |
 
-Templates (`.4`) re-provide "standard" / "dedicated" as one-click presets that
-stamp a placement + an env-policy set; an org then customizes per-env. The
+Templates (`.4`, shipped) re-provide "trials" / "standard" / "dedicated" as
+one-click presets that stamp a placement + an env-policy set
+(`provision-org --template <name>`); an org then customizes per-env. The
 topology doc's tier language stays valid as the name of a preset, not a type.
 
 ## Region (design-for, don't build)
@@ -349,8 +371,9 @@ migration**:
      (env order via `promotion_rank`, not `Env::ALL`), `move-org-tier`, the
      dispatcher, and every drift-guard.
    - Fixes `cjv.20`; largely fixes `cjv.21` (policy-driven cluster sizing).
-2. **`wamn-8df.4`** — templates: named presets (the `Tier` successor) that stamp a
-   placement + env-policy set; org/per-env customization. Completes `cjv.21`.
+2. **`wamn-8df.4`** — **done** — templates: named presets (the `Tier` successor)
+   that stamp a placement + env-policy set; org-scoped policies + per-env
+   customization. Completes `cjv.21`.
 3. **`wamn-8df.5`** — the unified `copy` primitive + quiesce/verify gate; generalize
    `promote` (definition) and dump/restore (data) into it; whole-DB + snapshot now.
    Fixes `cjv.7`; feeds `wamn-2ib`.

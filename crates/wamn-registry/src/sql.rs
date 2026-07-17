@@ -31,31 +31,57 @@ pub fn select_org_placement_sql() -> &'static str {
     "SELECT placement_kind, pool_cluster FROM registry.orgs WHERE id = $1"
 }
 
-// --- env policies (wamn-8df.3) ---------------------------------------------
+// --- env policies (wamn-8df.3; org-scoped by wamn-8df.4) --------------------
 //
-// The named, self-contained [`EnvPolicy`](crate::EnvPolicy) rows (D18): sizing /
-// HA / backup / recovery-domain per env slug. `recovery_domain` is `jsonb`; the
-// reads cast it to `text` so the driver serde-parses it back into
-// `RecoveryDomain`. Seeded by `deploy/system-schema.sql`; columns drift-guarded
-// against the storage DDL. The full row is what `provision-org` sizes clusters
-// from and what `provision-project-env` derives the cluster owner from.
+// The per-org [`EnvPolicy`](crate::EnvPolicy) rows (D18): sizing / HA / backup /
+// recovery-domain per (org, env slug). `recovery_domain` is `jsonb`; the reads
+// cast it to `text` so the driver serde-parses it back into `RecoveryDomain`.
+// Stamped from a [`Template`](crate::Template) at provision-org time (no
+// platform-global seed); columns drift-guarded against the storage DDL. The
+// org's full set is what `provision-org` sizes clusters from and what
+// `provision-project-env` derives the cluster owner from.
 
-/// The `registry.env_policies` column list, in the order both reads return and a
-/// row-mapper reads by index. `recovery_domain` is cast to `text` for serde.
+/// The `registry.env_policies` policy-value column list, in the order both reads
+/// return and a row-mapper reads by index (`org` is the caller's key, not
+/// returned). `recovery_domain` is cast to `text` for serde.
 const ENV_POLICY_COLUMNS: &str = "name, recovery_domain::text, promotion_rank, instances, \
      storage, cpu, memory, image, backup_cadence, wal_retention, hibernation";
 
-/// Select every env policy, ordered by `promotion_rank` (so `provision-org` sees
-/// `dev` before `prod`). Columns: [`ENV_POLICY_COLUMNS`].
+/// Select one org's whole env-policy set, ordered by `promotion_rank` (so
+/// `provision-org` sees `dev` before `prod`). Param: `$1` org id. Columns:
+/// [`ENV_POLICY_COLUMNS`].
 pub fn select_env_policies_sql() -> String {
-    format!("SELECT {ENV_POLICY_COLUMNS} FROM registry.env_policies ORDER BY promotion_rank")
+    format!(
+        "SELECT {ENV_POLICY_COLUMNS} FROM registry.env_policies \
+         WHERE org = $1 ORDER BY promotion_rank"
+    )
 }
 
-/// Select one env policy by name — `provision-project-env` reads it to derive the
-/// project-env's cluster owner (and confirm the env resolves to a policy).
-/// Param: `$1` policy name (the env slug). Columns: [`ENV_POLICY_COLUMNS`].
+/// Select one env policy from an org's set — `provision-project-env` reads it to
+/// derive the project-env's cluster owner (and confirm the env resolves to one of
+/// the org's policies). Params: `$1` org id, `$2` policy name (the env slug).
+/// Columns: [`ENV_POLICY_COLUMNS`].
 pub fn select_env_policy_sql() -> String {
-    format!("SELECT {ENV_POLICY_COLUMNS} FROM registry.env_policies WHERE name = $1")
+    format!(
+        "SELECT {ENV_POLICY_COLUMNS} FROM registry.env_policies \
+         WHERE org = $1 AND name = $2"
+    )
+}
+
+/// Stamp one template policy row into an org's set — **insert-if-absent**
+/// (`ON CONFLICT (org, name) DO NOTHING`), the wamn-8df.4 instantiate-and-own
+/// semantics: re-running `provision-org` keeps an org's per-env customizations
+/// and only adds envs the org is missing; it never clobbers a customized row
+/// back to template values. Params: `$1` org, `$2` name, `$3` recovery_domain
+/// (JSON text, cast `::text::jsonb`), `$4` promotion_rank, `$5` instances, `$6`
+/// storage, `$7` cpu, `$8` memory, `$9` image, `$10` backup_cadence, `$11`
+/// wal_retention, `$12` hibernation.
+pub fn stamp_env_policy_sql() -> &'static str {
+    "INSERT INTO registry.env_policies \
+       (org, name, recovery_domain, promotion_rank, instances, \
+        storage, cpu, memory, image, backup_cadence, wal_retention, hibernation) \
+     VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+     ON CONFLICT (org, name) DO NOTHING"
 }
 
 /// Upsert a project row into `registry.projects` (idempotent). Params: `$1` org,
@@ -246,10 +272,42 @@ mod tests {
             // recovery_domain is jsonb, read as text for serde.
             assert!(sql.contains("recovery_domain::text"));
         }
-        // The full-set read is ordered by promotion_rank (dev before prod).
+        // Policies are org-scoped (8df.4): the set read is keyed by org and
+        // ordered by promotion_rank (dev before prod); the single read by
+        // (org, name) — never cross-org.
+        assert!(all.contains("WHERE org = $1"));
         assert!(all.contains("ORDER BY promotion_rank"));
-        // The single read is keyed by the env slug as a $n param.
-        assert!(one.contains("WHERE name = $1"));
+        assert!(one.contains("WHERE org = $1 AND name = $2"));
+    }
+
+    #[test]
+    fn stamp_env_policy_is_insert_if_absent_keyed_by_org_and_name() {
+        let sql = stamp_env_policy_sql();
+        assert!(sql.contains("INSERT INTO registry.env_policies"));
+        for col in [
+            "org",
+            "name",
+            "recovery_domain",
+            "promotion_rank",
+            "instances",
+            "storage",
+            "cpu",
+            "memory",
+            "image",
+            "backup_cadence",
+            "wal_retention",
+            "hibernation",
+        ] {
+            assert!(sql.contains(col), "missing column {col}");
+        }
+        // Values are $n params; the jsonb travels as text then casts (the
+        // publish-catalog `::text::jsonb` bind lesson).
+        assert!(sql.contains("$3::text::jsonb"));
+        assert!(sql.contains("$12"));
+        // Insert-if-absent: a re-stamp NEVER clobbers an org's customization
+        // (DO NOTHING, not DO UPDATE — the instantiate-and-own semantics).
+        assert!(sql.contains("ON CONFLICT (org, name) DO NOTHING"));
+        assert!(!sql.contains("DO UPDATE"));
     }
 
     #[test]

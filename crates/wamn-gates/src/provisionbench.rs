@@ -43,7 +43,7 @@ use wamn_provision::{
     render_project_env_secret_manifest, secret, sql,
 };
 use wamn_registry::sql as reg_sql;
-use wamn_registry::{Org, Triple};
+use wamn_registry::{Org, OrgEnvPolicy, Template, Triple};
 
 /// The canonical T1 registry DDL (registry + provisioning schemas). Applied into
 /// an ephemeral schema on the throwaway/pool PG for the tier modes' registry +
@@ -267,14 +267,14 @@ struct EnvSpec {
     marker: i32,
 }
 
-/// A **dedicated** org (owns per-recovery-domain clusters) with two project-envs —
-/// `prod` and `dev` — as two per-project-env databases.
+/// A **dedicated** org (the `standard` template: owns per-recovery-domain
+/// clusters, canary shared-with prod) with two project-envs — `prod` and `dev` —
+/// as two per-project-env databases.
 async fn orgpair_mode(admin_url: &str) -> anyhow::Result<()> {
-    let org = Org::dedicated("gate-t2");
     tier_scenario(
         admin_url,
         "dedicated (prod + dev)",
-        &org,
+        &Template::standard().stamp("gate-t2", "wamn-pg"),
         "app",
         &[
             EnvSpec {
@@ -292,13 +292,13 @@ async fn orgpair_mode(admin_url: &str) -> anyhow::Result<()> {
     .await
 }
 
-/// A **pooled** org: every env collapses onto the shared pool cluster.
+/// A **pooled** org (the `trials` template): every env collapses onto the shared
+/// pool cluster.
 async fn t3_mode(admin_url: &str) -> anyhow::Result<()> {
-    let org = Org::pooled("gate-t3", "wamn-pg");
     tier_scenario(
         admin_url,
         "pooled (shared pool)",
-        &org,
+        &Template::trials().stamp("gate-t3", "wamn-pg"),
         "demo",
         &[EnvSpec {
             env: "dev",
@@ -312,16 +312,19 @@ async fn t3_mode(admin_url: &str) -> anyhow::Result<()> {
 
 /// The shared per-tier scenario: provision each project-env database, prove
 /// routing / per-DB isolation / least-priv / Secret layout, record the registry
-/// rows, and land a provisioning saga (create → advance → complete).
+/// rows (org + its template-stamped policies + project-envs), and land a
+/// provisioning saga (create → advance → complete). `stamp` is a template's
+/// [`Template::stamp`] output: the org placement + its policy rows.
 async fn tier_scenario(
     admin_url: &str,
     label: &str,
-    org: &Org,
+    stamp: &(Org, Vec<OrgEnvPolicy>),
     project: &str,
     envs: &[EnvSpec],
     saga_id: &str,
     saga_kind: &str,
 ) -> anyhow::Result<()> {
+    let (org, stamped) = stamp;
     println!(
         "== [wamn-q3n.8] provisionbench {label}: org {}, {} project-env db(s) ==",
         org.id,
@@ -425,8 +428,9 @@ async fn tier_scenario(
     }
     println!("  secret layout: {db0} carries the app-role url + identity triple");
 
-    // 3. Registry rows: the org, its project, and a project-env row per env land
-    //    in the (ephemeral) system DB.
+    // 3. Registry rows: the org, its template-stamped policy set (8df.4 — the
+    //    composite (org, env) FK requires them before any project-env row), its
+    //    project, and a project-env row per env land in the (ephemeral) system DB.
     let (admin, admin_task) = connect(admin_url).await.context("registry connect")?;
     let org_id = org.id.as_str();
     let placement_kind = org.placement.kind_str();
@@ -438,6 +442,31 @@ async fn tier_scenario(
         )
         .await
         .context("upsert org")?;
+    for row in stamped {
+        let p = &row.policy;
+        let name = p.name.as_str();
+        let recovery = serde_json::to_string(&p.recovery_domain).context("recovery json")?;
+        admin
+            .execute(
+                reg_sql::stamp_env_policy_sql(),
+                &[
+                    &row.org,
+                    &name,
+                    &recovery,
+                    &p.promotion_rank,
+                    &p.instances,
+                    &p.storage,
+                    &p.cpu,
+                    &p.memory,
+                    &p.image,
+                    &p.backup_cadence,
+                    &p.wal_retention,
+                    &p.hibernation,
+                ],
+            )
+            .await
+            .with_context(|| format!("stamp env policy {name:?}"))?;
+    }
     admin
         .execute(reg_sql::upsert_project_sql(), &[&org_id, &project])
         .await
@@ -461,6 +490,13 @@ async fn tier_scenario(
         )
         .await?
         .get(0);
+    let policy_rows: i64 = admin
+        .query_one(
+            "SELECT count(*) FROM registry.env_policies WHERE org = $1",
+            &[&org_id],
+        )
+        .await?
+        .get(0);
     let env_rows: i64 = admin
         .query_one(
             "SELECT count(*) FROM registry.project_envs WHERE org = $1 AND project = $2",
@@ -468,13 +504,18 @@ async fn tier_scenario(
         )
         .await?
         .get(0);
-    if org_rows != 1 || env_rows != envs.len() as i64 {
+    if org_rows != 1 || policy_rows != stamped.len() as i64 || env_rows != envs.len() as i64 {
         bail!(
-            "registry rows FAIL: orgs={org_rows} project_envs={env_rows} (want 1 / {})",
+            "registry rows FAIL: orgs={org_rows} env_policies={policy_rows} project_envs={env_rows} \
+             (want 1 / {} / {})",
+            stamped.len(),
             envs.len()
         );
     }
-    println!("  registry: org + project + {env_rows} project-env row(s) recorded in the system DB");
+    println!(
+        "  registry: org + {policy_rows} stamped polic(ies) + project + {env_rows} \
+         project-env row(s) recorded in the system DB"
+    );
 
     // 4. Saga: a provisioning saga for this tier lands (exactly-once), advances one
     //    durable step per env, and reaches `completed`.

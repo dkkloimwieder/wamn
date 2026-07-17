@@ -138,17 +138,21 @@ The gate is **substrate-agnostic** — it needs only a superuser URL — so it r
 locally against a throwaway `postgres:18` (fast iteration) and in-cluster against
 the CNPG cluster (the gate of record).
 
-## `wamn-host provision-org` (wamn-q3n.6, generalized to D18 by wamn-8df.3)
+## `wamn-host provision-org` (wamn-q3n.6; D18 by wamn-8df.3; templates by wamn-8df.4)
 
 The topology (`docs/postgres-topology.md`) splits `provision-project` into
-`provision-org` + `provision-project-env`. **`provision-org`** places an org —
-`--placement pooled` (shared pool, record-only) or `--placement dedicated` — and,
-for a dedicated org, renders its CNPG `Cluster` **set**: one cluster per
-**distinct recovery-domain owner** across the env policies
-(`registry.env_policies`), each named `<org>-<owner>` and **sized by its owner
-env's policy** (`instances` / `storage` / `cpu` / `memory` / `image` — the cjv.21
-fix: sizes are policy-driven, not hard-coded). With the default `dev` / `prod`
-policies:
+`provision-org` + `provision-project-env`. **`provision-org`** stamps an org from
+a named **template** (`--template trials|standard|dedicated` — the `Tier`
+successor, `wamn_registry::Template`): its placement **and** its own env-policy
+set in one step. Policies are **org-scoped** (`registry.env_policies` keyed
+`(org, name)`, no platform-global seed); stamping is **insert-if-absent**, so
+re-provisioning keeps the org's per-env customizations and a richer template only
+adds missing envs. For a dedicated org it then renders the CNPG `Cluster`
+**set**: one cluster per **distinct recovery-domain owner** across the org's
+(post-stamp, read-back) policies, each named `<org>-<owner>` and **sized by its
+owner env's policy** (`instances` / `storage` / `cpu` / `memory` / `image` — the
+cjv.21 fix: sizes are policy-driven, not hard-coded; a customized org re-renders
+with its customizations). With the `dev` / `prod` policies every template stamps:
 
 - **`<org>-prod`** — HA (the `prod` policy's 3 instances), pod anti-affinity
   spread, WAL/PITR backed (the policy's `backup_cadence` / `wal_retention`);
@@ -157,63 +161,71 @@ policies:
   off-hours scheduler flips it `on`), no scheduled backup (its restore path is
   the logical dump).
 
-Adding a `canary` policy **shared-with `prod`** changes nothing here (canary
-co-resides on `<org>-prod` — the old T2 shape); a `canary` policy with its
-**own** recovery domain adds a third cluster `<org>-canary` (the old T4 shape,
-formerly wamn-q3n.14's special case). HA (anti-affinity) keys on
-`instances >= 2`; hibernation on `hibernation: eligible` — both policy knobs.
+The `standard` template also stamps a `canary` policy **shared-with `prod`**
+(canary co-resides on `<org>-prod` — the old T2 shape, still 2 clusters); the
+`dedicated` template stamps `canary` with its **own** recovery domain, adding a
+third cluster `<org>-canary` (the old T4 shape, formerly wamn-q3n.14's special
+case). Because policies are org-scoped, a `standard` org and a `dedicated` org
+**coexist** on one platform — the same `canary` slug derives to a different
+physical cluster per org. HA (anti-affinity) keys on `instances >= 2`;
+hibernation on `hibernation: eligible` — both policy knobs.
 
 All clusters carry `enableSuperuserAccess` (the per-project-env path connects as
 superuser), a non-TLS `pg_hba`, and **no cpu limit** (the S2 CFS lesson). Cluster
 **names** derive from `wamn_registry::cluster_of(org, policy)` — the one rule the
 renderer and `Registry::resolve` share, so a provisioned cluster and a resolved
-triple always agree. The policies come from `registry.env_policies` when a
-system-DB URL is given (an operator-added `canary` policy is honored), else the
-built-in `dev`/`prod` defaults.
+triple always agree. The policies come from the org's `registry.env_policies`
+rows when a system-DB URL is given (recorded + stamped first, then read back —
+customizations honored), else the template's.
 
 | Flag | Purpose |
 |---|---|
 | `--org <id>` | Org id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric). Names the derived `<org>-<owner>` clusters; the reserved `wamn` prefix is rejected. |
-| `--placement pooled\|dedicated` | `pooled`: placed on `--pool`, record-only (owns no clusters). `dedicated`: owns one cluster per recovery-domain owner, rendered here. |
-| `--pool <cluster>` | The shared pool a `pooled` org is placed on. Ignored for `dedicated`. Default `wamn-pg`. |
-| `--system-database-url` / `WAMN_SYSTEM_ADMIN_URL` | Superuser URL to the T1 `wamn_system` DB: read the env policies (cluster sizing) and record the org row. Omit to render/plan only (default policies). |
+| `--template trials\|standard\|dedicated` | The preset to stamp: `trials` = pooled on `--pool`, record-only (owns no clusters); `standard` = dedicated, canary shared-with prod; `dedicated` = canary own. |
+| `--pool <cluster>` | The shared pool a `trials` org is placed on. Ignored for dedicated templates. Default `wamn-pg`. |
+| `--system-database-url` / `WAMN_SYSTEM_ADMIN_URL` | Superuser URL to the T1 `wamn_system` DB: record the org + stamp its policy rows (one txn), then read them back for cluster sizing. Omit to render/plan only (template policies). |
 | `--emit-clusters <path>` | Write the rendered `Cluster` CRs (a JSON `List`; `-` = stdout, the default) — `kubectl apply -f`. Empty for a `pooled` org. |
 | `--emit-object-store` / `--emit-scheduled-backup` `<path>` | The WAL/PITR `ObjectStore` / `ScheduledBackup` CRs (JSON `List`s, wamn-e1g) for the backup-enabled clusters. Apply ObjectStores **before** the clusters, ScheduledBackups **after**. |
 
 ### Pooled orgs (wamn-q3n.9, generalized)
 
-A `pooled` org shares the pre-contract **pool** (`deploy/cnpg-cluster.yaml`
+A `trials` org shares the pre-contract **pool** (`deploy/cnpg-cluster.yaml`
 `wamn-pg` — the T3-style tier, `docs/postgres-topology.md` §T3), so it owns no
-clusters: there is nothing to render. `--placement pooled` builds the org via
-`Org::pooled(id, pool)`, validates it, records **only** the `registry.orgs`
+clusters: there is nothing to render. `--template trials` builds the org via
+`Template::trials().stamp(id, pool)`, validates it, records the `registry.orgs`
 placement row (`placement_kind='pooled'`, `pool_cluster=<pool>` — the same
-idempotent `upsert_org_sql` path), and emits no CRs. `provision-project-env` then
-reads that placement and derives the pool via `cluster_of` — no manual
-`--cluster`. Conversion to a dedicated org is the unified `copy` move
-(`wamn-8df.5`; the retired `move-org-tier` — see below).
+idempotent `upsert_org_sql` path) plus its `dev`/`prod` policy rows, and emits no
+CRs. `provision-project-env` then reads that placement and derives the pool via
+`cluster_of` — no manual `--cluster`. Conversion to a dedicated org is the
+unified `copy` move (`wamn-8df.5`; the retired `move-org-tier` — see below);
+re-running `provision-org --template standard` on the same org flips the
+placement and adds the missing `canary` policy while keeping any customized
+`dev`/`prod` rows.
 
-### Dedicated placement variants (formerly T2/T4)
+### Dedicated templates (formerly T2/T4)
 
-The old tier distinction is now a **policy difference**, not a code path
-(`docs/deployment-model.md`):
+The old tier distinction is now a **one-field policy difference**, not a code
+path (`docs/deployment-model.md`):
 
-| Old tier | D18 expression | Clusters rendered |
-|---|---|---|
-| T2 standard | `dedicated` + `canary` policy shared-with `prod` | `<org>-dev`, `<org>-prod` (canary co-resides on prod) |
-| T4 dedicated | `dedicated` + `canary` policy with `own` recovery domain | + `<org>-canary` — a third recovery domain with independent PITR |
+| Template | Old tier | Canary policy | Clusters rendered |
+|---|---|---|---|
+| `standard` | T2 | shared-with `prod` | `<org>-dev`, `<org>-prod` (canary co-resides on prod) |
+| `dedicated` | T4 | `own` recovery domain | + `<org>-canary` — a third recovery domain with independent PITR |
 
 The wamn-q3n.14 `canary_cluster` column, its two CHECKs, and the
 `Org::cluster_for_env` special case are **retired** — subsumed by
 `recovery_domain` + the `cluster_of` derivation. `provision-project-env --env
-canary` routes to whichever cluster canary's policy derives, with no manual
-`--cluster`.
+canary` routes to whichever cluster the org's own canary policy derives, with no
+manual `--cluster`.
 
 Like `provision-project`, it is a **renderer + DB writer only** — it does NOT
 apply the CRs (the runbook/Job `kubectl apply`s them and waits ready, as the
 Secret pattern) and does NOT create per-project-env databases. The org row is an
-**idempotent upsert** into `registry.orgs` (`ON CONFLICT (id) DO UPDATE`), written
-as the `wamn_system` owner; the builder lives with the registry model
-(`wamn_registry::sql::upsert_org_sql`, SR2 single-source).
+**idempotent upsert** into `registry.orgs` (`ON CONFLICT (id) DO UPDATE`) and the
+policy stamps are **insert-if-absent** (`ON CONFLICT (org, name) DO NOTHING` —
+never clobbering a customization), written in one transaction as the
+`wamn_system` owner; the builders live with the registry model
+(`wamn_registry::sql::{upsert_org_sql, stamp_env_policy_sql}`, SR2 single-source).
 
 **Scope: the cluster SHAPE + the registry row only.** Per-project-env
 database/role creation is `provision-project-env` (wamn-q3n.7). The rework
@@ -378,19 +390,23 @@ the new `Database` CR + registry rows, then drops the created database (the
 `provisionbench` gains `--mode` (the pgbench / queuebench precedent):
 
 - **`legacy`** — the 2.3 two-project flow above, kept as regression.
-- **`orgpair`** — a **dedicated** org (`Org::dedicated`, so `cluster_of` derives
-  `<org>-prod` ≠ `<org>-dev`) with two project-envs (`prod` + `dev`) as two
-  per-project-env databases (`wamn-db-<org>--<project>--<env>`). Off-cluster the
-  CNPG `Database` CRD is unavailable, so the databases are created with plain SQL
-  through the **real** wamn-q3n.7 builders (`ensure_app_role_sql` +
+- **`orgpair`** — a **dedicated** org stamped from the `standard` template
+  (`Template::standard().stamp(…)`, so `cluster_of` derives `<org>-prod` ≠
+  `<org>-dev`) with two project-envs (`prod` + `dev`) as two per-project-env
+  databases (`wamn-db-<org>--<project>--<env>`). Off-cluster the CNPG `Database`
+  CRD is unavailable, so the databases are created with plain SQL through the
+  **real** wamn-q3n.7 builders (`ensure_app_role_sql` +
   `create_database_named_sql` with the per-project-env name +
   `grant_connect_on_database_sql`) — honest superuser scaffolding, the same shape
   the CRD reconciles to. Asserts per-database routing + isolation + least-priv +
-  the per-project-env `Secret` layout, records the D18
-  `registry.orgs`/`projects`/`project_envs` rows (placement + the env FK), and
-  lands a provisioning **saga** (create → step-per-env → complete).
-- **`t3`** — a **pooled** org (every env collapses onto the shared pool) with one
-  project-env; the same per-placement assertions.
+  the per-project-env `Secret` layout, records the D18/8df.4
+  `registry.orgs` row + the org's **template-stamped policy rows** (the composite
+  `(org, env)` FK requires them before any project-env) + `projects` /
+  `project_envs`, and lands a provisioning **saga** (create → step-per-env →
+  complete).
+- **`t3`** — a **pooled** org stamped from the `trials` template (every env
+  collapses onto the shared pool) with one project-env; the same per-placement
+  assertions.
 - **`saga`** — a focused proof of the saga builders: exactly-once create, durable
   step advance, terminal complete + fail.
 - **`all`** — `legacy`, then (over one ephemeral registry schema) `saga`,
@@ -416,7 +432,7 @@ each fail a named unit test + the live proof (the step mutant also fails
 **The physical cross-CLUSTER isolation of a real dedicated org needs the
 operator**, so the in-cluster **gate of record is a live dedicated-org standup**
 (the `.6`/`.7` precedent — the debug binary + `kubectl`, no image rebuild):
-`provision-org --placement dedicated` renders and stands up a real `<org>-prod`
+`provision-org --template standard` renders and stands up a real `<org>-prod`
 (HA) / `<org>-dev` set, then `provision-project-env` derives each env's cluster
 via `cluster_of` and renders a `Database` CR on **each** (the prod env on
 `<org>-prod`, the dev env on `<org>-dev`). It proves each project-env database

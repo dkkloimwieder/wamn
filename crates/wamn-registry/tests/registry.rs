@@ -1,23 +1,21 @@
 //! Integration tests for the control-plane registry model: import/export
 //! round-trip, triple-driven routing, and placement resolution (cluster + Secret
-//! reference), including the D18 recovery-domain cluster derivation.
+//! reference), including the D18 recovery-domain cluster derivation and the
+//! wamn-8df.4 org-scoped policies (templates; T2/T4 coexistence).
 
 use wamn_registry::{
-    ClusterRef, Env, EnvPolicy, Org, Project, ProjectEnv, RecoveryDomain, Registry, RegistryError,
-    SecretRef, Triple,
+    ClusterRef, Org, Project, ProjectEnv, RecoveryDomain, Registry, RegistryError, SecretRef,
+    Template, Triple,
 };
 
-/// A registry with the platform env policies (`dev`, `prod`, `canary` sharing
-/// prod's recovery domain) and a dedicated + a pooled org, each with a project
+/// A registry with a dedicated + a pooled org, each stamped from the `standard`
+/// template (dev/prod own + canary sharing prod's recovery domain) with a project
 /// provisioned across all three envs.
 fn sample() -> Registry {
-    let mut env_policies = EnvPolicy::defaults();
-    env_policies.push(EnvPolicy {
-        name: Env::new("canary"),
-        recovery_domain: RecoveryDomain::SharedWith(Env::new("prod")),
-        promotion_rank: 20,
-        ..EnvPolicy::prod()
-    });
+    let mut env_policies = Vec::new();
+    for org in ["acme", "try"] {
+        env_policies.extend(Template::standard().stamp(org, "wamn-pg").1);
+    }
 
     let mut project_envs = Vec::new();
     for (org, project, secret_prefix) in [("acme", "billing", "acme"), ("try", "demo", "try")] {
@@ -121,8 +119,8 @@ fn resolve_routes_canary_own_to_its_own_cluster() {
     // resolves to its own cluster — distinct from prod.
     let mut r = sample();
     for p in &mut r.env_policies {
-        if p.name == "canary" {
-            p.recovery_domain = RecoveryDomain::Own;
+        if p.org == "acme" && p.policy.name == "canary" {
+            p.policy.recovery_domain = RecoveryDomain::Own;
         }
     }
     let canary = r
@@ -135,6 +133,62 @@ fn resolve_routes_canary_own_to_its_own_cluster() {
     assert_ne!(
         canary.cluster, prod.cluster,
         "an own-domain canary is not prod's cluster"
+    );
+}
+
+#[test]
+fn t2_and_t4_orgs_coexist_via_org_scoped_policies() {
+    // THE wamn-8df.4 headline: one platform holds a `standard` org (canary
+    // shared-with prod) AND a `dedicated` org (canary own) at the same time —
+    // impossible under platform-global policies, where one canary row would have
+    // forced the same shape on every dedicated org.
+    let mut env_policies = Template::standard().stamp("acme", "wamn-pg").1;
+    env_policies.extend(Template::dedicated().stamp("bigco", "wamn-pg").1);
+    let projects = vec![
+        Project {
+            org: "acme".into(),
+            id: "billing".into(),
+        },
+        Project {
+            org: "bigco".into(),
+            id: "ledger".into(),
+        },
+    ];
+    let project_envs = vec![
+        ProjectEnv {
+            triple: Triple::new("acme", "billing", "canary"),
+            db_secret: SecretRef::new("wamn-db-acme-canary"),
+        },
+        ProjectEnv {
+            triple: Triple::new("bigco", "ledger", "canary"),
+            db_secret: SecretRef::new("wamn-db-bigco-canary"),
+        },
+    ];
+    let r = Registry {
+        schema_version: "0.1".into(),
+        env_policies,
+        orgs: vec![Org::dedicated("acme"), Org::dedicated("bigco")],
+        projects,
+        project_envs,
+    };
+    assert!(r.is_valid(), "issues: {:?}", r.issues());
+
+    // The SAME env slug resolves to a different physical shape per org.
+    let acme = r
+        .resolve(&Triple::new("acme", "billing", "canary"))
+        .expect("resolves");
+    assert_eq!(
+        acme.cluster,
+        ClusterRef::new("acme-prod"),
+        "standard: canary co-resides in prod's recovery domain (T2)"
+    );
+    let bigco = r
+        .resolve(&Triple::new("bigco", "ledger", "canary"))
+        .expect("resolves");
+    assert_eq!(
+        bigco.cluster,
+        ClusterRef::new("bigco-canary"),
+        "dedicated: canary owns its recovery domain (T4)"
     );
 }
 

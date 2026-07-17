@@ -181,79 +181,6 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
         )),
     }
 
-    // --- env policies: valid slug names, unique, resolvable recovery domains ---
-    let mut policy_names: HashSet<&str> = HashSet::new();
-    for (i, p) in reg.env_policies.iter().enumerate() {
-        check_env(
-            &mut issues,
-            format!("env-policies[{i}].name"),
-            &p.name,
-            "empty-env-policy-name",
-            "invalid-env-policy-name",
-        );
-        if !p.name.is_empty() && !policy_names.insert(p.name.as_str()) {
-            issues.push(Issue::error(
-                "duplicate-env-policy",
-                format!("env-policies[{i}].name"),
-                format!("env policy {:?} is not unique", p.name),
-            ));
-        }
-    }
-    // A `shared-with` target must name a known policy (referential integrity —
-    // the recovery-domain owner must exist for `cluster_of` to derive a cluster).
-    for (i, p) in reg.env_policies.iter().enumerate() {
-        if let RecoveryDomain::SharedWith(target) = &p.recovery_domain
-            && !policy_names.contains(target.as_str())
-        {
-            issues.push(Issue::error(
-                "unknown-shared-with-target",
-                format!("env-policies[{i}].recovery-domain"),
-                format!(
-                    "env policy {:?} shares the recovery domain of {:?}, which is not a known policy",
-                    p.name, target
-                ),
-            ));
-        }
-    }
-    // No `shared-with` cycle (a functional graph — each policy points at ≤1
-    // target). A cycle has no `own` root, so `cluster_of` would not terminate.
-    let target_of: HashMap<&str, &str> = reg
-        .env_policies
-        .iter()
-        .filter_map(|p| match &p.recovery_domain {
-            RecoveryDomain::SharedWith(t) if policy_names.contains(t.as_str()) => {
-                Some((p.name.as_str(), t.as_str()))
-            }
-            _ => None,
-        })
-        .collect();
-    let mut cycle_members: HashSet<&str> = HashSet::new();
-    for (i, p) in reg.env_policies.iter().enumerate() {
-        if cycle_members.contains(p.name.as_str()) {
-            continue;
-        }
-        let mut path: Vec<&str> = vec![p.name.as_str()];
-        let mut cur = p.name.as_str();
-        while let Some(&next) = target_of.get(cur) {
-            if let Some(pos) = path.iter().position(|&n| n == next) {
-                for &m in &path[pos..] {
-                    cycle_members.insert(m);
-                }
-                issues.push(Issue::error(
-                    "shared-with-cycle",
-                    format!("env-policies[{i}].recovery-domain"),
-                    format!(
-                        "env policy {:?} is in a recovery-domain shared-with cycle",
-                        p.name
-                    ),
-                ));
-                break;
-            }
-            path.push(next);
-            cur = next;
-        }
-    }
-
     // --- orgs: valid ids, unique, valid placement ---------------------------
     let mut org_ids: HashSet<&str> = HashSet::new();
     for (i, o) in reg.orgs.iter().enumerate() {
@@ -282,6 +209,98 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
                 "empty-cluster-name",
                 "invalid-cluster-name",
             );
+        }
+    }
+
+    // --- env policies (org-scoped, wamn-8df.4): valid slug names, unique per
+    // org, known org, resolvable recovery domains within the org's own set ---
+    let mut policy_keys: HashSet<(&str, &str)> = HashSet::new();
+    for (i, p) in reg.env_policies.iter().enumerate() {
+        check_env(
+            &mut issues,
+            format!("env-policies[{i}].policy.name"),
+            &p.policy.name,
+            "empty-env-policy-name",
+            "invalid-env-policy-name",
+        );
+        if !org_ids.contains(p.org.as_str()) {
+            issues.push(Issue::error(
+                "unknown-org",
+                format!("env-policies[{i}].org"),
+                format!("env policy references unknown org {:?}", p.org),
+            ));
+        }
+        if !p.policy.name.is_empty()
+            && !policy_keys.insert((p.org.as_str(), p.policy.name.as_str()))
+        {
+            issues.push(Issue::error(
+                "duplicate-env-policy",
+                format!("env-policies[{i}].policy.name"),
+                format!(
+                    "env policy {:?} is not unique in org {:?}",
+                    p.policy.name, p.org
+                ),
+            ));
+        }
+    }
+    // A `shared-with` target must name a known policy IN THE SAME ORG's set
+    // (referential integrity — the recovery-domain owner must exist for
+    // `cluster_of` to derive a cluster).
+    for (i, p) in reg.env_policies.iter().enumerate() {
+        if let RecoveryDomain::SharedWith(target) = &p.policy.recovery_domain
+            && !policy_keys.contains(&(p.org.as_str(), target.as_str()))
+        {
+            issues.push(Issue::error(
+                "unknown-shared-with-target",
+                format!("env-policies[{i}].policy.recovery-domain"),
+                format!(
+                    "env policy {:?} (org {:?}) shares the recovery domain of {:?}, \
+                     which is not one of that org's policies",
+                    p.policy.name, p.org, target
+                ),
+            ));
+        }
+    }
+    // No `shared-with` cycle within an org (a functional graph per org — each
+    // policy points at ≤1 target). A cycle has no `own` root, so `cluster_of`
+    // would not terminate.
+    let target_of: HashMap<(&str, &str), &str> = reg
+        .env_policies
+        .iter()
+        .filter_map(|p| match &p.policy.recovery_domain {
+            RecoveryDomain::SharedWith(t)
+                if policy_keys.contains(&(p.org.as_str(), t.as_str())) =>
+            {
+                Some(((p.org.as_str(), p.policy.name.as_str()), t.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    let mut cycle_members: HashSet<(&str, &str)> = HashSet::new();
+    for (i, p) in reg.env_policies.iter().enumerate() {
+        let key = (p.org.as_str(), p.policy.name.as_str());
+        if cycle_members.contains(&key) {
+            continue;
+        }
+        let mut path: Vec<&str> = vec![p.policy.name.as_str()];
+        let mut cur = p.policy.name.as_str();
+        while let Some(&next) = target_of.get(&(p.org.as_str(), cur)) {
+            if let Some(pos) = path.iter().position(|&n| n == next) {
+                for &m in &path[pos..] {
+                    cycle_members.insert((p.org.as_str(), m));
+                }
+                issues.push(Issue::error(
+                    "shared-with-cycle",
+                    format!("env-policies[{i}].policy.recovery-domain"),
+                    format!(
+                        "env policy {:?} (org {:?}) is in a recovery-domain shared-with cycle",
+                        p.policy.name, p.org
+                    ),
+                ));
+                break;
+            }
+            path.push(next);
+            cur = next;
         }
     }
 
@@ -326,8 +345,9 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
                 ),
             ));
         }
-        // The env slug must be well-formed AND name a known policy (D18: validity
-        // is "well-formed slug + resolves a policy", replacing the closed CHECK).
+        // The env slug must be well-formed AND name a policy in ITS ORG's set
+        // (D18 + 8df.4: validity is "well-formed slug + resolves the org's
+        // policy", replacing the closed CHECK).
         check_env(
             &mut issues,
             format!("project-envs[{i}].triple.env"),
@@ -335,11 +355,11 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
             "empty-env",
             "invalid-env",
         );
-        if is_slug(&t.env) && !policy_names.contains(t.env.as_str()) {
+        if is_slug(&t.env) && !policy_keys.contains(&(t.org.as_str(), t.env.as_str())) {
             issues.push(Issue::error(
                 "unknown-env",
                 format!("project-envs[{i}].triple.env"),
-                format!("env {:?} names no env policy", t.env),
+                format!("env {:?} names no env policy in org {:?}", t.env, t.org),
             ));
         }
         if !pe_keys.insert((t.org.as_str(), t.project.as_str(), t.env.as_str())) {
@@ -416,15 +436,26 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use crate::types::{
-        Env, EnvPolicy, Org, Project, ProjectEnv, RecoveryDomain, Registry, SecretRef, Triple,
+        Env, EnvPolicy, Org, OrgEnvPolicy, Project, ProjectEnv, RecoveryDomain, Registry,
+        SecretRef, Triple,
     };
 
-    /// A minimal valid registry: the two default policies, one pooled + one
-    /// dedicated org, a project, and a prod env.
+    fn policies_for(org: &str, policies: Vec<EnvPolicy>) -> Vec<OrgEnvPolicy> {
+        policies
+            .into_iter()
+            .map(|policy| OrgEnvPolicy {
+                org: org.into(),
+                policy,
+            })
+            .collect()
+    }
+
+    /// A minimal valid registry: one dedicated org with its stamped default
+    /// policies, one pooled org, a project, and a prod env.
     fn minimal() -> Registry {
         Registry {
             schema_version: "0.1".into(),
-            env_policies: EnvPolicy::defaults(),
+            env_policies: policies_for("acme", EnvPolicy::defaults()),
             orgs: vec![Org::dedicated("acme"), Org::pooled("try", "wamn-pg")],
             projects: vec![Project {
                 org: "acme".into(),
@@ -434,6 +465,19 @@ mod tests {
                 triple: Triple::new("acme", "billing", "prod"),
                 db_secret: SecretRef::new("wamn-db-billing"),
             }],
+        }
+    }
+
+    /// Rename the first org across every row that references it (orgs, projects,
+    /// project-envs, and its policy rows).
+    fn rename_first_org(r: &mut Registry, id: &str) {
+        r.orgs[0].id = id.into();
+        r.projects[0].org = id.into();
+        r.project_envs[0].triple.org = id.into();
+        for p in &mut r.env_policies {
+            if p.org == "acme" {
+                p.org = id.into();
+            }
         }
     }
 
@@ -456,16 +500,12 @@ mod tests {
     #[test]
     fn reserved_wamn_prefix_is_rejected_on_org_and_project_ids() {
         let mut r = minimal();
-        r.orgs[0].id = "wamn-corp".into();
-        r.projects[0].org = "wamn-corp".into();
-        r.project_envs[0].triple.org = "wamn-corp".into();
+        rename_first_org(&mut r, "wamn-corp");
         assert!(codes(&r).contains(&"reserved-org-id"), "{:?}", r.issues());
 
         // Bare `wamn` is reserved too.
         let mut r = minimal();
-        r.orgs[0].id = "wamn".into();
-        r.projects[0].org = "wamn".into();
-        r.project_envs[0].triple.org = "wamn".into();
+        rename_first_org(&mut r, "wamn");
         assert!(codes(&r).contains(&"reserved-org-id"));
 
         // Project id under the reserved prefix.
@@ -476,9 +516,7 @@ mod tests {
 
         // The boundary is a hyphen: `wamning` is a normal id.
         let mut r = minimal();
-        r.orgs[0].id = "wamning".into();
-        r.projects[0].org = "wamning".into();
-        r.project_envs[0].triple.org = "wamning".into();
+        rename_first_org(&mut r, "wamning");
         assert!(r.is_valid(), "{:?}", r.issues());
     }
 
@@ -486,9 +524,7 @@ mod tests {
     fn non_slug_ids_are_invalid() {
         for bad in ["Acme", "under_score", "has.dot", "-lead", "trail-", "a b"] {
             let mut r = minimal();
-            r.orgs[0].id = bad.into();
-            r.projects[0].org = bad.into();
-            r.project_envs[0].triple.org = bad.into();
+            rename_first_org(&mut r, bad);
             assert!(
                 codes(&r).contains(&"invalid-org-id"),
                 "{bad:?} should be invalid"
@@ -562,12 +598,15 @@ mod tests {
         r.project_envs[0].triple.env = Env::new("staging");
         assert!(codes(&r).contains(&"unknown-env"), "{:?}", r.issues());
 
-        // Adding the policy makes it valid.
+        // Adding the policy TO THE ORG's set makes it valid.
         let mut r = minimal();
         r.project_envs[0].triple.env = Env::new("staging");
-        r.env_policies.push(EnvPolicy {
-            name: Env::new("staging"),
-            ..EnvPolicy::dev()
+        r.env_policies.push(OrgEnvPolicy {
+            org: "acme".into(),
+            policy: EnvPolicy {
+                name: Env::new("staging"),
+                ..EnvPolicy::dev()
+            },
         });
         assert!(r.is_valid(), "{:?}", r.issues());
 
@@ -580,15 +619,43 @@ mod tests {
     }
 
     #[test]
+    fn policies_are_org_scoped_not_shared_across_orgs() {
+        // ANOTHER org's policy row does not satisfy this org's project-env: a
+        // 'staging' policy stamped only for 'try' leaves acme's staging unknown
+        // (8df.4 — each org owns its policy set).
+        let mut r = minimal();
+        r.project_envs[0].triple.env = Env::new("staging");
+        r.env_policies.push(OrgEnvPolicy {
+            org: "try".into(),
+            policy: EnvPolicy {
+                name: Env::new("staging"),
+                ..EnvPolicy::dev()
+            },
+        });
+        assert!(codes(&r).contains(&"unknown-env"), "{:?}", r.issues());
+
+        // A policy row under an unregistered org is a referential error.
+        let mut r = minimal();
+        r.env_policies.push(OrgEnvPolicy {
+            org: "ghost".into(),
+            policy: EnvPolicy::dev(),
+        });
+        assert!(codes(&r).contains(&"unknown-org"), "{:?}", r.issues());
+    }
+
+    #[test]
     fn canary_shared_with_prod_is_valid() {
         // The shipped T2 canary: a policy sharing prod's recovery domain, added as
         // data with no enum variant.
         let mut r = minimal();
-        r.env_policies.push(EnvPolicy {
-            name: Env::new("canary"),
-            recovery_domain: RecoveryDomain::SharedWith(Env::new("prod")),
-            promotion_rank: 20,
-            ..EnvPolicy::prod()
+        r.env_policies.push(OrgEnvPolicy {
+            org: "acme".into(),
+            policy: EnvPolicy {
+                name: Env::new("canary"),
+                recovery_domain: RecoveryDomain::SharedWith(Env::new("prod")),
+                promotion_rank: 20,
+                ..EnvPolicy::prod()
+            },
         });
         r.project_envs.push(ProjectEnv {
             triple: Triple::new("acme", "billing", "canary"),
@@ -599,34 +666,51 @@ mod tests {
 
     #[test]
     fn env_policy_integrity_is_enforced() {
-        // Duplicate policy name.
+        // Duplicate policy name within one org.
         let mut r = minimal();
-        r.env_policies.push(EnvPolicy::prod());
+        r.env_policies.push(OrgEnvPolicy {
+            org: "acme".into(),
+            policy: EnvPolicy::prod(),
+        });
         assert!(codes(&r).contains(&"duplicate-env-policy"));
 
-        // shared-with names a policy that doesn't exist.
+        // The SAME policy name in a DIFFERENT org is fine (org-scoped keying).
         let mut r = minimal();
-        r.env_policies.push(EnvPolicy {
-            name: Env::new("canary"),
-            recovery_domain: RecoveryDomain::SharedWith(Env::new("ghost")),
-            ..EnvPolicy::dev()
+        r.env_policies.push(OrgEnvPolicy {
+            org: "try".into(),
+            policy: EnvPolicy::prod(),
+        });
+        assert!(r.is_valid(), "{:?}", r.issues());
+
+        // shared-with names a policy the org doesn't have.
+        let mut r = minimal();
+        r.env_policies.push(OrgEnvPolicy {
+            org: "acme".into(),
+            policy: EnvPolicy {
+                name: Env::new("canary"),
+                recovery_domain: RecoveryDomain::SharedWith(Env::new("ghost")),
+                ..EnvPolicy::dev()
+            },
         });
         assert!(codes(&r).contains(&"unknown-shared-with-target"));
 
-        // A shared-with cycle (a <-> b) has no `own` root.
+        // A shared-with cycle (a <-> b) within an org has no `own` root.
         let mut r = minimal();
-        r.env_policies = vec![
-            EnvPolicy {
-                name: Env::new("a"),
-                recovery_domain: RecoveryDomain::SharedWith(Env::new("b")),
-                ..EnvPolicy::dev()
-            },
-            EnvPolicy {
-                name: Env::new("b"),
-                recovery_domain: RecoveryDomain::SharedWith(Env::new("a")),
-                ..EnvPolicy::dev()
-            },
-        ];
+        r.env_policies = policies_for(
+            "acme",
+            vec![
+                EnvPolicy {
+                    name: Env::new("a"),
+                    recovery_domain: RecoveryDomain::SharedWith(Env::new("b")),
+                    ..EnvPolicy::dev()
+                },
+                EnvPolicy {
+                    name: Env::new("b"),
+                    recovery_domain: RecoveryDomain::SharedWith(Env::new("a")),
+                    ..EnvPolicy::dev()
+                },
+            ],
+        );
         // (drop the project-env whose 'prod' policy no longer exists)
         r.project_envs.clear();
         assert!(codes(&r).contains(&"shared-with-cycle"), "{:?}", r.issues());

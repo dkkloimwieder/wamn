@@ -23,13 +23,17 @@
 -- what .6 provision-org connects as. A superuser driving the apply `SET ROLE
 -- wamn_system` first.
 --
--- THE GENERIC DEPLOYMENT MODEL (D18, docs/deployment-model.md, wamn-8df.3):
--- the closed tier/env CHECK enumerations are RETIRED. `env` is a validated slug
--- resolving a named `registry.env_policies` row (referential integrity — the FK
--- below — replaces the old `env IN ('dev','canary','prod')` CHECK), and an org
--- carries a minimal placement (`pooled` | `dedicated`) from which clusters
--- derive (crates/wamn-registry cluster_of). The default env set (`dev`, `prod`)
--- is DATA seeded here, not a type; `canary` and others are addable policies.
+-- THE GENERIC DEPLOYMENT MODEL (D18, docs/deployment-model.md, wamn-8df.3;
+-- org-scoped policies + templates, wamn-8df.4): the closed tier/env CHECK
+-- enumerations are RETIRED. `env` is a validated slug resolving a
+-- `registry.env_policies` row IN ITS ORG's set (referential integrity — the
+-- composite FK below — replaces the old `env IN ('dev','canary','prod')`
+-- CHECK), and an org carries a minimal placement (`pooled` | `dedicated`) from
+-- which clusters derive (crates/wamn-registry cluster_of). Policies are
+-- PER-ORG rows stamped from a named Template preset (`trials` / `standard` /
+-- `dedicated` — the Tier successor, crates/wamn-registry Template) at
+-- provision-org time; there is NO platform-global policy seed — an org
+-- instantiates a template and then customizes its own rows per-env.
 --
 -- THE FOUR INVARIANTS (docs/postgres-topology.md §T1), and how this schema
 -- encodes / makes each testable:
@@ -103,20 +107,25 @@ CREATE TABLE registry.orgs (
 );
 
 -- ---------------------------------------------------------------------------
--- Env policies (D18, wamn-8df.3) — named, self-contained environment
--- configurations (crates/wamn-registry EnvPolicy). The `name` IS the env slug: a
--- project-env's `env` both identifies it in the triple and (via the FK below)
--- resolves its policy. `recovery_domain` is `jsonb` (`"own"` | `{"shared-with":
--- "<env>"}`) driving the cluster derivation; the rest are the sizing / HA /
--- backup knobs `provision-org` renders each cluster from (fixing cjv.21). Standalone
--- (no inheritance) — the template layer that stamps them is wamn-8df.4.
+-- Env policies (D18, wamn-8df.3; ORG-SCOPED by wamn-8df.4) — each org's own
+-- environment configurations (crates/wamn-registry EnvPolicy, keyed per org as
+-- OrgEnvPolicy). The `name` IS the env slug: a project-env's `env` both
+-- identifies it in the triple and (via the composite FK below) resolves its
+-- policy in ITS ORG's set. `recovery_domain` is `jsonb` (`"own"` |
+-- `{"shared-with": "<env>"}`) driving the cluster derivation; the rest are the
+-- sizing / HA / backup knobs `provision-org` renders each cluster from.
 --
--- SEEDED with the two defaults (`dev`, `prod`). These MUST match the model's
--- EnvPolicy::dev() / prod() (drift-guarded against crates/wamn-registry). `canary`
--- is NOT built in — it is added as a policy (shared-with prod = T2, own = T4).
+-- NO PLATFORM-GLOBAL SEED: rows are STAMPED per org from a Template preset
+-- (`trials` / `standard` / `dedicated`) by provision-org — insert-if-absent
+-- (stamp_env_policy_sql), so an org's per-env customizations survive
+-- re-provisioning and a template edit never silently resizes an existing
+-- customer. Org-scoping is what lets a T2 org (canary shared-with prod) and a
+-- T4 org (canary own) coexist on one platform. Cascades with its org.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.env_policies (
-    name            text PRIMARY KEY,
+    -- the org FK (CASCADE) is added AFTER project_envs below — ordering note there
+    org             text NOT NULL,
+    name            text NOT NULL,
     recovery_domain jsonb NOT NULL,
     promotion_rank  int   NOT NULL,
     instances       int   NOT NULL,
@@ -126,16 +135,9 @@ CREATE TABLE registry.env_policies (
     image           text  NOT NULL,
     backup_cadence  text  NOT NULL DEFAULT '',
     wal_retention   text  NOT NULL DEFAULT '',
-    hibernation     text  NOT NULL DEFAULT 'off'
+    hibernation     text  NOT NULL DEFAULT 'off',
+    PRIMARY KEY (org, name)
 );
-INSERT INTO registry.env_policies
-    (name, recovery_domain, promotion_rank, instances,
-     storage, cpu, memory, image, backup_cadence, wal_retention, hibernation)
-VALUES
-    ('dev',  '"own"'::jsonb, 10, 1,
-     '2Gi', '200m', '256Mi', 'ghcr.io/cloudnative-pg/postgresql:18', '',              '',    'eligible'),
-    ('prod', '"own"'::jsonb, 30, 3,
-     '2Gi', '200m', '256Mi', 'ghcr.io/cloudnative-pg/postgresql:18', '0 0 */6 * * *', '14d', 'off');
 
 -- ---------------------------------------------------------------------------
 -- Projects — structure within an org. Unique per org (the composite PK);
@@ -150,9 +152,17 @@ CREATE TABLE registry.projects (
 -- ---------------------------------------------------------------------------
 -- Project-envs — the registry LEAF: one provisioned (org, project, env)
 -- database, keyed by the identity triple, with a REFERENCE to its credential
--- Secret. `env` is a validated slug; the FK to `registry.env_policies (name)`
--- enforces that it names a known policy (D18 — referential integrity replaces
--- the retired `env IN ('dev','canary','prod')` CHECK).
+-- Secret. `env` is a validated slug; the composite FK to
+-- `registry.env_policies (org, name)` enforces that it names a policy in ITS
+-- ORG's set (D18 + 8df.4 — referential integrity replaces the retired
+-- `env IN ('dev','canary','prod')` CHECK; another org's policy never
+-- satisfies it). The policy FK is deliberately NOT a CASCADE: a policy in use
+-- by a provisioned env cannot be dropped (a cascade would silently erase the
+-- record of a real provisioned database). It is DEFERRABLE INITIALLY IMMEDIATE
+-- — inserts are checked immediately; `SET CONSTRAINTS ... DEFERRED` inside a
+-- transaction is the order-independent escape hatch for bulk teardown (the
+-- env_policies org-FK ordering note below makes plain single-statement org
+-- DELETEs cascade cleanly on a fresh apply).
 --
 -- INVARIANT 2 (no credentials, R8b): `secret_name` (+ optional
 -- `secret_namespace`) is a REFERENCE — the actual credential material lives in a
@@ -163,12 +173,25 @@ CREATE TABLE registry.projects (
 CREATE TABLE registry.project_envs (
     org              text NOT NULL,
     project          text NOT NULL,
-    env              text NOT NULL REFERENCES registry.env_policies (name),
+    env              text NOT NULL,
     secret_name      text NOT NULL,
     secret_namespace text,
     PRIMARY KEY (org, project, env),
-    FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE
+    FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
+    FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)
+        DEFERRABLE INITIALLY IMMEDIATE
 );
+
+-- The env_policies → orgs CASCADE is added HERE, after projects/project_envs
+-- exist: Postgres fires an org DELETE's cascade triggers in creation order, so
+-- adding this FK LAST means the projects → project_envs cascade clears the
+-- referencing rows BEFORE the policy rows are deleted — a plain
+-- `DELETE FROM registry.orgs WHERE id = ...` tears a whole org down in one
+-- statement without tripping the in-use-policy FK above. (If a dump/restore
+-- ever reorders the triggers, the DEFERRABLE escape hatch above still works.)
+ALTER TABLE registry.env_policies
+    ADD CONSTRAINT env_policies_org_fkey
+    FOREIGN KEY (org) REFERENCES registry.orgs (id) ON DELETE CASCADE;
 
 -- ---------------------------------------------------------------------------
 -- Provisioning sagas — minimal exactly-once / resumable state for the

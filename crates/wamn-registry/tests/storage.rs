@@ -1,22 +1,22 @@
 //! Storage-schema tests for the T1 control-plane registry (wamn-q3n.3;
-//! generalized in wamn-8df.3).
+//! generalized in wamn-8df.3; org-scoped policies + templates in wamn-8df.4).
 //!
 //! Three layers, all pure/portable except the last:
 //! - a **drift guard** tying `deploy/system-schema.sql` to the `wamn-registry`
-//!   model (table/column shape, the D18 placement CHECKs, the seeded `env_policies`
-//!   matching `EnvPolicy::defaults()`, `SCHEMA_VERSION`) — the `wamn-schema` /
-//!   `state_literals_match_catalog_schema_sql` pattern;
+//!   model (table/column shape, the D18 placement CHECKs, the org-scoped
+//!   `env_policies` keying with NO platform-global seed, `SCHEMA_VERSION`) —
+//!   the `wamn-schema` / `state_literals_match_catalog_schema_sql` pattern;
 //! - the **request-path-free** invariant (1): a static grep asserting no
 //!   data-plane manifest references the T1 cluster / system DB;
 //! - a **live-apply gate** (invariants 2/3 + placement/env FK integrity + the
-//!   seeded policies + the saga exactly-once/resume checkpoint), gated on
-//!   `WAMN_REGISTRY_PG_URL` (a superuser URL — the harness provisions the
-//!   `wamn_system` owner role) and skipped cleanly when unset (mirrors wamn-ddl /
-//!   wamn-run-store).
+//!   template stamp insert-if-absent semantics + the saga exactly-once/resume
+//!   checkpoint), gated on `WAMN_REGISTRY_PG_URL` (a superuser URL — the harness
+//!   provisions the `wamn_system` owner role) and skipped cleanly when unset
+//!   (mirrors wamn-ddl / wamn-run-store).
 
 use std::path::Path;
 
-use wamn_registry::{EnvPolicy, SCHEMA_VERSION};
+use wamn_registry::{SCHEMA_VERSION, Template};
 
 fn deploy_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy")
@@ -42,8 +42,9 @@ fn code_only(sql: &str) -> String {
 
 /// `deploy/system-schema.sql` must mirror the `wamn-registry` model: the two
 /// control-plane schemas, the registry tables and their distinctive columns (the
-/// D18 placement + env-policy shape), the seeded `env_policies` matching
-/// `EnvPolicy::defaults()`, the storage-format `SCHEMA_VERSION`, and the saga table.
+/// D18 placement shape + the 8df.4 org-scoped `env_policies` keying, with NO
+/// platform-global policy seed), the storage-format `SCHEMA_VERSION`, and the
+/// saga table.
 #[test]
 fn system_schema_sql_mirrors_the_model() {
     let sql = code_only(&system_schema_sql());
@@ -67,7 +68,8 @@ fn system_schema_sql_mirrors_the_model() {
         "the retired tier/canary cluster columns must be gone"
     );
 
-    // Env policies: the named-policy table + its distinctive columns.
+    // Env policies: ORG-SCOPED rows (8df.4) — keyed (org, name), cascading with
+    // their org, with the policy-value columns.
     assert!(sql.contains("CREATE TABLE registry.env_policies"));
     for col in [
         "recovery_domain",
@@ -79,39 +81,52 @@ fn system_schema_sql_mirrors_the_model() {
     ] {
         assert!(sql.contains(col), "env_policies missing column {col}");
     }
+    let policies_block = sql
+        .split("CREATE TABLE registry.env_policies")
+        .nth(1)
+        .and_then(|rest| rest.split(';').next())
+        .expect("env_policies table body");
+    assert!(
+        policies_block.contains("PRIMARY KEY (org, name)"),
+        "env_policies must be keyed per org (8df.4)"
+    );
+    // The org CASCADE is added AFTER project_envs (ALTER TABLE — the RI-trigger
+    // ordering that lets a single-statement org DELETE cascade cleanly).
+    let alter_pos = sql
+        .find("ALTER TABLE registry.env_policies")
+        .expect("env_policies org FK is added via ALTER TABLE");
+    assert!(
+        sql[alter_pos..].contains("REFERENCES registry.orgs (id) ON DELETE CASCADE"),
+        "an org's policies must cascade with the org"
+    );
+    assert!(
+        alter_pos > sql.find("CREATE TABLE registry.project_envs").unwrap(),
+        "the env_policies org FK must be created AFTER project_envs (cascade ordering)"
+    );
+    // NO platform-global seed: policies are stamped per org from a Template.
+    assert!(
+        !sql.contains("INSERT INTO registry.env_policies"),
+        "env_policies must not carry a platform-global seed — templates stamp per-org rows"
+    );
 
-    // Projects / project-envs, the latter FK'd to env_policies (env resolves a
-    // policy — the D18 referential-integrity replacement for the env CHECK).
+    // Projects / project-envs, the latter FK'd to the ORG's env_policies (env
+    // resolves a policy in its org's set — the D18+8df.4 referential-integrity
+    // replacement for the env CHECK).
     assert!(sql.contains("CREATE TABLE registry.projects"));
     assert!(sql.contains("CREATE TABLE registry.project_envs"));
     assert!(sql.contains("secret_name") && sql.contains("secret_namespace"));
     assert!(
-        sql.contains("REFERENCES registry.env_policies (name)"),
-        "project_envs.env must FK to env_policies (the retired env CHECK's replacement)"
+        sql.contains("FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)"),
+        "project_envs must FK (org, env) to the org's env_policies (8df.4)"
+    );
+    assert!(
+        !sql.contains("REFERENCES registry.env_policies (name)"),
+        "the single-column (platform-global) env FK must be retired"
     );
     assert!(
         !sql.contains("env IN ('dev', 'canary', 'prod')"),
         "the closed env CHECK must be retired"
     );
-
-    // The seed must carry the two default policies with the model's values — a
-    // drift guard tying the SQL seed to EnvPolicy::dev() / prod().
-    for p in EnvPolicy::defaults() {
-        assert!(
-            sql.contains(&format!("'{}'", p.name)),
-            "seed is missing the {:?} policy",
-            p.name
-        );
-        for lit in [&p.image, &p.hibernation] {
-            assert!(
-                sql.contains(&format!("'{lit}'")),
-                "seed missing literal {lit:?}"
-            );
-        }
-    }
-    // `own` recovery domain and prod's cadence/retention are seeded literally.
-    assert!(sql.contains("'\"own\"'::jsonb"));
-    assert!(sql.contains("'0 0 */6 * * *'") && sql.contains("'14d'"));
 
     // The storage-format version is recorded (singleton meta row).
     assert!(sql.contains(&format!("'{SCHEMA_VERSION}'")));
@@ -170,16 +185,40 @@ fn upsert_project_and_project_env_sql_match_the_columns() {
     assert!(sel.contains("registry.orgs"));
     assert!(sel.contains("placement_kind") && sel.contains("pool_cluster"));
 
-    // The env-policy reads target env_policies (provision-org sizes clusters from
-    // the full policy set; provision-project-env reads one to derive the owner).
+    // The env-policy reads target env_policies keyed by ORG (8df.4: provision-org
+    // sizes clusters from the org's own set; provision-project-env reads one of
+    // the org's rows to derive the owner).
     for reader in [
         wamn_registry::sql::select_env_policies_sql(),
         wamn_registry::sql::select_env_policy_sql(),
     ] {
         assert!(reader.contains("FROM registry.env_policies"));
         assert!(reader.contains("recovery_domain::text"));
+        assert!(reader.contains("WHERE org = $1"), "reads must be org-keyed");
     }
     assert!(wamn_registry::sql::select_env_policies_sql().contains("ORDER BY promotion_rank"));
+
+    // The template stamp targets every env_policies column the DDL declares.
+    let stamp = wamn_registry::sql::stamp_env_policy_sql();
+    assert!(stamp.contains("registry.env_policies"));
+    assert!(stamp.contains("ON CONFLICT (org, name) DO NOTHING"));
+    for col in [
+        "org",
+        "name",
+        "recovery_domain",
+        "promotion_rank",
+        "instances",
+        "storage",
+        "cpu",
+        "memory",
+        "image",
+        "backup_cadence",
+        "wal_retention",
+        "hibernation",
+    ] {
+        assert!(sql.contains(col), "env_policies table missing {col}");
+        assert!(stamp.contains(col), "stamp builder missing {col}");
+    }
 }
 
 /// The saga builders must target the `provisioning.sagas` columns and use only
@@ -348,11 +387,6 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     );
     script.push_str(&ddl);
     script.push('\n');
-    // The seeded env policies match the model's EnvPolicy::defaults() exactly — a
-    // live drift guard: a divergence between the SQL seed and the Rust defaults
-    // fails an ASSERT here (a name-only text guard cannot catch a value drift).
-    // Run BEFORE ASSERTIONS, which adds a 'staging' policy to prove env is data.
-    script.push_str(&env_policy_seed_assertions());
     script.push_str(ASSERTIONS);
     // Exercise the REAL org-row builder via PREPARE/EXECUTE: two upserts of the
     // same id must collapse to ONE row (the second refreshing the placement),
@@ -372,8 +406,32 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          DEALLOCATE up;\n",
         upsert = wamn_registry::sql::upsert_org_sql(),
     ));
+    // Exercise the REAL template stamp (8df.4) against the 'demo' org: stamp the
+    // trials policy set with the model's values, customize one row, re-stamp, and
+    // assert the customization SURVIVES (insert-if-absent — a DO UPDATE mutant
+    // would clobber it back to template values and fail here).
+    script.push_str(&format!(
+        "PREPARE stamp (text,text,text,int,int,text,text,text,text,text,text,text) AS {stamp};\n",
+        stamp = wamn_registry::sql::stamp_env_policy_sql(),
+    ));
+    script.push_str(&stamp_statements("demo", &Template::trials()));
+    script.push_str(
+        "UPDATE registry.env_policies SET storage='42Gi' WHERE org='demo' AND name='dev';\n",
+    );
+    script.push_str(&stamp_statements("demo", &Template::trials()));
+    script.push_str(
+        "DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM registry.env_policies WHERE org='demo')=2,\n\
+             'the trials template stamps dev + prod for the org (re-stamp adds nothing)';\n\
+           ASSERT (SELECT storage FROM registry.env_policies WHERE org='demo' AND name='dev')='42Gi',\n\
+             'a customized policy row SURVIVES a re-stamp (insert-if-absent, never clobbered)';\n\
+           ASSERT (SELECT instances FROM registry.env_policies WHERE org='demo' AND name='prod')=3,\n\
+             'the stamped prod policy carries the template values';\n\
+         END $$;\n\
+         DEALLOCATE stamp;\n",
+    );
     // Exercise the REAL project / project-env builders against the 'demo' org just
-    // upserted. env 'dev' resolves the seeded policy (the FK holds).
+    // stamped. env 'dev' resolves demo's own policy row (the composite FK holds).
     script.push_str(&format!(
         "PREPARE upp (text,text) AS {up_project};\n\
          PREPARE upe (text,text,text,text,text) AS {up_env};\n\
@@ -393,17 +451,21 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
         up_env = wamn_registry::sql::upsert_project_env_sql(),
     ));
     // Exercise the REAL env-policy read via `CREATE TABLE AS EXECUTE` — provision-
-    // project-env reads one policy by name to derive the cluster owner.
+    // project-env reads one of the ORG's policies to derive the cluster owner; a
+    // different org's key returns nothing (org-scoped, never cross-org).
     script.push_str(&format!(
-        "PREPARE getpol (text) AS {get};\n\
-         CREATE TEMP TABLE policy_probe AS EXECUTE getpol('dev');\n\
+        "PREPARE getpol (text,text) AS {get};\n\
+         CREATE TEMP TABLE policy_probe AS EXECUTE getpol('demo','dev');\n\
+         CREATE TEMP TABLE policy_probe_other AS EXECUTE getpol('ghost','dev');\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM policy_probe)=1,\n\
-             'select_env_policy_sql returns exactly one row';\n\
+             'select_env_policy_sql returns exactly one row for the org';\n\
            ASSERT (SELECT name FROM policy_probe)='dev',\n\
              'select_env_policy_sql returns the named policy';\n\
+           ASSERT (SELECT count(*) FROM policy_probe_other)=0,\n\
+             'select_env_policy_sql never returns another org''s policy (org-keyed)';\n\
          END $$;\n\
-         DROP TABLE policy_probe; DEALLOCATE getpol;\n",
+         DROP TABLE policy_probe; DROP TABLE policy_probe_other; DEALLOCATE getpol;\n",
         get = wamn_registry::sql::select_env_policy_sql(),
     ));
     // Exercise the REAL dump-record builder (unchanged by D18).
@@ -478,39 +540,24 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     );
 }
 
-/// Build the live env-policy seed assertions from the model, so a divergence
-/// between `deploy/system-schema.sql`'s seed and `EnvPolicy::dev()` / `prod()`
-/// fails the live gate. Both defaults are `own`, so the recovery-domain assertion
-/// is the literal `"own"`.
-fn env_policy_seed_assertions() -> String {
-    let mut s = String::from(
-        "DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.env_policies)=2,\n\
-           'exactly the two default policies are seeded'; END $$;\n",
-    );
-    for p in EnvPolicy::defaults() {
+/// Render `EXECUTE stamp(...)` lines for every policy in a template, with the
+/// MODEL's values as literals — so the live gate stamps exactly what
+/// `provision-org` would (the `Template` policies through the real
+/// `stamp_env_policy_sql` builder). None of the shipped values contain a single
+/// quote, so plain `'{}'` quoting is exact.
+fn stamp_statements(org: &str, template: &Template) -> String {
+    let mut s = String::new();
+    for p in &template.policies {
+        let recovery = serde_json::to_string(&p.recovery_domain).expect("recovery json");
         s.push_str(&format!(
-            "DO $$ BEGIN\n\
-               ASSERT (SELECT promotion_rank FROM registry.env_policies WHERE name='{name}')={rank},\n\
-                 'seed {name}.promotion_rank matches the model';\n\
-               ASSERT (SELECT instances FROM registry.env_policies WHERE name='{name}')={inst},\n\
-                 'seed {name}.instances matches the model';\n\
-               ASSERT (SELECT storage FROM registry.env_policies WHERE name='{name}')='{storage}',\n\
-                 'seed {name}.storage matches the model';\n\
-               ASSERT (SELECT image FROM registry.env_policies WHERE name='{name}')='{image}',\n\
-                 'seed {name}.image matches the model';\n\
-               ASSERT (SELECT backup_cadence FROM registry.env_policies WHERE name='{name}')='{backup}',\n\
-                 'seed {name}.backup_cadence matches the model';\n\
-               ASSERT (SELECT wal_retention FROM registry.env_policies WHERE name='{name}')='{wal}',\n\
-                 'seed {name}.wal_retention matches the model';\n\
-               ASSERT (SELECT hibernation FROM registry.env_policies WHERE name='{name}')='{hib}',\n\
-                 'seed {name}.hibernation matches the model';\n\
-               ASSERT (SELECT recovery_domain FROM registry.env_policies WHERE name='{name}')='\"own\"'::jsonb,\n\
-                 'seed {name}.recovery_domain is own';\n\
-             END $$;\n",
+            "EXECUTE stamp('{org}','{name}','{recovery}',{rank},{inst},\
+             '{storage}','{cpu}','{memory}','{image}','{backup}','{wal}','{hib}');\n",
             name = p.name,
             rank = p.promotion_rank,
             inst = p.instances,
             storage = p.storage,
+            cpu = p.cpu,
+            memory = p.memory,
             image = p.image,
             backup = p.backup_cadence,
             wal = p.wal_retention,
@@ -522,15 +569,45 @@ fn env_policy_seed_assertions() -> String {
 
 /// The live assertions (kept out of the Rust string plumbing for readability).
 const ASSERTIONS: &str = r#"
--- FK integrity: an org + its project + two provisioned envs (references only).
--- env 'prod' / 'dev' resolve the seeded env_policies (the env FK holds).
+-- FK integrity: an org + its per-org policies (8df.4 fixtures — the REAL stamp
+-- builder is exercised via PREPARE later) + its project + two provisioned envs
+-- (references only). 'try' deliberately gets NO policy rows.
 INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
   VALUES ('acme','dedicated',NULL),
          ('try','pooled','wamn-pg');
+INSERT INTO registry.env_policies
+    (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
+  VALUES ('acme','dev','"own"'::jsonb,10,1,'2Gi','200m','256Mi','ghcr.io/cloudnative-pg/postgresql:18'),
+         ('acme','prod','"own"'::jsonb,30,3,'2Gi','200m','256Mi','ghcr.io/cloudnative-pg/postgresql:18');
 INSERT INTO registry.projects (org, id) VALUES ('acme','billing'),('try','demo');
 INSERT INTO registry.project_envs (org, project, env, secret_name)
   VALUES ('acme','billing','prod','wamn-db-acme-prod'),
          ('acme','billing','dev','wamn-db-acme-dev');
+
+-- A policy row under an unregistered org is rejected (FK to orgs).
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.env_policies
+      (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
+    VALUES ('ghost','dev','"own"'::jsonb,10,1,'2Gi','200m','256Mi','x');
+  ASSERT false, 'a policy under an unknown org must be rejected';
+EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
+
+-- ORG-SCOPING (8df.4): another org's policy never satisfies this org's env FK.
+-- 'try' has no policies, so a try project-env is rejected even though 'acme'
+-- has a 'dev' policy — the composite (org, env) FK is what keeps a T2 and a T4
+-- org's identically-named envs independent.
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.project_envs (org, project, env, secret_name)
+    VALUES ('try','demo','dev','s');
+  ASSERT false, 'an env with no policy in ITS org must be rejected (composite FK)';
+EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
+
+-- A policy in use by a provisioned env cannot be dropped (the deliberate
+-- NO ACTION FK), while a whole-org DELETE still cascades (asserted at the end).
+DO $$ BEGIN BEGIN
+  DELETE FROM registry.env_policies WHERE org='acme' AND name='prod';
+  ASSERT false, 'a policy referenced by a provisioned env must not be droppable';
+EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
 -- A dump record for that project-env — cascades with the org below, and its FK
 -- requires the project-env to exist.
@@ -556,16 +633,16 @@ DO $$ BEGIN BEGIN
   ASSERT false, 'a project-env under an unknown project must be rejected';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
--- D18: an env that names no seeded policy is rejected (the env FK — the retired
--- env CHECK's replacement). 'staging' is not a seeded policy.
+-- D18: an env that names no policy in ITS org's set is rejected (the composite
+-- env FK — the retired env CHECK's replacement). 'staging' is not stamped.
 DO $$ BEGIN BEGIN
   INSERT INTO registry.project_envs (org, project, env, secret_name)
     VALUES ('acme','billing','staging','s');
   ASSERT false, 'an env naming no policy must be rejected (env FK)';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
--- ...but adding the policy first lets it in (env is data, not a closed CHECK).
-INSERT INTO registry.env_policies (name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
-  VALUES ('staging', '"own"'::jsonb, 20, 1, '2Gi', '200m', '256Mi', 'ghcr.io/cloudnative-pg/postgresql:18');
+-- ...but adding the ORG's policy first lets it in (env is data, not a closed CHECK).
+INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
+  VALUES ('acme', 'staging', '"own"'::jsonb, 20, 1, '2Gi', '200m', '256Mi', 'ghcr.io/cloudnative-pg/postgresql:18');
 INSERT INTO registry.project_envs (org, project, env, secret_name)
   VALUES ('acme','billing','staging','wamn-db-acme-staging');
 DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.project_envs
@@ -626,11 +703,14 @@ DO $$ BEGIN BEGIN
   ASSERT false, 'an unknown saga status must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
--- Deleting an org cascades its projects, project-envs, and their dump records.
+-- Deleting an org cascades its projects, project-envs, their dump records, AND
+-- its policy rows — the whole-org delete succeeds despite the in-use-policy
+-- NO ACTION FK (checked at statement end, after the project-env cascade).
 DELETE FROM registry.orgs WHERE id='acme';
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM registry.projects WHERE org='acme')=0, 'projects cascade';
   ASSERT (SELECT count(*) FROM registry.project_envs WHERE org='acme')=0, 'project-envs cascade';
   ASSERT (SELECT count(*) FROM provisioning.dumps WHERE org='acme')=0, 'dumps cascade';
+  ASSERT (SELECT count(*) FROM registry.env_policies WHERE org='acme')=0, 'env-policies cascade';
 END $$;
 "#;

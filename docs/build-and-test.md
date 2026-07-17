@@ -589,9 +589,9 @@ Docs: docs/registry-model.md, docs/system-cluster.md
 cargo test -p wamn-registry   # drift-guard (placement cols + env_policies seed vs the model) + inv-1 grep (live-apply skips)
 cargo clippy -p wamn-registry --all-targets && cargo fmt -p wamn-registry --check
 # optional throwaway-PG live-apply gate (WAMN_REGISTRY_PG_URL, superuser url —
-# invariants 2/3 + the placement biconditional + the project_envs.env FK ->
-# env_policies + the dev/prod seed + FK integrity + saga exactly-once; skips when
-# unset):
+# invariants 2/3 + the placement biconditional + the composite (org, env) FK ->
+# env_policies(org, name) + the template stamp insert-if-absent + FK integrity +
+# saga exactly-once; skips when unset):
 docker run -d --rm --name wamn-reg-pg -p 5461:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
 WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5461/wamn cargo test -p wamn-registry
@@ -605,7 +605,7 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn
   -tAc "SELECT schemaname||'.'||tablename FROM pg_tables \
         WHERE schemaname IN ('registry','provisioning') ORDER BY 1;"  # 7 control-plane tables (incl env_policies + dumps)
 kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
-  -tAc "SELECT name, recovery_domain, instances FROM registry.env_policies ORDER BY promotion_rank;"  # dev + prod seeded
+  -tAc "SELECT count(*) FROM registry.env_policies;"  # 0 — NO platform seed (8df.4): policies are stamped per org by provision-org --template
 ```
 
 ### [D6/wamn-q3n.6] provision-org
@@ -616,8 +616,8 @@ Docs: docs/provisioning.md, docs/postgres-topology.md
 cargo test -p wamn-registry -p wamn-provision -p wamn-host   # renderer shape + org-row SQL + drift/subcommand units
 cargo clippy -p wamn-registry -p wamn-provision -p wamn-host --all-targets \
   && cargo fmt -p wamn-registry -p wamn-provision -p wamn-host --check
-# CONFLICT mutant). Render CRs locally (no cluster/DB needed — default policies):
-./target/debug/wamn-host provision-org --org demo --placement dedicated \
+# CONFLICT mutant). Render CRs locally (no cluster/DB needed — template policies):
+./target/debug/wamn-host provision-org --org demo --template standard \
   --emit-clusters /tmp/demo-clusters.json --emit-object-store /tmp/demo-os.json \
   --emit-scheduled-backup /tmp/demo-sb.json
 # IN-CLUSTER live standup = the gate of record (the wamn-q3n.2 infra precedent;
@@ -627,7 +627,7 @@ cargo clippy -p wamn-registry -p wamn-provision -p wamn-host --all-targets \
 kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5463:5432 &
 SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
 WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5463/wamn_system?sslmode=disable" \
-  ./target/debug/wamn-host provision-org --org demo --placement dedicated \
+  ./target/debug/wamn-host provision-org --org demo --template standard \
   --emit-clusters /tmp/demo-clusters.json --emit-object-store /tmp/demo-os.json \
   --emit-scheduled-backup /tmp/demo-sb.json   # renders per-recovery-domain + writes registry.orgs
 kubectl apply -f /tmp/demo-os.json -f /tmp/demo-clusters.json
@@ -695,7 +695,7 @@ WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn cargo test
 docker stop wamn-prov-pg
 # IN-CLUSTER gate of record = a LIVE DEDICATED-ORG STANDUP (the .6/.7 precedent; the
 # registry read/write (the registry-write path is the .6/.7 gate of record):
-./target/debug/wamn-host provision-org --org gate8 --placement dedicated \
+./target/debug/wamn-host provision-org --org gate8 --template standard \
   --emit-clusters /tmp/gate8-clusters.json --emit-object-store /tmp/gate8-os.json \
   --emit-scheduled-backup /tmp/gate8-sb.json
 kubectl apply -f /tmp/gate8-os.json -f /tmp/gate8-clusters.json   # ObjectStore first (prod is backed)
@@ -724,13 +724,13 @@ cargo test -p wamn-registry -p wamn-host   # Org::pooled placement + pooled-vs-d
 cargo clippy -p wamn-registry -p wamn-host --all-targets \
   && cargo fmt -p wamn-registry -p wamn-host --check
 # Plan a pooled org locally (no DB needed — omit --system-database-url):
-./target/debug/wamn-host provision-org --org trialco --placement pooled --pool wamn-pg
+./target/debug/wamn-host provision-org --org trialco --template trials --pool wamn-pg
 # IN-CLUSTER gate of record = a LIVE T3 trials-org standup (the .6/.7 precedent; T3
 # port-forward (check `ss -ltn | grep 547` first):
 kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5473:5432 &
 SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
 WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5473/wamn_system?sslmode=disable" \
-  ./target/debug/wamn-host provision-org --org t3gate --placement pooled --pool wamn-pg   # records registry.orgs (pooled|wamn-pg), NO CRs
+  ./target/debug/wamn-host provision-org --org t3gate --template trials --pool wamn-pg   # records registry.orgs (pooled|wamn-pg), NO CRs
 # provision-project-env WITHOUT --cluster reads placement from the registered row -> wamn-pg:
 WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5473/wamn_system?sslmode=disable" \
   ./target/debug/wamn-host provision-project-env --org t3gate --project demo --env dev \
@@ -778,7 +778,7 @@ kubectl -n wamn-system port-forward svc/wamn-pg-rw 5475:5432 &
 SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
 PGPW=$(kubectl -n wamn-system get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
 SYS="postgres://postgres:${SYSPW}@127.0.0.1:5474/wamn_system?sslmode=disable"
-WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-org --org t10gate --placement pooled --pool wamn-pg
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-org --org t10gate --template trials --pool wamn-pg
 WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-project-env \
   --org t10gate --project demo --env dev --connection-limit 10 \
   --emit-database /tmp/t10-db.json --emit-role-sql /tmp/t10-role.sql \
@@ -840,7 +840,7 @@ SYS="postgres://postgres:${SYSPW}@127.0.0.1:5476/wamn_system?sslmode=disable"
 PGADMIN="postgres://postgres:${PGPW}@127.0.0.1:5477/postgres?sslmode=disable"
 DB="wamn-db-t11gate--demo--dev"; DUMPROOT=$(mktemp -d)
 # Register a pooled org + provision a project-env DB on wamn-pg (the .7/.9 path), seed:
-WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-org --org t11gate --placement pooled --pool wamn-pg
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-org --org t11gate --template trials --pool wamn-pg
 WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-project-env \
   --org t11gate --project demo --env dev --connection-limit 10 \
   --emit-database /tmp/t11-db.json --emit-role-sql /tmp/t11-role.sql \
@@ -893,20 +893,60 @@ policy with its **own** recovery domain; shared-with `prod` reproduces the old
 T2 collapse instead. The dedicated standup itself is the `[D6/wamn-q3n.6]` gate.
 
 ```bash
-# Add canary as DATA (its own recovery domain -> a third cluster <org>-canary):
+# Since wamn-8df.4 the T4 shape is a TEMPLATE: `provision-org --org <org>
+# --template dedicated` stamps canary(own) at provision time — three clusters
+# (<org>-dev/-canary/-prod), each sized by the org's policy. To flip an EXISTING
+# org's canary to its own recovery domain instead, edit THAT ORG's row (policies
+# are org-scoped — no other org is affected):
 kubectl -n wamn-system exec -i wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
   -c "SET ROLE wamn_system; INSERT INTO registry.env_policies
-      (name, recovery_domain, promotion_rank, instances,
+      (org, name, recovery_domain, promotion_rank, instances,
        storage, cpu, memory, image, backup_cadence, wal_retention, hibernation)
-      VALUES ('canary', '\"own\"'::jsonb, 20, 2, '2Gi', '200m', '256Mi',
+      VALUES ('<org>', 'canary', '\"own\"'::jsonb, 20, 2, '2Gi', '200m', '256Mi',
               'ghcr.io/cloudnative-pg/postgresql:18', '0 0 */6 * * *', '14d', 'off')
-      ON CONFLICT (name) DO NOTHING;"
-# provision-org --placement dedicated (with a system-DB URL, so the added policy is
-# read) now renders THREE clusters (<org>-dev/-canary/-prod), each sized by its
-# policy; provision-project-env --env canary derives <org>-canary via cluster_of.
-# Remove the policy when done (project_envs.env FK blocks removal while in use):
+      ON CONFLICT (org, name) DO UPDATE SET recovery_domain = '\"own\"'::jsonb;"
+# Re-running provision-org (any template) re-renders from the org's own rows;
+# provision-project-env --env canary derives <org>-canary via cluster_of.
+# Remove the policy when done (the composite (org, env) FK blocks removal while in use):
 kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
-  -c "DELETE FROM registry.env_policies WHERE name='canary';"
+  -c "DELETE FROM registry.env_policies WHERE org='<org>' AND name='canary';"
+```
+
+### [ARCH/wamn-8df.4] templates + org-scoped env policies (the Tier successor)
+
+Docs: docs/deployment-model.md, docs/registry-model.md, docs/provisioning.md
+
+```bash
+cargo test -p wamn-registry -p wamn-host -p wamn-gates   # Template presets + OrgEnvPolicy + org-scoped validate/resolve/SQL + subcommand units
+cargo clippy -p wamn-registry -p wamn-host -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-registry -p wamn-host -p wamn-gates --check
+# Throwaway-PG live gates (superuser url): the storage live-apply (composite
+# (org, env) FK + stamp insert-if-absent + cross-org isolation + whole-org
+# cascade) + provisionbench --mode all (tier scenarios stamp template policies):
+docker run -d --rm --name wamn-8df4-pg -p 5494:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5494/postgres cargo test -p wamn-registry
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5494/postgres \
+  ./target/debug/wamn-gates --log-level error provisionbench --mode all
+# Subcommand smoke (apply role + system-schema.sql into the throwaway DB as
+# wamn_system first — the .3 recipe): standard + dedicated orgs COEXIST (T2/T4),
+# canary derives per-org, a customized row survives a re-stamp:
+export WAMN_SYSTEM_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5494/postgres
+./target/debug/wamn-host provision-org --org smoke1 --template standard  --emit-clusters /tmp/s1.json ...  # 2 clusters (canary -> prod)
+./target/debug/wamn-host provision-org --org smoke2 --template dedicated --emit-clusters /tmp/s2.json ...  # 3 clusters (smoke2-canary)
+./target/debug/wamn-host provision-project-env --org smoke1 --project app --env canary ...  # cluster smoke1-prod
+./target/debug/wamn-host provision-project-env --org smoke2 --project app --env canary ...  # cluster smoke2-canary
+docker stop wamn-8df4-pg
+# 5 mutants killed (apply/test/restore, debug builds — scratchpad/mutate_8df4.py):
+# M1 standard-canary->Own (template unit), M2 stamp DO NOTHING->DO UPDATE (unit +
+# live customization-survives), M3 policy read drops org key (unit + live
+# cross-org probe), M4 provision-org stamps nothing (scripted project-env
+# refusal), M5 validate env check any-org (org-scoping unit).
+# IN-CLUSTER gate of record: re-apply system-schema.sql into wamn-sysdb (the
+# [D6/wamn-q3n.3] block — org-scoped env_policies, NO seed), rebuild + kind-load
+# wamn-gates, run deploy/provisionbench-job.yaml, then a live TEMPLATE-STAMPED
+# standup: tpl1 (standard) + tpl2 (dedicated) coexisting — tpl1 canary derives
+# tpl1-prod while tpl2 renders/holds tpl2-canary. Teardown deletes ONLY the new
+# clusters/CRs/org rows (org DELETE cascades policies + project-envs).
 ```
 
 ### [D6/wamn-e1g] per-org WAL/PITR via the Barman Cloud plugin + the shared object
@@ -919,7 +959,7 @@ cargo clippy -p wamn-provision -p wamn-host -p wamn-registry -p wamn-gates --all
   && cargo fmt -p wamn-provision -p wamn-host -p wamn-registry -p wamn-gates --check
 # Render a dedicated org's backup CRs locally (no cluster/DB needed; the prod
 # policy's backup_cadence/wal_retention drive the CRs):
-./target/debug/wamn-host provision-org --org demo --placement dedicated \
+./target/debug/wamn-host provision-org --org demo --template standard \
   --emit-clusters /tmp/demo-clusters.json \
   --emit-object-store /tmp/demo-os.json --emit-scheduled-backup /tmp/demo-sb.json
 # IN-CLUSTER gate of record = a LIVE WAL/PITR standup (the .6/.14 precedent; T3 pool
@@ -932,7 +972,7 @@ kubectl apply -f deploy/minio.yaml
 kubectl -n wamn-system rollout status deploy/minio --timeout=150s
 kubectl -n wamn-system wait --for=condition=complete job/minio-init --timeout=120s
 # backup CRs, not the registry row), apply ObjectStore -> Clusters -> ScheduledBackup:
-env -u WAMN_SYSTEM_ADMIN_URL ./target/debug/wamn-host provision-org --org e1gate --placement dedicated \
+env -u WAMN_SYSTEM_ADMIN_URL ./target/debug/wamn-host provision-org --org e1gate --template standard \
   --emit-clusters /tmp/e1-clusters.json \
   --emit-object-store /tmp/e1-os.json --emit-scheduled-backup /tmp/e1-sb.json
 kubectl apply -f /tmp/e1-os.json                             # ObjectStore BEFORE the cluster

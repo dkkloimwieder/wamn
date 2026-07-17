@@ -72,8 +72,40 @@ with no enum variant; `canary` own reproduces the T4 third cluster).
 target). The remaining fields are the sizing / HA / backup / hibernation knobs
 `provision-org` renders each cluster from (the cjv.21 fix), and
 `promotion_rank` orders promotion (the retired `Env::ALL` order). Policies are
-**standalone** (no inheritance); the template layer that stamps them is
-`wamn-8df.4`.
+**standalone** (no inheritance) and — since `wamn-8df.4` — **org-scoped**:
+
+```
+OrgEnvPolicy { org: OrgId, policy: EnvPolicy }
+```
+
+Each org owns its policy rows (`EnvPolicy` stays an org-free *value* so templates
+can carry it). Org-scoping is load-bearing, not cosmetic: the cluster renderer
+consumes an org's whole policy set, so under platform-global policies one
+`canary(own)` row would have forced a canary cluster on *every* dedicated org —
+a T2 org (canary shared-with prod) and a T4 org (canary own) could not coexist.
+
+### Templates — the `Tier` successor (wamn-8df.4)
+
+```
+Template { name, pooled, policies: Vec<EnvPolicy> }
+Template::{trials, standard, dedicated, by_name}
+Template::stamp(org_id, pool) -> (Org, Vec<OrgEnvPolicy>)
+```
+
+A named **code preset** (versioned with the model, not registry rows) that stamps
+an org's placement *and* its initial policy set in one step — the retired closed
+`Tier`, re-provided as data:
+
+| Template | Old tier | Placement | Policy set |
+|---|---|---|---|
+| `trials` | T3 | pooled (shares `--pool`) | `dev`, `prod` |
+| `standard` | T2 | dedicated | `dev`(own), `canary`(shared-with `prod`), `prod`(own) |
+| `dedicated` | T4 | dedicated | `dev`(own), `canary`(**own**), `prod`(own) |
+
+Stamping is **instantiate-and-own** (`sql::stamp_env_policy_sql`,
+insert-if-absent): the org gets its own copy, customizes it per-env, and a
+re-provision (or a later template edit) never clobbers a customized row — it only
+adds envs the org is missing.
 
 ## Placement and cluster derivation
 
@@ -82,7 +114,7 @@ Org        { id, placement: Placement }
 Placement  = Pooled { pool } | Dedicated
 Project    { org, id }
 ProjectEnv { triple: Triple, db_secret: SecretRef }
-Registry   { schema_version, env_policies: Vec<EnvPolicy>, orgs, projects, project_envs }
+Registry   { schema_version, env_policies: Vec<OrgEnvPolicy>, orgs, projects, project_envs }
 ```
 
 - **`Placement`** — the minimal descriptor replacing `Tier`: does this org share
@@ -115,10 +147,11 @@ Resolution { cluster, secret }
 
 `resolve` is the reason the registry exists: it looks up the org (for its
 placement), confirms the project and the provisioned project-env exist, derives
-the cluster via `cluster_of` (the org's placement + the env's policy), and
-returns the placement. It fails with a typed `RegistryError` (`UnknownOrg` /
-`UnknownProject` / `UnknownProjectEnv` / `UnknownEnvPolicy`) — an enum mirroring
-the failure modes (SR6 rule 2), never `Error(String)`.
+the cluster via `cluster_of` (the org's placement + the env's policy **in that
+org's set** — never another org's), and returns the placement. It fails with a
+typed `RegistryError` (`UnknownOrg` / `UnknownProject` / `UnknownProjectEnv` /
+`UnknownEnvPolicy`) — an enum mirroring the failure modes (SR6 rule 2), never
+`Error(String)`.
 
 ## Validation
 
@@ -134,18 +167,22 @@ Error codes:
 - `empty-org-id` / `invalid-org-id` / `reserved-org-id` (and the `project`
   counterparts) — the slug + reserved-prefix discipline.
 - `empty-env-policy-name` / `invalid-env-policy-name` / `duplicate-env-policy` —
-  policy names are slugs, unique.
+  policy names are slugs, unique **per org** (the same name in two orgs is two
+  independent rows — org-scoping).
 - `unknown-shared-with-target` / `shared-with-cycle` — recovery-domain
-  integrity: a `shared-with(x)` targets an existing policy and the graph has no
-  cycle. Two `own`-domain envs can never collapse onto one cluster — the
-  derivation `<org>-<owner>` keys on the (unique) policy name, so "dev never
-  rewinds prod" holds by construction.
+  integrity **within an org's set**: a `shared-with(x)` targets one of that
+  org's own policies and the per-org graph has no cycle. Two `own`-domain envs
+  can never collapse onto one cluster — the derivation `<org>-<owner>` keys on
+  the (per-org-unique) policy name, so "dev never rewinds prod" holds by
+  construction.
 - `empty-env` / `invalid-env` / `unknown-env` — a project-env's slug is
-  well-formed **and resolves to a policy** (the `CHECK IN (…)` replacement).
+  well-formed **and resolves to a policy in its org's set** (the `CHECK IN (…)`
+  replacement; another org's policy never satisfies it).
 - `duplicate-org` / `duplicate-project` (per org) / `duplicate-project-env`
   (per triple) — uniqueness.
-- `unknown-org` (a project names an unregistered org) / `unknown-project` (a
-  project-env names an unregistered project) — referential integrity.
+- `unknown-org` (a project — or a policy row — names an unregistered org) /
+  `unknown-project` (a project-env names an unregistered project) — referential
+  integrity.
 - `empty-cluster-name` / `invalid-cluster-name` (a pooled org's `pool_cluster`) /
   `empty-secret-name` / `invalid-secret-name` — the placement references are
   DNS-1123 labels.
@@ -175,13 +212,19 @@ table set (invariant 3) is exactly what they hold:
 
 - **`registry`** — `meta` (singleton storage-format version), `orgs`
   (`id`, `placement_kind` `'pooled'|'dedicated'`, `pool_cluster` — set **iff**
-  pooled, a structural biconditional CHECK), `env_policies` (`name` PK = the env
-  slug, `recovery_domain` jsonb `"own" | {"shared-with": "<env>"}`,
-  `promotion_rank`, and the sizing/backup/hibernation knobs; **seeded** `dev` +
-  `prod`, drift-guarded against `EnvPolicy::dev()`/`prod()`), `projects`
-  (`org`→org, `id`), `project_envs` (`org`/`project`→project, `env` **FK →
-  `env_policies(name)`** — referential integrity replacing the retired
-  `CHECK IN (…)` literals, `secret_name`, `secret_namespace`). FK integrity +
+  pooled, a structural biconditional CHECK), `env_policies` (**org-scoped**,
+  wamn-8df.4: PK `(org, name)`, cascading with its org; `recovery_domain` jsonb
+  `"own" | {"shared-with": "<env>"}`, `promotion_rank`, and the
+  sizing/backup/hibernation knobs; **no platform-global seed** — rows are stamped
+  per org from a `Template`, insert-if-absent), `projects` (`org`→org, `id`),
+  `project_envs` (`org`/`project`→project, `env` via the **composite FK
+  `(org, env)` → `env_policies(org, name)`** — referential integrity replacing
+  the retired `CHECK IN (…)` literals, and another org's policy never satisfies
+  it; `secret_name`, `secret_namespace`). The policy FK is deliberately not a
+  cascade (an in-use policy cannot be dropped) and is `DEFERRABLE INITIALLY
+  IMMEDIATE`; the `env_policies` org-CASCADE FK is added *after* `project_envs`
+  so a plain single-statement org `DELETE` tears a whole org down cleanly
+  (RI-trigger creation order — the ordering note in the DDL). FK integrity +
   the composite keys mirror `validate()`.
 - **`provisioning`** — `sagas`: a **minimal** exactly-once / resumable saga-state
   table (consumed by `.6` provision-org / `.7`). `target` is decoupled text (a
