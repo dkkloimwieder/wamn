@@ -47,6 +47,9 @@ wit_bindgen::generate!({
     generate_all,
 });
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::time::Instant;
 
 use serde_json::{Value, json};
@@ -56,7 +59,12 @@ use wamn_run_store::{NodeRunRecord, RunRecord, sql as run_sql};
 // The durable-queue claim-path builders (5.14). The guest deps wamn-run-queue
 // with default-features off, so only these pure `sql.rs` builders link — the
 // cron/outbox/dispatch trio (croner/chrono) never enters the wasm (fqg.4).
-use wamn_run_queue::{claim_batch_sql, dequeue_sql, mark_running_sql, park_sql, renew_lease_sql};
+// The combined claim/checkpoint/complete statements are the fqg.18 record-stream
+// amortization: one statement where the split path spent two or three.
+use wamn_run_queue::{
+    claim_dispatch_sql, complete_dequeue_sql, dequeue_sql, park_sql, record_error_and_renew_sql,
+    record_success_and_renew_sql,
+};
 use wamn_runner::{
     Dispatch, ERROR_PORT, NodeError, NodeOutcome, Plan, RetryPolicy, RunStatus, Step,
 };
@@ -372,20 +380,7 @@ fn record_error(
     err: &NodeError,
     input: &Value,
 ) -> Result<(), String> {
-    let (kind, detail) = match err {
-        NodeError::Retryable(d) => ("retryable", Some(d)),
-        NodeError::RateLimited(r) => ("rate-limited", Some(&r.detail)),
-        NodeError::Terminal(d) => ("terminal", Some(d)),
-        NodeError::InvalidInput(d) => ("invalid-input", Some(d)),
-        NodeError::Cancelled => ("cancelled", None),
-    };
-    let payload = detail
-        .map(|d| d.to_error_payload())
-        .unwrap_or_else(|| json!({ "error": {} }));
-    let detail_json = match detail {
-        Some(d) => json!({ "message": d.message, "code": d.code, "data": d.data }),
-        None => Value::Null,
-    };
+    let (kind, payload, detail_json) = error_row_values(err);
     client::execute(
         &run_sql::insert_node_run_error_sql(),
         &[
@@ -400,6 +395,27 @@ fn record_error(
     )
     .map_err(|e| err_name(&e))?;
     Ok(())
+}
+
+/// The error row's column values — the taxonomy tag, the routed `{"error":..}`
+/// payload, and the history detail — shared by [`record_error`] (direct path)
+/// and [`record_error_and_renew`] (claim path).
+fn error_row_values(err: &NodeError) -> (&'static str, Value, Value) {
+    let (kind, detail) = match err {
+        NodeError::Retryable(d) => ("retryable", Some(d)),
+        NodeError::RateLimited(r) => ("rate-limited", Some(&r.detail)),
+        NodeError::Terminal(d) => ("terminal", Some(d)),
+        NodeError::InvalidInput(d) => ("invalid-input", Some(d)),
+        NodeError::Cancelled => ("cancelled", None),
+    };
+    let payload = detail
+        .map(|d| d.to_error_payload())
+        .unwrap_or_else(|| json!({ "error": {} }));
+    let detail_json = match detail {
+        Some(d) => json!({ "message": d.message, "code": d.code, "data": d.data }),
+        None => Value::Null,
+    };
+    (kind, payload, detail_json)
 }
 
 /// Record the run's failure verdict (audit parity with poc-webhook-f1).
@@ -719,56 +735,169 @@ fn read_runner_owner() -> Result<String, String> {
     }
 }
 
-/// Claim ONE currently-claimable **unpartitioned** run for `owner`
-/// (`FOR UPDATE SKIP LOCKED`, `lease_ttl_ms` visibility). Returns its run_id, or
-/// None when the queue is drained. Partitioned runs stay on the per-partition
-/// ownership path (fqg.1) — the global claim skips `partition_key IS NOT NULL`;
-/// a guest-side partitioned claim is a follow-up.
-fn claim_one(owner: &str, ttl_ms: i64) -> Result<Option<String>, String> {
-    let rs = client::query(&claim_batch_sql(1), &[text(owner), int64(ttl_ms)])
-        .map_err(|e| err_name(&e))?;
-    match rs.rows.first().and_then(|r| r.first()) {
-        Some(SqlValue::Text(s)) => Ok(Some(s.clone())),
-        _ => Ok(None),
-    }
+thread_local! {
+    /// The `app.runner` owner, read once per instance (fqg.18): the host sets it
+    /// from per-replica config at instantiate and never re-sets it, so the value
+    /// is immutable for this instance's lifetime.
+    static RUNNER_OWNER: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Parsed flows keyed by `flow_id` -> (version, flow) — the fqg.18 plan
+    /// cache. Probed against the ACTIVE version the claim statement returns, so
+    /// a version flip (hot reload) invalidates on the very next record; an
+    /// in-place graph edit that does NOT bump the version is not picked up, and
+    /// registration always bumps versions (register_flow + i7i).
+    static FLOW_CACHE: RefCell<HashMap<String, (u32, Rc<Flow>)>> = RefCell::new(HashMap::new());
 }
 
-/// The claimed run's dispatch inputs — the flow it runs + the trigger input the
-/// dispatcher persisted (5.7). The claim path drives the RECORDED flow + input,
-/// never a fixture constant.
-fn read_run_dispatch(run_id: &str) -> Result<(String, Value), String> {
-    let rs = client::query(&run_sql::select_run_dispatch_sql(), &[text(run_id)])
+/// The instance-cached lease owner (see [`RUNNER_OWNER`]).
+fn runner_owner() -> Result<String, String> {
+    if let Some(owner) = RUNNER_OWNER.with(|c| c.borrow().clone()) {
+        return Ok(owner);
+    }
+    let owner = read_runner_owner()?;
+    RUNNER_OWNER.with(|c| *c.borrow_mut() = Some(owner.clone()));
+    Ok(owner)
+}
+
+/// A run claimed with its dispatch inputs in one statement (fqg.18).
+struct ClaimedRun {
+    run_id: String,
+    flow_id: String,
+    input: Value,
+    /// The ACTIVE flow version at claim time — the plan-cache probe. `None`
+    /// when no version is active (the flow load then reports it).
+    active_version: Option<u32>,
+}
+
+/// Claim ONE currently-claimable **unpartitioned** run for `owner` and return
+/// its dispatch inputs — the single [`claim_dispatch_sql`] statement that also
+/// flips the run `running` and reads the active flow version (what the split
+/// path spent three round trips on). Returns None when the queue is drained.
+/// Partitioned runs stay on the per-partition ownership path (fqg.1/fqg.9).
+fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String> {
+    let rs = client::query(&claim_dispatch_sql(), &[text(owner), int64(ttl_ms)])
         .map_err(|e| err_name(&e))?;
-    let row = rs.rows.first().ok_or("claimed run row vanished")?;
-    let flow_id = match row.first() {
+    let Some(row) = rs.rows.first() else {
+        return Ok(None);
+    };
+    let run_id = match row.first() {
+        Some(SqlValue::Text(s)) => s.clone(),
+        other => return Err(format!("claim run_id shape: {other:?}")),
+    };
+    let flow_id = match row.get(1) {
         Some(SqlValue::Text(s)) => s.clone(),
         other => return Err(format!("runs.flow_id shape: {other:?}")),
     };
-    let input = match row.get(1) {
+    let input = match row.get(2) {
         Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => {
             serde_json::from_str(s).map_err(|e| format!("runs.input_json parse: {e}"))?
         }
         _ => Value::Null,
     };
-    Ok((flow_id, input))
+    let active_version = match row.get(3) {
+        Some(SqlValue::Int32(v)) => u32::try_from(*v).ok(),
+        Some(SqlValue::Int64(v)) => u32::try_from(*v).ok(),
+        _ => None,
+    };
+    Ok(Some(ClaimedRun {
+        run_id,
+        flow_id,
+        input,
+        active_version,
+    }))
 }
 
-/// Flip a claimed run `dispatched` -> `running` (guarded, so a reclaim of an
-/// already-running run is a no-op).
-fn mark_running(run_id: &str) -> Result<(), String> {
-    client::execute(&mark_running_sql(), &[text(run_id)]).map_err(|e| err_name(&e))?;
+/// The flow to drive: the cached parse when it matches the active version,
+/// else a fresh load (which also refreshes the cache). See [`FLOW_CACHE`].
+fn active_flow(flow_id: &str, active_version: Option<u32>) -> Result<Rc<Flow>, String> {
+    if let Some(v) = active_version {
+        let hit = FLOW_CACHE.with(|c| {
+            c.borrow()
+                .get(flow_id)
+                .and_then(|(ver, f)| (*ver == v).then(|| f.clone()))
+        });
+        if let Some(flow) = hit {
+            return Ok(flow);
+        }
+    }
+    let flow = Rc::new(load_active_flow(flow_id)?);
+    FLOW_CACHE.with(|c| {
+        c.borrow_mut()
+            .insert(flow_id.to_string(), (flow.version, flow.clone()));
+    });
+    Ok(flow)
+}
+
+/// Per-node checkpoint + lease heartbeat in ONE statement (fqg.18). The renew
+/// fires even when the record is an idempotency no-op (a cycle revisiting a
+/// node), so a long walk's lease stays live exactly as the split
+/// renew-before-dispatch kept it: the claim's fresh lease covers the first
+/// node, each record covers the next.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the checkpoint row's six columns plus the renew pair, mirroring the statement"
+)]
+fn record_node_run_and_renew(
+    run_id: &str,
+    node_id: &str,
+    seq: i32,
+    port: &str,
+    output: &Value,
+    input: &Value,
+    ttl_ms: i64,
+    owner: &str,
+) -> Result<(), String> {
+    client::execute(
+        &record_success_and_renew_sql(),
+        &[
+            text(run_id),
+            text(node_id),
+            int32(seq),
+            text(port),
+            jsonb(output),
+            jsonb(input),
+            int64(ttl_ms),
+            text(owner),
+        ],
+    )
+    .map_err(|e| err_name(&e))?;
     Ok(())
 }
 
-/// Heartbeat the lease by `ttl_ms` for `owner` (owner-guarded: a straggler whose
-/// row was reclaimed no-ops). Called per node so a live-but-slow runner's lease
-/// never lapses mid-walk.
-fn renew_lease(run_id: &str, ttl_ms: i64, owner: &str) -> Result<(), String> {
+/// The error-routed twin of [`record_node_run_and_renew`].
+fn record_error_and_renew(
+    run_id: &str,
+    node_id: &str,
+    seq: i32,
+    err: &NodeError,
+    input: &Value,
+    ttl_ms: i64,
+    owner: &str,
+) -> Result<(), String> {
+    let (kind, payload, detail_json) = error_row_values(err);
     client::execute(
-        &renew_lease_sql(),
-        &[text(run_id), int64(ttl_ms), text(owner)],
+        &record_error_and_renew_sql(),
+        &[
+            text(run_id),
+            text(node_id),
+            int32(seq),
+            jsonb(&payload),
+            jsonb(input),
+            text(kind),
+            jsonb(&detail_json),
+            int64(ttl_ms),
+            text(owner),
+        ],
     )
     .map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Mark the run completed AND drop its queue row in one atomic statement
+/// (fqg.18) — the claim path's terminal write; [`run_next`] skips its dequeue
+/// for a completed run.
+fn complete_and_dequeue(run_id: &str, result: &Value) -> Result<(), String> {
+    client::execute(&complete_dequeue_sql(), &[text(run_id), jsonb(result)])
+        .map_err(|e| err_name(&e))?;
     Ok(())
 }
 
@@ -795,19 +924,18 @@ fn park(run_id: &str, park_ms: u64) -> Result<(), String> {
 /// NOT re-open the run — it reconstructs from `node_runs` and continues.
 fn execute_claimed(
     run_id: &str,
-    flow_id: &str,
+    flow: &Flow,
     input: Value,
     owner: &str,
     ttl_ms: i64,
 ) -> Result<ClaimOutcome, String> {
-    let flow = load_active_flow(flow_id)?;
-    declare_run_grant(&flow);
-    declare_run_egress(&flow);
-    let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
+    declare_run_grant(flow);
+    declare_run_egress(flow);
+    let plan = Plan::compile(flow).map_err(|e| e.to_string())?;
     let version = plan.version();
     let completed = load_completed(run_id)?;
     let mut next_seq = completed.len() as i32;
-    let run_rec = RunRecord::new(run_id, flow_id, version, input);
+    let run_rec = RunRecord::new(run_id, &flow.flow_id, version, input);
     let mut st =
         wamn_run_store::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
     let mut http_status: u32 = 0;
@@ -815,7 +943,7 @@ fn execute_claimed(
     loop {
         match plan.next(&mut st, 0) {
             Step::Done(RunStatus::Completed) => {
-                mark_completed(run_id, st.result())?;
+                complete_and_dequeue(run_id, st.result())?;
                 return Ok(ClaimOutcome {
                     outcome: 0,
                     park_ms: 0,
@@ -833,14 +961,17 @@ fn execute_claimed(
             }
             Step::Wait { node, .. } => return Err(format!("unexpected retry wait at {node}")),
             Step::Dispatch(d) => {
-                // Heartbeat before each node so the lease outlives a long walk.
-                renew_lease(run_id, ttl_ms, owner)?;
-                match dispatch_node(&d, run_id, &flow, false, &mut http_status)? {
+                // The lease heartbeat rides each node's checkpoint statement
+                // (fqg.18): the claim's fresh lease covers the first node, each
+                // record's renew covers the next — the same coverage the split
+                // renew-before-dispatch gave, one round trip cheaper.
+                match dispatch_node(&d, run_id, flow, false, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
                         match &outcome {
                             NodeOutcome::Success { payload, port } => {
-                                record_node_run(
-                                    run_id, &d.node, next_seq, port, payload, &d.payload,
+                                record_node_run_and_renew(
+                                    run_id, &d.node, next_seq, port, payload, &d.payload, ttl_ms,
+                                    owner,
                                 )?;
                                 next_seq += 1;
                             }
@@ -848,7 +979,9 @@ fn execute_claimed(
                                 if will_error_route(err, &d)
                                     && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
                             {
-                                record_error(run_id, &d.node, next_seq, err, &d.payload)?;
+                                record_error_and_renew(
+                                    run_id, &d.node, next_seq, err, &d.payload, ttl_ms, owner,
+                                )?;
                                 next_seq += 1;
                             }
                             NodeOutcome::Error(_) => {}
@@ -879,18 +1012,18 @@ fn execute_claimed(
 /// per-node heartbeat, and dequeue (terminal) or park (delay). See the WIT doc.
 fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
     let ttl = i64::try_from(lease_ttl_ms).map_err(|_| "lease-ttl-ms too large".to_string())?;
-    let owner = read_runner_owner()?;
-    let Some(run_id) = claim_one(&owner, ttl)? else {
+    let owner = runner_owner()?;
+    let Some(claimed) = claim_dispatch(&owner, ttl)? else {
         return Ok((false, None, 0)); // queue drained
     };
-    let (flow_id, input) = read_run_dispatch(&run_id)?;
-    mark_running(&run_id)?;
-    let claim = execute_claimed(&run_id, &flow_id, input, &owner, ttl)?;
+    let flow = active_flow(&claimed.flow_id, claimed.active_version)?;
+    let claim = execute_claimed(&claimed.run_id, &flow, claimed.input, &owner, ttl)?;
     match claim.outcome {
-        1 => park(&run_id, claim.park_ms)?, // parked -> re-offered at wake
-        _ => dequeue(&run_id)?,             // completed / failed -> terminal
+        0 => {} // completed: complete_and_dequeue already dropped the queue row
+        1 => park(&claimed.run_id, claim.park_ms)?, // parked -> re-offered at wake
+        _ => dequeue(&claimed.run_id)?, // failed -> terminal
     }
-    Ok((true, Some(run_id), claim.outcome))
+    Ok((true, Some(claimed.run_id), claim.outcome))
 }
 
 // ---------------------------------------------------------------------------

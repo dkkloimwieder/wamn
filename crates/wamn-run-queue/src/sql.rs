@@ -117,23 +117,122 @@ pub fn claim_batch_sql(limit: usize) -> String {
     // prepared-statement path). MATERIALIZED forces single evaluation regardless
     // of the join plan (the canonical SKIP LOCKED job-queue claim shape).
     format!(
-        "WITH claimed AS MATERIALIZED ( \
-            SELECT c.tenant_id, c.run_id FROM run_queue AS c \
+        "WITH claimed AS MATERIALIZED ( {cte} ) \
+        UPDATE run_queue AS q \
+            {set} \
+           FROM claimed \
+          WHERE q.tenant_id = claimed.tenant_id AND q.run_id = claimed.run_id \
+          RETURNING q.run_id, q.attempts, q.lease_expires_at",
+        cte = global_claim_cte(limit),
+        set = CLAIM_LEASE_SET,
+    )
+}
+
+/// The global (unpartitioned) claimable scan — predicate, order, fence — shared
+/// VERBATIM by [`claim_batch_sql`] and [`claim_dispatch_sql`] so the two claim
+/// paths cannot drift: the fqg.7 wedge-wake disjunct, the budget guard, and the
+/// `FOR UPDATE SKIP LOCKED LIMIT n` all live here exactly once.
+fn global_claim_cte(limit: usize) -> String {
+    format!(
+        "SELECT c.tenant_id, c.run_id FROM run_queue AS c \
              WHERE c.partition_key IS NULL \
                AND c.available_at <= now() \
                AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now()) \
                AND (c.attempts < c.max_attempts OR c.lease_expires_at IS NULL) \
              ORDER BY c.available_at, c.run_id \
              FOR UPDATE SKIP LOCKED \
-             LIMIT {limit} \
-        ) \
-        UPDATE run_queue AS q \
-            SET lease_owner = $1, \
+             LIMIT {limit}"
+    )
+}
+
+/// The lease-write SET clause both claim paths apply (`$1` owner, `$2` ttl_ms):
+/// attempts bump only as crash evidence — an expired prior lease (fqg.5).
+const CLAIM_LEASE_SET: &str = "SET lease_owner = $1, \
                 lease_expires_at = now() + ($2::bigint * interval '1 millisecond'), \
-                attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
-           FROM claimed \
-          WHERE q.tenant_id = claimed.tenant_id AND q.run_id = claimed.run_id \
-          RETURNING q.run_id, q.attempts, q.lease_expires_at"
+                attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END";
+
+/// The record-stream claim (fqg.18): ONE statement doing what the guest's claim
+/// preamble previously spent three on — claim the next unpartitioned run
+/// ([`claim_batch_sql`]'s exact scan + lease write, via the shared fragments),
+/// flip its run `dispatched` -> `running` (the [`mark_running_sql`] guard), and
+/// return the dispatch inputs (`flow_id`, `input_json`) plus the ACTIVE flow
+/// version so the guest's plan cache can probe for free. Params: `$1` owner,
+/// `$2` ttl_ms. Returns 0 or 1 row: `(run_id, flow_id, input_json::text,
+/// active_version)`; `active_version` is `max(version)` over active rows —
+/// registration keeps at most one active (i7i), `max` just refuses to duplicate
+/// the claim row if that invariant is ever violated.
+pub fn claim_dispatch_sql() -> String {
+    format!(
+        "WITH claimed AS MATERIALIZED ( {cte} ), \
+         leased AS ( \
+            UPDATE run_queue AS q \
+               {set} \
+              FROM claimed \
+             WHERE q.tenant_id = claimed.tenant_id AND q.run_id = claimed.run_id \
+             RETURNING q.tenant_id, q.run_id \
+         ), \
+         marked AS ( \
+            UPDATE runs AS r \
+               SET status = '{running}' \
+              FROM leased \
+             WHERE r.tenant_id = leased.tenant_id AND r.run_id = leased.run_id \
+               AND r.status = '{dispatched}' \
+         ) \
+         SELECT l.run_id, r.flow_id, r.input_json::text, \
+                (SELECT max(f.version) FROM flows AS f \
+                  WHERE f.tenant_id = l.tenant_id AND f.flow_id = r.flow_id AND f.active) \
+                AS active_version \
+           FROM leased AS l \
+           JOIN runs AS r ON r.tenant_id = l.tenant_id AND r.run_id = l.run_id",
+        cte = global_claim_cte(1),
+        set = CLAIM_LEASE_SET,
+        running = RunStatus::Running.as_sql(),
+        dispatched = RunStatus::Dispatched.as_sql(),
+    )
+}
+
+/// Completion + dequeue as ONE statement (fqg.18): composes the 5.7
+/// [`wamn_run_store::sql::update_run_completed_sql`] (deliberately
+/// UNCONDITIONAL — the fqg.2 reverse-race override) with [`dequeue_sql`],
+/// sharing `$1` run_id (`$2` result_json). Also strictly better than the split
+/// pair: completion and queue removal are now atomic, so no crash window leaves
+/// a completed run enqueued.
+pub fn complete_dequeue_sql() -> String {
+    format!(
+        "WITH done AS ({completed}) {dequeue}",
+        completed = wamn_run_store::sql::update_run_completed_sql(),
+        dequeue = dequeue_sql(),
+    )
+}
+
+/// Per-node checkpoint + heartbeat as ONE statement (fqg.18): composes the 5.7
+/// [`wamn_run_store::sql::insert_node_run_success_sql`] (`$1`..`$6`, idempotent
+/// by `(run_id, node_id, occurrence)`) with the [`renew_lease_sql`] write
+/// (`$7` ttl_ms, `$8` owner — owner-guarded, sharing `$1` run_id). The renew
+/// fires even when the record is a conflict no-op (a cycle re-visiting a node),
+/// so a long cyclic walk's lease stays live exactly as the split pair kept it.
+pub fn record_success_and_renew_sql() -> String {
+    format!(
+        "WITH recorded AS ({insert}) \
+         UPDATE run_queue \
+            SET lease_expires_at = now() + ($7::bigint * interval '1 millisecond') \
+          WHERE tenant_id = current_setting('app.tenant', true) \
+            AND run_id = $1 AND lease_owner = $8",
+        insert = wamn_run_store::sql::insert_node_run_success_sql(),
+    )
+}
+
+/// The error-routed twin of [`record_success_and_renew_sql`]: composes
+/// [`wamn_run_store::sql::insert_node_run_error_sql`] (`$1`..`$7`) with the
+/// owner-guarded lease renew (`$8` ttl_ms, `$9` owner).
+pub fn record_error_and_renew_sql() -> String {
+    format!(
+        "WITH recorded AS ({insert}) \
+         UPDATE run_queue \
+            SET lease_expires_at = now() + ($8::bigint * interval '1 millisecond') \
+          WHERE tenant_id = current_setting('app.tenant', true) \
+            AND run_id = $1 AND lease_owner = $9",
+        insert = wamn_run_store::sql::insert_node_run_error_sql(),
     )
 }
 

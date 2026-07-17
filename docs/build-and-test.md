@@ -500,17 +500,27 @@ docker exec wamn-fqg8-pg psql -U postgres -c \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5490/postgres \
   --admin-database-url postgres://postgres:postgres@127.0.0.1:5490/postgres
-# 4 phases: drain + reuse + empty + RUNAWAY (cjv.4 anti-wedge, LOCAL gate of
+# 6 phases: drain + reuse + empty + RUNAWAY (cjv.4 anti-wedge, LOCAL gate of
 # record: a never-terminating cyclic flow drives the engine's default 10k
 # dispatch budget, ends failed/runaway-budget + DEQUEUES, and the run queued
 # behind it still completes — under the phase's own 180s wall guard so a
 # budget-removed mutant FAILS instead of hanging; ~1-2 min wall for the 10k
-# dispatches). Engine units: cargo test -p wamn-runner (budget section) +
-# cargo test -p wamn-run-store (fail_kind literal + DDL drift guard).
-# Mutation harness (6 killed — engine check/off-by-one/resume-exempt, store
-# literal, guest verdict, wedge-to-timeout): scratchpad mutate_cjv4.py; NOTE
-# the engine is compiled into the GUEST, so engine mutants need a flowrunner
-# wasm rebuild to reach the live gate.
+# dispatches) + STREAM + STREAM-RELOAD (fqg.18 record-stream amortization:
+# --stream-records record-runs of one flow on one warm instance, per-record
+# correctness [exactly-once, full node_runs trail, sink witness] + the
+# ms/record measurement — combined claim/checkpoint/complete statements +
+# guest plan cache took the local debug number from ~66 to ~32-37 ms/record —
+# then a mid-stream version flip must take effect for the following records =
+# the plan-cache invalidation guard). Engine units: cargo test -p wamn-runner
+# (budget section) + cargo test -p wamn-run-store (fail_kind literal + DDL
+# drift guard). Combined-builder shape + live-apply (PREPARE/EXECUTE the real
+# claim_dispatch/record+renew/complete+dequeue against deploy DDL incl
+# flows.sql): cargo test -p wamn-run-queue (+ WAMN_RUN_QUEUE_PG_URL).
+# Mutation harnesses: scratchpad mutate_cjv4.py (6 killed) + mutate_fqg18.py
+# (5 killed — cache-never-invalidates, MATERIALIZED fence, renew tail,
+# dequeue arm, mark-running arm); NOTE the engine AND the claim path are
+# compiled into the GUEST, so those mutants need a flowrunner wasm rebuild
+# to reach the live gate.
 docker rm -f wamn-fqg8-pg
 # In-cluster live smoke = gate of record (HOST changed — the run-worker module +
 # flowrunner.wasm baked into the prod image — so FULL rebuild BOTH stages + kind load):

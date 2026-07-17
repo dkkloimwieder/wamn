@@ -8,14 +8,16 @@ use std::collections::HashSet;
 use wamn_run_queue::{
     ClaimState, CronError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, JanitorVerdict,
     OutboxRow, PartitionOwner, PartitionPolicy, QueueEntry, RowEventFlow, RunStatus,
-    acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_partition_head_sql,
-    claim_state, cron_firing, cron_last_run_sql, cron_tick_of, dequeue_sql, due_tick, enqueue_sql,
-    enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql,
-    janitor_verdict, lease_deadline, lease_live, mark_running_sql, match_outbox, mint_cron_run_id,
-    next_fire, next_interval, next_reconcile, orphans, outbox_ack_sql, outbox_insert_sql,
-    outbox_poll_sql, park_sql, parked_due_sql, partition_lease_live, plan_ack, plan_acquire,
-    plan_claim, plan_partition_claim, reconcile_due, release_partition_sql, renew_lease_sql,
-    renew_partition_sql, should_renew, write_ahead_run_sql, write_ahead_triggered_run_sql,
+    acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_dispatch_sql,
+    claim_partition_head_sql, claim_state, complete_dequeue_sql, cron_firing, cron_last_run_sql,
+    cron_tick_of, dequeue_sql, due_tick, enqueue_sql, enqueue_with_policy_sql,
+    gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline,
+    lease_live, mark_running_sql, match_outbox, mint_cron_run_id, next_fire, next_interval,
+    next_reconcile, orphans, outbox_ack_sql, outbox_insert_sql, outbox_poll_sql, park_sql,
+    parked_due_sql, partition_lease_live, plan_ack, plan_acquire, plan_claim, plan_partition_claim,
+    reconcile_due, record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
+    renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
+    write_ahead_triggered_run_sql,
 };
 
 // ---- claim eligibility -----------------------------------------------------
@@ -252,6 +254,80 @@ fn claim_sql_is_skip_locked_and_bounded() {
     // `FROM (subquery)` derived table — both let the LockRows scan rescan and over-lease.
     assert!(!sql.contains(") IN ("));
     assert!(!sql.contains("FROM ("));
+}
+
+/// The fqg.18 combined claim/checkpoint/complete builders: each composes the
+/// existing single-purpose statements — the composition (not re-derivation) is
+/// the drift-guard, pinned by asserting the composed text CONTAINS the source
+/// builder's text verbatim, plus the load-bearing clauses of each tail.
+#[test]
+fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
+    // claim_dispatch = the claim scan (shared fragment with claim_batch_sql) +
+    // the mark-running guard + the dispatch read + the active-version probe.
+    let cd = claim_dispatch_sql();
+    for pin in [
+        // The claim scan, verbatim from the shared fragment (fence + predicate).
+        "WITH claimed AS MATERIALIZED (",
+        "c.partition_key IS NULL",
+        "c.available_at <= now()",
+        "c.lease_expires_at IS NULL OR c.lease_expires_at <= now()",
+        "c.attempts < c.max_attempts OR c.lease_expires_at IS NULL",
+        "ORDER BY c.available_at, c.run_id",
+        "FOR UPDATE SKIP LOCKED",
+        "LIMIT 1",
+        "attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END",
+        // The mark-running arm (the mark_running_sql guard, in-statement).
+        "SET status = 'running'",
+        "AND r.status = 'dispatched'",
+        // The dispatch read + the ACTIVE-version probe (the plan-cache input).
+        "r.flow_id, r.input_json::text",
+        "SELECT max(f.version) FROM flows AS f",
+        "AND f.active",
+    ] {
+        assert!(cd.contains(pin), "claim_dispatch_sql missing: {pin}");
+    }
+    assert!(!cd.contains(") IN ("));
+    assert!(!cd.contains("FROM ("));
+    // The scan is shared with claim_batch_sql structurally — same fragment, so
+    // the batch claim's exact scan text appears inside the combined claim.
+    let batch = claim_batch_sql(1);
+    let scan_start = batch.find("SELECT c.tenant_id").unwrap();
+    let scan_end = batch.find("LIMIT 1").unwrap() + "LIMIT 1".len();
+    assert!(
+        cd.contains(&batch[scan_start..scan_end]),
+        "claim_dispatch_sql and claim_batch_sql have drifted apart on the claim scan"
+    );
+
+    // complete_dequeue = update_run_completed_sql (fqg.2 unconditional override)
+    // + dequeue_sql, sharing $1 — one atomic statement.
+    let cq = complete_dequeue_sql();
+    assert!(
+        cq.contains(&wamn_run_store::sql::update_run_completed_sql()),
+        "complete_dequeue_sql no longer composes update_run_completed_sql verbatim"
+    );
+    assert!(
+        cq.contains(&dequeue_sql()),
+        "complete_dequeue_sql no longer composes dequeue_sql verbatim"
+    );
+
+    // record+renew = the 5.7 checkpoint insert verbatim + the owner-guarded
+    // renew tail; param numbering pinned ($7/$8 success, $8/$9 error).
+    let rs = record_success_and_renew_sql();
+    assert!(
+        rs.contains(&wamn_run_store::sql::insert_node_run_success_sql()),
+        "record_success_and_renew_sql no longer composes insert_node_run_success_sql verbatim"
+    );
+    assert!(rs.contains("$7::bigint * interval '1 millisecond'"));
+    assert!(rs.contains("AND run_id = $1 AND lease_owner = $8"));
+    assert!(!rs.contains("$9"));
+    let re = record_error_and_renew_sql();
+    assert!(
+        re.contains(&wamn_run_store::sql::insert_node_run_error_sql()),
+        "record_error_and_renew_sql no longer composes insert_node_run_error_sql verbatim"
+    );
+    assert!(re.contains("$8::bigint * interval '1 millisecond'"));
+    assert!(re.contains("AND run_id = $1 AND lease_owner = $9"));
+    assert!(!re.contains("$10"));
 }
 
 #[test]
@@ -1324,6 +1400,9 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
         .expect("read deploy/run-state.sql");
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/run-queue.sql"))
         .expect("read deploy/run-queue.sql");
+    // The flow registry: claim_dispatch_sql's active-version probe joins it.
+    let flows_ddl =
+        std::fs::read_to_string(format!("{root}/deploy/flows.sql")).expect("read deploy/flows.sql");
 
     // Exercise the REAL builders (not hand-copied SQL) via PREPARE/EXECUTE, so a
     // bug in claim_batch_sql / janitor_sweep_sql / the partition builders is caught here.
@@ -1339,6 +1418,11 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     let triggered_sql = write_ahead_triggered_run_sql();
     let last_run_sql = cron_last_run_sql();
     let parked_sql = parked_due_sql(50);
+    // The fqg.18 combined claim/checkpoint/complete statements.
+    let claim_dispatch = claim_dispatch_sql();
+    let complete_dequeue = complete_dequeue_sql();
+    let record_success_renew = record_success_and_renew_sql();
+    let record_error_renew = record_error_and_renew_sql();
 
     let mut script = String::new();
     // Provision wamn_app (NOSUPERUSER/NOBYPASSRLS, like production) + a fresh schema.
@@ -1350,6 +1434,8 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     script.push_str(&run_state);
     script.push('\n');
     script.push_str(&run_queue);
+    script.push('\n');
+    script.push_str(&flows_ddl);
     script.push('\n');
 
     // Seed (superuser bypasses RLS): eight t1 runs + a t2 witness, and a run_queue
@@ -1532,6 +1618,74 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
                'FK ON DELETE CASCADE removed the queue row'; END $$;\n\
          COMMIT;\n",
     );
+
+    // The fqg.18 combined statements via the REAL builders. Seed a dedicated run
+    // (cd-0) + an active flow v3 (and an INACTIVE v4, so the version probe must
+    // filter on `active`, not take max over all versions). All earlier
+    // unpartitioned rows are leased/parked/spent by now, so the LIMIT-1 combined
+    // claim deterministically takes cd-0.
+    script.push_str(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status, input_json) \
+           VALUES ('t1','cd-0','f',3,'dispatched','\"rec\"'::jsonb);\n\
+         INSERT INTO wamn_run.run_queue (tenant_id, run_id, available_at, attempts, max_attempts) \
+           VALUES ('t1','cd-0', now(), 0, 20);\n\
+         INSERT INTO wamn_run.flows (tenant_id, flow_id, version, active, graph_json) VALUES \
+           ('t1','f',3,true,'{}'::jsonb), \
+           ('t1','f',4,false,'{}'::jsonb);\n",
+    );
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE cd_stmt (text, bigint) AS {claim_dispatch};\n\
+         PREPARE csr_stmt (text, text, int, text, jsonb, jsonb, bigint, text) AS {record_success_renew};\n\
+         PREPARE cer_stmt (text, text, int, jsonb, jsonb, text, jsonb, bigint, text) AS {record_error_renew};\n\
+         PREPARE cdq_stmt (text, jsonb) AS {complete_dequeue};\n\
+         -- ONE statement: claim + mark running + dispatch read + version probe.\n\
+         CREATE TEMP TABLE cd_probe AS EXECUTE cd_stmt('cd-owner', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM cd_probe) = 1, 'combined claim takes exactly one run'; \
+           ASSERT (SELECT run_id FROM cd_probe) = 'cd-0', 'combined claim takes the ready run'; \
+           ASSERT (SELECT flow_id FROM cd_probe) = 'f', 'combined claim returns the dispatch flow'; \
+           ASSERT (SELECT input_json FROM cd_probe) = '\"rec\"', 'combined claim returns the trigger input'; \
+           ASSERT (SELECT active_version FROM cd_probe) = 3, 'version probe returns the ACTIVE version, not the inactive max'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='cd-0') = 'cd-owner', 'combined claim leased the row'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='cd-0') = 'running', 'combined claim marked the run running in-statement'; \
+         END $$;\n\
+         -- Per-node checkpoint + heartbeat: record advances the lease (owner-guarded).\n\
+         CREATE TEMP TABLE lease_t0 AS SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0';\n\
+         EXECUTE csr_stmt('cd-0','n1',0,'main','\"out\"','\"in\"',120000,'cd-owner');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND node_id='n1' AND status='success') = 1, 'combined record wrote the checkpoint'; \
+           ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') > (SELECT lease_expires_at FROM lease_t0), 'combined record renewed the lease'; \
+         END $$;\n\
+         -- A straggler with the WRONG owner still records (idempotent checkpoint,\n\
+         -- same as the split path) but cannot renew the lease.\n\
+         CREATE TEMP TABLE lease_t1 AS SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0';\n\
+         EXECUTE csr_stmt('cd-0','n2',1,'main','\"out\"','\"in\"',300000,'not-the-owner');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND node_id='n2') = 1, 'wrong-owner record still checkpoints'; \
+           ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') = (SELECT lease_expires_at FROM lease_t1), 'wrong-owner record does NOT renew the lease'; \
+         END $$;\n\
+         -- The error-routed twin.\n\
+         EXECUTE cer_stmt('cd-0','n3',2,'{{\"error\":{{}}}}','\"in\"','terminal','{{\"message\":\"x\"}}',240000,'cd-owner');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT error_kind FROM node_runs WHERE run_id='cd-0' AND node_id='n3') = 'terminal', 'combined error record carries the taxonomy'; \
+           ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') > (SELECT lease_expires_at FROM lease_t1), 'error record renews the lease too'; \
+         END $$;\n\
+         -- Completion + dequeue, atomic in one statement.\n\
+         EXECUTE cdq_stmt('cd-0','\"done\"');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT status FROM runs WHERE run_id='cd-0') = 'completed', 'combined complete marked the run'; \
+           ASSERT (SELECT result_json FROM runs WHERE run_id='cd-0') = '\"done\"', 'combined complete recorded the result'; \
+           ASSERT (SELECT count(*) FROM run_queue WHERE run_id='cd-0') = 0, 'combined complete dequeued atomically'; \
+         END $$;\n\
+         -- Drained: a second combined claim returns no row.\n\
+         CREATE TEMP TABLE cd_probe2 AS EXECUTE cd_stmt('cd-owner', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM cd_probe2) = 0, 'combined claim of a drained queue returns nothing'; \
+         END $$;\n\
+         COMMIT;\n"
+    ));
     // The trigger dispatcher's outbox path via the REAL builders: a producer
     // inserts events in its own transaction (outbox_insert_sql); the dispatcher
     // polls pending rows oldest-first (outbox_poll_sql, SKIP LOCKED), fires the

@@ -82,6 +82,12 @@ pub struct RunnerBenchArgs {
     /// Runs seeded per drain.
     #[arg(long, default_value_t = 12)]
     pub iters: usize,
+
+    /// Records seeded for the stream phase (fqg.18): one flow, many record-runs
+    /// on one warm instance — the per-record dispatch cost the amortization work
+    /// is judged by.
+    #[arg(long, default_value_t = 200)]
+    pub stream_records: usize,
 }
 
 /// The union DDL (identical shape to failoverbench): the flow tables the guest
@@ -405,7 +411,93 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             after_done == 1
         );
 
-        anyhow::Ok(drain1 && reuse && empty && runaway)
+        // --- (5) RECORD STREAM (fqg.18): many records = many runs of ONE flow
+        // on one warm instance. Correctness: every record completes exactly
+        // once with a full per-record node_runs trail and the v1 sink witness.
+        // Measurement: wall clock per record on this substrate — the relative
+        // number the amortization mechanisms are judged by.
+        let m = args.stream_records;
+        for i in 0..m {
+            seed_run(&mut seed_conn, &format!("st-{i}")).await?;
+        }
+        let t0 = std::time::Instant::now();
+        let r5 = worker.drain().await?;
+        let stream_elapsed = t0.elapsed();
+        let q5 = count(&seed_conn, &queued).await?;
+        let st_done = count(
+            &seed_conn,
+            &format!("SELECT count(*) FROM {SCHEMA}.runs WHERE run_id LIKE 'st-%' AND status = 'completed'"),
+        )
+        .await?;
+        // Per-record node_runs trail: every record carries the same, complete
+        // trail (uniformity pinned against the first record's count).
+        let per_record: i64 = count(
+            &seed_conn,
+            &format!("SELECT count(*) FROM {SCHEMA}.node_runs WHERE run_id = 'st-0'"),
+        )
+        .await?;
+        let st_nodes = count(
+            &seed_conn,
+            &format!("SELECT count(*) FROM {SCHEMA}.node_runs WHERE run_id LIKE 'st-%'"),
+        )
+        .await?;
+        // Sink witness: v1 is the `upper` transform — every record's sink row
+        // must carry it (also pins exactly-once: one sink row per record).
+        let st_sinks_v1 = count(
+            &seed_conn,
+            &format!("SELECT count(*) FROM {SCHEMA}.sink WHERE run_id LIKE 'st-%' AND payload = 'RECEIPT'"),
+        )
+        .await?;
+        let per_ms = stream_elapsed.as_secs_f64() * 1000.0 / m.max(1) as f64;
+        let stream_ok = r5.claimed == m
+            && r5.completed == m
+            && q5 == 0
+            && st_done as usize == m
+            && per_record >= 3
+            && st_nodes == per_record * m as i64
+            && st_sinks_v1 as usize == m;
+        println!(
+            "## stream — {m} records in {:.2}s ({per_ms:.2} ms/record), completed {st_done}/{m}, \
+             node_runs {st_nodes} ({per_record}/record), v1 sinks {st_sinks_v1}/{m}, \
+             queue drained = {} -> {stream_ok}",
+            stream_elapsed.as_secs_f64(),
+            q5 == 0
+        );
+
+        // --- (6) HOT-RELOAD MID-STREAM (fqg.18): activate v2 (the `reverse`
+        // transform), stream more records — they must run v2. This is the
+        // load-bearing guard on the plan cache: keyed by the ACTIVE version,
+        // a version flip must invalidate it.
+        wamn_gate_harness::seed_flow_version(
+            &seed_conn,
+            TENANT,
+            FLOW_ID,
+            2,
+            true,
+            &crate::flowbench::flow_json(2),
+            true,
+        )
+        .await?;
+        wamn_gate_harness::set_active_flow_version(&seed_conn, TENANT, FLOW_ID, 2).await?;
+        let m2 = (m / 4).max(8);
+        for i in 0..m2 {
+            seed_run(&mut seed_conn, &format!("sv-{i}")).await?;
+        }
+        let r6 = worker.drain().await?;
+        let sv_sinks_v2 = count(
+            &seed_conn,
+            &format!("SELECT count(*) FROM {SCHEMA}.sink WHERE run_id LIKE 'sv-%' AND payload = 'tpiecer'"),
+        )
+        .await?;
+        let reload_ok = r6.claimed == m2 && r6.completed == m2 && sv_sinks_v2 as usize == m2;
+        // Restore v1 active so a re-run of the binary starts from the same state.
+        wamn_gate_harness::set_active_flow_version(&seed_conn, TENANT, FLOW_ID, 1).await?;
+        println!(
+            "## stream-reload — v2 activated mid-stream: {}/{m2} records ran v2 (reverse sinks {sv_sinks_v2}) -> {reload_ok}",
+            r6.completed
+        );
+
+        anyhow::Ok(drain1 && reuse && empty && runaway && stream_ok && reload_ok)
     }
     .await;
 

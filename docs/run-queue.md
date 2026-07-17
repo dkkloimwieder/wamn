@@ -229,20 +229,48 @@ The `failover` path above has the *host* claim from the queue and hand the guest
 that is the flowrunner guest's `run-next` export (fqg.4). One invocation is one turn
 of the production dispatch loop:
 
-1. **Claim** one currently-claimable **unpartitioned** run for this replica
-   (`claim_batch_sql(1)`, `FOR UPDATE SKIP LOCKED`, an owner + lease TTL). Empty
-   queue → `claimed = false`, nothing to do. (Partitioned runs stay on the
-   per-partition ownership path; a guest-side partitioned claim is a follow-up.)
-2. **Read** the run's flow + trigger input from the dispatcher-persisted `runs`
-   row (`select_run_dispatch_sql` — the claim path drives the **recorded** flow +
-   input, never a fixture constant), and flip it `dispatched → running`
-   (`mark_running_sql`).
+1. **Claim + read + mark, one statement** (`claim_dispatch_sql`, fqg.18): claim
+   one currently-claimable **unpartitioned** run for this replica (the exact
+   `claim_batch_sql` scan — a shared fragment, so the two claim paths cannot
+   drift — `FOR UPDATE SKIP LOCKED`, an owner + lease TTL), flip its run
+   `dispatched → running` (the `mark_running_sql` guard, in-statement), and
+   return the dispatch inputs (`flow_id`, `input_json` — the claim path drives
+   the **recorded** flow + input, never a fixture constant) plus the **active
+   flow version**. Empty queue → `claimed = false`, nothing to do. (Partitioned
+   runs stay on the per-partition ownership path; a guest-side partitioned claim
+   is fqg.9.)
+2. **Plan cache** (fqg.18): the guest memoizes the parsed flow per
+   `flow_id` keyed by version; the claim statement's active-version probe makes
+   the cache check free, so a record stream re-fetches + re-parses +
+   re-compiles **nothing** per record while a version flip (hot reload)
+   invalidates on the very next record. The `app.runner` owner is likewise read
+   once per instance (host-injected at instantiate, immutable after).
 3. **Drive** it with the 5.2 engine, reconstructing from `node_runs` (so a
-   reclaimed run resumes exactly), **renewing the lease per node**
-   (`renew_lease_sql`) so a live-but-slow runner is never reclaimed mid-walk.
-4. **Dequeue** on completion (`dequeue_sql`), or **park** on a `delay`
-   (`park_sql` — push `available_at` to the wake and *release* the lease, so the
-   wake re-claim is free; wamn-fqg.5/.7).
+   reclaimed run resumes exactly). Each node's durable checkpoint and the lease
+   heartbeat ride **one statement** (`record_success_and_renew_sql` /
+   `record_error_and_renew_sql`): the claim's fresh lease covers the first node,
+   each record's owner-guarded renew covers the next — the split path's
+   renew-before-dispatch coverage, one round trip cheaper per node. The renew
+   fires even when the record is an idempotency no-op (a cycle revisiting a
+   node), so a long cyclic walk's lease stays live.
+4. **Complete + dequeue atomically** (`complete_dequeue_sql` — the 5.7
+   completion write and the queue removal in one statement, so no crash window
+   leaves a completed run enqueued), or **park** on a `delay` (`park_sql` — push
+   `available_at` to the wake and *release* the lease, so the wake re-claim is
+   free; wamn-fqg.5/.7).
+
+**Record streams (fqg.18 / D9).** Records map 1:1 to runs — there is no batch
+API: a record stream is many runs of one flow, each with its own 5.7 audit
+trail, per-record checkpoint, and exactly-once semantics. The amortization above
+(one-statement claim/checkpoint/complete + the plan cache) is what makes that
+shape cheap: the per-record cost fell from ~18 statements + a full graph
+fetch/parse/compile to ~8 statements and no per-record compile (runnerbench
+`stream` phase: ~66 → ~32–37 ms/record on the local debug substrate). Component
+instantiation was already amortized — the run-worker instantiates the flowrunner
+once and loops `run-next` for its whole lifetime. The flow-level ordering
+declaration (`unordered`/`strict`/`partitioned(key)` + the dispatcher stamping
+`partition_key` at enqueue) is wamn-fqg.20; the guest-side partitioned claim is
+wamn-fqg.9.
 
 **Claim-builder shape (bounded-lease correctness).** The guest is the first caller
 to run `claim_batch_sql` through the `wamn:postgres` plugin (host callers use raw
@@ -338,7 +366,13 @@ The `runnerbench` gate drives the *production* `RunWorker` (not a gate-local
 worker) against an ephemeral schema seeded the dispatcher way, asserting it drains
 the queue to completion, reuses one instance across drains, and reports an empty
 drain — the local, repeatable, mutation-tested counterpart of the in-cluster
-dispatcher → queue → runner live smoke.
+dispatcher → queue → runner live smoke. Its `stream` phase (fqg.18) pushes
+`--stream-records` (default 200) record-runs of one flow through one warm
+instance — correctness (every record completes exactly once with a full
+per-record `node_runs` trail and the v1 sink witness) plus the wall-clock
+per-record measurement the amortization is judged by — and its `stream-reload`
+phase activates a new flow version mid-stream and asserts the following records
+run it: the load-bearing guard on the guest plan cache's invalidation.
 
 ## Trigger dispatcher (cron + outbox + parked-wake)
 
