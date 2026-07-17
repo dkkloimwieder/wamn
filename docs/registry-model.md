@@ -191,6 +191,18 @@ The reserved-prefix rule, the env→policy resolution, the `cluster_of` derivati
 and referential integrity are the load-bearing behaviors; each is mutation-tested
 (apply / test / restore, debug builds).
 
+`validate()` is the **primary** id/name guard and runs on the in-memory
+`from_json` path a direct control-plane writer takes. As a defense-in-depth
+**backstop** for a writer that skips *both* `provision-org` **and**
+`Registry::validate()` — a malformed id otherwise flows straight into K8s object
+names and WAL paths — the stored slug/name columns in `deploy/system-schema.sql`
+also carry a charset/length `CHECK` mirroring it (`orgs_id_charset_check` /
+`orgs_pool_cluster_charset_check` / `projects_id_charset_check` /
+`env_policies_name_charset_check`, cjv.20; the two id columns include the
+reserved-`wamn` clause, the cluster/env names do not). `validate_org_id(&str) ->
+Result<(), Issue>` exposes the org-id discipline standalone, for a caller
+(e.g. `wamn-2ib`) that wants to reject one id without building a whole registry.
+
 ## Storage schema (wamn-q3n.3)
 
 `deploy/system-schema.sql` persists the model as tables in the **T1 system DB**

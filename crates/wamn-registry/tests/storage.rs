@@ -312,6 +312,62 @@ fn placement_check_is_present_and_tier_checks_are_gone() {
     }
 }
 
+/// The cjv.20 charset/length backstop: each stored slug/name column carries a
+/// named CHECK mirroring `wamn-registry` validate() (`check_id` / `check_env` /
+/// `check_name`). Pinned by constraint name + the anchored slug regex + the
+/// length bound + the reserved-`wamn` clause, so a weakened predicate can't slip
+/// through (the drift-guard-expression lesson). Defends a direct control-plane
+/// writer (wamn-2ib) that skips both provision-org and Registry::validate().
+#[test]
+fn charset_length_checks_backstop_the_stored_slug_names() {
+    let sql = code_only(&system_schema_sql());
+
+    // The anchored slug regex mirrors wamn-registry `is_slug`, once per stored
+    // slug/name column: orgs.id, orgs.pool_cluster, projects.id, env_policies.name.
+    let slug_re = "'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'";
+    assert!(
+        sql.matches(slug_re).count() >= 4,
+        "each of the 4 stored slug/name columns must carry the anchored slug regex"
+    );
+
+    // Every column carries a named CHECK constraint.
+    for name in [
+        "orgs_id_charset_check",
+        "orgs_pool_cluster_charset_check",
+        "projects_id_charset_check",
+        "env_policies_name_charset_check",
+    ] {
+        assert!(
+            sql.contains(name),
+            "missing charset CHECK constraint {name}"
+        );
+    }
+
+    // Length bounds: ids/env slugs ≤ 40 (MAX_ID_LEN), cluster names ≤ 63
+    // (MAX_NAME_LEN, DNS-1123 label).
+    assert!(sql.contains("char_length(id) <= 40"), "id length bound");
+    assert!(
+        sql.contains("char_length(name) <= 40"),
+        "env name length bound"
+    );
+    assert!(
+        sql.contains("char_length(pool_cluster) <= 63"),
+        "cluster name length bound"
+    );
+
+    // The id columns (orgs.id, projects.id) mirror the reserved-`wamn` rule
+    // (check_id); the pool_cluster / env name columns deliberately do NOT (they
+    // may carry the `wamn` prefix / are arbitrary env slugs).
+    assert!(
+        sql.contains("id <> 'wamn'") && sql.contains("id NOT LIKE 'wamn-%'"),
+        "the id charset CHECK must reject the reserved `wamn` prefix"
+    );
+    assert!(
+        !sql.contains("pool_cluster NOT LIKE") && !sql.contains("name NOT LIKE"),
+        "pool_cluster / env name must NOT carry a reserved-prefix rule"
+    );
+}
+
 /// Invariant 2 (no credentials, R8b): the schema stores Secret *references* and
 /// must not introduce a credential column (a text-level backstop; the live-apply
 /// gate asserts the actual column set).
@@ -692,6 +748,56 @@ EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 DO $$ BEGIN BEGIN
   INSERT INTO registry.orgs (id, placement_kind) VALUES ('badkind','elastic');
   ASSERT false, 'an unknown placement_kind must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+
+-- cjv.20: the charset/length backstop on the stored slug/name columns. Each
+-- malformed value is rejected by its named CHECK (check_violation); a well-formed
+-- one applies. (The PRIMARY guard is crates/wamn-registry validate(); this DB
+-- CHECK backstops a writer that skips both provision-org AND validate().)
+-- orgs.id — a check_id mirror (slug + <= 40 bytes + reserved-wamn).
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('Bad_Id','dedicated',NULL);
+  ASSERT false, 'a non-slug org id must be rejected (orgs_id_charset_check)';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- Uppercase alone is rejected (the CHECK is case-SENSITIVE `~`, not `~*`).
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('BadCaps','dedicated',NULL);
+  ASSERT false, 'an uppercase org id must be rejected (case-sensitive charset)';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('wamn-x','dedicated',NULL);
+  ASSERT false, 'a reserved-wamn org id must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
+    VALUES (repeat('a',41),'dedicated',NULL);
+  ASSERT false, 'an over-length org id must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- orgs.pool_cluster — a check_name mirror (slug + <= 63; MAY carry the wamn prefix).
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('goodorg','pooled','Bad_Pool');
+  ASSERT false, 'a non-slug pool cluster must be rejected (orgs_pool_cluster_charset_check)';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- A well-formed org id + a wamn-prefixed pool cluster applies (then cleaned up).
+INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('goodorg','pooled','wamn-pg');
+DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.orgs WHERE id='goodorg')=1,
+  'a well-formed org id + wamn-prefixed pool cluster applies'; END $$;
+DELETE FROM registry.orgs WHERE id='goodorg';
+-- projects.id — a check_id mirror (slug + reserved), under the existing 'try' org.
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.projects (org, id) VALUES ('try','Bad_Proj');
+  ASSERT false, 'a non-slug project id must be rejected (projects_id_charset_check)';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.projects (org, id) VALUES ('try','wamn-run');
+  ASSERT false, 'a reserved-wamn project id must be rejected';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- env_policies.name — a check_env mirror (slug + <= 40, NO reserved), under 'acme'.
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.env_policies
+      (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
+    VALUES ('acme','Bad_Env','"own"'::jsonb,10,1,'2Gi','200m','256Mi','x');
+  ASSERT false, 'a non-slug env policy name must be rejected (env_policies_name_charset_check)';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
 -- Invariant 2 (no credentials, R8b): project_envs carries the Secret REFERENCE

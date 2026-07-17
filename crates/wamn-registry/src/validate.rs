@@ -87,6 +87,39 @@ fn is_reserved(id: &str) -> bool {
     id == RESERVED_PREFIX || id.starts_with("wamn-")
 }
 
+/// The first violating [`Issue`] for an org/project id under the given codes, or
+/// `None` if `id` is a non-empty, non-reserved lowercase slug within length. The
+/// single source of the id discipline, shared by [`check_id`] (in-registry) and
+/// [`validate_org_id`] (standalone).
+fn id_issue(
+    path: String,
+    id: &str,
+    empty: &'static str,
+    invalid: &'static str,
+    reserved: &'static str,
+) -> Option<Issue> {
+    if id.is_empty() {
+        Some(Issue::error(empty, path, "id is required"))
+    } else if id.len() > MAX_ID_LEN || !is_slug(id) {
+        Some(Issue::error(
+            invalid,
+            path,
+            format!(
+                "id {id:?} must be a lowercase slug [a-z0-9-] (start/end alphanumeric, \
+                 <= {MAX_ID_LEN} bytes) — it embeds into cluster/Secret/subdomain names"
+            ),
+        ))
+    } else if is_reserved(id) {
+        Some(Issue::error(
+            reserved,
+            path,
+            format!("id {id:?} is under the reserved `wamn` prefix (wamn-66x)"),
+        ))
+    } else {
+        None
+    }
+}
+
 /// Validate an org/project id: non-empty slug, within length, not reserved.
 fn check_id(
     issues: &mut Vec<Issue>,
@@ -96,23 +129,29 @@ fn check_id(
     invalid: &'static str,
     reserved: &'static str,
 ) {
-    if id.is_empty() {
-        issues.push(Issue::error(empty, path, "id is required"));
-    } else if id.len() > MAX_ID_LEN || !is_slug(id) {
-        issues.push(Issue::error(
-            invalid,
-            path,
-            format!(
-                "id {id:?} must be a lowercase slug [a-z0-9-] (start/end alphanumeric, \
-                 <= {MAX_ID_LEN} bytes) — it embeds into cluster/Secret/subdomain names"
-            ),
-        ));
-    } else if is_reserved(id) {
-        issues.push(Issue::error(
-            reserved,
-            path,
-            format!("id {id:?} is under the reserved `wamn` prefix (wamn-66x)"),
-        ));
+    if let Some(issue) = id_issue(path, id, empty, invalid, reserved) {
+        issues.push(issue);
+    }
+}
+
+/// Validate a **single org id** in isolation — the same discipline [`validate`]
+/// applies to `orgs[i].id` (non-empty lowercase slug `[a-z0-9-]`, start/end
+/// alphanumeric, ≤ 40 bytes, not under the reserved `wamn` prefix). For a caller
+/// that mints an org id **outside** a full [`Registry`] and wants to reject it
+/// before it flows into cluster / Secret / WAL-path names — e.g. a direct
+/// control-plane writer (`wamn-2ib`) that does not build a whole registry to
+/// validate. Mirrors the DB `orgs_id_charset_check` backstop
+/// (`deploy/system-schema.sql`, cjv.20). The reported [`Issue::path`] is `org.id`.
+pub fn validate_org_id(id: &str) -> Result<(), Issue> {
+    match id_issue(
+        "org.id".to_string(),
+        id,
+        "empty-org-id",
+        "invalid-org-id",
+        "reserved-org-id",
+    ) {
+        Some(issue) => Err(issue),
+        None => Ok(()),
     }
 }
 
@@ -536,6 +575,46 @@ mod tests {
         let c = codes(&r);
         assert!(c.contains(&"empty-org-id"));
         assert!(!c.contains(&"invalid-org-id"));
+    }
+
+    #[test]
+    fn validate_org_id_accepts_good_and_rejects_bad() {
+        use super::{MAX_ID_LEN, validate_org_id};
+
+        // Non-empty lowercase slugs within length are accepted.
+        for good in ["acme", "a", "my-org", "a1", "org-123", "x9"] {
+            assert!(validate_org_id(good).is_ok(), "{good:?} should be valid");
+        }
+
+        // Empty / charset / boundary / length / reserved are each rejected with a
+        // stable code (mirrors the in-registry `check_id`).
+        for (bad, code) in [
+            ("", "empty-org-id"),
+            ("Bad", "invalid-org-id"), // uppercase
+            ("a_b", "invalid-org-id"), // underscore
+            ("has.dot", "invalid-org-id"),
+            ("-x", "invalid-org-id"),  // leading non-alnum
+            ("x-", "invalid-org-id"),  // trailing non-alnum
+            ("a b", "invalid-org-id"), // space
+            ("wamn", "reserved-org-id"),
+            ("wamn-corp", "reserved-org-id"),
+        ] {
+            let err = validate_org_id(bad).expect_err(&format!("{bad:?} should be rejected"));
+            assert_eq!(err.code, code, "wrong code for {bad:?}");
+            assert_eq!(err.path, "org.id");
+        }
+
+        // Over-length is invalid; the boundary (exactly 40) is fine.
+        assert!(validate_org_id(&"a".repeat(MAX_ID_LEN)).is_ok());
+        assert_eq!(
+            validate_org_id(&"a".repeat(MAX_ID_LEN + 1))
+                .unwrap_err()
+                .code,
+            "invalid-org-id"
+        );
+
+        // The reserved boundary is a hyphen: `wamning` is a normal id.
+        assert!(validate_org_id("wamning").is_ok());
     }
 
     #[test]

@@ -624,10 +624,18 @@ Docs: docs/registry-model.md, docs/system-cluster.md
 ```bash
 cargo test -p wamn-registry   # drift-guard (placement cols + env_policies seed vs the model) + inv-1 grep (live-apply skips)
 cargo clippy -p wamn-registry --all-targets && cargo fmt -p wamn-registry --check
+# cjv.20: the charset/length CHECK backstop on the stored slug/name columns
+# (orgs.id/pool_cluster, projects.id, env_policies.name — mirrors validate()
+# check_id/check_env/check_name) is pinned by the drift-guard
+# `charset_length_checks_backstop_the_stored_slug_names`, proven live by the gate
+# below, and mutation-tested (scratchpad/mutate_cjv20.py: 3 mutants — drop the
+# orgs.id CHECK / `~`->`~*` case-insensitive / neuter validate_org_id). Pure-crate
+# + hand-written SQL — NO in-cluster required (a45 precedent; the live wamn-sysdb
+# picks the CHECK up on the next system-schema re-apply — see wamn-cjv.29).
 # optional throwaway-PG live-apply gate (WAMN_REGISTRY_PG_URL, superuser url —
 # invariants 2/3 + the placement biconditional + the composite (org, env) FK ->
 # env_policies(org, name) + the template stamp insert-if-absent + FK integrity +
-# saga exactly-once; skips when unset):
+# the cjv.20 charset CHECKs + saga exactly-once; skips when unset):
 docker run -d --rm --name wamn-reg-pg -p 5461:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
 WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5461/wamn cargo test -p wamn-registry

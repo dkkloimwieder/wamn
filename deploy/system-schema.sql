@@ -52,8 +52,16 @@
 --       own-domain envs (dev, prod) derive distinct clusters (<org>-dev vs
 --       <org>-prod) by construction, so they never collapse; `canary` collapsing
 --       onto prod is an INTENTIONAL `recovery-domain: {shared-with: prod}` policy,
---       and `canary` isolated (T4) is `recovery-domain: own` (→ <org>-canary). The
---       structural CHECK that remains is only `pooled ⟺ pool_cluster present`.
+--       and `canary` isolated (T4) is `recovery-domain: own` (→ <org>-canary).
+--
+-- id/name WELL-FORMEDNESS: crates/wamn-registry validate() (check_id/check_env/
+-- check_name) is the PRIMARY guard, and it runs on the in-memory `from_json`
+-- import path a direct control-plane writer (e.g. wamn-2ib) uses. But a writer
+-- that skips BOTH provision-org AND Registry::validate() would land a malformed
+-- id straight into K8s object names + WAL paths with no guard, so the stored
+-- slug/name columns also carry a defensive charset/length CHECK backstop that
+-- mirrors validate() (wamn-cjv.20). The structural CHECKs on `orgs` are thus
+-- `pooled ⟺ pool_cluster present` plus that charset/length backstop.
 
 -- ---------------------------------------------------------------------------
 -- Schemas. `registry` = the identity/placement model (wamn-q3n.1); `provisioning`
@@ -91,10 +99,15 @@ INSERT INTO registry.meta (schema_version) VALUES ('0.1');
 -- cluster_of — not stored). The retired `tier` / `prod_cluster` / `canary_cluster`
 -- / `dev_cluster` columns are gone; sizing/HA/backup are env-policy knobs.
 --
--- The only structural CHECK is `pooled ⟺ pool_cluster present`: a pooled org
--- names its shared pool; a dedicated org's clusters are derived, so pool is NULL.
--- Invariant 4 (dev ≠ prod recovery domain) is now the derivation's + validate()'s
--- job (header note), not a per-org CHECK.
+-- Structural CHECKs: `pooled ⟺ pool_cluster present` (a pooled org names its
+-- shared pool; a dedicated org's clusters are derived, so pool is NULL) plus a
+-- defensive charset/length backstop (cjv.20) on `id` and `pool_cluster` mirroring
+-- crates/wamn-registry validate() (check_id / check_name) — `id` must be a
+-- lowercase slug `[a-z0-9-]` (start/end alnum), ≤ 40 bytes, and not under the
+-- reserved `wamn` prefix (it mints `<org>-*` cluster / `wamn-db-<org>--*` Secret /
+-- subdomain names); `pool_cluster` is a DNS-1123 label ≤ 63 and MAY carry the
+-- `wamn` prefix (`wamn-pg`), so no reserved rule there. Invariant 4 (dev ≠ prod
+-- recovery domain) is still the derivation's + validate()'s job, not a CHECK.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.orgs (
     id             text PRIMARY KEY,
@@ -103,7 +116,15 @@ CREATE TABLE registry.orgs (
     CONSTRAINT orgs_placement_kind_check
         CHECK (placement_kind IN ('pooled', 'dedicated')),
     CONSTRAINT orgs_pool_cluster_check
-        CHECK ((placement_kind = 'pooled') = (pool_cluster IS NOT NULL))
+        CHECK ((placement_kind = 'pooled') = (pool_cluster IS NOT NULL)),
+    CONSTRAINT orgs_id_charset_check
+        CHECK (id ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+               AND char_length(id) <= 40
+               AND id <> 'wamn' AND id NOT LIKE 'wamn-%'),
+    CONSTRAINT orgs_pool_cluster_charset_check
+        CHECK (pool_cluster IS NULL
+               OR (pool_cluster ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+                   AND char_length(pool_cluster) <= 63))
 );
 
 -- ---------------------------------------------------------------------------
@@ -136,7 +157,12 @@ CREATE TABLE registry.env_policies (
     backup_cadence  text  NOT NULL DEFAULT '',
     wal_retention   text  NOT NULL DEFAULT '',
     hibernation     text  NOT NULL DEFAULT 'off',
-    PRIMARY KEY (org, name)
+    PRIMARY KEY (org, name),
+    -- cjv.20 charset backstop: `name` IS the env slug (check_env mirror) — a
+    -- lowercase slug ≤ 40 bytes; no reserved rule (an env may be any slug).
+    CONSTRAINT env_policies_name_charset_check
+        CHECK (name ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+               AND char_length(name) <= 40)
 );
 
 -- ---------------------------------------------------------------------------
@@ -146,7 +172,13 @@ CREATE TABLE registry.env_policies (
 CREATE TABLE registry.projects (
     org  text NOT NULL REFERENCES registry.orgs (id) ON DELETE CASCADE,
     id   text NOT NULL,
-    PRIMARY KEY (org, id)
+    PRIMARY KEY (org, id),
+    -- cjv.20 charset backstop: project `id` is a check_id mirror (lowercase slug
+    -- ≤ 40 bytes, not under the reserved `wamn` prefix — it too mints names).
+    CONSTRAINT projects_id_charset_check
+        CHECK (id ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+               AND char_length(id) <= 40
+               AND id <> 'wamn' AND id NOT LIKE 'wamn-%')
 );
 
 -- ---------------------------------------------------------------------------
