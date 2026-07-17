@@ -64,6 +64,28 @@ silently resizes an existing customer. The platform-global `dev`/`prod` seed is
 retired (templates carry the defaults); `provision-org` records-then-reads-back,
 so a customized org re-renders with its customizations. **Completes cjv.21.**
 
+**Landed — `wamn-8df.5` (unified copy, 2026-07-17):** `copy(src → dst)` shipped
+as the pure `wamn_provision::plan_copy` step plan + the `wamn-host
+copy-project-env` driver. `include ∈ {definition, data, both}`, `scope: whole`,
+`mode: snapshot` (subset / live-cutover stay first-class in the API shape,
+rejected with a named `UnbuiltCopyAxis` error). The definition pass promotes
+each of the src env's **applied catalogs** through the 2.5 migrate engine
+(idempotent — a re-copy skips `AlreadyApplied`), copies the flow registrations
+verbatim, and copies **and re-compiles/applies** the RLS policy rows on the dst;
+`data` is a `pg_restore --data-only --disable-triggers` of the data schema (the
+outbox triggers must not fire per restored row); `both` is a full-fidelity
+restore of the `pg_dump -Fd` snapshot (recorded in `provisioning.dumps`). A
+`--cutover` copy is a **move**: `Quiesce → Snapshot → Restore → Verify →
+Cutover [→ DeprovisionOld]`, each step advancing a `copy`-kind saga in
+`provisioning.sagas`, and the cutover executor **re-reads the saga and refuses**
+unless every prior step is durably recorded — the enforced form of the topology
+doc's "scheduled downtime window" (**fixes cjv.7**). Quiesce =
+`ALTER DATABASE … SET default_transaction_read_only = on` + terminating existing
+backends, *proven* by a write probe that must fail `25006`; verify = exact
+per-table row counts (data) / applied-document byte-equality + flows/RLS counts
+(definition). Config has no defined artifact yet — deferred, noted at runtime.
+**Completes the D18 rework; epic `wamn-8df` closed.**
+
 **Landed — `wamn-8df.6` (landing, 2026-07-16):** the in-cluster q3n gate re-run —
 the new `system-schema.sql` DROP+re-applied into `wamn-sysdb` (7 control-plane
 tables, `dev`/`prod` policies seeded); the rebuilt `wamn-gates` image's
@@ -286,8 +308,8 @@ taking writes.
 
 **Axes shipped vs. specified:**
 
-- **Now (`wamn-8df.5`):** `include ∈ {definition, data, both}`, `scope: whole`,
-  `mode: snapshot`. This already subsumes promote + tier-move + deploy.
+- **Shipped (`wamn-8df.5`):** `include ∈ {definition, data, both}`, `scope:
+  whole`, `mode: snapshot`. This already subsumes promote + tier-move + deploy.
 - **Specified here, built later:** `scope: subset(predicate)` (referential-
   integrity-aware slicing of a filtered row set — needed for "move a *subset* of
   data") and `mode: live-cutover` (logical-replication publication/subscription,

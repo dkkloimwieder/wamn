@@ -949,6 +949,49 @@ docker stop wamn-8df4-pg
 # clusters/CRs/org rows (org DELETE cascades policies + project-envs).
 ```
 
+### [ARCH/wamn-8df.5] unified copy — copy-project-env (deploy/promote/clone/move)
+
+Docs: docs/deployment-model.md §4, docs/provisioning.md
+
+```bash
+cargo test -p wamn-provision copy      # the pure plan (clone vs cutover pipeline, unbuilt axes, quiesce/verify builders)
+cargo test -p wamn-registry            # select_saga shape + the 'copy' kind literal drift-guard
+cargo test -p wamn-migrate             # select_applied_catalogs shape
+cargo test -p wamn-host                # driver units (incl. the shared apply_catalog_target refactor)
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-migrate -p wamn-host --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-migrate -p wamn-host --check
+# Throwaway-PG e2e gate (scratchpad/e2e_8df5.sh; postgres:18 on :5496): builds a
+# src project-env (catalog via migrate-catalog + rows + a flow + RLS policy rows)
+# and proves, 20 asserts:
+#   R  --cutover without --system-database-url is REFUSED (the gate needs the T1 record)
+#   A  cross-org DEFINITION clone ("deploy an app"): catalog applied in the dst env,
+#      data tables exist, flow registration + RLS rows copied, the compiled RLS
+#      policy LIVE on the dst table (pg_policies), zero rows carried, re-copy idempotent
+#   C  DATA copy into a pre-populated dst FAILS verify (row counts differ) and the
+#      saga records status=failed
+#   B  the MOVE (both + cutover): saga completed with every step recorded (5/5),
+#      dst holds rows+flow+policies+grants, snapshot recorded in provisioning.dumps,
+#      and the src is quiesced — a post-cutover write from a FRESH session is
+#      refused read-only (25006)
+#   B2 a re-move with --deprovision-old --confirm: six-step saga completed, the
+#      retained src database dropped
+# Registry/migrate/provision live-apply regressions on the same throwaway:
+export U=postgres://postgres:postgres@127.0.0.1:5496/postgres
+WAMN_REGISTRY_PG_URL=$U cargo test -p wamn-registry --test storage   # incl. the copy-kind saga probe
+WAMN_MIGRATE_PG_URL=$U cargo test -p wamn-migrate --test migrate
+WAMN_DUMP_PG_URL=$U WAMN_RESTORE_PG_URL=$U WAMN_PROVISION_PG_URL=$U cargo test -p wamn-provision
+# 6 mutants killed (apply/test/restore, debug builds — scratchpad/mutate_8df5.py):
+# M1 plan drops Quiesce (pure unit), M2 quiesce SQL read-only OFF (unit),
+# M3 driver verify neutered (e2e scenario C), M4 saga advance no-op — the cutover
+# gate REFUSES (e2e scenario B), M5 the sagas kind CHECK loses 'copy' (drift),
+# M6 --disable-triggers dropped from the data-only restore (unit).
+# IN-CLUSTER gate of record: a live CROSS-CLUSTER move — a pooled src project-env
+# on wamn-pg copied --include both --cutover to a dedicated dst cluster with the
+# saga recorded in the REAL wamn-sysdb (apply the additive sagas_kind_check ALTER
+# first), quiesce proven on the live src, then --deprovision-old. Teardown deletes
+# ONLY the new clusters/CRs/org rows; wamn-pg / wamn-sysdb untouched.
+```
+
 ### [D6/wamn-e1g] per-org WAL/PITR via the Barman Cloud plugin + the shared object
 
 Docs: docs/postgres-topology.md, docs/provisioning.md

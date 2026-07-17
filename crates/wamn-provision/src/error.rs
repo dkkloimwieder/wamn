@@ -43,6 +43,23 @@ pub enum ProvisionError {
         /// The maximum length (bytes).
         max: usize,
     },
+    /// A copy request uses an axis that is first-class in the API shape but
+    /// specified-not-built (`scope: subset`, `mode: live-cutover` — wamn-8df.5,
+    /// docs/deployment-model.md §4).
+    UnbuiltCopyAxis {
+        /// Which axis (a stable label).
+        axis: &'static str,
+    },
+    /// A copy where `src == dst` and no cutover was requested — a self-clone is
+    /// a no-op; the same identity is only meaningfully copied as a *move* onto
+    /// a different cluster (`cutover`).
+    SelfCopyWithoutCutover {
+        /// The triple named on both sides.
+        triple: String,
+    },
+    /// A cutover copy that carries no data (`include: definition`): moving the
+    /// serving identity to a dst that never received the rows abandons them.
+    CutoverNeedsData,
 }
 
 impl fmt::Display for ProvisionError {
@@ -69,6 +86,20 @@ impl fmt::Display for ProvisionError {
                 "provisioned name {name:?} is {} bytes, over the {max}-byte limit: \
                  shorten the org or project id",
                 name.len()
+            ),
+            ProvisionError::UnbuiltCopyAxis { axis } => write!(
+                f,
+                "copy axis {axis} is specified but not built (docs/deployment-model.md §4)"
+            ),
+            ProvisionError::SelfCopyWithoutCutover { triple } => write!(
+                f,
+                "src and dst are both {triple}: a self-copy is only meaningful as a move \
+                 (re-run with --cutover to re-home the identity onto a different cluster)"
+            ),
+            ProvisionError::CutoverNeedsData => write!(
+                f,
+                "a cutover requires the data half (include: data or both) — cutting traffic \
+                 over to a dst without its rows abandons them"
             ),
         }
     }

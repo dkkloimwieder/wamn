@@ -227,7 +227,10 @@ table set (invariant 3) is exactly what they hold:
   (RI-trigger creation order — the ordering note in the DDL). FK integrity +
   the composite keys mirror `validate()`.
 - **`provisioning`** — `sagas`: a **minimal** exactly-once / resumable saga-state
-  table (consumed by `.6` provision-org / `.7`). `target` is decoupled text (a
+  table (consumed by `.6` provision-org / `.7`, and by the unified copy's
+  `copy` kind — wamn-8df.5's `Quiesce → … → Cutover` pipeline records each step
+  here, and the cutover executor re-reads the row (`select_saga_sql`) and
+  refuses unless every prior step is recorded). `target` is decoupled text (a
   provision-org saga runs *before* its org row exists); creation is exactly-once
   via the `saga_id` PK; `step` is the durable resume checkpoint (the write-ahead
   pattern — advanced in the same txn as each step's effect). The per-step

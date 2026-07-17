@@ -361,6 +361,21 @@ fn catalog_schema_sql_mirrors_the_engine() {
     assert!(wamn_migrate::sql::record_migration_sql().contains("catalog.schema_migrations"));
 }
 
+#[test]
+fn select_applied_catalogs_enumerates_an_envs_applied_set() {
+    // The unified copy's definition pass (wamn-8df.5) promotes each of the src
+    // env's applied catalogs — the enumeration is (tenant, environment)-scoped,
+    // applied-state-only, and deterministic.
+    let sql = wamn_migrate::sql::select_applied_catalogs_sql();
+    assert!(sql.contains("FROM catalog.catalogs"));
+    for col in ["catalog_id", "version", "document::text"] {
+        assert!(sql.contains(col), "missing column {col}");
+    }
+    assert!(sql.contains("tenant_id = $1 AND environment = $2"));
+    assert!(sql.contains("state = 'applied'"), "applied versions only");
+    assert!(sql.contains("ORDER BY catalog_id"), "deterministic order");
+}
+
 // --- live-apply gate --------------------------------------------------------
 
 /// Substitute the positional `$n` params into a statement's SQL as literals, so

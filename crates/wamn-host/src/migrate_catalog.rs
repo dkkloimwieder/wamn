@@ -95,55 +95,24 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         .context("admin connect")?;
     let conn_task = tokio::spawn(conn);
 
-    // Ensure the data schema exists (idempotent; the tenant floor DDL grants the
-    // tables to wamn_app, and the schema needs USAGE too). Outside the migration
-    // transaction — it is provisioning, not part of the atomic apply.
-    client
-        .batch_execute(&format!(
-            "CREATE SCHEMA IF NOT EXISTS {schema} AUTHORIZATION CURRENT_USER; \
-             GRANT USAGE ON SCHEMA {schema} TO wamn_app;",
+    if args.dry_run {
+        ensure_data_schema(&client, &args.schema).await?;
+        let tx = client.transaction().await.context("begin")?;
+        tx.batch_execute(&format!(
+            "SET LOCAL search_path = {schema}, catalog",
             schema = args.schema
         ))
         .await
-        .context("ensure data schema")?;
-
-    let tx = client.transaction().await.context("begin")?;
-    tx.batch_execute(&format!(
-        "SET LOCAL search_path = {schema}, catalog",
-        schema = args.schema
-    ))
-    .await
-    .context("set search_path")?;
-
-    // Read the current applied version (locked for the apply).
-    let current_row = tx
-        .query_opt(
-            &sql::select_current_applied_sql(),
-            &[&args.tenant, &target.catalog_id, &env_str],
-        )
-        .await
-        .context("read current applied version")?;
-    let current: Option<Catalog> = match current_row {
-        Some(row) => {
-            let doc: Option<String> = row.get(1);
-            let doc = doc.context(
-                "current applied version has no stored document — cannot diff (a pre-2.5 row?)",
-            )?;
-            Some(Catalog::from_json(&doc).context("parse current applied catalog document")?)
-        }
-        None => None,
-    };
-
-    let request = MigrationRequest {
-        tenant: &args.tenant,
-        environment: env,
-        current: current.as_ref(),
-        target: &target,
-        expected_base: args.base,
-        confirm,
-    };
-
-    if args.dry_run {
+        .context("set search_path")?;
+        let current = read_current_applied(&tx, &args.tenant, &target.catalog_id, &env_str).await?;
+        let request = MigrationRequest {
+            tenant: &args.tenant,
+            environment: env,
+            current: current.as_ref(),
+            target: &target,
+            expected_base: args.base,
+            confirm,
+        };
         let report = plan_error(dry_run(&request))?;
         // Nothing is executed — drop the transaction (rolls back the lock).
         drop(tx);
@@ -152,20 +121,24 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let plan = plan_error(plan_migration(&request))?;
-    for stmt in &plan.statements {
-        if stmt.params.is_empty() {
-            tx.batch_execute(&stmt.sql)
-                .await
-                .with_context(|| format!("apply: {}", stmt.summary))?;
-        } else {
-            let params = to_sql_params(&stmt.params);
-            tx.execute(stmt.sql.as_str(), &params)
-                .await
-                .with_context(|| format!("apply: {}", stmt.summary))?;
+    let plan = match apply_catalog_target(
+        &mut client,
+        &args.tenant,
+        &env_str,
+        &args.schema,
+        &target,
+        args.base,
+        confirm,
+    )
+    .await?
+    {
+        ApplyOutcome::Applied(plan) => plan,
+        // migrate-catalog keeps re-applying a version an ERROR (the copy driver
+        // treats it as "already current" — its call site decides).
+        ApplyOutcome::AlreadyApplied { version } => {
+            bail!("{}", MigrationError::AlreadyApplied { version })
         }
-    }
-    tx.commit().await.context("commit migration")?;
+    };
     conn_task.abort();
 
     let from = plan
@@ -190,6 +163,113 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         println!("  [warning] {w}");
     }
     Ok(())
+}
+
+/// Outcome of applying a target catalog against a live database.
+pub(crate) enum ApplyOutcome {
+    /// The migration ran (the executed plan, with its versions/warnings).
+    Applied(wamn_migrate::ApplyPlan),
+    /// The target version is already the applied version — nothing to do. The
+    /// caller decides whether that is an error (`migrate-catalog`) or an
+    /// idempotent skip (the copy driver's re-copy).
+    AlreadyApplied { version: u32 },
+}
+
+/// Ensure the data schema exists (idempotent; the tenant floor DDL grants the
+/// tables to wamn_app, and the schema needs USAGE too). Outside the migration
+/// transaction — it is provisioning, not part of the atomic apply.
+pub(crate) async fn ensure_data_schema(
+    client: &tokio_postgres::Client,
+    schema: &str,
+) -> anyhow::Result<()> {
+    client
+        .batch_execute(&format!(
+            "CREATE SCHEMA IF NOT EXISTS {schema} AUTHORIZATION CURRENT_USER; \
+             GRANT USAGE ON SCHEMA {schema} TO wamn_app;"
+        ))
+        .await
+        .context("ensure data schema")?;
+    Ok(())
+}
+
+/// Read the current applied version for `(tenant, catalog, environment)`,
+/// locked `FOR UPDATE` (the apply transaction holds it).
+async fn read_current_applied(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant: &str,
+    catalog_id: &str,
+    environment: &str,
+) -> anyhow::Result<Option<Catalog>> {
+    let current_row = tx
+        .query_opt(
+            &sql::select_current_applied_sql(),
+            &[&tenant, &catalog_id, &environment],
+        )
+        .await
+        .context("read current applied version")?;
+    match current_row {
+        Some(row) => {
+            let doc: Option<String> = row.get(1);
+            let doc = doc.context(
+                "current applied version has no stored document — cannot diff (a pre-2.5 row?)",
+            )?;
+            Ok(Some(
+                Catalog::from_json(&doc).context("parse current applied catalog document")?,
+            ))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Apply a target catalog to the connected database: read the current applied
+/// version (locked), plan with the pure engine, and run the whole [`ApplyPlan`]
+/// in **one transaction** (the R9c invariant). Shared by `migrate-catalog` and
+/// the copy driver's definition pass (`copy-project-env`, wamn-8df.5).
+pub(crate) async fn apply_catalog_target(
+    client: &mut tokio_postgres::Client,
+    tenant: &str,
+    environment: &str,
+    schema: &str,
+    target: &Catalog,
+    expected_base: Option<u32>,
+    confirm: Confirmation,
+) -> anyhow::Result<ApplyOutcome> {
+    ensure_data_schema(client, schema).await?;
+    let tx = client.transaction().await.context("begin")?;
+    tx.batch_execute(&format!("SET LOCAL search_path = {schema}, catalog"))
+        .await
+        .context("set search_path")?;
+
+    let current = read_current_applied(&tx, tenant, &target.catalog_id, environment).await?;
+    let request = MigrationRequest {
+        tenant,
+        environment: Env::new(environment),
+        current: current.as_ref(),
+        target,
+        expected_base,
+        confirm,
+    };
+    let plan = match plan_migration(&request) {
+        Err(MigrationError::AlreadyApplied { version }) => {
+            drop(tx);
+            return Ok(ApplyOutcome::AlreadyApplied { version });
+        }
+        other => plan_error(other)?,
+    };
+    for stmt in &plan.statements {
+        if stmt.params.is_empty() {
+            tx.batch_execute(&stmt.sql)
+                .await
+                .with_context(|| format!("apply: {}", stmt.summary))?;
+        } else {
+            let params = to_sql_params(&stmt.params);
+            tx.execute(stmt.sql.as_str(), &params)
+                .await
+                .with_context(|| format!("apply: {}", stmt.summary))?;
+        }
+    }
+    tx.commit().await.context("commit migration")?;
+    Ok(ApplyOutcome::Applied(plan))
 }
 
 /// Map a [`MigrationError`] to a clear operator-facing failure (the confirmation
@@ -219,7 +299,7 @@ fn to_sql_params(vals: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
         .collect()
 }
 
-fn is_bare_ident(s: &str) -> bool {
+pub(crate) fn is_bare_ident(s: &str) -> bool {
     let mut cs = s.chars();
     matches!(cs.next(), Some(c) if c == '_' || c.is_ascii_lowercase())
         && cs.all(|c| c == '_' || c.is_ascii_lowercase() || c.is_ascii_digit())

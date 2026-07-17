@@ -582,6 +582,72 @@ debug builds): `pg_restore_argv` dropping `--clean` or `--no-owner`,
 `select_latest` flipping `taken_at DESC`, and the in-place `--confirm` gate
 neutered each fail a named test.
 
+## `wamn-host copy-project-env` (wamn-8df.5) — the unified copy
+
+One operation over **arbitrary** `(org, project, env)` triples — same-org or
+cross-org — subsuming deploy / promote / clone / move
+(`docs/deployment-model.md` §4). The step plan is the pure
+`wamn_provision::plan_copy` (`CopyRequest`/`CopyStep`); the driver composes the
+shipped machinery: the 2.5 migrate engine (catalog), `pg_dump -Fd`/`pg_restore`
+(rows, the q3n.10/.11 artifact), and the q3n.8 saga builders (the durable
+record).
+
+| Flag | Meaning |
+|---|---|
+| `--src-org/--src-project/--src-env`, `--dst-*` | the two triples |
+| `--include definition\|data\|both` | what the copy carries (default `both`) |
+| `--cutover` | this is a **move**: quiesce → verify → gated cutover (requires `--system-database-url`) |
+| `--deprovision-old --confirm` | after a verified cutover, drop the retained src DB (default: keep through a hold window) |
+| `--src-admin-url` / `--dst-admin-url` | superuser URLs to the src/dst clusters (dst defaults to src — a same-cluster copy) |
+| `--system-database-url` | T1 registry (env `WAMN_SYSTEM_ADMIN_URL`): the `copy` saga + the dump record |
+| `--tenant` | the definition rows' tenant scope (required for `--include definition`) |
+| `--data-schema` / `--flow-schema` | where the entity tables / flow registry live (`public` / `wamn_run`) |
+| `--confirm-with-backup` | acknowledge a destructive definition promotion (the 3.2 gate) |
+| `--plan` | print the step plan, execute nothing |
+
+**Includes.** `definition` = the src env's applied catalogs promoted through the
+migrate engine (idempotent: a re-copy skips `AlreadyApplied`), the flow
+registrations copied verbatim, and the RLS policy rows copied **and
+re-compiled/applied** on the dst (an existing policy is a `duplicate_object`
+skip). `data` = `pg_restore --data-only --disable-triggers -n <data-schema>` of
+a fresh snapshot into a dst that already carries the definition
+(`--disable-triggers` is load-bearing: the D4 outbox triggers must not fire once
+per restored row; a full restore has no such problem — triggers are post-data).
+`both` = a full-fidelity restore (schema + rows + ownership/ACLs; the dump
+carries the definition tables, so no separate definition pass). "Deploy an app"
+is `copy --include definition` into a fresh cross-org dst; "promote dev→prod" is
+the same within one org; the retired tier-move is `copy --include both
+--cutover` onto a new cluster.
+
+**Consistency (fixes cjv.7).** A clone into a fresh dst runs unquiesced — the
+src stays live. A `--cutover` copy runs the mandatory pipeline `Quiesce →
+Snapshot → Restore → Verify → Cutover [→ DeprovisionOld]`; every executed step
+advances a `copy`-kind saga (`provisioning.sagas`), and the **cutover executor
+re-reads the saga and refuses unless every prior step — quiesce and verify
+included — is durably recorded**. Quiesce = `ALTER DATABASE … SET
+default_transaction_read_only = on` + terminating existing backends so pooled
+sessions re-dial under the new default, then *proven* by a write probe that must
+fail `read_only_sql_transaction` (25006); reads stay live through the copy
+window. Verify = exact per-table row counts of the data schema (data/both) /
+applied-document byte-equality + flows/RLS row counts (definition); a mismatch
+fails the saga and the run. After a successful cutover the src stays quiesced
+(it is retired); on failure the un-quiesce statement is printed. The resumable /
+compensating orchestrator that drives this saga across crashes is 10.1
+(`wamn-2ib`) — this subcommand ships the primitive + the gate it enforces.
+
+**Preconditions.** The dst database exists (`provision-project-env` + its
+`Database` CR); for a definition copy the dst carries the catalog storage schema
+(`deploy/catalog-schema.sql`) — the flow registry is ensured on demand. The
+snapshot is recorded under the src triple in `provisioning.dumps`, so the src
+must be registered in the T1 registry when recording.
+
+Gate: the throwaway-PG e2e (cross-org definition deploy incl. live RLS policies
+on the dst; a data copy into a pre-populated dst **fails verify** and fails the
+saga; a full move with the quiesce proven externally — a post-cutover write to
+the src is refused read-only — and a six-step deprovisioning re-move), plus the
+in-cluster cross-cluster move standup; see `docs/build-and-test.md`
+`[ARCH/wamn-8df.5]`.
+
 ## `wamn-host move-org-tier` (wamn-q3n.13) — **retired** (wamn-8df.3)
 
 `move-org-tier` (and its pure core `wamn_provision::tier_move`) shipped with the
@@ -589,12 +655,10 @@ closed `Tier` lattice: promote an org T3 → T2 → T4 by dump / provision-on-ne
 restore / registry-flip, planned as an ordered runbook with the flip last. With
 `Tier` dropped (D18), the subcommand and module are **removed** — a placement
 change is no longer a privileged "tier upgrade" but one case of the **unified
-`copy(src → dst)` operation** (`docs/deployment-model.md` §4, `wamn-8df.5`),
-which reintroduces the move/cutover with a mandatory **quiesce + verify** gate
-(fixing the cjv.7 dump→flip write-loss window) over arbitrary triples. Until
-`.5` lands, a cross-cluster move is the manual runbook: `dump-project-env` →
-`provision-org` (the new placement) → `provision-project-env` →
-`restore-project-env` → update the org's placement row. **CNPG `initdb.import`**
+`copy(src → dst)` operation** (`docs/deployment-model.md` §4), shipped as
+`copy-project-env` (wamn-8df.5, above), which reintroduces the move/cutover with
+a mandatory **quiesce + verify** gate (fixing the cjv.7 dump→flip write-loss
+window) over arbitrary triples. **CNPG `initdb.import`**
 (a `bootstrap.import` microservice import on the new `Database`/`Cluster`)
 remains the documented CNPG-native alternative to the `.11` `pg_restore` path.
 

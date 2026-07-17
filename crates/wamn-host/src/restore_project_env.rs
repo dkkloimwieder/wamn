@@ -288,7 +288,7 @@ async fn recreate_database(admin_url: &str, database: &str) -> anyhow::Result<()
 /// Swap the database path segment of a libpq URL, preserving any query string
 /// (the connection driver's concern — the builders stay pure). Mirrors the dump
 /// round-trip gate's helper.
-fn swap_db(url: &str, db: &str) -> String {
+pub(crate) fn swap_db(url: &str, db: &str) -> String {
     let (no_q, query) = match url.split_once('?') {
         Some((a, b)) => (a, Some(b)),
         None => (url, None),

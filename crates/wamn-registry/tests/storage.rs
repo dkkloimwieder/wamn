@@ -131,9 +131,13 @@ fn system_schema_sql_mirrors_the_model() {
     // The storage-format version is recorded (singleton meta row).
     assert!(sql.contains(&format!("'{SCHEMA_VERSION}'")));
 
-    // The saga table + its kind literals.
+    // The saga table + its kind literals ('copy' = the wamn-8df.5 pipeline).
     assert!(sql.contains("CREATE TABLE provisioning.sagas"));
     assert!(sql.contains("'provision-org'") && sql.contains("'provision-project-env'"));
+    assert!(
+        sql.contains("'provision-project-env', 'copy'"),
+        "the sagas kind CHECK must admit the copy pipeline (wamn-8df.5)"
+    );
 }
 
 /// The org-row builder (`wamn_registry::sql::upsert_org_sql`) must target exactly
@@ -511,6 +515,29 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
         advance = wamn_registry::sql::advance_saga_step_sql(),
         complete = wamn_registry::sql::complete_saga_sql(),
         fail = wamn_registry::sql::fail_saga_sql(),
+    ));
+    // The copy pipeline's saga kind (wamn-8df.5) is admitted by the kind CHECK,
+    // and select_saga_sql reads back the durable state the cutover gate checks.
+    script.push_str(&format!(
+        "PREPARE csaga2 (text,text,text,int) AS {create};\n\
+         PREPARE asaga2 (text) AS {advance};\n\
+         PREPARE ssaga (text) AS {select};\n\
+         EXECUTE csaga2('sg3','copy','acme/app/dev -> acme/app/prod', 5);\n\
+         EXECUTE asaga2('sg3');\n\
+         CREATE TEMP TABLE saga_probe AS EXECUTE ssaga('sg3');\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM provisioning.sagas WHERE saga_id='sg3' AND kind='copy')=1,\n\
+             'the sagas kind CHECK admits the copy pipeline (wamn-8df.5)';\n\
+           ASSERT (SELECT status FROM saga_probe)='running'\n\
+              AND (SELECT step FROM saga_probe)=1\n\
+              AND (SELECT total_steps FROM saga_probe)=5,\n\
+             'select_saga_sql reads the durable state the cutover gate checks';\n\
+         END $$;\n\
+         DROP TABLE saga_probe;\n\
+         DEALLOCATE csaga2; DEALLOCATE asaga2; DEALLOCATE ssaga;\n",
+        create = wamn_registry::sql::create_saga_sql(),
+        advance = wamn_registry::sql::advance_saga_step_sql(),
+        select = wamn_registry::sql::select_saga_sql(),
     ));
     script.push_str("DROP SCHEMA registry CASCADE;\n");
     script.push_str("DROP SCHEMA provisioning CASCADE;\n");

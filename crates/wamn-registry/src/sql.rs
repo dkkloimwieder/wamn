@@ -162,6 +162,16 @@ pub fn fail_saga_sql() -> &'static str {
      WHERE saga_id = $1"
 }
 
+/// Read a saga's durable state (`$1` = saga_id): `status, step, total_steps`.
+/// The copy pipeline's **cutover gate** (wamn-8df.5, fixes cjv.7) re-reads this
+/// before repointing and refuses unless every prior step — quiesce and verify
+/// included — is recorded.
+pub fn select_saga_sql() -> &'static str {
+    "SELECT status, step, total_steps \
+     FROM provisioning.sagas \
+     WHERE saga_id = $1"
+}
+
 // --- dump bookkeeping (wamn-q3n.10) ----------------------------------------
 //
 // The `provisioning.dumps` row a scheduled/on-demand per-project-env logical dump
@@ -379,6 +389,17 @@ mod tests {
         // The error is a $n param (never interpolated).
         assert!(failed.contains("last_error = $2"));
         assert!(failed.contains("WHERE saga_id = $1"));
+    }
+
+    #[test]
+    fn select_saga_reads_the_durable_state_by_id() {
+        // The copy cutover gate re-reads this row before repointing.
+        let sql = select_saga_sql();
+        assert!(sql.contains("FROM provisioning.sagas"));
+        for col in ["status", "step", "total_steps"] {
+            assert!(sql.contains(col), "missing column {col}");
+        }
+        assert!(sql.contains("WHERE saga_id = $1"));
     }
 
     #[test]

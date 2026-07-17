@@ -12,7 +12,7 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_host::{
-    dispatch, dump_project_env, host, migrate_catalog, provision, provision_org,
+    copy_project_env, dispatch, dump_project_env, host, migrate_catalog, provision, provision_org,
     provision_project_env, publish_catalog, restore_project_env, run_worker,
 };
 
@@ -47,6 +47,8 @@ enum Command {
     DumpProjectEnv(dump_project_env::DumpProjectEnvArgs),
     /// Restore a per-project-env logical dump (pg_restore -Fd → scratch DB or in-place) (wamn-q3n.11)
     RestoreProjectEnv(restore_project_env::RestoreProjectEnvArgs),
+    /// Copy a project-env to another (deploy/promote/clone/move): definition|data|both, quiesce-gated cutover (wamn-8df.5)
+    CopyProjectEnv(copy_project_env::CopyProjectEnvArgs),
     /// Apply a catalog to a project DB: versioned, forward-only migration + lifecycle + history (2.5)
     MigrateCatalog(migrate_catalog::MigrateCatalogArgs),
 }
@@ -75,6 +77,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
         Command::DumpProjectEnv(args) => dump_project_env::run(args).await,
         Command::RestoreProjectEnv(args) => restore_project_env::run(args).await,
+        Command::CopyProjectEnv(args) => copy_project_env::run(args).await,
         Command::MigrateCatalog(args) => migrate_catalog::run(args).await,
     };
 

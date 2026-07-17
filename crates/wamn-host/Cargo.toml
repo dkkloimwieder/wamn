@@ -54,6 +54,10 @@ wamn-registry = { path = "../wamn-registry" }
 # catalog, plans the one-transaction apply (DDL + lifecycle + history), and the
 # subcommand executes it over tokio_postgres.
 wamn-migrate = { path = "../wamn-migrate" }
+# wamn-8df.5 copy-project-env: the definition pass re-compiles the copied RLS
+# policy rows and applies them on the dst (rows alone would leave the dst's
+# tables without their per-role policies).
+wamn-rls = { path = "../wamn-rls" }
 # 5.14 queuebench: the pure SKIP LOCKED claim / lease / janitor SQL builders +
 # decision logic the durable-queue gates drive over tokio_postgres.
 wamn-run-queue = { path = "../wamn-run-queue" }

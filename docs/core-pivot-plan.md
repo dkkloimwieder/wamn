@@ -62,8 +62,12 @@ Engine support pulled in only as a rung needs it: `wamn-1d4` (5.11 ordering),
 ## Track 3 — Control-plane API · parallel, in-core
 
 - **`wamn-2ib` [P1]** — 10.1 provisioning **saga orchestrator** only (resumable, compensating
-  driver over `provision-org` / `provision-project-env` + `provisioning.sagas` + the `q3n.8`
-  saga builders). **Admin console UI deferred.** Buildable now.
+  driver over `provision-org` / `provision-project-env` / `copy-project-env` +
+  `provisioning.sagas` + the `q3n.8` saga builders). **Admin console UI deferred.** Its
+  cjv.7 quiesce prerequisite is closed by the unified copy (`wamn-8df.5`, 2026-07-17:
+  `copy` records a saga per step and cutover refuses until quiesce+verify are recorded);
+  remaining prerequisite = cjv.20 registry `validate()` completeness (partly closed by
+  8df.3's `validate()` rework — re-check the bead) + the per-step `saga_steps` ledger.
 
 ## Support (kept active, not parked)
 

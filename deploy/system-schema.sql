@@ -218,7 +218,7 @@ CREATE TABLE provisioning.sagas (
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT sagas_kind_check
-        CHECK (kind IN ('provision-org', 'provision-project-env')),
+        CHECK (kind IN ('provision-org', 'provision-project-env', 'copy')),
     CONSTRAINT sagas_status_check
         CHECK (status IN ('pending', 'running', 'completed', 'failed',
                           'compensating', 'compensated')),

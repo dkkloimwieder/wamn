@@ -9,6 +9,7 @@
 //! consumes this library so gates exercise the identical host code they
 //! verify.
 
+pub mod copy_project_env;
 pub mod dispatch;
 pub mod dump_project_env;
 pub mod engine;

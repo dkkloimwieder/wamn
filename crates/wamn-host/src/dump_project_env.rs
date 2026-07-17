@@ -221,7 +221,7 @@ async fn do_record_dump(
 
 /// Seconds since the Unix epoch (a monotonic-enough dump label). The clock lives
 /// in this driver, never in the pure renderer/builder (SR6 rule 1).
-fn unix_seconds() -> u64 {
+pub(crate) fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -229,7 +229,7 @@ fn unix_seconds() -> u64 {
 }
 
 /// Total byte size of a directory tree (the dump's on-disk size).
-fn dir_size(path: &std::path::Path) -> std::io::Result<u64> {
+pub(crate) fn dir_size(path: &std::path::Path) -> std::io::Result<u64> {
     let mut total = 0;
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;

@@ -29,6 +29,18 @@ pub fn select_current_applied_sql() -> String {
         .to_string()
 }
 
+/// Enumerate every applied catalog for `(tenant, environment)` — the unified
+/// copy's definition pass (wamn-8df.5) promotes each of the src env's applied
+/// catalogs into the dst env. Returns `catalog_id, version, document::text`.
+pub fn select_applied_catalogs_sql() -> String {
+    format!(
+        "SELECT catalog_id, version, document::text FROM catalog.catalogs \
+         WHERE tenant_id = $1 AND environment = $2 AND state = '{applied}' \
+         ORDER BY catalog_id",
+        applied = State::Applied.as_sql(),
+    )
+}
+
 /// Demote whichever version is currently `applied` in `(tenant, catalog,
 /// environment)` to `superseded`. Run before promoting the target so the
 /// `catalogs_one_applied_per_env` single-applied index is never transiently

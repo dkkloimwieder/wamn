@@ -12,7 +12,7 @@ use crate::name::{APP_ROLE, database_name};
 /// Quote a SQL identifier (double-quoted, embedded `"` doubled). Mirrors the
 /// canonical `wamn_ddl::sql::quote_ident` (inlined to keep this crate's
 /// dependency closure to `serde_json`).
-fn quote_ident(ident: &str) -> String {
+pub(crate) fn quote_ident(ident: &str) -> String {
     format!("\"{}\"", ident.replace('"', "\"\""))
 }
 

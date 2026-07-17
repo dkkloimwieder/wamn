@@ -36,6 +36,7 @@
 //! a hardening follow-up (8.2), not this MVP.
 
 pub mod backup;
+pub mod copy;
 pub mod database;
 pub mod dump;
 mod error;
@@ -48,6 +49,11 @@ pub mod sql;
 pub use backup::{
     BACKUP_PLUGIN_NAME, MINIO_ENDPOINT, OBJECT_STORE_SECRET, WAL_BUCKET, cluster_backup_plugin,
     object_store_name, render_object_store, render_scheduled_backup, scheduled_backup_name,
+};
+pub use copy::{
+    COPY_SAGA_KIND, CopyInclude, CopyMode, CopyRequest, CopyScope, CopyStep, count_rows_sql,
+    list_schema_tables_sql, pg_restore_data_only_argv, plan_copy, quiesce_database_sql,
+    terminate_database_backends_sql, unquiesce_database_sql,
 };
 pub use database::render_project_env_database;
 pub use dump::{
