@@ -47,6 +47,10 @@ PostgREST-ish, all validated against the catalog:
 | paginate  | `?limit=&offset=`                   | `limit` capped at a max page size (the hard limiter is 4.6) |
 | expand    | `?expand=rel,rel2`                  | one level; a to-one relation embeds an object, a to-many an array |
 
+Every list appends the unique `id ASC` tiebreaker as the final `ORDER BY` key, so
+`OFFSET` pagination is stable even under a user `sort` on a non-unique column and
+never skips or duplicates a row across pages (C5-1).
+
 Unknown entity / field / relation, or a bad value (non-uuid id, non-exact
 decimal, enum not a variant), is rejected `4xx` **before any SQL is built**.
 

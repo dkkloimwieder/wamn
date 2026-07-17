@@ -401,9 +401,11 @@ impl<'a> Router<'a> {
             sql.push_str(" WHERE ");
             sql.push_str(&where_clauses.join(" AND "));
         }
-        if order_by.is_empty() {
-            order_by.push(format!("{} ASC", quote_ident("id")));
-        }
+        // Always append the unique `id` tiebreaker as the final ORDER BY key so
+        // pagination is stable even under a user sort on a non-unique column (C5-1).
+        // `id` is the managed PK; a user cannot sort by it (field_by_name rejects the
+        // managed columns), so this never duplicates a user-chosen key.
+        order_by.push(format!("{} ASC", quote_ident("id")));
         sql.push_str(" ORDER BY ");
         sql.push_str(&order_by.join(", "));
 

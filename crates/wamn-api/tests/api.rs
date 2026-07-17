@@ -402,15 +402,39 @@ fn sort_and_paginate_are_capped_and_parametrized() {
             None,
         )
         .unwrap();
+    // The unique `id` tiebreaker is always appended as the final ORDER BY key so
+    // OFFSET pagination stays stable under a sort on non-unique columns (C5-1).
     assert!(
         plan.query()
             .sql()
-            .contains("ORDER BY \"received_at\" ASC, \"receipt_no\" DESC")
+            .contains("ORDER BY \"received_at\" ASC, \"receipt_no\" DESC, \"id\" ASC")
     );
     // limit clamped to the max page size (100), offset passed through, both params.
     let n = plan.query().params().len();
     assert_eq!(plan.query().params()[n - 2], SqlValue::Int64(100));
     assert_eq!(plan.query().params()[n - 1], SqlValue::Int64(40));
+}
+
+#[test]
+fn user_sort_still_appends_the_id_tiebreaker() {
+    // A sort on a single non-unique column must still end with the unique `id`
+    // tiebreaker so OFFSET pages neither skip nor duplicate rows (C5-1).
+    let cat = catalog();
+    let plan = Router::new(&cat)
+        .compile(
+            Method::Get,
+            "/api/rest/quality_holds",
+            &q(&[("sort", "status")]),
+            None,
+        )
+        .unwrap();
+    assert!(
+        plan.query()
+            .sql()
+            .contains("ORDER BY \"status\" ASC, \"id\" ASC"),
+        "sql was: {}",
+        plan.query().sql()
+    );
 }
 
 #[test]

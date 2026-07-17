@@ -1186,6 +1186,10 @@ Docs: docs/api-gateway.md
 ```bash
 cargo test -p wamn-api
 cargo clippy -p wamn-api --all-targets && cargo fmt -p wamn-api --check
+# cjv.6: every list appends the unique `id ASC` tiebreaker so OFFSET pagination is
+# stable under any user sort (C5-1). Mutation (revert to the guarded append -> both
+# sort_and_paginate_are_capped_and_parametrized and user_sort_still_appends_the_id_tiebreaker
+# fail): scratchpad/mutate_cjv6.py.
 # wamn_app + seeds two tenants + the catalog snapshot the gateway reads):
 docker run -d --rm --name wamn-api-pg -p 5455:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
