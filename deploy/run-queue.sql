@@ -29,7 +29,8 @@
 -- events are outbox rows polled by the dispatcher; LISTEN/NOTIFY removed).
 -- Unpartitioned runs (`partition_key IS NULL`) claim globally in `available_at`
 -- order; a run with a `partition_key` is dispatched only through the partition
--- path (crates/wamn-run-queue `acquire_partitions_sql` + `claim_partition_head_sql`).
+-- path (crates/wamn-run-queue `acquire_partitions_sql` + `claim_partition_head_sql`),
+-- under the row's `partition_policy` (D20: 'blocking' default / 'leapfrog' opt-in).
 -- `priority` remains reserved (default 0).
 
 -- ---------------------------------------------------------------------------
@@ -41,7 +42,10 @@
 -- first claim and a park->wake re-claim (park releases the lease) are free, so a
 -- flow may park unboundedly without spending redelivery budget. Once `attempts`
 -- reaches `max_attempts` and the lease is long expired, the janitor marks the run
--- `infrastructure-failure` and removes the row. The FK to `runs` ON DELETE CASCADE
+-- `infrastructure-failure` and removes the row — EXCEPT a 'blocking'-policy
+-- partitioned row (D20): that row stays and WEDGES its key (operator release),
+-- since reaping it would silently reorder a flow that opted into strict ordering.
+-- The FK to `runs` ON DELETE CASCADE
 -- ties the claim machinery to the run's immutable history. Status/lifecycle live
 -- on `runs` (5.7) — the queue is the claim/lease layer, not a second run-state.
 -- ---------------------------------------------------------------------------
@@ -49,6 +53,12 @@ CREATE TABLE wamn_run.run_queue (
     tenant_id        text NOT NULL CHECK (tenant_id <> ''),
     run_id           text NOT NULL,
     partition_key    text,
+    -- D20: the key's head-unavailability policy, materialized at enqueue from the
+    -- flow's declaration (inert when partition_key IS NULL). 'blocking' (default):
+    -- a backed-off/parked/exhausted head still blocks its key — stream order is
+    -- (enqueued_at, run_id), stamped once, never moved by a park (available_at is).
+    -- 'leapfrog' (opt-in): a later ready run may overtake an unavailable head.
+    partition_policy text NOT NULL DEFAULT 'blocking' CHECK (partition_policy IN ('blocking', 'leapfrog')),
     priority         int  NOT NULL DEFAULT 0,
     available_at     timestamptz NOT NULL DEFAULT now(),
     lease_owner      text,

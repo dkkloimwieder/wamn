@@ -134,6 +134,8 @@ fn queue_ddl(schema: &str) -> String {
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
          CREATE TABLE {schema}.run_queue (\
             tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
+            partition_policy text NOT NULL DEFAULT 'blocking' \
+              CHECK (partition_policy IN ('blocking','leapfrog')), \
             priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
             lease_owner text, lease_expires_at timestamptz, \
             attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
@@ -1067,8 +1069,106 @@ async fn partition_phase(
     // the whole key and finishes it in order.
     let failover = partition_failover(app_url, admin_url).await?;
 
-    let pass = complete && in_order && failover;
-    println!("PASS(partition in-order + exactly-once + failover): {pass}");
+    // D20 (R6): the head-unavailability POLICY — blocking holds/wedges a key, leapfrog
+    // overtakes/releases.
+    let policy = partition_policy_cases(app_url, admin_url).await?;
+
+    let pass = complete && in_order && failover && policy;
+    println!("PASS(partition in-order + exactly-once + failover + policy): {pass}");
+    Ok(pass)
+}
+
+/// D20 (R6): the `partitioned(key)` head-unavailability policy, through the live
+/// `claim_partition_head_sql` (policy branch) + `janitor_sweep_sql` (wedge
+/// exemption). Four keys, seeded as superuser so availability, stream order
+/// (`enqueued_at`), lease, and policy are all explicit:
+/// - `blk` (DEFAULT = blocking): a backed-off head, FIRST in stream order, and a
+///   later ready run — the later run must NOT overtake (the key holds).
+/// - `lf` (leapfrog): the same shape — the later run DOES overtake.
+/// - `wg` (blocking): an EXHAUSTED head — the janitor must NOT reap it (it wedges
+///   the key), and the later run stays blocked behind it.
+/// - `lx` (leapfrog): an exhausted head — the janitor reaps it and the key releases.
+async fn partition_policy_cases(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
+    println!(
+        "## partition policy — blocking holds/wedges a key; leapfrog overtakes/releases (D20)"
+    );
+    reset(admin_url).await?;
+
+    {
+        let (client, conn) = tokio_postgres::connect(admin_url, NoTls).await?;
+        let conn_task = tokio::spawn(conn);
+        let seed = format!(
+            "INSERT INTO {SCHEMA}.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+               ('{TENANT}','blk-0','f',1,'dispatched'),('{TENANT}','blk-1','f',1,'dispatched'), \
+               ('{TENANT}','lf-0','f',1,'dispatched'),('{TENANT}','lf-1','f',1,'dispatched'), \
+               ('{TENANT}','wg-0','f',1,'running'),('{TENANT}','wg-1','f',1,'dispatched'), \
+               ('{TENANT}','lx-0','f',1,'running'),('{TENANT}','lx-1','f',1,'dispatched'); \
+             INSERT INTO {SCHEMA}.run_queue \
+               (tenant_id, run_id, partition_key, available_at, enqueued_at, lease_owner, lease_expires_at, attempts, max_attempts, partition_policy) VALUES \
+               ('{TENANT}','blk-0','blk', now()+interval '1 hour', now()-interval '2 min', NULL,  NULL,                    0,  20, 'blocking'), \
+               ('{TENANT}','blk-1','blk', now()-interval '30 sec', now()-interval '1 min', NULL,  NULL,                    0,  20, 'blocking'), \
+               ('{TENANT}','lf-0','lf',   now()+interval '1 hour', now()-interval '2 min', NULL,  NULL,                    0,  20, 'leapfrog'), \
+               ('{TENANT}','lf-1','lf',   now()-interval '30 sec', now()-interval '1 min', NULL,  NULL,                    0,  20, 'leapfrog'), \
+               ('{TENANT}','wg-0','wg',   now()-interval '3 hour', now()-interval '2 min','dead', now()-interval '2 hour', 20, 20, 'blocking'), \
+               ('{TENANT}','wg-1','wg',   now()-interval '30 sec', now()-interval '1 min', NULL,  NULL,                    0,  20, 'blocking'), \
+               ('{TENANT}','lx-0','lx',   now()-interval '3 hour', now()-interval '2 min','dead', now()-interval '2 hour', 20, 20, 'leapfrog'), \
+               ('{TENANT}','lx-1','lx',   now()-interval '30 sec', now()-interval '1 min', NULL,  NULL,                    0,  20, 'leapfrog');"
+        );
+        let r = client.batch_execute(&seed).await;
+        drop(client);
+        let _ = conn_task.await;
+        r.context("seed policy cases")?;
+    }
+
+    let (client, _h) = connect_app(app_url).await?;
+    let acquire = acquire_partitions_sql(8);
+    let claim = claim_partition_head_sql(8);
+    let janitor = janitor_sweep_sql();
+    let ttl: i64 = 600_000;
+
+    // Janitor first (grace 1h): the exhausted heads are orphan-shaped. wg-0
+    // (blocking) is EXEMPT — kept, its run left untouched (wedge). lx-0 (leapfrog)
+    // is reaped to infrastructure-failure.
+    client.execute(&janitor, &[&3_600_000i64]).await?;
+    let wg0_present: i64 = client
+        .query_one("SELECT count(*) FROM run_queue WHERE run_id='wg-0'", &[])
+        .await?
+        .get(0);
+    let wg0_status: String = client
+        .query_one("SELECT status FROM runs WHERE run_id='wg-0'", &[])
+        .await?
+        .get(0);
+    let lx0_present: i64 = client
+        .query_one("SELECT count(*) FROM run_queue WHERE run_id='lx-0'", &[])
+        .await?
+        .get(0);
+    let lx0_status: String = client
+        .query_one("SELECT status FROM runs WHERE run_id='lx-0'", &[])
+        .await?
+        .get(0);
+    let wedge_kept = wg0_present == 1 && wg0_status == "running";
+    let leap_reaped = lx0_present == 0 && lx0_status == "infrastructure-failure";
+
+    // Acquire all four keys, then claim the head of each under its policy.
+    client.query(&acquire, &[&"P", &ttl]).await?;
+    let heads = client.query(&claim, &[&"P", &ttl]).await?;
+    let claimed: HashSet<String> = heads.iter().map(|r| r.get::<_, String>("run_id")).collect();
+
+    let blocking_holds = !claimed.contains("blk-0") && !claimed.contains("blk-1");
+    let leapfrog_overtakes = claimed.contains("lf-1");
+    let wedge_blocks = !claimed.contains("wg-1");
+    let leap_releases = claimed.contains("lx-1");
+
+    let pass = wedge_kept
+        && leap_reaped
+        && blocking_holds
+        && leapfrog_overtakes
+        && wedge_blocks
+        && leap_releases;
+    println!(
+        "blocking holds={blocking_holds} | leapfrog overtakes={leapfrog_overtakes} | blocking wedge kept={wedge_kept}+blocks={wedge_blocks} | leapfrog reaped={leap_reaped}+releases={leap_releases}"
+    );
+    println!("PASS(partition policy blocking/leapfrog + wedge): {pass}");
     Ok(pass)
 }
 

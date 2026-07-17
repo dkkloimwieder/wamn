@@ -336,7 +336,7 @@ impl Flow {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{Edge, Flow, Node, Trigger};
+    use crate::types::{Edge, Flow, Node, PartitionPolicy, Trigger};
     use serde_json::json;
 
     fn node(id: &str, ty: &str) -> Node {
@@ -371,6 +371,7 @@ mod tests {
             edges: vec![],
             credentials: vec![],
             allowed_hosts: vec![],
+            partition_policy: PartitionPolicy::default(),
         }
     }
 
@@ -462,6 +463,29 @@ mod tests {
         f.allowed_hosts = vec!["notify.example".into(), "notify.example".into()];
         assert!(codes(&f).contains(&"duplicate-allowed-host"));
         assert!(!f.is_valid());
+    }
+
+    #[test]
+    fn partition_policy_defaults_to_blocking_and_round_trips() {
+        // Absent field = the blocking default; the default is omitted on export
+        // so flows round-trip minimal (D20: choosing partitioned IS opting into
+        // ordering — leapfrog is the explicit opt-out).
+        let f = minimal();
+        assert_eq!(f.partition_policy, PartitionPolicy::Blocking);
+        assert!(!f.to_json().contains("partition-policy"));
+
+        let mut f = minimal();
+        f.partition_policy = PartitionPolicy::Leapfrog;
+        let json = f.to_json();
+        assert!(json.contains("\"partition-policy\": \"leapfrog\""));
+        assert_eq!(
+            Flow::from_json(&json).unwrap().partition_policy,
+            PartitionPolicy::Leapfrog
+        );
+
+        // An unknown policy value is a parse error, not a silent default.
+        let bad = json.replace("leapfrog", "yolo");
+        assert!(Flow::from_json(&bad).is_err());
     }
 
     #[test]

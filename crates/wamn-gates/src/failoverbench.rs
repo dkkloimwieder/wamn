@@ -209,6 +209,8 @@ fn failover_ddl(schema: &str) -> String {
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.node_runs TO wamn_app;\
          CREATE TABLE {schema}.run_queue (\
             tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
+            partition_policy text NOT NULL DEFAULT 'blocking' \
+              CHECK (partition_policy IN ('blocking','leapfrog')), \
             priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
             lease_owner text, lease_expires_at timestamptz, \
             attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \

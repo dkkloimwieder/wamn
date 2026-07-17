@@ -12,6 +12,47 @@ use serde::{Deserialize, Serialize};
 /// same instants as `timestamptz` and compares with server-side `now()`.
 pub type Millis = i64;
 
+/// The `partitioned(key)` head-unavailability policy (5.11 / D20), materialized
+/// onto each queue row at enqueue so the claim SQL is self-contained. Mirrors
+/// the `wamn-flow` contract enum (the flow declares it; the enqueue writer
+/// stamps it) — the serde/SQL literals are drift-guarded against each other and
+/// against the `deploy/run-queue.sql` CHECK. Inert on unpartitioned rows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PartitionPolicy {
+    /// The default: an unavailable head — backed off, parked, or
+    /// budget-exhausted — still **blocks** its key. The per-key stream order is
+    /// `(enqueued_at, run_id)` (stamped at enqueue, never moved by a
+    /// park/backoff), and a head that exhausts its redelivery budget **wedges**
+    /// the key: the janitor leaves it for an operator, later runs wait.
+    #[default]
+    Blocking,
+    /// Opt-in: a later ready run may overtake an unavailable head (the
+    /// `(available_at, run_id)` order among currently-ready siblings), and the
+    /// janitor's `infrastructure-failure` verdict on an exhausted head releases
+    /// the key.
+    Leapfrog,
+}
+
+impl PartitionPolicy {
+    /// Every policy, for drift guards over the storage CHECK.
+    pub const ALL: [PartitionPolicy; 2] = [PartitionPolicy::Blocking, PartitionPolicy::Leapfrog];
+
+    /// The storage literal — equals the serde kebab-case wire form and the
+    /// `run_queue.partition_policy` CHECK literals.
+    pub fn as_sql(self) -> &'static str {
+        match self {
+            PartitionPolicy::Blocking => "blocking",
+            PartitionPolicy::Leapfrog => "leapfrog",
+        }
+    }
+
+    /// Parse a storage literal.
+    pub fn from_sql(s: &str) -> Option<PartitionPolicy> {
+        PartitionPolicy::ALL.into_iter().find(|p| p.as_sql() == s)
+    }
+}
+
 /// One row of `run_queue`: a run waiting to be (or being) dispatched. `available_at`
 /// is when the row becomes claimable — future for a delayed/parked/backed-off run;
 /// a live lease (`lease_expires_at` in the future) marks a row a runner currently
@@ -30,11 +71,22 @@ pub struct QueueEntry {
     /// ([`crate::plan_partition_claim`]) so the key's runs stay in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition_key: Option<String>,
+    /// The head-unavailability policy for this row's key (D20), stamped at
+    /// enqueue from the flow's declaration. Inert when `partition_key` is null.
+    #[serde(default)]
+    pub partition_policy: PartitionPolicy,
     /// Dispatch priority tiebreaker (claim orders by `available_at` first).
     #[serde(default)]
     pub priority: i32,
     /// When this row becomes claimable. Future = parked (delay node / backoff).
     pub available_at: Millis,
+    /// When this row was enqueued — stamped **once** and never updated, unlike
+    /// `available_at` which a park/backoff pushes into the future. This is the
+    /// stable per-key stream order (`(enqueued_at, run_id)`) the `blocking`
+    /// policy ranks by: a parked head sorts *later* than its ready sibling on
+    /// `available_at`, so blocking order cannot be expressed over it.
+    #[serde(default)]
+    pub enqueued_at: Millis,
     /// The runner replica currently holding a lease, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_owner: Option<String>,
@@ -64,13 +116,24 @@ impl QueueEntry {
             tenant_id: tenant_id.into(),
             run_id: run_id.into(),
             partition_key: None,
+            partition_policy: PartitionPolicy::default(),
             priority: 0,
             available_at,
+            // An immediately-claimable row was enqueued when it became
+            // available; a delayed enqueue's `enqueued_at` precedes it (the DB
+            // stamps `now()` while `available_at` = `now() + delay`).
+            enqueued_at: available_at,
             lease_owner: None,
             lease_expires_at: None,
             attempts: 0,
             max_attempts,
         }
+    }
+
+    /// The same entry under an explicit head-unavailability policy (D20).
+    pub fn with_policy(mut self, policy: PartitionPolicy) -> QueueEntry {
+        self.partition_policy = policy;
+        self
     }
 
     /// A fresh, immediately-claimable entry bound to a partition (`partitioned(key)`

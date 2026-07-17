@@ -30,6 +30,7 @@ A `Flow` is **one version** of a flow (the unit stored in the catalog):
 | `edges` | Edge[] | Wiring between output ports and downstream nodes. |
 | `credentials` | CredentialRef[] | Declared by logical name; resolved by the vault (5.9). |
 | `allowed-hosts` | string[] | Hosts the flow's outbound HTTP may reach (fqg.11): `host[:port]`, `scheme://host[:port]`, or `*.suffix`. **Opt-in, fail-closed**: undeclared/empty = deny-all for the flow; a declared host must ALSO pass the runner's host-level allowlist (intersection). Enforced host-side via the trusted `wamn:runner/egress` per-run declaration — the credentials-grant (cjv.3) shape for egress. |
+| `partition-policy` | `blocking` \| `leapfrog` | How this flow's `partitioned(key)` runs dispatch when a key's head is unavailable (5.11 / D20). Default `blocking`: a backed-off/parked/exhausted head **holds** (and, when exhausted, **wedges**) its key — choosing partitioned dispatch *is* opting into ordering. `leapfrog`: a later ready run may overtake an unavailable head. Inert for a flow whose runs carry no partition key. Materialized onto the queue row at enqueue; the runner reads the field once guest-side partitioned claiming lands (fqg.9). See `docs/run-queue.md` §Head-unavailability policy. |
 
 **Node** — `{ id, type, label?, config?, credential? }`. `type` is an **open
 string** the runner's node library (5.3) resolves (`postgres-query`,

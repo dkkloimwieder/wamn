@@ -59,6 +59,45 @@ pub struct Flow {
     /// allow). Mirrors [`Flow::credentials`]: capability by declaration.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_hosts: Vec<String>,
+    /// How this flow's `partitioned(key)` runs dispatch when the key's earliest
+    /// (head) run is unavailable — backed off, parked, or budget-exhausted
+    /// (5.11 ordering decision, D20). Absent = [`PartitionPolicy::Blocking`]:
+    /// choosing partitioned dispatch *is* opting into ordering. Inert for a
+    /// flow whose runs carry no partition key; materialized onto each queue
+    /// row at enqueue (`wamn-run-queue`) so the claim SQL is self-contained.
+    #[serde(default, skip_serializing_if = "PartitionPolicy::is_default")]
+    pub partition_policy: PartitionPolicy,
+}
+
+/// The `partitioned(key)` head-unavailability policy (5.11 / D20): what a key
+/// does while its earliest (head) run cannot dispatch. The stream order the
+/// policy ranks by is `(enqueued_at, run_id)` — stamped once at enqueue, never
+/// moved by a park/backoff (unlike `available_at`).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum PartitionPolicy {
+    /// The default: an unavailable head still **blocks** its key — a
+    /// backed-off or parked head holds later runs until it completes, and a
+    /// head that exhausts its redelivery budget **wedges** the key (operator
+    /// release; the janitor's `infrastructure-failure` verdict does not free
+    /// it). The Kafka-consumer model: a partition never leapfrogs.
+    #[default]
+    Blocking,
+    /// Opt-in: a later ready run may overtake an unavailable head (the
+    /// `(available_at, run_id)` order among currently-ready siblings), and the
+    /// janitor's verdict on an exhausted head releases the key. For keys where
+    /// ordering is a throughput heuristic, not a correctness requirement.
+    Leapfrog,
+}
+
+impl PartitionPolicy {
+    /// `true` for the default ([`PartitionPolicy::Blocking`]) — used to omit
+    /// the field on export so flows round-trip minimal.
+    pub fn is_default(&self) -> bool {
+        *self == PartitionPolicy::Blocking
+    }
 }
 
 /// A single graph step.

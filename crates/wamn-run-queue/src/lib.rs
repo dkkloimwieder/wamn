@@ -76,17 +76,17 @@ pub use cron::{CronError, cron_firing, cron_tick_of, due_tick, mint_cron_run_id,
 pub use dispatch::{DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, Firing, next_interval};
 pub use janitor::{JanitorVerdict, janitor_verdict, orphans};
 pub use lease::{lease_deadline, lease_live, should_renew};
-pub use model::{Millis, PartitionOwner, QueueEntry};
+pub use model::{Millis, PartitionOwner, PartitionPolicy, QueueEntry};
 #[cfg(feature = "dispatcher")]
 pub use outbox::{OutboxRow, RowEventFlow, match_outbox, mint_outbox_run_id, plan_ack};
 pub use partition::{partition_lease_live, plan_acquire, plan_partition_claim};
 pub use reconcile::{next_reconcile, reconcile_due};
 pub use sql::{
     acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_partition_head_sql,
-    cron_last_run_sql, dequeue_sql, enqueue_sql, gc_orphan_partitions_sql, janitor_sweep_sql,
-    mark_running_sql, outbox_ack_sql, outbox_insert_sql, outbox_poll_sql, park_sql, parked_due_sql,
-    release_partition_sql, renew_lease_sql, renew_partition_sql, write_ahead_run_sql,
-    write_ahead_triggered_run_sql,
+    cron_last_run_sql, dequeue_sql, enqueue_sql, enqueue_with_policy_sql, gc_orphan_partitions_sql,
+    janitor_sweep_sql, mark_running_sql, outbox_ack_sql, outbox_insert_sql, outbox_poll_sql,
+    park_sql, parked_due_sql, release_partition_sql, renew_lease_sql, renew_partition_sql,
+    write_ahead_run_sql, write_ahead_triggered_run_sql,
 };
 
 // The queue drives the 5.7 run lifecycle rather than redefining it: the

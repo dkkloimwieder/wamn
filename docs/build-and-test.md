@@ -421,6 +421,18 @@ kubectl -n wamn-system apply -f deploy/queuebench-job.yaml
 kubectl -n wamn-system logs -f job/queuebench
 ```
 
+D20 (R6, wamn-1d4) the `partitioned(key)` head-unavailability policy lands here:
+`wamn-flow` gains `Flow::partition_policy` (`blocking` default / `leapfrog`),
+`run_queue.partition_policy` materializes it, `claim_partition_head_sql` branches on
+it, and `janitor_sweep_sql` exempts a blocking-policy row (wedge). Pure coverage:
+`partition_policy_decides_whether_a_later_run_overtakes_an_unavailable_head`,
+`blocking_wedges_a_key_behind_an_exhausted_head_leapfrog_releases_it`,
+`blocking_partition_orphan_wedges_instead_of_being_reaped` (janitor verdict), plus
+shape/DDL drift guards. The live-apply gate (Phase A/B) and the queuebench
+`partition` phase (`partition_policy_cases`) prove it through real Postgres. The
+guest does not read the flow field until fqg.9, so the in-cluster gate is a
+gates-image rebuild only (guest unchanged for this slice).
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

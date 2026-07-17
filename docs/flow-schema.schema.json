@@ -96,6 +96,25 @@
       ],
       "type": "object"
     },
+    "PartitionPolicy": {
+      "description": "The `partitioned(key)` head-unavailability policy (5.11 / D20): what a key does while its earliest (head) run cannot dispatch. The stream order the policy ranks by is `(enqueued_at, run_id)` — stamped once at enqueue, never moved by a park/backoff (unlike `available_at`).",
+      "oneOf": [
+        {
+          "description": "The default: an unavailable head still **blocks** its key — a backed-off or parked head holds later runs until it completes, and a head that exhausts its redelivery budget **wedges** the key (operator release; the janitor's `infrastructure-failure` verdict does not free it). The Kafka-consumer model: a partition never leapfrogs.",
+          "enum": [
+            "blocking"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Opt-in: a later ready run may overtake an unavailable head (the `(available_at, run_id)` order among currently-ready siblings), and the janitor's verdict on an exhausted head releases the key. For keys where ordering is a throughput heuristic, not a correctness requirement.",
+          "enum": [
+            "leapfrog"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "RowEvent": {
       "description": "The row mutation a [`Trigger::RowEvent`] fires on.",
       "enum": [
@@ -242,6 +261,14 @@
         "$ref": "#/definitions/Node"
       },
       "type": "array"
+    },
+    "partition-policy": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/PartitionPolicy"
+        }
+      ],
+      "description": "How this flow's `partitioned(key)` runs dispatch when the key's earliest (head) run is unavailable — backed off, parked, or budget-exhausted (5.11 ordering decision, D20). Absent = [`PartitionPolicy::Blocking`]: choosing partitioned dispatch *is* opting into ordering. Inert for a flow whose runs carry no partition key; materialized onto each queue row at enqueue (`wamn-run-queue`) so the claim SQL is self-contained."
     },
     "schema-version": {
       "description": "The flow-schema format version (e.g. `\"0.1\"`). See [`SCHEMA_VERSION`].",

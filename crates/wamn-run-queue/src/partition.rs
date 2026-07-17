@@ -22,7 +22,7 @@ use std::collections::HashSet;
 
 use crate::claim::{ClaimPlan, Claimed, is_claimable};
 use crate::lease::lease_live;
-use crate::model::{Millis, PartitionOwner, QueueEntry};
+use crate::model::{Millis, PartitionOwner, PartitionPolicy, QueueEntry};
 
 /// Whether a partition lease is still held at `now` (its deadline is in the future).
 pub fn partition_lease_live(owner: &PartitionOwner, now: Millis) -> bool {
@@ -61,17 +61,20 @@ pub fn plan_acquire(
 }
 
 /// The head runs a replica would claim across the partitions it owns: for each
-/// owned key with no run currently in flight, the earliest-`(available_at, run_id)`
-/// run that is ready now (its head) — then the globally-earliest such heads across
-/// owned partitions, up to `limit`, each with a fresh run lease. Models
+/// owned key with no run currently in flight, the ready run no sibling blocks
+/// under the row's policy (its head) — then the globally-earliest such heads
+/// across owned partitions, up to `limit`, each with a fresh run lease. Models
 /// [`crate::claim_partition_head_sql`]. `owned` is the set of partition keys the
 /// replica holds a live lease on.
 ///
-/// The two guarantees this encodes — **one in flight per partition** (a partition
-/// with any live-leased run yields no head) and **head-first** (only the earliest
-/// ready run of a partition is taken) — are exactly what preserve per-key order:
-/// the next run of a key is claimable only once the current one has completed and
-/// dequeued.
+/// The guarantees this encodes — **one in flight per partition** (a partition
+/// with any live-leased run yields no head) and **head-first** under the row's
+/// [`PartitionPolicy`] (D20) — are what preserve per-key order. Under
+/// `blocking` (the default) the head is the earliest run in the key's *stream
+/// order* `(enqueued_at, run_id)` — a backed-off/parked/exhausted earlier run
+/// still blocks, so the key waits (or wedges) rather than reorder. Under
+/// `leapfrog` only an earlier *currently-ready* sibling blocks, in
+/// `(available_at, run_id)` order — an unavailable head yields the key.
 pub fn plan_partition_claim(
     rows: &[QueueEntry],
     owned: &HashSet<&str>,
@@ -89,11 +92,12 @@ pub fn plan_partition_claim(
         if part.iter().any(|e| lease_live(now, e.lease_expires_at)) {
             continue;
         }
-        // Head = the earliest ready run (by available_at, then run_id).
+        // Head = the claimable run no sibling blocks under its policy.
         if let Some(head) = part
             .iter()
             .copied()
-            .filter(|e| is_claimable(e, now))
+            .filter(|c| is_claimable(c, now))
+            .filter(|c| !part.iter().any(|b| blocks(b, c, now)))
             .min_by(|a, b| ord_key(a).cmp(&ord_key(b)))
         {
             heads.push(head);
@@ -116,7 +120,29 @@ pub fn plan_partition_claim(
     ClaimPlan { claimed }
 }
 
+/// Whether sibling `b` blocks head candidate `c` under `c`'s policy — the pure
+/// mirror of `claim_partition_head_sql`'s `NOT EXISTS` (minus the in-flight arm,
+/// which [`plan_partition_claim`] applies key-wide).
+fn blocks(b: &QueueEntry, c: &QueueEntry, now: Millis) -> bool {
+    if b.run_id == c.run_id {
+        return false;
+    }
+    match c.partition_policy {
+        // Blocking: ANY earlier sibling in stream order blocks — ready or not,
+        // budget spent or not (an exhausted earlier sibling is the wedge).
+        PartitionPolicy::Blocking => stream_key(b) < stream_key(c),
+        // Leapfrog: only an earlier currently-ready sibling blocks.
+        PartitionPolicy::Leapfrog => is_claimable(b, now) && ord_key(b) < ord_key(c),
+    }
+}
+
 /// The dispatch-order key: `(available_at, run_id)`, matching every SQL `ORDER BY`.
 fn ord_key(e: &QueueEntry) -> (Millis, &str) {
     (e.available_at, e.run_id.as_str())
+}
+
+/// The `blocking` policy's stream order: `(enqueued_at, run_id)` — stamped at
+/// enqueue, never moved by a park/backoff (unlike `available_at`).
+fn stream_key(e: &QueueEntry) -> (Millis, &str) {
+    (e.enqueued_at, e.run_id.as_str())
 }

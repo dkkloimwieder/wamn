@@ -12,6 +12,7 @@
 //! `infrastructure-failure`. Milliseconds are converted to an `interval` inline
 //! (`$n::bigint * interval '1 millisecond'`).
 
+use crate::model::PartitionPolicy;
 use wamn_run_store::RunStatus;
 
 /// The D15 write-ahead run row: a `dispatched` run persisted *before* the runner
@@ -30,10 +31,28 @@ pub fn write_ahead_run_sql() -> String {
 /// (one durability domain, D3). Params: `$1` run_id, `$2` partition_key (nullable),
 /// `$3` priority, `$4` delay_ms (0 = immediately claimable; >0 = a parked/delayed
 /// wake). Idempotent: a redelivered enqueue for the same run is a no-op.
+///
+/// Writes no `partition_policy`, so the row takes the column default —
+/// `blocking`, the D20 decision (choosing partitioned dispatch *is* opting into
+/// ordering). A writer materializing a flow's explicit policy uses
+/// [`enqueue_with_policy_sql`].
 pub fn enqueue_sql() -> String {
     "INSERT INTO run_queue (tenant_id, run_id, partition_key, priority, available_at) \
      VALUES (current_setting('app.tenant', true), $1, $2, $3, \
              now() + ($4::bigint * interval '1 millisecond')) \
+     ON CONFLICT (tenant_id, run_id) DO NOTHING"
+        .to_string()
+}
+
+/// [`enqueue_sql`] with the flow's declared head-unavailability policy
+/// materialized onto the row (D20) — the claim SQL branches on the ROW, never a
+/// join back to the flow, so it stays self-contained. Params: `$1` run_id,
+/// `$2` partition_key (nullable), `$3` priority, `$4` delay_ms, `$5` the policy
+/// literal ([`PartitionPolicy::as_sql`], CHECK-constrained by the DDL).
+pub fn enqueue_with_policy_sql() -> String {
+    "INSERT INTO run_queue (tenant_id, run_id, partition_key, priority, available_at, partition_policy) \
+     VALUES (current_setting('app.tenant', true), $1, $2, $3, \
+             now() + ($4::bigint * interval '1 millisecond'), $5) \
      ON CONFLICT (tenant_id, run_id) DO NOTHING"
         .to_string()
 }
@@ -167,6 +186,14 @@ pub fn park_sql() -> String {
 /// more than `$1` grace_ms ago and the redelivery budget spent) and mark its run
 /// `infrastructure-failure`. RLS scopes both tables to the current tenant.
 ///
+/// A **`blocking`-policy partitioned row is exempt** (D20 terminal fold-in): its
+/// queue row is the only record that later runs of the key must wait, so reaping
+/// it would silently release a key whose flow opted into strict ordering. The
+/// exhausted head instead **wedges** the key — row kept, run status untouched —
+/// until an operator intervenes (requeue or delete). Under `leapfrog` (and for
+/// every unpartitioned row) the janitor verdict retires the run and releases the
+/// key as before.
+///
 /// The `r.status IN ('dispatched', 'running')` guard on the status update is the
 /// completion-vs-failover race guard (checkpoint/resume on replica loss): a run a
 /// second replica successfully reclaimed and drove to a terminal state — `completed`
@@ -184,6 +211,7 @@ pub fn janitor_sweep_sql() -> String {
               WHERE q.lease_expires_at IS NOT NULL \
                 AND q.lease_expires_at + ($1::bigint * interval '1 millisecond') <= now() \
                 AND q.attempts >= q.max_attempts \
+                AND (q.partition_key IS NULL OR q.partition_policy = '{leapfrog}') \
               RETURNING q.tenant_id, q.run_id \
          ) \
          UPDATE runs r SET status = '{infra}' \
@@ -193,6 +221,7 @@ pub fn janitor_sweep_sql() -> String {
         infra = RunStatus::InfrastructureFailure.as_sql(),
         dispatched = RunStatus::Dispatched.as_sql(),
         running = RunStatus::Running.as_sql(),
+        leapfrog = PartitionPolicy::Leapfrog.as_sql(),
     )
 }
 
@@ -373,13 +402,29 @@ pub fn release_partition_sql() -> String {
 }
 
 /// Within the partitions `$1` owns (a live `partition_owner` lease), claim the
-/// **head** of each — the earliest-`(available_at, run_id)` run that is ready, has no
-/// earlier ready sibling, and whose partition has **no run in flight** — leasing it
-/// for `$2` ttl_ms. Because the `NOT EXISTS` reduces each partition to a single head
-/// candidate, `FOR UPDATE OF c SKIP LOCKED` is legal (no `DISTINCT`) and takes the
-/// globally-earliest heads across owned partitions up to `limit`. One-in-flight-per-
-/// partition + head-first is what keeps a key in order: its next run becomes
-/// claimable only once the current one completes and dequeues.
+/// **head** of each — the earliest run that is ready, not blocked by a sibling
+/// under the row's policy, and whose partition has **no run in flight** — leasing
+/// it for `$2` ttl_ms. Because the `NOT EXISTS` reduces each partition to a single
+/// head candidate, `FOR UPDATE OF c SKIP LOCKED` is legal (no `DISTINCT`) and takes
+/// the globally-earliest heads across owned partitions up to `limit`. One-in-
+/// flight-per-partition + head-first is what keeps a key in order: its next run
+/// becomes claimable only once the current one completes and dequeues.
+///
+/// What "blocked by a sibling" means branches on the row's materialized
+/// `partition_policy` (D20):
+///
+/// - **`blocking`** (the default): ANY sibling earlier in the key's *stream
+///   order* — `(enqueued_at, run_id)`, stamped at enqueue and never moved —
+///   blocks, whether it is ready, backed off, parked, or budget-exhausted. A
+///   transiently-unavailable head holds its key (the Kafka model), and an
+///   exhausted head **wedges** it (the janitor leaves the row; see
+///   [`janitor_sweep_sql`]). The stream order deliberately ignores
+///   `available_at`: a park/backoff pushes `available_at` into the future, so
+///   any comparison over it would let a later run overtake — the exact
+///   corruption the policy exists to forbid.
+/// - **`leapfrog`** (opt-in): only an earlier *currently-ready* sibling blocks,
+///   in `(available_at, run_id)` order — a backed-off or parked head yields the
+///   key and a later ready run overtakes it until the head becomes due.
 ///
 /// `attempts` counts **crash evidence only**, exactly as in [`claim_batch_sql`]: the
 /// `CASE` bumps it iff this claim reclaims an *expired* lease. This matters most
@@ -420,7 +465,10 @@ pub fn claim_partition_head_sql(limit: usize) -> String {
                         AND b.run_id <> c.run_id \
                         AND ( \
                             (b.lease_expires_at IS NOT NULL AND b.lease_expires_at > now()) \
-                            OR (b.available_at <= now() \
+                            OR (c.partition_policy = '{blocking}' \
+                                AND (b.enqueued_at, b.run_id) < (c.enqueued_at, c.run_id)) \
+                            OR (c.partition_policy = '{leapfrog}' \
+                                AND b.available_at <= now() \
                                 AND (b.attempts < b.max_attempts OR b.lease_expires_at IS NULL) \
                                 AND (b.lease_expires_at IS NULL OR b.lease_expires_at <= now()) \
                                 AND (b.available_at, b.run_id) < (c.available_at, c.run_id)) \
@@ -436,7 +484,9 @@ pub fn claim_partition_head_sql(limit: usize) -> String {
                 attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
            FROM heads \
           WHERE q.tenant_id = heads.tenant_id AND q.run_id = heads.run_id \
-          RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at"
+          RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at",
+        blocking = PartitionPolicy::Blocking.as_sql(),
+        leapfrog = PartitionPolicy::Leapfrog.as_sql(),
     )
 }
 

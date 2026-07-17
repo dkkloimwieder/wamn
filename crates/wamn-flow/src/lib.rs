@@ -22,8 +22,8 @@ mod validate;
 
 pub use diff::{FlowDiff, NodeChange, diff};
 pub use types::{
-    CredentialRef, ERROR_PORT, Edge, Flow, MAIN_PORT, Node, NodeId, RowEvent, SCHEMA_VERSION,
-    Trigger,
+    CredentialRef, ERROR_PORT, Edge, Flow, MAIN_PORT, Node, NodeId, PartitionPolicy, RowEvent,
+    SCHEMA_VERSION, Trigger,
 };
 pub use validate::{Issue, Severity, validate};
 

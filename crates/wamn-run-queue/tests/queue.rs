@@ -7,15 +7,15 @@ use std::collections::HashSet;
 
 use wamn_run_queue::{
     ClaimState, CronError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, JanitorVerdict,
-    OutboxRow, PartitionOwner, QueueEntry, RowEventFlow, RunStatus, acquire_partitions_sql,
-    active_flows_sql, claim_batch_sql, claim_partition_head_sql, claim_state, cron_firing,
-    cron_last_run_sql, cron_tick_of, dequeue_sql, due_tick, enqueue_sql, gc_orphan_partitions_sql,
-    is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live, mark_running_sql,
-    match_outbox, mint_cron_run_id, next_fire, next_interval, next_reconcile, orphans,
-    outbox_ack_sql, outbox_insert_sql, outbox_poll_sql, park_sql, parked_due_sql,
-    partition_lease_live, plan_ack, plan_acquire, plan_claim, plan_partition_claim, reconcile_due,
-    release_partition_sql, renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
-    write_ahead_triggered_run_sql,
+    OutboxRow, PartitionOwner, PartitionPolicy, QueueEntry, RowEventFlow, RunStatus,
+    acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_partition_head_sql,
+    claim_state, cron_firing, cron_last_run_sql, cron_tick_of, dequeue_sql, due_tick, enqueue_sql,
+    enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql,
+    janitor_verdict, lease_deadline, lease_live, mark_running_sql, match_outbox, mint_cron_run_id,
+    next_fire, next_interval, next_reconcile, orphans, outbox_ack_sql, outbox_insert_sql,
+    outbox_poll_sql, park_sql, parked_due_sql, partition_lease_live, plan_ack, plan_acquire,
+    plan_claim, plan_partition_claim, reconcile_due, release_partition_sql, renew_lease_sql,
+    renew_partition_sql, should_renew, write_ahead_run_sql, write_ahead_triggered_run_sql,
 };
 
 // ---- claim eligibility -----------------------------------------------------
@@ -155,6 +155,52 @@ fn janitor_verdict_and_orphans() {
     assert_eq!(o[0].run_id, "orphan");
 }
 
+#[test]
+fn blocking_partition_orphan_wedges_instead_of_being_reaped() {
+    let grace = 1_000;
+    // An orphan-shaped row (expired lease past grace, budget spent) that belongs
+    // to a blocking-policy partition is Wedged, not Orphaned (D20): reaping it
+    // would silently release a key the flow chose to keep ordered.
+    let wedged = QueueEntry {
+        lease_expires_at: Some(1_000),
+        attempts: 20,
+        ..QueueEntry::ready_partition("t1", "pw", "site", 0, 20)
+    };
+    assert_eq!(
+        janitor_verdict(&wedged, 1_000 + grace, grace),
+        JanitorVerdict::Wedged
+    );
+    // The SAME shape under leapfrog IS reaped — the key releases on exhaustion.
+    let leap = QueueEntry {
+        lease_expires_at: Some(1_000),
+        attempts: 20,
+        ..QueueEntry::ready_partition("t1", "lp", "site2", 0, 20)
+    }
+    .with_policy(PartitionPolicy::Leapfrog);
+    assert_eq!(
+        janitor_verdict(&leap, 1_000 + grace, grace),
+        JanitorVerdict::Orphaned
+    );
+    // An unpartitioned orphan is reaped regardless of the (inert) policy field.
+    let unpart = QueueEntry {
+        lease_expires_at: Some(1_000),
+        attempts: 20,
+        ..QueueEntry::ready("t1", "u", 0, 20)
+    };
+    assert_eq!(
+        janitor_verdict(&unpart, 1_000 + grace, grace),
+        JanitorVerdict::Orphaned
+    );
+    // `orphans()` excludes the wedged row — only the leapfrog + unpartitioned
+    // orphans are swept.
+    let rows = vec![wedged, leap, unpart];
+    let swept: Vec<&str> = orphans(&rows, 1_000 + grace, grace)
+        .iter()
+        .map(|e| e.run_id.as_str())
+        .collect();
+    assert_eq!(swept, ["lp", "u"]);
+}
+
 // ---- reconciliation --------------------------------------------------------
 
 #[test]
@@ -230,12 +276,22 @@ fn partition_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(claim.contains("o.lease_owner = $1 AND o.lease_expires_at > now()"));
     assert!(claim.contains("c.partition_key IS NOT NULL"));
     // The NOT EXISTS reduces each partition to a single head candidate, which is
-    // what makes FOR UPDATE OF c (no DISTINCT) legal. Its two disjuncts are the two
-    // ordering guards: a live-leased sibling (one-in-flight) and an earlier ready
-    // sibling (head-first). The behavioral live-apply gate proves the in-flight
-    // branch is the SOLE blocker of a successor while its head is live-leased.
+    // what makes FOR UPDATE OF c (no DISTINCT) legal. Its disjuncts are the
+    // ordering guards: a live-leased sibling (one-in-flight) plus the per-policy
+    // head-first arm (D20). The behavioral live-apply gate proves the in-flight
+    // branch is the SOLE blocker of a successor while its head is live-leased
+    // (on leapfrog-policy fixtures, where the stream-order arm cannot mask it).
     assert!(claim.contains("NOT EXISTS"));
     assert!(claim.contains("b.lease_expires_at IS NOT NULL AND b.lease_expires_at > now()"));
+    // D20 blocking (default): ANY earlier sibling in the STREAM order — stamped
+    // (enqueued_at, run_id), which a park/backoff never moves — blocks the head.
+    // These pins are the load-bearing drift guard for the policy branch: the
+    // runtime effect is timing/plan-dependent, the strings are deterministic.
+    assert!(claim.contains("c.partition_policy = 'blocking'"));
+    assert!(claim.contains("(b.enqueued_at, b.run_id) < (c.enqueued_at, c.run_id)"));
+    // D20 leapfrog (opt-in): only an earlier CURRENTLY-READY sibling blocks, in
+    // (available_at, run_id) order — the pre-D20 behavior, now explicit.
+    assert!(claim.contains("c.partition_policy = 'leapfrog'"));
     assert!(claim.contains("(b.available_at, b.run_id) < (c.available_at, c.run_id)"));
     assert!(claim.contains("FOR UPDATE OF c SKIP LOCKED"));
     // wamn-fqg.7: the budget disjunct is on BOTH the head candidate `c` and the
@@ -613,6 +669,104 @@ fn plan_partition_claim_advances_in_order_and_limits_across_partitions() {
 }
 
 #[test]
+fn partition_policy_decides_whether_a_later_run_overtakes_an_unavailable_head() {
+    // The R6 decision (D20): what a key does while its earliest (head) run is
+    // unavailable. The stream head `p-0` (earliest by enqueued_at) is backed off
+    // into the future (available_at 5_000 at now=1_000); the later `p-1`
+    // (enqueued after it) is ready now.
+    let owned: HashSet<&str> = ["site"].into_iter().collect();
+    let backed_off_head = QueueEntry {
+        available_at: 5_000, // parked/backed-off — not yet due
+        enqueued_at: 100,    // but FIRST in the key's stream order
+        ..QueueEntry::ready_partition("t1", "p-0", "site", 5_000, 20)
+    };
+    let ready_later = QueueEntry {
+        enqueued_at: 200, // enqueued AFTER p-0
+        ..QueueEntry::ready_partition("t1", "p-1", "site", 100, 20)
+    };
+
+    // Blocking (default): the backed-off head still blocks its key — `p-1` does
+    // NOT overtake, so the key dispatches nothing until `p-0` becomes due (the
+    // Kafka model; the corruption R6 exists to forbid). `blocks` ranks by the
+    // stable stream order, which a park never moves.
+    let blk_head = backed_off_head
+        .clone()
+        .with_policy(PartitionPolicy::Blocking);
+    let blk_later = ready_later.clone().with_policy(PartitionPolicy::Blocking);
+    let plan = plan_partition_claim(&[blk_head, blk_later], &owned, 1_000, 10, 60_000);
+    assert!(
+        plan.claimed.is_empty(),
+        "blocking: a backed-off head holds the key, p-1 must not overtake"
+    );
+
+    // Leapfrog (opt-in): the backed-off head yields; the later ready run
+    // overtakes (pre-D20 behavior). Only currently-ready siblings block.
+    let lf_head = backed_off_head.with_policy(PartitionPolicy::Leapfrog);
+    let lf_later = ready_later.with_policy(PartitionPolicy::Leapfrog);
+    let plan = plan_partition_claim(&[lf_head, lf_later], &owned, 1_000, 10, 60_000);
+    let ids: Vec<&str> = plan.claimed.iter().map(|c| c.run_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["p-1"],
+        "leapfrog: a later ready run overtakes an unavailable head"
+    );
+}
+
+#[test]
+fn blocking_wedges_a_key_behind_an_exhausted_head_leapfrog_releases_it() {
+    // The terminal fold-in (D20): a budget-exhausted head (expired lease, budget
+    // spent → Exhausted, awaiting the janitor) that is FIRST in the stream order.
+    let owned: HashSet<&str> = ["site"].into_iter().collect();
+    let exhausted_head = QueueEntry {
+        lease_expires_at: Some(500), // expired at now=1_000
+        attempts: 20,
+        max_attempts: 20,
+        enqueued_at: 100, // first in stream order
+        ..QueueEntry::ready_partition("t1", "e-0", "site", 0, 20)
+    };
+    let ready_later = QueueEntry {
+        enqueued_at: 200,
+        ..QueueEntry::ready_partition("t1", "e-1", "site", 0, 20)
+    };
+
+    // Blocking: the exhausted head still blocks — the key WEDGES (nothing
+    // dispatches) until an operator clears the head. The janitor leaves the row
+    // (see `blocking_partition_orphan_wedges_instead_of_being_reaped`), so the
+    // wedge persists rather than silently releasing.
+    let blk = plan_partition_claim(
+        &[
+            exhausted_head
+                .clone()
+                .with_policy(PartitionPolicy::Blocking),
+            ready_later.clone().with_policy(PartitionPolicy::Blocking),
+        ],
+        &owned,
+        1_000,
+        10,
+        60_000,
+    );
+    assert!(
+        blk.claimed.is_empty(),
+        "blocking: an exhausted head wedges its key"
+    );
+
+    // Leapfrog: the exhausted head (not currently ready) does not block; `e-1`
+    // dispatches and the janitor's verdict on `e-0` releases the key.
+    let lf = plan_partition_claim(
+        &[
+            exhausted_head.with_policy(PartitionPolicy::Leapfrog),
+            ready_later.with_policy(PartitionPolicy::Leapfrog),
+        ],
+        &owned,
+        1_000,
+        10,
+        60_000,
+    );
+    let ids: Vec<&str> = lf.claimed.iter().map(|c| c.run_id.as_str()).collect();
+    assert_eq!(ids, ["e-1"], "leapfrog: an exhausted head releases its key");
+}
+
+#[test]
 fn lifecycle_sql_uses_run_status_literals() {
     // The queue drives the 5.7 run lifecycle: the literals in the SQL are exactly
     // RunStatus::as_sql, so a rename of the vocabulary can't silently desync.
@@ -633,6 +787,14 @@ fn lifecycle_sql_uses_run_status_literals() {
             RunStatus::Running.as_sql()
         )),
         "janitor sweep must guard the status update on a non-terminal run: {sweep}"
+    );
+    // D20 terminal fold-in: a blocking-policy partitioned row is EXEMPT from the
+    // sweep — it stays and wedges its key. Only unpartitioned rows and leapfrog
+    // partitions are reaped. (The pin is the load-bearing drift guard: dropping
+    // the DELETE arm silently un-wedges every blocking key.)
+    assert!(
+        sweep.contains("q.partition_key IS NULL OR q.partition_policy = 'leapfrog'"),
+        "janitor sweep must exempt a blocking-policy partition (D20 wedge): {sweep}"
     );
 }
 
@@ -657,6 +819,23 @@ fn enqueue_and_maintenance_sql_are_tenant_scoped_and_parameterized() {
     assert!(write_ahead_run_sql().contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
     assert!(janitor_sweep_sql().contains("DELETE FROM run_queue"));
     assert!(janitor_sweep_sql().contains("UPDATE runs"));
+
+    // The policy-materializing enqueue (D20) writes the partition_policy column
+    // from a $5 literal, so the claim SQL branches on the row, not a flow join.
+    let ewp = enqueue_with_policy_sql();
+    assert!(ewp.contains("current_setting('app.tenant', true)"));
+    assert!(ewp.contains("partition_policy"));
+    assert!(ewp.contains("$5"));
+    assert!(ewp.contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
+    // The two policy literals match the model's as_sql (drift guard over the CHECK).
+    assert_eq!(PartitionPolicy::Blocking.as_sql(), "blocking");
+    assert_eq!(PartitionPolicy::Leapfrog.as_sql(), "leapfrog");
+    assert_eq!(
+        PartitionPolicy::from_sql("leapfrog"),
+        Some(PartitionPolicy::Leapfrog)
+    );
+    assert_eq!(PartitionPolicy::from_sql("nope"), None);
+    assert_eq!(PartitionPolicy::default(), PartitionPolicy::Blocking);
 }
 
 // ---- trigger dispatcher: cron ------------------------------------------------
@@ -1043,10 +1222,14 @@ fn queue_entry_round_trips_as_kebab_json() {
         lease_owner: Some("replica-2".into()),
         lease_expires_at: Some(1_700_000_000_000),
         attempts: 2,
+        enqueued_at: 1_699_999_998_000,
         ..QueueEntry::ready("t1", "run-9", 1_699_999_999_000, 20)
+            .with_policy(PartitionPolicy::Leapfrog)
     };
     let json = serde_json::to_string(&e).unwrap();
     assert!(json.contains("\"partition-key\":\"site-7\""));
+    assert!(json.contains("\"partition-policy\":\"leapfrog\""));
+    assert!(json.contains("\"enqueued-at\":1699999998000"));
     assert!(json.contains("\"lease-expires-at\":1700000000000"));
     assert!(json.contains("\"max-attempts\":20"));
     assert_eq!(serde_json::from_str::<QueueEntry>(&json).unwrap(), e);
@@ -1080,6 +1263,7 @@ fn run_queue_sql_matches_the_model() {
     // The claim/lease machinery columns the SQL builders read/write.
     for col in [
         "partition_key",
+        "partition_policy",
         "priority",
         "available_at",
         "lease_owner",
@@ -1088,6 +1272,16 @@ fn run_queue_sql_matches_the_model() {
         "max_attempts",
     ] {
         assert!(sql.contains(col), "run-queue.sql missing column {col}");
+    }
+    // D20: partition_policy defaults to 'blocking' and is CHECK-constrained to the
+    // model's two literals (drift guard over PartitionPolicy::as_sql).
+    assert!(sql.contains("partition_policy text NOT NULL DEFAULT 'blocking'"));
+    for p in PartitionPolicy::ALL {
+        assert!(
+            sql.contains(&format!("'{}'", p.as_sql())),
+            "run-queue.sql CHECK missing policy literal {}",
+            p.as_sql()
+        );
     }
 
     // The per-partition ownership lease table + its tenant floor + PK.
@@ -1526,6 +1720,97 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          COMMIT;\n",
     );
+
+    // ------------------------------------------------------------------------
+    // D20 (R6): the partitioned(key) head-unavailability POLICY, through the REAL
+    // claim_partition_head_sql (policy branch) + janitor_sweep_sql (wedge
+    // exemption). All prior partitions (site-a/-b/-w) are still live-owned, so the
+    // acquire calls below grab only these new keys. enqueued_at is stamped
+    // explicitly and INDEPENDENTLY of available_at, so the stream order the
+    // blocking policy ranks by is not an artifact of the (backed-off) availability.
+    // ------------------------------------------------------------------------
+    //
+    // The policy-materializing enqueue builder (fqg.9 wires this on the guest
+    // claim path): enqueue_with_policy_sql writes partition_policy from $5, and a
+    // plain enqueue_sql takes the column DEFAULT ('blocking').
+    let enqueue_policy_sql = enqueue_with_policy_sql();
+    let enqueue_plain_sql = enqueue_sql();
+    script.push_str(&format!(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+           ('t1','ep-lf','f',1,'dispatched'),('t1','ep-def','f',1,'dispatched');\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE enq_policy (text, text, int, bigint, text) AS {enqueue_policy_sql};\n\
+         PREPARE enq_plain (text, text, int, bigint) AS {enqueue_plain_sql};\n\
+         EXECUTE enq_policy('ep-lf', NULL, 0, 0, 'leapfrog');\n\
+         EXECUTE enq_plain('ep-def', NULL, 0, 0);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT partition_policy FROM run_queue WHERE run_id='ep-lf') = 'leapfrog', 'enqueue_with_policy_sql materializes the declared policy onto the row'; \
+           ASSERT (SELECT partition_policy FROM run_queue WHERE run_id='ep-def') = 'blocking', 'a plain enqueue takes the blocking column default'; \
+         END $$;\n\
+         COMMIT;\n"
+    ));
+    //
+    // Phase A — a backed-off head (future available_at) that is FIRST in the
+    // stream order. `blk` uses the DEFAULT policy (no column written) to also
+    // prove the default is 'blocking'; `lf` opts into 'leapfrog'.
+    script.push_str(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+           ('t1','blk-0','f',1,'dispatched'),('t1','blk-1','f',1,'dispatched'), \
+           ('t1','lf-0','f',1,'dispatched'),('t1','lf-1','f',1,'dispatched');\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, partition_key, available_at, enqueued_at, attempts, max_attempts) VALUES \
+           ('t1','blk-0','blk', now() + interval '1 hour', now() - interval '2 min', 0, 20), \
+           ('t1','blk-1','blk', now() - interval '30 sec', now() - interval '1 min', 0, 20);\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, partition_key, available_at, enqueued_at, attempts, max_attempts, partition_policy) VALUES \
+           ('t1','lf-0','lf', now() + interval '1 hour', now() - interval '2 min', 0, 20, 'leapfrog'), \
+           ('t1','lf-1','lf', now() - interval '30 sec', now() - interval '1 min', 0, 20, 'leapfrog');\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         DO $$ BEGIN ASSERT (SELECT partition_policy FROM run_queue WHERE run_id='blk-0') = 'blocking', 'a partitioned row defaults to the blocking policy (D20)'; END $$;\n\
+         EXECUTE acquire_stmt('PA', 60000);\n\
+         EXECUTE claimhead_stmt('PA', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='blk-1') IS NULL, 'blocking: a backed-off head HOLDS its key — the later ready run does NOT overtake'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='blk-0') IS NULL, 'blocking: the not-yet-due head is not claimed either (the key dispatches nothing)'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='lf-1') = 'PA', 'leapfrog: the later ready run OVERTAKES the backed-off head'; \
+         END $$;\n\
+         COMMIT;\n",
+    );
+
+    // Phase B — an EXHAUSTED head (expired lease past grace, budget spent). `wg`
+    // is blocking (default): the janitor must NOT reap it (it wedges the key);
+    // `lx` is leapfrog: the janitor reaps it and the key releases.
+    script.push_str(&format!(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+           ('t1','wg-0','f',1,'running'),('t1','wg-1','f',1,'dispatched'), \
+           ('t1','lx-0','f',1,'running'),('t1','lx-1','f',1,'dispatched');\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, partition_key, available_at, enqueued_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
+           ('t1','wg-0','wg', now() - interval '3 hour', now() - interval '2 min','dead', now() - interval '2 hour', 20, 20), \
+           ('t1','wg-1','wg', now() - interval '30 sec', now() - interval '1 min', NULL,  NULL,                     0,  20);\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, partition_key, available_at, enqueued_at, lease_owner, lease_expires_at, attempts, max_attempts, partition_policy) VALUES \
+           ('t1','lx-0','lx', now() - interval '3 hour', now() - interval '2 min','dead', now() - interval '2 hour', 20, 20, 'leapfrog'), \
+           ('t1','lx-1','lx', now() - interval '30 sec', now() - interval '1 min', NULL,  NULL,                     0,  20, 'leapfrog');\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         EXECUTE janitor_stmt(3600000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM run_queue WHERE run_id='wg-0') = 1, 'blocking wedge: the janitor does NOT reap an exhausted blocking head'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='wg-0') = 'running', 'blocking wedge: the exhausted head''s run status is left untouched (operator releases)'; \
+           ASSERT (SELECT count(*) FROM run_queue WHERE run_id='lx-0') = 0, 'leapfrog: the janitor DOES reap an exhausted leapfrog head'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='lx-0') = 'infrastructure-failure', 'leapfrog: the reaped head''s run is marked infra-failure'; \
+         END $$;\n\
+         EXECUTE acquire_stmt('PB', 60000);\n\
+         EXECUTE claimhead_stmt('PB', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='wg-1') IS NULL, 'blocking wedge: the later run stays BLOCKED behind the exhausted head — the key is wedged'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='lx-1') = 'PB', 'leapfrog: with the exhausted head reaped, the key RELEASES and the next run dispatches'; \
+         END $$;\n\
+         COMMIT;\n"
+    ));
 
     script.push_str("DROP SCHEMA wamn_run CASCADE;\n");
 

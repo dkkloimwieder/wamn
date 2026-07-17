@@ -146,18 +146,40 @@ history, is **not** FK'd to `run_queue` (a `partition_key` is not unique there),
 is garbage-collected when the key drains. It sits on the same tenant floor
 (`FORCE ROW LEVEL SECURITY` on `app.tenant`).
 
-The dispatch key is `(available_at, run_id)`, but in-order dispatch holds only
-among the runs of a key that are **currently ready**: `claim_partition_head_sql`'s
-no-earlier-ready-sibling predicate ranks only ready siblings, so a parked or
-backed-off earlier run (a future `available_at`) **yields the head** and a
-later-but-ready run of the same key overtakes it, until the earlier one becomes due.
-Strict in-order-under-retry/park — whether an earlier not-yet-due run should *hold*
-the key rather than yield it — is an ordering **policy** deferred to 5.11 (wamn-1d4);
-5.14 ships only the mechanism. A run that exhausts its retry budget is
-retired by the janitor to `infrastructure-failure` and stops holding its partition;
-whether a *terminal* failure should instead **wedge** the key (block later runs until
-an operator intervenes) is an ordering **policy** decision that belongs to 5.11 —
-5.14 ships the mechanism.
+### Head-unavailability policy (5.11 / D20)
+
+What a key does while its earliest (head) run is **unavailable** — backed off,
+parked, or budget-exhausted — is a per-flow **policy** the flow declares
+(`Flow::partition_policy`, `wamn-flow`) and the enqueue writer **materializes onto
+the queue row** (`run_queue.partition_policy`), so `claim_partition_head_sql`
+branches on the row alone and never joins back to the flow. The default is
+**`blocking`**; `leapfrog` is the explicit opt-out. Choosing partitioned dispatch
+*is* opting into ordering.
+
+- **`blocking` (default).** ANY sibling earlier in the key's **stream order** —
+  `(enqueued_at, run_id)`, stamped once at enqueue and never moved — blocks the
+  head, whether it is ready, backed off, parked, or budget-exhausted. A
+  transiently-unavailable head therefore *holds* its key (the Kafka-consumer
+  model: a partition never leapfrogs a retrying message), and a head that exhausts
+  its redelivery budget **wedges** the key: the janitor is **exempt** from reaping
+  a blocking-policy row (`janitor_sweep_sql`'s
+  `partition_key IS NULL OR partition_policy = 'leapfrog'` guard), so the row stays
+  and later runs wait until an operator clears the head (requeue or delete). The
+  stream order deliberately ignores `available_at`: a park/backoff pushes
+  `available_at` into the future, so ranking over it would let a later run overtake
+  — the exact corruption (consume-before-produce genealogy, state-machine streams)
+  the policy exists to forbid on a transient network blip.
+- **`leapfrog` (opt-in).** Only an earlier *currently-ready* sibling blocks, in
+  `(available_at, run_id)` order — a backed-off or parked head yields the key and a
+  later ready run overtakes it until the head becomes due, and the janitor's
+  `infrastructure-failure` verdict on an exhausted head **releases** the key. For
+  keys where ordering is a throughput heuristic, not a correctness requirement.
+
+The dispatch key is still `(available_at, run_id)` — it decides *which* claimable
+head is globally earliest across owned partitions; the policy decides *whether* a
+key has a claimable head at all. This is inert on unpartitioned rows (the global
+`claim_batch_sql` and the janitor treat `partition_key IS NULL` as always
+reapable).
 
 ## Checkpoint/resume on replica loss
 
