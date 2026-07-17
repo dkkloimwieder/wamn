@@ -102,9 +102,10 @@ primary; **no parallel overhaul of the dispatch machinery the ladder stands on.*
 
 ## Suggested first picks
 
-~~`fqg.8` → ladder rungs~~ (done) → **`fqg.11`** (unparks F3 with `fqg.12`) →
-**`1d4` R6 decision** (decide `blocking` now, while it's a decision not a rework — F4 is
-its first consumer, and it's load-bearing for the event plane too) → **`d8v` GC half**
+~~`fqg.8` → ladder rungs~~ (done) → ~~`fqg.11`~~ (done, unparks F3 with `fqg.12`) →
+~~`1d4` R6 decision~~ (**done** — D20 chosen: `blocking` default, commit 84233fa;
+record-stream amortization + R8d cron-misfire remain later slices of `1d4`) →
+**`d8v` GC half**
 (small janitor-colocated pruner; F4's live outbox traffic needs it, and it unblocks
 `z7b.2`) → `POC-F3` / `POC-F4` → `4.4` hot-reload → (parallel) `2ib`.
 Bench days when convenient: `z7b.1` (C7) / `z7b.2` (C2) — measurement-only, safe to
