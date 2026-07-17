@@ -26,10 +26,18 @@ cargo build --release -p wamn-host -p wamn-gates   # prod host + gate suite (SR1
 ### S1/4p3/bp4.1 gates
 
 ```bash
+# Local (exit-code disciplined since wamn-cjv.1: any failed phase — p99 SLO,
+# cap kill at the 256 MiB ceiling, epoch Trap::Interrupt, 64/192 budget
+# differentiation — makes bench exit non-zero; job completion IS the verdict):
 ./target/release/wamn-gates --log-level warn bench \
   --hello components/target/wasm32-wasip2/release/hello.wasm \
   --memhog components/target/wasm32-wasip2/release/memhog.wasm \
   --busyloop components/target/wasm32-wasip2/release/busyloop.wasm
+# In-cluster gate of record (no DB/NATS; fixtures ship in the image):
+kubectl -n wamn-system apply -f deploy/bench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/bench --timeout=600s
+kubectl -n wamn-system logs job/bench
+# Mutation harness (4 mutants, each must exit non-zero): scratchpad/mutate_cjv1.py
 ```
 
 ### S2 gates (qps + p99, saturation, chaos/RLS/injection)

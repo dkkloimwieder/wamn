@@ -1,0 +1,36 @@
+# S1/4p3/bp4.1 in-cluster gate of record (wamn-cjv.1). Runs the bench
+# subcommand of the wamn-gates image: cold instantiation p99, resident
+# density, 256 MiB cap kill, epoch kill (carried fork commit), and the
+# per-component memory-budget differentiation (D16). No DB, no NATS — the
+# fixtures ship in the image at /bench. The suite exits non-zero if any
+# gate fails, so job completion IS the verdict.
+#
+#   kubectl -n wamn-system apply -f deploy/bench-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/bench --timeout=600s
+#   kubectl -n wamn-system logs job/bench
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bench
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: bench }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: bench
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "warn"
+            - "bench"
+          resources:
+            # No CPU limit (CFS-quota tail artifact — see pgbench/flowbench).
+            # Memory headroom: 100 separately compiled residents plus three
+            # concurrent memhogs allocating up to their caps (~512 MiB touched).
+            requests: { cpu: "2", memory: "1Gi" }
+            limits: { memory: "3Gi" }

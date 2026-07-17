@@ -19,7 +19,9 @@
 //!   unbudgeted one still traps at the ceiling, and a budget above the
 //!   ceiling hard-fails without allocating (error, never a silent clamp).
 //!
-//! Runs locally and inside the host image (`kubectl run ... -- bench`).
+//! Runs locally and in-cluster (`deploy/bench-job.yaml`, the gate of record).
+//! Every phase returns its verdict; `run` aggregates them and exits non-zero
+//! if any gate fails (wamn-cjv.1 — the suite was previously print-only).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -138,19 +140,23 @@ pub async fn run(args: BenchArgs) -> anyhow::Result<()> {
         MEMORY_CAP_BYTES >> 20
     );
 
-    instantiation_phase(&hello_bytes, args.iterations).await?;
+    let mut pass = true;
+    pass &= instantiation_phase(&hello_bytes, args.iterations).await?;
     let host = density_phase(&hello_bytes, args.residents).await?;
     if !args.skip_capkill {
-        capkill_phase(&host, &hello_bytes, &memhog_bytes).await?;
+        pass &= capkill_phase(&host, &hello_bytes, &memhog_bytes).await?;
     }
-    epochkill_phase(&hello_bytes, &busyloop_bytes).await?;
-    membudget_phase(&hello_bytes, &memhog_bytes).await?;
-    println!("\nbench complete");
+    pass &= epochkill_phase(&hello_bytes, &busyloop_bytes).await?;
+    pass &= membudget_phase(&hello_bytes, &memhog_bytes).await?;
+    println!("\nbench complete — overall PASS: {pass}");
+    if !pass {
+        anyhow::bail!("one or more S1 bench gates failed");
+    }
     Ok(())
 }
 
 /// Phase 1: cold instantiation latency on the host's engine config.
-async fn instantiation_phase(hello: &[u8], iterations: usize) -> anyhow::Result<()> {
+async fn instantiation_phase(hello: &[u8], iterations: usize) -> anyhow::Result<bool> {
     let engine = build_engine(&[])?;
     let raw: &RawEngine = engine.inner();
 
@@ -195,7 +201,7 @@ async fn instantiation_phase(hello: &[u8], iterations: usize) -> anyhow::Result<
     );
     let pass = percentile(&samples, 0.99) < Duration::from_millis(10);
     println!("PASS(p99 < 10ms): {pass}");
-    Ok(())
+    Ok(pass)
 }
 
 /// Phase 2: memory overhead at N resident workloads (one component each,
@@ -255,33 +261,19 @@ async fn density_phase(
     Ok(host)
 }
 
-/// Phase 3: cap-kill. memhog runs as a service and must trap growing past
-/// the 256 MiB pooling cap; the host must keep working afterwards.
+/// Phase 3: cap-kill. memhog runs as a service (unbudgeted, report mounted)
+/// and must trap growing past the 256 MiB pooling cap; the host must keep
+/// working afterwards. The kill is asserted through the report file: the
+/// high-water memhog reached must sit at the ceiling, never past it.
 async fn capkill_phase(
     host: &Arc<wash_runtime::host::Host>,
     hello: &[u8],
     memhog: &[u8],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     println!("\n## Phase 3 — 256 MiB cap kill");
-    host.workload_start(WorkloadStartRequest {
-        workload_id: "capkill".to_string(),
-        workload: Workload {
-            namespace: "bench".to_string(),
-            name: "memhog".to_string(),
-            annotations: Default::default(),
-            service: Some(Service {
-                bytes: memhog.to_vec().into(),
-                digest: Some("bench-memhog".to_string()),
-                local_resources: empty_resources(),
-                max_restarts: 0,
-            }),
-            components: vec![],
-            host_interfaces: vec![],
-            volumes: vec![],
-        },
-    })
-    .await
-    .context("failed to start memhog service")?;
+    let report_dir = std::env::temp_dir().join(format!("wamn-bench-cap-{}", std::process::id()));
+    std::fs::create_dir_all(&report_dir)?;
+    start_memhog(host, memhog, "capkill", 0, &report_dir).await?;
 
     // Give the service time to allocate past the cap and die.
     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -295,10 +287,16 @@ async fn capkill_phase(
         "memhog workload status after kill: {:?}",
         status.workload_status
     );
+    let achieved = read_report_mib(&report_dir);
+    let _ = std::fs::remove_dir_all(&report_dir);
+    // Killed at the ceiling: it got close to 256 MiB and never past it. A
+    // missing report (never allocated) or a value beyond the cap both fail.
+    let killed_at_ceiling = matches!(achieved, Some(v) if (208..=256).contains(&v));
+    println!("memhog high-water = {achieved:?} MiB (ceiling 256)");
 
     // Host must still accept and run work.
-    let heartbeat = host.heartbeat().await;
-    println!("heartbeat after kill: ok = {}", heartbeat.is_ok());
+    let heartbeat_ok = host.heartbeat().await.is_ok();
+    println!("heartbeat after kill: ok = {heartbeat_ok}");
     host.workload_start(WorkloadStartRequest {
         workload_id: "post-capkill".to_string(),
         workload: Workload {
@@ -321,8 +319,9 @@ async fn capkill_phase(
     .await
     .context("host failed to start work after cap kill")?;
     println!("host accepted new workload after kill: true");
-    println!("PASS(clean cap kill, host survives): true");
-    Ok(())
+    let pass = killed_at_ceiling && heartbeat_ok;
+    println!("PASS(clean cap kill, host survives): {pass}");
+    Ok(pass)
 }
 
 /// Phase 4: epoch kill (wamn-4p3). Raw path: busyloop under a short deadline
@@ -330,7 +329,7 @@ async fn capkill_phase(
 /// a busyloop *service* with `wamn.epoch-deadline-ticks` config (plumbed by
 /// the carried patch) dies at its deadline while the host keeps serving and
 /// a default-deadline workload runs unaffected under the same ticker.
-async fn epochkill_phase(hello: &[u8], busyloop: &[u8]) -> anyhow::Result<()> {
+async fn epochkill_phase(hello: &[u8], busyloop: &[u8]) -> anyhow::Result<bool> {
     const KILL_TICKS: u64 = 20;
 
     println!("\n## Phase 4 — epoch kill (carried patch + {DEFAULT_EPOCH_TICK:?} ticker)");
@@ -410,10 +409,8 @@ async fn epochkill_phase(hello: &[u8], busyloop: &[u8]) -> anyhow::Result<()> {
         "busyloop workload status after deadline: {:?} (upstream keeps Running after service death — S1 gap #4)",
         status.workload_status
     );
-    println!(
-        "heartbeat after epoch kill: ok = {}",
-        host.heartbeat().await.is_ok()
-    );
+    let heartbeat_ok = host.heartbeat().await.is_ok();
+    println!("heartbeat after epoch kill: ok = {heartbeat_ok}");
 
     // A default-deadline workload starts and runs fine under the ticker.
     host.workload_start(WorkloadStartRequest {
@@ -439,8 +436,9 @@ async fn epochkill_phase(hello: &[u8], busyloop: &[u8]) -> anyhow::Result<()> {
     .context("host failed to start work after epoch kill")?;
     println!("host accepted new workload after epoch kill: true");
     ticker.abort();
-    println!("PASS(epoch kill, host survives): {raw_interrupted}");
-    Ok(())
+    let pass = raw_interrupted && heartbeat_ok;
+    println!("PASS(epoch kill, host survives): {pass}");
+    Ok(pass)
 }
 
 /// Start memhog as a service with the given memory budget (0 = unbudgeted)
@@ -509,7 +507,7 @@ fn read_report_mib(dir: &std::path::Path) -> Option<u64> {
 /// (strictness: error, never a silent clamp). Enforcement is read back
 /// through each memhog's mounted report file: the last total it wrote is the
 /// high-water the limiter allowed.
-async fn membudget_phase(hello: &[u8], memhog: &[u8]) -> anyhow::Result<()> {
+async fn membudget_phase(hello: &[u8], memhog: &[u8]) -> anyhow::Result<bool> {
     println!("\n## Phase 5 — per-component memory budgets (fork limiter, wamn-bp4.1)");
     let engine = build_engine(&[])?;
     let host = HostBuilder::new().with_engine(engine).build()?;
@@ -560,10 +558,8 @@ async fn membudget_phase(hello: &[u8], memhog: &[u8]) -> anyhow::Result<()> {
     println!("PASS(budget > ceiling never allocates — hard error, no clamp): {pass_o}");
 
     // Host must still accept and run work after three budget kills.
-    println!(
-        "heartbeat after budget kills: ok = {}",
-        host.heartbeat().await.is_ok()
-    );
+    let heartbeat_ok = host.heartbeat().await.is_ok();
+    println!("heartbeat after budget kills: ok = {heartbeat_ok}");
     host.workload_start(WorkloadStartRequest {
         workload_id: "post-membudget".to_string(),
         workload: Workload {
@@ -588,9 +584,7 @@ async fn membudget_phase(hello: &[u8], memhog: &[u8]) -> anyhow::Result<()> {
     println!("host accepted new workload after budget kills: true");
     let _ = std::fs::remove_dir_all(&base);
 
-    println!(
-        "PASS(memory budget differentiation): {}",
-        pass_a && pass_b && pass_c && pass_o
-    );
-    Ok(())
+    let pass = pass_a && pass_b && pass_c && pass_o && heartbeat_ok;
+    println!("PASS(memory budget differentiation): {pass}");
+    Ok(pass)
 }
