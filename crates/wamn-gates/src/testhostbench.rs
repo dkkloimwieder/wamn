@@ -314,6 +314,9 @@ impl Harness {
         // 5.9: the runner imports wamn:node/credentials unconditionally; no
         // S6 fixture declares one, so the linked vault stays unbacked.
         wamn_host::plugins::wamn_credentials::add_to_linker(&mut linker)?;
+        // cjv.3: the flowrunner declares its per-run grant via this trusted
+        // channel; the harness must link it or instantiation fails.
+        wamn_host::plugins::wamn_credentials::add_runner_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self {
             engine,
@@ -330,6 +333,14 @@ impl Harness {
         m.insert(
             wamn_postgres::WAMN_POSTGRES_ID,
             plugin.clone() as Arc<dyn HostPlugin + Send + Sync>,
+        );
+        // cjv.3: the flowrunner declares its per-run grant on every walk, so a
+        // credentials plugin must back the linked interface. No S3/S6 fixture
+        // declares a credential, so an empty unbacked vault suffices.
+        m.insert(
+            wamn_host::plugins::wamn_credentials::WAMN_CREDENTIALS_ID,
+            Arc::new(wamn_host::plugins::wamn_credentials::WamnCredentials::empty())
+                as Arc<dyn HostPlugin + Send + Sync>,
         );
         m
     }

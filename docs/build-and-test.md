@@ -340,6 +340,20 @@ cargo test -p wamn-node-sdk && cargo test -p wamn-nodes
 cargo test -p wamn-node-guest --all-features
 cargo test -p wamn-host wamn_credentials && cargo test -p wamn-gates credproof
 
+# cjv.3 host-enforced per-execution grant + fail-closed project. credprobe
+# drives the direct-import THREAT fixture (components/fixtures/cred-probe,
+# imports wamn:node/credentials directly like a custom node) in-proc against a
+# vault with a NARROW host-registered grant — proves an ungranted /
+# unregistered-project get() is not-granted over the real WIT boundary (no DB):
+(cd components && cargo build --release --target wasm32-wasip2 -p cred-probe)
+./target/debug/wamn-gates credprobe \
+  --cred-probe components/target/wasm32-wasip2/release/cred_probe.wasm
+# Mutation (apply/test/restore, sha256, DEBUG): scratchpad mutate_cjv3.py
+#   M1 grant check skipped        -> credprobe (sibling/absent not-granted)
+#   M2 project_for fail-open      -> credprobe (no-project not-granted)
+#   M3 set_granted no-op          -> credprobe (DELIVERY: granted resolves)
+#   M4 guest declares empty grant -> credproof e2e (notify get not-granted, no delivery)
+
 # Local end-to-end (throwaway PG + local serve-echo + a background run-worker
 # whose vault carries the demo secret; the run-worker needs the target on its
 # --allowed-hosts — EMPTY = deny-all, fail-closed):

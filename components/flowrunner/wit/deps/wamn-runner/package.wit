@@ -1,0 +1,16 @@
+package wamn:runner@0.1.0;
+
+/// TRUSTED host<->runner control channel — deliberately NOT part of the frozen
+/// public `wamn:node` contract a custom node depends on. Linked ONLY into the
+/// trusted, compiled-in flow-runner world; a custom node is granted host-side
+/// per invocation (wamn-bd5) and never imports this. This is what lets the host
+/// enforce the frozen `wamn:node/credentials` `not-granted` grant on the single
+/// long-lived flow-runner component, whose per-node boundary the host cannot
+/// otherwise observe (it invokes the component once per run).
+interface credentials {
+  /// Declare the credential names granted to the run the flow-runner is about
+  /// to dispatch (the flow's declared `credentials`). Replaces any prior
+  /// declaration for this component. A subsequent `wamn:node/credentials.get`
+  /// for any name NOT in this set returns `not-granted` (host-enforced).
+  set-granted: func(names: list<string>);
+}

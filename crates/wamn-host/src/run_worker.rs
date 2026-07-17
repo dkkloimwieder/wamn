@@ -293,6 +293,11 @@ impl RunWorker {
         // The flowrunner imports wamn:node/credentials unconditionally; the
         // linker must satisfy it even when the vault is empty.
         wamn_credentials::add_to_linker(&mut linker)?;
+        // cjv.3: the TRUSTED per-run grant channel — the compiled-in flowrunner
+        // declares each run's grant (the flow's declared credentials) so the
+        // host can enforce the frozen `not-granted` grant. A custom node
+        // (wamn-bd5) is NOT instantiated here and never gets this channel.
+        wamn_credentials::add_runner_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
 
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();

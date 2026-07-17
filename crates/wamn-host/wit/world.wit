@@ -16,9 +16,14 @@ world node-plugin {
 
 /// Host-side bindgen world for the wamn:node credentials vault (5.9): the
 /// host IMPLEMENTS `get` — per-project resolution from a mounted static
-/// source, every get audit-logged. See plugins/wamn_credentials.rs.
+/// source, grant-enforced (cjv.3) and audit-logged. The trusted
+/// `wamn:runner/credentials.set-granted` (cjv.3) lets the compiled-in
+/// flow-runner declare its per-run grant so the host can enforce the frozen
+/// `not-granted` grant on that single long-lived component. See
+/// plugins/wamn_credentials.rs.
 world credentials-plugin {
   import wamn:node/credentials@0.1.0;
+  import wamn:runner/credentials@0.1.0;
 }
 
 /// Host-side bindgen world for the S4 `nodebench` / `serve-node` harness: the

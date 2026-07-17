@@ -38,6 +38,13 @@ world flowrunner {
   // match the caps-node world's pin (the CapsCtx bindings unify with these at
   // componentization).
   import wamn:node/credentials@0.1.0;
+  // cjv.3: the TRUSTED per-run grant channel. Before dispatching a run's nodes
+  // the runner declares that run's credential names (the flow's declared
+  // `credentials`) so the host can enforce the frozen `not-granted` grant on
+  // `wamn:node/credentials.get`. Linked only into this trusted, compiled-in
+  // world — a custom node is granted host-side per invocation (wamn-bd5) and
+  // never imports this.
+  import wamn:runner/credentials@0.1.0;
 
   /// Dispatch micro-benchmark. Runs `iterations` walks of the supplied
   /// canonical flow (the fixture JSON now lives with the gates, SR2)

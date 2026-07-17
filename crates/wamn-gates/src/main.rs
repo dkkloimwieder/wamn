@@ -9,6 +9,7 @@ mod apibench;
 mod apifixture;
 mod apiproof;
 mod bench;
+mod credprobe;
 mod credproof;
 mod dispatchbench;
 mod egressbench;
@@ -63,6 +64,7 @@ enum Command {
     /// Run the 5.14 dispatcher gates (cron / outbox / race / fairness / wake / live)
     Dispatchbench(dispatchbench::DispatchBenchArgs),
     /// Run the 5.9 credential-vault proof (delivery to serve-echo + no-leak containment)
+    Credprobe(credprobe::CredProbeArgs),
     Credproof(credproof::CredProofArgs),
     /// Run the S4 custom-node gates (HTTP hop / interpreted-vs-composed / config parse)
     Nodebench(nodebench::NodeBenchArgs),
@@ -120,6 +122,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Failoverbench(args) => failoverbench::run(args).await,
         Command::Runnerbench(args) => runnerbench::run(args).await,
         Command::Dispatchbench(args) => dispatchbench::run(args).await,
+        Command::Credprobe(args) => credprobe::run(args).await,
         Command::Credproof(args) => credproof::run(args).await,
         Command::Nodebench(args) => nodebench::run(args).await,
         Command::ServeNode(args) => nodebench::serve(args).await,

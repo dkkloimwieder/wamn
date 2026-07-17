@@ -54,6 +54,9 @@ fn vendored_wit_copies_match_the_frozen_contract() {
     let cred_paths = [
         "../wamn-node-guest/wit-caps/deps/wamn-node/package.wit",
         "../../components/flowrunner/wit/deps/wamn-node/package.wit",
+        // cjv.3: the direct-import threat fixture imports the SAME trimmed
+        // credentials interface a custom node would.
+        "../../components/fixtures/cred-probe/wit/deps/wamn-node/package.wit",
     ];
     let cred_first = fs::read_to_string(root().join(cred_paths[0])).expect("cred copy reads");
     for p in &cred_paths[1..] {

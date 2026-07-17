@@ -50,6 +50,22 @@ nodes:                         mounted from a K8s Secret;                    │
    only read its own declared credential; a node that declared none gets
    `NotGranted` **locally**, without the vault ever being asked. The secret
    is materialized only inside the executing node's call.
+   **Host-enforced grant (cjv.3)** — `CapsCtx` is a *guest-side* facade a
+   direct-import custom node (wamn-bd5) could bypass, so the host enforces the
+   frozen contract's per-execution grant too: `credentials.get(handle)` returns
+   `not-granted` for any name outside the executing component's granted set,
+   and an unregistered project fails **closed** (never a fail-open default).
+   The granted set is registered per component:
+   - the trusted, compiled-in **flow-runner** declares its per-**run** grant
+     (the flow's declared `credentials`) via the trusted
+     `wamn:runner/credentials` `set-granted` channel — linked ONLY into its
+     world — right after loading the flow; per-node scoping still rides
+     `CapsCtx`, so `get` is bounded by both the run's grant and the node's
+     declaration;
+   - a **custom node** (wamn-bd5) — a separate per-invocation component that
+     imports `wamn:node/credentials` directly and never gets the trusted
+     channel — will be granted its exact declared name(s) host-side by the
+     runner before invocation.
 4. **Consumption** — the standard `http-request` node resolves its declared
    credential and sends it as the `authorization` header (config
    `credential-header` overrides the header name; an explicit config header
@@ -62,9 +78,19 @@ nodes:                         mounted from a K8s Secret;                    │
 
 | Condition | WIT error | Node taxonomy |
 |---|---|---|
-| No source configured at all (no file) | `unavailable` | retryable |
-| Source present, project or name absent | `not-found` | terminal |
+| Handle not in the component's granted set (cjv.3) | `not-granted` | terminal |
+| Unregistered project — fail-closed (cjv.3) | `not-granted` | terminal |
+| Granted name, no source configured at all (no file) | `unavailable` | retryable |
+| Granted name, source present but name absent | `not-found` | terminal |
 | Node declared no credential | (guest-local) `not-granted` | proceed bare |
+
+`not-granted` precedes any lookup, so an ungranted `get` never learns whether
+the secret exists. The direct-import bypass is proven closed by the
+`credprobe` gate (`crates/wamn-gates/src/credprobe.rs` +
+`components/fixtures/cred-probe`): a fixture that imports `wamn:node/credentials`
+directly — exactly as a custom node would — is granted a narrow set host-side,
+and an ungranted / unregistered-project `get` is refused over the real WIT
+boundary.
 
 A **missing** credentials file is a warn + empty vault (the Secret mounts
 `optional` in `deploy/runner.yaml`, so a credential-less project deploys
@@ -106,12 +132,27 @@ Gate of record: `deploy/credproof-job.yaml` against `deploy/runner.yaml` (with
 `deploy/runner-credentials.example.yaml`) + `deploy/serve-echo.yaml`.
 Verification commands: [build-and-test.md](build-and-test.md) § *[5.9]*.
 
+## Host-enforced grant (cjv.3)
+
+cjv.3 hardened the seam before custom nodes ship: `get` is now grant-enforced
+host-side, and `project_for` fails **closed** (see § *Per-dispatch scoping* and
+the error table above). The plugin holds a per-component granted set
+(`grants`), a trusted `wamn:runner/credentials.set-granted` channel lets the
+compiled-in flow-runner declare its per-run grant (the host cannot observe the
+single long-lived component's per-node boundary otherwise), and the direct-import
+threat is proven closed by the `credprobe` gate. cjv.3 **unblocks wamn-bd5**: the
+runner will register a custom node's exact declared grant host-side
+(`set_granted_credentials`) before invoking it, with a get-only linker (never the
+trusted channel). It does **not** wire that per-invocation registration — that
+lands with bd5, when the custom-node invocation path exists.
+
 ## Scope boundary
 
 5.9 owns: by-name resolution + the WIT seam host implementation + per-dispatch
 scoping + http-request consumption + the mounted-file source + the gate.
-NOT 5.9: live per-Secret K8s reads (follow-up, shares wamn-5x0.1's client);
-per-flow egress allowlists (wamn-fqg.11); custom-node (5.6) credential
-delivery over the HTTP transport; secret rotation/versioning; the 4.3 field
-masks. The `CredentialRef.kind` field stays an editor hint (the header name is
-node config).
+cjv.3 adds: host-side grant enforcement + fail-closed project.
+NOT here: live per-Secret K8s reads (follow-up, shares wamn-5x0.1's client);
+per-flow egress allowlists (wamn-fqg.11); custom-node (5.6/wamn-bd5) credential
+delivery over the HTTP transport + its per-invocation grant registration;
+secret rotation/versioning; the 4.3 field masks. The `CredentialRef.kind` field
+stays an editor hint (the header name is node config).

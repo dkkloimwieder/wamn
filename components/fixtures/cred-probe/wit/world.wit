@@ -1,0 +1,20 @@
+package wamn:cred-probe@0.1.0;
+
+/// The direct-import credential-vault THREAT fixture (cjv.3). It imports the
+/// frozen public `wamn:node/credentials` interface DIRECTLY — exactly as an
+/// untrusted custom node (wamn-bd5) would — and NOT through the SDK `CapsCtx`
+/// facade the trusted flow-runner uses. It deliberately does NOT import the
+/// trusted `wamn:runner/credentials` grant channel, so it cannot grant itself;
+/// its grant is registered host-side by the driving gate. The `credprobe` gate
+/// drives it to prove the host enforces the per-execution grant + fail-closed
+/// project at the real WIT boundary — the only place the direct-import bypass
+/// can be exercised.
+world cred-probe {
+  import wamn:node/credentials@0.1.0;
+
+  /// Attempt to resolve `name` from the vault via the host `get`. Returns a
+  /// tagged string the gate asserts on: `ok:<secret>` on success, else
+  /// `err:not-granted` / `err:not-found` / `err:unavailable` — the credential
+  /// error the host returned, so the gate can assert the exact variant.
+  export probe: func(name: string) -> string;
+}

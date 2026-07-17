@@ -572,6 +572,20 @@ fn dispatch_node(
 /// `pg-write` commits and before its `node_runs` row is written (the pod-death
 /// window). Returns the version, the outcome (0 = completed, 1 = parked), and the
 /// last observed HTTP status.
+/// cjv.3: declare this run's credential grant to the host BEFORE dispatching
+/// any node, so the host can enforce the frozen `wamn:node/credentials`
+/// `not-granted` grant on this single, long-lived component (whose per-node
+/// boundary the host never sees). The grant is the flow's DECLARED credentials
+/// (`flow.credentials`); a `get` for anything else — the direct-import bypass a
+/// custom node could attempt — is refused. Per-NODE scoping still rides
+/// `CapsCtx` (a node reads only its OWN declared name), so `get` is bounded by
+/// both. Called on every walk (including a resume) since the grant lives on the
+/// long-lived instance and each run overwrites the prior declaration.
+fn declare_run_grant(flow: &Flow) {
+    let names: Vec<String> = flow.credentials.iter().map(|c| c.name.clone()).collect();
+    wamn::runner::credentials::set_granted(&names);
+}
+
 fn execute(
     run_id: &str,
     payload: &str,
@@ -583,6 +597,7 @@ fn execute(
     // not); pinning a resume to the run's persisted `flow_version` is a follow-up
     // (docs/run-state.md).
     let flow = load_active_flow(flow_id)?;
+    declare_run_grant(&flow);
     let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
     let version = plan.version();
     let input = Value::String(payload.to_string());
@@ -774,6 +789,7 @@ fn execute_claimed(
     ttl_ms: i64,
 ) -> Result<ClaimOutcome, String> {
     let flow = load_active_flow(flow_id)?;
+    declare_run_grant(&flow);
     let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
     let version = plan.version();
     let completed = load_completed(run_id)?;

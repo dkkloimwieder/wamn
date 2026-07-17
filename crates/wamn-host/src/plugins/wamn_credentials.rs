@@ -3,13 +3,28 @@
 //! credentials`, frozen 0.1 at 5.4; this is its first host implementation).
 //!
 //! Flows reference a credential BY NAME (`wamn-flow` `CredentialRef` +
-//! `node.credential`, 5.1 — never inlined secret material); the runner scopes
-//! each dispatch to its declared name guest-side (`CapsCtx.credential`), and
-//! the node's `get(handle)` resolves here lazily. Host-enforced invariants:
+//! `node.credential`, 5.1 — never inlined secret material); the node's
+//! `get(handle)` resolves here lazily. Host-enforced invariants:
 //!
 //! - Resolution is PROJECT-SCOPED: the executing component's project is a
 //!   host-injected claim (`set_project` / `wamn.project` config), never guest
-//!   input — a component can only read its own project's credentials.
+//!   input — a component can only read its own project's credentials. An
+//!   UNREGISTERED project fails CLOSED (`not-granted`, cjv.3) — never a
+//!   fail-open default.
+//! - Resolution is GRANT-SCOPED (cjv.3): `get(handle)` returns `not-granted`
+//!   for any name NOT in the executing component's granted set, so the frozen
+//!   contract's per-execution grant is enforced HOST-SIDE, not only by the
+//!   guest-side `CapsCtx` facade a direct-import custom node could bypass. The
+//!   granted set is registered per component:
+//!     * the trusted, compiled-in flow-runner declares its per-RUN grant (the
+//!       flow's declared `credentials`) via `wamn:runner/credentials`
+//!       `set-granted` — a channel linked ONLY into its world; per-NODE
+//!       scoping still rides `CapsCtx` (a node reads only its own declared
+//!       name), so `get` is bounded by both;
+//!     * a custom node (wamn-bd5) — a separate per-invocation component that
+//!       imports `wamn:node/credentials` directly and never gets the trusted
+//!       channel — is granted its exact declared name(s) host-side by the
+//!       runner before invocation.
 //! - Every `get` is AUDIT-LOGGED (component, project, handle, outcome) on the
 //!   `wamn::credentials` target. The secret value itself is never logged.
 //!   Run/node attribution rides the guest-side `node_runs` records (the host
@@ -18,9 +33,10 @@
 //!   object `{project: {name: secret}}` mounted from a K8s Secret — the
 //!   `WAMN_PG_PROJECTS_FILE` pattern). A live per-Secret K8s read is the
 //!   follow-up sharing wamn-5x0.1's client.
-//! - Error semantics: NO SOURCE configured at all ⇒ `unavailable` (retryable —
-//!   a deployment being fixed); a present source lacking the project or name ⇒
-//!   `not-found` (config-shaped, terminal at the node).
+//! - Error semantics: an ungranted name or unregistered project ⇒
+//!   `not-granted` (terminal); a granted name with NO source configured at all
+//!   ⇒ `unavailable` (retryable — a deployment being fixed); a granted name a
+//!   present source lacks ⇒ `not-found` (config-shaped, terminal at the node).
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -33,7 +49,7 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use super::wamn_postgres::{DEFAULT_PROJECT, PROJECT_CONFIG_KEY};
+use super::wamn_postgres::PROJECT_CONFIG_KEY;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -44,14 +60,25 @@ mod bindings {
 }
 
 use bindings::wamn::node::credentials::{self, CredentialError};
+use bindings::wamn::runner::credentials as runner_credentials;
 
 pub const WAMN_CREDENTIALS_ID: &str = "wamn-credentials";
 
-/// Wire the `wamn:node/credentials` host function into a linker directly (the
-/// runner / gate-harness path; the wash workload path uses
-/// [`HostPlugin::on_workload_item_bind`]).
+/// Wire the `wamn:node/credentials` `get` host function into a linker directly
+/// (the runner / gate-harness path; the wash workload path uses
+/// [`HostPlugin::on_workload_item_bind`]). Every component that resolves a
+/// credential imports this.
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     credentials::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
+}
+
+/// Wire the TRUSTED `wamn:runner/credentials` `set-granted` channel into a
+/// linker (cjv.3). Call this ONLY for the trusted, compiled-in flow-runner —
+/// the sole component allowed to declare its own per-run grant. A custom node
+/// must NOT get this: its grant is registered host-side by the runner
+/// ([`WamnCredentials::set_granted_credentials`]) before invocation.
+pub fn add_runner_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
+    runner_credentials::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
 
 /// The vault: an in-memory per-project credential map plus the component →
@@ -67,10 +94,16 @@ pub struct WamnCredentials {
     /// component id → project. Registered host-side (`set_project` or the
     /// `wamn.project` workload config); a component can never choose it.
     components: RwLock<HashMap<String, String>>,
+    /// component id → the credential names it may resolve (cjv.3). The trusted
+    /// flow-runner declares its per-run set via `wamn:runner/credentials`; the
+    /// runner registers a custom node's exact grant host-side. A component
+    /// absent here (or a `get` for a name outside its set) is `not-granted` —
+    /// fail-closed.
+    grants: RwLock<HashMap<String, HashSet<String>>>,
 }
 
 impl WamnCredentials {
-    /// A vault with NO backing source: every `get` is `unavailable`. The
+    /// A vault with NO backing source: a granted `get` is `unavailable`. The
     /// linker still needs the interface satisfied (the flowrunner imports it
     /// unconditionally), so gates and credential-less deployments use this.
     pub fn empty() -> Self {
@@ -78,6 +111,7 @@ impl WamnCredentials {
             has_source: false,
             projects: HashMap::new(),
             components: RwLock::new(HashMap::new()),
+            grants: RwLock::new(HashMap::new()),
         }
     }
 
@@ -87,6 +121,7 @@ impl WamnCredentials {
             has_source: true,
             projects,
             components: RwLock::new(HashMap::new()),
+            grants: RwLock::new(HashMap::new()),
         }
     }
 
@@ -144,13 +179,56 @@ impl WamnCredentials {
         Ok(())
     }
 
-    fn project_for(&self, component_id: &str) -> String {
+    /// Register (or replace) the credential names a component may resolve
+    /// (cjv.3). The trusted flow-runner calls this per run via
+    /// `wamn:runner/credentials`; the runner calls it host-side for a custom
+    /// node before invoking it. A `get` for any name outside this set is
+    /// `not-granted`.
+    pub fn set_granted_credentials(
+        &self,
+        component_id: &str,
+        names: impl IntoIterator<Item = String>,
+    ) {
+        self.grants
+            .write()
+            .expect("grants lock poisoned")
+            .insert(component_id.to_string(), names.into_iter().collect());
+    }
+
+    /// The component's registered project, or `None` if unregistered (which
+    /// `authorize` treats as fail-closed — cjv.3, no fail-open default).
+    fn project_for(&self, component_id: &str) -> Option<String> {
         self.components
             .read()
             .expect("components lock poisoned")
             .get(component_id)
             .cloned()
-            .unwrap_or_else(|| DEFAULT_PROJECT.to_string())
+    }
+
+    /// Whether `component_id` was granted `name` (cjv.3). Fail-closed: an
+    /// unregistered component grants nothing.
+    fn is_granted(&self, component_id: &str, name: &str) -> bool {
+        self.grants
+            .read()
+            .expect("grants lock poisoned")
+            .get(component_id)
+            .is_some_and(|set| set.contains(name))
+    }
+
+    /// The full guest-facing `get(handle)` decision (cjv.3): fail-closed
+    /// project → fail-closed grant → project-scoped resolution. `not-granted`
+    /// precedes any lookup, so an ungranted name never learns whether the
+    /// secret exists.
+    fn authorize(&self, component_id: &str, handle: &str) -> Result<String, CredentialError> {
+        // Fail-closed identity: no registered project ⇒ nothing is granted.
+        let project = self
+            .project_for(component_id)
+            .ok_or(CredentialError::NotGranted)?;
+        // Fail-closed grant: the frozen per-execution grant, enforced host-side.
+        if !self.is_granted(component_id, handle) {
+            return Err(CredentialError::NotGranted);
+        }
+        self.resolve(&project, handle)
     }
 
     /// Resolve `name` within `project` — the vault semantics the WIT errors
@@ -218,9 +296,11 @@ impl credentials::Host for ActiveCtx<'_> {
         let plugin = plugin_of(self)?;
         let component = self.component_id.to_string();
         let project = plugin.project_for(&component);
-        let out = plugin.resolve(&project, &handle);
+        let out = plugin.authorize(&component, &handle);
         // The WIT-promised audit trail: every get, granted or refused, with
         // the executing component's host-known identity. NEVER the secret.
+        // `project` may be absent (fail-closed identity); log what we know.
+        let project = project.unwrap_or_default();
         match &out {
             Ok(_) => tracing::info!(
                 target: "wamn::credentials",
@@ -236,6 +316,19 @@ impl credentials::Host for ActiveCtx<'_> {
             ),
         }
         Ok(out)
+    }
+}
+
+impl runner_credentials::Host for ActiveCtx<'_> {
+    /// The trusted flow-runner declares the credential names granted to the
+    /// run it is about to dispatch (cjv.3). Only components linked with
+    /// [`add_runner_to_linker`] can call this — the compiled-in flow-runner,
+    /// never a custom node.
+    async fn set_granted(&mut self, names: Vec<String>) -> wash_runtime::wasmtime::Result<()> {
+        let plugin = plugin_of(self)?;
+        let component = self.component_id.to_string();
+        plugin.set_granted_credentials(&component, names);
+        Ok(())
     }
 }
 
@@ -290,11 +383,82 @@ mod tests {
             Err(CredentialError::NotFound)
         ));
 
-        // The claim registry defaults to the default project and is
-        // host-registered per component.
+        // The project registry is host-registered per component and fails
+        // CLOSED — an unregistered component has no project identity (cjv.3).
         vault.set_project("comp-1", "proj-b").unwrap();
-        assert_eq!(vault.project_for("comp-1"), "proj-b");
-        assert_eq!(vault.project_for("comp-unregistered"), DEFAULT_PROJECT);
+        assert_eq!(vault.project_for("comp-1").as_deref(), Some("proj-b"));
+        assert_eq!(vault.project_for("comp-unregistered"), None);
+    }
+
+    /// The cjv.3 grant boundary end to end through `authorize` (the exact
+    /// `get(handle)` decision): a granted name resolves; an ungranted name is
+    /// `not-granted` BEFORE any lookup (never leaks whether the secret exists);
+    /// an unregistered project or unregistered grant fails CLOSED.
+    #[test]
+    fn authorize_enforces_the_per_execution_grant() {
+        let vault = WamnCredentials::from_projects(HashMap::from([(
+            "proj-a".to_string(),
+            HashMap::from([
+                ("granted".to_string(), "sekret".to_string()),
+                ("sibling".to_string(), "other".to_string()),
+            ]),
+        )]));
+        vault.set_project("node", "proj-a").unwrap();
+        vault.set_granted_credentials("node", ["granted".to_string()]);
+
+        // Granted name in the project → the secret.
+        assert_eq!(vault.authorize("node", "granted").unwrap(), "sekret");
+        // A name that EXISTS in the project but was not granted → not-granted
+        // (the C3-1 sibling-credential read, now closed host-side).
+        assert!(matches!(
+            vault.authorize("node", "sibling"),
+            Err(CredentialError::NotGranted)
+        ));
+        // A name that does not exist and was not granted → not-granted (grant
+        // is checked before existence, so no probing).
+        assert!(matches!(
+            vault.authorize("node", "absent"),
+            Err(CredentialError::NotGranted)
+        ));
+
+        // Fail-closed project: a component with NO registered project, even one
+        // granted the name, is not-granted (never fail-open to DEFAULT_PROJECT).
+        vault.set_granted_credentials("no-project", ["granted".to_string()]);
+        assert!(matches!(
+            vault.authorize("no-project", "granted"),
+            Err(CredentialError::NotGranted)
+        ));
+
+        // Fail-closed grant: a component with a project but NO granted set.
+        vault.set_project("no-grant", "proj-a").unwrap();
+        assert!(matches!(
+            vault.authorize("no-grant", "granted"),
+            Err(CredentialError::NotGranted)
+        ));
+    }
+
+    /// Grant passes but resolution still governs existence/source: a GRANTED
+    /// name absent from the source is `not-found`; a granted name with no
+    /// source at all is `unavailable` (the retryable/terminal split survives
+    /// the grant gate).
+    #[test]
+    fn a_granted_name_still_resolves_through_the_vault_semantics() {
+        let vault =
+            WamnCredentials::from_projects(HashMap::from([("proj-a".to_string(), HashMap::new())]));
+        vault.set_project("node", "proj-a").unwrap();
+        vault.set_granted_credentials("node", ["missing".to_string()]);
+        assert!(matches!(
+            vault.authorize("node", "missing"),
+            Err(CredentialError::NotFound)
+        ));
+
+        let empty = WamnCredentials::empty();
+        empty.set_project("node", "proj-a").unwrap();
+        empty.set_granted_credentials("node", ["missing".to_string()]);
+        assert!(matches!(
+            empty.authorize("node", "missing"),
+            Err(CredentialError::Unavailable)
+        ));
     }
 
     /// The mounted-file shape is the WAMN_PG_PROJECTS_FILE pattern:
