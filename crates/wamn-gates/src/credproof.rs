@@ -367,10 +367,10 @@ async fn assert_cred_run(
     Ok(ok)
 }
 
-/// The fqg.11 deny half: the run failed terminally, and the http node's
-/// recorded error carries the `egress-denied` code — the flow-layer refusal
-/// (the host list admits this target; the completed cred-notify run proved
-/// it).
+/// The fqg.11 deny half: the run failed terminally on the egress refusal —
+/// the flow-layer denial (the host list admits this target; the completed
+/// cred-notify run proved it). A failed node writes NO `node_runs` row (only
+/// completed nodes checkpoint); the terminal error lands on the run itself.
 async fn assert_deny_run(
     client: &Client,
     run_id: &str,
@@ -385,20 +385,35 @@ async fn assert_deny_run(
         final_status == "failed",
     );
 
-    let call_error: Option<String> = client
-        .query_opt(
-            "SELECT error_detail::text FROM node_runs \
-             WHERE run_id = $1 AND node_id = 'call'",
+    let run = client
+        .query_one(
+            "SELECT fail_reason, fail_kind FROM runs WHERE run_id = $1",
+            &[&run_id],
+        )
+        .await?;
+    let fail_reason: Option<String> = run.get(0);
+    let fail_kind: Option<String> = run.get(1);
+    check(
+        &mut ok,
+        &format!("DENY: terminal egress refusal recorded (fail_reason = {fail_reason:?})"),
+        fail_kind.as_deref() == Some("terminal")
+            && fail_reason.as_deref().is_some_and(|r| r.contains("egress")),
+    );
+    // The denied node never completes, so it must have NO checkpoint row —
+    // only the entry node ran.
+    let node_ids: Vec<String> = client
+        .query(
+            "SELECT node_id FROM node_runs WHERE run_id = $1 ORDER BY seq",
             &[&run_id],
         )
         .await?
-        .and_then(|r| r.get(0));
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
     check(
         &mut ok,
-        &format!("DENY: the http node recorded egress-denied (got {call_error:?})"),
-        call_error
-            .as_deref()
-            .is_some_and(|e| e.contains("egress-denied")),
+        &format!("DENY: the http node has no node_runs checkpoint (got {node_ids:?})"),
+        node_ids == ["in"],
     );
     Ok(ok)
 }
