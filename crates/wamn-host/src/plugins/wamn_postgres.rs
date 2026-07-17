@@ -8,7 +8,17 @@
 //!   (`Ctx::component_id` → tenant, registered at workload bind time from
 //!   `localResources.config["wamn.tenant"]` or via [`WamnPostgres::set_tenant`])
 //!   and injected with `SET LOCAL app.tenant` inside the plugin-managed
-//!   transaction. There is no guest-facing way to set or override claims.
+//!   transaction. Guest SQL that tries to set or reset a session variable or
+//!   role in-band (`SET` / `RESET` / `set_config`, e.g. a later
+//!   `SET app.tenant = 'other'` that would override the BEGIN-time claim) is
+//!   rejected on the query/execute/cursor surface (see
+//!   [`reject_claim_mutation`], wamn-cjv.2), closing the reachable
+//!   transaction-API override. This is a defense-in-depth blocklist, **not** a
+//!   structural close: raw dynamic SQL (`DO` / `EXECUTE`) can still construct a
+//!   claim mutation, so re-keying RLS onto a non-settable identity (a per-tenant
+//!   DB role + `current_user`) is a prerequisite for enabling the raw-SQL node
+//!   (wamn-1nd) — until then the claim is trusted only on the parameterized
+//!   standard-node path.
 //! - `statement_timeout` and a row limit are applied host-side per call.
 //! - Abnormal instance death (store dropped mid-transaction, e.g. an epoch
 //!   kill) destroys the underlying connection via [`Drop`] on
@@ -358,6 +368,88 @@ fn valid_schema(schema: &str) -> bool {
         && schema
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Reject guest SQL that would set or reset a session variable or role in-band.
+///
+/// A guest on the transaction / one-shot / cursor API must not be able to
+/// rewrite its host-injected `app.tenant` claim (or switch roles) and defeat
+/// RLS tenant isolation (wamn-cjv.2 / review C4-1). RLS keys on the settable
+/// GUC `current_setting('app.tenant', …)`, and the `wamn_app` login role
+/// (`NOSUPERUSER NOBYPASSRLS`) may freely `SET` it; a later
+/// `SET app.tenant = 'victim'` overrides the BEGIN-time `SET LOCAL`.
+///
+/// The extended-query protocol forbids statement chaining, so a claim override
+/// can only arrive as a *standalone* `SET` / `RESET` / `set_config(…)`
+/// statement — which this catches. It is a defense-in-depth **blocklist**, not
+/// a structural close: raw dynamic SQL (`DO` / `EXECUTE`) can still build a
+/// claim mutation at runtime. The structural close re-keys RLS onto a
+/// non-settable identity (per-tenant role + `current_user`) and is a
+/// prerequisite for enabling the raw-SQL node (wamn-1nd).
+fn reject_claim_mutation(sql: &str) -> Result<(), PgError> {
+    if statement_mutates_session(sql) {
+        tracing::warn!(
+            target: "wamn::security",
+            "rejected an in-band claim/role mutation on the guest SQL surface"
+        );
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "in-band claim or role mutation is not permitted".to_string(),
+        )));
+    }
+    Ok(())
+}
+
+/// True if `sql`'s first keyword is `SET` (covers `SET LOCAL` / `SET SESSION` /
+/// `SET ROLE` / `SET SESSION AUTHORIZATION`) or `RESET`, or if it calls
+/// `set_config` anywhere (CTE, sub-select, target list). `current_setting`
+/// (a *read* of a GUC) is deliberately allowed. Matching is case-insensitive;
+/// leading whitespace and SQL comments are stripped so a comment prefix cannot
+/// hide the keyword.
+fn statement_mutates_session(sql: &str) -> bool {
+    let lower = sql.to_ascii_lowercase();
+    let head = strip_leading_noise(&lower);
+    if starts_with_keyword(head, "set") || starts_with_keyword(head, "reset") {
+        return true;
+    }
+    // `set_config` is the only GUC-*write* function; `current_setting` reads and
+    // is not matched by this substring. Over-rejects the rare statement that
+    // merely names `set_config` in a literal/identifier — fail-closed, which is
+    // acceptable on this (flag-OFF) raw surface.
+    lower.contains("set_config")
+}
+
+/// Strip leading whitespace and SQL comments (`--` line, `/* … */` block) so
+/// the first real token can be inspected. Best-effort: an unterminated block
+/// comment stops stripping and the statement is inspected from there, which
+/// only makes the guard *more* likely to reject (fail-closed).
+fn strip_leading_noise(sql: &str) -> &str {
+    let mut s = sql.trim_start();
+    loop {
+        if let Some(rest) = s.strip_prefix("--") {
+            match rest.find('\n') {
+                Some(i) => s = rest[i + 1..].trim_start(),
+                None => return "",
+            }
+        } else if let Some(rest) = s.strip_prefix("/*") {
+            match rest.find("*/") {
+                Some(i) => s = rest[i + 2..].trim_start(),
+                None => return s,
+            }
+        } else {
+            return s;
+        }
+    }
+}
+
+/// True if `head` (already lowercased and comment-stripped) begins with `kw` as
+/// a whole keyword — followed by whitespace or end-of-input, so `set` matches
+/// `set …` but not `settings`.
+fn starts_with_keyword(head: &str, kw: &str) -> bool {
+    match head.strip_prefix(kw) {
+        Some(rest) => rest.is_empty() || rest.starts_with(|c: char| c.is_whitespace()),
+        None => false,
+    }
 }
 
 impl WamnPostgres {
@@ -961,6 +1053,7 @@ async fn run_query(
     params: &[SqlValue],
     row_limit: u64,
 ) -> Result<RowSet, PgError> {
+    reject_claim_mutation(sql)?;
     let stmt = conn
         .prepare_cached(sql)
         .await
@@ -983,6 +1076,7 @@ async fn run_query(
 }
 
 async fn run_execute(conn: &Object, sql: &str, params: &[SqlValue]) -> Result<u64, PgError> {
+    reject_claim_mutation(sql)?;
     let stmt = conn
         .prepare_cached(sql)
         .await
@@ -1410,6 +1504,11 @@ impl client::HostTransaction for ActiveCtx<'_> {
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgCursor>, PgError>> {
+        // A cursor over `SELECT set_config('app.tenant', …)` would execute the
+        // override on fetch; guard the same surface as query/execute (wamn-cjv.2).
+        if let Err(e) = reject_claim_mutation(&sql) {
+            return Ok(Err(e));
+        }
         let txn = self.table.get_mut(&rep)?;
         txn.cursor_seq += 1;
         let name = format!("wamn_c{}", txn.cursor_seq);
@@ -1550,6 +1649,53 @@ impl client::HostCursor for ActiveCtx<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // wamn-cjv.2 — the in-band claim/role mutation guard.
+    #[test]
+    fn guard_rejects_set_and_reset_variants() {
+        for s in [
+            "SET app.tenant = 'victim'",
+            "set local app.tenant = 'victim'",
+            "SET SESSION app.tenant TO 'victim'",
+            "SET ROLE postgres",
+            "set session authorization postgres",
+            "RESET app.tenant",
+            "RESET ALL",
+            "   \n\t SET app.tenant='victim'",
+            "/* sneaky */ SET app.tenant='victim'",
+            "-- lead\nSET app.tenant='victim'",
+        ] {
+            assert!(statement_mutates_session(s), "should reject: {s:?}");
+            assert!(reject_claim_mutation(s).is_err(), "should reject: {s:?}");
+        }
+    }
+
+    #[test]
+    fn guard_rejects_set_config_anywhere() {
+        for s in [
+            "SELECT set_config('app.tenant','victim',false)",
+            "WITH t AS (SELECT set_config('app.tenant','victim',true)) SELECT 1",
+            "select pg_catalog.set_config('app.tenant','victim',false)",
+            "SELECT SET_CONFIG('app.tenant','victim',false)",
+        ] {
+            assert!(statement_mutates_session(s), "should reject: {s:?}");
+        }
+    }
+
+    #[test]
+    fn guard_allows_normal_statements_and_current_setting() {
+        for s in [
+            "SELECT count(*) FROM s2.rls_secrets WHERE secret LIKE $1",
+            "INSERT INTO t (tenant_id, k) VALUES (current_setting('app.tenant', true), $1)",
+            "UPDATE t SET a = 1 WHERE id = $1",
+            "SELECT current_setting('app.tenant', true)",
+            "SELECT * FROM settings",
+            "DELETE FROM assets WHERE id = $1",
+        ] {
+            assert!(!statement_mutates_session(s), "should allow: {s:?}");
+            assert!(reject_claim_mutation(s).is_ok(), "should allow: {s:?}");
+        }
+    }
 
     fn enc(ndigits: i16, weight: i16, sign: u16, dscale: u16, digits: &[u16]) -> Vec<u8> {
         let mut raw = Vec::new();

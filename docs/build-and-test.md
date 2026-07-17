@@ -49,6 +49,9 @@ docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
 ./target/release/wamn-gates --log-level error pgbench \
   --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
+# --mode attack is the wamn-cjv.2 in-band claim-override gate (pgprobe ops 7/8/9);
+# guard unit tests: cargo test -p wamn-host guard_
+# Mutation harness (3 guard mutants, each must fail --mode attack): scratchpad/mutate_cjv2.py
 # In-cluster gate of record (p99 is measured in-cluster):
 kubectl -n wamn-system create configmap pg-init --from-file=init.sql=deploy/postgres-init.sql
 kubectl -n wamn-system apply -f deploy/postgres.yaml -f deploy/pgbench-job.yaml

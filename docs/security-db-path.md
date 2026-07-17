@@ -161,6 +161,45 @@ vacuous.
    lint / 11.5) must reject a custom node that declares it. `egressbench` is that
    gate's artifact-level check.
 
+## In-band claim integrity within the plugin path (wamn-cjv.2)
+
+The verdict above is about *reaching* the DB (raw socket vs the plugin). A
+distinct vector, not considered by the original 2.6 review, lives **inside** the
+plugin path: a guest that legitimately reaches the plugin can try to rewrite its
+host-injected tenant claim in-band and defeat RLS.
+
+Tenant identity is injected only as `SET LOCAL app.tenant = '<tenant>'` at
+`BEGIN`, and RLS keys on `NULLIF(current_setting('app.tenant', true), '')`.
+`app.tenant` is an unreserved GUC that the `wamn_app` login role
+(`NOSUPERUSER NOBYPASSRLS`) may freely `SET`, so a guest on the transaction API
+doing `begin()` → `execute("SET app.tenant = 'victim'")` → `query(...)` — or the
+`set_config('app.tenant', …)` equivalent — would read/write another tenant's
+rows. Not reachable on shipped default paths (standard nodes emit only
+parameterized SQL; the raw-SQL node is flag-OFF; custom nodes are unshipped), but
+directly exploitable once the raw-SQL node (`wamn-1nd`) is enabled or custom
+nodes (`wamn-bd5`) ship.
+
+**Shipped guard (cjv.2):** `reject_claim_mutation` rejects any guest statement
+whose first keyword is `SET`/`RESET` (covers `SET LOCAL`/`SET SESSION`/`SET ROLE`/
+`SET SESSION AUTHORIZATION`) or that calls `set_config`, on the
+`query`/`execute`/`open_cursor`/`one_shot` surface. The extended-query protocol
+forbids statement chaining, so the *reachable* txn-API override can only arrive
+as a standalone such statement — which the guard catches. A new `pgbench --mode
+attack` gate drives both mechanisms in both directions and asserts zero
+cross-tenant rows are ever visible (the mandatory stop-the-line S2 security
+gate).
+
+**Limitation — this is defense-in-depth, not a structural close.** The guard is
+a blocklist: raw dynamic SQL (`DO`/`EXECUTE`) can still construct a claim
+mutation at runtime, which no text guard defeats. The structural close re-keys
+RLS onto an identity the guest cannot rewrite — a per-tenant DB role reached via
+`SET ROLE` (or connection-per-tenant), with RLS keyed on `current_user` instead
+of the settable GUC — so a guest `SET app.tenant` is inert. That work
+(per-tenant-role **provisioning** + the RLS re-key across the 3.2 floor emitter,
+3.5 `wamn-rls`, the a45 hardening, and the hand-written schemas) lands with
+`wamn-1nd`, and **raw-SQL / custom-node enablement is gated behind it**. Until
+then the tenant claim is trusted only on the parameterized standard-node path.
+
 ## Scope
 
 2.6 is the **DB-path** egress specifically. Out of scope, tracked elsewhere:
@@ -178,5 +217,9 @@ vacuous.
   `engine/workload.rs:1418` (`host_interfaces` gates plugins only).
 - Plugin: `crates/wamn-host/src/plugins/wamn_postgres.rs`; memory
   `wamn-2.2-postgres-production-facts`, `wamn-postgres-wit-0.1-frozen`.
+- In-band claim guard (cjv.2): `reject_claim_mutation` /
+  `statement_mutates_session` in `wamn_postgres.rs`; gate
+  `crates/wamn-gates/src/pgbench.rs` (`--mode attack`) + pgprobe ops 7/8/9;
+  structural close deferred to `wamn-1nd`.
 - HTTP egress chokepoint: memory `wamn-s6-testhost-facts` (egress spy).
 - Gate: `crates/wamn-host/src/egressbench.rs`.

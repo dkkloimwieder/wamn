@@ -18,6 +18,8 @@
 //!   rls        — two tenants, one table; 10k randomized cross-tenant reads
 //!                leak zero rows; cross-tenant writes are permission-denied.
 //!   injection  — SQL fragments in params round-trip byte-identically.
+//!   attack     — a guest that tries to override its `app.tenant` claim in-band
+//!                (SET / set_config) still sees zero foreign rows (wamn-cjv.2).
 //!   all        — every mode in sequence.
 
 use std::collections::HashMap;
@@ -49,6 +51,8 @@ pub enum Mode {
     Chaos,
     Rls,
     Injection,
+    /// wamn-cjv.2 — an in-band `app.tenant` override must not defeat RLS.
+    Attack,
     /// [2.2] per-project pooling + credential resolution + per-project policy.
     Multiproject,
     All,
@@ -254,6 +258,9 @@ pub async fn run(args: PgBenchArgs) -> anyhow::Result<()> {
     }
     if run_all || args.mode == Mode::Injection {
         pass &= injection_phase(&harness, &args).await?;
+    }
+    if run_all || args.mode == Mode::Attack {
+        pass &= attack_phase(&harness, &args).await?;
     }
     if run_all || args.mode == Mode::Multiproject {
         if args.admin_database_url.is_some() {
@@ -556,6 +563,68 @@ async fn rls_phase(harness: &Harness, args: &PgBenchArgs) -> anyhow::Result<bool
     let pass =
         leaks == 0 && unexpected == 0 && denied_writes == write_attempts && write_attempts > 0;
     println!("PASS(rls: zero leakage, writes denied, no detail): {pass}");
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// attack — in-band claim override (wamn-cjv.2)
+// ---------------------------------------------------------------------------
+
+/// A guest on the transaction API tries to override its host-injected
+/// `app.tenant` claim (`SET app.tenant='<foreign>'` and
+/// `SELECT set_config('app.tenant','<foreign>',…)`) and read another tenant's
+/// rows. The host guard must reject the mutation so RLS keeps the foreign set
+/// invisible. Both directions (A→B, B→A) and both mechanisms are exercised;
+/// zero foreign rows may be visible and the guard must have fired.
+async fn attack_phase(harness: &Harness, _args: &PgBenchArgs) -> anyhow::Result<bool> {
+    println!("\n## attack — in-band app.tenant override must not defeat RLS (wamn-cjv.2)");
+    let mut a = harness.worker(TENANT_A, None).await?;
+    let mut b = harness.worker(TENANT_B, None).await?;
+
+    // Sanity: each identity sees its OWN rows (RLS is live, not just empty).
+    let a_own = a
+        .call(2, "secret-tenant-a-%")
+        .await?
+        .map_err(|e| anyhow::anyhow!("tenant-a self-read: {e}"))?;
+    let b_own = b
+        .call(2, "secret-tenant-b-%")
+        .await?
+        .map_err(|e| anyhow::anyhow!("tenant-b self-read: {e}"))?;
+    println!("sanity: A sees {a_own} of its own, B sees {b_own} of its own");
+    if a_own == 0 || b_own == 0 {
+        println!("PASS(attack): false (own-row sanity failed — fixture/claims broken)");
+        return Ok(false);
+    }
+
+    let mut leaked: u64 = 0;
+    let mut guard_fired: u64 = 0;
+    let attempts: u64 = 4; // 2 mechanisms × 2 directions
+    for (w, foreign) in [(&mut a, TENANT_B), (&mut b, TENANT_A)] {
+        let via_set = w
+            .call(7, foreign)
+            .await?
+            .map_err(|e| anyhow::anyhow!("op7 (SET override) {foreign}: {e}"))?;
+        let via_setconfig = w
+            .call(8, foreign)
+            .await?
+            .map_err(|e| anyhow::anyhow!("op8 (set_config override) {foreign}: {e}"))?;
+        let rejected = w
+            .call(9, foreign)
+            .await?
+            .map_err(|e| anyhow::anyhow!("op9 (reject probe) {foreign}: {e}"))?;
+        leaked += via_set + via_setconfig;
+        guard_fired += rejected;
+        println!(
+            "  impersonate {foreign}: foreign rows via SET={via_set}, via set_config={via_setconfig}, guard rejected SET={}",
+            rejected == 1
+        );
+    }
+
+    println!(
+        "cross-tenant rows leaked via in-band override = {leaked} (of {attempts} attempts); guard rejected {guard_fired}/2 SET probes"
+    );
+    let pass = leaked == 0 && guard_fired == 2;
+    println!("PASS(attack: in-band claim override cannot defeat RLS): {pass}");
     Ok(pass)
 }
 

@@ -42,6 +42,26 @@ const QPS_SQL: &str = "SELECT id, tenant_id, g, a, b, num, ts, payload \
        AND num >= $5 AND ts >= $6 AND payload LIKE $7 \
      ORDER BY id LIMIT $8";
 
+/// Count this connection's currently-visible `rls_secrets` rows whose secret
+/// belongs to `foreign` (pattern `secret-<foreign>-%`). Under RLS a guest that
+/// has NOT overridden its claim sees zero such rows; a successful in-band
+/// override would make the foreign tenant's rows visible (a leak). Used by the
+/// wamn-cjv.2 attack ops after they try to impersonate `foreign`.
+fn count_foreign(txn: &Transaction, foreign: &str) -> Result<u64, String> {
+    let pattern = format!("secret-{foreign}-%");
+    match txn.query(
+        "SELECT count(*) FROM s2.rls_secrets WHERE secret LIKE $1",
+        &[SqlValue::Text(pattern)],
+    ) {
+        Ok(rs) => match rs.rows.first().and_then(|r| r.first()) {
+            Some(SqlValue::Int64(n)) => Ok(*n as u64),
+            Some(SqlValue::Int32(n)) => Ok(*n as u64),
+            _ => Err("unexpected count shape".into()),
+        },
+        Err(e) => Err(err_name(&e)),
+    }
+}
+
 fn qps_params(g: i32) -> Vec<SqlValue> {
     vec![
         SqlValue::Int32(g),
@@ -162,6 +182,45 @@ impl Guest for Component {
                     Ok(_) => Ok(1),
                     Err(e) => Err(err_name(&e)),
                 }
+            }
+            // rls-override-set (wamn-cjv.2): try to override the host-injected
+            // `app.tenant` claim in-band with `SET app.tenant='<foreign>'`, then
+            // count the FOREIGN tenant's rows. The host guard must reject the SET
+            // so RLS keeps that set invisible. Returns the foreign-visible count
+            // (must be 0). `arg` is the foreign tenant to impersonate.
+            7 => {
+                let txn = client::begin().map_err(|e| err_name(&e))?;
+                // The guest is the attacker: it interpolates the foreign tenant
+                // into a SET (SET takes no bind params). Rejection is ignored;
+                // the leak is measured by what the next query can see.
+                let _ = txn.execute(&format!("SET app.tenant = '{arg}'"), &[]);
+                let out = count_foreign(&txn, &arg);
+                let _ = txn.commit();
+                out
+            }
+            // rls-override-set_config (wamn-cjv.2): same attack via a
+            // `set_config('app.tenant', …)` inside a SELECT, then count foreign
+            // rows. Must be 0.
+            8 => {
+                let txn = client::begin().map_err(|e| err_name(&e))?;
+                let _ = txn.query(
+                    &format!("SELECT set_config('app.tenant', '{arg}', false)"),
+                    &[],
+                );
+                let out = count_foreign(&txn, &arg);
+                let _ = txn.commit();
+                out
+            }
+            // rls-override-rejected (wamn-cjv.2): 1 if the host guard REJECTS the
+            // in-band `SET`, else 0. Distinguishes "guard fired" from "RLS
+            // coincidentally held".
+            9 => {
+                let txn = client::begin().map_err(|e| err_name(&e))?;
+                let rejected = txn
+                    .execute(&format!("SET app.tenant = '{arg}'"), &[])
+                    .is_err();
+                let _ = txn.commit();
+                Ok(rejected as u64)
             }
             // count-items: unqualified name resolves in this component's project
             // DB; RLS confines to its tenant; subject to the project's row limit.
