@@ -48,8 +48,10 @@ flow + execution gate):
 Vault follow-up (not F3-blocking): `wamn-fqg.13` [5.9] live K8s Secret credential source
 (shares `wamn-5x0.1`'s client).
 
-Engine support pulled in only as a rung needs it: `wamn-1d4` (5.11 ordering),
-`wamn-dq5` (5.12 cancel), `wamn-sdp` (5.10 payload store).
+Engine support pulled in only as a rung needs it: ~~`wamn-1d4`~~ (5.11 ordering
+policy — **done**, D20, commit 84233fa; split into `wamn-fqg.18` record-stream
+dispatch/D9 + `wamn-fqg.19` cron-misfire/R8d), `wamn-dq5` (5.12 cancel),
+`wamn-sdp` (5.10 payload store).
 
 ## Track 2 — API surface correctness · primary, interleave
 
@@ -103,9 +105,10 @@ primary; **no parallel overhaul of the dispatch machinery the ladder stands on.*
 ## Suggested first picks
 
 ~~`fqg.8` → ladder rungs~~ (done) → ~~`fqg.11`~~ (done, unparks F3 with `fqg.12`) →
-~~`1d4` R6 decision~~ (**done** — D20 chosen: `blocking` default, commit 84233fa;
-record-stream amortization + R8d cron-misfire remain later slices of `1d4`) →
-**`d8v` GC half**
+~~`1d4` R6 decision~~ (**done** — D20 chosen: `blocking` default, commit 84233fa; the
+old `1d4` bead is closed and split into `fqg.18` record-stream/D9 + `fqg.19`
+cron-misfire/R8d) → **`fqg.18` record-stream dispatch** (dkk-directed next pick,
+2026-07-17 — needs a design pass first) → **`d8v` GC half**
 (small janitor-colocated pruner; F4's live outbox traffic needs it, and it unblocks
 `z7b.2`) → `POC-F3` / `POC-F4` → `4.4` hot-reload → (parallel) `2ib`.
 Bench days when convenient: `z7b.1` (C7) / `z7b.2` (C2) — measurement-only, safe to
