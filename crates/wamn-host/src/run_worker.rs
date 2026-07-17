@@ -58,6 +58,7 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
 use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use crate::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
 use crate::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
 use crate::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
@@ -170,16 +171,20 @@ impl DrainReport {
 
 /// The runner's outbound-`wasi:http` egress handler: enforce the host
 /// allowlist (the fork's [`check_allowed_hosts`] — EMPTY = DENY-ALL, the
-/// production fail-closed posture), then delegate transport to
+/// production fail-closed posture) AND the current flow's declared
+/// `allowed-hosts` (fqg.11 — the trusted `wamn:runner/egress` declaration,
+/// see [`RunnerEgressPolicy`]; never-declared or declared-empty = deny-all,
+/// both checks must pass = intersection), then delegate transport to
 /// [`DefaultOutgoingHandler`] (which also stamps the 9.2 trace context).
 /// Without a handler on the store's `Ctx`, an outbound call TRAPS ("http
 /// client not available") and poisons the instance — so the runner wires this
 /// unconditionally; a denial is a clean `HttpRequestDenied` the node
-/// classifies as `egress-denied` (terminal). Host-LEVEL governance only;
-/// per-flow allowlists are the fqg.11 refinement.
-#[derive(Default)]
+/// classifies as `egress-denied` (terminal).
 struct RunnerEgress {
     inner: DefaultOutgoingHandler,
+    /// The per-component declared flow allowlists, written through the trusted
+    /// `wamn:runner/egress` channel by the flowrunner before each run.
+    policy: Arc<RunnerEgressPolicy>,
 }
 
 #[async_trait::async_trait]
@@ -219,6 +224,21 @@ impl HostHandler for RunnerEgress {
             );
             // A DENIAL, never a trap: the guest sees HttpRequestDenied and the
             // node classifies it egress-denied (terminal); the instance lives.
+            return Ok(HostFutureIncomingResponse::ready(Ok(Err(
+                ErrorCode::HttpRequestDenied,
+            ))));
+        }
+        // fqg.11: the flow-level check. Undeclared and declared-empty are the
+        // same deny-all `&[]` (egress is opt-in per flow); a declared set must
+        // ALSO pass — the host list above stays the outer bound.
+        let declared = self.policy.declared(workload_id);
+        if let Err(e) = check_allowed_hosts(&request, declared.as_deref().unwrap_or(&[])) {
+            tracing::warn!(
+                workload_id,
+                error = %e,
+                declared = declared.is_some(),
+                "run-worker outbound request denied by the flow's allowed-hosts"
+            );
             return Ok(HostFutureIncomingResponse::ready(Ok(Err(
                 ErrorCode::HttpRequestDenied,
             ))));
@@ -298,8 +318,11 @@ impl RunWorker {
         // host can enforce the frozen `not-granted` grant. A custom node
         // (wamn-bd5) is NOT instantiated here and never gets this channel.
         wamn_credentials::add_runner_to_linker(&mut linker)?;
+        // fqg.11: the TRUSTED per-run egress channel — same trust argument.
+        runner_egress::add_runner_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
 
+        let egress_policy = Arc::new(RunnerEgressPolicy::default());
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
         plugins.insert(
             wamn_postgres::WAMN_POSTGRES_ID,
@@ -309,11 +332,19 @@ impl RunWorker {
             WAMN_CREDENTIALS_ID,
             vault as Arc<dyn HostPlugin + Send + Sync>,
         );
+        plugins.insert(
+            RUNNER_EGRESS_ID,
+            egress_policy.clone() as Arc<dyn HostPlugin + Send + Sync>,
+        );
         // The egress handler is unconditional (an outbound call without one
-        // TRAPS); the allowlist gates it — empty = deny-all, fail-closed.
+        // TRAPS); the allowlists gate it — the host-level list here plus the
+        // per-flow declaration (fqg.11), both empty-deny-all, fail-closed.
         let ctx = Ctx::builder(owner.to_string(), owner.to_string())
             .with_plugins(plugins)
-            .with_http_handler(Arc::new(RunnerEgress::default()))
+            .with_http_handler(Arc::new(RunnerEgress {
+                inner: DefaultOutgoingHandler::default(),
+                policy: egress_policy,
+            }))
             .with_allowed_hosts(allowed_hosts)
             .build();
         let mut store = Store::new(raw, SharedCtx::new(ctx));

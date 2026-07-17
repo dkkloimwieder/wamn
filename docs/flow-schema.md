@@ -29,6 +29,7 @@ A `Flow` is **one version** of a flow (the unit stored in the catalog):
 | `nodes` | Node[] | The graph steps. |
 | `edges` | Edge[] | Wiring between output ports and downstream nodes. |
 | `credentials` | CredentialRef[] | Declared by logical name; resolved by the vault (5.9). |
+| `allowed-hosts` | string[] | Hosts the flow's outbound HTTP may reach (fqg.11): `host[:port]`, `scheme://host[:port]`, or `*.suffix`. **Opt-in, fail-closed**: undeclared/empty = deny-all for the flow; a declared host must ALSO pass the runner's host-level allowlist (intersection). Enforced host-side via the trusted `wamn:runner/egress` per-run declaration — the credentials-grant (cjv.3) shape for egress. |
 
 **Node** — `{ id, type, label?, config?, credential? }`. `type` is an **open
 string** the runner's node library (5.3) resolves (`postgres-query`,

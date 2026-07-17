@@ -22,9 +22,22 @@
 //!   `input_json`/`result_json`/`state_json`, the registered `graph_json`,
 //!   and every `node_runs` row's input/output/error.
 //!
-//! `--setup` provisions the ephemeral schema + registers the flow (the LOCAL
-//! self-contained path); without it, credproof is a client against a schema
-//! the deploy pipeline provisioned (the in-cluster gate of record).
+//! Since fqg.11 the proof also carries the per-flow egress gate, using the
+//! same live runner and target:
+//!
+//! * **Flow-level ALLOW** — `cred-notify` completing at all now also proves
+//!   the flow's declared `allowed-hosts` admits the echo target (deny-all
+//!   default: an undeclared flow could not have reached it).
+//! * **Flow-level DENY, discriminated from the host list** — a second run of
+//!   `egress-deny` (`deploy/cred/deny.flow.json`), which targets the SAME
+//!   echo the runner's host-level `--allowed-hosts` admits but declares no
+//!   `allowed-hosts` of its own: the run must fail terminally with the
+//!   `egress-denied` code. Because the first flow just proved the host list
+//!   allows this target, the denial is attributable to the flow layer alone.
+//!
+//! `--setup` provisions the ephemeral schema + registers both flows (the
+//! LOCAL self-contained path); without it, credproof is a client against a
+//! schema the deploy pipeline provisioned (the in-cluster gate of record).
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -42,6 +55,9 @@ use crate::traceproof::fnv1a_64;
 /// the shape the proof asserts against).
 const FLOW_JSON: &str = include_str!("../../../deploy/cred/notify.flow.json");
 const FLOW_ID: &str = "cred-notify";
+/// The fqg.11 deny fixture: same echo target, NO `allowed-hosts` declared.
+const DENY_FLOW_JSON: &str = include_str!("../../../deploy/cred/deny.flow.json");
+const DENY_FLOW_ID: &str = "egress-deny";
 /// The credential name the fixture declares (`credentials[0].name` +
 /// `nodes[notify].credential`).
 const CREDENTIAL_NAME: &str = "notify-token";
@@ -139,6 +155,9 @@ async fn setup(admin_url: &str, app_url: &str, schema: &str, tenant: &str) -> an
     seed_flow_version(&app, tenant, FLOW_ID, 1, true, FLOW_JSON, true)
         .await
         .context("register cred-notify")?;
+    seed_flow_version(&app, tenant, DENY_FLOW_ID, 1, true, DENY_FLOW_JSON, true)
+        .await
+        .context("register egress-deny")?;
     Ok(())
 }
 
@@ -176,8 +195,8 @@ pub async fn run(args: CredProofArgs) -> anyhow::Result<()> {
         )?;
         setup(&admin_url, &app_url, &args.schema, &args.tenant)
             .await
-            .context("setup: provision schema + register the flow")?;
-        println!("## setup — provisioned schema + registered {FLOW_ID} (active)");
+            .context("setup: provision schema + register the flows")?;
+        println!("## setup — provisioned schema + registered {FLOW_ID} + {DENY_FLOW_ID} (active)");
     }
 
     let mut client = connect_app(&app_url, &args.schema, &args.tenant).await?;
@@ -203,7 +222,23 @@ pub async fn run(args: CredProofArgs) -> anyhow::Result<()> {
 
     let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
     let status = poll_to_terminal(&client, &run_id, deadline).await?;
-    let ok = assert_cred_run(&client, &run_id, &status, &args.secret).await?;
+    let mut ok = assert_cred_run(&client, &run_id, &status, &args.secret).await?;
+
+    // ---- fqg.11 deny half: same echo target (the host list provably allows
+    // it — the run above reached it), but the flow declares no allowed-hosts,
+    // so the flow layer alone must refuse the call.
+    let deny_run_id = format!("deny-{nanos}");
+    seed_run(
+        &mut client,
+        DENY_FLOW_ID,
+        &deny_run_id,
+        &serde_json::to_string(&input)?,
+    )
+    .await?;
+    println!("\n## seed — egress-deny run {deny_run_id} enqueued; awaiting the deployed runner");
+    let deny_deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
+    let deny_status = poll_to_terminal(&client, &deny_run_id, deny_deadline).await?;
+    ok &= assert_deny_run(&client, &deny_run_id, &deny_status).await?;
 
     if args.teardown
         && let Some(admin_url) = args.admin_database_url.clone()
@@ -332,6 +367,42 @@ async fn assert_cred_run(
     Ok(ok)
 }
 
+/// The fqg.11 deny half: the run failed terminally, and the http node's
+/// recorded error carries the `egress-denied` code — the flow-layer refusal
+/// (the host list admits this target; the completed cred-notify run proved
+/// it).
+async fn assert_deny_run(
+    client: &Client,
+    run_id: &str,
+    final_status: &str,
+) -> anyhow::Result<bool> {
+    println!("## assert — per-flow egress deny (fqg.11)");
+    let mut ok = true;
+
+    check(
+        &mut ok,
+        &format!("egress-deny run reached failed (status = {final_status})"),
+        final_status == "failed",
+    );
+
+    let call_error: Option<String> = client
+        .query_opt(
+            "SELECT error_detail::text FROM node_runs \
+             WHERE run_id = $1 AND node_id = 'call'",
+            &[&run_id],
+        )
+        .await?
+        .and_then(|r| r.get(0));
+    check(
+        &mut ok,
+        &format!("DENY: the http node recorded egress-denied (got {call_error:?})"),
+        call_error
+            .as_deref()
+            .is_some_and(|e| e.contains("egress-denied")),
+    );
+    Ok(ok)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,6 +447,37 @@ mod tests {
         assert!(
             !FLOW_JSON.contains(DEMO_SECRET),
             "the fixture must reference the credential by name only"
+        );
+
+        // fqg.11: the flow DECLARES its egress — both echo authorities (the
+        // in-cluster Service and the local recipe's port). Deny-all default:
+        // without this the live proof could never reach serve-echo.
+        assert_eq!(
+            flow.allowed_hosts,
+            vec!["serve-echo:8091".to_string(), "127.0.0.1:8093".to_string()],
+            "notify fixture declares exactly the two echo authorities"
+        );
+    }
+
+    /// The fqg.11 deny fixture pins the discriminating shape: same `{{echo}}`
+    /// target as cred-notify, but NO `allowed-hosts` (the deny-all default is
+    /// what the live gate proves) and no credential.
+    #[test]
+    fn deny_fixture_declares_no_egress() {
+        let flow = wamn_flow::Flow::from_json(DENY_FLOW_JSON).expect("fixture is a wamn-flow");
+        flow.validate().expect("fixture validates");
+        assert_eq!(flow.flow_id.as_str(), DENY_FLOW_ID);
+        assert!(
+            flow.allowed_hosts.is_empty(),
+            "the deny fixture must declare NO hosts — its denial IS the gate"
+        );
+        assert!(flow.credentials.is_empty(), "no credential in play");
+        let v: Value = serde_json::from_str(DENY_FLOW_JSON).expect("fixture parses");
+        assert_eq!(
+            v["nodes"][1]["config"]["url"],
+            json!("{{echo}}"),
+            "the deny flow targets the SAME echo the host list admits — the \
+             denial discriminates the flow layer from the host layer"
         );
     }
 

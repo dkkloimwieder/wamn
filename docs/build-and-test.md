@@ -385,8 +385,9 @@ WAMN_RUNNER=cred-local ./target/debug/wamn-host --log-level info run-worker \
 # [flowrunner imports wamn:node/credentials]):
 docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
 kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-# provision wamn_runner_demo + register deploy/cred/notify.flow.json active
-# (the fqg.8/ojm recipe), then:
+# provision wamn_runner_demo + register deploy/cred/notify.flow.json AND
+# deploy/cred/deny.flow.json active (the fqg.8/ojm recipe; deny.flow.json is
+# the fqg.11 per-flow egress deny half credproof now asserts), then:
 kubectl -n wamn-system apply -f deploy/serve-echo.yaml
 kubectl -n wamn-system apply -f deploy/runner-credentials.example.yaml
 kubectl -n wamn-system apply -f deploy/runner-db.example.yaml -f deploy/runner.yaml

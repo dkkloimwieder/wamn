@@ -7,12 +7,13 @@
   "entry": "recommend",
   "nodes": [
     { "id": "recommend", "type": "custom", "label": "F2 disposition recommendation", "config": { "component": "disposition-recommendation" } },
-    { "id": "callback", "type": "http-request", "label": "POST ERP callback", "config": { "method": "POST", "idempotency-key": "${run.id}", "allowed-hosts": ["erp.example"] }, "credential": "erp-callback" }
+    { "id": "callback", "type": "http-request", "label": "POST ERP callback", "config": { "method": "POST", "idempotency-key": "${run.id}" }, "credential": "erp-callback" }
   ],
   "edges": [
     { "from": "recommend", "to": "callback" }
   ],
   "credentials": [
     { "name": "erp-callback", "kind": "api-key", "description": "ERP disposition callback" }
-  ]
+  ],
+  "allowed-hosts": ["erp.example"]
 }

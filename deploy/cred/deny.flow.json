@@ -1,0 +1,21 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "egress-deny",
+  "version": 1,
+  "name": "Per-flow egress deny proof (fqg.11)",
+  "trigger": { "type": "manual" },
+  "entry": "in",
+  "nodes": [
+    { "id": "in", "type": "webhook-in" },
+    {
+      "id": "call",
+      "type": "http-request",
+      "config": { "method": "GET", "url": "{{echo}}" }
+    },
+    { "id": "out", "type": "respond" }
+  ],
+  "edges": [
+    { "from": "in", "to": "call" },
+    { "from": "call", "to": "out" }
+  ]
+}

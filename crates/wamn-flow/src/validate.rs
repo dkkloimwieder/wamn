@@ -163,6 +163,28 @@ pub fn validate(flow: &Flow) -> Vec<Issue> {
         }
     }
 
+    // --- allowed-hosts: unique, structurally plausible (fqg.11) -------------
+    // The authoritative grammar lives host-side (the runner's AllowedHost
+    // parser); here we catch only what is wrong in ANY grammar. A host-side
+    // parse failure drops the entry fail-closed, so a typo surfaces as
+    // egress-denied at run time, never as wider access.
+    let mut hosts: HashSet<&str> = HashSet::new();
+    for (i, h) in flow.allowed_hosts.iter().enumerate() {
+        if h.is_empty() || h.chars().any(char::is_whitespace) {
+            issues.push(Issue::error(
+                "invalid-allowed-host",
+                format!("allowed-hosts[{i}]"),
+                format!("allowed host {h:?} is empty or contains whitespace"),
+            ));
+        } else if !hosts.insert(h.as_str()) {
+            issues.push(Issue::error(
+                "duplicate-allowed-host",
+                format!("allowed-hosts[{i}]"),
+                format!("allowed host {h:?} is not unique"),
+            ));
+        }
+    }
+
     // --- entry --------------------------------------------------------------
     if !node_ids.contains(flow.entry.as_str()) {
         issues.push(Issue::error(
@@ -348,6 +370,7 @@ mod tests {
             nodes: vec![node("a", "respond")],
             edges: vec![],
             credentials: vec![],
+            allowed_hosts: vec![],
         }
     }
 
@@ -409,6 +432,35 @@ mod tests {
         let mut f = minimal();
         f.nodes.push(node("a", "transform"));
         assert!(codes(&f).contains(&"duplicate-node-id"));
+        assert!(!f.is_valid());
+    }
+
+    #[test]
+    fn allowed_hosts_validated() {
+        // Plausible entries in the runner grammar all pass.
+        let mut f = minimal();
+        f.allowed_hosts = vec![
+            "notify.example".into(),
+            "api.example:8443".into(),
+            "https://hooks.example".into(),
+            "*.internal.example".into(),
+        ];
+        assert!(f.is_valid(), "{:?}", f.issues());
+
+        // Empty and whitespace entries are structural errors in any grammar.
+        for bad in ["", "two words", "tab\thost"] {
+            let mut f = minimal();
+            f.allowed_hosts = vec![bad.into()];
+            assert!(
+                codes(&f).contains(&"invalid-allowed-host"),
+                "{bad:?} should be rejected"
+            );
+        }
+
+        // Duplicates are errors.
+        let mut f = minimal();
+        f.allowed_hosts = vec!["notify.example".into(), "notify.example".into()];
+        assert!(codes(&f).contains(&"duplicate-allowed-host"));
         assert!(!f.is_valid());
     }
 

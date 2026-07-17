@@ -587,6 +587,16 @@ fn declare_run_grant(flow: &Flow) {
     wamn::runner::credentials::set_granted(&names);
 }
 
+/// fqg.11: declare this run's egress allowlist (the flow's declared
+/// `allowed-hosts`) to the host BEFORE dispatching any node — the exact
+/// cjv.3 shape above, for outbound HTTP instead of credentials. The host
+/// intersects it with its own host-level list; an undeclared (or empty)
+/// flow is deny-all. Called on every walk (including a resume) since the
+/// declaration lives on the long-lived instance and each run overwrites it.
+fn declare_run_egress(flow: &Flow) {
+    wamn::runner::egress::set_allowed_hosts(&flow.allowed_hosts);
+}
+
 fn execute(
     run_id: &str,
     payload: &str,
@@ -599,6 +609,7 @@ fn execute(
     // (docs/run-state.md).
     let flow = load_active_flow(flow_id)?;
     declare_run_grant(&flow);
+    declare_run_egress(&flow);
     let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
     let version = plan.version();
     let input = Value::String(payload.to_string());
@@ -791,6 +802,7 @@ fn execute_claimed(
 ) -> Result<ClaimOutcome, String> {
     let flow = load_active_flow(flow_id)?;
     declare_run_grant(&flow);
+    declare_run_egress(&flow);
     let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
     let version = plan.version();
     let completed = load_completed(run_id)?;

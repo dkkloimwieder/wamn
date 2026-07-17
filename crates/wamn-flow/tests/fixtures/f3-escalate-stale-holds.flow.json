@@ -8,7 +8,7 @@
   "nodes": [
     { "id": "query", "type": "postgres-query", "label": "holds open > 48h", "config": { "op": "select" } },
     { "id": "escalate", "type": "postgres-query", "label": "mark escalated", "config": { "op": "update", "set": { "status": "escalated" } } },
-    { "id": "notify", "type": "http-request", "label": "notify manager", "config": { "method": "POST", "allowed-hosts": ["notify.example"] }, "credential": "notify-webhook" }
+    { "id": "notify", "type": "http-request", "label": "notify manager", "config": { "method": "POST" }, "credential": "notify-webhook" }
   ],
   "edges": [
     { "from": "query", "to": "escalate" },
@@ -16,5 +16,6 @@
   ],
   "credentials": [
     { "name": "notify-webhook", "kind": "api-key", "description": "manager notification endpoint" }
-  ]
+  ],
+  "allowed-hosts": ["notify.example"]
 }

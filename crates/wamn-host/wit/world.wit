@@ -26,6 +26,15 @@ world credentials-plugin {
   import wamn:runner/credentials@0.1.0;
 }
 
+/// Host-side bindgen world for the trusted `wamn:runner/egress` channel
+/// (fqg.11): the compiled-in flow-runner declares each run's `allowed-hosts`
+/// so the run-worker's outgoing handler can enforce the per-flow outbound
+/// allowlist (never-declared / declared-empty = deny-all, intersected with
+/// the host-level list). See plugins/runner_egress.rs.
+world egress-plugin {
+  import wamn:runner/egress@0.1.0;
+}
+
 /// Host-side bindgen world for the S4 `nodebench` / `serve-node` harness: the
 /// host CALLS a bench node's exported `handler.run` and IMPLEMENTS the bench
 /// `wait-ns` import (a real async host sleep) used to model an I/O-bound node

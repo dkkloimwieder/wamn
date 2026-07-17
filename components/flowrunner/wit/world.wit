@@ -45,6 +45,12 @@ world flowrunner {
   // world — a custom node is granted host-side per invocation (wamn-bd5) and
   // never imports this.
   import wamn:runner/credentials@0.1.0;
+  // fqg.11: the TRUSTED per-run egress channel — same trust argument as the
+  // grant channel above. Before dispatching a run's nodes the runner declares
+  // that run's `allowed-hosts` so the host can enforce the per-flow outbound
+  // allowlist on this single long-lived component (never-declared or
+  // declared-empty = deny-all, intersected with the host-level list).
+  import wamn:runner/egress@0.1.0;
 
   /// Dispatch micro-benchmark. Runs `iterations` walks of the supplied
   /// canonical flow (the fixture JSON now lives with the gates, SR2)

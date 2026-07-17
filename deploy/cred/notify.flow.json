@@ -27,5 +27,6 @@
     { "from": "in", "to": "notify" },
     { "from": "notify", "to": "status" },
     { "from": "status", "to": "out" }
-  ]
+  ],
+  "allowed-hosts": ["serve-echo:8091", "127.0.0.1:8093"]
 }

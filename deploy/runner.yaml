@@ -143,9 +143,12 @@ spec:
             - "demo-tenant"
             - "--schema"
             - "wamn_runner_demo"
-            # [5.9] Outbound egress allowlist (EMPTY = deny-all, fail-closed).
-            # serve-echo is the demo notify target the credproof gate drives;
-            # real per-project entries land with fqg.11/provisioning.
+            # [5.9] HOST-LEVEL egress allowlist — the outer bound (EMPTY =
+            # deny-all, fail-closed). Since fqg.11 each flow must ALSO declare
+            # its `allowed-hosts` (deny-all default; intersection with this
+            # list). serve-echo is the demo notify target the credproof gate
+            # drives; rendering per-project entries from provisioning is still
+            # open (nothing renders runner deploys today — hand-maintained).
             - "--allowed-hosts"
             - "serve-echo:8091"
             - "--nats-url"

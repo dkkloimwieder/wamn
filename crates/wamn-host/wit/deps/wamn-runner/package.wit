@@ -14,3 +14,14 @@ interface credentials {
   /// for any name NOT in this set returns `not-granted` (host-enforced).
   set-granted: func(names: list<string>);
 }
+
+interface egress {
+  /// Declare the hosts the run the flow-runner is about to dispatch may reach
+  /// over outbound HTTP (the flow's declared `allowed-hosts`, fqg.11).
+  /// Replaces any prior declaration for this component. Enforcement is
+  /// host-side on the outgoing-handler path: a request must pass BOTH the
+  /// runner's host-level allowlist AND this per-flow set (intersection);
+  /// declared-empty — like never-declared — is DENY-ALL, and an entry the
+  /// host cannot parse is dropped (fail-closed), never widened.
+  set-allowed-hosts: func(hosts: list<string>);
+}

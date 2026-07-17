@@ -419,6 +419,8 @@ impl Harness {
         // cjv.3: the flowrunner declares its per-run grant via this trusted
         // channel; the harness must link it or instantiation fails.
         wamn_host::plugins::wamn_credentials::add_runner_to_linker(&mut linker)?;
+        // fqg.11: the flowrunner declares its per-run egress the same way.
+        wamn_host::plugins::runner_egress::add_runner_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self {
             engine,
@@ -441,6 +443,15 @@ impl Harness {
         m.insert(
             wamn_host::plugins::wamn_credentials::WAMN_CREDENTIALS_ID,
             Arc::new(wamn_host::plugins::wamn_credentials::WamnCredentials::empty())
+                as Arc<dyn HostPlugin + Send + Sync>,
+        );
+        // fqg.11: the flowrunner declares its per-run egress on every walk, so
+        // the policy plugin must back the linked interface. Enforcement here is
+        // the harness's own http handler, so the declaration is inert — the
+        // plugin exists to keep the trusted channel satisfied.
+        m.insert(
+            wamn_host::plugins::runner_egress::RUNNER_EGRESS_ID,
+            Arc::new(wamn_host::plugins::runner_egress::RunnerEgressPolicy::default())
                 as Arc<dyn HostPlugin + Send + Sync>,
         );
         m

@@ -51,6 +51,14 @@ pub struct Flow {
     /// secrets never appear in flow data.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub credentials: Vec<CredentialRef>,
+    /// Hosts this flow's outbound HTTP may reach (fqg.11). Entries use the
+    /// host allowlist grammar: `host[:port]`, `scheme://host[:port]`, or a
+    /// `*.suffix` subdomain wildcard. Egress is opt-in and fail-closed —
+    /// undeclared (or empty) means DENY-ALL for the flow, and a declared host
+    /// is still bounded by the runner's host-level allowlist (both must
+    /// allow). Mirrors [`Flow::credentials`]: capability by declaration.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_hosts: Vec<String>,
 }
 
 /// A single graph step.
