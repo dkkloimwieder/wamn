@@ -465,6 +465,40 @@ Mutation harness for the knee controller: scratchpad `mutate_z7b1.py`
 (saturation-arm + bisect-direction mutants each fail a named
 wamn-gate-harness unit test).
 
+### [EVT-C2 / wamn-z7b.2] outboxbench trigger-overhead campaign (measurement, not a gate)
+
+Docs: docs/ceilings.md (the published curves) + docs/event-plane-jetstream.md §10/§11
++ docs/ddl-compiler.md § Outbox row-event triggers
+
+```bash
+cargo test -p wamn-gates outboxbench   # cadence parse/duration + catalog/plan compile units
+# Local iteration (short knobs; correctness only — debug build, dev-host PG):
+docker run -d --rm --name wamn-c2-pg -p 5443:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+docker exec wamn-c2-pg psql -U postgres -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5443/postgres \
+  WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5443/postgres \
+  ./target/debug/wamn-gates --log-level error outboxbench --mode all \
+  --iters 100 --growth-rate 50 --growth-secs 20 --growth-cadences 0,5,15 --retention-ms 2000
+docker stop wamn-c2-pg
+# Numbers of record (in-cluster, record knobs baked into the manifest; ~35–40 min;
+# a SINGLE run is the record — no knee search to poison, the headline numbers
+# are byte counts/medians and a stall shows as a visible p99 outlier):
+kubectl -n wamn-system apply -f deploy/outboxbench-job.yaml
+kubectl -n wamn-system logs -f job/outboxbench
+# Extract the `=== BEGIN CSV <name> ===` blocks (c2-trigger / c2-bulk /
+# c2-growth-c{0,60,600}) into docs/ceilings-data/ and cite them from
+# docs/ceilings.md (§11 provenance).
+```
+
+Paired same-table A/B: the bench toggles the REAL `Migration::outbox_triggers`
+/ `drop_outbox_triggers` plans between phases, so the with/without delta is the
+trigger itself (a closing baseline re-measure bounds drift). Only the sanity
+asserts are pass/fail: the trigger fires exactly once per written row (per
+event), and the prune never touches a pending row (sentinel proof). Mutation
+harness: scratchpad `mutate_z7b2.py` (trigger-apply neutered / acker acks
+sentinels / bulk on-leg loses the trigger — each fails a named sanity assert).
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

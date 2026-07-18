@@ -21,6 +21,7 @@ mod flowbench;
 mod ladderproof;
 mod logbench;
 mod nodebench;
+mod outboxbench;
 mod pgbench;
 mod provisionbench;
 mod publish_catalog_demo;
@@ -63,6 +64,8 @@ enum Command {
     Runnerbench(runnerbench::RunnerBenchArgs),
     /// Run the 5.14 dispatcher gates (cron / outbox / race / fairness / wake / live)
     Dispatchbench(dispatchbench::DispatchBenchArgs),
+    /// Run the EVT-C2 outbox-trigger overhead campaign (single-row / bulk amplification / growth-vs-GC)
+    Outboxbench(outboxbench::OutboxBenchArgs),
     /// Run the 5.9 credential-vault proof (delivery to serve-echo + no-leak containment)
     Credprobe(credprobe::CredProbeArgs),
     Credproof(credproof::CredProofArgs),
@@ -122,6 +125,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Failoverbench(args) => failoverbench::run(args).await,
         Command::Runnerbench(args) => runnerbench::run(args).await,
         Command::Dispatchbench(args) => dispatchbench::run(args).await,
+        Command::Outboxbench(args) => outboxbench::run(args).await,
         Command::Credprobe(args) => credprobe::run(args).await,
         Command::Credproof(args) => credproof::run(args).await,
         Command::Nodebench(args) => nodebench::run(args).await,

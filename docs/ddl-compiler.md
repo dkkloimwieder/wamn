@@ -340,6 +340,13 @@ Shape and invariants:
 [--create]` prints the plan (with `--create`, a complete provisioning script)
 for demos and manual project setup.
 
+**Measured cost** (EVT-C2, `wamn-gates outboxbench`): the per-write overhead
+these triggers add — single-row latency + WAL/row, bulk-UPDATE amplification
+at 1k/10k/100k rows, and outbox growth vs the d8v prune cadence — is published
+with full provenance in [`docs/ceilings.md`](ceilings.md) § C2. Those numbers
+size the wamn-vbl mitigation (registration-driven per-entity emission instead
+of the uniform all-tables plan).
+
 ## Verification
 
 `cargo test -p wamn-ddl` checks emitted SQL for the POC catalog (tenant floor,

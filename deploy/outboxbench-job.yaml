@@ -1,0 +1,80 @@
+# EVT-C2 outbox-trigger overhead campaign (wamn-z7b.2): the outboxbench
+# subcommand — a measurement run (paired same-table single-row latency + WAL,
+# bulk-UPDATE amplification at 1k/10k/100k rows, outbox growth vs prune
+# cadence under sustained row-event load), NOT a regression gate. Only the
+# sanity asserts gate (trigger fires exactly once per written row; GC never
+# prunes a pending row).
+#
+#   kubectl -n wamn-system apply -f deploy/outboxbench-job.yaml
+#   kubectl -n wamn-system logs -f job/outboxbench
+#
+# The curves land in the logs as `=== BEGIN CSV <name> ===` blocks; extract
+# them into docs/ceilings-data/ and cite them from docs/ceilings.md (§11
+# provenance: date, env, git rev, knobs, raw-data pointer). A single run is
+# the record (unlike C7's two-run practice): no knee search to poison — the
+# headline numbers are byte counts and medians, and a disk stall shows as a
+# visible p99 outlier. No NATS: the bench never touches the doorbell.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: outboxbench
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  # trigger (~2 min) + bulk (~3 min) + growth sweep 0/60/600 s cadences
+  # (300 s + 300 s + 1260 s of load) ≈ 35–40 min.
+  activeDeadlineSeconds: 5400
+  template:
+    metadata:
+      labels: { app: outboxbench }
+    spec:
+      restartPolicy: Never
+      # Co-located with Postgres, same topology class as every p0 reference
+      # number (the S2 rationale).
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: postgres }
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "until nc -z postgres 5432; do echo waiting for postgres; sleep 1; done"
+      containers:
+        - name: outboxbench
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "error"
+            - "outboxbench"
+            - "--mode"
+            - "all"
+            # Record knobs: 1000 single-row ops/batch; 200/s sustained
+            # row-event load; ≥300 s per cadence (the 600 s cadence stretches
+            # itself to 1260 s so it prunes at least twice); default cadences
+            # 0,60,600 — 600 s is the d8v production maintenance interval.
+            - "--iters"
+            - "1000"
+            - "--growth-rate"
+            - "200"
+            - "--growth-secs"
+            - "300"
+          env:
+            # Writer: the non-superuser, non-BYPASSRLS app role (the trigger
+            # fires under the production RLS floor).
+            - name: WAMN_PG_URL
+              value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+            # Admin: schema provisioning, trigger-plan toggles, VACUUM /
+            # CHECKPOINT, WAL LSN reads, the bloat probe.
+            - name: WAMN_PG_ADMIN_URL
+              value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn
+          resources:
+            # No CPU limit on purpose (the S2 CFS lesson): a quota would
+            # throttle the writers and measure the scheduler, not the trigger.
+            requests: { cpu: "1", memory: "256Mi" }
+            limits: { memory: "1Gi" }

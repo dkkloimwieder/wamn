@@ -10,6 +10,7 @@
 
 pub mod ceiling;
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -27,6 +28,23 @@ pub fn percentile(sorted: &[Duration], p: f64) -> Duration {
 pub fn check(pass: &mut bool, label: &str, ok: bool) {
     println!("  [{}] {label}", if ok { "PASS" } else { "FAIL" });
     *pass &= ok;
+}
+
+/// Print a measurement CSV between grep-able markers (the job-log extraction
+/// path the ceiling campaigns use: `=== BEGIN CSV <name> ===` … `=== END CSV
+/// <name> ===`) and optionally write it to `out_dir/<name>.csv`. A write
+/// failure is reported but never fails the campaign — stdout always carries
+/// the data.
+pub fn emit_csv(name: &str, csv: &str, out_dir: &Option<PathBuf>) {
+    println!("=== BEGIN CSV {name} ===");
+    print!("{csv}");
+    println!("=== END CSV {name} ===");
+    if let Some(dir) = out_dir
+        && let Err(e) = std::fs::create_dir_all(dir)
+            .and_then(|()| std::fs::write(dir.join(format!("{name}.csv")), csv))
+    {
+        println!("(could not write {name}.csv: {e})");
+    }
 }
 
 /// A JSON value as an array of values (empty if not an array).

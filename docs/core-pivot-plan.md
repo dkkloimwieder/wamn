@@ -91,10 +91,12 @@ primary; **no parallel overhaul of the dispatch machinery the ladder stands on.*
   ceiling mode~~ **done 2026-07-18** (`wamn-z7b.1` — `docs/ceilings.md`: untuned 60 s
   knee ~2000–2500 transitions/sec, sustained ~550–1400/s with stock autovacuum
   [boom-bust above], overload drain ~4000/s; D3 folklore retired; phase-2 tuning
-  matrix split to `wamn-z7b.6` behind the `wamn-z7b.7` noise-robust ramp) + C2
-  outbox-trigger overhead (C2's GC sub-measure now unblocked — `wamn-d8v` done).
-  These retire folklore D3 already depends on — worth it regardless of D19's
-  outcome.
+  matrix split to `wamn-z7b.6` behind the `wamn-z7b.7` noise-robust ramp) +
+  ~~C2 outbox-trigger overhead~~ **done 2026-07-18** (`wamn-z7b.2` —
+  `outboxbench`, `docs/ceilings.md` § C2: +30 µs / +500 B WAL per single-row
+  write, bulk ×5–6 duration / ×2.2 WAL — the wamn-vbl price tag; growth
+  bounded at `rate × cadence` under the d8v GC; R8c quantified). These retire
+  folklore D3 already depends on — worth it regardless of D19's outcome.
 - **After (or alongside late ladder rungs):** C1 retained-events knee → **D19 decision
   checkpoint**. JetStream build-out (Phases A–C) only past the checkpoint or on an
   external driver (design partner fan-out/replay; high-rate ingest — MQTT de-scoped
@@ -126,8 +128,9 @@ split out `fqg.20` ordering declaration + key-stamping, `fqg.9` bumped to P2) �
 `wamn-vbl`, production janitor wiring filed as `wamn-71t`) →
 `POC-F3` / `POC-F4` → `4.4` hot-reload → (parallel) `2ib`.
 Bench days when convenient: ~~`z7b.1` (C7)~~ (**done 2026-07-18**, `docs/ceilings.md`) /
-`z7b.2` (C2) — measurement-only, safe to interleave. C1 + the D19 checkpoint
-(`z7b.3`/`z7b.4`) after F4; `z7b.4` now needs only `.2`/`.3`.
+~~`z7b.2` (C2)~~ (**done 2026-07-18**, `docs/ceilings.md` § C2) —
+measurement-only, safe to interleave. C1 + the D19 checkpoint
+(`z7b.3`/`z7b.4`) after F4; `z7b.4` now needs only `.3`.
 
 ## bd encoding
 

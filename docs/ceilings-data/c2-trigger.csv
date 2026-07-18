@@ -1,0 +1,10 @@
+phase,op,n,p50_ms,p99_ms,wal_bytes_per_row
+baseline,insert,1000,0.054,0.143,253
+baseline,update,1000,0.065,0.130,366
+baseline,delete,1000,0.046,0.097,215
+with-trigger,insert,1000,0.083,0.158,739
+with-trigger,update,1000,0.094,0.184,879
+with-trigger,delete,1000,0.072,0.154,733
+baseline-after,insert,1000,0.054,0.101,269
+baseline-after,update,1000,0.058,0.129,381
+baseline-after,delete,1000,0.041,0.086,225

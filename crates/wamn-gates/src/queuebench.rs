@@ -50,7 +50,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
-use wamn_gate_harness::{ceiling, percentile};
+use wamn_gate_harness::{ceiling, emit_csv, percentile};
 use wamn_run_queue::{
     acquire_partitions_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql,
     complete_dequeue_sql, dequeue_sql, enqueue_sql, janitor_sweep_sql, mark_running_sql, park_sql,
@@ -1904,20 +1904,6 @@ async fn ceiling_burst(
         (drain_done - burst_end).as_secs_f64(),
     );
     Ok(ceiling_sanity(&shared, drained, "burst"))
-}
-
-/// Print a CSV between grep-able markers (the job-log extraction path) and
-/// optionally write it to `--ceiling-out`.
-fn emit_csv(name: &str, csv: &str, out_dir: &Option<PathBuf>) {
-    println!("=== BEGIN CSV {name} ===");
-    print!("{csv}");
-    println!("=== END CSV {name} ===");
-    if let Some(dir) = out_dir
-        && let Err(e) = std::fs::create_dir_all(dir)
-            .and_then(|()| std::fs::write(dir.join(format!("{name}.csv")), csv))
-    {
-        println!("(could not write {name}.csv: {e})");
-    }
 }
 
 async fn ceiling_phase(
