@@ -61,6 +61,14 @@ enum RampState {
 /// doubles from the base rate until a level saturates, then bisects until the
 /// good/bad rates are within `tolerance` of each other (or `max_levels` runs
 /// have been spent — a wall-clock bound, reported by the caller as a cap).
+///
+/// Noise defense (wamn-z7b.7): host noise on the measurement rig is one-sided
+/// (a disk stall only ever pushes a level TOWARD saturated), and one false
+/// positive sends the bisect permanently downward. So a level that classifies
+/// saturated is re-run once and only a REPRODUCED saturation is accepted; the
+/// re-run appears in [`Ramp::levels`] as a second row at the same offered rate.
+/// For the same reason the p99-doubling baseline is the first ACCEPTED-good
+/// run, never a retried-away noise run.
 pub struct Ramp {
     tolerance: f64,
     max_levels: usize,
@@ -68,6 +76,10 @@ pub struct Ramp {
     state: RampState,
     /// Index (into `levels`) of the highest-offered unsaturated level.
     best_good: Option<usize>,
+    /// Index of the p99-doubling baseline: the first accepted-good run.
+    baseline: Option<usize>,
+    /// A saturated classification is pending its confirmation re-run.
+    retrying: bool,
 }
 
 impl Ramp {
@@ -78,6 +90,8 @@ impl Ramp {
             levels: Vec::new(),
             state: RampState::Coarse { next: base_rate },
             best_good: None,
+            baseline: None,
+            retrying: false,
         }
     }
 
@@ -98,14 +112,26 @@ impl Ramp {
     /// Record the stats for the level that `next_offered` scheduled.
     pub fn record(&mut self, stats: LevelStats) {
         let offered = stats.offered;
-        // The baseline for p99 doubling is the FIRST level; the first level
-        // itself can only saturate on divergence/drain (doubling needs a prior).
-        let sat = match self.levels.first() {
+        // The p99-doubling baseline is the first ACCEPTED-good run; until one
+        // exists a level can only saturate on divergence/drain (doubling needs
+        // a trusted prior — a noise run retried away must not become it).
+        let sat = match self.baseline.map(|i| &self.levels[i]) {
             Some(baseline) => saturated(baseline, &stats),
             None => !stats.drained || stats.achieved_complete < 0.9 * stats.achieved_enqueue,
         };
         let idx = self.levels.len();
         self.levels.push(stats);
+        // One-sided-noise defense: the first saturated classification at a
+        // level only schedules a confirmation re-run — leaving the state
+        // untouched makes `next_offered` re-issue the same rate.
+        if sat && !self.retrying {
+            self.retrying = true;
+            return;
+        }
+        self.retrying = false;
+        if !sat && self.baseline.is_none() {
+            self.baseline = Some(idx);
+        }
         self.state = match self.state {
             RampState::Coarse { .. } if !sat => {
                 self.best_good = Some(idx);
@@ -192,10 +218,11 @@ mod tests {
 
     #[test]
     fn coarse_doubles_then_bisects_to_the_knee() {
-        // Capacity 3000: coarse 250→500→1000→2000→4000(sat), then bisect
-        // 3000(good)→3500(sat, divergence)→3250(sat via the p99 tail — over
-        // capacity the sojourn explodes even though 3000/s ≥ 0.9×3250) and the
-        // good/bad gap (3000..3250) is within the 15% tolerance.
+        // Capacity 3000: coarse 250→500→1000→2000→4000(sat, confirmed by the
+        // z7b.7 re-run), then bisect 3000(good)→3500(sat ×2, divergence)→
+        // 3250(sat ×2 via the p99 tail — over capacity the sojourn explodes
+        // even though 3000/s ≥ 0.9×3250) and the good/bad gap (3000..3250) is
+        // within the 15% tolerance.
         let mut ramp = Ramp::new(250.0, 0.15, 16);
         let mut offered_seq = Vec::new();
         while let Some(rate) = ramp.next_offered() {
@@ -204,10 +231,13 @@ mod tests {
         }
         assert_eq!(
             offered_seq,
-            vec![250.0, 500.0, 1000.0, 2000.0, 4000.0, 3000.0, 3500.0, 3250.0]
+            vec![
+                250.0, 500.0, 1000.0, 2000.0, 4000.0, 4000.0, 3000.0, 3500.0, 3500.0, 3250.0,
+                3250.0
+            ]
         );
         assert_eq!(ramp.knee().map(|k| k.offered), Some(3000.0));
-        assert_eq!(ramp.levels().len(), 8);
+        assert_eq!(ramp.levels().len(), 11);
     }
 
     #[test]
@@ -215,8 +245,14 @@ mod tests {
         let mut ramp = Ramp::new(1000.0, 0.15, 16);
         assert_eq!(ramp.next_offered(), Some(1000.0));
         ramp.record(level(1000.0, 400.0));
+        // First saturated classification only schedules the confirmation
+        // re-run at the SAME rate (wamn-z7b.7).
+        assert_eq!(ramp.next_offered(), Some(1000.0));
+        ramp.record(level(1000.0, 400.0));
+        // Reproduced at the base rate: no knee above it to find.
         assert_eq!(ramp.next_offered(), None);
         assert!(ramp.knee().is_none());
+        assert_eq!(ramp.levels().len(), 2);
     }
 
     #[test]
@@ -263,6 +299,73 @@ mod tests {
         let mut stuck = level(500.0, 10_000.0);
         stuck.drained = false;
         assert!(saturated(&baseline, &stuck));
+    }
+
+    /// A stall-poisoned run of `offered`: the backlog never drained and
+    /// completions collapsed — classifies saturated under every rule.
+    fn poisoned(offered: f64) -> LevelStats {
+        LevelStats {
+            offered,
+            achieved_enqueue: offered,
+            achieved_complete: offered * 0.3,
+            p50_ms: 40.0,
+            p99_ms: 500.0,
+            p999_ms: 900.0,
+            window_completed: (offered * 0.3) as u64 * 60,
+            drained: false,
+        }
+    }
+
+    #[test]
+    fn a_noise_poisoned_level_is_retried_and_survives() {
+        // Capacity 3000, but the 1000/s level's FIRST run hits a disk stall.
+        // The ramp must re-offer 1000, accept the clean re-run, and land on
+        // the same knee the clean ramp finds — not bisect down from 1000.
+        let mut ramp = Ramp::new(250.0, 0.15, 16);
+        let mut offered_seq = Vec::new();
+        let mut poisoned_once = false;
+        while let Some(rate) = ramp.next_offered() {
+            offered_seq.push(rate);
+            if rate == 1000.0 && !poisoned_once {
+                poisoned_once = true;
+                ramp.record(poisoned(rate));
+            } else {
+                ramp.record(level(rate, 3000.0));
+            }
+        }
+        assert_eq!(
+            offered_seq,
+            vec![
+                250.0, 500.0, 1000.0, 1000.0, 2000.0, 4000.0, 4000.0, 3000.0, 3500.0, 3500.0,
+                3250.0, 3250.0
+            ]
+        );
+        assert_eq!(ramp.knee().map(|k| k.offered), Some(3000.0));
+    }
+
+    #[test]
+    fn a_poisoned_first_level_recovers_a_clean_baseline() {
+        // The FIRST level's first run stalls; the clean re-run must become the
+        // p99-doubling baseline. Above 250/s the tail rides at 12 ms —
+        // saturated against the clean 4 ms baseline, invisible against the
+        // poisoned 500 ms run. A poisoned baseline would let the ramp double
+        // forever; the clean one pins the knee at 250.
+        let mut ramp = Ramp::new(250.0, 0.15, 32);
+        let mut first = true;
+        while let Some(rate) = ramp.next_offered() {
+            if first {
+                first = false;
+                ramp.record(poisoned(rate));
+            } else if rate <= 250.0 {
+                ramp.record(level(rate, 10_000.0));
+            } else {
+                let mut s = level(rate, 10_000.0);
+                s.p99_ms = 12.0;
+                s.p999_ms = 20.0;
+                ramp.record(s);
+            }
+        }
+        assert_eq!(ramp.knee().map(|k| k.offered), Some(250.0));
     }
 
     #[test]
