@@ -145,9 +145,16 @@ depth = **16** (owner override of the proposed ~8).
   TOAST-marker surfacing; 1M-row streamed transaction memory profile;
   Message-event support (causation). Any failure → fallback assessment
   (Supabase `etl`) before proceeding.
+  *Done (`wamn-l5i9.2`, 2026-07-18): all five checks pass; findings F1 (crate
+  failover-slot syntax bug, worked around; fork patch on `wamn-l5i9.8`) and F2
+  (reader session re-open loop, on `wamn-l5i9.10`) recorded.*
 - **S-CDC-2 (Sequin calibration, 2–3 days):** stand up Sequin→NATS on one
   staging org against the *same* subject contract — a working reference +
   ceiling calibration + the documented buy-fallback if S-CDC-1 sours.
+  *Skipped (`wamn-l5i9.3`, owner decision 2026-07-18): S-CDC-1 did not sour —
+  build-vs-buy rests on its results plus Sequin's vendor-published numbers
+  (the §10 row stays "unverified locally"); the banked calibration plan is
+  preserved in the bead's notes as the buy-fallback starting point.*
 **Benches (existing infra only):** C-QUEUE (retire the D3 folklore number) +
 C-WAL-0 (baseline WAL volume of representative app load, pre-CDC).
 **Docs:** teardown list (§3) circulated so no new work lands on the outbox

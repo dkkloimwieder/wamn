@@ -95,12 +95,16 @@ poller, per-table triggers + DDL emission, outbox table + GC, dispatchbench outb
 modes). **No new work lands on the outbox path**; deletion executes at
 `wamn-l5i9.19` (Phase 2). Tracker: epic **`wamn-l5i9` [EVENT-PLANE-V3]**, phases 0–3.
 
-- **Phase 0 blocks all other project work** (owner decision 2026-07-18): owner
-  sign-offs (`wamn-l5i9.1`), pg_walstream diligence spike (S-CDC-1, `l5i9.2`),
-  Sequin calibration (S-CDC-2, `l5i9.3`), C-WAL-0 baseline (`l5i9.4`), the docs
-  pass (`l5i9.5`), build-vs-buy (`wamn-l5i9.6`, owner). The ladder and all other
-  tracks are **suspended** during Phase 0 and resume after, unless the owner
-  redirects. `l5i9.1`/`l5i9.6` are owner decision beads — never auto-claimed.
+- **Phase 0 blocks all other project work** (owner decision 2026-07-18): ~~owner
+  sign-offs (`wamn-l5i9.1`)~~ (signed 2026-07-18), ~~pg_walstream diligence spike
+  (S-CDC-1, `l5i9.2`)~~ (done 2026-07-18, all five checks pass — `5c3cdf6`),
+  ~~Sequin calibration (S-CDC-2, `l5i9.3`)~~ (skipped 2026-07-18, owner decision —
+  build-vs-buy rests on S-CDC-1 results + vendor-published numbers; banked plan
+  preserved in the bead's notes), C-WAL-0 baseline (`l5i9.4`), ~~the docs pass
+  (`l5i9.5`)~~ (done — `ff147f1`), build-vs-buy (`wamn-l5i9.6`, owner — unblocked
+  by the `.2`/`.3` closes). The ladder and all other tracks are **suspended**
+  during Phase 0 and resume after, unless the owner redirects.
+  `l5i9.1`/`l5i9.6` are owner decision beads — never auto-claimed.
 - Measurement already banked (pre-decision, still load-bearing): ~~C7/C-QUEUE~~
   (`wamn-z7b.1`, `docs/ceilings.md` — untuned knee ~2000–2500 transitions/sec) +
   ~~C2 outbox-trigger overhead~~ (`wamn-z7b.2`, `docs/ceilings.md` § C2 — now a
