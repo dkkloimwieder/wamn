@@ -1,6 +1,6 @@
 # Core Pivot Plan
 
-**Date:** 2026-07-15 · **Updated:** 2026-07-16 · **Status:** active ordering (supersedes the "finish the tiering epic first" directive)
+**Date:** 2026-07-15 · **Updated:** 2026-07-18 · **Status:** active ordering (supersedes the "finish the tiering epic first" directive) — **currently suspended by the event-plane v3 Phase 0** (owner decision 2026-07-18, see the event-plane section): Phase 0 of `wamn-l5i9` blocks all other project work; the ladder + tracks resume after Phase 0 unless the owner redirects.
 
 ## Why
 
@@ -41,7 +41,10 @@ flow + execution gate):
      with 17o (host-level allowlist); remaining = per-FLOW allowlists (F3's
      `allowedHosts=[notify.example]`) + provisioning-driven entries
    - `wamn-fqg.12` [POC-F3] scale-to-zero / parked-wake proof (P3, deployment topology)
-5. `wamn-lxk` — **POC-F4** async row-event + 429 throttle
+5. `wamn-lxk` — **POC-F4** async row-event + 429 throttle — **reworked to a CDC
+   row-event flow** (D19 v3, 2026-07-18; no new work lands on the outbox path),
+   dep-gated on the Phase-2 cutover (`wamn-l5i9.18`); 429-throttle scope and the
+   cutover-regression role survive unchanged
 6. `wamn-1ab` — **POC-F2** custom node ← `wamn-7j0.1` guard → `wamn-bd5` (5.6) → `wamn-0si` (5.5)
 7. `wamn-2ft` **POC-DEMO** + `wamn-3rj` **POC-TESTS** — receiving acceptance capstone
 
@@ -82,30 +85,31 @@ guest partitioned claim P3→P2 — those two close the 5.11 surface),
   the execution ladder matures)
 - `wamn-jn6` — 9.8 metric set (also unblocks the deferred `q3n.12`)
 
-## Event-plane program (D19 candidate — measurement interleaves, overhaul sequenced)
+## Event-plane program (D19 **decided** 2026-07-18 — v3: CDC → JetStream; Phase 0 blocks everything)
 
-`docs/event-plane-jetstream.md` (v2.1) + the D19 decision-table row. The ladder stays
-primary; **no parallel overhaul of the dispatch machinery the ladder stands on.**
+**Owner decision 2026-07-18:** `docs/event-plane-jetstream.md` **v3** supersedes the
+v2 outbox-relay candidate (v2 preserved at `docs/event-plane-jetstream-outbox.md`).
+Capture is **CDC via logical decoding (pg_walstream)** → JetStream — the WAL is the
+event source; the outbox trigger path is retired (v3 §3 teardown: dispatcher outbox
+poller, per-table triggers + DDL emission, outbox table + GC, dispatchbench outbox
+modes). **No new work lands on the outbox path**; deletion executes at
+`wamn-l5i9.19` (Phase 2). Tracker: epic **`wamn-l5i9` [EVENT-PLANE-V3]**, phases 0–3.
 
-- **Interleave OK (bounded bench work, measures existing mechanics):** ~~C7 queuebench
-  ceiling mode~~ **done 2026-07-18** (`wamn-z7b.1` — `docs/ceilings.md`: untuned 60 s
-  knee ~2000–2500 transitions/sec, sustained ~550–1400/s with stock autovacuum
-  [boom-bust above], overload drain ~4000/s; D3 folklore retired; phase-2 tuning
-  matrix split to `wamn-z7b.6` behind the `wamn-z7b.7` noise-robust ramp) +
-  ~~C2 outbox-trigger overhead~~ **done 2026-07-18** (`wamn-z7b.2` —
-  `outboxbench`, `docs/ceilings.md` § C2: +30 µs / +500 B WAL per single-row
-  write, bulk ×5–6 duration / ×2.2 WAL — the wamn-vbl price tag; growth
-  bounded at `rate × cadence` under the d8v GC; R8c quantified). These retire
-  folklore D3 already depends on — worth it regardless of D19's outcome.
-- **After (or alongside late ladder rungs):** C1 retained-events knee → **D19 decision
-  checkpoint**. JetStream build-out (Phases A–C) only past the checkpoint or on an
-  external driver (design partner fan-out/replay; high-rate ingest — MQTT de-scoped
-  2026-07-17, assume HTTP).
-- Prerequisites either branch: ~~`wamn-d8v` (outbox GC)~~ **done 2026-07-18**
-  (dispatcher maintenance step, `outbox_prune_sql`, batch-bounded 7d retention;
-  split out `wamn-vbl` write-amplification + `wamn-71t` production janitor
-  wiring), R6 decision (`wamn-1d4` — 5.11 needs it anyway, done), 5.10 scope
-  change noted on `wamn-sdp`.
+- **Phase 0 blocks all other project work** (owner decision 2026-07-18): owner
+  sign-offs (`wamn-l5i9.1`), pg_walstream diligence spike (S-CDC-1, `l5i9.2`),
+  Sequin calibration (S-CDC-2, `l5i9.3`), C-WAL-0 baseline (`l5i9.4`), the docs
+  pass (`l5i9.5`), build-vs-buy (`wamn-l5i9.6`, owner). The ladder and all other
+  tracks are **suspended** during Phase 0 and resume after, unless the owner
+  redirects. `l5i9.1`/`l5i9.6` are owner decision beads — never auto-claimed.
+- Measurement already banked (pre-decision, still load-bearing): ~~C7/C-QUEUE~~
+  (`wamn-z7b.1`, `docs/ceilings.md` — untuned knee ~2000–2500 transitions/sec) +
+  ~~C2 outbox-trigger overhead~~ (`wamn-z7b.2`, `docs/ceilings.md` § C2 — now a
+  historical record of the retired path's cost). Bench renames v2→v3: C1→C-EVTBL
+  (contingency-only; prototype parked on `park/c1-eventsbench`), C7→C-QUEUE,
+  C3/C5→C-MAT, C4→C-JS, C6→C-E2E, C8→C-REPLAY, C9→C-INTERFERENCE; new C-WAL-0.
+  The `z7b.6` tuning matrix is re-parented under the epic (P3).
+- 5.10 (`wamn-sdp`) is now an **unconditional** dual prerequisite (claim-check
+  payload objects + node streaming); its backend decision lands in `wamn-l5i9.1`.
 
 ## Parked (demoted to P3)
 
@@ -126,11 +130,14 @@ split out `fqg.20` ordering declaration + key-stamping, `fqg.9` bumped to P2) �
 ~~`d8v` GC half~~ (**done 2026-07-18** — dispatcher-tick maintenance step +
 `outbox_prune_sql`, unblocks `z7b.2`; the amplification half split to
 `wamn-vbl`, production janitor wiring filed as `wamn-71t`) →
-`POC-F3` / `POC-F4` → `4.4` hot-reload → (parallel) `2ib`.
+**event-plane v3 Phase 0 (`wamn-l5i9` — blocks all other work, 2026-07-18)** →
+then resume: `POC-F3` / `POC-F4` (F4 now a CDC flow, gated on `l5i9.18`) →
+`4.4` hot-reload → (parallel) `2ib`.
 Bench days when convenient: ~~`z7b.1` (C7)~~ (**done 2026-07-18**, `docs/ceilings.md`) /
 ~~`z7b.2` (C2)~~ (**done 2026-07-18**, `docs/ceilings.md` § C2) —
-measurement-only, safe to interleave. C1 + the D19 checkpoint
-(`z7b.3`/`z7b.4`) after F4; `z7b.4` now needs only `.3`.
+measurement-only, safe to interleave. The D19 decision checkpoint is **retired** —
+decided 2026-07-18 by the owner-authored v3 (`z7b.3`/`z7b.4` closed superseded;
+the C1 prototype is parked on `park/c1-eventsbench` as the C-EVTBL contingency).
 
 ## bd encoding
 

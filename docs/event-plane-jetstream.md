@@ -207,7 +207,7 @@ events-table knee) runs **only if** the §9 retreat is ever invoked.
 | Claim | Status |
 |---|---|
 | Plugin ~2k qps p99<10ms; dispatch p99s | **measured** (p0/queuebench) |
-| Queue ~1–5k transitions/s | **estimate** → C-QUEUE (Phase 0) |
+| Queue ~1–5k transitions/s | **measured** (C-QUEUE = wamn-z7b.1, 2026-07-18, `docs/ceilings.md`): untuned 60 s knee ~2000–2500 transitions/s, sustained ~550–1400/s under stock autovacuum; tuning matrix pending (wamn-z7b.6) |
 | Sequin ~40–50k ops/s, 55ms | **vendor-published**, unverified locally |
 | pg_walstream perf/robustness | **unknown** → S-CDC-1 |
 | 256 KiB payload cap; 10-min dedupe window; depth 8; consumer quota | **proposed knobs** → C-JS/C-CDC inform |

@@ -376,6 +376,12 @@ run it: the load-bearing guard on the guest plan cache's invalidation.
 
 ## Trigger dispatcher (cron + outbox + parked-wake)
 
+> **Outbox path retiring (D19 v3, 2026-07-18).** Row-event capture moves to
+> CDC via logical decoding (`docs/event-plane-jetstream.md`); **no new work
+> lands on the outbox path** — the outbox poller, the per-table triggers +
+> DDL emission, and the outbox table + GC are deleted at the Phase-2 teardown
+> (wamn-l5i9.19). Cron and parked-wake are unaffected and stay here.
+
 The **shared trigger dispatcher** is the always-on control-plane loop that turns
 *time* and *data changes* into runs: it owns **cron schedules** (flows with a
 `cron` trigger, F3) and **outbox polling** (flows with a `row-event` trigger —

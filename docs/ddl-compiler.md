@@ -259,6 +259,12 @@ a forward note on the migration engine (wamn-d8u, 2.5).
 
 ## Outbox row-event triggers (5.14 / D4 producers)
 
+> **Retired path (D19 v3, 2026-07-18).** Event capture moves to CDC via
+> logical decoding (`docs/event-plane-jetstream.md`); **no new work lands on
+> the outbox path** — this emitter, the dispatcher poller, and the outbox
+> table + GC are deleted at the Phase-2 teardown (wamn-l5i9.19). This section
+> stands as the record of the shipped mechanism until then.
+
 `Migration::outbox_triggers(&catalog, &OutboxOptions { schema })` emits the
 production **row-event producers**: one shared plpgsql function plus one
 `AFTER INSERT OR UPDATE OR DELETE ... FOR EACH ROW` trigger per entity table,
@@ -344,8 +350,9 @@ for demos and manual project setup.
 these triggers add — single-row latency + WAL/row, bulk-UPDATE amplification
 at 1k/10k/100k rows, and outbox growth vs the d8v prune cadence — is published
 with full provenance in [`docs/ceilings.md`](ceilings.md) § C2. Those numbers
-size the wamn-vbl mitigation (registration-driven per-entity emission instead
-of the uniform all-tables plan).
+were gathered to size the wamn-vbl mitigation (registration-driven per-entity
+emission); wamn-vbl closed superseded 2026-07-18 — D19 v3's CDC capture pays
+none of this cost, and the numbers remain as the retired path's cost record.
 
 ## Verification
 

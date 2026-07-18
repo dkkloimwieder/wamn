@@ -191,9 +191,10 @@ amplification and ×2.2 WAL** — 100k rows go from 0.4 s to 2.3 s inside the
 user's transaction, plus 100k outbox rows. Duration amplification far
 exceeds WAL amplification: the per-row plpgsql invocation + outbox INSERT
 execution dominates, not the bytes. This is the number `wamn-vbl`
-(registration-driven per-entity emission) is sized against — an
-*unregistered* table pays none of it, and today's uniform all-tables plan
-charges every table. R8c's gate-before-bulk-import-tooling stands.
+(registration-driven per-entity emission) was sized against — an
+*unregistered* table pays none of it, and the uniform all-tables plan
+charges every table. (Superseded 2026-07-18: D19 v3 CDC capture retires the
+trigger path — wamn-vbl closed, R8c closed; this stays as the cost record.)
 
 ### Growth vs GC cadence (`c2-growth-c{0,60,600}.csv`)
 
@@ -221,8 +222,10 @@ d8v `--outbox-retention-hours` knob prices that separately):
 R8c's "write amplification, txn bloat, WAL" adjectives are now: +30 µs /
 +500 B per single-row write; ×5–6 duration and ×2.2 WAL on bulk statements;
 outbox growth bounded by `rate × cadence` under the shipped GC and unbounded
-without it. The mitigation R8c asked for (per-registration emission) is
-`wamn-vbl`, now with its price tag attached.
+without it. The mitigation R8c asked for (per-registration emission) was
+`wamn-vbl` — closed superseded 2026-07-18 along with R8c itself: D19 v3's CDC
+capture (`docs/event-plane-jetstream.md`) removes the amplification at the
+source, and these numbers stand as the retired path's price tag.
 
 ### Raw data
 
