@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/wamn-host", "crates/wamn-gates", "crates/wamn-gate-harness", "crates/wamn-flow", "crates/wamn-catalog", "crates/wamn-ddl", "crates/wamn-schema", "crates/wamn-rls", "crates/wamn-seed", "crates/wamn-api", "crates/wamn-runner", "crates/wamn-run-store", "crates/wamn-run-queue", "crates/wamn-node-sdk", "crates/wamn-nodes", "crates/wamn-node-guest", "crates/wamn-node-manifest", "crates/wamn-provision", "crates/wamn-registry", "crates/wamn-sysschema", "crates/wamn-migrate", "poc/f1", "poc/dm1"]
+members = ["crates/wamn-host", "crates/wamn-gates", "crates/wamn-gate-harness", "crates/wamn-flow", "crates/wamn-catalog", "crates/wamn-ddl", "crates/wamn-schema", "crates/wamn-rls", "crates/wamn-seed", "crates/wamn-api", "crates/wamn-runner", "crates/wamn-run-store", "crates/wamn-run-queue", "crates/wamn-node-sdk", "crates/wamn-nodes", "crates/wamn-node-guest", "crates/wamn-node-manifest", "crates/wamn-provision", "crates/wamn-registry", "crates/wamn-sysschema", "crates/wamn-migrate", "poc/f1", "poc/dm1", "poc/cdc1"]
 # Guest components are built separately for wasm32-wasip2 (see components/*).
 exclude = ["components"]
 

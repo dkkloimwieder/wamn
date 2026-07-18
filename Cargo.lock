@@ -2405,6 +2405,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "pg_walstream"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7ab7c4175ec27f84dab31b6dab80340ef84fa3de886d10f1b3fb708729bfc0d"
+dependencies = [
+ "aws-lc-rs",
+ "bytes",
+ "chrono",
+ "futures-core",
+ "memchr",
+ "postgres-protocol",
+ "rustls",
+ "serde",
+ "smallvec",
+ "socket2",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "tracing",
+ "webpki-roots 1.0.8",
+]
+
+[[package]]
 name = "phf"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4067,6 +4090,16 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "wamn-cdc1"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pg_walstream",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]

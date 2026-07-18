@@ -499,6 +499,34 @@ event), and the prune never touches a pending row (sentinel proof). Mutation
 harness: scratchpad `mutate_z7b2.py` (trigger-apply neutered / acker acks
 sentinels / bulk on-leg loses the trigger — each fails a named sanity assert).
 
+### [EVT-S-CDC-1 / wamn-l5i9.2] pg_walstream diligence spike (diligence, not a gate)
+
+Docs: docs/event-plane-jetstream.md §7; verdicts live in the wamn-l5i9.2 bead
+notes and feed wamn-l5i9.6 [BUILD-VS-BUY]. The harness is `poc/cdc1`
+(pg_walstream pinned `=0.8.0`; the vendor/fork + pin is wamn-l5i9.8).
+
+```bash
+cargo build -p wamn-cdc1 && cargo clippy -p wamn-cdc1 && cargo fmt -p wamn-cdc1 --check
+# Throwaway 2-instance CNPG cluster (torn down after the spike; NEVER reuse
+# wamn-pg or wamn-sysdb — switchover needs a standby):
+kubectl apply -f poc/cdc1/cdc1-cluster.yaml   # cluster cdc1 + NodePort 172.28.0.4:30497
+export CDC1_URL="postgresql://postgres:$(kubectl -n wamn-system get secret \
+  cdc1-superuser -o jsonpath='{.data.password}' | base64 -d)@172.28.0.4:30497/app"
+./target/debug/wamn-cdc1 setup        # tables + publication + failover slot (via SQL — see F1)
+./target/debug/wamn-cdc1 message      # (e) pg_logical_emit_message → EventType::Message
+./target/debug/wamn-cdc1 toast        # (c) unchanged-TOAST absent-vs-Null + FULL old image
+./target/debug/wamn-cdc1 stream --rows 1000000   # (d) streamed txn, VmRSS profile
+./target/debug/wamn-cdc1 soak --secs 1800        # (a) idle keepalive/feedback + canary
+./target/debug/wamn-cdc1 switchover --secs 90    # (b) then delete the primary pod mid-run
+./target/debug/wamn-cdc1 teardown && kubectl delete -f poc/cdc1/cdc1-cluster.yaml
+```
+
+FINDING F1: pg_walstream 0.8.0's `slot_options.failover = true` emits legacy
+space-separated `CREATE_REPLICATION_SLOT … FAILOVER`, which PG17+ rejects
+(FAILOVER exists only in the parenthesized option grammar) — the harness
+creates the slot via `pg_create_logical_replication_slot(…, failover => true)`
+instead and runs the stream with `failover = false`.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

@@ -1,0 +1,73 @@
+# Throwaway 2-instance CNPG cluster for the S-CDC-1 pg_walstream diligence
+# spike (wamn-l5i9.2, docs/event-plane-jetstream.md §7). NOT production infra:
+# stood up for the spike, torn down at the end. Two instances because the
+# switchover drill needs a standby (the guardrailed wamn-pg pool is 1/1 and
+# wamn-sysdb is the T1 control plane — neither may be touched).
+#
+# Logical failover-slot sync (PG17+, CNPG 1.29): synchronizeLogicalDecoding
+# plus the sync_replication_slots/hot_standby_feedback GUCs; the spike creates
+# its slot with failover => true. logical_decoding_work_mem is pinned LOW
+# (4MB) so the 1M-row transaction forces protocol-v2 streaming.
+# max_slot_wal_keep_size bounds the WAL a forgotten slot can pin (§11 sharp
+# edge).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cdc1
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/managed-by: wamn
+    app.kubernetes.io/component: cdc-spike
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  enableSuperuserAccess: true
+  primaryUpdateStrategy: unsupervised
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    # NO cpu limit — the DB path must not be CFS-throttled (S2 lesson).
+  storage:
+    size: 2Gi
+  replicationSlots:
+    highAvailability:
+      enabled: true
+      synchronizeLogicalDecoding: true
+  postgresql:
+    # Non-TLS password connections from the pod/host network (the harness
+    # connects NoTls). A logical-replication walsender names a database and
+    # matches ordinary `host` rules — no `replication` keyword row needed.
+    pg_hba:
+      - host all all all scram-sha-256
+    parameters:
+      hot_standby_feedback: "on"
+      sync_replication_slots: "on"
+      logical_decoding_work_mem: "4MB"
+      max_slot_wal_keep_size: "1GB"
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+---
+# NodePort to the cdc1 primary (kubectl port-forward on this kind cluster dies
+# on connection close — the 8df.5 lesson). Reach it at the kind node docker IP
+# 172.28.0.4:30497. The instanceRole selector follows a promotion, so the
+# switchover drill reconnects through the same address. Deleted at teardown.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cdc1-np
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/managed-by: wamn
+    app.kubernetes.io/component: cdc-spike
+spec:
+  type: NodePort
+  selector:
+    cnpg.io/cluster: cdc1
+    cnpg.io/instanceRole: primary
+  ports:
+    - port: 5432
+      targetPort: 5432
+      nodePort: 30497

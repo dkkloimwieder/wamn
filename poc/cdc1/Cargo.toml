@@ -1,0 +1,11 @@
+[package]
+name = "wamn-cdc1"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Pinned exactly for the spike; vendor/fork + pin is wamn-l5i9.8 (Phase 1).
+pg_walstream = "=0.8.0"
+tokio = { workspace = true }
+tokio-postgres = "0.7"
+anyhow = { workspace = true }
