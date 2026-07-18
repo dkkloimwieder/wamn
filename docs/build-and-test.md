@@ -585,6 +585,62 @@ grep -c '^name = "pg_walstream"$' Cargo.lock   # must be 1 (git-sourced)
 #      then `wamn-cdc1 message` passes as the streaming regression.
 ```
 
+### [EVT-NATS / wamn-l5i9.7] streambench data-plane JetStream gate
+
+Docs: docs/event-plane-jetstream.md §5/§7 Phase 1. Stands up the DEDICATED
+data-plane NATS (deploy/nats-jetstream.yaml — a 3-node JetStream cluster, R3
+file storage, Service `evt-nats`), SEPARATE from the operator/control-plane NATS
+(Service `nats`, doorbells) which stays untouched. The gate (`streambench`, a
+pure NATS client — no wasm, no Postgres) proves the four load-bearing claims:
+publish → the `EVT_<org>_<env>` stream (subjects
+`evt.<org>.<project>.<env>.<entity>.<op>`), `Nats-Msg-Id = <project_env>:<lsn>`
+dedupe, consume in commit order, and R3 survives node loss. Accounts: single
+shared (default) account — per-org accounts + replication creds are the
+wamn-4xw seam (§11).
+
+```bash
+cargo build -p wamn-gates   # streambench compiles into the suite
+# Local iteration — a throwaway 3-node cluster is R3 (single node = R1):
+docker network create evt-nats-local
+R=nats://evt-nats-local-0:6222,nats://evt-nats-local-1:6222,nats://evt-nats-local-2:6222
+for i in 0 1 2; do docker run -d --name evt-nats-local-$i --network evt-nats-local \
+  -p $((4232+i)):4222 nats:2.10-alpine -js -sd /data --name n$i \
+  --cluster nats://0.0.0.0:6222 --cluster_name evt-local --routes "$R"; done
+./target/debug/wamn-gates --log-level error streambench --mode all \
+  --nats-url nats://localhost:4232 --replicas 3 --messages 200
+# Physical node-loss heal (degraded 2/3): publish → destroy a node → heal
+./target/debug/wamn-gates --log-level error streambench --mode publish \
+  --nats-url nats://localhost:4232 --replicas 3 -n 200
+docker rm -f evt-nats-local-2
+./target/debug/wamn-gates --log-level error streambench --mode heal \
+  --nats-url nats://localhost:4232 --replicas 3 --expect-messages 200
+docker rm -f evt-nats-local-0 evt-nats-local-1 evt-nats-local-2; docker network rm evt-nats-local
+
+# Gate of record (in-cluster). Gates-only image (no wamn-host change → host stage
+# cached apart from the crates/ recompile):
+docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system apply -f deploy/nats-jetstream.yaml
+kubectl -n wamn-system rollout status statefulset/evt-nats --timeout=180s
+kubectl -n wamn-system apply -f deploy/streambench-job.yaml    # --mode all: publish/consume/dedupe/stepdown
+kubectl -n wamn-system wait --for=condition=complete job/streambench --timeout=180s
+kubectl -n wamn-system logs job/streambench
+# Physical R3 heal (the runbook is in deploy/streambench-job.yaml's header):
+#   streambench-pub pod → kubectl delete pod evt-nats-2 → streambench-heal pod
+```
+
+`--mode all` proves R3 durability without k8s (a RAFT leader step-down +
+re-election, all messages survive); the two-step `publish` → `kubectl delete pod`
+→ `heal` runbook proves survival of a physical node deletion. The heal drain
+uses an R1 in-memory consumer (transient bookkeeping — the durability guarantee
+is on the R3 stream), so it succeeds while a node is still down. Mutation
+harness: scratchpad `mutate_l5i9_7.py` — M1 drops the Nats-Msg-Id on re-publish
+(dedupe assert fails), M2 creates the stream R1 not R3 (`stream is R3` fails),
+M3 makes the LSN non-monotonic-but-unique via `i^1` (commit-order assert fails),
+M4 drops the id on the focused second publish (`second publish IS a duplicate`
+fails). The data-plane NATS is left STANDING as the Phase-1 substrate (the
+reader wamn-l5i9.10 + C-JS wamn-l5i9.15 consume it); reclaim with
+`kubectl -n wamn-system delete -f deploy/nats-jetstream.yaml`.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

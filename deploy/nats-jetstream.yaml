@@ -1,0 +1,196 @@
+# Event-plane DATA-PLANE NATS (D19 v3 §5/§7 Phase 1; wamn-l5i9.7 [EVT-NATS]).
+#
+# A DEDICATED 3-node JetStream cluster (R3 file storage) that carries the CDC
+# event streams (EVT_<org>_prod / EVT_<org>_dev, subjects
+# evt.<org>.<project>.<env>.<entity>.<op>). It is DELIBERATELY SEPARATE from the
+# operator/control-plane NATS (Deployment `nats`, Service `nats`) that carries
+# only the dispatcher doorbell (wamn.doorbell.<tenant>) and the wasmCloud
+# control plane — that cluster is untouched by this manifest, and the
+# NATS-optional posture of the doorbell/dispatcher path is unaffected.
+#
+#   kubectl -n wamn-system apply -f deploy/nats-jetstream.yaml
+#   kubectl -n wamn-system rollout status statefulset/evt-nats --timeout=180s
+#   kubectl -n wamn-system exec evt-nats-0 -- nats-server --help >/dev/null   # sanity
+#
+# ACCOUNTS (wamn-l5i9.7 fork Q2 = single shared account now): JetStream is
+# enabled on the default global account. Per-org NATS accounts + replication
+# credentials are MANDATORY eventually (§11 honeypot) but are a documented SEAM
+# co-designed in wamn-4xw — NOT provisioned here. The subject namespace already
+# reserves per-org isolation (evt.<org>...), so the account split is additive.
+#
+# The gate of record is deploy/streambench-job.yaml (publish/consume + Nats-Msg-Id
+# dedupe + R3 survives one node deletion).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evt-nats-config
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: event-plane-nats
+data:
+  nats.conf: |
+    # server_name is expanded from $POD_NAME by nats-server at load time so
+    # each replica advertises a stable, unique identity in the RAFT groups.
+    server_name: $POD_NAME
+    listen: 0.0.0.0:4222
+    http: 0.0.0.0:8222
+
+    jetstream {
+      store_dir: /data/jetstream
+      # Memory store is a spill lane only; the EVT_ streams are FILE storage
+      # (R3), the durable second domain (§11 on-call: raft, disk, lag).
+      max_memory_store: 256MB
+      max_file_store: 3GB
+    }
+
+    cluster {
+      name: evt-nats
+      listen: 0.0.0.0:6222
+      # Stable StatefulSet pod DNS via the headless service — this is what makes
+      # R3 replication + leader re-election survive a single pod loss.
+      routes = [
+        nats://evt-nats-0.evt-nats-headless.wamn-system.svc.cluster.local:6222
+        nats://evt-nats-1.evt-nats-headless.wamn-system.svc.cluster.local:6222
+        nats://evt-nats-2.evt-nats-headless.wamn-system.svc.cluster.local:6222
+      ]
+    }
+---
+# Headless service: stable per-pod DNS for the cluster routes above.
+apiVersion: v1
+kind: Service
+metadata:
+  name: evt-nats-headless
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: event-plane-nats
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: evt-nats
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+    - name: cluster
+      port: 6222
+      targetPort: 6222
+    - name: monitor
+      port: 8222
+      targetPort: 8222
+---
+# Client service: what publishers/consumers/the reader connect to.
+# nats://evt-nats.wamn-system.svc.cluster.local:4222
+apiVersion: v1
+kind: Service
+metadata:
+  name: evt-nats
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: event-plane-nats
+spec:
+  selector:
+    app.kubernetes.io/name: evt-nats
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+    - name: monitor
+      port: 8222
+      targetPort: 8222
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: evt-nats
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: event-plane-nats
+spec:
+  serviceName: evt-nats-headless
+  replicas: 3
+  # Parallel so all three come up together and form the RAFT meta group without
+  # serial ordinal gating (the standard NATS chart posture).
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: evt-nats
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: evt-nats
+        app.kubernetes.io/component: event-plane-nats
+    spec:
+      # Spread the three replicas across nodes so a node loss takes at most one.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: evt-nats
+                topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: nats
+          image: nats:2.10-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - nats-server
+            - --config
+            - /etc/nats-config/nats.conf
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: client
+              containerPort: 4222
+            - name: cluster
+              containerPort: 6222
+            - name: monitor
+              containerPort: 8222
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats-config
+            - name: data
+              mountPath: /data
+          # /healthz on the monitoring port reports overall + JetStream health.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 6
+          resources:
+            # No CPU limit on purpose (the S2 CFS lesson): a quota throttles the
+            # raft/replication loops and inflates tail latency with scheduler
+            # stalls rather than real work. Memory is capped.
+            requests: { cpu: "200m", memory: "256Mi" }
+            limits: { memory: "1Gi" }
+      volumes:
+        - name: config
+          configMap:
+            name: evt-nats-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

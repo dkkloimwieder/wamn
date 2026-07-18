@@ -98,7 +98,11 @@ mechanical row changes ride one pipeline, distinguished by subject.
 - **Streams:** `EVT_<org>_prod` / `EVT_<org>_dev` on a **dedicated data-plane
   NATS** (JetStream, R3 file; control-plane NATS untouched). `EVT_trials`
   shared, subject-isolated. Per-org accounts. Retention = replay horizon =
-  billable tier knob.
+  billable tier knob. *Cluster stood up 2026-07-18 (wamn-l5i9.7): 3-node
+  JetStream, R3 file storage (deploy/nats-jetstream.yaml, Service `evt-nats`,
+  distinct from the untouched control-plane NATS); the `streambench` gate proves
+  publish / consume-in-commit-order / `Nats-Msg-Id` dedupe / R3-survives-node-loss
+  on the single shared account — per-org accounts are the wamn-4xw seam.*
 - **Materializer:** durable consumer per subscribing flow (registration:
   entity id, ops, condition, partition-key expr). Condition evaluates **here**
   (hot-editable; filtered-out events remain in the stream, so condition edits
@@ -170,6 +174,9 @@ path; posture rows (reader exception, replication-credential tier).
 Provisioning (publication/slot/registry); reader MVP (one project-env → real
 `EVT_` stream); OID→entity mapping incl. rename drill; causation message in the
 plugin + reader stitching; claim-check path.
+*Data-plane NATS shipped (wamn-l5i9.7, 2026-07-18): deploy/nats-jetstream.yaml
+(3-node R3 JetStream), `streambench` in-cluster gate of record — the substrate
+the reader (l5i9.10) publishes onto and C-JS (l5i9.15) benches; left standing.*
 **Benches:** C-CDC (decode drain rate after bulk import; slot-lag knee vs
 sustained write rate; WAL delta under FULL identity per table class;
 switchover drill timed), C-JS (JetStream bare ceilings: publish/deliver/
