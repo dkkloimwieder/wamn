@@ -635,7 +635,15 @@ unchanged; `run-next` is the additive claim path.
   mode: `partitioned(key)` runs dispatched **in order per key** across concurrent
   replicas (per-key serialization + exactly-once) plus in-order partition failover.
   Runs co-located with Postgres, no CPU limit (the S2 CFS lesson), locally and
-  in-cluster.
+  in-cluster. The separate **ceiling** mode (wamn-z7b.1, EVT-C7 —
+  `docs/event-plane-jetstream.md` §10) is a measurement *campaign*, deliberately
+  **not** part of `--mode all`: open-loop producers + closed-loop claimers drive
+  the full lifecycle (write-ahead+enqueue → claim → complete) through a find-knee
+  ramp on the production combined-statement path and the split-builder path at
+  batch 1/8/32, a sustained soak at 80% of knee with a bloat probe, and a 10×
+  burst/recovery profile — curves + CSVs published to `docs/ceilings.md`, with
+  only the exactly-once/completeness sanity asserts acting as pass/fail
+  (`deploy/queuebench-ceiling-job.yaml`).
 - **`failoverbench`** — checkpoint/resume on replica loss, against a superuser-
   provisioned ephemeral schema that unions the flow tables with `run_queue`. The
   `failover` mode kills replica A mid-effect, lets its lease expire, reclaims the

@@ -41,11 +41,18 @@ wamn-registry = { path = "../wamn-registry" }
 # queuebench/failoverbench/dispatchbench drive the pure queue/cron/outbox
 # builders over tokio_postgres.
 wamn-run-queue = { path = "../wamn-run-queue" }
+# queuebench ceiling mode drives the pre-fqg.18 SPLIT lifecycle (claim → read →
+# mark-running → complete → dequeue) as the comparison curve for the combined
+# statements.
+wamn-run-store = { path = "../wamn-run-store" }
 wamn-flow = { path = "../wamn-flow" }
 # queuebench/dispatchbench doorbell hints (same version req as wash-runtime's
 # so cargo unifies to one crate instance).
 async-nats = { version = "0.47", default-features = false }
-tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+# with-serde_json-1: the ceiling mode binds result_json (jsonb) params on the
+# raw client — the production path sends text wire format via the plugin, but
+# tokio_postgres binary binds need the typed Value.
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures-util = "0.3"
 

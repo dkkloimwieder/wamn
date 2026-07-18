@@ -433,6 +433,38 @@ shape/DDL drift guards. The live-apply gate (Phase A/B) and the queuebench
 guest does not read the flow field until fqg.9, so the in-cluster gate is a
 gates-image rebuild only (guest unchanged for this slice).
 
+### [EVT-C7 / wamn-z7b.1] queuebench ceiling campaign (measurement, not a gate)
+
+Docs: docs/ceilings.md (the published curves) + docs/event-plane-jetstream.md §10/§11
+
+```bash
+# The pure ramp/knee controller (coarse-double → bisect; p99-doubling /
+# rate-divergence / drain-timeout saturation) lives in wamn-gate-harness:
+cargo test -p wamn-gate-harness
+# Local iteration (short knobs; correctness only — debug build, dev-host PG):
+docker run -d --rm --name wamn-ceil-pg -p 5443:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+docker exec wamn-ceil-pg psql -U postgres -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5443/postgres \
+  WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5443/postgres \
+  ./target/debug/wamn-gates --log-level error queuebench --mode ceiling \
+  --level-secs 5 --soak-secs 30 --burst-secs 10
+docker stop wamn-ceil-pg
+# Numbers of record (in-cluster, §10 knobs baked into the manifest; ~60–90 min):
+kubectl -n wamn-system apply -f deploy/queuebench-ceiling-job.yaml
+kubectl -n wamn-system logs -f job/queuebench-ceiling
+# Extract the `=== BEGIN CSV <name> ===` blocks from the job log into
+# docs/ceilings-data/ and cite them from docs/ceilings.md (§11 provenance).
+```
+
+The ceiling mode is deliberately NOT in `--mode all` (the regression gate of
+record stays deploy/queuebench-job.yaml). Only the exactly-once + completeness
+sanity asserts are pass/fail; the knees/curves are measurements. Phase 2
+(fillfactor × autovacuum matrix, 30-min soak, 1M-run bloat soak) = wamn-z7b.6.
+Mutation harness for the knee controller: scratchpad `mutate_z7b1.py`
+(saturation-arm + bisect-direction mutants each fail a named
+wamn-gate-harness unit test).
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

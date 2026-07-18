@@ -32,21 +32,29 @@
 //!                concurrent replicas (per-key serialization + in-order +
 //!                exactly-once), and a partition fails over in order when its owner
 //!                dies (the dedicated `partition_owner` lease).
-//!   all        — every mode in sequence.
+//!   ceiling    — the EVT-C7 measurement campaign (docs/event-plane-jetstream.md
+//!                §10): full-lifecycle transitions/sec knee (ramp + bisect), a
+//!                sustained soak at 80% of knee with a bloat probe, and a 10×
+//!                burst/recovery profile — curves + CSVs, not pass/fail numbers
+//!                (only the exactly-once/completeness sanity asserts gate). NOT
+//!                part of `--mode all` (it is a long campaign, not a regression
+//!                gate); run it explicitly via deploy/queuebench-ceiling-job.yaml.
+//!   all        — every regression mode in sequence (everything except ceiling).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
-use wamn_gate_harness::percentile;
+use wamn_gate_harness::{ceiling, percentile};
 use wamn_run_queue::{
-    acquire_partitions_sql, claim_batch_sql, claim_partition_head_sql, dequeue_sql, enqueue_sql,
-    janitor_sweep_sql, mark_running_sql, park_sql, write_ahead_run_sql,
+    acquire_partitions_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql,
+    complete_dequeue_sql, dequeue_sql, enqueue_sql, janitor_sweep_sql, mark_running_sql, park_sql,
+    write_ahead_run_sql,
 };
 
 const SCHEMA: &str = "wamn_queue_bench";
@@ -62,6 +70,7 @@ pub enum Mode {
     Janitor,
     Doorbell,
     Partition,
+    Ceiling,
     All,
 }
 
@@ -110,6 +119,32 @@ pub struct QueueBenchArgs {
     /// Hint→claim samples for the doorbell gate.
     #[arg(long, default_value_t = 300)]
     pub doorbell_iters: usize,
+
+    /// Ceiling mode: seconds of offered load per ramp level (60 for the record
+    /// run — the §10 methodology; small values for local iteration).
+    #[arg(long, default_value_t = 60)]
+    pub level_secs: u64,
+
+    /// Ceiling mode: the ramp's starting offered rate, lifecycles/sec.
+    #[arg(long, default_value_t = 250.0)]
+    pub base_rate: f64,
+
+    /// Ceiling mode: open-loop producer connections (write-ahead + enqueue).
+    #[arg(long, default_value_t = 8)]
+    pub producers: usize,
+
+    /// Ceiling mode: sustained-soak seconds at 80% of the measured knee.
+    #[arg(long, default_value_t = 300)]
+    pub soak_secs: u64,
+
+    /// Ceiling mode: burst seconds at 10× the soak baseline.
+    #[arg(long, default_value_t = 60)]
+    pub burst_secs: u64,
+
+    /// Ceiling mode: also write each CSV to this directory (stdout always
+    /// carries them between `=== BEGIN/END CSV <name> ===` markers).
+    #[arg(long)]
+    pub ceiling_out: Option<PathBuf>,
 }
 
 /// The ephemeral-schema clone: the 5.7 `runs` (the write-ahead target + the FK)
@@ -125,6 +160,7 @@ fn queue_ddl(schema: &str) -> String {
             status text NOT NULL DEFAULT 'running' \
               CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
             input_json jsonb, result_json jsonb, state_json jsonb, \
+            updated_at timestamptz NOT NULL DEFAULT now(), \
             PRIMARY KEY (tenant_id, run_id));\
          ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
@@ -160,7 +196,17 @@ fn queue_ddl(schema: &str) -> String {
          CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;\
+         CREATE TABLE {schema}.flows (\
+            tenant_id text NOT NULL, flow_id text NOT NULL, version int NOT NULL, \
+            active boolean NOT NULL DEFAULT false, graph_json jsonb, \
+            PRIMARY KEY (tenant_id, flow_id, version));\
+         ALTER TABLE {schema}.flows ENABLE ROW LEVEL SECURITY;\
+         ALTER TABLE {schema}.flows FORCE ROW LEVEL SECURITY;\
+         CREATE POLICY flows_tenant ON {schema}.flows \
+            USING (tenant_id = current_setting('app.tenant', true)) \
+            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.flows TO wamn_app;"
     )
 }
 
@@ -181,6 +227,16 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .batch_execute(&queue_ddl(SCHEMA))
             .await
             .context("apply queue DDL")?;
+        // The one active flow every seeded run references: claim_dispatch_sql's
+        // active-version probe joins it (reset() truncates only runs, so this
+        // survives every phase).
+        client
+            .batch_execute(&format!(
+                "INSERT INTO {SCHEMA}.flows (tenant_id, flow_id, version, active, graph_json) \
+                 VALUES ('{TENANT}', 'f', 1, true, '{{}}'::jsonb);"
+            ))
+            .await
+            .context("seed the active flow row")?;
         anyhow::Ok(())
     }
     .await;
@@ -312,6 +368,11 @@ pub async fn run(args: QueueBenchArgs) -> anyhow::Result<()> {
         }
         if run_all || args.mode == Mode::Partition {
             pass &= partition_phase(&app_url, &admin_url, &args).await?;
+        }
+        // Ceiling is a measurement CAMPAIGN, not a regression gate: it runs
+        // only when asked for explicitly, never under --mode all.
+        if args.mode == Mode::Ceiling {
+            pass &= ceiling_phase(&app_url, &admin_url, &args).await?;
         }
         anyhow::Ok(())
     }
@@ -1256,4 +1317,671 @@ async fn partition_failover(app_url: &str, admin_url: &str) -> anyhow::Result<bo
     );
     println!("PASS(partition failover in-order + exactly-once reclaim): {pass}");
     Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// ceiling (EVT-C7): full-lifecycle transitions/sec — measurement, not gates
+// (docs/event-plane-jetstream.md §10; curves + CSVs, only sanity asserts gate)
+// ---------------------------------------------------------------------------
+
+/// Which lifecycle shape the claimers drive.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum LifecyclePath {
+    /// The production run-worker path (fqg.18): `claim_dispatch` (claim +
+    /// mark-running + dispatch read, one statement) then `complete_dequeue`
+    /// (complete + dequeue, one statement). The number of record.
+    Combined,
+    /// The pre-fqg.18 split-builder path — `claim_batch(batch)` then per run
+    /// `select_run_dispatch` + `mark_running` + `update_run_completed` +
+    /// `dequeue` — the comparison curve, swept across batch-claim sizes.
+    Split { batch: usize },
+}
+
+impl LifecyclePath {
+    fn label(self) -> String {
+        match self {
+            LifecyclePath::Combined => "combined".to_string(),
+            LifecyclePath::Split { batch } => format!("split-b{batch}"),
+        }
+    }
+}
+
+/// Shared state between the open-loop producers and the claimers of one
+/// offered-load window.
+#[derive(Default)]
+struct CeilingShared {
+    /// run_id → enqueue start. Inserted just BEFORE the write-ahead txn so a
+    /// fast completion can never race past its entry; the sojourn therefore
+    /// includes the enqueue write itself (the full lifecycle).
+    enq_at: Mutex<HashMap<String, Instant>>,
+    /// (completion instant, enqueue→completion sojourn).
+    samples: Mutex<Vec<(Instant, Duration)>>,
+    /// Every completed run_id — the exactly-once witness. Shared (not
+    /// task-local) so an aborted drain cannot lose it.
+    completed: Mutex<Vec<String>>,
+    enqueued: AtomicU64,
+    /// false: keep polling for work; true: exit once the queue is empty.
+    drain: AtomicBool,
+}
+
+fn record_completion(shared: &CeilingShared, run_id: String) {
+    let start = shared.enq_at.lock().unwrap().remove(&run_id);
+    let now = Instant::now();
+    if let Some(s) = start {
+        shared.samples.lock().unwrap().push((now, now - s));
+    }
+    shared.completed.lock().unwrap().push(run_id);
+}
+
+/// On an empty claim: park briefly, or — in drain mode — exit once the queue
+/// is actually empty (a leased-but-uncompleted row is still work in flight).
+async fn drained_or_done(client: &Client, shared: &CeilingShared) -> anyhow::Result<bool> {
+    if shared.drain.load(Ordering::Relaxed) {
+        let left: i64 = client
+            .query_one("SELECT count(*) FROM run_queue", &[])
+            .await?
+            .get(0);
+        if left == 0 {
+            return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    } else {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    Ok(false)
+}
+
+/// Closed-loop claimers driving the chosen lifecycle path. Statements are
+/// prepared once per connection, matching the plugin's `prepare_cached` wire
+/// shape (the measurement is the mechanism, not Parse overhead).
+fn spawn_claimers(
+    set: &mut tokio::task::JoinSet<anyhow::Result<()>>,
+    app_url: &str,
+    path: LifecyclePath,
+    n: usize,
+    shared: &Arc<CeilingShared>,
+) {
+    for w in 0..n {
+        let app_url = app_url.to_string();
+        let shared = shared.clone();
+        let owner = format!("ceil-{w}");
+        set.spawn(async move {
+            let (client, _h) = connect_app(&app_url).await?;
+            let ttl: i64 = 60_000;
+            let result = serde_json::json!({"ok": true});
+            match path {
+                LifecyclePath::Combined => {
+                    let claim = client.prepare(&claim_dispatch_sql()).await?;
+                    let complete = client.prepare(&complete_dequeue_sql()).await?;
+                    loop {
+                        let rows = client.query(&claim, &[&owner, &ttl]).await?;
+                        let Some(row) = rows.first() else {
+                            if drained_or_done(&client, &shared).await? {
+                                break;
+                            }
+                            continue;
+                        };
+                        let run_id: String = row.get("run_id");
+                        client.execute(&complete, &[&run_id, &result]).await?;
+                        record_completion(&shared, run_id);
+                    }
+                }
+                LifecyclePath::Split { batch } => {
+                    let claim = client.prepare(&claim_batch_sql(batch)).await?;
+                    let read = client
+                        .prepare(&wamn_run_store::sql::select_run_dispatch_sql())
+                        .await?;
+                    let mark = client.prepare(&mark_running_sql()).await?;
+                    let complete = client
+                        .prepare(&wamn_run_store::sql::update_run_completed_sql())
+                        .await?;
+                    let deq = client.prepare(&dequeue_sql()).await?;
+                    loop {
+                        let rows = client.query(&claim, &[&owner, &ttl]).await?;
+                        if rows.is_empty() {
+                            if drained_or_done(&client, &shared).await? {
+                                break;
+                            }
+                            continue;
+                        }
+                        for row in &rows {
+                            let run_id: String = row.get("run_id");
+                            client.query(&read, &[&run_id]).await?;
+                            client.execute(&mark, &[&run_id]).await?;
+                            client.execute(&complete, &[&run_id, &result]).await?;
+                            client.execute(&deq, &[&run_id]).await?;
+                            record_completion(&shared, run_id);
+                        }
+                    }
+                }
+            }
+            anyhow::Ok(())
+        });
+    }
+}
+
+/// Open-loop producers: `producers_n` connections each pacing
+/// `offered / producers_n` lifecycles/sec of write-ahead + enqueue for `secs`.
+/// Catch-up pacing: a slow txn is followed by a burst back onto schedule, so
+/// `offered` is a schedule, not a closed loop (the achieved rate is reported
+/// separately and divergence is a saturation signal).
+async fn produce_window(
+    app_url: &str,
+    offered: f64,
+    secs: u64,
+    producers_n: usize,
+    shared: Arc<CeilingShared>,
+    tag: String,
+) -> anyhow::Result<()> {
+    let mut set = tokio::task::JoinSet::new();
+    for w in 0..producers_n {
+        let app_url = app_url.to_string();
+        let shared = shared.clone();
+        let tag = tag.clone();
+        let per_sec = offered / producers_n as f64;
+        set.spawn(async move {
+            let (mut client, _h) = connect_app(&app_url).await?;
+            let wa = client.prepare(&write_ahead_run_sql()).await?;
+            let enq = client.prepare(&enqueue_sql()).await?;
+            let window = Duration::from_secs(secs);
+            let start = Instant::now();
+            let mut sent = 0u64;
+            while start.elapsed() < window {
+                let due = (start.elapsed().as_secs_f64() * per_sec) as u64 + 1;
+                while sent < due && start.elapsed() < window {
+                    let run_id = format!("cl-{tag}-{w}-{sent}");
+                    shared
+                        .enq_at
+                        .lock()
+                        .unwrap()
+                        .insert(run_id.clone(), Instant::now());
+                    let tx = client.transaction().await?;
+                    tx.execute(&wa, &[&run_id, &"f", &1i32]).await?;
+                    tx.execute(&enq, &[&run_id, &Option::<&str>::None, &0i32, &0i64])
+                        .await?;
+                    tx.commit().await?;
+                    shared.enqueued.fetch_add(1, Ordering::Relaxed);
+                    sent += 1;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            anyhow::Ok(())
+        });
+    }
+    while let Some(r) = set.join_next().await {
+        r??;
+    }
+    Ok(())
+}
+
+/// Join the claimers within `budget`; a timeout aborts them (the level's
+/// backlog never drained — itself a saturation signal).
+async fn drain_claimers(
+    claimers: &mut tokio::task::JoinSet<anyhow::Result<()>>,
+    budget: Duration,
+) -> anyhow::Result<bool> {
+    match tokio::time::timeout(budget, async {
+        while let Some(r) = claimers.join_next().await {
+            r??;
+        }
+        anyhow::Ok(())
+    })
+    .await
+    {
+        Ok(r) => {
+            r?;
+            Ok(true)
+        }
+        Err(_) => {
+            claimers.abort_all();
+            while claimers.join_next().await.is_some() {}
+            Ok(false)
+        }
+    }
+}
+
+/// Exactly-once (always) + completeness (when the backlog drained) over the
+/// window — the sanity asserts that gate the campaign.
+fn ceiling_sanity(shared: &CeilingShared, drained: bool, context: &str) -> bool {
+    let completed = shared.completed.lock().unwrap();
+    let unique: HashSet<&str> = completed.iter().map(String::as_str).collect();
+    let exactly_once = unique.len() == completed.len();
+    let enqueued = shared.enqueued.load(Ordering::Relaxed);
+    let complete = !drained || completed.len() as u64 == enqueued;
+    if !exactly_once || !complete {
+        println!(
+            "  SANITY FAIL ({context}): enqueued={enqueued} completed={} unique={} drained={drained}",
+            completed.len(),
+            unique.len()
+        );
+    }
+    if !drained {
+        println!(
+            "  ({context}: drain timed out — completeness unchecked, level counted saturated)"
+        );
+    }
+    exactly_once && complete
+}
+
+/// One ramp level: `level_secs` of offered load, then a drain. Stats cover the
+/// offered window only (drain completions are excluded from the percentiles).
+async fn ceiling_level(
+    app_url: &str,
+    admin_url: &str,
+    path: LifecyclePath,
+    offered: f64,
+    args: &QueueBenchArgs,
+    tag: &str,
+) -> anyhow::Result<(ceiling::LevelStats, bool)> {
+    reset(admin_url).await?;
+    let shared = Arc::new(CeilingShared::default());
+    let mut claimers = tokio::task::JoinSet::new();
+    spawn_claimers(&mut claimers, app_url, path, args.concurrency, &shared);
+
+    let window_start = Instant::now();
+    produce_window(
+        app_url,
+        offered,
+        args.level_secs,
+        args.producers,
+        shared.clone(),
+        tag.to_string(),
+    )
+    .await?;
+    let window_end = Instant::now();
+    shared.drain.store(true, Ordering::Relaxed);
+    let drained =
+        drain_claimers(&mut claimers, Duration::from_secs(args.level_secs * 3 + 60)).await?;
+
+    let window = (window_end - window_start).as_secs_f64();
+    let mut window_sojourns: Vec<Duration> = {
+        let samples = shared.samples.lock().unwrap();
+        samples
+            .iter()
+            .filter(|(at, _)| *at <= window_end)
+            .map(|(_, d)| *d)
+            .collect()
+    };
+    window_sojourns.sort();
+    let wc = window_sojourns.len() as u64;
+    let stats = ceiling::LevelStats {
+        offered,
+        achieved_enqueue: shared.enqueued.load(Ordering::Relaxed) as f64 / window,
+        achieved_complete: wc as f64 / window,
+        p50_ms: percentile(&window_sojourns, 0.50).as_secs_f64() * 1e3,
+        p99_ms: percentile(&window_sojourns, 0.99).as_secs_f64() * 1e3,
+        p999_ms: percentile(&window_sojourns, 0.999).as_secs_f64() * 1e3,
+        window_completed: wc,
+        drained,
+    };
+    let sanity = ceiling_sanity(&shared, drained, tag);
+    Ok((stats, sanity))
+}
+
+/// Drive the find-knee ramp (coarse doubling, then bisect) for one path.
+async fn ceiling_ramp(
+    app_url: &str,
+    admin_url: &str,
+    path: LifecyclePath,
+    args: &QueueBenchArgs,
+) -> anyhow::Result<(ceiling::Ramp, bool)> {
+    println!(
+        "\n### ramp — {} path (saturation = p99 doubling / rate divergence / drain timeout)",
+        path.label()
+    );
+    // A discarded warmup level: the FIRST measured level is the p99-doubling
+    // baseline, so it must not carry cold-cache noise.
+    let warm_tag = format!("{}-warm", path.label());
+    let (_, warm_ok) =
+        ceiling_level(app_url, admin_url, path, args.base_rate, args, &warm_tag).await?;
+    let mut ramp = ceiling::Ramp::new(args.base_rate, 0.15, 16);
+    let mut sanity = warm_ok;
+    while let Some(offered) = ramp.next_offered() {
+        let tag = format!("{}-{offered:.0}", path.label());
+        let (stats, ok) = ceiling_level(app_url, admin_url, path, offered, args, &tag).await?;
+        println!(
+            "  offered {:>7.0}/s | enq {:>7.1}/s | done {:>7.1}/s | p50 {:>8.2}ms p99 {:>8.2}ms p999 {:>8.2}ms | drained={}{}",
+            stats.offered,
+            stats.achieved_enqueue,
+            stats.achieved_complete,
+            stats.p50_ms,
+            stats.p99_ms,
+            stats.p999_ms,
+            stats.drained,
+            if stats.achieved_enqueue < 0.95 * stats.offered {
+                " (producer-limited)"
+            } else {
+                ""
+            }
+        );
+        sanity &= ok;
+        ramp.record(stats);
+    }
+    match ramp.knee() {
+        Some(k) => println!(
+            "  knee({}) = {:.0}/s offered → {:.0}/s sustained transitions",
+            path.label(),
+            k.offered,
+            k.achieved_complete
+        ),
+        None => println!(
+            "  knee({}) — none: saturated at the base rate",
+            path.label()
+        ),
+    }
+    Ok((ramp, sanity))
+}
+
+/// One bloat/depth probe row: (t_secs, relation bytes, dead tuples, queue depth).
+type BloatRow = (u64, i64, i64, i64);
+
+/// Probe `run_queue` size / dead tuples / depth on the admin connection every
+/// `every_secs` (plus a final sample when stopped).
+fn spawn_bloat_sampler(
+    admin_url: String,
+    stop: Arc<AtomicBool>,
+    every_secs: u64,
+) -> tokio::task::JoinHandle<anyhow::Result<Vec<BloatRow>>> {
+    tokio::spawn(async move {
+        let (client, conn) = tokio_postgres::connect(&admin_url, NoTls).await?;
+        let _task = tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        let probe = format!(
+            "SELECT pg_relation_size('{SCHEMA}.run_queue'), \
+                    COALESCE((SELECT n_dead_tup FROM pg_stat_all_tables \
+                               WHERE schemaname = '{SCHEMA}' AND relname = 'run_queue'), 0)::bigint, \
+                    (SELECT count(*) FROM {SCHEMA}.run_queue)"
+        );
+        let start = Instant::now();
+        let mut rows = Vec::new();
+        loop {
+            let r = client.query_one(&probe, &[]).await?;
+            rows.push((
+                start.elapsed().as_secs(),
+                r.get::<_, i64>(0),
+                r.get::<_, i64>(1),
+                r.get::<_, i64>(2),
+            ));
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            for _ in 0..every_secs {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+        anyhow::Ok(rows)
+    })
+}
+
+/// The sustained soak at 80% of knee: per-30s completion windows + the bloat
+/// curve (relation size, dead tuples) over the run.
+async fn ceiling_soak(
+    app_url: &str,
+    admin_url: &str,
+    rate: f64,
+    args: &QueueBenchArgs,
+) -> anyhow::Result<bool> {
+    println!(
+        "\n### soak — {rate:.0}/s (80% of knee) for {}s, combined path, bloat probed",
+        args.soak_secs
+    );
+    reset(admin_url).await?;
+    let shared = Arc::new(CeilingShared::default());
+    let mut claimers = tokio::task::JoinSet::new();
+    spawn_claimers(
+        &mut claimers,
+        app_url,
+        LifecyclePath::Combined,
+        args.concurrency,
+        &shared,
+    );
+    let stop = Arc::new(AtomicBool::new(false));
+    let sampler = spawn_bloat_sampler(admin_url.to_string(), stop.clone(), 30);
+
+    let start = Instant::now();
+    produce_window(
+        app_url,
+        rate,
+        args.soak_secs,
+        args.producers,
+        shared.clone(),
+        "soak".to_string(),
+    )
+    .await?;
+    shared.drain.store(true, Ordering::Relaxed);
+    let drained =
+        drain_claimers(&mut claimers, Duration::from_secs(args.soak_secs / 2 + 120)).await?;
+    stop.store(true, Ordering::Relaxed);
+    let bloat = sampler.await??;
+
+    let n_windows = args.soak_secs.div_ceil(30) as usize;
+    let mut buckets: Vec<Vec<Duration>> = vec![Vec::new(); n_windows];
+    for (at, d) in shared.samples.lock().unwrap().iter() {
+        let t = (at.saturating_duration_since(start).as_secs() / 30) as usize;
+        if let Some(b) = buckets.get_mut(t) {
+            b.push(*d);
+        }
+    }
+    let mut windows_csv = String::from("t_end_secs,completed,rate_per_s,p99_ms\n");
+    for (i, mut b) in buckets.into_iter().enumerate() {
+        b.sort();
+        windows_csv.push_str(&format!(
+            "{},{},{:.1},{:.3}\n",
+            (i + 1) * 30,
+            b.len(),
+            b.len() as f64 / 30.0,
+            percentile(&b, 0.99).as_secs_f64() * 1e3
+        ));
+    }
+    emit_csv("ceiling-soak-windows", &windows_csv, &args.ceiling_out);
+    let mut bloat_csv = String::from("t_secs,rel_size_bytes,dead_tup,queue_depth\n");
+    for (t, rel, dead, depth) in &bloat {
+        bloat_csv.push_str(&format!("{t},{rel},{dead},{depth}\n"));
+    }
+    emit_csv("ceiling-soak-bloat", &bloat_csv, &args.ceiling_out);
+    if let (Some(first), Some(last)) = (bloat.first(), bloat.last()) {
+        println!(
+            "  run_queue {} → {} bytes, dead tuples {} → {}",
+            first.1, last.1, first.2, last.2
+        );
+    }
+    Ok(ceiling_sanity(&shared, drained, "soak"))
+}
+
+/// The burst profile: a steady baseline, a 10× spike for `burst_secs`, then
+/// recovery — peak backlog depth and time-to-recover measured.
+async fn ceiling_burst(
+    app_url: &str,
+    admin_url: &str,
+    base: f64,
+    args: &QueueBenchArgs,
+) -> anyhow::Result<bool> {
+    let burst_rate = base * 10.0;
+    println!(
+        "\n### burst — {base:.0}/s baseline, 10× ({burst_rate:.0}/s) for {}s, recovery measured",
+        args.burst_secs
+    );
+    reset(admin_url).await?;
+    let shared = Arc::new(CeilingShared::default());
+    let mut claimers = tokio::task::JoinSet::new();
+    spawn_claimers(
+        &mut claimers,
+        app_url,
+        LifecyclePath::Combined,
+        args.concurrency,
+        &shared,
+    );
+    let stop = Arc::new(AtomicBool::new(false));
+    let sampler = spawn_bloat_sampler(admin_url.to_string(), stop.clone(), 2);
+
+    let t0 = Instant::now();
+    produce_window(
+        app_url,
+        base,
+        30,
+        args.producers,
+        shared.clone(),
+        "burst-base".to_string(),
+    )
+    .await?;
+    let burst_start = t0.elapsed();
+    produce_window(
+        app_url,
+        burst_rate,
+        args.burst_secs,
+        args.producers,
+        shared.clone(),
+        "burst-spike".to_string(),
+    )
+    .await?;
+    let burst_end = t0.elapsed();
+    produce_window(
+        app_url,
+        base,
+        30,
+        args.producers,
+        shared.clone(),
+        "burst-recovery".to_string(),
+    )
+    .await?;
+    shared.drain.store(true, Ordering::Relaxed);
+    let drained = drain_claimers(
+        &mut claimers,
+        Duration::from_secs(args.burst_secs * 10 + 120),
+    )
+    .await?;
+    let drain_done = t0.elapsed();
+    stop.store(true, Ordering::Relaxed);
+    let depth_rows = sampler.await??;
+
+    let mut csv = String::from("t_secs,queue_depth\n");
+    for (t, _, _, depth) in &depth_rows {
+        csv.push_str(&format!("{t},{depth}\n"));
+    }
+    emit_csv("ceiling-burst-depth", &csv, &args.ceiling_out);
+
+    let baseline_depth = depth_rows
+        .iter()
+        .filter(|(t, ..)| *t < burst_start.as_secs())
+        .map(|r| r.3)
+        .max()
+        .unwrap_or(0);
+    let peak_depth = depth_rows.iter().map(|r| r.3).max().unwrap_or(0);
+    let threshold = (2 * baseline_depth).max(50);
+    let recovery_secs = depth_rows
+        .iter()
+        .find(|(t, _, _, d)| *t > burst_end.as_secs() && *d <= threshold)
+        .map(|(t, ..)| t.saturating_sub(burst_end.as_secs()));
+
+    let phase_p99 = |from: Duration, to: Duration| -> f64 {
+        let mut v: Vec<Duration> = shared
+            .samples
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(at, _)| {
+                let e = at.saturating_duration_since(t0);
+                e > from && e <= to
+            })
+            .map(|(_, d)| *d)
+            .collect();
+        v.sort();
+        percentile(&v, 0.99).as_secs_f64() * 1e3
+    };
+    println!(
+        "  base p99 {:.1}ms | spike p99 {:.1}ms | recovery p99 {:.1}ms | peak depth {peak_depth} | \
+         depth back under {threshold} {} after burst end | fully drained {:.0}s after burst end",
+        phase_p99(Duration::ZERO, burst_start),
+        phase_p99(burst_start, burst_end),
+        phase_p99(burst_end, drain_done),
+        recovery_secs
+            .map(|s| format!("{s}s"))
+            .unwrap_or_else(|| "NOT REACHED".to_string()),
+        (drain_done - burst_end).as_secs_f64(),
+    );
+    Ok(ceiling_sanity(&shared, drained, "burst"))
+}
+
+/// Print a CSV between grep-able markers (the job-log extraction path) and
+/// optionally write it to `--ceiling-out`.
+fn emit_csv(name: &str, csv: &str, out_dir: &Option<PathBuf>) {
+    println!("=== BEGIN CSV {name} ===");
+    print!("{csv}");
+    println!("=== END CSV {name} ===");
+    if let Some(dir) = out_dir
+        && let Err(e) = std::fs::create_dir_all(dir)
+            .and_then(|()| std::fs::write(dir.join(format!("{name}.csv")), csv))
+    {
+        println!("(could not write {name}.csv: {e})");
+    }
+}
+
+async fn ceiling_phase(
+    app_url: &str,
+    admin_url: &str,
+    args: &QueueBenchArgs,
+) -> anyhow::Result<bool> {
+    println!(
+        "\n## ceiling (EVT-C7) — full-lifecycle transitions/sec (measurement; only sanity asserts gate)\n\
+         level {}s, base {:.0}/s, {} producers, {} claimers",
+        args.level_secs, args.base_rate, args.producers, args.concurrency
+    );
+    let mut sanity = true;
+    // (label, (offered, sustained transitions/sec) at the knee level).
+    let mut knees: Vec<(String, Option<(f64, f64)>)> = Vec::new();
+
+    // The number of record: the production combined-statement path (fqg.18).
+    let (ramp, ok) = ceiling_ramp(app_url, admin_url, LifecyclePath::Combined, args).await?;
+    sanity &= ok;
+    emit_csv(
+        "ceiling-ramp-combined",
+        &ceiling::ramp_csv(ramp.levels()),
+        &args.ceiling_out,
+    );
+    let knee_combined = ramp.knee().map(|k| (k.offered, k.achieved_complete));
+    knees.push((
+        "combined (claim_dispatch + complete_dequeue)".to_string(),
+        knee_combined,
+    ));
+
+    // Comparison curves: the split-builder path across the batch-claim sizes.
+    for batch in [1usize, 8, 32] {
+        let (ramp, ok) =
+            ceiling_ramp(app_url, admin_url, LifecyclePath::Split { batch }, args).await?;
+        sanity &= ok;
+        emit_csv(
+            &format!("ceiling-ramp-split-b{batch}"),
+            &ceiling::ramp_csv(ramp.levels()),
+            &args.ceiling_out,
+        );
+        knees.push((
+            format!("split batch={batch}"),
+            ramp.knee().map(|k| (k.offered, k.achieved_complete)),
+        ));
+    }
+
+    // Soak + burst at 80% of the combined knee's SUSTAINED rate (the number of
+    // record's path).
+    if let Some((_, sustained)) = knee_combined {
+        sanity &= ceiling_soak(app_url, admin_url, 0.8 * sustained, args).await?;
+        sanity &= ceiling_burst(app_url, admin_url, 0.8 * sustained, args).await?;
+    } else {
+        println!("(combined path saturated at the base rate — soak/burst skipped)");
+    }
+
+    println!("\nknees (full lifecycle enqueue→complete, transitions/sec):");
+    for (label, knee) in &knees {
+        match knee {
+            Some((offered, sustained)) => {
+                println!("  {label}: {offered:.0}/s offered → {sustained:.0}/s sustained")
+            }
+            None => println!("  {label}: none — saturated at the base rate"),
+        }
+    }
+    println!("PASS(ceiling sanity — exactly-once + completeness at every level): {sanity}");
+    Ok(sanity)
 }

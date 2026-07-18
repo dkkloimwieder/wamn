@@ -8,6 +8,8 @@
 //! stepped clocks with a single consumer) stays in its bench module until a
 //! second consumer pulls it here.
 
+pub mod ceiling;
+
 use std::time::Duration;
 
 use serde_json::Value;

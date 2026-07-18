@@ -363,7 +363,7 @@ rig for the JetStream-specific rows only.
 |---|---|
 | Plugin ~2k qps, p99 <10 ms | **measured** (S2, p0-results) |
 | Dispatch p99s (write-ahead 1.11 ms, fast 361 µs) | **measured** (queuebench) |
-| Queue ~1–5k transitions/sec | **estimate** (D3 folklore) → C7 measures |
+| Queue ~1–5k transitions/sec | **measured** (C7, wamn-z7b.1 2026-07-18, `docs/ceilings.md`): 60 s knee ~2000–2500/s, overload drain ~4000/s, sustained untuned ~550–1400/s (stock autovacuum boom-busts above that — the phase-2 tuning matrix moves it) |
 | v1's "events table sufficient below 1–2k events/sec/org" | **fabricated extrapolation — retracted**; C1 measures the knee |
 | 256 KiB payload cap | **proposed knob** → C4a informs |
 | Dedupe window 10 min | **derived** (2× redelivery horizon) → C4c prices |

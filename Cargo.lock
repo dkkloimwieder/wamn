@@ -2501,6 +2501,8 @@ dependencies = [
  "chrono",
  "fallible-iterator",
  "postgres-protocol",
+ "serde_core",
+ "serde_json",
 ]
 
 [[package]]
@@ -4141,6 +4143,7 @@ dependencies = [
  "wamn-provision",
  "wamn-registry",
  "wamn-run-queue",
+ "wamn-run-store",
  "wamn-seed",
  "wash-runtime",
  "wasmtime-wasi",
