@@ -156,11 +156,13 @@ depth = **16** (owner override of the proposed ~8).
   (the §10 row stays "unverified locally"); the banked calibration plan is
   preserved in the bead's notes as the buy-fallback starting point.*
 **Benches (existing infra only):** C-QUEUE (retire the D3 folklore number) +
-C-WAL-0 (baseline WAL volume of representative app load, pre-CDC).
+C-WAL-0 (baseline WAL volume of representative app load, pre-CDC) — **both
+measured 2026-07-18** (`docs/ceilings.md`).
 *C-WAL-0 re-sequenced (owner decision 2026-07-18): it was not needed for the
 build-vs-buy signature and now gates Phase-1 capture instead — `wamn-l5i9.9`
 (publication/slot provisioning) depends on `wamn-l5i9.4`, keeping the baseline
-strictly pre-CDC.*
+strictly pre-CDC. Done `wamn-l5i9.4` (`docs/ceilings.md` § C-WAL-0): per-op
+WAL/op (narrow + wide/TOAST) + representative receiving-event bytes/s.*
 **Docs:** teardown list (§3) circulated so no new work lands on the outbox
 path; posture rows (reader exception, replication-credential tier).
 
@@ -224,6 +226,7 @@ events-table knee) runs **only if** the §9 retreat is ever invoked.
 |---|---|
 | Plugin ~2k qps p99<10ms; dispatch p99s | **measured** (p0/queuebench) |
 | Queue ~1–5k transitions/s | **measured** (C-QUEUE = wamn-z7b.1, 2026-07-18, `docs/ceilings.md`): untuned 60 s knee ~2000–2500 transitions/s, sustained ~550–1400/s under stock autovacuum; tuning matrix pending (wamn-z7b.6) |
+| Baseline app WAL (pre-CDC denominator) | **measured** (C-WAL-0 = wamn-l5i9.4, 2026-07-18, `docs/ceilings.md`): ~200–310 B/op narrow write; ~7 KB / ~14 KB wide-row insert/update (TOAST); ~1.3 KB per typical receiving event. The denominator every C-CDC (wamn-l5i9.14) WAL-delta divides by |
 | Sequin ~40–50k ops/s, 55ms | **vendor-published**, unverified locally |
 | pg_walstream perf/robustness | **unknown** → S-CDC-1 |
 | 256 KiB payload cap; 10-min dedupe window; consumer quota | **proposed knobs** → C-JS/C-CDC inform |

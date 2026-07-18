@@ -499,6 +499,45 @@ event), and the prune never touches a pending row (sentinel proof). Mutation
 harness: scratchpad `mutate_z7b2.py` (trigger-apply neutered / acker acks
 sentinels / bulk on-leg loses the trigger — each fails a named sanity assert).
 
+### [EVT-C-WAL-0 / wamn-l5i9.4] walbench pre-CDC WAL baseline (measurement, not a gate)
+
+Docs: docs/ceilings.md § C-WAL-0 (the published numbers) + docs/event-plane-jetstream.md
+§7/§8/§10. The *denominator* every later C-CDC WAL-delta claim (wamn-l5i9.14) divides
+by: representative-app WAL volume BEFORE any publication/slot exists (bd dep
+wamn-l5i9.9 → wamn-l5i9.4 keeps it strictly pre-CDC).
+
+```bash
+cargo test -p wamn-gates walbench   # rates parse / wide-blob entropy / poc-catalog floor compile
+# Local iteration (short knobs; correctness only — debug build, dev-host PG):
+docker run -d --rm --name wamn-cwal0-pg -p 5444:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+docker exec wamn-cwal0-pg psql -U postgres -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5444/postgres \
+  WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5444/postgres \
+  ./target/debug/wamn-gates --log-level error walbench --mode all \
+  --iters 100 --mixed-rates 20,50 --mixed-secs 8
+docker stop wamn-cwal0-pg
+# Numbers of record (in-cluster on the fixture pod, record knobs baked into the
+# manifest; ~few min; a SINGLE run is the record — byte counts + medians, no knee
+# to poison). Needs a gates-only image (docker build --target gates); no wamn-host
+# change so the host stage is cached apart from the crates/ recompile:
+docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system apply -f deploy/walbench-job.yaml
+kubectl -n wamn-system logs -f job/walbench
+# Extract the `=== BEGIN CSV <name> ===` blocks (cwal0-perop / cwal0-mixed) into
+# docs/ceilings-data/ and cite them from docs/ceilings.md (§ C-WAL-0 provenance).
+```
+
+The pre-CDC claim is made checkable, not assumed: `precheck` asserts the measured DB
+has no publication and no replication slot and every table carries the DEFAULT replica
+identity (`d`) before any measurement runs. `pg_current_wal_insert_lsn` (WAL generated),
+not the flushed position — exact even under the fixture pod's `fsync=off`/
+`synchronous_commit=off`. Only the sanity asserts gate: pre-CDC, per-op WAL > 24 B (the
+instrument self-check), exact op counts, and the wide leg genuinely TOASTed. Mutation
+harness: scratchpad `mutate_cwal0.py` (M1 instrument swap `pg_current_wal_insert_lsn` →
+`pg_current_wal_lsn` fails every `> 24 B/op` assert on an `fsync=off` PG — the fixture-pod
+kill; M2 op-batch runs `n/2` fails the exact-op-count assert).
+
 ### [EVT-S-CDC-1 / wamn-l5i9.2] pg_walstream diligence spike (diligence, not a gate)
 
 Docs: docs/event-plane-jetstream.md §7; verdicts live in the wamn-l5i9.2 bead

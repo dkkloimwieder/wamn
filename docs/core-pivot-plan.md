@@ -100,15 +100,16 @@ modes). **No new work lands on the outbox path**; deletion executes at
   (S-CDC-1, `l5i9.2`)~~ (done 2026-07-18, all five checks pass — `5c3cdf6`),
   ~~Sequin calibration (S-CDC-2, `l5i9.3`)~~ (skipped 2026-07-18, owner decision —
   build-vs-buy rests on S-CDC-1 results + vendor-published numbers; banked plan
-  preserved in the bead's notes), C-WAL-0 baseline (`l5i9.4` — re-sequenced
-  2026-07-18 to gate Phase-1 capture: `l5i9.9` depends on it, keeping the
-  baseline pre-CDC), ~~the docs pass (`l5i9.5`)~~ (done — `ff147f1`),
+  preserved in the bead's notes), ~~C-WAL-0 baseline (`l5i9.4`)~~ (done
+  2026-07-18, `docs/ceilings.md` § C-WAL-0 — still gates Phase-1: `l5i9.9`
+  depends on it), ~~the docs pass (`l5i9.5`)~~ (done — `ff147f1`),
   ~~build-vs-buy (`wamn-l5i9.6`, owner)~~ (**signed 2026-07-18: build** —
   vendored/pinned pg_walstream; Sequin stays the documented fallback).
   **Phase 0 is complete** — the suspension lifts: the ladder and other tracks
   resume, and epic Phase 1 is unblocked (~~`l5i9.8` vendor/fork~~ done
   2026-07-18 — fork branch `wamn/0.8.0` pinned, ledger
-  `docs/pg-walstream-fork.md`; `l5i9.7` ready; `l5i9.9` behind `l5i9.4`).
+  `docs/pg-walstream-fork.md`; `l5i9.7` ready; `l5i9.9` now ready
+  (`l5i9.4` done 2026-07-18)).
   Next pick is the owner's.
 - Measurement already banked (pre-decision, still load-bearing): ~~C7/C-QUEUE~~
   (`wamn-z7b.1`, `docs/ceilings.md` — untuned knee ~2000–2500 transitions/sec) +

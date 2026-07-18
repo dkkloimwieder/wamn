@@ -1,0 +1,3 @@
+rate_target,events,seconds,our_wal_bytes,wal_per_event_mean,wal_per_event_p50,wal_bytes_per_sec,events_per_sec
+20,1200,60.0,2113072,1761,1280,35217,20.0
+50,3000,60.0,4742472,1581,1280,79039,50.0

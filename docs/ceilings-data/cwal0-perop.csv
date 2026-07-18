@@ -1,0 +1,7 @@
+shape,op,n,p50_ms,p99_ms,wal_bytes_per_op
+narrow,insert,1000,0.053,0.100,253
+narrow,update,1000,0.055,0.100,311
+narrow,delete,1000,0.059,0.139,205
+wide,insert,1000,0.118,0.239,6969
+wide,update,1000,0.105,0.225,13675
+wide,delete,1000,0.058,0.119,6808

@@ -30,6 +30,7 @@ mod runnerbench;
 mod testhostbench;
 mod tracebench;
 mod traceproof;
+mod walbench;
 
 use std::str::FromStr as _;
 
@@ -66,6 +67,8 @@ enum Command {
     Dispatchbench(dispatchbench::DispatchBenchArgs),
     /// Run the EVT-C2 outbox-trigger overhead campaign (single-row / bulk amplification / growth-vs-GC)
     Outboxbench(outboxbench::OutboxBenchArgs),
+    /// Run the EVT-C-WAL-0 pre-CDC WAL-volume baseline (per-op WAL/op + representative-load bytes/s)
+    Walbench(walbench::WalBenchArgs),
     /// Run the 5.9 credential-vault proof (delivery to serve-echo + no-leak containment)
     Credprobe(credprobe::CredProbeArgs),
     Credproof(credproof::CredProofArgs),
@@ -126,6 +129,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Runnerbench(args) => runnerbench::run(args).await,
         Command::Dispatchbench(args) => dispatchbench::run(args).await,
         Command::Outboxbench(args) => outboxbench::run(args).await,
+        Command::Walbench(args) => walbench::run(args).await,
         Command::Credprobe(args) => credprobe::run(args).await,
         Command::Credproof(args) => credproof::run(args).await,
         Command::Nodebench(args) => nodebench::run(args).await,

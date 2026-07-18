@@ -243,3 +243,92 @@ after-image; one modest row shape measured here) — filed as a phase-2
 measurement bead. Statement-level triggers with transition tables (the R8c
 escape hatch if per-row invocation cost ever dominates) remain a deliberate
 payload-shape decision, not a default.
+
+## C-WAL-0 — pre-CDC WAL-volume baseline (wamn-l5i9.4)
+
+**Date:** 2026-07-18 · **Git rev:** the `wamn-l5i9.4` commit (parent `a341d28`;
+the campaign binary was built from this tree) · **Bench:** `wamn-gates walbench
+--mode all` (`deploy/walbench-job.yaml`).
+
+**What is measured:** the *denominator* every later C-CDC WAL-delta claim
+(`wamn-l5i9.14`) divides by — the WAL an application's writes generate BEFORE any
+publication, replication slot, or non-default replica identity exists. Not the
+outbox path (C2, retired): the plain 3.2 tenant floor for the poc-receiving
+catalog (the real POC app model), written by `wamn_app` under the RLS floor. Two
+legs: per-op WAL bytes across two row shapes (narrow `suppliers`, wide/TOASTy
+`users`) × insert/update/delete, and a representative receiving-event write mix
+(one transaction per event: a receipt + 3 receipt_lines, plus a quality_hold +
+disposition on every 4th) → WAL bytes/event and bytes/s. WAL measured as
+`pg_current_wal_insert_lsn()` deltas (WAL *generated*, exact under async commit —
+the C2 lesson). The per-op batches bracket 1000 ops after a fresh CHECKPOINT, so
+the first-touch full-page-image share amortizes consistently (the C2 discipline —
+and the narrow INSERT lands at 253 B, matching C2's baseline INSERT exactly, an
+independent cross-check of the instrument). The mixed leg brackets WAL **per
+event**, not over the window: the insert LSN is instance-global, and a
+window-long bracket on the *shared* fixture pod folds in other tenants' WAL (an
+early run showed one 60 s window at ~5× another); a per-event bracket is a sub-ms
+window whose sum excludes the idle gaps.
+
+**Pre-CDC, made checkable:** the run asserts the measured DB has **0
+publications, 0 replication slots, and every one of its 8 tables at DEFAULT
+replica identity** before any measurement runs — so "pre-CDC denominator" is a
+verified property, not an assumption. `wal_level = replica`.
+
+**Environment:** the p0 reference class (same rig, pod, and co-location as C7/C2
+above — `deploy/postgres.yaml`, `fsync=off` + `synchronous_commit=off`, PG 18.4).
+WAL byte counts are deterministic and unaffected by `fsync=off` (`wamn-dzhw`:
+"WAL byte counts + growth curves unaffected either way" — confirmed here
+byte-for-byte against an `fsync=off` throwaway PG); the p50s exclude per-commit
+fsync (sub-0.1 ms). **Single-run record** (the C2 practice): no knee search a
+one-sided stall can poison — the headline numbers are byte counts and medians.
+
+### Per-op WAL (`cwal0-perop.csv`)
+
+| shape | op | WAL/op | p50 |
+|---|---|---|---|
+| narrow (`suppliers`) | INSERT | 253 B | 0.053 ms |
+| narrow | UPDATE | 311 B | 0.055 ms |
+| narrow | DELETE | 205 B | 0.059 ms |
+| wide/TOASTy (`users`, 6 KiB) | INSERT | 6969 B | 0.118 ms |
+| wide | UPDATE | 13675 B | 0.105 ms |
+| wide | DELETE | 6808 B | 0.058 ms |
+
+A small business row costs **~200–310 B of WAL per single-row write**. A wide row
+whose 6 KiB column TOASTs out-of-line (the wide leg genuinely TOASTed — 8.19 MB
+of TOAST relation for 1000 rows) costs **~7 KB on INSERT and ~14 KB on UPDATE**:
+the UPDATE writes a fresh out-of-line value while the old is retained for vacuum,
+roughly doubling the INSERT. This width span is exactly why C-CDC splits narrow
+vs wide — REPLICA IDENTITY FULL logs the *old row image* on UPDATE/DELETE, and
+that added WAL scales with row width, so these are the two ends of the
+denominator.
+
+### Representative receiving-event load (`cwal0-mixed.csv`)
+
+| offered rate | events | WAL/event p50 | WAL/event mean | WAL/s |
+|---|---|---|---|---|
+| 20/s | 1200 | 1280 B | 1761 B | 35 KB/s |
+| 50/s | 3000 | 1280 B | 1581 B | 79 KB/s |
+
+A **typical receiving event** (a receipt + 3 lines, one transaction) generates
+**~1.3 KB of WAL** — the identical p50 at both rates. The mean lifts to
+~1.6–1.8 KB because one event in four also opens a quality hold and records a
+disposition. The app-load WAL rate scales ~linearly with the event rate
+(~1.3–1.8 KB × events/s); this is the "representative app load" bytes/s baseline
+the per-org capacity model (§8) sizes retention and disk growth against.
+
+### The denominator
+
+Every C-CDC WAL-delta figure (`wamn-l5i9.14`: "WAL delta under FULL identity per
+table class") divides by these pre-CDC numbers. Recording them *before* the
+publication/slot lands (the `wamn-l5i9.9` → `wamn-l5i9.4` bd dependency keeps that
+ordering) is what makes the delta attributable to CDC and nothing else. The one
+methodology note that carries forward: the insert LSN is instance-global, so on a
+shared pod per-op / per-event brackets stay clean while a window-long bracket does
+not — C-CDC's window measurements will want the same per-event discipline (or a
+dedicated cluster).
+
+### Raw data
+
+- `docs/ceilings-data/cwal0-perop.csv`, `cwal0-mixed.csv` (extracted from the job
+  log's `=== BEGIN CSV … ===` blocks).
+- Reproduce: `docs/build-and-test.md` § [EVT-C-WAL-0 / wamn-l5i9.4].
