@@ -36,6 +36,10 @@
 //!              sweep or starve its own head), the quiet project's triggers
 //!              fire in its own first sweep, and the adaptive intervals
 //!              tighten/decay per project independently (no herd).
+//!   prune    — the maintenance step's outbox GC (wamn-d8v): acked rows past
+//!              the retention window are pruned in batch-bounded DELETEs; a
+//!              saturated batch keeps draining every sweep, a completed drain
+//!              waits out the maintenance interval; recent-acked rows survive.
 //!   wake     — a parked run (future available_at) is doorbell-hinted only once
 //!              due; a firing's hint carries the WON run id and arrives only
 //!              after its transaction committed (needs NATS; skipped under
@@ -72,6 +76,7 @@ pub enum Mode {
     Outbox,
     Race,
     Fairness,
+    Prune,
     Wake,
     Live,
     All,
@@ -331,6 +336,9 @@ pub async fn run(args: DispatchBenchArgs) -> anyhow::Result<()> {
         }
         if run_all || args.mode == Mode::Fairness {
             pass &= fairness_phase(&app_url, &admin_url).await?;
+        }
+        if run_all || args.mode == Mode::Prune {
+            pass &= prune_phase(&app_url, &admin_url).await?;
         }
         if run_all || args.mode == Mode::Wake {
             pass &= wake_phase(&app_url, &admin_url, &args, args.mode == Mode::Wake).await?;
@@ -1017,6 +1025,102 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
 }
 
 // ---------------------------------------------------------------------------
+// prune: outbox GC — batch-bounded drain every sweep while saturated, then the
+// low maintenance cadence; retention decided by dispatched_at, DB-side
+// ---------------------------------------------------------------------------
+
+async fn prune_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
+    const BATCH: usize = 4;
+    println!("\n## prune — outbox GC: batch-bounded drain + maintenance cadence (batch {BATCH})");
+    reset(admin_url, SCHEMA_A).await?;
+
+    // 9 acked rows past the 7-day default retention + 1 recently acked. (No
+    // pending row here: the sweep's own outbox path acks an unmatched pending
+    // row, so pending-survival is the crate live-apply gate's proof.)
+    admin_exec(
+        admin_url,
+        &format!(
+            "INSERT INTO {SCHEMA_A}.outbox (tenant_id, table_name, event, payload, dispatched_at) \
+             SELECT '{TENANT_A}', 'receipts', 'insert', NULL, now() - interval '8 days' \
+               FROM generate_series(1, 9); \
+             INSERT INTO {SCHEMA_A}.outbox (tenant_id, table_name, event, payload, dispatched_at) \
+             VALUES ('{TENANT_A}', 'receipts', 'insert', NULL, now() - interval '1 hour');"
+        ),
+    )
+    .await?;
+
+    let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
+    let mut d = Dispatcher::connect(
+        &specs,
+        None,
+        DispatcherConfig {
+            batch: BATCH,
+            ..DispatcherConfig::default()
+        },
+    )
+    .await?;
+
+    // Startup sweep (maintenance stamp 0 → due): one bounded batch. Saturated
+    // batches leave the stamp, so the next sweeps keep draining at the sweep
+    // cadence until the prune comes back short.
+    let r1 = d.tick_project(0, BASE_MS).await?;
+    let r2 = d.tick_project(0, BASE_MS + 250).await?;
+    let r3 = d.tick_project(0, BASE_MS + 500).await?;
+    let drain_ok = r1.outbox_pruned == BATCH as u64
+        && r1.outbox_prune_backlog
+        && r2.outbox_pruned == BATCH as u64
+        && r2.outbox_prune_backlog
+        && r3.outbox_pruned == 1
+        && !r3.outbox_prune_backlog;
+    // A saturated prune counts as work (keeps the cadence tight while
+    // draining); a completed prune is bookkeeping, not work.
+    let work_ok = r1.found_work() && r2.found_work() && !r3.found_work();
+
+    // The stamp now gates: fresh prunable rows must WAIT for the maintenance
+    // interval, not get swept 1 min later — then get swept once it elapses.
+    admin_exec(
+        admin_url,
+        &format!(
+            "INSERT INTO {SCHEMA_A}.outbox (tenant_id, table_name, event, payload, dispatched_at) \
+             SELECT '{TENANT_A}', 'receipts', 'insert', NULL, now() - interval '8 days' \
+               FROM generate_series(1, 2);"
+        ),
+    )
+    .await?;
+    let r4 = d.tick_project(0, BASE_MS + 60_500).await?;
+    let r5 = d.tick_project(0, BASE_MS + 601_000).await?;
+    let cadence_ok = r4.outbox_pruned == 0 && r5.outbox_pruned == 2 && !r5.outbox_prune_backlog;
+
+    let (probe, _hp) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
+    let old_left = scalar_i64(
+        &probe,
+        "SELECT count(*) FROM outbox WHERE dispatched_at < now() - interval '7 days'",
+    )
+    .await?;
+    let recent = scalar_i64(
+        &probe,
+        "SELECT count(*) FROM outbox WHERE dispatched_at >= now() - interval '7 days'",
+    )
+    .await?;
+    let state_ok = old_left == 0 && recent == 1;
+
+    let pass = drain_ok && work_ok && cadence_ok && state_ok;
+    println!(
+        "drain=[{},{},{}] backlog=[{},{},{}] work_ok={work_ok} | gated={} then={} | old_left={old_left} recent={recent}",
+        r1.outbox_pruned,
+        r2.outbox_pruned,
+        r3.outbox_pruned,
+        r1.outbox_prune_backlog,
+        r2.outbox_prune_backlog,
+        r3.outbox_prune_backlog,
+        r4.outbox_pruned,
+        r5.outbox_pruned,
+    );
+    println!("PASS(prune: batch-bounded drain, maintenance cadence, retention-scoped): {pass}");
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
 // wake: a parked run is doorbell-hinted only once due
 // ---------------------------------------------------------------------------
 
@@ -1185,6 +1289,7 @@ async fn live_phase(
             min_interval_ms: 50,
             max_interval_ms: 1_000,
             batch: 64,
+            ..DispatcherConfig::default()
         },
     )
     .await?;
@@ -1278,6 +1383,7 @@ async fn live_phase(
             min_interval_ms: 5_000,
             max_interval_ms: 5_000,
             batch: 64,
+            ..DispatcherConfig::default()
         },
     )
     .await?;

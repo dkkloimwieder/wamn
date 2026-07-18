@@ -129,8 +129,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.partition_owner TO wamn_app;
 -- oldest-first order; it is NOT a cross-replica dispatch-order guarantee
 -- (SKIP LOCKED batches commit independently and outbox runs enqueue
 -- unpartitioned — per-key ordering is the 5.11 `partition_key` seam). Acked
--- rows are audit history (retention/pruning is an operational concern, not
--- dispatch logic).
+-- rows are short-lived audit history: the dispatcher's maintenance step prunes
+-- them past a retention window (`outbox_prune_sql`, batch-bounded DELETE;
+-- default 7 days — generous enough for forensics) so the outbox stays bounded.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.outbox (
     tenant_id     text NOT NULL CHECK (tenant_id <> ''),

@@ -383,6 +383,27 @@ pub fn outbox_ack_sql() -> String {
         .to_string()
 }
 
+/// Prune acked outbox rows past their retention window — the GC that keeps the
+/// outbox bounded ([`outbox_ack_sql`] only stamps `dispatched_at`; nothing else
+/// ever deletes, so without this every project's outbox grows without bound).
+/// Batch-bounded via the `ctid` subquery (`limit` is a numeric literal, the
+/// [`claim_batch_sql`] convention): one execution deletes at most `limit` rows,
+/// so a long-lived install's first prune never runs an unbounded DELETE inside
+/// a dispatcher sweep — a backlog drains one batch per sweep. Params: `$1`
+/// retention in milliseconds (rows acked longer ago than this are pruned).
+/// Scoped to the OUTBOX only: a pruner that also swept `runs` would break cron
+/// anchor recovery ([`cron_last_run_sql`] reads old cron run ids).
+pub fn outbox_prune_sql(limit: usize) -> String {
+    format!(
+        "DELETE FROM outbox \
+          WHERE ctid IN (SELECT o.ctid FROM outbox AS o \
+             WHERE o.tenant_id = current_setting('app.tenant', true) \
+               AND o.dispatched_at IS NOT NULL \
+               AND o.dispatched_at < now() - ($1::bigint * interval '1 millisecond') \
+             LIMIT {limit})"
+    )
+}
+
 /// The PRODUCER's outbox insert — runs in the producer's own transaction (D4:
 /// "outbox insert and enqueue can share a transaction with user writes"), so an
 /// event is durable iff the write it announces is. In production the 3.2-emitted

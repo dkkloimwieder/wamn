@@ -470,7 +470,23 @@ One sweep of one project:
    doorbell. Duplicate hints are harmless by design (the claim is the arbiter),
    which is what lets one scan double as the lost-hint reconciliation backstop
    of lifecycle step 5.
-5. **Cadence.** Per-project adaptive interval (`next_interval`): work tightens
+5. **Maintenance — outbox GC (wamn-d8v).** Acked outbox rows are short-lived
+   audit history, not an archive: `outbox_ack_sql` only stamps `dispatched_at`,
+   so without GC every project's outbox grows without bound. The maintenance
+   step prunes rows acked longer ago than the retention window
+   (`outbox_prune_sql`; `--outbox-retention-hours`, default 7 days — generous
+   enough for forensics) on a low cadence (every 10 min per project), each
+   execution a **batch-bounded** DELETE (`ctid` subquery, the sweep `--batch`
+   bound) so a long-lived install's first prune never runs unbounded work
+   inside a sweep. A **saturated** batch means backlog remains: it counts as
+   work (the cadence stays tight) and bypasses the maintenance stamp, so the
+   drain continues every sweep until the prune comes back short. The pruner is
+   scoped to the **outbox only** — a pruner that also swept `runs` would break
+   cron anchor recovery (`cron_last_run_sql` reads old cron run ids). Pending
+   rows are never pruned, whatever their age; wiring the run-queue janitor
+   (`janitor_sweep_sql`, which today has no production caller) into this same
+   maintenance seam is wamn-71t.
+6. **Cadence.** Per-project adaptive interval (`next_interval`): work tightens
    it to `min` (default 250 ms), idleness decays it exponentially to `max`
    (default 30 s — the reconciliation band's floor). The loop sleeps until the
    earliest next sweep OR the earliest upcoming cron fire across projects, so an
@@ -599,8 +615,11 @@ unchanged; `run-next` is the additive claim path.
   no half-state; the redelivery dedupes on the deterministic id), cron
   last-tick recovery (flow-exclusive `max(run_id)` — cross-flow poison ids,
   including a nested `{flow}:cron:` prefix in a *neighboring* flow id, never
-  leak into the anchor), and the wake scan
-  (due-unleased surfaced; future/leased not).
+  leak into the anchor), the wake scan
+  (due-unleased surfaced; future/leased not), and the **outbox GC**
+  (`outbox_prune_sql`): acked rows past the 7-day retention pruned in exact
+  batch-bounded steps, while recently-acked, pending (whatever their age), and
+  other-tenant rows all survive.
 - **`queuebench`** — the gate of record (pure host-side `tokio_postgres` claimers
   against a superuser-provisioned ephemeral schema): the D15 dispatch SLOs
   (write-ahead p99 < 15 ms, fast-path p99 < 10 ms), SKIP LOCKED **exactly-once +
@@ -664,6 +683,13 @@ unchanged; `run-next` is the additive claim path.
   replicas must win work), no leader. `fairness`: a 120-row backlog in project
   A is batch-bounded per sweep **oldest-first** and does not starve project B's
   first sweep; the adaptive intervals tighten/decay per project independently.
+  `prune`: the maintenance step's outbox GC — old-acked rows drain in
+  batch-bounded DELETEs (a saturated batch continues every sweep, counted as
+  work; a completed drain waits out the maintenance interval — fresh prunable
+  rows seeded 1 min after a drain are NOT swept, then are once the interval
+  elapses) while recently-acked rows survive; retention-predicate correctness
+  (recent/pending/other-tenant survival, exact batch bound) is the crate
+  live-apply gate's proof through the real `outbox_prune_sql` builder.
   `wake`: a parked run is doorbell-hinted only once due; a firing's hint
   carries the won run id and arrives only after its transaction committed.
   `live`: the real `dispatch` run loop fires an outbox insert sub-500ms

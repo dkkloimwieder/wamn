@@ -67,7 +67,7 @@ use wamn_flow::{Flow, Trigger};
 use wamn_run_queue::{
     Firing, OutboxRow, RowEventFlow, active_flows_sql, cron_firing, cron_last_run_sql,
     cron_tick_of, due_tick, enqueue_sql, match_outbox, next_fire, next_interval, next_reconcile,
-    outbox_ack_sql, outbox_poll_sql, parked_due_sql, plan_ack, reconcile_due,
+    outbox_ack_sql, outbox_poll_sql, outbox_prune_sql, parked_due_sql, plan_ack, reconcile_due,
     write_ahead_triggered_run_sql,
 };
 
@@ -119,6 +119,11 @@ pub struct DispatchArgs {
     /// fairness bound: one project's backlog cannot monopolize a sweep).
     #[arg(long, default_value_t = 64)]
     pub batch: usize,
+
+    /// Retention for acked outbox rows, in hours (default 7 days). The
+    /// maintenance step prunes rows acked longer ago than this.
+    #[arg(long, default_value_t = 168)]
+    pub outbox_retention_hours: i64,
 }
 
 /// One project the dispatcher serves: where its flow/queue tables live
@@ -202,6 +207,10 @@ pub struct ProjectState {
     /// whole search horizon per sweep for a flow that can never fire. Keyed by
     /// the schedule STRING, so a fixed flow (new schedule) evaluates fresh.
     bad_schedules: std::collections::HashSet<String>,
+    /// When the maintenance step (outbox GC) last completed a non-saturated
+    /// prune. Zero at startup — the first sweep prunes (batch-bounded, so a
+    /// startup backlog costs one bounded batch, not an unbounded DELETE).
+    last_maintenance_ms: i64,
 }
 
 /// What one project sweep did — the gate's assertion surface and the cadence
@@ -219,11 +228,19 @@ pub struct TickReport {
     /// (the claim is the arbiter), and a persistently-unclaimed backlog SHOULD
     /// keep the cadence tight — waking a scale-to-zero runner is the point.
     pub woken: Vec<String>,
+    /// Acked outbox rows the maintenance step pruned this sweep.
+    pub outbox_pruned: u64,
+    /// The prune batch came back full — backlog remains, so the drain must
+    /// continue next sweep (counts as work to keep the cadence tight).
+    pub outbox_prune_backlog: bool,
 }
 
 impl TickReport {
     pub fn found_work(&self) -> bool {
-        !self.cron_fired.is_empty() || !self.outbox_fired.is_empty() || !self.woken.is_empty()
+        !self.cron_fired.is_empty()
+            || !self.outbox_fired.is_empty()
+            || !self.woken.is_empty()
+            || self.outbox_prune_backlog
     }
 }
 
@@ -231,6 +248,8 @@ pub struct DispatcherConfig {
     pub min_interval_ms: i64,
     pub max_interval_ms: i64,
     pub batch: usize,
+    /// Acked outbox rows older than this are pruned by the maintenance step.
+    pub outbox_retention_ms: i64,
 }
 
 impl Default for DispatcherConfig {
@@ -239,9 +258,15 @@ impl Default for DispatcherConfig {
             min_interval_ms: wamn_run_queue::DEFAULT_MIN_INTERVAL_MS,
             max_interval_ms: wamn_run_queue::DEFAULT_MAX_INTERVAL_MS,
             batch: 64,
+            outbox_retention_ms: 168 * 3_600_000,
         }
     }
 }
+
+/// How often a project's maintenance step (outbox GC) runs — far below the
+/// sweep cadence: pruning is bookkeeping, not trigger work. A saturated prune
+/// batch bypasses this (the drain continues every sweep until caught up).
+const MAINTENANCE_INTERVAL_MS: i64 = 600_000;
 
 /// The trigger registry one sweep works from: the cron flows, the row-event
 /// flows, and the HELD `(table, event)` pairs of active flows this dispatcher
@@ -369,6 +394,7 @@ impl Dispatcher {
                 last_fired: HashMap::new(),
                 first_seen: HashMap::new(),
                 bad_schedules: std::collections::HashSet::new(),
+                last_maintenance_ms: 0,
             });
         }
         Ok(Self {
@@ -383,10 +409,11 @@ impl Dispatcher {
     /// real clock, the gate passes stepped time); the SQL's own `now()` instants
     /// are server-side timestamps and orthogonal to the trigger decisions.
     pub async fn tick_project(&mut self, idx: usize, now_ms: i64) -> anyhow::Result<TickReport> {
-        let (batch, min_ms, max_ms) = (
+        let (batch, min_ms, max_ms, retention_ms) = (
             self.cfg.batch,
             self.cfg.min_interval_ms,
             self.cfg.max_interval_ms,
+            self.cfg.outbox_retention_ms,
         );
         let nats = self.nats.as_ref();
 
@@ -555,7 +582,23 @@ impl Dispatcher {
             nats.flush().await?;
         }
 
-        // 5. Adaptive cadence.
+        // 5. Maintenance: outbox GC, batch-bounded. Low cadence — pruning is
+        // bookkeeping, not trigger work — EXCEPT while a saturated batch says
+        // backlog remains: then the stamp stays put and every sweep drains one
+        // more batch until the prune comes back short.
+        if now_ms - p.last_maintenance_ms >= MAINTENANCE_INTERVAL_MS {
+            let pruned = p
+                .client
+                .execute(&outbox_prune_sql(batch), &[&retention_ms])
+                .await?;
+            report.outbox_pruned = pruned;
+            report.outbox_prune_backlog = pruned as usize == batch;
+            if !report.outbox_prune_backlog {
+                p.last_maintenance_ms = now_ms;
+            }
+        }
+
+        // 6. Adaptive cadence.
         p.interval_ms = next_interval(p.interval_ms, report.found_work(), min_ms, max_ms);
         p.last_sweep_ms = now_ms;
         Ok(report)
@@ -752,6 +795,7 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         min_interval_ms: args.min_interval_ms.max(10),
         max_interval_ms: args.max_interval_ms.max(args.min_interval_ms.max(10)),
         batch: args.batch.max(1),
+        outbox_retention_ms: args.outbox_retention_hours.max(1) * 3_600_000,
     };
     let mut dispatcher = Dispatcher::connect(&specs, nats, cfg).await?;
     tracing::info!(
@@ -785,4 +829,28 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         let _ = tx.send(true);
     });
     dispatcher.run_loop(rx).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TickReport;
+
+    /// A completed prune is bookkeeping, not work — it must not keep the
+    /// adaptive cadence tight. A SATURATED prune batch (backlog remains) is
+    /// work: the drain must continue at the sweep cadence.
+    #[test]
+    fn prune_counts_as_work_only_while_a_backlog_remains() {
+        let done = TickReport {
+            outbox_pruned: 5,
+            ..TickReport::default()
+        };
+        assert!(!done.found_work());
+
+        let backlog = TickReport {
+            outbox_pruned: 64,
+            outbox_prune_backlog: true,
+            ..TickReport::default()
+        };
+        assert!(backlog.found_work());
+    }
 }

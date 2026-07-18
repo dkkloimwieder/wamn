@@ -88,14 +88,18 @@ guest partitioned claim P3→P2 — those two close the 5.11 surface),
 primary; **no parallel overhaul of the dispatch machinery the ladder stands on.**
 
 - **Interleave OK (bounded bench work, measures existing mechanics):** C7 queuebench
-  ceiling mode + C2 outbox-trigger overhead (C2's GC sub-measure after `wamn-d8v`).
-  These retire folklore D3 already depends on — worth it regardless of D19's outcome.
+  ceiling mode + C2 outbox-trigger overhead (C2's GC sub-measure now unblocked —
+  `wamn-d8v` done). These retire folklore D3 already depends on — worth it
+  regardless of D19's outcome.
 - **After (or alongside late ladder rungs):** C1 retained-events knee → **D19 decision
   checkpoint**. JetStream build-out (Phases A–C) only past the checkpoint or on an
   external driver (design partner fan-out/replay; high-rate ingest — MQTT de-scoped
   2026-07-17, assume HTTP).
-- Prerequisites either branch: `wamn-d8v` (outbox GC), R6 decision (`wamn-1d4` — 5.11
-  needs it anyway), 5.10 scope change noted on `wamn-sdp`.
+- Prerequisites either branch: ~~`wamn-d8v` (outbox GC)~~ **done 2026-07-18**
+  (dispatcher maintenance step, `outbox_prune_sql`, batch-bounded 7d retention;
+  split out `wamn-vbl` write-amplification + `wamn-71t` production janitor
+  wiring), R6 decision (`wamn-1d4` — 5.11 needs it anyway, done), 5.10 scope
+  change noted on `wamn-sdp`.
 
 ## Parked (demoted to P3)
 
@@ -113,9 +117,10 @@ primary; **no parallel overhaul of the dispatch machinery the ladder stands on.*
 old `1d4` bead is closed and split into `fqg.18` record-stream/D9 + `fqg.19`
 cron-misfire/R8d) → ~~`fqg.18` record-stream dispatch~~ (**done 2026-07-17**;
 split out `fqg.20` ordering declaration + key-stamping, `fqg.9` bumped to P2) →
-**`d8v` GC half**
-(small janitor-colocated pruner; F4's live outbox traffic needs it, and it unblocks
-`z7b.2`) → `POC-F3` / `POC-F4` → `4.4` hot-reload → (parallel) `2ib`.
+~~`d8v` GC half~~ (**done 2026-07-18** — dispatcher-tick maintenance step +
+`outbox_prune_sql`, unblocks `z7b.2`; the amplification half split to
+`wamn-vbl`, production janitor wiring filed as `wamn-71t`) →
+`POC-F3` / `POC-F4` → `4.4` hot-reload → (parallel) `2ib`.
 Bench days when convenient: `z7b.1` (C7) / `z7b.2` (C2) — measurement-only, safe to
 interleave. C1 + the D19 checkpoint (`z7b.3`/`z7b.4`) after F4.
 

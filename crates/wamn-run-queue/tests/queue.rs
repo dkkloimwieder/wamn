@@ -13,10 +13,10 @@ use wamn_run_queue::{
     cron_tick_of, dequeue_sql, due_tick, enqueue_sql, enqueue_with_policy_sql,
     gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline,
     lease_live, mark_running_sql, match_outbox, mint_cron_run_id, next_fire, next_interval,
-    next_reconcile, orphans, outbox_ack_sql, outbox_insert_sql, outbox_poll_sql, park_sql,
-    parked_due_sql, partition_lease_live, plan_ack, plan_acquire, plan_claim, plan_partition_claim,
-    reconcile_due, record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
-    renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
+    next_reconcile, orphans, outbox_ack_sql, outbox_insert_sql, outbox_poll_sql, outbox_prune_sql,
+    park_sql, parked_due_sql, partition_lease_live, plan_ack, plan_acquire, plan_claim,
+    plan_partition_claim, reconcile_due, record_error_and_renew_sql, record_success_and_renew_sql,
+    release_partition_sql, renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
     write_ahead_triggered_run_sql,
 };
 
@@ -1256,6 +1256,27 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
 }
 
 #[test]
+fn outbox_prune_is_batch_bounded_and_scoped_to_the_outbox() {
+    let prune = outbox_prune_sql(5);
+    assert!(prune.contains("DELETE FROM outbox"));
+    // Acked rows only, past the retention window ($1 ms). The exact `< now() -`
+    // comparison is pinned: a flipped sign would prune RECENT rows and keep the
+    // backlog forever.
+    assert!(prune.contains("dispatched_at IS NOT NULL"));
+    assert!(prune.contains("dispatched_at < now() - ($1::bigint * interval '1 millisecond')"));
+    assert!(prune.contains("current_setting('app.tenant', true)"));
+    // Batch-bounded via the ctid subquery: one execution deletes at most
+    // `limit` rows, so a first prune on a long-lived install is never an
+    // unbounded DELETE inside a dispatcher sweep.
+    assert!(prune.contains("ctid IN (SELECT o.ctid FROM outbox AS o"));
+    assert!(prune.contains("LIMIT 5"));
+    // OUTBOX ONLY: a pruner that also swept runs would break cron anchor
+    // recovery (cron_last_run_sql reads old cron run ids).
+    assert!(!prune.contains("runs"));
+    assert!(!prune.contains("run_queue"));
+}
+
+#[test]
 fn outbox_ddl_matches_the_model() {
     let sql = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -1758,6 +1779,41 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          COMMIT;\n",
     );
+
+    // Outbox GC (outbox_prune_sql): acked rows past the retention window are
+    // pruned batch-by-batch (ctid LIMIT bound); recently-acked, pending, and
+    // other-tenant rows all survive. Retention param = 7 days in ms.
+    let prune2_sql = outbox_prune_sql(2);
+    let prune64_sql = outbox_prune_sql(64);
+    script.push_str(&format!(
+        "INSERT INTO wamn_run.outbox (tenant_id, table_name, event, payload, dispatched_at) VALUES \
+           ('t1','dispositions','insert', NULL, now() - interval '8 days'), \
+           ('t1','dispositions','insert', NULL, now() - interval '9 days'), \
+           ('t1','dispositions','insert', NULL, now() - interval '10 days'), \
+           ('t1','dispositions','update', NULL, NULL), \
+           ('t2','dispositions','insert', NULL, now() - interval '30 days');\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE prune_stmt (bigint) AS {prune2_sql};\n\
+         PREPARE prune_wide (bigint) AS {prune64_sql};\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at < now() - interval '7 days') = 3, 'three prunable rows seeded'; \
+         END $$;\n\
+         EXECUTE prune_stmt(604800000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at < now() - interval '7 days') = 1, 'batch-bounded: one execution pruned exactly the limit (2 of 3)'; \
+         END $$;\n\
+         EXECUTE prune_wide(604800000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at < now() - interval '7 days') = 0, 'the drain finishes over successive batches'; \
+           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at IS NOT NULL) = 3, 'recently-acked rows survive the prune'; \
+           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at IS NULL AND event = 'update') = 1, 'a pending row is never pruned, whatever its age'; \
+         END $$;\n\
+         COMMIT;\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM wamn_run.outbox WHERE tenant_id = 't2' AND dispatched_at < now() - interval '7 days') = 1, 't2''s old acked row survives t1''s prune (tenant-scoped)'; \
+         END $$;\n",
+    ));
 
     // Cron last-fired-tick recovery: FLOW-EXCLUSIVE (flow_id + trigger_source
     // predicate, cron_last_run_sql) — foreign flows whose ids sort inside a

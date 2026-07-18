@@ -596,7 +596,8 @@ Docs: docs/run-queue.md
 cargo test -p wamn-run-queue   # incl cron calendar edges + outbox/adaptive decisions
 cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --check
 # optional live-apply gate (run-state.sql + run-queue.sql now incl the outbox; real
-# atomicity + redelivery dedupe, cron last-tick recovery, wake scan; skips when unset):
+# atomicity + redelivery dedupe, cron last-tick recovery, wake scan, outbox GC
+# retention/batch-bound proof [wamn-d8v, outbox_prune_sql]; skips when unset):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
 WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-queue
@@ -607,6 +608,12 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn \
   --nats-url nats://127.0.0.1:4232 --mode all
 docker stop wamn-rq-pg wamn-rq-nats
+# dispatchbench modes: cron/outbox/race/fairness/prune/wake/live/all — `prune`
+# (wamn-d8v) drives the maintenance step's outbox GC: batch-bounded drain every
+# sweep while saturated, then the 10-min maintenance cadence; retention via
+# `wamn-host dispatch --outbox-retention-hours` (default 168 = 7d).
+# Mutation harness: scratchpad/mutate_d8v.py (retention sign, batch bound,
+# maintenance neuter, stamp inversion — each fails a named test/gate).
 # The production service is `wamn-host dispatch --projects-file <json>` (one entry
 # In-cluster gate of record (co-located with postgres,
 # HOST change => full docker rebuild (both --target stages + kind load BOTH images):
