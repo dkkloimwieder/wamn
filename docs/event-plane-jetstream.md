@@ -157,6 +157,10 @@ depth = **16** (owner override of the proposed ~8).
   preserved in the bead's notes as the buy-fallback starting point.*
 **Benches (existing infra only):** C-QUEUE (retire the D3 folklore number) +
 C-WAL-0 (baseline WAL volume of representative app load, pre-CDC).
+*C-WAL-0 re-sequenced (owner decision 2026-07-18): it was not needed for the
+build-vs-buy signature and now gates Phase-1 capture instead — `wamn-l5i9.9`
+(publication/slot provisioning) depends on `wamn-l5i9.4`, keeping the baseline
+strictly pre-CDC.*
 **Docs:** teardown list (§3) circulated so no new work lands on the outbox
 path; posture rows (reader exception, replication-credential tier).
 
@@ -248,6 +252,6 @@ durability domain on-call (raft, disk, lag, retention).
 | 5.10 backend | ~~Phase 0 sign-off~~ **deferred to a Phase-1 spike** (wamn-l5i9.29, signed 2026-07-18) |
 | Schemas (envelope/subjects/ids) frozen | ~~Phase 0~~ **at the Phase-2 cutover** (wamn-l5i9.30, signed 2026-07-18) |
 | Replica-identity policy + causation depth | ~~Phase 0~~ **signed 2026-07-18** (per-entity knob, wamn-l5i9.31; depth 16) |
-| Reader build (pg_walstream) vs buy (Sequin) | end of Phase 0 spikes |
+| Reader build (pg_walstream) vs buy (Sequin) | ~~end of Phase 0 spikes~~ **signed 2026-07-18: build** (`wamn-l5i9.6`, on S-CDC-1 results + vendor numbers; S-CDC-2 skipped — Sequin stays the documented fallback, Debezium second) |
 | Consumer quota / retention tiers | Phase 3 (from C-JS) |
 | Runtime-DB split (D19-adjacent) | independent; C-INTERFERENCE informs |
