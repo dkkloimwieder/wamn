@@ -134,6 +134,11 @@ the Posture-C residency story.
 backend (now dual-prerequisite: claim-check + node streaming); envelope/subject/
 `Nats-Msg-Id`/`run_id` schemas frozen into code; replica-identity policy;
 causation depth default (~8).
+*Signed 2026-07-18 (wamn-l5i9.1):* R6 `blocking` carries to the materializer;
+5.10 backend deferred to a Phase-1 spike (wamn-l5i9.29); schemas stay working
+drafts through Phase 1 and freeze at the Phase-2 cutover (wamn-l5i9.30);
+replica identity = the per-entity knob as written (wamn-l5i9.31); causation
+depth = **16** (owner override of the proposed ~8).
 **Spikes:**
 - **S-CDC-1 (pg_walstream diligence):** sustained soak w/ keepalive+feedback
   over idle hours; CNPG switchover with failover slot (resume, no gap);
@@ -210,7 +215,8 @@ events-table knee) runs **only if** the §9 retreat is ever invoked.
 | Queue ~1–5k transitions/s | **measured** (C-QUEUE = wamn-z7b.1, 2026-07-18, `docs/ceilings.md`): untuned 60 s knee ~2000–2500 transitions/s, sustained ~550–1400/s under stock autovacuum; tuning matrix pending (wamn-z7b.6) |
 | Sequin ~40–50k ops/s, 55ms | **vendor-published**, unverified locally |
 | pg_walstream perf/robustness | **unknown** → S-CDC-1 |
-| 256 KiB payload cap; 10-min dedupe window; depth 8; consumer quota | **proposed knobs** → C-JS/C-CDC inform |
+| 256 KiB payload cap; 10-min dedupe window; consumer quota | **proposed knobs** → C-JS/C-CDC inform |
+| Causation depth 16 | **decided** (wamn-l5i9.1, 2026-07-18; doc proposed ~8) |
 | MQTT "10k+ msg/s bursts" | **industry assumption** |
 
 Rule: no number enters a design doc unlabeled.
@@ -231,10 +237,10 @@ durability domain on-call (raft, disk, lag, retention).
 
 | Decision | Needed by |
 |---|---|
-| R6 `blocking` default | Phase 0 sign-off |
-| 5.10 backend | Phase 0 sign-off |
-| Schemas (envelope/subjects/ids) frozen | Phase 0 |
-| Replica-identity policy + causation depth | Phase 0 |
+| R6 `blocking` default | ~~Phase 0 sign-off~~ **signed 2026-07-18** (carries to the materializer) |
+| 5.10 backend | ~~Phase 0 sign-off~~ **deferred to a Phase-1 spike** (wamn-l5i9.29, signed 2026-07-18) |
+| Schemas (envelope/subjects/ids) frozen | ~~Phase 0~~ **at the Phase-2 cutover** (wamn-l5i9.30, signed 2026-07-18) |
+| Replica-identity policy + causation depth | ~~Phase 0~~ **signed 2026-07-18** (per-entity knob, wamn-l5i9.31; depth 16) |
 | Reader build (pg_walstream) vs buy (Sequin) | end of Phase 0 spikes |
 | Consumer quota / retention tiers | Phase 3 (from C-JS) |
 | Runtime-DB split (D19-adjacent) | independent; C-INTERFERENCE informs |
