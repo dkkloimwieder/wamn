@@ -503,7 +503,8 @@ sentinels / bulk on-leg loses the trigger — each fails a named sanity assert).
 
 Docs: docs/event-plane-jetstream.md §7; verdicts live in the wamn-l5i9.2 bead
 notes and feed wamn-l5i9.6 [BUILD-VS-BUY]. The harness is `poc/cdc1`
-(pg_walstream pinned `=0.8.0`; the vendor/fork + pin is wamn-l5i9.8).
+(pg_walstream from the wamn fork, rev-pinned in the root workspace table since
+wamn-l5i9.8 — ledger: docs/pg-walstream-fork.md).
 
 ```bash
 cargo build -p wamn-cdc1 && cargo clippy -p wamn-cdc1 && cargo fmt -p wamn-cdc1 --check
@@ -512,7 +513,7 @@ cargo build -p wamn-cdc1 && cargo clippy -p wamn-cdc1 && cargo fmt -p wamn-cdc1 
 kubectl apply -f poc/cdc1/cdc1-cluster.yaml   # cluster cdc1 + NodePort 172.28.0.4:30497
 export CDC1_URL="postgresql://postgres:$(kubectl -n wamn-system get secret \
   cdc1-superuser -o jsonpath='{.data.password}' | base64 -d)@172.28.0.4:30497/app"
-./target/debug/wamn-cdc1 setup        # tables + publication + failover slot (via SQL — see F1)
+./target/debug/wamn-cdc1 setup        # tables + publication + failover slot (through the crate)
 ./target/debug/wamn-cdc1 message      # (e) pg_logical_emit_message → EventType::Message
 ./target/debug/wamn-cdc1 toast        # (c) unchanged-TOAST absent-vs-Null + FULL old image
 ./target/debug/wamn-cdc1 stream --rows 1000000   # (d) streamed txn, VmRSS profile
@@ -521,11 +522,29 @@ export CDC1_URL="postgresql://postgres:$(kubectl -n wamn-system get secret \
 ./target/debug/wamn-cdc1 teardown && kubectl delete -f poc/cdc1/cdc1-cluster.yaml
 ```
 
-FINDING F1: pg_walstream 0.8.0's `slot_options.failover = true` emits legacy
-space-separated `CREATE_REPLICATION_SLOT … FAILOVER`, which PG17+ rejects
-(FAILOVER exists only in the parenthesized option grammar) — the harness
-creates the slot via `pg_create_logical_replication_slot(…, failover => true)`
-instead and runs the stream with `failover = false`.
+FINDING F1: crates.io pg_walstream 0.8.0's `slot_options.failover = true`
+emits legacy space-separated `CREATE_REPLICATION_SLOT … FAILOVER`, which PG17+
+rejects (FAILOVER exists only in the parenthesized option grammar). FIXED in
+the wamn fork (wamn-l5i9.8): the harness now sets `failover = true` and creates
+the slot through the crate.
+
+### [EVT-VENDOR / wamn-l5i9.8] pg_walstream fork + pin
+
+Docs: docs/pg-walstream-fork.md (carried-commit ledger + sync runbook). The
+fork branch `wamn/0.8.0` = upstream v0.8.0 + the F1 failover-syntax commit;
+the rev is pinned once in the root `Cargo.toml` workspace table.
+
+```bash
+# Fork unit tests (in a clone of dkkloimwieder/pg-walstream, branch wamn/0.8.0):
+cargo test --lib          # 1247 tests incl the parenthesized-FAILOVER pins
+# Consumer + lock sanity (in wamn):
+cargo build -p wamn-cdc1
+grep -c '^name = "pg_walstream"$' Cargo.lock   # must be 1 (git-sourced)
+# Live A/B (throwaway postgres:18 -c wal_level=logical, e.g. :5444):
+#   A: pin poc/cdc1 back to crates.io `=0.8.0` → `wamn-cdc1 setup` fails 42601
+#   B: the fork pin → setup prints `slot cdc1_spike created: … failover=true`,
+#      then `wamn-cdc1 message` passes as the streaming regression.
+```
 
 ### [5.14] checkpoint/resume on replica loss
 

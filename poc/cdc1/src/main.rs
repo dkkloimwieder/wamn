@@ -56,15 +56,13 @@ fn repl_config() -> ReplicationStreamConfig {
         RetryConfig::default(),
     );
     cfg.messages = true; // pg_logical_emit_message → EventType::Message
-    // FINDING F1 (spike, 2026-07-18): slot_options.failover = true is BROKEN in
-    // pg_walstream 0.8.0 against PG17+ — the crate emits the legacy
-    // space-separated `CREATE_REPLICATION_SLOT … FAILOVER`, but FAILOVER only
-    // exists in the parenthesized option grammar (proven live: legacy form →
-    // 42601, `(SNAPSHOT 'nothing', FAILOVER)` → ok). Workaround: setup()
-    // creates the slot via SQL pg_create_logical_replication_slot(…,
-    // failover => true); ensure_replication_slot() then tolerates
-    // "already exists". A vendor/fork patch (wamn-l5i9.8) is ~3 lines.
-    cfg.slot_options.failover = false;
+    // FINDING F1 (spike, 2026-07-18): crates.io pg_walstream 0.8.0 emitted the
+    // legacy space-separated `CREATE_REPLICATION_SLOT … FAILOVER`, which only
+    // exists in the PG17+ parenthesized option grammar → 42601. FIXED in our
+    // fork (wamn-l5i9.8, branch wamn/0.8.0 — see docs/pg-walstream-fork.md):
+    // the builder now emits `(… FAILOVER)`, so the native path works and
+    // setup() creates the slot through the crate.
+    cfg.slot_options.failover = true;
     cfg
 }
 
@@ -129,25 +127,14 @@ async fn setup() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    // Create the failover-enabled slot via SQL (see FINDING F1 in
-    // repl_config: the crate's own CREATE_REPLICATION_SLOT … FAILOVER path
-    // emits legacy syntax PG17+ rejects).
-    let exists = c
-        .query_opt(
-            "SELECT 1 FROM pg_replication_slots WHERE slot_name = $1",
-            &[&SLOT],
-        )
-        .await?
-        .is_some();
-    if !exists {
-        c.execute(
-            &format!(
-                "SELECT pg_create_logical_replication_slot('{SLOT}', 'pgoutput', \
-                 temporary => false, twophase => false, failover => true)"
-            ),
-            &[],
-        )
-        .await?;
+    // Create the failover-enabled slot THROUGH the crate — this exercises the
+    // fork's F1 fix (parenthesized `CREATE_REPLICATION_SLOT … (FAILOVER)`);
+    // against crates.io 0.8.0 this exact call fails with a 42601.
+    // ensure_replication_slot() tolerates an already-existing slot.
+    {
+        let url = format!("{}?sslmode=disable&replication=database", base_url()?);
+        let mut stream = LogicalReplicationStream::new(&url, repl_config()).await?;
+        stream.ensure_replication_slot().await?;
     }
     let row = c
         .query_one(

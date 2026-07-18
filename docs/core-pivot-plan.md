@@ -106,8 +106,10 @@ modes). **No new work lands on the outbox path**; deletion executes at
   ~~build-vs-buy (`wamn-l5i9.6`, owner)~~ (**signed 2026-07-18: build** —
   vendored/pinned pg_walstream; Sequin stays the documented fallback).
   **Phase 0 is complete** — the suspension lifts: the ladder and other tracks
-  resume, and epic Phase 1 (`l5i9.7`/`l5i9.8` ready; `l5i9.9` behind `l5i9.4`)
-  is unblocked. Next pick is the owner's.
+  resume, and epic Phase 1 is unblocked (~~`l5i9.8` vendor/fork~~ done
+  2026-07-18 — fork branch `wamn/0.8.0` pinned, ledger
+  `docs/pg-walstream-fork.md`; `l5i9.7` ready; `l5i9.9` behind `l5i9.4`).
+  Next pick is the owner's.
 - Measurement already banked (pre-decision, still load-bearing): ~~C7/C-QUEUE~~
   (`wamn-z7b.1`, `docs/ceilings.md` — untuned knee ~2000–2500 transitions/sec) +
   ~~C2 outbox-trigger overhead~~ (`wamn-z7b.2`, `docs/ceilings.md` § C2 — now a

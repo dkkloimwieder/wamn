@@ -2407,8 +2407,7 @@ dependencies = [
 [[package]]
 name = "pg_walstream"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7ab7c4175ec27f84dab31b6dab80340ef84fa3de886d10f1b3fb708729bfc0d"
+source = "git+https://github.com/dkkloimwieder/pg-walstream?rev=0b007cd627bb913d4b159c705a106b6d4152c91a#0b007cd627bb913d4b159c705a106b6d4152c91a"
 dependencies = [
  "aws-lc-rs",
  "bytes",

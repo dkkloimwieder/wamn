@@ -4,8 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-# Pinned exactly for the spike; vendor/fork + pin is wamn-l5i9.8 (Phase 1).
-pg_walstream = "=0.8.0"
+# The vendored fork, rev-pinned once in the root workspace table (wamn-l5i9.8;
+# ledger: docs/pg-walstream-fork.md).
+pg_walstream = { workspace = true }
 tokio = { workspace = true }
 tokio-postgres = "0.7"
 anyhow = { workspace = true }

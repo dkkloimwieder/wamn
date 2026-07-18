@@ -20,6 +20,12 @@ license = "Apache-2.0"
 # workspace's git-pinned one (two wasmtimes = linker typecheck failures upstream
 # solves with a [patch] we'd otherwise have to replicate).
 wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "d3d83f3152abe103fa49a538861cbc826c256d5e", default-features = false, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel"] }
+# pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch
+# wamn/0.8.0 = upstream v0.8.0 (784e644) + the carried failover-slot-syntax
+# commit (S-CDC-1 finding F1: legacy `… FAILOVER` → 42601 on PG17+; the fork
+# emits the parenthesized option list). Pin a REV, never a branch.
+# Carried-commit ledger + sync runbook: docs/pg-walstream-fork.md.
+pg_walstream = { git = "https://github.com/dkkloimwieder/pg-walstream", rev = "0b007cd627bb913d4b159c705a106b6d4152c91a" }
 anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tracing = "0.1"
