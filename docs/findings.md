@@ -926,6 +926,14 @@ corrections. Everything downstream cites IDs and paths this wave creates.
   stated prerequisite) and the C-CDC bench slot on the shared cluster.
 - **R16/R2 + R18 + SR4** — one sitting, all `wamn_postgres.rs`.
 
+**Wave 2.5 — open-Highs sitting (owner-inserted 2026-07-19, before the sync
+point; near-disjoint subsystems):** R32 retry-abort (`wamn-2jkm.50`,
+runner/run_worker) ∥ E15/E16 fork UDP arms (`wamn-7j0.2`, fork repo only —
+5th carried commit, escalation threshold reached) ∥ R27 slug injectivity
+(`wamn-2jkm.45`, provisioning/registry naming) ∥ E17 egressbench positive
+allowlist (`wamn-2jkm.52`, `wamn-gates`; unblocks wamn-bd5) · SR12a header
+qualification (`wamn-2jkm.17`) rides the integration pass.
+
 **Sync point — anti-parallel by nature:** SR9/E7/E8 (the `wamn-host` crate
 split + reader extraction). It touches every deployment artifact and wants a
 quiet tree; schedule it alone between waves, then the materializer build
