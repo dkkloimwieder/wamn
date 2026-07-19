@@ -26,9 +26,16 @@
 //!   GAP — a first-class incident (v3 §11): the reader refuses to start (or
 //!   dies) loudly instead of silently re-creating and resuming from "now".
 //!   Recovery is operator-driven: re-enable CDC + replay/backfill assessment.
-//! - **Session re-open** (S-CDC-1 finding F2): the crate's inner retry can be
-//!   shorter than a real primary-less window, so a session-level re-open loop
-//!   wraps the drain; re-opens are counted and logged. The slot admits one
+//! - **Session re-open** (S-CDC-1 finding F2, R11): the crate's inner retry can
+//!   be shorter than a real primary-less window, so a session-level re-open
+//!   loop wraps the drain. ONE `ReopenLadder` backs BOTH arms (open failure and
+//!   drain sever), so a session that opens cleanly then severs immediately can
+//!   no longer hot-loop preflight→connect→sever: every re-open backs off, and
+//!   the cap trips two ways. The consecutive-failure streak resets ONLY on a
+//!   drain that committed a transaction (`DrainSummary { commits > 0 }` —
+//!   productivity, never open success), catching a fast flap; a trailing-window
+//!   re-open RATE cap catches a slow flap that commits a little each session
+//!   and would otherwise reset the streak forever. The slot admits one
 //!   consumer, so exclusivity is structural (the lease that elects WHICH
 //!   replica holds the session is deferred — run replicas=1).
 //! - **Entity keying** (wamn-l5i9.11): each relation resolves to its stable
@@ -38,8 +45,8 @@
 //!   subjects stay keyed on the entity id across `ALTER TABLE RENAME` (R9b).
 //!   Unmapped tables publish with the table-name fallback, `entity` absent.
 
-use std::collections::HashMap;
-use std::time::Duration;
+use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use async_nats::header::{HeaderMap, NATS_MESSAGE_ID};
@@ -130,6 +137,109 @@ fn classify(e: &ReplicationError) -> SessionFate {
         ReplicationError::Cancelled(_) => SessionFate::Cancelled,
         ReplicationError::Authentication(_) | ReplicationError::Config(_) => SessionFate::Fatal,
         _ => SessionFate::Reopen,
+    }
+}
+
+/// Shared reopen backoff + cap ladder (R11). BOTH the open-failure arm and the
+/// drain-sever arm feed this ONE ladder, so a session that opens cleanly then
+/// severs immediately can no longer hot-loop preflight→connect→sever as fast as
+/// Postgres answers: every re-open is a bounded backoff, and the cap trips two
+/// independent ways.
+///
+/// - `consecutive_failures` is the FAST-flap guard. It resets ONLY when a drain
+///   committed a transaction (`note_reopen(_, commits > 0)` — productivity, not
+///   open success), so an open-then-sever session that never commits keeps
+///   incrementing it until `max_consecutive` trips.
+/// - `window_reopens` is the SLOW-flap guard. EVERY re-open (productive or not)
+///   is timestamped; more than `rate_cap` inside `rate_window` trips even when
+///   each session commits once and thus keeps clearing the streak.
+struct ReopenLadder {
+    /// Consecutive re-opens with no committed transaction between them.
+    consecutive_failures: u32,
+    /// Every re-open ever taken (the `reopens` gauge — E2).
+    total_reopens: u64,
+    /// Re-open instants inside the trailing window, oldest first.
+    window_reopens: VecDeque<Instant>,
+    max_consecutive: u32,
+    rate_window: Duration,
+    rate_cap: usize,
+    base_backoff: Duration,
+    max_backoff: Duration,
+}
+
+/// The ladder's verdict for one re-open.
+enum LadderStep {
+    /// Sleep this long, then re-open.
+    Backoff(Duration),
+    /// The cap tripped — terminate the reader with this reason.
+    Trip(String),
+}
+
+impl ReopenLadder {
+    fn new() -> Self {
+        Self {
+            consecutive_failures: 0,
+            total_reopens: 0,
+            window_reopens: VecDeque::new(),
+            // Bails at 10 in a row (the pre-R11 open-path cap), now measuring
+            // productivity rather than open success.
+            max_consecutive: 10,
+            // >20 re-opens inside a rolling minute is a sustained flap even if
+            // each one committed and cleared the streak.
+            rate_window: Duration::from_secs(60),
+            rate_cap: 20,
+            base_backoff: Duration::from_secs(1),
+            max_backoff: Duration::from_secs(30),
+        }
+    }
+
+    fn reopens(&self) -> u64 {
+        self.total_reopens
+    }
+
+    fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures
+    }
+
+    /// Record a re-open of a session that produced `commits` committed
+    /// transactions, and return the next step: a bounded backoff, or a trip
+    /// that must terminate the reader.
+    fn note_reopen(&mut self, now: Instant, commits: u64) -> LadderStep {
+        self.total_reopens += 1;
+        if commits > 0 {
+            self.consecutive_failures = 0;
+        } else {
+            self.consecutive_failures += 1;
+        }
+        self.window_reopens.push_back(now);
+        while let Some(&front) = self.window_reopens.front() {
+            if now.saturating_duration_since(front) > self.rate_window {
+                self.window_reopens.pop_front();
+            } else {
+                break;
+            }
+        }
+        if self.consecutive_failures >= self.max_consecutive {
+            return LadderStep::Trip(format!(
+                "{} consecutive re-opens with no committed transaction between them",
+                self.consecutive_failures
+            ));
+        }
+        if self.window_reopens.len() > self.rate_cap {
+            return LadderStep::Trip(format!(
+                "{} re-opens within {:?} — a sustained flap",
+                self.window_reopens.len(),
+                self.rate_window
+            ));
+        }
+        // Backoff grows with the unproductive streak (a productive re-open,
+        // streak 0, backs off the base minimum). Capped at `max_backoff`.
+        let shift = self.consecutive_failures.saturating_sub(1).min(20);
+        let backoff = self
+            .base_backoff
+            .saturating_mul(1u32 << shift)
+            .min(self.max_backoff);
+        LadderStep::Backoff(backoff)
     }
 }
 
@@ -403,8 +513,7 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
     .await
     .map_err(|e| anyhow::anyhow!("get-or-create stream {}: {e}", reg.stream))?;
 
-    let mut reopens: u64 = 0;
-    let mut consecutive_failures: u32 = 0;
+    let mut ladder = ReopenLadder::new();
     loop {
         if token.is_cancelled() {
             return Ok(());
@@ -422,26 +531,29 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
                 }
                 SessionFate::Fatal => return Err(anyhow::anyhow!(e).context("open session")),
                 SessionFate::Reopen => {
-                    consecutive_failures += 1;
-                    if consecutive_failures >= 10 {
-                        bail!("session open failed {consecutive_failures}x in a row: {e}");
-                    }
-                    tracing::warn!(error = %e, consecutive_failures, "session open failed; retrying");
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    // An open that never produced a commit is unproductive by
+                    // definition — the SAME ladder the drain-sever arm feeds.
+                    ladder_step_or_bail(&mut ladder, 0, &e, &token).await?;
                     continue;
                 }
             },
         };
-        consecutive_failures = 0;
-        tracing::info!(reopens, "walsender session open; draining");
+        tracing::info!(
+            reopens = ladder.reopens(),
+            "walsender session open; draining"
+        );
 
         match drain(&mut stream, &args, &token, &js).await {
-            Ok(()) => {
+            DrainOutcome::Shutdown(summary) => {
                 let _ = stream.shutdown().await;
-                tracing::info!(reopens, "shutdown requested; exiting cleanly");
+                tracing::info!(
+                    reopens = ladder.reopens(),
+                    commits = summary.commits,
+                    "shutdown requested; exiting cleanly"
+                );
                 return Ok(());
             }
-            Err(e) => {
+            DrainOutcome::Severed(e, summary) => {
                 let _ = stream.shutdown().await;
                 if token.is_cancelled() {
                     return Ok(());
@@ -453,11 +565,42 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
                     }
                     SessionFate::Fatal => return Err(anyhow::anyhow!(e).context("drain")),
                     SessionFate::Reopen => {
-                        reopens += 1;
-                        tracing::warn!(error = %e, reopens, "stream severed; re-opening the session");
+                        // Productivity — not open success — resets the streak:
+                        // only a drain that committed clears the fast-flap cap.
+                        ladder_step_or_bail(&mut ladder, summary.commits, &e, &token).await?;
                     }
                 }
             }
+        }
+    }
+}
+
+/// Feed one re-open into the shared ladder and act on its verdict: bail if the
+/// cap tripped (R11 — nonzero exit), else back off the returned interval
+/// (interruptible by shutdown) before the loop re-opens.
+async fn ladder_step_or_bail(
+    ladder: &mut ReopenLadder,
+    commits: u64,
+    e: &ReplicationError,
+    token: &CancellationToken,
+) -> anyhow::Result<()> {
+    match ladder.note_reopen(Instant::now(), commits) {
+        LadderStep::Trip(reason) => {
+            bail!("reader reopen cap tripped ({reason}); last error: {e}")
+        }
+        LadderStep::Backoff(delay) => {
+            tracing::warn!(
+                error = %e,
+                reopens = ladder.reopens(),
+                consecutive_failures = ladder.consecutive_failures(),
+                backoff_ms = delay.as_millis() as u64,
+                "session severed/failed; backing off before re-open"
+            );
+            tokio::select! {
+                _ = token.cancelled() => {}
+                _ = tokio::time::sleep(delay) => {}
+            }
+            Ok(())
         }
     }
 }
@@ -491,20 +634,42 @@ struct PendingRow {
     lsn: u64,
 }
 
-/// Drain the session until cancelled (`Ok`) or severed (`Err`). Buffers each
-/// transaction's row events (resolving entities as they arrive) and captures
-/// its `wamn.causation` message whenever it lands; at `Commit`, publishes every
-/// buffered row (ack-awaited, in arrival order) with the causation stamp
-/// attached, then advances the feedback LSN — only once every row is acked.
+/// What a drained session produced. `commits` is the R11 productivity signal —
+/// the shared ladder resets the fast-flap streak only when a session committed
+/// at least one transaction, so an open-then-sever session that never commits
+/// keeps counting toward the cap.
+struct DrainSummary {
+    commits: u64,
+    published: u64,
+    deduped: u64,
+}
+
+/// How a drain ended: either shutdown was requested (exit cleanly) or the
+/// stream severed (re-open per the ladder). BOTH carry the `DrainSummary`, so
+/// the caller always knows whether the ended session was productive.
+enum DrainOutcome {
+    Shutdown(DrainSummary),
+    Severed(ReplicationError, DrainSummary),
+}
+
+/// Drain the session until cancelled (`Shutdown`) or severed (`Severed`).
+/// Buffers each transaction's row events (resolving entities as they arrive)
+/// and captures its `wamn.causation` message whenever it lands; at `Commit`,
+/// publishes every buffered row (ack-awaited, in arrival order) with the
+/// causation stamp attached, then advances the feedback LSN — only once every
+/// row is acked. Returns the `DrainSummary` in both outcomes.
 async fn drain(
     stream: &mut EventStream,
     args: &EventReaderArgs,
     token: &CancellationToken,
     js: &jetstream::Context,
-) -> Result<(), ReplicationError> {
+) -> DrainOutcome {
     let mut txn: Option<Txn> = None;
-    let mut published: u64 = 0;
-    let mut deduped: u64 = 0;
+    let mut summary = DrainSummary {
+        commits: 0,
+        published: 0,
+        deduped: 0,
+    };
     // The per-SESSION OID → entity-id cache (wamn-l5i9.11): resolved lazily at
     // a relation's first row event, NEVER invalidated mid-session — pg_class
     // OIDs survive renames, so a cached resolution stays correct by
@@ -515,12 +680,22 @@ async fn drain(
         let ev = match stream.next_event().await {
             Ok(ev) => ev,
             Err(ReplicationError::Cancelled(_)) => {
-                tracing::info!(published, deduped, "drain summary");
-                return Ok(());
+                tracing::info!(
+                    commits = summary.commits,
+                    published = summary.published,
+                    deduped = summary.deduped,
+                    "drain summary"
+                );
+                return DrainOutcome::Shutdown(summary);
             }
             Err(e) => {
-                tracing::info!(published, deduped, "drain summary (severed)");
-                return Err(e);
+                tracing::info!(
+                    commits = summary.commits,
+                    published = summary.published,
+                    deduped = summary.deduped,
+                    "drain summary (severed)"
+                );
+                return DrainOutcome::Severed(e, summary);
             }
         };
         let lsn = ev.lsn.value();
@@ -540,9 +715,10 @@ async fn drain(
             }
             EventType::Commit { end_lsn, .. } => {
                 let Some(frame) = txn.take() else {
-                    return Err(ReplicationError::Protocol(
-                        "Commit outside a Begin frame".into(),
-                    ));
+                    return DrainOutcome::Severed(
+                        ReplicationError::Protocol("Commit outside a Begin frame".into()),
+                        summary,
+                    );
                 };
                 // Buffer-per-txn: publish the whole transaction NOW, the
                 // causation stamp (if the plugin emitted one) attached to every
@@ -568,24 +744,31 @@ async fn drain(
                         row.op,
                     );
                     let id = msg_id(&args.project, &args.env, row.lsn);
-                    let payload = serde_json::to_vec(&envelope).map_err(|e| {
-                        ReplicationError::Generic(format!("serialize envelope: {e}"))
-                    })?;
+                    let payload = match serde_json::to_vec(&envelope) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            return DrainOutcome::Severed(
+                                ReplicationError::Generic(format!("serialize envelope: {e}")),
+                                summary,
+                            );
+                        }
+                    };
                     match publish_acked(js, token, &subj, &id, payload).await {
                         PublishOutcome::Acked { duplicate } => {
-                            published += 1;
+                            summary.published += 1;
                             if duplicate {
-                                deduped += 1;
+                                summary.deduped += 1;
                                 tracing::debug!(id, "redelivery deduped by the stream");
                             }
                         }
                         PublishOutcome::CancelledMidRetry => {
                             tracing::info!(
-                                published,
-                                deduped,
+                                commits = summary.commits,
+                                published = summary.published,
+                                deduped = summary.deduped,
                                 "drain summary (cancelled mid-publish)"
                             );
-                            return Ok(());
+                            return DrainOutcome::Shutdown(summary);
                         }
                     }
                 }
@@ -594,6 +777,7 @@ async fn drain(
                 let l = end_lsn.value();
                 stream.update_flushed_lsn(l);
                 stream.update_applied_lsn(l);
+                summary.commits += 1;
                 continue;
             }
             EventType::Message {
@@ -671,7 +855,10 @@ async fn drain(
         // from the map (by OID — rename-proof). `None` is cached too, so an
         // unmapped table costs one lookup per session, not one per event.
         if !entities.contains_key(&relation_oid) {
-            let resolved = resolve_entity(args, &schema, relation_oid).await?;
+            let resolved = match resolve_entity(args, &schema, relation_oid).await {
+                Ok(r) => r,
+                Err(e) => return DrainOutcome::Severed(e, summary),
+            };
             tracing::info!(
                 %table,
                 relation_oid,
@@ -684,9 +871,10 @@ async fn drain(
         // Buffer the row; it publishes at Commit, once the txn's causation
         // stamp (if any) is known.
         let Some(frame) = txn.as_mut() else {
-            return Err(ReplicationError::Protocol(
-                "row event outside a Begin/Commit frame".into(),
-            ));
+            return DrainOutcome::Severed(
+                ReplicationError::Protocol("row event outside a Begin/Commit frame".into()),
+                summary,
+            );
         };
         frame.rows.push(PendingRow {
             op,
@@ -856,6 +1044,93 @@ mod tests {
                 br#"{"run":"a","root":"b","depth":1,"x":2}"#
             ),
             None
+        );
+    }
+
+    // R11 — the shared reopen backoff/cap ladder. These drive the ladder
+    // deterministically with synthetic `Instant`s: the "stubbed stream that
+    // opens-then-errs" is modelled by feeding `commits == 0` re-opens.
+
+    #[test]
+    fn ladder_open_then_err_flap_terminates_within_the_cap() {
+        // Every session opens then severs without committing (commits == 0) —
+        // the hot-loop R11 describes. The streak guard MUST trip, and within
+        // `max_consecutive` re-opens, not never.
+        let mut ladder = ReopenLadder::new();
+        let cap = ladder.max_consecutive;
+        let t0 = Instant::now();
+        let mut tripped_at = None;
+        for i in 1..=cap {
+            match ladder.note_reopen(t0, 0) {
+                LadderStep::Trip(_) => {
+                    tripped_at = Some(i);
+                    break;
+                }
+                LadderStep::Backoff(d) => {
+                    // Backoff must be bounded and grow with the streak.
+                    assert!(d <= ladder.max_backoff);
+                }
+            }
+        }
+        assert_eq!(
+            tripped_at,
+            Some(cap),
+            "an open-then-err flap must terminate exactly at the consecutive cap"
+        );
+    }
+
+    #[test]
+    fn ladder_productivity_resets_the_streak() {
+        // A session that commits (commits > 0) clears the fast-flap streak, so
+        // the consecutive guard NEVER trips no matter how many productive
+        // re-opens happen. Spaced beyond the rate window so ONLY the streak
+        // guard is exercised here.
+        let mut ladder = ReopenLadder::new();
+        let t0 = Instant::now();
+        for i in 0..100 {
+            let now = t0 + Duration::from_secs(i * 10);
+            assert!(
+                matches!(ladder.note_reopen(now, 1), LadderStep::Backoff(_)),
+                "a productive re-open must never trip the streak guard"
+            );
+        }
+        assert_eq!(ladder.consecutive_failures(), 0);
+    }
+
+    #[test]
+    fn ladder_rate_cap_catches_a_slow_productive_flap() {
+        // The slow flap the streak guard alone misses: every session commits
+        // once (streak stays 0) but re-opens ~1/s, far above the rate cap. The
+        // trailing-window guard must NOT trip while under the cap and MUST trip
+        // exactly once it is exceeded — pinning both directions.
+        let mut ladder = ReopenLadder::new();
+        let cap = ladder.rate_cap as u64;
+        let t0 = Instant::now();
+        let mut trip_at = None;
+        for i in 0..100u64 {
+            let now = t0 + Duration::from_secs(i);
+            match ladder.note_reopen(now, 1) {
+                LadderStep::Backoff(_) => assert!(
+                    i <= cap,
+                    "re-open #{i} is still under the rate cap ({cap}); must not trip yet"
+                ),
+                LadderStep::Trip(_) => {
+                    trip_at = Some(i);
+                    break;
+                }
+            }
+        }
+        // `cap + 1` re-opens (indices 0..=cap) put `cap + 1` instants in the
+        // window; the trip fires on that one, i.e. at index `cap`.
+        assert_eq!(
+            trip_at,
+            Some(cap),
+            "a sustained productive flap must trip the rate cap the moment it is exceeded"
+        );
+        assert_eq!(
+            ladder.consecutive_failures(),
+            0,
+            "the trip came from the rate cap, not the streak"
         );
     }
 }
