@@ -35,7 +35,7 @@ completion, while the `runs` row is audit history that lives forever.
 | `available_at` | visibility gate — future = a delayed / parked / backed-off run |
 | `lease_owner`, `lease_expires_at` | the replica currently holding the run; past expiry it is reclaimable (crash-safe failover) |
 | `attempts`, `max_attempts` | redelivery budget — `attempts` counts **crash evidence** (expired-lease reclaims) only; spent + long-expired ⇒ the janitor gives up |
-| `partition_key`, `priority` | the per-partition-ownership dispatch key (see *Per-partition ownership*); `priority` remains reserved |
+| `partition_key`, `priority` | the per-partition-ownership dispatch key, stamped at fire() from the flow's ordering declaration (see *Flow-level ordering declaration* + *Per-partition ownership*); NULL = unordered; `priority` remains reserved |
 
 The table sits on the house tenant floor — `FORCE ROW LEVEL SECURITY` keyed on
 `current_setting('app.tenant', true)`, granted to the non-owner `wamn_app` role —
@@ -145,6 +145,38 @@ out of order:
 history, is **not** FK'd to `run_queue` (a `partition_key` is not unique there), and
 is garbage-collected when the key drains. It sits on the same tenant floor
 (`FORCE ROW LEVEL SECURITY` on `app.tenant`).
+
+### Flow-level ordering declaration (5.11 / wamn-fqg.20)
+
+Which stream a run joins is declared **on the flow** (`Flow::ordering`, `wamn-flow`),
+and the **dispatcher stamps `run_queue.partition_key` at fire()** from that
+declaration — the `partition_policy` above is materialized the same way, so a
+partitioned row is self-describing and the two claim paths never join back to the
+flow. Three modes:
+
+- **`unordered` (default).** `partition_key` stays NULL — the global claim, in
+  `available_at` order. Absent field = unordered, so existing flows are unchanged.
+- **`strict`.** Every run of the flow carries a **constant** key — the flow id —
+  so the whole flow is one ordered stream (one run in flight, in order, across
+  replicas). The key is per-flow, so two strict flows never share a stream.
+- **`partitioned(partition-key)`.** The key is a JMESPath (`partition-key`) over
+  the run input, evaluated at fire(). A scalar result (string / number / bool)
+  is the key; a **null / missing / non-scalar** result **falls back to the flow
+  id** (the flow-wide stream) rather than NULL — a flow that opted into ordering
+  must never have a run silently escape to the unordered global claim (the D20
+  blocking coherence: NULL = unordered dispatch, which for a partitioned flow
+  would reorder its stream). The JMESPath is validated for syntactic
+  well-formedness when the flow is validated (`wamn-flow`), so a mis-authored key
+  fails validation rather than degrading silently at fire().
+
+The CDC materializer (wamn-l5i9.17) consumes the **same** declaration to key its
+event runs; the guest-side partitioned claim is wamn-fqg.9.
+
+**Per-node ordering is deferred.** The 5.11 plan wording is per-node
+`strict`/`partitioned`/`unordered`, but the queue's dispatch unit is the **run**
+(records map 1:1 to runs, D9), so ordering is declared on the flow, not per node.
+Per-node streams would be a later refinement (a distinct `partition_key` seam per
+node); nothing in the current model needs them.
 
 ### Head-unavailability policy (5.11 / D20)
 

@@ -96,6 +96,61 @@
       ],
       "type": "object"
     },
+    "Ordering": {
+      "description": "The flow's record-stream **ordering** (5.11): which ordered stream a run joins. This is the run's `run_queue.partition_key` seam — the dispatcher evaluates the declaration at fire() and stamps the key; a NULL key is the order-agnostic global claim. Orthogonal to [`PartitionPolicy`], which ranks runs *within* one stream (D20). Absent = [`Ordering::Unordered`].\n\nPer-node ordering (the 5.11 plan wording) is deferred: the queue's dispatch unit is the **run** (records map 1:1 to runs, D9), so ordering is declared on the flow, not per node — a later refinement if per-node streams are ever needed. See `docs/run-queue.md` §Flow-level ordering declaration.",
+      "oneOf": [
+        {
+          "description": "No ordering: runs dispatch by the global claim in `available_at` order (`partition_key` NULL). Today's behavior, and the default.",
+          "properties": {
+            "mode": {
+              "enum": [
+                "unordered"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The whole flow is ONE ordered stream: every run carries a constant partition key (the flow id), so the flow's runs dispatch strictly in-order — one in flight per stream — across replicas.",
+          "properties": {
+            "mode": {
+              "enum": [
+                "strict"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Per-key ordering: the run's partition key is a [JMESPath] over the run input. Runs sharing a key dispatch in-order; distinct keys dispatch independently.\n\n[JMESPath]: https://jmespath.org/",
+          "properties": {
+            "mode": {
+              "enum": [
+                "partitioned"
+              ],
+              "type": "string"
+            },
+            "partition-key": {
+              "description": "The JMESPath expression evaluated over the run input to produce the stream key. Validated for syntactic well-formedness by [`crate::validate`].",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "partition-key"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "PartitionPolicy": {
       "description": "The `partitioned(key)` head-unavailability policy (5.11 / D20): what a key does while its earliest (head) run cannot dispatch. The stream order the policy ranks by is `(enqueued_at, run_id)` — stamped once at enqueue, never moved by a park/backoff (unlike `available_at`).",
       "oneOf": [
@@ -261,6 +316,14 @@
         "$ref": "#/definitions/Node"
       },
       "type": "array"
+    },
+    "ordering": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Ordering"
+        }
+      ],
+      "description": "The flow's record-stream ordering (5.11): which ordered stream its runs join. Absent = [`Ordering::Unordered`] (today's global-claim behavior). The dispatcher evaluates this at fire() and stamps `run_queue.partition_key` ([`Ordering::partition_key_for`]); the CDC materializer (wamn-l5i9.17) consumes the SAME declaration. Composes with [`Flow::partition_policy`], which is the head-unavailability policy *within* a stream (orthogonal: this picks the stream, that ranks it)."
     },
     "partition-policy": {
       "allOf": [

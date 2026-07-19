@@ -63,7 +63,7 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
-use wamn_flow::{Flow, Trigger};
+use wamn_flow::{Flow, Ordering, Trigger};
 use wamn_run_queue::{
     Firing, OutboxRow, RowEventFlow, active_flows_sql, cron_firing, cron_last_run_sql,
     cron_tick_of, due_tick, enqueue_sql, match_outbox, next_fire, next_interval, next_reconcile,
@@ -267,6 +267,13 @@ struct Registry {
     crons: Vec<(String, i32, String)>,
     row_events: Vec<RowEventFlow>,
     held: Vec<(String, String)>,
+    /// Flow-level record-stream ordering (5.11, wamn-fqg.20) per registered
+    /// flow_id — the dispatcher evaluates it at fire() to stamp
+    /// `run_queue.partition_key` ([`partition_key_for_firing`]). Every cron /
+    /// row-event flow lands here (unordered ones as [`Ordering::Unordered`], so
+    /// their key stays NULL); a flow absent from the map falls back to
+    /// unordered too.
+    ordering: HashMap<String, Ordering>,
 }
 
 fn event_str(event: &wamn_flow::RowEvent) -> &'static str {
@@ -333,13 +340,22 @@ fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
             continue;
         }
         match &flow.trigger {
-            Trigger::Cron { schedule } => reg.crons.push((flow_id, version, schedule.clone())),
-            Trigger::RowEvent { table, event } => reg.row_events.push(RowEventFlow {
-                flow_id,
-                flow_version: version,
-                table: table.clone(),
-                event: event_str(event).to_string(),
-            }),
+            Trigger::Cron { schedule } => {
+                // Record the ordering declaration (5.11) so fire() can stamp the
+                // partition key; only flows that actually fire (cron/row-event)
+                // need it.
+                reg.ordering.insert(flow_id.clone(), flow.ordering.clone());
+                reg.crons.push((flow_id, version, schedule.clone()));
+            }
+            Trigger::RowEvent { table, event } => {
+                reg.ordering.insert(flow_id.clone(), flow.ordering.clone());
+                reg.row_events.push(RowEventFlow {
+                    flow_id,
+                    flow_version: version,
+                    table: table.clone(),
+                    event: event_str(event).to_string(),
+                });
+            }
             // Webhook is routed by the API gateway; manual by the editor.
             Trigger::Webhook { .. } | Trigger::Manual => {}
         }
@@ -470,8 +486,14 @@ impl Dispatcher {
             };
             if let Some(tick) = due {
                 let firing = cron_firing(flow_id, *version, schedule, tick);
+                // 5.11 ordering: stamp the partition key from the flow's
+                // declaration (unordered cron flows keep a NULL key = today's
+                // behavior).
+                let key = partition_key_for_firing(&reg, &firing);
                 let span = trigger_span(&firing, &p.spec.tenant);
-                let won = fire(&mut p.client, &firing).instrument(span).await?;
+                let won = fire(&mut p.client, &firing, key.as_deref())
+                    .instrument(span)
+                    .await?;
                 p.last_fired.insert(flow_id.clone(), tick);
                 if won {
                     doorbells.push(firing.run_id.clone());
@@ -520,6 +542,10 @@ impl Dispatcher {
                 let triggered = write_ahead_triggered_run_sql();
                 let enq = enqueue_sql();
                 for f in match_outbox(&polled, &reg.row_events) {
+                    // 5.11 ordering: the partition key from the flow's
+                    // declaration, evaluated over this firing's row-event input
+                    // (unordered flows keep a NULL key = today's behavior).
+                    let key = partition_key_for_firing(&reg, &f);
                     let span = trigger_span(&f, &tenant);
                     let inserted = tx
                         .execute(
@@ -539,8 +565,7 @@ impl Dispatcher {
                     // either still pending or legitimately dequeued —
                     // re-inserting would resurrect a terminal run's queue row.
                     if inserted == 1 {
-                        tx.execute(&enq, &[&f.run_id, &Option::<&str>::None, &0i32, &0i64])
-                            .await?;
+                        tx.execute(&enq, &[&f.run_id, &key, &0i32, &0i64]).await?;
                         doorbells.push(f.run_id.clone());
                         report.outbox_fired.push(f.run_id);
                     }
@@ -706,7 +731,27 @@ pub fn trigger_span(f: &Firing, tenant: &str) -> tracing::Span {
     )
 }
 
-async fn fire(client: &mut Client, f: &Firing) -> anyhow::Result<bool> {
+/// The `run_queue.partition_key` a firing carries (wamn-fqg.20): the firing
+/// flow's ordering declaration (5.11) evaluated over the run input. `None` — the
+/// unordered global claim — for an unordered flow, a flow absent from the
+/// registry, or (defensively) an unparseable input. Strict yields the flow id;
+/// partitioned yields the JMESPath result, folded to a key by
+/// [`Ordering::partition_key_for`] (a missing/non-scalar key degrades to the
+/// flow-wide stream, never NULL).
+fn partition_key_for_firing(reg: &Registry, f: &Firing) -> Option<String> {
+    let ordering = reg.ordering.get(&f.flow_id)?;
+    // The input the run is replayed from (5.7) is the same JSON the key is
+    // evaluated over; a malformed input degrades to `null` (fallback to the
+    // flow-wide stream for a partitioned flow, None for unordered/strict-null).
+    let input = serde_json::from_str(&f.input_json).unwrap_or(serde_json::Value::Null);
+    ordering.partition_key_for(&f.flow_id, &input)
+}
+
+async fn fire(
+    client: &mut Client,
+    f: &Firing,
+    partition_key: Option<&str>,
+) -> anyhow::Result<bool> {
     let tx = client.transaction().await?;
     let inserted = tx
         .execute(
@@ -721,11 +766,8 @@ async fn fire(client: &mut Client, f: &Firing) -> anyhow::Result<bool> {
         )
         .await?;
     if inserted == 1 {
-        tx.execute(
-            &enqueue_sql(),
-            &[&f.run_id, &Option::<&str>::None, &0i32, &0i64],
-        )
-        .await?;
+        tx.execute(&enqueue_sql(), &[&f.run_id, &partition_key, &0i32, &0i64])
+            .await?;
     }
     tx.commit().await?;
     Ok(inserted == 1)
@@ -891,7 +933,61 @@ fn init_crypto() {
 
 #[cfg(test)]
 mod tests {
-    use super::{TickReport, valid_tenant};
+    use super::{Ordering, Registry, TickReport, partition_key_for_firing, valid_tenant};
+    use wamn_run_queue::Firing;
+
+    fn firing(flow_id: &str, input_json: &str) -> Firing {
+        Firing {
+            run_id: format!("{flow_id}:outbox:1"),
+            flow_id: flow_id.to_string(),
+            flow_version: 1,
+            input_json: input_json.to_string(),
+            trigger_source: "outbox:1".to_string(),
+        }
+    }
+
+    // wamn-fqg.20: the dispatcher stamps run_queue.partition_key from the flow's
+    // ordering declaration (5.11), evaluated over the firing's run input.
+    #[test]
+    fn partition_key_stamped_from_the_flow_ordering() {
+        let mut reg = Registry::default();
+        reg.ordering.insert("plain".into(), Ordering::Unordered);
+        reg.ordering.insert("whole".into(), Ordering::Strict);
+        reg.ordering.insert(
+            "keyed".into(),
+            Ordering::Partitioned {
+                partition_key: "payload.customer".into(),
+            },
+        );
+
+        let input = r#"{"table":"orders","payload":{"customer":"acme"}}"#;
+        // Unordered → NULL key (today's global claim, unchanged).
+        assert_eq!(
+            partition_key_for_firing(&reg, &firing("plain", input)),
+            None
+        );
+        // Strict → the constant whole-flow key (the flow id).
+        assert_eq!(
+            partition_key_for_firing(&reg, &firing("whole", input)),
+            Some("whole".to_string())
+        );
+        // Partitioned → the evaluated key.
+        assert_eq!(
+            partition_key_for_firing(&reg, &firing("keyed", input)),
+            Some("acme".to_string())
+        );
+        // Partitioned with a missing key → the flow-wide stream, never NULL: a
+        // partitioned flow must not escape to the unordered claim (D20).
+        assert_eq!(
+            partition_key_for_firing(&reg, &firing("keyed", r#"{"payload":{}}"#)),
+            Some("keyed".to_string())
+        );
+        // A flow with no recorded ordering falls back to unordered.
+        assert_eq!(
+            partition_key_for_firing(&reg, &firing("unknown", input)),
+            None
+        );
+    }
 
     // R16b (wamn-2jkm.20) — the dispatcher and the wamn:postgres plugin now share
     // ONE `valid_tenant`. Exercised through the symbol the dispatcher's spec check

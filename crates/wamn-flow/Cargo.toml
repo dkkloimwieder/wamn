@@ -11,6 +11,11 @@ serde_json = "1"
 # The published JSON Schema contract (docs/flow-schema.schema.json) is GENERATED
 # from these types (single source of truth); a drift test keeps them in lockstep.
 schemars = "0.8"
+# The `partitioned(key)` ordering key (5.11) is a JMESPath over the run input —
+# the SAME expression surface (crate + version) the node library evaluates
+# (wamn-nodes), so validation and the dispatcher/materializer key stamping share
+# one grammar.
+jmespath = "0.3"
 
 [dev-dependencies]
 # tests validate each fixture flow against the generated JSON Schema, tying the

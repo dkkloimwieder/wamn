@@ -27,6 +27,13 @@
 //!              co-transaction is proven atomic by traps on BOTH sides (the
 //!              ack-side trap kills the fire-first split-txn mutant, the
 //!              fire-side trap kills the ack-first lost-event mutant).
+//!   ordering — the flow-level ordering declaration (5.11, wamn-fqg.20) is
+//!              stamped onto run_queue.partition_key at fire(): an unordered
+//!              flow's runs carry a NULL key (today's global claim), a strict
+//!              flow's runs all carry the constant whole-flow key (the flow id),
+//!              and a partitioned flow's runs carry the JMESPath result over the
+//!              run input — with a missing key degrading to the flow-wide stream
+//!              (never NULL), so a partitioned flow never escapes to unordered.
 //!   race     — TWO live dispatchers over one project, ticking concurrently:
 //!              every cron tick and every outbox row still fires exactly once,
 //!              with contention PROVEN (losing attempts are counted and both
@@ -74,6 +81,7 @@ const DAY: i64 = 86_400_000;
 pub enum Mode {
     Cron,
     Outbox,
+    Ordering,
     Race,
     Fairness,
     Prune,
@@ -142,12 +150,13 @@ fn dispatch_ddl(schema: &str) -> String {
          CREATE TABLE {schema}.run_queue (\
             tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
             priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
+            stream_seq bigint NOT NULL DEFAULT 0, \
             lease_owner text, lease_expires_at timestamptz, \
             attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
             enqueued_at timestamptz NOT NULL DEFAULT now(), \
             PRIMARY KEY (tenant_id, run_id), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         CREATE INDEX {schema}_claimable ON {schema}.run_queue (tenant_id, available_at, lease_expires_at);\
+         CREATE INDEX {schema}_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
          ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
          CREATE POLICY run_queue_tenant ON {schema}.run_queue \
@@ -160,9 +169,10 @@ fn dispatch_ddl(schema: &str) -> String {
             event text NOT NULL CHECK (event IN ('insert', 'update', 'delete')), \
             payload jsonb, created_at timestamptz NOT NULL DEFAULT now(), \
             dispatched_at timestamptz, \
+            held_since timestamptz, \
             PRIMARY KEY (tenant_id, seq));\
          CREATE INDEX {schema}_outbox_pending ON {schema}.outbox (tenant_id, seq) \
-            WHERE dispatched_at IS NULL;\
+            WHERE dispatched_at IS NULL AND held_since IS NULL;\
          ALTER TABLE {schema}.outbox ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.outbox FORCE ROW LEVEL SECURITY;\
          CREATE POLICY outbox_tenant ON {schema}.outbox \
@@ -302,6 +312,18 @@ async fn scalar_i64(client: &Client, sql: &str) -> anyhow::Result<i64> {
     Ok(client.query_one(sql, &[]).await?.get(0))
 }
 
+/// The `run_queue.partition_key` of one run (NULL = unordered), for the ordering
+/// gate's per-run key assertions.
+async fn partition_key_of(client: &Client, run_id: &str) -> anyhow::Result<Option<String>> {
+    Ok(client
+        .query_one(
+            "SELECT partition_key FROM run_queue WHERE run_id = $1",
+            &[&run_id],
+        )
+        .await?
+        .get(0))
+}
+
 pub async fn run(args: DispatchBenchArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
@@ -330,6 +352,9 @@ pub async fn run(args: DispatchBenchArgs) -> anyhow::Result<()> {
         }
         if run_all || args.mode == Mode::Outbox {
             pass &= outbox_phase(&app_url, &admin_url).await?;
+        }
+        if run_all || args.mode == Mode::Ordering {
+            pass &= ordering_phase(&app_url, &admin_url).await?;
         }
         if run_all || args.mode == Mode::Race {
             pass &= race_phase(&app_url, &admin_url).await?;
@@ -786,6 +811,107 @@ async fn outbox_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     println!(
         "PASS(outbox fire + consume + skew-hold + id-mismatch-hold + ghost-guard + co-txn traps both ways): {pass}"
     );
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// ordering: the flow-level ordering declaration is stamped onto
+// run_queue.partition_key at fire() (wamn-fqg.20)
+// ---------------------------------------------------------------------------
+
+async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
+    println!(
+        "\n## ordering — unordered→NULL key, strict→constant flow key, partitioned→JMESPath key \
+         (missing key falls back to the flow-wide stream, never NULL)"
+    );
+    reset(admin_url, SCHEMA_A).await?;
+    let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
+
+    // Three row-event flows on the SAME (orders, insert), so ONE outbox row
+    // fires all three — a per-flow key assertion off a single event.
+    let ordered_flow = |flow_id: &str, ordering: serde_json::Value| {
+        let mut graph = serde_json::json!({
+            "schema-version": "0.1", "flow-id": flow_id, "version": 1,
+            "trigger": {"type": "row-event", "table": "orders", "event": "insert"},
+            "entry": "n1", "nodes": [{"id": "n1", "type": "noop"}],
+        });
+        if !ordering.is_null() {
+            graph["ordering"] = ordering;
+        }
+        graph.to_string()
+    };
+    // unordered = the field absent (today's default).
+    seed_flow(
+        &seeder,
+        "unordered-flow",
+        &ordered_flow("unordered-flow", serde_json::Value::Null),
+    )
+    .await?;
+    seed_flow(
+        &seeder,
+        "strict-flow",
+        &ordered_flow("strict-flow", serde_json::json!({"mode": "strict"})),
+    )
+    .await?;
+    seed_flow(
+        &seeder,
+        "partitioned-flow",
+        &ordered_flow(
+            "partitioned-flow",
+            serde_json::json!({"mode": "partitioned", "partition-key": "payload.customer"}),
+        ),
+    )
+    .await?;
+
+    // Row 1 carries the partition key; row 2 lacks it (the fallback case).
+    insert_outbox(
+        &seeder,
+        "orders",
+        "insert",
+        Some("{\"customer\": \"acme\"}"),
+    )
+    .await?;
+    insert_outbox(&seeder, "orders", "insert", Some("{\"order\": 7}")).await?;
+
+    let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
+    let mut d = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let report = d.tick_project(0, BASE_MS).await?;
+    let fired = report.outbox_fired.len() == 6; // 3 flows × 2 rows
+
+    // Unordered: NULL key on BOTH rows — byte-for-byte today's global-claim behavior.
+    let unordered_null = partition_key_of(&seeder, "unordered-flow:outbox:1")
+        .await?
+        .is_none()
+        && partition_key_of(&seeder, "unordered-flow:outbox:2")
+            .await?
+            .is_none();
+    // Strict: the constant whole-flow key (the flow id) on BOTH rows.
+    let strict_constant = partition_key_of(&seeder, "strict-flow:outbox:1")
+        .await?
+        .as_deref()
+        == Some("strict-flow")
+        && partition_key_of(&seeder, "strict-flow:outbox:2")
+            .await?
+            .as_deref()
+            == Some("strict-flow");
+    // Partitioned: row 1's key is the evaluated JMESPath result.
+    let partitioned_keyed = partition_key_of(&seeder, "partitioned-flow:outbox:1")
+        .await?
+        .as_deref()
+        == Some("acme");
+    // Partitioned with a MISSING key: the flow-wide stream (flow id), never NULL.
+    let partitioned_fallback = partition_key_of(&seeder, "partitioned-flow:outbox:2")
+        .await?
+        .as_deref()
+        == Some("partitioned-flow");
+
+    let pass =
+        fired && unordered_null && strict_constant && partitioned_keyed && partitioned_fallback;
+    println!(
+        "fired={fired} unordered_null={unordered_null} strict_constant={strict_constant} \
+         partitioned_keyed={partitioned_keyed} partitioned_fallback={partitioned_fallback}"
+    );
+    println!("PASS(ordering: partition_key stamped from the flow declaration): {pass}");
     Ok(pass)
 }
 

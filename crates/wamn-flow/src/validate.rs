@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::types::{Flow, SCHEMA_VERSION, Trigger};
+use crate::types::{Flow, Ordering, SCHEMA_VERSION, Trigger};
 
 /// Severity of a validation [`Issue`]. Only [`Severity::Error`] makes a flow
 /// invalid; warnings surface editor-fixable smells (e.g. dead nodes).
@@ -234,6 +234,29 @@ pub fn validate(flow: &Flow) -> Vec<Issue> {
         _ => {}
     }
 
+    // --- ordering: partitioned needs a compilable JMESPath key (5.11) -------
+    // strict/unordered carry no key by construction (the type has no field), so
+    // "must not carry a key" is enforced structurally; only the partitioned key
+    // needs a grammar check. Full JMESPath authority is the eval path's
+    // (`Ordering::partition_key_for`); here we reject a key that can never
+    // compile, so a mis-authored expression fails validation, not silently at
+    // fire() (where it would degrade to the flow-wide stream).
+    if let Ordering::Partitioned { partition_key } = &flow.ordering {
+        if partition_key.trim().is_empty() {
+            issues.push(Issue::error(
+                "empty-partition-key",
+                "ordering.partition-key",
+                "partitioned ordering needs a partition-key expression",
+            ));
+        } else if let Err(e) = jmespath::compile(partition_key) {
+            issues.push(Issue::error(
+                "invalid-partition-key",
+                "ordering.partition-key",
+                format!("partition-key {partition_key:?} is not a valid JMESPath: {e}"),
+            ));
+        }
+    }
+
     // --- reachability (warning) — dead nodes are editor smells --------------
     if node_ids.contains(flow.entry.as_str()) {
         let reachable = reachable_from(flow);
@@ -336,7 +359,7 @@ impl Flow {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{Edge, Flow, Node, PartitionPolicy, Trigger};
+    use crate::types::{Edge, Flow, Node, Ordering, PartitionPolicy, Trigger};
     use serde_json::json;
 
     fn node(id: &str, ty: &str) -> Node {
@@ -372,6 +395,7 @@ mod tests {
             credentials: vec![],
             allowed_hosts: vec![],
             partition_policy: PartitionPolicy::default(),
+            ordering: Ordering::default(),
         }
     }
 
@@ -535,5 +559,101 @@ mod tests {
         let mut f = minimal();
         f.schema_version = "1.0".into();
         assert!(codes(&f).contains(&"unsupported-schema-version"));
+    }
+
+    #[test]
+    fn ordering_defaults_to_unordered_and_round_trips() {
+        // Absent = unordered; the default is omitted on export so flows
+        // round-trip minimal (like partition-policy).
+        let f = minimal();
+        assert_eq!(f.ordering, Ordering::Unordered);
+        assert!(f.is_valid());
+        assert!(!f.to_json().contains("ordering"));
+
+        // strict is a unit variant — no key to carry, by construction.
+        let mut f = minimal();
+        f.ordering = Ordering::Strict;
+        let json = f.to_json();
+        assert!(json.contains("\"ordering\""));
+        assert!(json.contains("\"mode\": \"strict\""));
+        assert_eq!(Flow::from_json(&json).unwrap().ordering, Ordering::Strict);
+        assert!(f.is_valid(), "{:?}", f.issues());
+
+        // partitioned round-trips with its kebab-case partition-key.
+        let mut f = minimal();
+        f.ordering = Ordering::Partitioned {
+            partition_key: "payload.customer".into(),
+        };
+        let json = f.to_json();
+        assert!(json.contains("\"mode\": \"partitioned\""));
+        assert!(json.contains("\"partition-key\": \"payload.customer\""));
+        assert_eq!(
+            Flow::from_json(&json).unwrap().ordering,
+            Ordering::Partitioned {
+                partition_key: "payload.customer".into()
+            }
+        );
+        assert!(f.is_valid(), "{:?}", f.issues());
+
+        // An unknown mode is a parse error, not a silent default.
+        let bad = json.replace("partitioned", "sideways");
+        assert!(Flow::from_json(&bad).is_err());
+    }
+
+    #[test]
+    fn partitioned_requires_a_compilable_jmespath_key() {
+        // A syntactically broken JMESPath is rejected at validation, not left to
+        // degrade silently at fire().
+        let mut f = minimal();
+        f.ordering = Ordering::Partitioned {
+            partition_key: "payload.[".into(), // unbalanced bracket
+        };
+        assert!(codes(&f).contains(&"invalid-partition-key"));
+        assert!(!f.is_valid());
+
+        // An empty key is its own, more specific error.
+        let mut f = minimal();
+        f.ordering = Ordering::Partitioned {
+            partition_key: "   ".into(),
+        };
+        let c = codes(&f);
+        assert!(c.contains(&"empty-partition-key"));
+        assert!(!c.contains(&"invalid-partition-key"));
+        assert!(!f.is_valid());
+
+        // A valid key is clean.
+        let mut f = minimal();
+        f.ordering = Ordering::Partitioned {
+            partition_key: "payload.customer".into(),
+        };
+        assert!(f.is_valid(), "{:?}", f.issues());
+    }
+
+    #[test]
+    fn partition_key_for_folds_the_input_to_a_stream_key() {
+        let input = json!({"payload": {"customer": "acme", "count": 42, "vip": true}});
+
+        // Unordered → None (the global claim), strict → the flow id.
+        assert_eq!(Ordering::Unordered.partition_key_for("f", &input), None);
+        assert_eq!(
+            Ordering::Strict.partition_key_for("f", &input),
+            Some("f".to_string())
+        );
+
+        // Partitioned scalars: string verbatim, number/bool stringified exactly.
+        let key = |expr: &str| {
+            Ordering::Partitioned {
+                partition_key: expr.into(),
+            }
+            .partition_key_for("f", &input)
+        };
+        assert_eq!(key("payload.customer"), Some("acme".to_string()));
+        assert_eq!(key("payload.count"), Some("42".to_string()));
+        assert_eq!(key("payload.vip"), Some("true".to_string()));
+
+        // Missing path / non-scalar result → the flow-wide stream (flow id),
+        // NEVER None: a partitioned flow must not escape to the unordered claim.
+        assert_eq!(key("payload.missing"), Some("f".to_string()));
+        assert_eq!(key("payload"), Some("f".to_string())); // an object is not a key
     }
 }
