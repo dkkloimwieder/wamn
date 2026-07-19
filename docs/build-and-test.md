@@ -277,6 +277,24 @@ kubectl -n wamn-system wait --for=condition=complete job/egressbench --timeout=3
 kubectl -n wamn-system logs job/egressbench
 ```
 
+### [E13a] publish-time egress-guard refusal (socketguard)
+
+Docs: docs/security-db-path.md · Manifest: deploy/gates/socketguard-job.yaml
+
+```bash
+# Hermetic: synthesizes a wasi:sockets importer (must be REFUSED at publish) and
+# a standard world (must publish) in-process — no registry, no fixtures, no DB,
+# so the local run IS the whole gate. Unlike egressbench (which walks the shipped
+# components), this proves the guard REJECTS an adversarial world.
+cargo test -p wamn-gates            # +the egressbench runtime/reject-tenant units
+cargo test -p wamn-host egress_guard  # the shared classifier units
+./target/release/wamn-gates --log-level warn socketguard
+# in-cluster sweep (carries the hermetic gate alongside egressbench-job):
+kubectl -n wamn-system apply -f deploy/gates/socketguard-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/socketguard --timeout=120s
+kubectl -n wamn-system logs job/socketguard
+```
+
 ### [5.1] flow-graph schema crate (crates/wamn-flow)
 
 Docs: docs/flow-schema.md

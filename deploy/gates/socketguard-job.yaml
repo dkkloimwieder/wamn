@@ -1,0 +1,37 @@
+# E13a publish-time egress-guard refusal gate in-cluster job (wamn-2jkm.56).
+# Runs the socketguard subcommand of the wamn-gates image (SR1). The gate is
+# HERMETIC — it synthesizes its two fixtures in-process (a wasi:sockets importer
+# that must be REFUSED at publish, and a standard world that must still publish),
+# so it needs no registry, no fixtures, no DB, and no NATS. The in-cluster sweep
+# still carries it so the publish-time guard is proven in the same environment
+# as the runtime egress gate (egressbench-job.yaml). The suite exits non-zero if
+# the guard does not hold, so job completion IS the verdict.
+#
+#   kubectl -n wamn-system apply -f deploy/gates/socketguard-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/socketguard --timeout=120s
+#   kubectl -n wamn-system logs job/socketguard
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: socketguard
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: socketguard }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: socketguard
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "warn"
+            - "socketguard"
+          resources:
+            # No CPU limit (CFS-quota tail artifact — see bench/flowbench). The
+            # gate compiles two tiny synthesized components; memory is capped.
+            requests: { cpu: "1", memory: "256Mi" }
+            limits: { memory: "1Gi" }
