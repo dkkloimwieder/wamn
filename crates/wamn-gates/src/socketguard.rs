@@ -151,6 +151,9 @@ mod tests {
                     "names every socket import, no others"
                 );
             }
+            Err(EgressGuardError::DisallowedTenantImport { .. }) => {
+                panic!("socket denylist produced a tenant-allowlist refusal — wrong classifier")
+            }
             Ok(()) => panic!("guard ADMITTED a wasi:sockets importer — the bypass is open"),
         }
     }
