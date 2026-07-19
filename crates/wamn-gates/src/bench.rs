@@ -1,4 +1,4 @@
-//! The `bench` subcommand: S1 measurements (docs/p0-exit-criteria.md).
+//! The `bench` subcommand: S1 measurements (docs/archive/p0-exit-criteria.md).
 //!
 //! Phase 1 — cold instantiation p50/p99 (pass: p99 < 10 ms). Raw wasmtime
 //!   Store::new + CommandPre::instantiate_async on the same engine config the

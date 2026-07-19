@@ -2,7 +2,7 @@
 //!
 //! The gates accreted per-bench copies of the same helpers (`percentile`
 //! existed three times host-side); this crate is the single place they live
-//! (docs/structure-review.md SR1). Scope: pure, dependency-light helpers —
+//! (docs/archive/structure-review.md SR1). Scope: pure, dependency-light helpers —
 //! stats over collected samples, the PASS/FAIL check line, and small JSON
 //! response asserts. Bench-specific machinery (harness structs, provisioning,
 //! stepped clocks with a single consumer) stays in its bench module until a

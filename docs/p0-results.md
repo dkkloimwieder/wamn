@@ -1,6 +1,6 @@
 # P0 Spike Results — Raw Numbers
 
-Records measurements against `docs/p0-exit-criteria.md`. One section per spike;
+Records measurements against `docs/archive/p0-exit-criteria.md`. One section per spike;
 the cross-cutting exit (decision closure for D5/D7/design-note-9b + the
 dispatch-SLO sanity-check) is the final section below.
 
@@ -629,7 +629,7 @@ Epic 11. All held. Closing S6 completes the P0 spike set (S1–S6) and unblocks
 ## Cross-cutting exit — P0 COMPLETE (2026-07-10)
 
 All six P0 spikes passed on their in-cluster gate of record; none took its fail
-branch. Per `docs/p0-exit-criteria.md` ("Cross-cutting exit"), P0 is done when
+branch. Per `docs/archive/p0-exit-criteria.md` ("Cross-cutting exit"), P0 is done when
 every spike passes (or has a written fail-branch decision), the raw numbers are
 recorded here, and the data-dependent decisions (D5, D7, design-note 9b, and the
 proposed dispatch SLOs) are formally closable with that data. All conditions are

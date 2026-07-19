@@ -1,3 +1,5 @@
+> **Archived 2026-07-19** — absorbed by `docs/findings.md` (the single findings ledger); retained for commit-message resolution (SR1–SR7 ids).
+
 # Structure & Code-Quality Review — SR1–SR7
 
 Scope: workspace structure, code organization, coherence, and conventions at tip `e300859` (16 crates, 11 components, ~37k lines). This is the "while the project is still new" review: every finding is cheapest now and compounds if deferred. Companion to `review-findings.md` (R-series = correctness/design findings; SR-series = structure/quality). Guideline citations reference the house Rust guidelines (M-rules).

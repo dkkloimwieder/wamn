@@ -1,3 +1,5 @@
+> **Archived 2026-07-19** — superseded by `docs/event-plane-jetstream.md` (v3, D19) on 2026-07-18; retained for the outbox-era rationale and the teardown list provenance.
+
 # Event Plane Design — JetStream behind the outbox (candidate D19, v2)
 
 **Status:** comprehensive design for sign-off. v2 supersedes v1: adds the

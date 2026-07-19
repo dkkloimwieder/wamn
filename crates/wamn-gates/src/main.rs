@@ -1,4 +1,4 @@
-//! wamn-gates: the gate suite binary (docs/structure-review.md SR1).
+//! wamn-gates: the gate suite binary (docs/archive/structure-review.md SR1).
 //!
 //! Every bench/fixture/proof subcommand that used to ride the wamn-host
 //! binary, with an identical subcommand surface (`wamn-gates pgbench …`), so

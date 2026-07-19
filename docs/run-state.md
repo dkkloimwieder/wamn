@@ -50,7 +50,7 @@ The module carries no DB driver, clock, or `tokio` in its dependency closure, so
 is **guest-compilable**: both wasm guests (`flowrunner`, `poc-webhook-f1`) bind
 these builders through `wamn:postgres`, while host drivers execute the identical
 text through `tokio_postgres`. Whoever holds the connection executes — there is
-never a second author of the schema's statements (docs/structure-review.md SR2).
+never a second author of the schema's statements (docs/archive/structure-review.md SR2).
 The load-bearing shapes (`ON CONFLICT` idempotency, the `dispatched`→`running`
 guard, the deliberately unconditional completion write, the `success`/`error`
 reconstruction filter) are pinned by shape unit tests in that module; the runtime

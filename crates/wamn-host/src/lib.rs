@@ -5,7 +5,7 @@
 //! `wamn:logging`, the `wamn:node/control` stub), and the project
 //! provisioning tool (`publish-catalog`). The thin `wamn-host` binary
 //! (src/main.rs) exposes exactly these as subcommands; the gate suite lives
-//! in the separate `wamn-gates` binary (docs/structure-review.md SR1) and
+//! in the separate `wamn-gates` binary (docs/archive/structure-review.md SR1) and
 //! consumes this library so gates exercise the identical host code they
 //! verify.
 

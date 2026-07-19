@@ -1,5 +1,5 @@
 //! The `pgbench` subcommand: S2 measurements and the three mandatory
-//! `wamn:postgres` security gates (docs/p0-exit-criteria.md S2).
+//! `wamn:postgres` security gates (docs/archive/p0-exit-criteria.md S2).
 //!
 //! Unlike the S1 `bench` command (raw wasi:cli components), this instantiates
 //! the `pgprobe` guest — which imports `wamn:postgres/client` — into a

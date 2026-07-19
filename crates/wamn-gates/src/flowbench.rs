@@ -1,5 +1,5 @@
 //! The `flowbench` subcommand: the three S3 flow-runner gates
-//! (docs/p0-exit-criteria.md S3).
+//! (docs/archive/p0-exit-criteria.md S3).
 //!
 //! Like `pgbench`, this instantiates a guest — here `flowrunner`, which embeds
 //! the standard node library as native Rust and imports `wamn:postgres/client`

@@ -1,5 +1,5 @@
 //! The `logbench` subcommand: the S5 logging-capture gates
-//! (docs/p0-exit-criteria.md S5).
+//! (docs/archive/p0-exit-criteria.md S5).
 //!
 //! S5 asks three things of the `wasi:logging` capture path — a guest logs, the
 //! `wamn:logging` plugin enriches (host-trusted tenant/project + guest

@@ -88,7 +88,7 @@ guest partitioned claim P3→P2 — those two close the 5.11 surface),
 ## Event-plane program (D19 **decided** 2026-07-18 — v3: CDC → JetStream; Phase 0 blocks everything)
 
 **Owner decision 2026-07-18:** `docs/event-plane-jetstream.md` **v3** supersedes the
-v2 outbox-relay candidate (v2 preserved at `docs/event-plane-jetstream-outbox.md`).
+v2 outbox-relay candidate (v2 preserved at `docs/archive/event-plane-v2-outbox.md`).
 Capture is **CDC via logical decoding (pg_walstream)** → JetStream — the WAL is the
 event source; the outbox trigger path is retired (v3 §3 teardown: dispatcher outbox
 poller, per-table triggers + DDL emission, outbox table + GC, dispatchbench outbox

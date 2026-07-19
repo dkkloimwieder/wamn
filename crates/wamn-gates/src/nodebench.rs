@@ -1,5 +1,5 @@
 //! The `nodebench` + `serve-node` subcommands: the S4 custom-node gates
-//! (docs/p0-exit-criteria.md S4, decision D7, design-note 9b).
+//! (docs/archive/p0-exit-criteria.md S4, decision D7, design-note 9b).
 //!
 //! S4 asks three questions about invoking a *dynamically-loaded custom node*
 //! (as opposed to the standard nodes compiled into the S3 runner):

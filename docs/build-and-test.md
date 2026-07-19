@@ -742,7 +742,7 @@ apply/test/restore with sha256, DEBUG builds.
 
 ### [EVT-OIDMAP / wamn-l5i9.11] relation-OID → catalog-entity keying (R9b)
 
-Docs: docs/event-plane-jetstream.md §4/§5, docs/review-findings.md R9b. The
+Docs: docs/event-plane-jetstream.md §4/§5, docs/archive/review-findings.md R9b. The
 reader resolves each relation OID to its stable catalog **entity id** via the
 `wamn_entities` map (`relation_oid → entity_id, table_name`), maintained by
 `publish-catalog`/`migrate-catalog` IN the DDL transaction (OID-keyed, so a

@@ -1,7 +1,7 @@
 //! S5 logging-capture bench guest (`components/fixtures/logspewer`).
 //!
 //! Imports `wasi:logging/logging` and exports two entry points the `logbench`
-//! harness drives (docs/p0-exit-criteria.md S5):
+//! harness drives (docs/archive/p0-exit-criteria.md S5):
 //!
 //!   * `overhead(n)` self-times each `log()` call with the guest's own
 //!     `std::time::Instant` (which works on wasm32-wasip2 — proven in S3/S4) and

@@ -1,5 +1,5 @@
 //! The `testhostbench` subcommand: the S6 test-host plugin-swap gates
-//! (docs/p0-exit-criteria.md S6).
+//! (docs/archive/p0-exit-criteria.md S6).
 //!
 //! S6 validates the mock-at-capability-boundary thesis (design-note 9): the
 //! SAME compiled flow binary runs unmodified under a *prod* host and a *test*

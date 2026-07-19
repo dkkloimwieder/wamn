@@ -1,4 +1,4 @@
-//! The single source of run-state SQL (docs/structure-review.md SR2).
+//! The single source of run-state SQL (docs/archive/structure-review.md SR2).
 //!
 //! Pure text builders over the `runs` / `node_runs` tables this crate owns
 //! (`deploy/run-state.sql`), in the house shape: values are ALWAYS `$n`

@@ -456,4 +456,4 @@ DB/role CRDs, resource sizing (`cloudnative-pg.io/docs/…`). Additional:
 hibernation (`…/declarative_hibernation/`), Barman Cloud plugin
 (`…/backup_barmanobjectstore/` + plugin repo). wamn: `docs/provisioning.md`,
 `CredentialProvider` seam, D6 row, R8b (credential blast radius),
-`review-findings.md` R7–R9, plan 10.1/10.3/3.4/8.1/8.6/9.8/9.11.
+`docs/archive/review-findings.md` R7–R9, plan 10.1/10.3/3.4/8.1/8.6/9.8/9.11.

@@ -55,7 +55,7 @@ Three postures were considered:
 | Deployment scheduling | runtime-operator `WorkloadDeployment` (`runtime.wasmcloud.dev/v1alpha1`) | **this *is* the k8s-native standard** | **Already correct** — control plane generates per-project-env instances |
 | Higher-level app model | none | wadm / OAM `Application` | **Deferred to C** (lattice-oriented; tied to wasmcloud-operator, not runtime-operator) |
 | Control plane / wake | operator NATS + dispatcher doorbell hint | NATS lattice | **Control only, not a data path** — unchanged |
-| Event capture (D19 v3, 2026-07-18) | **native CDC reader** (dispatcher-family service: pg_walstream logical decoding → JetStream) holding **replication credentials — a privilege tier above query credentials** (see the R8b role-scoping in `docs/review-findings.md`) | — (no ecosystem equivalent) | **Native by design** — a long-lived replication session owning a slot does not fit the per-invocation component model; a parser-only wasm decoder is a future seam (event-plane v3 §6), not planned |
+| Event capture (D19 v3, 2026-07-18) | **native CDC reader** (dispatcher-family service: pg_walstream logical decoding → JetStream) holding **replication credentials — a privilege tier above query credentials** (see the R8b role-scoping in `docs/archive/review-findings.md`) | — (no ecosystem equivalent) | **Native by design** — a long-lived replication session owning a slot does not fit the per-invocation component model; a parser-only wasm decoder is a future seam (event-plane v3 §6), not planned |
 
 ## Interface policy — prefer standard, justify exceptions
 

@@ -1,3 +1,5 @@
+> **Archived 2026-07-19** — absorbed by `docs/findings.md` (the single findings ledger); retained for commit-message resolution (R1–R9c ids).
+
 # Review Findings — Issues R1–R5
 
 Source: external code review of the wamn repo (2026-07-11, tip `155ac4b`), cross-checked against the P0 results and the planning corpus; amended same day after review of the 5.14 follow-up commits (`75d8277` partition ownership, `a7d2ad2` failover — tip `5107268`); amended 2026-07-12 after review of the dispatcher tranche (`a3fb0b3` shared trigger dispatcher, `98ba290` flow-id slugs, `9123e13` production deploy, `b687d45` outbox trigger producers); amended again after review of the migration-ordering commit (`873c3d8` name-freeing preamble — tip `873c3d8`); amended 2026-07-18 after the **D19 v3 event-plane decision** (CDC via logical decoding retires the outbox capture path — R8c closes, R9b re-homes to the CDC decode layer; see `docs/event-plane-jetstream.md`). CI/LICENSE finding excluded by decision. Each issue: context → evidence → design → implementation → verification → doc closure. Repo `docs/` are canonical; all doc-closure edits land there.

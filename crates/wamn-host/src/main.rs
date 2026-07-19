@@ -5,7 +5,7 @@
 //! `publish-catalog` — project provisioning + catalog snapshot publication.
 //!
 //! The gate suite (bench/pgbench/…/f1proof) lives in the separate
-//! `wamn-gates` binary (docs/structure-review.md SR1); this artifact ships
+//! `wamn-gates` binary (docs/archive/structure-review.md SR1); this artifact ships
 //! none of it.
 
 use std::str::FromStr as _;

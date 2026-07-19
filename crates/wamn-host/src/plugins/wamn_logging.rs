@@ -1,4 +1,4 @@
-//! # wamn:logging plugin (S5 — logging capture PoC, docs/p0-exit-criteria.md S5)
+//! # wamn:logging plugin (S5 — logging capture PoC, docs/archive/p0-exit-criteria.md S5)
 //!
 //! Implements `wasi:logging/logging` for guests, but unlike the vendored
 //! `TracingLogger` (which only tags the workload/component identity and routes

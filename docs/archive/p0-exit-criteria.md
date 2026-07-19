@@ -1,3 +1,5 @@
+> **Archived 2026-07-19** — P0 closed; results live in `docs/p0-results.md`; retained for the go/no-go thresholds that gate re-measurement.
+
 # P0 Exit Criteria — Measurable Go/No-Go per Spike
 
 Numbers, not vibes. Each spike lists: deliverable, measurements, pass thresholds, and what a failure triggers. Bench environment: 3-node kind/k3d cluster on a dev workstation-class machine, in-cluster Postgres (CNPG single instance), results recorded in a `p0-results.md` with raw numbers. Thresholds are dev-cluster values; production SLOs (plan 5.14/D15) are separate.
