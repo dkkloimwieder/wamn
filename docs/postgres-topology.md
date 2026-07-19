@@ -1,5 +1,7 @@
 # Postgres topology (D6 refinement, v2) — org clusters, four tiers
 
+> **§1.9a audit (2026-07-19): amendments contradict the base — rewrite scheduled (findings §1.9b).**
+
 **Supersedes** the prior D6-topology note (shared-`Cluster`-vs-cluster-per-project
 framing). That note's analysis stands — its CNPG facts are incorporated below —
 but its option space was built on the wrong tenancy unit. The unit of isolation

@@ -1,5 +1,7 @@
 # Control-plane registry model (wamn-q3n.1, generalized by wamn-8df.3 / D18)
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 The registry is the platform's **system-of-record for identity and placement**.
 It is the foundation of the Postgres topology (`docs/postgres-topology.md`,
 epic `wamn-q3n`): it names who exists and answers *where does this database live

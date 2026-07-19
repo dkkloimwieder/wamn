@@ -1,5 +1,7 @@
 # Build & Test — gate commands per bead
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 Every shipped feature/bead has a build+gate command block below. Prose rationale
 lives in the design docs (`docs/*.md`) and the beads memories (`bd memories <keyword>`);
 this file is the runnable-command reference. See `README.md` for the quick

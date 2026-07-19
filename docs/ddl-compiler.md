@@ -1,5 +1,7 @@
 # DDL Compiler (3.2)
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 Turns the canonical catalog model (3.1, [`catalog-model.md`](catalog-model.md))
 into Postgres DDL: a whole catalog into `CREATE` statements, or a catalog *diff*
 into an ordered **migration plan** of `ALTER`s. Every operation is classified

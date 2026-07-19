@@ -1,5 +1,7 @@
 # Generic deployment model — env policies, org placement, unified copy (D6 env-model, reopened)
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 **Design (wamn-8df.2).** Reopens the D6 *environment* model. This note replaces the
 closed `Env` / `Tier` enums (and their DB `CHECK` literals) with a data-driven,
 configurable model, and unifies "promote", "deploy", "clone", and "tier-move" into

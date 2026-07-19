@@ -1,5 +1,7 @@
 # POC-F1: the `receipt-received` sync flow, end-to-end
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 Implements F1 of [docs/poc-material-receiving.md](poc-material-receiving.md) —
 the P1 exit criterion (wamn-067): an ERP POSTs a receipt, the platform
 validates it, upserts receipt + lines in one transaction, evaluates every line

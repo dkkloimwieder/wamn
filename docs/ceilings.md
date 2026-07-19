@@ -1,5 +1,7 @@
 # Measured ceilings
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 > **Provenance banner (E6, 2026-07-19):** fixture-pod figures were measured under
 > `fsync=off` + `synchronous_commit=off` — **shape-only, not citable externally**.
 > Durable-commit re-measurement of the latency gates of record is tracked as

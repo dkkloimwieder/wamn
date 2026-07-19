@@ -1,5 +1,7 @@
 # Schema Versioning & Environments (3.4)
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 A catalog does not go straight from edited to live. Each version moves through a
 **lifecycle** — `draft → staged → applied` (with `superseded` for prior applied
 versions) — and is **promoted** between **environments** (`dev`, `canary`,

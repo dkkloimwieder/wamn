@@ -1,5 +1,7 @@
 # P0 Spike Results — Raw Numbers
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 > **Provenance banner (E6, 2026-07-19):** fixture-pod measurements ran
 > `fsync=off` + `synchronous_commit=off` — **shape-only, not citable
 > externally** (wamn-dzhw tracks the durable-commit re-measure).

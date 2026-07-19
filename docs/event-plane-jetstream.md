@@ -1,5 +1,7 @@
 # Event Plane — CDC (pg_walstream) → JetStream (D19, v3)
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 **Status:** v3 supersedes v2. Capture is now **CDC via logical decoding**, not
 the outbox: events for ANY committed insert/update/delete come from the
 database itself (WAL), with filtering purely downstream. Structured as

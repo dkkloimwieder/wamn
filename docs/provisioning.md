@@ -1,5 +1,7 @@
 # Managed Postgres provisioning (2.3)
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 Standing up a project turns the SQL-emitting E3 crates into a live system:
 given a project id, provision a per-project Postgres **database** on the shared
 cluster, credentialed for the runtime. The output 2.4 (system schema) consumes

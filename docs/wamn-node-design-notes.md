@@ -1,5 +1,7 @@
 # `wamn:node` Contract — Design Notes (v0.1 — FROZEN)
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 Companion to `wamn-node.wit`. Load-bearing for runner dispatch (5.2/5.6), trace propagation (9.2), and testability (11.5). Draft 2 resolved the four open questions from draft 1.
 
 **FROZEN 0.1.0 (2026-07-12, plan 5.4).** Three deltas the 5.3 standard library

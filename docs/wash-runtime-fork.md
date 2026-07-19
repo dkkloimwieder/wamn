@@ -1,5 +1,7 @@
 # Consuming `wash-runtime` from the wamn fork
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 wamn builds against `wash-runtime` from **our fork of the wasmCloud monorepo**
 — https://github.com/dkkloimwieder/wasmCloud — consumed as a plain cargo git
 dependency. Upstream is `publish = false`, so a git dependency is the only way

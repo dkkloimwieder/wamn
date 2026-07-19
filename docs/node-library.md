@@ -1,5 +1,7 @@
 # Standard node library v1 (5.3)
 
+> **§1.9a audit (2026-07-19): amendments are additive — base sound.**
+
 Two crates deliver plan item 5.3 (wamn-3xa):
 
 | Crate | What it is |
