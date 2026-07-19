@@ -135,8 +135,12 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.partition_owner TO wamn_app;
 -- registered on is acked as consumed-with-no-op (an unmatched backlog must not
 -- pin the oldest-first poll window) — EXCEPT rows whose (table_name, event)
 -- belongs to an ACTIVE flow the dispatcher could not parse/validate (a version
--- skew): those are HELD pending, so a skipped flow degrades to delayed
--- delivery, never silent event loss. `seq` is the identity and the poll's
+-- skew): those are HELD — stamped `held_since` and EXCLUDED from the poll (R14)
+-- rather than acked, so a broken flow's events are neither lost (never acked)
+-- nor allowed to head-of-line-block the healthy ones (never left oldest-and-
+-- pending in the window). The growing `held_since` age is the operator's alert
+-- signal; clearing it retries the rows once the flow (or the dispatcher binary)
+-- is fixed. `seq` is the identity and the poll's
 -- oldest-first order; it is NOT a cross-replica dispatch-order guarantee
 -- (SKIP LOCKED batches commit independently and outbox runs enqueue
 -- unpartitioned — per-key ordering is the 5.11 `partition_key` seam). Acked
@@ -152,11 +156,23 @@ CREATE TABLE wamn_run.outbox (
     payload       jsonb,
     created_at    timestamptz NOT NULL DEFAULT now(),
     dispatched_at timestamptz,
+    -- R14: when the dispatcher recognized this row as HELD (its (table, event)
+    -- belongs to an active flow this binary cannot parse/validate — a version
+    -- skew). A held row is never acked (that would be silent event loss), so
+    -- without this it stays dispatched_at IS NULL forever and, being oldest,
+    -- permanently occupies the lowest seq slots — once `--batch` held rows
+    -- accumulate, row-event dispatch stops PROJECT-WIDE. Stamped ONCE (the SET is
+    -- WHERE held_since IS NULL) so it preserves the backlog AGE operators alert
+    -- on; the poll excludes held rows, so a broken flow no longer head-of-line-
+    -- blocks the healthy ones. An operator clears held_since to retry once the
+    -- flow (or this binary) is fixed.
+    held_since    timestamptz,
     PRIMARY KEY (tenant_id, seq)
 );
--- The poll scan: pending rows only, oldest-first.
+-- The poll scan: pending, NOT held, oldest-first — a held row leaves the poll
+-- window (R14) but stays in the table (visible, age-queryable) until cleared.
 CREATE INDEX outbox_pending ON wamn_run.outbox (tenant_id, seq)
-    WHERE dispatched_at IS NULL;
+    WHERE dispatched_at IS NULL AND held_since IS NULL;
 ALTER TABLE wamn_run.outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.outbox FORCE ROW LEVEL SECURITY;
 CREATE POLICY outbox_tenant ON wamn_run.outbox

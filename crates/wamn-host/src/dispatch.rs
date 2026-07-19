@@ -67,8 +67,8 @@ use wamn_flow::{Flow, Trigger};
 use wamn_run_queue::{
     Firing, OutboxRow, RowEventFlow, active_flows_sql, cron_firing, cron_last_run_sql,
     cron_tick_of, due_tick, enqueue_sql, match_outbox, next_fire, next_interval, next_reconcile,
-    outbox_ack_sql, outbox_poll_sql, outbox_prune_sql, parked_due_sql, plan_ack, reconcile_due,
-    write_ahead_triggered_run_sql,
+    outbox_ack_sql, outbox_hold_sql, outbox_poll_sql, outbox_prune_sql, parked_due_sql, plan_ack,
+    plan_hold, reconcile_due, write_ahead_triggered_run_sql,
 };
 
 #[derive(Debug, Args)]
@@ -555,9 +555,20 @@ impl Dispatcher {
                     }
                 }
                 // Ack everything not held — matched or unmatched (an unmatched
-                // row is consumed-with-no-op; a HELD row redelivers next sweep).
+                // row is consumed-with-no-op).
                 let seqs = plan_ack(&polled, &reg.held);
                 tx.execute(&outbox_ack_sql(), &[&seqs]).await?;
+                // R14: stamp the HELD rows (active flows this binary cannot
+                // parse/validate) so the poll stops returning them — a broken flow
+                // no longer head-of-line-blocks the healthy events once `--batch`
+                // held rows accumulate. Held rows are NEVER acked (no silent loss);
+                // the growing held_since age is the operator alert signal.
+                let held_seqs = plan_hold(&polled, &reg.held);
+                if !held_seqs.is_empty() {
+                    tx.execute(&outbox_hold_sql(), &[&held_seqs]).await?;
+                    tracing::warn!(project = %p.spec.name, held = held_seqs.len(),
+                        "dispatcher: outbox rows HELD (active flows this binary cannot parse/validate) — excluded from the poll with held_since stamped; fix the flow or dispatcher binary and clear held_since to retry");
+                }
                 tx.commit().await?;
             }
         }

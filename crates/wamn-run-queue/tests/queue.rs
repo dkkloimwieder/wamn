@@ -13,11 +13,11 @@ use wamn_run_queue::{
     cron_tick_of, dequeue_sql, due_tick, enqueue_sql, enqueue_with_policy_sql,
     gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline,
     lease_live, mark_running_sql, match_outbox, mint_cron_run_id, next_fire, next_interval,
-    next_reconcile, orphans, outbox_ack_sql, outbox_insert_sql, outbox_poll_sql, outbox_prune_sql,
-    park_sql, parked_due_sql, partition_lease_live, plan_ack, plan_acquire, plan_claim,
-    plan_partition_claim, reconcile_due, record_error_and_renew_sql, record_success_and_renew_sql,
-    release_partition_sql, renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
-    write_ahead_triggered_run_sql,
+    next_reconcile, orphans, outbox_ack_sql, outbox_hold_sql, outbox_insert_sql, outbox_poll_sql,
+    outbox_prune_sql, park_sql, parked_due_sql, partition_lease_live, plan_ack, plan_acquire,
+    plan_claim, plan_hold, plan_partition_claim, reconcile_due, record_error_and_renew_sql,
+    record_success_and_renew_sql, release_partition_sql, renew_lease_sql, renew_partition_sql,
+    should_renew, write_ahead_run_sql, write_ahead_triggered_run_sql,
 };
 
 // ---- claim eligibility -----------------------------------------------------
@@ -1186,6 +1186,123 @@ fn plan_ack_holds_a_skipped_flows_events() {
     let held = vec![("skewed".to_string(), "insert".to_string())];
     assert_eq!(plan_ack(&rows, &held), [1, 3]);
     assert_eq!(plan_ack(&rows, &[]), [1, 2, 3]);
+    // R14: plan_hold is the exact complement — the held seqs the dispatcher stamps
+    // held_since on (so the poll stops returning them), NEVER acks. Every polled seq
+    // is in exactly one of the two lists.
+    assert_eq!(plan_hold(&rows, &held), [2]);
+    assert!(
+        plan_hold(&rows, &[]).is_empty(),
+        "nothing held -> nothing to stamp"
+    );
+    let mut both = [plan_ack(&rows, &held), plan_hold(&rows, &held)].concat();
+    both.sort_unstable();
+    assert_eq!(
+        both,
+        [1, 2, 3],
+        "ack + hold partition the polled batch exactly"
+    );
+}
+
+#[test]
+fn held_rows_leave_the_poll_window_so_a_healthy_event_is_reached() {
+    // R14 poll-window model: the poll returns pending (dispatched_at IS NULL) AND
+    // NOT held (held_since IS NULL), oldest-first, up to `limit` — the exact filter
+    // of outbox_poll_sql. A batch of held rows at the LOWEST seqs (a broken flow)
+    // would starve a healthy event forever: held rows never ack (plan_ack refuses
+    // them), so dispatched_at stays NULL and, being oldest, they permanently fill
+    // the window. Stamping held_since (plan_hold + outbox_hold_sql) lifts them out
+    // so the healthy event is reached on the next poll.
+    struct Pending {
+        seq: i64,
+        table: &'static str,
+        event: &'static str,
+        held_since: bool,
+        dispatched: bool,
+    }
+    // Models outbox_poll_sql's WHERE + ORDER BY seq + LIMIT.
+    fn poll(pending: &[Pending], limit: usize) -> Vec<OutboxRow> {
+        let mut idx: Vec<&Pending> = pending
+            .iter()
+            .filter(|p| !p.dispatched && !p.held_since)
+            .collect();
+        idx.sort_by_key(|p| p.seq);
+        idx.into_iter()
+            .take(limit)
+            .map(|p| OutboxRow {
+                seq: p.seq,
+                table: p.table.into(),
+                event: p.event.into(),
+                payload: None,
+            })
+            .collect()
+    }
+    let mut pending = vec![
+        Pending {
+            seq: 1,
+            table: "skewed",
+            event: "insert",
+            held_since: false,
+            dispatched: false,
+        },
+        Pending {
+            seq: 2,
+            table: "skewed",
+            event: "insert",
+            held_since: false,
+            dispatched: false,
+        },
+        Pending {
+            seq: 3,
+            table: "skewed",
+            event: "insert",
+            held_since: false,
+            dispatched: false,
+        },
+        Pending {
+            seq: 4,
+            table: "healthy",
+            event: "insert",
+            held_since: false,
+            dispatched: false,
+        },
+    ];
+    let held = [("skewed".to_string(), "insert".to_string())];
+
+    // Round 1 (batch=2): the two oldest slots are held; nothing acks, both are stamped.
+    let r1 = poll(&pending, 2);
+    assert_eq!(r1.iter().map(|r| r.seq).collect::<Vec<_>>(), [1, 2]);
+    assert!(
+        plan_ack(&r1, &held).is_empty(),
+        "no healthy row in the first window"
+    );
+    for seq in plan_hold(&r1, &held) {
+        pending
+            .iter_mut()
+            .find(|p| p.seq == seq)
+            .unwrap()
+            .held_since = true;
+    }
+    // Round 2: seq 1,2 have left the window; the healthy seq 4 is now reached.
+    let r2 = poll(&pending, 2);
+    assert_eq!(r2.iter().map(|r| r.seq).collect::<Vec<_>>(), [3, 4]);
+    assert_eq!(
+        plan_ack(&r2, &held),
+        [4],
+        "the healthy event is finally reached and acked"
+    );
+    for seq in plan_hold(&r2, &held) {
+        pending
+            .iter_mut()
+            .find(|p| p.seq == seq)
+            .unwrap()
+            .held_since = true;
+    }
+    pending.iter_mut().find(|p| p.seq == 4).unwrap().dispatched = true; // fired + acked
+    // Round 3: held rows excluded, healthy dispatched — no head-of-line block remains.
+    assert!(
+        poll(&pending, 2).is_empty(),
+        "the poll window is drained; no held row blocks it"
+    );
 }
 
 // ---- trigger dispatcher: adaptive cadence ---------------------------------------
@@ -1219,9 +1336,13 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(wat.contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
     assert!(wat.contains("current_setting('app.tenant', true)"));
 
-    // The poll: pending only, oldest-first, SKIP LOCKED (replica-disjoint batches).
+    // The poll: pending AND NOT HELD, oldest-first, SKIP LOCKED (replica-disjoint
+    // batches). The `held_since IS NULL` clause is the load-bearing R14 drift-guard:
+    // dropping it re-opens the head-of-line block (held rows starve the window), and
+    // the runtime effect only shows once `--batch` held rows accumulate.
     let poll = outbox_poll_sql(64);
     assert!(poll.contains("dispatched_at IS NULL"));
+    assert!(poll.contains("held_since IS NULL"));
     assert!(poll.contains("ORDER BY seq"));
     assert!(!poll.contains("DESC")); // oldest-FIRST — a substring check alone would pass DESC
     assert!(poll.contains("FOR UPDATE SKIP LOCKED"));
@@ -1231,6 +1352,18 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(ack.contains("SET dispatched_at = now()"));
     assert!(ack.contains("seq = ANY($1)"));
     assert!(ack.contains("current_setting('app.tenant', true)"));
+
+    // The hold (R14): stamp held_since on the held subset so the poll excludes them.
+    // Stamped ONCE (WHERE held_since IS NULL) so it preserves the backlog age; scoped
+    // by the same $1 seq array + tenant claim as the ack.
+    let hold = outbox_hold_sql();
+    assert!(hold.contains("SET held_since = now()"));
+    assert!(hold.contains("seq = ANY($1)"));
+    assert!(
+        hold.contains("held_since IS NULL"),
+        "held_since is stamped once, preserving the backlog age"
+    );
+    assert!(hold.contains("current_setting('app.tenant', true)"));
 
     let ins = outbox_insert_sql();
     assert!(ins.contains("$3::text::jsonb"));
@@ -1304,6 +1437,7 @@ fn outbox_ddl_matches_the_model() {
         "payload",
         "created_at",
         "dispatched_at",
+        "held_since",
     ] {
         assert!(
             sql.contains(col),
@@ -1313,9 +1447,10 @@ fn outbox_ddl_matches_the_model() {
     // The wamn-flow row-event vocabulary, verbatim.
     assert!(sql.contains("CHECK (event IN ('insert', 'update', 'delete'))"));
     assert!(sql.contains("PRIMARY KEY (tenant_id, seq)"));
-    // The pending partial index the poll scans.
+    // R14: the pending partial index the poll scans is over pending AND NOT HELD —
+    // held rows leave the index (and the poll window) but stay in the table.
     assert!(sql.contains("CREATE INDEX outbox_pending"));
-    assert!(sql.contains("WHERE dispatched_at IS NULL"));
+    assert!(sql.contains("WHERE dispatched_at IS NULL AND held_since IS NULL"));
     // House tenant floor.
     assert!(sql.contains("CREATE POLICY outbox_tenant ON wamn_run.outbox"));
     assert!(sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.outbox TO wamn_app"));
@@ -1456,6 +1591,9 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // The trigger dispatcher's builders (cron/outbox/wake).
     let insert_sql = outbox_insert_sql();
     let poll_sql = outbox_poll_sql(10);
+    // R14: a small-limit poll + the hold builder, for the head-of-line-block check.
+    let poll2_sql = outbox_poll_sql(2);
+    let hold_sql = outbox_hold_sql();
     let ack_sql = outbox_ack_sql();
     let triggered_sql = write_ahead_triggered_run_sql();
     let last_run_sql = cron_last_run_sql();
@@ -2039,6 +2177,54 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          DO $$ BEGIN \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='wg-1') IS NULL, 'blocking wedge: the later run stays BLOCKED behind the exhausted head — the key is wedged'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='lx-1') = 'PB', 'leapfrog: with the exhausted head reaped, the key RELEASES and the next run dispatches'; \
+         END $$;\n\
+         COMMIT;\n"
+    ));
+
+    // ------------------------------------------------------------------------
+    // R14: HELD rows must not head-of-line-block the poll window. Reset t1's outbox,
+    // then seed 3 rows of a BROKEN flow (held (table, event)) at the OLDEST seqs +
+    // 1 healthy row behind them. With a batch of 2, the first poll sees ONLY the
+    // broken rows — the healthy event is starved. The dispatcher stamps the held
+    // rows via the REAL outbox_hold_sql (never acking them), which lifts them out
+    // of the window so the next poll REACHES the healthy event. Before the fix the
+    // held rows would forever occupy the window and the healthy event never fires.
+    // ------------------------------------------------------------------------
+    script.push_str("DELETE FROM wamn_run.outbox WHERE tenant_id = 't1';\n");
+    // The held seqs are IDENTITY-generated (unknown ahead of time), and an EXECUTE
+    // parameter may not be a subquery — so `\gset` captures the held subset into a
+    // psql var and the REAL outbox_hold_sql (PREPARE hold_stmt) is EXECUTEd on it.
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE poll2 AS {poll2_sql};\n\
+         PREPARE hold_stmt (bigint[]) AS {hold_sql};\n\
+         EXECUTE outbox_ins('brokentbl', 'insert', NULL);\n\
+         EXECUTE outbox_ins('brokentbl', 'insert', NULL);\n\
+         EXECUTE outbox_ins('brokentbl', 'insert', NULL);\n\
+         EXECUTE outbox_ins('gudtbl', 'insert', NULL);\n\
+         CREATE TEMP TABLE hb1 AS EXECUTE poll2;\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM hb1 WHERE table_name='brokentbl') = 2, 'the two oldest slots are the broken flow''s events'; \
+           ASSERT (SELECT count(*) FROM hb1 WHERE table_name='gudtbl') = 0, 'the healthy event is starved behind the held batch (LIMIT 2)'; \
+         END $$;\n\
+         -- The dispatcher stamps the HELD subset (never acks it) via the real builder.\n\
+         SELECT array_agg(seq) AS heldseqs FROM hb1 WHERE table_name='brokentbl' \\gset\n\
+         EXECUTE hold_stmt(:'heldseqs'::bigint[]);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM outbox WHERE table_name='brokentbl' AND held_since IS NOT NULL) = 2, 'the held rows are stamped held_since (kept, never acked — no silent loss)'; \
+           ASSERT (SELECT count(*) FROM outbox WHERE table_name='brokentbl' AND dispatched_at IS NOT NULL) = 0, 'a held row is NEVER acked'; \
+         END $$;\n\
+         -- The held rows have left the window: the next poll REACHES the healthy event.\n\
+         CREATE TEMP TABLE hb2 AS EXECUTE poll2;\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM hb2 WHERE table_name='gudtbl') = 1, 'the healthy event is reached once the held rows leave the poll window (R14)'; \
+         END $$;\n\
+         -- Re-stamping a held row does NOT move its held_since (age preserved).\n\
+         CREATE TEMP TABLE hb_before AS SELECT seq, held_since FROM outbox WHERE table_name='brokentbl' AND held_since IS NOT NULL;\n\
+         EXECUTE hold_stmt(:'heldseqs'::bigint[]);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM outbox o JOIN hb_before b ON o.seq = b.seq WHERE o.held_since <> b.held_since) = 0, 'a re-hold never resets held_since — the backlog age is preserved'; \
          END $$;\n\
          COMMIT;\n"
     ));

@@ -109,3 +109,16 @@ pub fn plan_ack(rows: &[OutboxRow], held: &[(String, String)]) -> Vec<i64> {
         .map(|r| r.seq)
         .collect()
 }
+
+/// The complement of [`plan_ack`]: the seqs of the polled rows whose `(table,
+/// event)` IS held. The dispatcher stamps these via [`crate::outbox_hold_sql`] in
+/// the SAME transaction as the ack, so a held flow's events leave the poll window
+/// (R14) instead of head-of-line-blocking the healthy ones — kept in the table,
+/// never acked (no silent loss), with a `held_since` age to alert on. Every
+/// polled seq is in exactly one of `plan_ack` / `plan_hold`.
+pub fn plan_hold(rows: &[OutboxRow], held: &[(String, String)]) -> Vec<i64> {
+    rows.iter()
+        .filter(|r| held.iter().any(|(t, e)| *t == r.table && *e == r.event))
+        .map(|r| r.seq)
+        .collect()
+}

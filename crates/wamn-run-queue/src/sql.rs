@@ -371,14 +371,40 @@ pub fn active_flows_sql() -> String {
 /// two dispatcher replicas polling concurrently disjoint batches: each row stays
 /// locked until its poll transaction (fire + ack) commits, and a crashed
 /// poller's rows unlock and redeliver. `limit` is a numeric literal.
+///
+/// `held_since IS NULL` excludes HELD rows (R14): an active-but-unparseable
+/// flow's events are never acked ([`plan_ack`] refuses them — acking would be
+/// silent event loss), so without this filter they stay `dispatched_at IS NULL`
+/// forever and, being oldest, permanently occupy the lowest `seq` slots — once
+/// `--batch` held rows accumulate the healthy events past them are never reached
+/// and row-event dispatch stops project-wide. Stamping [`outbox_hold_sql`] lifts
+/// each held row out of this window (keeping it in the table with a visible age)
+/// so the healthy events flow.
 pub fn outbox_poll_sql(limit: usize) -> String {
     format!(
         "SELECT seq, table_name, event, payload::text AS payload FROM outbox \
           WHERE dispatched_at IS NULL \
+            AND held_since IS NULL \
           ORDER BY seq \
           FOR UPDATE SKIP LOCKED \
           LIMIT {limit}"
     )
+}
+
+/// Stamp the polled rows the dispatcher recognized as HELD (their `(table,
+/// event)` belongs to an active flow this binary cannot parse/validate — a
+/// version skew) so [`outbox_poll_sql`] stops returning them (R14). `held_since`
+/// is set ONCE (`WHERE held_since IS NULL`) so a re-recognition — a held row
+/// re-polled before its first hold committed, or a manual clear-and-retry that
+/// fails again — never resets the backlog AGE operators alert on. Param: `$1` seq
+/// array (`bigint[]`), the held subset of the batch ([`plan_hold`]). Co-transacted
+/// with the poll's fire + [`outbox_ack_sql`], so a crash before commit leaves the
+/// held rows in the window to be re-recognized.
+pub fn outbox_hold_sql() -> String {
+    "UPDATE outbox SET held_since = now() \
+      WHERE tenant_id = current_setting('app.tenant', true) \
+        AND seq = ANY($1) AND held_since IS NULL"
+        .to_string()
 }
 
 /// Ack a polled outbox batch — CO-TRANSACTED with the write-ahead + enqueue of
