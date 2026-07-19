@@ -1,0 +1,22 @@
+[package]
+name = "wamn-event-reg"
+description = "wamn event registration model (EVT-REG, D19 v3 §5): a subscribing flow's declaration — entity id, ops, condition, partition-key expr — that the materializer (l5i9.17) consumes. Rename-proof by entity-id keying (EVT-OIDMAP). Stored as jsonb in catalog.event_registrations."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# A registration resolves against the canonical catalog (3.1) — by entity ID,
+# the rename-proof key (EVT-OIDMAP) — and reuses its Issue/Severity validation
+# shape.
+wamn-catalog = { path = "../wamn-catalog" }
+# The op set is the same Op the CDC envelope carries, so a registration's ops
+# and the wire's `<op>` segment can never drift.
+wamn-event-wire = { path = "../wamn-event-wire" }
+serde = { version = "1", features = ["derive"] }
+# Import/export-able (EventRegistration::from_json/to_json) and stored as jsonb.
+serde_json = "1"
+# Condition + partition-key expressions are JMESPath (the codebase's one
+# expression language, wamn-nodes/wamn-3xa) — compiled at write time to reject
+# bad syntax; the materializer (l5i9.17) owns evaluation.
+jmespath = "0.3"

@@ -298,3 +298,43 @@ CREATE POLICY seed_datasets_tenant ON catalog.seed_datasets
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.seed_datasets TO wamn_app;
+
+-- ---------------------------------------------------------------------------
+-- Event registrations (EVT-REG, D19 v3 §5, crates/wamn-event-reg). One row per
+-- registration: a subscribing flow's declaration of WHICH entity's row events it
+-- wants (`entity_id`), WHICH ops, an optional condition filter, and an optional
+-- partition-key expression. The materializer (crates/... l5i9.17) is the
+-- consumer — a durable consumer per registration, condition evaluated there
+-- (hot-editable). Managed through the minimal CRUD surface in crates/wamn-api
+-- (`registration` module); the editor panel lands later (EVT-TRIGGER-UX).
+--
+-- `entity_id` is the stable catalog ENTITY ID, not a table name, so a table
+-- rename never orphans a registration (EVT-OIDMAP, wamn-l5i9.11); it matches the
+-- CDC envelope's `entity` segment. It is a DENORMALIZED column — the full
+-- declaration is the `registration` jsonb (crates/wamn-event-reg is the source
+-- of truth for its semantics; the DB does not enumerate ops/condition as
+-- columns) — so 11.8 impact analysis (wamn-wvb) can enumerate "which
+-- registrations reference entity X" without opening every document, and the
+-- materializer's per-entity sweep is indexed (`event_registrations_by_entity`).
+-- Like catalog.rls_policies, registrations attach to the LIVE catalog, not a
+-- specific catalog VERSION (a registration is hot-editable), so there is no
+-- catalog_version column or version FK.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.event_registrations (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id      text NOT NULL,
+    registration_id text NOT NULL,
+    flow_id         text NOT NULL,
+    entity_id       text NOT NULL,
+    registration    jsonb NOT NULL,
+    PRIMARY KEY (tenant_id, catalog_id, registration_id)
+);
+ALTER TABLE catalog.event_registrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.event_registrations FORCE ROW LEVEL SECURITY;
+CREATE POLICY event_registrations_tenant ON catalog.event_registrations
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app;
+-- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
+CREATE INDEX event_registrations_by_entity
+    ON catalog.event_registrations (tenant_id, catalog_id, entity_id);

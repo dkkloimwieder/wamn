@@ -51,6 +51,7 @@
 //! ```
 
 pub mod error;
+pub mod registration;
 pub mod router;
 pub mod shape;
 pub mod value;

@@ -855,6 +855,39 @@ Mutation harness: scratchpad `mutate_l5i9_12_2.py` — M1 emit dropped from
 guard always passes — each fails a NAMED `wamn_postgres::tests` unit test;
 apply/test/restore with sha256, DEBUG builds.
 
+### [EVT-REG / wamn-l5i9.16] registration surface — catalog + minimal API
+
+Docs: docs/event-plane-jetstream.md §5. The **declaration surface** the
+materializer (l5i9.17) consumes: a registration = subscribing flow id, entity id
+(the rename-proof catalog **entity id**, EVT-OIDMAP — never a table name), a
+non-empty op set, an optional JMESPath condition, and an optional JMESPath
+partition-key expr. Model + validation in the pure `wamn-event-reg` crate;
+storage `catalog.event_registrations` (deploy/sql/catalog-schema.sql, mirrors
+`rls_policies` — jsonb doc + denormalized `flow_id`/`entity_id` columns, live-
+catalog-scoped not version-tied, tenant-RLS'd, indexed by entity for 11.8 impact
+analysis wamn-wvb); minimal CRUD builders in `wamn-api` (`registration` module —
+pinned identifiers, `$n` values, `tenant_id` server-side). NO materializer, NO
+reader change, NO UI (parked). The condition/partition-key are stored as JMESPath
+strings, validated for SYNTAX at write time (the materializer owns evaluation); a
+condition referencing `old` ("changed-to") is expressible but its old image needs
+REPLICA IDENTITY FULL (l5i9.31) — this surface never flips replica identity.
+
+```bash
+cargo test -p wamn-event-reg              # validation rules (entity-by-id, ops non-empty/dedup, JMESPath syntax, schema-version, round-trip)
+cargo test -p wamn-api                     # +registration builder shapes + the storage-schema drift guard
+cargo clippy -p wamn-event-reg -p wamn-api --all-targets
+# Local live-apply gate (throwaway PG): applies the REAL catalog-schema.sql, then
+# drives create/list/get/update/delete through the wamn-api builders AS wamn_app
+# under a tenant claim — round-trips the document + proves RLS tenant isolation.
+# Hermetic (drops+recreates the catalog schema, teardown leaves nothing):
+docker run -d --name evtreg-pg -p 55433:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+WAMN_API_PG_URL=postgres://postgres:postgres@127.0.0.1:55433/postgres \
+  cargo test -p wamn-api --test registration_live
+docker rm -f evtreg-pg
+# wamn-api is an api-gateway guest dep; confirm the wasm build (dev-deps excluded):
+(cd components && cargo build -p api-gateway --target wasm32-wasip2)
+```
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

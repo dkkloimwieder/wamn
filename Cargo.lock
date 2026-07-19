@@ -4090,8 +4090,11 @@ name = "wamn-api"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "tokio",
+ "tokio-postgres",
  "wamn-catalog",
  "wamn-ddl",
+ "wamn-event-reg",
 ]
 
 [[package]]
@@ -4194,6 +4197,17 @@ dependencies = [
  "wamn-rls",
  "wamn-seed",
  "wamn-sysschema",
+]
+
+[[package]]
+name = "wamn-event-reg"
+version = "0.1.0"
+dependencies = [
+ "jmespath",
+ "serde",
+ "serde_json",
+ "wamn-catalog",
+ "wamn-event-wire",
 ]
 
 [[package]]
