@@ -302,6 +302,49 @@ fn save_wake(run_id: &str, wake_secs: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Persist the in-flight retry cursor — the retrying node + the attempt the next
+/// dispatch runs as — in the run's `state_json`, so the retry budget survives
+/// park→reclaim→reconstruct (R32): the outstanding node re-enters carrying its
+/// attempt instead of resetting to 0 (reconstruction replays only COMPLETED
+/// node_runs, so a mid-retry node otherwise loses its count). Home-shares
+/// `state_json` with the delay node's `wake`; the engine has one `current` node,
+/// so at most one park's state is live at a time, and both readers re-validate
+/// against the reconstructed frontier (`restore_retry` no-ops off the front;
+/// `load_wake` only fires while its node is outstanding).
+fn save_retry(run_id: &str, node: &str, attempt: u32) -> Result<(), String> {
+    client::execute(
+        &run_sql::update_run_state_sql(),
+        &[
+            text(run_id),
+            text(json!({ "retry": { "node": node, "attempt": attempt } }).to_string()),
+        ],
+    )
+    .map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Load a persisted in-flight retry cursor `(node, attempt)` from `state_json`,
+/// if any — the reconstruction seam feeds it to [`Plan::restore_retry`].
+fn load_retry(run_id: &str) -> Result<Option<(String, u32)>, String> {
+    let rs = client::query(&run_sql::select_run_state_sql(), &[text(run_id)])
+        .map_err(|e| err_name(&e))?;
+    let raw = match rs.rows.first().and_then(|r| r.first()) {
+        Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s.clone(),
+        _ => return Ok(None),
+    };
+    let v: Value = serde_json::from_str(&raw).map_err(|e| format!("state_json parse: {e}"))?;
+    let Some(retry) = v.get("retry") else {
+        return Ok(None);
+    };
+    match (
+        retry.get("node").and_then(|n| n.as_str()),
+        retry.get("attempt").and_then(|a| a.as_u64()),
+    ) {
+        (Some(node), Some(attempt)) => Ok(Some((node.to_string(), attempt as u32))),
+        _ => Ok(None),
+    }
+}
+
 /// Split an `http://authority/path?query` URL into (scheme, authority, path).
 /// Only plain HTTP is used (the loopback egress target); anything else yields
 /// None so the caller reports a 0 status.
@@ -674,11 +717,18 @@ fn execute(
     let run_rec = RunRecord::new(run_id, flow_id, version, input);
     let mut st =
         wamn_run_store::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
+    // R32: restore an in-flight retry parked on a prior invocation — the
+    // outstanding node re-enters carrying its persisted attempt (the queue served
+    // the backoff) so the retry budget advances instead of resetting to 0.
+    if let Some((node, attempt)) = load_retry(run_id)? {
+        plan.restore_retry(&mut st, &node, attempt);
+    }
     let mut http_status: u32 = 0;
 
     loop {
-        // now_ms = 0: the fixture flows carry no retry backoff, so the engine
-        // never returns Wait; `delay` parks via NodeAction::Park instead.
+        // now_ms = 0: the queue's available_at is the retry clock (R32), so a
+        // scheduled retry re-enters DUE after its park; `delay` parks via
+        // NodeAction::Park.
         match plan.next(&mut st, 0) {
             Step::Done(RunStatus::Completed) => {
                 mark_completed(run_id, st.result())?;
@@ -696,11 +746,19 @@ fn execute(
                 }
                 return Err(format!("run ended in {status:?}"));
             }
-            // Cross-invocation retry scheduling belongs to the queue layer
-            // (run_queue.available_at / park_sql — the fqg.4 guest-claim
-            // rewire); this per-invocation driver treats a scheduled retry
-            // wait defensively, like poc-webhook-f1's sync path.
-            Step::Wait { node, .. } => return Err(format!("unexpected retry wait at {node}")),
+            // R32: a scheduled retry not yet due. Cross-invocation retry belongs
+            // to the queue layer (run_queue.available_at / park_sql) — persist the
+            // attempt and PARK the run (outcome=1), so the next invocation restores
+            // the attempt (DUE now, the park served the backoff) and re-dispatches;
+            // the budget advances until success, error-route, or RetryExhausted.
+            Step::Wait { node, attempt, .. } => {
+                save_retry(run_id, &node, attempt)?;
+                return Ok(RunOutcome {
+                    version,
+                    outcome: 1,
+                    http_status,
+                });
+            }
             Step::Dispatch(d) => {
                 match dispatch_node(&d, run_id, &flow, kill_after_write, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
@@ -981,6 +1039,12 @@ fn execute_claimed(
     let run_rec = RunRecord::new(run_id, &flow.flow_id, version, input);
     let mut st =
         wamn_run_store::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
+    // R32: restore an in-flight retry parked on a prior claim — the outstanding
+    // node re-enters carrying its persisted attempt (the queue served the
+    // backoff) so the retry budget advances instead of resetting to 0.
+    if let Some((node, attempt)) = load_retry(run_id)? {
+        plan.restore_retry(&mut st, &node, attempt);
+    }
     let mut http_status: u32 = 0;
 
     loop {
@@ -1002,7 +1066,25 @@ fn execute_claimed(
                     park_ms: 0,
                 });
             }
-            Step::Wait { node, .. } => return Err(format!("unexpected retry wait at {node}")),
+            // R32: a scheduled retry not yet due — persist the attempt and PARK
+            // the queue row for the backoff (release the lease), the
+            // cross-invocation retry the `execute` note deferred to the queue
+            // layer. `now_ms` is 0, so `until_ms` IS the backoff to wait; the next
+            // claim reconstructs, restores the attempt (DUE now, the park served
+            // the wait), and re-dispatches — the budget advances until success,
+            // error-route, or RetryExhausted.
+            Step::Wait {
+                node,
+                until_ms,
+                attempt,
+                ..
+            } => {
+                save_retry(run_id, &node, attempt)?;
+                return Ok(ClaimOutcome {
+                    outcome: 1,
+                    park_ms: until_ms,
+                });
+            }
             Step::Dispatch(d) => {
                 // The lease heartbeat rides each node's checkpoint statement
                 // (fqg.18): the claim's fresh lease covers the first node, each

@@ -48,6 +48,7 @@ fn run(
                 node,
                 until_ms,
                 throttle,
+                ..
             } => {
                 waits.push((node, until_ms, throttle));
                 clock.set(until_ms); // virtual sleep
@@ -884,6 +885,261 @@ fn the_default_budget_is_generous_but_finite() {
     assert_eq!(status, RunStatus::Failed);
     assert_eq!(dispatched.len(), 10_000);
     assert_eq!(st.failure().unwrap().kind, FailKind::RunawayBudget);
+}
+
+// ---------------------------------------------------------------------------
+// R32: cross-invocation retry — the durable-queue park→reclaim→reconstruct cycle
+// ---------------------------------------------------------------------------
+
+/// A single retryable node with no edges — the R32 acceptance shape. `cfg` is an
+/// optional `,"config":{...}` tail.
+fn one_retryable_node(cfg: &str) -> Flow {
+    flow(&format!(
+        r#"{{"schema-version":"0.1","flow-id":"r32","version":1,
+            "trigger":{{"type":"manual"}},"entry":"b",
+            "nodes":[{{"id":"b","type":"call"{cfg}}}],"edges":[]}}"#
+    ))
+}
+
+/// The durable-queue outcome of driving a run across parks (R32): every LIVE
+/// dispatch as `(node, attempt)` over ALL claims, how many times it parked, how
+/// many claims it took, and the terminal verdict.
+struct ParkTrace {
+    dispatches: Vec<(String, u32)>,
+    parks: usize,
+    claims: usize,
+    status: RunStatus,
+    failure: Option<FailKind>,
+}
+
+impl ParkTrace {
+    fn steps(&self) -> Vec<(&str, u32)> {
+        self.dispatches
+            .iter()
+            .map(|(n, a)| (n.as_str(), *a))
+            .collect()
+    }
+}
+
+/// Drive a run EXACTLY as the flow-runner's claim path does across durable-queue
+/// parks (R32). Each claim reconstructs branch-aware from the recorded completed
+/// steps ([`Plan::resume`]) PLUS the persisted in-flight retry cursor
+/// ([`Plan::restore_retry`] — the `state_json` the driver round-trips), then
+/// drives until the run parks on a [`Step::Wait`] or terminates. A `Wait` is
+/// translated to a PARK: the (virtual) queue serves the backoff, so the next
+/// claim re-enters DUE — the retry budget must advance across claims via the
+/// persisted attempt, or the run never terminates (the exact R32 bug the
+/// `max_claims` guard turns into a test failure). Records only SUCCESS emissions
+/// as completed steps — enough for these fixtures, where an error-route is always
+/// followed by the run terminating in the SAME claim (no park after it).
+fn drive_across_parks(
+    plan: &Plan,
+    run_id: &str,
+    input: Value,
+    max_claims: usize,
+    mut dispatch_fn: impl FnMut(&Dispatch) -> NodeOutcome,
+) -> ParkTrace {
+    let mut completed: Vec<Recorded> = Vec::new();
+    let mut retry: Option<(String, u32)> = None; // the persisted state_json cursor
+    let mut dispatches = Vec::new();
+    let mut parks = 0usize;
+    for claim in 1..=max_claims {
+        let mut st = plan.resume(run_id, input.clone(), &completed).unwrap();
+        if let Some((node, attempt)) = &retry {
+            plan.restore_retry(&mut st, node, *attempt);
+        }
+        loop {
+            match plan.next(&mut st, 0) {
+                Step::Done(status) => {
+                    return ParkTrace {
+                        dispatches,
+                        parks,
+                        claims: claim,
+                        status,
+                        failure: st.failure().map(|f| f.kind),
+                    };
+                }
+                Step::Wait { node, attempt, .. } => {
+                    retry = Some((node, attempt)); // persist the budget cursor, then park
+                    parks += 1;
+                    break;
+                }
+                Step::Dispatch(d) => {
+                    dispatches.push((d.node.clone(), d.attempt));
+                    let outcome = dispatch_fn(&d);
+                    if let NodeOutcome::Success { payload, port } = &outcome {
+                        // Checkpoint the completed node (the driver's node_runs
+                        // row) so the next claim folds it instead of re-dispatching.
+                        // A now-stale retry cursor is left as-is: restore_retry's
+                        // front-check no-ops it once this node is no longer the
+                        // frontier front (the driver likewise leans on that guard
+                        // rather than clearing state_json on every success).
+                        completed.push(Recorded::new(
+                            d.node.clone(),
+                            port.clone(),
+                            payload.clone(),
+                        ));
+                    }
+                    plan.apply(&mut st, &d, outcome, 0);
+                }
+            }
+        }
+    }
+    panic!(
+        "run did not terminate within {max_claims} claims — the retry budget never advanced (R32)"
+    );
+}
+
+#[test]
+fn wait_carries_the_pending_retry_attempt() {
+    // The engine's half of the park translation: after a retryable failure the
+    // NEXT step is a Wait carrying the attempt the driver persists (1) at the
+    // default backoff (100ms). A mutant that zeroes this cursor is caught here.
+    let f = one_retryable_node("");
+    let plan = Plan::compile(&f).unwrap();
+    let mut st = plan.start("r1", json!({}));
+    let Step::Dispatch(d) = plan.next(&mut st, 0) else {
+        panic!("first step dispatches");
+    };
+    assert_eq!(d.attempt, 0);
+    plan.apply(
+        &mut st,
+        &d,
+        NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("flaky"))),
+        0,
+    );
+    match plan.next(&mut st, 0) {
+        Step::Wait {
+            node,
+            until_ms,
+            attempt,
+            ..
+        } => {
+            assert_eq!(node, "b");
+            assert_eq!(until_ms, 100); // now(0) + backoff(0)
+            assert_eq!(
+                attempt, 1,
+                "the Wait carries the attempt the retry will run as"
+            );
+        }
+        other => panic!("expected a retry Wait, got {other:?}"),
+    }
+}
+
+#[test]
+fn restore_retry_promotes_the_outstanding_node_due_now_with_its_attempt() {
+    // After a park+reconstruct the retrying node sits at the frontier front with
+    // an empty current slot; restore_retry promotes it carrying its persisted
+    // attempt, DUE NOW (the queue served the backoff), so the next step is a
+    // Dispatch at that attempt — not a fresh attempt-0 promotion, not a re-Wait.
+    let f = one_retryable_node("");
+    let plan = Plan::compile(&f).unwrap();
+    let mut st = plan.resume("r1", json!({}), &[]).unwrap(); // fresh: b outstanding
+    assert!(plan.restore_retry(&mut st, "b", 2));
+    match plan.next(&mut st, 0) {
+        Step::Dispatch(d) => {
+            assert_eq!(d.node, "b");
+            assert_eq!(
+                d.attempt, 2,
+                "the persisted attempt survived reconstruction"
+            );
+        }
+        other => panic!("expected a due dispatch at the restored attempt, got {other:?}"),
+    }
+}
+
+#[test]
+fn restore_retry_is_a_noop_for_a_node_that_is_not_the_front() {
+    // Stale state_json (the node already completed on an earlier claim, so it is
+    // no longer the frontier front) must NOT hijack the walk, nor must an unknown
+    // node id.
+    let f = linear4();
+    let plan = Plan::compile(&f).unwrap();
+    let mut st = plan.resume("r1", json!("go"), &[]).unwrap(); // front is "a"
+    assert!(!plan.restore_retry(&mut st, "c", 5)); // c is not the front
+    assert!(!plan.restore_retry(&mut st, "nope", 5)); // unknown node
+    // The walk is untouched: the next dispatch is still the real front, fresh.
+    match plan.next(&mut st, 0) {
+        Step::Dispatch(d) => {
+            assert_eq!(d.node, "a");
+            assert_eq!(d.attempt, 0);
+        }
+        other => panic!("expected a's fresh dispatch, got {other:?}"),
+    }
+}
+
+#[test]
+fn retry_budget_survives_parks_to_exhaustion() {
+    // The R32 acceptance case: a node Retryable on attempt 0, no error edge.
+    // Across successive claims the run PARKS (never aborts, never holds a lease)
+    // and the budget advances via the persisted attempt until it fails
+    // RetryExhausted — it does NOT loop forever re-running attempt 0. Default
+    // budget = 3 attempts.
+    let f = one_retryable_node("");
+    let plan = Plan::compile(&f).unwrap();
+    let t = drive_across_parks(&plan, "r1", json!({}), 50, |_| {
+        NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg(
+            "always",
+        )))
+    });
+    assert_eq!(t.status, RunStatus::Failed);
+    assert_eq!(t.failure, Some(FailKind::RetryExhausted));
+    // Attempts 0,1,2 — one per claim — with a park between each.
+    assert_eq!(t.steps(), vec![("b", 0), ("b", 1), ("b", 2)]);
+    assert_eq!(t.parks, 2);
+    assert_eq!(t.claims, 3);
+}
+
+#[test]
+fn retry_budget_survives_parks_then_error_routes_when_exhausted() {
+    // max-attempts=2 and an error edge b--error-->h: across a park the budget
+    // exhausts and the run ROUTES to the handler (rather than failing), then
+    // completes. Proves the "error-routes OR fails RetryExhausted" acceptance.
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"r32e","version":1,
+            "trigger":{"type":"manual"},"entry":"b",
+            "nodes":[{"id":"b","type":"call","config":{"retry":{"max-attempts":2}}},
+                     {"id":"h","type":"handler"}],
+            "edges":[{"from":"b","from-port":"error","to":"h"}]}"#,
+    );
+    let plan = Plan::compile(&f).unwrap();
+    let t = drive_across_parks(&plan, "r1", json!({}), 50, |d| match d.node.as_str() {
+        "b" => NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("x"))),
+        _ => NodeOutcome::ok(json!({ "handled": true })),
+    });
+    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.parks, 1); // attempt 0 parks; attempt 1 exhausts and routes
+    assert_eq!(t.steps(), vec![("b", 0), ("b", 1), ("h", 0)]);
+}
+
+#[test]
+fn a_completed_predecessor_is_not_re_run_across_a_retry_park() {
+    // a -> b: a succeeds once, then b retries across parks and eventually
+    // succeeds. Reconstruction folds a's recorded success each claim (a is NOT
+    // re-dispatched) while b's attempt advances across the parks.
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"r32seq","version":1,
+            "trigger":{"type":"manual"},"entry":"a",
+            "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"call"}],
+            "edges":[{"from":"a","to":"b"}]}"#,
+    );
+    let plan = Plan::compile(&f).unwrap();
+    let b_attempts = Cell::new(0u32);
+    let t = drive_across_parks(&plan, "r1", json!("go"), 50, |d| match d.node.as_str() {
+        "a" => NodeOutcome::ok(json!({ "at": "a" })),
+        _ => {
+            let n = b_attempts.replace(b_attempts.get() + 1);
+            if n < 2 {
+                NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("flaky")))
+            } else {
+                NodeOutcome::ok(json!({ "at": "b" }))
+            }
+        }
+    });
+    assert_eq!(t.status, RunStatus::Completed);
+    // a dispatched exactly once; b dispatched at attempts 0,1,2 across 2 parks.
+    assert_eq!(t.steps(), vec![("a", 0), ("b", 0), ("b", 1), ("b", 2)]);
+    assert_eq!(t.parks, 2);
 }
 
 // ---------------------------------------------------------------------------

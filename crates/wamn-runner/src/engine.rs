@@ -147,10 +147,17 @@ pub enum Step {
     /// Run this node, then feed its outcome back via [`Plan::apply`].
     Dispatch(Dispatch),
     /// The next node is a scheduled retry not yet due: coordinate on `throttle`
-    /// (if any) and sleep until `until_ms`, then call [`Plan::next`] again.
+    /// (if any) and sleep until `until_ms`, then call [`Plan::next`] again. A
+    /// driver that spans invocations (the durable queue) translates this into a
+    /// park for `until_ms - now` and persists `attempt`, restoring it via
+    /// [`Plan::restore_retry`] on the next claim so the retry budget survives the
+    /// park→reclaim→reconstruct cycle instead of resetting to 0 (R32).
     Wait {
         node: String,
         until_ms: u64,
+        /// The attempt the pending retry will run as — the budget cursor a
+        /// cross-invocation driver persists so the next claim resumes it.
+        attempt: u32,
         throttle: Option<ThrottleKey>,
     },
     /// The run reached a terminal status.
@@ -322,6 +329,7 @@ impl<'f> Plan<'f> {
                 return Step::Wait {
                     node: a.node.clone(),
                     until_ms: a.retry_until_ms,
+                    attempt: a.attempt,
                     throttle: a.throttle.clone(),
                 };
             }
@@ -590,5 +598,41 @@ impl<'f> Plan<'f> {
             result: Value::Null,
             failure: None,
         })
+    }
+
+    /// Restore an in-flight retry after reconstruction (5.7 + R32). A run that
+    /// parked on a scheduled retry ([`Step::Wait`]) replays only its **completed**
+    /// nodes — the retrying node has no `node_runs` row, so [`resume`](Self::resume)
+    /// leaves it as the outstanding frontier front with an empty `current` slot and
+    /// its attempt count gone. The durable queue's park already served the backoff
+    /// (`available_at`), so this promotes that token to the active slot carrying its
+    /// persisted `attempt`, **due now** — without it the next promotion resets
+    /// `attempt` to 0, the retry budget never advances, and `RetryExhausted` never
+    /// fires (the run instead loops until it is reaped as an infra-failure).
+    ///
+    /// Promotes IFF the frontier's front token is `node` (the token
+    /// [`next`](Self::next) would promote): returns whether it did. A stale record
+    /// — the node has since completed on an earlier claim, so it is no longer the
+    /// front — is a no-op, leaving the walk to promote the true front fresh.
+    pub fn restore_retry(&self, state: &mut RunState, node: &str, attempt: u32) -> bool {
+        if state.status.is_terminal() || state.current.is_some() || self.node(node).is_none() {
+            return false;
+        }
+        match state.frontier.front() {
+            Some(tok) if tok.node == node => {
+                let tok = state.frontier.pop_front().expect("front checked present");
+                state.current = Some(Active {
+                    node: tok.node,
+                    payload: tok.payload,
+                    attempt,
+                    // Due now: the queue park (available_at) served the backoff,
+                    // so the engine must not re-wait on a stale monotonic deadline.
+                    retry_until_ms: 0,
+                    throttle: None,
+                });
+                true
+            }
+            _ => false,
+        }
     }
 }
