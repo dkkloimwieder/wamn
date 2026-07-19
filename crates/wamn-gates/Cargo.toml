@@ -11,6 +11,9 @@ license.workspace = true
 wamn-host = { path = "../wamn-host" }
 # SR9: the one-shot control-plane verbs the provisioning/publish gates drive.
 wamn-ctl = { path = "../wamn-ctl" }
+# SR9: the per-service crates whose engines the bench gates drive directly.
+wamn-dispatcher = { path = "../wamn-dispatcher" }
+wamn-run-worker = { path = "../wamn-run-worker" }
 wamn-gate-harness = { path = "../wamn-gate-harness" }
 wash-runtime = { workspace = true }
 # Bench harnesses instantiate command components directly (CommandPre) and

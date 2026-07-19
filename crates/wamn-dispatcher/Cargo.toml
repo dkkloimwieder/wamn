@@ -1,0 +1,30 @@
+[package]
+name = "wamn-dispatcher"
+description = "wamn shared trigger dispatcher service (5.14, SR9): cron + outbox + parked-wake across all projects — its own deployment artifact, no runtime linked (the doorbell NATS client is a local thin connect)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros", "signal", "sync"] }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# The doorbell client. Same version req as the runtime's so cargo unifies to
+# one crate instance across the workspace build.
+async-nats = { version = "0.47", default-features = false }
+# init_crypto: standardize the process rustls provider on aws-lc-rs (the local
+# copy of the fork's wash_runtime::init_crypto — same feature shape).
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws-lc-rs"] }
+# The trigger registry is the flows table's graph_json — the dispatcher parses
+# each active flow and registers its cron / row-event trigger.
+wamn-flow = { path = "../wamn-flow" }
+# The pure SKIP LOCKED claim / lease / janitor SQL builders + Cadence.
+wamn-run-queue = { path = "../wamn-run-queue" }
+# R16b identity-format validators — the ONE owner shared with the
+# wamn:postgres plugin (wamn-host).
+wamn-registry = { path = "../wamn-registry" }

@@ -1,0 +1,32 @@
+[package]
+name = "wamn-cdc-reader"
+description = "wamn CDC event reader service (l5i9.10, D19 v3 §4, SR9): walsender session → envelopes → the EVT_ JetStream stream, LSN advances only on ack — its own deployment artifact, no runtime linked (E7 owns its placement/ownership model)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros", "signal", "sync"] }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+serde_json = "1"
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-nats = { version = "0.47", default-features = false }
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+futures-util = "0.3"
+# The CDC walsender session (our pinned fork — F1 failover-slot syntax;
+# docs/pg-walstream-fork.md).
+pg_walstream = { workspace = true }
+# The draft envelope/subject/Nats-Msg-Id wire contract.
+wamn-event-wire = { path = "../wamn-event-wire" }
+# registry.event_readers registration lookup.
+wamn-registry = { path = "../wamn-registry" }
+
+[dev-dependencies]
+# The event_reader_live gate provisions its fixture env (publication, slot,
+# catalog) through the SR9 verb crate + the pure provisioning builders.
+wamn-ctl = { path = "../wamn-ctl" }
+wamn-provision = { path = "../wamn-provision" }

@@ -57,10 +57,10 @@ use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
-use crate::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use crate::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
-use crate::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
-use crate::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_host::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
+use wamn_host::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
+use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 /// Default in-image path of the flowrunner component (baked into the prod host
 /// image — the runner IS the production flowrunner service, so the component

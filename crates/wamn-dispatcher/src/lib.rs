@@ -772,9 +772,7 @@ fn resolve_projects(args: &DispatchArgs) -> anyhow::Result<Vec<ProjectSpec>> {
 }
 
 pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
-    use wash_runtime::washlet::{NatsConnectionOptions, connect_nats};
-
-    wash_runtime::init_crypto();
+    init_crypto();
     let specs = resolve_projects(&args)?;
 
     let nats_opts = NatsConnectionOptions {
@@ -836,6 +834,60 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         let _ = tx.send(true);
     });
     dispatcher.run_loop(rx).await
+}
+
+
+/// TLS material for the doorbell connection. Local copy of the fork's
+/// `wash_runtime::washlet::NatsConnectionOptions` (SR9): the doorbell is this
+/// crate's only NATS use and the dispatcher artifact must not link the runtime.
+struct NatsConnectionOptions {
+    request_timeout: Option<Duration>,
+    tls_ca: Option<PathBuf>,
+    tls_first: bool,
+    tls_cert: Option<PathBuf>,
+    tls_key: Option<PathBuf>,
+}
+
+/// Local copy of the fork's `wash_runtime::washlet::connect_nats` (SR9).
+async fn connect_nats(
+    addr: impl async_nats::ToServerAddrs,
+    options: NatsConnectionOptions,
+) -> anyhow::Result<async_nats::Client> {
+    let mut opts = async_nats::ConnectOptions::new();
+    if let Some(timeout) = options.request_timeout {
+        opts = opts.request_timeout(Some(timeout));
+    }
+    if let Some(ca_path) = options.tls_ca {
+        opts = opts.add_root_certificates(ca_path)
+    }
+    if options.tls_first {
+        opts = opts.tls_first();
+    }
+    if let (Some(cert_path), Some(key_path)) = (options.tls_cert, options.tls_key) {
+        opts = opts.add_client_certificate(cert_path, key_path)
+    }
+    opts.connect(addr)
+        .await
+        .context("failed to connect to NATS")
+}
+
+/// Local copy of the fork's `wash_runtime::init_crypto` (SR9): standardize on
+/// aws-lc-rs so the rustls provider is deterministic regardless of which
+/// backends the dep graph enables.
+fn init_crypto() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        if rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .is_err()
+        {
+            tracing::warn!(
+                "a rustls CryptoProvider was already installed; \
+                 the dispatcher standardizes on aws-lc-rs — check dependencies if this is unexpected"
+            );
+        }
+    });
 }
 
 #[cfg(test)]

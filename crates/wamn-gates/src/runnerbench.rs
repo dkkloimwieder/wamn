@@ -3,7 +3,7 @@
 //!
 //! fqg.4's `failoverbench` drives the guest `run-next` export DIRECTLY (a
 //! gate-local `Worker`), proving the claim/park/heartbeat path. fqg.8 adds the
-//! long-lived SERVICE around it — [`wamn_host::run_worker::RunWorker`]: one
+//! long-lived SERVICE around it — [`wamn_run_worker::RunWorker`]: one
 //! flowrunner instance, a `drain` that pulls every currently-claimable run, and
 //! the doorbell + backoff serve loop. This gate drives THAT production struct
 //! (SR1: the gate exercises the identical host code the binary runs) against an
@@ -34,7 +34,7 @@ use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_host::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
-use wamn_host::run_worker::RunWorker;
+use wamn_run_worker::RunWorker;
 
 /// The ephemeral schema unioning the flowrunner's flow tables with the 5.14
 /// `run_queue`, provisioned via superuser (mirrors failoverbench).
@@ -294,7 +294,7 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             &guest,
             plugin.clone(),
             vault,
-            wamn_host::run_worker::RunnerIdentity {
+            wamn_run_worker::RunnerIdentity {
                 owner: OWNER,
                 tenant: TENANT,
                 schema: Some(SCHEMA),

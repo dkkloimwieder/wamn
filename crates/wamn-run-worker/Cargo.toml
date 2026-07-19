@@ -1,0 +1,32 @@
+[package]
+name = "wamn-run-worker"
+description = "wamn production flow runner service (fqg.8, SR9): claim from run_queue + drive the flowrunner component, looping — its own deployment artifact; embeds the runtime via the wamn-host library (E12 later moves this to a Service workload)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The runtime: shared engine config + the wamn:postgres / credentials /
+# runner-egress plugins this worker links into the flowrunner instance.
+wamn-host = { path = "../wamn-host" }
+wash-runtime = { workspace = true }
+# Instantiates the flowrunner command component directly (CommandPre). Pinned
+# to the exact rev wash-runtime's workspace uses so the graph keeps a single
+# wasmtime.
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+# The http-call node egress path (prod handler over the linked wasi:http).
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros", "signal", "sync"] }
+tracing = { workspace = true }
+futures-util = "0.3"
+# The egress HostHandler::outgoing_request signature is in terms of
+# hyper::Request. Matches the hyper 1.x wasmtime-wasi-http uses.
+hyper = "1"
+# Doorbell wake subscriber type. Same version req as the runtime's so cargo
+# unifies to one crate instance.
+async-nats = { version = "0.47", default-features = false }
+# The pure claim/lease decision logic the worker drives.
+wamn-run-queue = { path = "../wamn-run-queue" }

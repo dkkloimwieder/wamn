@@ -9,7 +9,7 @@
 //! end to end, the S5 `logbench`→Loki analog but against Tempo's TraceQL API:
 //!
 //!   * a **`wamn.trigger`** span — the real
-//!     [`wamn_host::dispatch::trigger_span`] the dispatcher roots a fired run's
+//!     [`wamn_dispatcher::trigger_span`] the dispatcher roots a fired run's
 //!     trace with, carrying `wamn.flow`/`wamn.run_id`/`wamn.tenant`;
 //!   * a **`wamn.postgres`** DB span — the real span the `wamn:postgres` plugin
 //!     wraps each guest DB call in, carrying `db.system`/`wamn.tenant`/
@@ -207,7 +207,7 @@ async fn flow_phase(harness: &Harness, args: &TracebenchArgs) -> anyhow::Result<
         input_json: "{}".to_string(),
         trigger_source: "cron".to_string(),
     };
-    let span = wamn_host::dispatch::trigger_span(&firing, TRACE_TENANT);
+    let span = wamn_dispatcher::trigger_span(&firing, TRACE_TENANT);
 
     let mut worker = harness.worker().await?;
     // Instrumenting the guest call with the trigger span makes the plugin's

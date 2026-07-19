@@ -1,7 +1,8 @@
 //! wamn-host: the production host binary.
 //!
-//! `host`            — ClusterHost driven by the runtime-operator over NATS.
-//! `dispatch`        — the shared trigger dispatcher (cron + outbox + wakes).
+//! `host` — ClusterHost driven by the runtime-operator over NATS. The
+//! long-lived services live in their own artifacts (SR9): `wamn-dispatcher`,
+//! `wamn-run-worker`, `wamn-cdc-reader`.
 //!
 //! The one-shot control-plane verbs (provision*, publish/migrate-catalog,
 //! dump/restore/copy-project-env, enable-cdc-project-env) live in `wamn-ctl`
@@ -14,7 +15,7 @@
 use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
-use wamn_host::{dispatch, event_reader, host, run_worker};
+use wamn_host::host;
 
 #[derive(Parser)]
 #[command(name = "wamn-host", version, about)]
@@ -31,12 +32,6 @@ struct Cli {
 enum Command {
     /// Run the wamn host (operator-managed via NATS)
     Host(Box<host::HostArgs>),
-    /// Run the shared trigger dispatcher (5.14): cron + outbox + parked-wake across all projects
-    Dispatch(dispatch::DispatchArgs),
-    /// Run the production flow runner (5.14): claim from run_queue + drive the flowrunner, looping (fqg.8)
-    RunWorker(run_worker::RunWorkerArgs),
-    /// Run the CDC event reader for ONE project-env: walsender session → envelopes → the EVT_ JetStream stream, LSN advances only on ack (wamn-l5i9.10, D19 v3 §4)
-    EventReader(event_reader::EventReaderArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -55,9 +50,6 @@ async fn async_main() -> anyhow::Result<()> {
 
     let result = match cli.command {
         Command::Host(args) => host::run(*args).await,
-        Command::Dispatch(args) => dispatch::run(args).await,
-        Command::RunWorker(args) => run_worker::run(args).await,
-        Command::EventReader(args) => event_reader::run(args).await,
     };
 
     shutdown_observability();

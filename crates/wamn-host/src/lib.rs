@@ -9,13 +9,10 @@
 //! both consume this library where they embed the runtime, so gates exercise
 //! the identical host code they verify.
 
-pub mod dispatch;
 pub mod egress_guard;
 pub mod engine;
-pub mod event_reader;
 pub mod host;
 pub mod plugins;
-pub mod run_worker;
 
 /// Advertise the platform memory ceiling to the fork's per-store limiter
 /// (docs/wash-runtime-fork.md): a workload budget above this is a hard
@@ -23,7 +20,8 @@ pub mod run_worker;
 ///
 /// # Safety contract (upheld by callers)
 /// Call before the tokio runtime exists — no other threads may be reading
-/// the environment. Both binaries call this first thing in `main`.
+/// the environment. Every engine-building binary (`wamn-host`, `wamn-gates`,
+/// `wamn-run-worker`) calls this first thing in `main`.
 pub fn advertise_memory_ceiling() {
     // SAFETY: single-threaded at this point per the function contract.
     unsafe {

@@ -39,7 +39,7 @@ use pg_walstream::CancellationToken;
 use tokio_postgres::NoTls;
 
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
-use wamn_host::event_reader::{EventReaderArgs, run_with_token};
+use wamn_cdc_reader::{EventReaderArgs, run_with_token};
 use wamn_ctl::migrate_catalog::MigrateCatalogArgs;
 use wamn_ctl::publish_catalog::PublishCatalogArgs;
 use wamn_provision::{cdc_object_name, event_stream_name, sql};

@@ -4105,6 +4105,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-cdc-reader"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "bytes",
+ "chrono",
+ "clap",
+ "futures-util",
+ "pg_walstream",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
+ "wamn-ctl",
+ "wamn-event-wire",
+ "wamn-provision",
+ "wamn-registry",
+]
+
+[[package]]
 name = "wamn-cdc1"
 version = "0.1.0"
 dependencies = [
@@ -4141,6 +4163,25 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "wamn-catalog",
+]
+
+[[package]]
+name = "wamn-dispatcher"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "clap",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
+ "wamn-flow",
+ "wamn-registry",
+ "wamn-run-queue",
 ]
 
 [[package]]
@@ -4213,6 +4254,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-ctl",
  "wamn-ddl",
+ "wamn-dispatcher",
  "wamn-event-wire",
  "wamn-flow",
  "wamn-gate-harness",
@@ -4221,6 +4263,7 @@ dependencies = [
  "wamn-registry",
  "wamn-run-queue",
  "wamn-run-store",
+ "wamn-run-worker",
  "wamn-seed",
  "wash-runtime",
  "wasm-encoder 0.251.0",
@@ -4240,25 +4283,16 @@ dependencies = [
  "clap",
  "deadpool-postgres",
  "futures-util",
- "hyper",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "pg_walstream",
- "serde",
  "serde_json",
  "tokio",
  "tokio-postgres",
  "tracing",
- "wamn-ctl",
  "wamn-event-wire",
- "wamn-flow",
- "wamn-provision",
  "wamn-registry",
- "wamn-run-queue",
  "wash-runtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -4354,6 +4388,25 @@ dependencies = [
  "wamn-flow",
  "wamn-runner",
  "wamn-sql",
+]
+
+[[package]]
+name = "wamn-run-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "clap",
+ "futures-util",
+ "hyper",
+ "tokio",
+ "tracing",
+ "wamn-host",
+ "wamn-run-queue",
+ "wash-runtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]

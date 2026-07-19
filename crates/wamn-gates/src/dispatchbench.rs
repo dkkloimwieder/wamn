@@ -5,7 +5,7 @@
 //! into the queue; driving them is the runner's job, regression-covered by
 //! flowbench/testhostbench). The gate provisions TWO ephemeral schemas as two
 //! projects through the superuser URL and drives the REAL
-//! [`wamn_host::dispatch::Dispatcher`] engine with **stepped time** — the trigger
+//! [`wamn_dispatcher::Dispatcher`] engine with **stepped time** — the trigger
 //! decisions take an injected `now`, so a nightly cron and a three-day outage
 //! are gated in milliseconds with no wall-clock waits (the 11.1
 //! fast-forwardable-cron discipline). Only the wake and live modes touch real
@@ -59,7 +59,7 @@ use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 use wamn_run_queue::{enqueue_sql, mint_cron_run_id, outbox_insert_sql, write_ahead_run_sql};
 
-use wamn_host::dispatch::{Dispatcher, DispatcherConfig, ProjectSpec};
+use wamn_dispatcher::{Dispatcher, DispatcherConfig, ProjectSpec};
 
 const SCHEMA_A: &str = "wamn_dispatch_a";
 const TENANT_A: &str = "dispatch-a";
@@ -1177,7 +1177,7 @@ async fn wake_phase(
     let mut d = Dispatcher::connect(&specs, Some(nats), DispatcherConfig::default()).await?;
 
     // Still parked: no hint may arrive.
-    let early = d.tick_project(0, wamn_host::dispatch::epoch_ms()).await?;
+    let early = d.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
     let not_woken_early = early.woken.is_empty();
     let premature = tokio::time::timeout(Duration::from_millis(150), subscription.next()).await;
     let no_premature_hint = premature.is_err();
@@ -1185,7 +1185,7 @@ async fn wake_phase(
     // Once due (available_at is a server-side instant — this wait is real time),
     // the sweep hints the run.
     tokio::time::sleep(Duration::from_millis(delay_ms as u64 + 200)).await;
-    let due = d.tick_project(0, wamn_host::dispatch::epoch_ms()).await?;
+    let due = d.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
     let woken = due.woken == ["parked-1"];
     let hinted = match tokio::time::timeout(Duration::from_secs(5), subscription.next()).await {
         Ok(Some(msg)) => msg.payload.as_ref() == b"parked-1",
@@ -1204,7 +1204,7 @@ async fn wake_phase(
     )
     .await?;
     insert_outbox(&app, "dispositions", "insert", Some("{\"id\": \"wake-1\"}")).await?;
-    let fired_tick = d.tick_project(0, wamn_host::dispatch::epoch_ms()).await?;
+    let fired_tick = d.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
     let fired_id = fired_tick.outbox_fired.first().cloned().unwrap_or_default();
     let fire_hinted = !fired_id.is_empty();
     let mut got_fire_hint = false;

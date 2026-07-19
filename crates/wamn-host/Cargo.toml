@@ -7,20 +7,9 @@ license.workspace = true
 
 [dependencies]
 wash-runtime = { workspace = true }
-# Bench harness instantiates command components directly (CommandPre). Pinned
-# to the exact rev wash-runtime's workspace uses so the graph keeps a single
-# wasmtime; cargo unifies it with wash-runtime's own copy.
-wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
-# S6 testhostbench: the extended flowrunner imports wasi:http/outgoing-handler
-# (the http-call node); the harness links it and reuses DefaultOutgoingHandler /
-# HostFutureIncomingResponse to build the prod egress path and the test spy.
-# Same git rev as wasmtime-wasi so the graph keeps a single wasmtime.
-wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "rt-multi-thread", "macros", "signal", "sync"] }
 serde_json = "1"
-# 5.14 dispatcher: the projects-file entries deserialize straight into ProjectSpec.
-serde = { version = "1", features = ["derive"] }
 tracing = { workspace = true }
 # S5 wamn:logging plugin owns its OWN OTel LoggerProvider (generous batch queue
 # -> OTLP gRPC -> collector -> Loki), independent of the vendored
@@ -33,30 +22,16 @@ opentelemetry-otlp = { version = "0.31", default-features = false, features = ["
 async-trait = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 bytes = "1"
-# S6 egress spy / prod handler: the HostHandler::outgoing_request signature is
-# in terms of hyper::Request. Matches the hyper 1.x wasmtime-wasi-http uses.
-hyper = "1"
-# 2.3 provision-project: the pure CREATE DATABASE / role / GRANT CONNECT builders
-# + project-id naming + credential Secret rendering the subcommand drives.
-wamn-provision = { path = "../wamn-provision" }
 # wamn-q3n.6 provision-org: the control-plane registry model — Org / Tier / the
 # cluster-name derivation the org-pair renderer shares with the registry row, and
 # the registry.orgs upsert SQL (SR2 single-source) the subcommand writes.
 wamn-registry = { path = "../wamn-registry" }
-# 5.14 queuebench: the pure SKIP LOCKED claim / lease / janitor SQL builders +
-# decision logic the durable-queue gates drive over tokio_postgres.
-wamn-run-queue = { path = "../wamn-run-queue" }
-# 5.14 dispatcher: the trigger registry is the flows table's graph_json — the
-# dispatcher parses each active flow and registers its cron / row-event trigger.
-wamn-flow = { path = "../wamn-flow" }
 # 5.14 dispatcher: holds the doorbell client (wash_runtime::washlet::connect_nats
 # returns async_nats::Client). Same version req as wash-runtime's so cargo
 # unifies to ONE crate instance (type identity) — the S5 OTel-crates pattern.
 async-nats = { version = "0.47", default-features = false }
-# l5i9.10 event-reader: the CDC walsender session (our pinned fork — F1
-# failover-slot syntax; docs/pg-walstream-fork.md).
-pg_walstream = { workspace = true }
-# l5i9.10 event-reader: the draft envelope/subject/Nats-Msg-Id wire contract.
+# The causation frame (Causation) the wamn:postgres plugin stamps on
+# run-owned txns (l5i9.12.2); the wire contract crate.
 wamn-event-wire = { path = "../wamn-event-wire" }
 # wamn:postgres plugin (S2): thin driver + pool with explicit connection
 # lifecycle (deadpool Object::take = destroy-never-repool on abnormal death).
@@ -64,8 +39,3 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 deadpool-postgres = "0.14"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures-util = "0.3"
-
-[dev-dependencies]
-# The event_reader_live gate provisions its fixture env through the SR9 verb
-# crate before driving the reader.
-wamn-ctl = { path = "../wamn-ctl" }

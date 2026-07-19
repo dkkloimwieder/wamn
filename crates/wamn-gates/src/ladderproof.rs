@@ -2,7 +2,7 @@
 //!
 //! Prove flows execute CORRECTLY on the LIVE runner, OUTSIDE a bench harness.
 //! Unlike `runnerbench` (which instantiates the flowrunner IN-PROC via
-//! [`wamn_host::run_worker::RunWorker`] and drives the claim loop itself),
+//! [`wamn_run_worker::RunWorker`] and drives the claim loop itself),
 //! `ladderproof` is a pure DB CLIENT — the f1proof/apiproof shape: it seeds ONE
 //! run the dispatcher way (write-ahead `dispatched` row + queue row) and then
 //! WAITS for a SEPARATELY-DEPLOYED `run-worker` service (deploy/platform/runner.yaml) to
