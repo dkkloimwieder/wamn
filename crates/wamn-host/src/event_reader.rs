@@ -770,9 +770,12 @@ enum DrainOutcome {
 /// Drain the session until cancelled (`Shutdown`) or severed (`Severed`).
 /// Buffers each transaction's row events (resolving entities as they arrive)
 /// and captures its `wamn.causation` message whenever it lands; at `Commit`,
-/// publishes every buffered row (ack-awaited, in arrival order) with the
-/// causation stamp attached, then advances the feedback LSN — only once every
-/// row is acked. Returns the `DrainSummary` in both outcomes.
+/// PIPELINES the whole transaction (E1): each buffered row is published without
+/// awaiting its server ack, the ack futures are held in publish order, and ALL
+/// of them are settled before the feedback LSN advances — the v3 §4 invariant
+/// (LSN advances only on ack, per transaction) preserved exactly, with one
+/// round trip amortized over the txn instead of one per row. Returns the
+/// `DrainSummary` in both outcomes.
 async fn drain(
     stream: &mut EventStream,
     args: &EventReaderArgs,
@@ -838,10 +841,11 @@ async fn drain(
                         summary,
                     );
                 };
-                // Buffer-per-txn: publish the whole transaction NOW, the
-                // causation stamp (if the plugin emitted one) attached to every
-                // row — robust to whether the message arrived before or after
-                // these rows. Each publish awaits its ack.
+                // Buffer-per-txn: build the whole transaction's wire messages
+                // NOW, the causation stamp (if the plugin emitted one) attached
+                // to every row — robust to whether the message arrived before or
+                // after these rows.
+                let mut msgs = Vec::with_capacity(frame.rows.len());
                 for row in &frame.rows {
                     let envelope = Envelope {
                         op: row.op,
@@ -854,7 +858,7 @@ async fn drain(
                         commit_ts: frame.commit_ts,
                         causation: frame.causation.clone(),
                     };
-                    let subj = subject(
+                    let subject = subject(
                         &args.org,
                         &args.project,
                         &args.env,
@@ -863,7 +867,7 @@ async fn drain(
                     );
                     let id = msg_id(&args.project, &args.env, row.lsn);
                     let payload = match serde_json::to_vec(&envelope) {
-                        Ok(p) => p,
+                        Ok(p) => bytes::Bytes::from(p),
                         Err(e) => {
                             return DrainOutcome::Severed(
                                 ReplicationError::Generic(format!("serialize envelope: {e}")),
@@ -871,25 +875,40 @@ async fn drain(
                             );
                         }
                     };
-                    let stall_threshold = Duration::from_secs(args.stall_threshold_secs);
-                    match publish_acked(js, token, &subj, &id, payload, stall_threshold).await {
-                        PublishOutcome::Acked { duplicate } => {
-                            summary.published += 1;
-                            if duplicate {
-                                summary.deduped += 1;
-                                tracing::debug!(id, "redelivery deduped by the stream");
-                            }
-                        }
-                        PublishOutcome::CancelledMidRetry => {
-                            tracing::info!(
-                                target: "wamn::event_reader",
-                                commits = summary.commits,
-                                events_published = summary.published,
-                                deduped = summary.deduped,
-                                "drain summary (cancelled mid-publish)"
-                            );
-                            return DrainOutcome::Shutdown(summary);
-                        }
+                    msgs.push(PreparedMsg {
+                        subject,
+                        id,
+                        payload,
+                    });
+                }
+                // E1: pipeline the txn's publishes — sent without awaiting, the
+                // ack futures held in publish order, ALL settled here before the
+                // LSN advances (the v3 §4 per-txn invariant, unchanged).
+                let stall_threshold = Duration::from_secs(args.stall_threshold_secs);
+                let mut tally = PublishTally::default();
+                match publish_txn(
+                    &JsPublisher { js },
+                    token,
+                    &msgs,
+                    MAX_IN_FLIGHT,
+                    stall_threshold,
+                    &mut tally,
+                )
+                .await
+                {
+                    PublishOutcome::Acked => {
+                        summary.published += tally.published;
+                        summary.deduped += tally.deduped;
+                    }
+                    PublishOutcome::CancelledMidRetry => {
+                        tracing::info!(
+                            target: "wamn::event_reader",
+                            commits = summary.commits,
+                            events_published = summary.published,
+                            deduped = summary.deduped,
+                            "drain summary (cancelled mid-publish)"
+                        );
+                        return DrainOutcome::Shutdown(summary);
                     }
                 }
                 // Every row of this txn is acked — NOW the confirmed LSN may
@@ -1010,9 +1029,82 @@ async fn drain(
     }
 }
 
+/// The outcome of publishing one whole transaction (E1). `Acked` means every
+/// row's server ack has settled — the LSN may advance.
 enum PublishOutcome {
-    Acked { duplicate: bool },
+    Acked,
     CancelledMidRetry,
+}
+
+/// The E1 in-flight publish bound: at most this many un-acked publishes are held
+/// before the pipeline settles them mid-transaction. Well under async-nats' 5000
+/// default ack-inflight semaphore (so `send` never blocks on backpressure), and
+/// large enough that the ack round trip amortizes across a whole transaction.
+const MAX_IN_FLIGHT: usize = 256;
+
+/// One row event's wire form, prepared once and re-published as-is on a retry
+/// (the `Nats-Msg-Id` in `id` is what the JetStream duplicate window keys on).
+struct PreparedMsg {
+    subject: String,
+    id: String,
+    payload: bytes::Bytes,
+}
+
+/// A settled publish's server receipt — the ONLY delivery truth (a sent-but-
+/// unacked publish proves nothing: the async-nats client buffers while
+/// disconnected). `duplicate` is JetStream's `Nats-Msg-Id` dedupe verdict.
+struct Receipt {
+    duplicate: bool,
+}
+
+/// Running publish/dedupe counts for one transaction, folded into the
+/// `DrainSummary` once the whole txn has settled.
+#[derive(Default)]
+struct PublishTally {
+    published: u64,
+    deduped: u64,
+}
+
+/// The publish substrate the txn pipeline drives. Abstracted so the pipeline's
+/// ordering / in-flight-bound / first-unacked-retry logic is unit-testable with
+/// a scripted fake. In production `Ack` is async-nats' `PublishAckFuture`:
+/// `send` performs the FIRST `.await` (buffers the publish on the connection,
+/// returns the ack future) and `settle` the SECOND (the server `PublishAck`).
+/// The trait is private and always driven single-threaded from `drain`, so the
+/// futures' `Send`-ness is irrelevant.
+#[allow(async_fn_in_trait)]
+trait AckPublisher {
+    type Ack;
+    async fn send(&self, msg: &PreparedMsg) -> anyhow::Result<Self::Ack>;
+    async fn settle(&self, ack: Self::Ack) -> anyhow::Result<Receipt>;
+}
+
+/// Production publisher: async-nats JetStream. `send` sends and returns the ack
+/// future (async-nats 0.47: `publish_with_headers(...).await`); `settle` awaits
+/// it for the `PublishAck`. Batch/ack errors are boxed dyn — `anyhow!`, never
+/// `.context`.
+struct JsPublisher<'a> {
+    js: &'a jetstream::Context,
+}
+
+impl AckPublisher for JsPublisher<'_> {
+    type Ack = jetstream::context::PublishAckFuture;
+
+    async fn send(&self, msg: &PreparedMsg) -> anyhow::Result<Self::Ack> {
+        let mut headers = HeaderMap::new();
+        headers.insert(NATS_MESSAGE_ID, msg.id.as_str());
+        self.js
+            .publish_with_headers(msg.subject.clone(), headers, msg.payload.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("publish: {e}"))
+    }
+
+    async fn settle(&self, ack: Self::Ack) -> anyhow::Result<Receipt> {
+        let ack = ack.await.map_err(|e| anyhow::anyhow!("ack: {e}"))?;
+        Ok(Receipt {
+            duplicate: ack.duplicate,
+        })
+    }
 }
 
 /// Where one publish's retry sits relative to the stall threshold (E2).
@@ -1194,21 +1286,30 @@ fn spawn_slot_monitor(
     });
 }
 
-/// Publish one event and wait for the JetStream ack — retrying FOREVER
-/// (bounded only by shutdown). JetStream down ⇒ we hold here ⇒ the LSN holds
-/// ⇒ WAL is retained: delayed, never lost. But a held LSN silently freezes WAL
-/// retention on the source DB, so once the retries pass `stall_threshold` this
-/// escalates from ordinary warns to a distinct `CDC_PUBLISH_STALLED` alert
-/// event (E2 — the interlock that makes "delayed, never lost" observable).
-async fn publish_acked(
-    js: &jetstream::Context,
+/// Publish one whole transaction's messages and settle every server ack —
+/// retrying FOREVER (bounded only by shutdown). JetStream down ⇒ we hold here ⇒
+/// the LSN holds ⇒ WAL is retained: delayed, never lost. But a held LSN silently
+/// freezes WAL retention on the source DB, so once the retries pass
+/// `stall_threshold` this escalates from ordinary warns to a distinct
+/// `CDC_PUBLISH_STALLED` alert event (E2 — the interlock that makes "delayed,
+/// never lost" observable). The publishes are PIPELINED (E1): sent without
+/// awaiting, held in order, settled in bounded batches; the whole set is acked
+/// before the caller advances the LSN.
+///
+/// A failed ack retries the transaction from the FIRST UNACKED row — the
+/// JetStream duplicate window absorbs the already-landed prefix, and the
+/// materializer's `run_id` + `ON CONFLICT` absorbs anything past the window.
+/// `first_unacked` advances only as acks settle durably, so a retry never
+/// re-settles (or double-counts) a row the server already acked.
+async fn publish_txn<P: AckPublisher>(
+    publisher: &P,
     token: &CancellationToken,
-    subject: &str,
-    id: &str,
-    payload: Vec<u8>,
+    msgs: &[PreparedMsg],
+    max_in_flight: usize,
     stall_threshold: Duration,
+    tally: &mut PublishTally,
 ) -> PublishOutcome {
-    let payload = bytes::Bytes::from(payload);
+    let mut first_unacked = 0usize;
     let mut delay = Duration::from_millis(500);
     let first_attempt = Instant::now();
     let mut publish_retries: u64 = 0;
@@ -1217,35 +1318,35 @@ async fn publish_acked(
         if token.is_cancelled() {
             return PublishOutcome::CancelledMidRetry;
         }
-        let mut headers = HeaderMap::new();
-        headers.insert(NATS_MESSAGE_ID, id);
-        let attempt = async {
-            js.publish_with_headers(subject.to_string(), headers, payload.clone())
-                .await
-                .map_err(|e| anyhow::anyhow!("publish: {e}"))?
-                .await
-                .map_err(|e| anyhow::anyhow!("ack: {e}"))
-        };
-        match attempt.await {
-            Ok(ack) => {
+        match publish_pass(
+            publisher,
+            token,
+            msgs,
+            &mut first_unacked,
+            max_in_flight,
+            tally,
+        )
+        .await
+        {
+            PassOutcome::Complete => {
                 if stalled {
                     tracing::info!(
                         target: "wamn::event_reader",
                         event = "CDC_PUBLISH_RECOVERED",
-                        subject,
-                        id,
                         publish_retries,
                         publish_stall_seconds = first_attempt.elapsed().as_secs(),
                         "JetStream publish recovered — the LSN can advance again"
                     );
                 }
-                return PublishOutcome::Acked {
-                    duplicate: ack.duplicate,
-                };
+                return PublishOutcome::Acked;
             }
-            Err(e) => {
+            PassOutcome::Cancelled => return PublishOutcome::CancelledMidRetry,
+            PassOutcome::Failed(e) => {
                 publish_retries += 1;
                 let stall = first_attempt.elapsed();
+                // The retry restart point — the row alerts should bind to.
+                let subject = msgs[first_unacked].subject.as_str();
+                let id = msgs[first_unacked].id.as_str();
                 match stall_level(stall, stall_threshold) {
                     StallLevel::Retrying => tracing::warn!(
                         target: "wamn::event_reader",
@@ -1254,7 +1355,7 @@ async fn publish_acked(
                         publish_retries,
                         publish_stall_seconds = stall.as_secs(),
                         error = %e,
-                        "publish unacked — holding the LSN; retrying"
+                        "publish unacked — holding the LSN; retrying from the first unacked row"
                     ),
                     StallLevel::Stalled => {
                         stalled = true;
@@ -1278,6 +1379,76 @@ async fn publish_acked(
             }
         }
     }
+}
+
+/// One pass of the pipeline: publish `msgs[*first_unacked..]` without awaiting,
+/// holding the ack futures in publish order, draining (settling) them whenever
+/// the in-flight set reaches `max_in_flight`, and settling the remainder at the
+/// end. `first_unacked` advances as each ack settles durably. A `send` or
+/// `settle` failure ends the pass at `Failed` (its held futures dropped — the
+/// async-nats client returns their permits to the acker), leaving `first_unacked`
+/// at the first row whose ack has NOT settled.
+enum PassOutcome {
+    Complete,
+    Cancelled,
+    Failed(anyhow::Error),
+}
+
+async fn publish_pass<P: AckPublisher>(
+    publisher: &P,
+    token: &CancellationToken,
+    msgs: &[PreparedMsg],
+    first_unacked: &mut usize,
+    max_in_flight: usize,
+    tally: &mut PublishTally,
+) -> PassOutcome {
+    // (row index, held ack future) in publish order — index strictly ascending.
+    let mut held: Vec<(usize, P::Ack)> = Vec::new();
+    for idx in *first_unacked..msgs.len() {
+        if token.is_cancelled() {
+            return PassOutcome::Cancelled;
+        }
+        match publisher.send(&msgs[idx]).await {
+            Ok(ack) => held.push((idx, ack)),
+            Err(e) => return PassOutcome::Failed(e),
+        }
+        if held.len() >= max_in_flight {
+            // In-flight bound hit mid-transaction: settle the held batch, then
+            // keep publishing. The LSN hold is unaffected.
+            if let Err(e) = settle_all(publisher, msgs, first_unacked, &mut held, tally).await {
+                return PassOutcome::Failed(e);
+            }
+        }
+    }
+    // Settle any remaining held acks BEFORE the caller advances the LSN.
+    match settle_all(publisher, msgs, first_unacked, &mut held, tally).await {
+        Ok(()) => PassOutcome::Complete,
+        Err(e) => PassOutcome::Failed(e),
+    }
+}
+
+/// Settle held acks in publish order. Each durable ack advances `first_unacked`
+/// (and the tally); the FIRST failure stops the drain and returns, dropping the
+/// still-held futures — `first_unacked` is left AT the failed row so the retry
+/// restarts there and never re-settles a durably-acked prefix.
+async fn settle_all<P: AckPublisher>(
+    publisher: &P,
+    msgs: &[PreparedMsg],
+    first_unacked: &mut usize,
+    held: &mut Vec<(usize, P::Ack)>,
+    tally: &mut PublishTally,
+) -> anyhow::Result<()> {
+    for (idx, ack) in held.drain(..) {
+        let receipt = publisher.settle(ack).await?;
+        debug_assert_eq!(idx, *first_unacked, "acks settle strictly in publish order");
+        *first_unacked = idx + 1;
+        tally.published += 1;
+        if receipt.duplicate {
+            tally.deduped += 1;
+            tracing::debug!(id = msgs[idx].id, "redelivery deduped by the stream");
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1581,5 +1752,346 @@ mod tests {
             d.iter().any(|m| m.contains("storage")),
             "storage drift must report: {d:?}"
         );
+    }
+
+    // E1 — the publish pipeline. A scripted `AckPublisher` drives the
+    // ordering / in-flight-bound / first-unacked-retry logic without a real
+    // JetStream; `start_paused` makes the retry backoff sleeps free.
+
+    /// A publisher that records every send/settle in call order and can script
+    /// per-row ack failures + duplicate flags. `Ack` is the row index (parsed
+    /// from the msg id), so the log reads as `send:<idx>` / `settle:<idx>` /
+    /// `settlefail:<idx>` in exactly the order the pipeline drove them.
+    struct FakePublisher {
+        settle_fails: std::cell::RefCell<Vec<u32>>,
+        duplicate: std::cell::RefCell<Vec<bool>>,
+        log: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl FakePublisher {
+        fn new(n: usize) -> Self {
+            Self {
+                settle_fails: std::cell::RefCell::new(vec![0; n]),
+                duplicate: std::cell::RefCell::new(vec![false; n]),
+                log: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+        fn fail_settle_once(&self, idx: usize) {
+            self.settle_fails.borrow_mut()[idx] += 1;
+        }
+        fn mark_duplicate(&self, idx: usize) {
+            self.duplicate.borrow_mut()[idx] = true;
+        }
+        fn log(&self) -> Vec<String> {
+            self.log.borrow().clone()
+        }
+        fn settle_order(&self) -> Vec<usize> {
+            self.log
+                .borrow()
+                .iter()
+                .filter_map(|e| e.strip_prefix("settle:").map(|s| s.parse().unwrap()))
+                .collect()
+        }
+        fn send_count(&self, idx: usize) -> usize {
+            let want = format!("send:{idx}");
+            self.log.borrow().iter().filter(|e| **e == want).count()
+        }
+    }
+
+    impl AckPublisher for FakePublisher {
+        type Ack = usize;
+        async fn send(&self, msg: &PreparedMsg) -> anyhow::Result<usize> {
+            let idx: usize = msg.id.parse().unwrap();
+            self.log.borrow_mut().push(format!("send:{idx}"));
+            Ok(idx)
+        }
+        async fn settle(&self, ack: usize) -> anyhow::Result<Receipt> {
+            let idx = ack;
+            if self.settle_fails.borrow()[idx] > 0 {
+                self.settle_fails.borrow_mut()[idx] -= 1;
+                self.log.borrow_mut().push(format!("settlefail:{idx}"));
+                return Err(anyhow::anyhow!("scripted ack failure at {idx}"));
+            }
+            self.log.borrow_mut().push(format!("settle:{idx}"));
+            Ok(Receipt {
+                duplicate: self.duplicate.borrow()[idx],
+            })
+        }
+    }
+
+    fn prepared(n: usize) -> Vec<PreparedMsg> {
+        (0..n)
+            .map(|i| PreparedMsg {
+                subject: format!("evt.test.{i}"),
+                id: i.to_string(),
+                payload: bytes::Bytes::from_static(b"{}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn in_flight_bound_is_pinned_under_the_client_semaphore() {
+        // Drift guard: the held-ack set is bounded well under async-nats' 5000
+        // default max-ack-inflight semaphore, so `send` never blocks on
+        // backpressure while the pipeline holds a batch.
+        assert_eq!(MAX_IN_FLIGHT, 256);
+        assert!(MAX_IN_FLIGHT < 5_000);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pipeline_settles_every_ack_in_publish_order() {
+        // The load-bearing invariant: `Acked` is returned only once EVERY held
+        // ack has settled (settle-before-LSN-advance), and the settles are in
+        // publish order (== held-future order == commit order).
+        let fake = FakePublisher::new(5);
+        let msgs = prepared(5);
+        let token = CancellationToken::new();
+        let mut tally = PublishTally::default();
+        let out = publish_txn(
+            &fake,
+            &token,
+            &msgs,
+            10,
+            Duration::from_secs(30),
+            &mut tally,
+        )
+        .await;
+        assert!(matches!(out, PublishOutcome::Acked));
+        assert_eq!(tally.published, 5, "every row is acked before advancing");
+        assert_eq!(tally.deduped, 0);
+        assert_eq!(
+            fake.settle_order(),
+            vec![0, 1, 2, 3, 4],
+            "acks settle in publish order, all of them"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn in_flight_bound_drains_mid_transaction() {
+        // With a bound of 2 the pipeline MUST settle a batch before it has sent
+        // the whole transaction — a mid-txn drain — rather than holding all
+        // five acks to the end.
+        let fake = FakePublisher::new(5);
+        let msgs = prepared(5);
+        let token = CancellationToken::new();
+        let mut tally = PublishTally::default();
+        let out = publish_txn(&fake, &token, &msgs, 2, Duration::from_secs(30), &mut tally).await;
+        assert!(matches!(out, PublishOutcome::Acked));
+        assert_eq!(tally.published, 5);
+        let log = fake.log();
+        let last_send = log.iter().rposition(|e| e == "send:4").unwrap();
+        let first_settle = log.iter().position(|e| e.starts_with("settle:")).unwrap();
+        assert!(
+            first_settle < last_send,
+            "the in-flight bound must trigger a mid-transaction drain: {log:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_restarts_from_the_first_unacked_row() {
+        // Row 1's first ack fails; row 2 comes back a duplicate on the retry (it
+        // landed in the first pass but its future was dropped unsettled). The
+        // retry MUST restart at the first unacked row (1), never re-sending the
+        // durably-acked prefix (0), and count each row exactly once.
+        let fake = FakePublisher::new(3);
+        fake.fail_settle_once(1);
+        fake.mark_duplicate(2);
+        let msgs = prepared(3);
+        let token = CancellationToken::new();
+        let mut tally = PublishTally::default();
+        let out = publish_txn(
+            &fake,
+            &token,
+            &msgs,
+            10,
+            Duration::from_secs(30),
+            &mut tally,
+        )
+        .await;
+        assert!(matches!(out, PublishOutcome::Acked));
+        assert_eq!(tally.published, 3, "each row acked exactly once");
+        assert_eq!(tally.deduped, 1, "row 2's redelivery is deduped");
+        assert_eq!(
+            fake.send_count(0),
+            1,
+            "a durably-acked prefix row is never re-sent"
+        );
+        let log = fake.log();
+        let fail_pos = log.iter().position(|e| e == "settlefail:1").unwrap();
+        let resent: Vec<String> = log[fail_pos + 1..]
+            .iter()
+            .filter(|e| e.starts_with("send:"))
+            .cloned()
+            .collect();
+        assert_eq!(
+            resent,
+            vec!["send:1".to_string(), "send:2".to_string()],
+            "the retry re-publishes from the first unacked row, in order: {log:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_mid_pipeline_reports_cancelled() {
+        // A shutdown request during the txn's publish returns CancelledMidRetry
+        // (the caller reports a clean drain summary, LSN unadvanced).
+        let fake = FakePublisher::new(3);
+        let msgs = prepared(3);
+        let token = CancellationToken::new();
+        token.cancel();
+        let mut tally = PublishTally::default();
+        let out = publish_txn(
+            &fake,
+            &token,
+            &msgs,
+            10,
+            Duration::from_secs(30),
+            &mut tally,
+        )
+        .await;
+        assert!(matches!(out, PublishOutcome::CancelledMidRetry));
+    }
+
+    /// E1 LIVE gate (env-gated, LOCAL): drive the REAL `JsPublisher` pipeline
+    /// against a throwaway JetStream (`docker run -d nats:2 -js`). Set
+    /// `WAMN_E1_NATS_URL`; skipped cleanly when unset. Proves the pipelined
+    /// publish lands every message, IN ORDER (stream seq == publish order), and
+    /// that a re-publish of the same `Nats-Msg-Id`s deduplicates. Uses > 256
+    /// messages so a real mid-transaction drain is exercised.
+    #[tokio::test]
+    async fn pipelined_publish_lands_in_order_and_dedupes_live() {
+        let Ok(nats_url) = std::env::var("WAMN_E1_NATS_URL") else {
+            eprintln!("WAMN_E1_NATS_URL unset — skipping E1 live JetStream gate");
+            return;
+        };
+        use async_nats::jetstream::consumer::pull::Config as PullConfig;
+        use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
+        use futures_util::StreamExt as _;
+
+        const ORG: &str = "e1";
+        const PROJECT: &str = "app";
+        const ENV: &str = "dev";
+        const N: u64 = 600; // > MAX_IN_FLIGHT: forces a real mid-txn drain
+
+        let client = async_nats::connect(&nats_url).await.expect("connect nats");
+        let js = jetstream::new(client);
+        let stream_name = format!("EVT_e1test_{}", std::process::id());
+        // Fresh stream each run.
+        let _ = js.delete_stream(&stream_name).await;
+        let stream = js
+            .create_stream(jetstream::stream::Config {
+                name: stream_name.clone(),
+                subjects: vec![stream_subjects(ORG, ENV)],
+                storage: jetstream::stream::StorageType::File,
+                num_replicas: 1,
+                retention: jetstream::stream::RetentionPolicy::Limits,
+                duplicate_window: Duration::from_secs(120),
+                ..Default::default()
+            })
+            .await
+            .expect("create stream");
+
+        // One event per lsn 0..N, in publish order.
+        let msgs: Vec<PreparedMsg> = (0..N)
+            .map(|lsn| {
+                let envelope = Envelope {
+                    op: Op::Insert,
+                    old: None,
+                    new: None,
+                    entity: Some("orders".into()),
+                    table: "orders".into(),
+                    lsn,
+                    txid: 1,
+                    commit_ts: chrono::Utc::now(),
+                    causation: None,
+                };
+                PreparedMsg {
+                    subject: subject(ORG, PROJECT, ENV, envelope.entity_segment(), Op::Insert),
+                    id: msg_id(PROJECT, ENV, lsn),
+                    payload: bytes::Bytes::from(serde_json::to_vec(&envelope).unwrap()),
+                }
+            })
+            .collect();
+
+        let token = CancellationToken::new();
+        let publisher = JsPublisher { js: &js };
+
+        // First pass: pipeline the whole batch; every id is fresh, none deduped.
+        let mut tally = PublishTally::default();
+        let out = publish_txn(
+            &publisher,
+            &token,
+            &msgs,
+            MAX_IN_FLIGHT,
+            Duration::from_secs(30),
+            &mut tally,
+        )
+        .await;
+        assert!(matches!(out, PublishOutcome::Acked));
+        assert_eq!(tally.published, N, "every message acked");
+        assert_eq!(tally.deduped, 0, "first publish deduplicates nothing");
+
+        // Read the stream back in stored order and prove it equals publish order.
+        let consumer = stream
+            .create_consumer(PullConfig {
+                deliver_policy: DeliverPolicy::All,
+                ack_policy: AckPolicy::Explicit,
+                num_replicas: 1,
+                memory_storage: true,
+                ..Default::default()
+            })
+            .await
+            .expect("create pull consumer");
+        let mut ids = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while (ids.len() as u64) < N && Instant::now() < deadline {
+            let mut batch = consumer
+                .fetch()
+                .max_messages(N as usize - ids.len())
+                .messages()
+                .await
+                .expect("fetch");
+            while let Some(msg) = batch.next().await {
+                let msg = msg.expect("message");
+                let id = msg
+                    .headers
+                    .as_ref()
+                    .and_then(|h| h.get(NATS_MESSAGE_ID))
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                ids.push(id);
+                msg.ack().await.expect("ack");
+            }
+        }
+        let want: Vec<String> = (0..N).map(|lsn| msg_id(PROJECT, ENV, lsn)).collect();
+        assert_eq!(
+            ids, want,
+            "stream order == publish order (pipelining kept order)"
+        );
+
+        // Second pass: the identical batch. The duplicate window absorbs every
+        // id — all acked, all flagged duplicate, stream count unchanged.
+        let mut tally2 = PublishTally::default();
+        let out2 = publish_txn(
+            &publisher,
+            &token,
+            &msgs,
+            MAX_IN_FLIGHT,
+            Duration::from_secs(30),
+            &mut tally2,
+        )
+        .await;
+        assert!(matches!(out2, PublishOutcome::Acked));
+        assert_eq!(tally2.published, N);
+        assert_eq!(
+            tally2.deduped, N,
+            "re-publish of the same ids fully deduped"
+        );
+        let info_msgs = {
+            let mut s = js.get_stream(&stream_name).await.expect("get stream");
+            s.info().await.expect("info").state.messages
+        };
+        assert_eq!(info_msgs, N, "dedupe kept the stored count flat");
+
+        js.delete_stream(&stream_name).await.expect("delete stream");
     }
 }
