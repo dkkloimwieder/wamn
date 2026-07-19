@@ -57,7 +57,7 @@ prerequisite that makes everything else findable.
 | R8c | Outbox amplification + GC | Med | **reopened** | see R10 |
 | SR1/SR3/SR6 | Gates split, repo tiering, conventions written down | — | **closed** | `3dfee03` / `4a637e2` / `d8e1366` |
 | E14 | Q1: `ev.lsn` is per-message — dedupe design sound | — | **closed** | evidence: `pg-walstream stream.rs:1093,1066` (question-class closure) |
-| SR12 | Pure/effect split can't test statement-level bugs | High | open | live-test half closed `c705c9e` (wamn-2jkm.23); header qualification = wamn-2jkm.17 |
+| SR12 | Pure/effect split can't test statement-level bugs | High | **closed** | live-test half `c705c9e` (wamn-2jkm.23); header qualification + composed-statement convention `0d7231f` (wamn-2jkm.17) |
 | SR9 | `wamn-host` is three programs in one crate | Med | open | with E7/E8 |
 | E7/E8 | Reader as a service: extraction + placement/ownership | Med/High | open | before cutover |
 | SR8 | `deploy/` 68 flat files — canonical: §1.6 | — | **closed** | `8123046`…`6ac07d9` (wamn-2jkm.6; local gates only — in-cluster run rides wamn-2jkm.41) |
@@ -75,15 +75,15 @@ prerequisite that makes everything else findable.
 | R24 | Merge/loop flows unresumable (occurrence collapse) | Med | open | wamn-2jkm.42 — before a multi-visit flow needs resume |
 | R25 | `idempotency_key` collides across visits | Low | open | wamn-2jkm.43, with R24 |
 | R26 | `resume` folds error-routes as Success (`step_seq`/`result` drift) | Low | open | wamn-2jkm.44 |
-| R27 | Slug `--` separator not injective — cross-tenant name collision on the shared pool | High | open | wamn-2jkm.45 — before untrusted slugs |
+| R27 | Slug `--` separator not injective — cross-tenant name collision on the shared pool | High | **closed** | `0d560b6` (wamn-2jkm.45) — both validators + SQL CHECK reject `--` runs; injectivity test; live PG gate |
 | R28 | CDC replication credential blast radius is cluster-wide, not "one registration" | Med | open | wamn-2jkm.46, with the l5i9.32 knobs |
 | R29 | Replication-slot shape never reconciled (R12 class) | Low | open | wamn-2jkm.47 |
 | R30 | Vault secrets plaintext-resident, no zeroization | Low | open | wamn-2jkm.48 |
 | R31 | Plugin claim/grant registries never cleared on unbind | Low | open | wamn-2jkm.49 — before wamn-bd5 grants |
-| R32 | `Retryable` node errors abort the invocation and hold the lease (prod dispatch path) | High | open | wamn-2jkm.50 — before real flows use std nodes |
+| R32 | `Retryable` node errors abort the invocation and hold the lease (prod dispatch path) | High | **closed** | `a59619d` (wamn-2jkm.50) — Step::Wait → park in BOTH drivers, attempt persists across reclaim; in-cluster verify rides wamn-2jkm.41 |
 | R33 | Delay wake key is global per run — second delay never delays | Low | open | wamn-2jkm.51 |
-| E15/E16 | UDP egress allow-all; `UdpBind` all-interfaces (the arms E13's fix left) | High/Med | open | wamn-7j0.2, next fork commit |
-| E17 | `egressbench` would PASS a tenant `wamn:postgres` importer | Med (latent) | open | wamn-2jkm.52 — hard precondition of wamn-bd5 |
+| E15/E16 | UDP egress allow-all; `UdpBind` all-interfaces (the arms E13's fix left) | High/Med | **closed** | fork `eef76cd8`/pin `4e82c8f` (wamn-7j0.2) — same opt-in as E13, UdpBind = TcpBind posture; runtime gate rides wamn-2jkm.41; **5 carried commits = past the fork escalation threshold** |
+| E17 | `egressbench` would PASS a tenant `wamn:postgres` importer | Med (latent) | **closed** | `91659ff` (wamn-2jkm.52) — tenant positive allowlist single-sourced in `egress_guard`; unblocks wamn-bd5; builder interface lint = wamn-2jkm.68 |
 | R8b-b | Tenant predicate on the four RLS-only queue statements | Low | **closed** | `79e414b` (wamn-2jkm.53; four builders carry the predicate; R8b-a stays wamn-286) |
 | Q1 (§5.1) | `--features caps` not tenant-reachable; `wamn-1nd` stays future conditioning | — | **closed** | evidence in §5.1 (wamn-2jkm.15; minted E17) |
 | Q2 (§5.1) | REPLICA IDENTITY de-facto contract = DEFAULT, key-only; `l5i9.31` is non-retroactive | — | **closed** | evidence in §5.1 (wamn-l5i9.56; design para → l5i9.17) |
@@ -927,12 +927,14 @@ corrections. Everything downstream cites IDs and paths this wave creates.
 - **R16/R2 + R18 + SR4** — one sitting, all `wamn_postgres.rs`.
 
 **Wave 2.5 — open-Highs sitting (owner-inserted 2026-07-19, before the sync
-point; near-disjoint subsystems):** R32 retry-abort (`wamn-2jkm.50`,
-runner/run_worker) ∥ E15/E16 fork UDP arms (`wamn-7j0.2`, fork repo only —
-5th carried commit, escalation threshold reached) ∥ R27 slug injectivity
-(`wamn-2jkm.45`, provisioning/registry naming) ∥ E17 egressbench positive
-allowlist (`wamn-2jkm.52`, `wamn-gates`; unblocks wamn-bd5) · SR12a header
-qualification (`wamn-2jkm.17`) rides the integration pass.
+point; near-disjoint subsystems) — EXECUTED 2026-07-19:** R32 retry-abort
+(`wamn-2jkm.50`, `a59619d`) ∥ E15/E16 fork UDP arms (`wamn-7j0.2`, fork
+`eef76cd8` + pin `4e82c8f` — **5th carried commit, escalation threshold
+reached: engage upstream**) ∥ R27 slug injectivity (`wamn-2jkm.45`,
+`0d560b6`) ∥ E17 egressbench positive allowlist (`wamn-2jkm.52`, `91659ff`
+— unblocked wamn-bd5) · SR12a header qualification (`wamn-2jkm.17`,
+`0d7231f`, main-loop solo after the merges). Four parallel worktree agents,
+serial main-loop integration, zero cherry-pick conflicts.
 
 **Sync point — anti-parallel by nature:** SR9/E7/E8 (the `wamn-host` crate
 split + reader extraction). It touches every deployment artifact and wants a
