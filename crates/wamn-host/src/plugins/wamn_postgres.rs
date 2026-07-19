@@ -41,7 +41,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 use chrono::{DateTime, SecondsFormat, Utc};
-use deadpool_postgres::{Manager, ManagerConfig, Object, Pool, RecyclingMethod, Runtime, Timeouts};
+use deadpool_postgres::{
+    Hook, HookError, Manager, ManagerConfig, Object, Pool, RecyclingMethod, Runtime, Timeouts,
+};
 use futures_util::TryStreamExt as _;
 use tokio_postgres::NoTls;
 use tokio_postgres::types::{Format, IsNull, ToSql, Type, to_sql_checked};
@@ -549,6 +551,42 @@ fn starts_with_keyword(head: &str, kw: &str) -> bool {
     }
 }
 
+/// R18 (wamn-2jkm.21): this plugin's SQL quoting is only sound when the server
+/// has `standard_conforming_strings = on` (the PG default since 9.1). With it
+/// on, a backslash inside a `'…'` literal is a literal backslash, so a charset-
+/// validated identifier quoted into a literal elsewhere cannot use `\'` to break
+/// out. If a server had it OFF the assumption would silently fail, so the plugin
+/// asserts it at connection establishment and fails CLOSED otherwise.
+fn standard_conforming_strings_ok(setting: &str) -> bool {
+    setting == "on"
+}
+
+/// The `post_create` deadpool hook that runs the R18 assertion once per new
+/// physical connection — one cheap round trip. A server with
+/// `standard_conforming_strings` off (or an unreadable setting) fails the
+/// connection create, which surfaces to the guest as `connection-unavailable`.
+fn standard_conforming_strings_hook() -> Hook {
+    Hook::async_fn(|client, _metrics| {
+        Box::pin(async move {
+            let setting: String = client
+                .query_one("SHOW standard_conforming_strings", &[])
+                .await
+                .map_err(|e| {
+                    HookError::message(format!("SHOW standard_conforming_strings failed: {e}"))
+                })?
+                .get(0);
+            if standard_conforming_strings_ok(&setting) {
+                Ok(())
+            } else {
+                Err(HookError::message(format!(
+                    "standard_conforming_strings is {setting:?}, expected \"on\": \
+                     wamn:postgres SQL quoting is unsafe otherwise (R18)"
+                )))
+            }
+        })
+    })
+}
+
 impl WamnPostgres {
     /// Plugin over a single default database (the [`WamnPostgresConfig`] URL).
     /// Pools are built lazily; `database_url: None` ⇒ every call returns
@@ -618,6 +656,8 @@ impl WamnPostgres {
                 create: Some(timeout),
                 recycle: Some(timeout),
             })
+            // R18: assert standard_conforming_strings=on once per new connection.
+            .post_create(standard_conforming_strings_hook())
             .runtime(Runtime::Tokio1)
             .build()?)
     }
@@ -1953,6 +1993,16 @@ mod tests {
         assert!(validate_claims("acme", None, Some("bad;runner")).is_err());
     }
 
+    // R18 — the connect-time check logic. A negative is hard to produce on stock
+    // PG18 (the setting defaults on), so the fail-closed branch is asserted here.
+    #[test]
+    fn standard_conforming_strings_check() {
+        assert!(standard_conforming_strings_ok("on"));
+        assert!(!standard_conforming_strings_ok("off"));
+        assert!(!standard_conforming_strings_ok(""));
+        assert!(!standard_conforming_strings_ok("ON"));
+    }
+
     #[test]
     fn set_and_clear_current_run_is_per_component() {
         let pg =
@@ -2228,5 +2278,34 @@ mod tests {
             .unwrap()
             .get(0);
         assert_eq!(after.as_deref(), Some(""));
+    }
+
+    // R18 — the post_create hook runs on connect; a successful checkout from the
+    // pool proves the assertion passed on this server (stock PG18 = on).
+    #[tokio::test]
+    async fn live_connect_asserts_standard_conforming_strings() {
+        let Some(url) = test_pg_url() else {
+            return;
+        };
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            database_url: Some(url),
+            pool_max_size: 1,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .unwrap();
+        // The checkout builds the pool (with the R18 hook) and creates a physical
+        // connection; the hook must pass for this to be Ok.
+        let (conn, _pp) = pg
+            .checkout(DEFAULT_PROJECT)
+            .await
+            .expect("checkout ok (scs=on)");
+        let scs: String = conn
+            .query_one("SHOW standard_conforming_strings", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(scs, "on");
     }
 }
