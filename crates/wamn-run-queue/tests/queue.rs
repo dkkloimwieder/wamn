@@ -1574,6 +1574,16 @@ fn run_queue_sql_matches_the_model() {
 /// skips cleanly when unset. Mirrors the wamn-run-store / wamn-ddl / wamn-rls
 /// gates. (True concurrent contention is the queuebench/dispatchbench gates; this
 /// asserts the schema + predicates on one session.)
+///
+/// SR12b (wamn-2jkm.23): this is the `WAMN_*_PG_URL` live coverage of the
+/// claim/queue SQL — where plan-sensitivity actually bites (the `AS MATERIALIZED`
+/// fence, RLS, `ON CONFLICT`, index selection) that no pure test can observe. It
+/// PREPARE/EXECUTEs the REAL builders (never hand-copied SQL) — the global +
+/// combined + per-partition claims, the ack/poll/hold outbox path, the composed
+/// checkpoint/complete statements, the janitor, and the registry scan — including
+/// every builder the wave-2 queue cluster touched: the E4 stream_seq numeric
+/// ordering, the R14 held-since poll exclusion, the SR11 composed statements, and
+/// the R8b-b tenant predicates (below).
 #[test]
 fn run_queue_schema_applies_and_claims_on_postgres() {
     let Ok(url) = std::env::var("WAMN_RUN_QUEUE_PG_URL") else {
@@ -1609,6 +1619,9 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     let triggered_sql = write_ahead_triggered_run_sql();
     let last_run_sql = cron_last_run_sql();
     let parked_sql = parked_due_sql(50);
+    // R8b-b / SR12b: the registry scan — the one bead-4 builder not otherwise
+    // PREPARE/EXECUTE'd on the live path (the dispatcher reads it every sweep).
+    let active_flows = active_flows_sql();
     // The fqg.18 combined claim/checkpoint/complete statements.
     let claim_dispatch = claim_dispatch_sql();
     let complete_dequeue = complete_dequeue_sql();
@@ -2284,6 +2297,37 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          COMMIT;\n",
     );
+
+    // ------------------------------------------------------------------------
+    // SR12b / R8b-b: the dispatcher's registry scan (active_flows_sql) — the one
+    // bead-touched claim/queue builder not otherwise PREPARE/EXECUTE'd here. Seed a
+    // t2 active flow alongside t1's, then run the REAL builder under each tenant
+    // claim: each sees ONLY its own active flow (the explicit tenant predicate +
+    // the `active` filter + RLS), and an inactive version is excluded.
+    // ------------------------------------------------------------------------
+    script.push_str(
+        "INSERT INTO wamn_run.flows (tenant_id, flow_id, version, active, graph_json) VALUES \
+           ('t2','g',1,true,'{}'::jsonb);\n",
+    );
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE active_flows AS {active_flows};\n\
+         CREATE TEMP TABLE af_t1 AS EXECUTE active_flows;\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM af_t1) = 1, 'the registry scan returns t1''s single ACTIVE flow (the inactive v4 is excluded)'; \
+           ASSERT (SELECT flow_id FROM af_t1) = 'f' AND (SELECT version FROM af_t1) = 3, 't1 sees flow f v3, not t2''s g'; \
+         END $$;\n\
+         COMMIT;\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't2';\n\
+         CREATE TEMP TABLE af_t2 AS EXECUTE active_flows;\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM af_t2) = 1, 'the registry scan is tenant-scoped: t2 sees only its own active flow'; \
+           ASSERT (SELECT flow_id FROM af_t2) = 'g', 't2 sees flow g, never t1''s f (R8b-b predicate + RLS)'; \
+         END $$;\n\
+         COMMIT;\n"
+    ));
 
     script.push_str("DROP SCHEMA wamn_run CASCADE;\n");
 
