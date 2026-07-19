@@ -18,9 +18,6 @@ pub mod engine;
 pub mod event_reader;
 mod env_policies;
 pub mod host;
-/// Identity-format validators shared by the wamn:postgres plugin and the
-/// dispatcher (R16b, wamn-2jkm.20).
-mod identifiers;
 pub mod migrate_catalog;
 pub mod plugins;
 pub mod provision;

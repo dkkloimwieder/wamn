@@ -74,7 +74,7 @@ use wamn_run_queue::{
 // R16b (wamn-2jkm.20): the dispatcher's pinned session `SET`s interpolate the
 // tenant/schema, so these validators are the injection boundary HERE — and they
 // are the SAME rule the wamn:postgres plugin enforces, held in one owner.
-use crate::identifiers::{valid_schema, valid_tenant};
+use wamn_registry::identifiers::{valid_schema, valid_tenant};
 
 #[derive(Debug, Args)]
 pub struct DispatchArgs {

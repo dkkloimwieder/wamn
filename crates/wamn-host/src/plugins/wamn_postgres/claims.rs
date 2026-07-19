@@ -15,7 +15,7 @@ use tokio_postgres::types::ToSql;
 
 use wamn_event_wire::Causation;
 
-use crate::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
+use wamn_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
 
 use super::pool::{
     CheckoutProbe, CredentialProvider, ProjectConfig, ProjectPool, StaticCredentialProvider,

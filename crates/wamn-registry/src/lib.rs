@@ -30,6 +30,7 @@
 //! not a published contract, so — like `wamn-run-store` — there is no generated
 //! JSON-Schema file.
 
+pub mod identifiers;
 mod resolve;
 pub mod sql;
 mod template;
