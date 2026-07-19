@@ -61,6 +61,14 @@ CREATE TABLE wamn_run.run_queue (
     partition_policy text NOT NULL DEFAULT 'blocking' CHECK (partition_policy IN ('blocking', 'leapfrog')),
     priority         int  NOT NULL DEFAULT 0,
     available_at     timestamptz NOT NULL DEFAULT now(),
+    -- D19 §5 / E4: the per-flow monotone stream position that CDC event runs are
+    -- keyed by (run_id = <flow>:evt:<stream_seq>). Carried AHEAD of run_id in the
+    -- claim ordering key so evt runs dispatch by NUMERIC stream position, never
+    -- lexical run-id order (f1:evt:10 must not precede f1:evt:9 — the R6/D20
+    -- corruption class, arriving through a string comparison). 0 for every non-CDC
+    -- enqueue today (the not-yet-built materializer passes real values); a uniform
+    -- 0 makes the tiebreak inert, so today's dispatch order is byte-for-byte unchanged.
+    stream_seq       bigint NOT NULL DEFAULT 0,
     lease_owner      text,
     lease_expires_at timestamptz,
     attempts         int  NOT NULL DEFAULT 0,
@@ -70,7 +78,10 @@ CREATE TABLE wamn_run.run_queue (
     FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
 );
 -- The claim scan: visible rows in dispatch order, filtered on lease liveness.
-CREATE INDEX run_queue_claimable ON wamn_run.run_queue (tenant_id, available_at, lease_expires_at);
+-- `stream_seq` sits in the ordering prefix (ahead of run_id, E4) so the claim's
+-- `ORDER BY available_at, stream_seq, run_id` is index-supported; `lease_expires_at`
+-- stays as the trailing in-index filter column it always was.
+CREATE INDEX run_queue_claimable ON wamn_run.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);
 -- Per-partition ownership: the acquire candidate scan (distinct partition keys with
 -- a claimable run) and the head-of-partition claim both key on (tenant, partition).
 CREATE INDEX run_queue_partition ON wamn_run.run_queue (tenant_id, partition_key)

@@ -136,13 +136,16 @@ fn blocks(b: &QueueEntry, c: &QueueEntry, now: Millis) -> bool {
     }
 }
 
-/// The dispatch-order key: `(available_at, run_id)`, matching every SQL `ORDER BY`.
+/// The dispatch-order key: `(available_at, run_id)`. The SQL carries a numeric
+/// `stream_seq` tiebreak between the two (E4), inert while every enqueue writes
+/// `stream_seq = 0`; see [`crate::plan_claim`]'s note for when the model adopts it.
 fn ord_key(e: &QueueEntry) -> (Millis, &str) {
     (e.available_at, e.run_id.as_str())
 }
 
 /// The `blocking` policy's stream order: `(enqueued_at, run_id)` — stamped at
-/// enqueue, never moved by a park/backoff (unlike `available_at`).
+/// enqueue, never moved by a park/backoff (unlike `available_at`). The SQL carries
+/// the same `stream_seq` tiebreak here, between `enqueued_at` and `run_id` (E4).
 fn stream_key(e: &QueueEntry) -> (Millis, &str) {
     (e.enqueued_at, e.run_id.as_str())
 }

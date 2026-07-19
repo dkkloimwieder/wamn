@@ -132,6 +132,14 @@ pub fn claim_batch_sql(limit: usize) -> String {
 /// VERBATIM by [`claim_batch_sql`] and [`claim_dispatch_sql`] so the two claim
 /// paths cannot drift: the fqg.7 wedge-wake disjunct, the budget guard, and the
 /// `FOR UPDATE SKIP LOCKED LIMIT n` all live here exactly once.
+///
+/// The order is `(available_at, stream_seq, run_id)` (E4): `stream_seq` is a
+/// BIGINT carried AHEAD of the text `run_id`, so CDC event runs
+/// (`<flow>:evt:<stream_seq>`) claim by NUMERIC stream position rather than
+/// lexical id order — `f1:evt:10` must not sort before `f1:evt:9`. Inert today
+/// (every enqueue writes `stream_seq = 0`, so it collapses to the prior
+/// `(available_at, run_id)` order); the not-yet-built materializer supplies real
+/// values.
 fn global_claim_cte(limit: usize) -> String {
     format!(
         "SELECT c.tenant_id, c.run_id FROM run_queue AS c \
@@ -139,7 +147,7 @@ fn global_claim_cte(limit: usize) -> String {
                AND c.available_at <= now() \
                AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now()) \
                AND (c.attempts < c.max_attempts OR c.lease_expires_at IS NULL) \
-             ORDER BY c.available_at, c.run_id \
+             ORDER BY c.available_at, c.stream_seq, c.run_id \
              FOR UPDATE SKIP LOCKED \
              LIMIT {limit}"
     )
@@ -448,7 +456,7 @@ pub fn parked_due_sql(limit: usize) -> String {
           WHERE available_at <= now() + interval '250 milliseconds' \
             AND (lease_expires_at IS NULL OR lease_expires_at <= now()) \
             AND (attempts < max_attempts OR lease_expires_at IS NULL) \
-          ORDER BY available_at, run_id \
+          ORDER BY available_at, stream_seq, run_id \
           LIMIT {limit}"
     )
 }
@@ -534,17 +542,20 @@ pub fn release_partition_sql() -> String {
 /// `partition_policy` (D20):
 ///
 /// - **`blocking`** (the default): ANY sibling earlier in the key's *stream
-///   order* — `(enqueued_at, run_id)`, stamped at enqueue and never moved —
-///   blocks, whether it is ready, backed off, parked, or budget-exhausted. A
-///   transiently-unavailable head holds its key (the Kafka model), and an
-///   exhausted head **wedges** it (the janitor leaves the row; see
-///   [`janitor_sweep_sql`]). The stream order deliberately ignores
+///   order* — `(enqueued_at, stream_seq, run_id)`, stamped at enqueue and never
+///   moved — blocks, whether it is ready, backed off, parked, or
+///   budget-exhausted. A transiently-unavailable head holds its key (the Kafka
+///   model), and an exhausted head **wedges** it (the janitor leaves the row;
+///   see [`janitor_sweep_sql`]). The stream order deliberately ignores
 ///   `available_at`: a park/backoff pushes `available_at` into the future, so
 ///   any comparison over it would let a later run overtake — the exact
 ///   corruption the policy exists to forbid.
 /// - **`leapfrog`** (opt-in): only an earlier *currently-ready* sibling blocks,
-///   in `(available_at, run_id)` order — a backed-off or parked head yields the
-///   key and a later ready run overtakes it until the head becomes due.
+///   in `(available_at, stream_seq, run_id)` order — a backed-off or parked head
+///   yields the key and a later ready run overtakes it until the head becomes due.
+///
+/// Both orders carry the numeric `stream_seq` AHEAD of the text `run_id` (E4), so
+/// CDC event runs on a key advance by stream position, not lexical id order.
 ///
 /// `attempts` counts **crash evidence only**, exactly as in [`claim_batch_sql`]: the
 /// `CASE` bumps it iff this claim reclaims an *expired* lease. This matters most
@@ -586,15 +597,15 @@ pub fn claim_partition_head_sql(limit: usize) -> String {
                         AND ( \
                             (b.lease_expires_at IS NOT NULL AND b.lease_expires_at > now()) \
                             OR (c.partition_policy = '{blocking}' \
-                                AND (b.enqueued_at, b.run_id) < (c.enqueued_at, c.run_id)) \
+                                AND (b.enqueued_at, b.stream_seq, b.run_id) < (c.enqueued_at, c.stream_seq, c.run_id)) \
                             OR (c.partition_policy = '{leapfrog}' \
                                 AND b.available_at <= now() \
                                 AND (b.attempts < b.max_attempts OR b.lease_expires_at IS NULL) \
                                 AND (b.lease_expires_at IS NULL OR b.lease_expires_at <= now()) \
-                                AND (b.available_at, b.run_id) < (c.available_at, c.run_id)) \
+                                AND (b.available_at, b.stream_seq, b.run_id) < (c.available_at, c.stream_seq, c.run_id)) \
                         ) \
                  ) \
-               ORDER BY c.available_at, c.run_id \
+               ORDER BY c.available_at, c.stream_seq, c.run_id \
                FOR UPDATE OF c SKIP LOCKED \
                LIMIT {limit} \
         ) \

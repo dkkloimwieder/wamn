@@ -219,7 +219,12 @@ fn claim_sql_is_skip_locked_and_bounded() {
     let sql = claim_batch_sql(25);
     assert!(sql.contains("FOR UPDATE SKIP LOCKED"));
     assert!(sql.contains("LIMIT 25"));
-    assert!(sql.contains("ORDER BY c.available_at, c.run_id"));
+    // E4: stream_seq (a numeric BIGINT) sits AHEAD of the text run_id in the claim
+    // key, so evt runs (<flow>:evt:<stream_seq>) dispatch by numeric stream
+    // position — f1:evt:10 must not sort before f1:evt:9. This pin is the
+    // load-bearing drift-guard: with every row at stream_seq 0 today the runtime
+    // ordering is unchanged, so only the string can catch a dropped tiebreak.
+    assert!(sql.contains("ORDER BY c.available_at, c.stream_seq, c.run_id"));
     assert!(sql.contains("c.available_at <= now()"));
     assert!(sql.contains("c.lease_expires_at IS NULL OR c.lease_expires_at <= now()"));
     // The redelivery-budget guard: a spent row is left for the janitor, UNLESS its
@@ -272,7 +277,7 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
         "c.available_at <= now()",
         "c.lease_expires_at IS NULL OR c.lease_expires_at <= now()",
         "c.attempts < c.max_attempts OR c.lease_expires_at IS NULL",
-        "ORDER BY c.available_at, c.run_id",
+        "ORDER BY c.available_at, c.stream_seq, c.run_id",
         "FOR UPDATE SKIP LOCKED",
         "LIMIT 1",
         "attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END",
@@ -364,11 +369,17 @@ fn partition_sql_builders_are_shaped_and_tenant_scoped() {
     // These pins are the load-bearing drift guard for the policy branch: the
     // runtime effect is timing/plan-dependent, the strings are deterministic.
     assert!(claim.contains("c.partition_policy = 'blocking'"));
-    assert!(claim.contains("(b.enqueued_at, b.run_id) < (c.enqueued_at, c.run_id)"));
+    // E4: stream_seq rides AHEAD of run_id in BOTH per-key orders (blocking stream
+    // order + leapfrog ready order), so an evt-keyed partition advances numerically.
+    assert!(claim.contains(
+        "(b.enqueued_at, b.stream_seq, b.run_id) < (c.enqueued_at, c.stream_seq, c.run_id)"
+    ));
     // D20 leapfrog (opt-in): only an earlier CURRENTLY-READY sibling blocks, in
-    // (available_at, run_id) order — the pre-D20 behavior, now explicit.
+    // (available_at, stream_seq, run_id) order — the pre-D20 behavior, now explicit.
     assert!(claim.contains("c.partition_policy = 'leapfrog'"));
-    assert!(claim.contains("(b.available_at, b.run_id) < (c.available_at, c.run_id)"));
+    assert!(claim.contains(
+        "(b.available_at, b.stream_seq, b.run_id) < (c.available_at, c.stream_seq, c.run_id)"
+    ));
     assert!(claim.contains("FOR UPDATE OF c SKIP LOCKED"));
     // wamn-fqg.7: the budget disjunct is on BOTH the head candidate `c` and the
     // earlier-ready-sibling sub-check `b`, so a woken budget-spent head is claimable
@@ -1249,7 +1260,8 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     // Mirrors the claim predicate incl. the wamn-fqg.7 disjunct: a woken budget-spent
     // (NULL-lease) run is surfaced for a doorbell hint, not left invisible.
     assert!(wake.contains("attempts < max_attempts OR lease_expires_at IS NULL"));
-    assert!(wake.contains("ORDER BY available_at, run_id"));
+    // E4: the wake scan mirrors the claim's numeric stream-position ordering.
+    assert!(wake.contains("ORDER BY available_at, stream_seq, run_id"));
     assert!(wake.contains("LIMIT 100"));
     assert!(!wake.contains("FOR UPDATE"));
     assert!(!wake.contains("UPDATE "));
@@ -1363,6 +1375,7 @@ fn run_queue_sql_matches_the_model() {
         "partition_policy",
         "priority",
         "available_at",
+        "stream_seq",
         "lease_owner",
         "lease_expires_at",
         "attempts",
@@ -1370,6 +1383,14 @@ fn run_queue_sql_matches_the_model() {
     ] {
         assert!(sql.contains(col), "run-queue.sql missing column {col}");
     }
+    // E4: stream_seq is a BIGINT (numeric semantics, no width ceiling) defaulting
+    // to 0, and sits in the claimable index's ordering prefix so the numeric claim
+    // key is index-supported.
+    assert!(sql.contains("stream_seq       bigint NOT NULL DEFAULT 0"));
+    assert!(
+        sql.contains("run_queue_claimable ON wamn_run.run_queue (tenant_id, available_at, stream_seq, lease_expires_at)"),
+        "the claimable index must carry stream_seq in its ordering prefix (E4)"
+    );
     // D20: partition_policy defaults to 'blocking' and is CHECK-constrained to the
     // model's two literals (drift guard over PartitionPolicy::as_sql).
     assert!(sql.contains("partition_policy text NOT NULL DEFAULT 'blocking'"));
@@ -2021,6 +2042,51 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          COMMIT;\n"
     ));
+
+    // ------------------------------------------------------------------------
+    // E4: the queue orders on stream_seq (numeric) AHEAD of run_id (text). CDC
+    // event runs are keyed <flow>:evt:<stream_seq>, whose text order INVERTS the
+    // numeric one (f1:evt:10 < f1:evt:9 lexically). Seed one partition key whose
+    // four heads share available_at + enqueued_at and differ ONLY by stream_seq,
+    // with run_ids in the WRONG lexical order, then drive the REAL partition
+    // claim: the head must advance 8 -> 9 by numeric stream position, never
+    // 10 -> 11 by lexical run-id. This is the assertion that FAILS before the fix.
+    // ------------------------------------------------------------------------
+    script.push_str(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+           ('t1','f1:evt:8','f',1,'dispatched'),('t1','f1:evt:9','f',1,'dispatched'), \
+           ('t1','f1:evt:10','f',1,'dispatched'),('t1','f1:evt:11','f',1,'dispatched');\n\
+         -- One statement: available_at and enqueued_at are the SAME now() for all\n\
+         -- four rows, so stream_seq is the sole differentiator of the claim order.\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, partition_key, available_at, enqueued_at, stream_seq, attempts, max_attempts) VALUES \
+           ('t1','f1:evt:8', 'evt-key', now(), now(), 8,  0, 20), \
+           ('t1','f1:evt:9', 'evt-key', now(), now(), 9,  0, 20), \
+           ('t1','f1:evt:10','evt-key', now(), now(), 10, 0, 20), \
+           ('t1','f1:evt:11','evt-key', now(), now(), 11, 0, 20);\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         DO $$ BEGIN ASSERT (SELECT partition_policy FROM run_queue WHERE run_id='f1:evt:8') = 'blocking', 'evt rows default to the blocking policy'; END $$;\n\
+         EXECUTE acquire_stmt('EV', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM partition_owner WHERE partition_key='evt-key' AND lease_owner='EV') = 1, 'EV leases the evt-key partition'; \
+         END $$;\n\
+         EXECUTE claimhead_stmt('EV', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='f1:evt:8') = 'EV', 'head is stream_seq 8 (numeric min), NOT lexical-min f1:evt:10'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='f1:evt:10') IS NULL, 'the lexically-smallest run_id is NOT the head'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='f1:evt:9') IS NULL, 'later stream positions stay blocked behind the head'; \
+         END $$;\n\
+         -- Advance the key: with stream_seq 8 dequeued, the next head must be\n\
+         -- stream_seq 9 (numeric), not lexical-min f1:evt:10.\n\
+         DELETE FROM run_queue WHERE run_id='f1:evt:8';\n\
+         EXECUTE claimhead_stmt('EV', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='f1:evt:9') = 'EV', 'the key advances 8 -> 9 by numeric stream position'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='f1:evt:10') IS NULL, 'f1:evt:10 does NOT overtake f1:evt:9 (lexical order would)'; \
+         END $$;\n\
+         COMMIT;\n",
+    );
 
     script.push_str("DROP SCHEMA wamn_run CASCADE;\n");
 

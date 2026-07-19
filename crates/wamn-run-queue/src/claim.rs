@@ -82,14 +82,21 @@ pub struct ClaimPlan {
 }
 
 /// Model a `claim_batch_sql(limit)` over a candidate row set: take the claimable
-/// **unpartitioned** rows in `(available_at, run_id)` order (the SQL's `ORDER BY`),
-/// up to `limit`, each with a fresh lease deadline `now + lease_ttl` and its attempt
-/// bumped. Partitioned rows (`partition_key` set) are skipped — the global claim's
+/// **unpartitioned** rows in `(available_at, run_id)` order, up to `limit`, each
+/// with a fresh lease deadline `now + lease_ttl` and its attempt bumped.
+/// Partitioned rows (`partition_key` set) are skipped — the global claim's
 /// `partition_key IS NULL` guard leaves them to the per-partition ownership path
 /// ([`crate::plan_partition_claim`]). The real SQL additionally `SKIP LOCKED`s rows
 /// another transaction already holds — a concurrency property only the live queue
 /// (queuebench) exercises; this models the eligibility + ordering + limit a single
 /// claimer sees.
+///
+/// NOTE (E4): the SQL's `ORDER BY` carries a numeric `stream_seq` tiebreak AHEAD of
+/// `run_id` — `(available_at, stream_seq, run_id)`. This model omits it because
+/// every enqueue today writes `stream_seq = 0`, so the tiebreak is inert and the
+/// two orders coincide. When the CDC materializer starts minting real `stream_seq`
+/// values (`<flow>:evt:<stream_seq>` runs), [`QueueEntry`] should gain a
+/// `stream_seq` field and this sort a matching tiebreak to stay a faithful mirror.
 pub fn plan_claim(
     candidates: &[QueueEntry],
     now: Millis,
