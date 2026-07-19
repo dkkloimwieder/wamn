@@ -16,7 +16,7 @@ metadata:
 type: Opaque
 stringData:
   # {"<project>": {"url": "...", "tenant": "...", "schema": "..."}} — the shape
-  # DispatchArgs::projects_file parses (crates/wamn-host/src/dispatch.rs).
+  # DispatchArgs::projects_file parses (crates/wamn-dispatcher/src/lib.rs).
   # `url` is the project's app-role (NOSUPERUSER, NOBYPASSRLS) connection;
   # `tenant` becomes the session's app.tenant RLS claim; `schema` its
   # search_path. Tenant/schema are charset-guarded at startup (they go into

@@ -4,7 +4,7 @@
 -- trigger dispatcher's registry sweep (`active_flows_sql`, crates/wamn-run-queue
 -- — cron + row-event flows), the poc-webhook-f1 ingress (sync webhook route
 -- matching), and the flowrunner guest (`load_active_flow`). Registration is the
--- deploy tooling's job (`wamn-host publish-catalog --flow`, which also enforces
+-- deploy tooling's job (`wamn-ctl publish-catalog --flow`, which also enforces
 -- that the column `flow_id` equals the graph's embedded flow-id — run ids are
 -- minted from the column, so the 5.1 slug rule extends to it by equality — and
 -- rejects a webhook path already served by another ACTIVE flow; the
@@ -15,7 +15,7 @@
 -- deploy/sql/postgres-init.sql (the s3.* gate fixtures keep their own stand-in).
 -- Assumes deploy/sql/run-state.sql has been applied first (schema `wamn_run` and
 -- the `wamn_app` role). Provisioning a per-project schema rewrites `wamn_run`
--- to the project schema (`wamn-host publish-catalog --runstate`).
+-- to the project schema (`wamn-ctl publish-catalog --runstate`).
 --
 -- Security shape mirrors the rest of the platform: FORCE RLS keyed on
 -- NULLIF(current_setting('app.tenant', true), ''); an empty/absent claim reads

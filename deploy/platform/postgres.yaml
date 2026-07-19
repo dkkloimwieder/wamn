@@ -9,7 +9,7 @@
 #     --from-file=init.sql=deploy/sql/postgres-init.sql
 #   kubectl -n wamn-system apply -f deploy/platform/postgres.yaml
 #
-# wamn-host pods reach it at postgres.wamn-system.svc.cluster.local:5432; set
+# wamn platform pods reach it at postgres.wamn-system.svc.cluster.local:5432; set
 # WAMN_PG_URL to postgres://wamn_app:wamn_app@postgres.wamn-system:5432/wamn
 # (the plugin connects as the non-superuser, non-BYPASSRLS app role).
 ---

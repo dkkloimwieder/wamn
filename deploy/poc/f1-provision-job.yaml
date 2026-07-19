@@ -29,7 +29,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: f1-provision
-          image: wamn-host:dev
+          image: wamn-ctl:dev
           imagePullPolicy: IfNotPresent
           args:
             [

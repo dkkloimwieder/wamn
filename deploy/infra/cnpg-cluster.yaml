@@ -4,7 +4,7 @@
 # belongs: many small idle tenants who haven't paid for a dedicated instance.
 # The RLS floor (per-DB CONNECT + FORCE RLS within) is LOAD-BEARING here (it is
 # belt-and-braces on the isolated T2/T4 clusters). Registered as the `trials`
-# tier via `wamn-host provision-org --tier trials --pool wamn-pg` (wamn-q3n.9);
+# tier via `wamn-ctl provision-org --tier trials --pool wamn-pg` (wamn-q3n.9);
 # `provision-project-env` then creates a trials org's databases on this pool.
 # CONVERSION = promotion to a dedicated T2 pair (the tier-move, wamn-q3n.13).
 #

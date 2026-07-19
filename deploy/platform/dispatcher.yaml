@@ -1,6 +1,6 @@
 # 5.14 shared trigger dispatcher — the always-on control-plane loop (cron +
 # outbox row-events + parked-run wakes for every project it serves). Runs the
-# `dispatch` subcommand of the same wamn-host image the operator deploys.
+# wamn-dispatcher binary (its own SR9 image target — no runtime linked).
 #
 #   kubectl -n wamn-system apply -f deploy/platform/dispatcher-projects.example.yaml  # once
 #   kubectl -n wamn-system apply -f deploy/platform/dispatcher.yaml
@@ -104,7 +104,7 @@ spec:
             defaultMode: 420
       containers:
         - name: dispatcher
-          image: wamn-host:dev
+          image: wamn-dispatcher:dev
           imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: runtime-cert
@@ -116,7 +116,6 @@ spec:
           args:
             - "--log-level"
             - "info"
-            - "dispatch"
             - "--projects-file"
             - "/etc/wamn/projects.json"
             - "--nats-url"

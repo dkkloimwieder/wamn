@@ -43,10 +43,9 @@ spec:
     spec:
       containers:
         - name: event-reader
-          image: wamn-host:dev
+          image: wamn-cdc-reader:dev
           imagePullPolicy: IfNotPresent
           args:
-            - event-reader
             - --org=t10cdc
             - --project=app
             - --env=dev
