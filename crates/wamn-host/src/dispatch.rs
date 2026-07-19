@@ -791,9 +791,14 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         }
     };
 
+    // R13: validate the poll cadence once, at the boundary — an inverted band
+    // (`--min-interval-ms` > `--max-interval-ms`) would otherwise panic in
+    // `next_interval`'s `clamp` on the first idle sweep. Bail at startup instead.
+    let cadence = wamn_run_queue::Cadence::new(args.min_interval_ms, args.max_interval_ms)
+        .context("invalid poll cadence (--min-interval-ms / --max-interval-ms)")?;
     let cfg = DispatcherConfig {
-        min_interval_ms: args.min_interval_ms.max(10),
-        max_interval_ms: args.max_interval_ms.max(args.min_interval_ms.max(10)),
+        min_interval_ms: cadence.min(),
+        max_interval_ms: cadence.max(),
         batch: args.batch.max(1),
         outbox_retention_ms: args.outbox_retention_hours.max(1) * 3_600_000,
     };

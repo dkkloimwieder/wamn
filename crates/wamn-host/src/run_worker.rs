@@ -412,16 +412,12 @@ impl RunWorker {
     pub async fn serve(
         &mut self,
         nats: Option<async_nats::Client>,
-        min_idle_ms: u64,
-        max_idle_ms: u64,
+        cadence: wamn_run_queue::Cadence,
         mut shutdown: watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
         use futures_util::StreamExt;
 
-        let (min, max) = (
-            min_idle_ms.max(10) as i64,
-            max_idle_ms.max(min_idle_ms.max(10)) as i64,
-        );
+        let (min, max) = (cadence.min(), cadence.max());
         let mut sub = match &nats {
             Some(c) => Some(c.subscribe(self.subject.clone()).await?),
             None => None,
@@ -489,6 +485,12 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
     use wash_runtime::washlet::{NatsConnectionOptions, connect_nats};
 
     wash_runtime::init_crypto();
+
+    // R13: validate the idle poll cadence once, at startup — an inverted band
+    // (`--min-idle-ms` > `--max-idle-ms`) would otherwise panic in
+    // `next_interval`'s `clamp` on the first idle sweep. Bail here instead.
+    let cadence = wamn_run_queue::Cadence::new(args.min_idle_ms as i64, args.max_idle_ms as i64)
+        .context("invalid idle poll cadence (--min-idle-ms / --max-idle-ms)")?;
 
     let url = args
         .database_url
@@ -592,9 +594,7 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
         "run-worker up (single-project claim loop; doorbell + poll-backoff)"
     );
 
-    let result = worker
-        .serve(nats, args.min_idle_ms, args.max_idle_ms, rx)
-        .await;
+    let result = worker.serve(nats, cadence, rx).await;
     ticker.abort();
     result
 }
