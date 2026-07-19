@@ -9,7 +9,7 @@
 #   wash push localhost:5000/wamn/trace-relay:dev \
 #     components/target/wasm32-wasip2/release/trace_relay.wasm --insecure
 #
-#   kubectl -n wamn-system apply -f deploy/trace-relay-workload.yaml
+#   kubectl -n wamn-system apply -f deploy/platform/trace-relay-workload.yaml
 apiVersion: v1
 kind: Service
 metadata:

@@ -1,7 +1,7 @@
 # [9.1] Local single-binary Tempo config (docker iteration). Mounted at
-# /etc/tempo/tempo.yaml; the same shape as deploy/tempo.yaml's ConfigMap.
+# /etc/tempo/tempo.yaml; the same shape as deploy/infra/tempo.yaml's ConfigMap.
 #   docker run -d --name wamn-s5-tempo --network wamn-s5 -p 3200:3200 \
-#     -v "$PWD/deploy/tempo-local.yaml:/etc/tempo/tempo.yaml:ro" \
+#     -v "$PWD/deploy/infra/tempo-local.yaml:/etc/tempo/tempo.yaml:ro" \
 #     grafana/tempo:2.6.1 -config.file=/etc/tempo/tempo.yaml
 stream_over_http_enabled: true
 usage_report:

@@ -5,7 +5,7 @@
 # fixtures ship in the image at /bench. The suite exits non-zero if any
 # gate fails, so job completion IS the verdict.
 #
-#   kubectl -n wamn-system apply -f deploy/bench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/bench-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/bench --timeout=600s
 #   kubectl -n wamn-system logs job/bench
 apiVersion: batch/v1

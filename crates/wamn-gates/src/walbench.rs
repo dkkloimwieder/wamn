@@ -30,7 +30,7 @@
 //!   all   — perop then mixed.
 //!
 //! Not `--mode all` of some other gate: run it explicitly via
-//! deploy/walbench-job.yaml. A single run is the record (unlike the C7 two-run
+//! deploy/gates/walbench-job.yaml. A single run is the record (unlike the C7 two-run
 //! practice): there is no knee search a one-sided disk stall can poison — the
 //! headline numbers are byte counts and medians, and a stall shows up visibly
 //! as a p99 outlier. The insert position (`pg_current_wal_insert_lsn`), not the
@@ -51,7 +51,7 @@ const TENANT: &str = "walbench-tenant";
 /// The poc-receiving catalog (POC-DM1's promoted artifact) — the real POC app
 /// model. `include_str!` bakes it into the binary at compile time (the builder
 /// COPYs `deploy/` before `cargo build`), so no runtime file dependency.
-const CATALOG_JSON: &str = include_str!("../../../deploy/poc-material-receiving.catalog.json");
+const CATALOG_JSON: &str = include_str!("../../../deploy/poc/poc-material-receiving.catalog.json");
 
 /// Reference (master) data seeded once for the mixed leg — the FK parents
 /// every receiving event references.

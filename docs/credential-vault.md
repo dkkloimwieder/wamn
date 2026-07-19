@@ -41,7 +41,7 @@ nodes:                         mounted from a K8s Secret;                    │
    (`--credentials-file` / `WAMN_CREDENTIALS_FILE`, JSON
    `{project: {name: secret}}` — the `WAMN_PG_PROJECTS_FILE` pattern; the
    material still lives in a K8s Secret at the deploy layer,
-   `deploy/runner-credentials.example.yaml`). A live per-Secret K8s read is a
+   `deploy/platform/runner-credentials.example.yaml`). A live per-Secret K8s read is a
    follow-up sharing wamn-5x0.1's client.
 3. **Per-dispatch scoping (the containment invariant, structural)** — the
    flowrunner builds a **fresh** `CapsCtx` per node dispatch carrying ONLY
@@ -93,7 +93,7 @@ and an ungranted / unregistered-project `get` is refused over the real WIT
 boundary.
 
 A **missing** credentials file is a warn + empty vault (the Secret mounts
-`optional` in `deploy/runner.yaml`, so a credential-less project deploys
+`optional` in `deploy/platform/runner.yaml`, so a credential-less project deploys
 cleanly); a **malformed** file is a hard startup error.
 
 ## Run-worker egress (wired with 5.9)
@@ -128,8 +128,8 @@ acceptance halves are both provable:
   `result_json` / `state_json` / `fail_reason`, the registered `graph_json`,
   and every `node_runs` row's input/output/error.
 
-Gate of record: `deploy/credproof-job.yaml` against `deploy/runner.yaml` (with
-`deploy/runner-credentials.example.yaml`) + `deploy/serve-echo.yaml`.
+Gate of record: `deploy/gates/credproof-job.yaml` against `deploy/platform/runner.yaml` (with
+`deploy/platform/runner-credentials.example.yaml`) + `deploy/gates/serve-echo.yaml`.
 Verification commands: [build-and-test.md](build-and-test.md) § *[5.9]*.
 
 ## Host-enforced grant (cjv.3)

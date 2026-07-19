@@ -21,7 +21,7 @@
 //! of versions and their current states.
 //!
 //! The four state names are also the values of the `state` column in
-//! `deploy/catalog-schema.sql`; [`State::as_sql`] is the authoritative mapping,
+//! `deploy/sql/catalog-schema.sql`; [`State::as_sql`] is the authoritative mapping,
 //! kept in lockstep with the DDL `CHECK` by a test.
 
 /// The lifecycle state of a single catalog version.
@@ -39,7 +39,7 @@ pub enum State {
 
 impl State {
     /// The storage literal for this state — the value written to the `state`
-    /// column in `deploy/catalog-schema.sql` (its `CHECK` lists exactly these).
+    /// column in `deploy/sql/catalog-schema.sql` (its `CHECK` lists exactly these).
     pub fn as_sql(self) -> &'static str {
         match self {
             State::Draft => "draft",

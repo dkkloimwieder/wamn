@@ -3,7 +3,7 @@
 The application-facing **auth / RBAC / config** tables that live in a project
 database: `users`, `roles` (+ the `user_roles` linkage), `permissions`,
 `configurations`, `audit_log`, `api_keys`. Shipped as the standalone DDL
-`deploy/app-schema.sql`, modeled and drift-guarded by the pure crate
+`deploy/sql/app-schema.sql`, modeled and drift-guarded by the pure crate
 `crates/wamn-sysschema` (bead wamn-as5, `docs/platform-plan.md` §2.4).
 
 ## Scope — the auth/RBAC half
@@ -13,8 +13,8 @@ Item 2.4 lists two halves. The **platform-metadata** half — `entities`,
 not redefined**:
 
 - `catalog.entities` / `catalog.fields` / `catalog.relations` —
-  `deploy/catalog-schema.sql` (the 3.1 `wamn-catalog` model's storage).
-- `wamn_run.flows` — `deploy/flows.sql` (the POC-F1 flow registry).
+  `deploy/sql/catalog-schema.sql` (the 3.1 `wamn-catalog` model's storage).
+- `wamn_run.flows` — `deploy/sql/flows.sql` (the POC-F1 flow registry).
 
 A `deployments` table is **deferred**: a live workload is a Kubernetes
 `WorkloadDeployment` CR, so a registry table would duplicate cluster state until
@@ -23,7 +23,7 @@ genuine new work — this file — is the auth/RBAC half.
 
 ## Distinct from the T1 control-plane registry
 
-Do not confuse this with `deploy/system-schema.sql` (wamn-q3n.3):
+Do not confuse this with `deploy/sql/system-schema.sql` (wamn-q3n.3):
 
 |                | `app-schema.sql` (this)            | `system-schema.sql` (T1 registry) |
 | -------------- | ---------------------------------- | --------------------------------- |
@@ -94,7 +94,7 @@ the authoritative artifact and the model is tied to it by a drift guard.
 
 - **Unit** (`cargo test -p wamn-sysschema`): the `UserStatus` literals and the
   table manifest.
-- **Drift guard** (`tests/schema.rs`): `deploy/app-schema.sql` must mirror the
+- **Drift guard** (`tests/schema.rs`): `deploy/sql/app-schema.sql` must mirror the
   model — the schema name, every table + its pinned columns, the RLS floor + a45
   hardening (one `CHECK (tenant_id <> '')` per table), the `users.status` CHECK
   literals from `UserStatus::as_str`, and the FK cascades (plus that `audit_log`

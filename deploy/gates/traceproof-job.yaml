@@ -8,7 +8,7 @@
 #
 # Prereqs: trace-relay WorkloadDeployment Ready + serve-echo rolled out.
 #
-#   kubectl -n wamn-system apply -f deploy/traceproof-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/traceproof-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/traceproof --timeout=180s
 #   kubectl -n wamn-system logs job/traceproof
 apiVersion: batch/v1

@@ -70,7 +70,7 @@ present, and per-entity keys plus composite-unique tuples are distinct.
 
 ## Storage
 
-`deploy/catalog-schema.sql` gains `catalog.seed_datasets` (tenant-scoped, FORCE
+`deploy/sql/catalog-schema.sql` gains `catalog.seed_datasets` (tenant-scoped, FORCE
 RLS): one row per dataset, the `dataset` document stored as jsonb (the crate is
 the source of truth for its semantics; the compiler emits the INSERTs from it).
 

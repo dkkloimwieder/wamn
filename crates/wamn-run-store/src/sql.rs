@@ -1,7 +1,7 @@
 //! The single source of run-state SQL (docs/archive/structure-review.md SR2).
 //!
 //! Pure text builders over the `runs` / `node_runs` tables this crate owns
-//! (`deploy/run-state.sql`), in the house shape: values are ALWAYS `$n`
+//! (`deploy/sql/run-state.sql`), in the house shape: values are ALWAYS `$n`
 //! parameters, identifiers are pinned, table names are UNQUALIFIED (the host
 //! injects the schema via `search_path` — the S6 schema-as-fixture pattern),
 //! and the tenant comes from the session claim
@@ -203,7 +203,7 @@ mod tests {
     /// deploy file and the builders cannot drift apart silently.
     #[test]
     fn builder_columns_exist_in_the_canonical_ddl() {
-        let ddl = include_str!("../../../deploy/run-state.sql");
+        let ddl = include_str!("../../../deploy/sql/run-state.sql");
         for col in [
             "tenant_id",
             "run_id",

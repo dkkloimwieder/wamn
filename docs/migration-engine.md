@@ -66,7 +66,7 @@ lifecycle-state literals come from `wamn_schema::State`, single-sourced with the
 
 ## Storage
 
-Two additive changes to the standalone `deploy/catalog-schema.sql` (not
+Two additive changes to the standalone `deploy/sql/catalog-schema.sql` (not
 `postgres-init.sql`):
 
 - `catalog.catalogs` gains a nullable **`document jsonb`** column — the applied
@@ -133,7 +133,7 @@ analysis) is a follow-up too; v1 stores the applied catalog as the `document`.
 
 - **Unit** (`cargo test -p wamn-migrate`): the guards, the 3.2 destructive gate,
   dry-run vs apply, the generated rollback, and a metadata-only version bump.
-- **Drift guard**: `deploy/catalog-schema.sql` must mirror the engine — the
+- **Drift guard**: `deploy/sql/catalog-schema.sql` must mirror the engine — the
   `document` column, the `schema_migrations` table + columns, and the
   confirmation / environment / lifecycle-state literals the SQL builders use.
 - **Live-apply gate** (`WAMN_MIGRATE_PG_URL`, a superuser URL; skipped when

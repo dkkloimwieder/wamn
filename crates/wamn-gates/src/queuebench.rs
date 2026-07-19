@@ -38,7 +38,7 @@
 //!                burst/recovery profile — curves + CSVs, not pass/fail numbers
 //!                (only the exactly-once/completeness sanity asserts gate). NOT
 //!                part of `--mode all` (it is a long campaign, not a regression
-//!                gate); run it explicitly via deploy/queuebench-ceiling-job.yaml.
+//!                gate); run it explicitly via deploy/gates/queuebench-ceiling-job.yaml.
 //!   all        — every regression mode in sequence (everything except ceiling).
 
 use std::collections::{HashMap, HashSet};
@@ -149,7 +149,7 @@ pub struct QueueBenchArgs {
 
 /// The ephemeral-schema clone: the 5.7 `runs` (the write-ahead target + the FK)
 /// and the 5.14 `run_queue`, schema-qualified, with the house tenant floor. A
-/// faithful, self-contained stand-in for `deploy/run-state.sql` + `run-queue.sql`
+/// faithful, self-contained stand-in for `deploy/sql/run-state.sql` + `run-queue.sql`
 /// so the gate never touches the shared production schema (the same pattern as
 /// testhostbench's `template_ddl`).
 fn queue_ddl(schema: &str) -> String {

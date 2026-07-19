@@ -5,7 +5,7 @@
 # sanity asserts gate (trigger fires exactly once per written row; GC never
 # prunes a pending row).
 #
-#   kubectl -n wamn-system apply -f deploy/outboxbench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/outboxbench-job.yaml
 #   kubectl -n wamn-system logs -f job/outboxbench
 #
 # The curves land in the logs as `=== BEGIN CSV <name> ===` blocks; extract

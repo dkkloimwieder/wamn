@@ -5,7 +5,7 @@
 # visible to it — component artifacts must live in a registry the host pods can
 # reach. This is a plain-HTTP registry at
 # registry.wamn-system.svc.cluster.local:5000; the host must run with
-# `--allow-insecure-registries` to pull from it (deploy/values-wamn.yaml).
+# `--allow-insecure-registries` to pull from it (deploy/infra/values-wamn.yaml).
 #
 # Push flow (from a machine with `wash`):
 #   kubectl -n wamn-system port-forward svc/registry 5000:5000 &
@@ -19,7 +19,7 @@
 # pod restarts, re-push before starting a workload with imagePullPolicy: Always.
 #
 #   kind load docker-image registry:2 --name wamn   # so the pod starts offline
-#   kubectl -n wamn-system apply -f deploy/registry.yaml
+#   kubectl -n wamn-system apply -f deploy/platform/registry.yaml
 ---
 apiVersion: apps/v1
 kind: Deployment

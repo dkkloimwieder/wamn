@@ -17,7 +17,7 @@ module, not the platform.
   the language-neutral JSON Schema, **generated** from the Rust types (single
   source of truth) and drift-guarded by a test.
 - **Crate:** `crates/wamn-catalog` — types, import/export, validation, diff.
-- **Storage:** [`deploy/catalog-schema.sql`](../deploy/catalog-schema.sql) — the
+- **Storage:** [`deploy/sql/catalog-schema.sql`](../deploy/sql/catalog-schema.sql) — the
   tenant-scoped catalog tables that persist the model (a standalone artifact 3.2
   / POC-DM1 wire into a project DB; not part of the S2–S6 fixtures).
 - **Consumers:** the DDL compiler (3.2), generated API (4.1), designer UI (3.3),
@@ -193,7 +193,7 @@ depend on it *before* any DDL applies).
 
 ## Storage
 
-`deploy/catalog-schema.sql` persists the model in tenant-scoped catalog tables
+`deploy/sql/catalog-schema.sql` persists the model in tenant-scoped catalog tables
 (`catalog.catalogs` / `entities` / `fields` / `relations` / `indexes` /
 `constraints`), same security shape as the rest of the platform (one `wamn_app`
 role, FORCE RLS on the `app.tenant` claim). Field `type` is stored as the
@@ -201,7 +201,7 @@ role, FORCE RLS on the `app.tenant` claim). Field `type` is stored as the
 semantics, and 3.2 interprets that `jsonb` via the `wamn-catalog` types rather
 than the SQL schema enumerating every variant. These are the *definitions*; the
 DDL compiler (3.2) reads them and emits the actual project tables. The file is a
-standalone artifact (not included by `deploy/postgres-init.sql`).
+standalone artifact (not included by `deploy/sql/postgres-init.sql`).
 
 ## Versioning & compatibility
 

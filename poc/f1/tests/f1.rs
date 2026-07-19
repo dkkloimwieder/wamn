@@ -2,7 +2,7 @@
 //! no-float rule), spec evaluation (boundary = in-spec), inter-node shape
 //! round-trips, SQL shape pins, and the two drift-guards — the SQL identifiers
 //! against the poc-receiving catalog fixture, and the implemented node set
-//! against the production flow graph `deploy/f1-flow.json`.
+//! against the production flow graph `deploy/poc/f1-flow.json`.
 
 use std::cmp::Ordering;
 
@@ -432,9 +432,9 @@ fn catalog_drift_guard() {
 fn flow_drift_guard() {
     let src = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../deploy/f1-flow.json"
+        "/../../deploy/poc/f1-flow.json"
     ))
-    .expect("read deploy/f1-flow.json");
+    .expect("read deploy/poc/f1-flow.json");
     let flow = wamn_flow::Flow::from_json(&src).expect("parse f1 flow");
     assert!(
         flow.issues().is_empty(),

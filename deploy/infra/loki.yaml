@@ -1,5 +1,5 @@
 # S5 logging sink: single-binary Loki 3.x with native OTLP ingest
-# (/otlp/v1/logs). The OTel Collector (deploy/otel-collector.yaml) forwards the
+# (/otlp/v1/logs). The OTel Collector (deploy/infra/otel-collector.yaml) forwards the
 # host's OTLP-gRPC logs here over otlphttp. Loki promotes `service.name` to the
 # `service_name` stream label and keeps the enrichment fields
 # (tenant/project/flow/run/node/run_label/seq) as structured metadata, which the
@@ -9,7 +9,7 @@
 # ingester — the ONLY intentional drop point in S5 is the plugin's bounded front
 # queue (counted), so nothing downstream should silently drop.
 #
-#   kubectl -n wamn-system apply -f deploy/loki.yaml
+#   kubectl -n wamn-system apply -f deploy/infra/loki.yaml
 #   kubectl -n wamn-system rollout status deploy/loki --timeout=120s
 apiVersion: v1
 kind: ConfigMap

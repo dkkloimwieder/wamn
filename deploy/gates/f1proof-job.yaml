@@ -1,7 +1,7 @@
 # POC-F1 over-the-network proof: drives the DEPLOYED poc-webhook-f1 Service
 # (sync + burst) and the DEPLOYED F1 api-gateway (generated REST) through their
 # operator routes, and audits runs/node_runs/quality_holds in the database.
-# Needs deploy/f1-provision-job.yaml + deploy/f1-workloads.yaml applied first.
+# Needs deploy/poc/f1-provision-job.yaml + deploy/poc/f1-workloads.yaml applied first.
 apiVersion: batch/v1
 kind: Job
 metadata:

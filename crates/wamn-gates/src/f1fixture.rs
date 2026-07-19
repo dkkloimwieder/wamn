@@ -4,7 +4,7 @@
 //! f1bench and f1proof gates POST — including the acceptance-script burst of
 //! 20 receipts, 3 of them out-of-spec.
 //!
-//! Seeded specs (deploy/f1-seed.dataset.json):
+//! Seeded specs (deploy/poc/f1-seed.dataset.json):
 //!   resin-a    moisture_max 12.50 pct   weight_tolerance 0.050 kg
 //!   solvent-b  moisture_max  0.10 pct   weight_tolerance 0.500 kg
 //!   pigment-c  moisture_max  5.00 pct   weight_tolerance 0.010 kg
@@ -16,12 +16,12 @@ use serde_json::{Value, json};
 pub const F1_CATALOG_JSON: &str =
     include_str!("../../wamn-catalog/tests/fixtures/poc-receiving.catalog.json");
 
-/// The production F1 flow graph (deploy/f1-flow.json — drift-guarded against
+/// The production F1 flow graph (deploy/poc/f1-flow.json — drift-guarded against
 /// the wamn-f1 node set by that crate's tests).
-pub const F1_FLOW_JSON: &str = include_str!("../../../deploy/f1-flow.json");
+pub const F1_FLOW_JSON: &str = include_str!("../../../deploy/poc/f1-flow.json");
 
-/// The F1 business seed (deploy/f1-seed.dataset.json, a wamn-seed dataset).
-pub const F1_SEED_JSON: &str = include_str!("../../../deploy/f1-seed.dataset.json");
+/// The F1 business seed (deploy/poc/f1-seed.dataset.json, a wamn-seed dataset).
+pub const F1_SEED_JSON: &str = include_str!("../../../deploy/poc/f1-seed.dataset.json");
 
 /// The tenant every F1 gate runs under.
 pub const F1_TENANT: &str = "f1-tenant";

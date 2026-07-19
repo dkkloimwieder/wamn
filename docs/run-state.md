@@ -13,7 +13,7 @@ holds the record model and all reconstruction/re-run logic — no DB, no wasm, n
 clock, unit-tested off-cluster — and drives two additive **engine primitives**
 (`Plan::resume` / `Plan::seed_at`); the **driver** (`components/flowrunner`)
 supplies the `wamn:postgres` effects against the schema in
-[`deploy/run-state.sql`](../deploy/run-state.sql).
+[`deploy/sql/run-state.sql`](../deploy/sql/run-state.sql).
 
 ## The tables
 
@@ -145,7 +145,7 @@ will land without a schema change; 5.7 leaves them null and stores I/O inline.
   replay/partial-re-run lineage, and the status/DDL drift guards — all off-cluster.
 - **`cargo test -p wamn-runner`** — the `resume` / `seed_at` primitives (branch,
   drift, overrun, partial-subtree).
-- **live-apply** (`WAMN_RUN_STORE_PG_URL`) — applies `deploy/run-state.sql` to a
+- **live-apply** (`WAMN_RUN_STORE_PG_URL`) — applies `deploy/sql/run-state.sql` to a
   throwaway Postgres and asserts tenant RLS isolation, the idempotency index, and
   the FK cascade.
 - **`flowbench`** (S3) + **`testhostbench`** (S6) — the driver's regression, now

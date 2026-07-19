@@ -1,6 +1,6 @@
 //! wamn-run-store tests — the run-state model, branch-aware replay
 //! reconstruction, and partial-re-run planning, all pure (no cluster, no DB).
-//! The live-apply test at the end applies `deploy/run-state.sql` to a throwaway
+//! The live-apply test at the end applies `deploy/sql/run-state.sql` to a throwaway
 //! Postgres and asserts RLS + the idempotency keys; it is gated on
 //! `WAMN_RUN_STORE_PG_URL` and skips cleanly when unset (mirrors wamn-ddl/rls/seed).
 
@@ -372,15 +372,15 @@ fn records_round_trip_as_json() {
     assert!(s2.contains("\"error-kind\":\"rate-limited\""));
 }
 
-// ---- deploy/run-state.sql drift guard --------------------------------------
+// ---- deploy/sql/run-state.sql drift guard --------------------------------------
 
 #[test]
 fn run_state_sql_matches_the_model() {
     let sql = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../deploy/run-state.sql"
+        "/../../deploy/sql/run-state.sql"
     ))
-    .expect("read deploy/run-state.sql");
+    .expect("read deploy/sql/run-state.sql");
 
     // The two tables + their tenant floor.
     assert!(sql.contains("CREATE TABLE wamn_run.runs"));
@@ -449,7 +449,7 @@ fn run_state_sql_matches_the_model() {
 
 // ---- live-apply gate (optional) --------------------------------------------
 
-/// Apply `deploy/run-state.sql` to a throwaway Postgres and assert the tenant RLS
+/// Apply `deploy/sql/run-state.sql` to a throwaway Postgres and assert the tenant RLS
 /// isolates rows, the idempotency index dedupes, and the FK cascades. Gated on
 /// `WAMN_RUN_STORE_PG_URL` (a superuser URL — the harness provisions `wamn_app`);
 /// skips cleanly when unset. Mirrors the wamn-ddl / wamn-rls / wamn-seed gates.
@@ -464,9 +464,9 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
 
     let ddl = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../deploy/run-state.sql"
+        "/../../deploy/sql/run-state.sql"
     ))
-    .expect("read deploy/run-state.sql");
+    .expect("read deploy/sql/run-state.sql");
 
     let mut script = String::new();
     // Provision wamn_app (NOSUPERUSER/NOBYPASSRLS, like production) + a fresh schema.

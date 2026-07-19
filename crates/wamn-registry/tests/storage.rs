@@ -2,7 +2,7 @@
 //! generalized in wamn-8df.3; org-scoped policies + templates in wamn-8df.4).
 //!
 //! Three layers, all pure/portable except the last:
-//! - a **drift guard** tying `deploy/system-schema.sql` to the `wamn-registry`
+//! - a **drift guard** tying `deploy/sql/system-schema.sql` to the `wamn-registry`
 //!   model (table/column shape, the D18 placement CHECKs, the org-scoped
 //!   `env_policies` keying with NO platform-global seed, `SCHEMA_VERSION`) —
 //!   the `wamn-schema` / `state_literals_match_catalog_schema_sql` pattern;
@@ -23,8 +23,8 @@ fn deploy_dir() -> std::path::PathBuf {
 }
 
 fn system_schema_sql() -> String {
-    std::fs::read_to_string(deploy_dir().join("system-schema.sql"))
-        .expect("read deploy/system-schema.sql")
+    std::fs::read_to_string(deploy_dir().join("sql/system-schema.sql"))
+        .expect("read deploy/sql/system-schema.sql")
 }
 
 /// The SQL with `--` line comments stripped, so text assertions test the actual
@@ -40,7 +40,7 @@ fn code_only(sql: &str) -> String {
 
 // --- drift guard: DDL ↔ model ----------------------------------------------
 
-/// `deploy/system-schema.sql` must mirror the `wamn-registry` model: the two
+/// `deploy/sql/system-schema.sql` must mirror the `wamn-registry` model: the two
 /// control-plane schemas, the registry tables and their distinctive columns (the
 /// D18 placement shape + the 8df.4 org-scoped `env_policies` keying, with NO
 /// platform-global policy seed), the storage-format `SCHEMA_VERSION`, and the
@@ -142,7 +142,7 @@ fn system_schema_sql_mirrors_the_model() {
 
 /// The org-row builder (`wamn_registry::sql::upsert_org_sql`) must target exactly
 /// the `registry.orgs` placement columns the storage DDL declares — a drift guard
-/// tying the builder to `deploy/system-schema.sql` (SR2: registry SQL lives with
+/// tying the builder to `deploy/sql/system-schema.sql` (SR2: registry SQL lives with
 /// the model, pinned to the schema it writes).
 #[test]
 fn upsert_org_sql_matches_the_placement_columns() {
@@ -446,20 +446,32 @@ fn no_data_plane_manifest_references_the_system_cluster() {
     const ALLOWLIST: &[&str] = &["wamn-sysdb.yaml"];
 
     let mut offenders = Vec::new();
-    for entry in std::fs::read_dir(deploy_dir()).expect("read deploy/") {
-        let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
-            continue;
-        }
-        let name = path.file_name().unwrap().to_str().unwrap().to_string();
-        if ALLOWLIST.contains(&name.as_str()) {
-            continue;
-        }
-        let body = std::fs::read_to_string(&path).expect("read manifest");
-        if body.contains("wamn-sysdb") || body.contains("wamn_system") {
-            offenders.push(name);
+    let mut scanned = 0usize;
+    let mut stack = vec![deploy_dir()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read deploy/") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+            scanned += 1;
+            let name = path.file_name().unwrap().to_str().unwrap().to_string();
+            if ALLOWLIST.contains(&name.as_str()) {
+                continue;
+            }
+            let body = std::fs::read_to_string(&path).expect("read manifest");
+            if body.contains("wamn-sysdb") || body.contains("wamn_system") {
+                offenders.push(name);
+            }
         }
     }
+    // The tiered deploy/ layout ships ~50 manifests; a low count means the walk
+    // went vacuous (the pre-tiering flat read_dir bug class).
+    assert!(scanned >= 10, "deploy/ manifest walk saw only {scanned} yaml files");
     assert!(
         offenders.is_empty(),
         "these deploy manifests reference the T1 system cluster/DB (request-path-free \
@@ -469,7 +481,7 @@ fn no_data_plane_manifest_references_the_system_cluster() {
 
 // --- live-apply gate: invariants 2/3 + placement/env FK + seed + saga --------
 
-/// Apply `deploy/system-schema.sql` to a throwaway Postgres and assert the live,
+/// Apply `deploy/sql/system-schema.sql` to a throwaway Postgres and assert the live,
 /// DB-enforced invariants. Set `WAMN_REGISTRY_PG_URL` to a superuser URL (the
 /// harness provisions the `wamn_system` owner role); skipped when unset.
 #[test]

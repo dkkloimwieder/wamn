@@ -25,7 +25,7 @@ dispatch-SLO sanity-check) is the final section below.
 results — real implementation is S2), `wamn:node/control` (stub). Host-process
 OTel via `initialize_observability` (activates on `OTEL_*` env). OCI image
 built from `Dockerfile` (152 MB), deployed via the runtime-operator chart with
-custom image values (`deploy/values-wamn.yaml`); 3 host pods self-registered
+custom image values (`deploy/infra/values-wamn.yaml`); 3 host pods self-registered
 as `Host` CRs (READY=True) and served a `WorkloadDeployment` end-to-end
 (`curl -H "Host: hello.localhost.direct" http://127.0.0.1:80/` → HTTP 200
 through NodePort 30950).
@@ -155,10 +155,10 @@ guest (`components/pgprobe`, which imports `wamn:postgres/client`) into a
 hand-built `SharedCtx` store with the plugin linked, and drives its
 `run(op,arg)` export — "sustained qps from one component" per the spike. The
 same harness hosts the three security gates. The in-cluster Job
-(`deploy/pgbench-job.yaml`, co-located with the PoC Postgres by pod-affinity)
+(`deploy/gates/pgbench-job.yaml`, co-located with the PoC Postgres by pod-affinity)
 is the gate of record; the local workstation run (docker `postgres:18`) is for
 iteration. PoC Postgres (user: `postgres:18`) runs as one pod in kind
-(`deploy/postgres.yaml`, fixture `deploy/postgres-init.sql`): app role
+(`deploy/platform/postgres.yaml`, fixture `deploy/sql/postgres-init.sql`): app role
 `wamn_app` is `NOSUPERUSER`/`NOBYPASSRLS`, and every table has `FORCE ROW LEVEL
 SECURITY` with policies keyed on `current_setting('app.tenant', true)`.
 
@@ -258,8 +258,8 @@ table; "deploy" flips the active-version pointer.
 `s3.flows` (versioned `graph_json` + active pointer), `s3.flow_runs`
 (checkpoints; `step_seq` = highest completed step), and `s3.sink` (business
 side effect, `UNIQUE (tenant_id, run_id, step)` idempotency key) live in
-`deploy/postgres-init.sql` under the same `FORCE ROW LEVEL SECURITY` shape as
-s2. The in-cluster Job (`deploy/flowbench-job.yaml`, co-located, no CPU limit —
+`deploy/sql/postgres-init.sql` under the same `FORCE ROW LEVEL SECURITY` shape as
+s2. The in-cluster Job (`deploy/gates/flowbench-job.yaml`, co-located, no CPU limit —
 the S2 CFS lesson) is the gate of record; the local docker run is for iteration.
 
 | Gate | In-cluster (kind pod, co-located) | Local (workstation) | Threshold | Verdict |
@@ -340,13 +340,13 @@ path is wasi:http, 5.6 / wamn-bd5).
 
 **Method:** the hop gate runs a real HTTP/1.1 round trip to a warm Rust `noop`
 node — in-cluster it targets a separate `serve-node` **pod** through a Service
-(`deploy/serve-node.yaml`), so it is a true cross-pod hop; locally it is an
+(`deploy/gates/serve-node.yaml`), so it is a true cross-pod hop; locally it is an
 in-process loopback server. The gap and config gates run in-process (no HTTP
 noise): the harness instantiates each guest into a hand-built `SharedCtx` store
 with `wasi` + the `wait-ns` import linked (the flowbench/pgbench pattern, here
 using `bindgen!` for the typed `handler.run(ctx, input)`), and times the 3-node
 flow three ways — JS-dynamic (interpreted), Rust-dynamic, and Rust-composed
-(the `wac` artifact). The in-cluster Job (`deploy/nodebench-job.yaml`, no CPU
+(the `wac` artifact). The in-cluster Job (`deploy/gates/nodebench-job.yaml`, no CPU
 limit — the S2 CFS lesson) is the gate of record.
 
 | Gate | In-cluster (kind) | Local (workstation) | Threshold | Verdict |
@@ -432,7 +432,7 @@ data).
 as the platform's log-capture path, plus a guest fixture
 (`components/logspewer`) and a `wamn-host logbench` subcommand
 (`crates/wamn-host/src/logbench.rs`) that drives it against a real **OTel
-Collector → Loki** pipeline (`deploy/otel-collector.yaml`, `deploy/loki.yaml`).
+Collector → Loki** pipeline (`deploy/infra/otel-collector.yaml`, `deploy/infra/loki.yaml`).
 The plugin replaces the vendored `TracingLogger`: it **enriches** every record
 with host-trusted `tenant`/`project` (from a component→claim map — a guest can
 *not* spoof its tenant) plus `flow`/`run`/`node` parsed from the guest's
@@ -451,7 +451,7 @@ native `/otlp/v1/logs` over `otlphttp`. Loki promotes `service.name` to the
 loss/enrichment are measured by exact LogQL counts
 (`sum(count_over_time({service_name="wamn-host"} | run_label="…" [Δ]))`), with
 the collector's internal `otelcol_exporter_sent_log_records` as a cross-check.
-The in-cluster Job (`deploy/logbench-job.yaml`, no CPU limit — the S2 CFS
+The in-cluster Job (`deploy/gates/logbench-job.yaml`, no CPU limit — the S2 CFS
 lesson) is the gate of record; local docker is for iteration.
 
 | Gate | In-cluster (kind) | Local (workstation) | Threshold | Verdict |
@@ -562,7 +562,7 @@ completes — reusing the S3 checkpoint/resume machinery and testing the real
 durable-flow mechanism, not a test-only shortcut. The egress spy delegates
 *expected* calls to the same `DefaultOutgoingHandler` production uses (a real
 send to a loopback echo) and *denies* anything whose authority is not on the
-expectation list. The in-cluster Job (`deploy/testhostbench-job.yaml`, no CPU
+expectation list. The in-cluster Job (`deploy/gates/testhostbench-job.yaml`, no CPU
 limit — the S2 CFS lesson) is the gate of record; local docker is for iteration.
 
 | Gate | In-cluster (kind) | Local (workstation) | Threshold | Verdict |

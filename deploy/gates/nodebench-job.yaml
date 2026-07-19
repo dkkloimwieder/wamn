@@ -3,12 +3,12 @@
 # docker runs are for iteration.
 #
 # The hop gate points at the serve-node Service, so it measures a REAL cross-pod
-# HTTP round trip (apply deploy/serve-node.yaml first). The gap (interpreted vs
+# HTTP round trip (apply deploy/gates/serve-node.yaml first). The gap (interpreted vs
 # composed) and config-parse gates run in-pod (no external dependency). No DB.
 #
-#   kubectl -n wamn-system apply -f deploy/serve-node.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/serve-node.yaml
 #   kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
-#   kubectl -n wamn-system apply -f deploy/nodebench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/nodebench-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/nodebench --timeout=300s
 #   kubectl -n wamn-system logs job/nodebench
 apiVersion: batch/v1

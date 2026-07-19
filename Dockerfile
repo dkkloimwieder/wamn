@@ -12,7 +12,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY poc ./poc
-# The canonical deploy DDL (run-state.sql / flows.sql) is include_str!'d by
+# The canonical deploy DDL (sql/run-state.sql / sql/flows.sql) is include_str!'d by
 # publish-catalog's provisioning helpers — single source of truth, no clones.
 COPY deploy ./deploy
 # wash-runtime resolves as a git dep from the fork pinned in Cargo.toml

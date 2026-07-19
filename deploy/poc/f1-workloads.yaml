@@ -1,6 +1,6 @@
 # POC-F1 serving workloads: the poc-webhook-f1 sync ingress + an F1 instance of
 # the 4.1 api-gateway, both over the poc_f1 project schema (provisioned by
-# deploy/f1-provision-job.yaml). Same shape as api-gateway-workload.yaml:
+# deploy/poc/f1-provision-job.yaml). Same shape as api-gateway-workload.yaml:
 # wasi:http is a built-in (the DynamicRouter routes on the Host header given in
 # hostInterfaces config); wamn:postgres is a host PLUGIN and MUST be declared in
 # hostInterfaces (the allowlist) or the component fails to instantiate. The

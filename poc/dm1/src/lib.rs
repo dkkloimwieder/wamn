@@ -11,7 +11,7 @@
 //!   ERP receipts-insert gate;
 //! - **3.6 [`wamn_seed`]** — the reference/seed data (sites, suppliers, materials,
 //!   inspector users carrying the `cert_level` extension);
-//! - **2.4 `app_system`** (`deploy/app-schema.sql`) — the auth substrate the
+//! - **2.4 `app_system`** (`deploy/sql/app-schema.sql`) — the auth substrate the
 //!   personas' roles + the ERP api-key live in (seeded/asserted by the gate).
 //!
 //! The three inputs are promoted `deploy/` artifacts:
@@ -40,14 +40,14 @@ use wamn_migrate::{
 use wamn_rls::AccessPolicy;
 use wamn_seed::Dataset;
 
-/// The promoted POC catalog (`deploy/poc-material-receiving.catalog.json`) — the
+/// The promoted POC catalog (`deploy/poc/poc-material-receiving.catalog.json`) — the
 /// 8-entity data model, drift-guarded against the wamn-catalog fixture.
-pub const CATALOG_JSON: &str = include_str!("../../../deploy/poc-material-receiving.catalog.json");
+pub const CATALOG_JSON: &str = include_str!("../../../deploy/poc/poc-material-receiving.catalog.json");
 /// The POC RLS policy: inspector hold site-scoping + the ERP receipts-insert gate.
-pub const POLICY_JSON: &str = include_str!("../../../deploy/poc-material-receiving.rls.json");
+pub const POLICY_JSON: &str = include_str!("../../../deploy/poc/poc-material-receiving.rls.json");
 /// The POC reference/seed data (sites, suppliers, materials, inspector users).
 pub const SEED_JSON: &str =
-    include_str!("../../../deploy/poc-material-receiving.seed.dataset.json");
+    include_str!("../../../deploy/poc/poc-material-receiving.seed.dataset.json");
 
 /// The catalog id all three artifacts share.
 pub const CATALOG_ID: &str = "poc-material-receiving";

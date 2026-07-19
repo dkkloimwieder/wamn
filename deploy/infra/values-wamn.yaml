@@ -2,7 +2,7 @@
 # (S1). Install:
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
 #     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
-#     -f deploy/values-wamn.yaml
+#     -f deploy/infra/values-wamn.yaml
 # (2.5.2 chart == the chart at our pinned runtime rev 8b53285 modulo version
 # strings; no 2.5.1 chart was published.)
 
@@ -32,7 +32,7 @@ runtime:
         - name: WAMN_PG_URL
           value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
       # [4.1b] Allow plain-HTTP OCI pulls so the host can pull locally-built
-      # component images from the in-cluster registry (deploy/registry.yaml).
+      # component images from the in-cluster registry (deploy/platform/registry.yaml).
       extraArgs:
         - "--allow-insecure-registries"
       resources:

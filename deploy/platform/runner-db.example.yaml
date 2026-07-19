@@ -1,4 +1,4 @@
-# Example per-project DB Secret for the production flow runner (deploy/runner.yaml,
+# Example per-project DB Secret for the production flow runner (deploy/platform/runner.yaml,
 # fqg.8). DELIBERATELY a separate manifest: it is per-environment config (real
 # entries land with hosting/2.3 provisioning), so re-applying runner.yaml never
 # clobbers a customized Secret back to this demo value.

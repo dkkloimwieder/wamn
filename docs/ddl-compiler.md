@@ -85,7 +85,7 @@ superuser / BYPASSRLS write path could otherwise land one that an idle
 connection would then see). Together these make "an empty claim sees nothing" a
 structural guarantee rather than an invariant that merely happens to hold. The
 same NULLIF + CHECK shape is mirrored in the hand-written run schemas
-(`deploy/run-state.sql`, `run-queue.sql`, `catalog-schema.sql`,
+(`deploy/sql/run-state.sql`, `run-queue.sql`, `catalog-schema.sql`,
 `postgres-init.sql`, `flows.sql`).
 
 All tables are created first, then foreign keys, constraints, indexes, and unit
@@ -269,7 +269,7 @@ a forward note on the migration engine (wamn-d8u, 2.5).
 production **row-event producers**: one shared plpgsql function plus one
 `AFTER INSERT OR UPDATE OR DELETE ... FOR EACH ROW` trigger per entity table,
 inserting one row into `<schema>.outbox` (default `wamn_run`,
-[`deploy/run-queue.sql`](../deploy/run-queue.sql)) **inside the user's
+[`deploy/sql/run-queue.sql`](../deploy/sql/run-queue.sql)) **inside the user's
 transaction** — D4's "outbox insert and enqueue can share a transaction with
 user writes": the event is durable iff the write it announces is. The trigger
 dispatcher (5.14, `docs/run-queue.md`) polls these rows, matches
@@ -370,7 +370,7 @@ and the reference-retype FK drop/add — each ordering rule is mutation-tested),
 and the outbox-trigger plans
 (coverage/shape, schema-option validation, the gated drop,
 and a drift guard pinning the emitted column set + event vocabulary against
-`deploy/run-queue.sql`). Five optional live-apply tests run against a throwaway
+`deploy/sql/run-queue.sql`). Five optional live-apply tests run against a throwaway
 Postgres, gated on `WAMN_DDL_PG_URL` (a superuser URL; the harness provisions
 the `wamn_app` role and ephemeral schemas — each test in its own schema so they
 parallelize): the CREATE/migrate script; the
@@ -400,4 +400,4 @@ docker stop wamn-ddl-pg
 
 - Plan: `docs/platform-plan.md` §Epic 3 (3.2), 2.5 (migration engine), D14.
 - Catalog model (the input): `docs/catalog-model.md`, `crates/wamn-catalog`.
-- Tenant shape: `deploy/postgres-init.sql`, `docs/security-db-path.md`.
+- Tenant shape: `deploy/sql/postgres-init.sql`, `docs/security-db-path.md`.

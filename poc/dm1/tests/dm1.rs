@@ -29,7 +29,7 @@ fn promoted_catalog_matches_the_wamn_catalog_fixture() {
     assert_eq!(
         catalog(),
         fixture,
-        "deploy/poc-material-receiving.catalog.json drifted from the wamn-catalog fixture"
+        "deploy/poc/poc-material-receiving.catalog.json drifted from the wamn-catalog fixture"
     );
     assert_eq!(catalog().catalog_id, CATALOG_ID);
 }
@@ -247,10 +247,10 @@ fn dm1_data_model_applies_and_enforces_policies_on_postgres() {
         return;
     };
 
-    let catalog_schema = std::fs::read_to_string(repo("deploy/catalog-schema.sql"))
+    let catalog_schema = std::fs::read_to_string(repo("deploy/sql/catalog-schema.sql"))
         .expect("read catalog-schema.sql");
     let app_schema =
-        std::fs::read_to_string(repo("deploy/app-schema.sql")).expect("read app-schema.sql");
+        std::fs::read_to_string(repo("deploy/sql/app-schema.sql")).expect("read app-schema.sql");
     let provisioning = provisioning_sql("t1").expect("compose provisioning SQL");
 
     let mut script = String::new();

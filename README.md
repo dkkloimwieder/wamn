@@ -118,10 +118,10 @@ with the host + gate images built from the two-stage `Dockerfile`:
 
 ```bash
 # 1. stand up the cluster + wasmCloud runtime-operator
-kind create cluster --name wamn --config deploy/kind-config.yaml
+kind create cluster --name wamn --config deploy/infra/kind-config.yaml
 helm upgrade --install -n wamn-system wamn \
   oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
-  -f deploy/values-wamn.yaml
+  -f deploy/infra/values-wamn.yaml
 
 # 2. build both images and load them into kind
 docker build --target host  -t wamn-host:dev  .

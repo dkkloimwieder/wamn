@@ -35,9 +35,9 @@ itself is unchanged — see §"The four tiers survive as configurations".
 
 **Landed — `wamn-8df.3` (code, 2026-07-16):** `Env`→slug newtype, `Tier` dropped,
 `Org`→`{id, placement}`, new `EnvPolicy` + `RecoveryDomain` + `cluster_of`, and
-`Registry.env_policies`; `deploy/system-schema.sql` (drop tier/canary CHECKs, add
+`Registry.env_policies`; `deploy/sql/system-schema.sql` (drop tier/canary CHECKs, add
 `env_policies` + `project_envs.env` FK + placement columns + seed `dev`/`prod`);
-`deploy/catalog-schema.sql` env CHECKs relaxed to an open slug; all consumers
+`deploy/sql/catalog-schema.sql` env CHECKs relaxed to an open slug; all consumers
 reworked (`provision-org` renders per-recovery-domain clusters sized by policy —
 **fixes cjv.21**; `provision-project-env` derives via `cluster_of`; `wamn-schema`
 `promote` is order-agnostic; dump/restore/migrate take an env slug); `move-org-tier`
@@ -110,7 +110,7 @@ environment onto them:
 - `Env` = closed enum `{Dev, Canary, Prod}` and `Tier` = closed enum
   `{Trials, Standard, Dedicated}` (`crates/wamn-registry/src/types.rs`), each
   `as_str()` **drift-guarded** against the `CHECK IN (…)` literals in
-  `deploy/system-schema.sql`. Adding one env or tier = a new enum variant + a
+  `deploy/sql/system-schema.sql`. Adding one env or tier = a new enum variant + a
   schema migration + a `CHECK` edit + drift-guard edits + every `match` arm.
 - **Placement is a special case that already had to be patched.** `Env::side()`
   collapses `canary → prod`-side — *except* for the regulated tier, where
@@ -385,7 +385,7 @@ migration**:
      `pool_cluster`; new `EnvPolicy` type + `env_policies` in the registry;
      `cluster_of` replaces `Env::side`/`cluster_name`/`canary_cluster_name`/
      `for_pair`/`for_pool`/`cluster_for_env`; `validate.rs` per §5.
-   - `deploy/system-schema.sql`: drop the `tier`/env/canary `CHECK`s; add
+   - `deploy/sql/system-schema.sql`: drop the `tier`/env/canary `CHECK`s; add
      `env_policies` + the `project_envs.env` FK + the `orgs` placement columns;
      seed the `dev`/`prod` policies.
    - Consumers: `provision-org` (render clusters from `owner(env)` + policy sizing),

@@ -1,10 +1,10 @@
 # 5.14 in-cluster durable-run-queue gates (gate of record). Runs the queuebench
 # subcommand of the wamn-gates image (SR1: gates ride their own image layered on the prod host stage), against the
-# in-cluster Postgres (deploy/postgres.yaml) and the NATS the runtime-operator
+# in-cluster Postgres (deploy/platform/postgres.yaml) and the NATS the runtime-operator
 # Helm chart deploys (Service `nats`, port 4222). Local docker runs are for
 # iteration (throwaway Postgres + throwaway NATS).
 #
-#   kubectl -n wamn-system apply -f deploy/queuebench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/queuebench-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/queuebench --timeout=300s
 #   kubectl -n wamn-system logs job/queuebench
 #

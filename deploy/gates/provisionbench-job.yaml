@@ -1,12 +1,12 @@
 # [2.3] in-cluster provisioning gate of record. Runs the `provisionbench`
 # subcommand of the wamn-gates image against the shared CloudNativePG cluster
-# (deploy/cnpg-cluster.yaml — the D6 substrate), through its superuser secret.
+# (deploy/infra/cnpg-cluster.yaml — the D6 substrate), through its superuser secret.
 # provisionbench provisions two projects via the production provision-project
 # path, then proves routing/resolution, database-level isolation, least
 # privilege, and the emitted credential layout. Self-contained: the gate-owned
 # project databases are dropped on teardown; the CNPG cluster is never recreated.
 #
-#   kubectl -n wamn-system apply -f deploy/provisionbench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/provisionbench-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/provisionbench --timeout=180s
 #   kubectl -n wamn-system logs job/provisionbench
 apiVersion: batch/v1

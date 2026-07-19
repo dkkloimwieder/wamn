@@ -47,8 +47,8 @@ use wamn_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
 
-const SYSTEM_SCHEMA: &str = include_str!("../../../deploy/system-schema.sql");
-const CATALOG_SCHEMA: &str = include_str!("../../../deploy/catalog-schema.sql");
+const SYSTEM_SCHEMA: &str = include_str!("../../../deploy/sql/system-schema.sql");
+const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const DB: &str = "wamn_reader_live";
 const ORG: &str = "rl0";
 const PROJECT: &str = "app";
@@ -373,10 +373,10 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .expect("wamn_app role (the floor + catalog schema's grant target)");
     sys.batch_execute(SYSTEM_SCHEMA)
         .await
-        .expect("apply deploy/system-schema.sql");
+        .expect("apply deploy/sql/system-schema.sql");
     sys.batch_execute(CATALOG_SCHEMA)
         .await
-        .expect("apply deploy/catalog-schema.sql (the migrate-catalog metadata store)");
+        .expect("apply deploy/sql/catalog-schema.sql (the migrate-catalog metadata store)");
     sys.execute(upsert_org_sql(), &[&ORG, &"pooled", &"wamn-pg"])
         .await
         .expect("org row");

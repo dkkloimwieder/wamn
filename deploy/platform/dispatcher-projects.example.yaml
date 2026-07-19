@@ -1,5 +1,5 @@
 # EXAMPLE projects Secret for the 5.14 trigger dispatcher
-# (deploy/dispatcher.yaml). Kept OUT of dispatcher.yaml on purpose: the Secret
+# (deploy/platform/dispatcher.yaml). Kept OUT of dispatcher.yaml on purpose: the Secret
 # is per-environment config, and re-applying the Deployment manifest must not
 # clobber customized project entries back to these demo values.
 #

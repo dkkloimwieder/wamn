@@ -2,7 +2,7 @@
 //! row (5.7) is the immutable run-state history; a `run_queue` row is the
 //! high-churn claim/lease machinery that co-transacts with it and is deleted when
 //! the run is done. This is the *decision view* the pure claim/lease/janitor
-//! logic reasons over, not every column of `deploy/run-queue.sql` (the DB row
+//! logic reasons over, not every column of `deploy/sql/run-queue.sql` (the DB row
 //! also carries `enqueued_at`).
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,7 @@ pub type Millis = i64;
 /// onto each queue row at enqueue so the claim SQL is self-contained. Mirrors
 /// the `wamn-flow` contract enum (the flow declares it; the enqueue writer
 /// stamps it) — the serde/SQL literals are drift-guarded against each other and
-/// against the `deploy/run-queue.sql` CHECK. Inert on unpartitioned rows.
+/// against the `deploy/sql/run-queue.sql` CHECK. Inert on unpartitioned rows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PartitionPolicy {
@@ -159,7 +159,7 @@ impl QueueEntry {
 /// ordering within the key is preserved; when the lease expires (the owner died or
 /// stepped down) another replica reacquires the whole key and continues in order.
 /// This is the *decision view* the pure acquire/claim logic reasons over — the DB
-/// row (`deploy/run-queue.sql`) also carries `acquired_at`.
+/// row (`deploy/sql/run-queue.sql`) also carries `acquired_at`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct PartitionOwner {

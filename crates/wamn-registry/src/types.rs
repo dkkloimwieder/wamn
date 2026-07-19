@@ -183,7 +183,7 @@ impl EnvPolicy {
 
     /// The seeded default `dev` policy — its own recovery domain, single instance,
     /// hibernation-eligible, no scheduled backup. The single source both
-    /// `deploy/system-schema.sql` (the seed, drift-guarded) and tests share.
+    /// `deploy/sql/system-schema.sql` (the seed, drift-guarded) and tests share.
     pub fn dev() -> EnvPolicy {
         EnvPolicy {
             name: Env::new("dev"),
@@ -551,7 +551,7 @@ mod tests {
 
     /// The seeded defaults are `dev` (rank 10, its own domain, hibernation-eligible,
     /// no backup) and `prod` (rank 30, HA, backup + PITR, never hibernated). The
-    /// single source `deploy/system-schema.sql` seeds and tests share.
+    /// single source `deploy/sql/system-schema.sql` seeds and tests share.
     #[test]
     fn default_policies_are_dev_and_prod() {
         let ps = EnvPolicy::defaults();

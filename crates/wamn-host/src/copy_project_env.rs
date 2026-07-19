@@ -33,7 +33,7 @@
 //!
 //! Preconditions (this tool copies, it does not provision): the dst database
 //! exists (`provision-project-env` + its Database CR), and for a definition
-//! copy the dst carries the catalog storage schema (`deploy/catalog-schema.sql`).
+//! copy the dst carries the catalog storage schema (`deploy/sql/catalog-schema.sql`).
 //! The flow registry is ensured on demand (`publish-catalog`'s idempotent DDL).
 
 use std::path::PathBuf;
@@ -462,7 +462,7 @@ async fn exec_copy_definition(
         (
             "dst",
             &dst_client,
-            "provision the dst first (apply deploy/catalog-schema.sql)",
+            "provision the dst first (apply deploy/sql/catalog-schema.sql)",
         ),
     ] {
         let has: Option<String> = client

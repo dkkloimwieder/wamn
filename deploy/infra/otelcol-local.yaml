@@ -18,7 +18,7 @@ exporters:
       queue_size: 10000
     retry_on_failure:
       enabled: true
-  # [9.1] traces → local Tempo (deploy/tempo-local.yaml).
+  # [9.1] traces → local Tempo (deploy/infra/tempo-local.yaml).
   otlp/tempo:
     endpoint: wamn-s5-tempo:4317
     tls:

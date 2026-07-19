@@ -7,7 +7,7 @@
 # op moved WAL (the pg_current_wal_insert_lsn instrument self-check), op counts
 # exact.
 #
-#   kubectl -n wamn-system apply -f deploy/walbench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/walbench-job.yaml
 #   kubectl -n wamn-system logs -f job/walbench
 #
 # The curves land in the logs as `=== BEGIN CSV <name> ===` blocks; extract

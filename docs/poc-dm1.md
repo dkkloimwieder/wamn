@@ -17,10 +17,10 @@ DM1 adds no engine code. It **composes the shipped tools** over three promoted
 
 | Tool | Role | Artifact |
 | --- | --- | --- |
-| **2.5** `wamn-migrate` | migrate the catalog live (DDL + lifecycle advance + history, one txn) | `deploy/poc-material-receiving.catalog.json` |
-| **3.5** `wamn-rls` | per-role RLS (site-scoping + ERP gate) | `deploy/poc-material-receiving.rls.json` |
-| **3.6** `wamn-seed` | reference/seed data | `deploy/poc-material-receiving.seed.dataset.json` |
-| **2.4** `app_system` | the personas' roles + the ERP api-key | `deploy/app-schema.sql` |
+| **2.5** `wamn-migrate` | migrate the catalog live (DDL + lifecycle advance + history, one txn) | `deploy/poc/poc-material-receiving.catalog.json` |
+| **3.5** `wamn-rls` | per-role RLS (site-scoping + ERP gate) | `deploy/poc/poc-material-receiving.rls.json` |
+| **3.6** `wamn-seed` | reference/seed data | `deploy/poc/poc-material-receiving.seed.dataset.json` |
+| **2.4** `app_system` | the personas' roles + the ERP api-key | `deploy/sql/app-schema.sql` |
 
 The catalog artifact is a **promotion of the wamn-catalog fixture**
 (`crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json`), kept identical

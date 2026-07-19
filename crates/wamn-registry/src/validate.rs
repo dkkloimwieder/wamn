@@ -141,7 +141,7 @@ fn check_id(
 /// before it flows into cluster / Secret / WAL-path names — e.g. a direct
 /// control-plane writer (`wamn-2ib`) that does not build a whole registry to
 /// validate. Mirrors the DB `orgs_id_charset_check` backstop
-/// (`deploy/system-schema.sql`, cjv.20). The reported [`Issue::path`] is `org.id`.
+/// (`deploy/sql/system-schema.sql`, cjv.20). The reported [`Issue::path`] is `org.id`.
 pub fn validate_org_id(id: &str) -> Result<(), Issue> {
     match id_issue(
         "org.id".to_string(),

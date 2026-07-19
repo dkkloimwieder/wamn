@@ -3,7 +3,7 @@
 //! not ship in the prod artifact). Provisioning/publication is the identical
 //! library path (`wamn_host::publish_catalog::run`); the wrapper only appends
 //! the bundled two-tenant demo rows (`apifixture`, matching
-//! `deploy/proof-catalog.json`) afterwards — the seed is `ON CONFLICT DO
+//! `deploy/poc/proof-catalog.json`) afterwards — the seed is `ON CONFLICT DO
 //! NOTHING` inserts into the floor tables, so ordering after the snapshot
 //! upsert is equivalent to the old in-line placement.
 
@@ -19,7 +19,7 @@ pub struct PublishCatalogDemoArgs {
     pub inner: wamn_host::publish_catalog::PublishCatalogArgs,
 
     /// Also seed the bundled two-tenant demo rows (proof scaffolding matching
-    /// the bundled `deploy/proof-catalog.json`; idempotent).
+    /// the bundled `deploy/poc/proof-catalog.json`; idempotent).
     #[arg(long)]
     pub seed: bool,
 }

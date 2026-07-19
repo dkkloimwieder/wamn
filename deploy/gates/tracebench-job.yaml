@@ -10,9 +10,9 @@
 # trace (trigger → wamn:postgres). No fixture / no DDL — pg_sleep is
 # schema-free, so this is additive on the shared Postgres (the guardrail).
 #
-#   kubectl -n wamn-system apply -f deploy/tempo.yaml -f deploy/otel-collector.yaml
+#   kubectl -n wamn-system apply -f deploy/infra/tempo.yaml -f deploy/infra/otel-collector.yaml
 #   kubectl -n wamn-system rollout status deploy/tempo deploy/otel-collector --timeout=120s
-#   kubectl -n wamn-system apply -f deploy/tracebench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/tracebench-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/tracebench --timeout=180s
 #   kubectl -n wamn-system logs job/tracebench
 apiVersion: batch/v1

@@ -302,7 +302,7 @@ fn json_round_trips() {
 #[test]
 fn seed_storage_table_exists_in_catalog_schema_sql() {
     let sql = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/catalog-schema.sql"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/sql/catalog-schema.sql"),
     )
     .expect("read catalog-schema.sql");
     assert!(sql.contains("CREATE TABLE catalog.seed_datasets"));

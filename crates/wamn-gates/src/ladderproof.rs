@@ -5,7 +5,7 @@
 //! [`wamn_host::run_worker::RunWorker`] and drives the claim loop itself),
 //! `ladderproof` is a pure DB CLIENT — the f1proof/apiproof shape: it seeds ONE
 //! run the dispatcher way (write-ahead `dispatched` row + queue row) and then
-//! WAITS for a SEPARATELY-DEPLOYED `run-worker` service (deploy/runner.yaml) to
+//! WAITS for a SEPARATELY-DEPLOYED `run-worker` service (deploy/platform/runner.yaml) to
 //! claim it, drive it, and record the result. It asserts nothing about how the
 //! run was driven — only that the deployed runner produced the correct terminal
 //! state + per-node execution trace.
@@ -13,15 +13,15 @@
 //! The proof is rung-parameterised (`--rung`): each rung is a set of `RungCase`s
 //! over the same seed/poll/assert client, climbing the ladder.
 //!   * **Rung 1** (wamn-ojm.1) — `webhook-in -> respond`
-//!     (deploy/ladder/rung1.flow.json): a single meaningful node + a terminal,
+//!     (deploy/gates/ladder/rung1.flow.json): a single meaningful node + a terminal,
 //!     both passthrough, so the run completes echoing its input.
 //!   * **Rung 2** (wamn-ojm.2) — `webhook-in -> transform{upper} ->
-//!     transform{reverse} -> respond` (deploy/ladder/rung2.flow.json): a linear
+//!     transform{reverse} -> respond` (deploy/gates/ladder/rung2.flow.json): a linear
 //!     multi-node chain that proves correct SEQUENCING (the `node_runs` seq
 //!     order) + payload THREADING (each node's recorded input is the prior
 //!     node's recorded output).
 //!   * **Rung 3** (wamn-ojm.3) — a conditional branch + merge
-//!     (deploy/ladder/rung3.flow.json): `in -> cond{true/false} -> yes|no ->
+//!     (deploy/gates/ladder/rung3.flow.json): `in -> cond{true/false} -> yes|no ->
 //!     out`, driven TWICE (a true and a false input). Proves correct ROUTING —
 //!     the conditional's recorded port matches the predicate, ONLY the taken
 //!     branch executes (a node_run for the other branch would break the count),
@@ -49,9 +49,9 @@ use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 /// The committed rung fixtures (single source of truth; the drift-guard tests
 /// pin that each file parses to the flow the proof asserts against).
-const RUNG1_FLOW_JSON: &str = include_str!("../../../deploy/ladder/rung1.flow.json");
-const RUNG2_FLOW_JSON: &str = include_str!("../../../deploy/ladder/rung2.flow.json");
-const RUNG3_FLOW_JSON: &str = include_str!("../../../deploy/ladder/rung3.flow.json");
+const RUNG1_FLOW_JSON: &str = include_str!("../../../deploy/gates/ladder/rung1.flow.json");
+const RUNG2_FLOW_JSON: &str = include_str!("../../../deploy/gates/ladder/rung2.flow.json");
+const RUNG3_FLOW_JSON: &str = include_str!("../../../deploy/gates/ladder/rung3.flow.json");
 
 /// The rungs registered by `--setup` (so one ephemeral schema serves them all).
 const ALL_RUNGS: [u8; 3] = [1, 2, 3];

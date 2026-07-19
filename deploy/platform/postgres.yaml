@@ -2,12 +2,12 @@
 # gate is measured in-cluster). Single pod, ephemeral storage — a benchmark
 # fixture, not a durable database.
 #
-# The init SQL lives in deploy/postgres-init.sql (single source of truth, also
+# The init SQL lives in deploy/sql/postgres-init.sql (single source of truth, also
 # used by the local docker container). Create its ConfigMap before applying:
 #
 #   kubectl -n wamn-system create configmap pg-init \
-#     --from-file=init.sql=deploy/postgres-init.sql
-#   kubectl -n wamn-system apply -f deploy/postgres.yaml
+#     --from-file=init.sql=deploy/sql/postgres-init.sql
+#   kubectl -n wamn-system apply -f deploy/platform/postgres.yaml
 #
 # wamn-host pods reach it at postgres.wamn-system.svc.cluster.local:5432; set
 # WAMN_PG_URL to postgres://wamn_app:wamn_app@postgres.wamn-system:5432/wamn

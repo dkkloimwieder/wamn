@@ -1,7 +1,7 @@
 //! Storage-schema tests for the per-project system schema v1 (wamn-as5).
 //!
-//! Two layers (the `wamn-registry` / `deploy/system-schema.sql` precedent):
-//! - a **drift guard** tying `deploy/app-schema.sql` to the `wamn-sysschema`
+//! Two layers (the `wamn-registry` / `deploy/sql/system-schema.sql` precedent):
+//! - a **drift guard** tying `deploy/sql/app-schema.sql` to the `wamn-sysschema`
 //!   model (the schema name, each table + its pinned columns, the RLS floor +
 //!   a45 empty-claim hardening, the `users.status` CHECK literals from
 //!   `UserStatus::as_str`, and the FK cascades);
@@ -21,8 +21,8 @@ fn deploy_dir() -> std::path::PathBuf {
 }
 
 fn app_schema_sql() -> String {
-    std::fs::read_to_string(deploy_dir().join("app-schema.sql"))
-        .expect("read deploy/app-schema.sql")
+    std::fs::read_to_string(deploy_dir().join("sql/app-schema.sql"))
+        .expect("read deploy/sql/app-schema.sql")
 }
 
 /// The SQL with `--` line comments stripped, so text assertions test the actual
@@ -39,7 +39,7 @@ fn code_only(sql: &str) -> String {
 
 // --- drift guard: DDL ↔ model ----------------------------------------------
 
-/// `deploy/app-schema.sql` must mirror the `wamn-sysschema` model: the schema
+/// `deploy/sql/app-schema.sql` must mirror the `wamn-sysschema` model: the schema
 /// name, every table + its pinned columns, and the tenant RLS floor on each.
 #[test]
 fn app_schema_sql_mirrors_the_model() {
@@ -146,7 +146,7 @@ fn fk_cascades_are_pinned() {
 
 // --- live-apply gate --------------------------------------------------------
 
-/// Apply `deploy/app-schema.sql` to a throwaway Postgres and assert the live,
+/// Apply `deploy/sql/app-schema.sql` to a throwaway Postgres and assert the live,
 /// DB-enforced behavior. Set `WAMN_SYSSCHEMA_PG_URL` to a superuser URL (the
 /// harness provisions `wamn_app`); skipped when unset.
 #[test]
@@ -189,7 +189,7 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
          DROP SCHEMA IF EXISTS app_system CASCADE;\n\
          DROP SCHEMA IF EXISTS wamn_sysschema_test CASCADE;\n",
     );
-    // The schema itself (deploy/app-schema.sql, applied verbatim as the superuser).
+    // The schema itself (deploy/sql/app-schema.sql, applied verbatim as the superuser).
     script.push_str(&app_schema_sql());
     script.push('\n');
     // The data table (3.2 floor) + its compiled 3.5 ownership policy, in a test

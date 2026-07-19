@@ -10,12 +10,12 @@
 //!
 //! The catalog is `suppliers ← receipts ← receipt_lines` with a to-one relation
 //! `supplier` (receipts→suppliers) and a to-many relation `lines`
-//! (receipt_lines→receipts). It is committed verbatim as `deploy/proof-catalog.json`
+//! (receipt_lines→receipts). It is committed verbatim as `deploy/poc/proof-catalog.json`
 //! (a drift-guard test asserts they match) so `publish-catalog` can read it as a
 //! file, exactly as it would read a real project's applied catalog.
 
 /// The demo catalog, stored as the snapshot the gateway loads. Kept byte-for-byte
-/// identical to `deploy/proof-catalog.json` (see the drift-guard test).
+/// identical to `deploy/poc/proof-catalog.json` (see the drift-guard test).
 pub const CATALOG_JSON: &str = r#"{
   "schema-version": "0.1",
   "catalog-id": "apibench",
@@ -98,16 +98,16 @@ pub fn entity_seed_sql() -> String {
 mod tests {
     use super::{CATALOG_JSON, catalog, floor_ddl};
 
-    /// The committed `deploy/proof-catalog.json` that `publish-catalog` reads must
+    /// The committed `deploy/poc/proof-catalog.json` that `publish-catalog` reads must
     /// stay in lockstep with the in-code `CATALOG_JSON` the gates address — else a
     /// snapshot written from the file would not match what `apiproof` queries.
     #[test]
     fn proof_catalog_file_matches_const() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../deploy/proof-catalog.json"
+            "/../../deploy/poc/proof-catalog.json"
         );
-        let file = std::fs::read_to_string(path).expect("read deploy/proof-catalog.json");
+        let file = std::fs::read_to_string(path).expect("read deploy/poc/proof-catalog.json");
         let from_file = wamn_catalog::Catalog::from_json(&file).expect("parse proof-catalog.json");
         let from_const = wamn_catalog::Catalog::from_json(CATALOG_JSON).expect("parse const");
         // Canonical JSON equality is robust to incidental whitespace differences.

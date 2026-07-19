@@ -19,7 +19,7 @@
 //!   unbudgeted one still traps at the ceiling, and a budget above the
 //!   ceiling hard-fails without allocating (error, never a silent clamp).
 //!
-//! Runs locally and in-cluster (`deploy/bench-job.yaml`, the gate of record).
+//! Runs locally and in-cluster (`deploy/gates/bench-job.yaml`, the gate of record).
 //! Every phase returns its verdict; `run` aggregates them and exits non-zero
 //! if any gate fails (wamn-cjv.1 — the suite was previously print-only).
 

@@ -4,5 +4,5 @@
 .beads
 docs
 # deploy/ is include_str!'d by publish-catalog's provisioning helpers
-# (run-state.sql / flows.sql) — it must be in the build context.
+# (sql/run-state.sql / sql/flows.sql) — it must be in the build context.
 vendor

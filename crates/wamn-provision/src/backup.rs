@@ -6,7 +6,7 @@
 //! (`barman-cloud.cloudnative-pg.io`). The in-tree `barmanObjectStore` provider is
 //! deprecated in CNPG 1.26 with removal slated for 1.31 — so this builds on the
 //! plugin (a CNPG-I sidecar the operator drives; it needs its own install +
-//! cert-manager for plugin↔operator mTLS — see deploy/barman-cloud-plugin.yaml).
+//! cert-manager for plugin↔operator mTLS — see deploy/infra/barman-cloud-plugin.yaml).
 //!
 //! This gives **whole-cluster point-in-time recovery**: the **retention window**
 //! (`EnvPolicy::wal_retention`) is the PITR-SLA knob — a **per-env policy** lever
@@ -14,7 +14,7 @@
 //! **base-backup cadence** is `EnvPolicy::backup_cadence` (empty = no scheduled
 //! backup). The *other* backup mechanism — per-project-env logical dumps
 //! (tenant-scoped restore, the 10.3 export) — is [`crate::dump`] (wamn-q3n.10/.11);
-//! the two share the object store (MinIO, deploy/minio.yaml).
+//! the two share the object store (MinIO, deploy/infra/minio.yaml).
 //!
 //! **Pure** (SR3 / house rule 1): K8s manifest renderers (`serde_json::Value` —
 //! `kubectl apply -f` accepts JSON, the [`crate::org`] / [`crate::dump`]
@@ -34,10 +34,10 @@ pub const BACKUP_PLUGIN_NAME: &str = "barman-cloud.cloudnative-pg.io";
 /// dumps never collide in one prefix tree.
 pub const WAL_BUCKET: &str = "wamn-backups";
 /// The shared object-store credentials `Secret` (keys `ACCESS_KEY_ID` /
-/// `ACCESS_SECRET_KEY`), created by deploy/minio.yaml. The ObjectStore's
+/// `ACCESS_SECRET_KEY`), created by deploy/infra/minio.yaml. The ObjectStore's
 /// `s3Credentials` reference it; the dump upload ([`crate::dump`]) reads the same.
 pub const OBJECT_STORE_SECRET: &str = "wamn-object-store";
-/// The in-cluster MinIO S3 endpoint (the deploy/minio.yaml `Service`). The shared
+/// The in-cluster MinIO S3 endpoint (the deploy/infra/minio.yaml `Service`). The shared
 /// object store both WAL/PITR and the logical dumps write to.
 pub const MINIO_ENDPOINT: &str = "http://minio.wamn-system.svc:9000";
 /// The namespace backup CRs live in (alongside the clusters + object store).

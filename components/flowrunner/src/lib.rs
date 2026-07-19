@@ -27,7 +27,7 @@
 //! both hosts.
 //!
 //! ## Checkpoint / resume (5.7)
-//! Durable run state is the `runs` / `node_runs` tables (`deploy/run-state.sql`):
+//! Durable run state is the `runs` / `node_runs` tables (`deploy/sql/run-state.sql`):
 //! a `runs` row per execution and a `node_runs` row per completed node. On every
 //! invocation the runner **reconstructs** the in-memory `RunState` by replaying
 //! the persisted `node_runs` through the pure engine (`wamn-run-store`) — the

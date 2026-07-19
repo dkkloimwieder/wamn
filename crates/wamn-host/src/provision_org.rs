@@ -35,7 +35,7 @@
 //! the template's.
 //!
 //! **Pooled orgs (wamn-q3n.9):** a `trials` org shares the pre-contract pool
-//! (`deploy/cnpg-cluster.yaml` `wamn-pg`), so it owns no clusters — there is
+//! (`deploy/infra/cnpg-cluster.yaml` `wamn-pg`), so it owns no clusters — there is
 //! nothing to render; only its registry rows are recorded. `.7`
 //! `provision-project-env` then reads that placement and derives the pool
 //! cluster via [`cluster_of`](wamn_registry::cluster_of).

@@ -2,15 +2,15 @@
 # outbox row-events + parked-run wakes for every project it serves). Runs the
 # `dispatch` subcommand of the same wamn-host image the operator deploys.
 #
-#   kubectl -n wamn-system apply -f deploy/dispatcher-projects.example.yaml  # once
-#   kubectl -n wamn-system apply -f deploy/dispatcher.yaml
+#   kubectl -n wamn-system apply -f deploy/platform/dispatcher-projects.example.yaml  # once
+#   kubectl -n wamn-system apply -f deploy/platform/dispatcher.yaml
 #   kubectl -n wamn-system rollout status deploy/dispatcher --timeout=120s
 #   kubectl -n wamn-system logs -l app=dispatcher --tail=20
 #
 # The wamn-dispatch-projects Secret is DELIBERATELY NOT in this file: it is
 # per-environment config (real entries land with hosting/2.3 provisioning),
 # and bundling it here would clobber a customized Secret back to the example
-# values on every re-apply. deploy/dispatcher-projects.example.yaml carries a
+# values on every re-apply. deploy/platform/dispatcher-projects.example.yaml carries a
 # demo-project example of the shape.
 #
 # TWO REPLICAS, NO LEADER: replicas race each trigger and collapse on the

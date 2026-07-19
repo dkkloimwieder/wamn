@@ -6,7 +6,7 @@
 # databases via the superuser admin url — wamn_app is NOSUPERUSER/NOCREATEDB,
 # as in production).
 #
-#   kubectl -n wamn-system apply -f deploy/pgbench-multiproject-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/pgbench-multiproject-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/pgbench-multiproject --timeout=300s
 #   kubectl -n wamn-system logs job/pgbench-multiproject
 apiVersion: batch/v1

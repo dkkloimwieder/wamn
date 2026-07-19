@@ -32,7 +32,7 @@
 //!   all     — trigger, bulk, growth in sequence.
 //!
 //! Not `--mode all` of some other gate: run it explicitly via
-//! deploy/outboxbench-job.yaml. A single run is the record (unlike the C7
+//! deploy/gates/outboxbench-job.yaml. A single run is the record (unlike the C7
 //! two-run practice): there is no knee search a one-sided disk stall can
 //! poison — the headline numbers are byte counts and medians, and a stall
 //! shows up visibly as a p99 outlier rather than corrupting the result.
@@ -161,7 +161,7 @@ fn catalog() -> anyhow::Result<wamn_catalog::Catalog> {
         .map_err(|e| anyhow::anyhow!("bench catalog parse: {e}"))
 }
 
-/// The run-queue outbox clone in the ephemeral schema (deploy/run-queue.sql
+/// The run-queue outbox clone in the ephemeral schema (deploy/sql/run-queue.sql
 /// shape: identity seq, event CHECK, pending partial index, hardened tenant
 /// floor). The trigger plan targets it schema-qualified.
 fn outbox_ddl(schema: &str) -> String {

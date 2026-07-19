@@ -93,7 +93,7 @@ append statements; the mirror guard on catalog `Check` expressions lives in 3.2
 
 ## Storage
 
-`deploy/catalog-schema.sql` gains `catalog.rls_policies` (tenant-scoped, FORCE
+`deploy/sql/catalog-schema.sql` gains `catalog.rls_policies` (tenant-scoped, FORCE
 RLS): one row per rule, the `rule` stored as jsonb (the crate is the source of
 truth for its semantics). Policies attach to the live schema, so they are keyed
 by `(tenant_id, catalog_id, policy_id)` — not to a specific catalog *version*.

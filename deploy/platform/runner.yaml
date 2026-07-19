@@ -2,11 +2,11 @@
 # live dispatcher → run_queue → runner chain. The `run-worker` subcommand of the
 # same wamn-host image the operator deploys: it instantiates the flowrunner
 # component (baked into the prod image at /components/flowrunner.wasm) and loops
-# `run-next`, claiming runs the dispatcher (deploy/dispatcher.yaml) wrote-ahead +
+# `run-next`, claiming runs the dispatcher (deploy/platform/dispatcher.yaml) wrote-ahead +
 # enqueued and driving each to completion.
 #
-#   kubectl -n wamn-system apply -f deploy/runner-db.example.yaml   # once (per project)
-#   kubectl -n wamn-system apply -f deploy/runner.yaml
+#   kubectl -n wamn-system apply -f deploy/platform/runner-db.example.yaml   # once (per project)
+#   kubectl -n wamn-system apply -f deploy/platform/runner.yaml
 #   kubectl -n wamn-system rollout status deploy/runner --timeout=120s
 #   kubectl -n wamn-system logs -l app=runner --tail=20
 #

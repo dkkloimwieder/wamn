@@ -1,9 +1,9 @@
 # 4.1 in-cluster generated-REST-API-gateway gates. Runs the apibench subcommand
 # of the wamn-gates image (SR1: gates ride their own image layered on the prod host stage), against the in-cluster
-# Postgres (deploy/postgres.yaml). This Job is the gate of record; local docker
+# Postgres (deploy/platform/postgres.yaml). This Job is the gate of record; local docker
 # runs are for iteration.
 #
-#   kubectl -n wamn-system apply -f deploy/apibench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/apibench-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/apibench --timeout=300s
 #   kubectl -n wamn-system logs job/apibench
 #

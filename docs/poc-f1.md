@@ -17,11 +17,11 @@ Three new pieces, each in the house shape:
 |---|---|
 | `poc/f1` | PURE F1 node logic: payload validation (no-float rule), exact-decimal arithmetic + spec evaluation, the parameterized SQL text the DB nodes run, inter-node/response JSON shapes. Unit-tested with no cluster. |
 | `components/poc-webhook-f1` | The sync-webhook ingress: exports `wasi:http/incoming-handler` (deployed like the 4.1b gateway, routed by Host header), imports **only** `wamn:postgres` (2.6-clean), embeds the wamn-runner (5.2) engine and the five F1 node implementations. |
-| `deploy/flows.sql` | The flow registry's production home (`flows`: tenant, flow_id, version, active, graph_json — the shape the dispatcher's `active_flows_sql` and the flowrunner already read; the a52 smoke's stand-in DDL is retired). Standalone + additive to `run-state.sql`. |
+| `deploy/sql/flows.sql` | The flow registry's production home (`flows`: tenant, flow_id, version, active, graph_json — the shape the dispatcher's `active_flows_sql` and the flowrunner already read; the a52 smoke's stand-in DDL is retired). Standalone + additive to `run-state.sql`. |
 
 `publish-catalog` grew into the one project-provisioning tool: `--provision`
-(3.2 floor) + `--runstate` (the **canonical** `deploy/run-state.sql` +
-`deploy/flows.sql`, `include_str!`'d and dot-anchored-rewritten from `wamn_run`
+(3.2 floor) + `--runstate` (the **canonical** `deploy/sql/run-state.sql` +
+`deploy/sql/flows.sql`, `include_str!`'d and dot-anchored-rewritten from `wamn_run`
 to the project schema; `.dockerignore` now ships `deploy/` into the image
 build) + `--seed-dataset` (a wamn-seed dataset compiled against the catalog) +
 `--flow` (validate, register, ACTIVATE — deactivating prior versions; the
@@ -30,7 +30,7 @@ column==graph guard holds by construction). Registration REJECTS a webhook
 path another active flow of the tenant already serves (any webhook trigger,
 sync or async): `register_flow` pre-checks with a named error before any
 write, the `flows_active_webhook_path` partial-unique expression index in
-`deploy/flows.sql` backstops concurrent registration, and
+`deploy/sql/flows.sql` backstops concurrent registration, and
 deactivate-prior + insert run in ONE transaction so a losing race never
 strands a flow with no active version. The f1bench gate provisions its
 ephemeral schema through the SAME helpers, so the flags are gated too —
@@ -48,7 +48,7 @@ including the collision rejection.
    `trigger_source='webhook'`, `input_json` = the payload **verbatim** (a
    non-JSON body is carried as a JSON string — it still gets its run and its
    400). Then `dispatched → running`.
-3. **Drive** — the 5.2 engine walks `deploy/f1-flow.json` (same topology as the
+3. **Drive** — the 5.2 engine walks `deploy/poc/f1-flow.json` (same topology as the
    5.1 structural fixture, F1-shaped node types):
    `validate` →(main)→ `upsert` → `evaluate` →(main | `out-of-spec`→`holds`)→
    `respond-ok`, with `validate` →(`error`)→ `respond-bad`. Every completed
@@ -135,10 +135,10 @@ trace (`node_runs.input_json`) and the response.
 
 - `cargo test -p wamn-f1` — decimal/payload/evaluate/shape units + two
   drift-guards (SQL identifiers vs the poc-receiving catalog fixture; the
-  implemented node set + topology vs `deploy/f1-flow.json`).
+  implemented node set + topology vs `deploy/poc/f1-flow.json`).
 - `cargo test -p wamn-host` — fixture coherence (burst = 20 receipts, 3
   out-of-spec, 4 holds) + the schema-rewrite guard.
-- **f1bench** (in-cluster Job of record `deploy/f1bench-job.yaml`; local via a
+- **f1bench** (in-cluster Job of record `deploy/gates/f1bench-job.yaml`; local via a
   throwaway PG) — drives `poc_webhook_f1.wasm` in-proc via ProxyPre and
   cross-checks through `api_gateway.wasm` over ONE ephemeral schema. Modes:
   `happy` (sync 200 + write-ahead + 4-node trace + persisted rows), `holds`
@@ -148,10 +148,10 @@ trace (`node_runs.input_json`) and the response.
   (the acceptance script: 20 receipts / 3 out-of-spec / 4 holds + verbatim
   write-ahead payloads + RLS isolation), `rest` (generated REST lists the
   holds incl `expand=line`).
-- **f1proof** (`deploy/f1proof-job.yaml`) — the same burst + REST cross-check
+- **f1proof** (`deploy/gates/f1proof-job.yaml`) — the same burst + REST cross-check
   over REAL cluster networking against the deployed workloads
-  (`deploy/f1-workloads.yaml`), plus the DB audit; provisioning via
-  `deploy/f1-provision-job.yaml` (the `f1-fixtures` ConfigMap).
+  (`deploy/poc/f1-workloads.yaml`), plus the DB audit; provisioning via
+  `deploy/poc/f1-provision-job.yaml` (the `f1-fixtures` ConfigMap).
 
 ## v1 limitations (deliberate)
 

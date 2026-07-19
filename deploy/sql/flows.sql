@@ -10,10 +10,10 @@
 -- rejects a webhook path already served by another ACTIVE flow; the
 -- flows_active_webhook_path unique index below is the race-proof backstop).
 --
--- STANDALONE ARTIFACT, ADDITIVE to deploy/run-state.sql: same convention as
+-- STANDALONE ARTIFACT, ADDITIVE to deploy/sql/run-state.sql: same convention as
 -- run-queue.sql / catalog-schema.sql — deliberately NOT included by
--- deploy/postgres-init.sql (the s3.* gate fixtures keep their own stand-in).
--- Assumes deploy/run-state.sql has been applied first (schema `wamn_run` and
+-- deploy/sql/postgres-init.sql (the s3.* gate fixtures keep their own stand-in).
+-- Assumes deploy/sql/run-state.sql has been applied first (schema `wamn_run` and
 -- the `wamn_app` role). Provisioning a per-project schema rewrites `wamn_run`
 -- to the project schema (`wamn-host publish-catalog --runstate`).
 --

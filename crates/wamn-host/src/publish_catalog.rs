@@ -18,8 +18,8 @@
 //! is ever dropped or altered (the shared-cluster guardrail).
 //!
 //! POC-F1 extended this into the one project-provisioning tool: `--runstate`
-//! applies the run-state storage (`deploy/run-state.sql`: runs/node_runs) and
-//! the flow registry (`deploy/flows.sql`) into the project schema — the
+//! applies the run-state storage (`deploy/sql/run-state.sql`: runs/node_runs) and
+//! the flow registry (`deploy/sql/flows.sql`) into the project schema — the
 //! canonical deploy files, embedded at compile time and rewritten from
 //! `wamn_run` to the target schema — when their tables are absent;
 //! `--seed-dataset` compiles a wamn-seed (3.6) dataset against the catalog and
@@ -61,8 +61,8 @@ pub struct PublishCatalogArgs {
     #[arg(long)]
     pub provision: bool,
 
-    /// Also apply the run-state storage (runs/node_runs, `deploy/run-state.sql`)
-    /// and the flow registry (`deploy/flows.sql`) into the schema when their
+    /// Also apply the run-state storage (runs/node_runs, `deploy/sql/run-state.sql`)
+    /// and the flow registry (`deploy/sql/flows.sql`) into the schema when their
     /// tables are absent. Additive: never drops or alters.
     #[arg(long)]
     pub runstate: bool,
@@ -313,7 +313,7 @@ fn rewrite_schema(ddl: &str, schema: &str) -> String {
         .replace("SCHEMA wamn_run", &format!("SCHEMA {schema}"))
 }
 
-/// Apply `deploy/run-state.sql` (runs + node_runs) into `schema` when its
+/// Apply `deploy/sql/run-state.sql` (runs + node_runs) into `schema` when its
 /// `runs` table is absent. Returns whether it applied (false = already there).
 pub async fn ensure_runstate(
     client: &tokio_postgres::Client,
@@ -322,7 +322,7 @@ pub async fn ensure_runstate(
     if table_exists(client, schema, "runs").await? {
         return Ok(false);
     }
-    let ddl = rewrite_schema(include_str!("../../../deploy/run-state.sql"), schema);
+    let ddl = rewrite_schema(include_str!("../../../deploy/sql/run-state.sql"), schema);
     client
         .batch_execute(&ddl)
         .await
@@ -330,7 +330,7 @@ pub async fn ensure_runstate(
     Ok(true)
 }
 
-/// Apply `deploy/flows.sql` (the flow registry) into `schema` when its `flows`
+/// Apply `deploy/sql/flows.sql` (the flow registry) into `schema` when its `flows`
 /// table is absent. Returns whether it applied.
 pub async fn ensure_flow_registry(
     client: &tokio_postgres::Client,
@@ -339,7 +339,7 @@ pub async fn ensure_flow_registry(
     if table_exists(client, schema, "flows").await? {
         return Ok(false);
     }
-    let ddl = rewrite_schema(include_str!("../../../deploy/flows.sql"), schema);
+    let ddl = rewrite_schema(include_str!("../../../deploy/sql/flows.sql"), schema);
     client
         .batch_execute(&ddl)
         .await
@@ -474,8 +474,8 @@ mod tests {
     /// the schema header — never prose like `wamn_run_store`.
     #[test]
     fn schema_rewrite_is_dot_anchored() {
-        let run_state = include_str!("../../../deploy/run-state.sql");
-        let flows = include_str!("../../../deploy/flows.sql");
+        let run_state = include_str!("../../../deploy/sql/run-state.sql");
+        let flows = include_str!("../../../deploy/sql/flows.sql");
         for (ddl, table) in [(run_state, "runs"), (flows, "flows")] {
             let out = rewrite_schema(ddl, "poc_f1");
             assert!(

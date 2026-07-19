@@ -13,7 +13,7 @@
 //! ([`status`]) and drives the engine's [`resume`](wamn_runner::Plan::resume) /
 //! [`seed_at`](wamn_runner::Plan::seed_at) primitives; the driver
 //! (`components/flowrunner`) supplies the `wamn:postgres` effects against the
-//! schema in `deploy/run-state.sql`.
+//! schema in `deploy/sql/run-state.sql`.
 //!
 //! ```
 //! use wamn_run_store::{reconstruct, RunRecord, NodeRunRecord};
@@ -38,7 +38,7 @@
 //! ```
 //!
 //! ## Scope (5.7) vs siblings
-//! Owns: the `runs`/`node_runs` model + DDL (`deploy/run-state.sql`), at-least-once
+//! Owns: the `runs`/`node_runs` model + DDL (`deploy/sql/run-state.sql`), at-least-once
 //! idempotency keying, the run-history read model, branch-aware replay
 //! reconstruction, and partial-re-run planning. Does **not** own: the durable run
 //! QUEUE + leases + NATS doorbell + dispatcher (5.14 — co-transacts with these

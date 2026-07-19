@@ -5,7 +5,7 @@
 //! cargo run -p wamn-ddl --example emit-outbox -- <catalog.json> [outbox-schema] [--create]
 //! ```
 //!
-//! `outbox-schema` defaults to `wamn_run` (deploy/run-queue.sql); `--create`
+//! `outbox-schema` defaults to `wamn_run` (deploy/sql/run-queue.sql); `--create`
 //! prepends the whole `CREATE` plan so the output is a complete provisioning
 //! script for a fresh project schema (run it under the executor's
 //! `search_path`).

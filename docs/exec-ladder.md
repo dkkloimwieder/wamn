@@ -5,7 +5,7 @@ CORRECTLY on the **deployed** runner — outside a bench harness — climbing fr
 single node to branching logic. Each rung is a small, repeatable, mutation-tested
 conformance proof that the next rung extends.
 
-The rungs are gated on the live runner (`deploy/runner.yaml`, wamn-fqg.8 — see
+The rungs are gated on the live runner (`deploy/platform/runner.yaml`, wamn-fqg.8 — see
 [run-queue.md](run-queue.md) § *Production runner*): the same `run-worker` service
 that closes the `dispatcher → run_queue → runner` chain.
 
@@ -38,7 +38,7 @@ registers every rung's flow so one ephemeral schema serves the whole ladder.
 
 ### Rung 1 — `webhook-in → respond`
 
-The fixture `deploy/ladder/rung1.flow.json` is a `manual`-trigger passthrough:
+The fixture `deploy/gates/ladder/rung1.flow.json` is a `manual`-trigger passthrough:
 
 ```
 webhook-in (in) ──► respond (out)
@@ -65,7 +65,7 @@ its next idle poll (the poll-backoff backstop, ≤ the runner's max idle interva
 
 ### Rung 2 — linear transform chain
 
-The fixture `deploy/ladder/rung2.flow.json` is a `manual`-trigger linear flow:
+The fixture `deploy/gates/ladder/rung2.flow.json` is a `manual`-trigger linear flow:
 
 ```
 webhook-in (in) ──► transform{op: upper} (t1) ──► transform{op: reverse} (t2) ──► respond (out)
@@ -99,7 +99,7 @@ mutant). The proof is the trace, not a final-result-depends-on-order property.
 
 ### Rung 3 — conditional branch + merge
 
-The fixture `deploy/ladder/rung3.flow.json` is a `manual`-trigger diamond:
+The fixture `deploy/gates/ladder/rung3.flow.json` is a `manual`-trigger diamond:
 
 ```
                  ┌─true──► transform{expression: yes} (yes) ─┐
@@ -155,8 +155,8 @@ reorder mutant.
   (`scratchpad/mutate_ojm3.py`): a fixture drift-guard, a gate **port** assert, and
   an in-place edge **swap** proving the gate catches a runner that routed down the
   wrong *branch*, not just its own arithmetic.
-* **In-cluster gate of record** — `deploy/ladderproof-job.yaml` (`--rung 3`, and
-  `--rung 2` / `--rung 1` for the regressions) drives the real `deploy/runner.yaml`
+* **In-cluster gate of record** — `deploy/gates/ladderproof-job.yaml` (`--rung 3`, and
+  `--rung 2` / `--rung 1` for the regressions) drives the real `deploy/platform/runner.yaml`
   service over the shared Postgres. See [build-and-test.md](build-and-test.md) §
   *[EXEC-LADDER.1/2/3]*.
 

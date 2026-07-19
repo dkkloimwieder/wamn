@@ -1,13 +1,13 @@
 # [5.9] The credential-vault gate of record (wamn-17o): credproof seeds one
 # manual run of deploy/cred/notify.flow.json and waits for the DEPLOYED
-# run-worker (deploy/runner.yaml + the wamn-runner-credentials Secret) to
-# drive it against serve-echo (deploy/serve-echo.yaml), then asserts DELIVERY
+# run-worker (deploy/platform/runner.yaml + the wamn-runner-credentials Secret) to
+# drive it against serve-echo (deploy/gates/serve-echo.yaml), then asserts DELIVERY
 # (the reflected authorization header == the vault secret) and CONTAINMENT
 # (the secret appears in no recorded run/node_run/graph row outside the http
 # node's own echo output). Prereqs: the demo schema provisioned + the flow
 # registered (the fqg.8/ojm provisioning recipe), runner + serve-echo up.
 #
-#   kubectl -n wamn-system apply -f deploy/credproof-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/credproof-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=180s
 #   kubectl -n wamn-system logs job/credproof
 apiVersion: batch/v1

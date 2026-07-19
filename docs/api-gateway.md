@@ -143,7 +143,7 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5455/wamn \
 docker stop wamn-api-pg
 ```
 
-The in-cluster gate of record is `deploy/apibench-job.yaml` (co-located with
+The in-cluster gate of record is `deploy/gates/apibench-job.yaml` (co-located with
 Postgres, no CPU limit — the S2 CFS lesson; `WAMN_PG_ADMIN_URL` is the superuser
 used only to provision the ephemeral schema).
 
@@ -155,10 +155,10 @@ wash-runtime uses) to prove the SQL/CRUD/RLS semantics. 4.1b makes it actually
 `WorkloadDeployment`, one instance per project.
 
 **No new serving code is needed.** wash-runtime ships an inbound HTTP server
-(`--http-addr`, on port 80 in `deploy/values-wamn.yaml`); its `DynamicRouter`
+(`--http-addr`, on port 80 in `deploy/infra/values-wamn.yaml`); its `DynamicRouter`
 routes a request whose `Host` header matches a workload's
 `hostInterfaces[].config.host` to that component's `wasi:http/incoming-handler`
-export. So the gateway deploys exactly like `deploy/hello-workload.yaml` — a
+export. So the gateway deploys exactly like `deploy/platform/hello-workload.yaml` — a
 `Service` + a `WorkloadDeployment` — with the DB claims in
 `components[].localResources.config`:
 
@@ -172,10 +172,10 @@ These are host-injected at `on_workload_item_bind` and non-spoofable by the gues
 
 The operator pulls `components[].image` through wash-runtime's own OCI client
 (not containerd), so a `kind load`ed image is invisible to it — the component
-must live in a registry the host pods can reach. `deploy/registry.yaml` is a
+must live in a registry the host pods can reach. `deploy/platform/registry.yaml` is a
 plain-HTTP registry at `registry.wamn-system.svc.cluster.local:5000`; the host
 runs with `--allow-insecure-registries` (a wamn-host flag wired through
-`deploy/values-wamn.yaml` `hostGroups[].extraArgs`) so it can pull over HTTP. The
+`deploy/infra/values-wamn.yaml` `hostGroups[].extraArgs`) so it can pull over HTTP. The
 registry addresses artifacts by repo path (hostname-independent), so you `wash
 push` via a port-forwarded `localhost` and the host pulls via the Service DNS
 name at the same repo path.
@@ -207,7 +207,7 @@ end to end.
 docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev . \
   && kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
 kind load docker-image registry:2 --name wamn
-kubectl -n wamn-system apply -f deploy/registry.yaml
+kubectl -n wamn-system apply -f deploy/platform/registry.yaml
 kubectl -n wamn-system rollout status deploy/registry --timeout=60s
 kubectl -n wamn-system port-forward svc/registry 5000:5000 &
 wash push localhost:5000/wamn/api-gateway:dev \
@@ -215,16 +215,16 @@ wash push localhost:5000/wamn/api-gateway:dev \
 # The host group gains --allow-insecure-registries + WAMN_PG_URL:
 helm upgrade --install -n wamn-system wamn \
   oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
-  -f deploy/values-wamn.yaml
+  -f deploy/infra/values-wamn.yaml
 kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=120s
 # Provision the project schema/floor + seed + publish the snapshot:
 kubectl -n wamn-system create configmap proof-catalog \
-  --from-file=proof-catalog.json=deploy/proof-catalog.json
-kubectl -n wamn-system apply -f deploy/publish-catalog-job.yaml
+  --from-file=proof-catalog.json=deploy/poc/proof-catalog.json
+kubectl -n wamn-system apply -f deploy/gates/publish-catalog-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/publish-catalog --timeout=120s
 # Deploy the gateway workload, then prove it serves:
-kubectl -n wamn-system apply -f deploy/api-gateway-workload.yaml
-kubectl -n wamn-system apply -f deploy/apiproof-job.yaml
+kubectl -n wamn-system apply -f deploy/platform/api-gateway-workload.yaml
+kubectl -n wamn-system apply -f deploy/gates/apiproof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
 kubectl -n wamn-system logs job/apiproof
 ```

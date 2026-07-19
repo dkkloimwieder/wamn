@@ -5,13 +5,13 @@
 --
 -- This is the AUTH/RBAC half of item 2.4. The "platform metadata" half
 -- (entities, fields, relations, flows) is ALREADY shipped and is deliberately
--- NOT redefined here: the catalog model lives in deploy/catalog-schema.sql
+-- NOT redefined here: the catalog model lives in deploy/sql/catalog-schema.sql
 -- (catalog.entities / catalog.fields / catalog.relations, 3.1) and the flow
--- registry in deploy/flows.sql (wamn_run.flows, POC-F1). A `deployments` table
+-- registry in deploy/sql/flows.sql (wamn_run.flows, POC-F1). A `deployments` table
 -- is deferred — a live WorkloadDeployment is a K8s CR, so a registry table would
 -- duplicate cluster state until there is a concrete reader (follow-up bead).
 --
--- DISTINCT FROM the T1 control-plane registry (deploy/system-schema.sql,
+-- DISTINCT FROM the T1 control-plane registry (deploy/sql/system-schema.sql,
 -- wamn-q3n.3): that is the PLATFORM-GLOBAL system DB (orgs / projects /
 -- project_envs / sagas), owned by wamn_system, NOT tenant-scoped, NO RLS floor.
 -- THIS schema is PER-PROJECT TENANT DATA: tenant-scoped, wamn_app-grantee, under
@@ -19,14 +19,14 @@
 -- plane, different owner, different security model — hence a different file, and
 -- deliberately NOT named system-schema.sql.
 --
--- STANDALONE ARTIFACT: like deploy/catalog-schema.sql, this file is NOT included
--- by deploy/postgres-init.sql (which builds the S2–S6 gate fixtures). It is the
+-- STANDALONE ARTIFACT: like deploy/sql/catalog-schema.sql, this file is NOT included
+-- by deploy/sql/postgres-init.sql (which builds the S2–S6 gate fixtures). It is the
 -- persistence target a project database provisions; shipping it here keeps the
 -- 2.4 schema reviewable in one place without touching the gate fixtures. It
 -- assumes a pre-existing wamn_app role (NOSUPERUSER, no BYPASSRLS), as in
 -- production and as the live-apply gate provisions.
 --
--- SECURITY SHAPE mirrors deploy/catalog-schema.sql exactly (the 3.2 tenant
+-- SECURITY SHAPE mirrors deploy/sql/catalog-schema.sql exactly (the 3.2 tenant
 -- floor + the a45 empty-claim hardening): one application role (wamn_app, not
 -- owner), tenant separation purely via the `app.tenant` claim the wamn:postgres
 -- plugin injects with SET LOCAL. Every table FORCEs RLS keyed on

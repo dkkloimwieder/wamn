@@ -9,7 +9,7 @@
 # Prereqs: the api-gateway WorkloadDeployment is Ready and the publish-catalog
 # Job has run (the snapshot + seed exist).
 #
-#   kubectl -n wamn-system apply -f deploy/apiproof-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/apiproof-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
 #   kubectl -n wamn-system logs job/apiproof
 apiVersion: batch/v1

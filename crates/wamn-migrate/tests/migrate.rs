@@ -4,7 +4,7 @@
 //! - **unit** — the guards (forward-only, catalog-id, stale-base), the 3.2
 //!   destructive gate (reused verbatim), dry-run vs apply, the generated
 //!   rollback, and a metadata-only version bump;
-//! - a **drift guard** tying `deploy/catalog-schema.sql` to the engine (the new
+//! - a **drift guard** tying `deploy/sql/catalog-schema.sql` to the engine (the new
 //!   `document` column, the `schema_migrations` table + columns, and the
 //!   confirmation / environment / lifecycle-state literals the SQL builders use);
 //! - a **live-apply gate** proving the DB-enforced behavior end-to-end — a first
@@ -294,8 +294,8 @@ fn a_metadata_only_version_bump_still_advances_the_lifecycle() {
 // --- drift guard ------------------------------------------------------------
 
 fn catalog_schema_sql() -> String {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/catalog-schema.sql");
-    std::fs::read_to_string(p).expect("read deploy/catalog-schema.sql")
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/sql/catalog-schema.sql");
+    std::fs::read_to_string(p).expect("read deploy/sql/catalog-schema.sql")
 }
 
 /// The SQL with `--` line comments stripped (no `--` appears inside a string

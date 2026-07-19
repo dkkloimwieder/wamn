@@ -1,14 +1,14 @@
 # EVT-NATS in-cluster gate of record (wamn-l5i9.7). Runs the streambench
 # subcommand of the wamn-gates image against the dedicated data-plane JetStream
-# cluster (deploy/nats-jetstream.yaml, Service `evt-nats`) — NOT the operator /
+# cluster (deploy/infra/nats-jetstream.yaml, Service `evt-nats`) — NOT the operator /
 # control-plane NATS (Service `nats`), which is untouched.
 #
 # Primary functional + self-contained R3 gate (publish / consume / Nats-Msg-Id
 # dedupe / leader-stepdown re-election):
 #
-#   kubectl -n wamn-system apply -f deploy/nats-jetstream.yaml
+#   kubectl -n wamn-system apply -f deploy/infra/nats-jetstream.yaml
 #   kubectl -n wamn-system rollout status statefulset/evt-nats --timeout=180s
-#   kubectl -n wamn-system apply -f deploy/streambench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/streambench-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/streambench --timeout=180s
 #   kubectl -n wamn-system logs job/streambench
 #

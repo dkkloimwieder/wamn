@@ -3,8 +3,8 @@
 //!
 //! This crate is the pure MODEL: the schema name, the table/column manifest, and
 //! the CHECK literals, kept as a single source and tied to the hand-written DDL
-//! [`deploy/app-schema.sql`](../../../deploy/app-schema.sql) by a drift guard
-//! (`tests/schema.rs`) — the `wamn-registry` → `deploy/system-schema.sql`
+//! [`deploy/sql/app-schema.sql`](../../../deploy/sql/app-schema.sql) by a drift guard
+//! (`tests/schema.rs`) — the `wamn-registry` → `deploy/sql/system-schema.sql`
 //! precedent. It emits no DDL of its own and holds no connection (the pure /
 //! effect-shell house rule); the DDL is the authoritative artifact, this model
 //! is what downstream (4.2 AuthN, 4.3 AuthZ, 2.5 migrations) references so they
@@ -16,11 +16,11 @@
 //! the user↔role linkage [`USER_ROLES`]), [`PERMISSIONS`], [`CONFIGURATIONS`],
 //! [`AUDIT_LOG`], [`API_KEYS`]. The "platform metadata" half of 2.4 (entities /
 //! fields / relations / flows) is ALREADY shipped — the catalog model in
-//! `deploy/catalog-schema.sql` (3.1) and the flow registry in `deploy/flows.sql`
+//! `deploy/sql/catalog-schema.sql` (3.1) and the flow registry in `deploy/sql/flows.sql`
 //! (POC-F1) — and is referenced, not redefined here.
 //!
 //! It is DISTINCT from the T1 control-plane registry (`wamn-registry` /
-//! `deploy/system-schema.sql`): that is the platform-global system DB (orgs /
+//! `deploy/sql/system-schema.sql`): that is the platform-global system DB (orgs /
 //! projects / envs), owned by `wamn_system`, not tenant-scoped. This schema is
 //! PER-PROJECT TENANT DATA under the same RLS floor as the catalog.
 //!
@@ -74,7 +74,7 @@ impl UserStatus {
     ];
 
     /// The wire / CHECK-literal form (`active` / `disabled` / `invited`), tied to
-    /// the `users_status_check` literals in `deploy/app-schema.sql` by a drift
+    /// the `users_status_check` literals in `deploy/sql/app-schema.sql` by a drift
     /// guard.
     pub fn as_str(self) -> &'static str {
         match self {

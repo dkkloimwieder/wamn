@@ -1,9 +1,9 @@
 # S2 in-cluster benchmark + security gates. Runs the pgbench subcommand of the
 # wamn-gates image (SR1: gates ride their own image layered on the prod host stage), against the in-cluster Postgres
-# (deploy/postgres.yaml). The p99 < 10ms acceptance gate is defined in-cluster,
+# (deploy/platform/postgres.yaml). The p99 < 10ms acceptance gate is defined in-cluster,
 # so this Job is the gate of record; local docker runs are for iteration.
 #
-#   kubectl -n wamn-system apply -f deploy/pgbench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/pgbench-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/pgbench --timeout=300s
 #   kubectl -n wamn-system logs job/pgbench
 apiVersion: batch/v1

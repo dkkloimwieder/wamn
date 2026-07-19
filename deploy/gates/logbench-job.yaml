@@ -6,9 +6,9 @@
 # to the collector, which forwards to Loki; logbench queries Loki for the exact
 # delivered count and cross-checks the collector's internal metrics.
 #
-#   kubectl -n wamn-system apply -f deploy/loki.yaml -f deploy/otel-collector.yaml
+#   kubectl -n wamn-system apply -f deploy/infra/loki.yaml -f deploy/infra/otel-collector.yaml
 #   kubectl -n wamn-system rollout status deploy/loki deploy/otel-collector --timeout=120s
-#   kubectl -n wamn-system apply -f deploy/logbench-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/logbench-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/logbench --timeout=300s
 #   kubectl -n wamn-system logs job/logbench
 apiVersion: batch/v1

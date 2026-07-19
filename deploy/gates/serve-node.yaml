@@ -3,7 +3,7 @@
 # in-cluster pod-to-pod round trip — the truest D7 number (in-cluster HTTP as
 # the v0 custom-node invocation path). Runs from the wamn-gates image (SR1).
 #
-#   kubectl -n wamn-system apply -f deploy/serve-node.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/serve-node.yaml
 #   kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
 apiVersion: apps/v1
 kind: Deployment

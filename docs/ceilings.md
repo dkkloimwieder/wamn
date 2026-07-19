@@ -19,7 +19,7 @@ owner attaches decision rules after the numbers exist.
 
 **Date:** 2026-07-18 · **Git rev:** the `wamn-z7b.1` commit (parent `817937d`;
 the campaign binary was built from exactly that tree) · **Bench:**
-`wamn-gates queuebench --mode ceiling` (`deploy/queuebench-ceiling-job.yaml`),
+`wamn-gates queuebench --mode ceiling` (`deploy/gates/queuebench-ceiling-job.yaml`),
 run twice back-to-back for repeatability.
 
 **What "one transition" is:** the full production lifecycle — a write-ahead
@@ -32,11 +32,11 @@ dispatch read + mark-running + complete + dequeue, 4 statements per run after
 the claim) at batch 1/8/32.
 
 **Environment (read the caveat):** the p0 reference class — a 3-node kind
-cluster on a single developer workstation, the shared `deploy/postgres.yaml`
+cluster on a single developer workstation, the shared `deploy/platform/postgres.yaml`
 pod (postgres:18, **stock container config — default `shared_buffers`,
 autovacuum, fillfactor; no tuning** — except `fsync=off` +
 `synchronous_commit=off`, which the fixture pod has always run with
-[deploy/postgres.yaml], so every latency in this file excludes per-commit
+[deploy/platform/postgres.yaml], so every latency in this file excludes per-commit
 fsync; correction recorded 2026-07-18 during C2), the gates Job co-located
 with the Postgres pod, no CPU limit (the S2 CFS lesson), release build. 8 open-loop
 producer connections (catch-up pacing), 12 closed-loop claimers, statements
@@ -143,7 +143,7 @@ accepting it — `wamn-z7b.7`) so single runs stop carrying 3× downward noise.
 **Date:** 2026-07-18 · **Git rev:** the `wamn-z7b.2` commit (parent `b24092a`;
 the campaign binary was built from that tree — post-run edits were
 comment/doc-only) · **Bench:** `wamn-gates outboxbench --mode all`
-(`deploy/outboxbench-job.yaml`).
+(`deploy/gates/outboxbench-job.yaml`).
 
 **What is measured:** the cost the *customer* pays for D4 row events — the
 wp4-emitted `AFTER … FOR EACH ROW` trigger (`Migration::outbox_triggers`)
@@ -163,7 +163,7 @@ mid-campaign).
 
 **Environment:** the p0 reference class (the same rig, pod, and co-location
 as C7 above — including its noise caveat), with one addition to the record:
-`deploy/postgres.yaml` runs `fsync=off` + `synchronous_commit=off`, so every
+`deploy/platform/postgres.yaml` runs `fsync=off` + `synchronous_commit=off`, so every
 latency here (and in C7) excludes per-commit fsync. WAL byte counts are
 deterministic and unaffected. **Single-run record** — a deliberate deviation
 from C7's two-run practice: C2 has no knee search a one-sided stall can
@@ -255,7 +255,7 @@ payload-shape decision, not a default.
 
 **Date:** 2026-07-18 · **Git rev:** the `wamn-l5i9.4` commit (parent `a341d28`;
 the campaign binary was built from this tree) · **Bench:** `wamn-gates walbench
---mode all` (`deploy/walbench-job.yaml`).
+--mode all` (`deploy/gates/walbench-job.yaml`).
 
 **What is measured:** the *denominator* every later C-CDC WAL-delta claim
 (`wamn-l5i9.14`) divides by — the WAL an application's writes generate BEFORE any
@@ -282,7 +282,7 @@ replica identity** before any measurement runs — so "pre-CDC denominator" is a
 verified property, not an assumption. `wal_level = replica`.
 
 **Environment:** the p0 reference class (same rig, pod, and co-location as C7/C2
-above — `deploy/postgres.yaml`, `fsync=off` + `synchronous_commit=off`, PG 18.4).
+above — `deploy/platform/postgres.yaml`, `fsync=off` + `synchronous_commit=off`, PG 18.4).
 WAL byte counts are deterministic and unaffected by `fsync=off` (`wamn-dzhw`:
 "WAL byte counts + growth curves unaffected either way" — confirmed here
 byte-for-byte against an `fsync=off` throwaway PG); the p50s exclude per-commit

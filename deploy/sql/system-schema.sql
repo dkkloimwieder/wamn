@@ -4,10 +4,10 @@
 -- provisioning-saga state table (exactly-once / resumable).
 --
 -- This is the schema that fills the EMPTY wamn_system DB the T1 cluster
--- (deploy/wamn-sysdb.yaml, wamn-q3n.2) bootstraps: registry-model → registry
--- tables, the way deploy/catalog-schema.sql followed crates/wamn-catalog.
+-- (deploy/platform/wamn-sysdb.yaml, wamn-q3n.2) bootstraps: registry-model → registry
+-- tables, the way deploy/sql/catalog-schema.sql followed crates/wamn-catalog.
 --
--- STANDALONE ARTIFACT: deliberately NOT included by deploy/postgres-init.sql
+-- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql
 -- (which builds the S2–S6 *tenant-data* fixtures). This is applied into the T1
 -- system DB — a different plane entirely.
 --

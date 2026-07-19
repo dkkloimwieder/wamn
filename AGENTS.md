@@ -111,7 +111,7 @@ Almost all code here is Rust — consult the `rust-guidelines` skill when writin
 - `crates/wamn-*` — pure decision crates (no DB/clock/wasm — pure core / effect shell): data model (`catalog`, `ddl`, `schema`, `rls`, `seed`); flow engine + API (`flow`, `runner`, `run-store`, `run-queue`, `node-sdk`, `node-guest`, `nodes`, `node-manifest`, `api`); control plane (`registry`, `provision`, `migrate`).
 - `components/` — wasm32-wasip2 guests: production at the root (`flowrunner`, `api-gateway`, `pgprobe`, …), `fixtures/` + `samples/` beneath, `poc-` prefix for POC components.
 - `poc/` — POC integration crates (`f1`, `dm1`).
-- `deploy/` — Kubernetes manifests + standalone SQL schemas (`postgres-init`, `catalog-schema`, `run-state`, `run-queue`, `system-schema`, …).
+- `deploy/` — tiered (SR8, `deploy/README.md` holds the rules): `infra/` install-once infrastructure, `platform/` production manifests, `gates/` gate/bench Jobs (+`ladder/`), `poc/` POC assets, `sql/` standalone SQL schemas (`postgres-init`, `catalog-schema`, `run-state`, `run-queue`, `system-schema`, …), `cred/` unchanged.
 - `docs/` — **design source of truth** (`platform-plan.md`, the decision table, WIT contracts, per-subsystem specs). Start here.
 - Root `Cargo.toml` pins the `wash-runtime` fork rev in one place (`workspace.dependencies.wash-runtime.rev`).
 

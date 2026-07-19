@@ -8,7 +8,7 @@
 # control plane — that cluster is untouched by this manifest, and the
 # NATS-optional posture of the doorbell/dispatcher path is unaffected.
 #
-#   kubectl -n wamn-system apply -f deploy/nats-jetstream.yaml
+#   kubectl -n wamn-system apply -f deploy/infra/nats-jetstream.yaml
 #   kubectl -n wamn-system rollout status statefulset/evt-nats --timeout=180s
 #   kubectl -n wamn-system exec evt-nats-0 -- nats-server --help >/dev/null   # sanity
 #
@@ -18,7 +18,7 @@
 # co-designed in wamn-4xw — NOT provisioned here. The subject namespace already
 # reserves per-org isolation (evt.<org>...), so the account split is additive.
 #
-# The gate of record is deploy/streambench-job.yaml (publish/consume + Nats-Msg-Id
+# The gate of record is deploy/gates/streambench-job.yaml (publish/consume + Nats-Msg-Id
 # dedupe + R3 survives one node deletion).
 apiVersion: v1
 kind: ConfigMap

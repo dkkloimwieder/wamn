@@ -11,7 +11,7 @@ is *a provisioned, credentialed, `wamn_app`-roled, empty project database*.
 - **Crate:** `crates/wamn-provision` — the pure core (naming, SQL builders,
   Secret rendering).
 - **Subcommand:** `wamn-host provision-project` — the imperative driver.
-- **Gate:** `wamn-gates provisionbench` + `deploy/provisionbench-job.yaml`.
+- **Gate:** `wamn-gates provisionbench` + `deploy/gates/provisionbench-job.yaml`.
 
 ## Topology (D6)
 
@@ -33,9 +33,9 @@ with its own pool + policy) and today's single-instance shape, and keeps a
 managed-Postgres (RDS/Cloud SQL) re-target parallel: swap the substrate behind
 the same narrow seam (a `CredentialProvider` + a per-project database URL).
 
-The CNPG cluster (`deploy/cnpg-cluster.yaml`, operator pinned at
-`deploy/cnpg-operator.yaml`, CNPG 1.29.2) stands up **alongside** the guardrailed
-`deploy/postgres.yaml` pod. The legacy S2–S6 gates + crate live-apply gates keep
+The CNPG cluster (`deploy/infra/cnpg-cluster.yaml`, operator pinned at
+`deploy/infra/cnpg-operator.yaml`, CNPG 1.29.2) stands up **alongside** the guardrailed
+`deploy/platform/postgres.yaml` pod. The legacy S2–S6 gates + crate live-apply gates keep
 running against that pod unchanged; only `provisionbench` targets the CNPG
 cluster. Migrating the legacy fixtures onto CNPG is a separate later bead. The
 DB-serving path carries **no CPU limit** (the S2 CFS lesson).
@@ -189,7 +189,7 @@ customizations honored), else the template's.
 
 ### Pooled orgs (wamn-q3n.9, generalized)
 
-A `trials` org shares the pre-contract **pool** (`deploy/cnpg-cluster.yaml`
+A `trials` org shares the pre-contract **pool** (`deploy/infra/cnpg-cluster.yaml`
 `wamn-pg` — the T3-style tier, `docs/postgres-topology.md` §T3), so it owns no
 clusters: there is nothing to render. `--template trials` builds the org via
 `Template::trials().stamp(id, pool)`, validates it, records the `registry.orgs`
@@ -254,9 +254,9 @@ is the other (`dump-project-env` / `restore-project-env`, wamn-q3n.10/.11).
 **Mechanism = the CloudNativePG Barman Cloud plugin** (`barman-cloud.cloudnative-pg.io`).
 The in-tree `.spec.backup.barmanObjectStore` provider is deprecated in CNPG 1.26
 (removal slated 1.31), so this builds on the plugin — a CNPG-I sidecar the operator
-drives. It is a separate install (`deploy/barman-cloud-plugin.yaml`, pinned v0.13.0,
+drives. It is a separate install (`deploy/infra/barman-cloud-plugin.yaml`, pinned v0.13.0,
 into `cnpg-system`) and **requires cert-manager** (plugin↔operator mTLS); the shared
-object store is `deploy/minio.yaml` (MinIO — buckets `wamn-backups` for WAL,
+object store is `deploy/infra/minio.yaml` (MinIO — buckets `wamn-backups` for WAL,
 `wamn-dumps` for logical dumps).
 
 The pure renderers live in `crates/wamn-provision/src/backup.rs`. Per
@@ -477,7 +477,7 @@ row — `event_readers` cascades through `project_envs`).
   `orgpair`, `t3`.
 
 The tier / saga modes need the T1 registry, so the gate applies
-`deploy/system-schema.sql` into an ephemeral `registry` / `provisioning` schema
+`deploy/sql/system-schema.sql` into an ephemeral `registry` / `provisioning` schema
 pair on the same PG (dropped at teardown). It is still **substrate-agnostic** — a
 superuser URL — so `--mode all` runs locally against a throwaway `postgres:18`.
 
@@ -701,7 +701,7 @@ compensating orchestrator that drives this saga across crashes is 10.1
 
 **Preconditions.** The dst database exists (`provision-project-env` + its
 `Database` CR); for a definition copy the dst carries the catalog storage schema
-(`deploy/catalog-schema.sql`) — the flow registry is ensured on demand. The
+(`deploy/sql/catalog-schema.sql`) — the flow registry is ensured on demand. The
 snapshot is recorded under the src triple in `provisioning.dumps`, so the src
 must be registered in the T1 registry when recording.
 
@@ -736,7 +736,7 @@ remains the documented CNPG-native alternative to the `.11` `pg_restore` path.
 - **Per-project distinct roles/passwords** — 8.2 hardening. The provisioning
   path leaves the `CREATE ROLE` seam for it (and for the dispatch role wamn-286
   and the user-SQL role wamn-1nd).
-- **Migrating the legacy `deploy/postgres.yaml` fixtures onto CNPG** — a separate
+- **Migrating the legacy `deploy/platform/postgres.yaml` fixtures onto CNPG** — a separate
   later bead; the MVP coexists.
 - **Control-plane automation** of provisioning (a Project CRD + controller) —
   10.1.

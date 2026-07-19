@@ -57,7 +57,7 @@ pub(crate) const TRIGGER_NAME: &str = "wamn_outbox_event";
 /// Options for outbox-trigger emission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboxOptions {
-    /// The schema holding the `outbox` table (deploy/run-queue.sql). The
+    /// The schema holding the `outbox` table (deploy/sql/run-queue.sql). The
     /// trigger function references it schema-qualified — `search_path` inside
     /// a trigger is the caller's and cannot be relied on. Must be a bare
     /// identifier (letters, digits, `_`, not digit-leading); rejected
@@ -126,7 +126,7 @@ fn function_op(opts: &OutboxOptions) -> Operation {
         // plpgsql bodies are not plan-checked at CREATE FUNCTION, so a
         // mis-targeted apply succeeds silently and fails on the first write.
         note: Some(format!(
-            "requires {outbox} (deploy/run-queue.sql) with INSERT granted to writing roles — \
+            "requires {outbox} (deploy/sql/run-queue.sql) with INSERT granted to writing roles — \
              if absent, every row write on the entity tables fails at runtime, not at apply"
         )),
     }

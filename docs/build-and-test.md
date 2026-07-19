@@ -34,7 +34,7 @@ cargo build --release -p wamn-host -p wamn-gates   # prod host + gate suite (SR1
   --memhog components/target/wasm32-wasip2/release/memhog.wasm \
   --busyloop components/target/wasm32-wasip2/release/busyloop.wasm
 # In-cluster gate of record (no DB/NATS; fixtures ship in the image):
-kubectl -n wamn-system apply -f deploy/bench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/bench-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/bench --timeout=600s
 kubectl -n wamn-system logs job/bench
 # Mutation harness (4 mutants, each must exit non-zero): scratchpad/mutate_cjv1.py
@@ -45,7 +45,7 @@ kubectl -n wamn-system logs job/bench
 ```bash
 # Local iteration (throwaway container + the same fixture SQL):
 docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
-  -v "$PWD/deploy/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
+  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
 ./target/release/wamn-gates --log-level error pgbench \
   --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
@@ -53,8 +53,8 @@ docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
 # guard unit tests: cargo test -p wamn-host guard_
 # Mutation harness (3 guard mutants, each must fail --mode attack): scratchpad/mutate_cjv2.py
 # In-cluster gate of record (p99 is measured in-cluster):
-kubectl -n wamn-system create configmap pg-init --from-file=init.sql=deploy/postgres-init.sql
-kubectl -n wamn-system apply -f deploy/postgres.yaml -f deploy/pgbench-job.yaml
+kubectl -n wamn-system create configmap pg-init --from-file=init.sql=deploy/sql/postgres-init.sql
+kubectl -n wamn-system apply -f deploy/platform/postgres.yaml -f deploy/gates/pgbench-job.yaml
 kubectl -n wamn-system logs -f job/pgbench
 ```
 
@@ -68,7 +68,7 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
 # In-cluster gate of record (co-located, no cpu limit — S2 CFS lesson;
 # WAMN_PG_ADMIN_URL is the superuser used only to provision the project DBs):
-kubectl -n wamn-system apply -f deploy/pgbench-multiproject-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/pgbench-multiproject-job.yaml
 kubectl -n wamn-system logs -f job/pgbench-multiproject
 ```
 
@@ -91,14 +91,14 @@ docker stop wamn-prov-pg
 # The production tool is `wamn-host provision-project --project <id>
 # In-cluster gate of record (against the shared CNPG cluster = the D6 substrate,
 # NO cpu limit — S2 CFS lesson):
-kubectl apply --server-side -f deploy/cnpg-operator.yaml
+kubectl apply --server-side -f deploy/infra/cnpg-operator.yaml
 kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=150s
-kubectl apply -f deploy/cnpg-cluster.yaml
+kubectl apply -f deploy/infra/cnpg-cluster.yaml
 kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=1 cluster/wamn-pg --timeout=300s
 # A HOST change => full docker rebuild (both --target stages + kind load BOTH images):
 docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
 kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/provisionbench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/provisionbench-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/provisionbench --timeout=180s
 kubectl -n wamn-system logs job/provisionbench
 ```
@@ -110,7 +110,7 @@ kubectl -n wamn-system logs job/provisionbench
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
 # In-cluster (same co-located / no-cpu-limit Job topology as pgbench):
-kubectl -n wamn-system apply -f deploy/flowbench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/flowbench-job.yaml
 kubectl -n wamn-system logs -f job/flowbench
 ```
 
@@ -129,9 +129,9 @@ wac plug $REL/flow_driver.wasm --plug $REL/node_rs.wasm -o $REL/flow_composed.wa
   --composed $REL/flow_composed.wasm --sample $REL/sample_node.wasm --mode all
 # In-cluster gate of record (real cross-pod hop via the serve-node Service; the
 # gap/config gates run in-pod; no cpu limit — the S2 CFS lesson):
-kubectl -n wamn-system apply -f deploy/serve-node.yaml
+kubectl -n wamn-system apply -f deploy/gates/serve-node.yaml
 kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
-kubectl -n wamn-system apply -f deploy/nodebench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/nodebench-job.yaml
 kubectl -n wamn-system logs -f job/nodebench
 ```
 
@@ -141,19 +141,19 @@ kubectl -n wamn-system logs -f job/nodebench
 # Local iteration (throwaway loki + collector on a docker network):
 docker network create wamn-s5 2>/dev/null || true
 docker run -d --name wamn-s5-loki --network wamn-s5 -p 3100:3100 \
-  -v "$PWD/deploy/loki-local.yaml:/etc/loki/loki.yaml:ro" \
+  -v "$PWD/deploy/infra/loki-local.yaml:/etc/loki/loki.yaml:ro" \
   grafana/loki:3.4.2 -config.file=/etc/loki/loki.yaml
 docker run -d --name wamn-s5-otelcol --network wamn-s5 -p 4317:4317 -p 8888:8888 \
-  -v "$PWD/deploy/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
+  -v "$PWD/deploy/infra/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
   otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 RUST_LOG=error \
   LOKI_URL=http://127.0.0.1:3100 COLLECTOR_METRICS_URL=http://127.0.0.1:8888/metrics \
   ./target/release/wamn-gates --log-level info logbench \
   --logspewer components/target/wasm32-wasip2/release/logspewer.wasm --mode all
 # In-cluster gate of record (real Loki + collector; no cpu limit — the S2 lesson):
-kubectl -n wamn-system apply -f deploy/loki.yaml -f deploy/otel-collector.yaml
+kubectl -n wamn-system apply -f deploy/infra/loki.yaml -f deploy/infra/otel-collector.yaml
 kubectl -n wamn-system rollout status deploy/loki deploy/otel-collector --timeout=120s
-kubectl -n wamn-system apply -f deploy/logbench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/logbench-job.yaml
 kubectl -n wamn-system logs -f job/logbench
 ```
 
@@ -170,10 +170,10 @@ docker network create wamn-s5 2>/dev/null || true
 docker run -d --rm --name wamn-trace-pg --network wamn-s5 -p 5482:5432 \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
 docker run -d --name wamn-s5-tempo --network wamn-s5 -p 3200:3200 \
-  -v "$PWD/deploy/tempo-local.yaml:/etc/tempo/tempo.yaml:ro" \
+  -v "$PWD/deploy/infra/tempo-local.yaml:/etc/tempo/tempo.yaml:ro" \
   grafana/tempo:2.6.1 -config.file=/etc/tempo/tempo.yaml
 docker run -d --name wamn-s5-otelcol --network wamn-s5 -p 4317:4317 -p 8888:8888 \
-  -v "$PWD/deploy/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
+  -v "$PWD/deploy/infra/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
   otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
   OTEL_BSP_SCHEDULE_DELAY=1000 RUST_LOG=error \
@@ -186,9 +186,9 @@ docker stop wamn-trace-pg wamn-s5-tempo wamn-s5-otelcol
 # --target stages + kind load BOTH images):
 docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
 kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/tempo.yaml -f deploy/otel-collector.yaml
+kubectl -n wamn-system apply -f deploy/infra/tempo.yaml -f deploy/infra/otel-collector.yaml
 kubectl -n wamn-system rollout status deploy/tempo deploy/otel-collector --timeout=120s
-kubectl -n wamn-system apply -f deploy/tracebench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/tracebench-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/tracebench --timeout=180s
 kubectl -n wamn-system logs job/tracebench
 ```
@@ -217,10 +217,10 @@ kubectl -n wamn-system port-forward svc/registry 5000:5000 &
 wash push localhost:5000/wamn/trace-relay:dev \
   components/target/wasm32-wasip2/release/trace_relay.wasm --insecure
 # Deploy pod B (serve-echo) + pod A (trace-relay), then run the proof:
-kubectl -n wamn-system apply -f deploy/serve-echo.yaml
+kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
 kubectl -n wamn-system rollout status deploy/serve-echo --timeout=120s
-kubectl -n wamn-system apply -f deploy/trace-relay-workload.yaml
-kubectl -n wamn-system apply -f deploy/traceproof-job.yaml
+kubectl -n wamn-system apply -f deploy/platform/trace-relay-workload.yaml
+kubectl -n wamn-system apply -f deploy/gates/traceproof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/traceproof --timeout=180s
 kubectl -n wamn-system logs job/traceproof
 ```
@@ -230,14 +230,14 @@ kubectl -n wamn-system logs job/traceproof
 ```bash
 # Local iteration (throwaway container + the same fixture SQL):
 docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
-  -v "$PWD/deploy/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
+  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
 ./target/release/wamn-gates --log-level error testhostbench \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
   --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn --mode all
 # In-cluster gate of record (co-located with Postgres, no cpu limit — S2 lesson;
 # WAMN_PG_ADMIN_URL is the superuser used only to provision the ephemeral schema):
-kubectl -n wamn-system apply -f deploy/testhostbench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/testhostbench-job.yaml
 kubectl -n wamn-system logs -f job/testhostbench
 ```
 
@@ -315,7 +315,7 @@ Docs: docs/run-state.md
 cargo test -p wamn-run-store
 cargo test -p wamn-runner   # the resume/seed_at primitives (regression)
 cargo clippy -p wamn-run-store --all-targets && cargo fmt -p wamn-run-store --check
-# optional live-apply gate (deploy/run-state.sql on a throwaway PG; superuser URL
+# optional live-apply gate (deploy/sql/run-state.sql on a throwaway PG; superuser URL
 # node_runs FK cascade; skips cleanly when unset):
 docker run -d --rm --name wamn-runstore-pg -p 5458:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
@@ -388,10 +388,10 @@ kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-
 # provision wamn_runner_demo + register deploy/cred/notify.flow.json AND
 # deploy/cred/deny.flow.json active (the fqg.8/ojm recipe; deny.flow.json is
 # the fqg.11 per-flow egress deny half credproof now asserts), then:
-kubectl -n wamn-system apply -f deploy/serve-echo.yaml
-kubectl -n wamn-system apply -f deploy/runner-credentials.example.yaml
-kubectl -n wamn-system apply -f deploy/runner-db.example.yaml -f deploy/runner.yaml
-kubectl -n wamn-system apply -f deploy/credproof-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
+kubectl -n wamn-system apply -f deploy/platform/runner-credentials.example.yaml
+kubectl -n wamn-system apply -f deploy/platform/runner-db.example.yaml -f deploy/platform/runner.yaml
+kubectl -n wamn-system apply -f deploy/gates/credproof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=180s
 kubectl -n wamn-system logs job/credproof   # overall PASS: true
 ```
@@ -403,7 +403,7 @@ Docs: docs/run-queue.md
 ```bash
 cargo test -p wamn-run-queue
 cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --check
-# optional live-apply gate (deploy/run-state.sql + run-queue.sql on a throwaway PG;
+# optional live-apply gate (deploy/sql/run-state.sql + run-queue.sql on a throwaway PG;
 # skips cleanly when unset):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
@@ -417,7 +417,7 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
 docker stop wamn-rq-pg wamn-rq-nats
 # In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS lesson;
 # kind load docker-image wamn-gates:dev --name wamn):
-kubectl -n wamn-system apply -f deploy/queuebench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/queuebench-job.yaml
 kubectl -n wamn-system logs -f job/queuebench
 ```
 
@@ -451,14 +451,14 @@ WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5443/postgres \
   --level-secs 5 --soak-secs 30 --burst-secs 10
 docker stop wamn-ceil-pg
 # Numbers of record (in-cluster, §10 knobs baked into the manifest; ~60–90 min):
-kubectl -n wamn-system apply -f deploy/queuebench-ceiling-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/queuebench-ceiling-job.yaml
 kubectl -n wamn-system logs -f job/queuebench-ceiling
 # Extract the `=== BEGIN CSV <name> ===` blocks from the job log into
 # docs/ceilings-data/ and cite them from docs/ceilings.md (§11 provenance).
 ```
 
 The ceiling mode is deliberately NOT in `--mode all` (the regression gate of
-record stays deploy/queuebench-job.yaml). Only the exactly-once + completeness
+record stays deploy/gates/queuebench-job.yaml). Only the exactly-once + completeness
 sanity asserts are pass/fail; the knees/curves are measurements. Phase 2
 (fillfactor × autovacuum matrix, 30-min soak, 1M-run bloat soak) = wamn-z7b.6.
 Mutation harness for the knee controller: scratchpad `mutate_z7b1.py`
@@ -484,7 +484,7 @@ docker stop wamn-c2-pg
 # Numbers of record (in-cluster, record knobs baked into the manifest; ~35–40 min;
 # a SINGLE run is the record — no knee search to poison, the headline numbers
 # are byte counts/medians and a stall shows as a visible p99 outlier):
-kubectl -n wamn-system apply -f deploy/outboxbench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/outboxbench-job.yaml
 kubectl -n wamn-system logs -f job/outboxbench
 # Extract the `=== BEGIN CSV <name> ===` blocks (c2-trigger / c2-bulk /
 # c2-growth-c{0,60,600}) into docs/ceilings-data/ and cite them from
@@ -522,7 +522,7 @@ docker stop wamn-cwal0-pg
 # to poison). Needs a gates-only image (docker build --target gates); no wamn-host
 # change so the host stage is cached apart from the crates/ recompile:
 docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/walbench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/walbench-job.yaml
 kubectl -n wamn-system logs -f job/walbench
 # Extract the `=== BEGIN CSV <name> ===` blocks (cwal0-perop / cwal0-mixed) into
 # docs/ceilings-data/ and cite them from docs/ceilings.md (§ C-WAL-0 provenance).
@@ -588,7 +588,7 @@ grep -c '^name = "pg_walstream"$' Cargo.lock   # must be 1 (git-sourced)
 ### [EVT-NATS / wamn-l5i9.7] streambench data-plane JetStream gate
 
 Docs: docs/event-plane-jetstream.md §5/§7 Phase 1. Stands up the DEDICATED
-data-plane NATS (deploy/nats-jetstream.yaml — a 3-node JetStream cluster, R3
+data-plane NATS (deploy/infra/nats-jetstream.yaml — a 3-node JetStream cluster, R3
 file storage, Service `evt-nats`), SEPARATE from the operator/control-plane NATS
 (Service `nats`, doorbells) which stays untouched. The gate (`streambench`, a
 pure NATS client — no wasm, no Postgres) proves the four load-bearing claims:
@@ -619,12 +619,12 @@ docker rm -f evt-nats-local-0 evt-nats-local-1 evt-nats-local-2; docker network 
 # Gate of record (in-cluster). Gates-only image (no wamn-host change → host stage
 # cached apart from the crates/ recompile):
 docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/nats-jetstream.yaml
+kubectl -n wamn-system apply -f deploy/infra/nats-jetstream.yaml
 kubectl -n wamn-system rollout status statefulset/evt-nats --timeout=180s
-kubectl -n wamn-system apply -f deploy/streambench-job.yaml    # --mode all: publish/consume/dedupe/stepdown
+kubectl -n wamn-system apply -f deploy/gates/streambench-job.yaml    # --mode all: publish/consume/dedupe/stepdown
 kubectl -n wamn-system wait --for=condition=complete job/streambench --timeout=180s
 kubectl -n wamn-system logs job/streambench
-# Physical R3 heal (the runbook is in deploy/streambench-job.yaml's header):
+# Physical R3 heal (the runbook is in deploy/gates/streambench-job.yaml's header):
 #   streambench-pub pod → kubectl delete pod evt-nats-2 → streambench-heal pod
 ```
 
@@ -639,7 +639,7 @@ M3 makes the LSN non-monotonic-but-unique via `i^1` (commit-order assert fails),
 M4 drops the id on the focused second publish (`second publish IS a duplicate`
 fails). The data-plane NATS is left STANDING as the Phase-1 substrate (the
 reader wamn-l5i9.10 + C-JS wamn-l5i9.15 consume it); reclaim with
-`kubectl -n wamn-system delete -f deploy/nats-jetstream.yaml`.
+`kubectl -n wamn-system delete -f deploy/infra/nats-jetstream.yaml`.
 
 ### [EVT-PROVISION / wamn-l5i9.9] enable-cdc-project-env — publication + failover slot + reader registration
 
@@ -695,7 +695,7 @@ env-policy knobs) are a SIBLING bead, not this overlay.
 
 Docs: docs/event-plane-jetstream.md §4. The CDC reader MVP: `wamn-host
 event-reader --org --project --env` (replicas=1 Deployment,
-deploy/event-reader.example.yaml) reads its `registry.event_readers`
+deploy/platform/event-reader.example.yaml) reads its `registry.event_readers`
 registration, opens ONE pg_walstream session (`StreamingMode::Off` — whole
 txns, commit order), and publishes `wamn-event-wire` envelopes onto
 `evt.<org>.<project>.<env>.<entity>.<op>` with
@@ -869,7 +869,7 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn --mode all
 # In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS lesson;
 # HOST change => full docker rebuild (both --target stages + kind load BOTH images):
-kubectl -n wamn-system apply -f deploy/failoverbench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/failoverbench-job.yaml
 kubectl -n wamn-system logs -f job/failoverbench
 ```
 
@@ -900,14 +900,14 @@ docker stop wamn-fqg4-pg
 # stages + kind load BOTH images (+ flowbench/testhostbench regress on the new guest):
 docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
 kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/failoverbench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/failoverbench-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/failoverbench --timeout=240s
 kubectl -n wamn-system logs job/failoverbench
 ```
 
 ### [5.14] production runner (run-worker, fqg.8)
 
-Docs: docs/run-queue.md · Manifests: deploy/runner.yaml + deploy/runner-db.example.yaml
+Docs: docs/run-queue.md · Manifests: deploy/platform/runner.yaml + deploy/platform/runner-db.example.yaml
 
 ```bash
 cargo test -p wamn-host run_worker   # owner fallback + drain tally + idle backoff
@@ -949,10 +949,10 @@ docker build --target host -t wamn-host:dev . && docker build --target gates -t 
 kind load docker-image wamn-host:dev --name wamn
 # Provision a demo schema (wamn_runner_demo: run-state.sql + run-queue.sql rewritten,
 # a flows table + a sink table) via kubectl exec psql, register a fast-cron flow, then:
-kubectl -n wamn-system apply -f deploy/dispatcher-projects.example.yaml   # (pointed at the demo)
-kubectl -n wamn-system apply -f deploy/dispatcher.yaml
-kubectl -n wamn-system apply -f deploy/runner-db.example.yaml
-kubectl -n wamn-system apply -f deploy/runner.yaml
+kubectl -n wamn-system apply -f deploy/platform/dispatcher-projects.example.yaml   # (pointed at the demo)
+kubectl -n wamn-system apply -f deploy/platform/dispatcher.yaml
+kubectl -n wamn-system apply -f deploy/platform/runner-db.example.yaml
+kubectl -n wamn-system apply -f deploy/platform/runner.yaml
 kubectl -n wamn-system rollout status deploy/runner --timeout=120s
 # Assert a dispatcher-fired cron run was CLAIMED by the runner and driven end-to-end:
 #   SELECT status FROM wamn_runner_demo.runs WHERE run_id LIKE 'runner-demo:cron:%'  -> completed
@@ -961,7 +961,7 @@ kubectl -n wamn-system rollout status deploy/runner --timeout=120s
 
 ### [EXEC-LADDER.1/2/3] rungs 1-3: single-node, linear chain, conditional branch on the deployed runner (wamn-ojm.1/2/3)
 
-Docs: docs/exec-ladder.md · Fixtures: deploy/ladder/rung{1,2,3}.flow.json · Manifest: deploy/ladderproof-job.yaml
+Docs: docs/exec-ladder.md · Fixtures: deploy/gates/ladder/rung{1,2,3}.flow.json · Manifest: deploy/gates/ladderproof-job.yaml
 
 `ladderproof --rung <N>` seeds one manual run per case of that rung's flow and
 waits for the deployed runner to drive it. Rung 1 is `webhook-in -> respond`;
@@ -1000,11 +1000,11 @@ kill %1; docker rm -f wamn-ojm3-pg
 docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-gates:dev --name wamn
 # Provision the demo schema (sed 's/\bwamn_run\b/wamn_runner_demo/g' over
 # deploy/{run-state,run-queue,flows}.sql | kubectl exec psql) + register
-# deploy/ladder/rung{1,2,3}.flow.json active as tenant demo-tenant (superuser, RLS bypassed).
-kubectl -n wamn-system apply -f deploy/runner-db.example.yaml
-kubectl -n wamn-system apply -f deploy/runner.yaml
+# deploy/gates/ladder/rung{1,2,3}.flow.json active as tenant demo-tenant (superuser, RLS bypassed).
+kubectl -n wamn-system apply -f deploy/platform/runner-db.example.yaml
+kubectl -n wamn-system apply -f deploy/platform/runner.yaml
 kubectl -n wamn-system rollout status deploy/runner --timeout=120s
-kubectl -n wamn-system apply -f deploy/ladderproof-job.yaml   # --rung 3 (rung-2/1 regressions: edit --rung to 2 / 1)
+kubectl -n wamn-system apply -f deploy/gates/ladderproof-job.yaml   # --rung 3 (rung-2/1 regressions: edit --rung to 2 / 1)
 kubectl -n wamn-system wait --for=condition=complete job/ladderproof --timeout=120s
 kubectl -n wamn-system logs job/ladderproof   # -> overall PASS: true
 ```
@@ -1038,7 +1038,7 @@ docker stop wamn-rq-pg wamn-rq-nats
 # The production service is `wamn-host dispatch --projects-file <json>` (one entry
 # In-cluster gate of record (co-located with postgres,
 # HOST change => full docker rebuild (both --target stages + kind load BOTH images):
-kubectl -n wamn-system apply -f deploy/dispatchbench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/dispatchbench-job.yaml
 kubectl -n wamn-system logs -f job/dispatchbench
 ```
 
@@ -1056,7 +1056,7 @@ cargo clippy -p wamn-registry --all-targets && cargo fmt -p wamn-registry --chec
 Docs: docs/system-cluster.md
 
 ```bash
-kubectl apply -f deploy/wamn-sysdb.yaml
+kubectl apply -f deploy/platform/wamn-sysdb.yaml
 kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=3 \
   cluster/wamn-sysdb --timeout=300s
 # Verify (gate of record — HA + distinct plane + bootstrap + no cpu limit):
@@ -1094,7 +1094,7 @@ docker stop wamn-reg-pg
 # IN-CLUSTER gate of record — apply system-schema.sql INTO wamn-sysdb's (wamn-q3n.2)
 # wamn_system DB (empty of rows — a DROP+re-apply is safe pre-production only):
 { echo "DROP SCHEMA IF EXISTS registry, provisioning CASCADE; SET ROLE wamn_system;"; \
-  cat deploy/system-schema.sql; } | kubectl -n wamn-system exec -i wamn-sysdb-1 \
+  cat deploy/sql/system-schema.sql; } | kubectl -n wamn-system exec -i wamn-sysdb-1 \
   -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 -f -
 kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
   -tAc "SELECT schemaname||'.'||tablename FROM pg_tables \
@@ -1264,7 +1264,7 @@ WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5462/wamn cargo test
 docker stop wamn-dump-pg
 # IN-CLUSTER gate of record (the .6/.7/.9 precedent; T3 pool wamn-pg + T1 wamn-sysdb
 # (writing the T1 registry's OWN DB IS .10's job; NEVER touch wamn-pg/postgres.yaml):
-awk '/^CREATE TABLE provisioning\.dumps/{f=1} f{print} f&&/^\);/{exit}' deploy/system-schema.sql \
+awk '/^CREATE TABLE provisioning\.dumps/{f=1} f{print} f&&/^\);/{exit}' deploy/sql/system-schema.sql \
   | { echo "SET ROLE wamn_system;"; cat; } | kubectl -n wamn-system exec -i wamn-sysdb-1 \
   -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 -f -
 # it, then dump+restore. PICK CLEAN unused ports (check `ss -ltn | grep 547`):
@@ -1438,7 +1438,7 @@ docker stop wamn-8df4-pg
 # refusal), M5 validate env check any-org (org-scoping unit).
 # IN-CLUSTER gate of record: re-apply system-schema.sql into wamn-sysdb (the
 # [D6/wamn-q3n.3] block — org-scoped env_policies, NO seed), rebuild + kind-load
-# wamn-gates, run deploy/provisionbench-job.yaml, then a live TEMPLATE-STAMPED
+# wamn-gates, run deploy/gates/provisionbench-job.yaml, then a live TEMPLATE-STAMPED
 # standup: tpl1 (standard) + tpl2 (dedicated) coexisting — tpl1 canary derives
 # tpl1-prod while tpl2 renders/holds tpl2-canary. Teardown deletes ONLY the new
 # clusters/CRs/org rows (org DELETE cascades policies + project-envs).
@@ -1504,9 +1504,9 @@ cargo clippy -p wamn-provision -p wamn-host -p wamn-registry -p wamn-gates --all
 # precedent — the shared-cluster guardrail forbids re-applying wamn-pg/wamn-sysdb):
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.21.0/cert-manager.yaml
 kubectl -n cert-manager wait --for=condition=Available deploy --all --timeout=180s
-kubectl apply -f deploy/barman-cloud-plugin.yaml
+kubectl apply -f deploy/infra/barman-cloud-plugin.yaml
 kubectl -n cnpg-system rollout status deploy/barman-cloud --timeout=180s
-kubectl apply -f deploy/minio.yaml
+kubectl apply -f deploy/infra/minio.yaml
 kubectl -n wamn-system rollout status deploy/minio --timeout=150s
 kubectl -n wamn-system wait --for=condition=complete job/minio-init --timeout=120s
 # backup CRs, not the registry row), apply ObjectStore -> Clusters -> ScheduledBackup:
@@ -1604,7 +1604,7 @@ docker run -d --rm --name wamn-cat-pg -p 5452:5432 -e POSTGRES_PASSWORD=postgres
 docker exec -i wamn-cat-pg psql -U postgres -d wamn -c \
   "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
 docker exec -i wamn-cat-pg psql -v ON_ERROR_STOP=1 -U postgres -d wamn \
-  < deploy/catalog-schema.sql
+  < deploy/sql/catalog-schema.sql
 docker stop wamn-cat-pg
 ```
 
@@ -1660,7 +1660,7 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5455/wamn \
 docker stop wamn-api-pg
 # In-cluster gate of record (co-located with Postgres, no cpu limit — S2 lesson;
 # WAMN_PG_ADMIN_URL is the superuser used only to provision the ephemeral schema):
-kubectl -n wamn-system apply -f deploy/apibench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/apibench-job.yaml
 kubectl -n wamn-system logs -f job/apibench
 ```
 
@@ -1676,7 +1676,7 @@ docker build --target host -t wamn-host:dev . \
   && docker build --target gates -t wamn-gates:dev .   # cached; two tags, one build
 kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
 kind load docker-image registry:2 --name wamn
-kubectl -n wamn-system apply -f deploy/registry.yaml
+kubectl -n wamn-system apply -f deploy/platform/registry.yaml
 kubectl -n wamn-system rollout status deploy/registry --timeout=60s
 kubectl -n wamn-system port-forward svc/registry 5000:5000 &
 wash push localhost:5000/wamn/api-gateway:dev \
@@ -1684,16 +1684,16 @@ wash push localhost:5000/wamn/api-gateway:dev \
 # The host group gains --allow-insecure-registries + WAMN_PG_URL:
 helm upgrade --install -n wamn-system wamn \
   oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
-  -f deploy/values-wamn.yaml
+  -f deploy/infra/values-wamn.yaml
 kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
 # Provision the project schema/floor + seed + publish the snapshot:
 kubectl -n wamn-system create configmap proof-catalog \
-  --from-file=proof-catalog.json=deploy/proof-catalog.json
-kubectl -n wamn-system apply -f deploy/publish-catalog-job.yaml
+  --from-file=proof-catalog.json=deploy/poc/proof-catalog.json
+kubectl -n wamn-system apply -f deploy/gates/publish-catalog-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/publish-catalog --timeout=120s
 # Deploy the gateway workload, then prove it serves over the network:
-kubectl -n wamn-system apply -f deploy/api-gateway-workload.yaml
-kubectl -n wamn-system apply -f deploy/apiproof-job.yaml
+kubectl -n wamn-system apply -f deploy/platform/api-gateway-workload.yaml
+kubectl -n wamn-system apply -f deploy/gates/apiproof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
 kubectl -n wamn-system logs job/apiproof
 ```
@@ -1728,7 +1728,7 @@ cargo test -p wamn-gates    # f1fixture coherence (burst = 20 receipts / 3 out-o
 # cross-check incl expand=line). Local iteration (throwaway PG; superuser
 # provisions the ephemeral schema):
 docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
-  -v "$PWD/deploy/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
+  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
 REL=components/target/wasm32-wasip2/release
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
   ./target/release/wamn-gates --log-level error f1bench \
@@ -1736,19 +1736,19 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
 # In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS
 # lesson; ephemeral schema => shared-PG safe; bench Jobs run SEQUENTIALLY):
-kubectl -n wamn-system apply -f deploy/f1bench-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/f1bench-job.yaml
 kubectl -n wamn-system logs -f job/f1bench
 # (sync + burst + DB audit + REST):
 wash push localhost:5000/wamn/poc-webhook-f1:dev \
   components/target/wasm32-wasip2/release/poc_webhook_f1.wasm --insecure
 kubectl -n wamn-system create configmap f1-fixtures \
   --from-file=poc-receiving.catalog.json=crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json \
-  --from-file=f1-flow.json=deploy/f1-flow.json \
-  --from-file=f1-seed.dataset.json=deploy/f1-seed.dataset.json
-kubectl -n wamn-system apply -f deploy/f1-provision-job.yaml
+  --from-file=f1-flow.json=deploy/poc/f1-flow.json \
+  --from-file=f1-seed.dataset.json=deploy/poc/f1-seed.dataset.json
+kubectl -n wamn-system apply -f deploy/poc/f1-provision-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/f1-provision --timeout=120s
-kubectl -n wamn-system apply -f deploy/f1-workloads.yaml
-kubectl -n wamn-system apply -f deploy/f1proof-job.yaml
+kubectl -n wamn-system apply -f deploy/poc/f1-workloads.yaml
+kubectl -n wamn-system apply -f deploy/gates/f1proof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/f1proof --timeout=180s
 kubectl -n wamn-system logs job/f1proof
 

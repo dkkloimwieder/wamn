@@ -8,15 +8,15 @@ rationale is `docs/postgres-topology.md` §T1 (the source of truth).
 
 - **Issue:** `wamn-q3n.2` `[D6/E1]` (epic `wamn-q3n`, foundation). **Gates**
   `wamn-q3n.3` (system-DB registry schema + the four testable invariants).
-- **Manifest:** `deploy/wamn-sysdb.yaml` — a CNPG `Cluster` (operator 1.29.2,
-  `deploy/cnpg-operator.yaml`). This is **infra**, not a crate: there is no
+- **Manifest:** `deploy/platform/wamn-sysdb.yaml` — a CNPG `Cluster` (operator 1.29.2,
+  `deploy/infra/cnpg-operator.yaml`). This is **infra**, not a crate: there is no
   cargo gate; verification is the live in-cluster standup below.
 - **Substrate:** D6 — CloudNativePG in-cluster (`wamn-dxi`).
 
 ## What it is
 
 Exactly **one T1 cluster per platform environment** (platform dev / staging /
-prod each get their own; `deploy/wamn-sysdb.yaml` is the kind/dev instance). It
+prod each get their own; `deploy/platform/wamn-sysdb.yaml` is the kind/dev instance). It
 is provisioned by Epic-1 Helm/IaC — `kubectl apply` of a `Cluster` CR — because
 **it cannot be provisioned by the provisioner it backs** (`wamn-host
 provision-project` reads the registry that lives here).
@@ -32,8 +32,8 @@ provision-project` reads the registry that lives here).
 
 ## Distinct plane — two clusters, always
 
-T1 stands up **alongside** the T3 trials pool (`deploy/cnpg-cluster.yaml`
-`wamn-pg`) and the legacy S2–S6 gate pod (`deploy/postgres.yaml`) — never
+T1 stands up **alongside** the T3 trials pool (`deploy/infra/cnpg-cluster.yaml`
+`wamn-pg`) and the legacy S2–S6 gate pod (`deploy/platform/postgres.yaml`) — never
 replacing them. They are different planes (control-plane state vs. real tenant
 data) with different blast radii, backup postures, and security profiles. The
 deployment is **additive**; the shared-cluster guardrail means `wamn-pg` and
@@ -58,10 +58,10 @@ empty bootstrapped system DB."
 
 ## Standing it up (the gate of record)
 
-Needs the kind `wamn` cluster + the CNPG operator (`deploy/cnpg-operator.yaml`).
+Needs the kind `wamn` cluster + the CNPG operator (`deploy/infra/cnpg-operator.yaml`).
 
 ```bash
-kubectl apply -f deploy/wamn-sysdb.yaml
+kubectl apply -f deploy/platform/wamn-sysdb.yaml
 kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=3 \
   cluster/wamn-sysdb --timeout=300s
 ```
@@ -87,11 +87,11 @@ replication for registry/saga durability — a platform-env knob, not part of
 ## Scope — what `.2` is *not*
 
 - **`.3`** (**shipped**) — the system-DB registry **tables/DDL**
-  (`deploy/system-schema.sql`, from the `wamn-q3n.1` `wamn-registry` model) applied
+  (`deploy/sql/system-schema.sql`, from the `wamn-q3n.1` `wamn-registry` model) applied
   into this DB as the `wamn_system` owner, plus the four testable invariants
   (references-only / no tenant data / request-path-free / dev ≠ prod recovery
   domain) and a minimal provisioning-saga table. `.2` shipped an *empty* system
-  DB, the way `deploy/catalog-schema.sql` followed `wamn-catalog`;
+  DB, the way `deploy/sql/catalog-schema.sql` followed `wamn-catalog`;
   `docs/registry-model.md` §Storage schema documents what `.3` fills it with.
 - **`.4`** — the fuller platform-plan amendment.
 - **`.5`** — amend `wamn-schema` (3.4) `Environment` for the triple + `canary`.
@@ -103,5 +103,5 @@ replication for registry/saga durability — a platform-env knob, not part of
 - Design: `docs/postgres-topology.md` (§T1, §"The four tiers").
 - The registry model this cluster will hold: `docs/registry-model.md`
   (`crates/wamn-registry`, `wamn-q3n.1`).
-- The T3 pool it stands beside: `deploy/cnpg-cluster.yaml`,
+- The T3 pool it stands beside: `deploy/infra/cnpg-cluster.yaml`,
   `docs/provisioning.md`.

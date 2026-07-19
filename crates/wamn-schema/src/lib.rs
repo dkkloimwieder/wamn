@@ -35,7 +35,7 @@
 //! engine (2.5), which wraps a [`PromotionPlan`]'s [`MigrationPlan`]. The real
 //! backup / PITR mechanism is hosting (2.3 / 10.3); the draft-editing designer UI
 //! and the staging screen are 3.3; per-role RLS is 3.5. Version *storage* lives
-//! in `deploy/catalog-schema.sql` (the `state` / `environment` / `base_version`
+//! in `deploy/sql/catalog-schema.sql` (the `state` / `environment` / `base_version`
 //! columns + the single-applied partial-unique index) — this crate is the
 //! in-memory model that storage persists.
 //!

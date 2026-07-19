@@ -13,7 +13,7 @@
 //! `(rows, now, config)` with `now` a passed-in [`Millis`]; the SQL is emitted as
 //! parameterized `String`s. The driver (`crates/wamn-host` `queuebench` / the
 //! dispatcher) supplies the `wamn:postgres` effects against the schema in
-//! `deploy/run-queue.sql`, the NATS-core doorbell, the real clock, and the replica
+//! `deploy/sql/run-queue.sql`, the NATS-core doorbell, the real clock, and the replica
 //! identity.
 //!
 //! ```
@@ -30,7 +30,7 @@
 //! ```
 //!
 //! ## Scope (5.14) vs siblings
-//! Owns: the `run_queue` + `outbox` tables + DDL (`deploy/run-queue.sql`), the
+//! Owns: the `run_queue` + `outbox` tables + DDL (`deploy/sql/run-queue.sql`), the
 //! `SKIP LOCKED` claim + batch claims, the D15 write-ahead / reduced-audit fast
 //! path, run-claim leases + reclaim, the janitor (orphan →
 //! `infrastructure-failure`), the reconciliation cadence, **per-partition

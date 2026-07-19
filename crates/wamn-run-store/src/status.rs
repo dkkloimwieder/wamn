@@ -1,7 +1,7 @@
 //! The persisted status/kind vocabularies — the storage-literal side of the
 //! engine's execution taxonomy. Each maps 1:1 to a `text` column value via
 //! `as_sql`/`from_sql` (the SQL literals are exactly the serde kebab-case names,
-//! tied to `deploy/run-state.sql` by a drift-guard test). `From<…>` conversions
+//! tied to `deploy/sql/run-state.sql` by a drift-guard test). `From<…>` conversions
 //! adapt the pure-engine enums (`wamn_runner::{RunStatus, FailKind, NodeError}`)
 //! into their persisted form, the way `wamn_api::SqlValue` mirrors the WIT.
 

@@ -1,10 +1,10 @@
 # [9.1] Trace sink: single-binary Grafana Tempo (all-in-one, local storage).
-# The OTel Collector (deploy/otel-collector.yaml) forwards the host's OTLP-gRPC
+# The OTel Collector (deploy/infra/otel-collector.yaml) forwards the host's OTLP-gRPC
 # spans here over the `otlp/tempo` exporter; Tempo's distributor receives them
 # on :4317. The query API (TraceQL `/api/search`, `/api/traces/<id>`) is on
 # :3200 — tracebench asserts against it (the S5 logbench→Loki analog). D13 store.
 #
-#   kubectl -n wamn-system apply -f deploy/tempo.yaml
+#   kubectl -n wamn-system apply -f deploy/infra/tempo.yaml
 #   kubectl -n wamn-system rollout status deploy/tempo --timeout=120s
 apiVersion: v1
 kind: ConfigMap

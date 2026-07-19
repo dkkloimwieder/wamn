@@ -1,10 +1,10 @@
 # EVT-C7 ceiling campaign (wamn-z7b.1): the queuebench ceiling MODE — a long
 # measurement run (knee ramps on the combined + split lifecycle paths, a
 # sustained soak at 80% of knee with a bloat probe, a 10× burst/recovery
-# profile), NOT the 5.14 regression gate (that stays deploy/queuebench-job.yaml
+# profile), NOT the 5.14 regression gate (that stays deploy/gates/queuebench-job.yaml
 # --mode all, which deliberately excludes ceiling).
 #
-#   kubectl -n wamn-system apply -f deploy/queuebench-ceiling-job.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/queuebench-ceiling-job.yaml
 #   kubectl -n wamn-system logs -f job/queuebench-ceiling
 #
 # The curves land in the logs as `=== BEGIN CSV <name> ===` blocks; extract

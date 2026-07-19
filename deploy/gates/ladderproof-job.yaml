@@ -1,6 +1,6 @@
 # Exec-ladder (wamn-ojm) — the DEPLOYED-runner conformance gate of record.
 # Seeds ONE manual run into the demo schema and waits for the deployed
-# `run-worker` service (deploy/runner.yaml) to claim + drive it, then asserts the
+# `run-worker` service (deploy/platform/runner.yaml) to claim + drive it, then asserts the
 # run completed correctly (result + per-node execution trace). A pure client — it
 # proves the deployed runner executes a flow correctly, OUTSIDE a bench harness.
 #
@@ -13,9 +13,9 @@
 #   # 1. provision the demo schema (run-state + run-queue + flows), additive:
 #   #    sed 's/\bwamn_run\b/wamn_runner_demo/g' over deploy/{run-state,run-queue,flows}.sql
 #   #    | kubectl -n wamn-system exec -i <postgres-pod> -- psql -U postgres -d wamn
-#   # 2. register deploy/ladder/rung1.flow.json + rung2.flow.json + rung3.flow.json active (tenant demo-tenant)
-#   # 3. kubectl -n wamn-system apply -f deploy/runner-db.example.yaml -f deploy/runner.yaml
-#   kubectl -n wamn-system apply -f deploy/ladderproof-job.yaml
+#   # 2. register deploy/gates/ladder/rung1.flow.json + rung2.flow.json + rung3.flow.json active (tenant demo-tenant)
+#   # 3. kubectl -n wamn-system apply -f deploy/platform/runner-db.example.yaml -f deploy/platform/runner.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/ladderproof-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/ladderproof --timeout=120s
 #   kubectl -n wamn-system logs job/ladderproof
 apiVersion: batch/v1

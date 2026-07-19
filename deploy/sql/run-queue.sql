@@ -7,9 +7,9 @@
 -- lives in crates/wamn-run-queue (pure); this file is the shape it reads and the
 -- driver (crates/wamn-host queuebench / the dispatcher) writes.
 --
--- STANDALONE ARTIFACT, ADDITIVE to deploy/run-state.sql: same convention as
+-- STANDALONE ARTIFACT, ADDITIVE to deploy/sql/run-state.sql: same convention as
 -- run-state.sql / catalog-schema.sql — deliberately NOT included by
--- deploy/postgres-init.sql. Assumes deploy/run-state.sql has been applied first
+-- deploy/sql/postgres-init.sql. Assumes deploy/sql/run-state.sql has been applied first
 -- (schema `wamn_run` + the `runs` table this FKs, and the `wamn_app` role). The
 -- queuebench gate provisions an ephemeral schema clone of `runs` + `run_queue`
 -- (crates/wamn-host/src/queuebench.rs) rather than touching this production schema.

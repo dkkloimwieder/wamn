@@ -47,9 +47,9 @@ use wamn_registry::{Org, OrgEnvPolicy, Template, Triple};
 
 /// The canonical T1 registry DDL (registry + provisioning schemas). Applied into
 /// an ephemeral schema on the throwaway/pool PG for the tier modes' registry +
-/// saga assertions — the standalone `deploy/system-schema.sql`, embedded so the
+/// saga assertions — the standalone `deploy/sql/system-schema.sql`, embedded so the
 /// gate writes into the SAME shape the T1 wamn_system DB carries.
-const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/system-schema.sql");
+const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 
 #[derive(Debug, Args)]
 pub struct ProvisionBenchArgs {

@@ -4,7 +4,7 @@
 # otlphttp. Its own telemetry (otelcol_exporter_sent_log_records, …) is exposed
 # on :8888 for the logbench loss cross-check.
 #
-#   kubectl -n wamn-system apply -f deploy/otel-collector.yaml
+#   kubectl -n wamn-system apply -f deploy/infra/otel-collector.yaml
 #   kubectl -n wamn-system rollout status deploy/otel-collector --timeout=120s
 apiVersion: v1
 kind: ConfigMap
@@ -34,7 +34,7 @@ data:
           queue_size: 10000
         retry_on_failure:
           enabled: true
-      # [9.1] traces → Tempo's OTLP-gRPC distributor (deploy/tempo.yaml).
+      # [9.1] traces → Tempo's OTLP-gRPC distributor (deploy/infra/tempo.yaml).
       otlp/tempo:
         endpoint: tempo:4317
         tls:

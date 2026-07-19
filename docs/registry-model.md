@@ -195,7 +195,7 @@ and referential integrity are the load-bearing behaviors; each is mutation-teste
 `from_json` path a direct control-plane writer takes. As a defense-in-depth
 **backstop** for a writer that skips *both* `provision-org` **and**
 `Registry::validate()` — a malformed id otherwise flows straight into K8s object
-names and WAL paths — the stored slug/name columns in `deploy/system-schema.sql`
+names and WAL paths — the stored slug/name columns in `deploy/sql/system-schema.sql`
 also carry a charset/length `CHECK` mirroring it (`orgs_id_charset_check` /
 `orgs_pool_cluster_charset_check` / `projects_id_charset_check` /
 `env_policies_name_charset_check`, cjv.20; the two id columns include the
@@ -205,10 +205,10 @@ Result<(), Issue>` exposes the org-id discipline standalone, for a caller
 
 ## Storage schema (wamn-q3n.3)
 
-`deploy/system-schema.sql` persists the model as tables in the **T1 system DB**
+`deploy/sql/system-schema.sql` persists the model as tables in the **T1 system DB**
 (`wamn_system`, on the cluster `wamn-q3n.2` bootstraps) — the way
-`deploy/catalog-schema.sql` follows `wamn-catalog`. It is a **standalone
-artifact**, deliberately *not* wired into `deploy/postgres-init.sql` (which builds
+`deploy/sql/catalog-schema.sql` follows `wamn-catalog`. It is a **standalone
+artifact**, deliberately *not* wired into `deploy/sql/postgres-init.sql` (which builds
 the S2–S6 *tenant-data* fixtures — a different plane entirely).
 
 The sharpest difference from `catalog-schema.sql`: the system DB is
@@ -280,7 +280,7 @@ column — each killed).
 `.1` is the **model only**. Deliberately deferred to its own epic children:
 
 - **`.3`** — the live system-DB tables on the T1 cluster and the four testable
-  invariants (DDL + storage), the way `deploy/catalog-schema.sql` followed
+  invariants (DDL + storage), the way `deploy/sql/catalog-schema.sql` followed
   `wamn-catalog`. **Shipped** — see §Storage schema above (`.3` also folds in a
   minimal provisioning-saga table, its one deliberate step past this model).
 - **`.5`** — amend `wamn-schema` (3.4) `Environment` for the full triple + the

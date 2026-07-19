@@ -1,5 +1,5 @@
 //! wamn-run-queue (5.14) tests: the pure claim/lease/janitor/reconcile decisions,
-//! the SQL builders' shape, the `deploy/run-queue.sql` drift guard, and an
+//! the SQL builders' shape, the `deploy/sql/run-queue.sql` drift guard, and an
 //! optional live-apply gate (the SKIP-LOCKED claim predicate, lease-expiry
 //! reclaim, janitor sweep, RLS isolation, and FK cascade on a real Postgres).
 
@@ -1280,9 +1280,9 @@ fn outbox_prune_is_batch_bounded_and_scoped_to_the_outbox() {
 fn outbox_ddl_matches_the_model() {
     let sql = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../deploy/run-queue.sql"
+        "/../../deploy/sql/run-queue.sql"
     ))
-    .expect("read deploy/run-queue.sql");
+    .expect("read deploy/sql/run-queue.sql");
 
     assert!(sql.contains("CREATE TABLE wamn_run.outbox"));
     for col in [
@@ -1338,15 +1338,15 @@ fn queue_entry_round_trips_as_kebab_json() {
     assert!(!rj.contains("partition-key"));
 }
 
-// ---- deploy/run-queue.sql drift guard --------------------------------------
+// ---- deploy/sql/run-queue.sql drift guard --------------------------------------
 
 #[test]
 fn run_queue_sql_matches_the_model() {
     let sql = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../deploy/run-queue.sql"
+        "/../../deploy/sql/run-queue.sql"
     ))
-    .expect("read deploy/run-queue.sql");
+    .expect("read deploy/sql/run-queue.sql");
 
     // The queue table + its tenant floor + the FK into the 5.7 run state.
     assert!(sql.contains("CREATE TABLE wamn_run.run_queue"));
@@ -1396,7 +1396,7 @@ fn run_queue_sql_matches_the_model() {
 
 // ---- live-apply gate (optional) --------------------------------------------
 
-/// Apply `deploy/run-state.sql` + `deploy/run-queue.sql` to a throwaway Postgres
+/// Apply `deploy/sql/run-state.sql` + `deploy/sql/run-queue.sql` to a throwaway Postgres
 /// and assert the queue's real behaviour: the `SKIP LOCKED` claim predicate
 /// (Ready claimed, Parked/Leased skipped), lease-expiry reclaim, the janitor sweep
 /// (orphan → `infrastructure-failure` + dequeued), tenant RLS isolation, the
@@ -1417,13 +1417,13 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     };
 
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let run_state = std::fs::read_to_string(format!("{root}/deploy/run-state.sql"))
-        .expect("read deploy/run-state.sql");
-    let run_queue = std::fs::read_to_string(format!("{root}/deploy/run-queue.sql"))
-        .expect("read deploy/run-queue.sql");
+    let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
+        .expect("read deploy/sql/run-state.sql");
+    let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
+        .expect("read deploy/sql/run-queue.sql");
     // The flow registry: claim_dispatch_sql's active-version probe joins it.
     let flows_ddl =
-        std::fs::read_to_string(format!("{root}/deploy/flows.sql")).expect("read deploy/flows.sql");
+        std::fs::read_to_string(format!("{root}/deploy/sql/flows.sql")).expect("read deploy/sql/flows.sql");
 
     // Exercise the REAL builders (not hand-copied SQL) via PREPARE/EXECUTE, so a
     // bug in claim_batch_sql / janitor_sweep_sql / the partition builders is caught here.

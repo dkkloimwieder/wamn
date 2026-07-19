@@ -3,7 +3,7 @@
 //! the run-history read model, and the input reconstruction/partial-re-run read
 //! from. The full DB rows carry additional reserved columns (the 5.10/9.6 seams
 //! and the DB-managed timestamps); [`NodeRunRecord`] is the reconstruction view
-//! of a node-run, not every column of `deploy/run-state.sql`.
+//! of a node-run, not every column of `deploy/sql/run-state.sql`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

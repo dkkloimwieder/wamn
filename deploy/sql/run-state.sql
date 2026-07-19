@@ -7,8 +7,8 @@
 -- these tables are the shape it reads and the driver (components/flowrunner)
 -- writes.
 --
--- STANDALONE ARTIFACT: deliberately NOT included by deploy/postgres-init.sql, the
--- same convention as deploy/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 gate
+-- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql, the
+-- same convention as deploy/sql/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 gate
 -- fixtures carry their own `runs`/`node_runs` copies (postgres-init.sql schema
 -- `s3`, and the testhostbench ephemeral clone) so the flowbench/testhostbench
 -- gates exercise the rewired runner; this file is the production schema and the

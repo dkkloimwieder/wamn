@@ -142,7 +142,7 @@ mechanical row changes ride one pipeline, distinguished by subject.
   NATS** (JetStream, R3 file; control-plane NATS untouched). `EVT_trials`
   shared, subject-isolated. Per-org accounts. Retention = replay horizon =
   billable tier knob. *Cluster stood up 2026-07-18 (wamn-l5i9.7): 3-node
-  JetStream, R3 file storage (deploy/nats-jetstream.yaml, Service `evt-nats`,
+  JetStream, R3 file storage (deploy/infra/nats-jetstream.yaml, Service `evt-nats`,
   distinct from the untouched control-plane NATS); the `streambench` gate proves
   publish / consume-in-commit-order / `Nats-Msg-Id` dedupe / R3-survives-node-loss
   on the single shared account — per-org accounts are the wamn-4xw seam.*
@@ -217,7 +217,7 @@ path; posture rows (reader exception, replication-credential tier).
 Provisioning (publication/slot/registry); reader MVP (one project-env → real
 `EVT_` stream); OID→entity mapping incl. rename drill; causation message in the
 plugin + reader stitching; claim-check path.
-*Data-plane NATS shipped (wamn-l5i9.7, 2026-07-18): deploy/nats-jetstream.yaml
+*Data-plane NATS shipped (wamn-l5i9.7, 2026-07-18): deploy/infra/nats-jetstream.yaml
 (3-node R3 JetStream), `streambench` in-cluster gate of record — the substrate
 the reader (l5i9.10) publishes onto and C-JS (l5i9.15) benches; left standing.*
 *Capture provisioning shipped (wamn-l5i9.9, 2026-07-18): the

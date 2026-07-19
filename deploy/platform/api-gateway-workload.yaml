@@ -6,13 +6,13 @@
 # in-process). One gateway instance per project.
 #
 # Prereqs (see docs/api-gateway.md § serving):
-#   1. deploy/registry.yaml applied + api_gateway.wasm pushed to it.
+#   1. deploy/platform/registry.yaml applied + api_gateway.wasm pushed to it.
 #   2. The host group deployed with --allow-insecure-registries + WAMN_PG_URL
-#      (deploy/values-wamn.yaml).
+#      (deploy/infra/values-wamn.yaml).
 #   3. The project's schema provisioned + snapshot published
-#      (deploy/publish-catalog-job.yaml).
+#      (deploy/gates/publish-catalog-job.yaml).
 #
-#   kubectl -n wamn-system apply -f deploy/api-gateway-workload.yaml
+#   kubectl -n wamn-system apply -f deploy/platform/api-gateway-workload.yaml
 #   kubectl -n wamn-system get workloaddeployment api-gateway
 #
 # The claims below are host-injected and non-spoofable (the postgres plugin

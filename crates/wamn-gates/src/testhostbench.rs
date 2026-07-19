@@ -116,7 +116,7 @@ const BENCH_ID: &str = "testhost-bench";
 /// Tenant claim injected for both stores (kept distinct from flowbench's
 /// `flow-tenant` so S6 rows in the shared `s3` schema stay RLS-isolated).
 const TENANT: &str = "s6-tenant";
-/// Shared production fixture schema (already in deploy/postgres-init.sql).
+/// Shared production fixture schema (already in deploy/sql/postgres-init.sql).
 const PROD_SCHEMA: &str = "s3";
 /// Per-run ephemeral schema the test host provisions from the template DDL.
 const EPH_SCHEMA: &str = "s6_test";
@@ -411,7 +411,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 // ---------------------------------------------------------------------------
 
 /// The template DDL for the flow tables, cloned into `schema`. Mirrors the s3
-/// fixture (deploy/postgres-init.sql): flows / flow_runs / sink plus the 5.7
+/// fixture (deploy/sql/postgres-init.sql): flows / flow_runs / sink plus the 5.7
 /// run-state tables (runs / node_runs — the runner's branch-aware reconstruction
 /// source), same columns, idempotency keys, and RLS shape, so the ephemeral
 /// schema is a faithful stand-in. (`flow_runs` is retained but unused: the runner

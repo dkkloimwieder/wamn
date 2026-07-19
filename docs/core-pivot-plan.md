@@ -23,7 +23,7 @@ demonstrated by a graduated ladder of live POC flows.
 Keystone first — nothing runs live until it exists:
 
 - ~~**`wamn-fqg.8` [P1]** — deploy the live runner~~ **DONE 2026-07-16** (`c40ffef`) — the
-  dispatcher → queue → runner chain runs as a live service (`run-worker` + `deploy/runner.yaml`).
+  dispatcher → queue → runner chain runs as a live service (`run-worker` + `deploy/platform/runner.yaml`).
 
 Then climb (`wamn-ojm` epic — **auxiliary, capability-gated**; each rung a small *deployed*
 flow + execution gate):
@@ -109,7 +109,7 @@ modes). **No new work lands on the outbox path**; deletion executes at
   resume, and epic Phase 1 is unblocked (~~`l5i9.8` vendor/fork~~ done
   2026-07-18 — fork branch `wamn/0.8.0` pinned, ledger
   `docs/pg-walstream-fork.md`; ~~`l5i9.7` EVT-NATS~~ done 2026-07-18 — the
-  data-plane NATS is stood up (3-node R3 JetStream, `deploy/nats-jetstream.yaml`,
+  data-plane NATS is stood up (3-node R3 JetStream, `deploy/infra/nats-jetstream.yaml`,
   streambench gate) and left standing; unblocks `l5i9.15` [C-JS];
   ~~`l5i9.9` EVT-PROVISION~~ **done 2026-07-18** — the `enable-cdc-project-env`
   overlay: publication + failover slot + replication role/Secret (R8b tier) +
@@ -118,7 +118,7 @@ modes). **No new work lands on the outbox path**; deletion executes at
   logical-decoding knobs are a filed sibling bead;
   ~~`l5i9.10` EVT-READER~~ **done 2026-07-19** — the reader MVP:
   `wamn-host event-reader` (one project-env, replicas=1;
-  `deploy/event-reader.example.yaml`) + the `wamn-event-wire` draft contract;
+  `deploy/platform/event-reader.example.yaml`) + the `wamn-event-wire` draft contract;
   commit-order envelopes onto the R3 `EVT_` stream, LSN advance only on ack
   (JetStream down = delayed-never-lost, proven), missing/invalidated slot =
   the §11 incident; gated live local + in-cluster (readerbench;

@@ -1,7 +1,7 @@
 //! Pure `$n`-parameterized SQL builders for the lifecycle + history writes the
 //! engine composes with the wamn-ddl DDL (SR3: text builders; the driver holds
 //! the connection and executes). Identifiers are pinned — the fixed `catalog`
-//! metadata schema (`deploy/catalog-schema.sql`) — and values are always `$n`.
+//! metadata schema (`deploy/sql/catalog-schema.sql`) — and values are always `$n`.
 //!
 //! The lifecycle state literals (`applied` / `superseded`) come from
 //! [`wamn_schema::State`], the single source they share with the

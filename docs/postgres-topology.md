@@ -83,7 +83,7 @@ created, project promoted, env provisioned).
 (GitOps-idiomatic) is a later ergonomics option; saga state, RBAC, quotas, and
 billing don't fit etcd regardless, so this cluster exists either way.
 
-*Shipped (`wamn-q3n.2`):* the T1 cluster itself — `deploy/wamn-sysdb.yaml`, a 3-
+*Shipped (`wamn-q3n.2`):* the T1 cluster itself — `deploy/platform/wamn-sysdb.yaml`, a 3-
 instance HA CNPG `Cluster` bootstrapping an empty `wamn_system` DB, standing up
 alongside the T3 pool. `docs/system-cluster.md`. The registry tables + the four
 testable invariants (references-only / no tenant data / request-path-free / dev
@@ -120,7 +120,7 @@ restore in this tier is the v1 scratch-cluster runbook (below) or the nightly
 logical dump — acceptable for trial data. **Conversion = promotion** to a T2
 pair via the seam (§Reversibility).
 
-*Shipped (`wamn-q3n.9`):* the shipped shared cluster (`deploy/cnpg-cluster.yaml`
+*Shipped (`wamn-q3n.9`):* the shipped shared cluster (`deploy/infra/cnpg-cluster.yaml`
 `wamn-pg`) is reframed as this T3 pool (header + `wamn.tier=trials` /
 `component=trials-pool` labels; the live cluster is untouched — the file is
 doc-of-intent) and made a first-class **placement target**: `provision-org
@@ -288,9 +288,9 @@ caveat** (below) applies to any physical restore, and immutability is delivered 
 append-only platform-audit export (8.6), not the tenant database.
 
 *Shipped (wamn-e1g):* the **WAL/PITR producer** — continuous WAL archiving + base
-backups to the shared object store (MinIO, `deploy/minio.yaml`; buckets
+backups to the shared object store (MinIO, `deploy/infra/minio.yaml`; buckets
 `wamn-backups` for WAL, `wamn-dumps` for logical dumps) via the CloudNativePG
-**Barman Cloud plugin** (`deploy/barman-cloud-plugin.yaml`, pinned v0.13.0 — it needs
+**Barman Cloud plugin** (`deploy/infra/barman-cloud-plugin.yaml`, pinned v0.13.0 — it needs
 its own operator Deployment in `cnpg-system` **and cert-manager** for
 plugin↔operator mTLS, both additive installs). `provision-org` renders, per
 **backup-enabled** cluster (`prod` always, a dedicated `canary` always, `dev` off —

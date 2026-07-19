@@ -6,7 +6,7 @@
 # assert the injected trace threaded the pod boundary. Runs the wamn-gates image
 # (SR1), like serve-node.
 #
-#   kubectl -n wamn-system apply -f deploy/serve-echo.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
 #   kubectl -n wamn-system rollout status deploy/serve-echo --timeout=120s
 apiVersion: apps/v1
 kind: Deployment

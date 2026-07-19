@@ -3,7 +3,7 @@
 //! single-applied, stale-base rebase guard) and promotion (first CREATE,
 //! additive, gated destructive, environment-aware incl. the same-application
 //! guard, promote being order-agnostic), plus the storage-literal drift guards
-//! tying State to deploy/catalog-schema.sql and asserting env is an open slug.
+//! tying State to deploy/sql/catalog-schema.sql and asserting env is an open slug.
 
 use std::path::{Path, PathBuf};
 
@@ -334,17 +334,17 @@ fn promote_is_order_agnostic() {
 // --- storage drift guard ---------------------------------------------------
 
 /// The `State` storage literals must match the `state` CHECK in
-/// deploy/catalog-schema.sql (the crate is the source of truth for the values).
+/// deploy/sql/catalog-schema.sql (the crate is the source of truth for the values).
 #[test]
 fn state_literals_match_catalog_schema_sql() {
     let sql = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/catalog-schema.sql"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/sql/catalog-schema.sql"),
     )
     .expect("read catalog-schema.sql");
     for s in State::ALL {
         assert!(
             sql.contains(&format!("'{}'", s.as_sql())),
-            "deploy/catalog-schema.sql is missing state literal {:?}",
+            "deploy/sql/catalog-schema.sql is missing state literal {:?}",
             s.as_sql()
         );
     }
@@ -359,7 +359,7 @@ fn state_literals_match_catalog_schema_sql() {
 #[test]
 fn environment_is_an_open_slug_in_catalog_schema_sql() {
     let sql = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/catalog-schema.sql"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/sql/catalog-schema.sql"),
     )
     .expect("read catalog-schema.sql");
     assert!(sql.contains("environment    text NOT NULL DEFAULT 'dev'"));

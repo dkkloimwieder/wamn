@@ -31,7 +31,7 @@ keep a versioned migration history, or roll back — that is the migration engin
 (2.5), which wraps a promotion's `MigrationPlan`. The real backup / PITR
 mechanism is hosting (2.3 / 10.3); the draft-editing designer UI and the staging
 screen are 3.3; per-role RLS is 3.5. Version *storage* lives in
-[`deploy/catalog-schema.sql`](../deploy/catalog-schema.sql); this crate is the
+[`deploy/sql/catalog-schema.sql`](../deploy/sql/catalog-schema.sql); this crate is the
 in-memory model that storage persists.
 
 ## Lifecycle
@@ -121,7 +121,7 @@ own beyond what `wamn-ddl` produces.
 
 ## Storage
 
-`deploy/catalog-schema.sql` persists the lifecycle on `catalog.catalogs`:
+`deploy/sql/catalog-schema.sql` persists the lifecycle on `catalog.catalogs`:
 
 - `state text` — the lifecycle state (`draft` / `staged` / `applied` /
   `superseded`), generalizing the earlier `active` boolean. Its values are
@@ -157,4 +157,4 @@ and rejects an out-of-set value.
 - Plan: `docs/platform-plan.md` §Epic 3 (3.4).
 - Catalog model (the promotion format): `docs/catalog-model.md`, `crates/wamn-catalog`.
 - DDL compiler (reused for the migration): `docs/ddl-compiler.md`, `crates/wamn-ddl`.
-- Storage: `deploy/catalog-schema.sql`.
+- Storage: `deploy/sql/catalog-schema.sql`.

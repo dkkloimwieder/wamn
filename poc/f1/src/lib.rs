@@ -15,7 +15,7 @@
 //! `postgres-query` node — the raw-SQL node lands with 5.3 under the D8
 //! decision (wamn-r13: flag-gated raw-SQL node, default OFF; decision table).
 //!
-//! See `docs/poc-f1.md`; the flow graph itself is `deploy/f1-flow.json`
+//! See `docs/poc-f1.md`; the flow graph itself is `deploy/poc/f1-flow.json`
 //! (drift-guarded by this crate's tests).
 
 mod decimal;
@@ -32,7 +32,7 @@ pub use shapes::{
 };
 
 /// Node types the F1 flow uses and the `poc-webhook-f1` component implements.
-/// `deploy/f1-flow.json` must reference only these (drift-guarded in tests).
+/// `deploy/poc/f1-flow.json` must reference only these (drift-guarded in tests).
 pub const NODE_TYPES: [&str; 5] = [
     "validate-receipt",
     "upsert-receipt",

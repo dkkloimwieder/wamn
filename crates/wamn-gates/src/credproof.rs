@@ -63,7 +63,7 @@ const DENY_FLOW_ID: &str = "egress-deny";
 const CREDENTIAL_NAME: &str = "notify-token";
 
 /// The demo secret the example runner Secret carries
-/// (deploy/runner-credentials.example.yaml) — distinctive enough that a
+/// (deploy/platform/runner-credentials.example.yaml) — distinctive enough that a
 /// substring scan over the recorded rows is a meaningful leak assert.
 pub const DEMO_SECRET: &str = "wamn-cred-proof-7f3a9b2e41d05c68";
 
@@ -500,7 +500,7 @@ mod tests {
     /// expects: `notify-token` -> the demo secret, under the default project.
     #[test]
     fn example_runner_secret_matches_the_demo_mapping() {
-        let manifest = include_str!("../../../deploy/runner-credentials.example.yaml");
+        let manifest = include_str!("../../../deploy/platform/runner-credentials.example.yaml");
         assert!(
             manifest.contains(CREDENTIAL_NAME),
             "credential name present"

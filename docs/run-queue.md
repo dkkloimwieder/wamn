@@ -18,7 +18,7 @@ deterministic run-id minting, the adaptive poll cadence — plus the parameteriz
 SQL builders — no DB, no NATS, no clock (`now` is a passed-in millis), unit-tested
 off-cluster — and the **driver** (`crates/wamn-gates` `queuebench`/`dispatchbench`,
 and the production `dispatch` service) supplies the `wamn:postgres` effects
-against the schema in [`deploy/run-queue.sql`](../deploy/run-queue.sql), the
+against the schema in [`deploy/sql/run-queue.sql`](../deploy/sql/run-queue.sql), the
 NATS-core doorbell, the real clock, and the replica identity.
 
 ## The table
@@ -335,7 +335,7 @@ deliberately deferred to wamn-dq5 [5.12], whose epoch-cancel machinery owns
 trap handling + re-instantiation.
 
 **Single-project** (one Deployment per project — the api-gateway analog,
-`deploy/runner.yaml`): one flowrunner instance whose plugin session carries this
+`deploy/platform/runner.yaml`): one flowrunner instance whose plugin session carries this
 project's identity. The lease **owner** is per-replica (the pod name via
 `WAMN_RUNNER` from the downward API), so `FOR UPDATE SKIP LOCKED` + attributable
 leases make replicas and scale-out safe, and a dead replica's lease ages out for
@@ -457,7 +457,7 @@ One sweep of one project:
    fires `insert|update|delete` events carrying the row as jsonb payload,
    inside the user's transaction; applications can also insert directly
    (`outbox_insert_sql`). The table lives in
-   [`deploy/run-queue.sql`](../deploy/run-queue.sql) beside `run_queue`.
+   [`deploy/sql/run-queue.sql`](../deploy/sql/run-queue.sql) beside `run_queue`.
    (`seq` is the poll's oldest-first order, not a
    cross-replica dispatch-order guarantee — per-key ordering is the 5.11
    `partition_key` seam.)
@@ -530,7 +530,7 @@ decay while every other project keeps its own cadence.
 
 Deployment shape: `wamn-host dispatch --projects-file <json>` (one entry per
 project: `url` + `tenant` + `schema` — the 2.2 projects-file pattern) or the
-single-project flags. The production manifest is `deploy/dispatcher.yaml`: a
+single-project flags. The production manifest is `deploy/platform/dispatcher.yaml`: a
 2-replica Deployment (no leader — replicas race and collapse on the write-ahead
 `ON CONFLICT`, the dispatchbench `race` gate; scale-out is safe by the same
 argument) + a PodDisruptionBudget, with the projects file mounted from the
@@ -538,9 +538,9 @@ argument) + a PodDisruptionBudget, with the projects file mounted from the
 `wasmcloud-runtime-tls` (the queuebench-job pattern; a publish-only NATS
 identity is a tracked follow-up — the runtime cert maps to an
 allow-all-subjects user). The Secret is deliberately a SEPARATE manifest
-(`deploy/dispatcher-projects.example.yaml`, demo values pointing at the
+(`deploy/platform/dispatcher-projects.example.yaml`, demo values pointing at the
 `wamn_dispatch_demo` schema — production run-state.sql + run-queue.sql objects
-plus the `flows` registry, whose production DDL is now `deploy/flows.sql`
+plus the `flows` registry, whose production DDL is now `deploy/sql/flows.sql`
 (POC-F1; applied per-project by `publish-catalog --runstate`), provisioned
 additively): re-applying the
 Deployment must not clobber customized project entries, and real per-project
@@ -553,7 +553,7 @@ bad Secret crashes inside its fatal-dial timeout and stalls the rollout
 instead of replacing healthy replicas. Cron anchor recovery at production
 `runs`-table scale is served by the partial index `runs_cron_anchor` on
 `runs (tenant_id, flow_id, run_id) WHERE trigger_source = 'cron'`
-(deploy/run-state.sql) — an index-only backward scan for `cron_last_run_sql`'s
+(deploy/sql/run-state.sql) — an index-only backward scan for `cron_last_run_sql`'s
 per-flow `max(run_id)` instead of a seq scan. Proven live in-cluster
 (2026-07-12): two replicas against the demo project minted 4 consecutive 20s
 cron ticks exactly once each, fired + acked the seeded outbox row with its
@@ -567,7 +567,7 @@ path, single-owner leases + reclaim, the janitor, the reconciliation cadence,
 **per-partition ownership** for `partitioned(key)`, **checkpoint/resume on
 replica loss**, the **shared trigger dispatcher** (cron + outbox + parked-wake, all
 above), the **guest-side queue claim** (`run-next`, above), and the **production
-runner** (`run-worker` + `deploy/runner.yaml`, fqg.8 — closes the live
+runner** (`run-worker` + `deploy/platform/runner.yaml`, fqg.8 — closes the live
 dispatcher → queue → runner chain), proven by `queuebench` + `failoverbench` +
 `dispatchbench` + `runnerbench`. It deliberately does **not** ship (tracked as
 follow-ups):
@@ -599,7 +599,7 @@ unchanged; `run-next` is the additive claim path.
   >2^53 ints and long decimals; ack planning incl. held rows; deterministic
   run-id minting + ordering; the adaptive interval), the
   SQL builders' `SKIP LOCKED`/tenant-scoping/`RunStatus` literals/`::text::jsonb`
-  binding, record JSON round-trip, and the `deploy/run-queue.sql` drift guards
+  binding, record JSON round-trip, and the `deploy/sql/run-queue.sql` drift guards
   (queue + partition + outbox) — all off-cluster.
 - **live-apply** (`WAMN_RUN_QUEUE_PG_URL`) — applies `run-state.sql` +
   `run-queue.sql` to a throwaway Postgres and asserts the SKIP LOCKED claim
@@ -649,7 +649,7 @@ unchanged; `run-next` is the additive claim path.
   batch 1/8/32, a sustained soak at 80% of knee with a bloat probe, and a 10×
   burst/recovery profile — curves + CSVs published to `docs/ceilings.md`, with
   only the exactly-once/completeness sanity asserts acting as pass/fail
-  (`deploy/queuebench-ceiling-job.yaml`).
+  (`deploy/gates/queuebench-ceiling-job.yaml`).
 - **`failoverbench`** — checkpoint/resume on replica loss, against a superuser-
   provisioned ephemeral schema that unions the flow tables with `run_queue`. The
   `failover` mode kills replica A mid-effect, lets its lease expire, reclaims the

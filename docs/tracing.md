@@ -49,11 +49,11 @@ the plan names and wires the sink:
    the cron and outbox (row-event) fire sites instrument their write-ahead under
    it.
 
-3. **Tempo sink + collector traces pipeline** — `deploy/tempo.yaml`
+3. **Tempo sink + collector traces pipeline** — `deploy/infra/tempo.yaml`
    (single-binary Tempo, OTLP-gRPC in on :4317, TraceQL query API on :3200) and
-   a `traces` pipeline in `deploy/otel-collector.yaml` (`otlp` receiver →
-   `otlp/tempo` exporter). Local variants: `deploy/tempo-local.yaml` +
-   `deploy/otelcol-local.yaml`.
+   a `traces` pipeline in `deploy/infra/otel-collector.yaml` (`otlp` receiver →
+   `otlp/tempo` exporter). Local variants: `deploy/infra/tempo-local.yaml` +
+   `deploy/infra/otelcol-local.yaml`.
 
 ### Enrichment sources
 
@@ -117,8 +117,8 @@ bare outbound call; it never sets a trace header, so a `traceparent` arriving at
 failure a mutation of the inject flips): the downstream received a `traceparent`
 at all; its **trace id equals the one we sent** (the trace threaded the
 boundary); and its **span id differs** (the host minted a child client span, not
-a blind copy). In-cluster gate of record: `deploy/serve-echo.yaml` +
-`deploy/trace-relay-workload.yaml` + `deploy/traceproof-job.yaml`.
+a blind copy). In-cluster gate of record: `deploy/gates/serve-echo.yaml` +
+`deploy/platform/trace-relay-workload.yaml` + `deploy/gates/traceproof-job.yaml`.
 
 ### Deferred
 
@@ -156,10 +156,10 @@ docker network create wamn-s5 2>/dev/null || true
 docker run -d --rm --name wamn-trace-pg --network wamn-s5 -p 5482:5432 \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
 docker run -d --name wamn-s5-tempo --network wamn-s5 -p 3200:3200 \
-  -v "$PWD/deploy/tempo-local.yaml:/etc/tempo/tempo.yaml:ro" \
+  -v "$PWD/deploy/infra/tempo-local.yaml:/etc/tempo/tempo.yaml:ro" \
   grafana/tempo:2.6.1 -config.file=/etc/tempo/tempo.yaml
 docker run -d --name wamn-s5-otelcol --network wamn-s5 -p 4317:4317 -p 8888:8888 \
-  -v "$PWD/deploy/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
+  -v "$PWD/deploy/infra/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
   otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
   OTEL_BSP_SCHEDULE_DELAY=1000 RUST_LOG=error \
@@ -170,7 +170,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 OTEL_EXPORTER_OTLP_PROTOCOL=gr
 ```
 
 `--log-level info` matters: the OTLP trace filter is level-tied and the spans are
-`INFO`. In-cluster gate of record: `deploy/tracebench-job.yaml` (against real
+`INFO`. In-cluster gate of record: `deploy/gates/tracebench-job.yaml` (against real
 Tempo + collector + Postgres; no CPU limit — the S2 lesson).
 
 Mutation-tested (`scratchpad/mutate_9.1.py`): the DB span's tenant, the trigger

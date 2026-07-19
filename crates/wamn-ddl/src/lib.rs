@@ -148,7 +148,7 @@ impl Migration {
     /// entity table, inserting the event row into `<options.schema>.outbox`
     /// inside the user's transaction. Opt-in and uniform — a separate plan the
     /// provisioning path composes with [`Migration::create`] for projects whose
-    /// database carries the run schema (deploy/run-state.sql + run-queue.sql);
+    /// database carries the run schema (deploy/sql/run-state.sql + run-queue.sql);
     /// deliberately not part of `create`/`migrate`, whose consumers' schemas
     /// have no outbox. All additive and idempotent (`CREATE OR REPLACE` +
     /// constant trigger name), so re-apply it on every catalog version: added

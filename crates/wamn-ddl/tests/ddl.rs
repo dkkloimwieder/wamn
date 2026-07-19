@@ -1285,12 +1285,12 @@ fn drop_outbox_triggers_is_gated_destructive() {
 }
 
 /// Drift guard: the columns and event vocabulary the emitted trigger writes
-/// must exist in the production outbox (deploy/run-queue.sql) — and the
+/// must exist in the production outbox (deploy/sql/run-queue.sql) — and the
 /// default [`OutboxOptions`] schema must be the one the deploy file creates.
 #[test]
 fn outbox_trigger_shape_matches_run_queue_deploy_file() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/run-queue.sql");
-    let ddl = std::fs::read_to_string(path).expect("read deploy/run-queue.sql");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/sql/run-queue.sql");
+    let ddl = std::fs::read_to_string(path).expect("read deploy/sql/run-queue.sql");
 
     let start = ddl
         .find("CREATE TABLE wamn_run.outbox")
@@ -2087,7 +2087,7 @@ fn outbox_triggers_fire_on_postgres() {
          GRANT USAGE ON SCHEMA wamn_ddl_outbox_test TO wamn_app;\n\
          SET search_path TO wamn_ddl_outbox_test;\n",
     );
-    // Inline replica of the production outbox (deploy/run-queue.sql,
+    // Inline replica of the production outbox (deploy/sql/run-queue.sql,
     // drift-guarded by outbox_trigger_shape_matches_run_queue_deploy_file).
     script.push_str(
         "CREATE TABLE outbox (\n\

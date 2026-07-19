@@ -7,7 +7,7 @@
 -- These tables hold the *definitions* of those tables.
 --
 -- STANDALONE ARTIFACT: this file is deliberately NOT included by
--- deploy/postgres-init.sql. It is the persistence target the DDL compiler (3.2)
+-- deploy/sql/postgres-init.sql. It is the persistence target the DDL compiler (3.2)
 -- and the catalog-API-first POC build (POC-DM1) wire into a project database;
 -- shipping it here keeps the 3.1 model and its storage shape reviewable in one
 -- place without touching the S2–S6 gate fixtures.

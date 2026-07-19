@@ -2,7 +2,7 @@
 //!
 //! Registry SQL lives with the registry model (SR2: the single source, like
 //! `wamn-run-store` owns the `runs` SQL), drift-guarded against the storage DDL
-//! in `deploy/system-schema.sql`. Values travel as `$n` params; the driver (the
+//! in `deploy/sql/system-schema.sql`. Values travel as `$n` params; the driver (the
 //! `provision-org` subcommand) holds the `wamn_system` connection and executes
 //! the statement as the registry owner.
 
@@ -162,7 +162,7 @@ pub fn select_event_reader_sql() -> &'static str {
 // `provision-org` / `provision-project-env` through. wamn-q3n.8 ships the pure
 // builders (and the `provisionbench` gate that proves a saga row LANDS in the
 // system DB per provisioned tier); the orchestrator that drives them through the
-// real subcommands stays 10.1 (the `deploy/system-schema.sql` schema comment).
+// real subcommands stays 10.1 (the `deploy/sql/system-schema.sql` schema comment).
 // The `status` literals are pinned to the `provisioning.sagas` status CHECK
 // (drift-guarded against the storage DDL).
 

@@ -644,7 +644,7 @@ Tenant tables compile from the catalog via `wamn-ddl`; platform tables are
 **hand-written SQL** in `deploy/` (~1,425 lines across seven files). Pure crates
 emit SQL naming those tables and nothing checks agreement — the symptom is
 already visible in `PartitionPolicy::as_sql`'s comment that its literals are
-"drift-guarded against the `deploy/run-queue.sql` CHECK", a bespoke manual
+"drift-guarded against the `deploy/sql/run-queue.sql` CHECK", a bespoke manual
 guard for one enum patching a hole that exists for every column.
 **Fix — the repo already applies the right pattern elsewhere:**
 `catalog-model.schema.json` and `flow-schema.schema.json` are *generated* from

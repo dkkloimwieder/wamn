@@ -13,8 +13,8 @@
 # plane).
 #
 # DISTINCT PLANE — this is a SEPARATE cluster from the T3 trials pool
-# (deploy/cnpg-cluster.yaml `wamn-pg`) and the legacy S2–S6 gate pod
-# (deploy/postgres.yaml). Two clusters, always: different blast radius, backup
+# (deploy/infra/cnpg-cluster.yaml `wamn-pg`) and the legacy S2–S6 gate pod
+# (deploy/platform/postgres.yaml). Two clusters, always: different blast radius, backup
 # posture, and security profile (control-plane state vs. real tenant data).
 # ADDITIVE — it stands up ALONGSIDE those; the shared-cluster guardrail means
 # `wamn-pg` and `postgres.yaml` are NEVER touched. Teardown of this experiment
@@ -25,7 +25,7 @@
 # CNPG pod anti-affinity). Provisioned by Epic-1 Helm/IaC (kubectl apply): it
 # cannot be provisioned by the provisioner it backs.
 #
-# Pinned operator: deploy/cnpg-operator.yaml (CNPG 1.29.2).
+# Pinned operator: deploy/infra/cnpg-operator.yaml (CNPG 1.29.2).
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
