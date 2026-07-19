@@ -1,0 +1,4 @@
+[package]
+name = "sockprobe"
+version.workspace = true
+edition.workspace = true

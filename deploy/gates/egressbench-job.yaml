@@ -1,0 +1,50 @@
+# 2.6/E13/E15/E17 DB-path egress gate in-cluster job (wamn-o3u6). Runs the
+# egressbench subcommand of the wamn-gates image (SR1) over the /bench fixtures
+# baked into the image — no DB, no NATS. It covers three riders that previously
+# had NO in-cluster harness:
+#   - E13 (rider 1) + E15/E16 (rider 8): the sockprobe fixture attempts raw
+#     TCP + UDP egress through the production host store path, so the fork's
+#     linked_call socket_addr_check is the policy under test (pins 8b76869 /
+#     eef76cd). The gate asserts raw egress is DENIED by default and PERMITTED
+#     only under the wamn.allow-raw-sockets opt-in.
+#   - E17 (rider 10): pgprobe (imports wamn:postgres) is held to the tenant
+#     allowlist v1 and MUST be refused (--reject-tenant); the first-party
+#     flowrunner (imports wamn:postgres, no sockets) is the positive.
+# The suite exits non-zero if any assertion fails, so job completion IS the
+# verdict. The hermetic publish-time refusal gate rides socketguard-job.yaml.
+#
+#   kubectl -n wamn-system apply -f deploy/gates/egressbench-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/egressbench --timeout=300s
+#   kubectl -n wamn-system logs job/egressbench
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: egressbench
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: egressbench }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: egressbench
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "warn"
+            - "egressbench"
+            - "--flowrunner"
+            - "/bench/flowrunner.wasm"
+            - "--reject-tenant"
+            - "/bench/pgprobe.wasm"
+            - "--sockprobe"
+            - "/bench/sockprobe.wasm"
+          resources:
+            # No CPU limit (CFS-quota tail artifact — see bench/flowbench). The
+            # runtime phase stands up a host + the pooling engine and runs the
+            # sockprobe service twice; memory is capped.
+            requests: { cpu: "1", memory: "512Mi" }
+            limits: { memory: "2Gi" }

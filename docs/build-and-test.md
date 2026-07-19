@@ -259,6 +259,22 @@ REL=components/target/wasm32-wasip2/release
 
 cargo clippy -p wamn-host -p wamn-run-worker -p wamn-gates -p wamn-gate-harness --all-targets \
   && cargo fmt -p wamn-host -p wamn-run-worker -p wamn-gates -p wamn-gate-harness --check
+
+# E13/E15 runtime raw-socket deny + E17 rejection (wamn-o3u6), the in-cluster
+# gate of record. sockprobe attempts raw TCP/UDP egress through the production
+# host store path, so the fork's linked_call socket_addr_check is the policy
+# under test (pins 8b76869 / eef76cd): raw egress is DENIED by default and
+# PERMITTED only under wamn.allow-raw-sockets. --reject-tenant asserts a
+# wamn:postgres importer (pgprobe) is refused by the allowlist v1 (E17). Runs
+# locally without a cluster:
+./target/release/wamn-gates --log-level warn egressbench \
+  --flowrunner $REL/flowrunner.wasm \
+  --reject-tenant $REL/pgprobe.wasm \
+  --sockprobe $REL/sockprobe.wasm
+# and in-cluster (fixtures baked in the wamn-gates image; no DB/NATS):
+kubectl -n wamn-system apply -f deploy/gates/egressbench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/egressbench --timeout=300s
+kubectl -n wamn-system logs job/egressbench
 ```
 
 ### [5.1] flow-graph schema crate (crates/wamn-flow)

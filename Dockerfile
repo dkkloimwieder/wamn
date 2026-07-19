@@ -74,6 +74,9 @@ COPY --from=builder /build/target/release/wamn-gates /usr/local/bin/wamn-gates
 COPY components/target/wasm32-wasip2/release/hello.wasm /bench/hello.wasm
 COPY components/target/wasm32-wasip2/release/memhog.wasm /bench/memhog.wasm
 COPY components/target/wasm32-wasip2/release/busyloop.wasm /bench/busyloop.wasm
+# E13/E15 runtime raw-socket fixture: attempts raw TCP + UDP egress via
+# wasi:sockets so egressbench can assert the fork's socket_addr_check deny.
+COPY components/target/wasm32-wasip2/release/sockprobe.wasm /bench/sockprobe.wasm
 COPY components/target/wasm32-wasip2/release/pgprobe.wasm /bench/pgprobe.wasm
 COPY components/target/wasm32-wasip2/release/flowrunner.wasm /bench/flowrunner.wasm
 # S4 custom-node fixtures: the Rust node, the wac-composed frozen flow, and the
