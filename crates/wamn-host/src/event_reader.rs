@@ -31,7 +31,14 @@
 //!   wraps the drain; re-opens are counted and logged. The slot admits one
 //!   consumer, so exclusivity is structural (the lease that elects WHICH
 //!   replica holds the session is deferred — run replicas=1).
+//! - **Entity keying** (wamn-l5i9.11): each relation resolves to its stable
+//!   catalog entity id via the OID-keyed `wamn_entities` map (maintained by
+//!   publish/migrate-catalog in the DDL's transaction) — resolved lazily per
+//!   session, never invalidated (OIDs survive renames), so envelopes and
+//!   subjects stay keyed on the entity id across `ALTER TABLE RENAME` (R9b).
+//!   Unmapped tables publish with the table-name fallback, `entity` absent.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
@@ -142,6 +149,57 @@ fn preflight_url(plain: &str, sslmode: &str) -> anyhow::Result<String> {
         bail!("the CDC url must be a plain libpq URL without a query string (R8b Secret contract)");
     }
     Ok(format!("{plain}?sslmode={sslmode}"))
+}
+
+/// The decode-time OID → entity-id lookup (wamn-l5i9.11): one row of the
+/// `wamn_entities` map `publish-catalog`/`migrate-catalog` maintain in the
+/// same transaction as the DDL. Queried by the RELATION OID, which survives
+/// `ALTER TABLE RENAME` — so the resolution is timeless under catch-up (a
+/// session decoding pre-rename backlog resolves identically).
+fn entity_lookup_sql(schema: &str) -> String {
+    format!(
+        "SELECT entity_id FROM \"{}\".wamn_entities WHERE relation_oid = $1",
+        schema.replace('"', "\"\"")
+    )
+}
+
+/// Resolve one relation OID to its catalog entity id over a short-lived SQL
+/// connection (the preflight-style credential — the CDC role's grants cover
+/// the map). `Ok(None)` = unmapped (no row, or the map table does not exist —
+/// an env from before wamn-l5i9.11): the event publishes with the table-name
+/// fallback. A connection/query failure is a transient session error — the
+/// re-open loop re-preflights and the fresh session re-resolves.
+async fn resolve_entity(
+    args: &EventReaderArgs,
+    schema: &str,
+    relation_oid: u32,
+) -> Result<Option<String>, ReplicationError> {
+    let url = preflight_url(&args.cdc_url, &args.sslmode)
+        .map_err(|e| ReplicationError::Config(e.to_string()))?;
+    let (client, conn) = tokio_postgres::connect(&url, NoTls)
+        .await
+        .map_err(|e| ReplicationError::TransientConnection(format!("entity-map connect: {e}")))?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    match client
+        .query_opt(entity_lookup_sql(schema).as_str(), &[&relation_oid])
+        .await
+    {
+        Ok(row) => Ok(row.map(|r| r.get(0))),
+        // 42P01 undefined_table: no map in this env — everything is unmapped,
+        // exactly the pre-.11 behavior.
+        Err(e) if e.code() == Some(&tokio_postgres::error::SqlState::UNDEFINED_TABLE) => {
+            tracing::warn!(
+                schema,
+                "no wamn_entities map in this env — publishing unmapped"
+            );
+            Ok(None)
+        }
+        Err(e) => Err(ReplicationError::TransientConnection(format!(
+            "entity-map lookup: {e}"
+        ))),
+    }
 }
 
 /// pgoutput text row → the envelope's column→value map. Values stay in text
@@ -396,6 +454,12 @@ async fn drain(
     let mut txn: Option<Txn> = None;
     let mut published: u64 = 0;
     let mut deduped: u64 = 0;
+    // The per-SESSION OID → entity-id cache (wamn-l5i9.11): resolved lazily at
+    // a relation's first row event, NEVER invalidated mid-session — pg_class
+    // OIDs survive renames, so a cached resolution stays correct by
+    // construction (asserted by the live gate's rename drill). A fresh session
+    // re-resolves from the map.
+    let mut entities: HashMap<u32, Option<String>> = HashMap::new();
     loop {
         let ev = match stream.next_event().await {
             Ok(ev) => ev,
@@ -409,7 +473,7 @@ async fn drain(
             }
         };
         let lsn = ev.lsn.value();
-        let (op, old, new, table) = match ev.event_type {
+        let (op, old, new, schema, table, relation_oid) = match ev.event_type {
             EventType::Begin {
                 transaction_id,
                 commit_timestamp,
@@ -430,16 +494,41 @@ async fn drain(
                 stream.update_applied_lsn(l);
                 continue;
             }
-            EventType::Insert { table, data, .. } => (Op::Insert, None, Some(data), table),
-            EventType::Update {
+            EventType::Insert {
+                schema,
                 table,
+                relation_oid,
+                data,
+            } => (Op::Insert, None, Some(data), schema, table, relation_oid),
+            EventType::Update {
+                schema,
+                table,
+                relation_oid,
                 old_data,
                 new_data,
                 ..
-            } => (Op::Update, old_data, Some(new_data), table),
+            } => (
+                Op::Update,
+                old_data,
+                Some(new_data),
+                schema,
+                table,
+                relation_oid,
+            ),
             EventType::Delete {
-                table, old_data, ..
-            } => (Op::Delete, Some(old_data), None, table),
+                schema,
+                table,
+                relation_oid,
+                old_data,
+                ..
+            } => (
+                Op::Delete,
+                Some(old_data),
+                None,
+                schema,
+                table,
+                relation_oid,
+            ),
             EventType::Truncate(tables) => {
                 // Not part of the event plane (v3 ops are insert/update/delete).
                 tracing::warn!(?tables, "TRUNCATE observed — not published");
@@ -462,17 +551,38 @@ async fn drain(
                 "row event outside a Begin/Commit frame".into(),
             ));
         };
+        // First row event of a relation this session: resolve its entity id
+        // from the map (by OID — rename-proof). `None` is cached too, so an
+        // unmapped table costs one lookup per session, not one per event.
+        if !entities.contains_key(&relation_oid) {
+            let resolved = resolve_entity(args, &schema, relation_oid).await?;
+            tracing::info!(
+                %table,
+                relation_oid,
+                entity = resolved.as_deref().unwrap_or("(unmapped)"),
+                "entity resolved"
+            );
+            entities.insert(relation_oid, resolved);
+        }
+        let entity = entities.get(&relation_oid).cloned().flatten();
         let envelope = Envelope {
             op,
             old: old.as_ref().map(row_to_map),
             new: new.as_ref().map(row_to_map),
-            entity: table.to_string(),
+            entity,
+            table: table.to_string(),
             lsn,
             txid: frame.txid,
             commit_ts: frame.commit_ts,
             causation: None, // stitching = wamn-l5i9.12
         };
-        let subj = subject(&args.org, &args.project, &args.env, &table, op);
+        let subj = subject(
+            &args.org,
+            &args.project,
+            &args.env,
+            envelope.entity_segment(),
+            op,
+        );
         let id = msg_id(&args.project, &args.env, lsn);
         let payload = serde_json::to_vec(&envelope)
             .map_err(|e| ReplicationError::Generic(format!("serialize envelope: {e}")))?;
@@ -586,6 +696,22 @@ mod tests {
                 "slot can no longer be used".into()
             )),
             SlotIncident
+        );
+    }
+
+    #[test]
+    fn entity_lookup_is_by_relation_oid_in_the_event_schema() {
+        // The pinned lookup: OID-keyed (rename-proof, timeless under
+        // catch-up), qualified by the EVENT's schema — the map lives beside
+        // the tables it describes, so no registry column is needed.
+        assert_eq!(
+            entity_lookup_sql("app"),
+            "SELECT entity_id FROM \"app\".wamn_entities WHERE relation_oid = $1"
+        );
+        // pgoutput schema names are server-provided — quote-safe embedding.
+        assert_eq!(
+            entity_lookup_sql("we\"ird"),
+            "SELECT entity_id FROM \"we\"\"ird\".wamn_entities WHERE relation_oid = $1"
         );
     }
 

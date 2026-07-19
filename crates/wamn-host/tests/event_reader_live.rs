@@ -18,6 +18,12 @@
 //! - crash (task abort) → restart resumes from the confirmed LSN, no gaps;
 //! - JetStream unreachable (a severed TCP proxy) → the LSN HOLDS while
 //!   writes continue → restore → delayed, never lost;
+//! - the RENAME DRILL (wamn-l5i9.11 / R9b): a catalog entity provisioned +
+//!   renamed through the REAL `migrate-catalog` path keeps its stable entity
+//!   id on every envelope and subject across `ALTER TABLE RENAME`, in ONE
+//!   reader session, with the pg_class OID provably constant; the
+//!   `publish-catalog` re-run backfills a wiped map; hand-created and
+//!   platform tables publish with `entity` ABSENT (the unmapped marker);
 //! - clean shutdown on cancellation; teardown leaves NO slot behind.
 
 use std::sync::Arc;
@@ -34,17 +40,55 @@ use tokio_postgres::NoTls;
 
 use wamn_event_wire::{Envelope, Op, msg_id, subject};
 use wamn_host::event_reader::{EventReaderArgs, run_with_token};
+use wamn_host::migrate_catalog::MigrateCatalogArgs;
+use wamn_host::publish_catalog::PublishCatalogArgs;
 use wamn_provision::{cdc_object_name, event_stream_name, sql};
 use wamn_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
 
 const SYSTEM_SCHEMA: &str = include_str!("../../../deploy/system-schema.sql");
+const CATALOG_SCHEMA: &str = include_str!("../../../deploy/catalog-schema.sql");
 const DB: &str = "wamn_reader_live";
 const ORG: &str = "rl0";
 const PROJECT: &str = "app";
 const ENV: &str = "dev";
 const CDC_PW: &str = "wamn_cdc_pw";
+const TENANT: &str = "t1";
+
+/// The rename-drill catalog, v1: the entity id `sales_orders` DELIBERATELY
+/// differs from its initial table name `orders`, so a mapped envelope proves
+/// the map was consulted — never an echo of the table name.
+const DRILL_CAT_V1: &str = r#"{
+  "schema-version": "0.1",
+  "catalog-id": "evtdrill",
+  "version": 1,
+  "name": "event-plane rename drill",
+  "entities": [
+    { "id": "sales_orders", "name": "orders",
+      "fields": [ { "id": "num", "name": "num", "type": { "kind": "text" } } ] }
+  ]
+}"#;
+
+/// v2: the SAME entity id, renamed table (`orders` → `orders2`) — the R9b
+/// migration (`ALTER TABLE RENAME`, pg_class OID preserved).
+const DRILL_CAT_V2: &str = r#"{
+  "schema-version": "0.1",
+  "catalog-id": "evtdrill",
+  "version": 2,
+  "name": "event-plane rename drill",
+  "entities": [
+    { "id": "sales_orders", "name": "orders2",
+      "fields": [ { "id": "num", "name": "num", "type": { "kind": "text" } } ] }
+  ]
+}"#;
+
+/// Write a drill catalog to a temp file the real subcommand fns can read.
+fn catalog_file(name: &str, json: &str) -> std::path::PathBuf {
+    let p = std::env::temp_dir().join(format!("wamn_reader_live_{name}.json"));
+    std::fs::write(&p, json).expect("write drill catalog");
+    p
+}
 
 /// Swap the database path segment of a libpq URL (the test controls the URL —
 /// no query string).
@@ -244,6 +288,20 @@ async fn insert_lsn(sys: &tokio_postgres::Client) -> String {
         .get(0)
 }
 
+/// The drill entity's map row: `(entity_id, table_name, oid-matches-live-table)`.
+async fn drill_map_row(sys: &tokio_postgres::Client) -> (String, String, bool) {
+    let r = sys
+        .query_one(
+            "SELECT entity_id, table_name, \
+                    relation_oid = ('app.' || quote_ident(table_name))::regclass::oid \
+             FROM app.wamn_entities WHERE entity_id = 'sales_orders'",
+            &[],
+        )
+        .await
+        .expect("read the drill entity's map row");
+    (r.get(0), r.get(1), r.get(2))
+}
+
 /// `(op, id)` — an event's identity for the commit-order program check.
 fn key_of(e: &Envelope) -> (Op, String) {
     let row = match e.op {
@@ -306,9 +364,19 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     )
     .await
     .expect("wamn_system role (the schema's owner-grants target)");
+    sys.batch_execute(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
+         THEN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' \
+           NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$",
+    )
+    .await
+    .expect("wamn_app role (the floor + catalog schema's grant target)");
     sys.batch_execute(SYSTEM_SCHEMA)
         .await
         .expect("apply deploy/system-schema.sql");
+    sys.batch_execute(CATALOG_SCHEMA)
+        .await
+        .expect("apply deploy/catalog-schema.sql (the migrate-catalog metadata store)");
     sys.execute(upsert_org_sql(), &[&ORG, &"pooled", &"wamn-pg"])
         .await
         .expect("org row");
@@ -385,6 +453,11 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     sys.batch_execute(&sql::create_publication_sql(&cdc_name, "app"))
         .await
         .expect("publication");
+    // The entity map precedes the grants (the enable-cdc bundle order): the
+    // role's SELECT ON ALL TABLES must cover the reader's decode-time lookup.
+    sys.batch_execute(&sql::ensure_entity_map_sql("app"))
+        .await
+        .expect("entity map");
     sys.batch_execute(&sql::grant_replication_access_sql(DB, &cdc_name, "app"))
         .await
         .expect("grants");
@@ -522,9 +595,13 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         "delivery order == commit order, exactly the write program"
     );
     for (subj, id, e) in &delivered {
-        assert_eq!(subj, &subject(ORG, PROJECT, ENV, &e.entity, e.op));
+        assert_eq!(subj, &subject(ORG, PROJECT, ENV, e.entity_segment(), e.op));
         assert_eq!(id, &msg_id(PROJECT, ENV, e.lsn));
-        assert_eq!(e.entity, "receipts");
+        // receipts is hand-created (no catalog entity): the FD unmapped
+        // marker — `entity` ABSENT, `table` carries the physical name, the
+        // subject falls back to the table segment.
+        assert!(e.entity.is_none(), "unmapped table publishes entity-ABSENT");
+        assert_eq!(e.table, "receipts");
     }
     let ids: std::collections::BTreeSet<_> = delivered.iter().map(|(_, id, _)| id).collect();
     assert_eq!(ids.len(), delivered.len(), "Nats-Msg-Ids are unique");
@@ -652,6 +729,179 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         expected,
         "the severed window's events arrive after restore — delayed, never lost"
     );
+
+    // --- phase F: the RENAME DRILL (wamn-l5i9.11 / R9b) ---------------------
+    // The REAL migrate path provisions entity `sales_orders` as table
+    // `orders`, the reader session from phase C stays LIVE throughout, and a
+    // v2 migration renames the table mid-stream. Every envelope must carry
+    // the STABLE entity id — the map is OID-keyed and the cache is never
+    // invalidated, so the resolution survives the rename by construction.
+    let admin_url = swap_db(&super_url, DB);
+    wamn_host::migrate_catalog::run(MigrateCatalogArgs {
+        admin_database_url: admin_url.clone(),
+        tenant: TENANT.into(),
+        environment: ENV.into(),
+        schema: "app".into(),
+        target: catalog_file("cat_v1", DRILL_CAT_V1),
+        base: None,
+        dry_run: false,
+        confirm_with_backup: false,
+    })
+    .await
+    .expect("migrate-catalog v1 (create the drill entity)");
+    assert_eq!(
+        drill_map_row(&sys).await,
+        ("sales_orders".into(), "orders".into(), true),
+        "migrate-catalog maintains the OID-keyed entity map in its transaction"
+    );
+    let oid_before: u32 = sys
+        .query_one("SELECT 'app.orders'::regclass::oid", &[])
+        .await
+        .unwrap()
+        .get(0);
+
+    // Backfill probe: a wiped map (an env CDC-enabled after its catalog was
+    // published) repopulates with one publish-catalog re-run.
+    sys.batch_execute("DELETE FROM app.wamn_entities")
+        .await
+        .unwrap();
+    wamn_host::publish_catalog::run(PublishCatalogArgs {
+        catalog: catalog_file("cat_v1", DRILL_CAT_V1),
+        admin_database_url: Some(admin_url.clone()),
+        tenant: TENANT.into(),
+        schema: "app".into(),
+        provision: false,
+        runstate: false,
+        seed_dataset: None,
+        flow: vec![],
+    })
+    .await
+    .expect("publish-catalog (the map backfill path)");
+    assert_eq!(
+        drill_map_row(&sys).await,
+        ("sales_orders".into(), "orders".into(), true),
+        "publish-catalog re-run backfills the entity map"
+    );
+
+    for num in ["80", "81"] {
+        sys.execute(
+            "INSERT INTO app.orders (tenant_id, num) VALUES ($1, $2)",
+            &[&TENANT, &num],
+        )
+        .await
+        .unwrap();
+    }
+
+    // The rename: v2 through the real migrate path (destructive — the rename
+    // op is flagged; the drill confirms like an operator with a backup).
+    wamn_host::migrate_catalog::run(MigrateCatalogArgs {
+        admin_database_url: admin_url.clone(),
+        tenant: TENANT.into(),
+        environment: ENV.into(),
+        schema: "app".into(),
+        target: catalog_file("cat_v2", DRILL_CAT_V2),
+        base: None,
+        dry_run: false,
+        confirm_with_backup: true,
+    })
+    .await
+    .expect("migrate-catalog v2 (the rename)");
+    let oid_after: u32 = sys
+        .query_one("SELECT 'app.orders2'::regclass::oid", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        oid_before, oid_after,
+        "ALTER TABLE RENAME preserves the pg_class OID (the property the map rides on)"
+    );
+    assert_eq!(
+        drill_map_row(&sys).await,
+        ("sales_orders".into(), "orders2".into(), true),
+        "the rename re-upserts the SAME map row: new table_name, same entity id + OID"
+    );
+
+    for num in ["90", "91", "92"] {
+        sys.execute(
+            "INSERT INTO app.orders2 (tenant_id, num) VALUES ($1, $2)",
+            &[&TENANT, &num],
+        )
+        .await
+        .unwrap();
+    }
+
+    // Deterministic drill accounting on the stream: 5 sales_orders inserts +
+    // the map's own unmapped events (insert at migrate v1, delete at the wipe,
+    // insert at the backfill, update at the v2 re-upsert) + the wamn_catalog
+    // snapshot insert = 10.
+    let drill_total = expected.len() as u64 + 10;
+    wait_for_count(&js, &stream_name, drill_total, 30).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        stream_count(&js, &stream_name).await,
+        drill_total,
+        "no stray events beyond the drill program"
+    );
+    let all = read_all(&js, &stream_name, drill_total as usize).await;
+    let drill: Vec<&(String, String, Envelope)> = all
+        .iter()
+        .filter(|(_, _, e)| e.entity.as_deref() == Some("sales_orders"))
+        .collect();
+    assert_eq!(
+        drill
+            .iter()
+            .map(|(_, _, e)| {
+                (
+                    e.op,
+                    e.table.clone(),
+                    e.new
+                        .as_ref()
+                        .unwrap()
+                        .get("num")
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .to_string(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [
+            (Op::Insert, "orders", "80"),
+            (Op::Insert, "orders", "81"),
+            (Op::Insert, "orders2", "90"),
+            (Op::Insert, "orders2", "91"),
+            (Op::Insert, "orders2", "92"),
+        ]
+        .map(|(op, t, n)| (op, t.to_string(), n.to_string())),
+        "envelopes carry the stable entity id across the rename (table changes, entity does not)"
+    );
+    for (subj, _, e) in &drill {
+        assert_eq!(
+            subj,
+            &subject(ORG, PROJECT, ENV, "sales_orders", e.op),
+            "the subject is keyed by the entity id, not the table"
+        );
+    }
+    assert!(
+        all.iter()
+            .all(|(subj, _, _)| { !subj.contains(".orders.") && !subj.contains(".orders2.") }),
+        "no mapped event ever falls back to a table-name subject"
+    );
+    // The platform tables the schema-scoped publication auto-includes are the
+    // unmapped probe: entity ABSENT, table-name subject fallback.
+    let unmapped: Vec<&(String, String, Envelope)> = all
+        .iter()
+        .filter(|(_, _, e)| e.table == "wamn_entities")
+        .collect();
+    assert_eq!(
+        unmapped.len(),
+        4,
+        "the map's own writes publish as unmapped platform-table events"
+    );
+    for (subj, _, e) in &unmapped {
+        assert!(e.entity.is_none(), "platform table publishes entity-ABSENT");
+        assert_eq!(subj, &subject(ORG, PROJECT, ENV, "wamn_entities", e.op));
+    }
 
     // --- phase E: clean shutdown --------------------------------------------
     token2.cancel();

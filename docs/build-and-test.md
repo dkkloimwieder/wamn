@@ -740,6 +740,44 @@ swapped (named unit), M2 an unacked publish counts as acked (the live gate's
 probe), M4 a missing slot silently tolerated (the CAPTURE GAP probe); all
 apply/test/restore with sha256, DEBUG builds.
 
+### [EVT-OIDMAP / wamn-l5i9.11] relation-OID → catalog-entity keying (R9b)
+
+Docs: docs/event-plane-jetstream.md §4/§5, docs/review-findings.md R9b. The
+reader resolves each relation OID to its stable catalog **entity id** via the
+`wamn_entities` map (`relation_oid → entity_id, table_name`), maintained by
+`publish-catalog`/`migrate-catalog` IN the DDL transaction (OID-keyed, so a
+rename only updates `table_name`; pg_class OIDs survive `ALTER TABLE RENAME`).
+The envelope carries `entity` (the id — ABSENT ⇒ unmapped, the
+delayed-never-lost fallback) and `table` (physical name); the subject's entity
+segment is the id, so consumer filters are rename-proof. Same throwaway rig as
+[EVT-READER]; the live gate gains **phase F**, the rename drill.
+
+```bash
+cargo test -p wamn-event-wire                # +unmapped-marker + entity/table wire pin
+cargo test -p wamn-provision entity_map      # the OID-keyed upsert drift guard ($2::text)
+cargo test -p wamn-host --lib                # +entity_lookup_sql pin, +map-order bundle test
+# Local live gate (adds the rename drill: provision entity `sales_orders` as
+# table `orders` via the REAL migrate-catalog path, wipe+publish-catalog
+# backfill, rename → `orders2`, assert the pg_class OID is constant and every
+# envelope/subject carries the stable id across the rename; platform tables
+# publish entity-ABSENT):
+WAMN_READER_PG_URL=postgres://postgres:postgres@127.0.0.1:5448/postgres \
+WAMN_READER_NATS_URL=nats://127.0.0.1:4261 \
+  cargo test -p wamn-host --test event_reader_live
+# In-cluster gate of record: incluster_l5i9_10.sh's shape + a rename-drill step
+# driving migrate-catalog, asserted with the new readerbench flags:
+./target/debug/wamn-gates readerbench --nats-url nats://<node>:30493 \
+  --org t10cdc --project app --env dev --stream EVT_t10cdc_dev \
+  --filter-entity sales_orders --expect-entity-id sales_orders \
+  --id-field num --expect-ids 80,81,90,91,92
+```
+
+Mutation harness: scratchpad `mutate_l5i9_11.py` — M1 map upsert dropped from
+migrate-catalog's apply txn, M2 dropped from publish-catalog, M3 the reader's
+map lookup bypassed (everything unmapped), M4 the subject keyed by the table
+even when mapped, M5 the upsert loses `ON CONFLICT` — each fails a NAMED live
+assert; apply/test/restore with sha256, DEBUG builds.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

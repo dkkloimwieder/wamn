@@ -43,9 +43,13 @@ pub struct Causation {
     pub depth: u32,
 }
 
-/// One row event on the wire: `{op, old, new, entity, lsn, txid, commit_ts,
-/// causation?}` (v3 §4). `entity` is the MVP naming — the pgoutput relation's
-/// table name (the catalog-entity keying replaces it in wamn-l5i9.11).
+/// One row event on the wire: `{op, old, new, entity?, table, lsn, txid,
+/// commit_ts, causation?}` (v3 §4). `entity` is the **stable catalog entity
+/// id** (wamn-l5i9.11) — the rename-proof key registrations bind to; it is
+/// ABSENT when the table is not catalog-mapped (hand-created, or a platform
+/// table the schema-scoped publication auto-includes) — absence IS the
+/// unmapped marker, unambiguous even when an entity id equals a table name.
+/// `table` always carries the physical table name at decode time.
 ///
 /// `old`/`new` are column→value maps in pgoutput **text** representation
 /// (values are JSON strings or `null`). An **unchanged TOAST column is ABSENT
@@ -60,12 +64,22 @@ pub struct Envelope {
     pub old: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new: Option<serde_json::Map<String, serde_json::Value>>,
-    pub entity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    pub table: String,
     pub lsn: u64,
     pub txid: u32,
     pub commit_ts: chrono::DateTime<chrono::Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub causation: Option<Causation>,
+}
+
+impl Envelope {
+    /// The subject's `<entity>` segment: the stable entity id when mapped, the
+    /// physical table name otherwise (the FD fallback — delayed, never lost).
+    pub fn entity_segment(&self) -> &str {
+        self.entity.as_deref().unwrap_or(&self.table)
+    }
 }
 
 /// `<project>_<env>` — the `Nats-Msg-Id` prefix a project-env's events dedupe
@@ -150,6 +164,8 @@ mod tests {
     #[test]
     fn envelope_wire_shape_is_the_v3_draft() {
         // Freeze the DRAFT field set + spellings: this literal is the wire.
+        // A MAPPED event: `entity` = the stable catalog entity id, `table` =
+        // the physical name at decode time (they differ after a rename).
         let mut new = serde_json::Map::new();
         new.insert("id".into(), serde_json::Value::String("7".into()));
         new.insert("note".into(), serde_json::Value::Null);
@@ -157,7 +173,8 @@ mod tests {
             op: Op::Update,
             old: None,
             new: Some(new),
-            entity: "receipts".into(),
+            entity: Some("sales_orders".into()),
+            table: "orders2".into(),
             lsn: 42,
             txid: 731,
             commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-18T12:00:00Z")
@@ -167,13 +184,41 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&env).unwrap(),
-            r#"{"op":"update","new":{"id":"7","note":null},"entity":"receipts","lsn":42,"txid":731,"commit_ts":"2026-07-18T12:00:00Z"}"#
+            r#"{"op":"update","new":{"id":"7","note":null},"entity":"sales_orders","table":"orders2","lsn":42,"txid":731,"commit_ts":"2026-07-18T12:00:00Z"}"#
         );
+        assert_eq!(env.entity_segment(), "sales_orders");
         // Round-trip; an unchanged-TOAST column stays ABSENT (not null).
         let back: Envelope = serde_json::from_str(&serde_json::to_string(&env).unwrap()).unwrap();
         assert_eq!(back, env);
         assert!(back.new.as_ref().unwrap().get("big").is_none());
         assert!(back.new.as_ref().unwrap().get("note").unwrap().is_null());
+    }
+
+    #[test]
+    fn unmapped_envelope_omits_entity_and_falls_back_to_the_table() {
+        // The FD marker: an unmapped table publishes WITHOUT `entity` —
+        // absence is the marker (unambiguous even when an entity id equals a
+        // table name); the subject segment falls back to the table name.
+        let env = Envelope {
+            op: Op::Insert,
+            old: None,
+            new: Some(serde_json::Map::new()),
+            entity: None,
+            table: "receipts".into(),
+            lsn: 7,
+            txid: 3,
+            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-18T12:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            causation: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&env).unwrap(),
+            r#"{"op":"insert","new":{},"table":"receipts","lsn":7,"txid":3,"commit_ts":"2026-07-18T12:00:00Z"}"#
+        );
+        assert_eq!(env.entity_segment(), "receipts");
+        let back: Envelope = serde_json::from_str(&serde_json::to_string(&env).unwrap()).unwrap();
+        assert!(back.entity.is_none());
     }
 
     #[test]

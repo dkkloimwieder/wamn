@@ -265,6 +265,36 @@ async fn publish(
         .await
         .context("write snapshot")?;
 
+    // Refresh the decode-time entity map (wamn-l5i9.11): entity id → the
+    // table's CURRENT pg_class OID, for every catalog entity whose table
+    // exists (absent tables upsert nothing). This is also the BACKFILL path
+    // for an env CDC-enabled after its catalog was published — re-running
+    // publish-catalog populates the map.
+    upsert_entity_map(client, cat, schema).await?;
+
+    Ok(())
+}
+
+/// Ensure + upsert the `wamn_entities` map for every entity of `cat` (rows are
+/// upsert-only; a dropped entity's row keeps old-WAL decode resolvable).
+/// Generic over [`tokio_postgres::GenericClient`] so `migrate-catalog` can run
+/// it INSIDE its apply transaction (atomic with the rename DDL).
+pub async fn upsert_entity_map(
+    client: &impl tokio_postgres::GenericClient,
+    cat: &wamn_catalog::Catalog,
+    schema: &str,
+) -> anyhow::Result<()> {
+    client
+        .batch_execute(&wamn_provision::sql::ensure_entity_map_sql(schema))
+        .await
+        .context("ensure entity map")?;
+    let upsert = wamn_provision::sql::upsert_entity_map_sql(schema);
+    for e in &cat.entities {
+        client
+            .execute(upsert.as_str(), &[&e.id.as_str(), &e.name])
+            .await
+            .with_context(|| format!("upsert entity map row for {:?}", e.id))?;
+    }
     Ok(())
 }
 

@@ -123,9 +123,16 @@ modes). **No new work lands on the outbox path**; deletion executes at
   (JetStream down = delayed-never-lost, proven), missing/invalidated slot =
   the §11 incident; gated live local + in-cluster (readerbench;
   `docs/build-and-test.md` [EVT-READER]); lease election + fleet enumeration
-  are filed follow-ups). Phase-1 remaining: `l5i9.11` [EVT-OIDMAP] +
-  `l5i9.12` [EVT-CAUSATION] + `l5i9.14` [C-CDC] now unblocked, `l5i9.15`
-  [C-JS] ready. Next pick is the owner's.
+  are filed follow-ups).
+  ~~`l5i9.11` EVT-OIDMAP~~ **done 2026-07-19** — relation-OID → catalog
+  entity-id keying: the reader resolves each OID via the `wamn_entities` map
+  (maintained by publish/migrate-catalog in the DDL txn; OID-keyed, so a
+  rename only moves `table_name`), envelopes carry `entity`+`table` and the
+  subject keys on the stable id — **the R9b decode side closes** (rename-proof
+  subjects; the registration-continuity half rides the materializer `l5i9.17`).
+  Live rename drill + 5 mutants; recipe `docs/build-and-test.md` [EVT-OIDMAP].
+  Phase-1 remaining: `l5i9.12` [EVT-CAUSATION] + `l5i9.14` [C-CDC] unblocked,
+  `l5i9.15` [C-JS] ready. Next pick is the owner's.
 - Measurement already banked (pre-decision, still load-bearing): ~~C7/C-QUEUE~~
   (`wamn-z7b.1`, `docs/ceilings.md` — untuned knee ~2000–2500 transitions/sec) +
   ~~C2 outbox-trigger overhead~~ (`wamn-z7b.2`, `docs/ceilings.md` § C2 — now a

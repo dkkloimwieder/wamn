@@ -210,6 +210,43 @@ pub fn grant_replication_access_sql(database: &str, role: &str, schema: &str) ->
     )
 }
 
+/// The decode-time entity map (wamn-l5i9.11, D19 v3 §4): `relation_oid` →
+/// stable catalog entity id. **OID-keyed** so a reader resolving events is
+/// timeless under catch-up — pg_class OIDs survive `ALTER TABLE RENAME`, so a
+/// session decoding pre-rename backlog still resolves correctly, and a rename
+/// only updates the informational `table_name`. Maintained by
+/// `publish-catalog`/`migrate-catalog` in the same transaction as the DDL;
+/// rows are upsert-only (a dropped entity's row keeps old-WAL decode
+/// resolvable). No RLS: it holds no tenant data, and the CDC role's decode
+/// stream sees every row of every table anyway.
+pub fn ensure_entity_map_sql(schema: &str) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {schema}.wamn_entities ( \
+           relation_oid oid PRIMARY KEY, \
+           entity_id text NOT NULL, \
+           table_name text NOT NULL)",
+        schema = quote_ident(schema),
+    )
+}
+
+/// Upsert one entity's map row, resolving the table's CURRENT `pg_class` OID
+/// server-side — run in the SAME transaction as the DDL that created/renamed
+/// the table, so the row is atomic with the physical state. `$1` = entity id,
+/// `$2` = physical table name. A table that does not exist (a catalog entity
+/// whose floor was never applied) upserts nothing — the SELECT is empty.
+pub fn upsert_entity_map_sql(schema: &str) -> String {
+    format!(
+        "INSERT INTO {schema}.wamn_entities (relation_oid, entity_id, table_name) \
+         SELECT c.oid, $1, $2::text FROM pg_class c \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = {schema_lit} AND c.relname = $2::text AND c.relkind = 'r' \
+         ON CONFLICT (relation_oid) DO UPDATE \
+           SET entity_id = EXCLUDED.entity_id, table_name = EXCLUDED.table_name",
+        schema = quote_ident(schema),
+        schema_lit = quote_literal(schema),
+    )
+}
+
 /// `DROP PUBLICATION IF EXISTS "<publication>"` — teardown / gate only.
 pub fn drop_publication_sql(publication: &str) -> String {
     format!("DROP PUBLICATION IF EXISTS {}", quote_ident(publication))
@@ -370,6 +407,40 @@ mod tests {
         ));
         assert!(sql.contains("GRANT USAGE ON SCHEMA \"app\" TO \"wamn_cdc_x\""));
         assert!(sql.contains("GRANT SELECT ON ALL TABLES IN SCHEMA \"app\" TO \"wamn_cdc_x\""));
+    }
+
+    /// The entity-map drift guard (wamn-l5i9.11): the PINNED SQL is the
+    /// load-bearing contract — the reader's OID lookup, the same-transaction
+    /// upsert, and the OID-keyed rename-proofing all ride these exact strings.
+    #[test]
+    fn entity_map_is_oid_keyed_and_upserted_from_pg_class() {
+        assert_eq!(
+            ensure_entity_map_sql("app"),
+            "CREATE TABLE IF NOT EXISTS \"app\".wamn_entities ( \
+               relation_oid oid PRIMARY KEY, \
+               entity_id text NOT NULL, \
+               table_name text NOT NULL)"
+        );
+        let upsert = upsert_entity_map_sql("app");
+        // The OID is resolved server-side from pg_class IN the DDL transaction
+        // (ordinary tables only), keyed for conflict on relation_oid — a
+        // rename re-upserts the SAME row (new table_name, same entity/OID).
+        assert!(
+            upsert.contains(
+                "INSERT INTO \"app\".wamn_entities (relation_oid, entity_id, table_name)"
+            )
+        );
+        // `$2::text` in BOTH the projection and the WHERE — a bare `$2` would
+        // be deduced `name` at `c.relname = $2` and `text` at the column,
+        // which tokio_postgres rejects ("inconsistent types deduced").
+        assert!(upsert.contains("SELECT c.oid, $1, $2::text FROM pg_class c"));
+        assert!(
+            upsert.contains("WHERE n.nspname = 'app' AND c.relname = $2::text AND c.relkind = 'r'")
+        );
+        assert!(upsert.contains("ON CONFLICT (relation_oid) DO UPDATE"));
+        assert!(
+            upsert.contains("SET entity_id = EXCLUDED.entity_id, table_name = EXCLUDED.table_name")
+        );
     }
 
     #[test]

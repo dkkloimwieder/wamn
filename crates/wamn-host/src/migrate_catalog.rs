@@ -268,6 +268,11 @@ pub(crate) async fn apply_catalog_target(
                 .with_context(|| format!("apply: {}", stmt.summary))?;
         }
     }
+    // Refresh the decode-time entity map (wamn-l5i9.11) IN the apply
+    // transaction: the OID-keyed rows commit atomically with the DDL that
+    // created/renamed the tables, so a CDC reader's lookup never sees one
+    // without the other.
+    crate::publish_catalog::upsert_entity_map(&tx, target, schema).await?;
     tx.commit().await.context("commit migration")?;
     Ok(ApplyOutcome::Applied(plan))
 }

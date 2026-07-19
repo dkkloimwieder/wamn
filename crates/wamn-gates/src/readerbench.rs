@@ -44,9 +44,29 @@ pub struct ReaderBenchArgs {
     #[arg(long)]
     pub stream: Option<String>,
 
-    /// Entity every expected event carries (the gate table's name).
+    /// The gate table's physical name. UNMAPPED programs (no
+    /// `--expect-entity-id`) assert every envelope carries this `table` with
+    /// `entity` ABSENT — the wamn-l5i9.11 unmapped marker.
     #[arg(long, default_value = "receipts")]
     pub entity: String,
+
+    /// Expected stable catalog entity id (wamn-l5i9.11): assert EVERY event's
+    /// envelope `entity` equals it — across renames, where the physical table
+    /// name changes mid-program. Omit for an unmapped-table program.
+    #[arg(long)]
+    pub expect_entity_id: Option<String>,
+
+    /// Column the expected-id program reads from `new` (the floor's managed
+    /// `id` is a random uuid, so catalog-entity drills use their own column).
+    #[arg(long, default_value = "id")]
+    pub id_field: String,
+
+    /// Drain only this entity SEGMENT's subjects (a filtered consumer) instead
+    /// of the whole stream — for asserting one entity's program on a stream
+    /// that also carries other tables' events (e.g. the rename drill sharing
+    /// the stream with the platform-table noise).
+    #[arg(long)]
+    pub filter_entity: Option<String>,
 
     /// The expected INSERT ids, comma-separated, in COMMIT ORDER — the whole
     /// write program of the gate run.
@@ -87,24 +107,35 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
         .with_context(|| format!("connect data-plane NATS at {}", args.nats_url))?;
     let js = jetstream::new(client);
 
+    // The consumer's subject scope: the whole stream, or (filtered mode) one
+    // entity segment's subjects.
+    let filter_subject = args
+        .filter_entity
+        .as_ref()
+        .map(|seg| format!("evt.{}.{}.{}.{}.>", args.org, args.project, args.env, seg));
+
     // Wait for the full program to land (the reader may still be catching up
-    // after a drill), then insist the count is EXACT — no strays.
+    // after a drill), then insist the count is EXACT — no strays. In filtered
+    // mode the stream count is not the program count; the drain deadline below
+    // does the waiting and a final empty fetch proves no strays in-filter.
     let deadline = Instant::now() + Duration::from_secs(args.wait_secs);
-    loop {
-        let mut stream = js.get_stream(&stream_name).await.context("get stream")?;
-        let have = stream.info().await.context("stream info")?.state.messages;
-        if have >= expect as u64 {
-            break;
-        }
-        if Instant::now() > deadline {
-            bail!(
-                "stream {stream_name} holds {have}/{expect} after {}s",
-                args.wait_secs
-            );
+    if filter_subject.is_none() {
+        loop {
+            let mut stream = js.get_stream(&stream_name).await.context("get stream")?;
+            let have = stream.info().await.context("stream info")?.state.messages;
+            if have >= expect as u64 {
+                break;
+            }
+            if Instant::now() > deadline {
+                bail!(
+                    "stream {stream_name} holds {have}/{expect} after {}s",
+                    args.wait_secs
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     let stream = js.get_stream(&stream_name).await.context("get stream")?;
     let exact = stream
@@ -119,13 +150,14 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
             ack_policy: AckPolicy::Explicit,
             num_replicas: 1,
             memory_storage: true,
+            filter_subject: filter_subject.clone().unwrap_or_default(),
             ..Default::default()
         })
         .await
         .map_err(|e| anyhow::anyhow!("create pull consumer: {e}"))?;
 
     let mut delivered: Vec<(String, String, Envelope)> = Vec::new();
-    let drain_deadline = Instant::now() + Duration::from_secs(30);
+    let drain_deadline = Instant::now() + Duration::from_secs(args.wait_secs.max(30));
     while delivered.len() < expect && Instant::now() < drain_deadline {
         let mut batch = consumer
             .fetch()
@@ -154,17 +186,39 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
     }
 
     let mut pass = true;
-    check(
-        &mut pass,
-        &format!("stream holds EXACTLY the program ({exact} == {expect})"),
-        exact == expect as u64,
-    );
+    if let Some(fs) = &filter_subject {
+        // Filtered mode: exactness within the filter — one more fetch after
+        // the full program must come back empty.
+        let mut strays = consumer
+            .fetch()
+            .max_messages(1)
+            .expires(Duration::from_secs(2))
+            .messages()
+            .await
+            .context("stray fetch")?;
+        let mut stray = 0;
+        while let Some(m) = strays.next().await {
+            let _ = m.map_err(|e| anyhow::anyhow!("stray consume: {e}"))?;
+            stray += 1;
+        }
+        check(
+            &mut pass,
+            &format!("filter {fs} holds EXACTLY the program ({expect}, 0 strays)"),
+            delivered.len() == expect && stray == 0,
+        );
+    } else {
+        check(
+            &mut pass,
+            &format!("stream holds EXACTLY the program ({exact} == {expect})"),
+            exact == expect as u64,
+        );
+    }
     let got_ids: Vec<String> = delivered
         .iter()
         .filter_map(|(_, _, e)| {
             e.new
                 .as_ref()
-                .and_then(|n| n.get("id"))
+                .and_then(|n| n.get(&args.id_field))
                 .and_then(|v| v.as_str())
                 .map(str::to_string)
         })
@@ -174,19 +228,44 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
         "delivery order == commit order (the exact id program)",
         got_ids == args.expect_ids,
     );
+    match &args.expect_entity_id {
+        // The wamn-l5i9.11 rename drill: EVERY envelope carries the stable
+        // catalog entity id — even where the physical table name changed
+        // mid-program (the tables observed are reported for the log).
+        Some(id) => {
+            let tables: std::collections::BTreeSet<&str> =
+                delivered.iter().map(|(_, _, e)| e.table.as_str()).collect();
+            check(
+                &mut pass,
+                &format!(
+                    "every event is an insert with stable entity id {id:?} (tables seen: {tables:?})"
+                ),
+                delivered
+                    .iter()
+                    .all(|(_, _, e)| e.op == Op::Insert && e.entity.as_deref() == Some(id)),
+            );
+        }
+        // Unmapped program: `entity` ABSENT (the marker) + the table name.
+        None => check(
+            &mut pass,
+            "every event is an insert on the gate table, entity ABSENT (unmapped marker)",
+            delivered.iter().all(|(_, _, e)| {
+                e.op == Op::Insert && e.entity.is_none() && e.table == args.entity
+            }),
+        ),
+    }
     check(
         &mut pass,
-        "every event is an insert on the gate entity",
-        delivered
-            .iter()
-            .all(|(_, _, e)| e.op == Op::Insert && e.entity == args.entity),
-    );
-    check(
-        &mut pass,
-        "every subject is the v3 grammar",
-        delivered
-            .iter()
-            .all(|(s, _, e)| s == &subject(&args.org, &args.project, &args.env, &e.entity, e.op)),
+        "every subject is the v3 grammar (keyed by the entity segment)",
+        delivered.iter().all(|(s, _, e)| {
+            s == &subject(
+                &args.org,
+                &args.project,
+                &args.env,
+                e.entity_segment(),
+                e.op,
+            )
+        }),
     );
     check(
         &mut pass,

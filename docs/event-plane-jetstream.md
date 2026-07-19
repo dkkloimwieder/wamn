@@ -47,7 +47,7 @@ Executed in Phase 2 (§7); listed now so nothing else is built on them:
 | **Per-table outbox triggers** + DDL trigger emission (b687d45) | publication `FOR TABLES IN SCHEMA app` (auto-includes new tables) |
 | Outbox table + GC for row events | WAL + slot (retention via `max_slot_wal_keep_size`) |
 | **R8c** (bulk-write outbox amplification) — *closes* | bulk txns cost nothing extra; decode drains async |
-| R9b residual (rename → registration orphaning) — *closes* | relation-OID → catalog-entity mapping at decode; registrations key on entity id |
+| R9b residual (rename → registration orphaning) — *decode side closed 2026-07-19, wamn-l5i9.11* | relation-OID → catalog-entity mapping at decode; envelopes + subjects key on the stable entity id (rename-proof, gated by the live rename drill). The registration-continuity half lands with the materializer (l5i9.17) |
 | N-run-rows-per-event fan-out | one stored event, durable consumer per flow |
 | dispatchbench outbox modes | streambench/ceiling benches (§8) |
 
@@ -90,6 +90,17 @@ mechanical row changes ride one pipeline, distinguished by subject.
   types live in `wamn-event-wire` (WORKING DRAFT per §12; freeze at the
   Phase-2 cutover). MVP entity naming = the pgoutput relation's table name —
   the OID→catalog-entity map is the next bead.*
+  *Entity keying shipped (wamn-l5i9.11, 2026-07-19): the reader resolves each
+  relation OID to its stable catalog entity id via a `wamn_entities` map
+  (`relation_oid → entity_id, table_name`), maintained by
+  publish/migrate-catalog IN the DDL transaction; OID-keyed, so a rename only
+  updates `table_name` (pg_class OIDs survive `ALTER TABLE RENAME`) and
+  resolution is timeless under catch-up. The envelope now carries `entity`
+  (the id — ABSENT when unmapped, the delayed-never-lost fallback) plus
+  `table` (the physical name); the subject's entity segment is the id, so a
+  registration's consumer filter is rename-proof (R9b decode side). Resolution
+  is lazy per session and never invalidated. Live rename drill + 5 mutants;
+  recipe docs/build-and-test.md [EVT-OIDMAP].*
 - **Pipeline per event:** typed pgoutput event → OID→entity map → envelope
   `{op, old, new, entity, lsn, txid, commit_ts, causation?}` → subject
   `evt.<org>.<project>.<env>.<entity>.<op>` → publish

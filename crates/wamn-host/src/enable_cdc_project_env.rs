@@ -220,14 +220,18 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
 /// dependency order: the eager schema guard (F2 — `FOR TABLES IN SCHEMA`
 /// auto-includes tables created later, so the publication may precede
 /// catalog-publish), the publication, the failover slot (WAL pinned from here),
+/// the decode-time entity map (wamn-l5i9.11 — created BEFORE the grants so the
+/// role's `SELECT ON ALL TABLES` covers it; an env CDC-enabled after its
+/// catalog was published backfills the map with one `publish-catalog` re-run),
 /// then the replication role's grants (the role SQL must have been applied to
 /// the cluster first). Every statement is idempotent — re-applying is a no-op.
 fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
     format!(
-        "{schema_guard};\n{publication}\n{slot}\n{grants}\n",
+        "{schema_guard};\n{publication}\n{slot}\n{entity_map};\n{grants}\n",
         schema_guard = sql::ensure_schema_sql(schema),
         publication = sql::create_publication_sql(cdc_name, schema),
         slot = sql::create_failover_slot_sql(cdc_name),
+        entity_map = sql::ensure_entity_map_sql(schema),
         grants = sql::grant_replication_access_sql(db_name, cdc_name, schema),
     )
 }
@@ -306,9 +310,10 @@ mod tests {
     /// The CDC bundle's statements land in dependency order: the schema guard
     /// before the publication (FOR TABLES IN SCHEMA needs the schema), the
     /// publication before the slot (nothing decodes before there is something
-    /// published), the grants last.
+    /// published), the entity map before the grants (so `SELECT ON ALL TABLES`
+    /// covers it — the reader's decode-time lookup needs it), the grants last.
     #[test]
-    fn cdc_sql_bundle_orders_schema_publication_slot_grants() {
+    fn cdc_sql_bundle_orders_schema_publication_slot_map_grants() {
         let bundle = cdc_sql_bundle(
             "app",
             "wamn_cdc_acme__billing__dev",
@@ -323,10 +328,14 @@ mod tests {
         let slot = bundle
             .find("pg_create_logical_replication_slot('wamn_cdc_acme__billing__dev', 'pgoutput', false, false, true)")
             .expect("failover slot");
+        let entity_map = bundle
+            .find("CREATE TABLE IF NOT EXISTS \"app\".wamn_entities")
+            .expect("entity map");
         let grants = bundle
             .find("GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\"")
             .expect("grants");
-        assert!(schema < publication && publication < slot && slot < grants);
+        assert!(schema < publication && publication < slot && slot < entity_map);
+        assert!(entity_map < grants);
     }
 
     #[test]
