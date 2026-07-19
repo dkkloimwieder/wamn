@@ -34,6 +34,19 @@
 //! assert!(composed.contains("ttl = $7"));
 //! assert!(composed.contains("owner = $8"));
 //! ```
+//!
+//! ## SR12 — what the pure tests cover, and what they cannot
+//!
+//! This crate's tests exercise the **decision** (which statement, what shape,
+//! which binds); they cannot exercise the **statement** — the pure model has no
+//! planner, isolation level, lock manager, or RLS. A statement can be modelled
+//! correctly here and still misbehave live: `wamn-run-queue`'s `claim_batch_sql`
+//! passed every pure test while the real statement over-claimed on a
+//! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
+//! property of the emitted SQL no pure test can observe. Convention (SR12a):
+//! every composed or plan-sensitive statement carries a comment naming what the
+//! pure tests do NOT cover; the live half is the throwaway-PG gates over the
+//! real prepared-statement path (SR12b).
 
 /// A parameterized SQL fragment carried with its positional-parameter arity — the
 /// count of distinct `$1..$n` placeholders it binds. Construct one where the SQL

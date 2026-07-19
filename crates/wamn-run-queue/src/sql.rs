@@ -214,6 +214,11 @@ pub fn claim_dispatch_sql() -> String {
 /// queue removal are now atomic, so no crash window leaves a completed run
 /// enqueued. The dequeue tail shares `$1` and appends NO new param, so the
 /// composed arity is exactly the head's ([`wamn_sql::Sql`], SR11).
+///
+/// SR12 (composed statement): the pure tests pin the text and the shared-bind
+/// arithmetic; they cannot observe the single-statement CTE data-modification
+/// semantics (both halves see the same snapshot; the dequeue does not see
+/// `done`'s write) or RLS on either half — that is the SR12b live gate.
 pub fn complete_dequeue_sql() -> String {
     format!(
         "WITH done AS ({completed}) {dequeue}",
@@ -245,6 +250,11 @@ pub fn record_error_and_renew_sql() -> String {
 /// ([`Sql::param`]), so a param added upstream (a different crate) can never
 /// silently shift them onto the wrong bind. Success head arity 6 → the renew binds
 /// land at `$7`/`$8`; error head arity 7 → `$8`/`$9`.
+///
+/// SR12 (composed statement): the pure tests pin the text and the arity
+/// arithmetic; they cannot observe the data-modifying-CTE snapshot semantics,
+/// the owner-guard race, or RLS on the co-transacted tables — that is the
+/// SR12b live gate over the real prepared-statement path.
 fn checkpoint_then_renew(head: Sql) -> String {
     format!(
         "WITH recorded AS ({insert}) \
