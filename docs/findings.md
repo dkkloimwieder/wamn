@@ -40,16 +40,16 @@ prerequisite that makes everything else findable.
 | R11 | Reader reopen: no backoff, no cap, budget reset on *open* | High | **closed** | `d41e682` (wamn-l5i9.39; one ladder both arms, productivity reset, rate cap) |
 | E2 | Reader stall: no alarm, no attempt metric, no slot headroom gauge | High | **closed** | `7147f07` (wamn-l5i9.40; `CDC_PUBLISH_STALLED` + slot-headroom monitor; exporter follow-up wamn-2jkm.54) |
 | E13 | `wasi:sockets` unconditional; `TcpConnect` ignores `allowedHosts` | **Crit** | **closed** | build `845d023` (wamn-2jkm.8) + fork `8b76869`/pin `627a108` (wamn-7j0.1); UDP arms → E15 (wamn-7j0.2); runtime gate rides wamn-2jkm.41 |
-| E4 | `run_id` lexical vs numeric `stream_seq` | High | open | **before the materializer** |
-| E1 | Sequential publish caps capture at ~1/RTT | High | open | before Phase-2 cutover |
+| E4 | `run_id` lexical vs numeric `stream_seq` | High | **closed** | `709d2cf` (wamn-l5i9.43; `stream_seq BIGINT` ahead of `run_id` in every claim key; zero-pad mint + pure-model field ride l5i9.17) |
+| E1 | Sequential publish caps capture at ~1/RTT | High | **closed** | `35a8bff` (wamn-l5i9.42; acks settle at Commit, in-flight 256, retry from first unacked; readerbench rides wamn-2jkm.41) |
 | E10 | `wasmcloud:messaging@0.2.0` cannot carry the materializer (verified) | High | **closed** | `f8f7abd` (wamn-l5i9.44; `wamn:jetstream@0.1.0` + host plugin; e2e rides wamn-l5i9.57) |
 | E11 | Native-service drift; adopt the default rule | High | **closed** | `cb86099` (wamn-l5i9.45; **D21**) |
 | E12 | `Service` workloads exist in 2.5.2 — corrects E11's run-worker verdict | High | **closed** | recorded in D21 (`cb86099`); implementation = wamn-l5i9.17 then .49/.50 |
-| SR11 | Positional SQL params compose across crates with no type | High | open | before the next composed statement |
-| R16 | R2 propagated (`app.runner`); duplicated, diverged validators | Med | open | pull forward now |
-| R2 | Claim interpolation → `set_config` binds | Med | open | with R16 (same change) |
+| SR11 | Positional SQL params compose across crates with no type | High | **closed** | `7b4671f` (wamn-2jkm.19; `wamn-sql` leaf — `Sql{text,arity}.param()`; three call sites renumber against head arity) |
+| R16 | R2 propagated (`app.runner`); duplicated, diverged validators | Med | **closed** | `f7652c6` + `e235abb` (wamn-5x0.2/wamn-2jkm.20; all four claims bound; one validator owner `identifiers.rs`) |
+| R2 | Claim interpolation → `set_config` binds | Med | **closed** | `f7652c6` (wamn-5x0.2; bound `CLAIM_SQL`, template deleted; S2 re-gate rides wamn-2jkm.41) |
 | R12 | Stream config drift: `get_or_create_stream` never asserts | High→Med | **closed** | `e350524` (wamn-l5i9.41; REFUSE posture; E1 unblocked) |
-| R14 | Held outbox rows head-of-line-block the poll window | Med | open | live work (see R10) |
+| R14 | Held outbox rows head-of-line-block the poll window | Med | **closed** | `cebd722` (wamn-2jkm.18; `held_since` exclusion + backlog age; dispatchbench scenario rides wamn-2jkm.41) |
 | R1 | Park/wake consumes the redelivery budget | High | **closed** | `9de70c2` (wamn-fqg.5) |
 | R3 | Per-component memory limits | Med-High | **closed** | `c3356ea` (wamn-bp4.1) + fork ResourceLimiter commit |
 | R4 | Fork-based upstream management | — | **closed** | `dd0d60d` (wamn-bp4.2) |
@@ -57,16 +57,16 @@ prerequisite that makes everything else findable.
 | R8c | Outbox amplification + GC | Med | **reopened** | see R10 |
 | SR1/SR3/SR6 | Gates split, repo tiering, conventions written down | — | **closed** | `3dfee03` / `4a637e2` / `d8e1366` |
 | E14 | Q1: `ev.lsn` is per-message — dedupe design sound | — | **closed** | evidence: `pg-walstream stream.rs:1093,1066` (question-class closure) |
-| SR12 | Pure/effect split can't test statement-level bugs | High | open | header qualification now |
+| SR12 | Pure/effect split can't test statement-level bugs | High | open | live-test half closed `c705c9e` (wamn-2jkm.23); header qualification = wamn-2jkm.17 |
 | SR9 | `wamn-host` is three programs in one crate | Med | open | with E7/E8 |
 | E7/E8 | Reader as a service: extraction + placement/ownership | Med/High | open | before cutover |
 | SR8 | `deploy/` 68 flat files — canonical: §1.6 | — | **closed** | `8123046`…`6ac07d9` (wamn-2jkm.6; local gates only — in-cluster run rides wamn-2jkm.41) |
 | SR13 | Two sources of truth for schema | Med | open | next platform-schema change |
-| SR4 | `wamn_postgres.rs` split (grew 18% since filing) | Med | open | with R2/R16 |
+| SR4 | `wamn_postgres.rs` split (grew 18% since filing) | Med | **closed** | `7f91e3a` (wamn-cjv.18; `{mod,types,pool,claims,resources}.rs`; claims.rs = the claim boundary as one unit) |
 | SR10 | `wamn-gates` flat at 18.8k lines | Med | open | next bench |
 | SR2 | flowrunner re-implements run-state SQL | Med | open | before F3/F4 |
 | R17 | `NAMEDATALEN` truncation: `wamn_mig_drop_` + long entity collides; `TempNameCollision` compares untruncated | Med | open | with the next migration-engine touch |
-| R18 | `standard_conforming_strings` assumed, never asserted | Med | open | **with R16/R2 (same file, same surface)** |
+| R18 | `standard_conforming_strings` assumed, never asserted | Med | **closed** | `d770302` (wamn-2jkm.21; `post_create` SHOW assert per physical connection, fail closed) |
 | R19 | `row_to_map` lossy on non-UTF-8 (`from_utf8_lossy`) | Low | open | with reader work |
 | R20 | Author-supplied retry `cap-ms` unbounded | Low | open | with runner work |
 | R21 | `classify` matches `Display` text; PG17+ floor unstated | Low | open | with reader work |
@@ -84,7 +84,7 @@ prerequisite that makes everything else findable.
 | R33 | Delay wake key is global per run — second delay never delays | Low | open | wamn-2jkm.51 |
 | E15/E16 | UDP egress allow-all; `UdpBind` all-interfaces (the arms E13's fix left) | High/Med | open | wamn-7j0.2, next fork commit |
 | E17 | `egressbench` would PASS a tenant `wamn:postgres` importer | Med (latent) | open | wamn-2jkm.52 — hard precondition of wamn-bd5 |
-| R8b-b | Tenant predicate on the four RLS-only queue statements | Low | open | wamn-2jkm.53 (R8b-a stays wamn-286) |
+| R8b-b | Tenant predicate on the four RLS-only queue statements | Low | **closed** | `79e414b` (wamn-2jkm.53; four builders carry the predicate; R8b-a stays wamn-286) |
 | Q1 (§5.1) | `--features caps` not tenant-reachable; `wamn-1nd` stays future conditioning | — | **closed** | evidence in §5.1 (wamn-2jkm.15; minted E17) |
 | Q2 (§5.1) | REPLICA IDENTITY de-facto contract = DEFAULT, key-only; `l5i9.31` is non-retroactive | — | **closed** | evidence in §5.1 (wamn-l5i9.56; design para → l5i9.17) |
 | Q3 (§5.1) | No `wamn_dispatch` role exists; `wamn_app` verified `NOBYPASSRLS` non-owner FORCE-RLS, live | — | **closed** | evidence in §5.1 (wamn-2jkm.16; R8b split → wamn-286 / wamn-2jkm.53) |
@@ -919,7 +919,7 @@ corrections. Everything downstream cites IDs and paths this wave creates.
   `wamn_credentials.rs`, `components/flowrunner`. Findings come back as
   candidate ledger sections; zero merge risk.
 
-**Wave 2 — after Wave 1 merges:**
+**Wave 2 — after Wave 1 merges** *(executed 2026-07-19: `35a8bff` E1 · `709d2cf` E4 · `cebd722` R14 · `7b4671f` SR11 · `79e414b` R8b-b · `c705c9e` SR12b · `f7652c6` R2/R16 · `e235abb` R16b · `d770302` R18 · `7f91e3a` SR4; riders per §6 "with the next queue work" included)*:
 - **Queue cluster** (one agent): E4 `stream_seq` ordering + R14 held-row
   exclusion + SR11 `Sql` arity type — all `wamn-run-queue` and neighbors.
 - **E1** publish pipelining — requires the reader cluster merged (R12 is its

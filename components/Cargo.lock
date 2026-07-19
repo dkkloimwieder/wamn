@@ -565,6 +565,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "wamn-run-store",
+ "wamn-sql",
 ]
 
 [[package]]
@@ -574,6 +575,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-runner",
+ "wamn-sql",
 ]
 
 [[package]]
@@ -584,6 +586,10 @@ dependencies = [
  "wamn-flow",
  "wamn-node-sdk",
 ]
+
+[[package]]
+name = "wamn-sql"
+version = "0.1.0"
 
 [[package]]
 name = "wasm-bindgen"
