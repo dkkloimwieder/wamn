@@ -115,8 +115,17 @@ modes). **No new work lands on the outbox path**; deletion executes at
   overlay: publication + failover slot + replication role/Secret (R8b tier) +
   `registry.event_readers` registration, proven live on wamn-pg
   (`docs/provisioning.md`); unblocks `l5i9.10` [reader MVP]; the cluster-level
-  logical-decoding knobs are a filed sibling bead). Next after `.9`:
-  `l5i9.10` [EVT-READER] + `l5i9.15` [C-JS] ready. Next pick is the owner's.
+  logical-decoding knobs are a filed sibling bead;
+  ~~`l5i9.10` EVT-READER~~ **done 2026-07-19** — the reader MVP:
+  `wamn-host event-reader` (one project-env, replicas=1;
+  `deploy/event-reader.example.yaml`) + the `wamn-event-wire` draft contract;
+  commit-order envelopes onto the R3 `EVT_` stream, LSN advance only on ack
+  (JetStream down = delayed-never-lost, proven), missing/invalidated slot =
+  the §11 incident; gated live local + in-cluster (readerbench;
+  `docs/build-and-test.md` [EVT-READER]); lease election + fleet enumeration
+  are filed follow-ups). Phase-1 remaining: `l5i9.11` [EVT-OIDMAP] +
+  `l5i9.12` [EVT-CAUSATION] + `l5i9.14` [C-CDC] now unblocked, `l5i9.15`
+  [C-JS] ready. Next pick is the owner's.
 - Measurement already banked (pre-decision, still load-bearing): ~~C7/C-QUEUE~~
   (`wamn-z7b.1`, `docs/ceilings.md` — untuned knee ~2000–2500 transitions/sec) +
   ~~C2 outbox-trigger overhead~~ (`wamn-z7b.2`, `docs/ceilings.md` § C2 — now a

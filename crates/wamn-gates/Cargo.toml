@@ -45,6 +45,9 @@ wamn-run-queue = { path = "../wamn-run-queue" }
 # mark-running → complete → dequeue) as the comparison curve for the combined
 # statements.
 wamn-run-store = { path = "../wamn-run-store" }
+# readerbench consumes the REAL draft envelope type the reader publishes — the
+# stream-side assert deserializes with deny_unknown_fields (drift guard).
+wamn-event-wire = { path = "../wamn-event-wire" }
 wamn-flow = { path = "../wamn-flow" }
 # queuebench/dispatchbench doorbell hints (same version req as wash-runtime's
 # so cargo unifies to one crate instance).

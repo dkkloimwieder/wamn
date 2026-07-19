@@ -26,6 +26,7 @@ mod pgbench;
 mod provisionbench;
 mod publish_catalog_demo;
 mod queuebench;
+mod readerbench;
 mod runnerbench;
 mod streambench;
 mod testhostbench;
@@ -68,6 +69,8 @@ enum Command {
     Dispatchbench(dispatchbench::DispatchBenchArgs),
     /// Run the EVT-NATS data-plane JetStream gate (publish / consume / Nats-Msg-Id dedupe / R3 node-loss heal)
     Streambench(streambench::StreamBenchArgs),
+    /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
+    Readerbench(readerbench::ReaderBenchArgs),
     /// Run the EVT-C2 outbox-trigger overhead campaign (single-row / bulk amplification / growth-vs-GC)
     Outboxbench(outboxbench::OutboxBenchArgs),
     /// Run the EVT-C-WAL-0 pre-CDC WAL-volume baseline (per-op WAL/op + representative-load bytes/s)
@@ -132,6 +135,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Runnerbench(args) => runnerbench::run(args).await,
         Command::Dispatchbench(args) => dispatchbench::run(args).await,
         Command::Streambench(args) => streambench::run(args).await,
+        Command::Readerbench(args) => readerbench::run(args).await,
         Command::Outboxbench(args) => outboxbench::run(args).await,
         Command::Walbench(args) => walbench::run(args).await,
         Command::Credprobe(args) => credprobe::run(args).await,

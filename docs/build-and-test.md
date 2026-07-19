@@ -691,6 +691,55 @@ builder). Cluster-level preconditions (`wal_level=logical` is the CNPG default;
 `synchronizeLogicalDecoding` / `max_slot_wal_keep_size` are provision-org
 env-policy knobs) are a SIBLING bead, not this overlay.
 
+### [EVT-READER / wamn-l5i9.10] event-reader — one project-env → the EVT_ stream
+
+Docs: docs/event-plane-jetstream.md §4. The CDC reader MVP: `wamn-host
+event-reader --org --project --env` (replicas=1 Deployment,
+deploy/event-reader.example.yaml) reads its `registry.event_readers`
+registration, opens ONE pg_walstream session (`StreamingMode::Off` — whole
+txns, commit order), and publishes `wamn-event-wire` envelopes onto
+`evt.<org>.<project>.<env>.<entity>.<op>` with
+`Nats-Msg-Id = <project>_<env>:<lsn>`. Confirmed LSN advances ONLY on
+JetStream ack, at txn granularity; JetStream down ⇒ the publish retries
+forever ⇒ WAL retained (delayed, never lost). The reader NEVER creates the
+slot — a missing/invalidated slot is the v3 §11 capture-gap incident and the
+crash-loop is the MVP alert. `WAMN_CDC_URL` is the plain Secret url; the
+reader appends `sslmode` + `replication=database` itself.
+
+```bash
+cargo test -p wamn-event-wire           # the draft wire contract, string-pinned
+cargo test -p wamn-host --lib event_reader   # url compose / error classify / row map
+cargo clippy -p wamn-event-wire -p wamn-host -p wamn-gates
+# Local live gate (throwaway PG18 logical + single-node JetStream; ~90s —
+# idle-stream feedback rides the ~30s server-keepalive cycle, hence the waits):
+docker run -d --name wamn-reader-pg -e POSTGRES_PASSWORD=postgres -p 5448:5432 \
+  postgres:18 -c wal_level=logical -c fsync=off
+docker run -d --name wamn-reader-nats -p 4261:4222 nats:2.10-alpine -js -sd /data
+WAMN_READER_PG_URL=postgres://postgres:postgres@127.0.0.1:5448/postgres \
+WAMN_READER_NATS_URL=nats://127.0.0.1:4261 \
+  cargo test -p wamn-host --test event_reader_live
+# drills: disabled-registration + missing-slot refusals, commit order +
+# envelope shape (TOAST-absent vs NULL) + dedupe, LSN-advance-on-ack, crash →
+# restart resume, severed-proxy JetStream-down holds the LSN, clean shutdown,
+# zero-residue teardown (no slot left behind).
+docker rm -f wamn-reader-pg wamn-reader-nats
+# In-cluster gate of record (no image rebuild — the real debug binary against
+# NodePorts on wamn-pg/wamn-sysdb/evt-nats; scripted: scratchpad
+# incluster_l5i9_10.sh): provision + enable-cdc a trials org (l5i9.9 runbook),
+# run `wamn-host event-reader`, psql writes → the R3 EVT_ stream, then the
+# stream-side asserts + drills:
+./target/debug/wamn-gates readerbench --nats-url nats://<node>:30493 \
+  --org t10cdc --project app --env dev --expect-ids 1,2,3,… [--delete-stream]
+#   + SIGKILL/restart resume, severed-python-proxy LSN hold (never touches
+#   evt-nats itself), SIGTERM clean exit, zero-residue teardown (slot first).
+```
+
+Mutation harness: scratchpad `mutate_l5i9_10.py` — M1 wire `msg_id` order
+swapped (named unit), M2 an unacked publish counts as acked (the live gate's
+"confirmed LSN must HOLD" phase), M3 the `enabled` flag ignored (disabled
+probe), M4 a missing slot silently tolerated (the CAPTURE GAP probe); all
+apply/test/restore with sha256, DEBUG builds.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

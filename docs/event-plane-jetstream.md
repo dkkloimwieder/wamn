@@ -78,6 +78,18 @@ mechanical row changes ride one pipeline, distinguished by subject.
   admits one consumer, so exclusivity is structural — the dispatcher lease only
   elects *which* replica holds the session; successor resumes from confirmed
   LSN.
+  *MVP shipped (wamn-l5i9.10): `wamn-host event-reader` — one project-env per
+  instance, replicas=1 `Recreate` Deployment (event-reader.example.yaml); the
+  slot's single-consumer admission is the exclusivity guard and the lease
+  election is a filed follow-up (as is fleet/org enumeration). Reads its
+  `registry.event_readers` row (never derives names), `StreamingMode::Off`
+  (whole txns, commit order, nothing uncommitted leaves the server), LSN
+  advance on ack at txn granularity, session re-open loop per the S-CDC-1 F2
+  finding. The reader NEVER creates the slot: missing/invalidated ⇒ the §11
+  incident, exit loudly (crash-loop = the MVP alert). Envelope/subject/msg-id
+  types live in `wamn-event-wire` (WORKING DRAFT per §12; freeze at the
+  Phase-2 cutover). MVP entity naming = the pgoutput relation's table name —
+  the OID→catalog-entity map is the next bead.*
 - **Pipeline per event:** typed pgoutput event → OID→entity map → envelope
   `{op, old, new, entity, lsn, txid, commit_ts, causation?}` → subject
   `evt.<org>.<project>.<env>.<entity>.<op>` → publish

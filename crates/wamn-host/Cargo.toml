@@ -69,6 +69,11 @@ wamn-seed = { path = "../wamn-seed" }
 # returns async_nats::Client). Same version req as wash-runtime's so cargo
 # unifies to ONE crate instance (type identity) — the S5 OTel-crates pattern.
 async-nats = { version = "0.47", default-features = false }
+# l5i9.10 event-reader: the CDC walsender session (our pinned fork — F1
+# failover-slot syntax; docs/pg-walstream-fork.md).
+pg_walstream = { workspace = true }
+# l5i9.10 event-reader: the draft envelope/subject/Nats-Msg-Id wire contract.
+wamn-event-wire = { path = "../wamn-event-wire" }
 # wamn:postgres plugin (S2): thin driver + pool with explicit connection
 # lifecycle (deadpool Object::take = destroy-never-repool on abnormal death).
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }

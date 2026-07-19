@@ -4122,6 +4122,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-event-wire"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "wamn-f1"
 version = "0.1.0"
 dependencies = [
@@ -4169,6 +4178,7 @@ dependencies = [
  "tracing",
  "wamn-catalog",
  "wamn-ddl",
+ "wamn-event-wire",
  "wamn-flow",
  "wamn-gate-harness",
  "wamn-host",
@@ -4199,6 +4209,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "pg_walstream",
  "serde",
  "serde_json",
  "tokio",
@@ -4206,6 +4217,7 @@ dependencies = [
  "tracing",
  "wamn-catalog",
  "wamn-ddl",
+ "wamn-event-wire",
  "wamn-flow",
  "wamn-migrate",
  "wamn-provision",

@@ -1,0 +1,68 @@
+# wamn-l5i9.10 CDC event reader (D19 v3 §4) — EXAMPLE Deployment for ONE
+# project-env. Per-env config (org/project/env args + which wamn-cdc Secret the
+# env refs point at) makes this an example the provisioning runbook
+# instantiates, not an apply-as-is manifest; the demo values below match the
+# t10cdc in-cluster gate triple.
+#
+#   # after: provision-project-env + enable-cdc-project-env (+ applied SQL/Secret)
+#   kubectl -n wamn-system apply -f <instantiated copy of this file>
+#
+# REPLICAS=1, NO LEASE (the l5i9.10 MVP): the replication slot admits ONE
+# consumer, so exclusivity is structural — a second replica's session open
+# just fails. k8s restarts the pod; the successor resumes from the confirmed
+# LSN (at-least-once; the stream's Nats-Msg-Id dedupe absorbs redelivery).
+# Dispatcher-style lease election for warm multi-replica failover is a filed
+# follow-up bead.
+#
+# CREDENTIALS (R8b): WAMN_CDC_URL carries the per-project-env REPLICATION
+# credential — a tier ABOVE the wamn_app query credential; the Secret is
+# per-env (wamn-cdc-<org>--<project>--<env>, emitted by enable-cdc-project-env)
+# and the registry row stores only its REFERENCE. WAMN_SYSTEM_URL only needs
+# SELECT on registry.event_readers; `wamn-system-db` below is an operator-
+# provided Secret (no chart ships it — the dispatcher-projects precedent).
+#
+# INCIDENT SEMANTICS (v3 §11): a MISSING or INVALIDATED slot is a capture GAP —
+# the reader exits loudly (never re-creates the slot) and the pod crash-loops;
+# that crash-loop IS the MVP alert. Recovery: re-enable CDC + assess the gap.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: event-reader-t10cdc-app-dev
+  namespace: wamn-system
+  labels: { app: event-reader, wamn.org: t10cdc, wamn.project: app, wamn.env: dev }
+spec:
+  replicas: 1
+  # The slot admits one consumer: never surge a second session over a live one.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: event-reader, wamn.org: t10cdc, wamn.project: app, wamn.env: dev }
+  template:
+    metadata:
+      labels: { app: event-reader, wamn.org: t10cdc, wamn.project: app, wamn.env: dev }
+    spec:
+      containers:
+        - name: event-reader
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - event-reader
+            - --org=t10cdc
+            - --project=app
+            - --env=dev
+          env:
+            - name: WAMN_SYSTEM_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-system-db
+                  key: url
+            - name: WAMN_CDC_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-cdc-t10cdc--app--dev
+                  key: url
+            - name: WAMN_EVT_NATS_URL
+              value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 512Mi }

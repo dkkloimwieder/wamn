@@ -12,9 +12,9 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_host::{
-    copy_project_env, dispatch, dump_project_env, enable_cdc_project_env, host, migrate_catalog,
-    provision, provision_org, provision_project_env, publish_catalog, restore_project_env,
-    run_worker,
+    copy_project_env, dispatch, dump_project_env, enable_cdc_project_env, event_reader, host,
+    migrate_catalog, provision, provision_org, provision_project_env, publish_catalog,
+    restore_project_env, run_worker,
 };
 
 #[derive(Parser)]
@@ -46,6 +46,8 @@ enum Command {
     ProvisionProjectEnv(provision_project_env::ProvisionProjectEnvArgs),
     /// Overlay CDC capture onto a provisioned project-env: publication + failover slot + replication role/Secret + reader registration (wamn-l5i9.9, D19 v3)
     EnableCdcProjectEnv(enable_cdc_project_env::EnableCdcProjectEnvArgs),
+    /// Run the CDC event reader for ONE project-env: walsender session → envelopes → the EVT_ JetStream stream, LSN advances only on ack (wamn-l5i9.10, D19 v3 §4)
+    EventReader(event_reader::EventReaderArgs),
     /// Render/run per-project-env logical dumps (pg_dump -Fd → object storage; CronJob + on-demand) (wamn-q3n.10)
     DumpProjectEnv(dump_project_env::DumpProjectEnvArgs),
     /// Restore a per-project-env logical dump (pg_restore -Fd → scratch DB or in-place) (wamn-q3n.11)
@@ -79,6 +81,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ProvisionOrg(args) => provision_org::run(args).await,
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
         Command::EnableCdcProjectEnv(args) => enable_cdc_project_env::run(args).await,
+        Command::EventReader(args) => event_reader::run(args).await,
         Command::DumpProjectEnv(args) => dump_project_env::run(args).await,
         Command::RestoreProjectEnv(args) => restore_project_env::run(args).await,
         Command::CopyProjectEnv(args) => copy_project_env::run(args).await,

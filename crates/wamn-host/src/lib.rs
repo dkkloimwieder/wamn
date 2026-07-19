@@ -14,6 +14,7 @@ pub mod dispatch;
 pub mod dump_project_env;
 pub mod enable_cdc_project_env;
 pub mod engine;
+pub mod event_reader;
 mod env_policies;
 pub mod host;
 pub mod migrate_catalog;
