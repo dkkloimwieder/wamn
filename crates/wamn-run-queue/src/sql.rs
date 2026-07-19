@@ -14,6 +14,7 @@
 
 use crate::model::PartitionPolicy;
 use wamn_run_store::RunStatus;
+use wamn_sql::Sql;
 
 /// The D15 write-ahead run row: a `dispatched` run persisted *before* the runner
 /// picks it up (the janitor later reconciles one that never reports back).
@@ -200,47 +201,53 @@ pub fn claim_dispatch_sql() -> String {
 }
 
 /// Completion + dequeue as ONE statement (fqg.18): composes the 5.7
-/// [`wamn_run_store::sql::update_run_completed_sql`] (deliberately
-/// UNCONDITIONAL — the fqg.2 reverse-race override) with [`dequeue_sql`],
-/// sharing `$1` run_id (`$2` result_json). Also strictly better than the split
-/// pair: completion and queue removal are now atomic, so no crash window leaves
-/// a completed run enqueued.
+/// [`wamn_run_store::sql::update_run_completed`] (deliberately UNCONDITIONAL —
+/// the fqg.2 reverse-race override) with [`dequeue_sql`], sharing `$1` run_id
+/// (`$2` result_json). Also strictly better than the split pair: completion and
+/// queue removal are now atomic, so no crash window leaves a completed run
+/// enqueued. The dequeue tail shares `$1` and appends NO new param, so the
+/// composed arity is exactly the head's ([`wamn_sql::Sql`], SR11).
 pub fn complete_dequeue_sql() -> String {
     format!(
         "WITH done AS ({completed}) {dequeue}",
-        completed = wamn_run_store::sql::update_run_completed_sql(),
+        completed = wamn_run_store::sql::update_run_completed().text(),
         dequeue = dequeue_sql(),
     )
 }
 
 /// Per-node checkpoint + heartbeat as ONE statement (fqg.18): composes the 5.7
-/// [`wamn_run_store::sql::insert_node_run_success_sql`] (`$1`..`$6`, idempotent
-/// by `(run_id, node_id, occurrence)`) with the [`renew_lease_sql`] write
-/// (`$7` ttl_ms, `$8` owner — owner-guarded, sharing `$1` run_id). The renew
-/// fires even when the record is a conflict no-op (a cycle re-visiting a node),
-/// so a long cyclic walk's lease stays live exactly as the split pair kept it.
+/// [`wamn_run_store::sql::insert_node_run_success`] (`$1`..`$6`, idempotent by
+/// `(run_id, node_id, occurrence)`) with the [`renew_lease_sql`] write (ttl_ms,
+/// owner — owner-guarded, sharing `$1` run_id). The renew fires even when the
+/// record is a conflict no-op (a cycle re-visiting a node), so a long cyclic
+/// walk's lease stays live exactly as the split pair kept it.
 pub fn record_success_and_renew_sql() -> String {
-    format!(
-        "WITH recorded AS ({insert}) \
-         UPDATE run_queue \
-            SET lease_expires_at = now() + ($7::bigint * interval '1 millisecond') \
-          WHERE tenant_id = current_setting('app.tenant', true) \
-            AND run_id = $1 AND lease_owner = $8",
-        insert = wamn_run_store::sql::insert_node_run_success_sql(),
-    )
+    checkpoint_then_renew(wamn_run_store::sql::insert_node_run_success())
 }
 
 /// The error-routed twin of [`record_success_and_renew_sql`]: composes
-/// [`wamn_run_store::sql::insert_node_run_error_sql`] (`$1`..`$7`) with the
-/// owner-guarded lease renew (`$8` ttl_ms, `$9` owner).
+/// [`wamn_run_store::sql::insert_node_run_error`] (`$1`..`$7`) with the
+/// owner-guarded lease renew.
 pub fn record_error_and_renew_sql() -> String {
+    checkpoint_then_renew(wamn_run_store::sql::insert_node_run_error())
+}
+
+/// Compose a per-node checkpoint `head` with the owner-guarded lease-renew tail
+/// they share (fqg.18). SR11: the tail SHARES the head's `$1` (run_id) and appends
+/// two NEW params — ttl_ms and the owner guard — numbered against the head's arity
+/// ([`Sql::param`]), so a param added upstream (a different crate) can never
+/// silently shift them onto the wrong bind. Success head arity 6 → the renew binds
+/// land at `$7`/`$8`; error head arity 7 → `$8`/`$9`.
+fn checkpoint_then_renew(head: Sql) -> String {
     format!(
         "WITH recorded AS ({insert}) \
          UPDATE run_queue \
-            SET lease_expires_at = now() + ($8::bigint * interval '1 millisecond') \
+            SET lease_expires_at = now() + (${ttl}::bigint * interval '1 millisecond') \
           WHERE tenant_id = current_setting('app.tenant', true) \
-            AND run_id = $1 AND lease_owner = $9",
-        insert = wamn_run_store::sql::insert_node_run_error_sql(),
+            AND run_id = $1 AND lease_owner = ${owner}",
+        insert = head.text(),
+        ttl = head.param(1),
+        owner = head.param(2),
     )
 }
 
@@ -660,4 +667,50 @@ pub fn gc_orphan_partitions_sql() -> String {
              WHERE q.tenant_id = o.tenant_id AND q.partition_key = o.partition_key \
         )"
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SR11: the renew tail numbers its ttl/owner params against the HEAD's arity,
+    /// so the same composing code stays correct for any head — a param added
+    /// upstream shifts the tail instead of misbinding it. A fake 5-param head puts
+    /// them at `$6`/`$7`; a 6-param head at `$7`/`$8`; a 7-param head at `$8`/`$9`.
+    #[test]
+    fn renew_tail_numbers_against_head_arity() {
+        let five = checkpoint_then_renew(Sql::new("INSERT $1 $2 $3 $4 $5", 5));
+        assert!(five.contains("$6::bigint * interval '1 millisecond'"));
+        assert!(five.contains("AND run_id = $1 AND lease_owner = $7"));
+        assert!(!five.contains("$8"));
+
+        let six = checkpoint_then_renew(Sql::new("INSERT $1 $2 $3 $4 $5 $6", 6));
+        assert!(six.contains("$7::bigint * interval '1 millisecond'"));
+        assert!(six.contains("AND run_id = $1 AND lease_owner = $8"));
+
+        let seven = checkpoint_then_renew(Sql::new("INSERT $1 $2 $3 $4 $5 $6 $7", 7));
+        assert!(seven.contains("$8::bigint * interval '1 millisecond'"));
+        assert!(seven.contains("AND run_id = $1 AND lease_owner = $9"));
+    }
+
+    /// The real composed statements bind exactly the head's arity + the renew's two
+    /// new params: success $1..$8, error $1..$9, complete $1..$2 (dequeue shares
+    /// $1, adds none). Pinned against the arity the producing crate declares.
+    #[test]
+    fn composed_arity_flows_from_the_producing_crate() {
+        assert_eq!(wamn_run_store::sql::insert_node_run_success().arity(), 6);
+        let s = record_success_and_renew_sql();
+        assert!(s.contains("AND run_id = $1 AND lease_owner = $8"));
+        assert!(!s.contains("$9"));
+
+        assert_eq!(wamn_run_store::sql::insert_node_run_error().arity(), 7);
+        let e = record_error_and_renew_sql();
+        assert!(e.contains("AND run_id = $1 AND lease_owner = $9"));
+        assert!(!e.contains("$10"));
+
+        assert_eq!(wamn_run_store::sql::update_run_completed().arity(), 2);
+        let c = complete_dequeue_sql();
+        assert!(c.contains(wamn_run_store::sql::update_run_completed().text()));
+        assert!(c.contains(&dequeue_sql()));
+    }
 }

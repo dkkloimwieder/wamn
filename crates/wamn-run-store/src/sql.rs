@@ -15,7 +15,32 @@
 //! This module is guest-compilable by construction: `String` builders only,
 //! no DB driver, no clock, no tokio in the dependency closure.
 
+use wamn_sql::Sql;
+
 use crate::status::{NodeRunStatus, RunStatus};
+
+// SR11: the THREE builders wamn-run-queue COMPOSES are also exposed as [`Sql`]
+// (text + param arity) so the consumer renumbers its lease-renew tail against the
+// arity instead of hardcoding `$7`/`$8` on an assumption about this crate. The
+// arity is declared here, beside the text, and asserted against the text by
+// `composed_builder_arities_match_their_placeholders` so the two cannot drift.
+// The plain `*_sql` String builders stay for the direct callers (the guests, the
+// benches). Other leaf builders are never composed and keep returning `String`.
+
+/// [`update_run_completed_sql`] carried with its param arity (`$1..$2`).
+pub fn update_run_completed() -> Sql {
+    Sql::new(update_run_completed_sql(), 2)
+}
+
+/// [`insert_node_run_success_sql`] carried with its param arity (`$1..$6`).
+pub fn insert_node_run_success() -> Sql {
+    Sql::new(insert_node_run_success_sql(), 6)
+}
+
+/// [`insert_node_run_error_sql`] carried with its param arity (`$1..$7`).
+pub fn insert_node_run_error() -> Sql {
+    Sql::new(insert_node_run_error_sql(), 7)
+}
 
 /// Idempotent run open (caller-minted run id): a fresh run records its trigger
 /// input; a resumed run is a no-op — its `node_runs` history is the durable
@@ -142,6 +167,54 @@ pub fn select_completed_node_runs_sql() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The highest `$n` placeholder in a builder's text — its true param count.
+    fn max_placeholder(sql: &str) -> u16 {
+        let bytes = sql.as_bytes();
+        let mut max = 0u16;
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'$' {
+                let mut j = i + 1;
+                let mut n = 0u16;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    n = n * 10 + u16::from(bytes[j] - b'0');
+                    j += 1;
+                }
+                if j > i + 1 {
+                    max = max.max(n);
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        max
+    }
+
+    /// SR11: each composed builder's declared arity equals the highest placeholder
+    /// in its own text, so a param added to the SQL without bumping the arity is
+    /// caught HERE — before wamn-run-queue mis-numbers its tail against a stale
+    /// arity.
+    #[test]
+    fn composed_builder_arities_match_their_placeholders() {
+        for stmt in [
+            update_run_completed(),
+            insert_node_run_success(),
+            insert_node_run_error(),
+        ] {
+            assert_eq!(
+                stmt.arity(),
+                max_placeholder(stmt.text()),
+                "declared arity must match the text's highest $n: {}",
+                stmt.text()
+            );
+        }
+        // The exact contract wamn-run-queue composes against, pinned.
+        assert_eq!(update_run_completed().arity(), 2);
+        assert_eq!(insert_node_run_success().arity(), 6);
+        assert_eq!(insert_node_run_error().arity(), 7);
+    }
 
     /// The builders stay in the house shape: unqualified tables, claim-scoped
     /// tenant, `$n` values only (no interpolated data), model-tied literals.

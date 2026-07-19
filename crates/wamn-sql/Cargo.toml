@@ -1,0 +1,10 @@
+[package]
+name = "wamn-sql"
+description = "SQL composition primitive (SR11): a parameterized statement fragment carried WITH its positional-parameter arity, so a fragment PRODUCED in one pure crate can be COMPOSED in another without the consumer hardcoding the producer's placeholder count. A leaf: no dependencies, guest-compilable, no DB/clock/wasm. wamn-run-store produces it (the composed checkpoint/completion statements), wamn-run-queue consumes it (renumbering its lease-renew tail against the head's arity)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

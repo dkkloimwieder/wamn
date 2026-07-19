@@ -4312,6 +4312,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-run-store",
+ "wamn-sql",
 ]
 
 [[package]]
@@ -4322,6 +4323,7 @@ dependencies = [
  "serde_json",
  "wamn-flow",
  "wamn-runner",
+ "wamn-sql",
 ]
 
 [[package]]
@@ -4352,6 +4354,10 @@ dependencies = [
  "wamn-catalog",
  "wamn-ddl",
 ]
+
+[[package]]
+name = "wamn-sql"
+version = "0.1.0"
 
 [[package]]
 name = "wamn-sysschema"

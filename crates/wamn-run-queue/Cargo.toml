@@ -10,6 +10,10 @@ license.workspace = true
 # (RunStatus::Dispatched) and the janitor verdict (RunStatus::InfrastructureFailure)
 # are RunStatus values, not a redefined vocabulary — reuse them.
 wamn-run-store = { path = "../wamn-run-store" }
+# SR11: the checkpoint/complete statements COMPOSE wamn-run-store's builders as
+# `Sql` (text + arity) and renumber their lease-renew tail against the head's
+# arity — never a hardcoded `$7`/`$8` that a new upstream param would misbind.
+wamn-sql = { path = "../wamn-sql" }
 # The queue records import/export as JSON (the read model / the pure decision
 # fixtures). No schemars — a store model, not a published contract (like
 # wamn-run-store / wamn-ddl / wamn-runner). Always present: `model` (QueueEntry)
