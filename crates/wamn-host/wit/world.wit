@@ -35,6 +35,17 @@ world egress-plugin {
   import wamn:runner/egress@0.1.0;
 }
 
+/// Host-side bindgen world for the trusted `wamn:runner/causation` channel
+/// (l5i9.12.2): the compiled-in flow-runner declares the run it is driving
+/// ({run, root, depth}) so the `wamn:postgres` plugin stamps a transactional
+/// `wamn.causation` logical message onto every run-owned transaction, which the
+/// CDC reader (l5i9.12.1) stitches onto the txn's row events. The host
+/// IMPLEMENTS `set-run-context`, feeding the plugin's per-component run map.
+/// See plugins/wamn_postgres.rs.
+world causation-plugin {
+  import wamn:runner/causation@0.1.0;
+}
+
 /// Host-side bindgen world for the S4 `nodebench` / `serve-node` harness: the
 /// host CALLS a bench node's exported `handler.run` and IMPLEMENTS the bench
 /// `wait-ns` import (a real async host sleep) used to model an I/O-bound node

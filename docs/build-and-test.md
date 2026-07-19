@@ -813,6 +813,47 @@ Mutation harness: scratchpad `mutate_l5i9_12.py` — M1 messages disabled
 exact-prefix guard broken — M1/M2 fail live-gate phase G, M3 fails the
 `parse_causation` unit test; apply/test/restore with sha256, DEBUG builds.
 
+### [EVT-CAUSATION-EMIT] the plugin emits wamn.causation per run-owned txn (l5i9.12.2)
+
+Docs: docs/event-plane-jetstream.md §4 · The emit half of the split above.
+
+The trusted flow-runner declares the run it drives through a new **additive**
+`wamn:runner/causation.set-run-context` channel (linked ONLY into the compiled-in
+runner — `wamn:postgres` stays FROZEN 0.1.0, no S2 re-gate); the host feeds a
+per-component `current_run` map on the `WamnPostgres` plugin, and
+`begin_with_claims` appends a transactional
+`pg_logical_emit_message(true,'wamn.causation',{run,root,depth})` to every
+run-owned txn. MVP: root runs only → `root = run`, `depth = 0` (no claim-SQL
+change, no guest-data change; event-chain root/depth thread from the materializer
+l5i9.17). A guest raw-SQL `wamn.*` emit is rejected on the query/execute/cursor
+surface (defense-in-depth blocklist, AR1). HOST-changed (plugin ships in
+wamn-host) AND GUEST-changed (the runner declares the channel) — the in-cluster
+gate rebakes the host image + rebuilds the flowrunner wasm.
+
+```bash
+cargo test -p wamn-host --lib plugins::wamn_postgres::tests  # emit bytes pinned + batch wiring (run set/unset) + forgery guard + current_run map
+(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)  # guest declares the channel
+# Local live proof — the REAL plugin emit through the REAL runner (both drive
+# paths: run/run_s6/run_until_kill via execute(), run_next via execute_claimed()):
+docker run -d --name caus-pg -p 5491:5432 -e POSTGRES_PASSWORD=postgres postgres:18 -c wal_level=logical
+docker exec caus-pg psql -U postgres -c "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER;"
+docker exec caus-pg psql -U postgres -tAc "SELECT pg_create_logical_replication_slot('caus','test_decoding')"
+./target/debug/wamn-gates runnerbench --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5491/postgres \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5491/postgres   # runs drive; NOSUPERUSER app role emits, writes never break
+# peek: a transactional wamn.causation {run,run,0} rides EACH run's sink-write txn, content == run_id:
+docker exec caus-pg psql -U postgres -tAc "SELECT data FROM pg_logical_slot_peek_changes('caus',NULL,1500)" | grep -E "wamn.causation|sink: INSERT"
+docker rm -f caus-pg
+# In-cluster gate of record (deployed image drives real runs; the reader stitch of
+# the identical bytes is already proven at l5i9.12.1's in-cluster R3 + phase G):
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-host:dev --name wamn
+```
+
+Mutation harness: scratchpad `mutate_l5i9_12_2.py` — M1 emit dropped from
+`build_claim_batch`, M2 `set_current_run` does not store the run, M3 the forgery
+guard always passes — each fails a NAMED `wamn_postgres::tests` unit test;
+apply/test/restore with sha256, DEBUG builds.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

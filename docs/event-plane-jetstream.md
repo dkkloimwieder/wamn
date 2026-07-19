@@ -118,7 +118,14 @@ mechanical row changes ride one pipeline, distinguished by subject.
   `Commit` with the stamp attached, so causation is robust to whether the
   message frame arrives before or after the rows. Only a **transactional**
   `wamn.causation` frame counts (the unforgeable property rides on the commit).
-  The plugin-emit half is wamn-l5i9.12.2.)*
+  The **plugin-emit half is done** (wamn-l5i9.12.2): the trusted flow-runner
+  declares the run it drives through a new `wamn:runner/causation.set-run-context`
+  channel (additive; `wamn:postgres` stays FROZEN 0.1.0), and the plugin appends
+  the transactional emit to `begin_with_claims`, so every run-owned txn is
+  stamped `{run, root: run, depth: 0}` (event-chain root/depth thread from the
+  materializer, l5i9.17). Guest forgery is blocked: a raw-SQL `wamn.*` emit is
+  rejected on the query/execute/cursor surface. MVP: root runs only —
+  self-root, depth 0.)*
 - **Old images:** `REPLICA IDENTITY FULL` is a **per-entity knob the DDL
   engine manages**, set only where a registration needs old-image conditions
   ("changed-to") — WAL cost is paid per table, not universally. Materializer

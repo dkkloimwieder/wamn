@@ -51,6 +51,13 @@ world flowrunner {
   // allowlist on this single long-lived component (never-declared or
   // declared-empty = deny-all, intersected with the host-level list).
   import wamn:runner/egress@0.1.0;
+  // l5i9.12.2: the TRUSTED per-run causation channel — same trust argument. The
+  // runner declares the run it is driving ({run, root, depth}) so the host's
+  // wamn:postgres plugin stamps a transactional wamn.causation message onto
+  // every run-owned txn; the CDC reader (l5i9.12.1) stitches it onto the row
+  // events. Cleared (none) between runs. A guest cannot forge causation: the
+  // frozen wamn:postgres surface rejects a raw-SQL wamn.* emit.
+  import wamn:runner/causation@0.1.0;
 
   /// Dispatch micro-benchmark. Runs `iterations` walks of the supplied
   /// canonical flow (the fixture JSON now lives with the gates, SR2)

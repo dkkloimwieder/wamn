@@ -319,6 +319,9 @@ impl Harness {
         wamn_host::plugins::wamn_credentials::add_runner_to_linker(&mut linker)?;
         // fqg.11: the flowrunner declares its per-run egress the same way.
         wamn_host::plugins::runner_egress::add_runner_to_linker(&mut linker)?;
+        // l5i9.12.2: the trusted per-run causation channel (the flowrunner world
+        // now imports it; instantiation traps without it).
+        wamn_postgres::add_runner_causation_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self {
             engine,

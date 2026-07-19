@@ -613,12 +613,47 @@ fn declare_run_egress(flow: &Flow) {
     wamn::runner::egress::set_allowed_hosts(&flow.allowed_hosts);
 }
 
+/// l5i9.12.2: declare the run this component is driving to the host's trusted
+/// causation channel, so the `wamn:postgres` plugin stamps a TRANSACTIONAL
+/// `wamn.causation` message ({run, root, depth}) onto every run-owned txn it
+/// opens — which the CDC reader (l5i9.12.1) stitches onto the txn's row events.
+/// A root run — every run the flow-runner claims from the queue today — is its
+/// own root at depth 0; event-triggered runs (materializer, l5i9.17) carry a
+/// real root/depth, and this shape is ready for them unchanged.
+fn declare_run_context(run_id: &str) {
+    let ctx = wamn::runner::causation::RunContext {
+        run: run_id.to_string(),
+        root: run_id.to_string(),
+        depth: 0,
+    };
+    wamn::runner::causation::set_run_context(Some(&ctx));
+}
+
+/// Clears the host's causation context when a run's driver returns (ANY path,
+/// including an early `?`), so between-run bookkeeping writes carry no stale
+/// causation. One flow-runner drains runs strictly sequentially, so a single
+/// live guard per [`execute`] call is sufficient.
+struct RunContextGuard;
+
+impl Drop for RunContextGuard {
+    fn drop(&mut self) {
+        wamn::runner::causation::set_run_context(None);
+    }
+}
+
 fn execute(
     run_id: &str,
     payload: &str,
     kill_after_write: bool,
     flow_id: &str,
 ) -> Result<RunOutcome, String> {
+    // l5i9.12.2: declare this run's causation to the host BEFORE any write, so
+    // the wamn:postgres plugin stamps {run, root, depth} onto every run-owned
+    // txn. The guard clears it on return (any path) so the next claim starts
+    // clean and between-run bookkeeping carries no stale causation.
+    declare_run_context(run_id);
+    let _run_ctx = RunContextGuard;
+
     // v1 reconstructs against the ACTIVE flow version (safe while a flow's
     // versions stay structurally compatible — `Plan::resume` raises Mismatch if
     // not); pinning a resume to the run's persisted `flow_version` is a follow-up
@@ -929,6 +964,14 @@ fn execute_claimed(
     owner: &str,
     ttl_ms: i64,
 ) -> Result<ClaimOutcome, String> {
+    // l5i9.12.2: the production dispatch path (run-next) — declare this run's
+    // causation BEFORE any write so the wamn:postgres plugin stamps
+    // {run, root, depth} onto every run-owned txn (checkpoints included; the CDC
+    // reader drops the platform-schema ones and stitches the app-table writes).
+    // The guard clears it on return so the next claim starts clean.
+    declare_run_context(run_id);
+    let _run_ctx = RunContextGuard;
+
     declare_run_grant(flow);
     declare_run_egress(flow);
     let plan = Plan::compile(flow).map_err(|e| e.to_string())?;

@@ -51,6 +51,8 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Linker, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+use wamn_event_wire::Causation;
+
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         world: "postgres-plugin",
@@ -73,6 +75,29 @@ pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 /// `pgbench` harness calls it to link the capability into a hand-built store.
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
+}
+
+mod causation_bindings {
+    wash_runtime::wasmtime::component::bindgen!({
+        world: "causation-plugin",
+        imports: { default: async | trappable | tracing },
+        wasmtime_crate: wash_runtime::wasmtime,
+    });
+}
+
+use causation_bindings::wamn::runner::causation;
+
+/// Wire the TRUSTED `wamn:runner/causation` `set-run-context` channel into a
+/// linker (l5i9.12.2). Call this ONLY for the trusted, compiled-in flow-runner
+/// — the sole component allowed to declare the run it is driving. A custom node
+/// must NOT get this: it never imports `wamn:runner`, and the frozen
+/// `wamn:postgres` surface rejects a raw-SQL `wamn.*` emit, so guest causation
+/// is unforgeable. The handler feeds the [`WamnPostgres`] plugin resolved from
+/// the invoking context.
+pub fn add_runner_causation_to_linker(
+    linker: &mut Linker<SharedCtx>,
+) -> wash_runtime::wasmtime::Result<()> {
+    causation::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
 
 /// Per-workload config key carrying the tenant identity (plumbed end-to-end
@@ -302,6 +327,16 @@ pub struct WamnPostgres {
     /// `SET LOCAL app.runner` so a flowrunner replica reads its owner identity to
     /// claim/renew queue rows under.
     runners: std::sync::RwLock<HashMap<String, String>>,
+    /// component id → the causation context {run, root, depth} of the run the
+    /// trusted flow-runner is currently driving (l5i9.12.2). Declared through
+    /// the `wamn:runner/causation` channel ([`add_runner_causation_to_linker`]),
+    /// cleared (removed) between runs. Absent (the default) ⇒ no causation is
+    /// stamped — so every non-run path (S2..S6, the gateway, benches without a
+    /// declaration) is byte-unchanged. When set, [`begin_with_claims`] appends a
+    /// TRANSACTIONAL `wamn.causation` logical message to every transaction the
+    /// plugin opens for that component, which the CDC reader (l5i9.12.1)
+    /// stitches onto the txn's row events.
+    current_run: std::sync::RwLock<HashMap<String, Causation>>,
     /// Connections destroyed instead of repooled (chaos-gate observability).
     destroyed: Arc<AtomicU64>,
 }
@@ -397,7 +432,105 @@ fn reject_claim_mutation(sql: &str) -> Result<(), PgError> {
             "in-band claim or role mutation is not permitted".to_string(),
         )));
     }
+    if statement_forges_causation(sql) {
+        tracing::warn!(
+            target: "wamn::security",
+            "rejected a guest wamn.* logical-message emit on the guest SQL surface"
+        );
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "emitting a wamn.* logical message is not permitted".to_string(),
+        )));
+    }
     Ok(())
+}
+
+/// True if `sql` calls `pg_logical_emit_message` (either overload) AND names the
+/// reserved `wamn.` message-prefix namespace (l5i9.12.2). Only the plugin's own
+/// [`begin_with_claims`] emit — which runs through `batch_execute`, NOT this
+/// guest surface — may write a `wamn.causation` frame; a guest forging one over
+/// the parameterized query/execute/cursor surface would ride its own txn's
+/// commit and the reader (l5i9.12.1) would stitch it, misattributing causation.
+/// This is a defense-in-depth **blocklist** (the AR1 theme, like
+/// [`reject_claim_mutation`]), not a structural close: matching is
+/// case-insensitive and comment-stripped, and over-rejects the rare statement
+/// that merely names both tokens in a literal — fail-closed, acceptable on this
+/// (flag-OFF) raw surface. A guest's own non-`wamn.` logical messages are left
+/// alone (the reader ignores them).
+fn statement_forges_causation(sql: &str) -> bool {
+    let lower = sql.to_ascii_lowercase();
+    lower.contains("pg_logical_emit_message") && lower.contains("wamn.")
+}
+
+/// The transactional `wamn.causation` logical-message emit appended to a
+/// run-owned transaction's BEGIN batch (l5i9.12.2). The [`Causation`] is
+/// serialized canonically (`{"run":..,"root":..,"depth":..}` — the reader
+/// deserializes with `deny_unknown_fields`) and SQL-escaped (single quotes
+/// doubled) for safe literal embedding in the simple-query batch, which takes
+/// no bind params. `transactional = true` so the message rides the txn's commit
+/// at its own LSN; the reader (l5i9.12.1) buffers the whole txn and stamps this
+/// onto every row event regardless of frame order.
+fn causation_emit_sql(c: &Causation) -> String {
+    let json = serde_json::to_string(c).expect("Causation serializes to JSON");
+    let escaped = json.replace('\'', "''");
+    format!(" SELECT pg_logical_emit_message(true, 'wamn.causation', '{escaped}');")
+}
+
+/// Build the one-round-trip `BEGIN` + claim-injection batch for a plugin-managed
+/// transaction (extracted from [`WamnPostgres::begin_with_claims`] so the exact
+/// SQL — the load-bearing contract — is unit-testable without a live pool). The
+/// `tenant`/`runner` literals are charset-validated so they cannot escape the
+/// quoted literal; `schema` is a validated bare identifier. When `run` is set, a
+/// TRANSACTIONAL `wamn.causation` emit is appended (l5i9.12.2) so every txn the
+/// plugin opens for a run stamps causation onto the txn's row events.
+fn build_claim_batch(
+    tenant: &str,
+    schema: Option<&str>,
+    runner: Option<&str>,
+    run: Option<&Causation>,
+    statement_timeout_ms: u32,
+) -> Result<String, PgError> {
+    debug_assert!(valid_tenant(tenant));
+    if !valid_tenant(tenant) {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid tenant identity".to_string(),
+        )));
+    }
+    let mut sql = format!(
+        "BEGIN; SET LOCAL app.tenant = '{tenant}'; SET LOCAL statement_timeout = {statement_timeout_ms};"
+    );
+    if let Some(schema) = schema {
+        debug_assert!(valid_schema(schema));
+        if !valid_schema(schema) {
+            return Err(PgError::QueryError((
+                "WAMN0".to_string(),
+                "invalid search_path schema".to_string(),
+            )));
+        }
+        sql.push_str(&format!(" SET LOCAL search_path = {schema};"));
+    }
+    if let Some(runner) = runner {
+        debug_assert!(valid_runner(runner));
+        if !valid_runner(runner) {
+            return Err(PgError::QueryError((
+                "WAMN0".to_string(),
+                "invalid runner owner".to_string(),
+            )));
+        }
+        // fqg.4: the durable-queue lease owner a flowrunner replica reads via
+        // `current_setting('app.runner', true)`. Quoted like the tenant;
+        // `valid_runner` guarantees the literal cannot escape.
+        sql.push_str(&format!(" SET LOCAL app.runner = '{runner}';"));
+    }
+    if let Some(run) = run {
+        // l5i9.12.2: stamp the run's causation onto this transaction. The
+        // TRANSACTIONAL message rides the commit, so a rolled-back txn emits
+        // nothing and the reader (l5i9.12.1) stitches it onto the txn's row
+        // events. Appended to the same one-round-trip batch as the claims.
+        sql.push_str(&causation_emit_sql(run));
+    }
+    Ok(sql)
 }
 
 /// True if `sql`'s first keyword is `SET` (covers `SET LOCAL` / `SET SESSION` /
@@ -475,6 +608,7 @@ impl WamnPostgres {
             projects: std::sync::RwLock::new(HashMap::new()),
             schemas: std::sync::RwLock::new(HashMap::new()),
             runners: std::sync::RwLock::new(HashMap::new()),
+            current_run: std::sync::RwLock::new(HashMap::new()),
             destroyed: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -658,6 +792,32 @@ impl WamnPostgres {
             .cloned()
     }
 
+    /// Declare (`Some`) or clear (`None`) the causation context of the run a
+    /// component is driving (l5i9.12.2). The trusted flow-runner feeds this
+    /// through the `wamn:runner/causation` channel; while set, every
+    /// transaction the plugin opens for the component carries a `wamn.causation`
+    /// message. The bench harness / live tests call this directly, exactly like
+    /// [`set_tenant`](Self::set_tenant) / [`set_runner`](Self::set_runner).
+    pub fn set_current_run(&self, component_id: &str, ctx: Option<Causation>) {
+        let mut w = self.current_run.write().expect("current_run lock poisoned");
+        match ctx {
+            Some(c) => {
+                w.insert(component_id.to_string(), c);
+            }
+            None => {
+                w.remove(component_id);
+            }
+        }
+    }
+
+    fn current_run_for(&self, component_id: &str) -> Option<Causation> {
+        self.current_run
+            .read()
+            .expect("current_run lock poisoned")
+            .get(component_id)
+            .cloned()
+    }
+
     /// Connections destroyed instead of repooled since startup.
     pub fn destroyed_connections(&self) -> u64 {
         self.destroyed.load(Ordering::Relaxed)
@@ -736,41 +896,10 @@ impl WamnPostgres {
         tenant: &str,
         schema: Option<&str>,
         runner: Option<&str>,
+        run: Option<&Causation>,
         statement_timeout_ms: u32,
     ) -> Result<(), PgError> {
-        debug_assert!(valid_tenant(tenant));
-        if !valid_tenant(tenant) {
-            return Err(PgError::QueryError((
-                "WAMN0".to_string(),
-                "invalid tenant identity".to_string(),
-            )));
-        }
-        let mut sql = format!(
-            "BEGIN; SET LOCAL app.tenant = '{tenant}'; SET LOCAL statement_timeout = {statement_timeout_ms};"
-        );
-        if let Some(schema) = schema {
-            debug_assert!(valid_schema(schema));
-            if !valid_schema(schema) {
-                return Err(PgError::QueryError((
-                    "WAMN0".to_string(),
-                    "invalid search_path schema".to_string(),
-                )));
-            }
-            sql.push_str(&format!(" SET LOCAL search_path = {schema};"));
-        }
-        if let Some(runner) = runner {
-            debug_assert!(valid_runner(runner));
-            if !valid_runner(runner) {
-                return Err(PgError::QueryError((
-                    "WAMN0".to_string(),
-                    "invalid runner owner".to_string(),
-                )));
-            }
-            // fqg.4: the durable-queue lease owner a flowrunner replica reads
-            // via `current_setting('app.runner', true)`. Quoted like the tenant;
-            // `valid_runner` guarantees the literal cannot escape.
-            sql.push_str(&format!(" SET LOCAL app.runner = '{runner}';"));
-        }
+        let sql = build_claim_batch(tenant, schema, runner, run, statement_timeout_ms)?;
         conn.batch_execute(&sql).await.map_err(|e| map_pg_error(&e))
     }
 
@@ -800,6 +929,7 @@ impl WamnPostgres {
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
         let runner = self.runner_for(component_id);
+        let run = self.current_run_for(component_id);
         let (conn, pp) = self.checkout(&project).await?;
         if let Err(e) = self
             .begin_with_claims(
@@ -807,6 +937,7 @@ impl WamnPostgres {
                 &tenant,
                 schema.as_deref(),
                 runner.as_deref(),
+                run.as_ref(),
                 pp.statement_timeout_ms,
             )
             .await
@@ -1348,6 +1479,37 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPost
     ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
 }
 
+impl causation::Host for ActiveCtx<'_> {
+    /// The trusted flow-runner declares (or clears, with `none`) the causation
+    /// context of the run it is driving (l5i9.12.2). Only components linked with
+    /// [`add_runner_causation_to_linker`] can call this. The declaration feeds
+    /// the [`WamnPostgres`] plugin's per-component run map, so every subsequent
+    /// transaction the plugin opens for this component stamps a `wamn.causation`
+    /// message. If no postgres plugin is present in this context (a runner-less
+    /// bench), the declaration is a harmless no-op.
+    async fn set_run_context(
+        &mut self,
+        ctx: Option<causation::RunContext>,
+    ) -> wash_runtime::wasmtime::Result<()> {
+        let component = self.component_id.to_string();
+        let run = ctx.map(|c| Causation {
+            run: c.run,
+            root: c.root,
+            depth: c.depth,
+        });
+        tracing::debug!(
+            target: "wamn::causation",
+            component,
+            run = ?run.as_ref().map(|c| &c.run),
+            "per-run causation context declared"
+        );
+        if let Ok(plugin) = plugin_of(self) {
+            plugin.set_current_run(&component, run);
+        }
+        Ok(())
+    }
+}
+
 /// [9.1] A `wamn.postgres` span over one guest DB call, enriched host-side with
 /// the executing component's tenant/project (the same claim maps that inject
 /// `app.tenant`; the guest cannot spoof them). Emitted through the process's
@@ -1426,6 +1588,7 @@ impl client::Host for ActiveCtx<'_> {
         let project = plugin.project_for(&component_id);
         let schema = plugin.schema_for(&component_id);
         let runner = plugin.runner_for(&component_id);
+        let run = plugin.current_run_for(&component_id);
         let (conn, pp) = match plugin.checkout(&project).await {
             Ok(c) => c,
             Err(e) => return Ok(Err(e)),
@@ -1436,6 +1599,7 @@ impl client::Host for ActiveCtx<'_> {
                 &tenant,
                 schema.as_deref(),
                 runner.as_deref(),
+                run.as_ref(),
                 pp.statement_timeout_ms,
             )
             .await
@@ -1695,6 +1859,123 @@ mod tests {
             assert!(!statement_mutates_session(s), "should allow: {s:?}");
             assert!(reject_claim_mutation(s).is_ok(), "should allow: {s:?}");
         }
+    }
+
+    // l5i9.12.2 — the guest wamn.* logical-message forgery guard.
+    #[test]
+    fn guard_rejects_guest_causation_forgery() {
+        for s in [
+            "SELECT pg_logical_emit_message(true,'wamn.causation','{}')",
+            "select PG_LOGICAL_EMIT_MESSAGE(true, 'wamn.causation', $1)",
+            "SELECT pg_logical_emit_message_bytea(true,'wamn.anything','\\x00')",
+            "/* hide */ SELECT pg_logical_emit_message(false,'wamn.x','y')",
+            "WITH t AS (SELECT pg_logical_emit_message(true,'wamn.causation','z')) SELECT 1",
+        ] {
+            assert!(
+                statement_forges_causation(s),
+                "should detect forgery: {s:?}"
+            );
+            assert!(reject_claim_mutation(s).is_err(), "should reject: {s:?}");
+        }
+    }
+
+    #[test]
+    fn guard_allows_non_wamn_logical_messages_and_normal_sql() {
+        for s in [
+            // a guest's OWN (non-reserved) logical message is fine — the reader
+            // only stitches `wamn.causation`.
+            "SELECT pg_logical_emit_message(true,'app.audit','{}')",
+            "SELECT count(*) FROM wamn_things WHERE id = $1",
+            "INSERT INTO t (k) VALUES ($1)",
+        ] {
+            assert!(!statement_forges_causation(s), "should allow: {s:?}");
+            assert!(reject_claim_mutation(s).is_ok(), "should allow: {s:?}");
+        }
+    }
+
+    // l5i9.12.2 — the emit bytes are the load-bearing contract with the reader
+    // (l5i9.12.1 parses `wamn.causation` via serde `deny_unknown_fields`), so pin
+    // them exactly. A builder mutation that drops the message, flips
+    // `transactional`, or reshapes the JSON must fail this.
+    #[test]
+    fn causation_emit_sql_pins_the_transactional_wamn_message() {
+        let c = Causation {
+            run: "r-1".into(),
+            root: "r-1".into(),
+            depth: 0,
+        };
+        assert_eq!(
+            causation_emit_sql(&c),
+            " SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"r-1\",\"root\":\"r-1\",\"depth\":0}');"
+        );
+    }
+
+    #[test]
+    fn causation_emit_sql_escapes_single_quotes_in_the_run_id() {
+        // A run id with a single quote must not break the SQL literal: quotes are
+        // doubled (injection-safe), the JSON itself is unchanged.
+        let c = Causation {
+            run: "o'brien".into(),
+            root: "o'brien".into(),
+            depth: 2,
+        };
+        assert_eq!(
+            causation_emit_sql(&c),
+            " SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"o''brien\",\"root\":\"o''brien\",\"depth\":2}');"
+        );
+    }
+
+    // l5i9.12.2 — the claim batch carries the causation emit IFF a run is set.
+    // Pins the whole one-round-trip string (the load-bearing SQL contract): a
+    // mutation that drops the emit append, or emits when unset, must fail here.
+    #[test]
+    fn build_claim_batch_appends_causation_only_when_a_run_is_set() {
+        let run = Causation {
+            run: "run-7".into(),
+            root: "run-7".into(),
+            depth: 0,
+        };
+        let emit = " SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"run-7\",\"root\":\"run-7\",\"depth\":0}');";
+        // No run → the pre-l5i9.12.2 batch, byte-for-byte (non-run paths
+        // unchanged): NO emit.
+        let base = "BEGIN; SET LOCAL app.tenant = 'acme'; SET LOCAL statement_timeout = 5000; SET LOCAL search_path = app; SET LOCAL app.runner = 'owner-1';";
+        assert_eq!(
+            build_claim_batch("acme", Some("app"), Some("owner-1"), None, 5000).unwrap(),
+            base
+        );
+        // With a run → the transactional wamn.causation emit is appended last.
+        assert_eq!(
+            build_claim_batch("acme", Some("app"), Some("owner-1"), Some(&run), 5000).unwrap(),
+            format!("{base}{emit}")
+        );
+        // The minimal (S2/pgbench) path with a run set: still stamped.
+        assert_eq!(
+            build_claim_batch("acme", None, None, Some(&run), 100).unwrap(),
+            format!(
+                "BEGIN; SET LOCAL app.tenant = 'acme'; SET LOCAL statement_timeout = 100;{emit}"
+            )
+        );
+    }
+
+    #[test]
+    fn set_and_clear_current_run_is_per_component() {
+        let pg =
+            WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
+        assert!(pg.current_run_for("c1").is_none());
+        pg.set_current_run(
+            "c1",
+            Some(Causation {
+                run: "r1".into(),
+                root: "r1".into(),
+                depth: 0,
+            }),
+        );
+        assert_eq!(pg.current_run_for("c1").unwrap().run, "r1");
+        // a second component is independent.
+        assert!(pg.current_run_for("c2").is_none());
+        // None clears it.
+        pg.set_current_run("c1", None);
+        assert!(pg.current_run_for("c1").is_none());
     }
 
     fn enc(ndigits: i16, weight: i16, sign: u16, dscale: u16, digits: &[u16]) -> Vec<u8> {

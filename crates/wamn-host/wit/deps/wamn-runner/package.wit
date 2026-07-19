@@ -25,3 +25,29 @@ interface egress {
   /// host cannot parse is dropped (fail-closed), never widened.
   set-allowed-hosts: func(hosts: list<string>);
 }
+
+interface causation {
+  /// The causation context of a run — {run, root, depth} (wamn-l5i9.12). The
+  /// flow-runner declares the run it is about to drive so the host's
+  /// `wamn:postgres` plugin stamps a TRANSACTIONAL `wamn.causation` logical
+  /// message onto every run-owned transaction it opens; the CDC reader
+  /// (l5i9.12.1) stitches that message onto the txn's row events. `root` is the
+  /// run at the head of the causation chain and `depth` its distance from the
+  /// root; a root run is its own root at depth 0. Event-triggered runs
+  /// (materializer, l5i9.17) carry a real root/depth — the shape is ready for
+  /// them with no further change.
+  record run-context {
+    run: string,
+    root: string,
+    depth: u32,
+  }
+
+  /// Declare (`some`) or clear (`none`) the run context the flow-runner is
+  /// driving. Replaces any prior declaration for this component. While set, the
+  /// host stamps causation onto every transaction the plugin opens for this
+  /// component; cleared, no causation is stamped. Trusted, compiled-in-only:
+  /// a guest CANNOT set its own causation through the frozen `wamn:postgres`
+  /// surface (a raw-SQL `wamn.*` emit is rejected there), so a stamped
+  /// `wamn.causation` message is unforgeable.
+  set-run-context: func(ctx: option<run-context>);
+}

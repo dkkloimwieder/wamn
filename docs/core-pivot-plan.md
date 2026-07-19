@@ -131,18 +131,24 @@ modes). **No new work lands on the outbox path**; deletion executes at
   subject keys on the stable id — **the R9b decode side closes** (rename-proof
   subjects; the registration-continuity half rides the materializer `l5i9.17`).
   Live rename drill + 5 mutants; recipe `docs/build-and-test.md` [EVT-OIDMAP].
-  ~~`l5i9.12.1` EVT-CAUSATION-STITCH~~ **done 2026-07-19** — `l5i9.12`
-  [EVT-CAUSATION] was SPLIT (issues-are-granular) into `.12.1` reader-stitch
-  (done) + `.12.2` plugin-emit (open, blocked on .12.1). The reader enables
-  protocol Messages and **buffers each txn**, stamping a transactional
-  `wamn.causation` {run,root,depth} onto every row envelope at `Commit` (robust
-  to frame order; only a transactional frame counts — unforgeable). Gated live
-  (both frame orderings + causation-absent + rolled-back-emits-nothing) + 3
-  mutants + in-cluster on the R3 stream; recipe [EVT-CAUSATION-STITCH]. `.12.2`
-  banks the emit forks (host-native run-context keeps the WIT frozen; depth-0
-  MVP, chain depth threads from the materializer .17).
-  Phase-1 remaining: `l5i9.12.2` [EVT-CAUSATION-EMIT] + `l5i9.14` [C-CDC]
-  unblocked, `l5i9.15` [C-JS] ready. Next pick is the owner's.
+  ~~`l5i9.12` EVT-CAUSATION~~ **done 2026-07-19** — SPLIT (issues-are-granular)
+  into `.12.1` reader-stitch + `.12.2` plugin-emit, both now closed (umbrella
+  `.12` closed). `.12.1`: the reader enables protocol Messages and **buffers
+  each txn**, stamping a transactional `wamn.causation` {run,root,depth} onto
+  every row envelope at `Commit` (robust to frame order; only a transactional
+  frame counts — unforgeable); gated live + 3 mutants + in-cluster R3; recipe
+  [EVT-CAUSATION-STITCH]. `.12.2`: the trusted flow-runner declares the run it
+  drives through a NEW additive `wamn:runner/causation.set-run-context` channel
+  (owner unfroze/extended the WIT the guest-driven way — `wamn:postgres` stays
+  FROZEN 0.1.0, no S2 re-gate), and the plugin appends the transactional emit to
+  `begin_with_claims`, stamping every run-owned txn `{run, root: run, depth: 0}`
+  (MVP root runs; event-chain root/depth thread from the materializer `.17`);
+  guest raw-SQL `wamn.*` emit blocked. Gated: unit (emit bytes + batch wiring +
+  forgery guard) + live runnerbench + a test_decoding decode probe (the real
+  plugin emit rides each run's sink txn, content == run_id) + 3 mutants; recipe
+  [EVT-CAUSATION-EMIT].
+  Phase-1 remaining: `l5i9.14` [C-CDC] + `l5i9.15` [C-JS] ready;
+  `l5i9.32` [EVT-CLUSTER-CONFIG] blocks `l5i9.18`. Next pick is the owner's.
 - Measurement already banked (pre-decision, still load-bearing): ~~C7/C-QUEUE~~
   (`wamn-z7b.1`, `docs/ceilings.md` — untuned knee ~2000–2500 transitions/sec) +
   ~~C2 outbox-trigger overhead~~ (`wamn-z7b.2`, `docs/ceilings.md` § C2 — now a

@@ -320,6 +320,11 @@ impl RunWorker {
         wamn_credentials::add_runner_to_linker(&mut linker)?;
         // fqg.11: the TRUSTED per-run egress channel — same trust argument.
         runner_egress::add_runner_to_linker(&mut linker)?;
+        // l5i9.12.2: the TRUSTED per-run causation channel — same trust
+        // argument. The runner declares the run it drives so the wamn:postgres
+        // plugin stamps a transactional wamn.causation message onto every
+        // run-owned txn (the CDC reader stitches it).
+        wamn_postgres::add_runner_causation_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
 
         let egress_policy = Arc::new(RunnerEgressPolicy::default());
