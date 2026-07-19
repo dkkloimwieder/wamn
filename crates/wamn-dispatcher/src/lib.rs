@@ -65,10 +65,11 @@ use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
 use wamn_flow::{Flow, Ordering, Trigger};
 use wamn_run_queue::{
-    Firing, OutboxRow, RowEventFlow, active_flows_sql, cron_firing, cron_last_run_sql,
-    cron_tick_of, due_tick, enqueue_sql, match_outbox, next_fire, next_interval, next_reconcile,
-    outbox_ack_sql, outbox_hold_sql, outbox_poll_sql, outbox_prune_sql, parked_due_sql, plan_ack,
-    plan_hold, reconcile_due, write_ahead_triggered_run_sql,
+    Firing, OutboxRow, PartitionPolicy, RowEventFlow, active_flows_sql, cron_firing,
+    cron_last_run_sql, cron_tick_of, due_tick, enqueue_sql, enqueue_with_policy_sql, match_outbox,
+    next_fire, next_interval, next_reconcile, outbox_ack_sql, outbox_hold_sql, outbox_poll_sql,
+    outbox_prune_sql, parked_due_sql, plan_ack, plan_hold, reconcile_due,
+    write_ahead_triggered_run_sql,
 };
 
 // R16b (wamn-2jkm.20): the dispatcher's pinned session `SET`s interpolate the
@@ -274,6 +275,14 @@ struct Registry {
     /// their key stays NULL); a flow absent from the map falls back to
     /// unordered too.
     ordering: HashMap<String, Ordering>,
+    /// Flow-level head-unavailability policy (D20, wamn-kq0z) per registered
+    /// flow_id — materialized onto the queue row at fire()
+    /// ([`partition_policy_for_firing`]) so the claim SQL never joins back to the
+    /// flow. Stamped only on a KEYED (strict/partitioned) row; an unordered row
+    /// keeps a NULL key and the column-default policy. Every cron / row-event
+    /// flow lands here alongside its ordering; a flow absent from the map falls
+    /// back to [`PartitionPolicy::Blocking`] (the D20 default).
+    policy: HashMap<String, PartitionPolicy>,
 }
 
 fn event_str(event: &wamn_flow::RowEvent) -> &'static str {
@@ -341,14 +350,19 @@ fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
         }
         match &flow.trigger {
             Trigger::Cron { schedule } => {
-                // Record the ordering declaration (5.11) so fire() can stamp the
-                // partition key; only flows that actually fire (cron/row-event)
-                // need it.
+                // Record the ordering (5.11) + head-unavailability policy (D20)
+                // declarations so fire() can stamp the partition key AND its
+                // materialized policy; only flows that actually fire
+                // (cron/row-event) need them.
                 reg.ordering.insert(flow_id.clone(), flow.ordering.clone());
+                reg.policy
+                    .insert(flow_id.clone(), rq_policy(flow.partition_policy));
                 reg.crons.push((flow_id, version, schedule.clone()));
             }
             Trigger::RowEvent { table, event } => {
                 reg.ordering.insert(flow_id.clone(), flow.ordering.clone());
+                reg.policy
+                    .insert(flow_id.clone(), rq_policy(flow.partition_policy));
                 reg.row_events.push(RowEventFlow {
                     flow_id,
                     flow_version: version,
@@ -486,12 +500,14 @@ impl Dispatcher {
             };
             if let Some(tick) = due {
                 let firing = cron_firing(flow_id, *version, schedule, tick);
-                // 5.11 ordering: stamp the partition key from the flow's
-                // declaration (unordered cron flows keep a NULL key = today's
-                // behavior).
+                // 5.11 ordering + D20 policy: stamp the partition key from the
+                // flow's declaration and, for a keyed row, its declared
+                // head-unavailability policy (unordered cron flows keep a NULL
+                // key + the column-default policy = today's behavior).
                 let key = partition_key_for_firing(&reg, &firing);
+                let policy = partition_policy_for_firing(&reg, &firing);
                 let span = trigger_span(&firing, &p.spec.tenant);
-                let won = fire(&mut p.client, &firing, key.as_deref())
+                let won = fire(&mut p.client, &firing, key.as_deref(), policy)
                     .instrument(span)
                     .await?;
                 p.last_fired.insert(flow_id.clone(), tick);
@@ -540,12 +556,14 @@ impl Dispatcher {
                     })
                     .collect();
                 let triggered = write_ahead_triggered_run_sql();
-                let enq = enqueue_sql();
                 for f in match_outbox(&polled, &reg.row_events) {
-                    // 5.11 ordering: the partition key from the flow's
-                    // declaration, evaluated over this firing's row-event input
-                    // (unordered flows keep a NULL key = today's behavior).
+                    // 5.11 ordering + D20 policy: the partition key from the
+                    // flow's declaration, evaluated over this firing's row-event
+                    // input, and — for a keyed row — its declared
+                    // head-unavailability policy (unordered flows keep a NULL key
+                    // + the column-default policy = today's behavior).
                     let key = partition_key_for_firing(&reg, &f);
+                    let policy = partition_policy_for_firing(&reg, &f);
                     let span = trigger_span(&f, &tenant);
                     let inserted = tx
                         .execute(
@@ -565,7 +583,7 @@ impl Dispatcher {
                     // either still pending or legitimately dequeued —
                     // re-inserting would resurrect a terminal run's queue row.
                     if inserted == 1 {
-                        tx.execute(&enq, &[&f.run_id, &key, &0i32, &0i64]).await?;
+                        enqueue_firing(&tx, &f.run_id, key.as_deref(), policy).await?;
                         doorbells.push(f.run_id.clone());
                         report.outbox_fired.push(f.run_id);
                     }
@@ -747,10 +765,61 @@ fn partition_key_for_firing(reg: &Registry, f: &Firing) -> Option<String> {
     ordering.partition_key_for(&f.flow_id, &input)
 }
 
+/// The `run_queue.partition_policy` literal a firing carries (D20, wamn-kq0z):
+/// the firing flow's declared head-unavailability policy, materialized onto the
+/// queue row so `claim_partition_head_sql` branches on the ROW and never joins
+/// back to the flow. Only consulted for a KEYED (strict/partitioned) row — an
+/// unordered/absent flow's NULL-key row takes the column default. A flow absent
+/// from the registry falls back to [`PartitionPolicy::Blocking`] (the D20
+/// decision: choosing partitioned dispatch *is* opting into ordering).
+fn partition_policy_for_firing(reg: &Registry, f: &Firing) -> &'static str {
+    reg.policy
+        .get(&f.flow_id)
+        .copied()
+        .unwrap_or_default()
+        .as_sql()
+}
+
+/// Bridge the `wamn-flow` policy contract enum to the `wamn-run-queue` storage
+/// enum (whose [`PartitionPolicy::as_sql`] owns the single storage literal). The
+/// two are structurally mirrored; this is the one crossing point.
+fn rq_policy(p: wamn_flow::PartitionPolicy) -> PartitionPolicy {
+    match p {
+        wamn_flow::PartitionPolicy::Blocking => PartitionPolicy::Blocking,
+        wamn_flow::PartitionPolicy::Leapfrog => PartitionPolicy::Leapfrog,
+    }
+}
+
+/// Enqueue one won firing's queue row, materializing the D20 policy COHERENTLY
+/// with its key (wamn-kq0z): a keyed row (strict/partitioned) carries the flow's
+/// declared `partition_policy` via [`enqueue_with_policy_sql`], while an
+/// unordered row keeps a NULL key and the column-default policy via
+/// [`enqueue_sql`] (today's behavior, byte-identical). `$3` priority and `$4`
+/// delay are 0 — a trigger firing is immediately claimable.
+async fn enqueue_firing(
+    tx: &tokio_postgres::Transaction<'_>,
+    run_id: &str,
+    partition_key: Option<&str>,
+    policy: &str,
+) -> Result<(), tokio_postgres::Error> {
+    if partition_key.is_some() {
+        tx.execute(
+            &enqueue_with_policy_sql(),
+            &[&run_id, &partition_key, &0i32, &0i64, &policy],
+        )
+        .await?;
+    } else {
+        tx.execute(&enqueue_sql(), &[&run_id, &partition_key, &0i32, &0i64])
+            .await?;
+    }
+    Ok(())
+}
+
 async fn fire(
     client: &mut Client,
     f: &Firing,
     partition_key: Option<&str>,
+    policy: &str,
 ) -> anyhow::Result<bool> {
     let tx = client.transaction().await?;
     let inserted = tx
@@ -766,8 +835,7 @@ async fn fire(
         )
         .await?;
     if inserted == 1 {
-        tx.execute(&enqueue_sql(), &[&f.run_id, &partition_key, &0i32, &0i64])
-            .await?;
+        enqueue_firing(&tx, &f.run_id, partition_key, policy).await?;
     }
     tx.commit().await?;
     Ok(inserted == 1)
@@ -933,7 +1001,10 @@ fn init_crypto() {
 
 #[cfg(test)]
 mod tests {
-    use super::{Ordering, Registry, TickReport, partition_key_for_firing, valid_tenant};
+    use super::{
+        Ordering, PartitionPolicy, Registry, TickReport, partition_key_for_firing,
+        partition_policy_for_firing, valid_tenant,
+    };
     use wamn_run_queue::Firing;
 
     fn firing(flow_id: &str, input_json: &str) -> Firing {
@@ -986,6 +1057,33 @@ mod tests {
         assert_eq!(
             partition_key_for_firing(&reg, &firing("unknown", input)),
             None
+        );
+    }
+
+    // wamn-kq0z: the dispatcher also materializes the flow's declared D20
+    // head-unavailability policy onto the queue row at fire(). The policy is
+    // stamped only when the row is keyed (the caller branches on the key), but
+    // the literal is resolved per flow here: declared leapfrog → 'leapfrog',
+    // declared/absent blocking → 'blocking' (the D20 default).
+    #[test]
+    fn partition_policy_stamped_from_the_flow_declaration() {
+        let mut reg = Registry::default();
+        reg.policy.insert("blk".into(), PartitionPolicy::Blocking);
+        reg.policy.insert("leap".into(), PartitionPolicy::Leapfrog);
+
+        let input = r#"{"payload":{"customer":"acme"}}"#;
+        assert_eq!(
+            partition_policy_for_firing(&reg, &firing("blk", input)),
+            "blocking"
+        );
+        assert_eq!(
+            partition_policy_for_firing(&reg, &firing("leap", input)),
+            "leapfrog"
+        );
+        // A flow absent from the map falls back to the D20 default (blocking).
+        assert_eq!(
+            partition_policy_for_firing(&reg, &firing("unknown", input)),
+            "blocking"
         );
     }
 

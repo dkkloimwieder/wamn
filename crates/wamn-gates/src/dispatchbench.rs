@@ -149,6 +149,8 @@ fn dispatch_ddl(schema: &str) -> String {
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
          CREATE TABLE {schema}.run_queue (\
             tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
+            partition_policy text NOT NULL DEFAULT 'blocking' \
+              CHECK (partition_policy IN ('blocking', 'leapfrog')), \
             priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
             stream_seq bigint NOT NULL DEFAULT 0, \
             lease_owner text, lease_expires_at timestamptz, \
@@ -318,6 +320,18 @@ async fn partition_key_of(client: &Client, run_id: &str) -> anyhow::Result<Optio
     Ok(client
         .query_one(
             "SELECT partition_key FROM run_queue WHERE run_id = $1",
+            &[&run_id],
+        )
+        .await?
+        .get(0))
+}
+
+/// The `run_queue.partition_policy` of one run (NOT NULL, DB default 'blocking'),
+/// for the ordering gate's per-run D20-policy assertions (wamn-kq0z).
+async fn partition_policy_of(client: &Client, run_id: &str) -> anyhow::Result<String> {
+    Ok(client
+        .query_one(
+            "SELECT partition_policy FROM run_queue WHERE run_id = $1",
             &[&run_id],
         )
         .await?
@@ -822,14 +836,20 @@ async fn outbox_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
 async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     println!(
         "\n## ordering — unordered→NULL key, strict→constant flow key, partitioned→JMESPath key \
-         (missing key falls back to the flow-wide stream, never NULL)"
+         (missing key falls back to the flow-wide stream, never NULL); the flow's D20 \
+         partition_policy is materialized COHERENTLY (keyed rows carry the declared policy, \
+         unordered rows keep the column default) — wamn-kq0z"
     );
     reset(admin_url, SCHEMA_A).await?;
     let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
 
-    // Three row-event flows on the SAME (orders, insert), so ONE outbox row
-    // fires all three — a per-flow key assertion off a single event.
-    let ordered_flow = |flow_id: &str, ordering: serde_json::Value| {
+    // Row-event flows on the SAME (orders, insert), so ONE outbox row fires all
+    // of them — a per-flow key+policy assertion off a single event. `policy`
+    // (D20) is the field ABSENT for the default (blocking); the leapfrog flow
+    // declares it so we can prove the declared policy is stamped, not the column
+    // default (wamn-kq0z: a partitioned(key) leapfrog flow used to silently
+    // dispatch blocking).
+    let ordered_flow = |flow_id: &str, ordering: serde_json::Value, policy: Option<&str>| {
         let mut graph = serde_json::json!({
             "schema-version": "0.1", "flow-id": flow_id, "version": 1,
             "trigger": {"type": "row-event", "table": "orders", "event": "insert"},
@@ -838,19 +858,22 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         if !ordering.is_null() {
             graph["ordering"] = ordering;
         }
+        if let Some(p) = policy {
+            graph["partition-policy"] = serde_json::json!(p);
+        }
         graph.to_string()
     };
     // unordered = the field absent (today's default).
     seed_flow(
         &seeder,
         "unordered-flow",
-        &ordered_flow("unordered-flow", serde_json::Value::Null),
+        &ordered_flow("unordered-flow", serde_json::Value::Null, None),
     )
     .await?;
     seed_flow(
         &seeder,
         "strict-flow",
-        &ordered_flow("strict-flow", serde_json::json!({"mode": "strict"})),
+        &ordered_flow("strict-flow", serde_json::json!({"mode": "strict"}), None),
     )
     .await?;
     seed_flow(
@@ -859,6 +882,19 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         &ordered_flow(
             "partitioned-flow",
             serde_json::json!({"mode": "partitioned", "partition-key": "payload.customer"}),
+            None,
+        ),
+    )
+    .await?;
+    // A partitioned flow that ALSO declares leapfrog: its keyed rows must carry
+    // 'leapfrog', not the column default — the exact wamn-kq0z regression.
+    seed_flow(
+        &seeder,
+        "leapfrog-flow",
+        &ordered_flow(
+            "leapfrog-flow",
+            serde_json::json!({"mode": "partitioned", "partition-key": "payload.customer"}),
+            Some("leapfrog"),
         ),
     )
     .await?;
@@ -876,7 +912,7 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
     let mut d = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
     let report = d.tick_project(0, BASE_MS).await?;
-    let fired = report.outbox_fired.len() == 6; // 3 flows × 2 rows
+    let fired = report.outbox_fired.len() == 8; // 4 flows × 2 rows
 
     // Unordered: NULL key on BOTH rows — byte-for-byte today's global-claim behavior.
     let unordered_null = partition_key_of(&seeder, "unordered-flow:outbox:1")
@@ -904,14 +940,53 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         .await?
         .as_deref()
         == Some("partitioned-flow");
+    // Leapfrog flow: keyed exactly like partitioned-flow (acme, then flow-id
+    // fallback) — the ordering seam is orthogonal to the policy seam.
+    let leapfrog_keyed = partition_key_of(&seeder, "leapfrog-flow:outbox:1")
+        .await?
+        .as_deref()
+        == Some("acme")
+        && partition_key_of(&seeder, "leapfrog-flow:outbox:2")
+            .await?
+            .as_deref()
+            == Some("leapfrog-flow");
 
-    let pass =
-        fired && unordered_null && strict_constant && partitioned_keyed && partitioned_fallback;
+    // D20 policy materialization (wamn-kq0z). Keyed rows of a DEFAULT-policy flow
+    // carry 'blocking' (the declared/absent default, stamped via the policy
+    // enqueue), the leapfrog flow's keyed rows carry 'leapfrog' (the fix — not
+    // the silent column default), and unordered rows keep the column-default
+    // 'blocking' (NULL key, today's plain enqueue).
+    let strict_policy = partition_policy_of(&seeder, "strict-flow:outbox:1").await? == "blocking"
+        && partition_policy_of(&seeder, "strict-flow:outbox:2").await? == "blocking";
+    let partitioned_policy = partition_policy_of(&seeder, "partitioned-flow:outbox:1").await?
+        == "blocking"
+        && partition_policy_of(&seeder, "partitioned-flow:outbox:2").await? == "blocking";
+    let leapfrog_policy = partition_policy_of(&seeder, "leapfrog-flow:outbox:1").await?
+        == "leapfrog"
+        && partition_policy_of(&seeder, "leapfrog-flow:outbox:2").await? == "leapfrog";
+    let unordered_policy = partition_policy_of(&seeder, "unordered-flow:outbox:1").await?
+        == "blocking"
+        && partition_policy_of(&seeder, "unordered-flow:outbox:2").await? == "blocking";
+
+    let pass = fired
+        && unordered_null
+        && strict_constant
+        && partitioned_keyed
+        && partitioned_fallback
+        && leapfrog_keyed
+        && strict_policy
+        && partitioned_policy
+        && leapfrog_policy
+        && unordered_policy;
     println!(
         "fired={fired} unordered_null={unordered_null} strict_constant={strict_constant} \
-         partitioned_keyed={partitioned_keyed} partitioned_fallback={partitioned_fallback}"
+         partitioned_keyed={partitioned_keyed} partitioned_fallback={partitioned_fallback} \
+         leapfrog_keyed={leapfrog_keyed} | policy: strict={strict_policy} \
+         partitioned={partitioned_policy} leapfrog={leapfrog_policy} unordered={unordered_policy}"
     );
-    println!("PASS(ordering: partition_key stamped from the flow declaration): {pass}");
+    println!(
+        "PASS(ordering: partition_key + D20 partition_policy stamped from the flow declaration): {pass}"
+    );
     Ok(pass)
 }
 
