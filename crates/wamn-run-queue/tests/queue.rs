@@ -243,6 +243,10 @@ fn claim_sql_is_skip_locked_and_bounded() {
     assert!(sql.contains("RETURNING q.run_id, q.attempts, q.lease_expires_at"));
     // The global claim leaves partitioned runs to the per-partition path.
     assert!(sql.contains("c.partition_key IS NULL"));
+    // R8b-b: the shared claim scan carries the EXPLICIT tenant predicate (inert —
+    // RLS injects the identical filter — but defense-in-depth, matching the
+    // ack/prune/insert builders). Both claim paths get it via global_claim_cte.
+    assert!(sql.contains("c.tenant_id = current_setting('app.tenant', true)"));
     // The locking scan lives in a CTE fenced `AS MATERIALIZED` so `FOR UPDATE SKIP
     // LOCKED LIMIT n` evaluates EXACTLY ONCE. Neither `WHERE (pk) IN (subquery)` nor a
     // plain `FROM (subquery)` derived table is a fence: the planner can put the LockRows
@@ -403,8 +407,9 @@ fn partition_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(!claim.contains("FROM ("));
 
     // Acquire / renew / release / gc carry an explicit tenant claim. (The head
-    // claim, like the global claim_batch_sql, is tenant-scoped purely by RLS on
-    // run_queue + partition_owner — it writes no explicit app.tenant literal.)
+    // claim is tenant-scoped purely by RLS on run_queue + partition_owner — it
+    // writes no explicit app.tenant literal. Unlike the GLOBAL claim, R8b-b did NOT
+    // add the explicit predicate here: this builder is out of that finding's scope.)
     for sql in [
         acquire_partitions_sql(1),
         renew_partition_sql(),
@@ -416,7 +421,7 @@ fn partition_sql_builders_are_shaped_and_tenant_scoped() {
             "not tenant-scoped: {sql}"
         );
     }
-    // The head claim relies on RLS, not an explicit tenant literal (like claim_batch_sql).
+    // The head claim relies on RLS, not an explicit tenant literal (R8b-b left it).
     assert!(!claim_partition_head_sql(1).contains("current_setting"));
     assert!(renew_partition_sql().contains("lease_owner = $3"));
     assert!(release_partition_sql().contains("DELETE FROM partition_owner"));
@@ -1347,6 +1352,8 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(!poll.contains("DESC")); // oldest-FIRST — a substring check alone would pass DESC
     assert!(poll.contains("FOR UPDATE SKIP LOCKED"));
     assert!(poll.contains("LIMIT 64"));
+    // R8b-b: the explicit tenant predicate (inert under RLS, defense-in-depth).
+    assert!(poll.contains("tenant_id = current_setting('app.tenant', true)"));
 
     let ack = outbox_ack_sql();
     assert!(ack.contains("SET dispatched_at = now()"));
@@ -1381,8 +1388,10 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(last.contains("current_setting('app.tenant', true)"));
 
     // The registry scan: active flows only; the trigger lives in graph_json.
+    // R8b-b: the tenant predicate now precedes the `active` filter (explicit
+    // defense-in-depth; inert under RLS).
     let flows = active_flows_sql();
-    assert!(flows.contains("WHERE active"));
+    assert!(flows.contains("tenant_id = current_setting('app.tenant', true) AND active"));
     assert!(flows.contains("graph_json::text"));
 
     // The wake/reconciliation scan mirrors the claim predicate (due,
@@ -1390,6 +1399,8 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     let wake = parked_due_sql(100);
     assert!(wake.contains("available_at <= now()"));
     assert!(wake.contains("lease_expires_at IS NULL OR lease_expires_at <= now()"));
+    // R8b-b: the explicit tenant predicate (inert under RLS, defense-in-depth).
+    assert!(wake.contains("tenant_id = current_setting('app.tenant', true)"));
     // Mirrors the claim predicate incl. the wamn-fqg.7 disjunct: a woken budget-spent
     // (NULL-lease) run is surfaced for a doorbell hint, not left invisible.
     assert!(wake.contains("attempts < max_attempts OR lease_expires_at IS NULL"));

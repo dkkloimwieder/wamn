@@ -141,10 +141,17 @@ pub fn claim_batch_sql(limit: usize) -> String {
 /// (every enqueue writes `stream_seq = 0`, so it collapses to the prior
 /// `(available_at, run_id)` order); the not-yet-built materializer supplies real
 /// values.
+///
+/// Carries the explicit `c.tenant_id = current_setting('app.tenant', true)`
+/// predicate (R8b-b) — behaviorally inert (RLS injects the identical filter, and
+/// the claimable index already leads with `tenant_id`) but defense-in-depth, so
+/// both claim paths match the ack/prune/insert builders instead of relying on RLS
+/// alone.
 fn global_claim_cte(limit: usize) -> String {
     format!(
         "SELECT c.tenant_id, c.run_id FROM run_queue AS c \
-             WHERE c.partition_key IS NULL \
+             WHERE c.tenant_id = current_setting('app.tenant', true) \
+               AND c.partition_key IS NULL \
                AND c.available_at <= now() \
                AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now()) \
                AND (c.attempts < c.max_attempts OR c.lease_expires_at IS NULL) \
@@ -368,10 +375,14 @@ pub fn write_ahead_triggered_run_sql() -> String {
 /// The dispatcher's trigger-registry scan: every active flow's graph JSON. The
 /// trigger lives INSIDE `graph_json` (wamn-flow `Flow.trigger`) — there is no
 /// trigger column — so the driver parses each flow and registers the `cron` /
-/// `row-event` ones (webhook is the gateway's, manual the editor's).
-/// Tenant-scoped purely by RLS, like the claims.
+/// `row-event` ones (webhook is the gateway's, manual the editor's). Carries the
+/// explicit `tenant_id = current_setting('app.tenant', true)` predicate (R8b-b) —
+/// behaviorally inert (RLS injects the identical filter) but defense-in-depth,
+/// matching the ack/prune/insert builders rather than relying on RLS alone.
 pub fn active_flows_sql() -> String {
-    "SELECT flow_id, version, graph_json::text AS graph_json FROM flows WHERE active".to_string()
+    "SELECT flow_id, version, graph_json::text AS graph_json FROM flows \
+      WHERE tenant_id = current_setting('app.tenant', true) AND active"
+        .to_string()
 }
 
 /// Poll the pending outbox batch, oldest-first. `FOR UPDATE SKIP LOCKED` gives
@@ -386,11 +397,14 @@ pub fn active_flows_sql() -> String {
 /// `--batch` held rows accumulate the healthy events past them are never reached
 /// and row-event dispatch stops project-wide. Stamping [`outbox_hold_sql`] lifts
 /// each held row out of this window (keeping it in the table with a visible age)
-/// so the healthy events flow.
+/// so the healthy events flow. Carries the explicit `tenant_id =
+/// current_setting('app.tenant', true)` predicate (R8b-b) — inert (RLS injects
+/// the identical filter) but defense-in-depth, matching the ack/prune builders.
 pub fn outbox_poll_sql(limit: usize) -> String {
     format!(
         "SELECT seq, table_name, event, payload::text AS payload FROM outbox \
-          WHERE dispatched_at IS NULL \
+          WHERE tenant_id = current_setting('app.tenant', true) \
+            AND dispatched_at IS NULL \
             AND held_since IS NULL \
           ORDER BY seq \
           FOR UPDATE SKIP LOCKED \
@@ -482,11 +496,14 @@ pub fn cron_last_run_sql() -> String {
 /// The dispatcher publishes a doorbell hint per row; a duplicate hint is
 /// harmless (fire-and-forget — the claim is the arbiter), which is what lets one
 /// read-only scan double as both the parked-wake and the lost-hint
-/// reconciliation backstop. `limit` is a numeric literal.
+/// reconciliation backstop. `limit` is a numeric literal. Carries the explicit
+/// `tenant_id = current_setting('app.tenant', true)` predicate (R8b-b) — inert
+/// (RLS injects the identical filter) but defense-in-depth, like the claim.
 pub fn parked_due_sql(limit: usize) -> String {
     format!(
         "SELECT run_id FROM run_queue \
-          WHERE available_at <= now() + interval '250 milliseconds' \
+          WHERE tenant_id = current_setting('app.tenant', true) \
+            AND available_at <= now() + interval '250 milliseconds' \
             AND (lease_expires_at IS NULL OR lease_expires_at <= now()) \
             AND (attempts < max_attempts OR lease_expires_at IS NULL) \
           ORDER BY available_at, stream_seq, run_id \
