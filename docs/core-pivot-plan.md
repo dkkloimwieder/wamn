@@ -131,8 +131,18 @@ modes). **No new work lands on the outbox path**; deletion executes at
   subject keys on the stable id — **the R9b decode side closes** (rename-proof
   subjects; the registration-continuity half rides the materializer `l5i9.17`).
   Live rename drill + 5 mutants; recipe `docs/build-and-test.md` [EVT-OIDMAP].
-  Phase-1 remaining: `l5i9.12` [EVT-CAUSATION] + `l5i9.14` [C-CDC] unblocked,
-  `l5i9.15` [C-JS] ready. Next pick is the owner's.
+  ~~`l5i9.12.1` EVT-CAUSATION-STITCH~~ **done 2026-07-19** — `l5i9.12`
+  [EVT-CAUSATION] was SPLIT (issues-are-granular) into `.12.1` reader-stitch
+  (done) + `.12.2` plugin-emit (open, blocked on .12.1). The reader enables
+  protocol Messages and **buffers each txn**, stamping a transactional
+  `wamn.causation` {run,root,depth} onto every row envelope at `Commit` (robust
+  to frame order; only a transactional frame counts — unforgeable). Gated live
+  (both frame orderings + causation-absent + rolled-back-emits-nothing) + 3
+  mutants + in-cluster on the R3 stream; recipe [EVT-CAUSATION-STITCH]. `.12.2`
+  banks the emit forks (host-native run-context keeps the WIT frozen; depth-0
+  MVP, chain depth threads from the materializer .17).
+  Phase-1 remaining: `l5i9.12.2` [EVT-CAUSATION-EMIT] + `l5i9.14` [C-CDC]
+  unblocked, `l5i9.15` [C-JS] ready. Next pick is the owner's.
 - Measurement already banked (pre-decision, still load-bearing): ~~C7/C-QUEUE~~
   (`wamn-z7b.1`, `docs/ceilings.md` — untuned knee ~2000–2500 transitions/sec) +
   ~~C2 outbox-trigger overhead~~ (`wamn-z7b.2`, `docs/ceilings.md` § C2 — now a

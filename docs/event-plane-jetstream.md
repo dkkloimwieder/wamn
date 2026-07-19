@@ -112,8 +112,13 @@ mechanical row changes ride one pipeline, distinguished by subject.
   {run, root, depth})` per transaction; the reader stamps it onto that txn's
   envelopes. Transactional, guest-unforgeable, zero schema footprint. The
   materializer enforces max depth + cycle check; refusals are a distinct,
-  alertable outcome. *(Verify pg_walstream surfaces protocol Message events;
-  fallback: `next_raw_event`.)*
+  alertable outcome. *(pg_walstream surfaces typed protocol Message events —
+  confirmed. The **reader-stitch half is done** (wamn-l5i9.12.1): `with_messages`
+  + **buffer-per-txn** — the whole txn is held and every row publishes at
+  `Commit` with the stamp attached, so causation is robust to whether the
+  message frame arrives before or after the rows. Only a **transactional**
+  `wamn.causation` frame counts (the unforgeable property rides on the commit).
+  The plugin-emit half is wamn-l5i9.12.2.)*
 - **Old images:** `REPLICA IDENTITY FULL` is a **per-entity knob the DDL
   engine manages**, set only where a registration needs old-image conditions
   ("changed-to") — WAL cost is paid per table, not universally. Materializer
@@ -212,6 +217,12 @@ the reader (l5i9.10) publishes onto and C-JS (l5i9.15) benches; left standing.*
 `enable-cdc-project-env` overlay — publication + failover slot + replication
 role/Secret + `registry.event_readers` registration (§4); proven live on the
 wamn-pg pool. The reader MVP (l5i9.10) consumes the registration.*
+*Causation reader-stitch shipped (wamn-l5i9.12.1, 2026-07-19): the reader
+enables protocol Messages and buffers each txn, stamping a transactional
+`wamn.causation` `{run,root,depth}` onto every one of its row envelopes at
+`Commit` (robust to frame order); gated live (both orderings + absent + rolled-
+back-emits-nothing) + in-cluster on the R3 stream. The plugin-emit half is the
+split sibling l5i9.12.2.*
 **Benches:** C-CDC (decode drain rate after bulk import; slot-lag knee vs
 sustained write rate; WAL delta under FULL identity per table class;
 switchover drill timed), C-JS (JetStream bare ceilings: publish/deliver/

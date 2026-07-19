@@ -51,7 +51,7 @@ use pg_walstream::{
 };
 use tokio_postgres::NoTls;
 
-use wamn_event_wire::{Envelope, Op, msg_id, stream_subjects, subject};
+use wamn_event_wire::{Causation, Envelope, Op, msg_id, stream_subjects, subject};
 use wamn_registry::sql::select_event_reader_sql;
 
 #[derive(Debug, Args)]
@@ -219,6 +219,28 @@ fn row_to_map(row: &RowData) -> serde_json::Map<String, serde_json::Value> {
     map
 }
 
+/// Decode a logical-decoding `Message` frame into a causation stamp, or `None`
+/// when it isn't our contract (wamn-l5i9.12). Two gates: the frame must be
+/// **transactional** (`flags & 1`) — the unforgeable property rides on the
+/// commit, so a rolled-back txn's message never reaches us and a
+/// non-transactional emit is deliberately ignored — and the prefix must be
+/// exactly `wamn.causation` (the plugin's own emit is the only legitimate
+/// writer). A payload that doesn't parse as a `Causation` (malformed, or
+/// smuggling extra fields past `deny_unknown_fields`) is logged and dropped,
+/// never a crash — a bad message must not sever the session.
+fn parse_causation(flags: u8, prefix: &str, content: &[u8]) -> Option<Causation> {
+    if flags & 1 == 0 || prefix != "wamn.causation" {
+        return None;
+    }
+    match serde_json::from_slice::<Causation>(content) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            tracing::warn!(error = %e, "wamn.causation message did not parse as Causation — ignoring");
+            None
+        }
+    }
+}
+
 /// This project-env's registration, straight off `registry.event_readers`.
 struct Registration {
     publication: String,
@@ -318,7 +340,11 @@ async fn open_session(
         Duration::from_secs(30),
         Duration::from_secs(30),
         RetryConfig::default(),
-    );
+    )
+    // Deliver logical-decoding Message frames (the `wamn.causation` stamp the
+    // wamn:postgres plugin emits per run-owned txn — wamn-l5i9.12): off by
+    // default, so the reader must opt in for `drain` to see them.
+    .with_messages(true);
     let mut stream = LogicalReplicationStream::new(&url, cfg).await?;
     // No ensure_replication_slot: the preflight proved existence; creating
     // here would turn a dropped slot into a SILENT gap.
@@ -436,15 +462,40 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
     }
 }
 
-/// One transaction frame, stamped onto its row envelopes.
+/// One transaction, held until its `Commit`: the metadata every row shares,
+/// the causation stamp (if the `wamn:postgres` plugin emitted one —
+/// wamn-l5i9.12), and the row events BUFFERED until the commit.
+///
+/// Buffer-per-txn is what makes causation robust to frame order: a
+/// transactional `wamn.causation` message rides the stream at its own LSN
+/// within `Begin`..`Commit` and may arrive BEFORE or AFTER a row event, so
+/// nothing can be published as it arrives — the whole txn is collected and
+/// every row publishes at `Commit` with the stamp (if any) attached. The
+/// confirmed LSN still advances only after every row of the txn is acked.
 struct Txn {
     txid: u32,
     commit_ts: chrono::DateTime<chrono::Utc>,
+    causation: Option<Causation>,
+    rows: Vec<PendingRow>,
 }
 
-/// Drain the session until cancelled (`Ok`) or severed (`Err`). Publishes row
-/// events sequentially (ack-awaited), advances the feedback LSN only at
-/// `Commit` — and only once every row of the txn is acked.
+/// A decoded row event awaiting its transaction's `Commit`. Entity resolution
+/// happens at arrival (keeping the per-session OID cache warm); only the
+/// causation stamp and the publish are deferred to the commit.
+struct PendingRow {
+    op: Op,
+    old: Option<serde_json::Map<String, serde_json::Value>>,
+    new: Option<serde_json::Map<String, serde_json::Value>>,
+    entity: Option<String>,
+    table: String,
+    lsn: u64,
+}
+
+/// Drain the session until cancelled (`Ok`) or severed (`Err`). Buffers each
+/// transaction's row events (resolving entities as they arrive) and captures
+/// its `wamn.causation` message whenever it lands; at `Commit`, publishes every
+/// buffered row (ack-awaited, in arrival order) with the causation stamp
+/// attached, then advances the feedback LSN — only once every row is acked.
 async fn drain(
     stream: &mut EventStream,
     args: &EventReaderArgs,
@@ -482,16 +533,87 @@ async fn drain(
                 txn = Some(Txn {
                     txid: transaction_id,
                     commit_ts: commit_timestamp,
+                    causation: None,
+                    rows: Vec::new(),
                 });
                 continue;
             }
             EventType::Commit { end_lsn, .. } => {
-                txn = None;
-                // Every row of this txn is acked (sequential awaits above) —
-                // NOW the confirmed LSN may advance past the commit.
+                let Some(frame) = txn.take() else {
+                    return Err(ReplicationError::Protocol(
+                        "Commit outside a Begin frame".into(),
+                    ));
+                };
+                // Buffer-per-txn: publish the whole transaction NOW, the
+                // causation stamp (if the plugin emitted one) attached to every
+                // row — robust to whether the message arrived before or after
+                // these rows. Each publish awaits its ack.
+                for row in &frame.rows {
+                    let envelope = Envelope {
+                        op: row.op,
+                        old: row.old.clone(),
+                        new: row.new.clone(),
+                        entity: row.entity.clone(),
+                        table: row.table.clone(),
+                        lsn: row.lsn,
+                        txid: frame.txid,
+                        commit_ts: frame.commit_ts,
+                        causation: frame.causation.clone(),
+                    };
+                    let subj = subject(
+                        &args.org,
+                        &args.project,
+                        &args.env,
+                        envelope.entity_segment(),
+                        row.op,
+                    );
+                    let id = msg_id(&args.project, &args.env, row.lsn);
+                    let payload = serde_json::to_vec(&envelope).map_err(|e| {
+                        ReplicationError::Generic(format!("serialize envelope: {e}"))
+                    })?;
+                    match publish_acked(js, token, &subj, &id, payload).await {
+                        PublishOutcome::Acked { duplicate } => {
+                            published += 1;
+                            if duplicate {
+                                deduped += 1;
+                                tracing::debug!(id, "redelivery deduped by the stream");
+                            }
+                        }
+                        PublishOutcome::CancelledMidRetry => {
+                            tracing::info!(
+                                published,
+                                deduped,
+                                "drain summary (cancelled mid-publish)"
+                            );
+                            return Ok(());
+                        }
+                    }
+                }
+                // Every row of this txn is acked — NOW the confirmed LSN may
+                // advance past the commit.
                 let l = end_lsn.value();
                 stream.update_flushed_lsn(l);
                 stream.update_applied_lsn(l);
+                continue;
+            }
+            EventType::Message {
+                flags,
+                prefix,
+                content,
+                ..
+            } => {
+                // The wamn:postgres causation stamp for the open txn
+                // (wamn-l5i9.12). A transactional message always rides inside a
+                // Begin/Commit; one outside a frame is a protocol surprise —
+                // log and ignore, never crash the session.
+                if let Some(c) = parse_causation(flags, &prefix, &content) {
+                    match txn.as_mut() {
+                        Some(frame) => frame.causation = Some(c),
+                        None => tracing::warn!(
+                            "transactional wamn.causation message outside a txn frame — ignored"
+                        ),
+                    }
+                }
                 continue;
             }
             EventType::Insert {
@@ -534,22 +656,16 @@ async fn drain(
                 tracing::warn!(?tables, "TRUNCATE observed — not published");
                 continue;
             }
-            // Metadata frames; nothing to publish, nothing to advance.
-            EventType::Relation { .. }
-            | EventType::Type { .. }
-            | EventType::Origin { .. }
-            | EventType::Message { .. } => continue,
+            // Metadata frames; nothing to buffer, nothing to advance.
+            EventType::Relation { .. } | EventType::Type { .. } | EventType::Origin { .. } => {
+                continue;
+            }
             other => {
                 // Streaming/two-phase frames can't occur (Off/off) — a
                 // protocol surprise is worth a loud log, not a crash.
                 tracing::warn!(?other, "unexpected replication frame — skipped");
                 continue;
             }
-        };
-        let Some(frame) = txn.as_ref() else {
-            return Err(ReplicationError::Protocol(
-                "row event outside a Begin/Commit frame".into(),
-            ));
         };
         // First row event of a relation this session: resolve its entity id
         // from the map (by OID — rename-proof). `None` is cached too, so an
@@ -565,40 +681,21 @@ async fn drain(
             entities.insert(relation_oid, resolved);
         }
         let entity = entities.get(&relation_oid).cloned().flatten();
-        let envelope = Envelope {
+        // Buffer the row; it publishes at Commit, once the txn's causation
+        // stamp (if any) is known.
+        let Some(frame) = txn.as_mut() else {
+            return Err(ReplicationError::Protocol(
+                "row event outside a Begin/Commit frame".into(),
+            ));
+        };
+        frame.rows.push(PendingRow {
             op,
             old: old.as_ref().map(row_to_map),
             new: new.as_ref().map(row_to_map),
             entity,
             table: table.to_string(),
             lsn,
-            txid: frame.txid,
-            commit_ts: frame.commit_ts,
-            causation: None, // stitching = wamn-l5i9.12
-        };
-        let subj = subject(
-            &args.org,
-            &args.project,
-            &args.env,
-            envelope.entity_segment(),
-            op,
-        );
-        let id = msg_id(&args.project, &args.env, lsn);
-        let payload = serde_json::to_vec(&envelope)
-            .map_err(|e| ReplicationError::Generic(format!("serialize envelope: {e}")))?;
-        match publish_acked(js, token, &subj, &id, payload).await {
-            PublishOutcome::Acked { duplicate } => {
-                published += 1;
-                if duplicate {
-                    deduped += 1;
-                    tracing::debug!(id, "redelivery deduped by the stream");
-                }
-            }
-            PublishOutcome::CancelledMidRetry => {
-                tracing::info!(published, deduped, "drain summary (cancelled mid-publish)");
-                return Ok(());
-            }
-        }
+        });
     }
 }
 
@@ -726,5 +823,39 @@ mod tests {
         assert_eq!(map.get("id").unwrap(), "7");
         assert!(map.get("note").unwrap().is_null());
         assert!(map.get("big").is_none());
+    }
+
+    #[test]
+    fn parse_causation_accepts_only_the_transactional_wamn_contract() {
+        let good = br#"{"run":"f1:evt:9","root":"f1:evt:1","depth":3}"#;
+        assert_eq!(
+            parse_causation(1, "wamn.causation", good),
+            Some(Causation {
+                run: "f1:evt:9".into(),
+                root: "f1:evt:1".into(),
+                depth: 3,
+            }),
+            "a transactional wamn.causation frame with valid JSON is the stamp"
+        );
+        // Non-transactional: ignored — the unforgeable property rides on the
+        // commit, so only a transactional message counts.
+        assert_eq!(parse_causation(0, "wamn.causation", good), None);
+        // A foreign prefix is not ours.
+        assert_eq!(parse_causation(1, "some.other.prefix", good), None);
+        // Malformed / incomplete / smuggling extra fields (deny_unknown_fields):
+        // dropped, never a crash.
+        assert_eq!(parse_causation(1, "wamn.causation", b"not json"), None);
+        assert_eq!(
+            parse_causation(1, "wamn.causation", br#"{"run":"a"}"#),
+            None
+        );
+        assert_eq!(
+            parse_causation(
+                1,
+                "wamn.causation",
+                br#"{"run":"a","root":"b","depth":1,"x":2}"#
+            ),
+            None
+        );
     }
 }

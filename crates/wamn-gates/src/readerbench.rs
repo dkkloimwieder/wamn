@@ -68,6 +68,12 @@ pub struct ReaderBenchArgs {
     #[arg(long)]
     pub filter_entity: Option<String>,
 
+    /// If set, assert EVERY delivered envelope carries a causation stamp whose
+    /// `run` equals this value (wamn-l5i9.12) — the in-cluster proof that a
+    /// transactional `wamn.causation` message stitched through to the stream.
+    #[arg(long)]
+    pub expect_causation_run: Option<String>,
+
     /// The expected INSERT ids, comma-separated, in COMMIT ORDER — the whole
     /// write program of the gate run.
     #[arg(long, value_delimiter = ',')]
@@ -274,6 +280,17 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
             .iter()
             .all(|(_, id, e)| id == &msg_id(&args.project, &args.env, e.lsn)),
     );
+    if let Some(run) = &args.expect_causation_run {
+        // wamn-l5i9.12: the reader stitched a transactional wamn.causation
+        // message onto every one of the txn's row envelopes.
+        check(
+            &mut pass,
+            &format!("every envelope carries causation run {run:?}"),
+            delivered.iter().all(|(_, _, e)| {
+                e.causation.as_ref().map(|c| c.run.as_str()) == Some(run.as_str())
+            }),
+        );
+    }
     let unique: std::collections::BTreeSet<&String> =
         delivered.iter().map(|(_, id, _)| id).collect();
     check(

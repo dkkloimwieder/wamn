@@ -778,6 +778,41 @@ map lookup bypassed (everything unmapped), M4 the subject keyed by the table
 even when mapped, M5 the upsert loses `ON CONFLICT` — each fails a NAMED live
 assert; apply/test/restore with sha256, DEBUG builds.
 
+### [EVT-CAUSATION-STITCH] reader stitches wamn.causation (l5i9.12.1)
+
+Docs: docs/event-plane-jetstream.md §4 · Recipe extends [EVT-READER]/[EVT-OIDMAP]
+
+The reader enables protocol Messages (`with_messages(true)`) and switches
+`drain()` to **buffer-per-txn**: it collects a transaction's row events and
+captures a transactional `wamn.causation` message whenever it lands, then at
+`Commit` publishes every row with the `{run,root,depth}` stamp attached — robust
+to whether the message frame arrives before or after the rows. The LSN still
+advances only after every row is acked. The live gate gains **phase G**. (The
+plugin-emit half — how a run-owned txn gets the message — is the split sibling
+l5i9.12.2; here the message is emitted by test SQL.)
+
+```bash
+cargo test -p wamn-event-wire                        # causation wire pin (run/root/depth)
+cargo test -p wamn-host --lib parse_causation        # only a transactional wamn.causation frame counts
+# Local live gate: phase G drives BOTH frame orderings (message-at-BEGIN and
+# message-AFTER-rows), a plain txn (causation ABSENT), and a rolled-back txn
+# that emitted one (nothing published — transactional):
+WAMN_READER_PG_URL=postgres://postgres:postgres@127.0.0.1:5448/postgres \
+WAMN_READER_NATS_URL=nats://127.0.0.1:4261 \
+  cargo test -p wamn-host --test event_reader_live
+# In-cluster gate of record (local reader binary + wamn-pg + evt-nats R3): one
+# txn emits the message AFTER 5 inserts; the new readerbench flag asserts every
+# envelope carries the run. Script: scratchpad incluster_l5i9_12.sh.
+./target/debug/wamn-gates readerbench --nats-url nats://<node>:30493 \
+  --org t121cau --project app --env dev --stream EVT_t121cau_dev \
+  --entity receipts --expect-ids 1,2,3,4,5 --expect-causation-run gate-run-1
+```
+
+Mutation harness: scratchpad `mutate_l5i9_12.py` — M1 messages disabled
+(`with_messages(false)`), M2 the causation stamp dropped at `Commit`, M3 the
+exact-prefix guard broken — M1/M2 fail live-gate phase G, M3 fails the
+`parse_causation` unit test; apply/test/restore with sha256, DEBUG builds.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

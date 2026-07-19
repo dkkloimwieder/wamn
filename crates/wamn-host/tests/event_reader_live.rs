@@ -38,7 +38,7 @@ use futures_util::StreamExt as _;
 use pg_walstream::CancellationToken;
 use tokio_postgres::NoTls;
 
-use wamn_event_wire::{Envelope, Op, msg_id, subject};
+use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
 use wamn_host::event_reader::{EventReaderArgs, run_with_token};
 use wamn_host::migrate_catalog::MigrateCatalogArgs;
 use wamn_host::publish_catalog::PublishCatalogArgs;
@@ -902,6 +902,94 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         assert!(e.entity.is_none(), "platform table publishes entity-ABSENT");
         assert_eq!(subj, &subject(ORG, PROJECT, ENV, "wamn_entities", e.op));
     }
+
+    // --- phase G: CAUSATION stitching (wamn-l5i9.12) ------------------------
+    // A transactional `pg_logical_emit_message(true, 'wamn.causation', …)`
+    // rides the txn commit; the reader BUFFERS the txn and stamps
+    // {run,root,depth} onto every one of its row envelopes — regardless of
+    // whether the message frame arrives BEFORE or AFTER the rows (buffer-per-
+    // txn, the FD robustness). A txn with no emit carries no causation; a
+    // rolled-back txn that emitted one publishes nothing (transactional).
+    let base = stream_count(&js, &stream_name).await;
+    // message-at-BEGIN: the frame precedes the rows.
+    sys.batch_execute(
+        "BEGIN; \
+         SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"r-100\",\"root\":\"root-a\",\"depth\":0}'); \
+         INSERT INTO app.receipts (id, val) VALUES (100, 'c100'); \
+         INSERT INTO app.receipts (id, val) VALUES (101, 'c101'); \
+         COMMIT",
+    )
+    .await
+    .expect("causation txn: message at BEGIN");
+    // message-PRE-COMMIT: the frame FOLLOWS the rows — the order-robustness
+    // proof that buffer-per-txn stamps rows seen before the message arrived.
+    sys.batch_execute(
+        "BEGIN; \
+         INSERT INTO app.receipts (id, val) VALUES (102, 'c102'); \
+         INSERT INTO app.receipts (id, val) VALUES (103, 'c103'); \
+         SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"r-200\",\"root\":\"root-b\",\"depth\":1}'); \
+         COMMIT",
+    )
+    .await
+    .expect("causation txn: message before COMMIT");
+    // a plain txn, no emit → causation ABSENT.
+    sys.execute(
+        "INSERT INTO app.receipts (id, val) VALUES (104, 'c104')",
+        &[],
+    )
+    .await
+    .unwrap();
+    // a ROLLED-BACK txn that emitted + wrote → NOTHING publishes: the
+    // transactional message never reaches the stream, the row is aborted.
+    sys.batch_execute(
+        "BEGIN; \
+         SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"r-rolled\",\"root\":\"root-x\",\"depth\":9}'); \
+         INSERT INTO app.receipts (id, val) VALUES (105, 'c105'); \
+         ROLLBACK",
+    )
+    .await
+    .expect("causation txn: rolled back");
+
+    wait_for_count(&js, &stream_name, base + 5, 30).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        stream_count(&js, &stream_name).await,
+        base + 5,
+        "5 row events (100-104); the rolled-back txn (105) + the message frames publish nothing"
+    );
+    let all = read_all(&js, &stream_name, (base + 5) as usize).await;
+    let caus: std::collections::BTreeMap<i64, Option<Causation>> = all
+        .iter()
+        .filter_map(|(_, _, e)| {
+            let id: i64 = e.new.as_ref()?.get("id")?.as_str()?.parse().ok()?;
+            (100..=104).contains(&id).then(|| (id, e.causation.clone()))
+        })
+        .collect();
+    assert_eq!(caus.len(), 5, "all five phase-G inserts are on the stream");
+    let c_a = Causation {
+        run: "r-100".into(),
+        root: "root-a".into(),
+        depth: 0,
+    };
+    let c_b = Causation {
+        run: "r-200".into(),
+        root: "root-b".into(),
+        depth: 1,
+    };
+    assert_eq!(
+        caus[&100].as_ref(),
+        Some(&c_a),
+        "message-at-BEGIN stamps the whole txn"
+    );
+    assert_eq!(caus[&101].as_ref(), Some(&c_a), "…every row of it");
+    assert_eq!(
+        caus[&102].as_ref(),
+        Some(&c_b),
+        "message-AFTER-rows still stamps every row (buffer-per-txn robustness)"
+    );
+    assert_eq!(caus[&103].as_ref(), Some(&c_b), "…every row of it");
+    assert_eq!(caus[&104], None, "a txn with no emit carries no causation");
+    // 105 rolled back — never on the stream (the exact count above proved it).
 
     // --- phase E: clean shutdown --------------------------------------------
     token2.cancel();
