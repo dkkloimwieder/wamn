@@ -173,6 +173,17 @@ SECURITY` with policies keyed on `current_setting('app.tenant', true)`.
 | Latency max | 23.0 ms | 22.4 ms | — | — |
 | Pool saturation (96 concurrent 1 s queries, 16-conn pool) | 33 served, **63 `connection-unavailable`**, 0 hangs, worst 3.0 s | same shape | graceful, no hang | **PASS** |
 
+> **Addendum (2026-07-19, wamn-2jkm.41 rider 7 — re-gate after the R2/R16
+> bound-`set_config` claim path `f7652c6` and the SR9 image split):** in-cluster
+> **16,215 qps**, p50 **894 µs**, p90 1.43 ms, p99 **2.50 ms**, max 32.7 ms,
+> 0 errors — thresholds unchanged, **PASS**. vs the row above: ~+26% p50
+> (+184 µs) and p99 1.98→2.50 ms, the anticipated cost of the extra
+> `set_config` round-trip on txn open (pipelined via `tokio::join!`). All
+> security gates re-passed in the same run (chaos ×100, RLS ×10k, injection
+> ×10k, in-band-override attack, multiproject pooling/policy). A first run
+> concurrent with a full-workspace release compile on the host measured p99
+> 14.7 ms — interference, discarded (the CFS/co-location lesson: measure quiet).
+
 **Security gates (all mandatory) — all PASS in-cluster:**
 
 - **Chaos** (epoch-kill mid-transaction 100×): the guest `begin()`s a
