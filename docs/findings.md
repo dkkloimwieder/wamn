@@ -59,7 +59,7 @@ prerequisite that makes everything else findable.
 | E14 | Q1: `ev.lsn` is per-message — dedupe design sound | — | **closed** | evidence: `pg-walstream stream.rs:1093,1066` (question-class closure) |
 | SR12 | Pure/effect split can't test statement-level bugs | High | **closed** | live-test half `c705c9e` (wamn-2jkm.23); header qualification + composed-statement convention `0d7231f` (wamn-2jkm.17) |
 | SR9 | `wamn-host` is three programs in one crate | Med | **closed** | `d4fe3aa`+`7262679`+`157b61b`+`685a7fc` (wamn-2jkm.22) — wamn-ctl / wamn-dispatcher / wamn-run-worker / wamn-cdc-reader split; washlet strings-clean; in-cluster rollout rides wamn-2jkm.41 |
-| E7/E8 | Reader as a service: extraction + placement/ownership | Med/High | open | before cutover |
+| E7/E8 | Reader as a service: extraction + placement/ownership | Med/High | **closed** | E7 `f044b5f` (wamn-l5i9.48; extraction = SR9 `d4fe3aa`/`157b61b`/`685a7fc`, remainder = zero-grant ServiceAccount + credential scope; in-cluster apply rides wamn-2jkm.41) · E8 = **D22** `055dfe6` (wamn-l5i9.46 ratified; lease-sharded fleet, per-org escape hatch; `.33`/`.34` implement) |
 | SR8 | `deploy/` 68 flat files — canonical: §1.6 | — | **closed** | `8123046`…`6ac07d9` (wamn-2jkm.6; local gates only — in-cluster run rides wamn-2jkm.41) |
 | SR13 | Two sources of truth for schema | Med | open | next platform-schema change |
 | SR4 | `wamn_postgres.rs` split (grew 18% since filing) | Med | **closed** | `7f91e3a` (wamn-cjv.18; `{mod,types,pool,claims,resources}.rs`; claims.rs = the claim boundary as one unit) |
@@ -675,7 +675,10 @@ means one session per project-env; today one hand-launched process each;
 recommend a multi-tenant reader sharded by a system-DB lease — the dispatcher's
 proven model — with a per-org isolated reader as the escape hatch, and a
 **"registered but not running" alarm**, because that state is invisible in
-every other metric) · **E9** — **canonical home is §1.3** (archive moves; **closed** `db4d891`, wamn-2jkm.2).
+every other metric) — **E7 closed** `f044b5f` (wamn-l5i9.48; extraction shipped
+with SR9, remainder = `event-reader-rbac.yaml` zero-grant identity + credential
+scope on the example) · **E8 closed as D22** `055dfe6` (wamn-l5i9.46 ratified
+2026-07-19; the alarm stays open as E8b/wamn-l5i9.47) · **E9** — **canonical home is §1.3** (archive moves; **closed** `db4d891`, wamn-2jkm.2).
 
 ### E15–E17 — Wave-1 audit additions (2026-07-19)
 **E15 (High, wamn-7j0.2)** Raw **UDP** egress is allow-all:
@@ -960,7 +963,14 @@ quiet tree; schedule it alone between waves, then the materializer build
 (as a `Service`, E12) proceeds on the new layout. — **SR9 EXECUTED 2026-07-19**
 (`d4fe3aa`…`685a7fc`, solo main-loop per the owner's "take sr9 on resume");
 E7 (`wamn-l5i9.48`, unblocked) and the E8 decision (`wamn-l5i9.46`) remain,
-owner's pick.
+owner's pick. — **MATERIALIZER-GATES WAVE EXECUTED 2026-07-19** (owner
+authorized "fqg.20 ∥ l5i9.16 … ratify E8 … fold E7's remainder in"): E8
+ratified as **D22** (`055dfe6`) · E7 remainder closed (`f044b5f`) ·
+`wamn-fqg.20` flow-level ordering + dispatcher key stamping (`c32ffaf`) ∥
+`wamn-l5i9.16` EVT-REG registration catalog + minimal API (`b456409`) — two
+parallel worktree agents, serial main-loop integration, zero conflicts. The
+materializer (`wamn-l5i9.17`, Service-first) is now fully unblocked; the
+single six-image rebake sweep is `wamn-2jkm.41`.
 
 **Day one (~half a day, documentation only, no code risk).** §1.1
 `docs/README.md` · §1.2 the D4 supersession line · §1.3 archive moves · R10's
