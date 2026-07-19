@@ -116,10 +116,16 @@ the bisect trail.
 crates/wash-runtime/src/engine/` — a heads-up that carried-against code moved,
 before an advisory puts a clock on the upgrade.
 
-**Escalation threshold (standing):** if the fork grows past ~4–5 carried
-commits, or the same commit conflicts on consecutive syncs, that is no longer
-dependency management — engage upstream or explicitly accept
-runtime-maintainer status as a decision-table entry.
+**Escalation threshold — RESOLVED as D23 (owner, 2026-07-19):**
+**runtime-maintainer status accepted.** The fork is a first-class owned
+component, not managed dependency drift: the ~4–5 carried-commit ceiling is
+retired, and the **upgrade-gate subset above is the standing sync gate** —
+every base-rev sync or carried-commit addition runs it and appends to the
+sync log, exactly as practiced. Upstreaming individual commits stays welcome
+opportunistically but is no longer a forcing function. (Recorded in the
+`docs/platform-plan.md` decision table as D23; the historical threshold text
+this replaces: past ~4–5 carried commits or repeated sync conflicts, engage
+upstream or accept maintainer status.)
 
 ## Sync log
 
