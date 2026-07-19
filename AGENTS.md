@@ -93,6 +93,14 @@ When your changes create orphans:
 
 The test: Every changed line should trace directly to the user's request.
 
+### 4. Findings & Closure
+
+The findings ledger is `docs/findings.md` — the single findings file. Reviews add sections, not new documents.
+
+A finding **closes on a commit that removes or fixes code — never on a decision that plans to.** Decisions change a finding's *priority*; only commits change its *status*. Questions close on **verified evidence, cited to source.** Every closed row carries its commit hash, bead id, or evidence citation.
+
+Close findings in the commit that carries the finding ID (`fix(R13): ...`); a single integration pass then sweeps the status board — evidence first, board second. Do not edit `docs/findings.md` from parallel worktrees.
+
 ### Rust
 Almost all code here is Rust — consult the `rust-guidelines` skill when writing, reviewing, or refactoring it. Where it conflicts with a project convention, the project wins (e.g. this repo uses error **enums** mirroring WIT variants, not the skill's error structs).
 

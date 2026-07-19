@@ -72,7 +72,7 @@ prerequisite that makes everything else findable.
 | R21 | `classify` matches `Display` text; PG17+ floor unstated | Low | open | with reader work |
 | R22 | `subject_token` collisions (`a.b` ≡ `a_b`) | Low | open | with E3 |
 | R23 | Unbounded `OFFSET` in the API gateway | Low | open | with keyset pagination |
-| R5, R7, R9a–c, R15, E3, E5, E6, E9, SR5, SR7 | see sections below | Low–Med | open | opportunistic |
+| R5, R7, R9a–c, R15, E3, E5, E6, E9, SR7 | see sections below | Low–Med | open | opportunistic |
 
 **Deferred by owner decision:** CI/LICENSE (§5.4 records the evidence-based
 re-open argument, unactioned); TRUNCATE handling (E5 — the prior question is
@@ -673,7 +673,9 @@ that `wamn-run-store` owns — single pure SQL source, guest-compilable; target
 `wamn_postgres.rs` module split — **1,510 → 1,788 lines (+18%) since filing**,
 evidence that a filed-but-unscheduled structural finding is not a brake; do it
 with R2/R16, which touch the same file *(open)* · **SR5** `CronError(String)`
-→ structured variants *(open, 1 hr)* · **SR6** conventions written down
+→ structured variants *(**closed** — `ca59e0e`, wamn-qfr.4; board corrected
+2026-07-19: the ledger merge failed to carry structure-review's Done forward —
+the inverse of the R8c error, caught by the R10 closure audit)* · **SR6** conventions written down
 *(closed)* · **SR7** WIT vendoring consolidation *(open, opportunistic — the
 coherence test means no correctness exposure)* · **SR8** `deploy/` tiering
 *(open — §1.6 **is** SR8; this line is a pointer only)* · **SR10** `wamn-gates` `{bench,proof,fixture}/`
@@ -828,6 +830,6 @@ the same file — one sitting) · SR12's header qualification now and its
 live-test extension with the next queue work · R14 while the outbox ships.
 
 **Opportunistic.** SR13 with the next platform-schema change · SR10 at the next
-bench · SR2 before F3/F4 · SR5, SR7 · R5/R7/R8a/R8b/R8d/R9a–c, R15, E3, E6
+bench · SR2 before F3/F4 · SR7 · R5/R7/R8a/R8b/R8d/R9a–c, R15, E3, E6
 as their subsystems are next touched (E9 lives in day-one §1.3) · E14's distinctness assertion when
 `streambench` is next opened · §1.5 `build-and-test.md` re-keying.
