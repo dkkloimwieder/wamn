@@ -144,7 +144,7 @@ trace) and asserts **one trace** with:
 
 That single trace is the `trigger → runner → wamn:postgres` thread of the plan's
 acceptance script, proven through the **production span builders** (the gate
-uses `wamn_host::dispatch::trigger_span` and the real plugin span), not gate
+uses `wamn_dispatcher::trigger_span` and the real plugin span), not gate
 scaffolding.
 
 ### Run it

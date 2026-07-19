@@ -1,6 +1,6 @@
 [package]
 name = "wamn-provision"
-description = "wamn project provisioning (2.3): PURE Postgres SQL builders + identifier naming + per-project credential Secret rendering for standing up a per-project database on the shared cluster (D6: CloudNativePG, one shared Cluster, database-per-project). No DB / K8s client / clock — the `provision-project` subcommand (wamn-host) supplies the effects and the `provisionbench` gate (wamn-gates) drives it against a real cluster. Cross-project isolation = per-project DATABASE + per-DB CONNECT (PUBLIC revoked) + the shared NOSUPERUSER `wamn_app` role, with RLS confining within (the 2.2 model)."
+description = "wamn project provisioning (2.3): PURE Postgres SQL builders + identifier naming + per-project credential Secret rendering for standing up a per-project database on the shared cluster (D6: CloudNativePG, one shared Cluster, database-per-project). No DB / K8s client / clock — the `provision-project` subcommand (wamn-ctl) supplies the effects and the `provisionbench` gate (wamn-gates) drives it against a real cluster. Cross-project isolation = per-project DATABASE + per-DB CONNECT (PUBLIC revoked) + the shared NOSUPERUSER `wamn_app` role, with RLS confining within (the 2.2 model)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,7 +20,7 @@ serde_json = "1"
 wamn-registry = { path = "../wamn-registry" }
 
 # NO DB / K8s / tokio / clock dependency: the builders are pure text and the
-# renderers are pure JSON. The `provision-project` driver (wamn-host) holds the
+# renderers are pure JSON. The `provision-project` driver (wamn-ctl) holds the
 # tokio_postgres connection; the optional live-apply gate (tests/provision.rs)
 # shells out to `psql` — so there is no database dependency even in dev, the same
 # pattern as wamn-ddl / wamn-rls / wamn-seed / wamn-run-store.

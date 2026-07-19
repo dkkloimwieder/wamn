@@ -15,7 +15,7 @@
 //! and the per-project-env CNPG [`Database` CR](crate::database) renderer
 //! (wamn-q3n.7) — no DB, no K8s client, no clock. The effects live in the
 //! `provision-project` / `provision-org` / `provision-project-env` subcommands
-//! (`wamn-host`); the `provisionbench` gate (`wamn-gates`) drives the whole path
+//! (`wamn-ctl`); the `provisionbench` gate (`wamn-gates`) drives the whole path
 //! against a real cluster.
 //!
 //! # Isolation model

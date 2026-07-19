@@ -12,7 +12,7 @@ frozen 0.1 at 5.4 — this is its first host implementation).
 ## The chain
 
 ```
-flow JSON                      runner (wamn-host run-worker)          guest (flowrunner)
+flow JSON                      runner (wamn-run-worker)          guest (flowrunner)
 ─────────                      ─────────────────────────────          ──────────────────
 credentials:                   WAMN_CREDENTIALS_FILE                  Dispatch.credential
   - name: notify-token   ───►  {project: {name: secret}}              (the DECLARED name)

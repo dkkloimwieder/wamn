@@ -9,7 +9,7 @@
 //! This module is **pure** (SR3 / house rule 1): the request/step model, the
 //! plan derivation ([`plan_copy`]), and the quiesce/verify SQL + argv builders.
 //! No DB, no clock, no process spawn — the effects live in the
-//! `copy-project-env` subcommand (`wamn-host`), which composes the shipped
+//! `copy-project-env` subcommand (`wamn-ctl`), which composes the shipped
 //! drivers (the migrate engine for the catalog, `pg_dump`/`pg_restore` for the
 //! rows, the registry saga builders for the durable record).
 //!

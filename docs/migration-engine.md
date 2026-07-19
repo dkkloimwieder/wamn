@@ -2,7 +2,7 @@
 
 The **live executor** that applies a catalog to a project database:
 versioned, forward-only, with a dry-run and a generated rollback plan. Shipped as
-the pure crate `crates/wamn-migrate` (the engine) + the `wamn-host
+the pure crate `crates/wamn-migrate` (the engine) + the `wamn-ctl
 migrate-catalog` subcommand (the effect shell), bead wamn-d8u,
 `docs/platform-plan.md` §2.5.
 
@@ -108,7 +108,7 @@ version: the rollback is a drop / restore, not a generated inverse.
 ## The subcommand
 
 ```
-wamn-host migrate-catalog \
+wamn-ctl migrate-catalog \
   --admin-database-url <superuser URL to the project DB> \
   --tenant <tenant> --environment dev|canary|prod --schema <data schema> \
   --target <catalog.json> [--base <n>] [--dry-run] [--confirm-with-backup]

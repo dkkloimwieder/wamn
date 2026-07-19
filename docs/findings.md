@@ -58,7 +58,7 @@ prerequisite that makes everything else findable.
 | SR1/SR3/SR6 | Gates split, repo tiering, conventions written down | — | **closed** | `3dfee03` / `4a637e2` / `d8e1366` |
 | E14 | Q1: `ev.lsn` is per-message — dedupe design sound | — | **closed** | evidence: `pg-walstream stream.rs:1093,1066` (question-class closure) |
 | SR12 | Pure/effect split can't test statement-level bugs | High | **closed** | live-test half `c705c9e` (wamn-2jkm.23); header qualification + composed-statement convention `0d7231f` (wamn-2jkm.17) |
-| SR9 | `wamn-host` is three programs in one crate | Med | open | with E7/E8 |
+| SR9 | `wamn-host` is three programs in one crate | Med | **closed** | `d4fe3aa`+`7262679`+`157b61b`+`685a7fc` (wamn-2jkm.22) — wamn-ctl / wamn-dispatcher / wamn-run-worker / wamn-cdc-reader split; washlet strings-clean; in-cluster rollout rides wamn-2jkm.41 |
 | E7/E8 | Reader as a service: extraction + placement/ownership | Med/High | open | before cutover |
 | SR8 | `deploy/` 68 flat files — canonical: §1.6 | — | **closed** | `8123046`…`6ac07d9` (wamn-2jkm.6; local gates only — in-cluster run rides wamn-2jkm.41) |
 | SR13 | Two sources of truth for schema | Med | open | next platform-schema change |
@@ -222,7 +222,10 @@ production**, and R14 is a live liveness bug in it.
   (`provision*`, `dump/restore/copy_project_env`, `migrate_catalog`,
   `publish_catalog`, `enable_cdc_project_env`, `env_policies`), and three
   long-lived services (`dispatch`, `run_worker`, `event_reader`). → **SR9**,
-  and E12 changes the destination for two of the three.
+  and E12 changes the destination for two of the three. *(Done — SR9 closed
+  2026-07-19, `d4fe3aa`+`7262679`+`157b61b`+`685a7fc`: split into `wamn-ctl` /
+  `wamn-dispatcher` / `wamn-run-worker` / `wamn-cdc-reader`; `wamn-host` is the
+  washlet only.)*
 - `wamn-gates` (18,803 ln / 29 flat modules, 27.8% of all Rust) → **SR10**.
 - `wamn_postgres.rs` (1,788 ln, **+18% since SR4 was filed**) → **SR4**.
 - `flowrunner` re-implements run-state SQL that `wamn-run-store` owns → **SR2**.
@@ -765,6 +768,21 @@ Image targets follow SR1's pattern (one Dockerfile, `--target` per artifact);
 the washlet image must stop carrying provisioning and replication-credential
 code (`strings` spot-check, per SR1's precedent).
 
+**Closed 2026-07-19** (wamn-2jkm.22, solo main-loop): `d4fe3aa` identifiers →
+`wamn-registry::identifiers` (the R16b owner relocated, still singular, so the
+dispatcher links no runtime) · `7262679` `wamn-ctl` (nine verbs — the bead's
+"ten" counted the private `env_policies` helper; `--help` byte-identical to the
+pre-split baseline modulo binary name) · `157b61b` the three service crates
+(`wamn-dispatcher` wasmtime-free via a local thin `connect_nats`/`init_crypto`
+copy; `wamn-run-worker` embeds the runtime via the lib; `wamn-cdc-reader`
+standalone, `event_reader_live` moved) · `685a7fc` six Dockerfile targets +
+manifest swaps. Strings spot-check held on the SHIPPED release binaries: the
+washlet carries zero provisioning/replication-credential markers. Gates: 89
+workspace test binaries green, all six image targets built locally; the
+in-cluster rollout of the six images rides `wamn-2jkm.41` (rider 11). E7/E8
+were NOT taken (not owner-named): E7 `wamn-l5i9.48` is now unblocked on this
+layout; the E8 placement decision is `wamn-l5i9.46`.
+
 ### SR1–SR8, SR10 — status
 **SR1** gates split *(closed)* · **SR2** flowrunner re-implements run-state SQL
 that `wamn-run-store` owns — single pure SQL source, guest-compilable; target
@@ -939,7 +957,10 @@ serial main-loop integration, zero cherry-pick conflicts.
 **Sync point — anti-parallel by nature:** SR9/E7/E8 (the `wamn-host` crate
 split + reader extraction). It touches every deployment artifact and wants a
 quiet tree; schedule it alone between waves, then the materializer build
-(as a `Service`, E12) proceeds on the new layout.
+(as a `Service`, E12) proceeds on the new layout. — **SR9 EXECUTED 2026-07-19**
+(`d4fe3aa`…`685a7fc`, solo main-loop per the owner's "take sr9 on resume");
+E7 (`wamn-l5i9.48`, unblocked) and the E8 decision (`wamn-l5i9.46`) remain,
+owner's pick.
 
 **Day one (~half a day, documentation only, no code risk).** §1.1
 `docs/README.md` · §1.2 the D4 supersession line · §1.3 archive moves · R10's

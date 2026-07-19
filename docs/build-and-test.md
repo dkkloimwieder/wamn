@@ -21,7 +21,7 @@ rev-bump procedure. The rev is pinned in one place:
 ### Workspace build
 
 ```bash
-cargo build --release -p wamn-host -p wamn-gates   # prod host + gate suite (SR1 split)
+cargo build --release -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-gates   # all artifacts (SR1/SR9 split)
 (cd components && cargo build --release --target wasm32-wasip2)  # guest fixtures
 ```
 
@@ -90,7 +90,7 @@ WAMN_PROVISION_PG_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn cargo tes
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn \
   ./target/debug/wamn-gates --log-level error provisionbench
 docker stop wamn-prov-pg
-# The production tool is `wamn-host provision-project --project <id>
+# The production tool is `wamn-ctl provision-project --project <id>
 # In-cluster gate of record (against the shared CNPG cluster = the D6 substrate,
 # NO cpu limit — S2 CFS lesson):
 kubectl apply --server-side -f deploy/infra/cnpg-operator.yaml
@@ -164,8 +164,8 @@ kubectl -n wamn-system logs -f job/logbench
 Docs: docs/tracing.md
 
 ```bash
-cargo clippy -p wamn-host -p wamn-gates --all-targets \
-  && cargo fmt -p wamn-host -p wamn-gates --check
+cargo clippy -p wamn-host -p wamn-dispatcher -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-host -p wamn-dispatcher -p wamn-gates --check
 # Local iteration (throwaway Postgres + Tempo + collector on a docker network;
 # spans are INFO):
 docker network create wamn-s5 2>/dev/null || true
@@ -257,8 +257,8 @@ REL=components/target/wasm32-wasip2/release
   --component $REL/poc_webhook_f1.wasm \
   --component $REL/sample_node.wasm  # webhook/api: {wamn:postgres,wasi:http}; 5.4 sample node: ZERO egress
 
-cargo clippy -p wamn-host -p wamn-gates -p wamn-gate-harness --all-targets \
-  && cargo fmt -p wamn-host -p wamn-gates -p wamn-gate-harness --check
+cargo clippy -p wamn-host -p wamn-run-worker -p wamn-gates -p wamn-gate-harness --all-targets \
+  && cargo fmt -p wamn-host -p wamn-run-worker -p wamn-gates -p wamn-gate-harness --check
 ```
 
 ### [5.1] flow-graph schema crate (crates/wamn-flow)
@@ -365,7 +365,7 @@ cat > /tmp/wamn-credentials.json <<'JSON'
 { "default": { "notify-token": "wamn-cred-proof-7f3a9b2e41d05c68" } }
 JSON
 ./target/debug/wamn-gates --log-level error serve-echo --port 8093 &
-WAMN_RUNNER=cred-local ./target/debug/wamn-host --log-level info run-worker \
+WAMN_RUNNER=cred-local ./target/debug/wamn-run-worker --log-level info \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5493/wamn \
   --tenant demo-tenant --schema wamn_cred_local --project default \
@@ -658,8 +658,8 @@ registration (FK → `project_envs`, so an unprovisioned env is refused).
 ```bash
 cargo test -p wamn-provision            # name/builder/secret units incl the CDC set
 cargo test -p wamn-registry             # event-reader builder shapes + EventReader round-trip
-cargo test -p wamn-host enable_cdc      # bundle ordering + name validation
-cargo clippy -p wamn-provision -p wamn-registry -p wamn-host
+cargo test -p wamn-ctl enable_cdc      # bundle ordering + name validation
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-ctl
 # Live-apply gates (throwaway PG18 with logical decoding ON):
 docker run -d --name wamn-cdc-pg -e POSTGRES_PASSWORD=postgres -p 5447:5432 \
   postgres:18 -c wal_level=logical
@@ -671,7 +671,7 @@ docker rm -f wamn-cdc-pg
 # In-cluster gate of record (no docker rebuild — the real debug subcommand +
 # kubectl; scratchpad incluster_l5i9_9.sh is the scripted run): register a
 # trials org + project-env on wamn-pg (q3n.7 runbook), then:
-./target/debug/wamn-host enable-cdc-project-env --org <o> --project <p> --env <e> \
+./target/debug/wamn-ctl enable-cdc-project-env --org <o> --project <p> --env <e> \
   --schema app --system-database-url "$WAMN_SYSTEM_ADMIN_URL" \
   --emit-role-sql role.sql --emit-cdc-sql cdc.sql --emit-secret secret.json
 #   apply order: role.sql → the TARGET cluster (any DB; roles are cluster-global),
@@ -695,8 +695,7 @@ env-policy knobs) are a SIBLING bead, not this overlay.
 
 ### [EVT-READER / wamn-l5i9.10] event-reader — one project-env → the EVT_ stream
 
-Docs: docs/event-plane-jetstream.md §4. The CDC reader MVP: `wamn-host
-event-reader --org --project --env` (replicas=1 Deployment,
+Docs: docs/event-plane-jetstream.md §4. The CDC reader MVP: `wamn-cdc-reader --org --project --env` (replicas=1 Deployment,
 deploy/platform/event-reader.example.yaml) reads its `registry.event_readers`
 registration, opens ONE pg_walstream session (`StreamingMode::Off` — whole
 txns, commit order), and publishes `wamn-event-wire` envelopes onto
@@ -710,8 +709,8 @@ reader appends `sslmode` + `replication=database` itself.
 
 ```bash
 cargo test -p wamn-event-wire           # the draft wire contract, string-pinned
-cargo test -p wamn-host --lib event_reader   # url compose / error classify / row map
-cargo clippy -p wamn-event-wire -p wamn-host -p wamn-gates
+cargo test -p wamn-cdc-reader --lib   # url compose / error classify / row map
+cargo clippy -p wamn-event-wire -p wamn-cdc-reader -p wamn-gates
 # Local live gate (throwaway PG18 logical + single-node JetStream; ~90s —
 # idle-stream feedback rides the ~30s server-keepalive cycle, hence the waits):
 docker run -d --name wamn-reader-pg -e POSTGRES_PASSWORD=postgres -p 5448:5432 \
@@ -719,7 +718,7 @@ docker run -d --name wamn-reader-pg -e POSTGRES_PASSWORD=postgres -p 5448:5432 \
 docker run -d --name wamn-reader-nats -p 4261:4222 nats:2.10-alpine -js -sd /data
 WAMN_READER_PG_URL=postgres://postgres:postgres@127.0.0.1:5448/postgres \
 WAMN_READER_NATS_URL=nats://127.0.0.1:4261 \
-  cargo test -p wamn-host --test event_reader_live
+  cargo test -p wamn-cdc-reader --test event_reader_live
 # drills: disabled-registration + missing-slot refusals, commit order +
 # envelope shape (TOAST-absent vs NULL) + dedupe, LSN-advance-on-ack, crash →
 # restart resume, severed-proxy JetStream-down holds the LSN, clean shutdown,
@@ -728,7 +727,7 @@ docker rm -f wamn-reader-pg wamn-reader-nats
 # In-cluster gate of record (no image rebuild — the real debug binary against
 # NodePorts on wamn-pg/wamn-sysdb/evt-nats; scripted: scratchpad
 # incluster_l5i9_10.sh): provision + enable-cdc a trials org (l5i9.9 runbook),
-# run `wamn-host event-reader`, psql writes → the R3 EVT_ stream, then the
+# run `wamn-cdc-reader`, psql writes → the R3 EVT_ stream, then the
 # stream-side asserts + drills:
 ./target/debug/wamn-gates readerbench --nats-url nats://<node>:30493 \
   --org t10cdc --project app --env dev --expect-ids 1,2,3,… [--delete-stream]
@@ -757,7 +756,7 @@ segment is the id, so consumer filters are rename-proof. Same throwaway rig as
 ```bash
 cargo test -p wamn-event-wire                # +unmapped-marker + entity/table wire pin
 cargo test -p wamn-provision entity_map      # the OID-keyed upsert drift guard ($2::text)
-cargo test -p wamn-host --lib                # +entity_lookup_sql pin, +map-order bundle test
+cargo test -p wamn-cdc-reader --lib          # +entity_lookup_sql pin, +map-order bundle test
 # Local live gate (adds the rename drill: provision entity `sales_orders` as
 # table `orders` via the REAL migrate-catalog path, wipe+publish-catalog
 # backfill, rename → `orders2`, assert the pg_class OID is constant and every
@@ -765,7 +764,7 @@ cargo test -p wamn-host --lib                # +entity_lookup_sql pin, +map-orde
 # publish entity-ABSENT):
 WAMN_READER_PG_URL=postgres://postgres:postgres@127.0.0.1:5448/postgres \
 WAMN_READER_NATS_URL=nats://127.0.0.1:4261 \
-  cargo test -p wamn-host --test event_reader_live
+  cargo test -p wamn-cdc-reader --test event_reader_live
 # In-cluster gate of record: incluster_l5i9_10.sh's shape + a rename-drill step
 # driving migrate-catalog, asserted with the new readerbench flags:
 ./target/debug/wamn-gates readerbench --nats-url nats://<node>:30493 \
@@ -795,13 +794,13 @@ l5i9.12.2; here the message is emitted by test SQL.)
 
 ```bash
 cargo test -p wamn-event-wire                        # causation wire pin (run/root/depth)
-cargo test -p wamn-host --lib parse_causation        # only a transactional wamn.causation frame counts
+cargo test -p wamn-cdc-reader --lib parse_causation  # only a transactional wamn.causation frame counts
 # Local live gate: phase G drives BOTH frame orderings (message-at-BEGIN and
 # message-AFTER-rows), a plain txn (causation ABSENT), and a rolled-back txn
 # that emitted one (nothing published — transactional):
 WAMN_READER_PG_URL=postgres://postgres:postgres@127.0.0.1:5448/postgres \
 WAMN_READER_NATS_URL=nats://127.0.0.1:4261 \
-  cargo test -p wamn-host --test event_reader_live
+  cargo test -p wamn-cdc-reader --test event_reader_live
 # In-cluster gate of record (local reader binary + wamn-pg + evt-nats R3): one
 # txn emits the message AFTER 5 inserts; the new readerbench flag asserts every
 # envelope carries the run. Script: scratchpad incluster_l5i9_12.sh.
@@ -882,8 +881,8 @@ Docs: docs/run-queue.md
 ```bash
 cargo test -p wamn-run-store   # incl select_run_dispatch shape (fl3's traceparent seam)
 cargo build -p wamn-run-queue --no-default-features   # the guest's pure claim-path core builds alone
-cargo clippy -p wamn-host -p wamn-gates -p wamn-run-store -p wamn-run-queue --all-targets \
-  && cargo fmt -p wamn-host -p wamn-gates -p wamn-run-store -p wamn-run-queue --check
+cargo clippy -p wamn-dispatcher -p wamn-run-worker -p wamn-gates -p wamn-run-store -p wamn-run-queue --all-targets \
+  && cargo fmt -p wamn-dispatcher -p wamn-run-worker -p wamn-gates -p wamn-run-store -p wamn-run-queue --check
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)   # guest CHANGED
 cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
   && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
@@ -912,9 +911,9 @@ kubectl -n wamn-system logs job/failoverbench
 Docs: docs/run-queue.md · Manifests: deploy/platform/runner.yaml + deploy/platform/runner-db.example.yaml
 
 ```bash
-cargo test -p wamn-host run_worker   # owner fallback + drain tally + idle backoff
-cargo clippy -p wamn-host -p wamn-gates --all-targets \
-  && cargo fmt -p wamn-host -p wamn-gates --check
+cargo test -p wamn-run-worker   # owner fallback + drain tally + idle backoff
+cargo clippy -p wamn-run-worker -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-run-worker -p wamn-gates --check
 # Local runnerbench (throwaway postgres:18 + wamn_app; guest UNCHANGED — no wasm rebuild):
 docker run -d --name wamn-fqg8-pg -p 5490:5432 -e POSTGRES_PASSWORD=postgres postgres:18
 docker exec wamn-fqg8-pg psql -U postgres -c \
@@ -982,8 +981,8 @@ cargo clippy -p wamn-gates --all-targets && cargo fmt -p wamn-gates --check
 # UNCHANGED — ladderproof is gates-only, no wasm/host rebuild). Start the runner
 # first; it error-drains until --setup provisions the schema + role, then claims:
 docker run -d --name wamn-ojm3-pg -p 5491:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
-WAMN_RUNNER=ojm3-local ./target/debug/wamn-host \
-  --log-level info run-worker \
+WAMN_RUNNER=ojm3-local ./target/debug/wamn-run-worker \
+  --log-level info \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5491/wamn \
   --tenant demo-tenant --schema wamn_ladder_local \
@@ -1034,10 +1033,10 @@ docker stop wamn-rq-pg wamn-rq-nats
 # dispatchbench modes: cron/outbox/race/fairness/prune/wake/live/all — `prune`
 # (wamn-d8v) drives the maintenance step's outbox GC: batch-bounded drain every
 # sweep while saturated, then the 10-min maintenance cadence; retention via
-# `wamn-host dispatch --outbox-retention-hours` (default 168 = 7d).
+# `wamn-dispatcher --outbox-retention-hours` (default 168 = 7d).
 # Mutation harness: scratchpad/mutate_d8v.py (retention sign, batch bound,
 # maintenance neuter, stamp inversion — each fails a named test/gate).
-# The production service is `wamn-host dispatch --projects-file <json>` (one entry
+# The production service is `wamn-dispatcher --projects-file <json>` (one entry
 # In-cluster gate of record (co-located with postgres,
 # HOST change => full docker rebuild (both --target stages + kind load BOTH images):
 kubectl -n wamn-system apply -f deploy/gates/dispatchbench-job.yaml
@@ -1110,11 +1109,11 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn
 Docs: docs/provisioning.md, docs/postgres-topology.md
 
 ```bash
-cargo test -p wamn-registry -p wamn-provision -p wamn-host   # renderer shape + org-row SQL + drift/subcommand units
-cargo clippy -p wamn-registry -p wamn-provision -p wamn-host --all-targets \
-  && cargo fmt -p wamn-registry -p wamn-provision -p wamn-host --check
+cargo test -p wamn-registry -p wamn-provision -p wamn-ctl   # renderer shape + org-row SQL + drift/subcommand units
+cargo clippy -p wamn-registry -p wamn-provision -p wamn-ctl --all-targets \
+  && cargo fmt -p wamn-registry -p wamn-provision -p wamn-ctl --check
 # CONFLICT mutant). Render CRs locally (no cluster/DB needed — template policies):
-./target/debug/wamn-host provision-org --org demo --template standard \
+./target/debug/wamn-ctl provision-org --org demo --template standard \
   --emit-clusters /tmp/demo-clusters.json --emit-object-store /tmp/demo-os.json \
   --emit-scheduled-backup /tmp/demo-sb.json
 # IN-CLUSTER live standup = the gate of record (the wamn-q3n.2 infra precedent;
@@ -1124,7 +1123,7 @@ cargo clippy -p wamn-registry -p wamn-provision -p wamn-host --all-targets \
 kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5463:5432 &
 SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
 WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5463/wamn_system?sslmode=disable" \
-  ./target/debug/wamn-host provision-org --org demo --template standard \
+  ./target/debug/wamn-ctl provision-org --org demo --template standard \
   --emit-clusters /tmp/demo-clusters.json --emit-object-store /tmp/demo-os.json \
   --emit-scheduled-backup /tmp/demo-sb.json   # renders per-recovery-domain + writes registry.orgs
 kubectl apply -f /tmp/demo-os.json -f /tmp/demo-clusters.json
@@ -1144,11 +1143,11 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
 Docs: docs/provisioning.md, docs/postgres-topology.md
 
 ```bash
-cargo test -p wamn-provision -p wamn-registry -p wamn-host   # renderer/naming + project SQL + drift/subcommand units
-cargo clippy -p wamn-provision -p wamn-registry -p wamn-host --all-targets \
-  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-host --check
+cargo test -p wamn-provision -p wamn-registry -p wamn-ctl   # renderer/naming + project SQL + drift/subcommand units
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-ctl --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-ctl --check
 # (--cluster given => no DB needed):
-./target/debug/wamn-host provision-project-env --org demo --project demo --env dev \
+./target/debug/wamn-ctl provision-project-env --org demo --project demo --env dev \
   --cluster wamn-pg --emit-database - --emit-role-sql - --emit-privilege-sql - --emit-secret -
 # IN-CLUSTER live standup = the gate of record (T3 pool wamn-pg is ALWAYS up; the
 # SQL -> Database CR -> privilege SQL in order:
@@ -1158,7 +1157,7 @@ kubectl -n wamn-system exec -i wamn-sysdb-1 -c postgres -- psql -U postgres -d w
 kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5470:5432 &
 SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
 WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5470/wamn_system?sslmode=disable" \
-  ./target/debug/wamn-host provision-project-env --org demo --project demo --env dev \
+  ./target/debug/wamn-ctl provision-project-env --org demo --project demo --env dev \
   --connection-limit 20 --emit-database /tmp/db.json --emit-role-sql /tmp/role.sql \
   --emit-privilege-sql /tmp/priv.sql --emit-secret /tmp/secret.json   # reads placement + writes rows
 kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/role.sql
@@ -1192,14 +1191,14 @@ WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn cargo test
 docker stop wamn-prov-pg
 # IN-CLUSTER gate of record = a LIVE DEDICATED-ORG STANDUP (the .6/.7 precedent; the
 # registry read/write (the registry-write path is the .6/.7 gate of record):
-./target/debug/wamn-host provision-org --org gate8 --template standard \
+./target/debug/wamn-ctl provision-org --org gate8 --template standard \
   --emit-clusters /tmp/gate8-clusters.json --emit-object-store /tmp/gate8-os.json \
   --emit-scheduled-backup /tmp/gate8-sb.json
 kubectl apply -f /tmp/gate8-os.json -f /tmp/gate8-clusters.json   # ObjectStore first (prod is backed)
 kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=3 cluster/gate8-prod --timeout=300s
 kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=1 cluster/gate8-dev  --timeout=180s
 for E in prod dev; do C=gate8-$E; \
-  ./target/debug/wamn-host provision-project-env --org gate8 --project app --env $E \
+  ./target/debug/wamn-ctl provision-project-env --org gate8 --project app --env $E \
     --cluster $C --emit-database /tmp/db-$E.json --emit-role-sql /tmp/role-$E.sql \
     --emit-privilege-sql /tmp/priv-$E.sql --emit-secret /tmp/sec-$E.json; \
   kubectl -n wamn-system exec -i $C-1 -c postgres -- psql -U postgres -f - < /tmp/role-$E.sql; \
@@ -1217,20 +1216,20 @@ kubectl -n wamn-system delete objectstore gate8-prod-store --ignore-not-found
 Docs: docs/postgres-topology.md, docs/provisioning.md
 
 ```bash
-cargo test -p wamn-registry -p wamn-host   # Org::pooled placement + pooled-vs-dedicated subcommand units
-cargo clippy -p wamn-registry -p wamn-host --all-targets \
-  && cargo fmt -p wamn-registry -p wamn-host --check
+cargo test -p wamn-registry -p wamn-ctl   # Org::pooled placement + pooled-vs-dedicated subcommand units
+cargo clippy -p wamn-registry -p wamn-ctl --all-targets \
+  && cargo fmt -p wamn-registry -p wamn-ctl --check
 # Plan a pooled org locally (no DB needed — omit --system-database-url):
-./target/debug/wamn-host provision-org --org trialco --template trials --pool wamn-pg
+./target/debug/wamn-ctl provision-org --org trialco --template trials --pool wamn-pg
 # IN-CLUSTER gate of record = a LIVE T3 trials-org standup (the .6/.7 precedent; T3
 # port-forward (check `ss -ltn | grep 547` first):
 kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5473:5432 &
 SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
 WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5473/wamn_system?sslmode=disable" \
-  ./target/debug/wamn-host provision-org --org t3gate --template trials --pool wamn-pg   # records registry.orgs (pooled|wamn-pg), NO CRs
+  ./target/debug/wamn-ctl provision-org --org t3gate --template trials --pool wamn-pg   # records registry.orgs (pooled|wamn-pg), NO CRs
 # provision-project-env WITHOUT --cluster reads placement from the registered row -> wamn-pg:
 WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5473/wamn_system?sslmode=disable" \
-  ./target/debug/wamn-host provision-project-env --org t3gate --project demo --env dev \
+  ./target/debug/wamn-ctl provision-project-env --org t3gate --project demo --env dev \
   --connection-limit 15 --emit-database /tmp/t3-db.json --emit-role-sql /tmp/t3-role.sql \
   --emit-privilege-sql /tmp/t3-priv.sql --emit-secret /tmp/t3-secret.json   # Database CR cluster == wamn-pg
 kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/t3-role.sql
@@ -1250,11 +1249,11 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
 Docs: docs/postgres-topology.md, docs/provisioning.md
 
 ```bash
-cargo test -p wamn-provision -p wamn-registry -p wamn-host   # renderers/builders + record_dump SQL + drift/subcommand units
-cargo clippy -p wamn-provision -p wamn-registry -p wamn-host --all-targets \
-  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-host --check
+cargo test -p wamn-provision -p wamn-registry -p wamn-ctl   # renderers/builders + record_dump SQL + drift/subcommand units
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-ctl --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-ctl --check
 # Render locally (no DB — the cadence is --schedule, default daily 03:00):
-./target/debug/wamn-host dump-project-env --org demo --project app --env prod \
+./target/debug/wamn-ctl dump-project-env --org demo --project app --env prod \
   --emit-cronjob - --emit-job -
 # optional live gates (throwaway postgres:18; superuser url): (a) the ARTIFACT
 # idempotent + byte_size-refresh proof rides the wamn-q3n.3 storage gate:
@@ -1275,8 +1274,8 @@ kubectl -n wamn-system port-forward svc/wamn-pg-rw 5475:5432 &
 SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
 PGPW=$(kubectl -n wamn-system get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
 SYS="postgres://postgres:${SYSPW}@127.0.0.1:5474/wamn_system?sslmode=disable"
-WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-org --org t10gate --template trials --pool wamn-pg
-WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-project-env \
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl provision-org --org t10gate --template trials --pool wamn-pg
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl provision-project-env \
   --org t10gate --project demo --env dev --connection-limit 10 \
   --emit-database /tmp/t10-db.json --emit-role-sql /tmp/t10-role.sql \
   --emit-privilege-sql /tmp/t10-priv.sql --emit-secret /tmp/t10-secret.json
@@ -1287,7 +1286,7 @@ kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < 
 kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -d "wamn-db-t10gate--demo--dev" \
   -c "CREATE TABLE parts (id int primary key, sku text, weight_kg numeric(8,3)); INSERT INTO parts VALUES (1,'bolt',0.125),(2,'nut',0.050),(3,'washer',0.008);"
 # Dump the REAL project-env DB (records the dump in the wamn-sysdb catalog), then restore:
-WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host dump-project-env --org t10gate --project demo --env dev \
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl dump-project-env --org t10gate --project demo --env dev \
   --database-url "postgres://postgres:${PGPW}@127.0.0.1:5475/wamn-db-t10gate--demo--dev?sslmode=disable" \
   --run-now --out-dir /tmp/t10-dump
 kubectl -n wamn-system exec wamn-pg-1 -c postgres -- psql -U postgres -c 'CREATE DATABASE wamn_dump_scratch_t10;'
@@ -1312,11 +1311,11 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn
 Docs: docs/postgres-topology.md, docs/provisioning.md
 
 ```bash
-cargo test -p wamn-provision -p wamn-registry -p wamn-host   # restore builders + select_latest shape/drift + subcommand units
-cargo clippy -p wamn-provision -p wamn-registry -p wamn-host --all-targets \
-  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-host --check
+cargo test -p wamn-provision -p wamn-registry -p wamn-ctl   # restore builders + select_latest shape/drift + subcommand units
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-ctl --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-ctl --check
 # Render/plan locally (no cluster/DB needed — explicit --dump-dir, render only):
-./target/debug/wamn-host restore-project-env --org demo --project app --env dev \
+./target/debug/wamn-ctl restore-project-env --org demo --project app --env dev \
   --database-url postgres://postgres:postgres@127.0.0.1:5468/postgres \
   --dump-dir /tmp/some-dump --help >/dev/null   # (see the subcommand flags)
 # optional live gates (throwaway postgres:18; superuser url): (a) the restore
@@ -1337,8 +1336,8 @@ SYS="postgres://postgres:${SYSPW}@127.0.0.1:5476/wamn_system?sslmode=disable"
 PGADMIN="postgres://postgres:${PGPW}@127.0.0.1:5477/postgres?sslmode=disable"
 DB="wamn-db-t11gate--demo--dev"; DUMPROOT=$(mktemp -d)
 # Register a pooled org + provision a project-env DB on wamn-pg (the .7/.9 path), seed:
-WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-org --org t11gate --template trials --pool wamn-pg
-WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host provision-project-env \
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl provision-org --org t11gate --template trials --pool wamn-pg
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl provision-project-env \
   --org t11gate --project demo --env dev --connection-limit 10 \
   --emit-database /tmp/t11-db.json --emit-role-sql /tmp/t11-role.sql \
   --emit-privilege-sql /tmp/t11-priv.sql --emit-secret /tmp/t11-secret.json
@@ -1349,15 +1348,15 @@ psql "$PGADMIN" -q -f /tmp/t11-priv.sql
 psql "postgres://postgres:${PGPW}@127.0.0.1:5477/${DB}?sslmode=disable" \
   -c "CREATE TABLE parts (id int primary key, sku text, weight_kg numeric(8,3)); INSERT INTO parts VALUES (1,'bolt',0.125),(2,'nut',0.050),(3,'washer',0.008);"
 # Dump it (records the REAL wamn-sysdb catalog), then RESTORE-to-last-dump into scratch:
-WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host dump-project-env --org t11gate --project demo --env dev \
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl dump-project-env --org t11gate --project demo --env dev \
   --database-url "postgres://postgres:${PGPW}@127.0.0.1:5477/${DB}?sslmode=disable" --run-now --out-dir "$DUMPROOT"
-WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host restore-project-env --org t11gate --project demo --env dev \
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl restore-project-env --org t11gate --project demo --env dev \
   --database-url "$PGADMIN" --dump-root "$DUMPROOT"   # reads the catalog -> scratch DB
 # row (mutate live -> restore -> stale gone):
 psql "postgres://postgres:${PGPW}@127.0.0.1:5477/wamn-restore-t11gate--demo--dev?sslmode=disable" \
   -tAc "SELECT count(*), sum(weight_kg) FROM parts;"
 psql "postgres://postgres:${PGPW}@127.0.0.1:5477/${DB}?sslmode=disable" -c "INSERT INTO parts VALUES (99,'STALE',9.999);"
-WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-host restore-project-env --org t11gate --project demo --env dev \
+WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl restore-project-env --org t11gate --project demo --env dev \
   --database-url "$PGADMIN" --dump-root "$DUMPROOT" --in-place --confirm
 psql "postgres://postgres:${PGPW}@127.0.0.1:5477/${DB}?sslmode=disable" -tAc "SELECT count(*) FROM parts;"  # 3 (stale gone)
 # projects+project_envs+dumps:
@@ -1414,9 +1413,9 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn
 Docs: docs/deployment-model.md, docs/registry-model.md, docs/provisioning.md
 
 ```bash
-cargo test -p wamn-registry -p wamn-host -p wamn-gates   # Template presets + OrgEnvPolicy + org-scoped validate/resolve/SQL + subcommand units
-cargo clippy -p wamn-registry -p wamn-host -p wamn-gates --all-targets \
-  && cargo fmt -p wamn-registry -p wamn-host -p wamn-gates --check
+cargo test -p wamn-registry -p wamn-ctl -p wamn-gates   # Template presets + OrgEnvPolicy + org-scoped validate/resolve/SQL + subcommand units
+cargo clippy -p wamn-registry -p wamn-ctl -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-registry -p wamn-ctl -p wamn-gates --check
 # Throwaway-PG live gates (superuser url): the storage live-apply (composite
 # (org, env) FK + stamp insert-if-absent + cross-org isolation + whole-org
 # cascade) + provisionbench --mode all (tier scenarios stamp template policies):
@@ -1428,10 +1427,10 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5494/postgres \
 # wamn_system first — the .3 recipe): standard + dedicated orgs COEXIST (T2/T4),
 # canary derives per-org, a customized row survives a re-stamp:
 export WAMN_SYSTEM_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5494/postgres
-./target/debug/wamn-host provision-org --org smoke1 --template standard  --emit-clusters /tmp/s1.json ...  # 2 clusters (canary -> prod)
-./target/debug/wamn-host provision-org --org smoke2 --template dedicated --emit-clusters /tmp/s2.json ...  # 3 clusters (smoke2-canary)
-./target/debug/wamn-host provision-project-env --org smoke1 --project app --env canary ...  # cluster smoke1-prod
-./target/debug/wamn-host provision-project-env --org smoke2 --project app --env canary ...  # cluster smoke2-canary
+./target/debug/wamn-ctl provision-org --org smoke1 --template standard  --emit-clusters /tmp/s1.json ...  # 2 clusters (canary -> prod)
+./target/debug/wamn-ctl provision-org --org smoke2 --template dedicated --emit-clusters /tmp/s2.json ...  # 3 clusters (smoke2-canary)
+./target/debug/wamn-ctl provision-project-env --org smoke1 --project app --env canary ...  # cluster smoke1-prod
+./target/debug/wamn-ctl provision-project-env --org smoke2 --project app --env canary ...  # cluster smoke2-canary
 docker stop wamn-8df4-pg
 # 5 mutants killed (apply/test/restore, debug builds — scratchpad/mutate_8df4.py):
 # M1 standard-canary->Own (template unit), M2 stamp DO NOTHING->DO UPDATE (unit +
@@ -1454,9 +1453,9 @@ Docs: docs/deployment-model.md §4, docs/provisioning.md
 cargo test -p wamn-provision copy      # the pure plan (clone vs cutover pipeline, unbuilt axes, quiesce/verify builders)
 cargo test -p wamn-registry            # select_saga shape + the 'copy' kind literal drift-guard
 cargo test -p wamn-migrate             # select_applied_catalogs shape
-cargo test -p wamn-host                # driver units (incl. the shared apply_catalog_target refactor)
-cargo clippy -p wamn-provision -p wamn-registry -p wamn-migrate -p wamn-host --all-targets \
-  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-migrate -p wamn-host --check
+cargo test -p wamn-ctl                # driver units (incl. the shared apply_catalog_target refactor)
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-migrate -p wamn-ctl --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-registry -p wamn-migrate -p wamn-ctl --check
 # Throwaway-PG e2e gate (scratchpad/e2e_8df5.sh; postgres:18 on :5496): builds a
 # src project-env (catalog via migrate-catalog + rows + a flow + RLS policy rows)
 # and proves, 20 asserts:
@@ -1494,12 +1493,12 @@ WAMN_DUMP_PG_URL=$U WAMN_RESTORE_PG_URL=$U WAMN_PROVISION_PG_URL=$U cargo test -
 Docs: docs/postgres-topology.md, docs/provisioning.md
 
 ```bash
-cargo test -p wamn-provision -p wamn-host   # backup renderer + policy knobs + org/dump wiring + subcommand units
-cargo clippy -p wamn-provision -p wamn-host -p wamn-registry -p wamn-gates --all-targets \
-  && cargo fmt -p wamn-provision -p wamn-host -p wamn-registry -p wamn-gates --check
+cargo test -p wamn-provision -p wamn-ctl   # backup renderer + policy knobs + org/dump wiring + subcommand units
+cargo clippy -p wamn-provision -p wamn-ctl -p wamn-registry -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-provision -p wamn-ctl -p wamn-registry -p wamn-gates --check
 # Render a dedicated org's backup CRs locally (no cluster/DB needed; the prod
 # policy's backup_cadence/wal_retention drive the CRs):
-./target/debug/wamn-host provision-org --org demo --template standard \
+./target/debug/wamn-ctl provision-org --org demo --template standard \
   --emit-clusters /tmp/demo-clusters.json \
   --emit-object-store /tmp/demo-os.json --emit-scheduled-backup /tmp/demo-sb.json
 # IN-CLUSTER gate of record = a LIVE WAL/PITR standup (the .6/.14 precedent; T3 pool
@@ -1512,7 +1511,7 @@ kubectl apply -f deploy/infra/minio.yaml
 kubectl -n wamn-system rollout status deploy/minio --timeout=150s
 kubectl -n wamn-system wait --for=condition=complete job/minio-init --timeout=120s
 # backup CRs, not the registry row), apply ObjectStore -> Clusters -> ScheduledBackup:
-env -u WAMN_SYSTEM_ADMIN_URL ./target/debug/wamn-host provision-org --org e1gate --template standard \
+env -u WAMN_SYSTEM_ADMIN_URL ./target/debug/wamn-ctl provision-org --org e1gate --template standard \
   --emit-clusters /tmp/e1-clusters.json \
   --emit-object-store /tmp/e1-os.json --emit-scheduled-backup /tmp/e1-sb.json
 kubectl apply -f /tmp/e1-os.json                             # ObjectStore BEFORE the cluster
@@ -1540,13 +1539,13 @@ WAMN_SYSSCHEMA_PG_URL=postgres://postgres:postgres@127.0.0.1:5466/wamn cargo tes
 docker stop wamn-as5-pg
 ```
 
-### [2.5] migration engine (crates/wamn-migrate + wamn-host migrate-catalog)
+### [2.5] migration engine (crates/wamn-migrate + wamn-ctl migrate-catalog)
 
 Docs: docs/migration-engine.md
 
 ```bash
 cargo test -p wamn-migrate     # unit (guards/gate/dry-run/rollback) + drift-guard + live-apply
-cargo test -p wamn-host --lib migrate_catalog   # the subcommand's bare-ident + param-map units
+cargo test -p wamn-ctl --lib migrate_catalog   # the subcommand's bare-ident + param-map units
 cargo clippy -p wamn-migrate -p wamn-host --all-targets \
   && cargo fmt -p wamn-migrate -p wamn-host --check
 # optional live-apply gate (throwaway postgres:18; superuser url — provisions
@@ -1555,7 +1554,7 @@ docker run -d --rm --name wamn-migrate-pg -p 5467:5432 -e POSTGRES_PASSWORD=post
   -e POSTGRES_DB=wamn postgres:18
 WAMN_MIGRATE_PG_URL=postgres://postgres:postgres@127.0.0.1:5467/wamn cargo test -p wamn-migrate
 docker stop wamn-migrate-pg
-# The production tool is `wamn-host migrate-catalog --admin-database-url <superuser>
+# The production tool is `wamn-ctl migrate-catalog --admin-database-url <superuser>
 ```
 
 ### [3.1] metadata catalog schema crate (crates/wamn-catalog)

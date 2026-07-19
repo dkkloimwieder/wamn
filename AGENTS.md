@@ -106,7 +106,7 @@ Almost all code here is Rust — consult the `rust-guidelines` skill when writin
 
 ## Repository structure
 
-- `crates/wamn-host` — production host: the `wash-runtime` washlet embedding + wamn host plugins (`wamn:postgres`, logging) + imperative subcommands (`host`, `dispatch`, `provision-*`, `migrate-catalog`, `publish-catalog`). Thin binary over the lib.
+- `crates/wamn-host` — production host: the `wash-runtime` washlet embedding + wamn host plugins (`wamn:postgres`, logging, jetstream). Washlet only (SR9); thin binary over the lib. Siblings by deployment artifact: `crates/wamn-ctl` (the one-shot control-plane verbs: `provision-*`, `publish/migrate-catalog`, `dump/restore/copy-project-env`, `enable-cdc-project-env`), `crates/wamn-dispatcher`, `crates/wamn-run-worker`, `crates/wamn-cdc-reader` (the long-lived services).
 - `crates/wamn-gates` — the gate/bench suite binary (SR1 split); `crates/wamn-gate-harness` — shared measurement helpers.
 - `crates/wamn-*` — pure decision crates (no DB/clock/wasm — pure core / effect shell): data model (`catalog`, `ddl`, `schema`, `rls`, `seed`); flow engine + API (`flow`, `runner`, `run-store`, `run-queue`, `node-sdk`, `node-guest`, `nodes`, `node-manifest`, `api`); control plane (`registry`, `provision`, `migrate`).
 - `components/` — wasm32-wasip2 guests: production at the root (`flowrunner`, `api-gateway`, `pgprobe`, …), `fixtures/` + `samples/` beneath, `poc-` prefix for POC components.

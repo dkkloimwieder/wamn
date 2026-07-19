@@ -15,7 +15,7 @@
 //! This module is **pure** (SR3 / house rule 1): the `pg_restore` argv builder and
 //! the scratch-database naming. No DB, no clock, no `pg_restore` invocation — the
 //! effects (running the restore, creating the scratch DB, reading the dump catalog)
-//! live in the `restore-project-env` subcommand (`wamn-host`).
+//! live in the `restore-project-env` subcommand (`wamn-ctl`).
 //!
 //! **Object store (Q2, the .10 stance):** the dump bytes live in object storage
 //! once the shared store lands (wamn-e1g); until then a dump is staged locally (the

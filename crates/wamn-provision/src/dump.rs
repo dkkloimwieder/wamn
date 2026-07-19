@@ -14,7 +14,7 @@
 //! the [`crate::database`] / [`crate::org`] precedent). No DB, no clock, no K8s
 //! client, no `pg_dump` invocation — the effects (running the dump, recording the
 //! [`provisioning.dumps`](crate::sql) row) live in the `dump-project-env`
-//! subcommand (`wamn-host`) and the CronJob container at runtime.
+//! subcommand (`wamn-ctl`) and the CronJob container at runtime.
 //!
 //! **Object store (wamn-q3n.10 rendered the upload; wamn-e1g makes it live):** the
 //! dump pod is now `initContainer`(`pg_dump -Fd` into a shared volume) +

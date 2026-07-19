@@ -18,7 +18,7 @@ rationale is `docs/postgres-topology.md` §T1 (the source of truth).
 Exactly **one T1 cluster per platform environment** (platform dev / staging /
 prod each get their own; `deploy/platform/wamn-sysdb.yaml` is the kind/dev instance). It
 is provisioned by Epic-1 Helm/IaC — `kubectl apply` of a `Cluster` CR — because
-**it cannot be provisioned by the provisioner it backs** (`wamn-host
+**it cannot be provisioned by the provisioner it backs** (`wamn-ctl
 provision-project` reads the registry that lives here).
 
 | Property | Value | Why |

@@ -307,12 +307,12 @@ a **running service** is the production runner below.
 
 ## Production runner (`run-worker`, fqg.8)
 
-The `run-worker` subcommand is the always-on service that **closes the live
-dispatcher → `run_queue` → runner chain**: a long-lived `wamn-host` process that
-instantiates the flowrunner component once (baked into the prod image at
+The `wamn-run-worker` binary (its own SR9 artifact) is the always-on service
+that **closes the live dispatcher → `run_queue` → runner chain**: a long-lived
+process that instantiates the flowrunner component once (baked into its image at
 `/components/flowrunner.wasm`) and loops the guest's `run-next` export, so the runs
 the dispatcher write-ahead + enqueued are actually claimed and driven to
-completion. The loop core is `wamn_host::run_worker::RunWorker` — `instantiate`
+completion. The loop core is `wamn_run_worker::RunWorker` — `instantiate`
 (inject the host-side `app.runner` owner + tenant + `search_path`), `drain` (pull
 every currently-claimable run — each `run-next` claims one and drives it terminal
 or parks it, so the claimable set strictly shrinks and the drain terminates), and
@@ -394,7 +394,7 @@ this crate: the decisions — cron due-tick evaluation, outbox matching, run-id
 minting, the poll cadence — live in the pure `cron`/`outbox`/`dispatch` modules
 and take an injected `now`, so the `dispatchbench` gate fast-forwards a nightly
 cron and a three-day outage in milliseconds (the 11.1 fast-forwardable-cron
-discipline); `wamn-host dispatch` supplies the real clock.
+discipline); `wamn-dispatcher` supplies the real clock.
 
 One sweep of one project:
 
@@ -528,7 +528,7 @@ a down DB — the durable anchor re-fires the tick exactly once on the next
 successful sweep). A failing project never wedges the loop: its errors log and
 decay while every other project keeps its own cadence.
 
-Deployment shape: `wamn-host dispatch --projects-file <json>` (one entry per
+Deployment shape: `wamn-dispatcher --projects-file <json>` (one entry per
 project: `url` + `tenant` + `schema` — the 2.2 projects-file pattern) or the
 single-project flags. The production manifest is `deploy/platform/dispatcher.yaml`: a
 2-replica Deployment (no leader — replicas race and collapse on the write-ahead

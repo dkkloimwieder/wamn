@@ -1,6 +1,6 @@
 [package]
 name = "wamn-migrate"
-description = "wamn migration engine (2.5): the live, versioned, forward-only executor that wraps the shipped machinery — it reads the current applied catalog, computes the plan with the wamn-ddl compiler, and produces a ONE-TRANSACTION apply plan (DDL + the wamn-schema lifecycle advance + a migration-history row) plus a dry-run report and a generated rollback plan. Pure: no DB/clock — the driver (wamn-host migrate-catalog) executes."
+description = "wamn migration engine (2.5): the live, versioned, forward-only executor that wraps the shipped machinery — it reads the current applied catalog, computes the plan with the wamn-ddl compiler, and produces a ONE-TRANSACTION apply plan (DDL + the wamn-schema lifecycle advance + a migration-history row) plus a dry-run report and a generated rollback plan. Pure: no DB/clock — the driver (wamn-ctl migrate-catalog) executes."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

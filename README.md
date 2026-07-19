@@ -16,8 +16,13 @@ changes are carried commits on a fork — see `docs/wash-runtime-fork.md`.
 ```
 crates/                 Rust workspace
   wamn-host             production host: washlet embedding + host plugins
-                        (wamn:postgres, logging) + subcommands (host, dispatch,
-                        provision-*, migrate-catalog, publish-catalog)
+                        (wamn:postgres, logging, jetstream) — washlet only (SR9)
+  wamn-ctl              one-shot control-plane verbs (provision-*, publish/
+                        migrate-catalog, dump/restore/copy-project-env,
+                        enable-cdc-project-env) — SR9 split
+  wamn-dispatcher       shared trigger dispatcher service (SR9 split)
+  wamn-run-worker       production flow-runner service (SR9 split)
+  wamn-cdc-reader       CDC event-reader service (SR9 split)
   wamn-gates            gate/bench suite binary (SR1 split)
   wamn-gate-harness     shared measurement helpers for gates
 
@@ -80,7 +85,7 @@ Dockerfile              two-stage image (--target host, --target gates)
 
 ```bash
 # host + gate suite (debug by default)
-cargo build -p wamn-host -p wamn-gates
+cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-gates
 
 # wasm guests
 (cd components && cargo build --release --target wasm32-wasip2)

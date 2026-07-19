@@ -12,7 +12,7 @@ is *a provisioned, credentialed, `wamn_app`-roled, empty project database*.
 - **Decision:** D6 — **CloudNativePG** (CNPG), in-cluster, chosen-revisitable.
 - **Crate:** `crates/wamn-provision` — the pure core (naming, SQL builders,
   Secret rendering).
-- **Subcommand:** `wamn-host provision-project` — the imperative driver.
+- **Subcommand:** `wamn-ctl provision-project` — the imperative driver.
 - **Gate:** `wamn-gates provisionbench` + `deploy/gates/provisionbench-job.yaml`.
 
 ## Topology (D6)
@@ -65,7 +65,7 @@ leaked credential reaches one project not all) is a hardening follow-up (8.2),
 slots in (that also serves the dispatch role wamn-286 and the user-SQL role
 wamn-1nd).
 
-## `wamn-host provision-project`
+## `wamn-ctl provision-project`
 
 An imperative CLI (the `publish-catalog` precedent), run as a Job — not a
 Project CRD + controller (that is the 10.1 control plane). It connects as the
@@ -140,7 +140,7 @@ The gate is **substrate-agnostic** — it needs only a superuser URL — so it r
 locally against a throwaway `postgres:18` (fast iteration) and in-cluster against
 the CNPG cluster (the gate of record).
 
-## `wamn-host provision-org` (wamn-q3n.6; D18 by wamn-8df.3; templates by wamn-8df.4)
+## `wamn-ctl provision-org` (wamn-q3n.6; D18 by wamn-8df.3; templates by wamn-8df.4)
 
 The topology (`docs/postgres-topology.md`) splits `provision-project` into
 `provision-org` + `provision-project-env`. **`provision-org`** stamps an org from
@@ -310,7 +310,7 @@ deletes **only** the test org's clusters / backup CRs / dump Jobs / objects; the
 infra (cert-manager / plugin / MinIO) stays as platform substrate, and the guardrailed
 clusters are never touched.
 
-## `wamn-host provision-project-env` (wamn-q3n.7)
+## `wamn-ctl provision-project-env` (wamn-q3n.7)
 
 The per-env counterpart of `provision-project`: **`provision-project-env`**
 stands up one per-project-env Postgres database, keyed by the `(org, project,
@@ -387,7 +387,7 @@ routes an added `canary` policy by its recovery domain). Teardown deletes **only
 the new `Database` CR + registry rows, then drops the created database (the
 `retain` policy leaves it) — never `wamn-pg` / `postgres.yaml` / `wamn-sysdb`.
 
-## `wamn-host enable-cdc-project-env` (wamn-l5i9.9, D19 v3)
+## `wamn-ctl enable-cdc-project-env` (wamn-l5i9.9, D19 v3)
 
 Overlay **CDC capture** onto an already-provisioned project-env
 (docs/event-plane-jetstream.md §4). CDC is opt-in and may be enabled long after
@@ -509,7 +509,7 @@ confined, `NOBYPASSRLS`; plus the same `Database`-CRD path on the pool
 drops the retained pool database on `wamn-pg`) — never `wamn-pg` /
 `postgres.yaml` / `wamn-sysdb`.
 
-## `wamn-host dump-project-env` (wamn-q3n.10)
+## `wamn-ctl dump-project-env` (wamn-q3n.10)
 
 The **second backup mechanism** (docs/postgres-topology.md §Backup architecture):
 a scheduled `pg_dump -Fd` of one project-env database to object storage. **One
@@ -539,7 +539,7 @@ The pure renderer + builders live in `crates/wamn-provision/src/dump.rs` (the
   (`dumps/<org>/<project>/<env>/<timestamp>` — derivable, so restore needs no
   registry read), `DEFAULT_DUMP_SCHEDULE` (daily, 03:00).
 
-`wamn-host dump-project-env` drives them:
+`wamn-ctl dump-project-env` drives them:
 
 ```
 dump-project-env --org <org> --project <p> --env <slug>
@@ -577,7 +577,7 @@ dropping `-Fd`, a wrong object-key shape, a CronJob command
 without `-Fd`, and `record_dump` `ON CONFLICT DO UPDATE`→`DO NOTHING` each fail a
 named test.
 
-## `wamn-host restore-project-env` (wamn-q3n.11)
+## `wamn-ctl restore-project-env` (wamn-q3n.11)
 
 The **restore counterpart** of `dump-project-env`: `pg_restore` a `pg_dump -Fd`
 artifact back into a database. This is the *logical-dump* restore path (docs/
@@ -598,7 +598,7 @@ precedent — no clock, no DB, no `pg_restore` invocation):
   name distinct from the live `wamn-db-…` so a scratch restore never shadows the
   real database (length-bounded by `validate_restore_scratch_name`).
 
-`wamn-host restore-project-env` drives them:
+`wamn-ctl restore-project-env` drives them:
 
 ```
 restore-project-env --org <org> --project <p> --env <slug>
@@ -648,7 +648,7 @@ debug builds): `pg_restore_argv` dropping `--clean` or `--no-owner`,
 `select_latest` flipping `taken_at DESC`, and the in-place `--confirm` gate
 neutered each fail a named test.
 
-## `wamn-host copy-project-env` (wamn-8df.5) — the unified copy
+## `wamn-ctl copy-project-env` (wamn-8df.5) — the unified copy
 
 One operation over **arbitrary** `(org, project, env)` triples — same-org or
 cross-org — subsuming deploy / promote / clone / move

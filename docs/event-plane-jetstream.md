@@ -80,7 +80,7 @@ mechanical row changes ride one pipeline, distinguished by subject.
   admits one consumer, so exclusivity is structural — the dispatcher lease only
   elects *which* replica holds the session; successor resumes from confirmed
   LSN.
-  *MVP shipped (wamn-l5i9.10): `wamn-host event-reader` — one project-env per
+  *MVP shipped (wamn-l5i9.10): `wamn-cdc-reader` — one project-env per
   instance, replicas=1 `Recreate` Deployment (event-reader.example.yaml); the
   slot's single-consumer admission is the exclusivity guard and the lease
   election is a filed follow-up (as is fleet/org enumeration). Reads its

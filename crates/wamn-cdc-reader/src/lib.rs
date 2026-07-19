@@ -1,4 +1,4 @@
-//! The `event-reader` subcommand (wamn-l5i9.10, D19 v3 §4): the CDC reader —
+//! The wamn-cdc-reader service (wamn-l5i9.10, D19 v3 §4; its own SR9 artifact): the CDC reader —
 //! one pg_walstream session for ONE project-env, publishing row events onto
 //! the org+env `EVT_` JetStream stream.
 //!

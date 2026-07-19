@@ -67,7 +67,7 @@ retired (templates carry the defaults); `provision-org` records-then-reads-back,
 so a customized org re-renders with its customizations. **Completes cjv.21.**
 
 **Landed — `wamn-8df.5` (unified copy, 2026-07-17):** `copy(src → dst)` shipped
-as the pure `wamn_provision::plan_copy` step plan + the `wamn-host
+as the pure `wamn_provision::plan_copy` step plan + the `wamn-ctl
 copy-project-env` driver. `include ∈ {definition, data, both}`, `scope: whole`,
 `mode: snapshot` (subset / live-cutover stay first-class in the API shape,
 rejected with a named `UnbuiltCopyAxis` error). The definition pass promotes

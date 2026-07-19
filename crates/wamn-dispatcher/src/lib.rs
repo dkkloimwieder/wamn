@@ -1,4 +1,4 @@
-//! The `dispatch` subcommand: the shared trigger dispatcher (5.14) — the
+//! The wamn-dispatcher service (5.14; its own SR9 artifact) — the
 //! always-on control-plane service that owns cron schedules and outbox polling
 //! across ALL projects with adaptive intervals, and wakes parked runners via
 //! doorbell (platform-plan Epic 5 "Triggers" + item 5.14; D4: LISTEN/NOTIFY is
@@ -835,7 +835,6 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
     });
     dispatcher.run_loop(rx).await
 }
-
 
 /// TLS material for the doorbell connection. Local copy of the fork's
 /// `wash_runtime::washlet::NatsConnectionOptions` (SR9): the doorbell is this

@@ -7,7 +7,7 @@
 //! 5.2 engine (renewing the lease per node), and dequeues (terminal) or parks
 //! (a `delay`). But the fqg.4 gates SEED `run_queue` directly; nothing consumed
 //! it as a *running service*. This module is that service: a long-lived
-//! wamn-host process that instantiates the flowrunner component once and loops
+//! wamn-run-worker process that instantiates the flowrunner component once and loops
 //! `run-next`, so the LIVE chain closes —
 //!
 //!   dispatcher (fqg.3/a52) write-ahead + enqueue → run_queue → **this runner
