@@ -9,6 +9,8 @@ license.workspace = true
 # The production host library — gates construct the identical engines, hosts,
 # and plugins the prod binary runs.
 wamn-host = { path = "../wamn-host" }
+# SR9: the one-shot control-plane verbs the provisioning/publish gates drive.
+wamn-ctl = { path = "../wamn-ctl" }
 wamn-gate-harness = { path = "../wamn-gate-harness" }
 wash-runtime = { workspace = true }
 # Bench harnesses instantiate command components directly (CommandPre) and

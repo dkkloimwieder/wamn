@@ -1,7 +1,7 @@
 //! Gates-side `publish-catalog` wrapper: the prod subcommand plus the
 //! `--seed` demo flag SR1 removed from the prod binary (fixture content must
 //! not ship in the prod artifact). Provisioning/publication is the identical
-//! library path (`wamn_host::publish_catalog::run`); the wrapper only appends
+//! library path (`wamn_ctl::publish_catalog::run`); the wrapper only appends
 //! the bundled two-tenant demo rows (`apifixture`, matching
 //! `deploy/poc/proof-catalog.json`) afterwards — the seed is `ON CONFLICT DO
 //! NOTHING` inserts into the floor tables, so ordering after the snapshot
@@ -16,7 +16,7 @@ use crate::apifixture;
 #[derive(Debug, Args)]
 pub struct PublishCatalogDemoArgs {
     #[command(flatten)]
-    pub inner: wamn_host::publish_catalog::PublishCatalogArgs,
+    pub inner: wamn_ctl::publish_catalog::PublishCatalogArgs,
 
     /// Also seed the bundled two-tenant demo rows (proof scaffolding matching
     /// the bundled `deploy/poc/proof-catalog.json`; idempotent).
@@ -27,7 +27,7 @@ pub struct PublishCatalogDemoArgs {
 pub async fn run(args: PublishCatalogDemoArgs) -> anyhow::Result<()> {
     let admin_url = args.inner.admin_database_url.clone();
     let schema = args.inner.schema.clone();
-    wamn_host::publish_catalog::run(args.inner).await?;
+    wamn_ctl::publish_catalog::run(args.inner).await?;
 
     if args.seed {
         let admin_url = admin_url

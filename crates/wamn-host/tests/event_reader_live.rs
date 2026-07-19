@@ -40,8 +40,8 @@ use tokio_postgres::NoTls;
 
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
 use wamn_host::event_reader::{EventReaderArgs, run_with_token};
-use wamn_host::migrate_catalog::MigrateCatalogArgs;
-use wamn_host::publish_catalog::PublishCatalogArgs;
+use wamn_ctl::migrate_catalog::MigrateCatalogArgs;
+use wamn_ctl::publish_catalog::PublishCatalogArgs;
 use wamn_provision::{cdc_object_name, event_stream_name, sql};
 use wamn_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
@@ -740,7 +740,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     // the STABLE entity id — the map is OID-keyed and the cache is never
     // invalidated, so the resolution survives the rename by construction.
     let admin_url = swap_db(&super_url, DB);
-    wamn_host::migrate_catalog::run(MigrateCatalogArgs {
+    wamn_ctl::migrate_catalog::run(MigrateCatalogArgs {
         admin_database_url: admin_url.clone(),
         tenant: TENANT.into(),
         environment: ENV.into(),
@@ -768,7 +768,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     sys.batch_execute("DELETE FROM app.wamn_entities")
         .await
         .unwrap();
-    wamn_host::publish_catalog::run(PublishCatalogArgs {
+    wamn_ctl::publish_catalog::run(PublishCatalogArgs {
         catalog: catalog_file("cat_v1", DRILL_CAT_V1),
         admin_database_url: Some(admin_url.clone()),
         tenant: TENANT.into(),
@@ -797,7 +797,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
 
     // The rename: v2 through the real migrate path (destructive — the rename
     // op is flagged; the drill confirms like an operator with a backup).
-    wamn_host::migrate_catalog::run(MigrateCatalogArgs {
+    wamn_ctl::migrate_catalog::run(MigrateCatalogArgs {
         admin_database_url: admin_url.clone(),
         tenant: TENANT.into(),
         environment: ENV.into(),

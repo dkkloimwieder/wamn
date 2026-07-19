@@ -3898,6 +3898,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-log"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
+dependencies = [
+ "log",
+ "once_cell",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-opentelemetry"
 version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3934,10 +3945,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sharded-slab",
+ "smallvec",
  "thread_local",
  "time",
  "tracing",
  "tracing-core",
+ "tracing-log",
  "tracing-serde",
 ]
 
@@ -4102,6 +4115,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-ctl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
+ "wamn-catalog",
+ "wamn-ddl",
+ "wamn-flow",
+ "wamn-migrate",
+ "wamn-provision",
+ "wamn-registry",
+ "wamn-rls",
+ "wamn-seed",
+]
+
+[[package]]
 name = "wamn-ddl"
 version = "0.1.0"
 dependencies = [
@@ -4177,6 +4211,7 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "wamn-catalog",
+ "wamn-ctl",
  "wamn-ddl",
  "wamn-event-wire",
  "wamn-flow",
@@ -4205,7 +4240,6 @@ dependencies = [
  "clap",
  "deadpool-postgres",
  "futures-util",
- "http-body-util",
  "hyper",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -4216,16 +4250,12 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
- "wamn-catalog",
- "wamn-ddl",
+ "wamn-ctl",
  "wamn-event-wire",
  "wamn-flow",
- "wamn-migrate",
  "wamn-provision",
  "wamn-registry",
- "wamn-rls",
  "wamn-run-queue",
- "wamn-seed",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",

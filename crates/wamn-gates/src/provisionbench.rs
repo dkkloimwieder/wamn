@@ -5,7 +5,7 @@
 //!
 //! * **legacy** — the 2.3 flow, kept as regression: provision TWO projects through
 //!   the **real** `provision-project` path
-//!   ([`wamn_host::provision::provision_project`]), then prove routing/resolution
+//!   ([`wamn_ctl::provision::provision_project`]), then prove routing/resolution
 //!   (a marker witness resolved through the plugin's own `StaticCredentialProvider`),
 //!   database-level isolation (no cross-database queries), least privilege
 //!   (`wamn_app` is `NOSUPERUSER NOCREATEDB`), and the emitted `Secret` layout.
@@ -136,11 +136,11 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
     // 1. Provision both projects through the production path; capture the
     //    emitted app-role URLs.
     let url_a =
-        wamn_host::provision::provision_project(admin_url, PROJECT_A, APP_PASSWORD, None, None)
+        wamn_ctl::provision::provision_project(admin_url, PROJECT_A, APP_PASSWORD, None, None)
             .await
             .context("provision project a")?;
     let url_b =
-        wamn_host::provision::provision_project(admin_url, PROJECT_B, APP_PASSWORD, None, None)
+        wamn_ctl::provision::provision_project(admin_url, PROJECT_B, APP_PASSWORD, None, None)
             .await
             .context("provision project b")?;
 

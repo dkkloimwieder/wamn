@@ -36,13 +36,6 @@ bytes = "1"
 # S6 egress spy / prod handler: the HostHandler::outgoing_request signature is
 # in terms of hyper::Request. Matches the hyper 1.x wasmtime-wasi-http uses.
 hyper = "1"
-# 4.1 apibench: build request bodies (Full<Bytes>) and collect the guest's
-# HyperOutgoingBody response back into bytes (BodyExt::collect).
-http-body-util = "0.1"
-# 4.1 apibench: builds the gate's catalog snapshot + the 3.2 tenant-floor DDL
-# for the ephemeral schema the api-gateway component queries.
-wamn-catalog = { path = "../wamn-catalog" }
-wamn-ddl = { path = "../wamn-ddl" }
 # 2.3 provision-project: the pure CREATE DATABASE / role / GRANT CONNECT builders
 # + project-id naming + credential Secret rendering the subcommand drives.
 wamn-provision = { path = "../wamn-provision" }
@@ -50,21 +43,12 @@ wamn-provision = { path = "../wamn-provision" }
 # cluster-name derivation the org-pair renderer shares with the registry row, and
 # the registry.orgs upsert SQL (SR2 single-source) the subcommand writes.
 wamn-registry = { path = "../wamn-registry" }
-# 2.5 migrate-catalog: the pure migration engine — reads the current applied
-# catalog, plans the one-transaction apply (DDL + lifecycle + history), and the
-# subcommand executes it over tokio_postgres.
-wamn-migrate = { path = "../wamn-migrate" }
-# wamn-8df.5 copy-project-env: the definition pass re-compiles the copied RLS
-# policy rows and applies them on the dst (rows alone would leave the dst's
-# tables without their per-role policies).
-wamn-rls = { path = "../wamn-rls" }
 # 5.14 queuebench: the pure SKIP LOCKED claim / lease / janitor SQL builders +
 # decision logic the durable-queue gates drive over tokio_postgres.
 wamn-run-queue = { path = "../wamn-run-queue" }
 # 5.14 dispatcher: the trigger registry is the flows table's graph_json — the
 # dispatcher parses each active flow and registers its cron / row-event trigger.
 wamn-flow = { path = "../wamn-flow" }
-wamn-seed = { path = "../wamn-seed" }
 # 5.14 dispatcher: holds the doorbell client (wash_runtime::washlet::connect_nats
 # returns async_nats::Client). Same version req as wash-runtime's so cargo
 # unifies to ONE crate instance (type identity) — the S5 OTel-crates pattern.
@@ -80,3 +64,8 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 deadpool-postgres = "0.14"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures-util = "0.3"
+
+[dev-dependencies]
+# The event_reader_live gate provisions its fixture env through the SR9 verb
+# crate before driving the reader.
+wamn-ctl = { path = "../wamn-ctl" }

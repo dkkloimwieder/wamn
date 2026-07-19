@@ -1,30 +1,20 @@
 //! wamn-host: the production host library.
 //!
 //! The custom wasmCloud host image (embeds `wash_runtime::washlet`), the
-//! shared trigger dispatcher, the host plugins (`wamn:postgres`,
-//! `wamn:logging`, the `wamn:node/control` stub), and the project
-//! provisioning tool (`publish-catalog`). The thin `wamn-host` binary
-//! (src/main.rs) exposes exactly these as subcommands; the gate suite lives
-//! in the separate `wamn-gates` binary (docs/archive/structure-review.md SR1) and
-//! consumes this library so gates exercise the identical host code they
-//! verify.
+//! shared trigger dispatcher, and the host plugins (`wamn:postgres`,
+//! `wamn:logging`, the `wamn:node/control` stub). The thin `wamn-host`
+//! binary (src/main.rs) exposes exactly these as subcommands; the one-shot
+//! control-plane verbs live in `wamn-ctl` (SR9) and the gate suite lives
+//! in the separate `wamn-gates` binary (docs/archive/structure-review.md SR1) —
+//! both consume this library where they embed the runtime, so gates exercise
+//! the identical host code they verify.
 
-pub mod copy_project_env;
 pub mod dispatch;
-pub mod dump_project_env;
 pub mod egress_guard;
-pub mod enable_cdc_project_env;
 pub mod engine;
 pub mod event_reader;
-mod env_policies;
 pub mod host;
-pub mod migrate_catalog;
 pub mod plugins;
-pub mod provision;
-pub mod provision_org;
-pub mod provision_project_env;
-pub mod publish_catalog;
-pub mod restore_project_env;
 pub mod run_worker;
 
 /// Advertise the platform memory ceiling to the fork's per-store limiter
