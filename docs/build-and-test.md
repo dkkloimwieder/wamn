@@ -1097,7 +1097,7 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn \
   --nats-url nats://127.0.0.1:4232 --mode all
 docker stop wamn-rq-pg wamn-rq-nats
-# dispatchbench modes: cron/outbox/race/fairness/prune/wake/live/all — `prune`
+# dispatchbench modes: cron/outbox/ordering/race/fairness/prune/wake/live/all — `prune`
 # (wamn-d8v) drives the maintenance step's outbox GC: batch-bounded drain every
 # sweep while saturated, then the 10-min maintenance cadence; retention via
 # `wamn-dispatcher --outbox-retention-hours` (default 168 = 7d).
