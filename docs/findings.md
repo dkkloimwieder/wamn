@@ -32,10 +32,10 @@ prerequisite that makes everything else findable.
 
 | # | Finding | Sev | Status | Do when |
 |---|---|---|---|---|
-| **§1** | **Docs consolidation + archive (single source of truth)** | — | **open** | **First — half a day** |
-| SR14 | D4/D19 contradiction unmarked in the decision table (§1.2) | High | open | with §1 (one line) |
+| **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
+| SR14 | D4/D19 contradiction unmarked in the decision table (§1.2) | High | **closed** | `b7fa9af` (wamn-2jkm.1; table sweep found no other same-shape row) |
 | §1.9a | Amendment-density audit of ~20 docs (verdict per file) | Med | open | after Wave 0; parallelizable, read-only |
-| R10 | R8c closed against code that ships; adopt the closure rule | High | open | with §1 |
+| R10 | R8c closed against code that ships; adopt the closure rule | High | **closed** | `c6f2f54` (wamn-2jkm.5; rule in AGENTS/CLAUDE; audit: 8 closures PASS, R8c reopened=wamn-2jkm.31, SR5 corrected the other way) |
 | R13 | `next_interval` panics on `min > max` (unvalidated CLI) | Med | open | this week (10 lines) |
 | R11 | Reader reopen: no backoff, no cap, budget reset on *open* | High | open | before the staging soak |
 | E2 | Reader stall: no alarm, no attempt metric, no slot headroom gauge | High | open | before the staging soak |
@@ -60,7 +60,7 @@ prerequisite that makes everything else findable.
 | SR12 | Pure/effect split can't test statement-level bugs | High | open | header qualification now |
 | SR9 | `wamn-host` is three programs in one crate | Med | open | with E7/E8 |
 | E7/E8 | Reader as a service: extraction + placement/ownership | Med/High | open | before cutover |
-| SR8 | `deploy/` 68 flat files — canonical: §1.6 | — | open | 30 min |
+| SR8 | `deploy/` 68 flat files — canonical: §1.6 | — | **closed** | `8123046`…`6ac07d9` (wamn-2jkm.6; local gates only — in-cluster run rides wamn-2jkm.41) |
 | SR13 | Two sources of truth for schema | Med | open | next platform-schema change |
 | SR4 | `wamn_postgres.rs` split (grew 18% since filing) | Med | open | with R2/R16 |
 | SR10 | `wamn-gates` flat at 18.8k lines | Med | open | next bench |
@@ -72,7 +72,7 @@ prerequisite that makes everything else findable.
 | R21 | `classify` matches `Display` text; PG17+ floor unstated | Low | open | with reader work |
 | R22 | `subject_token` collisions (`a.b` ≡ `a_b`) | Low | open | with E3 |
 | R23 | Unbounded `OFFSET` in the API gateway | Low | open | with keyset pagination |
-| R5, R7, R9a–c, R15, E3, E5, E6, E9, SR7 | see sections below | Low–Med | open | opportunistic |
+| R5, R7, R9a–c, R15, E3, E5, SR7 | see sections below | Low–Med | open | opportunistic (E6 closed `9ea8da0`; E9 closed `db4d891`) |
 
 **Deferred by owner decision:** CI/LICENSE (§5.4 records the evidence-based
 re-open argument, unactioned); TRUNCATE handling (E5 — the prior question is
@@ -585,7 +585,7 @@ transaction. `poc/cdc1` establishes *monotonicity*; this establishes
 **E3** `entity` is an unqualified table name (publication is single-schema
 today, so names are unique — but carry `schema` in the envelope now, before
 `l5i9.11` makes catalog-entity id the subject token and registration key) ·
-**E5** TRUNCATE — **deferred**, see §5.3 · **E6** `ceilings.md` banner
+**E5** TRUNCATE — **deferred**, see §5.3 · **E6** `ceilings.md` banner (**closed** `9ea8da0`, wamn-2jkm.3)
 (`fsync=off` figures are shape-only; C7 measured the run queue, which survives
 the CDC pivot, so the number stays live — C2 is the one whose subject
 disappears) · **E7** the reader is a long-lived service living as a CLI
@@ -594,8 +594,7 @@ means one session per project-env; today one hand-launched process each;
 recommend a multi-tenant reader sharded by a system-DB lease — the dispatcher's
 proven model — with a per-org isolated reader as the escape hatch, and a
 **"registered but not running" alarm**, because that state is invisible in
-every other metric) · **E9** — **canonical home is §1.3** (archive moves); no separate
-work item exists here.
+every other metric) · **E9** — **canonical home is §1.3** (archive moves; **closed** `db4d891`, wamn-2jkm.2).
 
 ---
 
