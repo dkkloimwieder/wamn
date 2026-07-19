@@ -1,0 +1,21 @@
+# E7 (wamn-l5i9.48) — the CDC reader's own identity, applied ONCE per cluster
+# (shared by every per-env reader instantiated from event-reader.example.yaml,
+# and by the future D22 lease-sharded fleet).
+#
+#   kubectl -n wamn-system apply -f deploy/platform/event-reader-rbac.yaml
+#
+# ZERO GRANTS BY DESIGN: the reader never talks to the Kubernetes API — its
+# whole surface is the per-env replication connection (WAMN_CDC_URL), the
+# system DB (WAMN_SYSTEM_URL), and evt-nats. No Role/RoleBinding exists for
+# this ServiceAccount, and pods must set automountServiceAccountToken: false
+# (the dispatcher precedent); the named account exists so the reader runs as a
+# distinct auditable identity rather than `default`, and so a future grant
+# (none planned — D22 coordination is a system-DB lease, NOT a k8s Lease)
+# would have exactly one place to land and be reviewed.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: event-reader
+  namespace: wamn-system
+  labels: { app: event-reader }
+automountServiceAccountToken: false

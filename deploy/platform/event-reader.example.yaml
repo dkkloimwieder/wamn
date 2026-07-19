@@ -24,6 +24,24 @@
 # INCIDENT SEMANTICS (v3 §11): a MISSING or INVALIDATED slot is a capture GAP —
 # the reader exits loudly (never re-creates the slot) and the pod crash-loops;
 # that crash-loop IS the MVP alert. Recovery: re-enable CDC + assess the gap.
+#
+# OWNERSHIP (D22, ratified 2026-07-19): the target shape is ONE multi-tenant
+# reader fleet sharded by a system-DB lease over registry.event_readers
+# (l5i9.33 lease election + l5i9.34 fleet enumeration implement it). This
+# per-env instantiation is the pre-fleet MVP and REMAINS afterwards as the
+# recorded escape hatch — a per-org isolated reader for compliance /
+# blast-radius separation. Either way each env's slot keeps its single
+# walsender session.
+#
+# IDENTITY + SCOPE (E7): runs as the zero-grant `event-reader` ServiceAccount
+# (deploy/platform/event-reader-rbac.yaml, applied once) with no API token
+# mounted — the reader never talks to the Kubernetes API. Its credential
+# surface is EXACTLY the two Secrets below plus evt-nats: no
+# wasmcloud-runtime-tls mount (unlike the dispatcher — evt-nats is the
+# single-account data plane today; per-org accounts are the wamn-4xw seam),
+# no superuser Secret, and only the ONE per-env wamn-cdc Secret this
+# instantiation names — an isolated reader never sees another org's
+# replication credential.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,6 +59,9 @@ spec:
     metadata:
       labels: { app: event-reader, wamn.org: t10cdc, wamn.project: app, wamn.env: dev }
     spec:
+      # Zero-grant identity; no k8s API surface (see IDENTITY + SCOPE above).
+      serviceAccountName: event-reader
+      automountServiceAccountToken: false
       containers:
         - name: event-reader
           image: wamn-cdc-reader:dev
