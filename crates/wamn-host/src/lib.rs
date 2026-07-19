@@ -12,6 +12,7 @@
 pub mod copy_project_env;
 pub mod dispatch;
 pub mod dump_project_env;
+pub mod egress_guard;
 pub mod enable_cdc_project_env;
 pub mod engine;
 pub mod event_reader;

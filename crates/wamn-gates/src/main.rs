@@ -28,6 +28,7 @@ mod publish_catalog_demo;
 mod queuebench;
 mod readerbench;
 mod runnerbench;
+mod socketguard;
 mod streambench;
 mod testhostbench;
 mod tracebench;
@@ -94,6 +95,8 @@ enum Command {
     Testhostbench(testhostbench::TestHostBenchArgs),
     /// Run the 2.6 DB-path egress review gate (no shipped workload imports wasi:sockets)
     Egressbench(egressbench::EgressBenchArgs),
+    /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
+    Socketguard(socketguard::SocketGuardArgs),
     /// Run the 4.1 generated-REST-API-gateway gates (CRUD / expand / RLS / injection)
     Apibench(apibench::ApiBenchArgs),
     /// Publish a catalog snapshot with the bundled 4.1b demo seed (wraps the
@@ -148,6 +151,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Testhostbench(args) => testhostbench::run(args).await,
         Command::Egressbench(args) => egressbench::run(args).await,
+        Command::Socketguard(args) => socketguard::run(args).await,
         Command::Apibench(args) => apibench::run(args).await,
         Command::PublishCatalog(args) => publish_catalog_demo::run(args).await,
         Command::Apiproof(args) => apiproof::run(args).await,

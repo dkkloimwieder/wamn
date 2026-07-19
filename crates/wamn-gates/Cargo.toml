@@ -58,6 +58,11 @@ async-nats = { version = "0.47", default-features = false }
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures-util = "0.3"
+# socketguard synthesizes minimal adversarial + control components in-process
+# (a socket-importing world vs a standard one) to drive the E13a publish-time
+# egress guard hermetically — no external fixture build, no registry. Pinned to
+# the wasm-encoder already in the graph via the wasmtime rev.
+wasm-encoder = "0.251"
 
 [dev-dependencies]
 # f1fixture coherence test compiles the committed seed dataset (3.6).
