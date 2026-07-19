@@ -1,5 +1,9 @@
 # P0 Spike Results — Raw Numbers
 
+> **Provenance banner (E6, 2026-07-19):** fixture-pod measurements ran
+> `fsync=off` + `synchronous_commit=off` — **shape-only, not citable
+> externally** (wamn-dzhw tracks the durable-commit re-measure).
+
 Records measurements against `docs/archive/p0-exit-criteria.md`. One section per spike;
 the cross-cutting exit (decision closure for D5/D7/design-note-9b + the
 dispatch-SLO sanity-check) is the final section below.

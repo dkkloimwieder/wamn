@@ -1,5 +1,12 @@
 # Measured ceilings
 
+> **Provenance banner (E6, 2026-07-19):** fixture-pod figures were measured under
+> `fsync=off` + `synchronous_commit=off` — **shape-only, not citable externally**.
+> Durable-commit re-measurement of the latency gates of record is tracked as
+> wamn-dzhw. C7 measured the run queue, which survives the CDC pivot, so that
+> number stays live; C2's subject (outbox capture) disappears at the D19
+> Phase-2 teardown.
+
 The capacity-model ledger the event-plane program publishes into
 (`docs/event-plane-jetstream.md` §10 "curves and ceilings, not verdicts" +
 §11 numbers hygiene). Every figure carries its measurement date, environment,
