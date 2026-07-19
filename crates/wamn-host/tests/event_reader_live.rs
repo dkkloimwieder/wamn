@@ -179,6 +179,9 @@ fn reader_args(super_url: &str, cdc_name: &str, nats_url: String) -> EventReader
         stream_replicas: 1,
         dup_window_secs: 120,
         feedback_secs: 1,
+        stall_threshold_secs: 30,
+        slot_poll_secs: 0,
+        slot_safe_wal_warn_bytes: 268_435_456,
     }
 }
 

@@ -307,6 +307,16 @@ honeypot → per-org accounts mandatory; GDPR answer = bounded retention, in
 writing); two-layer exactly-once interleavings verified at Phase 2; second
 durability domain on-call (raft, disk, lag, retention).
 
+**Runbook — sustained publish stall (E2):** a held LSN is delivery being
+*delayed, never lost* — but it also freezes WAL retention on the source DB, so
+an unreachable JetStream silently marches the slot toward invalidation. The
+reader escalates to a distinct `CDC_PUBLISH_STALLED` event past
+`--stall-threshold-secs` and a slot-headroom monitor alerts before `wal_status`
+leaves `reserved` (`slot_safe_wal_bytes`). **On a sustained stall, fix JetStream
+— do NOT drop the slot.** Dropping the slot "fixes" the disk by *creating the
+gap* it was protecting against; recovery is then re-enable CDC + a backfill
+assessment (§4, v3 §11), not a slot drop.
+
 ## 12. Open decisions
 
 | Decision | Needed by |

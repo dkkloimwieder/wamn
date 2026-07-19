@@ -18,6 +18,15 @@
 //!   retries forever ⇒ the LSN holds ⇒ WAL is retained — delayed, never lost.
 //!   A crash mid-txn redelivers the whole txn; the msg-id dedupe absorbs the
 //!   published prefix (at-least-once → exactly-once on the stream).
+//! - **Stall interlock** (E2): "delayed, never lost" is only SAFE if someone is
+//!   told early, because a held LSN silently freezes WAL retention on the source
+//!   DB until `max_slot_wal_keep_size` invalidates the slot — a capture gap.
+//!   `publish_acked` escalates to a distinct `CDC_PUBLISH_STALLED` event past
+//!   `--stall-threshold-secs`; independently a slot-headroom monitor polls
+//!   `pg_replication_slots.safe_wal_size` over a SEPARATE plain connection and
+//!   alerts BEFORE `wal_status` leaves `reserved`. Runbook: on a sustained
+//!   stall, fix JetStream — NEVER drop the slot (that "fixes" the disk by
+//!   creating the gap). All signals are structured `wamn::event_reader` events.
 //! - **Commit order**: `StreamingMode::Off` — the server delivers whole
 //!   transactions in commit order; sequential publish preserves it, so stream
 //!   order == commit order per DB.
@@ -46,6 +55,8 @@
 //!   Unmapped tables publish with the table-name fallback, `entity` absent.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
@@ -111,6 +122,25 @@ pub struct EventReaderArgs {
     /// LSN reaches the server).
     #[arg(long, default_value_t = 5)]
     pub feedback_secs: u64,
+
+    /// How long a single JetStream publish may retry unacked before the reader
+    /// emits the distinct `CDC_PUBLISH_STALLED` alert event (E2). Below this the
+    /// retries are ordinary warns; at/past it every retry is an error alerts can
+    /// bind to. The LSN is held throughout — a stall silently freezes WAL
+    /// retention on the source DB, so this is a SAFETY INTERLOCK, not a metric.
+    #[arg(long, default_value_t = 30)]
+    pub stall_threshold_secs: u64,
+
+    /// How often the slot-headroom monitor polls `pg_replication_slots` over a
+    /// SEPARATE plain connection (E2 backstop). Zero disables the monitor.
+    #[arg(long, default_value_t = 30)]
+    pub slot_poll_secs: u64,
+
+    /// Warn while the slot is still `reserved` but `safe_wal_size` has fallen
+    /// below this many bytes — the early alert that fires BEFORE `wal_status`
+    /// leaves `reserved` (E2). Default 256 MiB (≈16 WAL segments of headroom).
+    #[arg(long, default_value_t = 268_435_456)]
+    pub slot_safe_wal_warn_bytes: i64,
 }
 
 /// What a session error means for the service.
@@ -513,6 +543,17 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
     .await
     .map_err(|e| anyhow::anyhow!("get-or-create stream {}: {e}", reg.stream))?;
 
+    // `confirmed_lsn_age_seconds` gauge (E2): millis of the last confirmed-LSN
+    // advance, seeded at start so a reader that never commits still ages. Shared
+    // with the detached slot-headroom monitor.
+    let last_lsn_advance_ms = Arc::new(AtomicI64::new(chrono::Utc::now().timestamp_millis()));
+    spawn_slot_monitor(
+        &args,
+        reg.slot.clone(),
+        token.clone(),
+        last_lsn_advance_ms.clone(),
+    );
+
     let mut ladder = ReopenLadder::new();
     loop {
         if token.is_cancelled() {
@@ -543,7 +584,7 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
             "walsender session open; draining"
         );
 
-        match drain(&mut stream, &args, &token, &js).await {
+        match drain(&mut stream, &args, &token, &js, &last_lsn_advance_ms).await {
             DrainOutcome::Shutdown(summary) => {
                 let _ = stream.shutdown().await;
                 tracing::info!(
@@ -663,6 +704,7 @@ async fn drain(
     args: &EventReaderArgs,
     token: &CancellationToken,
     js: &jetstream::Context,
+    last_lsn_advance_ms: &AtomicI64,
 ) -> DrainOutcome {
     let mut txn: Option<Txn> = None;
     let mut summary = DrainSummary {
@@ -681,8 +723,9 @@ async fn drain(
             Ok(ev) => ev,
             Err(ReplicationError::Cancelled(_)) => {
                 tracing::info!(
+                    target: "wamn::event_reader",
                     commits = summary.commits,
-                    published = summary.published,
+                    events_published = summary.published,
                     deduped = summary.deduped,
                     "drain summary"
                 );
@@ -690,8 +733,9 @@ async fn drain(
             }
             Err(e) => {
                 tracing::info!(
+                    target: "wamn::event_reader",
                     commits = summary.commits,
-                    published = summary.published,
+                    events_published = summary.published,
                     deduped = summary.deduped,
                     "drain summary (severed)"
                 );
@@ -753,7 +797,8 @@ async fn drain(
                             );
                         }
                     };
-                    match publish_acked(js, token, &subj, &id, payload).await {
+                    let stall_threshold = Duration::from_secs(args.stall_threshold_secs);
+                    match publish_acked(js, token, &subj, &id, payload, stall_threshold).await {
                         PublishOutcome::Acked { duplicate } => {
                             summary.published += 1;
                             if duplicate {
@@ -763,8 +808,9 @@ async fn drain(
                         }
                         PublishOutcome::CancelledMidRetry => {
                             tracing::info!(
+                                target: "wamn::event_reader",
                                 commits = summary.commits,
-                                published = summary.published,
+                                events_published = summary.published,
                                 deduped = summary.deduped,
                                 "drain summary (cancelled mid-publish)"
                             );
@@ -778,6 +824,9 @@ async fn drain(
                 stream.update_flushed_lsn(l);
                 stream.update_applied_lsn(l);
                 summary.commits += 1;
+                // Feed the `confirmed_lsn_age_seconds` gauge (E2): the LSN just
+                // advanced, so its age resets to ~0.
+                last_lsn_advance_ms.store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
                 continue;
             }
             EventType::Message {
@@ -892,18 +941,204 @@ enum PublishOutcome {
     CancelledMidRetry,
 }
 
+/// Where one publish's retry sits relative to the stall threshold (E2).
+#[derive(Debug, PartialEq, Eq)]
+enum StallLevel {
+    /// Under the threshold — an ordinary retry warn.
+    Retrying,
+    /// At or past the threshold — emit the distinct `CDC_PUBLISH_STALLED` alert.
+    Stalled,
+}
+
+/// Classify how long a single publish has been holding the LSN. At/past the
+/// threshold the stall is a first-class alert; below it, an ordinary retry.
+fn stall_level(stall: Duration, threshold: Duration) -> StallLevel {
+    if stall >= threshold {
+        StallLevel::Stalled
+    } else {
+        StallLevel::Retrying
+    }
+}
+
+/// Slot WAL-retention headroom, derived from `pg_replication_slots` (E2
+/// backstop). The ladder maps onto Postgres' own `wal_status` semantics plus a
+/// `safe_wal_size` early-warning floor so the alert fires BEFORE the status
+/// leaves `reserved`.
+#[derive(Debug, PartialEq, Eq)]
+enum SlotHealth {
+    /// `reserved` with headroom above the warn floor.
+    Healthy,
+    /// Still `reserved` but `safe_wal_size` fell below the warn floor — the
+    /// early warning before the status degrades.
+    HeadroomLow,
+    /// `extended`: past `max_wal_size`, retained only by `max_slot_wal_keep_size`.
+    Extended,
+    /// `unreserved`: WAL may be removed at the next checkpoint — gap imminent.
+    Unreserved,
+    /// `lost`: the slot is invalidated — the v3 §11 capture-gap incident.
+    Lost,
+}
+
+/// Map a slot's `wal_status` + `safe_wal_size` to a health level. A NULL/unknown
+/// status is treated conservatively as `HeadroomLow` (surfaced, never silently
+/// healthy). `safe_wal_size` is NULL once the status is not `reserved`, so the
+/// floor check only applies on the `reserved` branch.
+fn classify_slot_health(
+    wal_status: &str,
+    safe_wal_size: Option<i64>,
+    warn_floor_bytes: i64,
+) -> SlotHealth {
+    match wal_status {
+        "reserved" => match safe_wal_size {
+            Some(n) if n < warn_floor_bytes => SlotHealth::HeadroomLow,
+            _ => SlotHealth::Healthy,
+        },
+        "extended" => SlotHealth::Extended,
+        "unreserved" => SlotHealth::Unreserved,
+        "lost" => SlotHealth::Lost,
+        _ => SlotHealth::HeadroomLow,
+    }
+}
+
+/// Seconds since the reader last advanced its confirmed LSN — the
+/// `confirmed_lsn_age_seconds` gauge (E2). Clamped at 0.
+fn confirmed_lsn_age_seconds(last_lsn_advance_ms: &AtomicI64) -> i64 {
+    let last = last_lsn_advance_ms.load(Ordering::Relaxed);
+    (chrono::Utc::now().timestamp_millis() - last).max(0) / 1000
+}
+
+/// Poll the slot's WAL-retention headroom once over a SEPARATE plain (non-
+/// replication) connection — the replication connection speaks the replication
+/// protocol and cannot run this query — and emit the gauge + the escalating
+/// alert for its health level. Publishes `slot_safe_wal_bytes`,
+/// `slot_wal_lag_bytes`, and `confirmed_lsn_age_seconds` as stable fields.
+async fn poll_slot_once(
+    cdc_url: &str,
+    sslmode: &str,
+    slot: &str,
+    warn_floor: i64,
+    last_lsn_advance_ms: &AtomicI64,
+) -> anyhow::Result<()> {
+    let url = preflight_url(cdc_url, sslmode)?;
+    let (client, conn) = tokio_postgres::connect(&url, NoTls)
+        .await
+        .context("slot-monitor connect")?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    let row = client
+        .query_opt(
+            "SELECT wal_status::text, safe_wal_size, \
+             (pg_current_wal_lsn() - restart_lsn)::bigint \
+             FROM pg_replication_slots WHERE slot_name = $1",
+            &[&slot],
+        )
+        .await
+        .context("slot-monitor query")?;
+    let confirmed_lsn_age_seconds = confirmed_lsn_age_seconds(last_lsn_advance_ms);
+    let Some(row) = row else {
+        tracing::error!(
+            target: "wamn::event_reader",
+            event = "CDC_SLOT_MISSING",
+            slot,
+            confirmed_lsn_age_seconds,
+            "slot vanished under the reader — capture gap imminent (v3 §11)"
+        );
+        return Ok(());
+    };
+    let wal_status: Option<String> = row.get(0);
+    let safe_wal_size: Option<i64> = row.get(1);
+    let lag_bytes: Option<i64> = row.get(2);
+    let status = wal_status.as_deref().unwrap_or("unknown");
+    match classify_slot_health(status, safe_wal_size, warn_floor) {
+        SlotHealth::Healthy => tracing::info!(
+            target: "wamn::event_reader", event = "cdc_slot_health", slot, wal_status = status,
+            slot_safe_wal_bytes = ?safe_wal_size, slot_wal_lag_bytes = ?lag_bytes,
+            confirmed_lsn_age_seconds, "slot headroom healthy"
+        ),
+        SlotHealth::HeadroomLow => tracing::warn!(
+            target: "wamn::event_reader", event = "CDC_SLOT_WAL_LOW", slot, wal_status = status,
+            slot_safe_wal_bytes = ?safe_wal_size, slot_wal_lag_bytes = ?lag_bytes,
+            confirmed_lsn_age_seconds,
+            "slot WAL headroom low — still reserved; act BEFORE it leaves reserved"
+        ),
+        SlotHealth::Extended => tracing::warn!(
+            target: "wamn::event_reader", event = "CDC_SLOT_WAL_EXTENDED", slot, wal_status = status,
+            slot_safe_wal_bytes = ?safe_wal_size, slot_wal_lag_bytes = ?lag_bytes,
+            confirmed_lsn_age_seconds,
+            "slot past max_wal_size — retained only by max_slot_wal_keep_size"
+        ),
+        SlotHealth::Unreserved => tracing::error!(
+            target: "wamn::event_reader", event = "CDC_SLOT_WAL_UNRESERVED", slot, wal_status = status,
+            slot_safe_wal_bytes = ?safe_wal_size, slot_wal_lag_bytes = ?lag_bytes,
+            confirmed_lsn_age_seconds,
+            "slot WAL no longer safe — invalidation imminent; fix JetStream, do NOT drop the slot (v3 §11)"
+        ),
+        SlotHealth::Lost => tracing::error!(
+            target: "wamn::event_reader", event = "CDC_SLOT_INVALIDATED", slot, wal_status = status,
+            confirmed_lsn_age_seconds,
+            "slot invalidated — capture GAP (v3 §11)"
+        ),
+    }
+    Ok(())
+}
+
+/// Spawn the slot-headroom monitor (E2 backstop): a detached loop — like the
+/// SIGTERM task, it rides the process lifetime and exits on shutdown — polling
+/// on its own cadence. A poll failure is transient (logged, retried); the main
+/// loop's preflight owns the die-loudly decision.
+fn spawn_slot_monitor(
+    args: &EventReaderArgs,
+    slot: String,
+    token: CancellationToken,
+    last_lsn_advance_ms: Arc<AtomicI64>,
+) {
+    if args.slot_poll_secs == 0 {
+        return;
+    }
+    let cdc_url = args.cdc_url.clone();
+    let sslmode = args.sslmode.clone();
+    let warn_floor = args.slot_safe_wal_warn_bytes;
+    let poll = Duration::from_secs(args.slot_poll_secs);
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) =
+                poll_slot_once(&cdc_url, &sslmode, &slot, warn_floor, &last_lsn_advance_ms).await
+            {
+                tracing::warn!(
+                    target: "wamn::event_reader",
+                    slot = %slot,
+                    error = %e,
+                    "slot-headroom poll failed (transient) — will retry"
+                );
+            }
+            tokio::select! {
+                _ = token.cancelled() => return,
+                _ = tokio::time::sleep(poll) => {}
+            }
+        }
+    });
+}
+
 /// Publish one event and wait for the JetStream ack — retrying FOREVER
 /// (bounded only by shutdown). JetStream down ⇒ we hold here ⇒ the LSN holds
-/// ⇒ WAL is retained: delayed, never lost.
+/// ⇒ WAL is retained: delayed, never lost. But a held LSN silently freezes WAL
+/// retention on the source DB, so once the retries pass `stall_threshold` this
+/// escalates from ordinary warns to a distinct `CDC_PUBLISH_STALLED` alert
+/// event (E2 — the interlock that makes "delayed, never lost" observable).
 async fn publish_acked(
     js: &jetstream::Context,
     token: &CancellationToken,
     subject: &str,
     id: &str,
     payload: Vec<u8>,
+    stall_threshold: Duration,
 ) -> PublishOutcome {
     let payload = bytes::Bytes::from(payload);
     let mut delay = Duration::from_millis(500);
+    let first_attempt = Instant::now();
+    let mut publish_retries: u64 = 0;
+    let mut stalled = false;
     loop {
         if token.is_cancelled() {
             return PublishOutcome::CancelledMidRetry;
@@ -919,12 +1154,48 @@ async fn publish_acked(
         };
         match attempt.await {
             Ok(ack) => {
+                if stalled {
+                    tracing::info!(
+                        target: "wamn::event_reader",
+                        event = "CDC_PUBLISH_RECOVERED",
+                        subject,
+                        id,
+                        publish_retries,
+                        publish_stall_seconds = first_attempt.elapsed().as_secs(),
+                        "JetStream publish recovered — the LSN can advance again"
+                    );
+                }
                 return PublishOutcome::Acked {
                     duplicate: ack.duplicate,
                 };
             }
             Err(e) => {
-                tracing::warn!(subject, id, error = %e, "publish unacked — holding the LSN; retrying");
+                publish_retries += 1;
+                let stall = first_attempt.elapsed();
+                match stall_level(stall, stall_threshold) {
+                    StallLevel::Retrying => tracing::warn!(
+                        target: "wamn::event_reader",
+                        subject,
+                        id,
+                        publish_retries,
+                        publish_stall_seconds = stall.as_secs(),
+                        error = %e,
+                        "publish unacked — holding the LSN; retrying"
+                    ),
+                    StallLevel::Stalled => {
+                        stalled = true;
+                        tracing::error!(
+                            target: "wamn::event_reader",
+                            event = "CDC_PUBLISH_STALLED",
+                            subject,
+                            id,
+                            publish_retries,
+                            publish_stall_seconds = stall.as_secs(),
+                            error = %e,
+                            "JetStream publish STALLED past threshold — LSN held, WAL retention frozen on the source DB; fix JetStream, do NOT drop the slot (v3 §11)"
+                        );
+                    }
+                }
                 tokio::select! {
                     _ = token.cancelled() => return PublishOutcome::CancelledMidRetry,
                     _ = tokio::time::sleep(delay) => {}
@@ -1131,6 +1402,62 @@ mod tests {
             ladder.consecutive_failures(),
             0,
             "the trip came from the rate cap, not the streak"
+        );
+    }
+
+    // E2 — the stall interlock's decision cores.
+
+    #[test]
+    fn stall_level_escalates_at_the_threshold() {
+        let t = Duration::from_secs(30);
+        // Below the threshold: an ordinary retry.
+        assert_eq!(
+            stall_level(Duration::from_secs(29), t),
+            StallLevel::Retrying
+        );
+        // AT the threshold: the distinct alert fires (boundary is load-bearing —
+        // an off-by-one here delays the CDC_PUBLISH_STALLED alert by a whole
+        // retry interval).
+        assert_eq!(stall_level(Duration::from_secs(30), t), StallLevel::Stalled);
+        // Past it: still stalled.
+        assert_eq!(
+            stall_level(Duration::from_secs(600), t),
+            StallLevel::Stalled
+        );
+    }
+
+    #[test]
+    fn slot_health_maps_wal_status_and_the_safe_wal_floor() {
+        let floor = 268_435_456; // 256 MiB
+        // reserved with ample headroom → healthy; below the floor → the early
+        // warning that fires BEFORE the status leaves 'reserved'.
+        assert_eq!(
+            classify_slot_health("reserved", Some(floor * 4), floor),
+            SlotHealth::Healthy
+        );
+        assert_eq!(
+            classify_slot_health("reserved", Some(floor - 1), floor),
+            SlotHealth::HeadroomLow
+        );
+        // At exactly the floor it is still healthy (strictly-below warns).
+        assert_eq!(
+            classify_slot_health("reserved", Some(floor), floor),
+            SlotHealth::Healthy
+        );
+        // The Postgres wal_status ladder past 'reserved'.
+        assert_eq!(
+            classify_slot_health("extended", None, floor),
+            SlotHealth::Extended
+        );
+        assert_eq!(
+            classify_slot_health("unreserved", None, floor),
+            SlotHealth::Unreserved
+        );
+        assert_eq!(classify_slot_health("lost", None, floor), SlotHealth::Lost);
+        // NULL/unknown status is surfaced, never silently healthy.
+        assert_eq!(
+            classify_slot_health("unknown", None, floor),
+            SlotHealth::HeadroomLow
         );
     }
 }
