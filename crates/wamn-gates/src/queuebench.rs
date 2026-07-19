@@ -176,9 +176,10 @@ fn queue_ddl(schema: &str) -> String {
             lease_owner text, lease_expires_at timestamptz, \
             attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
             enqueued_at timestamptz NOT NULL DEFAULT now(), \
+            stream_seq bigint NOT NULL DEFAULT 0, \
             PRIMARY KEY (tenant_id, run_id), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, lease_expires_at);\
+         CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
          CREATE INDEX run_queue_partition ON {schema}.run_queue (tenant_id, partition_key) WHERE partition_key IS NOT NULL;\
          ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
