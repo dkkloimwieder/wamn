@@ -20,6 +20,21 @@ pub enum ProvisionError {
         /// The offending id.
         id: String,
     },
+    /// A non-project identity component (`org` or `env`) of a provisioned name is
+    /// not a valid slug. Org and env — like the project — are separated by `--`
+    /// (`project_env_database_name`) and `__` (`cdc_object_name`) into the derived
+    /// database / CDC object names, so a malformed component (in particular a
+    /// consecutive-hyphen run) would let two distinct triples derive one name
+    /// (wamn-R27). Validated here since only `project` has its own
+    /// [`ProvisionError::InvalidProjectId`].
+    InvalidComponent {
+        /// Which component (`"org"` or `"env"`).
+        component: &'static str,
+        /// The offending value.
+        value: String,
+        /// Why it was rejected (a stable, human-readable reason).
+        reason: &'static str,
+    },
     /// A **pooled** org has no dedicated clusters to render (D18): it shares the
     /// pool cluster, so `provision-org` records only its registry row and emits no
     /// `Cluster` CRs. Only a `dedicated` org owns clusters (`<org>-<owner(env)>`).
@@ -72,6 +87,11 @@ impl fmt::Display for ProvisionError {
                 f,
                 "reserved project id {id:?}: the `wamn` prefix is platform-reserved"
             ),
+            ProvisionError::InvalidComponent {
+                component,
+                value,
+                reason,
+            } => write!(f, "invalid {component} {value:?}: {reason}"),
             ProvisionError::OrgIsPooled { pool } => write!(
                 f,
                 "org is pooled on {pool:?}: it has no dedicated clusters to render \

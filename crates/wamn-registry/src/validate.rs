@@ -81,6 +81,17 @@ fn is_slug(id: &str) -> bool {
         && is_alnum(bytes[bytes.len() - 1])
 }
 
+/// An **identity-component** slug: a [`is_slug`] that additionally forbids a run
+/// of consecutive hyphens. The org/project id and the env slug separate on `--`
+/// (`wamn-provision::project_env_database_name`) and, mapped to `__`, in the CDC
+/// object name, so a `--` run inside a component would let two distinct
+/// `(org, project, env)` triples derive one database / CDC role name (wamn-R27).
+/// A DERIVED name ([`check_name`]) may legitimately carry the `--` separator, so
+/// only ids/env slugs — never names — are held to this.
+fn is_component_slug(id: &str) -> bool {
+    is_slug(id) && !id.contains("--")
+}
+
 /// Whether `id` is under the reserved `wamn` prefix. The boundary is a hyphen,
 /// so `wamning` is a normal id (mirrors the catalog 66x rule).
 fn is_reserved(id: &str) -> bool {
@@ -100,13 +111,14 @@ fn id_issue(
 ) -> Option<Issue> {
     if id.is_empty() {
         Some(Issue::error(empty, path, "id is required"))
-    } else if id.len() > MAX_ID_LEN || !is_slug(id) {
+    } else if id.len() > MAX_ID_LEN || !is_component_slug(id) {
         Some(Issue::error(
             invalid,
             path,
             format!(
                 "id {id:?} must be a lowercase slug [a-z0-9-] (start/end alphanumeric, \
-                 <= {MAX_ID_LEN} bytes) — it embeds into cluster/Secret/subdomain names"
+                 no consecutive hyphens, <= {MAX_ID_LEN} bytes) — it embeds into \
+                 cluster/Secret/subdomain names"
             ),
         ))
     } else if is_reserved(id) {
@@ -168,11 +180,14 @@ fn check_env(
 ) {
     if env.is_empty() {
         issues.push(Issue::error(empty, path, "env slug is required"));
-    } else if env.len() > MAX_ID_LEN || !is_slug(env) {
+    } else if env.len() > MAX_ID_LEN || !is_component_slug(env) {
         issues.push(Issue::error(
             invalid,
             path,
-            format!("env {env:?} must be a lowercase slug [a-z0-9-] (<= {MAX_ID_LEN} bytes)"),
+            format!(
+                "env {env:?} must be a lowercase slug [a-z0-9-] \
+                 (no consecutive hyphens, <= {MAX_ID_LEN} bytes)"
+            ),
         ));
     }
 }
@@ -394,7 +409,7 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
             "empty-env",
             "invalid-env",
         );
-        if is_slug(&t.env) && !policy_keys.contains(&(t.org.as_str(), t.env.as_str())) {
+        if is_component_slug(&t.env) && !policy_keys.contains(&(t.org.as_str(), t.env.as_str())) {
             issues.push(Issue::error(
                 "unknown-env",
                 format!("project-envs[{i}].triple.env"),
@@ -561,7 +576,18 @@ mod tests {
 
     #[test]
     fn non_slug_ids_are_invalid() {
-        for bad in ["Acme", "under_score", "has.dot", "-lead", "trail-", "a b"] {
+        // wamn-R27: interior `--` is a slug-collision vector (the `--`/`__` name
+        // separator), so it joins the non-slug set; a single interior hyphen stays
+        // valid.
+        for bad in [
+            "Acme",
+            "under_score",
+            "has.dot",
+            "-lead",
+            "trail-",
+            "a b",
+            "a--b",
+        ] {
             let mut r = minimal();
             rename_first_org(&mut r, bad);
             assert!(
@@ -569,12 +595,45 @@ mod tests {
                 "{bad:?} should be invalid"
             );
         }
+        // A single interior hyphen is still a valid id.
+        let mut r = minimal();
+        rename_first_org(&mut r, "a-b-c");
+        assert!(r.is_valid(), "{:?}", r.issues());
         // Empty is its own, earlier code (charset check skipped).
         let mut r = minimal();
         r.orgs[0].id = "".into();
         let c = codes(&r);
         assert!(c.contains(&"empty-org-id"));
         assert!(!c.contains(&"invalid-org-id"));
+    }
+
+    #[test]
+    fn consecutive_hyphens_are_rejected_on_ids_and_env_but_not_derived_names() {
+        // wamn-R27: `--` inside an org/project id or an env slug is a collision
+        // vector (two triples deriving one `wamn-db-<org>--<project>--<env>` /
+        // `wamn_cdc_<org>__<project>__<env>` name), so each is rejected.
+        let mut r = minimal();
+        r.projects[0].id = "a--b".into();
+        r.project_envs[0].triple.project = "a--b".into();
+        assert!(
+            codes(&r).contains(&"invalid-project-id"),
+            "{:?}",
+            r.issues()
+        );
+
+        // A `--` env is invalid-env and NOT double-reported as unknown-env.
+        let mut r = minimal();
+        r.project_envs[0].triple.env = Env::new("a--b");
+        let c = codes(&r);
+        assert!(c.contains(&"invalid-env"), "{:?}", r.issues());
+        assert!(!c.contains(&"unknown-env"));
+
+        // The DERIVED Secret name legitimately carries the `--` component
+        // separator (`wamn-db-<org>--<project>--<env>`) — check_name stays
+        // permissive so a real provisioned name is not spuriously rejected.
+        let mut r = minimal();
+        r.project_envs[0].db_secret = SecretRef::new("wamn-db-acme--billing--prod");
+        assert!(r.is_valid(), "{:?}", r.issues());
     }
 
     #[test]
@@ -593,9 +652,10 @@ mod tests {
             ("Bad", "invalid-org-id"), // uppercase
             ("a_b", "invalid-org-id"), // underscore
             ("has.dot", "invalid-org-id"),
-            ("-x", "invalid-org-id"),  // leading non-alnum
-            ("x-", "invalid-org-id"),  // trailing non-alnum
-            ("a b", "invalid-org-id"), // space
+            ("-x", "invalid-org-id"),   // leading non-alnum
+            ("x-", "invalid-org-id"),   // trailing non-alnum
+            ("a b", "invalid-org-id"),  // space
+            ("a--b", "invalid-org-id"), // consecutive hyphens (wamn-R27)
             ("wamn", "reserved-org-id"),
             ("wamn-corp", "reserved-org-id"),
         ] {

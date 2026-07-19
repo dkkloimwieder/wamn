@@ -44,31 +44,50 @@ pub const CDC_SECRET_PREFIX: &str = "wamn-cdc-";
 /// reuse it so the whole CDC surface carries one name.
 pub const CDC_OBJECT_PREFIX: &str = "wamn_cdc_";
 
+/// The shared slug discipline for a provisioned-name identity component: a
+/// non-empty lowercase slug `[a-z0-9-]`, starting and ending alphanumeric, with
+/// **no run of consecutive hyphens**, at most [`MAX_PROJECT_ID_LEN`] bytes.
+/// Returns the rejection reason, or `None` when well-formed.
+///
+/// The consecutive-hyphen ban (wamn-R27) closes an identity-collision: `--` is
+/// the component separator in [`project_env_database_name`] and (mapped to `__`)
+/// in [`cdc_object_name`], so a `--` run *inside* a component would let two
+/// distinct triples — e.g. `(a, x--p, dev)` and `(a--x, p, dev)` — derive the
+/// SAME database and CDC role/slot/publication names. `_` is not a second vector:
+/// the charset ([`is_slug_byte`]) admits no underscore, so a `-`→`_` mapping only
+/// ever yields an isolated `_` and the `__` separator stays unambiguous.
+fn slug_reason(id: &str) -> Option<&'static str> {
+    if id.is_empty() {
+        return Some("empty");
+    }
+    if id.len() > MAX_PROJECT_ID_LEN {
+        return Some("too long (max 40 bytes)");
+    }
+    if !id.bytes().all(is_slug_byte) {
+        return Some("only lowercase letters, digits, and hyphens are allowed");
+    }
+    let bytes = id.as_bytes();
+    if !is_alnum(bytes[0]) || !is_alnum(bytes[bytes.len() - 1]) {
+        return Some("must start and end with a lowercase letter or digit");
+    }
+    if id.contains("--") {
+        return Some("must not contain consecutive hyphens");
+    }
+    None
+}
+
 /// Validate a project id: a non-empty lowercase slug `[a-z0-9-]`, starting and
-/// ending alphanumeric, at most [`MAX_PROJECT_ID_LEN`] bytes, and not under the
-/// reserved `wamn` prefix.
+/// ending alphanumeric, with no consecutive hyphens, at most
+/// [`MAX_PROJECT_ID_LEN`] bytes, and not under the reserved `wamn` prefix.
 ///
 /// Lowercase + hyphen (not underscore) is deliberate: the id is both a K8s
 /// Secret-name suffix (hyphens, no underscores) and — quoted — a database name.
 pub fn validate_project_id(id: &str) -> Result<(), ProvisionError> {
-    let invalid = |reason| {
-        Err(ProvisionError::InvalidProjectId {
+    if let Some(reason) = slug_reason(id) {
+        return Err(ProvisionError::InvalidProjectId {
             id: id.to_string(),
             reason,
-        })
-    };
-    if id.is_empty() {
-        return invalid("empty");
-    }
-    if id.len() > MAX_PROJECT_ID_LEN {
-        return invalid("too long (max 40 bytes)");
-    }
-    if !id.bytes().all(is_slug_byte) {
-        return invalid("only lowercase letters, digits, and hyphens are allowed");
-    }
-    let bytes = id.as_bytes();
-    if !is_alnum(bytes[0]) || !is_alnum(bytes[bytes.len() - 1]) {
-        return invalid("must start and end with a lowercase letter or digit");
+        });
     }
     // wamn-66x: the `wamn` prefix is platform-reserved. The id is already
     // lowercase; reject the bare word and any `wamn-…` id (the boundary is a
@@ -122,11 +141,33 @@ pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
 }
 
 /// Validate that a `(org, project, env)` yields a safe provisioned database /
-/// Secret name: the project id is a slug (the org id is validated by the registry
-/// at org creation) and the assembled name fits [`MAX_DB_NAME_LEN`] — a legal
-/// Postgres identifier and a legal DNS-1123 label for the CNPG `Database` resource.
+/// Secret name: **all three** identity components are slugs and the assembled
+/// name fits [`MAX_DB_NAME_LEN`] — a legal Postgres identifier and a legal
+/// DNS-1123 label for the CNPG `Database` resource.
+///
+/// Every component is slug-checked (wamn-R27): the org and env — not only the
+/// project — separate on `--`/`__` into the derived database and CDC object
+/// names, so a malformed component (a consecutive-hyphen run above all) is an
+/// identity-collision vector, not merely the registry's concern. The project
+/// carries the extra reserved-`wamn` rule ([`validate_project_id`]); org and env
+/// are not reserved (an env may be any slug; the org's reserved-prefix rule is
+/// the registry's at org creation), so they get the plain slug discipline.
 pub fn validate_project_env(org: &str, project: &str, env: &str) -> Result<(), ProvisionError> {
+    if let Some(reason) = slug_reason(org) {
+        return Err(ProvisionError::InvalidComponent {
+            component: "org",
+            value: org.to_string(),
+            reason,
+        });
+    }
     validate_project_id(project)?;
+    if let Some(reason) = slug_reason(env) {
+        return Err(ProvisionError::InvalidComponent {
+            component: "env",
+            value: env.to_string(),
+            reason,
+        });
+    }
     let name = project_env_database_name(org, project, env);
     if name.len() > MAX_DB_NAME_LEN {
         return Err(ProvisionError::NameTooLong {
@@ -232,11 +273,37 @@ mod tests {
             "acme-corp",
             "proj-1",
             "p9",
-            "a--b",
+            "a-b-c",
             max.as_str(),
         ] {
             assert!(validate_project_id(id).is_ok(), "{id:?} should be valid");
         }
+    }
+
+    #[test]
+    fn consecutive_hyphens_are_rejected() {
+        // wamn-R27: `--` is the component separator in project_env_database_name
+        // (and `__` in cdc_object_name), so an interior `--` run inside a slug is
+        // an identity-collision vector and must be rejected. A SINGLE interior
+        // hyphen stays valid.
+        for bad in ["a--b", "x---y", "a--b--c", "ab--", "--ab"] {
+            let err = validate_project_id(bad).unwrap_err();
+            // "ab--"/"--ab" trip the start/end-alnum boundary first; the interior
+            // cases trip the consecutive-hyphen rule — either way, rejected.
+            assert!(
+                matches!(err, ProvisionError::InvalidProjectId { .. }),
+                "{bad:?} should be rejected"
+            );
+        }
+        // The interior-run rule reports its own reason.
+        assert!(matches!(
+            validate_project_id("a--b"),
+            Err(ProvisionError::InvalidProjectId {
+                reason: "must not contain consecutive hyphens",
+                ..
+            })
+        ));
+        assert!(validate_project_id("a-b").is_ok());
     }
 
     #[test]
@@ -353,6 +420,21 @@ mod tests {
             validate_project_env("acme", "wamn-x", "dev"),
             Err(ProvisionError::ReservedProjectId { .. })
         ));
+        // wamn-R27: the org and env are slug-checked too (not only the project).
+        assert!(matches!(
+            validate_project_env("Bad_Org", "billing", "dev"),
+            Err(ProvisionError::InvalidComponent {
+                component: "org",
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_project_env("acme", "billing", "Bad_Env"),
+            Err(ProvisionError::InvalidComponent {
+                component: "env",
+                ..
+            })
+        ));
         // The assembled name must fit the Postgres / DNS-1123 63-byte limit.
         let long_org = "o".repeat(40);
         let long_proj = "p".repeat(40);
@@ -360,6 +442,129 @@ mod tests {
         assert!(matches!(err, ProvisionError::NameTooLong { max: 63, .. }));
         // A comfortably-sized triple is fine.
         assert!(validate_project_env(&"o".repeat(20), &"p".repeat(20), "prod").is_ok());
+    }
+
+    #[test]
+    fn double_hyphen_collision_pair_is_rejected_in_every_component() {
+        // The wamn-R27 collision: `(a, x--p, dev)` and `(a--x, p, dev)` both
+        // derive `wamn-db-a--x--p--dev` (and `wamn_cdc_a__x__p__dev`). The
+        // derivations still alias — that is why the VALIDATOR is the fix: both
+        // triples are now rejected before they can be provisioned.
+        assert_eq!(
+            project_env_database_name("a", "x--p", "dev"),
+            project_env_database_name("a--x", "p", "dev"),
+            "the derivations still alias — rejection is what closes the collision"
+        );
+        assert_eq!(
+            cdc_object_name("a", "x--p", "dev"),
+            cdc_object_name("a--x", "p", "dev")
+        );
+        // Project carries the `--`: rejected via validate_project_id.
+        assert!(matches!(
+            validate_project_env("a", "x--p", "dev"),
+            Err(ProvisionError::InvalidProjectId {
+                reason: "must not contain consecutive hyphens",
+                ..
+            })
+        ));
+        // Org carries the `--`: rejected as the org component.
+        assert!(matches!(
+            validate_project_env("a--x", "p", "dev"),
+            Err(ProvisionError::InvalidComponent {
+                component: "org",
+                reason: "must not contain consecutive hyphens",
+                ..
+            })
+        ));
+        // Env carries the `--`: rejected as the env component.
+        assert!(matches!(
+            validate_project_env("a", "p", "d--v"),
+            Err(ProvisionError::InvalidComponent {
+                component: "env",
+                reason: "must not contain consecutive hyphens",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn derived_names_are_injective_over_valid_triples() {
+        // Enumerate short slugs across the three components; every VALID triple
+        // must map to a UNIQUE database name AND a unique CDC object name. The
+        // alphabet deliberately includes `--` slugs — `("a","b--c")` and
+        // `("a--b","c")` both derive `wamn-db-a--b--c--<env>` (and
+        // `wamn_cdc_a__b__c__<env>`). With the `--` ban they are FILTERED out (so
+        // injectivity holds over the survivors); remove the ban and both survive
+        // and collide here — this test is also a mutation catcher for the ban.
+        let slugs = ["a", "b", "a-b", "c", "a--b", "b--c"];
+        let envs = ["dev", "prod", "c-d"];
+        let mut by_db: std::collections::HashMap<String, (&str, &str, &str)> =
+            std::collections::HashMap::new();
+        let mut by_cdc: std::collections::HashMap<String, (&str, &str, &str)> =
+            std::collections::HashMap::new();
+        let mut valid = 0usize;
+        for &org in &slugs {
+            for &project in &slugs {
+                for &env in &envs {
+                    // Only VALID triples derive names; `--`/`_` slugs never reach here.
+                    if validate_project_env_cdc(org, project, env).is_err() {
+                        continue;
+                    }
+                    valid += 1;
+                    let triple = (org, project, env);
+                    let db = project_env_database_name(org, project, env);
+                    if let Some(prev) = by_db.insert(db.clone(), triple) {
+                        assert_eq!(prev, triple, "database name {db:?} collides two triples");
+                    }
+                    let cdc = cdc_object_name(org, project, env);
+                    if let Some(prev) = by_cdc.insert(cdc.clone(), triple) {
+                        assert_eq!(prev, triple, "cdc object name {cdc:?} collides two triples");
+                    }
+                }
+            }
+        }
+        // The `--` slugs (2 of 6 org/project values) are filtered by the ban, so
+        // exactly the 4 hyphen-run-free slugs survive per id position × 3 envs.
+        // The count being BELOW the full product proves the filter actually ran.
+        assert!(
+            valid < slugs.len() * slugs.len() * envs.len(),
+            "the `--` filter ran"
+        );
+        assert_eq!(
+            valid,
+            4 * 4 * 3,
+            "4 valid org × 4 valid project × 3 valid env"
+        );
+        assert_eq!(by_db.len(), valid, "database names are injective");
+        assert_eq!(by_cdc.len(), valid, "cdc object names are injective");
+    }
+
+    #[test]
+    fn underscore_is_not_a_second_collision_vector() {
+        // cdc_object_name maps `-`→`_`; a `_` INSIDE a slug would be a second way
+        // to forge the `__` separator. The slug charset admits no underscore, so
+        // the vector is closed at validation — confirm it here.
+        assert!(matches!(
+            validate_project_id("a_b"),
+            Err(ProvisionError::InvalidProjectId {
+                reason: "only lowercase letters, digits, and hyphens are allowed",
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_project_env("a_b", "p", "dev"),
+            Err(ProvisionError::InvalidComponent {
+                component: "org",
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_project_env("a", "p", "d_v"),
+            Err(ProvisionError::InvalidComponent {
+                component: "env",
+                ..
+            })
+        ));
     }
 
     #[test]

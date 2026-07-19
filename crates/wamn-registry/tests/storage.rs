@@ -369,12 +369,24 @@ fn placement_check_is_present_and_tier_checks_are_gone() {
 fn charset_length_checks_backstop_the_stored_slug_names() {
     let sql = code_only(&system_schema_sql());
 
-    // The anchored slug regex mirrors wamn-registry `is_slug`, once per stored
-    // slug/name column: orgs.id, orgs.pool_cluster, projects.id, env_policies.name.
-    let slug_re = "'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'";
+    // The three IDENTITY-COMPONENT columns (orgs.id, projects.id,
+    // env_policies.name) carry the consecutive-hyphen-free regex (wamn-R27): `--`
+    // is the `wamn-db-<org>--<project>--<env>` / `wamn_cdc_<org>__<project>__<env>`
+    // component separator, so a `--` run inside a component would collide two
+    // triples onto one name (mirrors is_component_slug).
+    let component_re = "'^[a-z0-9]+(-[a-z0-9]+)*$'";
     assert!(
-        sql.matches(slug_re).count() >= 4,
-        "each of the 4 stored slug/name columns must carry the anchored slug regex"
+        sql.matches(component_re).count() >= 3,
+        "orgs.id / projects.id / env_policies.name must carry the consecutive-hyphen-free \
+         component regex (wamn-R27)"
+    );
+    // orgs.pool_cluster is a DERIVED DNS-1123 label (a check_name mirror) that may
+    // carry consecutive hyphens, so it keeps the permissive slug regex — the `--`
+    // ban applies to identity slugs, never to derived names.
+    let name_re = "'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'";
+    assert!(
+        sql.contains(name_re),
+        "pool_cluster keeps the permissive slug regex (a derived name may carry `--`)"
     );
 
     // Every column carries a named CHECK constraint.
@@ -471,7 +483,10 @@ fn no_data_plane_manifest_references_the_system_cluster() {
     }
     // The tiered deploy/ layout ships ~50 manifests; a low count means the walk
     // went vacuous (the pre-tiering flat read_dir bug class).
-    assert!(scanned >= 10, "deploy/ manifest walk saw only {scanned} yaml files");
+    assert!(
+        scanned >= 10,
+        "deploy/ manifest walk saw only {scanned} yaml files"
+    );
     assert!(
         offenders.is_empty(),
         "these deploy manifests reference the T1 system cluster/DB (request-path-free \
@@ -899,6 +914,36 @@ DO $$ BEGIN BEGIN
     VALUES ('acme','Bad_Env','"own"'::jsonb,10,1,'2Gi','200m','256Mi','x');
   ASSERT false, 'a non-slug env policy name must be rejected (env_policies_name_charset_check)';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+
+-- wamn-R27: an interior `--` run inside an org/project id or env slug is rejected
+-- by the tightened component regex — `--` is the wamn-db-<org>--<project>--<env>
+-- (and wamn_cdc_<org>__<project>__<env>) separator, so a `--` run would collide
+-- two distinct triples onto ONE derived database / CDC role name.
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('a--x','dedicated',NULL);
+  ASSERT false, 'a consecutive-hyphen org id must be rejected (wamn-R27)';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.projects (org, id) VALUES ('try','x--p');
+  ASSERT false, 'a consecutive-hyphen project id must be rejected (wamn-R27)';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+DO $$ BEGIN BEGIN
+  INSERT INTO registry.env_policies
+      (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
+    VALUES ('acme','d--v','"own"'::jsonb,10,1,'2Gi','200m','256Mi','x');
+  ASSERT false, 'a consecutive-hyphen env policy name must be rejected (wamn-R27)';
+EXCEPTION WHEN check_violation THEN NULL; END; END $$;
+-- A SINGLE interior hyphen stays valid on a component (org id here); then cleaned up.
+INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('a-b-c','dedicated',NULL);
+DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.orgs WHERE id='a-b-c')=1,
+  'a single interior hyphen is a valid component id'; END $$;
+DELETE FROM registry.orgs WHERE id='a-b-c';
+-- pool_cluster is a DERIVED name and may carry `--` (the ban is for identity
+-- slugs only): a `--` pool cluster on a well-formed pooled org applies.
+INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('poolorg','pooled','wamn--pg--x');
+DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.orgs WHERE id='poolorg')=1,
+  'a derived pool_cluster name may carry consecutive hyphens (wamn-R27 bans slugs, not names)'; END $$;
+DELETE FROM registry.orgs WHERE id='poolorg';
 
 -- Invariant 2 (no credentials, R8b): project_envs carries the Secret REFERENCE
 -- and NO credential column.

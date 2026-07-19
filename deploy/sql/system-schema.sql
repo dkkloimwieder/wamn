@@ -103,8 +103,10 @@ INSERT INTO registry.meta (schema_version) VALUES ('0.1');
 -- shared pool; a dedicated org's clusters are derived, so pool is NULL) plus a
 -- defensive charset/length backstop (cjv.20) on `id` and `pool_cluster` mirroring
 -- crates/wamn-registry validate() (check_id / check_name) — `id` must be a
--- lowercase slug `[a-z0-9-]` (start/end alnum), ≤ 40 bytes, and not under the
--- reserved `wamn` prefix (it mints `<org>-*` cluster / `wamn-db-<org>--*` Secret /
+-- lowercase slug `[a-z0-9-]` (start/end alnum, NO consecutive hyphens — wamn-R27,
+-- since `--` is the `wamn-db-<org>--<project>--<env>` component separator, so a
+-- `--` run would let two triples collide onto one name), ≤ 40 bytes, and not under
+-- the reserved `wamn` prefix (it mints `<org>-*` cluster / `wamn-db-<org>--*` Secret /
 -- subdomain names); `pool_cluster` is a DNS-1123 label ≤ 63 and MAY carry the
 -- `wamn` prefix (`wamn-pg`), so no reserved rule there. Invariant 4 (dev ≠ prod
 -- recovery domain) is still the derivation's + validate()'s job, not a CHECK.
@@ -118,7 +120,7 @@ CREATE TABLE registry.orgs (
     CONSTRAINT orgs_pool_cluster_check
         CHECK ((placement_kind = 'pooled') = (pool_cluster IS NOT NULL)),
     CONSTRAINT orgs_id_charset_check
-        CHECK (id ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+        CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(id) <= 40
                AND id <> 'wamn' AND id NOT LIKE 'wamn-%'),
     CONSTRAINT orgs_pool_cluster_charset_check
@@ -161,7 +163,7 @@ CREATE TABLE registry.env_policies (
     -- cjv.20 charset backstop: `name` IS the env slug (check_env mirror) — a
     -- lowercase slug ≤ 40 bytes; no reserved rule (an env may be any slug).
     CONSTRAINT env_policies_name_charset_check
-        CHECK (name ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+        CHECK (name ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(name) <= 40)
 );
 
@@ -176,7 +178,7 @@ CREATE TABLE registry.projects (
     -- cjv.20 charset backstop: project `id` is a check_id mirror (lowercase slug
     -- ≤ 40 bytes, not under the reserved `wamn` prefix — it too mints names).
     CONSTRAINT projects_id_charset_check
-        CHECK (id ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+        CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(id) <= 40
                AND id <> 'wamn' AND id NOT LIKE 'wamn-%')
 );
