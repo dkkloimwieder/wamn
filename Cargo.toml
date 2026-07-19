@@ -19,7 +19,7 @@ license = "Apache-2.0"
 # default-features off: `wasi-webgpu` pulls crates.io wasmtime alongside the
 # workspace's git-pinned one (two wasmtimes = linker typecheck failures upstream
 # solves with a [patch] we'd otherwise have to replicate).
-wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "8b76869249458b3918587f4ecb0db533628d5a41", default-features = false, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel"] }
+wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "eef76cd8ab950966b6a74430545e7c4c4060b85e", default-features = false, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel"] }
 # pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch
 # wamn/0.8.0 = upstream v0.8.0 (784e644) + the carried failover-slot-syntax
 # commit (S-CDC-1 finding F1: legacy `… FAILOVER` → 42601 on PG17+; the fork
