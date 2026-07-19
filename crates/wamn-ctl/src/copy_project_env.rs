@@ -8,9 +8,10 @@
 //!
 //! * `include: definition` — the src env's **applied catalogs** promote into the
 //!   dst through the 2.5 migrate engine (the same one-transaction apply
-//!   `migrate-catalog` runs), plus the **flow registrations** and the **RLS
-//!   policy rows** (re-compiled and applied on the dst). Config has no defined
-//!   artifact yet — deferred, noted at runtime.
+//!   `migrate-catalog` runs), plus the **flow registrations**, the **RLS
+//!   policy rows** (re-compiled and applied on the dst), and the **event
+//!   registration rows** (EVT-REG — copied verbatim, no re-apply). Config has no
+//!   defined artifact yet — deferred, noted at runtime.
 //! * `include: data` — `pg_restore --data-only --disable-triggers` of the data
 //!   schema from a fresh `pg_dump -Fd` snapshot (the q3n.10 artifact, recorded
 //!   in `provisioning.dumps`).
@@ -57,7 +58,7 @@ use crate::restore_project_env::swap_db;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum IncludeArg {
-    /// Structure only: catalog + flows + RLS policies.
+    /// Structure only: catalog + flows + RLS policies + event registrations.
     Definition,
     /// Rows only: `pg_restore --data-only` of the data schema.
     Data,
@@ -446,8 +447,9 @@ async fn exec_snapshot(
 }
 
 /// The definition pass: applied catalogs (via the 2.5 migrate engine), flow
-/// registrations, RLS policy rows + their compiled application. Config has no
-/// defined artifact yet — deferred.
+/// registrations, RLS policy rows + their compiled application, and event
+/// registration rows (copied verbatim). Config has no defined artifact yet —
+/// deferred.
 async fn exec_copy_definition(
     ctx: &mut ExecCtx<'_>,
     _src: &Triple,
@@ -610,6 +612,49 @@ async fn exec_copy_definition(
         apply_rls_policies(&dst_client, &ctx.args.data_schema, &catalogs, &policies).await?;
     }
     println!("  rls: {} policy row(s) copied + applied", policies.len());
+
+    // 4. Event registrations (EVT-REG): copy the tenant's registration rows
+    //    verbatim (the jsonb document + its denormalized flow_id/entity_id).
+    //    Like flows — and unlike RLS policies — a registration is pure data with
+    //    no compiled Postgres artifact, so there is no re-apply step; the copy
+    //    mirrors the rls_policies row copy (superuser bypasses the tenant-FORCE
+    //    RLS; the tenant filter scopes the read).
+    let registrations = src_client
+        .query(
+            "SELECT catalog_id, registration_id, flow_id, entity_id, registration::text \
+             FROM catalog.event_registrations WHERE tenant_id = $1",
+            &[&tenant],
+        )
+        .await
+        .context("read src event registrations")?;
+    for row in &registrations {
+        let (catalog_id, registration_id, flow_id, entity_id): (String, String, String, String) =
+            (row.get(0), row.get(1), row.get(2), row.get(3));
+        let registration: String = row.get(4);
+        dst_client
+            .execute(
+                "INSERT INTO catalog.event_registrations \
+                   (tenant_id, catalog_id, registration_id, flow_id, entity_id, registration) \
+                 VALUES ($1, $2, $3, $4, $5, $6::text::jsonb) \
+                 ON CONFLICT (tenant_id, catalog_id, registration_id) DO UPDATE SET \
+                   flow_id = EXCLUDED.flow_id, entity_id = EXCLUDED.entity_id, \
+                   registration = EXCLUDED.registration",
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &registration_id,
+                    &flow_id,
+                    &entity_id,
+                    &registration,
+                ],
+            )
+            .await
+            .with_context(|| format!("copy event registration {registration_id}"))?;
+    }
+    println!(
+        "  event registrations: {} row(s) copied",
+        registrations.len()
+    );
     println!("  config: no defined artifact yet — deferred");
 
     drop(src_client);
@@ -772,6 +817,10 @@ async fn exec_verify(
                 "rls policies",
                 "SELECT count(*) FROM catalog.rls_policies WHERE tenant_id = $1".to_string(),
             ),
+            (
+                "event registrations",
+                "SELECT count(*) FROM catalog.event_registrations WHERE tenant_id = $1".to_string(),
+            ),
         ] {
             let s: i64 = match src_client.query_one(sql.as_str(), &[&tenant]).await {
                 Ok(row) => row.get(0),
@@ -790,7 +839,8 @@ async fn exec_verify(
             );
         }
         println!(
-            "  verified: {} applied catalog(s) byte-equal; flows + RLS counts match",
+            "  verified: {} applied catalog(s) byte-equal; flows + RLS + \
+             event-registration counts match",
             src_rows.len()
         );
     }
