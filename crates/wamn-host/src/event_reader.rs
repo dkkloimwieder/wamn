@@ -17,7 +17,9 @@
 //!   feedback LSN to the commit's end. JetStream unreachable ⇒ the publish
 //!   retries forever ⇒ the LSN holds ⇒ WAL is retained — delayed, never lost.
 //!   A crash mid-txn redelivers the whole txn; the msg-id dedupe absorbs the
-//!   published prefix (at-least-once → exactly-once on the stream).
+//!   published prefix (at-least-once → exactly-once WITHIN the JetStream
+//!   duplicate window keyed on `Nats-Msg-Id`; past that window the
+//!   materializer's `run_id` + `ON CONFLICT` is the unbounded guarantee — R12).
 //! - **Stall interlock** (E2): "delayed, never lost" is only SAFE if someone is
 //!   told early, because a held LSN silently freezes WAL retention on the source
 //!   DB until `max_slot_wal_keep_size` invalidates the slot — a capture gap.
@@ -35,6 +37,15 @@
 //!   GAP — a first-class incident (v3 §11): the reader refuses to start (or
 //!   dies) loudly instead of silently re-creating and resuming from "now".
 //!   Recovery is operator-driven: re-enable CDC + replay/backfill assessment.
+//! - **The reader NEVER reconciles a pre-existing stream** (R12, decision:
+//!   REFUSE). `get_or_create_stream` leaves an existing `EVT_` stream's config
+//!   untouched, so `--dup-window-secs` / `--stream-replicas` are inert against
+//!   one already there (possibly silently at R1). The reader reads the live
+//!   `StreamInfo` back and HARD-FAILS on `duplicate_window` / `num_replicas` /
+//!   `storage` drift rather than `update_stream` — refusing matches the
+//!   never-creates-the-slot posture, and E1's crash-republish recovery leans on
+//!   the window being asserted, not hoped. Fix is operator-driven: re-provision
+//!   the stream.
 //! - **Session re-open** (S-CDC-1 finding F2, R11): the crate's inner retry can
 //!   be shorter than a real primary-less window, so a session-level re-open
 //!   loop wraps the drain. ONE `ReopenLadder` backs BOTH arms (open failure and
@@ -109,12 +120,14 @@ pub struct EventReaderArgs {
     #[arg(long, default_value = "disable")]
     pub sslmode: String,
 
-    /// Replicas for the `EVT_` stream when this reader has to create it
-    /// (get-or-create; an existing stream keeps its config).
+    /// Replicas for the `EVT_` stream when this reader creates it. Against a
+    /// pre-existing stream this is asserted, not applied: a mismatch hard-fails
+    /// (R12 — the reader refuses to reconcile a stream it did not create).
     #[arg(long, default_value_t = 3)]
     pub stream_replicas: usize,
 
     /// JetStream duplicate window (the `Nats-Msg-Id` dedupe horizon), seconds.
+    /// Asserted against a pre-existing stream, not applied (R12).
     #[arg(long, default_value_t = 120)]
     pub dup_window_secs: u64,
 
@@ -462,6 +475,45 @@ async fn preflight_slot(args: &EventReaderArgs, slot: &str) -> anyhow::Result<()
     Ok(())
 }
 
+/// Compare the reader's REQUESTED stream config against what JetStream actually
+/// holds (R12), one human-readable mismatch per drifted field (empty when they
+/// agree). `get_or_create_stream` never reconciles a pre-existing stream, so
+/// `--dup-window-secs` and `--stream-replicas` are INERT against one that
+/// already exists (possibly silently at R1); reading the live config back and
+/// REFUSING on drift is what makes those flags mean anything. The reader refuses
+/// rather than `update_stream` — it never mutates a stream it did not create,
+/// exactly as it never re-creates the slot. `duplicate_window` bounds
+/// JetStream's own `Nats-Msg-Id` dedupe (exactly-once WITHIN the window); the
+/// materializer's `run_id` + `ON CONFLICT` is the unbounded guarantee, so an
+/// unasserted window silently narrows the fast path E1 leans on.
+fn stream_config_drift(
+    want_replicas: usize,
+    want_dup_window: Duration,
+    want_storage: jetstream::stream::StorageType,
+    got: &jetstream::stream::Config,
+) -> Vec<String> {
+    let mut drift = Vec::new();
+    if got.num_replicas != want_replicas {
+        drift.push(format!(
+            "num_replicas: want {want_replicas}, stream has {}",
+            got.num_replicas
+        ));
+    }
+    if got.duplicate_window != want_dup_window {
+        drift.push(format!(
+            "duplicate_window: want {want_dup_window:?}, stream has {:?}",
+            got.duplicate_window
+        ));
+    }
+    if got.storage != want_storage {
+        drift.push(format!(
+            "storage: want {want_storage:?}, stream has {:?}",
+            got.storage
+        ));
+    }
+    drift
+}
+
 async fn open_session(
     args: &EventReaderArgs,
     reg: &Registration,
@@ -531,17 +583,39 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
         .await
         .with_context(|| format!("connect data-plane NATS at {}", args.nats_url))?;
     let js = jetstream::new(client);
-    js.get_or_create_stream(jetstream::stream::Config {
-        name: reg.stream.clone(),
-        subjects: vec![stream_subjects(&args.org, &args.env)],
-        storage: jetstream::stream::StorageType::File,
-        num_replicas: args.stream_replicas,
-        retention: jetstream::stream::RetentionPolicy::Limits,
-        duplicate_window: Duration::from_secs(args.dup_window_secs),
-        ..Default::default()
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("get-or-create stream {}: {e}", reg.stream))?;
+    let want_dup_window = Duration::from_secs(args.dup_window_secs);
+    let evt_stream = js
+        .get_or_create_stream(jetstream::stream::Config {
+            name: reg.stream.clone(),
+            subjects: vec![stream_subjects(&args.org, &args.env)],
+            storage: jetstream::stream::StorageType::File,
+            num_replicas: args.stream_replicas,
+            retention: jetstream::stream::RetentionPolicy::Limits,
+            duplicate_window: want_dup_window,
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("get-or-create stream {}: {e}", reg.stream))?;
+    // R12: get-or-create NEVER reconciles — a pre-existing `EVT_` stream keeps
+    // its old config, so `--dup-window-secs` / `--stream-replicas` are inert
+    // against it (including one silently at R1). Read the live config back and
+    // REFUSE on drift; the reader never mutates a stream it did not create,
+    // exactly as it never re-creates the slot (no `update_stream`).
+    let drift = stream_config_drift(
+        args.stream_replicas,
+        want_dup_window,
+        jetstream::stream::StorageType::File,
+        &evt_stream.cached_info().config,
+    );
+    if !drift.is_empty() {
+        bail!(
+            "EVT_ stream {} already exists with drifted config the reader will not \
+             silently accept (R12): {}. The reader REFUSES to reconcile — fix the \
+             stream or re-provision (matches the never-creates-the-slot posture).",
+            reg.stream,
+            drift.join("; ")
+        );
+    }
 
     // `confirmed_lsn_age_seconds` gauge (E2): millis of the last confirmed-LSN
     // advance, seeded at start so a reader that never commits still ages. Shared
@@ -1458,6 +1532,54 @@ mod tests {
         assert_eq!(
             classify_slot_health("unknown", None, floor),
             SlotHealth::HeadroomLow
+        );
+    }
+
+    // R12 — the stream-config drift assertion. The reader REFUSES on any
+    // mismatch (never `update_stream`); this pins each load-bearing field.
+
+    #[test]
+    fn stream_config_drift_flags_replicas_dup_window_and_storage() {
+        use jetstream::stream::{Config, StorageType};
+        let want_replicas = 3;
+        let want_dup = Duration::from_secs(120);
+        // A matching stream drifts on nothing.
+        let matching = Config {
+            num_replicas: 3,
+            duplicate_window: Duration::from_secs(120),
+            storage: StorageType::File,
+            ..Default::default()
+        };
+        assert!(
+            stream_config_drift(want_replicas, want_dup, StorageType::File, &matching).is_empty(),
+            "an exact-match stream must report no drift"
+        );
+        // A pre-existing stream silently at R1 with a 10s window on memory
+        // storage — the exact case R12 exists to catch: all three fields drift.
+        let drifted = Config {
+            num_replicas: 1,
+            duplicate_window: Duration::from_secs(10),
+            storage: StorageType::Memory,
+            ..Default::default()
+        };
+        let d = stream_config_drift(want_replicas, want_dup, StorageType::File, &drifted);
+        assert_eq!(
+            d.len(),
+            3,
+            "all three load-bearing fields must report: {d:?}"
+        );
+        assert!(
+            d.iter()
+                .any(|m| m.contains("num_replicas") && m.contains("want 3") && m.contains("has 1")),
+            "num_replicas drift must report both values: {d:?}"
+        );
+        assert!(
+            d.iter().any(|m| m.contains("duplicate_window")),
+            "duplicate_window drift must report: {d:?}"
+        );
+        assert!(
+            d.iter().any(|m| m.contains("storage")),
+            "storage drift must report: {d:?}"
         );
     }
 }

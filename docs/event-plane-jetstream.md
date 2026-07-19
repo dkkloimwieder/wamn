@@ -107,6 +107,13 @@ mechanical row changes ride one pipeline, distinguished by subject.
   (`Nats-Msg-Id = <project_env>:<lsn>`) → **advance confirmed LSN only on
   JetStream ack**. JetStream down ⇒ LSN holds ⇒ WAL retained (bounded by
   `max_slot_wal_keep_size`, alerted long before) ⇒ delayed, never lost.
+  The `Nats-Msg-Id` dedupe is **exactly-once WITHIN the stream's duplicate
+  window**; past that window the materializer's `run_id` + `ON CONFLICT` is the
+  unbounded guarantee (the window is only the fast path). Because the window's
+  size is therefore load-bearing, the reader **asserts** the live stream config
+  on start-up and hard-fails on `duplicate_window` / `num_replicas` / `storage`
+  drift — it never reconciles a stream it did not create (R12,
+  wamn-l5i9.41; decision: REFUSE, matching the never-creates-the-slot posture).
 - **Causation (loop-bounding):** when a connection belongs to a run, the
   `wamn:postgres` plugin emits one `pg_logical_emit_message('wamn.causation',
   {run, root, depth})` per transaction; the reader stamps it onto that txn's
