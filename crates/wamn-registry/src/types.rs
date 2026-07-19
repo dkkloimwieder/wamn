@@ -409,6 +409,27 @@ pub struct ProjectEnv {
     pub db_secret: SecretRef,
 }
 
+/// A registered **CDC event reader** for a provisioned project-env (D19 v3,
+/// wamn-l5i9.9): which publication + failover replication slot it streams from,
+/// which JetStream stream its envelopes land in (`EVT_<org>_<env>` by default),
+/// and a [`SecretRef`] to its **replication** credential — a reference, never
+/// the material (R8b; the replication credential is its own tier, above the
+/// `wamn_app` query credential and the dispatch role).
+///
+/// Deliberately a light row model like [`ProjectEnv`] — not folded into
+/// [`Registry`] validation; the reader service (l5i9.10) deserializes its
+/// registration to learn what to stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct EventReader {
+    pub triple: Triple,
+    pub publication: String,
+    pub slot: String,
+    pub stream: String,
+    pub replication_secret: SecretRef,
+    pub enabled: bool,
+}
+
 /// The whole control-plane registry: the per-org [`OrgEnvPolicy`] rows plus org /
 /// project / project-env membership and placement. Import/export via
 /// [`Registry::from_json`] / [`Registry::to_json`].

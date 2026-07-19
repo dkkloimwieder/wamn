@@ -4,8 +4,8 @@
 //! wamn-8df.4 org-scoped policies (templates; T2/T4 coexistence).
 
 use wamn_registry::{
-    ClusterRef, Org, Project, ProjectEnv, RecoveryDomain, Registry, RegistryError, SecretRef,
-    Template, Triple,
+    ClusterRef, EventReader, Org, Project, ProjectEnv, RecoveryDomain, Registry, RegistryError,
+    SecretRef, Template, Triple,
 };
 
 /// A registry with a dedicated + a pooled org, each stamped from the `standard`
@@ -250,4 +250,33 @@ fn triple_host_label_is_derived_not_parsed() {
     let t = Triple::new("acme", "billing", "prod");
     assert_eq!(t.host_label(), "billing--prod.acme");
     assert_eq!(t.to_string(), "acme/billing/prod");
+}
+
+/// The CDC reader registration (wamn-l5i9.9) round-trips on the kebab-case
+/// wire, and its Secret field is a REFERENCE ([`SecretRef`]) — the row model
+/// the reader service (l5i9.10) deserializes.
+#[test]
+fn event_reader_registration_round_trips_with_a_secret_reference() {
+    let r = EventReader {
+        triple: Triple::new("acme", "billing", "dev"),
+        publication: "wamn_cdc_acme__billing__dev".into(),
+        slot: "wamn_cdc_acme__billing__dev".into(),
+        stream: "EVT_acme_dev".into(),
+        replication_secret: SecretRef::new("wamn-cdc-acme--billing--dev"),
+        enabled: true,
+    };
+    let json = serde_json::to_string_pretty(&r).expect("serializes");
+    let back: EventReader = serde_json::from_str(&json).expect("parses");
+    assert_eq!(r, back);
+    // Kebab-case wire keys; the credential travels as a reference, never material.
+    assert!(json.contains("\"replication-secret\""));
+    assert!(json.contains("\"wamn-cdc-acme--billing--dev\""));
+    assert!(!json.to_lowercase().contains("password"));
+    // An unknown field is rejected (deny_unknown_fields — a fat row with a
+    // smuggled credential column fails to parse).
+    let bad = json.replace(
+        "\"enabled\": true",
+        "\"enabled\": true, \"url\": \"postgres://…\"",
+    );
+    assert!(serde_json::from_str::<EventReader>(&bad).is_err());
 }

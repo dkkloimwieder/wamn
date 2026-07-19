@@ -112,6 +112,123 @@ pub fn grant_connect_sql(project: &str) -> String {
     grant_connect_on_database_sql(&database_name(project))
 }
 
+// --- CDC capture provisioning (wamn-l5i9.9, D19 v3 §4) -----------------------
+//
+// The per-project-env CDC substrate: a REPLICATION role (the R8b credential
+// tier above `wamn_app` query creds and the dispatch role), a publication over
+// the app data schema, and a failover-enabled logical replication slot. The
+// publication and the slot are DATABASE-BOUND — apply their SQL connected to
+// the project-env database; the role is cluster-global. Pass the shared
+// `cdc_object_name` (`wamn_cdc_<org>__<project>__<env>`) as the role /
+// publication / slot name.
+
+/// Idempotently bootstrap a per-project-env **replication** role: `REPLICATION
+/// LOGIN`, otherwise least-privilege (`NOSUPERUSER NOCREATEDB NOCREATEROLE
+/// NOBYPASSRLS`). One role per project-env (a leaked credential's blast radius
+/// is one registration) — but note `REPLICATION` itself is CLUSTER-WIDE in
+/// Postgres: any replication role can read any database's WAL on that cluster,
+/// so on a shared pool the input-side isolation rests on handing each reader
+/// only its own slot/publication/credentials (documented in the runbook).
+pub fn ensure_replication_role_sql(role: &str, password: &str) -> String {
+    format!(
+        "DO $$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
+             CREATE ROLE {role} LOGIN REPLICATION PASSWORD {pw} \
+               NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+           END IF; \
+         END $$;",
+        role = quote_ident(role),
+        role_lit = quote_literal(role),
+        pw = quote_literal(password),
+    )
+}
+
+/// `CREATE SCHEMA IF NOT EXISTS "<schema>"` — the eager guard that makes the
+/// CDC SQL order-robust: `FOR TABLES IN SCHEMA` auto-includes tables created
+/// later, so the publication may be created BEFORE catalog-publish fills the
+/// schema and still capture everything from the start. Catalog-publish's own
+/// `CREATE SCHEMA IF NOT EXISTS` then no-ops.
+pub fn ensure_schema_sql(schema: &str) -> String {
+    format!("CREATE SCHEMA IF NOT EXISTS {}", quote_ident(schema))
+}
+
+/// Idempotently create the CDC publication over the project-env's app **data**
+/// schema: `CREATE PUBLICATION <pub> FOR TABLES IN SCHEMA <schema>`, guarded by
+/// a `pg_publication` probe (Postgres has no `CREATE PUBLICATION IF NOT
+/// EXISTS`). `FOR TABLES IN SCHEMA` auto-includes tables created in the schema
+/// later — the D19 v3 replacement for the retired per-table trigger emission.
+/// Re-pointing an existing publication at a different schema is a manual
+/// `ALTER PUBLICATION … SET TABLES IN SCHEMA` (the guard never rewrites).
+/// Run connected to the project-env database.
+pub fn create_publication_sql(publication: &str, schema: &str) -> String {
+    format!(
+        "DO $$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = {pub_lit}) THEN \
+             CREATE PUBLICATION {publication} FOR TABLES IN SCHEMA {schema}; \
+           END IF; \
+         END $$;",
+        publication = quote_ident(publication),
+        pub_lit = quote_literal(publication),
+        schema = quote_ident(schema),
+    )
+}
+
+/// Idempotently create the **failover-enabled** logical replication slot via
+/// the SQL-function form: `pg_create_logical_replication_slot(<slot>,
+/// 'pgoutput', temporary => false, twophase => false, failover => true)`
+/// (PG17+ fifth argument) — a normal connection, no replication-protocol
+/// syntax; the reader's `ensure_replication_slot` tolerates the existing slot
+/// (same plugin/twophase/failover shape). Logical slots are DATABASE-BOUND:
+/// run connected to the project-env database. WAL is pinned from creation
+/// (capture starts at CDC-enable), bounded by the cluster's
+/// `max_slot_wal_keep_size`.
+pub fn create_failover_slot_sql(slot: &str) -> String {
+    format!(
+        "DO $$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_replication_slots WHERE slot_name = {slot_lit}) THEN \
+             PERFORM pg_create_logical_replication_slot({slot_lit}, 'pgoutput', false, false, true); \
+           END IF; \
+         END $$;",
+        slot_lit = quote_literal(slot),
+    )
+}
+
+/// Grant the replication role its read surface: `CONNECT` on the project-env
+/// database, `USAGE` on the app data schema, and `SELECT` on the schema's
+/// **current** tables (an initial-snapshot/backfill needs table reads; logical
+/// *decoding* itself reads WAL, not tables, so tables added later decode fine
+/// without a re-grant). Idempotent; run connected to the project-env database
+/// AFTER the schema exists.
+pub fn grant_replication_access_sql(database: &str, role: &str, schema: &str) -> String {
+    let role = quote_ident(role);
+    format!(
+        "GRANT CONNECT ON DATABASE {db} TO {role}; \
+         GRANT USAGE ON SCHEMA {schema} TO {role}; \
+         GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {role};",
+        db = quote_ident(database),
+        schema = quote_ident(schema),
+    )
+}
+
+/// `DROP PUBLICATION IF EXISTS "<publication>"` — teardown / gate only.
+pub fn drop_publication_sql(publication: &str) -> String {
+    format!("DROP PUBLICATION IF EXISTS {}", quote_ident(publication))
+}
+
+/// Drop the replication slot if it exists (teardown / gate only — dropping a
+/// live slot severs the reader and releases the pinned WAL). Run connected to
+/// the slot's database.
+pub fn drop_replication_slot_sql(slot: &str) -> String {
+    format!(
+        "DO $$ BEGIN \
+           IF EXISTS (SELECT FROM pg_replication_slots WHERE slot_name = {slot_lit}) THEN \
+             PERFORM pg_drop_replication_slot({slot_lit}); \
+           END IF; \
+         END $$;",
+        slot_lit = quote_literal(slot),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +312,75 @@ mod tests {
             grant_connect_sql("acme"),
             grant_connect_on_database_sql("wamn-db-acme")
         );
+    }
+
+    #[test]
+    fn replication_role_is_replication_login_and_otherwise_least_privilege() {
+        let sql = ensure_replication_role_sql("wamn_cdc_acme__billing__dev", "s3cr3t");
+        assert!(sql.contains("IF NOT EXISTS"), "idempotent guard");
+        assert!(sql.contains("CREATE ROLE \"wamn_cdc_acme__billing__dev\" LOGIN REPLICATION"));
+        assert!(sql.contains("PASSWORD 's3cr3t'"));
+        // The R8b tier: REPLICATION but nothing else elevated.
+        for attr in ["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOBYPASSRLS"] {
+            assert!(sql.contains(attr), "missing {attr}");
+        }
+        // A password with a quote is escaped, not injected.
+        assert!(ensure_replication_role_sql("r", "a'b").contains("PASSWORD 'a''b'"));
+    }
+
+    #[test]
+    fn publication_covers_the_schema_and_is_idempotent() {
+        let sql = create_publication_sql("wamn_cdc_acme__billing__dev", "app");
+        // FOR TABLES IN SCHEMA (auto-includes tables created later) — never the
+        // per-table form and never FOR ALL TABLES (which would leak app_system
+        // and any other schema into the stream).
+        assert!(sql.contains(
+            "CREATE PUBLICATION \"wamn_cdc_acme__billing__dev\" FOR TABLES IN SCHEMA \"app\""
+        ));
+        assert!(!sql.contains("FOR ALL TABLES"));
+        // Idempotent: guarded by a pg_publication probe (no IF NOT EXISTS in PG).
+        assert!(sql.contains("IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = 'wamn_cdc_acme__billing__dev')"));
+        // The eager schema guard is a separate statement.
+        assert_eq!(
+            ensure_schema_sql("app"),
+            "CREATE SCHEMA IF NOT EXISTS \"app\""
+        );
+    }
+
+    #[test]
+    fn failover_slot_uses_the_sql_function_form_with_failover_true() {
+        let sql = create_failover_slot_sql("wamn_cdc_acme__billing__dev");
+        // The PG17+ five-argument form: (slot, plugin, temporary, twophase,
+        // FAILOVER) — pgoutput, non-temporary, no two-phase, failover=true, the
+        // exact shape pg_walstream's ensure_replication_slot tolerates.
+        assert!(sql.contains(
+            "pg_create_logical_replication_slot('wamn_cdc_acme__billing__dev', 'pgoutput', false, false, true)"
+        ));
+        // Idempotent: guarded by a pg_replication_slots probe.
+        assert!(
+            sql.contains("IF NOT EXISTS (SELECT FROM pg_replication_slots WHERE slot_name = 'wamn_cdc_acme__billing__dev')")
+        );
+    }
+
+    #[test]
+    fn replication_grants_cover_connect_usage_and_current_tables() {
+        let sql = grant_replication_access_sql("wamn-db-acme--billing--dev", "wamn_cdc_x", "app");
+        assert!(sql.contains(
+            "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_cdc_x\""
+        ));
+        assert!(sql.contains("GRANT USAGE ON SCHEMA \"app\" TO \"wamn_cdc_x\""));
+        assert!(sql.contains("GRANT SELECT ON ALL TABLES IN SCHEMA \"app\" TO \"wamn_cdc_x\""));
+    }
+
+    #[test]
+    fn cdc_teardown_builders_are_guarded() {
+        assert_eq!(
+            drop_publication_sql("wamn_cdc_x"),
+            "DROP PUBLICATION IF EXISTS \"wamn_cdc_x\""
+        );
+        let drop_slot = drop_replication_slot_sql("wamn_cdc_x");
+        assert!(drop_slot.contains("pg_drop_replication_slot('wamn_cdc_x')"));
+        assert!(drop_slot.contains("IF EXISTS"));
     }
 
     #[test]

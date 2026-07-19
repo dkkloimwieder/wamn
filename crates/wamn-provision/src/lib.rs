@@ -62,10 +62,11 @@ pub use dump::{
 };
 pub use error::ProvisionError;
 pub use name::{
-    APP_ROLE, DB_PREFIX, MAX_DB_NAME_LEN, MAX_PROJECT_ID_LEN, compose_url, database_name,
+    APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, MAX_DB_NAME_LEN, MAX_PROJECT_ID_LEN,
+    cdc_object_name, compose_url, database_name, event_stream_name, project_env_cdc_secret_name,
     project_env_database_name, project_env_secret_name, secret_name, validate_project_env,
-    validate_project_id,
+    validate_project_env_cdc, validate_project_id,
 };
 pub use org::{OrgClusters, render_org_cluster_set};
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
-pub use secret::render_project_env_secret_manifest;
+pub use secret::{render_project_env_cdc_secret_manifest, render_project_env_secret_manifest};

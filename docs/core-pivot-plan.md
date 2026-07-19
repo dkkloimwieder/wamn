@@ -110,9 +110,13 @@ modes). **No new work lands on the outbox path**; deletion executes at
   2026-07-18 — fork branch `wamn/0.8.0` pinned, ledger
   `docs/pg-walstream-fork.md`; ~~`l5i9.7` EVT-NATS~~ done 2026-07-18 — the
   data-plane NATS is stood up (3-node R3 JetStream, `deploy/nats-jetstream.yaml`,
-  streambench gate) and left standing; unblocks `l5i9.15` [C-JS]; `l5i9.9` ready
-  (`l5i9.4` done 2026-07-18)). After `.7`: `l5i9.15` [C-JS] + `l5i9.9`
-  [EVT-PROVISION] ready. Next pick is the owner's.
+  streambench gate) and left standing; unblocks `l5i9.15` [C-JS];
+  ~~`l5i9.9` EVT-PROVISION~~ **done 2026-07-18** — the `enable-cdc-project-env`
+  overlay: publication + failover slot + replication role/Secret (R8b tier) +
+  `registry.event_readers` registration, proven live on wamn-pg
+  (`docs/provisioning.md`); unblocks `l5i9.10` [reader MVP]; the cluster-level
+  logical-decoding knobs are a filed sibling bead). Next after `.9`:
+  `l5i9.10` [EVT-READER] + `l5i9.15` [C-JS] ready. Next pick is the owner's.
 - Measurement already banked (pre-decision, still load-bearing): ~~C7/C-QUEUE~~
   (`wamn-z7b.1`, `docs/ceilings.md` — untuned knee ~2000–2500 transitions/sec) +
   ~~C2 outbox-trigger overhead~~ (`wamn-z7b.2`, `docs/ceilings.md` § C2 — now a

@@ -237,7 +237,14 @@ table set (invariant 3) is exactly what they hold:
   IMMEDIATE`; the `env_policies` org-CASCADE FK is added *after* `project_envs`
   so a plain single-statement org `DELETE` tears a whole org down cleanly
   (RI-trigger creation order — the ordering note in the DDL). FK integrity +
-  the composite keys mirror `validate()`.
+  the composite keys mirror `validate()`. `event_readers` (wamn-l5i9.9, D19
+  v3) is the CDC capture registration — one row per CDC-enabled project-env
+  (PK the triple, FK → `project_envs` ON DELETE CASCADE): `publication`,
+  `slot`, `stream` (`EVT_<org>_<env>` by default), and the
+  replication-credential Secret **reference**
+  (`replication_secret_name`/`_namespace` — invariant 2; the replication
+  credential is its own tier above `wamn_app`). The reader service (l5i9.10)
+  deserializes its row (`EventReader` in `wamn-registry`).
 - **`provisioning`** — `sagas`: a **minimal** exactly-once / resumable saga-state
   table (consumed by `.6` provision-org / `.7`, and by the unified copy's
   `copy` kind — wamn-8df.5's `Quiesce → … → Cutover` pipeline records each step

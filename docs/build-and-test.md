@@ -641,6 +641,56 @@ fails). The data-plane NATS is left STANDING as the Phase-1 substrate (the
 reader wamn-l5i9.10 + C-JS wamn-l5i9.15 consume it); reclaim with
 `kubectl -n wamn-system delete -f deploy/nats-jetstream.yaml`.
 
+### [EVT-PROVISION / wamn-l5i9.9] enable-cdc-project-env — publication + failover slot + reader registration
+
+Docs: docs/event-plane-jetstream.md §4, docs/provisioning.md
+§enable-cdc-project-env. The CDC capture overlay on a provisioned project-env:
+one shared `wamn_cdc_<org>__<project>__<env>` name for the publication
+(`FOR TABLES IN SCHEMA <data schema>` — auto-includes tables catalog-publish
+creates later), the failover-enabled slot (SQL-function form,
+`pg_create_logical_replication_slot(…, failover => true)`; WAL pinned from
+enable), and the REPLICATION role (R8b tier; own Secret
+`wamn-cdc-<org>--<project>--<env>`), plus the `registry.event_readers`
+registration (FK → `project_envs`, so an unprovisioned env is refused).
+
+```bash
+cargo test -p wamn-provision            # name/builder/secret units incl the CDC set
+cargo test -p wamn-registry             # event-reader builder shapes + EventReader round-trip
+cargo test -p wamn-host enable_cdc      # bundle ordering + name validation
+cargo clippy -p wamn-provision -p wamn-registry -p wamn-host
+# Live-apply gates (throwaway PG18 with logical decoding ON):
+docker run -d --name wamn-cdc-pg -e POSTGRES_PASSWORD=postgres -p 5447:5432 \
+  postgres:18 -c wal_level=logical
+WAMN_CDC_PG_URL=postgres://postgres:postgres@127.0.0.1:5447/postgres \
+  cargo test -p wamn-provision --test cdc          # publication/slot/role/grants live
+WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5447/postgres \
+  cargo test -p wamn-registry --test storage       # incl event_readers upsert/read/FK/cascade
+docker rm -f wamn-cdc-pg
+# In-cluster gate of record (no docker rebuild — the real debug subcommand +
+# kubectl; scratchpad incluster_l5i9_9.sh is the scripted run): register a
+# trials org + project-env on wamn-pg (q3n.7 runbook), then:
+./target/debug/wamn-host enable-cdc-project-env --org <o> --project <p> --env <e> \
+  --schema app --system-database-url "$WAMN_SYSTEM_ADMIN_URL" \
+  --emit-role-sql role.sql --emit-cdc-sql cdc.sql --emit-secret secret.json
+#   apply order: role.sql → the TARGET cluster (any DB; roles are cluster-global),
+#   cdc.sql → the PROJECT-ENV database (publication + slot are database-bound),
+#   kubectl apply secret.json. Assert pg_publication (+ auto-include after a
+#   CREATE TABLE in the schema), pg_replication_slots.failover=true,
+#   pg_roles.rolreplication, and the registry.event_readers read-back; teardown
+#   drops the slot FIRST (releases pinned WAL — wamn-pg has no
+#   max_slot_wal_keep_size bound), then CR/db/role + the org row (cascade).
+# kubectl port-forward dies per-connection on this kind cluster — use the
+# temporary NodePort-on-the-primary recipe (8df.5) for the host↔wamn-sysdb TCP.
+```
+
+Mutation harness: scratchpad `mutate_l5i9_9.py` — M1 slot `failover` true→false,
+M2 role loses `REPLICATION`, M3 publication `FOR ALL TABLES`, M4 event-reader
+upsert never refreshes; each killed by a named unit AND the live gate (the gate
+drops the role in its preamble so a leftover healthy role can't mask a mutated
+builder). Cluster-level preconditions (`wal_level=logical` is the CNPG default;
+`synchronizeLogicalDecoding` / `max_slot_wal_keep_size` are provision-org
+env-policy knobs) are a SIBLING bead, not this overlay.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

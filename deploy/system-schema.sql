@@ -226,6 +226,39 @@ ALTER TABLE registry.env_policies
     FOREIGN KEY (org) REFERENCES registry.orgs (id) ON DELETE CASCADE;
 
 -- ---------------------------------------------------------------------------
+-- Event readers — the CDC capture registrations (D19 v3, wamn-l5i9.9). One row
+-- per project-env with CDC enabled: the publication + failover replication slot
+-- the reader streams from (the `wamn_cdc_…` Postgres objects the
+-- enable-cdc-project-env overlay provisions), the JetStream stream envelopes
+-- land in (`EVT_<org>_<env>` by default), and a REFERENCE to the reader's
+-- replication-credential Secret (`wamn-cdc-<org>--<project>--<env>`).
+--
+-- INVARIANT 2 (no credentials, R8b): `replication_secret_name` (+ optional
+-- namespace) is a reference only — the replication credential is its own tier
+-- ABOVE the wamn_app query credential, and its material lives in a K8s Secret,
+-- never here. Keyed by the identity triple; FK to the project-env it captures
+-- (the provisioning.dumps precedent), so a de-provisioned env (or a deleted
+-- org, cascading through project_envs) drops its registration. The reader
+-- service (l5i9.10) reads its row to learn what to stream.
+-- ---------------------------------------------------------------------------
+CREATE TABLE registry.event_readers (
+    org                          text NOT NULL,
+    project                      text NOT NULL,
+    env                          text NOT NULL,
+    publication                  text NOT NULL,
+    slot                         text NOT NULL,
+    stream                       text NOT NULL,
+    replication_secret_name      text NOT NULL,
+    replication_secret_namespace text,
+    enabled                      boolean NOT NULL DEFAULT true,
+    created_at                   timestamptz NOT NULL DEFAULT now(),
+    updated_at                   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org, project, env),
+    FOREIGN KEY (org, project, env)
+        REFERENCES registry.project_envs (org, project, env) ON DELETE CASCADE
+);
+
+-- ---------------------------------------------------------------------------
 -- Provisioning sagas — minimal exactly-once / resumable state for the
 -- provisioning orchestrator (10.1; consumed by .6 provision-org / .7
 -- provision-project-env). One row per saga run.

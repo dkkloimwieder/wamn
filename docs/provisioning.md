@@ -385,6 +385,70 @@ routes an added `canary` policy by its recovery domain). Teardown deletes **only
 the new `Database` CR + registry rows, then drops the created database (the
 `retain` policy leaves it) — never `wamn-pg` / `postgres.yaml` / `wamn-sysdb`.
 
+## `wamn-host enable-cdc-project-env` (wamn-l5i9.9, D19 v3)
+
+Overlay **CDC capture** onto an already-provisioned project-env
+(docs/event-plane-jetstream.md §4). CDC is opt-in and may be enabled long after
+provisioning, so it is its own overlay subcommand, not a `provision-project-env`
+flag. Renders + records (the house shape — no K8s client, no target-cluster
+connection); the runbook applies the artifacts.
+
+What one enable provisions, all under a single shared name
+`wamn_cdc_<org>__<project>__<env>` (underscored — a replication **slot** name
+admits only `[a-z0-9_]`):
+
+- the **publication** `FOR TABLES IN SCHEMA <data schema>` — auto-includes
+  tables catalog-publish creates later (and `domain_events` once it exists), so
+  the eager `CREATE SCHEMA IF NOT EXISTS` guard makes the SQL order-robust;
+- the **failover-enabled slot** via the SQL-function form
+  (`pg_create_logical_replication_slot(…, failover => true)`, PG17+) — a normal
+  connection, no replication-protocol syntax; the reader's
+  `ensure_replication_slot` tolerates it (same pgoutput/no-two-phase/failover
+  shape). WAL is pinned from enable (capture starts here), bounded by the
+  cluster's `max_slot_wal_keep_size`;
+- the **replication role** (`REPLICATION LOGIN`, otherwise least-privilege) +
+  its own credential Secret `wamn-cdc-<org>--<project>--<env>` — the R8b tier
+  ABOVE the `wamn_app` query credential and the dispatch role. **Caveat:**
+  Postgres `REPLICATION` is cluster-wide (any replication role can read any
+  database's WAL on that cluster); on the shared trials pool, input-side
+  isolation rests on handing each reader only its own
+  slot/publication/credentials (+ per-org NATS accounts on the output side) —
+  regulated tiers use dedicated clusters;
+- the **reader registration** in `registry.event_readers` (publication, slot,
+  stream — `EVT_<org>_<env>` by default, `--stream` overrides — and the
+  replication-Secret *reference*; invariant 2). Its FK to
+  `registry.project_envs` makes the overlay ordering structural: an
+  unprovisioned env is refused with a provision-first hint.
+
+| flag | meaning |
+| --- | --- |
+| `--org` / `--project` / `--env` | the identity triple (must be provisioned) |
+| `--schema` | the app DATA schema the publication covers (default `public`; the `--schema` catalog-publish uses, NOT `app_system`) |
+| `--system-database-url` | T1 superuser URL (`WAMN_SYSTEM_ADMIN_URL`): derive the cluster + record the registration |
+| `--cluster` | override the derived cluster (required in render-only mode) |
+| `--replication-password` / `--db-host` / `--db-port` | the replication-role credential/endpoint in the emitted URL |
+| `--stream` | override the recorded JetStream stream (default `EVT_<org>_<env>`) |
+| `--emit-role-sql` / `--emit-cdc-sql` / `--emit-secret` | the three artifacts |
+
+Apply order: **role SQL** → the target cluster's superuser (any database —
+roles are cluster-global); **CDC SQL** → connected to the **project-env
+database** (publications and logical slots are database-bound); **Secret** →
+`kubectl apply`. Every statement is idempotent — re-running an enable is a
+no-op (a customized `--stream` re-enable refreshes the registration row).
+Re-pointing an existing publication at a different schema is a manual
+`ALTER PUBLICATION … SET TABLES IN SCHEMA`.
+
+Cluster-level **preconditions** are provision-org / env-policy concerns, not
+this overlay: `wal_level=logical` (the CNPG default), and — for slot continuity
+across switchover on HA clusters — `replicationSlots.highAvailability.
+synchronizeLogicalDecoding` + `sync_replication_slots` / `hot_standby_feedback`
++ a `max_slot_wal_keep_size` bound (the §11 sharp edge: a slot pins WAL until
+dropped). Tracked as a sibling bead under the event-plane epic.
+
+Teardown (gate/de-provision): drop the **slot first** (releases the pinned
+WAL), then publication/database/role, then delete the registration (or the org
+row — `event_readers` cascades through `project_envs`).
+
 ## `provisionbench` — the four-tier extension (wamn-q3n.8)
 
 `provisionbench` gains `--mode` (the pgbench / queuebench precedent):

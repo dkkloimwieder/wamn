@@ -30,6 +30,20 @@ pub const MAX_PROJECT_ID_LEN: usize = 40;
 /// full triple, so the assembled length is validated (see [`validate_project_env`]).
 pub const MAX_DB_NAME_LEN: usize = 63;
 
+/// Prefix for the per-project-env CDC **credential Secret**:
+/// `wamn-cdc-<org>--<project>--<env>` (wamn-l5i9.9, D19 v3) — the hyphenated K8s
+/// convention, a sibling of the `wamn-db-…` query-credential Secret and the
+/// registration's `replication_secret_name` reference.
+pub const CDC_SECRET_PREFIX: &str = "wamn-cdc-";
+
+/// Prefix for the per-project-env CDC **Postgres objects** — the publication,
+/// the failover replication slot, and the replication role share one name:
+/// `wamn_cdc_<org>__<project>__<env>` with slug hyphens mapped to `_`.
+/// Underscored because a replication **slot** name admits only `[a-z0-9_]`
+/// (slots are not identifiers and cannot be quoted); the publication and role
+/// reuse it so the whole CDC surface carries one name.
+pub const CDC_OBJECT_PREFIX: &str = "wamn_cdc_";
+
 /// Validate a project id: a non-empty lowercase slug `[a-z0-9-]`, starting and
 /// ending alphanumeric, at most [`MAX_PROJECT_ID_LEN`] bytes, and not under the
 /// reserved `wamn` prefix.
@@ -114,6 +128,60 @@ pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
 pub fn validate_project_env(org: &str, project: &str, env: &str) -> Result<(), ProvisionError> {
     validate_project_id(project)?;
     let name = project_env_database_name(org, project, env);
+    if name.len() > MAX_DB_NAME_LEN {
+        return Err(ProvisionError::NameTooLong {
+            name,
+            max: MAX_DB_NAME_LEN,
+        });
+    }
+    Ok(())
+}
+
+/// The per-project-env CDC credential Secret name:
+/// `wamn-cdc-<org>--<project>--<env>` (wamn-l5i9.9). Distinct from the
+/// `wamn-db-…` query-credential Secret — the replication credential is a
+/// separate, higher-privilege tier (R8b), so a leaked query credential never
+/// implies the WAL and vice versa.
+pub fn project_env_cdc_secret_name(org: &str, project: &str, env: &str) -> String {
+    format!("{CDC_SECRET_PREFIX}{org}--{project}--{env}")
+}
+
+/// The shared name of the per-project-env CDC Postgres objects — publication,
+/// failover replication slot, and replication role:
+/// `wamn_cdc_<org>__<project>__<env>`, slug hyphens mapped to `_` and `__` as
+/// the separator (a slot name admits only `[a-z0-9_]`). Since slugs cannot
+/// contain `_`, the mapping keeps distinct triples distinct except for the same
+/// consecutive-hyphen ambiguity the `--` database-name separator already
+/// carries; identity always travels in the registration row / Secret labels,
+/// never parsed back out of a name. Validate the assembled length with
+/// [`validate_project_env_cdc`] before use.
+pub fn cdc_object_name(org: &str, project: &str, env: &str) -> String {
+    let flat = |s: &str| s.replace('-', "_");
+    format!(
+        "{CDC_OBJECT_PREFIX}{}__{}__{}",
+        flat(org),
+        flat(project),
+        flat(env)
+    )
+}
+
+/// The JetStream stream a project-env's CDC envelopes land in:
+/// `EVT_<org>_<env>` (D19 v3 §5; the streambench-proven contract). Recorded in
+/// the reader registration — the row is the source the reader publishes by, so
+/// a policy refinement (e.g. a shared trials stream) is a data change, not a
+/// rename.
+pub fn event_stream_name(org: &str, env: &str) -> String {
+    format!("EVT_{org}_{env}")
+}
+
+/// Validate that a `(org, project, env)` yields safe CDC names: the base
+/// project-env validation ([`validate_project_env`]) plus the assembled
+/// `wamn_cdc_…` object name — one byte per component longer than the database
+/// name — fitting Postgres's 63-byte limit (a slot/publication/role name; the
+/// like-sized `wamn-cdc-…` Secret name is comfortably within the K8s bound).
+pub fn validate_project_env_cdc(org: &str, project: &str, env: &str) -> Result<(), ProvisionError> {
+    validate_project_env(org, project, env)?;
+    let name = cdc_object_name(org, project, env);
     if name.len() > MAX_DB_NAME_LEN {
         return Err(ProvisionError::NameTooLong {
             name,
@@ -292,6 +360,61 @@ mod tests {
         assert!(matches!(err, ProvisionError::NameTooLong { max: 63, .. }));
         // A comfortably-sized triple is fine.
         assert!(validate_project_env(&"o".repeat(20), &"p".repeat(20), "prod").is_ok());
+    }
+
+    #[test]
+    fn cdc_names_encode_the_triple_in_both_domains() {
+        // The Secret keeps the hyphenated K8s convention…
+        assert_eq!(
+            project_env_cdc_secret_name("acme", "billing", "dev"),
+            "wamn-cdc-acme--billing--dev"
+        );
+        // …while the Postgres objects (slot charset `[a-z0-9_]`) are underscored,
+        // slug hyphens mapped to `_`, `__` as the separator.
+        assert_eq!(
+            cdc_object_name("acme", "billing", "dev"),
+            "wamn_cdc_acme__billing__dev"
+        );
+        assert_eq!(
+            cdc_object_name("org-a", "demo", "dev"),
+            "wamn_cdc_org_a__demo__dev"
+        );
+        // A hyphen inside a slug maps to a SINGLE `_`, the separator is DOUBLE —
+        // ("org-a","demo") and ("org","a-demo") stay distinct.
+        assert_ne!(
+            cdc_object_name("org-a", "demo", "dev"),
+            cdc_object_name("org", "a-demo", "dev")
+        );
+        // The stream name follows the D19 v3 contract.
+        assert_eq!(event_stream_name("acme", "prod"), "EVT_acme_prod");
+        assert_eq!(event_stream_name("org-a", "dev"), "EVT_org-a_dev");
+    }
+
+    #[test]
+    fn validate_project_env_cdc_bounds_the_object_name() {
+        assert!(validate_project_env_cdc("acme", "billing", "prod").is_ok());
+        // The base project-env validation still applies (slug + reserved rules).
+        assert!(matches!(
+            validate_project_env_cdc("acme", "Bad", "dev"),
+            Err(ProvisionError::InvalidProjectId { .. })
+        ));
+        // The CDC object name is one byte per component longer than the db name
+        // ("wamn_cdc_" = 9 vs "wamn-db-" = 8): a triple whose db name is exactly
+        // at the 63-byte limit overflows the CDC name and is rejected.
+        let org = "o".repeat(25);
+        let project = "p".repeat(22);
+        assert_eq!(
+            project_env_database_name(&org, &project, "prod").len(),
+            MAX_DB_NAME_LEN
+        );
+        assert!(validate_project_env(&org, &project, "prod").is_ok());
+        assert!(matches!(
+            validate_project_env_cdc(&org, &project, "prod"),
+            Err(ProvisionError::NameTooLong { max: 63, .. })
+        ));
+        // One byte shorter fits both.
+        let org_ok = "o".repeat(24);
+        assert!(validate_project_env_cdc(&org_ok, &project, "prod").is_ok());
     }
 
     #[test]

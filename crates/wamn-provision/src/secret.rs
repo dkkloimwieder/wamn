@@ -15,7 +15,9 @@
 use serde_json::{Value, json};
 use wamn_registry::Triple;
 
-use crate::name::{APP_ROLE, project_env_secret_name, secret_name};
+use crate::name::{
+    APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_secret_name, secret_name,
+};
 
 /// The `WAMN_PG_PROJECTS_FILE` entry for one project: `{ "url": <url> }`.
 /// Policy knobs (`row_limit`, timeouts) are optional and default from the
@@ -88,6 +90,43 @@ pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url:
     })
 }
 
+/// Render the per-project-env **CDC** credential `Secret` (wamn-l5i9.9). Name
+/// `wamn-cdc-<org>--<project>--<env>` — the reference the reader registration
+/// records as `replication_secret_name`, DISTINCT from the `wamn-db-…` query
+/// Secret (the replication credential is its own R8b tier). `stringData.url` is
+/// the replication-role connection URL to the project-env database (a plain
+/// libpq URL; the reader appends its own connection parameters, e.g.
+/// `replication=database`, when it opens the walsender session — l5i9.10).
+pub fn render_project_env_cdc_secret_manifest(
+    triple: &Triple,
+    namespace: &str,
+    url: &str,
+) -> Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": project_env_cdc_secret_name(&triple.org, &triple.project, triple.env.as_str()),
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/managed-by": "wamn",
+                "app.kubernetes.io/component": "project-env-cdc-credentials",
+                "wamn.org": triple.org,
+                "wamn.project": triple.project,
+                "wamn.env": triple.env.as_str(),
+            },
+        },
+        "type": "Opaque",
+        "stringData": {
+            "url": url,
+            "org": triple.org,
+            "project": triple.project,
+            "env": triple.env.as_str(),
+            "role": cdc_object_name(&triple.org, &triple.project, triple.env.as_str()),
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +171,30 @@ mod tests {
         assert_eq!(s["stringData"]["project"], "billing");
         assert_eq!(s["stringData"]["env"], "dev");
         assert_eq!(s["stringData"]["role"], "wamn_app");
+    }
+
+    #[test]
+    fn cdc_secret_is_a_distinct_replication_tier_reference() {
+        let t = Triple::new("acme", "billing", "dev");
+        let url =
+            "postgres://wamn_cdc_acme__billing__dev:pw@acme-dev-rw:5432/wamn-db-acme--billing--dev";
+        let s = render_project_env_cdc_secret_manifest(&t, "wamn-system", url);
+        assert_eq!(s["kind"], "Secret");
+        // The CDC Secret name is the wamn-cdc-… sibling — NEVER the wamn-db-…
+        // query Secret (a distinct R8b credential tier, one lookup key each).
+        assert_eq!(s["metadata"]["name"], "wamn-cdc-acme--billing--dev");
+        assert_ne!(
+            s["metadata"]["name"],
+            render_project_env_secret_manifest(&t, "wamn-system", url)["metadata"]["name"]
+        );
+        assert_eq!(
+            s["metadata"]["labels"]["app.kubernetes.io/component"],
+            "project-env-cdc-credentials"
+        );
+        assert_eq!(s["metadata"]["labels"]["wamn.org"], "acme");
+        assert_eq!(s["metadata"]["labels"]["wamn.env"], "dev");
+        assert_eq!(s["stringData"]["url"], url);
+        // The role recorded is the underscored replication role, not wamn_app.
+        assert_eq!(s["stringData"]["role"], "wamn_cdc_acme__billing__dev");
     }
 }

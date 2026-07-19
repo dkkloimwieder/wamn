@@ -12,6 +12,7 @@
 pub mod copy_project_env;
 pub mod dispatch;
 pub mod dump_project_env;
+pub mod enable_cdc_project_env;
 pub mod engine;
 mod env_policies;
 pub mod host;

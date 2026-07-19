@@ -208,8 +208,13 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
 /// Read the org's placement + the env's policy from the registry and **derive**
 /// the target cluster via [`cluster_of`] (D18): a pooled org collapses onto its
 /// pool; a dedicated org owns `<org>-<owner(env)>`. Connects as the `wamn_system`
-/// owner (`SET ROLE`).
-async fn resolve_cluster(system_url: &str, org: &str, env: &str) -> anyhow::Result<String> {
+/// owner (`SET ROLE`). Shared with the `enable-cdc-project-env` overlay
+/// (wamn-l5i9.9), which targets the same derived cluster.
+pub(crate) async fn resolve_cluster(
+    system_url: &str,
+    org: &str,
+    env: &str,
+) -> anyhow::Result<String> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect")?;

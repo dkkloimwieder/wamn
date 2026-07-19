@@ -64,6 +64,14 @@ mechanical row changes ride one pipeline, distinguished by subject.
   app schema (+ `domain_events`); **failover-enabled slot** (PG18/CNPG — slot
   continuity across switchover is a Phase-1 drill, not an assumption); reader
   registration in the system registry.
+  *Shipped (wamn-l5i9.9, 2026-07-18) as the `enable-cdc-project-env` overlay:
+  one `wamn_cdc_<org>__<project>__<env>` name for publication (`FOR TABLES IN
+  SCHEMA`, auto-includes `domain_events` once it exists) + failover slot
+  (SQL-function form, WAL pinned from enable) + REPLICATION role with its own
+  `wamn-cdc-…` Secret (the R8b tier named below); `registry.event_readers`
+  holds the registration (docs/provisioning.md). Cluster-level knobs
+  (`synchronizeLogicalDecoding`, `max_slot_wal_keep_size`) are a provision-org
+  sibling bead.*
 - **Reader:** dispatcher-family **native** service (posture-doc exception row:
   holds *replication* credentials — a privilege tier above query creds; name it
   in the R8b role scoping). One pg_walstream session per project-env; slot
@@ -177,6 +185,10 @@ plugin + reader stitching; claim-check path.
 *Data-plane NATS shipped (wamn-l5i9.7, 2026-07-18): deploy/nats-jetstream.yaml
 (3-node R3 JetStream), `streambench` in-cluster gate of record — the substrate
 the reader (l5i9.10) publishes onto and C-JS (l5i9.15) benches; left standing.*
+*Capture provisioning shipped (wamn-l5i9.9, 2026-07-18): the
+`enable-cdc-project-env` overlay — publication + failover slot + replication
+role/Secret + `registry.event_readers` registration (§4); proven live on the
+wamn-pg pool. The reader MVP (l5i9.10) consumes the registration.*
 **Benches:** C-CDC (decode drain rate after bulk import; slot-lag knee vs
 sustained write rate; WAL delta under FULL identity per table class;
 switchover drill timed), C-JS (JetStream bare ceilings: publish/deliver/

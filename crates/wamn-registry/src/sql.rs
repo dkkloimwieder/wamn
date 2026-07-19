@@ -114,6 +114,48 @@ pub fn upsert_project_env_sql() -> &'static str {
        secret_namespace = EXCLUDED.secret_namespace"
 }
 
+// --- event readers (wamn-l5i9.9, D19 v3) ------------------------------------
+//
+// The `registry.event_readers` row an `enable-cdc-project-env` overlay records:
+// which publication + failover slot a project-env's CDC reader streams from,
+// which JetStream stream it publishes into, and the REFERENCE to its
+// replication-credential Secret (invariant 2 — never the material). Keyed by
+// the (org, project, env) triple, FK'd to the provisioned project-env (the
+// `provisioning.dumps` precedent), so a de-provisioned env drops its
+// registration. The reader service (l5i9.10) reads its row to learn what to
+// stream. Columns drift-guarded against the storage DDL.
+
+/// Upsert a project-env's CDC reader registration (idempotent + refreshing —
+/// re-enabling refreshes the names/stream/Secret reference and re-arms
+/// `enabled`). Params: `$1` org, `$2` project, `$3` env, `$4` publication, `$5`
+/// slot, `$6` stream, `$7` replication_secret_name, `$8`
+/// replication_secret_namespace (nullable), `$9` enabled.
+pub fn upsert_event_reader_sql() -> &'static str {
+    "INSERT INTO registry.event_readers \
+       (org, project, env, publication, slot, stream, \
+        replication_secret_name, replication_secret_namespace, enabled) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+     ON CONFLICT (org, project, env) DO UPDATE SET \
+       publication = EXCLUDED.publication, \
+       slot = EXCLUDED.slot, \
+       stream = EXCLUDED.stream, \
+       replication_secret_name = EXCLUDED.replication_secret_name, \
+       replication_secret_namespace = EXCLUDED.replication_secret_namespace, \
+       enabled = EXCLUDED.enabled, \
+       updated_at = now()"
+}
+
+/// Read one project-env's CDC reader registration — what the reader service
+/// (l5i9.10) streams by. Params: `$1` org, `$2` project, `$3` env. Columns:
+/// `publication, slot, stream, replication_secret_name,
+/// replication_secret_namespace, enabled`.
+pub fn select_event_reader_sql() -> &'static str {
+    "SELECT publication, slot, stream, \
+            replication_secret_name, replication_secret_namespace, enabled \
+     FROM registry.event_readers \
+     WHERE org = $1 AND project = $2 AND env = $3"
+}
+
 // --- provisioning sagas (wamn-q3n.8) ---------------------------------------
 //
 // The exactly-once / resumable state the provisioning orchestrator (10.1) drives
@@ -353,6 +395,49 @@ mod tests {
         // Idempotent + additive: refreshes the Secret reference on the triple PK.
         assert!(sql.contains("ON CONFLICT (org, project, env) DO UPDATE"));
         assert!(sql.contains("secret_name = EXCLUDED.secret_name"));
+    }
+
+    #[test]
+    fn upsert_event_reader_targets_the_registration_columns_and_upserts() {
+        let sql = upsert_event_reader_sql();
+        assert!(sql.contains("INSERT INTO registry.event_readers"));
+        for col in [
+            "org",
+            "project",
+            "env",
+            "publication",
+            "slot",
+            "stream",
+            "replication_secret_name",
+            "replication_secret_namespace",
+            "enabled",
+        ] {
+            assert!(sql.contains(col), "missing column {col}");
+        }
+        // Values are $n params (never interpolated) — nine.
+        assert!(sql.contains("VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"));
+        // Idempotent + refreshing on the triple PK: re-enabling refreshes the
+        // names/stream/Secret reference (a DO NOTHING would strand a stale row).
+        assert!(sql.contains("ON CONFLICT (org, project, env) DO UPDATE"));
+        assert!(sql.contains("slot = EXCLUDED.slot"));
+        assert!(sql.contains("replication_secret_name = EXCLUDED.replication_secret_name"));
+    }
+
+    #[test]
+    fn select_event_reader_reads_one_registration_by_triple() {
+        let sql = select_event_reader_sql();
+        assert!(sql.contains("FROM registry.event_readers"));
+        for col in [
+            "publication",
+            "slot",
+            "stream",
+            "replication_secret_name",
+            "enabled",
+        ] {
+            assert!(sql.contains(col), "missing column {col}");
+        }
+        // Keyed by the triple as $n params (never interpolated).
+        assert!(sql.contains("WHERE org = $1 AND project = $2 AND env = $3"));
     }
 
     #[test]

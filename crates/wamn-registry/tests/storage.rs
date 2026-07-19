@@ -287,6 +287,53 @@ fn dumps_table_and_record_builder_match_the_columns() {
     }
 }
 
+/// The CDC reader-registration builders (`upsert_event_reader_sql` /
+/// `select_event_reader_sql`) must target the `registry.event_readers` columns
+/// the storage DDL declares (wamn-l5i9.9, D19 v3) — and the table must carry the
+/// Secret REFERENCE shape (invariant 2), the triple key, and the project-env
+/// cascade FK (the provisioning.dumps precedent).
+#[test]
+fn event_readers_table_and_builders_match_the_columns() {
+    let sql = code_only(&system_schema_sql());
+
+    assert!(sql.contains("CREATE TABLE registry.event_readers"));
+    let block = sql
+        .split("CREATE TABLE registry.event_readers")
+        .nth(1)
+        .and_then(|rest| rest.split(';').next())
+        .expect("event_readers table body");
+    assert!(
+        block.contains("PRIMARY KEY (org, project, env)"),
+        "event_readers is keyed by the identity triple"
+    );
+    assert!(
+        block.contains("REFERENCES registry.project_envs (org, project, env) ON DELETE CASCADE"),
+        "a de-provisioned project-env must drop its CDC registration"
+    );
+
+    let upsert = wamn_registry::sql::upsert_event_reader_sql();
+    let select = wamn_registry::sql::select_event_reader_sql();
+    for col in [
+        "publication",
+        "slot",
+        "stream",
+        "replication_secret_name",
+        "replication_secret_namespace",
+        "enabled",
+    ] {
+        assert!(block.contains(col), "event_readers table missing {col}");
+        assert!(upsert.contains(col), "upsert builder missing {col}");
+        assert!(select.contains(col), "select builder missing {col}");
+    }
+    // Invariant 2: a REFERENCE, never material — no url/password column.
+    for bad in ["url", "password", "dsn"] {
+        assert!(
+            !block.contains(bad),
+            "event_readers must hold NO credential column (found {bad:?})"
+        );
+    }
+}
+
 /// The D18 placement structural CHECK is pinned by *expression*, not just its
 /// name (the drift-guard lesson: a name-only assertion lets a weakened predicate
 /// slip through). The retired tier/canary CHECKs must be gone.
@@ -595,6 +642,47 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
         advance = wamn_registry::sql::advance_saga_step_sql(),
         select = wamn_registry::sql::select_saga_sql(),
     ));
+    // Exercise the REAL CDC reader-registration builders (wamn-l5i9.9) against
+    // the demo/app/dev project-env provisioned above: upsert twice (the second
+    // refreshes slot/enabled — ON CONFLICT DO UPDATE), read it back via the real
+    // select, reject a registration for an UNPROVISIONED env (the project-env
+    // FK — enable-cdc is an overlay on an already-provisioned env), and prove
+    // the whole-org cascade drops the registration.
+    script.push_str(&format!(
+        "PREPARE uper (text,text,text,text,text,text,text,text,boolean) AS {upsert};\n\
+         PREPARE geter (text,text,text) AS {select};\n\
+         EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev',\
+                      'EVT_demo_dev','wamn-cdc-demo--app--dev',NULL,true);\n\
+         EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev_v2',\
+                      'EVT_demo_dev','wamn-cdc-demo--app--dev',NULL,false);\n\
+         CREATE TEMP TABLE reader_probe AS EXECUTE geter('demo','app','dev');\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM registry.event_readers\n\
+                     WHERE org='demo' AND project='app' AND env='dev')=1,\n\
+             'upsert_event_reader_sql is idempotent — one row after two upserts';\n\
+           ASSERT (SELECT slot FROM reader_probe)='wamn_cdc_demo__app__dev_v2'\n\
+              AND (SELECT enabled FROM reader_probe)=false,\n\
+             'the second upsert refreshed slot + enabled (ON CONFLICT DO UPDATE)';\n\
+           ASSERT (SELECT stream FROM reader_probe)='EVT_demo_dev'\n\
+              AND (SELECT replication_secret_name FROM reader_probe)='wamn-cdc-demo--app--dev',\n\
+             'select_event_reader_sql returns the stream + replication-Secret reference';\n\
+         END $$;\n\
+         DO $$ BEGIN BEGIN\n\
+           INSERT INTO registry.event_readers\n\
+               (org, project, env, publication, slot, stream, replication_secret_name)\n\
+             VALUES ('demo','app','prod','p','s','EVT_demo_prod','sec');\n\
+           ASSERT false, 'a registration for an unprovisioned project-env must be rejected (FK)';\n\
+         EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;\n\
+         DROP TABLE reader_probe;\n\
+         DELETE FROM registry.orgs WHERE id='demo';\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM registry.event_readers WHERE org='demo')=0,\n\
+             'deleting an org cascades its CDC registrations (through project_envs)';\n\
+         END $$;\n\
+         DEALLOCATE uper; DEALLOCATE geter;\n",
+        upsert = wamn_registry::sql::upsert_event_reader_sql(),
+        select = wamn_registry::sql::select_event_reader_sql(),
+    ));
     script.push_str("DROP SCHEMA registry CASCADE;\n");
     script.push_str("DROP SCHEMA provisioning CASCADE;\n");
     script.push_str("RESET ROLE;\n");
@@ -814,13 +902,28 @@ DO $$ DECLARE bad int; BEGIN
     'project_envs must carry the Secret reference (name + optional namespace)';
 END $$;
 
+-- Invariant 2 also covers the CDC registrations (wamn-l5i9.9): event_readers
+-- carries the replication-Secret REFERENCE and NO credential column — the
+-- replication credential is its own tier and never lands in the registry.
+DO $$ DECLARE bad int; BEGIN
+  SELECT count(*) INTO bad FROM information_schema.columns
+    WHERE table_schema='registry' AND table_name='event_readers'
+      AND column_name IN ('password','secret','secret_value','url','dsn',
+                          'credential','credentials','connection_string');
+  ASSERT bad=0, 'event_readers must hold NO credential column (R8b) — references only';
+  ASSERT (SELECT count(*) FROM information_schema.columns
+    WHERE table_schema='registry' AND table_name='event_readers'
+      AND column_name IN ('replication_secret_name','replication_secret_namespace'))=2,
+    'event_readers must carry the replication-Secret reference (name + optional namespace)';
+END $$;
+
 -- Invariant 3 (no tenant data): the ONLY tables in the system DB are the
--- control-plane set (now including env_policies).
+-- control-plane set (now including env_policies + event_readers).
 DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
     INTO tbls FROM information_schema.tables
     WHERE table_schema IN ('registry','provisioning') AND table_type='BASE TABLE';
-  ASSERT tbls = 'provisioning.dumps,provisioning.sagas,registry.env_policies,registry.meta,registry.orgs,registry.project_envs,registry.projects',
+  ASSERT tbls = 'provisioning.dumps,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.projects',
     format('unexpected control-plane table set (invariant 3): %s', tbls);
 END $$;
 
