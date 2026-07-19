@@ -71,6 +71,11 @@ use wamn_run_queue::{
     plan_hold, reconcile_due, write_ahead_triggered_run_sql,
 };
 
+// R16b (wamn-2jkm.20): the dispatcher's pinned session `SET`s interpolate the
+// tenant/schema, so these validators are the injection boundary HERE — and they
+// are the SAME rule the wamn:postgres plugin enforces, held in one owner.
+use crate::identifiers::{valid_schema, valid_tenant};
+
 #[derive(Debug, Args)]
 pub struct DispatchArgs {
     /// JSON projects map the dispatcher serves:
@@ -136,20 +141,6 @@ pub struct ProjectSpec {
     pub tenant: String,
     #[serde(default)]
     pub schema: Option<String>,
-}
-
-/// The claims go into session `SET` literals — hold them to the same charsets
-/// the wamn:postgres plugin enforces, so a config value can't smuggle SQL.
-fn valid_tenant(t: &str) -> bool {
-    !t.is_empty()
-        && t.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-}
-
-fn valid_schema(s: &str) -> bool {
-    let mut bytes = s.bytes();
-    matches!(bytes.next(), Some(b) if b.is_ascii_alphabetic() || b == b'_')
-        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 /// Dial one project: a pinned session with `search_path` + the tenant claim set
@@ -849,7 +840,19 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::TickReport;
+    use super::{TickReport, valid_tenant};
+
+    // R16b (wamn-2jkm.20) — the dispatcher and the wamn:postgres plugin now share
+    // ONE `valid_tenant`. Exercised through the symbol the dispatcher's spec check
+    // actually calls: a 64-char tenant is legal, a 65-char one is rejected. This
+    // FAILS against the pre-R16b dispatch-local rule (which had no length bound,
+    // so it accepted 65 chars while the plugin rejected them) — the exact
+    // divergence this bead closes.
+    #[test]
+    fn dispatcher_and_plugin_agree_on_a_65_char_tenant() {
+        assert!(valid_tenant(&"a".repeat(64)));
+        assert!(!valid_tenant(&"a".repeat(65)));
+    }
 
     /// A completed prune is bookkeeping, not work — it must not keep the
     /// adaptive cadence tight. A SATURATED prune batch (backlog remains) is

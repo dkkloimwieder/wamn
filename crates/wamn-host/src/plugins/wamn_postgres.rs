@@ -55,6 +55,8 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 use wamn_event_wire::Causation;
 
+use crate::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
+
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         world: "postgres-plugin",
@@ -361,53 +363,6 @@ pub struct CheckoutProbe {
     /// `pg_current_xact_id_if_assigned()` — non-NULL means a leaked open
     /// transaction that performed writes.
     pub xact_id: Option<String>,
-}
-
-fn valid_tenant(tenant: &str) -> bool {
-    !tenant.is_empty()
-        && tenant.len() <= 64
-        && tenant
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-/// A project id. Used only as a map key and provider lookup (never embedded in
-/// SQL), so the charset just needs to be a sane, bounded identifier.
-fn valid_project(project: &str) -> bool {
-    !project.is_empty()
-        && project.len() <= 64
-        && project
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-/// A durable-queue lease owner. An identity-format contract: bounded
-/// `[A-Za-z0-9_-]`, no quotes/backslashes. Since R2 this is NO LONGER the
-/// injection boundary — the runner binds as a parameter into [`CLAIM_SQL`], so a
-/// quote/backslash is inert data — but a malformed owner still fails closed.
-fn valid_runner(runner: &str) -> bool {
-    !runner.is_empty()
-        && runner.len() <= 128
-        && runner
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-/// A `search_path` schema name. Stricter than a tenant: no hyphens. Since R2 the
-/// value binds as a parameter into [`CLAIM_SQL`] rather than being spliced into
-/// SQL, so this is an identity-format contract — but the no-hyphen rule still
-/// matters where a schema name is quoted into DDL elsewhere (e.g. the migrate /
-/// copy paths), and a malformed schema still fails closed.
-fn valid_schema(schema: &str) -> bool {
-    !schema.is_empty()
-        && schema.len() <= 63
-        && schema
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && schema
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
@@ -2074,16 +2029,6 @@ mod tests {
             decode_binary_numeric(&enc(0, 0, 0xC000, 0, &[])).unwrap(),
             "NaN"
         );
-    }
-
-    #[test]
-    fn tenant_validation() {
-        assert!(valid_tenant("tenant-a"));
-        assert!(valid_tenant("T_1"));
-        assert!(!valid_tenant(""));
-        assert!(!valid_tenant("bad'tenant"));
-        assert!(!valid_tenant("x".repeat(65).as_str()));
-        assert!(!valid_tenant("a;b"));
     }
 
     #[test]
