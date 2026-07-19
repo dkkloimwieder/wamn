@@ -5,9 +5,12 @@ package wamn:postgres@0.1.0;
 /// - The guest NEVER holds a socket; only resource handles. Connections
 ///   live in the plugin's pool.
 /// - RLS claims (tenant/user/role) are derived from the executing
-///   workload's identity and injected by the plugin via SET LOCAL inside
-///   the plugin-managed transaction. There is deliberately NO way for a
-///   guest to set or override its own claims through this interface.
+///   workload's identity and injected by the plugin as BOUND PARAMETERS of a
+///   single set_config() statement (the SET LOCAL equivalent) inside the
+///   plugin-managed transaction -- there is no string-interpolation path, so an
+///   injection-shaped claim is unrepresentable, not merely validated. There is
+///   deliberately NO way for a guest to set or override its own claims through
+///   this interface.
 /// - Statement timeout and row limits are applied host-side per project
 ///   policy; guests cannot raise them.
 /// - Abnormal instance death destroys the underlying connection (never

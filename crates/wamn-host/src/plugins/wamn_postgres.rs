@@ -7,8 +7,10 @@
 //! - Claims are derived from the executing component's identity
 //!   (`Ctx::component_id` → tenant, registered at workload bind time from
 //!   `localResources.config["wamn.tenant"]` or via [`WamnPostgres::set_tenant`])
-//!   and injected with `SET LOCAL app.tenant` inside the plugin-managed
-//!   transaction. Guest SQL that tries to set or reset a session variable or
+//!   and injected by one fully-bound `set_config(…, is_local => true)` statement
+//!   — the `SET LOCAL` equivalent — inside the plugin-managed transaction; every
+//!   claim value travels as a bind parameter, so no interpolation path exists
+//!   (R2/R16). Guest SQL that tries to set or reset a session variable or
 //!   role in-band (`SET` / `RESET` / `set_config`, e.g. a later
 //!   `SET app.tenant = 'other'` that would override the BEGIN-time claim) is
 //!   rejected on the query/execute/cursor surface (see
@@ -379,9 +381,10 @@ fn valid_project(project: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// A durable-queue lease owner. Embedded in the quoted `SET LOCAL app.runner`
-/// literal (like the tenant claim), so the charset must not escape the quotes:
-/// bounded `[A-Za-z0-9_-]`, no quotes/backslashes.
+/// A durable-queue lease owner. An identity-format contract: bounded
+/// `[A-Za-z0-9_-]`, no quotes/backslashes. Since R2 this is NO LONGER the
+/// injection boundary — the runner binds as a parameter into [`CLAIM_SQL`], so a
+/// quote/backslash is inert data — but a malformed owner still fails closed.
 fn valid_runner(runner: &str) -> bool {
     !runner.is_empty()
         && runner.len() <= 128
@@ -390,9 +393,11 @@ fn valid_runner(runner: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// A `search_path` schema name. Stricter than a tenant: no hyphens, so it is a
-/// bare unquoted SQL identifier that cannot escape the `SET LOCAL search_path`
-/// statement it is embedded in.
+/// A `search_path` schema name. Stricter than a tenant: no hyphens. Since R2 the
+/// value binds as a parameter into [`CLAIM_SQL`] rather than being spliced into
+/// SQL, so this is an identity-format contract — but the no-hyphen rule still
+/// matters where a schema name is quoted into DDL elsewhere (e.g. the migrate /
+/// copy paths), and a malformed schema still fails closed.
 fn valid_schema(schema: &str) -> bool {
     !schema.is_empty()
         && schema.len() <= 63
@@ -476,61 +481,65 @@ fn causation_emit_sql(c: &Causation) -> String {
     format!(" SELECT pg_logical_emit_message(true, 'wamn.causation', '{escaped}');")
 }
 
-/// Build the one-round-trip `BEGIN` + claim-injection batch for a plugin-managed
-/// transaction (extracted from [`WamnPostgres::begin_with_claims`] so the exact
-/// SQL — the load-bearing contract — is unit-testable without a live pool). The
-/// `tenant`/`runner` literals are charset-validated so they cannot escape the
-/// quoted literal; `schema` is a validated bare identifier. When `run` is set, a
-/// TRANSACTIONAL `wamn.causation` emit is appended (l5i9.12.2) so every txn the
-/// plugin opens for a run stamps causation onto the txn's row events.
-fn build_claim_batch(
+/// The fully-bound claim statement run inside the plugin-managed transaction
+/// (R2/R16). Every claim value travels as a bind parameter (`$1..$4`) — there is
+/// NO string-interpolation path, so an injection-shaped tenant / schema / runner
+/// is *unrepresentable* as SQL, not merely rejected by validation. `set_config`
+/// with `is_local => true` is the exact `SET LOCAL` equivalent (scoped to the
+/// current transaction). Parameter order:
+///
+/// - `$1` `app.tenant` — the RLS claim (always present).
+/// - `$2` `statement_timeout` — as TEXT (a bare-integer string = milliseconds).
+/// - `$3` `search_path` — `COALESCE($3, current_setting('search_path'))`, so a
+///   NULL bind (absent schema) preserves the server's default search_path; the
+///   S2/pgbench path is byte-unchanged.
+/// - `$4` `app.runner` — `COALESCE($4, current_setting('app.runner', true))`, so
+///   a NULL bind (absent runner) re-asserts the current value (a no-op), exactly
+///   like the pre-fqg.4 "no `app.runner` statement" path.
+///
+/// The `wamn.causation` emit (l5i9.12.2) is NOT part of this statement — it is a
+/// separate, already-escaped simple-query emit appended by [`begin_with_claims`]
+/// only for a run-owned transaction.
+const CLAIM_SQL: &str = "SELECT \
+     set_config('app.tenant', $1, true), \
+     set_config('statement_timeout', $2, true), \
+     set_config('search_path', COALESCE($3, current_setting('search_path')), true), \
+     set_config('app.runner', COALESCE($4, current_setting('app.runner', true)), true)";
+
+/// Reject a malformed claim identity before it is bound (R16). Since R2 these
+/// validators are NO LONGER the injection boundary — every claim value binds as a
+/// parameter into [`CLAIM_SQL`], so a `'`/`;`/`--` value is inert data — but a
+/// malformed identity still fails closed: they define what a *legal* id is (and
+/// the no-hyphen `valid_schema` rule still matters where a schema name is quoted
+/// into DDL elsewhere).
+fn validate_claims(
     tenant: &str,
     schema: Option<&str>,
     runner: Option<&str>,
-    run: Option<&Causation>,
-    statement_timeout_ms: u32,
-) -> Result<String, PgError> {
-    debug_assert!(valid_tenant(tenant));
+) -> Result<(), PgError> {
     if !valid_tenant(tenant) {
         return Err(PgError::QueryError((
             "WAMN0".to_string(),
             "invalid tenant identity".to_string(),
         )));
     }
-    let mut sql = format!(
-        "BEGIN; SET LOCAL app.tenant = '{tenant}'; SET LOCAL statement_timeout = {statement_timeout_ms};"
-    );
     if let Some(schema) = schema {
-        debug_assert!(valid_schema(schema));
         if !valid_schema(schema) {
             return Err(PgError::QueryError((
                 "WAMN0".to_string(),
                 "invalid search_path schema".to_string(),
             )));
         }
-        sql.push_str(&format!(" SET LOCAL search_path = {schema};"));
     }
     if let Some(runner) = runner {
-        debug_assert!(valid_runner(runner));
         if !valid_runner(runner) {
             return Err(PgError::QueryError((
                 "WAMN0".to_string(),
                 "invalid runner owner".to_string(),
             )));
         }
-        // fqg.4: the durable-queue lease owner a flowrunner replica reads via
-        // `current_setting('app.runner', true)`. Quoted like the tenant;
-        // `valid_runner` guarantees the literal cannot escape.
-        sql.push_str(&format!(" SET LOCAL app.runner = '{runner}';"));
     }
-    if let Some(run) = run {
-        // l5i9.12.2: stamp the run's causation onto this transaction. The
-        // TRANSACTIONAL message rides the commit, so a rolled-back txn emits
-        // nothing and the reader (l5i9.12.1) stitches it onto the txn's row
-        // events. Appended to the same one-round-trip batch as the claims.
-        sql.push_str(&causation_emit_sql(run));
-    }
-    Ok(sql)
+    Ok(())
 }
 
 /// True if `sql`'s first keyword is `SET` (covers `SET LOCAL` / `SET SESSION` /
@@ -884,12 +893,19 @@ impl WamnPostgres {
         Ok((obj, pp))
     }
 
-    /// `BEGIN` + claim/limit injection, one round trip. `tenant` is
-    /// host-derived and validated to a charset that cannot escape the quoted
-    /// literal (no quotes, no backslashes), so literal embedding is safe.
-    /// `schema`, when present, is a validated bare identifier embedded in
-    /// `SET LOCAL search_path` so unqualified names resolve to a host-chosen
-    /// schema (None leaves the server default untouched — the S2/pgbench path).
+    /// `BEGIN` + claim/limit injection. The claims are injected by ONE fully
+    /// bound statement ([`CLAIM_SQL`]) whose every value travels as a bind
+    /// parameter — there is no interpolation path (R2/R16). `tenant` is always
+    /// present; `schema`/`runner` bind NULL when absent (COALESCE-to-current
+    /// preserves the server default / prior value — the S2/pgbench path is
+    /// byte-unchanged). A run-owned transaction also appends the transactional
+    /// `wamn.causation` emit (l5i9.12.2).
+    ///
+    /// Cost: `BEGIN` and the bound claim statement are pipelined (issued without
+    /// an await between them; tokio-postgres preserves FIFO order so `BEGIN`
+    /// opens the txn before the transaction-LOCAL `set_config`s apply), and the
+    /// claim statement is `prepare_cached`, so the steady-state round-trip count
+    /// on a pooled connection matches the pre-R2 single batch.
     async fn begin_with_claims(
         &self,
         conn: &Object,
@@ -899,8 +915,33 @@ impl WamnPostgres {
         run: Option<&Causation>,
         statement_timeout_ms: u32,
     ) -> Result<(), PgError> {
-        let sql = build_claim_batch(tenant, schema, runner, run, statement_timeout_ms)?;
-        conn.batch_execute(&sql).await.map_err(|e| map_pg_error(&e))
+        validate_claims(tenant, schema, runner)?;
+        let stmt = conn
+            .prepare_cached(CLAIM_SQL)
+            .await
+            .map_err(|e| map_pg_error(&e))?;
+        // statement_timeout binds as TEXT (a bare-integer string = ms).
+        let timeout = statement_timeout_ms.to_string();
+        let params: [&(dyn ToSql + Sync); 4] = [&tenant, &timeout, &schema, &runner];
+        // Pipeline BEGIN ahead of the bound claim statement: both requests are
+        // enqueued in `join!` poll order (BEGIN first) and travel in one flight;
+        // tokio-postgres processes them FIFO, so the txn is open before the
+        // transaction-LOCAL `set_config`s run.
+        let (begin, claims) =
+            tokio::join!(conn.batch_execute("BEGIN"), conn.execute(&stmt, &params));
+        begin.map_err(|e| map_pg_error(&e))?;
+        claims.map_err(|e| map_pg_error(&e))?;
+        if let Some(run) = run {
+            // l5i9.12.2: stamp the run's causation onto this txn. The
+            // TRANSACTIONAL emit rides the commit; a rolled-back txn emits
+            // nothing and the reader (l5i9.12.1) stitches it onto the txn's row
+            // events. It carries no bind params, so the already-escaped
+            // simple-query emit is unchanged by R2.
+            conn.batch_execute(&causation_emit_sql(run))
+                .await
+                .map_err(|e| map_pg_error(&e))?;
+        }
+        Ok(())
     }
 
     fn require_tenant(&self, component_id: &str) -> Result<String, PgError> {
@@ -1925,36 +1966,36 @@ mod tests {
         );
     }
 
-    // l5i9.12.2 — the claim batch carries the causation emit IFF a run is set.
-    // Pins the whole one-round-trip string (the load-bearing SQL contract): a
-    // mutation that drops the emit append, or emits when unset, must fail here.
+    // R2/R16 — the claim statement is a FIXED, fully-bound SELECT: every value is
+    // a `$n` bind, there is no interpolation path. Pin its shape so a regression
+    // that reintroduces `SET LOCAL` string-building or drops a claim fails here
+    // (the unit-level twin of the "no `format!` with `SET LOCAL`" grep-gate).
     #[test]
-    fn build_claim_batch_appends_causation_only_when_a_run_is_set() {
-        let run = Causation {
-            run: "run-7".into(),
-            root: "run-7".into(),
-            depth: 0,
-        };
-        let emit = " SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"run-7\",\"root\":\"run-7\",\"depth\":0}');";
-        // No run → the pre-l5i9.12.2 batch, byte-for-byte (non-run paths
-        // unchanged): NO emit.
-        let base = "BEGIN; SET LOCAL app.tenant = 'acme'; SET LOCAL statement_timeout = 5000; SET LOCAL search_path = app; SET LOCAL app.runner = 'owner-1';";
-        assert_eq!(
-            build_claim_batch("acme", Some("app"), Some("owner-1"), None, 5000).unwrap(),
-            base
+    fn claim_sql_is_fully_bound_with_no_interpolation() {
+        assert!(
+            !CLAIM_SQL.to_ascii_uppercase().contains("SET LOCAL"),
+            "CLAIM_SQL must not use SET LOCAL"
         );
-        // With a run → the transactional wamn.causation emit is appended last.
-        assert_eq!(
-            build_claim_batch("acme", Some("app"), Some("owner-1"), Some(&run), 5000).unwrap(),
-            format!("{base}{emit}")
-        );
-        // The minimal (S2/pgbench) path with a run set: still stamped.
-        assert_eq!(
-            build_claim_batch("acme", None, None, Some(&run), 100).unwrap(),
-            format!(
-                "BEGIN; SET LOCAL app.tenant = 'acme'; SET LOCAL statement_timeout = 100;{emit}"
-            )
-        );
+        for frag in [
+            "set_config('app.tenant', $1, true)",
+            "set_config('statement_timeout', $2, true)",
+            "set_config('search_path', COALESCE($3, current_setting('search_path')), true)",
+            "set_config('app.runner', COALESCE($4, current_setting('app.runner', true)), true)",
+        ] {
+            assert!(CLAIM_SQL.contains(frag), "CLAIM_SQL missing {frag:?}");
+        }
+    }
+
+    // R16 — the validators stay as the identity-format contract (demoted from the
+    // injection boundary by R2): a malformed identity fails closed even though
+    // the value would bind as inert data.
+    #[test]
+    fn validate_claims_rejects_malformed_identities() {
+        assert!(validate_claims("acme", Some("public"), Some("owner-1")).is_ok());
+        assert!(validate_claims("acme", None, None).is_ok());
+        assert!(validate_claims("bad'tenant", None, None).is_err());
+        assert!(validate_claims("acme", Some("has-hyphen"), None).is_err());
+        assert!(validate_claims("acme", None, Some("bad;runner")).is_err());
     }
 
     #[test]
@@ -2065,5 +2106,182 @@ mod tests {
         let p = PgParam(SqlValue::Boolean(true));
         p.to_sql(&Type::BOOL, &mut buf).unwrap();
         assert_eq!(&buf[..], b"t");
+    }
+
+    // ------------------------------------------------------------------
+    // Live-PG checks (hermetic; skipped cleanly when no test URL is set).
+    // Set WAMN_PG_TEST_URL (or WAMN_PG_URL / DATABASE_URL) to a throwaway
+    // Postgres. Each test creates + drops its own objects.
+    // ------------------------------------------------------------------
+
+    fn test_pg_url() -> Option<String> {
+        std::env::var("WAMN_PG_TEST_URL")
+            .or_else(|_| std::env::var("WAMN_PG_URL"))
+            .or_else(|_| std::env::var("DATABASE_URL"))
+            .ok()
+    }
+
+    async fn connect_raw(url: &str) -> tokio_postgres::Client {
+        let (client, conn) = tokio_postgres::connect(url, NoTls).await.unwrap();
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        client
+    }
+
+    // R2/R16 — the ACTUAL bound claim statement makes injection-shaped and
+    // unicode values INERT DATA: bound as `$n`, none takes statement-level effect
+    // (a marker table a spliced `DROP`/`DELETE` would destroy survives).
+    // `valid_*` would reject these values, but the point is the BIND is safe
+    // regardless of validation.
+    #[tokio::test]
+    async fn live_bound_claims_are_injection_inert_and_txn_local() {
+        let Some(url) = test_pg_url() else {
+            return;
+        };
+        let client = connect_raw(&url).await;
+        let marker = format!("wave2_marker_{}", std::process::id());
+        client
+            .batch_execute(&format!(
+                "DROP TABLE IF EXISTS public.{marker}; \
+                 CREATE TABLE public.{marker}(id int); \
+                 INSERT INTO public.{marker} VALUES (1);"
+            ))
+            .await
+            .unwrap();
+        let stmt = client.prepare(CLAIM_SQL).await.unwrap();
+        let timeout = "5000";
+
+        // (1) app.tenant / app.runner are free-form custom GUCs: injection-shaped
+        //     + unicode values bind as DATA and round-trip VERBATIM; the absent
+        //     schema ($3 NULL) leaves the server-default search_path untouched.
+        let default_sp: Option<String> = client
+            .query_one("SELECT current_setting('search_path', true)", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let evil_tenant = format!("x'; DROP TABLE public.{marker}; -- 😀Ω");
+        let evil_runner = format!("r'; DELETE FROM public.{marker}; --");
+        let no_schema: Option<&str> = None;
+        client.batch_execute("BEGIN").await.unwrap();
+        let params: [&(dyn ToSql + Sync); 4] = [&evil_tenant, &timeout, &no_schema, &evil_runner];
+        client.execute(&stmt, &params).await.unwrap();
+
+        let got_tenant: Option<String> = client
+            .query_one("SELECT current_setting('app.tenant', true)", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(got_tenant.as_deref(), Some(evil_tenant.as_str()));
+        let got_runner: Option<String> = client
+            .query_one("SELECT current_setting('app.runner', true)", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(got_runner.as_deref(), Some(evil_runner.as_str()));
+        let got_sp: Option<String> = client
+            .query_one("SELECT current_setting('search_path', true)", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(
+            got_sp, default_sp,
+            "absent schema must preserve the default"
+        );
+
+        // marker survived — no spliced statement ran.
+        let n: i64 = client
+            .query_one(&format!("SELECT count(*) FROM public.{marker}"), &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(n, 1);
+        client.batch_execute("COMMIT").await.unwrap();
+
+        // SET LOCAL equivalence: after COMMIT the txn-local claim is gone. Per the
+        // custom-GUC gotcha a touched GUC reverts to '' (NOT NULL) — the value the
+        // RLS floor NULLIFs.
+        let after: Option<String> = client
+            .query_one("SELECT current_setting('app.tenant', true)", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(after.as_deref(), Some(""));
+
+        // (2) The $3 (search_path) bind is a VALUE, not SQL: an injection-shaped
+        //     schema is rejected by search_path's own list-check hook (22023) —
+        //     parsed as data, never executed — and the marker still stands.
+        client.batch_execute("BEGIN").await.unwrap();
+        let evil_schema: Option<&str> = Some("s'; DROP TABLE public.foo; --");
+        let params2: [&(dyn ToSql + Sync); 4] =
+            [&evil_tenant, &timeout, &evil_schema, &evil_runner];
+        let err = client.execute(&stmt, &params2).await.unwrap_err();
+        assert_eq!(
+            err.as_db_error().map(|db| db.code().code()),
+            Some("22023"),
+            "malformed search_path must fail as an invalid VALUE, not execute"
+        );
+        client.batch_execute("ROLLBACK").await.unwrap();
+        let n2: i64 = client
+            .query_one(&format!("SELECT count(*) FROM public.{marker}"), &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(n2, 1);
+
+        client
+            .batch_execute(&format!("DROP TABLE public.{marker}"))
+            .await
+            .unwrap();
+    }
+
+    // R2/R16 — the REAL plugin path: begin_with_claims injects all four claims via
+    // the bound statement, they are visible in-txn, and revert after the txn.
+    #[tokio::test]
+    async fn live_begin_with_claims_sets_all_four_and_reverts() {
+        let Some(url) = test_pg_url() else {
+            return;
+        };
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            database_url: Some(url),
+            pool_max_size: 2,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .unwrap();
+        let (conn, _pp) = pg.checkout(DEFAULT_PROJECT).await.unwrap();
+        pg.begin_with_claims(&conn, "acme", Some("public"), Some("owner-1"), None, 4321)
+            .await
+            .unwrap();
+        let row = conn
+            .query_one(
+                "SELECT current_setting('app.tenant', true), \
+                 current_setting('statement_timeout', true), \
+                 current_setting('search_path', true), \
+                 current_setting('app.runner', true)",
+                &[],
+            )
+            .await
+            .unwrap();
+        let tenant: Option<String> = row.get(0);
+        let timeout: Option<String> = row.get(1);
+        let sp: Option<String> = row.get(2);
+        let runner: Option<String> = row.get(3);
+        assert_eq!(tenant.as_deref(), Some("acme"));
+        assert_eq!(timeout.as_deref(), Some("4321ms"));
+        assert_eq!(sp.as_deref(), Some("public"));
+        assert_eq!(runner.as_deref(), Some("owner-1"));
+
+        // COMMIT (the one_shot success path): a `set_config(is_local => true)`
+        // claim reverts even across a commit — proving it is truly LOCAL, not a
+        // session-level leak.
+        conn.batch_execute("COMMIT").await.unwrap();
+        let after: Option<String> = conn
+            .query_one("SELECT current_setting('app.tenant', true)", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(after.as_deref(), Some(""));
     }
 }

@@ -168,8 +168,12 @@ distinct vector, not considered by the original 2.6 review, lives **inside** the
 plugin path: a guest that legitimately reaches the plugin can try to rewrite its
 host-injected tenant claim in-band and defeat RLS.
 
-Tenant identity is injected only as `SET LOCAL app.tenant = '<tenant>'` at
-`BEGIN`, and RLS keys on `NULLIF(current_setting('app.tenant', true), '')`.
+Tenant identity is injected by a single fully-bound
+`set_config('app.tenant', $1, true)` (the `SET LOCAL` equivalent) at `BEGIN` —
+the value travels as a bind parameter, so there is no interpolation path and an
+injection-shaped tenant is *unrepresentable*, not merely validated (R2/R16; the
+`valid_*` charset checks are demoted to an identity-format contract). RLS keys on
+`NULLIF(current_setting('app.tenant', true), '')`.
 `app.tenant` is an unreserved GUC that the `wamn_app` login role
 (`NOSUPERUSER NOBYPASSRLS`) may freely `SET`, so a guest on the transaction API
 doing `begin()` → `execute("SET app.tenant = 'victim'")` → `query(...)` — or the
