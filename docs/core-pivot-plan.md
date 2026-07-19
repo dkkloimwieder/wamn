@@ -2,7 +2,7 @@
 
 > **§1.9a audit (2026-07-19): amendments contradict the base — rewrite scheduled (findings §1.9b).**
 
-**Date:** 2026-07-15 · **Updated:** 2026-07-18 · **Status:** active ordering (supersedes the "finish the tiering epic first" directive) — **currently suspended by the event-plane v3 Phase 0** (owner decision 2026-07-18, see the event-plane section): Phase 0 of `wamn-l5i9` blocks all other project work; the ladder + tracks resume after Phase 0 unless the owner redirects. **Cross-cutting sequencing overlay:** `docs/findings.md` §6 (the findings wave/cluster plan; beads: epic `wamn-2jkm` + `wamn-l5i9.39–.56`).
+**Date:** 2026-07-15 · **Updated:** 2026-07-18 · **Status:** active ordering (supersedes the "finish the tiering epic first" directive) — **currently suspended by the event-plane v3 Phase 0** (owner decision 2026-07-18, see the event-plane section): Phase 0 of `wamn-l5i9` blocks all other project work; the ladder + tracks resume after Phase 0 unless the owner redirects. **Cross-cutting sequencing overlay:** `docs/findings.md` §6 (the findings wave/cluster plan; beads: epic `wamn-2jkm` + `wamn-l5i9.39–.58`). **Wave 1 executed 2026-07-19** (`d41e682`…`627a108`: reader hardening R11/E2/R12 · R13 · E13 both halves closed (build denylist + fork TcpConnect deny, rev pin `8b76869`) · E10 `wamn:jetstream@0.1.0` · E11 → **D21** · §1.9a audit · §5.2 reviews → R24–R33/E15–E17 minted, Q1–Q3 closed on evidence). Next per §6: **Wave 2** — queue cluster (`l5i9.43` E4 + `2jkm.18` R14 + `2jkm.19` SR11) ∥ `l5i9.42` E1 (R12 merged — now unblocked) ∥ pgplugin sitting (`5x0.2` + `2jkm.20` + `2jkm.21` + `cjv.18`); then the SR9/E7/E8 sync point alone; then the materializer `wamn-l5i9.17` as a `Service` (remaining gates: `l5i9.16`, `fqg.20`, `l5i9.43`).
 
 ## Why
 

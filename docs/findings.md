@@ -34,21 +34,21 @@ prerequisite that makes everything else findable.
 |---|---|---|---|---|
 | **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
 | SR14 | D4/D19 contradiction unmarked in the decision table (§1.2) | High | **closed** | `b7fa9af` (wamn-2jkm.1; table sweep found no other same-shape row) |
-| §1.9a | Amendment-density audit of ~20 docs (verdict per file) | Med | open | after Wave 0; parallelizable, read-only |
+| §1.9a | Amendment-density audit (verdict per file) | Med | **closed** | `3a3bb34` (wamn-2jkm.10; 15 stamped — 13 additive, 2 contradict → rewrites wamn-2jkm.59/.60; platform-plan re-audit wamn-2jkm.63) |
 | R10 | R8c closed against code that ships; adopt the closure rule | High | **closed** | `c6f2f54` (wamn-2jkm.5; rule in AGENTS/CLAUDE; audit: 8 closures PASS, R8c reopened=wamn-2jkm.31, SR5 corrected the other way) |
-| R13 | `next_interval` panics on `min > max` (unvalidated CLI) | Med | open | this week (10 lines) |
-| R11 | Reader reopen: no backoff, no cap, budget reset on *open* | High | open | before the staging soak |
-| E2 | Reader stall: no alarm, no attempt metric, no slot headroom gauge | High | open | before the staging soak |
-| E13 | `wasi:sockets` unconditional; `TcpConnect` ignores `allowedHosts` | **Crit** | open | now (build-time half is one rule) |
+| R13 | `next_interval` panics on `min > max` (unvalidated CLI) | Med | **closed** | `6b22e84` (wamn-2jkm.7; `Cadence::new → Result`, silent `.max()` coercion removed) |
+| R11 | Reader reopen: no backoff, no cap, budget reset on *open* | High | **closed** | `d41e682` (wamn-l5i9.39; one ladder both arms, productivity reset, rate cap) |
+| E2 | Reader stall: no alarm, no attempt metric, no slot headroom gauge | High | **closed** | `7147f07` (wamn-l5i9.40; `CDC_PUBLISH_STALLED` + slot-headroom monitor; exporter follow-up wamn-2jkm.54) |
+| E13 | `wasi:sockets` unconditional; `TcpConnect` ignores `allowedHosts` | **Crit** | **closed** | build `845d023` (wamn-2jkm.8) + fork `8b76869`/pin `627a108` (wamn-7j0.1); UDP arms → E15 (wamn-7j0.2); runtime gate rides wamn-2jkm.41 |
 | E4 | `run_id` lexical vs numeric `stream_seq` | High | open | **before the materializer** |
 | E1 | Sequential publish caps capture at ~1/RTT | High | open | before Phase-2 cutover |
-| E10 | `wasmcloud:messaging@0.2.0` cannot carry the materializer (verified) | High | open | before the materializer |
-| E11 | Native-service drift; adopt the default rule | High | open | before the materializer |
-| E12 | `Service` workloads exist in 2.5.2 — corrects E11's run-worker verdict | High | open | materializer first, then run-worker |
+| E10 | `wasmcloud:messaging@0.2.0` cannot carry the materializer (verified) | High | **closed** | `f8f7abd` (wamn-l5i9.44; `wamn:jetstream@0.1.0` + host plugin; e2e rides wamn-l5i9.57) |
+| E11 | Native-service drift; adopt the default rule | High | **closed** | `cb86099` (wamn-l5i9.45; **D21**) |
+| E12 | `Service` workloads exist in 2.5.2 — corrects E11's run-worker verdict | High | **closed** | recorded in D21 (`cb86099`); implementation = wamn-l5i9.17 then .49/.50 |
 | SR11 | Positional SQL params compose across crates with no type | High | open | before the next composed statement |
 | R16 | R2 propagated (`app.runner`); duplicated, diverged validators | Med | open | pull forward now |
 | R2 | Claim interpolation → `set_config` binds | Med | open | with R16 (same change) |
-| R12 | Stream config drift: `get_or_create_stream` never asserts | **High until the materializer ships** | open | **before E1** |
+| R12 | Stream config drift: `get_or_create_stream` never asserts | High→Med | **closed** | `e350524` (wamn-l5i9.41; REFUSE posture; E1 unblocked) |
 | R14 | Held outbox rows head-of-line-block the poll window | Med | open | live work (see R10) |
 | R1 | Park/wake consumes the redelivery budget | High | **closed** | `9de70c2` (wamn-fqg.5) |
 | R3 | Per-component memory limits | Med-High | **closed** | `c3356ea` (wamn-bp4.1) + fork ResourceLimiter commit |
@@ -72,6 +72,22 @@ prerequisite that makes everything else findable.
 | R21 | `classify` matches `Display` text; PG17+ floor unstated | Low | open | with reader work |
 | R22 | `subject_token` collisions (`a.b` ≡ `a_b`) | Low | open | with E3 |
 | R23 | Unbounded `OFFSET` in the API gateway | Low | open | with keyset pagination |
+| R24 | Merge/loop flows unresumable (occurrence collapse) | Med | open | wamn-2jkm.42 — before a multi-visit flow needs resume |
+| R25 | `idempotency_key` collides across visits | Low | open | wamn-2jkm.43, with R24 |
+| R26 | `resume` folds error-routes as Success (`step_seq`/`result` drift) | Low | open | wamn-2jkm.44 |
+| R27 | Slug `--` separator not injective — cross-tenant name collision on the shared pool | High | open | wamn-2jkm.45 — before untrusted slugs |
+| R28 | CDC replication credential blast radius is cluster-wide, not "one registration" | Med | open | wamn-2jkm.46, with the l5i9.32 knobs |
+| R29 | Replication-slot shape never reconciled (R12 class) | Low | open | wamn-2jkm.47 |
+| R30 | Vault secrets plaintext-resident, no zeroization | Low | open | wamn-2jkm.48 |
+| R31 | Plugin claim/grant registries never cleared on unbind | Low | open | wamn-2jkm.49 — before wamn-bd5 grants |
+| R32 | `Retryable` node errors abort the invocation and hold the lease (prod dispatch path) | High | open | wamn-2jkm.50 — before real flows use std nodes |
+| R33 | Delay wake key is global per run — second delay never delays | Low | open | wamn-2jkm.51 |
+| E15/E16 | UDP egress allow-all; `UdpBind` all-interfaces (the arms E13's fix left) | High/Med | open | wamn-7j0.2, next fork commit |
+| E17 | `egressbench` would PASS a tenant `wamn:postgres` importer | Med (latent) | open | wamn-2jkm.52 — hard precondition of wamn-bd5 |
+| R8b-b | Tenant predicate on the four RLS-only queue statements | Low | open | wamn-2jkm.53 (R8b-a stays wamn-286) |
+| Q1 (§5.1) | `--features caps` not tenant-reachable; `wamn-1nd` stays future conditioning | — | **closed** | evidence in §5.1 (wamn-2jkm.15; minted E17) |
+| Q2 (§5.1) | REPLICA IDENTITY de-facto contract = DEFAULT, key-only; `l5i9.31` is non-retroactive | — | **closed** | evidence in §5.1 (wamn-l5i9.56; design para → l5i9.17) |
+| Q3 (§5.1) | No `wamn_dispatch` role exists; `wamn_app` verified `NOBYPASSRLS` non-owner FORCE-RLS, live | — | **closed** | evidence in §5.1 (wamn-2jkm.16; R8b split → wamn-286 / wamn-2jkm.53) |
 | R5, R7, R9a–c, R15, E3, E5, SR7 | see sections below | Low–Med | open | opportunistic (E6 closed `9ea8da0`; E9 closed `db4d891`) |
 
 **Deferred by owner decision:** CI/LICENSE (§5.4 records the evidence-based
@@ -380,9 +396,11 @@ a test that plugin and dispatcher agree on a 65-character tenant.
 claim-shape `NULLIF` + S2 scope honesty *(open, low)* · **R6** partition
 ordering policy *(closed, D20)* · **R7a/b** failover status-flip alerting +
 two-lease latency *(open, low)* · **R8a** cron anchor vs retention *(open —
-decide before 9.6 retention)* · **R8b** dispatcher DB role scoping
-*(open — `wamn_dispatch` non-owner `NOBYPASSRLS`; also closes the
-`outbox_poll_sql`/`parked_due_sql` missing-tenant-predicate inconsistency)* ·
+decide before 9.6 retention)* · **R8b** dispatcher DB role scoping *(split 2026-07-19 by the Q3 answer —
+no `wamn_dispatch` role has ever existed; the dispatcher runs as `wamn_app`,
+verified `NOBYPASSRLS` non-owner under FORCE RLS, statically and live.
+**R8b-a** narrow dedicated role stays open = wamn-286; **R8b-b** explicit
+tenant predicate on the four RLS-only statements = wamn-2jkm.53)* ·
 **R8c** outbox amplification/GC *(**reopened**, R10)* · **R8d** cron misfire
 collapse *(open, doc)* · **R9a** reserve the `wamn_` identifier prefix at
 catalog validation *(open)* · **R9b** rename × row-event registration
@@ -411,6 +429,56 @@ when sanitization changed the string, rather than map; do with E3. ·
 `statement_timeout`; keyset pagination is the end state, C5-1's stable
 tiebreaker its prerequisite.
 
+### R24–R33 — Wave-1 review pass (2026-07-19)
+The §5.2 fleet's verified findings, integrated by the single integration pass;
+each has a board row and a bead (wamn-2jkm.42–.51). ·
+**R24 (Med)** Merge/loop flows are unresumable: the walk dispatches once per
+edge (`engine.rs:438–446`; merges/cycles are stated v1 features) but
+`record_node_run` writes `occurrence = 0` (`flowrunner/lib.rs:234–237`) into a
+PK that collapses repeats, while `Plan::resume` (`engine.rs:529–557`) demands
+one record per dispatch — a resumed merge/loop run dies with a spurious
+`Mismatch`/`Overrun`. Latent (shipped fixtures acyclic); escalates to High when
+a multi-visit flow needs resume. Occurrence end-to-end + visit-aware match
+(wamn-2jkm.42). ·
+**R25 (Low)** `idempotency_key = run_id:node` is identical across visits — an
+external dedupe drops a legitimate second merge arrival re-dispatched on
+resume; include the occurrence (wamn-2jkm.43, with R24). ·
+**R26 (Low)** `resume` folds error-routed records through the Success arm
+(`engine.rs:541–549`), bumping `step_seq` and `result` where live routing
+touches neither (wamn-2jkm.44). ·
+**R27 (High, isolation)** The slug validators permit interior `--`
+(`name.rs:86–88` — test `:235` asserts `a--b` valid; registry
+`validate.rs:76–82`; the DB CHECK) while `--`/`__` are the derived-name
+separators: `(a, x--p, dev)` and `(a--x, p, dev)` collide on the same database
+**and the same cluster-global CDC role/slot/publication** — one tenant's
+reader streams the other's WAL on a shared pool. `validate_project_env` also
+never slug-validates org/env. Reject `--`, validate all three components,
+injectivity test (wamn-2jkm.45). ·
+**R28 (Med)** The CDC credential's true blast radius is **cluster-wide WAL**
+(REPLICATION has no per-database scope); the "one registration" comment
+self-contradicts (`sql.rs:125–131`). Fix the claim; decide shared-pool CDC
+posture (wamn-2jkm.46). ·
+**R29 (Low)** `create_failover_slot_sql` guards on existence only — a
+pre-existing `failover=false` slot is silently kept; apply R12's read-back
+pattern (wamn-2jkm.47). ·
+**R30 (Low)** The vault keeps every project's secrets as plain `String` for
+the process lifetime and clones on resolve — no zeroization; log hygiene
+verified clean (wamn-2jkm.48). ·
+**R31 (Low)** Neither `wamn_credentials` nor `wamn_postgres` implements
+`on_workload_unbind` — claims/grants survive unbind, maps grow unbounded;
+must fix before wamn-bd5's per-invocation grants (wamn-2jkm.49). ·
+**R32 (High)** Both flowrunner drivers advance the engine with a hardcoded
+clock of 0 and turn `Step::Wait` into `Err("unexpected retry wait")`
+(`lib.rs:682/731/987/1032` and `:703/:1005`): a standard http/postgres node's
+`Retryable` on the production `run_next→execute_claimed` path aborts the
+invocation, holds the lease to expiry, and resets `attempt` on every
+reconstruction — the retry budget never advances and the error edge never
+fires. The stated design (retries park via the queue layer) is unimplemented.
+`Step::Wait` → park (wamn-2jkm.50). ·
+**R33 (Low)** The delay node's wake is one global `state_json` key — a
+two-delay flow never delays the second, and the stale wake is never cleared
+(wamn-2jkm.51).
+
 ---
 
 ## 3 — Event plane (E-series)
@@ -436,6 +504,16 @@ allowlists are fragile (rebinding, shared IPs).
 **Scope note:** audit the other unconditionally-linked WASI interfaces
 (`wasi:filesystem` especially — volume mounts are the only bound today) against
 the platform's stated sandbox claims.
+**Closed 2026-07-19, both halves.** Build: `845d023` —
+`wamn_host::egress_guard` (package-keyed `wasi:sockets` denylist,
+`screen_component`) + the hermetic `socketguard` refusal gate, negative and
+positive PASS (wamn-2jkm.8). Runtime: fork `8b76869` consumed at `627a108` —
+`TcpConnect` denied unless the workload opts in (`wamn.allow-raw-sockets`
+config, then `WAMN_ALLOW_RAW_SOCKETS`, else deny; unparseable denies;
+warn-once per component); the fork's 4th carried commit — **at the escalation
+threshold** (wamn-7j0.1). The negative runtime gate rides the wamn-2jkm.41
+rebake; the deliberately-excluded UDP arms are E15/E16 (wamn-7j0.2); the
+scope-note audit ran → E15–E17 below.
 
 ### E4 — `run_id` lexical vs numeric `stream_seq` *(High — before the materializer)*
 D19 §5 specifies `run_id = <flow>:evt:<stream_seq>`; the queue claims on
@@ -596,6 +674,29 @@ proven model — with a per-org isolated reader as the escape hatch, and a
 **"registered but not running" alarm**, because that state is invisible in
 every other metric) · **E9** — **canonical home is §1.3** (archive moves; **closed** `db4d891`, wamn-2jkm.2).
 
+### E15–E17 — Wave-1 audit additions (2026-07-19)
+**E15 (High, wamn-7j0.2)** Raw **UDP** egress is allow-all:
+`UdpConnect`/`UdpOutgoingDatagram` return `true` unconditionally
+(`linked_call.rs`; enforced call sites `host_udp.rs:136,533`) — the E13 bypass
+on UDP, deliberately left by the E13 fork commit (TcpConnect only). Deny by
+default behind the same opt-in. ·
+**E16 (Med, wamn-7j0.2)** `UdpBind` allows loopback **or unspecified** for
+every component — an all-interfaces inbound UDP listener its TCP sibling
+forbids (`TcpBind => false` for non-services). Align the arms. ·
+**E17 (Med, latent — wamn-2jkm.52, hard precondition of wamn-bd5)**
+`egressbench`'s classifier allowlists `wamn:postgres` and asserts custom-node
+shapes with `require_postgres=false` (`egressbench.rs:53,158–161`) — a tenant
+node importing `wamn:postgres/client` would PASS the named publish-gate
+backstop and receive the raw DB surface (and the DO/EXECUTE claim-mutation
+bypass). Enforce the positive allowlist; wire `screen_component` (E13a) into
+the same chokepoint. ·
+**E13 precision (from the audit):** `ip_name_lookup` is linked but
+**default-denied** (`allowed_network_uses.ip_name_lookup = false`, enforced at
+`host_ip_name_lookup.rs:38`), so E13's "with DNS" overstated — the raw-IP
+connect path needs no DNS. Verified consistent elsewhere: filesystem preopens
+= validated volume mounts only; env from `local_resources.environment` only;
+stdin empty; `proc_exit` traps the component, not the host.
+
 ---
 
 ## 4 — Structure & quality (SR-series)
@@ -686,29 +787,60 @@ serving 29 modules suggests the duplication SR1 removed is re-accumulating)
 
 ## 5 — Deferred, declined, and open questions
 
-**5.1 Open questions worth answering** (each changes a finding's severity):
-*Is `wamn-node-guest --features caps` reachable by tenant-authored components
-today?* `reject_claim_mutation` is a blocklist by its own admission —
-`DO $$ BEGIN EXECUTE 'SET app.tenant = ''victim'''; END $$;` passes the
-first-keyword + `set_config`-substring check. If `caps` is not host-gated to
-first-party nodes, the RLS tenant boundary is **already** bypassable and
-`wamn-1nd`'s structural prerequisite (re-key RLS onto `current_user`) is present
-debt, not a future condition. · *Does anything set `REPLICA IDENTITY`?* Not
-found in `enable_cdc_project_env.rs` or `wamn-provision/src/sql.rs`, so `old`
-images are key-only by default — and whatever ships before the per-entity knob
-(`l5i9.31`) becomes the de-facto contract for everything captured meanwhile;
-the materializer (`l5i9.17`) must be designed against that. · *Is
-`wamn_dispatch` already `NOBYPASSRLS` non-owner in the deployed manifests?* If
-pending, close the `outbox_poll_sql`/`parked_due_sql` missing-tenant-predicate
-inconsistency regardless, as defence-in-depth (R8b).
+**5.1 Open questions — all three RESOLVED 2026-07-19** (question-class
+closure on cited evidence; full citation sets in the wamn-2jkm.15/.16 and
+wamn-l5i9.56 close records): ·
+*Q1 — is `wamn-node-guest --features caps` tenant-reachable?* **No.** Two
+independent verified gates: the `hostInterfaces` CRD allowlist is
+operator/control-plane authored and no tenant deployment path exists (the 5.5
+builder and custom nodes are unshipped P2), and the 5.6 design excludes
+`wamn:postgres` from the custom-node import allowlist outright
+(`wamn-node-design-notes.md:64–77`; `f1-workloads.yaml:5–8`;
+`node-library.md:86–93` — the raw-SQL facade hard-returns false until
+`wamn-1nd`). The RLS boundary is therefore **not** presently bypassable
+in-band; `wamn-1nd` stays future conditioning, priority unchanged. The review
+also minted **E17**: the shipped `egressbench` classifier would PASS a tenant
+node importing `wamn:postgres` (`egressbench.rs:53,158–161`) — the mechanical
+allowlist this verdict delegates to is not yet enforced (wamn-2jkm.52). ·
+*Q2 — does anything set `REPLICA IDENTITY`?* **No — confirmed exhaustively**
+(provisioning, DDL compiler, reader: the string appears only in bench/test/doc
+comments), so the de-facto contract is **DEFAULT over the surrogate `id uuid`
+PK** (`emit.rs:149`): full `new` on insert/update with unchanged-TOAST columns
+*absent* (distinct from a real null); **no `old` on update** (the PK never
+changes); key-only `old` (`id` alone — not even `tenant_id`) on delete.
+Verified live (`event_reader_live.rs:619–645`; the `poc/cdc1` TOAST test).
+Sufficient for the `ON CONFLICT` enqueue (stream_seq-keyed) and new-value
+conditions; **insufficient** for old-value/changed-to conditions and delete
+payloads — exactly what `l5i9.31` fills. `ALTER … REPLICA IDENTITY FULL` is
+**non-retroactive**, so the pre-FULL window is a permanent old-image gap that
+grows with capture time: `l5i9.31` must apply at/before registration **before**
+the materializer exposes old-value conditions, and old-absent must read as
+"cannot evaluate", never "condition false" (design paragraph appended to
+wamn-l5i9.17). ·
+*Q3 — is `wamn_dispatch` `NOBYPASSRLS` non-owner as deployed?* **The role does
+not exist and never did** — the dispatcher connects as `wamn_app`, which IS
+`NOBYPASSRLS`, non-super, and a non-owner under `FORCE ROW LEVEL SECURITY`,
+verified statically (`postgres-init.sql:13`; `wamn-provision/sql.rs:30–42`;
+`run-queue.sql:78–83`) **and live** (pg_roles/pg_class on the fixture). R8b
+splits: **R8b-a** (a dedicated narrowly-granted dispatcher role — `wamn_app`
+holds DML on tenant data tables and can `SET app.tenant` freely, so a leaked
+credential reads any tenant) stays open = **wamn-286**; **R8b-b** (explicit
+tenant predicate on the **four** RLS-only statement families —
+`outbox_poll_sql`, `parked_due_sql`, `active_flows_sql`, `global_claim_cte` —
+not just the two R8b named) = **wamn-2jkm.53**, close-as-defence-in-depth.
 
-**5.2 Never-reviewed surface — the list least safe to drop.** No review pass
-(internal or external) has covered: **`Plan::resume`** (the highest-complexity
-pure code in the repo — the migration planner's resumption path);
-**`wamn-provision` + `wamn-registry`** (7,200 LOC, 124 tests, **zero review
-coverage in any pass**); **`wamn_credentials.rs`**; **`components/flowrunner`**.
-This ledger is complete over what was *looked at*, and these were not — its
-status board must not be read as a coverage claim. Coverage-rate observation
+**5.2 Never-reviewed surface — reviewed 2026-07-19 (Wave 1,
+wamn-2jkm.11–.14).** All four surfaces got a read-only correctness pass:
+**`Plan::resume`** — which is the **flow runner's** branch-aware resume
+(`wamn-runner/src/engine.rs:522–560`), *not* the migration planner's as this
+list previously said — yielded R24–R26; **`wamn-provision` + `wamn-registry`**
+yielded R27–R29 (the SQL-injection surface verified well-defended:
+`quote_ident`/`quote_literal` drift-tested byte-for-byte, `$n` params
+everywhere, NAMEDATALEN bounds tested); **`wamn_credentials.rs`** yielded
+R30–R31 (grant-check fail-closed ordering, TOCTOU, tenant scoping, and log
+hygiene verified sound); **`components/flowrunner`** yielded R32–R33 (the
+causation declare path, `will_error_route` mirroring, checkpoint ordering, and
+SQL column-order parsing verified sound). Coverage-rate observation
 from the two independent 2026-07-18 passes: `event_reader.rs` yielded 11
 findings with exactly **1 overlap** between passes, which estimates the unfound
 surface as comparable to the found. That observation is also the strongest
