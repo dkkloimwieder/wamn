@@ -297,8 +297,10 @@ instruction not pre-specified as gates.
 first importer + causation thread + matbench gate; first C-MAT numbers
 (deliveries→enqueue + duplicate-storm cost) recorded in docs/ceilings.md
 (local provenance — the in-cluster campaign re-measures). Wire schemas FROZEN
-0.1.0 into code (wamn-l5i9.30, 2026-07-19, §4 status block). Next on this phase:
-l5i9.32 cluster knobs, l5i9.18 shadow/cutover (against the frozen shapes).*
+0.1.0 into code (wamn-l5i9.30, 2026-07-19, §4 status block). Cluster knobs
+rendered (wamn-l5i9.32, 2026-07-20; the one-time live wamn-pg WAL-bound
+retrofit is an owner-run `kubectl patch`, see the bead notes). Next on this
+phase: l5i9.18 shadow/cutover — both its gates (.30 + .32) are closed.*
 **Benches:** C-MAT (deliveries→enqueue rate, duplicate-storm cost), C-E2E
 (commit→run-start distribution; fan-out 1→N vs old path — the one
 before/after chart), C-INTERFERENCE (app-CRUD p99 while capture+materialize run
