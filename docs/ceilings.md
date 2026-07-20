@@ -358,3 +358,149 @@ C-MAT campaign re-measures on the real rig with tuned batch/fetch windows.
 | duplicate storm (full redelivery, 207 events × 3) | 608 `ON CONFLICT` collisions, **0 new rows** | consumers deleted server-side; exactly-once holds |
 
 - Reproduce: `docs/build-and-test.md` § [EVT-MAT / wamn-l5i9.17].
+
+## C-E2E — outbox-vs-CDC before/after (wamn-l5i9.22, first numbers)
+
+**Provenance: LOCAL-THROWAWAY, DEBUG-build host binaries, RELEASE guest wasm,
+in-process runtime (e2ebench), single-node throwaway NATS (nats:2, 1 replica) +
+postgres:18 (`fsync=off`, `synchronous_commit=off`, `wal_level=logical`),
+`disp_poll_ms=50`, `fetch_ms=100`. Machine: `local-throwaway` (a developer
+workstation shared with a kind cluster + other containers — a NOISY rig, see
+C7's one-sided-noise caveat).** These are **shape** numbers for METHODOLOGY
+VALIDATION, not ceilings — the absolute latencies are dominated by the two
+tunable pacing terms (the dispatcher's 50 ms poll cadence on the old path; the
+materializer's 100 ms per-registration fetch long-poll on the new path), so a
+re-tune moves them. The in-cluster release-image `e2ebench` job (below)
+re-measures on the reference rig; the rows OF RECORD come from there.
+
+**Date:** 2026-07-20 · **Git rev:** the `wamn-l5i9.22` commit (parent
+`322cec8`) · **Bench:** `wamn-gates e2ebench --phase all`
+(`deploy/gates/e2ebench-job.yaml`), run twice back-to-back for repeatability.
+
+**What is measured (each vs BOTH real paths at identical write load, one writer
+program):** ONE process composes both paths (the cutbench substrate). OLD path
+= a `wamn_app` write to an `old_*` table carrying the REAL
+`Migration::outbox_triggers` → the real `wamn_dispatcher` engine
+(poll/match/fire/enqueue), run id `{flow}:outbox:{seq}`. NEW path = a `wamn_app`
+write to a trigger-free `new_*` table → the embedded real `wamn-cdc-reader`
+(one `pg_walstream` session) → JetStream → the real `materializer.wasm` guest,
+run id `{flow}:evt:{stream_seq}`. Old-arm flows carry NO live CDC registration
+(the dispatcher fires them); new-arm flows carry live registrations (the
+dispatcher yields them — moot, a trigger-free table produces no outbox rows —
+and the materializer fires them). Runs attribute by the disjoint run-id
+namespace. The commit instant is `clock_timestamp()` returned by the writing
+INSERT; the enqueue instant is `run_queue.enqueued_at` (server `now()` at the
+fire/enqueue txn) — **both the same Postgres wall clock** (the throwaway PG
+shares the host kernel clock, so there is no client↔server skew), latency =
+enqueued − commit. **Error bound ≈ ±1–2 ms:** `clock_timestamp()` is evaluated
+a hair before the autocommit finalises (slight over-count) and `enqueued_at` is
+the enqueue txn's *start* (slight under-count) — the two biases partly cancel
+and are dwarfed by the 100-ms-scale signal.
+
+Only structural sanity asserts gate (so the numbers are trustworthy): every
+write on each arm produced exactly its expected run count — 120/120 + 600/600
+(distribution), 24×{1,5,20} → {24,120,480} runs per arm (fan-out) — and both
+burst backlogs built then drained. All held on both runs.
+
+### (a) commit→run-start distribution (`ce2e-dist.csv`, `ce2e-dist-hist.csv`)
+
+| path | rate | p50 | p90 | p99 | mean |
+|---|---|---|---|---|---|
+| old (outbox) | 10/s | 27 ms | 48 ms | 53 ms | 26 ms |
+| new (CDC) | 10/s | 129 ms | 315 ms | 327 ms | 163 ms |
+| old (outbox) | 50/s | 30 ms | 52 ms | 59 ms | 29 ms |
+| new (CDC) | 50/s | 153 ms | 229 ms | 267 ms | 154 ms |
+
+At steady state the **OLD outbox path delivers a run to the queue FASTER** than
+the new CDC path on this config: the old-path latency is a near-uniform draw
+over the 50 ms dispatcher poll interval (p50 ~27–30 ms, p99 ~53–67 ms), while
+the new path pays WAL-decode + a JetStream hop + the materializer's 100 ms
+fetch long-poll (p50 ~130–165 ms, p99 ~265–365 ms). **CDC's win is NOT
+steady-state latency** — it is the app-write decoupling (a) and the removal of
+the synchronous trigger tax (below). Both terms are pure config: a tighter
+`fetch_ms` and a batched pull pull the new-path p50 down; a slacker
+`disp_poll_ms` (production min is **250 ms**, 5× the 50 ms used here) pushes the
+old-path latency UP — real production old-path p50 sits near ~125 ms, above the
+new path measured here. Run-to-run: old p50 within 2 ms; new p50 varied
+129↔166 ms (the fetch long-poll boundary is noise-sensitive).
+
+### (b) fan-out 1→N — the headline (`ce2e-fanout.csv`)
+
+| path | N | app-txn p50 | app-txn p99 | commit→last-run p50 | p99 |
+|---|---|---|---|---|---|
+| old (outbox) | 1 | 0.73 ms | 1.67 ms | 24 ms | 50 ms |
+| new (CDC) | 1 | 0.37 ms | 0.99 ms | 152 ms | 350 ms |
+| old (outbox) | 5 | 1.27 ms | 5.88 ms | 29 ms | 54 ms |
+| new (CDC) | 5 | 0.76 ms | 4.19 ms | 204 ms | 352 ms |
+| old (outbox) | 20 | 1.06 ms | 1.63 ms | 41 ms | 129 ms |
+| new (CDC) | 20 | 0.65 ms | 1.36 ms | 314 ms | 571 ms |
+
+**The headline correction to the plan's premise.** The plan text sized the
+before/after as *"N outbox rows written INSIDE the app txn (write amplification
+on the app transaction)"*. Measured, that is **not how the shipped path
+behaves**: `Migration::outbox_triggers` emits ONE per-table `AFTER … FOR EACH
+ROW` trigger that writes **one** outbox row per write regardless of how many
+flows subscribe — the fan-out to N runs happens entirely POST-commit, at the
+dispatcher. So **app-transaction commit latency does not scale with fan-out N**
+on either path (old ~0.7–1.3 ms, new ~0.4–0.8 ms, flat across N=1/5/20 within
+noise). The whole app-side old-vs-new difference is the **constant** outbox
+trigger tax — visible here as new-CDC running a consistent ~0.3–0.5 ms below
+old-outbox per write (the C2 "+30 µs / +500 B" single-row tax, buried inside a
+sub-ms round trip on this fast local loop; it shows sharply in WAL/bulk, not in
+single-row commit latency). What DOES scale with N is **commit→last-run**: old
+scales gently (24→29→41 ms) as the dispatcher fires N runs from one outbox row;
+new scales steeply (152→204→314 ms, and up to ~950 ms at N=20 in run 2) because
+the materializer fetches its N registrations' consumers **serially**, each with
+its own ~100 ms long-poll — the per-registration serial fetch is the new path's
+fan-out cost and the clearest tuning target (parallel/multiplexed consumer
+fetch).
+
+### (c) burst — 10× spike (`ce2e-burst-depth.csv`, `ce2e-burst-applat.csv`)
+
+Steady 40/s, spike ×10 (400/s) for 5 s, then drain observed while steady
+continues. **App-write latency was NOT degraded during the spike on either
+path** — through the 5 s of ~400 writes/s both arms held p50 ~0.6 ms / p99
+~1.8 ms (old-outbox a steady ~0.08 ms above new-CDC, the trigger tax again),
+with a small SHARED post-burst p99 blip to ~13 ms (checkpoint/vacuum, both arms
+equally). Lag depth + drain were **heavily run-to-run noise-dominated** (the
+shared rig):
+
+| run | old peak backlog | old drain | new peak pending | new drain |
+|---|---|---|---|---|
+| run 1 (clean) | 84 rows | 0.9 s | 9 msgs | 0.1 s |
+| run 2 (noise-poisoned) | 438 rows | 14.1 s | 585 msgs | 2.9 s |
+
+Both paths absorb the 10× spike and drain; the new path drains faster (batched
+pull vs one-row-per-poll fire). The absolute depths/drains are not citable from
+this rig — they swing ~5–15× between back-to-back runs (host contention on one
+disk, the C7 caveat) — but the **mechanism** is instrumented: outbox unfired
+backlog (`dispatched_at IS NULL`) for the old path, JetStream consumer
+`num_pending` for the new. The committed CSV is run 1 (the clean run); run 2's
+poisoned depths are recorded here as the variance envelope.
+
+### What this says about the design (curves, not a verdict)
+
+The CDC plane is **not** a steady-state-latency win at these settings — it is
+slower to first-enqueue than a tightly-polled outbox. Its case rests elsewhere,
+and this bench isolates where: (1) it removes the synchronous per-write trigger
+tax from the app transaction (constant, small per row, but paid by every write
+forever and unbounded on bulk — C2); (2) app-write latency is decoupled from
+consumer lag (burst absorption held app p99 flat); (3) the fan-out cost moves
+off the app txn to an async consumer. The open tuning question it surfaces: the
+materializer's serial per-registration fetch makes new-path fan-out latency
+grow with N — the in-cluster campaign should sweep `fetch_ms`/batch and a
+parallel-fetch variant.
+
+### Raw data
+
+- `docs/ceilings-data/ce2e-dist.csv`, `ce2e-dist-hist.csv`, `ce2e-fanout.csv`,
+  `ce2e-burst-depth.csv`, `ce2e-burst-applat.csv` (run 1 — the clean run;
+  extracted from the job log's `=== BEGIN CSV … ===` blocks).
+- Reproduce: `docs/build-and-test.md` § [EVT-C-E2E / wamn-l5i9.22].
+
+### Deferred (in-cluster / follow-ups)
+
+Release-image job re-measure on the reference rig (the rows of record); a
+`fetch_ms`/batch sweep + a parallel-consumer-fetch variant for new-path fan-out;
+the app-CRUD-p99-under-capture C-INTERFERENCE bench (sibling, D19 §7). MUST stay
+ahead of EVT-TEARDOWN (l5i9.19) — the old path must be alive to measure.

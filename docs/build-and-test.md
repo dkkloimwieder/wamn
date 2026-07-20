@@ -2100,3 +2100,51 @@ by `decide::tests::old_value_conditions_are_serviceable_and_guarded_per_event`),
 M3 `alter_replica_identity_sql` emits the wrong keyword (killed by
 `replica_identity::tests::alter_and_read_sql_are_pinned`); apply/test/restore
 with sha256, DEBUG builds.
+
+### [EVT-C-E2E / wamn-l5i9.22] e2ebench outbox-vs-CDC before/after (measurement, not a gate)
+
+Docs: docs/event-plane-jetstream.md §7 Phase 2 + §8 · docs/ceilings.md § C-E2E.
+The Phase-2 before/after chart that justifies or indicts the CDC event plane vs
+the OLD outbox path — commit→run-start distribution, fan-out 1→N (N=1/5/20),
+and a 10× burst, each vs BOTH real paths at identical write load from ONE writer
+program. Reuses the cutbench substrate: ONE process runs the real
+`wamn_dispatcher` over the REAL `Migration::outbox_triggers` (old arm) AND the
+embedded real `wamn-cdc-reader` → JetStream → `materializer.wasm` (new arm);
+old-arm tables carry the trigger, new-arm tables do not (the post-teardown CDC
+world). CEILING bench — curves/knees, provenance-labelled; only structural
+sanity asserts gate (both paths produced exactly N runs). **MUST run BEFORE
+EVT-TEARDOWN (l5i9.19)** — it needs the old path alive.
+
+```bash
+cargo test -p wamn-gates --bin wamn-gates e2ebench   # path-attribution + fan-out sanity + trigger-scope + frozen-type drift guards
+# Local rig (throwaway PG18 `wal_level=logical` + JetStream; ~3 min for --phase all):
+docker run -d --name wamn-e2e-pg -e POSTGRES_PASSWORD=postgres -p 5461:5432 \
+  postgres:18 -c wal_level=logical -c fsync=off -c synchronous_commit=off
+docker run -d --name wamn-e2e-nats -p 4281:4222 nats:2 -js
+(cd components && cargo build -p materializer --target wasm32-wasip2)
+cargo build -p wamn-gates
+./target/debug/wamn-gates --log-level error e2ebench \
+  --component components/target/wasm32-wasip2/debug/materializer.wasm \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5461/postgres \
+  --nats-url nats://127.0.0.1:4281 \
+  --phase all --burst-steady 40 --burst-mult 10 --burst-spike-secs 5
+#   --phase dist|fanout|burst runs one measurement; --dist-rates / --fanout-events /
+#   --disp-poll-ms / --fetch-ms tune the pacing terms (recorded in the provenance line).
+docker rm -f wamn-e2e-pg wamn-e2e-nats
+# In-cluster campaign of record (two-stage image; fixture postgres carries
+# wal_level=logical — deploy/platform/postgres.yaml — apply + restart once):
+(cd components && cargo build --release --target wasm32-wasip2)
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system delete job e2ebench --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/e2ebench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/e2ebench --timeout=600s
+kubectl -n wamn-system logs job/e2ebench | tail -60   # curves in the `=== BEGIN CSV ce2e-* ===` blocks
+```
+
+Mutation harness: scratchpad `mutate_l5i9_22.py` — M1 a path-attribution
+predicate broken (`:outbox:` → `:evt:`; killed by unit
+`run_ids_attribute_to_disjoint_paths`), M2 the fan-out run-count sanity weakened
+(drops the `== N` check; killed by unit
+`fanout_sanity_requires_every_event_at_exactly_n`); apply/test/restore with
+sha256, DEBUG builds, never `git checkout`.

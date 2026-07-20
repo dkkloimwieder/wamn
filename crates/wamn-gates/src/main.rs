@@ -13,6 +13,7 @@ mod credprobe;
 mod credproof;
 mod cutbench;
 mod dispatchbench;
+mod e2ebench;
 mod egressbench;
 mod f1bench;
 mod f1fixture;
@@ -104,6 +105,8 @@ enum Command {
     Matbench(matbench::MatBenchArgs),
     /// Run the l5i9.18 EVT-CUTOVER gate (shadow dual-run equivalence, then the per-flow flip)
     Cutbench(cutbench::CutBenchArgs),
+    /// Run the l5i9.22 EVT-C-E2E campaign (commit->run-start dist / fan-out 1->N / burst — outbox-vs-CDC before/after; measured, not gated)
+    E2ebench(e2ebench::E2eBenchArgs),
     /// Run the l5i9.57 E10-e2e wamn:jetstream sample gate (bind/fetch/ack/publish/dedupe/reject via the js-sample guest)
     Samplebench(samplebench::SampleBenchArgs),
     /// Run the 4.1 generated-REST-API-gateway gates (CRUD / expand / RLS / injection)
@@ -163,6 +166,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Socketguard(args) => socketguard::run(args).await,
         Command::Matbench(args) => matbench::run(args).await,
         Command::Cutbench(args) => cutbench::run(args).await,
+        Command::E2ebench(args) => e2ebench::run(args).await,
         Command::Samplebench(args) => samplebench::run(args).await,
         Command::Apibench(args) => apibench::run(args).await,
         Command::PublishCatalog(args) => publish_catalog_demo::run(args).await,
