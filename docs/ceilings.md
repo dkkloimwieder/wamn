@@ -498,9 +498,55 @@ parallel-fetch variant.
   extracted from the job log's `=== BEGIN CSV … ===` blocks).
 - Reproduce: `docs/build-and-test.md` § [EVT-C-E2E / wamn-l5i9.22].
 
+### Campaign of record (in-cluster, release image, 2026-07-20)
+
+Provenance: `env=in-cluster-kind build=release-host-binaries release-guest-wasm
+pg=fixture-pod-postgres:18(fsync=off,synchronous_commit=off,wal_level=logical)
+nats=evt-nats(3-node,R3-cluster;bench-stream-R1) disp_poll_ms=50 fetch_ms=100
+machine=kind-wamn/postgres-colocated — CAMPAIGN OF RECORD` (job
+`deploy/gates/e2ebench-job.yaml`; all completeness gates PASS: every write
+produced exactly its N runs on BOTH paths in every phase).
+
+Commit→run-start (N=1):
+
+| rate | old p50 / p90 / p99 | new p50 / p90 / p99 |
+|---|---|---|
+| 10/s | 25.5 / 45.4 / 49.6 ms | 184.3 / 290.3 / 385.2 ms |
+| 50/s | 26.6 / 47.8 / 53.0 ms | 157.0 / 238.6 / 310.8 ms |
+
+Fan-out 1→N (24 events per N):
+
+| N | app-txn p50 old / new | commit→last-run p50 old / new |
+|---|---|---|
+| 1 | 0.495 / 0.212 ms | 19.4 / 166.2 ms |
+| 5 | 0.495 / 0.205 ms | 29.6 / 166.1 ms |
+| 20 | 0.454 / 0.229 ms | 30.8 / 185.0 ms |
+
+Burst (10× over 40/s steady, 5 s spike): old peak backlog 12 rows, drained
+268 ms after spike end; new consumer pending never sampled >0 at 200 ms cadence
+(drain outpaced the sampler), settled ≤66 ms after spike end.
+
+Readings: (1) the **trigger tax is directly visible and constant** — ~0.25–0.3
+ms per app write (old 0.45–0.50 ms vs new 0.21–0.23 ms p50), flat in N on both
+paths (the fan-out premise correction from the local runs holds on the record
+rig: the old path writes ONE outbox row per write; fan-out was always
+post-commit). (2) A tightly-polled outbox still wins steady-state first-enqueue
+(~26 ms vs ~157–185 ms p50 at `disp_poll_ms=50` / `fetch_ms=100` — both pacing
+knobs, recorded in provenance; production dispatcher minimum poll is 250 ms).
+(3) On the release build the new-path fan-out slope is nearly FLAT (166→185 ms
+p50 from N=1→20) — the steep serial-fetch growth in the local debug runs was
+largely a debug-guest artifact; the `fetch_ms`/batch sweep (wamn-l5i9.64)
+remains the tuning lever but is not the cliff the local shape suggested.
+(4) Burst absorption: the CDC path absorbs a 10× spike without measurable
+consumer lag at 200 ms sampling while the app path stays flat — the
+write-decoupling claim, observed.
+
+Raw rows: `docs/ceilings-data/ce2e-record-{dist,dist-hist,fanout,burst-depth,burst-applat}.csv`.
+
 ### Deferred (in-cluster / follow-ups)
 
-Release-image job re-measure on the reference rig (the rows of record); a
-`fetch_ms`/batch sweep + a parallel-consumer-fetch variant for new-path fan-out;
-the app-CRUD-p99-under-capture C-INTERFERENCE bench (sibling, D19 §7). MUST stay
-ahead of EVT-TEARDOWN (l5i9.19) — the old path must be alive to measure.
+A `fetch_ms`/batch sweep + a parallel-consumer-fetch variant for new-path
+fan-out (wamn-l5i9.64 — softened by the record run's flat slope, reading 3
+above); the app-CRUD-p99-under-capture C-INTERFERENCE bench (sibling, D19 §7).
+The before/after record predates EVT-TEARDOWN (l5i9.19) as required — the old
+path was alive for every row above.
