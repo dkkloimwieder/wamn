@@ -40,6 +40,7 @@ use async_nats::{Client, HeaderMap};
 use bytes::Bytes;
 use clap::{Args, ValueEnum};
 use futures_util::StreamExt as _;
+use wamn_event_wire::{Envelope, Op, msg_id, subject};
 use wamn_gate_harness::check;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -101,50 +102,47 @@ pub struct StreamBenchArgs {
 
 impl StreamBenchArgs {
     fn stream_name(&self) -> String {
-        format!("EVT_{}_{}", self.org, self.env)
+        wamn_event_wire::stream_name(&self.org, &self.env)
     }
     /// The stream binds every project's events for this org+env.
     fn stream_subjects(&self) -> String {
-        format!("evt.{}.*.{}.>", self.org, self.env)
+        wamn_event_wire::stream_subjects(&self.org, &self.env)
     }
     /// `<project>_<env>` — the Nats-Msg-Id prefix the reader keys dedupe on.
     fn project_env(&self) -> String {
-        format!("{}_{}", self.project, self.env)
+        wamn_event_wire::project_env(&self.project, &self.env)
     }
 }
 
-/// A CDC-shaped envelope (a stand-in for the reader's real pgoutput event) plus
-/// the fields the gate asserts on.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Envelope {
-    op: String,
-    entity: String,
-    lsn: u64,
-    project_env: String,
-    seq: usize,
-}
-
 const ENTITIES: [&str; 3] = ["receipts", "receipt_lines", "quality_holds"];
-const OPS: [&str; 3] = ["insert", "update", "delete"];
+const OPS: [Op; 3] = [Op::Insert, Op::Update, Op::Delete];
 /// A fixed synthetic base LSN so the ids look like real confirmed positions.
 const LSN_BASE: u64 = 0x0100_0000;
 
-/// The i-th event's subject, envelope, LSN, and Nats-Msg-Id.
+/// The i-th event's subject, LSN, Nats-Msg-Id, and a REAL `wamn_event_wire`
+/// envelope payload — the frozen wire contract (wamn-l5i9.30), no stand-in copy.
 fn event(args: &StreamBenchArgs, i: usize) -> (String, u64, String, Bytes) {
     let entity = ENTITIES[i % ENTITIES.len()];
     let op = OPS[i % OPS.len()];
     let lsn = LSN_BASE + i as u64;
-    let subject = format!(
-        "evt.{}.{}.{}.{}.{}",
-        args.org, args.project, args.env, entity, op
-    );
-    let msg_id = format!("{}:{lsn}", args.project_env());
+    let subject = subject(&args.org, &args.project, &args.env, entity, op);
+    let msg_id = msg_id(&args.project, &args.env, lsn);
+    // A synthetic `new` image — the substrate gate asserts on lsn / subject /
+    // Nats-Msg-Id, not on row contents; the frozen envelope keeps it drift-proof.
+    let mut new = serde_json::Map::new();
+    new.insert("id".into(), serde_json::Value::String(i.to_string()));
     let env = Envelope {
-        op: op.to_string(),
-        entity: entity.to_string(),
+        op,
+        old: None,
+        new: Some(new),
+        entity: Some(entity.to_string()),
+        table: entity.to_string(),
         lsn,
-        project_env: args.project_env(),
-        seq: i,
+        txid: 1 + i as u32,
+        commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
+            .expect("valid rfc3339")
+            .with_timezone(&chrono::Utc),
+        causation: None,
     };
     let payload = Bytes::from(serde_json::to_vec(&env).expect("serialize envelope"));
     (subject, lsn, msg_id, payload)
@@ -330,11 +328,8 @@ async fn dedupe_phase(
     let name = args.stream_name();
     let (before, _l, _p, _r) = stream_state(js, &name).await?;
 
-    let subject = format!(
-        "evt.{}.{}.{}.receipts.insert",
-        args.org, args.project, args.env
-    );
-    let msg_id = format!("{}:{}", args.project_env(), 0xDED0_u64);
+    let subject = subject(&args.org, &args.project, &args.env, "receipts", Op::Insert);
+    let msg_id = msg_id(&args.project, &args.env, 0xDED0);
     let payload = Bytes::from_static(b"{\"dedupe\":true}");
 
     let mut h1 = HeaderMap::new();

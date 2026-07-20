@@ -2,11 +2,13 @@
 //! the envelope a CDC reader publishes per row event, the subject it lands on,
 //! and the `Nats-Msg-Id` the whole plane keys dedupe on.
 //!
-//! **WORKING DRAFT** (wamn-l5i9.1 decision c): these shapes are frozen only at
-//! the Phase-2 cutover (wamn-l5i9.30). Consumers today: the reader service
-//! (wamn-l5i9.10); next: the materializer (wamn-l5i9.17). `streambench`
-//! (wamn-gates) carries an inline stand-in of the same contract and migrates
-//! here at freeze.
+//! **STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). These shapes are the
+//! Phase-2 cutover contract: the reader service (wamn-l5i9.10) publishes them,
+//! the materializer (wamn-l5i9.17) consumes them, and `readerbench` /
+//! `streambench` (wamn-gates) bind this crate directly — no stand-in copy.
+//! Compatibility rule (the WIT-freeze discipline): 0.1.x admits only additive
+//! or clarifying changes; any breaking change waits for 0.2. Field removal or
+//! rename must break a named golden test below.
 //!
 //! Pure — no IO, no clock; every string this crate emits is pinned by a test.
 
@@ -14,6 +16,8 @@ use serde::{Deserialize, Serialize};
 
 /// Row operation — the `<op>` subject segment. v3 publishes exactly these
 /// three; TRUNCATE is not part of the event plane (a reader logs and skips it).
+///
+/// STATUS: FROZEN 0.1.0 (wamn-l5i9.30) — additive/clarifying only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Op {
@@ -35,6 +39,8 @@ impl Op {
 /// The v3 §4 causation stamp `{run, root, depth}` — stitched onto a
 /// transaction's envelopes by the reader when the `wamn:postgres` plugin
 /// emitted one (wamn-l5i9.12). Depth is bounded by the materializer (max 16).
+///
+/// STATUS: FROZEN 0.1.0 (wamn-l5i9.30) — additive/clarifying only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Causation {
@@ -56,6 +62,9 @@ pub struct Causation {
 /// from the map** — distinguishable from a real NULL, which is present as
 /// `null` (the S-CDC-1 finding). `old` is present only when the source
 /// provided an old image (REPLICA IDENTITY, or the key columns of a delete).
+///
+/// STATUS: FROZEN 0.1.0 (wamn-l5i9.30) — additive/clarifying only. The field
+/// set, spellings, and serde omission rules are pinned by the golden tests.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Envelope {
@@ -112,6 +121,12 @@ pub fn stream_subjects(org: &str, env: &str) -> String {
     format!("evt.{org}.*.{env}.>")
 }
 
+/// `EVT_<org>_<env>` — the JetStream stream name a project-env's events land in
+/// (the registration default; one stream per org+env, D19 v3 §5).
+pub fn stream_name(org: &str, env: &str) -> String {
+    format!("EVT_{org}_{env}")
+}
+
 /// Make a raw name safe as ONE subject token: NATS reserves `.` (separator),
 /// `*`/`>` (wildcards), and whitespace/control break parsing — each becomes
 /// `_`. Catalog-managed tables are already clean idents; this is the backstop
@@ -152,6 +167,12 @@ mod tests {
     #[test]
     fn stream_binds_every_project_of_the_org_env() {
         assert_eq!(stream_subjects("acme", "dev"), "evt.acme.*.dev.>");
+    }
+
+    #[test]
+    fn stream_name_is_evt_org_env() {
+        assert_eq!(stream_name("acme", "dev"), "EVT_acme_dev");
+        assert_eq!(stream_name("acme", "prod"), "EVT_acme_prod");
     }
 
     #[test]
@@ -226,8 +247,47 @@ mod tests {
         let c: Causation =
             serde_json::from_str(r#"{"run":"f1:evt:9","root":"f1:evt:1","depth":3}"#).unwrap();
         assert_eq!(c.depth, 3);
-        // The draft rejects smuggled fields.
+        // Freeze the serialized field order + spellings (run, root, depth).
+        assert_eq!(
+            serde_json::to_string(&c).unwrap(),
+            r#"{"run":"f1:evt:9","root":"f1:evt:1","depth":3}"#
+        );
+        // The frozen shape rejects smuggled fields.
         let smuggled = r#"{"run":"a","root":"b","depth":1,"x":2}"#;
         assert!(serde_json::from_str::<Causation>(smuggled).is_err());
+    }
+
+    #[test]
+    fn fully_populated_envelope_freezes_every_field() {
+        // The freeze golden: every field present — old, new, entity, AND
+        // causation. Pins the full field ORDER, spellings, and nesting; a
+        // rename/removal of any wire field breaks THIS string.
+        let mut old = serde_json::Map::new();
+        old.insert("status".into(), serde_json::Value::String("draft".into()));
+        let mut new = serde_json::Map::new();
+        new.insert("status".into(), serde_json::Value::String("shipped".into()));
+        let env = Envelope {
+            op: Op::Update,
+            old: Some(old),
+            new: Some(new),
+            entity: Some("sales_orders".into()),
+            table: "orders".into(),
+            lsn: 42,
+            txid: 731,
+            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-18T12:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            causation: Some(Causation {
+                run: "f1:evt:00000000000000000009".into(),
+                root: "f1:evt:00000000000000000001".into(),
+                depth: 3,
+            }),
+        };
+        assert_eq!(
+            serde_json::to_string(&env).unwrap(),
+            r#"{"op":"update","old":{"status":"draft"},"new":{"status":"shipped"},"entity":"sales_orders","table":"orders","lsn":42,"txid":731,"commit_ts":"2026-07-18T12:00:00Z","causation":{"run":"f1:evt:00000000000000000009","root":"f1:evt:00000000000000000001","depth":3}}"#
+        );
+        let back: Envelope = serde_json::from_str(&serde_json::to_string(&env).unwrap()).unwrap();
+        assert_eq!(back, env);
     }
 }

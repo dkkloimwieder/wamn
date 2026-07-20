@@ -8,6 +8,12 @@
 //!
 //! Always-on (no `dispatcher` feature): the materializer guest links this
 //! through the same `default-features = false` core the flowrunner uses.
+//!
+//! **STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). The run-id grammar
+//! `<flow>:evt:<stream_seq zero-padded to 20>` is the Phase-2 cutover contract
+//! (pinned by the tests below — the pad width and format break a named test on
+//! any change). Compatibility rule (the WIT-freeze discipline): 0.1.x admits
+//! only additive or clarifying changes; any breaking change waits for 0.2.
 
 /// Deterministic run id for a CDC event firing: `{flow}:evt:{stream_seq}`, one
 /// run per (flow, stream event).

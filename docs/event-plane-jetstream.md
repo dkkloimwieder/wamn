@@ -62,6 +62,18 @@ mechanical row changes ride one pipeline, distinguished by subject.
 
 ## 4. Capture layer
 
+**Wire schemas — STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). The envelope
+`{op, old, new, entity?, table, lsn, txid, commit_ts, causation?}`, the subject
+`evt.<org>.<project>.<env>.<entity>.<op>`, the `Nats-Msg-Id =
+<project_env>:<lsn>`, the stream name `EVT_<org>_<env>`, the `run_id =
+<flow>:evt:<stream_seq padded 20>`, the registration declaration (JMESPath
+condition/partition-key over the event context `{op, old, new}`), and the
+run-input envelope are frozen into code (`wamn-event-wire`, `wamn-event-reg`,
+`wamn-materializer`, `wamn-run-queue`); each is pinned by a golden test — a field
+removal/rename breaks a named test. Compatibility rule (the WIT-freeze
+discipline): 0.1.x admits only additive or clarifying changes; any breaking
+change waits for 0.2.
+
 - **Provisioning** (`provision-project-env` additions): publication over the
   app schema (+ `domain_events`); **failover-enabled slot** (PG18/CNPG — slot
   continuity across switchover is a Phase-1 drill, not an assumption); reader
@@ -89,8 +101,9 @@ mechanical row changes ride one pipeline, distinguished by subject.
   advance on ack at txn granularity, session re-open loop per the S-CDC-1 F2
   finding. The reader NEVER creates the slot: missing/invalidated ⇒ the §11
   incident, exit loudly (crash-loop = the MVP alert). Envelope/subject/msg-id
-  types live in `wamn-event-wire` (WORKING DRAFT per §12; freeze at the
-  Phase-2 cutover). MVP entity naming = the pgoutput relation's table name —
+  types live in `wamn-event-wire` (FROZEN 0.1.0 at the Phase-2 cutover —
+  wamn-l5i9.30; see the §4 status block). MVP entity naming = the pgoutput
+  relation's table name —
   the OID→catalog-entity map is the next bead.*
   *Entity keying shipped (wamn-l5i9.11, 2026-07-19): the reader resolves each
   relation OID to its stable catalog entity id via a `wamn_entities` map
@@ -275,8 +288,9 @@ instruction not pre-specified as gates.
 (wamn-l5i9.17, 2026-07-19, §5 status note): Service workload + wamn:jetstream
 first importer + causation thread + matbench gate; first C-MAT numbers
 (deliveries→enqueue + duplicate-storm cost) recorded in docs/ceilings.md
-(local provenance — the in-cluster campaign re-measures). Next on this phase:
-l5i9.30 wire-schema freeze, l5i9.32 cluster knobs, l5i9.18 shadow/cutover.*
+(local provenance — the in-cluster campaign re-measures). Wire schemas FROZEN
+0.1.0 into code (wamn-l5i9.30, 2026-07-19, §4 status block). Next on this phase:
+l5i9.32 cluster knobs, l5i9.18 shadow/cutover (against the frozen shapes).*
 **Benches:** C-MAT (deliveries→enqueue rate, duplicate-storm cost), C-E2E
 (commit→run-start distribution; fan-out 1→N vs old path — the one
 before/after chart), C-INTERFERENCE (app-CRUD p99 while capture+materialize run
@@ -357,7 +371,7 @@ assessment (§4, v3 §11), not a slot drop.
 |---|---|
 | R6 `blocking` default | ~~Phase 0 sign-off~~ **signed 2026-07-18** (carries to the materializer) |
 | 5.10 backend | ~~Phase 0 sign-off~~ **deferred to a Phase-1 spike** (wamn-l5i9.29, signed 2026-07-18) |
-| Schemas (envelope/subjects/ids) frozen | ~~Phase 0~~ **at the Phase-2 cutover** (wamn-l5i9.30, signed 2026-07-18) |
+| Schemas (envelope/subjects/ids) frozen | ~~Phase 0~~ ~~at the Phase-2 cutover~~ **FROZEN 0.1.0 into code 2026-07-19** (wamn-l5i9.30; §4 status block) |
 | Replica-identity policy + causation depth | ~~Phase 0~~ **signed 2026-07-18** (per-entity knob, wamn-l5i9.31; depth 16) |
 | Reader build (pg_walstream) vs buy (Sequin) | ~~end of Phase 0 spikes~~ **signed 2026-07-18: build** (`wamn-l5i9.6`, on S-CDC-1 results + vendor numbers; S-CDC-2 skipped — Sequin stays the documented fallback, Debezium second) |
 | Consumer quota / retention tiers | Phase 3 (from C-JS) |

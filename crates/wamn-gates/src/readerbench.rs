@@ -98,7 +98,7 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
     let stream_name = args
         .stream
         .clone()
-        .unwrap_or_else(|| format!("EVT_{}_{}", args.org, args.env));
+        .unwrap_or_else(|| wamn_event_wire::stream_name(&args.org, &args.env));
     let expect = args.expect_ids.len();
     println!(
         "readerbench — draining {stream_name} at {} (expect {expect} inserts on {})",

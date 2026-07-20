@@ -159,6 +159,26 @@ fn round_trips_through_canonical_json_with_kebab_case_fields() {
 }
 
 #[test]
+fn frozen_wire_shape_is_the_exact_field_order_and_spellings() {
+    // The freeze golden (wamn-l5i9.30): a field rename/removal or reordering
+    // breaks THIS string. Compact form pins the canonical field ORDER
+    // (declaration order) and the kebab-case spellings deterministically.
+    let full = serde_json::to_string(&reg()).unwrap();
+    assert_eq!(
+        full,
+        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","catalog-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"],"condition":"new.status == 'shipped' && old.status != 'shipped'","partition-key":"new.status"}"#
+    );
+    // Minimal: the two optional expression fields are OMITTED (not null).
+    let mut r = reg();
+    r.condition = None;
+    r.partition_key = None;
+    assert_eq!(
+        serde_json::to_string(&r).unwrap(),
+        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","catalog-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"]}"#
+    );
+}
+
+#[test]
 fn optional_fields_are_omitted_when_absent() {
     let mut r = reg();
     r.condition = None;

@@ -1,5 +1,12 @@
 //! The event context — the JSON value conditions and registration
 //! partition-key extractors evaluate over — and the tenant-scoping read.
+//!
+//! **STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). The context shape
+//! [`event_context`] emits — `{"op", "old", "new"}` — is the frozen surface a
+//! `wamn_event_reg` JMESPath condition/partition-key evaluates against; it is
+//! pinned by a golden test. Compatibility rule (the WIT-freeze discipline):
+//! 0.1.x admits only additive or clarifying changes; any breaking change waits
+//! for 0.2.
 
 use serde_json::{Map, Value, json};
 use wamn_event_wire::{Envelope, Op};
@@ -68,6 +75,21 @@ mod tests {
         chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc)
+    }
+
+    #[test]
+    fn frozen_context_shape_is_exactly_op_old_new() {
+        // The freeze golden (wamn-l5i9.30): the condition/extractor context is
+        // exactly {op, old, new}. A field rename/removal breaks THIS string.
+        let env = envelope(
+            Op::Update,
+            Some(json!({"status": "draft"})),
+            Some(json!({"status": "shipped"})),
+        );
+        assert_eq!(
+            serde_json::to_string(&event_context(&env)).unwrap(),
+            r#"{"new":{"status":"shipped"},"old":{"status":"draft"},"op":"update"}"#
+        );
     }
 
     #[test]

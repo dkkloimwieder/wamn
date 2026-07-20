@@ -26,8 +26,15 @@
 //! crate is the source of truth for the semantics; the storage schema denormalizes
 //! `flow_id`/`entity_id` as columns for lookup).
 //!
-//! **WORKING DRAFT** (wamn-l5i9.1 decision c): the event-plane wire/declaration
-//! shapes freeze at the Phase-2 cutover (wamn-l5i9.30) — `0.1.x` is additive only.
+//! **STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). The declaration shape,
+//! the kebab-case field spellings, AND the expression grammar are frozen: a
+//! [`condition`](EventRegistration::condition) is a JMESPath **predicate** and a
+//! [`partition_key`](EventRegistration::partition_key) a JMESPath **expression**,
+//! both over the frozen event context `{"op", "old", "new"}` (built by
+//! `wamn_materializer::event_context`) and syntax-validated at write
+//! ([`crate::validate`]). Compatibility rule (the WIT-freeze discipline): 0.1.x
+//! admits only additive or clarifying changes; any breaking change waits for
+//! 0.2. A field removal/rename breaks a named golden test in `tests/`.
 
 use serde::{Deserialize, Serialize};
 

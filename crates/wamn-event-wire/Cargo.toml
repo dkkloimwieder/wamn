@@ -1,6 +1,6 @@
 [package]
 name = "wamn-event-wire"
-description = "D19 v3 event-plane wire contract (WORKING DRAFT, l5i9.1c): envelope + subject + Nats-Msg-Id builders shared by the CDC reader and the materializer"
+description = "D19 v3 event-plane wire contract (FROZEN 0.1.0, l5i9.30): envelope + subject + Nats-Msg-Id builders shared by the CDC reader and the materializer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

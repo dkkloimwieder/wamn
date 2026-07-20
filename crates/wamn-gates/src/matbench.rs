@@ -156,7 +156,8 @@ fn envelope_json(
     }
     if let Some((depth, root)) = causation {
         env["causation"] = serde_json::json!({
-            "run": format!("parent:evt:{depth:020}"),
+            // The frozen evt run-id builder — no inline padded copy (l5i9.30).
+            "run": mint_evt_run_id("parent", u64::from(depth)),
             "root": root,
             "depth": depth,
         });
@@ -476,7 +477,10 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     for (i, (op, body)) in tape.iter().enumerate() {
         let lsn = (i + 1) as u64;
         let mut headers = async_nats::HeaderMap::new();
-        headers.append("Nats-Msg-Id", format!("{PROJECT}_{ENV}:{lsn}").as_str());
+        headers.append(
+            "Nats-Msg-Id",
+            wamn_event_wire::msg_id(PROJECT, ENV, lsn).as_str(),
+        );
         js.publish_with_headers(subject(op), headers, body.clone().into())
             .await
             .context("publish send")?
@@ -687,7 +691,10 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             None,
         );
         let mut headers = async_nats::HeaderMap::new();
-        headers.append("Nats-Msg-Id", format!("{PROJECT}_{ENV}:{lsn}").as_str());
+        headers.append(
+            "Nats-Msg-Id",
+            wamn_event_wire::msg_id(PROJECT, ENV, lsn).as_str(),
+        );
         js.publish_with_headers(subject("insert"), headers, body.into())
             .await
             .context("burst publish send")?
@@ -777,4 +784,47 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         bail!("l5i9.17 matbench gate failed");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drift guard (wamn-l5i9.30): the tape's hand-built `envelope_json` MUST
+    /// stay a valid `wamn_event_wire::Envelope` — the frozen wire type. A field
+    /// rename/removal on either side (the type's `deny_unknown_fields`, or a
+    /// missing required field) fails deserialization here, at `cargo test`,
+    /// before the gate ever needs a live JetStream.
+    #[test]
+    fn tape_envelopes_match_the_frozen_wire_type() {
+        // Insert with a new image, no causation.
+        let insert = envelope_json(
+            "insert",
+            None,
+            Some(serde_json::json!({"id": "1", "tenant_id": TENANT})),
+            1,
+            None,
+        );
+        let env: wamn_event_wire::Envelope =
+            serde_json::from_str(&insert).expect("insert tape is a frozen Envelope");
+        assert_eq!(env.op, wamn_event_wire::Op::Insert);
+        assert_eq!(env.entity.as_deref(), Some(ENTITY));
+
+        // Delete carrying an old key image + a causation stamp (the run id is
+        // the frozen mint — proves the causation record shape too).
+        let del = envelope_json(
+            "delete",
+            Some(serde_json::json!({"id": "1"})),
+            None,
+            5,
+            Some((3, "origin-root")),
+        );
+        let env: wamn_event_wire::Envelope =
+            serde_json::from_str(&del).expect("delete tape is a frozen Envelope");
+        assert_eq!(env.op, wamn_event_wire::Op::Delete);
+        assert_eq!(
+            env.causation.expect("stamped").run,
+            mint_evt_run_id("parent", 3)
+        );
+    }
 }

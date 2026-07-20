@@ -1,8 +1,9 @@
 //! The run-input envelope an evt firing persists (`runs.input_json`, 5.7 —
 //! what a replay re-runs and the flow's trigger node reads).
 //!
-//! Shape (WORKING DRAFT until the l5i9.30 freeze, like every event-plane wire
-//! shape): `{"trigger":"event", "entity"?, "table", "event", "seq", "payload",
+//! Shape (**STATUS: FROZEN 0.1.0**, 2026-07-19, wamn-l5i9.30, like every
+//! event-plane wire shape — additive/clarifying only, pinned by a golden test):
+//! `{"trigger":"event", "entity"?, "table", "event", "seq", "payload",
 //! "old"?, "causation":{run,root,depth}}` — the outbox firing's
 //! `{trigger,table,event,seq,payload}` grammar (so a flow reads
 //! `payload.<column>` the same way post-cutover), extended with the stable
@@ -80,6 +81,22 @@ mod tests {
                 .with_timezone(&chrono::Utc),
             causation: None,
         }
+    }
+
+    #[test]
+    fn frozen_run_input_shape_is_the_evt_grammar() {
+        // The freeze golden (wamn-l5i9.30): the exact run-input field set +
+        // spellings a replay re-runs. A field rename/removal breaks THIS string.
+        let env = envelope(Op::Insert, None, Some(json!({"id": "7"})));
+        let child = Causation {
+            run: "f1:evt:00000000000000000009".into(),
+            root: "f1:evt:00000000000000000009".into(),
+            depth: 0,
+        };
+        assert_eq!(
+            evt_input_json(&env, 9, &child),
+            r#"{"causation":{"depth":0,"root":"f1:evt:00000000000000000009","run":"f1:evt:00000000000000000009"},"entity":"receipts","event":"insert","payload":{"id":"7"},"seq":9,"table":"receipts_v2","trigger":"event"}"#
+        );
     }
 
     #[test]
