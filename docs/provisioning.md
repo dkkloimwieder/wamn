@@ -735,7 +735,7 @@ registrations copied verbatim, and the RLS policy rows copied **and
 re-compiled/applied** on the dst (an existing policy is a `duplicate_object`
 skip). `data` = `pg_restore --data-only --disable-triggers -n <data-schema>` of
 a fresh snapshot into a dst that already carries the definition
-(`--disable-triggers` is load-bearing: the D4 outbox triggers must not fire once
+(`--disable-triggers` is load-bearing: no trigger may fire once
 per restored row; a full restore has no such problem — triggers are post-data).
 `both` = a full-fidelity restore (schema + rows + ownership/ACLs; the dump
 carries the definition tables, so no separate definition pass). "Deploy an app"

@@ -68,9 +68,10 @@ fn default_literal(v: &Value) -> String {
 }
 
 /// A `CHECK` forbidding the JSON-type-changing special values a numeric or
-/// timestamp column can otherwise hold. `to_jsonb` serializes `'NaN'::numeric`
+/// timestamp column can otherwise hold. JSON projections of a row (`to_jsonb`,
+/// a CDC event payload) serialize `'NaN'::numeric`
 /// and `'infinity'::timestamptz`/`date` as JSON **strings** (`"NaN"`,
-/// `"infinity"`), so a row-event outbox payload's field would silently change
+/// `"infinity"`), so a row-event payload's field would silently change
 /// JSON type from number/instant to string; a consumer branching on
 /// `jsonb_typeof` mishandles it with no error. Forbidding the values at the
 /// column keeps every numeric/timestamp payload field a JSON number/string-

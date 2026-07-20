@@ -17,7 +17,7 @@ mod model;
 mod oldref;
 mod validate;
 
-pub use model::{EventRegistration, RegistrationState, SCHEMA_VERSION};
+pub use model::{EventRegistration, SCHEMA_VERSION};
 pub use oldref::{condition_references_old, references_old};
 pub use validate::validate;
 

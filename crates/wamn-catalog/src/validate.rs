@@ -60,8 +60,8 @@ impl std::fmt::Display for Issue {
 }
 
 /// The reserved identifier prefix. The entire `wamn_` family is platform-owned —
-/// migration asides (`wamn_mig_drop_*`), the outbox trigger/function
-/// (`wamn_outbox_event`), and run-schema objects all live under it — so a
+/// migration asides (`wamn_mig_drop_*`), the CDC entity map (`wamn_entities`),
+/// and run-schema objects all live under it — so a
 /// user-authored name must never collide. Rejecting it at *design* time makes the
 /// rule clear up front and demotes wamn-ddl's `TempNameCollision` (which only
 /// fires at migration-compile time, and only on a colliding aside-rename) to

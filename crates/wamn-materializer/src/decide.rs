@@ -39,7 +39,7 @@ pub struct FirePlan {
     pub run_id: String,
     pub flow_id: String,
     pub flow_version: i32,
-    /// The audit `trigger_source` (`evt:<stream_seq>`, the `outbox:<seq>` grammar).
+    /// The audit `trigger_source` (`evt:<stream_seq>` — the trigger-source grammar).
     pub trigger_source: String,
     /// The persisted run input (causation thread embedded).
     pub input_json: String,

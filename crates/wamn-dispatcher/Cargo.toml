@@ -1,6 +1,6 @@
 [package]
 name = "wamn-dispatcher"
-description = "wamn shared trigger dispatcher service (5.14, SR9): cron + outbox + parked-wake across all projects — its own deployment artifact, no runtime linked (the doorbell NATS client is a local thin connect)"
+description = "wamn shared trigger dispatcher service (5.14, SR9): cron + parked-wake across all projects — its own deployment artifact, no runtime linked (the doorbell NATS client is a local thin connect)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

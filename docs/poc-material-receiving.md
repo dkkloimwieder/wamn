@@ -28,7 +28,7 @@ Extends the **system schema** — deliberately including the hard path of adding
 
 **F3 — `escalate-stale-holds` (cron, nightly).** Query holds open > 48h → mark `escalated` → notify manager via outbound HTTP (webhook-style notification) using a **stored credential** and `allowedHosts: [notify.example]`. Exercises: dispatcher-owned cron, parked-project wake (project idles overnight — scale-to-zero proof), credential vault, egress allowlist.
 
-**F4 — `disposition-recorded` (row-event trigger).** Outbox row on `dispositions` insert → flow calls F2's recommendation node (audit comparison: did inspector match the recommendation?) → POST callback to ERP with idempotency key. Exercises: outbox + dispatcher + doorbell path end-to-end, custom-node invocation, `rate-limited` handling (ERP simulator returns 429 with Retry-After on demand — assert shared throttle, no stampede).
+**F4 — `disposition-recorded` (row-event trigger).** CDC row event on `dispositions` insert (D19 event plane: reader → JetStream → materializer, via the flow's event registration) → flow calls F2's recommendation node (audit comparison: did inspector match the recommendation?) → POST callback to ERP with idempotency key. Exercises: CDC capture → materializer → doorbell path end-to-end, custom-node invocation, `rate-limited` handling (ERP simulator returns 429 with Retry-After on demand — assert shared throttle, no stampede).
 
 ## Frontend (Epic 6 exercise)
 BYO React SPA from the starter template, generated TS SDK only (no hand-rolled fetch): login via platform IdP, inspector hold queue (filtered/paginated via generated REST), hold detail with disposition form (mutation), manager dashboard (relation expansion: hold → line → material → supplier). Deployed through the frontend build pipeline (6.2) to `{project}.wamn.example`.
@@ -64,7 +64,7 @@ No MQTT/OPC-UA (post-v0), no UI builder, no multi-site federation, no real ERP c
 | F1 transactions + taxonomy | 2.1–2.2, wamn:node errors |
 | F2 zero-import custom node | 5.4–5.6 (contract, builder, grant derivation) |
 | F3 cron + parked wake + credential + allowlist | 5.14 dispatcher, scale-to-zero, 5.9, egress governance |
-| F4 outbox→doorbell→flow + 429 throttle | D4, 5.14, rate-limited semantics |
+| F4 CDC-event→materializer→flow + 429 throttle | D19, 5.14, rate-limited semantics |
 | RLS site scoping + ERP API key | 2.2, 4.2–4.3, 8.2 |
 | Platform viewer account | 8.1 platform RBAC |
 | Fixtures / egress spy / virtual time / gates / impact demo | 11.1–11.8 |

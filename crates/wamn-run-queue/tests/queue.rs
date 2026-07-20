@@ -7,18 +7,16 @@ use std::collections::HashSet;
 
 use wamn_run_queue::{
     ClaimState, CronError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, JanitorVerdict,
-    OutboxRow, PartitionOwner, PartitionPolicy, QueueEntry, RowEventFlow, RunStatus,
-    acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_dispatch_sql,
-    claim_partition_head_sql, claim_state, complete_dequeue_sql, cron_firing, cron_last_run_sql,
-    cron_tick_of, dequeue_sql, due_tick, enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql,
-    enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql,
-    janitor_verdict, lease_deadline, lease_live, mark_running_sql, match_outbox, mint_cron_run_id,
-    mint_evt_run_id, next_fire, next_interval, next_reconcile, orphans, outbox_ack_sql,
-    outbox_hold_sql, outbox_insert_sql, outbox_poll_sql, outbox_prune_sql, park_sql,
-    parked_due_sql, partition_lease_live, plan_ack, plan_acquire, plan_claim, plan_hold,
-    plan_partition_claim, reconcile_due, record_error_and_renew_sql, record_success_and_renew_sql,
-    release_partition_sql, renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
-    write_ahead_triggered_run_sql,
+    PartitionOwner, PartitionPolicy, QueueEntry, RunStatus, acquire_partitions_sql,
+    active_flows_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql, claim_state,
+    complete_dequeue_sql, cron_firing, cron_last_run_sql, cron_tick_of, dequeue_sql, due_tick,
+    enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql,
+    gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline,
+    lease_live, mark_running_sql, mint_cron_run_id, mint_evt_run_id, next_fire, next_interval,
+    next_reconcile, orphans, park_sql, parked_due_sql, partition_lease_live, plan_acquire,
+    plan_claim, plan_partition_claim, reconcile_due, record_error_and_renew_sql,
+    record_success_and_renew_sql, release_partition_sql, renew_lease_sql, renew_partition_sql,
+    should_renew, write_ahead_run_sql, write_ahead_triggered_run_sql,
 };
 
 // ---- claim eligibility -----------------------------------------------------
@@ -1210,246 +1208,6 @@ fn cron_run_ids_are_deterministic_and_ordered() {
     assert_eq!(v["fire-at-ms"], JAN1_2026);
 }
 
-// ---- trigger dispatcher: outbox ------------------------------------------------
-
-#[test]
-fn outbox_matching_fires_per_row_times_flow() {
-    let rows = vec![
-        OutboxRow {
-            seq: 7,
-            table: "dispositions".into(),
-            event: "insert".into(),
-            payload: Some("{\"id\": \"d-1\"}".to_string()),
-        },
-        OutboxRow {
-            seq: 8,
-            table: "receipts".into(),
-            event: "update".into(),
-            payload: None,
-        },
-        // No flow registered on deletes -> consumed with no firing.
-        OutboxRow {
-            seq: 9,
-            table: "receipts".into(),
-            event: "delete".into(),
-            payload: None,
-        },
-    ];
-    let flows = vec![
-        RowEventFlow {
-            flow_id: "disposition-recorded".into(),
-            flow_version: 2,
-            table: "dispositions".into(),
-            event: "insert".into(),
-        },
-        // Two flows on the same (table, event): both fire per row.
-        RowEventFlow {
-            flow_id: "disposition-audit".into(),
-            flow_version: 1,
-            table: "dispositions".into(),
-            event: "insert".into(),
-        },
-        RowEventFlow {
-            flow_id: "receipt-updated".into(),
-            flow_version: 1,
-            table: "receipts".into(),
-            event: "update".into(),
-        },
-    ];
-    let firings = match_outbox(&rows, &flows);
-    let ids: Vec<&str> = firings.iter().map(|f| f.run_id.as_str()).collect();
-    assert_eq!(
-        ids,
-        [
-            "disposition-recorded:outbox:7",
-            "disposition-audit:outbox:7",
-            "receipt-updated:outbox:8",
-        ]
-    );
-    assert_eq!(firings[0].trigger_source, "outbox:7");
-    let v: serde_json::Value = serde_json::from_str(&firings[0].input_json).unwrap();
-    assert_eq!(v["trigger"], "row-event");
-    assert_eq!(v["table"], "dispositions");
-    assert_eq!(v["event"], "insert");
-    assert_eq!(v["seq"], 7);
-    assert_eq!(v["payload"]["id"], "d-1");
-    // A payload-less event carries an explicit null (still a replayable input).
-    let v8: serde_json::Value = serde_json::from_str(&firings[2].input_json).unwrap();
-    assert_eq!(v8["payload"], serde_json::Value::Null);
-    // No flows registered -> nothing fires (rows are acked as consumed-no-op).
-    assert!(match_outbox(&rows, &[]).is_empty());
-}
-
-#[test]
-fn outbox_payload_is_spliced_verbatim_no_float_round_trip() {
-    // The platform's no-float rule end-to-end: a row_to_json payload carrying
-    // an int8 beyond 2^53 and a >15-significant-digit exact decimal must reach
-    // the run input BYTE-EXACT — a parse-through-f64 would rewrite both.
-    let rows = vec![OutboxRow {
-        seq: 1,
-        table: "receipts".into(),
-        event: "insert".into(),
-        payload: Some("{\"big\": 9007199254740993, \"qty\": 12345678901234567.89}".to_string()),
-    }];
-    let flows = vec![RowEventFlow {
-        flow_id: "f".into(),
-        flow_version: 1,
-        table: "receipts".into(),
-        event: "insert".into(),
-    }];
-    let firings = match_outbox(&rows, &flows);
-    assert_eq!(firings.len(), 1);
-    assert!(firings[0].input_json.contains("9007199254740993"));
-    assert!(firings[0].input_json.contains("12345678901234567.89"));
-}
-
-#[test]
-fn plan_ack_holds_a_skipped_flows_events() {
-    // A skew-held (table, event) stays pending; everything else — matched or
-    // unmatched — acks.
-    let rows = vec![
-        OutboxRow {
-            seq: 1,
-            table: "dispositions".into(),
-            event: "insert".into(),
-            payload: None,
-        },
-        OutboxRow {
-            seq: 2,
-            table: "skewed".into(),
-            event: "insert".into(),
-            payload: None,
-        },
-        // Same table, different event -> NOT held.
-        OutboxRow {
-            seq: 3,
-            table: "skewed".into(),
-            event: "delete".into(),
-            payload: None,
-        },
-    ];
-    let held = vec![("skewed".to_string(), "insert".to_string())];
-    assert_eq!(plan_ack(&rows, &held), [1, 3]);
-    assert_eq!(plan_ack(&rows, &[]), [1, 2, 3]);
-    // R14: plan_hold is the exact complement — the held seqs the dispatcher stamps
-    // held_since on (so the poll stops returning them), NEVER acks. Every polled seq
-    // is in exactly one of the two lists.
-    assert_eq!(plan_hold(&rows, &held), [2]);
-    assert!(
-        plan_hold(&rows, &[]).is_empty(),
-        "nothing held -> nothing to stamp"
-    );
-    let mut both = [plan_ack(&rows, &held), plan_hold(&rows, &held)].concat();
-    both.sort_unstable();
-    assert_eq!(
-        both,
-        [1, 2, 3],
-        "ack + hold partition the polled batch exactly"
-    );
-}
-
-#[test]
-fn held_rows_leave_the_poll_window_so_a_healthy_event_is_reached() {
-    // R14 poll-window model: the poll returns pending (dispatched_at IS NULL) AND
-    // NOT held (held_since IS NULL), oldest-first, up to `limit` — the exact filter
-    // of outbox_poll_sql. A batch of held rows at the LOWEST seqs (a broken flow)
-    // would starve a healthy event forever: held rows never ack (plan_ack refuses
-    // them), so dispatched_at stays NULL and, being oldest, they permanently fill
-    // the window. Stamping held_since (plan_hold + outbox_hold_sql) lifts them out
-    // so the healthy event is reached on the next poll.
-    struct Pending {
-        seq: i64,
-        table: &'static str,
-        event: &'static str,
-        held_since: bool,
-        dispatched: bool,
-    }
-    // Models outbox_poll_sql's WHERE + ORDER BY seq + LIMIT.
-    fn poll(pending: &[Pending], limit: usize) -> Vec<OutboxRow> {
-        let mut idx: Vec<&Pending> = pending
-            .iter()
-            .filter(|p| !p.dispatched && !p.held_since)
-            .collect();
-        idx.sort_by_key(|p| p.seq);
-        idx.into_iter()
-            .take(limit)
-            .map(|p| OutboxRow {
-                seq: p.seq,
-                table: p.table.into(),
-                event: p.event.into(),
-                payload: None,
-            })
-            .collect()
-    }
-    let mut pending = vec![
-        Pending {
-            seq: 1,
-            table: "skewed",
-            event: "insert",
-            held_since: false,
-            dispatched: false,
-        },
-        Pending {
-            seq: 2,
-            table: "skewed",
-            event: "insert",
-            held_since: false,
-            dispatched: false,
-        },
-        Pending {
-            seq: 3,
-            table: "skewed",
-            event: "insert",
-            held_since: false,
-            dispatched: false,
-        },
-        Pending {
-            seq: 4,
-            table: "healthy",
-            event: "insert",
-            held_since: false,
-            dispatched: false,
-        },
-    ];
-    let held = [("skewed".to_string(), "insert".to_string())];
-
-    // Round 1 (batch=2): the two oldest slots are held; nothing acks, both are stamped.
-    let r1 = poll(&pending, 2);
-    assert_eq!(r1.iter().map(|r| r.seq).collect::<Vec<_>>(), [1, 2]);
-    assert!(
-        plan_ack(&r1, &held).is_empty(),
-        "no healthy row in the first window"
-    );
-    for seq in plan_hold(&r1, &held) {
-        pending
-            .iter_mut()
-            .find(|p| p.seq == seq)
-            .unwrap()
-            .held_since = true;
-    }
-    // Round 2: seq 1,2 have left the window; the healthy seq 4 is now reached.
-    let r2 = poll(&pending, 2);
-    assert_eq!(r2.iter().map(|r| r.seq).collect::<Vec<_>>(), [3, 4]);
-    assert_eq!(
-        plan_ack(&r2, &held),
-        [4],
-        "the healthy event is finally reached and acked"
-    );
-    for seq in plan_hold(&r2, &held) {
-        pending
-            .iter_mut()
-            .find(|p| p.seq == seq)
-            .unwrap()
-            .held_since = true;
-    }
-    pending.iter_mut().find(|p| p.seq == 4).unwrap().dispatched = true; // fired + acked
-    // Round 3: held rows excluded, healthy dispatched — no head-of-line block remains.
-    assert!(
-        poll(&pending, 2).is_empty(),
-        "the poll window is drained; no held row blocks it"
-    );
-}
-
 // ---- trigger dispatcher: adaptive cadence ---------------------------------------
 
 #[test]
@@ -1480,41 +1238,6 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(wat.contains(&format!("'{}'", RunStatus::Dispatched.as_sql())));
     assert!(wat.contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
     assert!(wat.contains("current_setting('app.tenant', true)"));
-
-    // The poll: pending AND NOT HELD, oldest-first, SKIP LOCKED (replica-disjoint
-    // batches). The `held_since IS NULL` clause is the load-bearing R14 drift-guard:
-    // dropping it re-opens the head-of-line block (held rows starve the window), and
-    // the runtime effect only shows once `--batch` held rows accumulate.
-    let poll = outbox_poll_sql(64);
-    assert!(poll.contains("dispatched_at IS NULL"));
-    assert!(poll.contains("held_since IS NULL"));
-    assert!(poll.contains("ORDER BY seq"));
-    assert!(!poll.contains("DESC")); // oldest-FIRST — a substring check alone would pass DESC
-    assert!(poll.contains("FOR UPDATE SKIP LOCKED"));
-    assert!(poll.contains("LIMIT 64"));
-    // R8b-b: the explicit tenant predicate (inert under RLS, defense-in-depth).
-    assert!(poll.contains("tenant_id = current_setting('app.tenant', true)"));
-
-    let ack = outbox_ack_sql();
-    assert!(ack.contains("SET dispatched_at = now()"));
-    assert!(ack.contains("seq = ANY($1)"));
-    assert!(ack.contains("current_setting('app.tenant', true)"));
-
-    // The hold (R14): stamp held_since on the held subset so the poll excludes them.
-    // Stamped ONCE (WHERE held_since IS NULL) so it preserves the backlog age; scoped
-    // by the same $1 seq array + tenant claim as the ack.
-    let hold = outbox_hold_sql();
-    assert!(hold.contains("SET held_since = now()"));
-    assert!(hold.contains("seq = ANY($1)"));
-    assert!(
-        hold.contains("held_since IS NULL"),
-        "held_since is stamped once, preserving the backlog age"
-    );
-    assert!(hold.contains("current_setting('app.tenant', true)"));
-
-    let ins = outbox_insert_sql();
-    assert!(ins.contains("$3::text::jsonb"));
-    assert!(ins.contains("current_setting('app.tenant', true)"));
 
     // Last-fired-tick recovery: FLOW-EXCLUSIVE (flow_id + trigger_source),
     // never a lexical run-id range — flow ids are unconstrained user text and
@@ -1551,61 +1274,8 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(!wake.contains("UPDATE "));
 }
 
-#[test]
-fn outbox_prune_is_batch_bounded_and_scoped_to_the_outbox() {
-    let prune = outbox_prune_sql(5);
-    assert!(prune.contains("DELETE FROM outbox"));
-    // Acked rows only, past the retention window ($1 ms). The exact `< now() -`
-    // comparison is pinned: a flipped sign would prune RECENT rows and keep the
-    // backlog forever.
-    assert!(prune.contains("dispatched_at IS NOT NULL"));
-    assert!(prune.contains("dispatched_at < now() - ($1::bigint * interval '1 millisecond')"));
-    assert!(prune.contains("current_setting('app.tenant', true)"));
-    // Batch-bounded via the ctid subquery: one execution deletes at most
-    // `limit` rows, so a first prune on a long-lived install is never an
-    // unbounded DELETE inside a dispatcher sweep.
-    assert!(prune.contains("ctid IN (SELECT o.ctid FROM outbox AS o"));
-    assert!(prune.contains("LIMIT 5"));
-    // OUTBOX ONLY: a pruner that also swept runs would break cron anchor
-    // recovery (cron_last_run_sql reads old cron run ids).
-    assert!(!prune.contains("runs"));
-    assert!(!prune.contains("run_queue"));
-}
-
-#[test]
-fn outbox_ddl_matches_the_model() {
-    let sql = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../deploy/sql/run-queue.sql"
-    ))
-    .expect("read deploy/sql/run-queue.sql");
-
-    assert!(sql.contains("CREATE TABLE wamn_run.outbox"));
-    for col in [
-        "seq",
-        "table_name",
-        "event",
-        "payload",
-        "created_at",
-        "dispatched_at",
-        "held_since",
-    ] {
-        assert!(
-            sql.contains(col),
-            "run-queue.sql outbox missing column {col}"
-        );
-    }
-    // The wamn-flow row-event vocabulary, verbatim.
-    assert!(sql.contains("CHECK (event IN ('insert', 'update', 'delete'))"));
-    assert!(sql.contains("PRIMARY KEY (tenant_id, seq)"));
-    // R14: the pending partial index the poll scans is over pending AND NOT HELD —
-    // held rows leave the index (and the poll window) but stay in the table.
-    assert!(sql.contains("CREATE INDEX outbox_pending"));
-    assert!(sql.contains("WHERE dispatched_at IS NULL AND held_since IS NULL"));
-    // House tenant floor.
-    assert!(sql.contains("CREATE POLICY outbox_tenant ON wamn_run.outbox"));
-    assert!(sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.outbox TO wamn_app"));
-}
+// [EVT-TEARDOWN l5i9.19]: the outbox table + its builders/DDL pins are gone —
+// row events are the event plane's (CDC reader → JetStream → materializer).
 
 // ---- record JSON round-trip ------------------------------------------------
 
@@ -1709,9 +1379,8 @@ fn run_queue_sql_matches_the_model() {
 /// and assert the queue's real behaviour: the `SKIP LOCKED` claim predicate
 /// (Ready claimed, Parked/Leased skipped), lease-expiry reclaim, the janitor sweep
 /// (orphan → `infrastructure-failure` + dequeued), tenant RLS isolation, the
-/// FK cascade from `runs`, and the trigger dispatcher's outbox path (producer
-/// insert → poll → co-transacted fire + ack, crash-rollback atomicity +
-/// redelivery dedupe, cron last-tick recovery, the wake scan). Gated on
+/// FK cascade from `runs`, and the trigger dispatcher's cron path (triggered
+/// write-ahead, cron last-tick recovery, the wake scan). Gated on
 /// `WAMN_RUN_QUEUE_PG_URL` (a superuser URL — the harness provisions `wamn_app`);
 /// skips cleanly when unset. Mirrors the wamn-run-store / wamn-ddl / wamn-rls
 /// gates. (True concurrent contention is the queuebench/dispatchbench gates; this
@@ -1721,10 +1390,10 @@ fn run_queue_sql_matches_the_model() {
 /// claim/queue SQL — where plan-sensitivity actually bites (the `AS MATERIALIZED`
 /// fence, RLS, `ON CONFLICT`, index selection) that no pure test can observe. It
 /// PREPARE/EXECUTEs the REAL builders (never hand-copied SQL) — the global +
-/// combined + per-partition claims, the ack/poll/hold outbox path, the composed
+/// combined + per-partition claims, the composed
 /// checkpoint/complete statements, the janitor, and the registry scan — including
 /// every builder the wave-2 queue cluster touched: the E4 stream_seq numeric
-/// ordering, the R14 held-since poll exclusion, the SR11 composed statements, and
+/// ordering, the SR11 composed statements, and
 /// the R8b-b tenant predicates (below).
 #[test]
 fn run_queue_schema_applies_and_claims_on_postgres() {
@@ -1751,13 +1420,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     let park_stmt_sql = park_sql();
     let acquire_sql = acquire_partitions_sql(10);
     let claim_head_sql = claim_partition_head_sql(10);
-    // The trigger dispatcher's builders (cron/outbox/wake).
-    let insert_sql = outbox_insert_sql();
-    let poll_sql = outbox_poll_sql(10);
-    // R14: a small-limit poll + the hold builder, for the head-of-line-block check.
-    let poll2_sql = outbox_poll_sql(2);
-    let hold_sql = outbox_hold_sql();
-    let ack_sql = outbox_ack_sql();
+    // The trigger dispatcher's builders (cron/wake).
     let triggered_sql = write_ahead_triggered_run_sql();
     let last_run_sql = cron_last_run_sql();
     let parked_sql = parked_due_sql(50);
@@ -2035,114 +1698,6 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          COMMIT;\n"
     ));
-    // The trigger dispatcher's outbox path via the REAL builders: a producer
-    // inserts events in its own transaction (outbox_insert_sql); the dispatcher
-    // polls pending rows oldest-first (outbox_poll_sql, SKIP LOCKED), fires the
-    // triggered write-ahead (write_ahead_triggered_run_sql), and acks
-    // (outbox_ack_sql) — all in ONE transaction. RLS isolates tenants' events.
-    script.push_str(&format!(
-        "BEGIN;\n\
-         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         PREPARE outbox_ins (text, text, text) AS {insert_sql};\n\
-         EXECUTE outbox_ins('dispositions', 'insert', '{{\"id\": \"d-1\"}}');\n\
-         EXECUTE outbox_ins('dispositions', 'insert', NULL);\n\
-         COMMIT;\n\
-         INSERT INTO wamn_run.outbox (tenant_id, table_name, event, payload) \
-           VALUES ('t2', 'dispositions', 'insert', '{{\"id\": \"other\"}}');\n",
-    ));
-    script.push_str(&format!(
-        "BEGIN;\n\
-         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         PREPARE outbox_poll AS {poll_sql};\n\
-         PREPARE outbox_ack (bigint[]) AS {ack_sql};\n\
-         PREPARE triggered_stmt (text, text, int, text, text) AS {triggered_sql};\n\
-         CREATE TEMP TABLE polled AS EXECUTE outbox_poll;\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM polled) = 2, 'poll returns t1''s 2 pending rows (t2''s is RLS-invisible)'; \
-           ASSERT (SELECT count(*) FROM polled WHERE table_name='dispositions' AND event='insert') = 2, 'poll carries table+event'; \
-           ASSERT (SELECT min(seq) FROM polled) = 1 AND (SELECT max(seq) FROM polled) = 2, 'poll is oldest-first over seq'; \
-         END $$;\n\
-         EXECUTE triggered_stmt('disposition-recorded:outbox:1', 'disposition-recorded', 1, 'outbox:1', '{{\"seq\": 1}}');\n\
-         EXECUTE triggered_stmt('disposition-recorded:outbox:2', 'disposition-recorded', 1, 'outbox:2', '{{\"seq\": 2}}');\n\
-         EXECUTE outbox_ack(ARRAY[1,2]::bigint[]);\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM runs WHERE trigger_source='outbox:1' AND input_json IS NOT NULL) = 1, 'triggered write-ahead persists trigger_source + input_json'; \
-           ASSERT (SELECT status FROM runs WHERE run_id='disposition-recorded:outbox:1') = 'dispatched', 'triggered run write-ahead is dispatched'; \
-           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at IS NULL) = 0, 'both t1 rows acked'; \
-         END $$;\n\
-         EXECUTE triggered_stmt('disposition-recorded:outbox:1', 'disposition-recorded', 1, 'outbox:1', '{{\"seq\": 1}}');\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM runs WHERE run_id='disposition-recorded:outbox:1') = 1, 'a redelivered firing is a no-op (deterministic id + ON CONFLICT)'; \
-         END $$;\n\
-         COMMIT;\n",
-    ));
-
-    // Crash atomicity: a dispatcher that polls and fires but dies before commit
-    // leaves NO half-state — the enqueue is retracted with the ack, the row stays
-    // pending, and the redelivery re-mints the same run id (exactly-once).
-    script.push_str(
-        "BEGIN;\n\
-         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         EXECUTE outbox_ins('dispositions', 'insert', '{\"id\": \"d-4\"}');\n\
-         COMMIT;\n\
-         BEGIN;\n\
-         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         CREATE TEMP TABLE polled_crash AS EXECUTE outbox_poll;\n\
-         EXECUTE triggered_stmt('disposition-recorded:outbox:4', 'disposition-recorded', 1, 'outbox:4', '{\"seq\": 4}');\n\
-         EXECUTE outbox_ack(ARRAY[4]::bigint[]);\n\
-         ROLLBACK;\n\
-         BEGIN;\n\
-         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM runs WHERE run_id='disposition-recorded:outbox:4') = 0, 'crash before commit retracts the fire (no half-state)'; \
-           ASSERT (SELECT count(*) FROM outbox WHERE seq=4 AND dispatched_at IS NULL) = 1, 'crash before commit redelivers the row'; \
-         END $$;\n\
-         CREATE TEMP TABLE polled_redeliver AS EXECUTE outbox_poll;\n\
-         EXECUTE triggered_stmt('disposition-recorded:outbox:4', 'disposition-recorded', 1, 'outbox:4', '{\"seq\": 4}');\n\
-         EXECUTE outbox_ack(ARRAY[4]::bigint[]);\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM polled_redeliver WHERE seq=4) = 1, 'redelivery re-polls the unacked row'; \
-           ASSERT (SELECT count(*) FROM runs WHERE run_id='disposition-recorded:outbox:4') = 1, 'redelivery fires exactly once'; \
-           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at IS NULL) = 0, 'redelivered row acked'; \
-         END $$;\n\
-         COMMIT;\n",
-    );
-
-    // Outbox GC (outbox_prune_sql): acked rows past the retention window are
-    // pruned batch-by-batch (ctid LIMIT bound); recently-acked, pending, and
-    // other-tenant rows all survive. Retention param = 7 days in ms.
-    let prune2_sql = outbox_prune_sql(2);
-    let prune64_sql = outbox_prune_sql(64);
-    script.push_str(&format!(
-        "INSERT INTO wamn_run.outbox (tenant_id, table_name, event, payload, dispatched_at) VALUES \
-           ('t1','dispositions','insert', NULL, now() - interval '8 days'), \
-           ('t1','dispositions','insert', NULL, now() - interval '9 days'), \
-           ('t1','dispositions','insert', NULL, now() - interval '10 days'), \
-           ('t1','dispositions','update', NULL, NULL), \
-           ('t2','dispositions','insert', NULL, now() - interval '30 days');\n\
-         BEGIN;\n\
-         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         PREPARE prune_stmt (bigint) AS {prune2_sql};\n\
-         PREPARE prune_wide (bigint) AS {prune64_sql};\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at < now() - interval '7 days') = 3, 'three prunable rows seeded'; \
-         END $$;\n\
-         EXECUTE prune_stmt(604800000);\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at < now() - interval '7 days') = 1, 'batch-bounded: one execution pruned exactly the limit (2 of 3)'; \
-         END $$;\n\
-         EXECUTE prune_wide(604800000);\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at < now() - interval '7 days') = 0, 'the drain finishes over successive batches'; \
-           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at IS NOT NULL) = 3, 'recently-acked rows survive the prune'; \
-           ASSERT (SELECT count(*) FROM outbox WHERE dispatched_at IS NULL AND event = 'update') = 1, 'a pending row is never pruned, whatever its age'; \
-         END $$;\n\
-         COMMIT;\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM wamn_run.outbox WHERE tenant_id = 't2' AND dispatched_at < now() - interval '7 days') = 1, 't2''s old acked row survives t1''s prune (tenant-scoped)'; \
-         END $$;\n",
-    ));
-
     // Cron last-fired-tick recovery: FLOW-EXCLUSIVE (flow_id + trigger_source
     // predicate, cron_last_run_sql) — foreign flows whose ids sort inside a
     // lexical range under the deployed collation (or literally nest ':cron:' in
@@ -2151,6 +1706,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
         "BEGIN;\n\
          SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
          PREPARE last_stmt (text) AS {last_run_sql};\n\
+         PREPARE triggered_stmt (text, text, int, text, text) AS {triggered_sql};\n\
          EXECUTE triggered_stmt('cronflow:cron:0000000000100', 'cronflow', 1, 'cron', '{{\"fire-at-ms\": 100}}');\n\
          EXECUTE triggered_stmt('cronflow:cron:0000000000200', 'cronflow', 1, 'cron', '{{\"fire-at-ms\": 200}}');\n\
          -- Foreign-anchor poison: a flow whose id embeds ':cron:' and a colon-free\n\
@@ -2158,10 +1714,10 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          -- collations, both with LATER ticks; and a non-cron run for the flow itself.\n\
          EXECUTE triggered_stmt('cronflow:cron:5x:cron:0000000000999', 'cronflow:cron:5x', 1, 'cron', '{{\"fire-at-ms\": 999}}');\n\
          EXECUTE triggered_stmt('cronflowx:cron:0000000000999', 'cronflowx', 1, 'cron', '{{\"fire-at-ms\": 999}}');\n\
-         EXECUTE triggered_stmt('cronflow:outbox:7', 'cronflow', 1, 'outbox:7', '{{\"seq\": 7}}');\n\
+         EXECUTE triggered_stmt('cronflow:manual:7', 'cronflow', 1, 'manual', '{{\"seq\": 7}}');\n\
          CREATE TEMP TABLE lastrun AS EXECUTE last_stmt('cronflow');\n\
          DO $$ BEGIN \
-           ASSERT (SELECT max FROM lastrun) = 'cronflow:cron:0000000000200', 'last-fired recovery is flow-exclusive (no foreign/outbox leak)'; \
+           ASSERT (SELECT max FROM lastrun) = 'cronflow:cron:0000000000200', 'last-fired recovery is flow-exclusive (no foreign/non-cron leak)'; \
          END $$;\n\
          COMMIT;\n",
     ));
@@ -2346,54 +1902,6 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          DO $$ BEGIN \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='wg-1') IS NULL, 'blocking wedge: the later run stays BLOCKED behind the exhausted head — the key is wedged'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='lx-1') = 'PB', 'leapfrog: with the exhausted head reaped, the key RELEASES and the next run dispatches'; \
-         END $$;\n\
-         COMMIT;\n"
-    ));
-
-    // ------------------------------------------------------------------------
-    // R14: HELD rows must not head-of-line-block the poll window. Reset t1's outbox,
-    // then seed 3 rows of a BROKEN flow (held (table, event)) at the OLDEST seqs +
-    // 1 healthy row behind them. With a batch of 2, the first poll sees ONLY the
-    // broken rows — the healthy event is starved. The dispatcher stamps the held
-    // rows via the REAL outbox_hold_sql (never acking them), which lifts them out
-    // of the window so the next poll REACHES the healthy event. Before the fix the
-    // held rows would forever occupy the window and the healthy event never fires.
-    // ------------------------------------------------------------------------
-    script.push_str("DELETE FROM wamn_run.outbox WHERE tenant_id = 't1';\n");
-    // The held seqs are IDENTITY-generated (unknown ahead of time), and an EXECUTE
-    // parameter may not be a subquery — so `\gset` captures the held subset into a
-    // psql var and the REAL outbox_hold_sql (PREPARE hold_stmt) is EXECUTEd on it.
-    script.push_str(&format!(
-        "BEGIN;\n\
-         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         PREPARE poll2 AS {poll2_sql};\n\
-         PREPARE hold_stmt (bigint[]) AS {hold_sql};\n\
-         EXECUTE outbox_ins('brokentbl', 'insert', NULL);\n\
-         EXECUTE outbox_ins('brokentbl', 'insert', NULL);\n\
-         EXECUTE outbox_ins('brokentbl', 'insert', NULL);\n\
-         EXECUTE outbox_ins('gudtbl', 'insert', NULL);\n\
-         CREATE TEMP TABLE hb1 AS EXECUTE poll2;\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM hb1 WHERE table_name='brokentbl') = 2, 'the two oldest slots are the broken flow''s events'; \
-           ASSERT (SELECT count(*) FROM hb1 WHERE table_name='gudtbl') = 0, 'the healthy event is starved behind the held batch (LIMIT 2)'; \
-         END $$;\n\
-         -- The dispatcher stamps the HELD subset (never acks it) via the real builder.\n\
-         SELECT array_agg(seq) AS heldseqs FROM hb1 WHERE table_name='brokentbl' \\gset\n\
-         EXECUTE hold_stmt(:'heldseqs'::bigint[]);\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM outbox WHERE table_name='brokentbl' AND held_since IS NOT NULL) = 2, 'the held rows are stamped held_since (kept, never acked — no silent loss)'; \
-           ASSERT (SELECT count(*) FROM outbox WHERE table_name='brokentbl' AND dispatched_at IS NOT NULL) = 0, 'a held row is NEVER acked'; \
-         END $$;\n\
-         -- The held rows have left the window: the next poll REACHES the healthy event.\n\
-         CREATE TEMP TABLE hb2 AS EXECUTE poll2;\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM hb2 WHERE table_name='gudtbl') = 1, 'the healthy event is reached once the held rows leave the poll window (R14)'; \
-         END $$;\n\
-         -- Re-stamping a held row does NOT move its held_since (age preserved).\n\
-         CREATE TEMP TABLE hb_before AS SELECT seq, held_since FROM outbox WHERE table_name='brokentbl' AND held_since IS NOT NULL;\n\
-         EXECUTE hold_stmt(:'heldseqs'::bigint[]);\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM outbox o JOIN hb_before b ON o.seq = b.seq WHERE o.held_since <> b.held_since) = 0, 'a re-hold never resets held_since — the backlog age is preserved'; \
          END $$;\n\
          COMMIT;\n"
     ));

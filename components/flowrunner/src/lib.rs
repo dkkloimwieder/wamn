@@ -58,7 +58,7 @@ use wamn_node_sdk as sdk;
 use wamn_run_store::{NodeRunRecord, RunRecord, sql as run_sql};
 // The durable-queue claim-path builders (5.14). The guest deps wamn-run-queue
 // with default-features off, so only these pure `sql.rs` builders link — the
-// cron/outbox/dispatch trio (croner/chrono) never enters the wasm (fqg.4).
+// cron/dispatch pair (croner/chrono) never enters the wasm (fqg.4).
 // The combined claim/checkpoint/complete statements are the fqg.18 record-stream
 // amortization: one statement where the split path spent two or three.
 use wamn_run_queue::{
@@ -908,7 +908,7 @@ fn declare_run_egress(flow: &Flow) {
 /// causation channel, so the `wamn:postgres` plugin stamps a TRANSACTIONAL
 /// `wamn.causation` message ({run, root, depth}) onto every run-owned txn it
 /// opens — which the CDC reader (l5i9.12.1) stitches onto the txn's row events.
-/// A root run — a cron/outbox/webhook firing — is its own root at depth 0.
+/// A root run — a cron/webhook firing — is its own root at depth 0.
 fn declare_run_context(run_id: &str) {
     declare_run_context_at(run_id, run_id.to_string(), 0);
 }
@@ -922,7 +922,7 @@ fn declare_run_context(run_id: &str) {
 /// every run would re-root at depth 0 and the materializer's ceiling could
 /// never trip. `run` is ALWAYS the claimed run id (never read from input); a
 /// missing/malformed `causation` falls back to self-root depth 0 (every
-/// non-evt trigger: cron, outbox, webhook, manual). Trust note: `input_json`
+/// non-evt trigger: cron, webhook, manual). Trust note: `input_json`
 /// is minted by platform writers (dispatcher / materializer / gateway
 /// envelope), not raw tenant bytes — a tenant's webhook BODY lands under
 /// `payload`, never at the envelope's top level.

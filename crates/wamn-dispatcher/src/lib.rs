@@ -1,12 +1,12 @@
 //! The wamn-dispatcher service (5.14; its own SR9 artifact) — the
-//! always-on control-plane service that owns cron schedules and outbox polling
+//! always-on control-plane service that owns cron schedules
 //! across ALL projects with adaptive intervals, and wakes parked runners via
-//! doorbell (platform-plan Epic 5 "Triggers" + item 5.14; D4: LISTEN/NOTIFY is
-//! removed entirely, the outbox is polled).
+//! doorbell (platform-plan Epic 5 "Triggers" + item 5.14). Row events are NOT
+//! a dispatcher concern: the D19 v3 event plane (CDC reader → JetStream →
+//! materializer) delivers them — the outbox poller was torn down at l5i9.19.
 //!
 //! Every decision is the pure crate's ([`wamn_run_queue`]): cron due-tick
-//! evaluation over an injected `now` ([`due_tick`]), outbox matching
-//! ([`match_outbox`]) + ack planning ([`plan_ack`]), deterministic trigger run
+//! evaluation over an injected `now` ([`due_tick`]), deterministic trigger run
 //! ids, the adaptive per-project cadence ([`next_interval`]). This module is
 //! the DRIVER — tokio_postgres effects, the NATS-core doorbell, the real
 //! clock — split exactly so a virtual-time driver (the `dispatchbench` gate)
@@ -15,31 +15,22 @@
 //!
 //! One sweep of one project ("tick"):
 //!   1. registry — scan active flows, parse each graph (wamn-flow), register
-//!      cron triggers (webhook = gateway's, manual = editor's). A flow that
+//!      cron triggers (webhook = gateway's, manual = editor's, row-event =
+//!      the materializer's via its event registration). A flow that
 //!      fails to parse or validate is skipped with a warning (a bad flow must
-//!      not wedge the project) — but if its trigger is still readable as a
-//!      row event, that `(table, event)` is HELD: its outbox rows are left
-//!      pending rather than consumed, so a version-skewed flow degrades to
-//!      delayed delivery, never silent event loss;
+//!      not wedge the project);
 //!   2. cron — recover each flow's last-fired tick (in-memory cache, else the
 //!      run ids themselves via [`cron_last_run_sql`] — the runs table IS the
 //!      cron state), fire the due tick via the write-ahead + enqueue
 //!      co-transaction, doorbell the winner;
-//!   3. outbox — poll pending rows (`SKIP LOCKED`), re-read the registry
-//!      INSIDE the same transaction (strictly after the poll, so a flow whose
-//!      activation committed before a polled event's commit is always visible —
-//!      no activation race can consume an event as unmatched), fire one run per
-//!      matching (flow × row), ack everything not held — ALL IN ONE transaction
-//!      (a crash redelivers and retracts atomically; deterministic ids dedupe
-//!      the redelivery);
-//!   4. wake — doorbell every currently-due unleased queue row (a parked run
+//!   3. wake — doorbell every currently-due unleased queue row (a parked run
 //!      whose `available_at` arrived, or a run whose enqueue hint was lost) —
 //!      one read-only scan doubling as the reconciliation backstop;
-//!   5. cadence — tighten the project's interval on work, decay while idle.
+//!   4. cadence — tighten the project's interval on work, decay while idle.
 //!
 //! Exactly-once across restart AND concurrently racing replicas needs no leader:
-//! run ids are deterministic per firing (`{flow}:cron:{tick}`,
-//! `{flow}:outbox:{seq}`), so every duplicate path collapses on the write-ahead
+//! run ids are deterministic per firing (`{flow}:cron:{tick}`),
+//! so every duplicate path collapses on the write-ahead
 //! `ON CONFLICT` — the dispatchbench `race` mode runs two live dispatchers over
 //! one project and asserts it. A firing that LOSES the write-ahead skips its
 //! enqueue too: the winner's queue row was created in the same past transaction
@@ -54,7 +45,7 @@
 //! that project's cadence and clears its stale cron wake-hint (the durable
 //! anchor re-fires the tick exactly once on the next successful sweep).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr as _;
 use std::time::Duration;
@@ -65,11 +56,9 @@ use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
 use wamn_flow::{Flow, Ordering, Trigger};
 use wamn_run_queue::{
-    Firing, OutboxRow, PartitionPolicy, RowEventFlow, active_flows_sql, cdc_live_flows_sql,
-    cron_firing, cron_last_run_sql, cron_tick_of, due_tick, enqueue_sql, enqueue_with_policy_sql,
-    event_registrations_exist_sql, match_outbox, next_fire, next_interval, next_reconcile,
-    outbox_ack_sql, outbox_hold_sql, outbox_poll_sql, outbox_prune_sql, parked_due_sql, plan_ack,
-    plan_hold, reconcile_due, write_ahead_triggered_run_sql,
+    Firing, PartitionPolicy, active_flows_sql, cron_firing, cron_last_run_sql, cron_tick_of,
+    due_tick, enqueue_sql, enqueue_with_policy_sql, next_fire, next_interval, next_reconcile,
+    parked_due_sql, reconcile_due, write_ahead_triggered_run_sql,
 };
 
 // R16b (wamn-2jkm.20): the dispatcher's pinned session `SET`s interpolate the
@@ -121,15 +110,10 @@ pub struct DispatchArgs {
     #[arg(long, default_value_t = wamn_run_queue::DEFAULT_MAX_INTERVAL_MS)]
     pub max_interval_ms: i64,
 
-    /// Max outbox rows / wake hints processed per project per sweep (the
+    /// Max wake hints processed per project per sweep (the
     /// fairness bound: one project's backlog cannot monopolize a sweep).
     #[arg(long, default_value_t = 64)]
     pub batch: usize,
-
-    /// Retention for acked outbox rows, in hours (default 7 days). The
-    /// maintenance step prunes rows acked longer ago than this.
-    #[arg(long, default_value_t = 168)]
-    pub outbox_retention_hours: i64,
 }
 
 /// One project the dispatcher serves: where its flow/queue tables live
@@ -199,10 +183,6 @@ pub struct ProjectState {
     /// whole search horizon per sweep for a flow that can never fire. Keyed by
     /// the schedule STRING, so a fixed flow (new schedule) evaluates fresh.
     bad_schedules: std::collections::HashSet<String>,
-    /// When the maintenance step (outbox GC) last completed a non-saturated
-    /// prune. Zero at startup — the first sweep prunes (batch-bounded, so a
-    /// startup backlog costs one bounded batch, not an unbounded DELETE).
-    last_maintenance_ms: i64,
 }
 
 /// What one project sweep did — the gate's assertion surface and the cadence
@@ -214,25 +194,16 @@ pub struct ProjectState {
 pub struct TickReport {
     pub cron_fired: Vec<String>,
     pub cron_lost: usize,
-    pub outbox_fired: Vec<String>,
     /// Due unleased queue rows hinted this sweep (parked wakes + lost-hint
     /// reconciliation). Duplicate hints across sweeps are by design: harmless
     /// (the claim is the arbiter), and a persistently-unclaimed backlog SHOULD
     /// keep the cadence tight — waking a scale-to-zero runner is the point.
     pub woken: Vec<String>,
-    /// Acked outbox rows the maintenance step pruned this sweep.
-    pub outbox_pruned: u64,
-    /// The prune batch came back full — backlog remains, so the drain must
-    /// continue next sweep (counts as work to keep the cadence tight).
-    pub outbox_prune_backlog: bool,
 }
 
 impl TickReport {
     pub fn found_work(&self) -> bool {
-        !self.cron_fired.is_empty()
-            || !self.outbox_fired.is_empty()
-            || !self.woken.is_empty()
-            || self.outbox_prune_backlog
+        !self.cron_fired.is_empty() || !self.woken.is_empty()
     }
 }
 
@@ -240,8 +211,6 @@ pub struct DispatcherConfig {
     pub min_interval_ms: i64,
     pub max_interval_ms: i64,
     pub batch: usize,
-    /// Acked outbox rows older than this are pruned by the maintenance step.
-    pub outbox_retention_ms: i64,
 }
 
 impl Default for DispatcherConfig {
@@ -250,28 +219,20 @@ impl Default for DispatcherConfig {
             min_interval_ms: wamn_run_queue::DEFAULT_MIN_INTERVAL_MS,
             max_interval_ms: wamn_run_queue::DEFAULT_MAX_INTERVAL_MS,
             batch: 64,
-            outbox_retention_ms: 168 * 3_600_000,
         }
     }
 }
 
-/// How often a project's maintenance step (outbox GC) runs — far below the
-/// sweep cadence: pruning is bookkeeping, not trigger work. A saturated prune
-/// batch bypasses this (the drain continues every sweep until caught up).
-const MAINTENANCE_INTERVAL_MS: i64 = 600_000;
-
-/// The trigger registry one sweep works from: the cron flows, the row-event
-/// flows, and the HELD `(table, event)` pairs of active flows this dispatcher
-/// binary could not parse/validate (their events must not be consumed).
+/// The trigger registry one sweep works from: the cron flows (webhook is the
+/// gateway's, manual the editor's, row-event the materializer's via its event
+/// registration).
 #[derive(Default)]
 struct Registry {
     crons: Vec<(String, i32, String)>,
-    row_events: Vec<RowEventFlow>,
-    held: Vec<(String, String)>,
     /// Flow-level record-stream ordering (5.11, wamn-fqg.20) per registered
     /// flow_id — the dispatcher evaluates it at fire() to stamp
-    /// `run_queue.partition_key` ([`partition_key_for_firing`]). Every cron /
-    /// row-event flow lands here (unordered ones as [`Ordering::Unordered`], so
+    /// `run_queue.partition_key` ([`partition_key_for_firing`]). Every cron
+    /// flow lands here (unordered ones as [`Ordering::Unordered`], so
     /// their key stays NULL); a flow absent from the map falls back to
     /// unordered too.
     ordering: HashMap<String, Ordering>,
@@ -279,24 +240,14 @@ struct Registry {
     /// flow_id — materialized onto the queue row at fire()
     /// ([`partition_policy_for_firing`]) so the claim SQL never joins back to the
     /// flow. Stamped only on a KEYED (strict/partitioned) row; an unordered row
-    /// keeps a NULL key and the column-default policy. Every cron / row-event
+    /// keeps a NULL key and the column-default policy. Every cron
     /// flow lands here alongside its ordering; a flow absent from the map falls
     /// back to [`PartitionPolicy::Blocking`] (the D20 default).
     policy: HashMap<String, PartitionPolicy>,
 }
 
-fn event_str(event: &wamn_flow::RowEvent) -> &'static str {
-    match event {
-        wamn_flow::RowEvent::Insert => "insert",
-        wamn_flow::RowEvent::Update => "update",
-        wamn_flow::RowEvent::Delete => "delete",
-    }
-}
-
 /// Parse the active-flows scan. A flow that fails to parse or validate is
-/// skipped with a warning — but if its `trigger` is still readable at the JSON
-/// level as a row event, the `(table, event)` is held so its outbox rows stay
-/// pending (delayed, not lost) until the flow or this binary is fixed.
+/// skipped with a warning (a bad flow must not wedge the project).
 fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
     let mut reg = Registry::default();
     for row in rows {
@@ -313,103 +264,40 @@ fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
         let flow = match parsed {
             Ok(f) => f,
             Err(why) => {
-                // Best-effort trigger extraction: the trigger field typically
-                // survives a schema-version skew even when the full graph
-                // doesn't parse.
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&graph)
-                    && v["trigger"]["type"] == "row-event"
-                    && let Some(table) = v["trigger"]["table"].as_str()
-                {
-                    let event = v["trigger"]["event"].as_str().unwrap_or("insert");
-                    reg.held.push((table.to_string(), event.to_string()));
-                    tracing::warn!(project = %project, %flow_id, why,
-                        "dispatcher: invalid active row-event flow skipped — its events are HELD, not consumed");
-                } else {
-                    tracing::warn!(project = %project, %flow_id, why,
-                        "dispatcher: invalid active flow skipped");
-                }
+                tracing::warn!(project = %project, %flow_id, why,
+                    "dispatcher: invalid active flow skipped");
                 continue;
             }
         };
-        // The run ids embed the registry id ({flow}:cron:{tick} /
-        // {flow}:outbox:{seq}) taken from the flows-table COLUMN, while the
+        // The run ids embed the registry id ({flow}:cron:{tick})
+        // taken from the flows-table COLUMN, while the
         // slug charset rule just validated only the graph's embedded flow-id.
         // Requiring the two to be EQUAL extends the charset guarantee to the
-        // id that is actually minted; a mismatched row is skipped (held if a
-        // row event) exactly like any other invalid flow.
+        // id that is actually minted; a mismatched row is skipped
+        // exactly like any other invalid flow.
         if flow.flow_id != flow_id {
-            if let Trigger::RowEvent { table, event } = &flow.trigger {
-                reg.held.push((table.clone(), event_str(event).to_string()));
-                tracing::warn!(project = %project, %flow_id, graph_flow_id = %flow.flow_id,
-                    "dispatcher: flows.flow_id != graph flow-id — row-event flow skipped, its events are HELD, not consumed");
-            } else {
-                tracing::warn!(project = %project, %flow_id, graph_flow_id = %flow.flow_id,
-                    "dispatcher: flows.flow_id != graph flow-id — flow skipped");
-            }
+            tracing::warn!(project = %project, %flow_id, graph_flow_id = %flow.flow_id,
+                "dispatcher: flows.flow_id != graph flow-id — flow skipped");
             continue;
         }
         match &flow.trigger {
             Trigger::Cron { schedule } => {
                 // Record the ordering (5.11) + head-unavailability policy (D20)
                 // declarations so fire() can stamp the partition key AND its
-                // materialized policy; only flows that actually fire
-                // (cron/row-event) need them.
+                // materialized policy; only flows this service fires (cron)
+                // need them.
                 reg.ordering.insert(flow_id.clone(), flow.ordering.clone());
                 reg.policy
                     .insert(flow_id.clone(), rq_policy(flow.partition_policy));
                 reg.crons.push((flow_id, version, schedule.clone()));
             }
-            Trigger::RowEvent { table, event } => {
-                reg.ordering.insert(flow_id.clone(), flow.ordering.clone());
-                reg.policy
-                    .insert(flow_id.clone(), rq_policy(flow.partition_policy));
-                reg.row_events.push(RowEventFlow {
-                    flow_id,
-                    flow_version: version,
-                    table: table.clone(),
-                    event: event_str(event).to_string(),
-                });
-            }
-            // Webhook is routed by the API gateway; manual by the editor.
-            Trigger::Webhook { .. } | Trigger::Manual => {}
+            // Webhook is routed by the API gateway; manual by the editor;
+            // row-event by the materializer (its event registration is the
+            // trigger record — l5i9.16/.17).
+            Trigger::RowEvent { .. } | Trigger::Webhook { .. } | Trigger::Manual => {}
         }
     }
     reg
-}
-
-/// The flows the outbox path must YIELD (EVT-CUTOVER, l5i9.18): every flow with
-/// a live event registration, read within the poll transaction. Two-step: the
-/// `to_regclass` probe first — a project database without the catalog surface
-/// (pre-catalog provisioning, a gate's self-contained fixture) has no
-/// registrations and must not error the poll.
-async fn cdc_live_flows(
-    tx: &tokio_postgres::Transaction<'_>,
-) -> anyhow::Result<HashSet<String>> {
-    let present: bool = tx
-        .query_one(&event_registrations_exist_sql(), &[])
-        .await?
-        .get(0);
-    if !present {
-        return Ok(HashSet::new());
-    }
-    Ok(tx
-        .query(&cdc_live_flows_sql(), &[])
-        .await?
-        .iter()
-        .map(|r| r.get(0))
-        .collect())
-}
-
-/// Pure yield filter (EVT-CUTOVER, l5i9.18): drop every row-event flow the CDC
-/// materializer owns (a LIVE registration exists), keep the rest. Only the
-/// match set shrinks — a yielded flow is neither held (its rows consume as
-/// unmatched) nor touched on the cron path (yield is a row-event concern).
-fn yield_cdc_live(row_events: &[RowEventFlow], live_cdc: &HashSet<String>) -> Vec<RowEventFlow> {
-    row_events
-        .iter()
-        .filter(|f| !live_cdc.contains(&f.flow_id))
-        .cloned()
-        .collect()
 }
 
 /// The dispatcher: per-project state + the optional doorbell client + the
@@ -450,7 +338,6 @@ impl Dispatcher {
                 last_fired: HashMap::new(),
                 first_seen: HashMap::new(),
                 bad_schedules: std::collections::HashSet::new(),
-                last_maintenance_ms: 0,
             });
         }
         Ok(Self {
@@ -465,11 +352,10 @@ impl Dispatcher {
     /// real clock, the gate passes stepped time); the SQL's own `now()` instants
     /// are server-side timestamps and orthogonal to the trigger decisions.
     pub async fn tick_project(&mut self, idx: usize, now_ms: i64) -> anyhow::Result<TickReport> {
-        let (batch, min_ms, max_ms, retention_ms) = (
+        let (batch, min_ms, max_ms) = (
             self.cfg.batch,
             self.cfg.min_interval_ms,
             self.cfg.max_interval_ms,
-            self.cfg.outbox_retention_ms,
         );
         let nats = self.nats.as_ref();
 
@@ -563,96 +449,7 @@ impl Dispatcher {
             .filter_map(|(_, _, s)| next_fire(s, now_ms).ok())
             .min();
 
-        // 3. Outbox: poll + fire + ack in ONE transaction (one durability
-        // domain — a crash redelivers the batch and retracts its enqueues
-        // atomically; the deterministic ids dedupe the redelivery).
-        {
-            let tenant = p.spec.tenant.clone();
-            let tx = p.client.transaction().await?;
-            let rows = tx.query(&outbox_poll_sql(batch), &[]).await?;
-            if !rows.is_empty() {
-                // Match against a registry read INSIDE this transaction,
-                // strictly AFTER the poll: a flow whose activation committed
-                // before a polled event's commit is always visible here, so an
-                // event can never be consumed as unmatched merely because it
-                // landed after the sweep's first registry read (the
-                // flow-activation race). Deterministic ids keep any boundary
-                // re-fire exactly-once.
-                let reg = parse_registry(&p.spec.name, &tx.query(&active_flows_sql(), &[]).await?);
-                // EVT-CUTOVER (l5i9.18): a flow with a LIVE event registration
-                // is fired by the CDC materializer (`<flow>:evt:<seq>` ids);
-                // the two paths' run-id namespaces are disjoint, so ON CONFLICT
-                // cannot collapse a double-fire — this path must YIELD the flow
-                // instead. Read inside the poll transaction (with the registry)
-                // so a registration state flip and a poll serialize on one
-                // snapshot; a row whose only match was a yielded flow consumes
-                // as unmatched (acked-unfired — the stream owns its delivery).
-                let live_cdc = cdc_live_flows(&tx).await?;
-                let row_events = yield_cdc_live(&reg.row_events, &live_cdc);
-                let polled: Vec<OutboxRow> = rows
-                    .iter()
-                    .map(|r| OutboxRow {
-                        seq: r.get("seq"),
-                        table: r.get("table_name"),
-                        event: r.get("event"),
-                        // Raw JSON text — spliced verbatim into the run input
-                        // (numeric fidelity; the platform's no-float rule).
-                        payload: r.get::<_, Option<String>>("payload"),
-                    })
-                    .collect();
-                let triggered = write_ahead_triggered_run_sql();
-                for f in match_outbox(&polled, &row_events) {
-                    // 5.11 ordering + D20 policy: the partition key from the
-                    // flow's declaration, evaluated over this firing's row-event
-                    // input, and — for a keyed row — its declared
-                    // head-unavailability policy (unordered flows keep a NULL key
-                    // + the column-default policy = today's behavior).
-                    let key = partition_key_for_firing(&reg, &f);
-                    let policy = partition_policy_for_firing(&reg, &f);
-                    let span = trigger_span(&f, &tenant);
-                    let inserted = tx
-                        .execute(
-                            &triggered,
-                            &[
-                                &f.run_id,
-                                &f.flow_id,
-                                &f.flow_version,
-                                &f.trigger_source,
-                                &f.input_json,
-                            ],
-                        )
-                        .instrument(span)
-                        .await?;
-                    // Only the WINNING write-ahead enqueues: a losing id's
-                    // queue row was created in the winner's transaction and is
-                    // either still pending or legitimately dequeued —
-                    // re-inserting would resurrect a terminal run's queue row.
-                    if inserted == 1 {
-                        enqueue_firing(&tx, &f.run_id, key.as_deref(), policy).await?;
-                        doorbells.push(f.run_id.clone());
-                        report.outbox_fired.push(f.run_id);
-                    }
-                }
-                // Ack everything not held — matched or unmatched (an unmatched
-                // row is consumed-with-no-op).
-                let seqs = plan_ack(&polled, &reg.held);
-                tx.execute(&outbox_ack_sql(), &[&seqs]).await?;
-                // R14: stamp the HELD rows (active flows this binary cannot
-                // parse/validate) so the poll stops returning them — a broken flow
-                // no longer head-of-line-blocks the healthy events once `--batch`
-                // held rows accumulate. Held rows are NEVER acked (no silent loss);
-                // the growing held_since age is the operator alert signal.
-                let held_seqs = plan_hold(&polled, &reg.held);
-                if !held_seqs.is_empty() {
-                    tx.execute(&outbox_hold_sql(), &[&held_seqs]).await?;
-                    tracing::warn!(project = %p.spec.name, held = held_seqs.len(),
-                        "dispatcher: outbox rows HELD (active flows this binary cannot parse/validate) — excluded from the poll with held_since stamped; fix the flow or dispatcher binary and clear held_since to retry");
-                }
-                tx.commit().await?;
-            }
-        }
-
-        // 4. Wake / reconciliation: hint every currently-due unleased row.
+        // 3. Wake / reconciliation: hint every currently-due unleased row.
         for row in p.client.query(&parked_due_sql(batch), &[]).await? {
             let run_id: String = row.get("run_id");
             doorbells.push(run_id.clone());
@@ -672,23 +469,7 @@ impl Dispatcher {
             nats.flush().await?;
         }
 
-        // 5. Maintenance: outbox GC, batch-bounded. Low cadence — pruning is
-        // bookkeeping, not trigger work — EXCEPT while a saturated batch says
-        // backlog remains: then the stamp stays put and every sweep drains one
-        // more batch until the prune comes back short.
-        if now_ms - p.last_maintenance_ms >= MAINTENANCE_INTERVAL_MS {
-            let pruned = p
-                .client
-                .execute(&outbox_prune_sql(batch), &[&retention_ms])
-                .await?;
-            report.outbox_pruned = pruned;
-            report.outbox_prune_backlog = pruned as usize == batch;
-            if !report.outbox_prune_backlog {
-                p.last_maintenance_ms = now_ms;
-            }
-        }
-
-        // 6. Adaptive cadence.
+        // 4. Adaptive cadence.
         p.interval_ms = next_interval(p.interval_ms, report.found_work(), min_ms, max_ms);
         p.last_sweep_ms = now_ms;
         Ok(report)
@@ -777,7 +558,7 @@ impl Dispatcher {
 /// re-inserting it would resurrect a terminal run's queue row (ghost dispatch).
 /// [9.1] A `wamn.trigger` span rooting a dispatcher-fired run's trace, enriched
 /// with the run context the host mints right here — flow, run_id, flow_version,
-/// tenant, and the trigger source (`cron`/`row-event`). This is the
+/// tenant, and the trigger source (`cron`). This is the
 /// host-known-path home for `flow`/`run_id` enrichment (a webhook's trigger is
 /// instead wash-runtime's inbound HTTP span; guest-minted webhook `run_id` and
 /// per-node `node_id` await the 9.2 guest→host run-context contract). The
@@ -955,14 +736,13 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         min_interval_ms: cadence.min(),
         max_interval_ms: cadence.max(),
         batch: args.batch.max(1),
-        outbox_retention_ms: args.outbox_retention_hours.max(1) * 3_600_000,
     };
     let mut dispatcher = Dispatcher::connect(&specs, nats, cfg).await?;
     tracing::info!(
         projects = dispatcher.projects.len(),
         min_interval_ms = args.min_interval_ms,
         max_interval_ms = args.max_interval_ms,
-        "shared trigger dispatcher up (cron + outbox + parked-wake)"
+        "shared trigger dispatcher up (cron + parked-wake)"
     );
 
     // SIGTERM must be handled explicitly: in-container the dispatcher is PID 1,
@@ -1047,18 +827,18 @@ fn init_crypto() {
 #[cfg(test)]
 mod tests {
     use super::{
-        Ordering, PartitionPolicy, Registry, TickReport, partition_key_for_firing,
-        partition_policy_for_firing, valid_tenant, yield_cdc_live,
+        Ordering, PartitionPolicy, Registry, partition_key_for_firing, partition_policy_for_firing,
+        valid_tenant,
     };
-    use wamn_run_queue::{Firing, RowEventFlow};
+    use wamn_run_queue::Firing;
 
     fn firing(flow_id: &str, input_json: &str) -> Firing {
         Firing {
-            run_id: format!("{flow_id}:outbox:1"),
+            run_id: format!("{flow_id}:cron:0000000000001"),
             flow_id: flow_id.to_string(),
             flow_version: 1,
             input_json: input_json.to_string(),
-            trigger_source: "outbox:1".to_string(),
+            trigger_source: "cron".to_string(),
         }
     }
 
@@ -1142,51 +922,5 @@ mod tests {
     fn dispatcher_and_plugin_agree_on_a_65_char_tenant() {
         assert!(valid_tenant(&"a".repeat(64)));
         assert!(!valid_tenant(&"a".repeat(65)));
-    }
-
-    /// A completed prune is bookkeeping, not work — it must not keep the
-    /// adaptive cadence tight. A SATURATED prune batch (backlog remains) is
-    /// work: the drain must continue at the sweep cadence.
-    #[test]
-    fn prune_counts_as_work_only_while_a_backlog_remains() {
-        let done = TickReport {
-            outbox_pruned: 5,
-            ..TickReport::default()
-        };
-        assert!(!done.found_work());
-
-        let backlog = TickReport {
-            outbox_pruned: 64,
-            outbox_prune_backlog: true,
-            ..TickReport::default()
-        };
-        assert!(backlog.found_work());
-    }
-
-    /// EVT-CUTOVER (l5i9.18): a flow with a LIVE event registration is yielded
-    /// from the outbox match set — the CDC materializer owns its firing and the
-    /// disjoint run-id namespaces (`:outbox:` vs `:evt:`) mean ON CONFLICT
-    /// cannot collapse a double-fire. Flows without a live registration (which
-    /// includes SHADOW registrations — absent from the live set) keep firing.
-    #[test]
-    fn live_cdc_registration_yields_the_flow_from_outbox_matching() {
-        let rev = |flow_id: &str| RowEventFlow {
-            flow_id: flow_id.into(),
-            flow_version: 1,
-            table: "dispositions".into(),
-            event: "insert".into(),
-        };
-        let row_events = vec![rev("cut-over"), rev("still-old"), rev("shadowing")];
-
-        // "cut-over" is live on CDC; "shadowing" has only a shadow registration
-        // (not in the live set) — it must keep firing on the outbox path, that
-        // is the whole point of the compare-only shadow.
-        let live: std::collections::HashSet<String> = ["cut-over".to_string()].into();
-        let kept = yield_cdc_live(&row_events, &live);
-        assert_eq!(kept, vec![rev("still-old"), rev("shadowing")]);
-
-        // No live registrations (or no catalog surface at all) = identity.
-        let none = std::collections::HashSet::new();
-        assert_eq!(yield_cdc_live(&row_events, &none), row_events);
     }
 }

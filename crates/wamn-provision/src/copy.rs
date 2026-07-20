@@ -128,7 +128,8 @@ pub enum CopyStep {
     CopyDefinition { src: Triple, dst: Triple },
     /// `pg_restore` the snapshot into the dst database. `data_only` scopes the
     /// restore to the data schema's rows (`--data-only --disable-triggers` —
-    /// the D4 outbox triggers must not fire per restored row).
+    /// no trigger may fire per restored row; a restore replays state, it does
+    /// not produce events).
     RestoreData {
         src: Triple,
         dst: Triple,
@@ -292,9 +293,9 @@ pub fn count_rows_sql(schema: &str, table: &str) -> String {
 
 /// The `pg_restore` argv for a **data-only** copy: restore just the data
 /// schema's rows into a dst that already carries the definition.
-/// `--disable-triggers` is load-bearing — the D4 outbox row-event triggers on
-/// entity tables would otherwise fire once per restored row, flooding the dst
-/// env's dispatcher with spurious firings (a full restore has no such problem:
+/// `--disable-triggers` is load-bearing defense-in-depth — any trigger on an
+/// entity table would otherwise fire once per restored row (a restore replays
+/// state, it does not produce events; a full restore has no such problem:
 /// `pg_dump` puts triggers in the post-data section, after the rows load).
 /// Requires a superuser connection (which the copy driver holds anyway).
 pub fn pg_restore_data_only_argv(conninfo: &str, dump_dir: &str, schema: &str) -> Vec<String> {
@@ -474,8 +475,8 @@ mod tests {
 
     #[test]
     fn data_only_restore_disables_triggers_and_scopes_the_schema() {
-        // --disable-triggers is load-bearing: the D4 outbox triggers must not
-        // fire once per restored row.
+        // --disable-triggers is load-bearing: no trigger may fire once per
+        // restored row (a restore replays state, it does not produce events).
         let argv = pg_restore_data_only_argv("postgres://u@h/db", "/dump/out", "public");
         assert_eq!(argv[0], "pg_restore");
         assert!(argv.iter().any(|a| a == "--data-only"));

@@ -17,7 +17,7 @@ use wamn_api::SqlValue;
 use wamn_api::registration;
 use wamn_api::router::Compiled;
 use wamn_catalog::Catalog;
-use wamn_event_reg::{EventRegistration, Op, RegistrationState, SCHEMA_VERSION, validate};
+use wamn_event_reg::{EventRegistration, Op, SCHEMA_VERSION, validate};
 
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
@@ -53,7 +53,6 @@ fn reg(reg_id: &str, entity: &str) -> EventRegistration {
         ops: vec![Op::Insert, Op::Update],
         condition: Some("new.status == 'shipped' && old.status != 'shipped'".into()),
         partition_key: Some("new.status".into()),
-        state: RegistrationState::default(),
     }
 }
 

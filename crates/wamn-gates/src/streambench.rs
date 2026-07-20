@@ -1,7 +1,7 @@
 //! The `streambench` gate: the in-cluster gate of record for the event-plane
 //! DATA-PLANE NATS (D19 v3 §5/§7 Phase 1; wamn-l5i9.7 [EVT-NATS]).
 //!
-//! Unlike the ceiling campaigns (walbench/outboxbench/queuebench ceiling), this
+//! Unlike the ceiling campaigns (walbench/queuebench ceiling), this
 //! is a pass/fail GATE: it proves the JetStream substrate the CDC reader
 //! (l5i9.10) publishes onto and the materializer (l5i9.17) consumes from behaves
 //! to the v3 contract, on the dedicated data-plane cluster (deploy/nats-
@@ -16,7 +16,7 @@
 //!     exactly-once guarantee (§5);
 //!   * **consume in commit order** — a pull consumer drains every message, each
 //!     carrying its Nats-Msg-Id header, delivered in stream order == the LSN
-//!     order they were published (stronger than the outbox's per-project seq);
+//!     order they were published (stronger than the retired outbox's per-project seq);
 //!   * **R3 survives node loss** — proven two ways: a self-contained RAFT
 //!     leader step-down + re-election (`--mode all`), and a physical pod
 //!     deletion (the two-step `publish` → `kubectl delete pod` → `heal`

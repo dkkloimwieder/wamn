@@ -115,7 +115,7 @@ fn create_rejects_missing_required_field() {
 #[test]
 fn rejects_infinite_timestamps_at_both_value_paths() {
     // `+/-infinity` are valid instants Postgres would serialize via `to_jsonb`
-    // as the JSON string "infinity" in a row-event outbox payload, silently
+    // as the JSON string "infinity" in a JSON row-event payload, silently
     // changing the field's JSON type. The gateway rejects them at the edge
     // (wamn-oj7), on both the JSON-body and query-filter value paths.
     let cat = catalog();

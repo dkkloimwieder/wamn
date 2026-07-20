@@ -715,8 +715,8 @@ async fn apply_rls_policies(
 }
 
 /// `pg_restore` the snapshot into the dst. `data_only` scopes to the data
-/// schema (`--data-only --disable-triggers` — the outbox triggers must not fire
-/// per restored row); a full restore keeps ownership + ACLs (the dst cluster
+/// schema (`--data-only --disable-triggers` — no trigger may fire per restored
+/// row); a full restore keeps ownership + ACLs (the dst cluster
 /// carries `wamn_app` — the provision-project-env precondition).
 async fn exec_restore_data(ctx: &mut ExecCtx<'_>, data_only: bool) -> anyhow::Result<()> {
     let dump_dir = ctx

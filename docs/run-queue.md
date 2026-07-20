@@ -13,7 +13,7 @@ happened*, 5.14 governs *what runs next and who runs it*.
 
 The split mirrors the rest of the platform: a **pure crate**
 (`crates/wamn-run-queue`) holds the claim/lease/janitor/reconciliation decisions —
-and the trigger dispatcher's: cron due-tick evaluation, outbox matching,
+and the trigger dispatcher's: cron due-tick evaluation,
 deterministic run-id minting, the adaptive poll cadence — plus the parameterized
 SQL builders — no DB, no NATS, no clock (`now` is a passed-in millis), unit-tested
 off-cluster — and the **driver** (`crates/wamn-gates` `queuebench`/`dispatchbench`,
@@ -329,7 +329,7 @@ The lease **owner** is *host-injected*: the `wamn:postgres` plugin sets an
 the tenant claim, and the guest reads `current_setting('app.runner', true)` — a
 non-spoofable per-replica identity to lease/renew under. The guest links
 `wamn-run-queue` with `default-features = false`, so only the pure claim-path
-builders enter its wasm (the cron/outbox/dispatch trio — croner/chrono — stays
+builders enter its wasm (the cron/dispatch pair — croner/chrono — stays
 host-side behind the default `dispatcher` feature).
 
 The `failoverbench` `claim`/`park`/`heartbeat` gates *seed* `run_queue` directly
@@ -406,24 +406,25 @@ per-record measurement the amortization is judged by — and its `stream-reload`
 phase activates a new flow version mid-stream and asserts the following records
 run it: the load-bearing guard on the guest plan cache's invalidation.
 
-## Trigger dispatcher (cron + outbox + parked-wake)
+## Trigger dispatcher (cron + parked-wake)
 
-> **Outbox path retiring (D19 v3, 2026-07-18).** Row-event capture moves to
-> CDC via logical decoding (`docs/event-plane-jetstream.md`); **no new work
-> lands on the outbox path** — the outbox poller, the per-table triggers +
-> DDL emission, and the outbox table + GC are deleted at the Phase-2 teardown
-> (wamn-l5i9.19). Cron and parked-wake are unaffected and stay here.
+> **Outbox path RETIRED (D19 v3 §3 teardown, executed 2026-07-20,
+> wamn-l5i9.19).** Row-event capture is CDC via logical decoding
+> (`docs/event-plane-jetstream.md`): the reader publishes onto JetStream and
+> the **materializer** fires registered flows (`{flow}:evt:{stream_seq}` run
+> ids) — the outbox poller, the per-table triggers + DDL emission, the outbox
+> table + GC, and the l5i9.18 cutover scaffolding (`evt_shadow`, registration
+> `state: shadow`, the dispatcher's yield guard) are deleted. Cron and
+> parked-wake were unaffected and remain here.
 
 The **shared trigger dispatcher** is the always-on control-plane loop that turns
-*time* and *data changes* into runs: it owns **cron schedules** (flows with a
-`cron` trigger, F3) and **outbox polling** (flows with a `row-event` trigger —
-D4: LISTEN/NOTIFY is removed entirely, events are durable outbox rows the
-dispatcher polls, F4) across **all projects**, and **wakes parked runners**
+*time* into runs: it owns **cron schedules** (flows with a
+`cron` trigger, F3) across **all projects**, and **wakes parked runners**
 whose `available_at` has arrived — one service, per-project connections (D3:
 reconciliation follows connection ownership, no cross-DB sweep), adaptive
 intervals, no per-project listeners, no polling herd. It is the second driver of
-this crate: the decisions — cron due-tick evaluation, outbox matching, run-id
-minting, the poll cadence — live in the pure `cron`/`outbox`/`dispatch` modules
+this crate: the decisions — cron due-tick evaluation, run-id
+minting, the poll cadence — live in the pure `cron`/`dispatch` modules
 and take an injected `now`, so the `dispatchbench` gate fast-forwards a nightly
 cron and a three-day outage in milliseconds (the 11.1 fast-forwardable-cron
 discipline); `wamn-dispatcher` supplies the real clock.
@@ -431,19 +432,16 @@ discipline); `wamn-dispatcher` supplies the real clock.
 One sweep of one project:
 
 1. **Registry.** Scan active flows: the trigger lives *inside* `graph_json`
-   (wamn-flow `Flow.trigger`) — `cron` and `row-event` register here; `webhook`
-   is the gateway's, `manual` the editor's. A flow that fails to parse or
-   validate is skipped with a warning, never wedging the project's dispatch —
-   but if its trigger is still readable at the JSON level as a row event, that
-   `(table, event)` is **held**: its outbox rows stay pending rather than being
-   consumed, so a version-skewed flow (an older dispatcher binary meeting a
-   newer flow schema) degrades to *delayed* delivery, never silent event loss.
+   (wamn-flow `Flow.trigger`) — `cron` registers here; `webhook`
+   is the gateway's, `manual` the editor's, and `row-event` the
+   **materializer's** (its event registration is the trigger record —
+   l5i9.16/.17). A flow that fails to parse or
+   validate is skipped with a warning, never wedging the project's dispatch.
    A row whose `flows.flow_id` **column** differs from the graph's validated
-   `flow-id` is treated the same way (skipped, held if a row event): run ids
+   `flow-id` is treated the same way (skipped): run ids
    are minted from the column, so the equality requirement extends the 5.1
    flow-id slug charset — which `validate()` enforces only on the graph field
-   — to the id that is actually embedded in `{flow}:cron:{tick}` /
-   `{flow}:outbox:{seq}`.
+   — to the id that is actually embedded in `{flow}:cron:{tick}`.
 2. **Cron.** The due tick is the *latest* scheduled tick since the anchor —
    misfire collapse: an outage fires the latest missed tick once, never a
    burst. The anchor is recovered from the run ids themselves,
@@ -466,65 +464,13 @@ One sweep of one project:
    *error*, not a silent no-op: the schedule is quarantined per project
    (warned once, skipped, excluded from the cron-aware sleep) so it can
    neither wedge the sweep nor burn a full croner horizon walk every tick.
-3. **Outbox.** Poll pending rows oldest-first (`outbox_poll_sql`, `FOR UPDATE
-   SKIP LOCKED` — racing replicas take disjoint batches), **re-read the
-   registry inside the same transaction, strictly after the poll** (a flow
-   whose activation committed before a polled event's commit is always visible,
-   so an event can never be consumed as unmatched merely because it landed
-   after the sweep's first registry read — the flow-activation race), fire one
-   run per (registered flow × row) with the row payload spliced into the run
-   input **verbatim** (raw JSON, never a float-lossy parse/re-serialize — the
-   platform's no-float rule survives into `input_json`), and ack everything not
-   held (`plan_ack` + `outbox_ack_sql`) — **poll, fire, and ack in one
-   transaction**: a crash anywhere before the commit redelivers the batch and
-   retracts its enqueues atomically, and the deterministic ids
-   (`{flow}:outbox:{seq}`) collapse the redelivery to no-ops. A row no flow is
-   registered on is acked as consumed-with-no-op (an unmatched backlog must not
-   pin the oldest-first poll window); a **held** row (step 1) redelivers. The
-   **producer** writes outbox rows in its *own* transaction — D4's "outbox
-   insert and enqueue can share a transaction with user writes" — so an event
-   is durable iff the write it announces is. In production the producers are
-   the 3.2-emitted per-table row triggers (`Migration::outbox_triggers`,
-   `docs/ddl-compiler.md` § outbox triggers): every generated entity table
-   fires `insert|update|delete` events carrying the row as jsonb payload,
-   inside the user's transaction; applications can also insert directly
-   (`outbox_insert_sql`). The table lives in
-   [`deploy/sql/run-queue.sql`](../deploy/sql/run-queue.sql) beside `run_queue`.
-   (`seq` is the poll's oldest-first order, not a
-   cross-replica dispatch-order guarantee — per-key ordering is the 5.11
-   `partition_key` seam.)
-
-   > **Renaming a table silently stops its row-event flows.** Matching is by
-   > **table name**: the producer trigger follows a rename and emits the *new*
-   > `table_name`, but a `row-event` flow declares the *old* name and `match_outbox`
-   > compares them for equality — so after a rename, the flow no longer matches and
-   > its now-unmatched rows are **acked (consumed), not held**, so it silently stops
-   > firing until re-pointed at the new name. This is the named 11.8 schema-impact
-   > case (wamn-wvb); until it lands, re-point row-event flows as part of any table
-   > rename.
-4. **Wake / reconciliation.** One read-only scan (`parked_due_sql`) surfaces
+3. **Wake / reconciliation.** One read-only scan (`parked_due_sql`) surfaces
    every currently-due, unleased, budget-remaining queue row — a parked `delay`
    wake, or a run whose enqueue-time hint was lost — and hints each on the
    doorbell. Duplicate hints are harmless by design (the claim is the arbiter),
    which is what lets one scan double as the lost-hint reconciliation backstop
    of lifecycle step 5.
-5. **Maintenance — outbox GC (wamn-d8v).** Acked outbox rows are short-lived
-   audit history, not an archive: `outbox_ack_sql` only stamps `dispatched_at`,
-   so without GC every project's outbox grows without bound. The maintenance
-   step prunes rows acked longer ago than the retention window
-   (`outbox_prune_sql`; `--outbox-retention-hours`, default 7 days — generous
-   enough for forensics) on a low cadence (every 10 min per project), each
-   execution a **batch-bounded** DELETE (`ctid` subquery, the sweep `--batch`
-   bound) so a long-lived install's first prune never runs unbounded work
-   inside a sweep. A **saturated** batch means backlog remains: it counts as
-   work (the cadence stays tight) and bypasses the maintenance stamp, so the
-   drain continues every sweep until the prune comes back short. The pruner is
-   scoped to the **outbox only** — a pruner that also swept `runs` would break
-   cron anchor recovery (`cron_last_run_sql` reads old cron run ids). Pending
-   rows are never pruned, whatever their age; wiring the run-queue janitor
-   (`janitor_sweep_sql`, which today has no production caller) into this same
-   maintenance seam is wamn-71t.
-6. **Cadence.** Per-project adaptive interval (`next_interval`): work tightens
+4. **Cadence.** Per-project adaptive interval (`next_interval`): work tightens
    it to `min` (default 250 ms), idleness decays it exponentially to `max`
    (default 30 s — the reconciliation band's floor). The loop sleeps until the
    earliest next sweep OR the earliest upcoming cron fire across projects, so an
@@ -538,7 +484,7 @@ skipped, the reconciliation scan still guarantees pickup): a missing broker
 costs latency, not correctness.
 
 **Exactly-once without a leader.** Run ids are deterministic per firing — one
-run per (flow, cron tick) and per (flow, outbox row) — and both write-ahead and
+run per (flow, cron tick) — and both write-ahead and
 enqueue are `ON CONFLICT DO NOTHING`, so a restarted dispatcher, a crashed
 poll, and two replicas racing the same tick all collapse onto one run; HA needs
 no election (the dispatchbench `race` mode runs two live dispatchers over one
@@ -588,8 +534,8 @@ instead of replacing healthy replicas. Cron anchor recovery at production
 (deploy/sql/run-state.sql) — an index-only backward scan for `cron_last_run_sql`'s
 per-flow `max(run_id)` instead of a seq scan. Proven live in-cluster
 (2026-07-12): two replicas against the demo project minted 4 consecutive 20s
-cron ticks exactly once each, fired + acked the seeded outbox row with its
-payload spliced verbatim, `EXPLAIN` confirmed the anchor query uses
+cron ticks exactly once each (the then-live outbox row fired + acked too —
+that path is retired), `EXPLAIN` confirmed the anchor query uses
 `runs_cron_anchor`, and SIGTERM shutdown measured 13 ms.
 
 ## Scope (5.14) vs. siblings
@@ -597,8 +543,8 @@ payload spliced verbatim, `EXPLAIN` confirmed the anchor query uses
 This issue built the D3 hybrid queue: the SKIP LOCKED queue, the write-ahead / fast
 path, single-owner leases + reclaim, the janitor, the reconciliation cadence,
 **per-partition ownership** for `partitioned(key)`, **checkpoint/resume on
-replica loss**, the **shared trigger dispatcher** (cron + outbox + parked-wake, all
-above), the **guest-side queue claim** (`run-next`, above), and the **production
+replica loss**, the **shared trigger dispatcher** (cron + parked-wake, above;
+the outbox half was retired at l5i9.19), the **guest-side queue claim** (`run-next`, above), and the **production
 runner** (`run-worker` + `deploy/platform/runner.yaml`, fqg.8 — closes the live
 dispatcher → queue → runner chain), proven by `queuebench` + `failoverbench` +
 `dispatchbench` + `runnerbench`. It deliberately does **not** ship (tracked as
@@ -626,13 +572,11 @@ unchanged; `run-next` is the additive claim path.
   reconciliation cadence, **per-partition ownership** (`plan_acquire`,
   `plan_partition_claim` head-first + one-in-flight), the **dispatcher decisions**
   (cron `next_fire`/`due_tick` incl. leap-day/short-month calendar edges,
-  sub-second tick canonicalization, misfire collapse; outbox matching + firing
-  envelopes with the payload spliced **verbatim** — no-float fidelity for
-  >2^53 ints and long decimals; ack planning incl. held rows; deterministic
+  sub-second tick canonicalization, misfire collapse; deterministic
   run-id minting + ordering; the adaptive interval), the
   SQL builders' `SKIP LOCKED`/tenant-scoping/`RunStatus` literals/`::text::jsonb`
   binding, record JSON round-trip, and the `deploy/sql/run-queue.sql` drift guards
-  (queue + partition + outbox) — all off-cluster.
+  (queue + partition) — all off-cluster.
 - **live-apply** (`WAMN_RUN_QUEUE_PG_URL`) — applies `run-state.sql` +
   `run-queue.sql` to a throwaway Postgres and asserts the SKIP LOCKED claim
   predicate (Ready claimed, Parked/Leased skipped, expired reclaimed), the
@@ -647,17 +591,11 @@ unchanged; `run-next` is the additive claim path.
   RLS isolation, the FK cascade, and — via the *real* builders through
   `PREPARE`/`EXECUTE` — the partition path: partition-lease arbitration (a second
   replica cannot steal a live-owned key), head-only claim (one in flight per key),
-  and in-order advance once the head dequeues; plus the dispatcher's outbox path:
-  producer insert → RLS-scoped oldest-first poll → co-transacted fire + ack, the
-  **crash-rollback atomicity** (rollback = row redelivered AND enqueue retracted,
-  no half-state; the redelivery dedupes on the deterministic id), cron
+  and in-order advance once the head dequeues; plus the dispatcher's cron
   last-tick recovery (flow-exclusive `max(run_id)` — cross-flow poison ids,
   including a nested `{flow}:cron:` prefix in a *neighboring* flow id, never
-  leak into the anchor), the wake scan
-  (due-unleased surfaced; future/leased not), and the **outbox GC**
-  (`outbox_prune_sql`): acked rows past the 7-day retention pruned in exact
-  batch-bounded steps, while recently-acked, pending (whatever their age), and
-  other-tenant rows all survive.
+  leak into the anchor) and the wake scan
+  (due-unleased surfaced; future/leased not).
 - **`queuebench`** — the gate of record (pure host-side `tokio_postgres` claimers
   against a superuser-provisioned ephemeral schema): the D15 dispatch SLOs
   (write-ahead p99 < 15 ms, fast-path p99 < 10 ms), SKIP LOCKED **exactly-once +
@@ -715,36 +653,28 @@ unchanged; `run-next` is the additive claim path.
   tick's second, no duplicate across a dispatcher **restart** (anchor recovered
   from the run ids), **misfire collapse** after a simulated three-day outage,
   first-sight bootstrap, and the fire's write-ahead + enqueue co-transaction
-  proven atomic by an enqueue-side trap. `outbox`: one run per (matching flow ×
-  row) with the payload persisted as the run input, unmatched rows consumed, a
-  version-skewed flow's rows **held** (never wedging the sweep — junk/webhook
-  registry rows are also seeded), a redelivered row deduped on the
-  deterministic id **without resurrecting a completed run's queue row** (the
-  ghost-dispatch guard), and the poll/fire/ack co-transaction proven atomic by
-  traps on **both** sides (an ack-side trap kills the fire-first split-txn
-  mutant; a fire-side trap kills the ack-first lost-event mutant). `race`:
+  proven atomic by an enqueue-side trap. `ordering`: the flow-level ordering
+  declaration (5.11, wamn-fqg.20) is stamped onto `run_queue.partition_key` at
+  fire() over the cron envelope — unordered→NULL, strict→the constant flow key,
+  partitioned→the evaluated JMESPath key, with a missing key falling back to
+  the flow-wide stream (never NULL) — and the flow's D20 `partition_policy` is
+  materialized coherently (wamn-kq0z). `race`:
   **two live dispatchers ticking concurrently** over one project — every cron
-  tick and outbox row still fires exactly once (won-insert count == distinct
-  runs) with the contention itself proven (losing attempts counted, both
-  replicas must win work), no leader. `fairness`: a 120-row backlog in project
-  A is batch-bounded per sweep **oldest-first** and does not starve project B's
+  tick still fires exactly once (won-insert count == distinct
+  runs) with the contention itself proven (losing attempts counted), no
+  leader. `fairness`: a 120-run due parked backlog in project
+  A is wake-hinted batch-bounded per sweep **oldest-first** and does not starve
+  project B's
   first sweep; the adaptive intervals tighten/decay per project independently.
-  `prune`: the maintenance step's outbox GC — old-acked rows drain in
-  batch-bounded DELETEs (a saturated batch continues every sweep, counted as
-  work; a completed drain waits out the maintenance interval — fresh prunable
-  rows seeded 1 min after a drain are NOT swept, then are once the interval
-  elapses) while recently-acked rows survive; retention-predicate correctness
-  (recent/pending/other-tenant survival, exact batch bound) is the crate
-  live-apply gate's proof through the real `outbox_prune_sql` builder.
-  `wake`: a parked run is doorbell-hinted only once due; a firing's hint
+  `wake`: a parked run is doorbell-hinted only once due; a cron firing's hint
   carries the won run id and arrives only after its transaction committed.
-  `live`: the real `dispatch` run loop fires an outbox insert sub-500ms
+  `live`: the real `dispatch` run loop keeps an every-second cron firing
   **beside a permanently failing project** (isolation), survives its DB
   connections being killed (reconnect), and honors the cron-aware sleep (a
   tick under a fixed 5 s interval fires within ~1 s). Every load-bearing check
-  is mutation-tested (an observed-now tick identity, an ack-first split
-  transaction, an unconditional enqueue, and a cron-blind sleep each fail the
-  gate). Same co-located, no-CPU-limit topology as `queuebench`, locally and
+  is mutation-tested (an observed-now tick identity, a policy-blind enqueue,
+  and a cron-blind sleep each fail the gate). Same co-located, no-CPU-limit
+  topology as `queuebench`, locally and
   in-cluster.
 - **`flowbench` (S3) + `testhostbench` (S6)** — regression: the flowrunner guest is
   unchanged, so both stay green.

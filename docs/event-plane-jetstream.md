@@ -41,7 +41,11 @@ publishes onto the same streams.
 
 ## 3. Dropped from the current implementation (the teardown list)
 
-Executed in Phase 2 (§7); listed now so nothing else is built on them:
+**STATUS: EXECUTED 2026-07-20 (wamn-l5i9.19).** Every row below is deleted
+from the tree; the l5i9.18 cutover scaffolding (`evt_shadow`, registration
+`state: shadow` — owner decision 2026-07-20: removed entirely, no permanent
+dual mode — and the dispatcher's `cdc_live_flows` yield guard) went with it.
+The table stands as the record of what was dropped and what replaced it:
 
 | Dropped | Replaced by |
 |---|---|
@@ -352,9 +356,13 @@ runbook), not a repo state: no production flow rides the outbox today (F1 is
 a sync webhook; F4 is born ON the CDC path per its bead note), so the
 platform cutover ships with an empty migrating set and cutbench + the POC-F4
 regression gate (wamn-lxk, now unblocked) carry the evidence. Teardown (§3)
-is next: l5i9.19, which also owns removing the shadow scaffolding (bead
-note); the under-sustained-traffic migration fence is deliberately unbuilt
-(wamn-0ynt, P4).*
+EXECUTED (wamn-l5i9.19, 2026-07-20): the outbox poller, trigger emission
+(`Migration::outbox_triggers` + the wamn-ddl outbox module), outbox table +
+GC, the dispatchbench outbox/prune modes, outboxbench, AND the shadow
+scaffolding (`evt_shadow`, `state: shadow` — removed entirely per owner
+decision, `cdc_live_flows` yield, cutbench, e2ebench) are deleted; row events
+have ONE path. The under-sustained-traffic migration fence stays deliberately
+unbuilt (wamn-0ynt, P4 — now moot for the empty migrating set).*
 **Benches:** C-MAT (deliveries→enqueue rate, duplicate-storm cost), C-E2E
 (commit→run-start distribution; fan-out 1→N vs old path — the one
 before/after chart), C-INTERFERENCE (app-CRUD p99 while capture+materialize run

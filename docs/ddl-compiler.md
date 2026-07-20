@@ -47,16 +47,6 @@ reject reserved managed-column collisions (`id` / `tenant_id`), returning
 table- or column-rename cycle (a swap) and an aside-name collision — see
 *Migration ordering & name reuse* below.
 
-Two further entry points emit the **outbox row-event triggers** (see the
-dedicated section below):
-
-```rust
-use wamn_ddl::OutboxOptions;
-
-let plan = Migration::outbox_triggers(&catalog, &OutboxOptions::default())?; // all additive
-let plan = Migration::drop_outbox_triggers(&catalog)?;                       // destructive (gated)
-```
-
 ## Generated table shape (the tenant floor)
 
 Every entity becomes a table with a managed surrogate key and the S2 / 2.2
@@ -117,7 +107,7 @@ Expression defaults are a 0.2 item — a `default` is emitted as a SQL literal.
 `CHECK (col <> 'NaN'::numeric)` and a `date`/`timestamptz` column carries
 `CHECK (col <> 'infinity' AND col <> '-infinity')`. `to_jsonb` serializes these
 Postgres special values as JSON *strings* (`"NaN"`, `"infinity"`), so without
-the check a row-event outbox payload's field could silently change JSON type
+the check a JSON row-event payload's field could silently change JSON type
 from number/instant to string and surprise a consumer branching on
 `jsonb_typeof`. `NaN` reaches a `numeric(p,s)` column only via flow-authored SQL
 (the 4.1 gateway already rejects it at the REST edge); the gateway also rejects
@@ -259,102 +249,18 @@ transaction block**: the first non-transactional migration step will need a
 residue janitor plus an apply journal to recover a half-applied plan. Recorded as
 a forward note on the migration engine (wamn-d8u, 2.5).
 
-## Outbox row-event triggers (5.14 / D4 producers)
+## Outbox row-event triggers — REMOVED (l5i9.19 teardown)
 
-> **Retired path (D19 v3, 2026-07-18).** Event capture moves to CDC via
-> logical decoding (`docs/event-plane-jetstream.md`); **no new work lands on
-> the outbox path** — this emitter, the dispatcher poller, and the outbox
-> table + GC are deleted at the Phase-2 teardown (wamn-l5i9.19). This section
-> stands as the record of the shipped mechanism until then.
-
-`Migration::outbox_triggers(&catalog, &OutboxOptions { schema })` emits the
-production **row-event producers**: one shared plpgsql function plus one
-`AFTER INSERT OR UPDATE OR DELETE ... FOR EACH ROW` trigger per entity table,
-inserting one row into `<schema>.outbox` (default `wamn_run`,
-[`deploy/sql/run-queue.sql`](../deploy/sql/run-queue.sql)) **inside the user's
-transaction** — D4's "outbox insert and enqueue can share a transaction with
-user writes": the event is durable iff the write it announces is. The trigger
-dispatcher (5.14, `docs/run-queue.md`) polls these rows, matches
-`(table_name, event)` against active `row-event` flows, and splices
-`payload::text` into the run input **verbatim**.
-
-Shape and invariants:
-
-- **Event vocabulary** is `lower(TG_OP COLLATE "C")` → `insert|update|delete`,
-  exactly the outbox `event` CHECK and the wamn-flow `row-event` strings;
-  `TG_TABLE_NAME` is the physical table name row-event flows declare. The `"C"`
-  collation pin matters: under a Turkish/Azeri database default collation,
-  `lower('INSERT')` is `ınsert` (dotless ı), which would fail the CHECK and —
-  the trigger sharing the user's transaction — abort the user write itself.
-- **Tenant from the row, not the claim**: `NEW.tenant_id` / `OLD.tenant_id`
-  (the tenant-floor column) — correct under superuser seeds, which carry no
-  `app.tenant`. For a `wamn_app` write the entity floor's `WITH CHECK` already
-  pinned the row's tenant to the claim, so the outbox policy passes by
-  construction.
-- **Payload**: `to_jsonb(NEW)` for insert/update, `to_jsonb(OLD)` for delete.
-  Postgres jsonb numerics are exact, so an exact-decimal column (`12.50`)
-  survives into the payload and from there verbatim into the run input — the
-  no-float rule holds structurally end to end. An `ON CONFLICT DO NOTHING`
-  no-op (a 3.6 re-seed) inserts no row and fires nothing; a *first* seed fires.
-  The JSON-type-changing special values are excluded at the source (wamn-oj7):
-  `to_jsonb` would serialize `'NaN'::numeric` and `'infinity'::timestamptz` as
-  JSON *strings* (`"NaN"`, `"infinity"`), but the generated-table floor now
-  forbids them (see [Type mapping](#type-mapping)), so a payload numeric is
-  always a JSON number and a payload instant always a finite string.
-- **Runtime precondition**: the plan applies cleanly even where the outbox does
-  not exist (plpgsql bodies are not plan-checked at `CREATE FUNCTION`) and
-  fails only on the first subsequent row write — so the function operation's
-  summary names the target (`… events -> "wamn_run"."outbox"`) and its note
-  states the precondition, keeping a mis-targeted or schema-drifted apply
-  visible on the plan review surface.
-- **Opt-in and uniform**: a separate plan covering ALL entity tables — the
-  dispatcher acks rows no flow is registered on cheaply. It is deliberately
-  not folded into `create`/`migrate`: their consumers' schemas (3.4/3.5/3.6
-  gates, the 4.1 gateway fixtures) have no outbox, and every row write would
-  fail once a trigger references it. Provisioning composes both plans for
-  project databases that carry the run schema.
-- **Idempotent + rename-safe**: `CREATE OR REPLACE` on the function and a
-  CONSTANT trigger name (`wamn_outbox_event`; trigger names are per-table)
-  make the plan safe to re-apply on every catalog version — added entities
-  gain their trigger, a renamed table keeps exactly one (the trigger follows
-  the rename and re-apply replaces it instead of stacking a second), and
-  `DROP TABLE` takes its trigger with it.
-  - *Rename-safety is about the trigger **plumbing**, not flow **matching**.*
-    The trigger follows the rename and emits the **new** `TG_TABLE_NAME`
-    ([`crates/wamn-ddl/src/outbox.rs`](../crates/wamn-ddl/src/outbox.rs)), but a
-    registered `row-event` flow still declares the **old** table name, and the
-    dispatcher matches by name equality
-    ([`crates/wamn-run-queue/src/outbox.rs`](../crates/wamn-run-queue/src/outbox.rs)
-    `match_outbox`) and **acks an unmatched row rather than holding it** — so
-    renaming a table under active row-event flows silently stops them firing
-    until they are re-pointed at the new name. This is the named 11.8
-    schema-impact case (wamn-wvb); it is also flagged beside the matching logic
-    in `docs/run-queue.md`.
-- **Classification**: all additive. The opt-out plan
-  (`Migration::drop_outbox_triggers`) is destructive — no data is lost, but
-  row-event flows on these tables silently stop firing — so it is gated
-  behind `Confirmation::ConfirmedWithBackup`. Its final `DROP FUNCTION` is
-  deliberately RESTRICT (no CASCADE): if a table *outside* the passed catalog
-  still carries the trigger (version drift), it fails loudly rather than
-  silently killing that table's events; re-run with the catalog version whose
-  triggers were actually applied. The shared-function operations are
-  catalog-scoped and carry an empty `entity` attribution.
-- The `OutboxOptions::schema` must be a bare identifier
-  (`[A-Za-z_][A-Za-z0-9_]*`) — it is embedded inside the function body's
-  dollar-quoted block, where quoting cannot protect against a value containing
-  the dollar tag — else `CompileError::InvalidOutboxSchema`.
-
-`cargo run -p wamn-ddl --example emit-outbox -- <catalog.json> [schema]
-[--create]` prints the plan (with `--create`, a complete provisioning script)
-for demos and manual project setup.
-
-**Measured cost** (EVT-C2, `wamn-gates outboxbench`): the per-write overhead
-these triggers add — single-row latency + WAL/row, bulk-UPDATE amplification
-at 1k/10k/100k rows, and outbox growth vs the d8v prune cadence — is published
-with full provenance in [`docs/ceilings.md`](ceilings.md) § C2. Those numbers
-were gathered to size the wamn-vbl mitigation (registration-driven per-entity
-emission); wamn-vbl closed superseded 2026-07-18 — D19 v3's CDC capture pays
-none of this cost, and the numbers remain as the retired path's cost record.
+> **Deleted (D19 v3 §3, executed 2026-07-20, wamn-l5i9.19).** Row-event
+> capture is CDC via logical decoding (`docs/event-plane-jetstream.md`): the
+> publication `FOR TABLES IN SCHEMA` auto-covers entity tables, so no
+> per-table trigger emission exists anymore. `Migration::outbox_triggers` /
+> `drop_outbox_triggers` / `OutboxOptions` and the `emit-outbox` example were
+> removed from this crate; the shipped mechanism's record lives in git history
+> (b687d45) and the C2 trigger-overhead campaign in docs/ceilings.md. What
+> REMAINS from that era: the special-value CHECKs (see
+> [Type mapping](#type-mapping)) — they protect ANY JSON projection of a row,
+> CDC payloads included — and the reserved `wamn_` identifier prefix.
 
 ## Verification
 
@@ -368,11 +274,8 @@ constraint-freed name, cross-table unique-name moves, pkey-follows-rename,
 column-name reuse / column-rename chains and swap rejection, the
 implicit-drop force-hoist, collision-free plans staying preamble-free, the
 removed-entity dependents-first drop ordering with mutual-FK cycle rejection,
-and the reference-retype FK drop/add — each ordering rule is mutation-tested),
-and the outbox-trigger plans
-(coverage/shape, schema-option validation, the gated drop,
-and a drift guard pinning the emitted column set + event vocabulary against
-`deploy/sql/run-queue.sql`). Five optional live-apply tests run against a throwaway
+and the reference-retype FK drop/add — each ordering rule is mutation-tested).
+Four optional live-apply tests run against a throwaway
 Postgres, gated on `WAMN_DDL_PG_URL` (a superuser URL; the harness provisions
 the `wamn_app` role and ephemeral schemas — each test in its own schema so they
 parallelize): the CREATE/migrate script; the
@@ -382,15 +285,10 @@ names over a live inbound FK with canonical pkey names asserted on both sides,
 in-place constraint/index redefinitions on kept and renamed tables, and a
 same-named column redefinition — each failed 42P07 / 42P01 / 42710 / 42701
 before the preamble); a whole FK-linked table chain dropped in one migration
-(dependents-first — 2BP01 before the ordering); the reference-retype FK
+(dependents-first — 2BP01 before the ordering); and the reference-retype FK
 lifecycle (a `Reference` retyped to `uuid` while its target table is removed —
 2BP01 before the drop — and a `uuid` retyped into a `Reference` whose added FK
-is proven to enforce); and the outbox triggers
-behaviorally — a `wamn_app` write emits exactly one event row
-in the same transaction with the exact-decimal payload preserved, a superuser
-seed fires with the row's tenant, outbox RLS isolates tenants, a conflict no-op
-emits nothing, a re-applied plan stacks no duplicate trigger, and the confirmed
-drop plan silences emission:
+is proven to enforce):
 
 ```sh
 docker run -d --rm --name wamn-ddl-pg -p 5451:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18

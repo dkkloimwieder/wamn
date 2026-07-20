@@ -46,43 +46,6 @@ use wamn_event_wire::Op;
 /// breaking change waits for `0.2`.
 pub const SCHEMA_VERSION: &str = "0.1";
 
-/// The registration's activation state — the EVT-CUTOVER (l5i9.18) per-flow
-/// switch, read by BOTH paths so their mutual exclusion is structural:
-///
-/// - [`Shadow`](RegistrationState::Shadow): the materializer evaluates the full
-///   decision pipeline but **observes only** — every verdict lands in the
-///   `wamn_run.evt_shadow` ledger (no run, no queue row, no doorbell) — while
-///   the dispatcher's outbox path keeps firing the flow. The ledger vs the
-///   old path's runs is the cutover comparison (v3 §7 Phase 2).
-/// - [`Live`](RegistrationState::Live): the materializer fires, and the
-///   dispatcher **yields** the flow's row events (consumed-unfired) — a live
-///   registration is what stops the two disjoint run-id namespaces
-///   (`:outbox:` vs `:evt:`) from double-firing.
-///
-/// The default is `live` (an absent field on a stored document reads as live),
-/// so every pre-l5i9.18 registration and the ordinary post-cutover create keep
-/// firing unchanged — the additive-compat rule of the 0.1.x freeze.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RegistrationState {
-    /// Observe/compare-only: decisions go to the shadow ledger, never the queue.
-    Shadow,
-    /// The registration fires; the dispatcher yields the flow's row events.
-    #[default]
-    Live,
-}
-
-impl RegistrationState {
-    /// `true` when this registration only observes (the shadow ledger path).
-    pub fn is_shadow(self) -> bool {
-        matches!(self, RegistrationState::Shadow)
-    }
-}
-
-fn state_is_default(s: &RegistrationState) -> bool {
-    *s == RegistrationState::default()
-}
-
 /// One event registration — a subscribing flow's declaration of the row events
 /// it wants and how they are filtered and partitioned.
 ///
@@ -122,11 +85,6 @@ pub struct EventRegistration {
     /// = the flow's runs carry no partition key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition_key: Option<String>,
-    /// Activation state (EVT-CUTOVER, l5i9.18): `shadow` = observe/compare-only,
-    /// `live` (the default; omitted when serialized) = fires, and the dispatcher
-    /// yields the flow's row events. See [`RegistrationState`].
-    #[serde(default, skip_serializing_if = "state_is_default")]
-    pub state: RegistrationState,
 }
 
 impl EventRegistration {

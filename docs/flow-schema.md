@@ -56,7 +56,7 @@ terminates with the terminal `runaway-budget` kind (cjv.4).
   *latest* missed tick, never a catch-up burst — ticks are scheduling boundaries,
   not durable work items. Per-flow catch-up (replaying every missed tick) is a
   future ordering policy (rides wamn-1d4).
-- `row-event` `{ table, event }` — durable outbox row event (D4, 5.14). *(F4)*
+- `row-event` `{ table, event }` — durable row event, delivered by the D19 v3 event plane (CDC reader → JetStream → materializer) via the flow's event registration. *(F4)*
 - `manual` — editor test-run.
 
 **CredentialRef** — `{ name, kind?, description? }`. A logical name nodes point
@@ -109,7 +109,7 @@ minimal and re-import to an identical value (round-trip).
 - **Errors:** unsupported `schema-version`, empty `flow-id`, `flow-id` not a
   lowercase slug (`[a-z0-9-]`, starting and ending alphanumeric — flow ids are
   embedded verbatim into the 5.14 deterministic trigger run ids
-  `{flow}:cron:{tick}` / `{flow}:outbox:{seq}`, so excluding `:` keeps the
+  `{flow}:cron:{tick}` / `{flow}:evt:{stream_seq}`, so excluding `:` keeps the
   flow-id prefix unambiguous to parse and ASCII-only keeps id ordering
   collation-independent; enforced here in `validate()`, not in the published
   JSON Schema — the `0.1` contract stays additive), `version < 1`,

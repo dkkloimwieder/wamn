@@ -46,7 +46,7 @@ webhook-in (in) ──► respond (out)
 
 A `manual` trigger means nothing auto-fires it — the proof seeds the run
 directly, isolating the **runner** (the subject) from the trigger machinery
-(cron/outbox, already gated by the dispatcher). Both nodes are passthrough, so
+(cron, already gated by the dispatcher). Both nodes are passthrough, so
 for a seeded input `X` the deployed runner produces:
 
 * `runs.status = completed`, `runs.result_json = X` (the last node's payload),

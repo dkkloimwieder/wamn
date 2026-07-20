@@ -2,7 +2,7 @@
   "schema-version": "0.1",
   "flow-id": "disposition-recorded",
   "version": 1,
-  "name": "F4 disposition-recorded (outbox row-event)",
+  "name": "F4 disposition-recorded (row-event)",
   "trigger": { "type": "row-event", "table": "dispositions", "event": "insert" },
   "entry": "recommend",
   "nodes": [

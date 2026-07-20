@@ -94,7 +94,7 @@ pub fn validate(flow: &Flow) -> Vec<Issue> {
             format!(
                 "flow_id {:?} must be a lowercase slug: [a-z0-9-], starting and \
                  ending alphanumeric (trigger run ids embed the flow id with ':' \
-                 separators — {}:cron:{{tick}} / {}:outbox:{{seq}} — so the charset \
+                 separators — {}:cron:{{tick}} / {}:evt:{{stream-seq}} — so the charset \
                  keeps those ids unambiguous to parse and collation-stable to sort)",
                 flow.flow_id, flow.flow_id, flow.flow_id
             ),
@@ -321,7 +321,7 @@ fn compatible(v: &str) -> Compat {
 
 /// A flow id is a lowercase slug: `[a-z0-9-]`, starting and ending
 /// alphanumeric. Flow ids are embedded verbatim into deterministic trigger run
-/// ids (`{flow}:cron:{tick}` / `{flow}:outbox:{seq}`, 5.14), so the charset
+/// ids (`{flow}:cron:{tick}` / `{flow}:evt:{stream_seq}`, 5.14 + D19 §5), so the charset
 /// guarantees `:` terminates the flow-id prefix (unambiguous exact-prefix
 /// parse) and keeps id ordering collation-independent (every byte is ASCII).
 fn is_slug(id: &str) -> bool {

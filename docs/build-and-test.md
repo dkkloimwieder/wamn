@@ -501,39 +501,13 @@ Mutation harness for the knee controller: scratchpad `mutate_z7b1.py`
 (saturation-arm + bisect-direction mutants each fail a named
 wamn-gate-harness unit test).
 
-### [EVT-C2 / wamn-z7b.2] outboxbench trigger-overhead campaign (measurement, not a gate)
+### [EVT-C2 / wamn-z7b.2] outboxbench — RETIRED (l5i9.19 teardown)
 
-Docs: docs/ceilings.md (the published curves) + docs/event-plane-jetstream.md §10/§11
-+ docs/ddl-compiler.md § Outbox row-event triggers
-
-```bash
-cargo test -p wamn-gates outboxbench   # cadence parse/duration + catalog/plan compile units
-# Local iteration (short knobs; correctness only — debug build, dev-host PG):
-docker run -d --rm --name wamn-c2-pg -p 5443:5432 -e POSTGRES_PASSWORD=postgres postgres:18
-docker exec wamn-c2-pg psql -U postgres -c \
-  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
-WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5443/postgres \
-  WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5443/postgres \
-  ./target/debug/wamn-gates --log-level error outboxbench --mode all \
-  --iters 100 --growth-rate 50 --growth-secs 20 --growth-cadences 0,5,15 --retention-ms 2000
-docker stop wamn-c2-pg
-# Numbers of record (in-cluster, record knobs baked into the manifest; ~35–40 min;
-# a SINGLE run is the record — no knee search to poison, the headline numbers
-# are byte counts/medians and a stall shows as a visible p99 outlier):
-kubectl -n wamn-system apply -f deploy/gates/outboxbench-job.yaml
-kubectl -n wamn-system logs -f job/outboxbench
-# Extract the `=== BEGIN CSV <name> ===` blocks (c2-trigger / c2-bulk /
-# c2-growth-c{0,60,600}) into docs/ceilings-data/ and cite them from
-# docs/ceilings.md (§11 provenance).
-```
-
-Paired same-table A/B: the bench toggles the REAL `Migration::outbox_triggers`
-/ `drop_outbox_triggers` plans between phases, so the with/without delta is the
-trigger itself (a closing baseline re-measure bounds drift). Only the sanity
-asserts are pass/fail: the trigger fires exactly once per written row (per
-event), and the prune never touches a pending row (sentinel proof). Mutation
-harness: scratchpad `mutate_z7b2.py` (trigger-apply neutered / acker acks
-sentinels / bulk on-leg loses the trigger — each fails a named sanity assert).
+The C2 campaign of record stands in docs/ceilings.md + docs/ceilings-data/
+(c2-*.csv). The bench, the outbox triggers it measured
+(`Migration::outbox_triggers`), and deploy/gates/outboxbench-job.yaml were
+deleted with the outbox path (D19 v3 §3, executed 2026-07-20) — the numbers
+are history of a retired mechanism and cannot be re-measured.
 
 ### [EVT-C-WAL-0 / wamn-l5i9.4] walbench pre-CDC WAL baseline (measurement, not a gate)
 
@@ -1026,62 +1000,17 @@ docker rm -f sample-nats
 #   kubectl -n wamn-system logs job/samplebench
 ```
 
-### [EVT-CUTOVER / wamn-l5i9.18] shadow equivalence + the per-flow flip (cutbench)
+### [EVT-CUTOVER / wamn-l5i9.18] — RETIRED (l5i9.19 teardown)
 
-Docs: docs/event-plane-jetstream.md §7 Phase 2 (THE COMPARISON, defined) + §11
-(the flip runbook). A registration gains `state: shadow | live` (absent = live
-— additive 0.1.x): shadow = the materializer observes into the
-`wamn_run.evt_shadow` ledger (no run/queue/doorbell); live = it fires AND the
-dispatcher YIELDS the flow from outbox matching (`cdc_live_flows_sql`, read in
-the poll transaction) — mutual exclusion replaces the id-collision safety the
-v2→v3 run-id change removed. `cutbench` is the gate of record: ONE write
-program (a wamn_app session on floor tables carrying the REAL outbox triggers
-AND a REAL logical slot) feeds the real dispatcher engine and the embedded
-real `wamn-cdc-reader` → JetStream → `materializer.wasm` concurrently; the
-comparator joins on (flow, table, op, payload row id) with
-`jsonb_populate_record` canonicalization and declared divergence classes,
-then the phase-2 flip drills the §11 runbook (flip-window writes fire exactly
-once, on the new path; `disp-del` proves the flip is per-flow).
-
-```bash
-cargo test -p wamn-event-reg      # state: default-live, shadow round-trip, bogus rejected
-cargo test -p wamn-run-queue      # shadow_observe/cdc_live_flows pins + evt_shadow DDL coherence
-cargo test -p wamn-dispatcher     # the pure yield filter (live yields; shadow keeps firing)
-cargo test -p wamn-gates cutbench # fixture frozen-type + comparator join-key drift guards
-# Local live gate (throwaway PG18 `wal_level=logical` + JetStream; ~60s):
-docker run -d --name wamn-cut-pg -e POSTGRES_PASSWORD=postgres -p 5449:5432 \
-  postgres:18 -c wal_level=logical -c fsync=off
-docker run -d --name wamn-cut-nats -p 4262:4222 nats:2.10-alpine -js -sd /data
-(cd components && cargo build -p materializer --target wasm32-wasip2)
-cargo build -p wamn-gates
-./target/debug/wamn-gates cutbench \
-  --component components/target/wasm32-wasip2/debug/materializer.wasm \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:5449/postgres \
-  --nats-url nats://127.0.0.1:4262
-# Regressions on the same rig: matbench (default-live registrations + the new
-# evt_shadow DDL) and dispatchbench (the missing-catalog probe path).
-docker rm -f wamn-cut-pg wamn-cut-nats
-# In-cluster gate of record (two-stage image; the fixture postgres carries
-# wal_level=logical — deploy/platform/postgres.yaml — apply + restart once):
-(cd components && cargo build --release --target wasm32-wasip2)
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/platform/postgres.yaml
-kubectl -n wamn-system delete pod -l app=postgres   # pick up the wal_level knob
-kubectl -n wamn-system delete job cutbench --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/cutbench-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/cutbench --timeout=600s
-kubectl -n wamn-system logs job/cutbench | tail -45
-```
-
-Mutation harness: scratchpad `mutate_l5i9_18.py` — M1 the dispatcher yield
-filter dropped (killed by cutbench "dispatcher yields the live flows"), M2 the
-guest ignores shadow state (cutbench "shadow fired NOTHING real"), M3
-`shadow_observe_sql` loses ON CONFLICT (named unit
-`shadow_observe_is_deduped_tenant_scoped_and_ddl_coherent`), M4 the
-registration state defaults to shadow (named unit
-`state_defaults_to_live_and_live_is_omitted_on_export`); apply/test/restore
-with sha256, DEBUG builds.
+The cutover shipped and the comparison machinery retired with it: `cutbench`,
+the `wamn_run.evt_shadow` ledger, registration `state: shadow|live` (owner
+decision 2026-07-20: removed entirely — no permanent dual mode), the
+dispatcher's `cdc_live_flows` yield guard, and deploy/gates/cutbench-job.yaml
+were all deleted at the §3 teardown (executed 2026-07-20). The definition of
+the comparison and its evidence live in docs/event-plane-jetstream.md §7
+Phase 2 (status note) + the l5i9.18 bead. Post-teardown, row events have ONE
+path: CDC reader → JetStream → materializer ([EVT-MAT], [EVT-READER],
+[EVT-NATS], [E10-E2E] are the standing gates).
 
 ### [5.14] checkpoint/resume on replica loss
 
@@ -1301,11 +1230,10 @@ kubectl -n wamn-system logs job/ladderproof   # -> overall PASS: true
 Docs: docs/run-queue.md
 
 ```bash
-cargo test -p wamn-run-queue   # incl cron calendar edges + outbox/adaptive decisions
+cargo test -p wamn-run-queue   # incl cron calendar edges + adaptive-cadence decisions
 cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --check
-# optional live-apply gate (run-state.sql + run-queue.sql now incl the outbox; real
-# atomicity + redelivery dedupe, cron last-tick recovery, wake scan, outbox GC
-# retention/batch-bound proof [wamn-d8v, outbox_prune_sql]; skips when unset):
+# optional live-apply gate (run-state.sql + run-queue.sql; claim/janitor/partition
+# paths + cron last-tick recovery + wake scan; skips when unset):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
 WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-queue
@@ -1316,12 +1244,9 @@ WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn \
   --nats-url nats://127.0.0.1:4232 --mode all
 docker stop wamn-rq-pg wamn-rq-nats
-# dispatchbench modes: cron/outbox/ordering/race/fairness/prune/wake/live/all — `prune`
-# (wamn-d8v) drives the maintenance step's outbox GC: batch-bounded drain every
-# sweep while saturated, then the 10-min maintenance cadence; retention via
-# `wamn-dispatcher --outbox-retention-hours` (default 168 = 7d).
-# Mutation harness: scratchpad/mutate_d8v.py (retention sign, batch bound,
-# maintenance neuter, stamp inversion — each fails a named test/gate).
+# dispatchbench modes: cron/ordering/race/fairness/wake/live/all (the outbox +
+# prune modes retired with the outbox path at l5i9.19 — row events are
+# matbench/streambench/readerbench territory).
 # The production service is `wamn-dispatcher --projects-file <json>` (one entry
 # In-cluster gate of record (co-located with postgres,
 # HOST change => full docker rebuild (both --target stages + kind load BOTH images):
@@ -1865,7 +1790,7 @@ Docs: docs/run-queue.md, docs/ddl-compiler.md
 ```bash
 cargo test -p wamn-ddl
 cargo clippy -p wamn-ddl --all-targets && cargo fmt -p wamn-ddl --check
-# optional live-apply gates (emitted SQL + outbox-trigger behavior [same-txn
+# optional live-apply gates (emitted SQL; a
 # superuser URL — provisions wamn_app + ephemeral schemas; skips when unset):
 docker run -d --rm --name wamn-ddl-pg -p 5451:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
@@ -2085,10 +2010,9 @@ docker rm -f wamn-ri-pg
   --catalog path/to/applied-catalog.json --schema app --dry-run
 # Materializer end-to-end (rebuild the guest — the served old condition + the
 # old-image-absent refusal changed): matbench adds an UPDATE carrying a FULL old
-# image that evaluates end to end and fires (f-old:evt:8); cutbench phase 3
-# reconciles the delete entity to FULL so disp-del cuts over and its post-flip
-# delete fires a scoped :evt: run (the EXPECTED-DELETE-RI divergence retires)
-# while the pre-flip DEFAULT refusals stand. Recipes: [EVT-MAT], [EVT-CUTOVER].
+# image that evaluates end to end and fires (f-old:evt:8). (The cutbench
+# phase-3 RI-flip drill retired with cutbench at l5i9.19; the reconcile verb's
+# own live gate is ri_orch_live.) Recipe: [EVT-MAT].
 (cd components && cargo build -p materializer --target wasm32-wasip2)
 ```
 
@@ -2143,53 +2067,16 @@ M2 `reconcile_after_apply` plans but never applies the flips (killed by the
 inverted in publish-catalog (killed by the `ri_orch_live` live gate);
 apply/test/restore with sha256, DEBUG builds.
 
-### [EVT-C-E2E / wamn-l5i9.22] e2ebench outbox-vs-CDC before/after (measurement, not a gate)
+### [EVT-C-E2E / wamn-l5i9.22] e2ebench — RETIRED (l5i9.19 teardown)
 
-Docs: docs/event-plane-jetstream.md §7 Phase 2 + §8 · docs/ceilings.md § C-E2E.
-The Phase-2 before/after chart that justifies or indicts the CDC event plane vs
-the OLD outbox path — commit→run-start distribution, fan-out 1→N (N=1/5/20),
-and a 10× burst, each vs BOTH real paths at identical write load from ONE writer
-program. Reuses the cutbench substrate: ONE process runs the real
-`wamn_dispatcher` over the REAL `Migration::outbox_triggers` (old arm) AND the
-embedded real `wamn-cdc-reader` → JetStream → `materializer.wasm` (new arm);
-old-arm tables carry the trigger, new-arm tables do not (the post-teardown CDC
-world). CEILING bench — curves/knees, provenance-labelled; only structural
-sanity asserts gate (both paths produced exactly N runs). **MUST run BEFORE
-EVT-TEARDOWN (l5i9.19)** — it needs the old path alive.
-
-```bash
-cargo test -p wamn-gates --bin wamn-gates e2ebench   # path-attribution + fan-out sanity + trigger-scope + frozen-type drift guards
-# Local rig (throwaway PG18 `wal_level=logical` + JetStream; ~3 min for --phase all):
-docker run -d --name wamn-e2e-pg -e POSTGRES_PASSWORD=postgres -p 5461:5432 \
-  postgres:18 -c wal_level=logical -c fsync=off -c synchronous_commit=off
-docker run -d --name wamn-e2e-nats -p 4281:4222 nats:2 -js
-(cd components && cargo build -p materializer --target wasm32-wasip2)
-cargo build -p wamn-gates
-./target/debug/wamn-gates --log-level error e2ebench \
-  --component components/target/wasm32-wasip2/debug/materializer.wasm \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:5461/postgres \
-  --nats-url nats://127.0.0.1:4281 \
-  --phase all --burst-steady 40 --burst-mult 10 --burst-spike-secs 5
-#   --phase dist|fanout|burst runs one measurement; --dist-rates / --fanout-events /
-#   --disp-poll-ms / --fetch-ms tune the pacing terms (recorded in the provenance line).
-docker rm -f wamn-e2e-pg wamn-e2e-nats
-# In-cluster campaign of record (two-stage image; fixture postgres carries
-# wal_level=logical — deploy/platform/postgres.yaml — apply + restart once):
-(cd components && cargo build --release --target wasm32-wasip2)
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system delete job e2ebench --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/e2ebench-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/e2ebench --timeout=600s
-kubectl -n wamn-system logs job/e2ebench | tail -60   # curves in the `=== BEGIN CSV ce2e-* ===` blocks
-```
-
-Mutation harness: scratchpad `mutate_l5i9_22.py` — M1 a path-attribution
-predicate broken (`:outbox:` → `:evt:`; killed by unit
-`run_ids_attribute_to_disjoint_paths`), M2 the fan-out run-count sanity weakened
-(drops the `== N` check; killed by unit
-`fanout_sanity_requires_every_event_at_exactly_n`); apply/test/restore with
-sha256, DEBUG builds, never `git checkout`.
+The C-E2E campaign of record stands in docs/ceilings.md § C-E2E +
+docs/ceilings-data/ (ce2e-*.csv): the one before/after chart (commit→run-start
+distribution, fan-out 1→N, 10× burst — outbox vs CDC at identical load). It
+ran BEFORE the teardown by design (the measure-first ordering); the bench and
+deploy/gates/e2ebench-job.yaml were deleted with the old path (D19 v3 §3,
+executed 2026-07-20) — a before/after against a deleted path cannot be
+re-measured, so the record is final. CDC-path regression coverage continues in
+[EVT-MAT] (matbench) and [E10-E2E] (samplebench).
 
 ### [NODE-INVOKE / wamn-bd5] production runner ↔ custom-node invocation (5.6)
 

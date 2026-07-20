@@ -941,7 +941,7 @@ fn value_for_field_str(field: &Field, s: &str) -> Result<SqlValue, ApiError> {
 /// Reject the infinite instants a `date`/`timestamptz` column can otherwise
 /// hold. Postgres accepts `[+-]infinity` (and the `inf` abbreviation) as a
 /// valid instant, but `to_jsonb` serializes it as the JSON **string**
-/// `"infinity"` — so a row-event outbox payload's field would silently change
+/// `"infinity"` — so a JSON row-event payload's field would silently change
 /// JSON type from instant to string. Rejecting it at the gateway edge (a clean
 /// 400) complements the generated-table floor CHECK (the DB-level backstop that
 /// also covers flow-authored SQL). `NaN` is not reachable here: it is invalid

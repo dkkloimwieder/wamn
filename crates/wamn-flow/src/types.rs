@@ -263,8 +263,10 @@ pub enum Trigger {
     /// Scheduled invocation (cron expression). Dispatcher-owned; wakes parked
     /// projects (F3).
     Cron { schedule: String },
-    /// Fires from a durable row event (outbox), e.g. F4 on `dispositions`
-    /// insert — the outbox + doorbell path (D4, 5.14).
+    /// Fires from a durable row event, e.g. F4 on `dispositions` insert —
+    /// delivered by the D19 v3 event plane (CDC reader → JetStream →
+    /// materializer) via the flow's event registration; the run id is
+    /// `{flow}:evt:{stream_seq}`.
     RowEvent {
         table: String,
         #[serde(default)]

@@ -30,19 +30,22 @@
 //! ```
 //!
 //! ## Scope (5.14) vs siblings
-//! Owns: the `run_queue` + `outbox` tables + DDL (`deploy/sql/run-queue.sql`), the
+//! Owns: the `run_queue` (+ `partition_owner`) tables + DDL
+//! (`deploy/sql/run-queue.sql`), the
 //! `SKIP LOCKED` claim + batch claims, the D15 write-ahead / reduced-audit fast
 //! path, run-claim leases + reclaim, the janitor (orphan →
 //! `infrastructure-failure`), the reconciliation cadence, **per-partition
 //! ownership** — the `partition_owner` lease + head-first claim ([`partition`])
 //! that dispatches `partitioned(key)` runs in order per key across replicas —
-//! and the **trigger dispatcher decisions** ([`cron`] / [`outbox`] /
-//! [`dispatch`]): cron due-tick evaluation over injected time, outbox
-//! matching, deterministic trigger run ids, and the adaptive per-project poll
-//! cadence. The **walking skeleton** deferred these to follow-ups; all are now
+//! and the **trigger dispatcher decisions** ([`cron`] / [`dispatch`]): cron
+//! due-tick evaluation over injected time, deterministic trigger run ids, and
+//! the adaptive per-project poll cadence. (Row events are no longer a
+//! dispatcher concern: the D19 v3 event plane — CDC reader → JetStream →
+//! materializer — delivers them; the outbox path was torn down at l5i9.19.)
+//! The **walking skeleton** deferred these to follow-ups; all are now
 //! delivered, including the **guest-self-claim** (fqg.4): the flowrunner guest
 //! links the pure claim-path builders ([`sql`]) with `default-features = false`
-//! and claims its own work via `run-next` (the cron/outbox/dispatch trio stays
+//! and claims its own work via `run-next` (the cron/dispatch pair stays
 //! host-side behind the default `dispatcher` feature).
 //! Does **not** own: the engine walk / retry / reconstruction (5.2 + 5.7 — the
 //! claimed run drives them); the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
@@ -65,8 +68,8 @@
 //! real prepared-statement path (SR12b).
 
 mod claim;
-// The trigger-dispatcher trio (cron due-tick evaluation, outbox matching, the
-// adaptive poll cadence) needs croner + chrono + serde_json. It is gated behind
+// The trigger-dispatcher pair (cron due-tick evaluation, the adaptive poll
+// cadence) needs croner + chrono + serde_json. It is gated behind
 // the default `dispatcher` feature so the flowrunner guest (fqg.4) can link the
 // pure claim-path builders (`sql`) WITHOUT those crates in its wasm.
 #[cfg(feature = "dispatcher")]
@@ -79,8 +82,6 @@ mod evt;
 mod janitor;
 mod lease;
 mod model;
-#[cfg(feature = "dispatcher")]
-mod outbox;
 mod partition;
 mod reconcile;
 mod sql;
@@ -96,19 +97,15 @@ pub use evt::mint_evt_run_id;
 pub use janitor::{JanitorVerdict, janitor_verdict, orphans};
 pub use lease::{lease_deadline, lease_live, should_renew};
 pub use model::{Millis, PartitionOwner, PartitionPolicy, QueueEntry};
-#[cfg(feature = "dispatcher")]
-pub use outbox::{OutboxRow, RowEventFlow, match_outbox, mint_outbox_run_id, plan_ack, plan_hold};
 pub use partition::{partition_lease_live, plan_acquire, plan_partition_claim};
 pub use reconcile::{next_reconcile, reconcile_due};
 pub use sql::{
-    acquire_partitions_sql, active_flows_sql, cdc_live_flows_sql, claim_batch_sql,
-    claim_dispatch_sql, claim_partition_head_sql, complete_dequeue_sql, cron_last_run_sql,
-    dequeue_sql, enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql,
-    enqueue_with_policy_sql, event_registrations_exist_sql, gc_orphan_partitions_sql,
-    janitor_sweep_sql, mark_running_sql, outbox_ack_sql, outbox_hold_sql, outbox_insert_sql,
-    outbox_poll_sql, outbox_prune_sql, park_sql, parked_due_sql, record_error_and_renew_sql,
-    record_success_and_renew_sql, release_partition_sql, renew_lease_sql, renew_partition_sql,
-    shadow_observe_sql, write_ahead_run_sql, write_ahead_triggered_run_sql,
+    acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_dispatch_sql,
+    claim_partition_head_sql, complete_dequeue_sql, cron_last_run_sql, dequeue_sql,
+    enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql,
+    gc_orphan_partitions_sql, janitor_sweep_sql, mark_running_sql, park_sql, parked_due_sql,
+    record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
+    renew_lease_sql, renew_partition_sql, write_ahead_run_sql, write_ahead_triggered_run_sql,
 };
 
 // The queue drives the 5.7 run lifecycle rather than redefining it: the

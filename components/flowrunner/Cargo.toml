@@ -17,7 +17,7 @@ wamn-runner = { path = "../../crates/wamn-runner" }
 wamn-run-store = { path = "../../crates/wamn-run-store" }
 # Durable run queue (5.14): the claim/lease/dequeue/park SQL builders the guest
 # calls to claim its OWN work from run_queue (fqg.4). `default-features = false`
-# keeps the dispatcher-only modules (cron/outbox/dispatch — croner + chrono) out
+# keeps the dispatcher-only modules (cron/dispatch — croner + chrono) out
 # of the guest wasm; the runner needs only the pure claim-path builders (sql.rs).
 wamn-run-queue = { path = "../../crates/wamn-run-queue", default-features = false }
 # The standard node library (5.3) + the SDK capability facade this component

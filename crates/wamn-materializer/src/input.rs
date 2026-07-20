@@ -4,8 +4,8 @@
 //! Shape (**STATUS: FROZEN 0.1.0**, 2026-07-19, wamn-l5i9.30, like every
 //! event-plane wire shape — additive/clarifying only, pinned by a golden test):
 //! `{"trigger":"event", "entity"?, "table", "event", "seq", "payload",
-//! "old"?, "causation":{run,root,depth}}` — the outbox firing's
-//! `{trigger,table,event,seq,payload}` grammar (so a flow reads
+//! "old"?, "causation":{run,root,depth}}` — the retired outbox firing's
+//! `{trigger,table,event,seq,payload}` grammar preserved (so a flow reads
 //! `payload.<column>` the same way post-cutover), extended with the stable
 //! entity id, the delete/update old image when present, and the CAUSATION
 //! THREAD: the flow-runner reads `causation` at claim time and declares it on
@@ -100,7 +100,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_input_is_the_outbox_grammar_plus_entity_and_causation() {
+    fn insert_input_is_the_row_event_grammar_plus_entity_and_causation() {
         let env = envelope(
             Op::Insert,
             None,
@@ -117,7 +117,7 @@ mod tests {
         assert_eq!(input["entity"], "receipts");
         assert_eq!(input["event"], "insert");
         assert_eq!(input["seq"], 9);
-        // The row image is `payload` — the outbox grammar a flow already reads.
+        // The row image is `payload` — the row-event grammar a flow already reads.
         assert_eq!(input["payload"]["qty"], "12.3400");
         // The causation thread the flow-runner declares at claim time.
         assert_eq!(input["causation"]["depth"], 0);

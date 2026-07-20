@@ -1,7 +1,7 @@
 //! Dispatcher decisions — the adaptive poll cadence ("adaptive intervals … no
-//! polling herd", platform-plan 5.14) and the firing record the cron/outbox
-//! halves both produce. Pure: the driver owns the clock and the sleep; these are
-//! the decisions it folds.
+//! polling herd", platform-plan 5.14) and the firing record the cron path
+//! produces. Pure: the driver owns the clock and the sleep; these are the
+//! decisions it folds.
 //!
 //! The cadence: each project's sweep interval TIGHTENS to `min` the moment a
 //! sweep finds work and DECAYS exponentially toward `max` while idle, so a busy

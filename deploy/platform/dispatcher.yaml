@@ -1,5 +1,6 @@
 # 5.14 shared trigger dispatcher — the always-on control-plane loop (cron +
-# outbox row-events + parked-run wakes for every project it serves). Runs the
+# parked-run wakes for every project it serves; row events are the D19 v3
+# event plane's — CDC reader → JetStream → materializer, l5i9.19). Runs the
 # wamn-dispatcher binary (its own SR9 image target — no runtime linked).
 #
 #   kubectl -n wamn-system apply -f deploy/platform/dispatcher-projects.example.yaml  # once
@@ -14,11 +15,12 @@
 # demo-project example of the shape.
 #
 # TWO REPLICAS, NO LEADER: replicas race each trigger and collapse on the
-# write-ahead ON CONFLICT (deterministic run ids {flow}:cron:{tick} /
-# {flow}:outbox:{seq}) — exactly-once minting with no leader election, proven
+# write-ahead ON CONFLICT (deterministic run ids {flow}:cron:{tick}) —
+# exactly-once minting with no leader election, proven
 # by the dispatchbench `race` mode. Scale-out is safe by the same argument.
 #
-# CRASH SAFETY + SHUTDOWN: a sweep is one transaction (poll -> fire -> ack); a
+# CRASH SAFETY + SHUTDOWN: a firing is one transaction (write-ahead +
+# enqueue); a
 # killed pod rolls it back and the surviving replica (or the restarted pod)
 # redelivers, so even SIGKILL mid-sweep is the crash the design absorbs. The
 # dispatcher also handles SIGTERM explicitly (PID 1 gets no default signal

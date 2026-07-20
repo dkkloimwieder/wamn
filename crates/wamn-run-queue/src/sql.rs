@@ -390,11 +390,11 @@ pub fn janitor_sweep_sql() -> String {
 
 // ---------------------------------------------------------------------------
 // Trigger dispatcher (5.14): the always-on control-plane loop that fires cron
-// ticks and outbox row events into the queue and wakes parked runners. Each
-// firing is the same write-ahead + enqueue co-transaction as above, with the
-// trigger payload persisted (`write_ahead_triggered_run_sql`); the outbox is
-// polled (D4 — LISTEN/NOTIFY removed entirely) and acked in that SAME
-// transaction. See `crate::cron` / `crate::outbox` / `crate::dispatch`.
+// ticks into the queue and wakes parked runners. Each firing is the same
+// write-ahead + enqueue co-transaction as above, with the trigger payload
+// persisted (`write_ahead_triggered_run_sql`). Row events are the D19 v3 event
+// plane's (CDC reader → JetStream → materializer — the outbox path was torn
+// down at l5i9.19). See `crate::cron` / `crate::dispatch`.
 // ---------------------------------------------------------------------------
 
 /// The dispatcher's write-ahead run row: [`write_ahead_run_sql`] plus the trigger
@@ -403,8 +403,8 @@ pub fn janitor_sweep_sql() -> String {
 /// `$4` trigger_source, `$5` input_json as JSON **text** (`$5::text::jsonb` —
 /// a bare `::jsonb` would type the param as jsonb, which the driver cannot bind
 /// a string into). Idempotent on redelivery: trigger run ids are deterministic
-/// (one per cron tick / outbox row), so a re-fired tick from a restarted or
-/// racing dispatcher is a no-op.
+/// (one per cron tick), so a re-fired tick from a restarted or racing
+/// dispatcher is a no-op.
 pub fn write_ahead_triggered_run_sql() -> String {
     format!(
         "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status, trigger_source, input_json) \
@@ -424,150 +424,6 @@ pub fn write_ahead_triggered_run_sql() -> String {
 pub fn active_flows_sql() -> String {
     "SELECT flow_id, version, graph_json::text AS graph_json FROM flows \
       WHERE tenant_id = current_setting('app.tenant', true) AND active"
-        .to_string()
-}
-
-/// Does this project database carry the registration surface at all? The
-/// dispatcher's yield guard ([`cdc_live_flows_sql`]) reads
-/// `catalog.event_registrations`, which a project provisioned before the
-/// catalog surface (or a gate's self-contained fixture DB) may not have —
-/// referencing a missing table is a parse-time error that would kill the whole
-/// poll transaction, so the guard is a two-step: this probe first, the read
-/// only when it resolves. `to_regclass` is NULL-not-error on a missing name.
-pub fn event_registrations_exist_sql() -> String {
-    "SELECT to_regclass('catalog.event_registrations') IS NOT NULL".to_string()
-}
-
-/// The dispatcher's CUTOVER YIELD set (EVT-CUTOVER, l5i9.18): every flow with a
-/// **live** event registration. A live registration means the CDC materializer
-/// fires this flow (`<flow>:evt:<stream_seq>` ids), and the two paths' run-id
-/// namespaces never collide under `ON CONFLICT` — so the outbox path must not
-/// fire it too: `match_outbox` runs with these flows excluded, and their rows
-/// consume as unmatched (acked-unfired; the stream is their delivery now).
-///
-/// State rides the stored jsonb document; an ABSENT key is `live` (the
-/// pre-l5i9.18 default — see `wamn_event_reg::RegistrationState`), so the
-/// COALESCE makes exactly the non-shadow registrations yield. A registration
-/// whose document is malformed beyond the state key still yields here when its
-/// state reads `live` — on the materializer side that document is HELD, so the
-/// event is delayed-never-lost (the invalid-flow posture), never double-fired.
-/// Read INSIDE the poll transaction, alongside the registry re-read, so a state
-/// flip and a poll serialize on the same snapshot.
-pub fn cdc_live_flows_sql() -> String {
-    "SELECT DISTINCT flow_id FROM catalog.event_registrations \
-      WHERE tenant_id = current_setting('app.tenant', true) \
-        AND COALESCE(registration->>'state', 'live') = 'live'"
-        .to_string()
-}
-
-/// Poll the pending outbox batch, oldest-first. `FOR UPDATE SKIP LOCKED` gives
-/// two dispatcher replicas polling concurrently disjoint batches: each row stays
-/// locked until its poll transaction (fire + ack) commits, and a crashed
-/// poller's rows unlock and redeliver. `limit` is a numeric literal.
-///
-/// `held_since IS NULL` excludes HELD rows (R14): an active-but-unparseable
-/// flow's events are never acked ([`plan_ack`] refuses them — acking would be
-/// silent event loss), so without this filter they stay `dispatched_at IS NULL`
-/// forever and, being oldest, permanently occupy the lowest `seq` slots — once
-/// `--batch` held rows accumulate the healthy events past them are never reached
-/// and row-event dispatch stops project-wide. Stamping [`outbox_hold_sql`] lifts
-/// each held row out of this window (keeping it in the table with a visible age)
-/// so the healthy events flow. Carries the explicit `tenant_id =
-/// current_setting('app.tenant', true)` predicate (R8b-b) — inert (RLS injects
-/// the identical filter) but defense-in-depth, matching the ack/prune builders.
-pub fn outbox_poll_sql(limit: usize) -> String {
-    format!(
-        "SELECT seq, table_name, event, payload::text AS payload FROM outbox \
-          WHERE tenant_id = current_setting('app.tenant', true) \
-            AND dispatched_at IS NULL \
-            AND held_since IS NULL \
-          ORDER BY seq \
-          FOR UPDATE SKIP LOCKED \
-          LIMIT {limit}"
-    )
-}
-
-/// Stamp the polled rows the dispatcher recognized as HELD (their `(table,
-/// event)` belongs to an active flow this binary cannot parse/validate — a
-/// version skew) so [`outbox_poll_sql`] stops returning them (R14). `held_since`
-/// is set ONCE (`WHERE held_since IS NULL`) so a re-recognition — a held row
-/// re-polled before its first hold committed, or a manual clear-and-retry that
-/// fails again — never resets the backlog AGE operators alert on. Param: `$1` seq
-/// array (`bigint[]`), the held subset of the batch ([`plan_hold`]). Co-transacted
-/// with the poll's fire + [`outbox_ack_sql`], so a crash before commit leaves the
-/// held rows in the window to be re-recognized.
-pub fn outbox_hold_sql() -> String {
-    "UPDATE outbox SET held_since = now() \
-      WHERE tenant_id = current_setting('app.tenant', true) \
-        AND seq = ANY($1) AND held_since IS NULL"
-        .to_string()
-}
-
-/// Ack a polled outbox batch — CO-TRANSACTED with the write-ahead + enqueue of
-/// its firings (one durability domain, D3/D4): a crash before the commit
-/// redelivers the rows AND retracts their enqueues atomically, so there is no
-/// half-state to reconcile. Param: `$1` seq array (`bigint[]`).
-pub fn outbox_ack_sql() -> String {
-    "UPDATE outbox SET dispatched_at = now() \
-      WHERE tenant_id = current_setting('app.tenant', true) AND seq = ANY($1)"
-        .to_string()
-}
-
-/// Prune acked outbox rows past their retention window — the GC that keeps the
-/// outbox bounded ([`outbox_ack_sql`] only stamps `dispatched_at`; nothing else
-/// ever deletes, so without this every project's outbox grows without bound).
-/// Batch-bounded via the `ctid` subquery (`limit` is a numeric literal, the
-/// [`claim_batch_sql`] convention): one execution deletes at most `limit` rows,
-/// so a long-lived install's first prune never runs an unbounded DELETE inside
-/// a dispatcher sweep — a backlog drains one batch per sweep. Params: `$1`
-/// retention in milliseconds (rows acked longer ago than this are pruned).
-/// Scoped to the OUTBOX only: a pruner that also swept `runs` would break cron
-/// anchor recovery ([`cron_last_run_sql`] reads old cron run ids).
-pub fn outbox_prune_sql(limit: usize) -> String {
-    format!(
-        "DELETE FROM outbox \
-          WHERE ctid IN (SELECT o.ctid FROM outbox AS o \
-             WHERE o.tenant_id = current_setting('app.tenant', true) \
-               AND o.dispatched_at IS NOT NULL \
-               AND o.dispatched_at < now() - ($1::bigint * interval '1 millisecond') \
-             LIMIT {limit})"
-    )
-}
-
-/// The PRODUCER's outbox insert — runs in the producer's own transaction (D4:
-/// "outbox insert and enqueue can share a transaction with user writes"), so an
-/// event is durable iff the write it announces is. In production the 3.2-emitted
-/// per-table trigger or the application write path issues this; the gates issue
-/// it directly. Params: `$1` table_name, `$2` event (insert|update|delete),
-/// `$3` payload (JSON text, nullable).
-pub fn outbox_insert_sql() -> String {
-    "INSERT INTO outbox (tenant_id, table_name, event, payload) \
-     VALUES (current_setting('app.tenant', true), $1, $2, $3::text::jsonb)"
-        .to_string()
-}
-
-/// The materializer's SHADOW observation (EVT-CUTOVER, l5i9.18): for a
-/// registration in `state: shadow` the guest records the full decision — what
-/// live mode WOULD do — instead of firing. One row per (registration,
-/// stream_seq) delivery; the PK `ON CONFLICT DO NOTHING` is the same
-/// exactly-once discipline as the fire path, so JetStream redelivery never
-/// inflates the ledger and the comparison stays count-exact. No run, no queue
-/// row, no doorbell — the ledger IS the entire shadow effect.
-///
-/// Params: `$1` registration_id, `$2` stream_seq, `$3` run_id (the id live
-/// mode would mint — [`crate::mint_evt_run_id`]), `$4` flow_id, `$5` verdict
-/// (`fire`|`skip`|`refuse`), `$6` reason (the skip/refuse discriminant token;
-/// NULL for fire), `$7` table_name, `$8` op, `$9` entity (nullable — the
-/// unmapped marker), `$10` partition_key (nullable), `$11` partition_policy
-/// (nullable; fire-only), `$12` input_json (JSON text, nullable; fire-only —
-/// what live mode would submit as the run input).
-pub fn shadow_observe_sql() -> String {
-    "INSERT INTO evt_shadow (tenant_id, registration_id, stream_seq, run_id, flow_id, \
-                             verdict, reason, table_name, op, entity, \
-                             partition_key, partition_policy, input_json) \
-     VALUES (current_setting('app.tenant', true), $1, $2, $3, $4, $5, $6, $7, $8, $9, \
-             $10, $11, $12::text::jsonb) \
-     ON CONFLICT (tenant_id, registration_id, stream_seq) DO NOTHING"
         .to_string()
 }
 
@@ -829,55 +685,5 @@ mod tests {
         let c = complete_dequeue_sql();
         assert!(c.contains(wamn_run_store::sql::update_run_completed().text()));
         assert!(c.contains(&dequeue_sql()));
-    }
-
-    /// EVT-CUTOVER (l5i9.18): the shadow observation is exactly-once per
-    /// (registration, stream_seq) and tenant-scoped like every other writer —
-    /// and its column list cannot drift from the shipped evt_shadow DDL.
-    #[test]
-    fn shadow_observe_is_deduped_tenant_scoped_and_ddl_coherent() {
-        let s = shadow_observe_sql();
-        assert!(s.contains("INSERT INTO evt_shadow"), "unqualified — search_path");
-        assert!(s.contains("current_setting('app.tenant', true)"));
-        assert!(s.contains("ON CONFLICT (tenant_id, registration_id, stream_seq) DO NOTHING"));
-        assert!(s.contains("$12::text::jsonb"), "input_json binds as text");
-        assert!(!s.contains("$13"));
-
-        // Drift guard against deploy/sql/run-queue.sql: every inserted column
-        // exists in the CREATE TABLE block (the matbench include_str! lesson).
-        let ddl = include_str!("../../../deploy/sql/run-queue.sql");
-        let table = ddl
-            .split("CREATE TABLE wamn_run.evt_shadow")
-            .nth(1)
-            .expect("evt_shadow DDL present")
-            .split(';')
-            .next()
-            .unwrap();
-        for col in [
-            "tenant_id", "registration_id", "stream_seq", "run_id", "flow_id",
-            "verdict", "reason", "table_name", "op", "entity",
-            "partition_key", "partition_policy", "input_json",
-        ] {
-            assert!(table.contains(col), "evt_shadow DDL missing column {col}");
-        }
-        assert!(table.contains("PRIMARY KEY (tenant_id, registration_id, stream_seq)"));
-    }
-
-    /// EVT-CUTOVER (l5i9.18): the dispatcher's yield set is the LIVE-state
-    /// registrations (absent state = live, the pre-cutover default), read
-    /// tenant-scoped, and guarded by the table-existence probe (referencing a
-    /// missing catalog.event_registrations would kill the poll transaction).
-    #[test]
-    fn cdc_live_flows_reads_live_state_with_default_and_probe() {
-        let probe = event_registrations_exist_sql();
-        assert!(probe.contains("to_regclass('catalog.event_registrations')"));
-
-        let s = cdc_live_flows_sql();
-        assert!(s.contains("SELECT DISTINCT flow_id FROM catalog.event_registrations"));
-        assert!(s.contains("current_setting('app.tenant', true)"));
-        assert!(
-            s.contains("COALESCE(registration->>'state', 'live') = 'live'"),
-            "absent state must read as live"
-        );
     }
 }

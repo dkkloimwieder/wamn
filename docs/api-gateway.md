@@ -80,7 +80,7 @@ decimal, enum not a variant), is rejected `4xx` **before any SQL is built**.
   (`value_for_field`) and a query filter (`value_for_field_str`) — with a `400`
   (wamn-oj7). Postgres would accept `'infinity'::timestamptz` and serialize it
   via `to_jsonb` as the JSON string `"infinity"`, silently changing a row-event
-  outbox payload's field from an instant to a string; the generated-table floor
+  row-event payload's field from an instant to a string; the generated-table floor
   CHECK (3.2) is the DB-level backstop that also covers flow-authored SQL.
 
 ## Catalog cross-references vs SQL identifiers

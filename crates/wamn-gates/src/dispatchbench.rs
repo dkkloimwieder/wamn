@@ -11,6 +11,11 @@
 //! fast-forwardable-cron discipline). Only the wake and live modes touch real
 //! time (sub-second), because `available_at` is a server-side instant.
 //!
+//! Row events are NOT gated here since l5i9.19: the D19 v3 event plane (CDC
+//! reader → JetStream → materializer) delivers them — matbench/streambench/
+//! readerbench own that path. This gate covers what the dispatcher still owns:
+//! cron and the parked-run wake.
+//!
 //! Modes:
 //!   cron     — a nightly (F3-shaped) schedule fires exactly once per due tick:
 //!              not early, once within a tick's second, no duplicate across a
@@ -18,44 +23,33 @@
 //!              misfire collapse after a multi-day outage, first-sight
 //!              bootstrap, and the fire's write-ahead + enqueue co-transaction
 //!              proven atomic by an enqueue-side trap.
-//!   outbox   — pending rows fire one run per (matching flow × row) with the
-//!              payload persisted as the run input; unmatched rows are
-//!              consumed; a version-SKEWED flow's rows are HELD, not consumed;
-//!              bad registry rows (junk/webhook) never wedge the sweep; a
-//!              redelivered row dedupes on the deterministic id WITHOUT
-//!              resurrecting a completed run's queue row; and the poll/fire/ack
-//!              co-transaction is proven atomic by traps on BOTH sides (the
-//!              ack-side trap kills the fire-first split-txn mutant, the
-//!              fire-side trap kills the ack-first lost-event mutant).
 //!   ordering — the flow-level ordering declaration (5.11, wamn-fqg.20) is
 //!              stamped onto run_queue.partition_key at fire(): an unordered
 //!              flow's runs carry a NULL key (today's global claim), a strict
 //!              flow's runs all carry the constant whole-flow key (the flow id),
 //!              and a partitioned flow's runs carry the JMESPath result over the
-//!              run input — with a missing key degrading to the flow-wide stream
-//!              (never NULL), so a partitioned flow never escapes to unordered.
+//!              run input (here: a key over the cron envelope) — with a missing
+//!              key degrading to the flow-wide stream (never NULL), so a
+//!              partitioned flow never escapes to unordered. The flow's D20
+//!              partition_policy is materialized coherently (wamn-kq0z).
 //!   race     — TWO live dispatchers over one project, ticking concurrently:
-//!              every cron tick and every outbox row still fires exactly once,
-//!              with contention PROVEN (losing attempts are counted and both
-//!              replicas must win work — an inert second replica fails).
-//!   fairness — two projects, one with a deep outbox backlog: per-sweep work is
-//!              batch-bounded AND oldest-first (the backlog cannot monopolize a
-//!              sweep or starve its own head), the quiet project's triggers
-//!              fire in its own first sweep, and the adaptive intervals
-//!              tighten/decay per project independently (no herd).
-//!   prune    — the maintenance step's outbox GC (wamn-d8v): acked rows past
-//!              the retention window are pruned in batch-bounded DELETEs; a
-//!              saturated batch keeps draining every sweep, a completed drain
-//!              waits out the maintenance interval; recent-acked rows survive.
+//!              every cron tick still fires exactly once, with contention
+//!              PROVEN (each tick's losing attempt is counted — an inert
+//!              second replica fails).
+//!   fairness — two projects, one with a deep due parked-run backlog: per-sweep
+//!              wake hints are batch-bounded AND oldest-first (the backlog
+//!              cannot monopolize a sweep or starve its own head), the quiet
+//!              project's cron fires in its own first sweep, and the adaptive
+//!              intervals tighten/decay per project independently (no herd).
 //!   wake     — a parked run (future available_at) is doorbell-hinted only once
-//!              due; a firing's hint carries the WON run id and arrives only
-//!              after its transaction committed (needs NATS; skipped under
+//!              due; a cron firing's hint carries the WON run id and arrives
+//!              only after its transaction committed (needs NATS; skipped under
 //!              --mode all when absent).
-//!   live     — the real `dispatch` run loop (real clock): an outbox insert
-//!              fires sub-500ms BESIDE a permanently failing project
-//!              (isolation), survives its DB connections being killed
-//!              (reconnect), and a cron tick under a fixed 5s interval still
-//!              fires within ~1s (cron-aware sleep).
+//!   live     — the real `dispatch` run loop (real clock): an every-second cron
+//!              keeps firing BESIDE a permanently failing project (isolation),
+//!              survives its DB connections being killed (reconnect), and a
+//!              cron tick under a fixed 5s interval still fires within ~1s
+//!              (cron-aware sleep).
 //!   all      — every mode in sequence.
 
 use std::path::PathBuf;
@@ -64,7 +58,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
-use wamn_run_queue::{enqueue_sql, mint_cron_run_id, outbox_insert_sql, write_ahead_run_sql};
+use wamn_run_queue::{enqueue_sql, mint_cron_run_id, write_ahead_run_sql};
 
 use wamn_dispatcher::{Dispatcher, DispatcherConfig, ProjectSpec};
 
@@ -80,11 +74,9 @@ const DAY: i64 = 86_400_000;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
     Cron,
-    Outbox,
     Ordering,
     Race,
     Fairness,
-    Prune,
     Wake,
     Live,
     All,
@@ -119,8 +111,8 @@ pub struct DispatchBenchArgs {
 }
 
 /// The ephemeral project schema: flows (the trigger registry), runs (the 5.7
-/// shape incl. trigger_source/input_json — the write-ahead target), run_queue,
-/// and the outbox — self-contained stand-ins for the production DDL so the gate
+/// shape incl. trigger_source/input_json — the write-ahead target), and
+/// run_queue — self-contained stand-ins for the production DDL so the gate
 /// never touches a shared schema.
 fn dispatch_ddl(schema: &str) -> String {
     format!(
@@ -164,23 +156,7 @@ fn dispatch_ddl(schema: &str) -> String {
          CREATE POLICY run_queue_tenant ON {schema}.run_queue \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;\
-         CREATE TABLE {schema}.outbox (\
-            tenant_id text NOT NULL, seq bigint GENERATED ALWAYS AS IDENTITY, \
-            table_name text NOT NULL, \
-            event text NOT NULL CHECK (event IN ('insert', 'update', 'delete')), \
-            payload jsonb, created_at timestamptz NOT NULL DEFAULT now(), \
-            dispatched_at timestamptz, \
-            held_since timestamptz, \
-            PRIMARY KEY (tenant_id, seq));\
-         CREATE INDEX {schema}_outbox_pending ON {schema}.outbox (tenant_id, seq) \
-            WHERE dispatched_at IS NULL AND held_since IS NULL;\
-         ALTER TABLE {schema}.outbox ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.outbox FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY outbox_tenant ON {schema}.outbox \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.outbox TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;"
     )
 }
 
@@ -224,14 +200,13 @@ async fn teardown(admin_url: &str) -> anyhow::Result<()> {
     .await
 }
 
-/// Clean slate for one project schema: runs (CASCADEs to run_queue), the outbox
-/// (identity restarted so per-phase seqs are deterministic), and the registry.
+/// Clean slate for one project schema: runs (CASCADEs to run_queue) and the
+/// registry.
 async fn reset(admin_url: &str, schema: &str) -> anyhow::Result<()> {
     admin_exec(
         admin_url,
         &format!(
             "TRUNCATE {schema}.runs CASCADE; \
-             TRUNCATE {schema}.outbox RESTART IDENTITY; \
              TRUNCATE {schema}.flows;"
         ),
     )
@@ -278,15 +253,6 @@ fn cron_flow_json(flow_id: &str, schedule: &str) -> String {
     .to_string()
 }
 
-fn row_event_flow_json(flow_id: &str, table: &str, event: &str) -> String {
-    serde_json::json!({
-        "schema-version": "0.1", "flow-id": flow_id, "version": 1,
-        "trigger": {"type": "row-event", "table": table, "event": event},
-        "entry": "n1", "nodes": [{"id": "n1", "type": "noop"}],
-    })
-    .to_string()
-}
-
 async fn seed_flow(client: &Client, flow_id: &str, graph_json: &str) -> anyhow::Result<()> {
     client
         .execute(
@@ -294,18 +260,6 @@ async fn seed_flow(client: &Client, flow_id: &str, graph_json: &str) -> anyhow::
              VALUES (current_setting('app.tenant', true), $1, 1, true, $2::text::jsonb)",
             &[&flow_id, &graph_json],
         )
-        .await?;
-    Ok(())
-}
-
-async fn insert_outbox(
-    client: &Client,
-    table: &str,
-    event: &str,
-    payload: Option<&str>,
-) -> anyhow::Result<()> {
-    client
-        .execute(&outbox_insert_sql(), &[&table, &event, &payload])
         .await?;
     Ok(())
 }
@@ -364,9 +318,6 @@ pub async fn run(args: DispatchBenchArgs) -> anyhow::Result<()> {
         if run_all || args.mode == Mode::Cron {
             pass &= cron_phase(&app_url, &admin_url).await?;
         }
-        if run_all || args.mode == Mode::Outbox {
-            pass &= outbox_phase(&app_url, &admin_url).await?;
-        }
         if run_all || args.mode == Mode::Ordering {
             pass &= ordering_phase(&app_url, &admin_url).await?;
         }
@@ -375,9 +326,6 @@ pub async fn run(args: DispatchBenchArgs) -> anyhow::Result<()> {
         }
         if run_all || args.mode == Mode::Fairness {
             pass &= fairness_phase(&app_url, &admin_url).await?;
-        }
-        if run_all || args.mode == Mode::Prune {
-            pass &= prune_phase(&app_url, &admin_url).await?;
         }
         if run_all || args.mode == Mode::Wake {
             pass &= wake_phase(&app_url, &admin_url, &args, args.mode == Mode::Wake).await?;
@@ -532,303 +480,6 @@ async fn cron_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
 }
 
 // ---------------------------------------------------------------------------
-// outbox: one run per (matching flow x row), payload persisted, redelivery dedupes
-// ---------------------------------------------------------------------------
-
-async fn outbox_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
-    const N: i64 = 5;
-    println!(
-        "\n## outbox — {N} rows × 2 matching flows fire once each; unmatched consumed; \
-         skew + id-mismatch held; redelivery + ghost dedupe; co-txn traps both ways"
-    );
-    reset(admin_url, SCHEMA_A).await?;
-    let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
-    seed_flow(
-        &seeder,
-        "disposition-recorded",
-        &row_event_flow_json("disposition-recorded", "dispositions", "insert"),
-    )
-    .await?;
-    seed_flow(
-        &seeder,
-        "disposition-audit",
-        &row_event_flow_json("disposition-audit", "dispositions", "insert"),
-    )
-    .await?;
-    // Poisoned registry rows that must be SKIPPED, never wedge the sweep:
-    // junk (unparseable, no extractable trigger — holds nothing), a webhook
-    // flow (not the dispatcher's), and a version-SKEWED row-event flow (parses
-    // as JSON, rejected by validate) whose (skewed, insert) events must be
-    // HELD — pending, not consumed — until the flow/binary is fixed.
-    seed_flow(&seeder, "junk-flow", "{\"not\": \"a flow\"}").await?;
-    seed_flow(
-        &seeder,
-        "webhook-flow",
-        &serde_json::json!({
-            "schema-version": "0.1", "flow-id": "webhook-flow", "version": 1,
-            "trigger": {"type": "webhook", "sync": true},
-            "entry": "n1", "nodes": [{"id": "n1", "type": "noop"}],
-        })
-        .to_string(),
-    )
-    .await?;
-    seed_flow(
-        &seeder,
-        "skew-flow",
-        &serde_json::json!({
-            "schema-version": "9.9", "flow-id": "skew-flow", "version": 1,
-            "trigger": {"type": "row-event", "table": "skewed", "event": "insert"},
-            "entry": "n1", "nodes": [{"id": "n1", "type": "noop"}],
-        })
-        .to_string(),
-    )
-    .await?;
-    // An ID-MISMATCHED row (column flow_id != graph flow-id): the graph
-    // validates fine — both ids are legal slugs — but run ids are minted from
-    // the COLUMN, which the slug rule never saw, so the dispatcher must treat
-    // the mismatch as invalid: skipped, its (mismatched, insert) events HELD.
-    seed_flow(
-        &seeder,
-        "mismatch-col",
-        &row_event_flow_json("mismatch-graph", "mismatched", "insert"),
-    )
-    .await?;
-
-    // Seqs 1..=5 match both flows; 6 (unregistered table) and 7 (unregistered
-    // event) match nothing and must still be consumed; 8 belongs to the SKEWED
-    // flow and must be held.
-    for i in 1..=N {
-        let payload = format!("{{\"id\": \"d-{i}\"}}");
-        insert_outbox(&seeder, "dispositions", "insert", Some(&payload)).await?;
-    }
-    insert_outbox(&seeder, "unregistered", "insert", None).await?;
-    insert_outbox(&seeder, "dispositions", "update", None).await?;
-    insert_outbox(&seeder, "skewed", "insert", Some("{\"id\": \"held-1\"}")).await?;
-
-    let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
-    let mut d = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
-    let report = d.tick_project(0, BASE_MS).await?;
-
-    let fired = report.outbox_fired.len() as i64 == 2 * N;
-    let runs_total = scalar_i64(&seeder, "SELECT count(*) FROM runs").await?;
-    let payload_kept = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM runs \
-          WHERE trigger_source = 'outbox:3' \
-            AND input_json->'payload'->>'id' = 'd-3' \
-            AND input_json->>'table' = 'dispositions'",
-    )
-    .await?;
-    let ids_deterministic = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM runs WHERE run_id = 'disposition-recorded:outbox:1' \
-             OR run_id = 'disposition-audit:outbox:1'",
-    )
-    .await?;
-    // Everything acked EXCEPT the held skew row, which stays pending with no run.
-    let pending_after = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM outbox WHERE dispatched_at IS NULL",
-    )
-    .await?;
-    let held_pending = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM outbox WHERE seq = 8 AND dispatched_at IS NULL",
-    )
-    .await?
-        == 1
-        && scalar_i64(
-            &seeder,
-            "SELECT count(*) FROM runs WHERE trigger_source = 'outbox:8'",
-        )
-        .await?
-            == 0;
-
-    // Redelivery (a lost ack / split-brain) + GHOST-DISPATCH check: complete +
-    // dequeue seqs 1-2's runs (a fast runner finished them), then un-ack their
-    // rows. The re-fire is a no-op on the deterministic ids AND must not
-    // resurrect the completed runs' queue rows (the losing-enqueue guard —
-    // an unconditional enqueue would insert fresh queue rows here).
-    admin_exec(
-        admin_url,
-        &format!(
-            "UPDATE {SCHEMA_A}.runs SET status = 'completed' \
-              WHERE trigger_source IN ('outbox:1', 'outbox:2'); \
-             DELETE FROM {SCHEMA_A}.run_queue \
-              WHERE run_id IN (SELECT run_id FROM {SCHEMA_A}.runs \
-                                WHERE trigger_source IN ('outbox:1', 'outbox:2')); \
-             UPDATE {SCHEMA_A}.outbox SET dispatched_at = NULL WHERE seq <= 2;"
-        ),
-    )
-    .await?;
-    let redelivered = d.tick_project(0, BASE_MS + 1_000).await?;
-    let no_dup = redelivered.outbox_fired.is_empty();
-    let runs_after = scalar_i64(&seeder, "SELECT count(*) FROM runs").await?;
-    let reacked = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM outbox WHERE seq <= 2 AND dispatched_at IS NULL",
-    )
-    .await?;
-    let no_ghost = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM run_queue q JOIN runs r \
-            ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id \
-          WHERE r.status = 'completed'",
-    )
-    .await?
-        == 0;
-
-    // Co-transaction atomicity, ACK side: arm a trap that makes the ack raise
-    // (a BEFORE UPDATE trigger), land a fresh event, tick — the whole tick
-    // errors and NOTHING lands: the fire is retracted with the failed ack
-    // because poll + fire + ack are ONE transaction. A dispatcher that
-    // committed the fire in its own transaction before acking would leave the
-    // run behind here (the fire-first split-txn mutant).
-    insert_outbox(
-        &seeder,
-        "dispositions",
-        "insert",
-        Some("{\"id\": \"d-trap\"}"),
-    )
-    .await?; // seq 9
-    admin_exec(
-        admin_url,
-        &format!(
-            "CREATE FUNCTION {SCHEMA_A}.ack_trap() RETURNS trigger LANGUAGE plpgsql AS \
-             $$ BEGIN RAISE EXCEPTION 'ack trap'; END $$; \
-             CREATE TRIGGER outbox_ack_trap BEFORE UPDATE ON {SCHEMA_A}.outbox \
-             FOR EACH ROW EXECUTE FUNCTION {SCHEMA_A}.ack_trap();"
-        ),
-    )
-    .await?;
-    let trapped = d.tick_project(0, BASE_MS + 2_000).await;
-    let tick_failed = trapped.is_err();
-    let trap_runs = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM runs WHERE run_id LIKE '%:outbox:9'",
-    )
-    .await?;
-    let trap_pending = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM outbox WHERE seq = 9 AND dispatched_at IS NULL",
-    )
-    .await?;
-    let no_half_state = trap_runs == 0 && trap_pending == 1;
-    admin_exec(
-        admin_url,
-        &format!(
-            "DROP TRIGGER outbox_ack_trap ON {SCHEMA_A}.outbox; DROP FUNCTION {SCHEMA_A}.ack_trap();"
-        ),
-    )
-    .await?;
-    let recovered = d.tick_project(0, BASE_MS + 3_000).await?;
-    let trap_runs_after = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM runs WHERE run_id LIKE '%:outbox:9'",
-    )
-    .await?;
-    let refired = recovered.outbox_fired.len() == 2 && trap_runs_after == 2;
-
-    // Co-transaction atomicity, FIRE side: arm a trap that makes the
-    // WRITE-AHEAD raise (a BEFORE INSERT trigger on runs), land a fresh event,
-    // tick — the tick errors and the row is STILL PENDING: an ack-first
-    // split-transaction mutant (the classic lost-event outbox bug: txn1
-    // poll+ack commits, txn2 fire crashes) would have committed the ack and
-    // silently lost the event here.
-    insert_outbox(
-        &seeder,
-        "dispositions",
-        "insert",
-        Some("{\"id\": \"d-firetrap\"}"),
-    )
-    .await?; // seq 10
-    admin_exec(
-        admin_url,
-        &format!(
-            "CREATE FUNCTION {SCHEMA_A}.fire_trap() RETURNS trigger LANGUAGE plpgsql AS \
-             $$ BEGIN RAISE EXCEPTION 'fire trap'; END $$; \
-             CREATE TRIGGER runs_fire_trap BEFORE INSERT ON {SCHEMA_A}.runs \
-             FOR EACH ROW EXECUTE FUNCTION {SCHEMA_A}.fire_trap();"
-        ),
-    )
-    .await?;
-    let fire_trapped = d.tick_project(0, BASE_MS + 4_000).await;
-    let fire_tick_failed = fire_trapped.is_err();
-    let fire_trap_pending = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM outbox WHERE seq = 10 AND dispatched_at IS NULL",
-    )
-    .await?
-        == 1;
-    let fire_trap_runs = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM runs WHERE run_id LIKE '%:outbox:10'",
-    )
-    .await?
-        == 0;
-    admin_exec(
-        admin_url,
-        &format!(
-            "DROP TRIGGER runs_fire_trap ON {SCHEMA_A}.runs; DROP FUNCTION {SCHEMA_A}.fire_trap();"
-        ),
-    )
-    .await?;
-    let fire_recovered = d.tick_project(0, BASE_MS + 5_000).await?;
-    let fire_refired = fire_recovered.outbox_fired.len() == 2;
-
-    // ID-MISMATCH hold: land an event for the mismatched flow's table — the
-    // sweep must neither mint a run (under EITHER id) nor consume the row.
-    insert_outbox(&seeder, "mismatched", "insert", Some("{\"id\": \"m-1\"}")).await?; // seq 11
-    d.tick_project(0, BASE_MS + 6_000).await?;
-    let mismatch_held = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM outbox WHERE seq = 11 AND dispatched_at IS NULL",
-    )
-    .await?
-        == 1;
-    let mismatch_no_run = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM runs WHERE run_id LIKE 'mismatch-%'",
-    )
-    .await?
-        == 0;
-
-    let pass = fired
-        && runs_total == 2 * N
-        && payload_kept == 2 // both flows carry row 3's payload
-        && ids_deterministic == 2
-        && pending_after == 1 // only the held skew row
-        && held_pending
-        && no_dup
-        && runs_after == 2 * N
-        && reacked == 0
-        && no_ghost
-        && tick_failed
-        && no_half_state
-        && refired
-        && fire_tick_failed
-        && fire_trap_pending
-        && fire_trap_runs
-        && fire_refired
-        && mismatch_held
-        && mismatch_no_run;
-    println!(
-        "fired={} runs={runs_total} payload_kept={payload_kept} deterministic_ids={ids_deterministic} \
-         held(pending={held_pending}, total_pending={pending_after}) \
-         redelivery(no_dup={no_dup}, runs_after={runs_after}, reacked={}, no_ghost={no_ghost}) \
-         ack_trap(failed={tick_failed}, no_half_state={no_half_state}, refired={refired}) \
-         fire_trap(failed={fire_tick_failed}, still_pending={fire_trap_pending}, no_run={fire_trap_runs}, refired={fire_refired}) \
-         id_mismatch(held={mismatch_held}, no_run={mismatch_no_run})",
-        report.outbox_fired.len(),
-        reacked == 0
-    );
-    println!(
-        "PASS(outbox fire + consume + skew-hold + id-mismatch-hold + ghost-guard + co-txn traps both ways): {pass}"
-    );
-    Ok(pass)
-}
-
-// ---------------------------------------------------------------------------
 // ordering: the flow-level ordering declaration is stamped onto
 // run_queue.partition_key at fire() (wamn-fqg.20)
 // ---------------------------------------------------------------------------
@@ -836,23 +487,26 @@ async fn outbox_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
 async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     println!(
         "\n## ordering — unordered→NULL key, strict→constant flow key, partitioned→JMESPath key \
-         (missing key falls back to the flow-wide stream, never NULL); the flow's D20 \
-         partition_policy is materialized COHERENTLY (keyed rows carry the declared policy, \
-         unordered rows keep the column default) — wamn-kq0z"
+         over the cron envelope (missing key falls back to the flow-wide stream, never NULL); \
+         the flow's D20 partition_policy is materialized COHERENTLY (keyed rows carry the \
+         declared policy, unordered rows keep the column default) — wamn-kq0z"
     );
     reset(admin_url, SCHEMA_A).await?;
     let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
 
-    // Row-event flows on the SAME (orders, insert), so ONE outbox row fires all
-    // of them — a per-flow key+policy assertion off a single event. `policy`
-    // (D20) is the field ABSENT for the default (blocking); the leapfrog flow
-    // declares it so we can prove the declared policy is stamped, not the column
-    // default (wamn-kq0z: a partitioned(key) leapfrog flow used to silently
-    // dispatch blocking).
+    // Cron flows on the SAME nightly schedule, so ONE stepped tick fires all of
+    // them — a per-flow key+policy assertion off a single sweep. The cron input
+    // envelope is {"trigger":"cron","schedule":...,"fire-at-ms":...}: a
+    // partitioned key of `schedule` evaluates to a scalar (the declared-key
+    // case), while `payload.customer` is absent from a cron input (the
+    // fallback case). `policy` (D20) is the field ABSENT for the default
+    // (blocking); the leapfrog flow declares it so we can prove the declared
+    // policy is stamped, not the column default (wamn-kq0z).
+    const SCHEDULE: &str = "0 2 * * *";
     let ordered_flow = |flow_id: &str, ordering: serde_json::Value, policy: Option<&str>| {
         let mut graph = serde_json::json!({
             "schema-version": "0.1", "flow-id": flow_id, "version": 1,
-            "trigger": {"type": "row-event", "table": "orders", "event": "insert"},
+            "trigger": {"type": "cron", "schedule": SCHEDULE},
             "entry": "n1", "nodes": [{"id": "n1", "type": "noop"}],
         });
         if !ordering.is_null() {
@@ -881,13 +535,14 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         "partitioned-flow",
         &ordered_flow(
             "partitioned-flow",
-            serde_json::json!({"mode": "partitioned", "partition-key": "payload.customer"}),
+            serde_json::json!({"mode": "partitioned", "partition-key": "schedule"}),
             None,
         ),
     )
     .await?;
-    // A partitioned flow that ALSO declares leapfrog: its keyed rows must carry
-    // 'leapfrog', not the column default — the exact wamn-kq0z regression.
+    // A partitioned flow whose key is ABSENT from the cron envelope: the
+    // flow-wide fallback. It ALSO declares leapfrog — its keyed rows must carry
+    // 'leapfrog', not the column default (the exact wamn-kq0z regression).
     seed_flow(
         &seeder,
         "leapfrog-flow",
@@ -899,90 +554,61 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
     )
     .await?;
 
-    // Row 1 carries the partition key; row 2 lacks it (the fallback case).
-    insert_outbox(
-        &seeder,
-        "orders",
-        "insert",
-        Some("{\"customer\": \"acme\"}"),
-    )
-    .await?;
-    insert_outbox(&seeder, "orders", "insert", Some("{\"order\": 7}")).await?;
-
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
     let mut d = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
-    let report = d.tick_project(0, BASE_MS).await?;
-    let fired = report.outbox_fired.len() == 8; // 4 flows × 2 rows
+    // Bootstrap sweep (first sight — nothing due), then the nightly tick.
+    d.tick_project(0, BASE_MS + HOUR).await?;
+    let tick = BASE_MS + 2 * HOUR;
+    let report = d.tick_project(0, tick + 300).await?;
+    let fired = report.cron_fired.len() == 4;
+    let rid = |flow_id: &str| mint_cron_run_id(flow_id, tick);
 
-    // Unordered: NULL key on BOTH rows — byte-for-byte today's global-claim behavior.
-    let unordered_null = partition_key_of(&seeder, "unordered-flow:outbox:1")
+    // Unordered: NULL key — byte-for-byte today's global-claim behavior.
+    let unordered_null = partition_key_of(&seeder, &rid("unordered-flow"))
         .await?
-        .is_none()
-        && partition_key_of(&seeder, "unordered-flow:outbox:2")
-            .await?
-            .is_none();
-    // Strict: the constant whole-flow key (the flow id) on BOTH rows.
-    let strict_constant = partition_key_of(&seeder, "strict-flow:outbox:1")
+        .is_none();
+    // Strict: the constant whole-flow key (the flow id).
+    let strict_constant = partition_key_of(&seeder, &rid("strict-flow"))
         .await?
         .as_deref()
-        == Some("strict-flow")
-        && partition_key_of(&seeder, "strict-flow:outbox:2")
-            .await?
-            .as_deref()
-            == Some("strict-flow");
-    // Partitioned: row 1's key is the evaluated JMESPath result.
-    let partitioned_keyed = partition_key_of(&seeder, "partitioned-flow:outbox:1")
+        == Some("strict-flow");
+    // Partitioned: the evaluated JMESPath result over the cron envelope.
+    let partitioned_keyed = partition_key_of(&seeder, &rid("partitioned-flow"))
         .await?
         .as_deref()
-        == Some("acme");
+        == Some(SCHEDULE);
     // Partitioned with a MISSING key: the flow-wide stream (flow id), never NULL.
-    let partitioned_fallback = partition_key_of(&seeder, "partitioned-flow:outbox:2")
+    let partitioned_fallback = partition_key_of(&seeder, &rid("leapfrog-flow"))
         .await?
         .as_deref()
-        == Some("partitioned-flow");
-    // Leapfrog flow: keyed exactly like partitioned-flow (acme, then flow-id
-    // fallback) — the ordering seam is orthogonal to the policy seam.
-    let leapfrog_keyed = partition_key_of(&seeder, "leapfrog-flow:outbox:1")
-        .await?
-        .as_deref()
-        == Some("acme")
-        && partition_key_of(&seeder, "leapfrog-flow:outbox:2")
-            .await?
-            .as_deref()
-            == Some("leapfrog-flow");
+        == Some("leapfrog-flow");
 
-    // D20 policy materialization (wamn-kq0z). Keyed rows of a DEFAULT-policy flow
-    // carry 'blocking' (the declared/absent default, stamped via the policy
-    // enqueue), the leapfrog flow's keyed rows carry 'leapfrog' (the fix — not
-    // the silent column default), and unordered rows keep the column-default
-    // 'blocking' (NULL key, today's plain enqueue).
-    let strict_policy = partition_policy_of(&seeder, "strict-flow:outbox:1").await? == "blocking"
-        && partition_policy_of(&seeder, "strict-flow:outbox:2").await? == "blocking";
-    let partitioned_policy = partition_policy_of(&seeder, "partitioned-flow:outbox:1").await?
-        == "blocking"
-        && partition_policy_of(&seeder, "partitioned-flow:outbox:2").await? == "blocking";
-    let leapfrog_policy = partition_policy_of(&seeder, "leapfrog-flow:outbox:1").await?
-        == "leapfrog"
-        && partition_policy_of(&seeder, "leapfrog-flow:outbox:2").await? == "leapfrog";
-    let unordered_policy = partition_policy_of(&seeder, "unordered-flow:outbox:1").await?
-        == "blocking"
-        && partition_policy_of(&seeder, "unordered-flow:outbox:2").await? == "blocking";
+    // D20 policy materialization (wamn-kq0z). Keyed rows of a DEFAULT-policy
+    // flow carry 'blocking' (stamped via the policy enqueue), the leapfrog
+    // flow's keyed rows carry 'leapfrog' (the fix — not the silent column
+    // default), and unordered rows keep the column-default 'blocking' (NULL
+    // key, today's plain enqueue).
+    let strict_policy = partition_policy_of(&seeder, &rid("strict-flow")).await? == "blocking";
+    let partitioned_policy =
+        partition_policy_of(&seeder, &rid("partitioned-flow")).await? == "blocking";
+    let leapfrog_policy = partition_policy_of(&seeder, &rid("leapfrog-flow")).await? == "leapfrog";
+    let unordered_policy =
+        partition_policy_of(&seeder, &rid("unordered-flow")).await? == "blocking";
 
     let pass = fired
         && unordered_null
         && strict_constant
         && partitioned_keyed
         && partitioned_fallback
-        && leapfrog_keyed
         && strict_policy
         && partitioned_policy
         && leapfrog_policy
         && unordered_policy;
     println!(
         "fired={fired} unordered_null={unordered_null} strict_constant={strict_constant} \
-         partitioned_keyed={partitioned_keyed} partitioned_fallback={partitioned_fallback} \
-         leapfrog_keyed={leapfrog_keyed} | policy: strict={strict_policy} \
-         partitioned={partitioned_policy} leapfrog={leapfrog_policy} unordered={unordered_policy}"
+         partitioned_keyed={partitioned_keyed} partitioned_fallback={partitioned_fallback} | \
+         policy: strict={strict_policy} partitioned={partitioned_policy} \
+         leapfrog={leapfrog_policy} unordered={unordered_policy}"
     );
     println!(
         "PASS(ordering: partition_key + D20 partition_policy stamped from the flow declaration): {pass}"
@@ -995,8 +621,7 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
 // ---------------------------------------------------------------------------
 
 async fn race_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
-    const ROWS: i64 = 40;
-    println!("\n## race — two dispatchers tick concurrently: every tick + row fires exactly once");
+    println!("\n## race — two dispatchers tick concurrently: every cron tick fires exactly once");
     reset(admin_url, SCHEMA_A).await?;
     let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
     seed_flow(
@@ -1005,112 +630,72 @@ async fn race_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
         &cron_flow_json("minutely", "* * * * *"),
     )
     .await?;
-    seed_flow(
-        &seeder,
-        "disposition-recorded",
-        &row_event_flow_json("disposition-recorded", "dispositions", "insert"),
-    )
-    .await?;
-    for i in 1..=ROWS {
-        let payload = format!("{{\"id\": \"r-{i}\"}}");
-        insert_outbox(&seeder, "dispositions", "insert", Some(&payload)).await?;
-    }
 
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
-    let cfg = || DispatcherConfig {
-        batch: 25, // < ROWS: neither replica can take the whole backlog alone
-        ..DispatcherConfig::default()
-    };
-    let mut d1 = Dispatcher::connect(&specs, None, cfg()).await?;
-    let mut d2 = Dispatcher::connect(&specs, None, cfg()).await?;
+    let mut d1 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let mut d2 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
 
     // Three stepped minutes, both replicas ticking CONCURRENTLY at the same
     // instant. Round 0 bootstraps the cron anchor (first sight); rounds 1..3
     // each have one due minutely tick.
     let mut won_cron = 0usize;
     let mut lost_cron = 0usize;
-    let (mut d1_outbox, mut d2_outbox) = (0usize, 0usize);
     for round in 0..4 {
         let now = BASE_MS + round * 60_000 + 250;
         let (r1, r2) = tokio::join!(d1.tick_project(0, now), d2.tick_project(0, now));
         let (r1, r2) = (r1?, r2?);
         won_cron += r1.cron_fired.len() + r2.cron_fired.len();
         lost_cron += r1.cron_lost + r2.cron_lost;
-        d1_outbox += r1.outbox_fired.len();
-        d2_outbox += r2.outbox_fired.len();
     }
-    let won_outbox = d1_outbox + d2_outbox;
 
     let cron_runs = scalar_i64(
         &seeder,
         "SELECT count(*) FROM runs WHERE flow_id = 'minutely'",
     )
     .await?;
-    let outbox_runs = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM runs WHERE trigger_source LIKE 'outbox:%'",
-    )
-    .await?;
-    let distinct_outbox = scalar_i64(
-        &seeder,
-        "SELECT count(DISTINCT run_id) FROM runs WHERE trigger_source LIKE 'outbox:%'",
-    )
-    .await?;
-    let pending = scalar_i64(
-        &seeder,
-        "SELECT count(*) FROM outbox WHERE dispatched_at IS NULL",
-    )
-    .await?;
+    let queued = scalar_i64(&seeder, "SELECT count(*) FROM run_queue").await?;
 
     // Exactly-once = the number of firings that WON the insert equals the number
-    // of distinct runs — a duplicate dispatch would inflate the win count; a
-    // lost row would deflate completeness. CONTENTION is asserted, not assumed:
-    // both replicas attempt rounds 1..3's cron tick, so exactly 3 attempts LOSE
-    // (an inert second dispatcher would make lost_cron 0 and the race vacuous),
-    // and with 40 rows against batch-25 polls BOTH replicas must win outbox
-    // firings (SKIP LOCKED hands them disjoint batches).
-    let pass = cron_runs == 3
-        && won_cron == 3
-        && lost_cron == 3
-        && outbox_runs == ROWS
-        && distinct_outbox == ROWS
-        && won_outbox as i64 == ROWS
-        && d1_outbox > 0
-        && d2_outbox > 0
-        && pending == 0;
-    println!(
-        "cron runs={cron_runs} (won {won_cron}/3, lost {lost_cron}/3) | outbox runs={outbox_runs} \
-         distinct={distinct_outbox} (d1 {d1_outbox} + d2 {d2_outbox} = {won_outbox}/{ROWS}) | pending={pending}"
-    );
+    // of distinct runs. CONTENTION is asserted, not assumed: both replicas
+    // attempt rounds 1..3's cron tick, so exactly 3 attempts LOSE (an inert
+    // second dispatcher would make lost_cron 0 and the race vacuous).
+    let pass = cron_runs == 3 && won_cron == 3 && lost_cron == 3 && queued == 3;
+    println!("cron runs={cron_runs} (won {won_cron}/3, lost {lost_cron}/3) queued={queued}");
     println!("PASS(replica race exactly-once, contention proven, no leader): {pass}");
     Ok(pass)
 }
 
 // ---------------------------------------------------------------------------
-// fairness: a deep backlog is batch-bounded per sweep; the quiet project's
-// triggers fire in its own first sweep; intervals adapt per project
+// fairness: a deep due parked-run backlog is batch-bounded per sweep; the quiet
+// project's cron fires in its own first sweep; intervals adapt per project
 // ---------------------------------------------------------------------------
 
 async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     const BACKLOG: i64 = 120;
     const BATCH: usize = 50;
     println!(
-        "\n## fairness — project A backlog {BACKLOG} (batch {BATCH}) must not starve project B"
+        "\n## fairness — project A's due parked backlog {BACKLOG} (batch {BATCH}) must not starve project B"
     );
     reset(admin_url, SCHEMA_A).await?;
     reset(admin_url, SCHEMA_B).await?;
-    let (seed_a, _ha) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
+    let (mut seed_a, _ha) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
     let (seed_b, _hb) = connect_app(app_url, SCHEMA_B, TENANT_B).await?;
 
-    seed_flow(
-        &seed_a,
-        "receipt-flow",
-        &row_event_flow_json("receipt-flow", "receipts", "insert"),
-    )
-    .await?;
-    for i in 1..=BACKLOG {
-        let payload = format!("{{\"id\": \"a-{i}\"}}");
-        insert_outbox(&seed_a, "receipts", "insert", Some(&payload)).await?;
+    // A: a deep DUE backlog (a scale-to-zero runner's unclaimed runs — every
+    // sweep hints wake candidates, batch-bounded). One transaction, so every
+    // row shares available_at and the oldest-first order is the run_id
+    // tiebreak (zero-padded ids make it deterministic).
+    {
+        let tx = seed_a.transaction().await?;
+        let wa = write_ahead_run_sql();
+        let enq = enqueue_sql();
+        for i in 1..=BACKLOG {
+            let run_id = format!("p-{i:03}");
+            tx.execute(&wa, &[&run_id, &"f", &1i32]).await?;
+            tx.execute(&enq, &[&run_id, &Option::<&str>::None, &0i32, &0i64])
+                .await?;
+        }
+        tx.commit().await?;
     }
     seed_flow(
         &seed_b,
@@ -1118,13 +703,6 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         &cron_flow_json("b-nightly", "0 2 * * *"),
     )
     .await?;
-    seed_flow(
-        &seed_b,
-        "b-flow",
-        &row_event_flow_json("b-flow", "dispositions", "insert"),
-    )
-    .await?;
-    insert_outbox(&seed_b, "dispositions", "insert", Some("{\"id\": \"b-1\"}")).await?;
     // Give B's cron a fired history (the previous nightly tick) so the stepped
     // tick at BASE+2h is due in B's FIRST sweep — and the anchor recovery from
     // seeded history is exercised.
@@ -1153,52 +731,59 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
     )
     .await?;
 
-    // Simulate a healthy runner draining the queue between sweeps, so the
-    // adaptive cadence reflects TRIGGER work, not an unclaimed-run backlog.
-    let drain = |schema: &'static str| {
-        let admin = admin_url.to_string();
-        async move { admin_exec(&admin, &format!("DELETE FROM {schema}.run_queue;")).await }
-    };
+    // Simulate a healthy runner claiming + completing the hinted runs between
+    // sweeps (dequeue), so each sweep's hint set is the backlog's NEXT slice
+    // and the adaptive cadence reflects real progress.
+    async fn drain(admin_url: &str, woken: &[String]) -> anyhow::Result<()> {
+        if woken.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = woken.iter().map(|w| format!("'{w}'")).collect();
+        admin_exec(
+            admin_url,
+            &format!(
+                "DELETE FROM {SCHEMA_A}.run_queue WHERE run_id IN ({});",
+                ids.join(",")
+            ),
+        )
+        .await
+    }
 
-    // Sweep 1 (B's nightly tick is due): A fires a batch-bounded 50, B fires its
-    // cron AND its outbox row in its own first sweep — not starved behind A.
+    // Sweep 1 (B's nightly tick is due): A hints a batch-bounded 50, B fires
+    // its cron in its own first sweep — not starved behind A.
     let t1 = BASE_MS + 2 * HOUR + 100;
     let a1 = d.tick_project(0, t1).await?;
     let b1 = d.tick_project(1, t1).await?;
-    let a_bounded = a1.outbox_fired.len() == BATCH;
-    // Oldest-first: the bounded first sweep took exactly the LOWEST 50 seqs
-    // (a newest-first poll would take 71..=120 and starve the backlog's head).
-    let a_seqs: Vec<i64> = a1
-        .outbox_fired
-        .iter()
-        .filter_map(|id| id.rsplit(':').next()?.parse().ok())
-        .collect();
-    let a_oldest_first = a_seqs.iter().min() == Some(&1)
-        && a_seqs.iter().max() == Some(&(BATCH as i64))
-        && a_seqs.len() == BATCH;
-    let b_first_sweep = b1.cron_fired.len() == 1 && b1.outbox_fired.len() == 1;
-    drain(SCHEMA_A).await?;
-    drain(SCHEMA_B).await?;
+    let a_bounded = a1.woken.len() == BATCH;
+    // Oldest-first: the bounded first sweep hinted exactly the LOWEST 50 ids
+    // (a newest-first scan would starve the backlog's head).
+    let expected: Vec<String> = (1..=BATCH as i64).map(|i| format!("p-{i:03}")).collect();
+    let a_oldest_first = a1.woken == expected;
+    let b_first_sweep = b1.cron_fired.len() == 1;
+    drain(admin_url, &a1.woken).await?;
+    // B's fired cron run would otherwise sit due in ITS queue and be
+    // wake-hinted every sweep (work, pinning B's cadence tight) — complete it,
+    // as a healthy runner would.
+    admin_exec(admin_url, &format!("DELETE FROM {SCHEMA_B}.run_queue;")).await?;
 
     // Sweep 2: A keeps draining at the tight interval; B is idle and decays.
     let t2 = t1 + min;
     let a2 = d.tick_project(0, t2).await?;
     let b2 = d.tick_project(1, t2).await?;
-    drain(SCHEMA_A).await?;
+    drain(admin_url, &a2.woken).await?;
 
     // Sweep 3: A finishes the backlog; B decays further.
     let t3 = t2 + min;
     let a3 = d.tick_project(0, t3).await?;
     let b3 = d.tick_project(1, t3).await?;
-    drain(SCHEMA_A).await?;
+    drain(admin_url, &a3.woken).await?;
 
-    let a_total = a1.outbox_fired.len() + a2.outbox_fired.len() + a3.outbox_fired.len();
-    let a_runs = scalar_i64(&seed_a, "SELECT count(*) FROM runs").await?;
-    let a_distinct = scalar_i64(&seed_a, "SELECT count(DISTINCT run_id) FROM runs").await?;
-    let b_idle = b2.outbox_fired.is_empty()
-        && b2.cron_fired.is_empty()
-        && b3.outbox_fired.is_empty()
-        && b3.cron_fired.is_empty();
+    let a_total = a1.woken.len() + a2.woken.len() + a3.woken.len();
+    let queue_left = scalar_i64(&seed_a, "SELECT count(*) FROM run_queue").await?;
+    let b_idle = b2.cron_fired.is_empty()
+        && b3.cron_fired.is_empty()
+        && b2.woken.is_empty()
+        && b3.woken.is_empty();
     // Independent per-project cadence: A stayed tight while working; B decayed
     // exponentially over its two idle sweeps (min -> 2min -> 4min).
     let a_interval = d.projects[0].interval_ms;
@@ -1209,115 +794,18 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         && a_oldest_first
         && b_first_sweep
         && a_total as i64 == BACKLOG
-        && a_runs == BACKLOG
-        && a_distinct == BACKLOG
+        && queue_left == 0
         && b_idle
         && cadence_ok;
     println!(
-        "A: sweep1={} (bounded={a_bounded}, oldest_first={a_oldest_first}) total={a_total} runs={a_runs} \
-         distinct={a_distinct} interval={a_interval} | \
+        "A: sweep1={} (bounded={a_bounded}, oldest_first={a_oldest_first}) total={a_total} \
+         queue_left={queue_left} interval={a_interval} | \
          B: first_sweep={b_first_sweep} idle_after={b_idle} interval={b_interval}",
-        a1.outbox_fired.len()
+        a1.woken.len()
     );
     println!(
         "PASS(fairness: batch-bounded, oldest-first, no starvation, independent cadence): {pass}"
     );
-    Ok(pass)
-}
-
-// ---------------------------------------------------------------------------
-// prune: outbox GC — batch-bounded drain every sweep while saturated, then the
-// low maintenance cadence; retention decided by dispatched_at, DB-side
-// ---------------------------------------------------------------------------
-
-async fn prune_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
-    const BATCH: usize = 4;
-    println!("\n## prune — outbox GC: batch-bounded drain + maintenance cadence (batch {BATCH})");
-    reset(admin_url, SCHEMA_A).await?;
-
-    // 9 acked rows past the 7-day default retention + 1 recently acked. (No
-    // pending row here: the sweep's own outbox path acks an unmatched pending
-    // row, so pending-survival is the crate live-apply gate's proof.)
-    admin_exec(
-        admin_url,
-        &format!(
-            "INSERT INTO {SCHEMA_A}.outbox (tenant_id, table_name, event, payload, dispatched_at) \
-             SELECT '{TENANT_A}', 'receipts', 'insert', NULL, now() - interval '8 days' \
-               FROM generate_series(1, 9); \
-             INSERT INTO {SCHEMA_A}.outbox (tenant_id, table_name, event, payload, dispatched_at) \
-             VALUES ('{TENANT_A}', 'receipts', 'insert', NULL, now() - interval '1 hour');"
-        ),
-    )
-    .await?;
-
-    let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
-    let mut d = Dispatcher::connect(
-        &specs,
-        None,
-        DispatcherConfig {
-            batch: BATCH,
-            ..DispatcherConfig::default()
-        },
-    )
-    .await?;
-
-    // Startup sweep (maintenance stamp 0 → due): one bounded batch. Saturated
-    // batches leave the stamp, so the next sweeps keep draining at the sweep
-    // cadence until the prune comes back short.
-    let r1 = d.tick_project(0, BASE_MS).await?;
-    let r2 = d.tick_project(0, BASE_MS + 250).await?;
-    let r3 = d.tick_project(0, BASE_MS + 500).await?;
-    let drain_ok = r1.outbox_pruned == BATCH as u64
-        && r1.outbox_prune_backlog
-        && r2.outbox_pruned == BATCH as u64
-        && r2.outbox_prune_backlog
-        && r3.outbox_pruned == 1
-        && !r3.outbox_prune_backlog;
-    // A saturated prune counts as work (keeps the cadence tight while
-    // draining); a completed prune is bookkeeping, not work.
-    let work_ok = r1.found_work() && r2.found_work() && !r3.found_work();
-
-    // The stamp now gates: fresh prunable rows must WAIT for the maintenance
-    // interval, not get swept 1 min later — then get swept once it elapses.
-    admin_exec(
-        admin_url,
-        &format!(
-            "INSERT INTO {SCHEMA_A}.outbox (tenant_id, table_name, event, payload, dispatched_at) \
-             SELECT '{TENANT_A}', 'receipts', 'insert', NULL, now() - interval '8 days' \
-               FROM generate_series(1, 2);"
-        ),
-    )
-    .await?;
-    let r4 = d.tick_project(0, BASE_MS + 60_500).await?;
-    let r5 = d.tick_project(0, BASE_MS + 601_000).await?;
-    let cadence_ok = r4.outbox_pruned == 0 && r5.outbox_pruned == 2 && !r5.outbox_prune_backlog;
-
-    let (probe, _hp) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
-    let old_left = scalar_i64(
-        &probe,
-        "SELECT count(*) FROM outbox WHERE dispatched_at < now() - interval '7 days'",
-    )
-    .await?;
-    let recent = scalar_i64(
-        &probe,
-        "SELECT count(*) FROM outbox WHERE dispatched_at >= now() - interval '7 days'",
-    )
-    .await?;
-    let state_ok = old_left == 0 && recent == 1;
-
-    let pass = drain_ok && work_ok && cadence_ok && state_ok;
-    println!(
-        "drain=[{},{},{}] backlog=[{},{},{}] work_ok={work_ok} | gated={} then={} | old_left={old_left} recent={recent}",
-        r1.outbox_pruned,
-        r2.outbox_pruned,
-        r3.outbox_pruned,
-        r1.outbox_prune_backlog,
-        r2.outbox_prune_backlog,
-        r3.outbox_prune_backlog,
-        r4.outbox_pruned,
-        r5.outbox_pruned,
-    );
-    println!("PASS(prune: batch-bounded drain, maintenance cadence, retention-scoped): {pass}");
     Ok(pass)
 }
 
@@ -1393,20 +881,18 @@ async fn wake_phase(
         _ => false,
     };
 
-    // A FIRING's doorbell: an outbox event fires and the hint carries the WON
+    // A FIRING's doorbell: a cron tick fires and the hint carries the WON
     // run id — with the run row already COMMITTED when the hint arrives
     // (publish strictly after commit: a hint for uncommitted work would wake a
     // runner into an empty claim). The parked run may be re-hinted by the same
     // sweep (duplicates are by design), so scan hints for the fired id.
-    seed_flow(
-        &app,
-        "disposition-recorded",
-        &row_event_flow_json("disposition-recorded", "dispositions", "insert"),
-    )
-    .await?;
-    insert_outbox(&app, "dispositions", "insert", Some("{\"id\": \"wake-1\"}")).await?;
+    seed_flow(&app, "secondly", &cron_flow_json("secondly", "* * * * * *")).await?;
+    // Bootstrap sweep (first sight — no retroactive tick), then wait past a
+    // second boundary so the next sweep fires it.
+    d.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
     let fired_tick = d.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
-    let fired_id = fired_tick.outbox_fired.first().cloned().unwrap_or_default();
+    let fired_id = fired_tick.cron_fired.first().cloned().unwrap_or_default();
     let fire_hinted = !fired_id.is_empty();
     let mut got_fire_hint = false;
     let mut committed_at_hint = false;
@@ -1443,7 +929,7 @@ async fn wake_phase(
 }
 
 // ---------------------------------------------------------------------------
-// live: the real run loop picks up an outbox insert end-to-end
+// live: the real run loop keeps cron firing beside failure and across reconnect
 // ---------------------------------------------------------------------------
 
 async fn live_phase(
@@ -1454,15 +940,15 @@ async fn live_phase(
     use wash_runtime::washlet::{NatsConnectionOptions, connect_nats};
 
     println!(
-        "\n## live — the real dispatch loop: sub-500ms fire beside a failing project, \
+        "\n## live — the real dispatch loop: cron keeps firing beside a failing project, \
          reconnect after backend kill, cron-aware sleep"
     );
     reset(admin_url, SCHEMA_A).await?;
     let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
     seed_flow(
         &seeder,
-        "disposition-recorded",
-        &row_event_flow_json("disposition-recorded", "dispositions", "insert"),
+        "secondly",
+        &cron_flow_json("secondly", "* * * * * *"),
     )
     .await?;
 
@@ -1476,9 +962,9 @@ async fn live_phase(
     let nats = connect_nats(args.nats_url.clone(), nats_opts).await.ok();
 
     // Project "b-broken" points at a nonexistent schema: every one of its
-    // sweeps fails. The healthy project's latency assertions below therefore
+    // sweeps fails. The healthy project's firing assertions below therefore
     // ALSO prove failing-project isolation — a loop that propagated or wedged
-    // on B's errors could not serve A sub-500ms.
+    // on B's errors could not keep A's every-second cron firing.
     let specs = [
         spec("a", app_url, SCHEMA_A, TENANT_A),
         spec("b-broken", app_url, "wamn_dispatch_missing", TENANT_B),
@@ -1490,46 +976,35 @@ async fn live_phase(
             min_interval_ms: 50,
             max_interval_ms: 1_000,
             batch: 64,
-            ..DispatcherConfig::default()
         },
     )
     .await?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let loop_task = tokio::spawn(async move { d.run_loop(shutdown_rx).await });
 
-    // Give the loop one idle sweep, then land an event. The 500ms bound is what
-    // makes the ADAPTIVE cadence load-bearing: a non-adaptive poller sleeping
-    // the gate's max_interval (1s) cannot meet it (floor ~880ms), while the
-    // tight-cadence loop measures ~200ms.
-    tokio::time::sleep(Duration::from_millis(120)).await;
-    insert_outbox(
-        &seeder,
-        "dispositions",
-        "insert",
-        Some("{\"id\": \"live-1\"}"),
-    )
-    .await?;
+    // The every-second cron must fire within ~2s of loop start (first sight
+    // anchors, the next second boundary fires) — beside the failing project.
     let started = Instant::now();
     let mut fired = false;
     while started.elapsed() < Duration::from_secs(5) {
         let n = scalar_i64(
             &seeder,
-            "SELECT count(*) FROM runs WHERE run_id = 'disposition-recorded:outbox:1'",
+            "SELECT count(*) FROM runs WHERE flow_id = 'secondly'",
         )
         .await?;
-        if n == 1 {
+        if n >= 1 {
             fired = true;
             break;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let latency = started.elapsed();
-    let sub_500 = fired && latency < Duration::from_millis(500);
 
     // Reconnect: kill every wamn_app backend except the seeder's (a Postgres
     // restart from the dispatcher's point of view). The loop's next sweep hits
     // a dead client, fails, and the sweep after re-dials — the always-on
-    // service must outlive its projects' databases.
+    // service must outlive its projects' databases. Observable: the secondly
+    // cron RESUMES minting new runs.
     let seeder_pid: i32 = seeder
         .query_one("SELECT pg_backend_pid()", &[])
         .await?
@@ -1542,41 +1017,35 @@ async fn live_phase(
         ),
     )
     .await?;
-    insert_outbox(
+    let before_kill = scalar_i64(
         &seeder,
-        "dispositions",
-        "insert",
-        Some("{\"id\": \"live-2\"}"),
+        "SELECT count(*) FROM runs WHERE flow_id = 'secondly'",
     )
     .await?;
     let restarted = Instant::now();
     let mut refired = false;
-    while restarted.elapsed() < Duration::from_secs(5) {
+    while restarted.elapsed() < Duration::from_secs(8) {
         let n = scalar_i64(
             &seeder,
-            "SELECT count(*) FROM runs WHERE run_id = 'disposition-recorded:outbox:2'",
+            "SELECT count(*) FROM runs WHERE flow_id = 'secondly'",
         )
         .await?;
-        if n == 1 {
+        if n > before_kill {
             refired = true;
             break;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let reconnect_latency = restarted.elapsed();
     let _ = shutdown_tx.send(true);
     let _ = loop_task.await;
 
-    // Cron-aware sleep: a fresh loop with a FIXED 5s interval and an
+    // Cron-aware sleep: a fresh loop with a FIXED 5s interval and the same
     // every-second (6-field) cron must still fire within ~1s of a tick — the
     // sleep computation wakes for the earliest cron fire, not just the next
-    // sweep. A loop without the cron-aware wake first fires at ~5s.
-    seed_flow(
-        &seeder,
-        "secondly",
-        &cron_flow_json("secondly", "* * * * * *"),
-    )
-    .await?;
+    // sweep. A loop without the cron-aware wake first fires at ~5s. (A fresh
+    // dispatcher recovers the anchor from the run ids, so the next SECOND
+    // boundary is its first due tick.)
     let mut d2 = Dispatcher::connect(
         &[spec("a", app_url, SCHEMA_A, TENANT_A)],
         None,
@@ -1584,8 +1053,12 @@ async fn live_phase(
             min_interval_ms: 5_000,
             max_interval_ms: 5_000,
             batch: 64,
-            ..DispatcherConfig::default()
         },
+    )
+    .await?;
+    let before_aware = scalar_i64(
+        &seeder,
+        "SELECT count(*) FROM runs WHERE flow_id = 'secondly'",
     )
     .await?;
     let (shutdown2_tx, shutdown2_rx) = tokio::sync::watch::channel(false);
@@ -1598,7 +1071,7 @@ async fn live_phase(
             "SELECT count(*) FROM runs WHERE flow_id = 'secondly'",
         )
         .await?;
-        if n >= 1 {
+        if n > before_aware {
             cron_aware = true;
             break;
         }
@@ -1608,14 +1081,12 @@ async fn live_phase(
     let _ = shutdown2_tx.send(true);
     let _ = loop2.await;
 
-    let pass = fired && sub_500 && refired && cron_aware;
+    let pass = fired && refired && cron_aware;
     println!(
-        "fired={fired} latency={latency:?} (sub_500={sub_500}, beside a failing project) | \
+        "fired={fired} latency={latency:?} (beside a failing project) | \
          reconnect(refired={refired}, latency={reconnect_latency:?}) | \
          cron_aware={cron_aware} ({cron_latency:?} under a fixed 5s interval)"
     );
-    println!(
-        "PASS(live loop: adaptive sub-500ms + isolation + reconnect + cron-aware sleep): {pass}"
-    );
+    println!("PASS(live loop: cron beside failure + reconnect + cron-aware sleep): {pass}");
     Ok(pass)
 }

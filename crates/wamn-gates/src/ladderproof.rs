@@ -29,7 +29,7 @@
 //!
 //! Each rung is a `manual`-trigger flow: nothing auto-fires it, so the proof
 //! seeds the run directly, isolating the RUNNER (the subject) from the trigger
-//! machinery (cron/outbox, already gated by the dispatcher).
+//! machinery (cron, already gated by the dispatcher).
 //!
 //! `--setup` provisions a fresh ephemeral schema + registers EVERY rung's flow
 //! (the LOCAL self-contained path, run once before the mutation loop) so one

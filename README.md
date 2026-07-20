@@ -36,7 +36,7 @@ crates/                 Rust workspace
   wamn-flow             flow-graph JSON model + JSON Schema
   wamn-runner           pure flow reducer (walk, branch, retry, resume)
   wamn-run-store        durable runs/node_runs + branch-aware replay
-  wamn-run-queue        durable run queue (SKIP LOCKED) + cron/outbox dispatch
+  wamn-run-queue        durable run queue (SKIP LOCKED) + cron dispatch
   wamn-node-sdk         node authoring contract (Node trait, error taxonomy)
   wamn-node-guest       custom-node componentization scaffolding
   wamn-nodes            standard node library (transform, http, postgres, ...)

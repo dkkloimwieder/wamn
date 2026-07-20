@@ -74,8 +74,8 @@ rejected with a named `UnbuiltCopyAxis` error). The definition pass promotes
 each of the src env's **applied catalogs** through the 2.5 migrate engine
 (idempotent — a re-copy skips `AlreadyApplied`), copies the flow registrations
 verbatim, and copies **and re-compiles/applies** the RLS policy rows on the dst;
-`data` is a `pg_restore --data-only --disable-triggers` of the data schema (the
-outbox triggers must not fire per restored row); `both` is a full-fidelity
+`data` is a `pg_restore --data-only --disable-triggers` of the data schema (no
+trigger may fire per restored row); `both` is a full-fidelity
 restore of the `pg_dump -Fd` snapshot (recorded in `provisioning.dumps`). A
 `--cutover` copy is a **move**: `Quiesce → Snapshot → Restore → Verify →
 Cutover [→ DeprovisionOld]`, each step advancing a `copy`-kind saga in
