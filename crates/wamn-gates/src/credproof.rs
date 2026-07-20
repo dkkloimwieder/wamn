@@ -58,9 +58,6 @@ const FLOW_ID: &str = "cred-notify";
 /// The fqg.11 deny fixture: same echo target, NO `allowed-hosts` declared.
 const DENY_FLOW_JSON: &str = include_str!("../../../deploy/cred/deny.flow.json");
 const DENY_FLOW_ID: &str = "egress-deny";
-/// The credential name the fixture declares (`credentials[0].name` +
-/// `nodes[notify].credential`).
-const CREDENTIAL_NAME: &str = "notify-token";
 
 /// The demo secret the example runner Secret carries
 /// (deploy/platform/runner-credentials.example.yaml) — distinctive enough that a
@@ -421,6 +418,10 @@ async fn assert_deny_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The credential name the fixture declares (`credentials[0].name` +
+    /// `nodes[notify].credential`) — only the drift-guard tests below pin it.
+    const CREDENTIAL_NAME: &str = "notify-token";
 
     /// The committed fixture parses + VALIDATES under the same engine the
     /// runner compiles it with, and pins the 5.9 shape: the credential is
