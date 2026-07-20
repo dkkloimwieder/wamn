@@ -847,6 +847,46 @@ async fn wake_phase(
     let mut subscription = nats.subscribe(subject.clone()).await?;
     nats.flush().await?;
 
+    // wamn-qeeg: a NATS server started seconds earlier can ACK a SUBSCRIBE yet not
+    // yet route the first publish to that interest — the race that flaked wake once
+    // in --mode all. `flush` guarantees the server processed our SUBs in order, not
+    // that delivery is live, so prove the subscribe->publish->deliver path on THIS
+    // connection with a bounded probe before the real hints fire: re-publish each
+    // round (a publish that lands before interest propagates is simply dropped) and
+    // wait a short slice for it back. The real doorbell SUB was flushed first, so
+    // once the probe round-trips the real subscription is effective too.
+    {
+        let probe = format!("wamn.dispatchbench.probe.{}", std::process::id());
+        let mut probe_sub = nats.subscribe(probe.clone()).await?;
+        nats.flush().await?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut delivering = false;
+        while Instant::now() < deadline {
+            nats.publish(probe.clone(), b"1".to_vec().into()).await?;
+            nats.flush().await?;
+            if let Ok(Some(_)) =
+                tokio::time::timeout(Duration::from_millis(100), probe_sub.next()).await
+            {
+                delivering = true;
+                break;
+            }
+        }
+        if !delivering {
+            if required {
+                bail!(
+                    "wake mode: NATS at {} accepted the subscription but never delivered \
+                     a probe within 3s (server-side interest not ready)",
+                    args.nats_url
+                );
+            }
+            println!(
+                "(skipping wake gate: NATS at {} not delivering — probe round-trip timed out)",
+                args.nats_url
+            );
+            return Ok(true);
+        }
+    }
+
     // Park a run 400ms out (a delay-node wake, D15 write-ahead + delayed enqueue).
     let (mut app, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
     let delay_ms: i64 = 400;
@@ -920,10 +960,18 @@ async fn wake_phase(
         && fire_hinted
         && got_fire_hint
         && committed_at_hint;
-    println!(
+    let detail = format!(
         "not_woken_early={not_woken_early} no_premature_hint={no_premature_hint} woken={woken} hinted={hinted} \
          firing(hinted={got_fire_hint}, committed_at_hint={committed_at_hint})"
     );
+    // wamn-qeeg: mark the failing sub-check unmissably so a future cold-NATS flake
+    // is diagnosable from --mode all's log alone (the detail otherwise scrolls past
+    // amid the other phases' output).
+    if pass {
+        println!("{detail}");
+    } else {
+        println!("WAKE FAILED — {detail}");
+    }
     println!("PASS(parked-wake + firing doorbells, publish-after-commit): {pass}");
     Ok(pass)
 }
