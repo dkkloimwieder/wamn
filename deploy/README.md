@@ -11,7 +11,7 @@ the top level. When in doubt, ask which lifecycle owns the file's create/delete.
   api-gateway/trace-relay workloads, credential `*.example` Secrets, the shared
   postgres fixture, `event-reader.example.yaml`, `hello-workload.yaml`.
 - **`gates/`** — gate/bench Job manifests (`*-job.yaml`) and their support
-  Deployments (`serve-echo`, `serve-node`); `gates/ladder/` holds the
+  Deployments (`serve-echo`, `serve-node-gate`); `gates/ladder/` holds the
   exec-ladder rung flows. Applied per gate run, deleted after.
 - **`poc/`** — POC assets (f1 flow/seed/workloads/provision Job, the
   material-receiving catalog/RLS/seed JSON, `proof-catalog.json`).
@@ -23,6 +23,6 @@ the top level. When in doubt, ask which lifecycle owns the file's create/delete.
 
 Placement judgment calls, recorded: `postgres.yaml` is platform (the shared
 long-lived fixture ~8 gates and the dispatcher point at, despite its bench
-header); `serve-echo`/`serve-node` are gates (gate support, not products);
+header); `serve-echo`/`serve-node-gate` are gates (gate support, not products);
 `f1-provision-job.yaml` is poc (f1 asset despite the `-job` suffix);
 `publish-catalog-job.yaml` is gates (driven by `wamn-gates`).

@@ -3,23 +3,28 @@
 # in-cluster pod-to-pod round trip — the truest D7 number (in-cluster HTTP as
 # the v0 custom-node invocation path). Runs from the wamn-gates image (SR1).
 #
+# NAMED `serve-node-gate` (NOT `serve-node`) so this bench fixture coexists with
+# the PRODUCTION serve-node Deployment/Service (deploy/platform/serve-node.yaml)
+# in the same namespace — distinct names + non-overlapping selectors, so applying
+# this gate no longer silently replaces production (wamn-bczu).
+#
 #   kubectl -n wamn-system apply -f deploy/gates/serve-node.yaml
-#   kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
+#   kubectl -n wamn-system rollout status deploy/serve-node-gate --timeout=120s
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: serve-node
+  name: serve-node-gate
   namespace: wamn-system
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: serve-node }
+    matchLabels: { app: serve-node-gate }
   template:
     metadata:
-      labels: { app: serve-node }
+      labels: { app: serve-node-gate }
     spec:
       containers:
-        - name: serve-node
+        - name: serve-node-gate
           image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
@@ -40,10 +45,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: serve-node
+  name: serve-node-gate
   namespace: wamn-system
 spec:
-  selector: { app: serve-node }
+  selector: { app: serve-node-gate }
   ports:
     - port: 8080
       targetPort: 8080

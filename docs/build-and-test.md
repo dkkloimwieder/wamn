@@ -129,10 +129,12 @@ wac plug $REL/flow_driver.wasm --plug $REL/node_rs.wasm -o $REL/flow_composed.wa
 ./target/release/wamn-gates --log-level error nodebench \
   --node-rs $REL/node_rs.wasm --node-ts components/samples/node-ts/node-ts.wasm \
   --composed $REL/flow_composed.wasm --sample $REL/sample_node.wasm --mode all
-# In-cluster gate of record (real cross-pod hop via the serve-node Service; the
-# gap/config gates run in-pod; no cpu limit — the S2 CFS lesson):
+# In-cluster gate of record (real cross-pod hop via the serve-node-gate Service; the
+# gap/config gates run in-pod; no cpu limit — the S2 CFS lesson). The fixture is
+# named serve-node-gate, so it coexists with the platform serve-node Deployment —
+# no need to re-apply deploy/platform/serve-node.yaml afterward (wamn-bczu):
 kubectl -n wamn-system apply -f deploy/gates/serve-node.yaml
-kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
+kubectl -n wamn-system rollout status deploy/serve-node-gate --timeout=120s
 kubectl -n wamn-system apply -f deploy/gates/nodebench-job.yaml
 kubectl -n wamn-system logs -f job/nodebench
 ```
