@@ -7,8 +7,9 @@
 //! lifecycle via wamn-schema, `$n`-parameterized SQL); this shell holds the
 //! connection. Two modes:
 //!
-//! * `--dry-run` — read + plan + print the report (DDL + rollback), touching
-//!   nothing;
+//! * `--dry-run` — read + plan + print the report (DDL + rollback) and run the
+//!   read-only D24 registration-orphan probe (surfacing + failing on an
+//!   orphaning target, exactly as the apply path would refuse), touching nothing;
 //! * apply — read the current applied version (locked `FOR UPDATE`), plan, and
 //!   run the whole plan in **one transaction** so a mid-plan failure rolls back
 //!   with zero residue (the R9c invariant).
@@ -124,7 +125,22 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         // Nothing is executed — drop the transaction (rolls back the lock).
         drop(tx);
         println!("{}", report.render());
+
+        // D24 (EVT-REG, wamn-1bfe): run the SAME read-only registration-orphan
+        // probe the apply path runs (guard_registration_orphans), so a dry run
+        // cannot report clean while the real migrate-catalog would REFUSE before
+        // the apply transaction. The orphan refusal is UNCONDITIONAL — unlike the
+        // destructive gate (which dry-run merely surfaces, because
+        // --confirm-with-backup overrides it), there is no override — so it joins
+        // the stale-base / not-forward preconditions dry-run already exits nonzero
+        // on: the verdict is surfaced as a marked dry-run finding AND fails the
+        // dry run. Read-only: mutates nothing (matches --dry-run's contract).
+        let orphan_check =
+            crate::publish_catalog::guard_registration_orphans(&client, &target).await;
         conn_task.abort();
+        if let Err(e) = orphan_check {
+            bail!("[dry-run] would REFUSE at apply — {e}");
+        }
         return Ok(());
     }
 

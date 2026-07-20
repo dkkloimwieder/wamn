@@ -129,6 +129,19 @@ fn migrate_args(
     }
 }
 
+/// `migrate-catalog --dry-run` args (wamn-1bfe): the plan/report path plus the
+/// read-only D24 orphan probe, never an apply. Confirmation is irrelevant to a
+/// dry run (it does not gate on it), so reuse `migrate_args`'s defaults.
+fn migrate_dry_run_args(
+    target: std::path::PathBuf,
+    url: &str,
+) -> migrate_catalog::MigrateCatalogArgs {
+    migrate_catalog::MigrateCatalogArgs {
+        dry_run: true,
+        ..migrate_args(target, url, false)
+    }
+}
+
 /// The snapshot entity ids currently published for tenant `t1` (parsed from the
 /// stored `wamn_catalog` document) — the proof the guard mutated nothing.
 async fn snapshot_entity_ids(su: &Client) -> Vec<String> {
@@ -147,7 +160,7 @@ async fn snapshot_entity_ids(su: &Client) -> Vec<String> {
         .collect()
 }
 
-/// Both scenarios share the fixed `catalog` metadata schema, so they run
+/// All scenarios share the fixed `catalog` metadata schema, so they run
 /// SEQUENTIALLY under one test entry (parallel `#[tokio::test]`s would clobber
 /// each other's hermetic reset).
 #[tokio::test]
@@ -159,6 +172,7 @@ async fn orphan_guard_refuses_then_proceeds() {
     let su = connect(&url).await;
     publish_scenario(&su, &url).await;
     migrate_scenario(&su, &url).await;
+    dry_run_scenario(&su, &url).await;
 }
 
 async fn publish_scenario(su: &Client, url: &str) {
@@ -295,6 +309,86 @@ async fn migrate_scenario(su: &Client, url: &str) {
         !table_present(su, &format!("{DATA_SCHEMA}.orders")).await,
         "the unreferenced entity's table is now dropped"
     );
+
+    su.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"
+    ))
+    .await
+    .expect("teardown");
+}
+
+/// wamn-1bfe: `migrate-catalog --dry-run` must SURFACE the D24 refusal, so an
+/// operator cannot dry-run clean and then fail the real run. A dry run whose
+/// target removes a still-referenced entity fails with the marked verdict naming
+/// every orphan across ALL tenants — while mutating NOTHING — and turns clean
+/// again once the registrations are deleted (proving the probe is not vacuous).
+async fn dry_run_scenario(su: &Client, url: &str) {
+    reset(su).await;
+
+    let ab = write_tmp(
+        "d24_dry_ab.json",
+        &cat_json(1, &format!("{E_SALES},{E_LINES}")),
+    );
+    let b_v2 = write_tmp("d24_dry_b_v2.json", &cat_json(2, E_LINES));
+
+    // v1: materialize {sales_orders -> orders, line_items -> lines}.
+    migrate_catalog::run(migrate_args(ab, url, false))
+        .await
+        .expect("first materialization applies");
+    assert!(table_present(su, &format!("{DATA_SCHEMA}.orders")).await);
+
+    insert_reg(su, "t1", "reg-t1", "sales_orders").await;
+    insert_reg(su, "t2", "reg-t2", "sales_orders").await;
+
+    // A dry run of v2 (removes the still-referenced `sales_orders`) REFUSES with a
+    // marked dry-run finding naming both tenants — NOT a clean report.
+    let err = migrate_catalog::run(migrate_dry_run_args(b_v2.clone(), url))
+        .await
+        .expect_err("orphaning dry-run must surface the refusal");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("dry-run"),
+        "the verdict is marked as a dry-run finding: {msg}"
+    );
+    for needle in ["reg-t1", "reg-t2", "t1", "t2", "sales_orders"] {
+        assert!(
+            msg.contains(needle),
+            "dry-run refusal names {needle:?}: {msg}"
+        );
+    }
+
+    // NOTHING mutated by the dry run: v1 still applied, `orders` survives, regs stay.
+    assert!(
+        table_present(su, &format!("{DATA_SCHEMA}.orders")).await,
+        "dry-run mutated nothing (the dropped-entity table survives)"
+    );
+    let applied: i32 = su
+        .query_one(
+            "SELECT version FROM catalog.catalogs \
+             WHERE tenant_id='t1' AND catalog_id='shop' AND environment='dev' AND state='applied'",
+            &[],
+        )
+        .await
+        .expect("read applied version")
+        .get(0);
+    assert_eq!(applied, 1, "dry-run left the applied version unchanged");
+    assert_eq!(
+        reg_count(su).await,
+        2,
+        "dry-run left the registrations intact"
+    );
+
+    // Delete the registrations — the SAME dry run now reports clean (Ok), proving
+    // the probe refuses only a real orphan, not vacuously.
+    su.execute(
+        "DELETE FROM catalog.event_registrations WHERE catalog_id = 'shop'",
+        &[],
+    )
+    .await
+    .expect("owner deletes the registrations");
+    migrate_catalog::run(migrate_dry_run_args(b_v2, url))
+        .await
+        .expect("dry-run proceeds once the registrations are gone");
 
     su.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"

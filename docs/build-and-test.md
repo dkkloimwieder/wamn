@@ -923,6 +923,13 @@ first). The pure decision + the `$n` read builder live in `wamn-migrate`
 (`check_registration_orphans`, `sql::select_registrations_for_catalog_sql`); the
 two `wamn-ctl` verbs share one read-only guard helper
 (`publish_catalog::guard_registration_orphans`) that runs BEFORE any mutation.
+`migrate-catalog --dry-run` runs the SAME read-only probe (wamn-1bfe): it
+surfaces the refusal as a marked `[dry-run] would REFUSE at apply` finding and
+exits nonzero on an orphaning target — the orphan refusal is unconditional (no
+override flag), so dry-run treats it like the stale-base / not-forward
+preconditions it already fails on, rather than merely reporting it as it does the
+overridable destructive gate — so an operator can no longer dry-run clean then
+fail the real run.
 
 ```bash
 cargo test -p wamn-migrate                 # pure decision + mutation-flavored unit tests
@@ -930,7 +937,9 @@ cargo clippy -p wamn-migrate -p wamn-ctl --all-targets
 # Live gate (throwaway PG): drives the REAL verbs — seed+publish a catalog, register
 # entity A as two tenants, attempt a publish/migrate that removes A → REFUSAL naming
 # both tenants' rows + NOTHING mutated; delete the registrations → proceeds; and a
-# removal of an UNREFERENCED entity proceeds. Hermetic (drops+recreates its schemas):
+# removal of an UNREFERENCED entity proceeds. The dry-run scenario (wamn-1bfe)
+# asserts `migrate-catalog --dry-run` surfaces the same verdict + mutates nothing.
+# Hermetic (drops+recreates its schemas):
 docker run -d --name wave3-pg-rmxa -p 55431:5432 -e POSTGRES_PASSWORD=postgres postgres:18
 WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:55431/postgres \
   cargo test -p wamn-ctl --test orphan_guard_live -- --nocapture
