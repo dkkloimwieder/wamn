@@ -48,6 +48,7 @@ use wash_runtime::wasmtime::{Engine as RawEngine, Store};
 use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
+use wamn_event_wire::Op;
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_host::plugins::wamn_jetstream::{
     self, WAMN_JETSTREAM_ID, WamnJetstream, WamnJetstreamConfig,
@@ -117,33 +118,36 @@ fn flow_json(flow_id: &str, ordering: serde_json::Value, policy: Option<&str>) -
 fn registration_json(
     registration_id: &str,
     flow_id: &str,
-    ops: &[&str],
+    ops: Vec<Op>,
     condition: Option<&str>,
     partition_key: Option<&str>,
 ) -> String {
-    serde_json::json!({
-        "schema-version": "0.1",
-        "registration-id": registration_id,
-        "catalog-id": "matcat",
-        "flow-id": flow_id,
-        "entity": ENTITY,
-        "ops": ops,
-        "condition": condition,
-        "partition-key": partition_key,
-    })
-    .to_string()
+    // The frozen EVT-REG builder — no hand-built JSON copy (wamn-idx3). The guest
+    // reads this back through the same `EventRegistration` type, so the tape's
+    // registrations cannot drift from the model of record.
+    wamn_event_reg::EventRegistration {
+        schema_version: wamn_event_reg::SCHEMA_VERSION.to_string(),
+        registration_id: registration_id.to_string(),
+        catalog_id: "matcat".to_string(),
+        flow_id: flow_id.to_string(),
+        entity: wamn_catalog::EntityId::from(ENTITY),
+        ops,
+        condition: condition.map(str::to_string),
+        partition_key: partition_key.map(str::to_string),
+    }
+    .to_json()
 }
 
 /// One tape envelope. `lsn` doubles as the Nats-Msg-Id discriminator.
 fn envelope_json(
-    op: &str,
+    op: Op,
     old: Option<serde_json::Value>,
     new: Option<serde_json::Value>,
     lsn: u64,
     causation: Option<(u32, &str)>,
 ) -> String {
     let mut env = serde_json::json!({
-        "op": op,
+        "op": op.as_str(),
         "entity": ENTITY,
         "table": "receipts_v2",
         "lsn": lsn,
@@ -329,15 +333,21 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     }
     // Registrations (superuser bypasses the tenant-FORCE RLS for seeding).
     for (rid, flow_id, ops, condition, extractor) in [
-        ("r-plain", "f-plain", vec!["insert", "delete"], None, None),
+        (
+            "r-plain",
+            "f-plain",
+            vec![Op::Insert, Op::Delete],
+            None,
+            None,
+        ),
         (
             "r-cond",
             "f-cond",
-            vec!["insert"],
+            vec![Op::Insert],
             Some("new.status == 'received'"),
             None,
         ),
-        ("r-key", "f-key", vec!["insert"], None, Some("new.site")),
+        ("r-key", "f-key", vec![Op::Insert], None, Some("new.site")),
         (
             // l5i9.31: a root-`old` condition is SERVED now (no longer held). It
             // refuses old-image-absent on the inserts (old absent under RI
@@ -345,7 +355,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             // UPDATE that carries a full old image (E8 — the changed-to eval).
             "r-old",
             "f-old",
-            vec!["insert", "update"],
+            vec![Op::Insert, Op::Update],
             Some("new.status != old.status"),
             None,
         ),
@@ -360,7 +370,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
                     &rid,
                     &flow_id,
                     &ENTITY,
-                    &registration_json(rid, flow_id, &ops, condition, extractor),
+                    &registration_json(rid, flow_id, ops, condition, extractor),
                 ],
             )
             .await
@@ -376,7 +386,10 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     let _ = js.delete_stream(STREAM).await;
     js.create_stream(async_nats::jetstream::stream::Config {
         name: STREAM.into(),
-        subjects: vec![format!("evt.{ORG}.>")],
+        // The frozen wire stream-subject filter (wamn-idx3) — `evt.<org>.*.<env>.>`,
+        // the exact filter a production EVT_ stream binds; captures the tape's
+        // evt.morg.mproj.menv.receipts.* subjects.
+        subjects: vec![wamn_event_wire::stream_subjects(ORG, ENV)],
         storage: async_nats::jetstream::stream::StorageType::File,
         num_replicas: 1,
         duplicate_window: Duration::from_secs(120),
@@ -391,8 +404,6 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .await
         .context("subscribe doorbell")?;
 
-    let subject = |op: &str| format!("evt.{ORG}.{PROJECT}.{ENV}.{ENTITY}.{op}");
-
     // The tape (stream seqs 1..=8 in publish order):
     //  1 fires plain+cond+key; 2 fires plain+key, condition-false on cond;
     //  3 foreign tenant; 4 unscopable (no tenant_id); 5 unscopable DELETE
@@ -402,11 +413,11 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     //  old.status` end to end and FIRES (f-old:evt:8). The inserts 1/2/6/7 that
     //  reach r-old's condition have NO old image → old-image-absent refusals
     //  (cannot-evaluate, never condition-false).
-    let tape: Vec<(&'static str, String)> = vec![
+    let tape: Vec<(Op, String)> = vec![
         (
-            "insert",
+            Op::Insert,
             envelope_json(
-                "insert",
+                Op::Insert,
                 None,
                 Some(
                     serde_json::json!({"id": "1", "tenant_id": TENANT, "status": "received", "site": "s-1", "qty": "12.3400"}),
@@ -416,9 +427,9 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             ),
         ),
         (
-            "insert",
+            Op::Insert,
             envelope_json(
-                "insert",
+                Op::Insert,
                 None,
                 Some(
                     serde_json::json!({"id": "2", "tenant_id": TENANT, "status": "draft", "site": "s-2"}),
@@ -428,9 +439,9 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             ),
         ),
         (
-            "insert",
+            Op::Insert,
             envelope_json(
-                "insert",
+                Op::Insert,
                 None,
                 Some(
                     serde_json::json!({"id": "3", "tenant_id": "t2", "status": "received", "site": "s-1"}),
@@ -440,9 +451,9 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             ),
         ),
         (
-            "insert",
+            Op::Insert,
             envelope_json(
-                "insert",
+                Op::Insert,
                 None,
                 Some(serde_json::json!({"id": "4", "status": "received", "site": "s-1"})),
                 4,
@@ -450,9 +461,9 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             ),
         ),
         (
-            "delete",
+            Op::Delete,
             envelope_json(
-                "delete",
+                Op::Delete,
                 Some(serde_json::json!({"id": "1"})),
                 None,
                 5,
@@ -460,9 +471,9 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             ),
         ),
         (
-            "insert",
+            Op::Insert,
             envelope_json(
-                "insert",
+                Op::Insert,
                 None,
                 Some(
                     serde_json::json!({"id": "6", "tenant_id": TENANT, "status": "received", "site": "s-1"}),
@@ -472,9 +483,9 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             ),
         ),
         (
-            "insert",
+            Op::Insert,
             envelope_json(
-                "insert",
+                Op::Insert,
                 None,
                 Some(
                     serde_json::json!({"id": "7", "tenant_id": TENANT, "status": "received", "site": "s-1"}),
@@ -488,9 +499,9 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             // IDENTITY FULL, l5i9.31). r-old subscribes update, reads root `old`,
             // and evaluates `new.status != old.status` → 'received' != 'draft' →
             // TRUE → fires f-old:evt:8 (the end-to-end old-image evaluation).
-            "update",
+            Op::Update,
             envelope_json(
-                "update",
+                Op::Update,
                 Some(
                     serde_json::json!({"id": "8", "tenant_id": TENANT, "status": "draft", "site": "s-1"}),
                 ),
@@ -509,11 +520,15 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             "Nats-Msg-Id",
             wamn_event_wire::msg_id(PROJECT, ENV, lsn).as_str(),
         );
-        js.publish_with_headers(subject(op), headers, body.clone().into())
-            .await
-            .context("publish send")?
-            .await
-            .context("publish ack")?;
+        js.publish_with_headers(
+            wamn_event_wire::subject(ORG, PROJECT, ENV, ENTITY, *op),
+            headers,
+            body.clone().into(),
+        )
+        .await
+        .context("publish send")?
+        .await
+        .context("publish ack")?;
     }
     println!("published the 8-event fixture tape (stream seqs 1..=8)");
 
@@ -729,7 +744,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     for i in 0..args.burst {
         let lsn = 1000 + i as u64;
         let body = envelope_json(
-            "insert",
+            Op::Insert,
             None,
             Some(serde_json::json!({
                 "id": format!("b{i}"), "tenant_id": TENANT,
@@ -743,11 +758,15 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             "Nats-Msg-Id",
             wamn_event_wire::msg_id(PROJECT, ENV, lsn).as_str(),
         );
-        js.publish_with_headers(subject("insert"), headers, body.into())
-            .await
-            .context("burst publish send")?
-            .await
-            .context("burst publish ack")?;
+        js.publish_with_headers(
+            wamn_event_wire::subject(ORG, PROJECT, ENV, ENTITY, Op::Insert),
+            headers,
+            body.into(),
+        )
+        .await
+        .context("burst publish send")?
+        .await
+        .context("burst publish ack")?;
     }
     let before: i64 = admin
         .query_one(
@@ -847,7 +866,7 @@ mod tests {
     fn tape_envelopes_match_the_frozen_wire_type() {
         // Insert with a new image, no causation.
         let insert = envelope_json(
-            "insert",
+            Op::Insert,
             None,
             Some(serde_json::json!({"id": "1", "tenant_id": TENANT})),
             1,
@@ -861,7 +880,7 @@ mod tests {
         // Delete carrying an old key image + a causation stamp (the run id is
         // the frozen mint — proves the causation record shape too).
         let del = envelope_json(
-            "delete",
+            Op::Delete,
             Some(serde_json::json!({"id": "1"})),
             None,
             5,
