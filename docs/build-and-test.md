@@ -1026,6 +1026,54 @@ Phase 2 (status note) + the l5i9.18 bead. Post-teardown, row events have ONE
 path: CDC reader → JetStream → materializer ([EVT-MAT], [EVT-READER],
 [EVT-NATS], [E10-E2E] are the standing gates).
 
+### [EVT-RI-E2E / wamn-3glr] rie2ebench — reader-inclusive REPLICA IDENTITY flip e2e
+
+Docs: docs/event-plane-jetstream.md §7 · decisions D19/l5i9.31/l5i9.61. The
+coverage the l5i9.19 teardown deleted with `cutbench`'s phase 3: `matbench`
+covers the old-image-absent refusal + a SYNTHESIZED FULL old image (a
+hand-published tape), and `ri_orch_live` covers the ctl flip machinery on
+`pg_class.relreplident` — but NO gate proved a REAL decoded WAL old image
+reaching the materializer AFTER a live RI flip. `rie2ebench` embeds the REAL
+`wamn-cdc-reader` service body (`run_with_token`) as a tokio task next to the
+REAL materializer guest (matbench harness shape), over a throwaway
+`wal_level=logical` Postgres + throwaway JetStream it OWNS. ONE FULL-flipped
+entity (`dispositions`, a bare `id uuid` PK), ONE delete-subscribed flow:
+(1) pre-flip DELETE under RI DEFAULT → the reader decodes a key-only old image →
+the materializer REFUSES it (`tenant-unscopable`, alertable, never
+condition-false); (2) flip RI→FULL via the REAL `reconcile_replica_identity`;
+(3) post-flip DELETE under RI FULL → the reader decodes a REAL full old image
+carrying `tenant_id` → the materializer tenant-scopes it and enqueues a scoped
+`disp-del:evt:<stream_seq>` run + rings the doorbell. Asserts the NON-RETROACTIVE
+boundary: the pre-flip DEFAULT delete stays refused (never retro-fires). The slot
+is created LAST (provisioning + seed writes stay uncaptured) and dropped
+deterministically at teardown (zero residue).
+
+```bash
+cargo test -p wamn-gates rie2ebench          # fixture drift guards (registration/flow/catalog parse the frozen types)
+# Local gate — REAL reader + REAL materializer guest + REAL deploy/sql DDL +
+# REAL JetStream. Postgres MUST be wal_level=logical (the real slot/reader):
+docker run -d --name wamn-lanec-rie-pg -p 57231:5432 -e POSTGRES_PASSWORD=postgres \
+  postgres:18 -c wal_level=logical -c fsync=off -c synchronous_commit=off
+docker run -d --name wamn-lanec-rie-nats -p 57232:4222 nats:2.10 -js
+./target/debug/wamn-gates rie2ebench \
+  --component components/target/wasm32-wasip2/release/materializer.wasm \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:57231/postgres \
+  --nats-url nats://127.0.0.1:57232
+docker rm -f wamn-lanec-rie-pg wamn-lanec-rie-nats
+# In-cluster: rie2ebench needs a wal_level=logical DB + a replication slot; the
+# existing matbench-job fixture Postgres has NEITHER (matbench publishes a
+# synthetic tape, no reader). It rides the [EVT-READER]/CDC live-DB shape, NOT
+# the matbench-job — a rie2ebench-job would need a CDC-capable throwaway DB
+# (wal_level=logical) + the data-plane evt-nats, mirroring the readerbench Job.
+```
+
+Mutation harness: scratchpad `mutate_lane_c.py` — M_RI neuters the production
+reconcile flip (`wamn_ctl::reconcile_replica_identity::reconcile` skips the
+`ALTER … REPLICA IDENTITY`) so the table stays DEFAULT: the post-flip DELETE is
+refused, and rie2ebench's `post-flip DELETE fired ONE scoped :evt: delete run`
+assert FAILS. Apply/test/restore with sha256, DEBUG; rebuild wamn-gates after
+restoring the dep.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

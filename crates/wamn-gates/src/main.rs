@@ -28,6 +28,7 @@ mod provisionbench;
 mod publish_catalog_demo;
 mod queuebench;
 mod readerbench;
+mod rie2ebench;
 mod runnerbench;
 mod samplebench;
 mod socketguard;
@@ -101,6 +102,8 @@ enum Command {
     Socketguard(socketguard::SocketGuardArgs),
     /// Run the l5i9.17 materializer gate (decide/refuse/enqueue/doorbell + C-MAT numbers)
     Matbench(matbench::MatBenchArgs),
+    /// Run the wamn-3glr reader-inclusive RI-flip e2e gate (real reader → materializer: pre-flip refusal, live flip, post-flip scoped delete run, non-retroactive)
+    Rie2ebench(rie2ebench::Rie2eBenchArgs),
     /// Run the l5i9.57 E10-e2e wamn:jetstream sample gate (bind/fetch/ack/publish/dedupe/reject via the js-sample guest)
     Samplebench(samplebench::SampleBenchArgs),
     /// Run the 4.1 generated-REST-API-gateway gates (CRUD / expand / RLS / injection)
@@ -159,6 +162,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Egressbench(args) => egressbench::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
         Command::Matbench(args) => matbench::run(args).await,
+        Command::Rie2ebench(args) => rie2ebench::run(args).await,
         Command::Samplebench(args) => samplebench::run(args).await,
         Command::Apibench(args) => apibench::run(args).await,
         Command::PublishCatalog(args) => publish_catalog_demo::run(args).await,

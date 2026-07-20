@@ -56,8 +56,8 @@ wamn-run-store = { path = "../wamn-run-store" }
 # readerbench consumes the REAL draft envelope type the reader publishes — the
 # stream-side assert deserializes with deny_unknown_fields (drift guard).
 wamn-event-wire = { path = "../wamn-event-wire" }
-# cutbench embeds the REAL reader service body (run_with_token) so one write
-# program feeds both capture paths; pg_walstream only for its CancellationToken.
+# rie2ebench embeds the REAL reader service body (run_with_token) next to the
+# materializer guest for the RI-flip e2e; pg_walstream only for its CancellationToken.
 wamn-cdc-reader = { path = "../wamn-cdc-reader" }
 wamn-event-reg = { path = "../wamn-event-reg" }
 pg_walstream = { workspace = true }
