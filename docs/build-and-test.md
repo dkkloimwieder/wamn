@@ -452,6 +452,8 @@ cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --ch
 # skips cleanly when unset):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
+docker exec wamn-rq-pg psql -U postgres -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
 WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-queue
 # throwaway PG above (the live-apply gate created wamn_app) + a throwaway NATS:
 docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
@@ -1344,6 +1346,8 @@ cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --ch
 # paths + cron last-tick recovery + wake scan; skips when unset):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
+docker exec wamn-rq-pg psql -U postgres -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
 WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-queue
 # the live-apply gate] + a throwaway NATS for the wake/live doorbell hints):
 docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
