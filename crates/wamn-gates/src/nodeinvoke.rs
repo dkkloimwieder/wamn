@@ -41,7 +41,7 @@ use wamn_gate_harness::check;
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_host::plugins::wamn_credentials::WamnCredentials;
 use wamn_host::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
-use wamn_host::serve_node::{self, ServeNode};
+use wamn_host::serve_node::{self, ServeNode, ServeNodeAuthn};
 use wamn_run_worker::{RunWorker, RunnerIdentity};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
@@ -334,8 +334,12 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
             serve_node::DEFAULT_NODE_ID,
             PROJECT,
             Arc::from([]),
-            false, // authn keyed below; not fail-closed (a key is present)
-            None,  // wamn-fqg.32: replay-freshness OFF (default) for the E2E drain
+            ServeNodeAuthn {
+                // authn keyed below; not fail-closed (a key is present)
+                require_signing_key: false,
+                // wamn-fqg.32: replay-freshness OFF (default) for the E2E drain
+                max_signature_age_secs: None,
+            },
         )
         .await
         .context("build serve-node")?,
@@ -639,8 +643,10 @@ async fn gate_body(
         serve_node::DEFAULT_NODE_ID,
         PROJECT,
         Arc::from([]),
-        true, // fail-closed
-        None,
+        ServeNodeAuthn {
+            require_signing_key: true, // fail-closed
+            max_signature_age_secs: None,
+        },
     )
     .await
     .context("build keyless fail-closed serve-node")?;
@@ -663,8 +669,10 @@ async fn gate_body(
         serve_node::DEFAULT_NODE_ID,
         PROJECT,
         Arc::from([]),
-        false, // default: legacy network-trust
-        None,
+        ServeNodeAuthn {
+            require_signing_key: false, // default: legacy network-trust
+            max_signature_age_secs: None,
+        },
     )
     .await
     .context("build keyless default serve-node")?;
@@ -703,8 +711,10 @@ async fn gate_body(
         serve_node::DEFAULT_NODE_ID,
         PROJECT,
         Arc::from([]),
-        false,
-        None,
+        ServeNodeAuthn {
+            require_signing_key: false,
+            max_signature_age_secs: None,
+        },
     )
     .await
     .context("build dual-key serve-node")?;
@@ -753,8 +763,10 @@ async fn gate_body(
         serve_node::DEFAULT_NODE_ID,
         PROJECT,
         Arc::from([]),
-        false,
-        Some(60), // enforce a 60s freshness window
+        ServeNodeAuthn {
+            require_signing_key: false,
+            max_signature_age_secs: Some(60), // enforce a 60s freshness window
+        },
     )
     .await
     .context("build freshness-enforcing serve-node")?;

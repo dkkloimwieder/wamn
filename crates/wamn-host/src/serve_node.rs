@@ -272,13 +272,21 @@ pub struct ServeNode {
     grant_installs: AtomicU64,
 }
 
+/// The runner→node authentication policy for [`ServeNode::new`] — the two
+/// fail-closed / freshness knobs grouped so the constructor stays under the
+/// argument threshold (plumbing only, no behavior of its own).
+pub struct ServeNodeAuthn {
+    /// wamn-fqg.31: FAIL-CLOSED — when `true` and no signing key is configured,
+    /// REFUSE every invocation instead of reverting to network trust.
+    pub require_signing_key: bool,
+    /// wamn-fqg.32: replay-freshness max-age (seconds). `Some` enforces a signed,
+    /// in-window `x-wamn-timestamp`; `None` (default) skips the age check.
+    pub max_signature_age_secs: Option<u64>,
+}
+
 impl ServeNode {
     /// Compile, screen (E17 tenant profile), link the real `wamn:node` world,
     /// register the host-owned project, and warm-instantiate the node.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "construction wires the node, vault, identity, and the authn policy knobs (key requirement, freshness window) in one call"
-    )]
     pub async fn new(
         engine: &Engine,
         wasm: &[u8],
@@ -286,9 +294,12 @@ impl ServeNode {
         node_id: &str,
         project: &str,
         allowed_hosts: Arc<[AllowedHost]>,
-        require_signing_key: bool,
-        max_signature_age_secs: Option<u64>,
+        authn: ServeNodeAuthn,
     ) -> anyhow::Result<Self> {
+        let ServeNodeAuthn {
+            require_signing_key,
+            max_signature_age_secs,
+        } = authn;
         let raw = engine.inner();
         let component =
             WasmtimeComponent::new(raw, wasm).map_err(|e| anyhow::anyhow!("compile node: {e}"))?;
@@ -818,8 +829,10 @@ pub async fn run(args: ServeNodeArgs) -> anyhow::Result<()> {
             DEFAULT_NODE_ID,
             &args.project,
             allowed_hosts,
-            args.require_signing_key,
-            args.signature_max_age_secs,
+            ServeNodeAuthn {
+                require_signing_key: args.require_signing_key,
+                max_signature_age_secs: args.signature_max_age_secs,
+            },
         )
         .await?,
     );
