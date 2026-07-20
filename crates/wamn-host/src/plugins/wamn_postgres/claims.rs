@@ -175,21 +175,21 @@ fn validate_claims(
             "invalid tenant identity".to_string(),
         )));
     }
-    if let Some(schema) = schema {
-        if !valid_schema(schema) {
-            return Err(PgError::QueryError((
-                "WAMN0".to_string(),
-                "invalid search_path schema".to_string(),
-            )));
-        }
+    if let Some(schema) = schema
+        && !valid_schema(schema)
+    {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid search_path schema".to_string(),
+        )));
     }
-    if let Some(runner) = runner {
-        if !valid_runner(runner) {
-            return Err(PgError::QueryError((
-                "WAMN0".to_string(),
-                "invalid runner owner".to_string(),
-            )));
-        }
+    if let Some(runner) = runner
+        && !valid_runner(runner)
+    {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid runner owner".to_string(),
+        )));
     }
     Ok(())
 }

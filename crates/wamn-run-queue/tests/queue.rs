@@ -1946,7 +1946,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // Phase B — an EXHAUSTED head (expired lease past grace, budget spent). `wg`
     // is blocking (default): the janitor must NOT reap it (it wedges the key);
     // `lx` is leapfrog: the janitor reaps it and the key releases.
-    script.push_str(&format!(
+    script.push_str(
         "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
            ('t1','wg-0','f',1,'running'),('t1','wg-1','f',1,'dispatched'), \
            ('t1','lx-0','f',1,'running'),('t1','lx-1','f',1,'dispatched');\n\
@@ -1973,8 +1973,8 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='wg-1') IS NULL, 'blocking wedge: the later run stays BLOCKED behind the exhausted head — the key is wedged'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='lx-1') = 'PB', 'leapfrog: with the exhausted head reaped, the key RELEASES and the next run dispatches'; \
          END $$;\n\
-         COMMIT;\n"
-    ));
+         COMMIT;\n",
+    );
 
     // ------------------------------------------------------------------------
     // E4: the queue orders on stream_seq (numeric) AHEAD of run_id (text). CDC
