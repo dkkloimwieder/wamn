@@ -23,6 +23,13 @@
 //!     still drains — the runner is provably not wedged. The phase runs under
 //!     its own wall-clock timeout so a budget-removed mutant FAILS the gate
 //!     instead of hanging it.
+//!   * PARTITION-ORDER (fqg.9, wamn-7hja): PARTITIONED(key) runs seeded via
+//!     `enqueue_with_policy_sql` across two keys with interleaved insertion
+//!     dispatch per-key IN STREAM ORDER, one in flight per key, through the
+//!     production `RunWorker::drain` — the keyed claim path failoverbench drives
+//!     via the gate-local `Worker`, proven here through the long-lived runner.
+//!     Dispatch order is read from a gate-local `sink.dispatch_seq` IDENTITY
+//!     witness (execution order, not seed order).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,7 +37,9 @@ use std::sync::Arc;
 use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::{Client, NoTls};
-use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_queue::{
+    PartitionPolicy, enqueue_sql, enqueue_with_policy_sql, write_ahead_triggered_run_sql,
+};
 
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_host::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
@@ -110,6 +119,7 @@ fn runner_ddl(schema: &str) -> String {
          CREATE TABLE {schema}.sink (\
             tenant_id text NOT NULL, run_id text NOT NULL, step int NOT NULL, \
             payload text NOT NULL, \
+            dispatch_seq bigint GENERATED ALWAYS AS IDENTITY, \
             CONSTRAINT sink_idem UNIQUE (tenant_id, run_id, step));\
          ALTER TABLE {schema}.sink ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.sink FORCE ROW LEVEL SECURITY;\
@@ -256,8 +266,53 @@ async fn seed_flow_run(client: &mut Client, run_id: &str, flow_id: &str) -> anyh
     Ok(())
 }
 
+/// Seed a PARTITIONED(key) run the way a keyed producer does (fqg.9): the
+/// write-ahead `dispatched` runs row co-transacted with the queue row, but via
+/// the D20 [`enqueue_with_policy_sql`] — the flow's declared head-unavailability
+/// policy materialized onto the row (`blocking`: strict per-key stream order).
+/// `enqueue_with_policy_sql` stamps `enqueued_at = now()` per seed txn and
+/// `stream_seq = 0`, so the blocking head order `(enqueued_at, stream_seq,
+/// run_id)` is seed order; the run ids are named so lexical order AGREES with
+/// the intended stream order (the `run_id` tiebreak makes the phase
+/// deterministic even if two seeds land in the same `now()` microsecond).
+async fn seed_keyed_run(client: &mut Client, run_id: &str, key: &str) -> anyhow::Result<()> {
+    let policy = PartitionPolicy::Blocking.as_sql();
+    let tx = client.transaction().await?;
+    tx.execute(
+        &write_ahead_triggered_run_sql(),
+        &[&run_id, &FLOW_ID, &1i32, &"cron", &"\"receipt\""],
+    )
+    .await?;
+    tx.execute(
+        &enqueue_with_policy_sql(),
+        &[&run_id, &Some(key), &0i32, &0i64, &policy],
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 async fn count(client: &Client, sql: &str) -> anyhow::Result<i64> {
     Ok(client.query_one(sql, &[]).await?.get(0))
+}
+
+/// The dispatch order of the keyed runs whose id starts with `prefix`, read from
+/// the gate-local `sink.dispatch_seq` witness (a `GENERATED ALWAYS AS IDENTITY`
+/// column the guest's explicit-column sink INSERT auto-populates). The sink row
+/// is written DURING run execution (the `pg-write` node) and the production
+/// `RunWorker::drain` claims one run at a time, so `dispatch_seq` order IS the
+/// true per-key dispatch order — independent of seed order, which is what makes
+/// this a real ordering witness rather than a tautology.
+async fn dispatch_order(client: &Client, prefix: &str) -> anyhow::Result<Vec<String>> {
+    let rows = client
+        .query(
+            &format!(
+                "SELECT run_id FROM {SCHEMA}.sink WHERE run_id LIKE '{prefix}%' ORDER BY dispatch_seq"
+            ),
+            &[],
+        )
+        .await?;
+    Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
 }
 
 pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
@@ -514,7 +569,69 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             r6.completed
         );
 
-        anyhow::Ok(drain1 && reuse && empty && runaway && stream_ok && reload_ok)
+        // --- (7) PARTITION-ORDER (fqg.9): the production RunWorker drains
+        // PARTITIONED(key) runs seeded via enqueue_with_policy_sql. runnerbench
+        // otherwise only seeds UNpartitioned runs, so the fqg.9 guest-side keyed
+        // claim path never rides its production drain (failoverbench drives it
+        // via the gate-local Worker; this is the independent proof through the
+        // long-lived RunWorker). Two keys are seeded with INTERLEAVED insertion
+        // (ka0,kb0,ka1,kb1,ka2,kb2) so a runner that dropped per-key ordering
+        // would interleave the sink witness; the assert is per-key IN-ORDER
+        // dispatch (blocking policy = one in flight per key, head-first).
+        for i in 0..3 {
+            seed_keyed_run(&mut seed_conn, &format!("ka{i}"), "pk-a").await?;
+            seed_keyed_run(&mut seed_conn, &format!("kb{i}"), "pk-b").await?;
+        }
+        // Two UNpartitioned (NULL-key) runs alongside — they drain via the
+        // global claim, proving the two paths coexist on one drain.
+        for i in 0..2 {
+            seed_run(&mut seed_conn, &format!("kn{i}")).await?;
+        }
+        let r7 = worker.drain().await?;
+        let order_a = dispatch_order(&seed_conn, "ka").await?;
+        let order_b = dispatch_order(&seed_conn, "kb").await?;
+        // The per-key ordering comparator: each key must dispatch in stream
+        // order (== its seeded/lexical order). A runner that reordered a key —
+        // or a comparator that accepted the wrong order — fails HERE.
+        let expected_a = vec!["ka0".to_string(), "ka1".to_string(), "ka2".to_string()];
+        let expected_b = vec!["kb0".to_string(), "kb1".to_string(), "kb2".to_string()];
+        let a_ok = order_a == expected_a;
+        let b_ok = order_b == expected_b;
+        // One-in-flight-per-key: no keyed run drove twice (max 1 sink row each).
+        let max_sink_keyed = count(
+            &seed_conn,
+            &format!(
+                "SELECT COALESCE(MAX(c),0) FROM \
+                 (SELECT count(*) c FROM {SCHEMA}.sink WHERE run_id LIKE 'k%' GROUP BY run_id) s"
+            ),
+        )
+        .await?;
+        // The partition path was actually engaged (a per-key ownership lease
+        // was taken — proving this rode the fqg.9 keyed claim, not the global one).
+        let leases = count(
+            &seed_conn,
+            &format!("SELECT count(*) FROM {SCHEMA}.partition_owner"),
+        )
+        .await?;
+        let q7 = count(&seed_conn, &queued).await?;
+        let partition_ok = r7.claimed == 8
+            && r7.completed == 8
+            && a_ok
+            && b_ok
+            && max_sink_keyed <= 1
+            && leases >= 2
+            && q7 == 0;
+        println!(
+            "## partition-order — 2 keys x 3 (interleaved) + 2 NULL-key via RunWorker::drain: \
+             claimed {}/8 completed {}, key pk-a order {order_a:?} (want ka0,ka1,ka2) -> {a_ok}, \
+             key pk-b order {order_b:?} (want kb0,kb1,kb2) -> {b_ok}, one-in-flight max sink/key={max_sink_keyed} (<=1), \
+             partition leases taken={leases} (>=2), queue drained={} -> {partition_ok}",
+            r7.claimed, r7.completed, q7 == 0
+        );
+
+        anyhow::Ok(
+            drain1 && reuse && empty && runaway && stream_ok && reload_ok && partition_ok,
+        )
     }
     .await;
 

@@ -1199,7 +1199,7 @@ docker exec wamn-fqg8-pg psql -U postgres -c \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5490/postgres \
   --admin-database-url postgres://postgres:postgres@127.0.0.1:5490/postgres
-# 6 phases: drain + reuse + empty + RUNAWAY (cjv.4 anti-wedge, LOCAL gate of
+# 7 phases: drain + reuse + empty + RUNAWAY (cjv.4 anti-wedge, LOCAL gate of
 # record: a never-terminating cyclic flow drives the engine's default 10k
 # dispatch budget, ends failed/runaway-budget + DEQUEUES, and the run queued
 # behind it still completes — under the phase's own 180s wall guard so a
@@ -1210,7 +1210,15 @@ docker exec wamn-fqg8-pg psql -U postgres -c \
 # ms/record measurement — combined claim/checkpoint/complete statements +
 # guest plan cache took the local debug number from ~66 to ~32-37 ms/record —
 # then a mid-stream version flip must take effect for the following records =
-# the plan-cache invalidation guard). Engine units: cargo test -p wamn-runner
+# the plan-cache invalidation guard) + PARTITION-ORDER (fqg.9, wamn-7hja:
+# PARTITIONED(key) runs seeded via enqueue_with_policy_sql across 2 keys with
+# INTERLEAVED insertion, drained through the production RunWorker::drain, assert
+# per-key IN-ORDER dispatch + one-in-flight — the independent proof of the keyed
+# claim path through the long-lived runner [failoverbench drives it via the
+# gate-local Worker]. Dispatch order is read from a gate-local sink.dispatch_seq
+# IDENTITY witness [execution order, not seed order]; the nhjg drift guard still
+# pins the run_queue/partition_owner stand-in DDL against deploy/sql/run-queue.sql).
+# Engine units: cargo test -p wamn-runner
 # (budget section) + cargo test -p wamn-run-store (fail_kind literal + DDL
 # drift guard). Combined-builder shape + live-apply (PREPARE/EXECUTE the real
 # claim_dispatch/record+renew/complete+dequeue against deploy DDL incl
@@ -1219,7 +1227,12 @@ docker exec wamn-fqg8-pg psql -U postgres -c \
 # (5 killed — cache-never-invalidates, MATERIALIZED fence, renew tail,
 # dequeue arm, mark-running arm); NOTE the engine AND the claim path are
 # compiled into the GUEST, so those mutants need a flowrunner wasm rebuild
-# to reach the live gate.
+# to reach the live gate. mutate_lane_c.py M_PART inverts the runnerbench
+# per-key ordering comparator (reverses the expected per-key dispatch vector);
+# the real in-order dispatch then FAILS the `partition-order` assert (a
+# host-only mutation — rebuild wamn-gates, no wasm rebuild; the production claim
+# comparator lives in the guest, covered by the fqg.9/fqg.10 partition-order
+# mutants above).
 docker rm -f wamn-fqg8-pg
 # In-cluster live smoke = gate of record (HOST changed — the run-worker module +
 # flowrunner.wasm baked into the prod image — so FULL rebuild BOTH stages + kind load):
