@@ -1972,3 +1972,27 @@ async fn ceiling_phase(
     println!("PASS(ceiling sanity — exactly-once + completeness at every level): {sanity}");
     Ok(sanity)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema_drift::{Need, assert_stand_in};
+
+    /// wamn-9mg8 [GATE-DRIFT]: queuebench's `run_queue` stand-in vs the schema of
+    /// record, through the uniform guard. queuebench drives the per-partition
+    /// ownership path (`partition_owner` + the `run_queue_partition` index), so
+    /// both are Required; it has no guest terminal-failure path, so
+    /// `run_dead_letters` is AbsentByDesign.
+    #[test]
+    fn queuebench_stand_in_tracks_run_queue_schema_of_record() {
+        assert_stand_in(
+            "queuebench",
+            &queue_ddl("wamn_run"),
+            &[
+                ("run_queue", Need::Required),
+                ("partition_owner", Need::Required),
+                ("run_dead_letters", Need::AbsentByDesign),
+            ],
+        );
+    }
+}

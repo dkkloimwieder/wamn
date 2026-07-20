@@ -787,124 +787,24 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_run_queue::PartitionPolicy;
+    use crate::schema_drift::{Need, assert_stand_in};
 
-    /// The schema of record, compiled in — the guard reads the SHIPPED column
-    /// set out of it so it cannot silently drift from what we assert against.
-    const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
-
-    /// The top-level column names of `CREATE TABLE {table} ( ... )` in `ddl`
-    /// (one column per line in deploy/sql), skipping comments and the
-    /// PRIMARY/FOREIGN/CONSTRAINT/CHECK constraint clauses. Used to lift the
-    /// run_queue / partition_owner column sets straight out of the schema of
-    /// record so the parity assertion below tracks it automatically.
-    fn table_columns(ddl: &str, table: &str) -> Vec<String> {
-        let mut cols = Vec::new();
-        let mut in_table = false;
-        for line in ddl.lines() {
-            let t = line.trim();
-            if !in_table {
-                if t.starts_with(&format!("CREATE TABLE {table} (")) {
-                    in_table = true;
-                }
-                continue;
-            }
-            if t.starts_with(')') {
-                break; // end of the CREATE TABLE body
-            }
-            if t.is_empty() || t.starts_with("--") {
-                continue;
-            }
-            let Some(tok) = t.split_whitespace().next() else {
-                continue;
-            };
-            if matches!(
-                tok,
-                "PRIMARY" | "FOREIGN" | "CONSTRAINT" | "CHECK" | "UNIQUE"
-            ) {
-                continue;
-            }
-            cols.push(tok.to_string());
-        }
-        cols
-    }
-
-    /// wamn-nhjg [GATE-DRIFT]: the ephemeral stand-in `runner_ddl` is a modified
-    /// variant of `deploy/sql/run-queue.sql` (schema-qualified, joined to the
-    /// flowrunner flow tables), so it cannot be `include_str!`'d verbatim — this
-    /// guard pins it against the schema of record instead. It fails the moment
-    /// the stand-in drops a column/object the fqg.9 guest-side partitioned claim
-    /// path (`acquire_partitions_sql` / `claim_partition_head_sql`) reads:
-    /// run-next falls through to that path once the global queue drains, so a
-    /// missing `partition_owner` table or `partition_policy` column is an
-    /// undefined-relation/undefined-column failure the next time runnerbench runs
-    /// (the wamn-9cn6 / wamn-9mg8 drift class).
+    /// wamn-9mg8 [GATE-DRIFT]: runnerbench's `run_queue` stand-in vs the schema of
+    /// record, through the uniform guard (folds the wamn-nhjg/wamn-v8cv guard).
+    /// run-next falls through to the fqg.9 guest-side partitioned claim path once
+    /// the global queue drains, so `partition_owner` + the `run_queue_partition`
+    /// index are Required; the guest's terminal settle names `run_dead_letters`
+    /// unconditionally (wamn-v8cv), so the ledger is Required too.
     #[test]
-    fn runner_stand_in_ddl_tracks_run_queue_schema_of_record() {
-        let standin = runner_ddl("wamn_run");
-
-        // run_queue column parity with the schema of record: every shipped column
-        // must be present in the stand-in (add a column to deploy/sql/run-queue.sql
-        // and this fails until the stand-in carries it too).
-        let queue_cols = table_columns(RUN_QUEUE_SQL, "wamn_run.run_queue");
-        assert!(
-            queue_cols.contains(&"partition_policy".to_string()),
-            "parser sanity: partition_policy should be a run_queue column of record"
+    fn runnerbench_stand_in_tracks_run_queue_schema_of_record() {
+        assert_stand_in(
+            "runnerbench",
+            &runner_ddl("wamn_run"),
+            &[
+                ("run_queue", Need::Required),
+                ("partition_owner", Need::Required),
+                ("run_dead_letters", Need::Required),
+            ],
         );
-        for col in &queue_cols {
-            assert!(
-                standin.contains(col),
-                "runnerbench run_queue stand-in missing column `{col}` \
-                 (drifted from deploy/sql/run-queue.sql)"
-            );
-        }
-
-        // The per-partition ownership lease table + its full column set: the
-        // fqg.9 guest path INSERTs/JOINs against it once the global claim drains.
-        assert!(
-            standin.contains("CREATE TABLE wamn_run.partition_owner"),
-            "runnerbench stand-in missing the partition_owner lease table \
-             (fqg.9 guest-side partitioned claim path needs it)"
-        );
-        for col in table_columns(RUN_QUEUE_SQL, "wamn_run.partition_owner") {
-            assert!(
-                standin.contains(&col),
-                "runnerbench partition_owner stand-in missing column `{col}` \
-                 (drifted from deploy/sql/run-queue.sql)"
-            );
-        }
-
-        // The partition index the acquire/claim path scans on.
-        assert!(
-            standin.contains("run_queue_partition"),
-            "runnerbench stand-in missing the run_queue_partition index"
-        );
-
-        // D20: the partition_policy CHECK carries exactly the model's literals.
-        for p in PartitionPolicy::ALL {
-            assert!(
-                standin.contains(&format!("'{}'", p.as_sql())),
-                "runnerbench stand-in partition_policy CHECK missing literal `{}`",
-                p.as_sql()
-            );
-        }
-
-        // wamn-v8cv: the terminal dead-letter ledger — the guest's settle path
-        // references it on EVERY terminal failure (the composed
-        // dead_letter_dequeue_sql names it unconditionally; conditionality is in
-        // its predicate), so a stand-in without it is an undefined-relation
-        // failure on the first failed run.
-        assert!(
-            standin.contains("CREATE TABLE wamn_run.run_dead_letters"),
-            "runnerbench stand-in missing the run_dead_letters ledger \
-             (the v8cv terminal dequeue references it)"
-        );
-        for col in table_columns(RUN_QUEUE_SQL, "wamn_run.run_dead_letters") {
-            assert!(
-                standin.contains(&col),
-                "runnerbench run_dead_letters stand-in missing column `{col}` \
-                 (drifted from deploy/sql/run-queue.sql)"
-            );
-        }
     }
 }

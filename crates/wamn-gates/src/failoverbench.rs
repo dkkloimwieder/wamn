@@ -1626,3 +1626,28 @@ async fn partition_failover_phase(
     );
     Ok(pass)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema_drift::{Need, assert_stand_in};
+
+    /// wamn-9mg8 [GATE-DRIFT]: failoverbench's `run_queue` stand-in vs the schema
+    /// of record, through the uniform guard. failoverbench drives the
+    /// per-partition ownership path (`partition_owner` + the `run_queue_partition`
+    /// index) AND a guest that can fail terminally (the settle path names
+    /// `run_dead_letters` unconditionally, wamn-v8cv), so all three tables are
+    /// Required.
+    #[test]
+    fn failoverbench_stand_in_tracks_run_queue_schema_of_record() {
+        assert_stand_in(
+            "failoverbench",
+            &failover_ddl("wamn_run"),
+            &[
+                ("run_queue", Need::Required),
+                ("partition_owner", Need::Required),
+                ("run_dead_letters", Need::Required),
+            ],
+        );
+    }
+}

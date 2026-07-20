@@ -1090,3 +1090,28 @@ async fn live_phase(
     println!("PASS(live loop: cron beside failure + reconnect + cron-aware sleep): {pass}");
     Ok(pass)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema_drift::{Need, assert_stand_in};
+
+    /// wamn-9mg8 [GATE-DRIFT]: dispatchbench's `run_queue` stand-in vs the schema
+    /// of record, through the uniform guard. The dispatcher enqueues + stamps
+    /// `partition_key`/`partition_policy` and checks ordering, but never runs the
+    /// per-partition claim path or a guest terminal settle — so `partition_owner`
+    /// and `run_dead_letters` are AbsentByDesign, while every `run_queue` column
+    /// (the c32ffaf `stream_seq` drift class) stays pinned.
+    #[test]
+    fn dispatchbench_stand_in_tracks_run_queue_schema_of_record() {
+        assert_stand_in(
+            "dispatchbench",
+            &dispatch_ddl("wamn_run"),
+            &[
+                ("run_queue", Need::Required),
+                ("partition_owner", Need::AbsentByDesign),
+                ("run_dead_letters", Need::AbsentByDesign),
+            ],
+        );
+    }
+}

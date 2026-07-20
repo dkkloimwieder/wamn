@@ -31,6 +31,8 @@ mod readerbench;
 mod rie2ebench;
 mod runnerbench;
 mod samplebench;
+#[cfg(test)]
+mod schema_drift;
 mod socketguard;
 mod streambench;
 mod testhostbench;

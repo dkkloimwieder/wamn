@@ -606,6 +606,28 @@ async fn assert_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema_drift::{Need, assert_stand_in};
+
+    /// wamn-9mg8 [GATE-DRIFT]: ladderproof's `run_queue` stand-in vs the schema of
+    /// record, through the uniform guard. The rung-1 conformance proof seeds ONE
+    /// unpartitioned manual run via `enqueue_sql()` (which writes no
+    /// `partition_policy` — the column takes its default) and never drives a
+    /// terminal-failure or partitioned run, so its stand-in needs neither
+    /// `partition_owner`/`run_dead_letters` (AbsentByDesign) nor the
+    /// `partition_policy` column (an explicit run_queue exemption). Every OTHER
+    /// run_queue column is still pinned against the source of truth.
+    #[test]
+    fn ladderproof_stand_in_tracks_run_queue_schema_of_record() {
+        assert_stand_in(
+            "ladderproof",
+            &ladder_ddl("wamn_run"),
+            &[
+                ("run_queue", Need::RequiredExcept(&["partition_policy"])),
+                ("partition_owner", Need::AbsentByDesign),
+                ("run_dead_letters", Need::AbsentByDesign),
+            ],
+        );
+    }
 
     /// A committed fixture parses to the flow the proof asserts against, and is
     /// VALID by the same engine the runner compiles it with (`Plan::compile`
