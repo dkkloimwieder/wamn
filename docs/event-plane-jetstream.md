@@ -83,9 +83,12 @@ change waits for 0.2.
   SCHEMA`, auto-includes `domain_events` once it exists) + failover slot
   (SQL-function form, WAL pinned from enable) + REPLICATION role with its own
   `wamn-cdc-…` Secret (the R8b tier named below); `registry.event_readers`
-  holds the registration (docs/provisioning.md). Cluster-level knobs
-  (`synchronizeLogicalDecoding`, `max_slot_wal_keep_size`) are a provision-org
-  sibling bead.*
+  holds the registration (docs/provisioning.md). Cluster-level knobs are now
+  rendered by `provision-org` (wamn-l5i9.32): an always-on `max_slot_wal_keep_size`
+  bound on every rendered cluster + the `synchronizeLogicalDecoding` /
+  `sync_replication_slots` / `hot_standby_feedback` / `logical_decoding_work_mem`
+  failover-slot-sync block on multi-instance (`instances >= 2`) clusters;
+  single-instance pools (`wamn-pg`) carry only the WAL bound.*
 - **Reader:** dispatcher-family **native** service (posture-doc exception row:
   holds *replication* credentials — a privilege tier above query creds; name it
   in the R8b role scoping). One pg_walstream session per project-env; slot
@@ -345,7 +348,8 @@ Rule: no number enters a design doc unlabeled.
 
 ## 11. Sharp edges (standing register)
 
-Slot pins WAL → `max_slot_wal_keep_size` + invalidation alert + resync runbook
+Slot pins WAL → `max_slot_wal_keep_size` (now rendered ALWAYS-ON by `provision-org`
+on every cluster, wamn-l5i9.32) + invalidation alert + resync runbook
 (a slot invalidation IS a gap — first-class incident); serial decode per
 project-env is the new capture ceiling (C-CDC measures; streamed-txn support is
 the unbounded-memory answer); failover-slot continuity is verified, not

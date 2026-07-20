@@ -30,6 +30,31 @@ use crate::error::ProvisionError;
 /// The namespace org clusters live in (alongside the guardrailed clusters).
 const NAMESPACE: &str = "wamn-system";
 
+/// The `max_slot_wal_keep_size` WAL-retention bound every rendered cluster carries.
+///
+/// The §11 sharp edge (docs/event-plane-jetstream.md): a forgotten CDC logical
+/// slot pins WAL *forever* without a bound, and the reader never GCs a slot it
+/// did not create. `max_slot_wal_keep_size` is the backstop — once a slot falls
+/// this far behind, PG invalidates it (a first-class, alerted incident) instead
+/// of letting WAL fill the volume and take the primary down. Always-on:
+/// single-instance pools host CDC slots too (the reader MVP runs on `wamn-pg`),
+/// so no cluster is ever renderable without a bound. `1GB` is the S-CDC-1-proven
+/// value (poc/cdc1/cdc1-cluster.yaml) for the 2Gi cluster sizing rendered here.
+const WAL_KEEP_BOUND: &str = "1GB";
+
+/// `logical_decoding_work_mem` on multi-instance CDC clusters — the per-walsender
+/// reorder-buffer bound.
+///
+/// Kept well under the 256Mi pod memory request so concurrent logical-decoding
+/// sessions cannot exhaust the pod; a transaction exceeding it *streams*
+/// (protocol-v2, PG14+) to the reader early rather than buffering — the
+/// bounded-memory / early-delivery property a CDC pipeline wants. `16MB` is 4× the
+/// S-CDC-1 spike's deliberately-minimal 4MB (tuned to force streaming of a 1M-row
+/// txn), leaving headroom for ordinary small transactions to decode without
+/// streaming overhead. Emitted only with the failover-sync block below (a
+/// single-instance pool needs only the WAL bound; there its PG default applies).
+const LOGICAL_DECODING_WORK_MEM: &str = "16MB";
+
 /// The rendered CNPG `Cluster` set for a dedicated org: one cluster per distinct
 /// recovery-domain owner env (`<org>-<owner>`), each sized by that owner env's
 /// [`EnvPolicy`], plus the WAL/PITR `ObjectStore` / `ScheduledBackup` CRs for the
@@ -120,7 +145,12 @@ fn cluster_labels(org: &str, owner: &str) -> Value {
 /// its [`EnvPolicy`] (D18 — cjv.21):
 ///
 /// * **HA** (`policy.instances >= 2`): pod anti-affinity spreads instances across
-///   nodes so a node loss drops at most one.
+///   nodes so a node loss drops at most one, PLUS the D19 v3 §4 failover-slot
+///   CONTINUITY config — `replicationSlots.highAvailability`
+///   (`synchronizeLogicalDecoding`) + the `sync_replication_slots` /
+///   `hot_standby_feedback` / `logical_decoding_work_mem` GUCs — since a CDC
+///   logical slot survives switchover only when CNPG syncs it to a standby, which
+///   only a multi-instance cluster has.
 /// * **hibernation-eligible** (`policy.hibernation == "eligible"`): carries the
 ///   `cnpg.io/hibernation` annotation set `off` (opted into the lifecycle but
 ///   running, so it comes up ready at provision; the platform off-hours scheduler
@@ -128,7 +158,9 @@ fn cluster_labels(org: &str, owner: &str) -> Value {
 ///
 /// All: `enableSuperuserAccess` (the wamn-q3n.7 per-project-env path connects as
 /// superuser to CREATE the databases/roles), a non-TLS `pg_hba` (the repo connects
-/// `NoTls`), and **NO cpu limit** — requests only (the S2 CFS lesson).
+/// `NoTls`), **NO cpu limit** — requests only (the S2 CFS lesson) — and the
+/// always-on `max_slot_wal_keep_size` WAL bound (the §11 sharp edge, see
+/// [`WAL_KEEP_BOUND`]).
 ///
 /// `backup_object_store` (wamn-e1g): when `Some`, the cluster carries a Barman
 /// Cloud plugin ref in `.spec.plugins` naming that ObjectStore — continuous
@@ -154,7 +186,14 @@ fn render_cluster(
         "enableSuperuserAccess": true,
         "resources": { "requests": { "cpu": policy.cpu, "memory": policy.memory } },
         "storage": { "size": policy.storage },
-        "postgresql": { "pg_hba": ["host all all all scram-sha-256"] },
+        "postgresql": {
+            "pg_hba": ["host all all all scram-sha-256"],
+            // The §11 WAL-retention bound is ALWAYS set (see WAL_KEEP_BOUND) —
+            // the one CDC-capture knob every cluster carries, single- or
+            // multi-instance. The failover-sync parameters are added below only
+            // when there is a standby to sync a slot to.
+            "parameters": { "max_slot_wal_keep_size": WAL_KEEP_BOUND },
+        },
         // A neutral placeholder DB; the real per-project-env databases are created
         // declaratively by wamn-q3n.7 (the CNPG Database CRD).
         "bootstrap": { "initdb": { "database": "app", "owner": "app" } },
@@ -169,6 +208,22 @@ fn render_cluster(
             "topologyKey": "kubernetes.io/hostname",
             "podAntiAffinityType": "preferred",
         });
+        // Failover-slot CONTINUITY across switchover (D19 v3 §4/§11). Meaningful
+        // only with a standby to sync the logical slot to, so it keys off the
+        // SAME instance count as HA anti-affinity — no separate env-policy column
+        // (the simplest correct shape; a single-instance pool needs only the WAL
+        // bound above). CNPG mirrors each logical slot to the standbys
+        // (`synchronizeLogicalDecoding`); `sync_replication_slots` is the PG-side
+        // switch, `hot_standby_feedback` keeps the standby from pruning rows the
+        // synced slot still needs, and `logical_decoding_work_mem` bounds each
+        // walsender's reorder buffer (see LOGICAL_DECODING_WORK_MEM).
+        spec["replicationSlots"] = json!({
+            "highAvailability": { "enabled": true, "synchronizeLogicalDecoding": true },
+        });
+        let params = &mut spec["postgresql"]["parameters"];
+        params["sync_replication_slots"] = json!("on");
+        params["hot_standby_feedback"] = json!("on");
+        params["logical_decoding_work_mem"] = json!(LOGICAL_DECODING_WORK_MEM);
     }
     if policy.hibernation_eligible() {
         metadata["annotations"] = json!({ "cnpg.io/hibernation": "off" });
@@ -273,6 +328,52 @@ mod tests {
         // dev (instances 1, hibernation eligible): hibernation annotation, no HA.
         assert_eq!(dev["metadata"]["annotations"]["cnpg.io/hibernation"], "off");
         assert!(dev["spec"]["affinity"].is_null());
+    }
+
+    #[test]
+    fn every_cluster_carries_the_wal_retention_bound() {
+        // §11 sharp edge: `max_slot_wal_keep_size` is ALWAYS-ON — a forgotten CDC
+        // slot must never be able to pin WAL unbounded, on single- OR
+        // multi-instance clusters.
+        let set = render_org_cluster_set(&Org::dedicated("acme"), &EnvPolicy::defaults()).unwrap();
+        assert!(!set.clusters.is_empty());
+        for c in &set.clusters {
+            assert_eq!(
+                c["spec"]["postgresql"]["parameters"]["max_slot_wal_keep_size"], "1GB",
+                "every rendered cluster carries the WAL bound"
+            );
+        }
+    }
+
+    #[test]
+    fn single_instance_cluster_gets_only_the_wal_bound() {
+        // dev (instances 1): the WAL bound, but NO failover-slot-sync config —
+        // there is no standby to sync a slot to (the "single-instance pools need
+        // only the WAL bound" decision).
+        let set = render_org_cluster_set(&Org::dedicated("acme"), &EnvPolicy::defaults()).unwrap();
+        let dev = cluster_named(&set, "acme-dev");
+        let params = &dev["spec"]["postgresql"]["parameters"];
+        assert_eq!(params["max_slot_wal_keep_size"], "1GB");
+        assert!(dev["spec"]["replicationSlots"].is_null());
+        assert!(params["sync_replication_slots"].is_null());
+        assert!(params["hot_standby_feedback"].is_null());
+        assert!(params["logical_decoding_work_mem"].is_null());
+    }
+
+    #[test]
+    fn multi_instance_cluster_gets_the_failover_slot_sync_config() {
+        // prod (instances 3): failover-slot continuity — HA slot sync + the GUCs
+        // that keep a synced logical slot alive across switchover (D19 v3 §4).
+        let set = render_org_cluster_set(&Org::dedicated("acme"), &EnvPolicy::defaults()).unwrap();
+        let prod = cluster_named(&set, "acme-prod");
+        let ha = &prod["spec"]["replicationSlots"]["highAvailability"];
+        assert_eq!(ha["enabled"], true);
+        assert_eq!(ha["synchronizeLogicalDecoding"], true);
+        let params = &prod["spec"]["postgresql"]["parameters"];
+        assert_eq!(params["max_slot_wal_keep_size"], "1GB");
+        assert_eq!(params["sync_replication_slots"], "on");
+        assert_eq!(params["hot_standby_feedback"], "on");
+        assert_eq!(params["logical_decoding_work_mem"], "16MB");
     }
 
     #[test]

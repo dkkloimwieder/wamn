@@ -51,6 +51,16 @@ spec:
     # connects NoTls). Prepended to CNPG's default hostssl rules.
     pg_hba:
       - host all all all scram-sha-256
+    parameters:
+      # CDC-capture WAL bound (§11 sharp edge, docs/event-plane-jetstream.md;
+      # wamn-l5i9.32). The reader MVP (l5i9.10) runs CDC on this shared pool, and
+      # the reader never GCs a slot it did not create — without a bound a
+      # forgotten/invalidated logical slot pins WAL until the volume fills.
+      # SINGLE-instance pool: only the WAL bound is needed (no standby to sync a
+      # slot to, so none of the failover-slot-sync GUCs apply). Matches what
+      # crates/wamn-provision render_org_cluster_set emits for a 1-instance
+      # cluster; wal_level=logical is already the CNPG default.
+      max_slot_wal_keep_size: "1GB"
   bootstrap:
     initdb:
       database: app

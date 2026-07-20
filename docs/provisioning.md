@@ -441,11 +441,17 @@ Re-pointing an existing publication at a different schema is a manual
 `ALTER PUBLICATION … SET TABLES IN SCHEMA`.
 
 Cluster-level **preconditions** are provision-org / env-policy concerns, not
-this overlay: `wal_level=logical` (the CNPG default), and — for slot continuity
-across switchover on HA clusters — `replicationSlots.highAvailability.
-synchronizeLogicalDecoding` + `sync_replication_slots` / `hot_standby_feedback`
-+ a `max_slot_wal_keep_size` bound (the §11 sharp edge: a slot pins WAL until
-dropped). Tracked as a sibling bead under the event-plane epic.
+this overlay, and are now RENDERED by `provision-org` (wamn-l5i9.32,
+crates/wamn-provision `render_org_cluster_set`): `wal_level=logical` is the CNPG
+default; every rendered cluster carries the `max_slot_wal_keep_size` WAL bound
+(the §11 sharp edge — a forgotten slot pins WAL until dropped, so the bound is
+**always-on**: no cluster is renderable without it); and multi-instance clusters
+(`instances >= 2`) additionally get the slot-continuity-across-switchover config
+`replicationSlots.highAvailability.synchronizeLogicalDecoding` +
+`sync_replication_slots` / `hot_standby_feedback` / `logical_decoding_work_mem`,
+keyed off the instance count the renderer already knows (no env-policy column).
+The single-instance trials pool (`wamn-pg`, deploy/infra/cnpg-cluster.yaml) needs
+only the WAL bound — no standby to sync a slot to.
 
 Teardown (gate/de-provision): drop the **slot first** (releases the pinned
 WAL), then publication/database/role, then delete the registration (or the org
