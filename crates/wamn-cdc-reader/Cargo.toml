@@ -13,7 +13,7 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 serde_json = "1"
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-async-nats = { version = "0.47", default-features = false }
+async-nats = { version = "0.47", default-features = false, features = ["jetstream"] }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures-util = "0.3"
