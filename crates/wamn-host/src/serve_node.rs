@@ -71,8 +71,8 @@ use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestC
 
 use wamn_node_invoke::{
     ConfigCache, NodeInvokeRequest, NodeInvokeResponse, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL,
-    SignatureError, WireEmission, WireErrorDetail, WireNodeError, WirePayload, WireRateLimit,
-    verify_envelope,
+    SIGNING_KEY_CREDENTIAL_PREVIOUS, SignatureError, WireEmission, WireErrorDetail, WireNodeError,
+    WirePayload, WireRateLimit, verify_envelope,
 };
 
 use crate::egress_guard::screen_tenant_compiled;
@@ -244,6 +244,10 @@ pub struct ServeNode {
     /// the vault's reserved [`SIGNING_KEY_CREDENTIAL`] entry. `None` = no key
     /// configured (legacy v0 network-trust: POSTs are admitted unsigned).
     signing_key: Option<Vec<u8>>,
+    /// wamn-fqg.30: the PREVIOUS per-project-env key (the reserved
+    /// [`SIGNING_KEY_CREDENTIAL_PREVIOUS`] vault entry), accepted ALONGSIDE
+    /// `signing_key` during a rotation window. `None` = no rotation in flight.
+    previous_signing_key: Option<Vec<u8>>,
     /// wamn-fqg.31: FAIL-CLOSED posture. When `true` and no `signing_key` is
     /// configured, every invocation is REFUSED (`Unconfigured`) rather than
     /// admitted under network trust. Inert when a key IS configured.
@@ -288,6 +292,19 @@ impl ServeNode {
         let signing_key = vault
             .lookup(project, SIGNING_KEY_CREDENTIAL)
             .map(String::into_bytes);
+        // wamn-fqg.30: the optional PREVIOUS key for a rotation window (resolved
+        // from the same vault, the second reserved name). Accepted alongside the
+        // current key; never installed into a node grant.
+        let previous_signing_key = vault
+            .lookup(project, SIGNING_KEY_CREDENTIAL_PREVIOUS)
+            .map(String::into_bytes);
+        if previous_signing_key.is_some() {
+            tracing::info!(
+                project,
+                key = SIGNING_KEY_CREDENTIAL_PREVIOUS,
+                "serve-node: a PREVIOUS signing key is also accepted (wamn-fqg.30 rotation window)"
+            );
+        }
         match (&signing_key, require_signing_key) {
             (Some(_), _) => tracing::info!(
                 project,
@@ -327,6 +344,7 @@ impl ServeNode {
             vault,
             node_id: node_id.to_string(),
             signing_key,
+            previous_signing_key,
             require_signing_key,
             grant_installs: AtomicU64::new(0),
         })
@@ -354,7 +372,17 @@ impl ServeNode {
             };
         };
         let sig = signature.ok_or(SignatureError::Missing)?;
-        verify_envelope(key, body, sig)
+        // wamn-fqg.30: accept the CURRENT key, else the PREVIOUS key if one is
+        // configured (a rotation window). The canonical constant-time verify
+        // lives in wamn-node-invoke; we call it once per key. Garbage
+        // (non-hex / wrong) still fails both and is refused.
+        match verify_envelope(key, body, sig) {
+            Ok(()) => Ok(()),
+            Err(e) => match self.previous_signing_key.as_deref() {
+                Some(prev) => verify_envelope(prev, body, sig),
+                None => Err(e),
+            },
+        }
     }
 
     /// How many per-invocation grants have been INSTALLED (cjv.3) — the
@@ -414,7 +442,12 @@ impl ServeNode {
         let grant = req
             .grant
             .iter()
-            .filter(|n| n.as_str() != SIGNING_KEY_CREDENTIAL)
+            .filter(|n| {
+                // wamn-fqg.30: BOTH reserved signing-key names are runner secrets,
+                // never node grants.
+                n.as_str() != SIGNING_KEY_CREDENTIAL
+                    && n.as_str() != SIGNING_KEY_CREDENTIAL_PREVIOUS
+            })
             .cloned();
         self.vault.set_granted_credentials(&self.node_id, grant);
         self.grant_installs.fetch_add(1, Ordering::Relaxed);

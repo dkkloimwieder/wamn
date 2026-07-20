@@ -2309,6 +2309,14 @@ SAME `nodeinvoke` gate (extra checks on top of the fqg.22 authn set):
   require host refuses both an unsigned AND a signed POST) + `NETWORK-TRUST` (the
   default keyless host admits an unsigned POST) — both via `verify_signature`.
 
+* **fqg.30 — dual-key rotation window.** A second reserved vault name
+  `wamn:node-invoke-signing-key-previous` holds the OLD key; the serve-node
+  accepts a signature under the current OR the previous key, so an env's key
+  rotates with no serve-node restart (the flowrunner always signs with the
+  current key). A second NAME, not a delimited value, keeps the
+  `{project:{name:secret}}` shape. Gate: `DUAL-KEY` — a previous-key signature
+  verifies, the current key still verifies, garbage is still `bad-signature`.
+
 The live gate is the SAME `nodeinvoke` command as [NODE-INVOKE / wamn-bd5];
 rebuild the flowrunner guest + wamn-gates first (the fqg.32 flowrunner change
 below re-touches the guest). Mutation harness: scratchpad `mutate_lane_a.py`

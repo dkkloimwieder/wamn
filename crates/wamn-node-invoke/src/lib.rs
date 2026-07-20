@@ -195,6 +195,19 @@ pub const SIGNATURE_HEADER: &str = "x-wamn-signature";
 /// `wamn:node/credentials`.
 pub const SIGNING_KEY_CREDENTIAL: &str = "wamn:node-invoke-signing-key";
 
+/// wamn-fqg.30: the reserved vault name for the PREVIOUS per-project-env signing
+/// key during a rotation window. A SECOND name — not a delimited two-key value —
+/// keeps the existing `{project: {name: secret}}` vault shape intact: one name,
+/// one opaque secret, no in-band delimiter that could collide with key bytes.
+/// The serve-node accepts a signature under EITHER the current
+/// [`SIGNING_KEY_CREDENTIAL`] or this previous key, so an env's key rotates
+/// (bank the new key as current, move the old to `-previous`) with no serve-node
+/// restart and no flowrunner change — the flowrunner always signs with the
+/// CURRENT key. Drop this entry once every runner has picked up the new current
+/// key. Like the current key it is reserved: the serve-node never installs it
+/// into a node grant.
+pub const SIGNING_KEY_CREDENTIAL_PREVIOUS: &str = "wamn:node-invoke-signing-key-previous";
+
 type HmacSha256 = Hmac<Sha256>;
 
 /// Compute the canonical runner→node signature: HMAC-SHA256 over the EXACT
@@ -547,6 +560,28 @@ mod tests {
         assert_eq!(SignatureError::Mismatch.reason(), "bad-signature");
         // wamn-fqg.31: the fail-closed refusal reason.
         assert_eq!(SignatureError::Unconfigured.reason(), "signing-key-required");
+    }
+
+    /// wamn-fqg.30: the reserved names are distinct stable strings — a body
+    /// signed under the "previous" key never verifies under the "current" key
+    /// (they are independent secrets; the serve-node accepts EITHER, but the
+    /// pure verify never conflates them). Pins both reserved names.
+    #[test]
+    fn previous_signing_key_name_is_distinct_and_independent() {
+        assert_eq!(SIGNING_KEY_CREDENTIAL, "wamn:node-invoke-signing-key");
+        assert_eq!(
+            SIGNING_KEY_CREDENTIAL_PREVIOUS,
+            "wamn:node-invoke-signing-key-previous"
+        );
+        assert_ne!(SIGNING_KEY_CREDENTIAL, SIGNING_KEY_CREDENTIAL_PREVIOUS);
+        let body = sample_request().to_json();
+        let sig_prev = sign_envelope(b"previous-key", body.as_bytes());
+        // Signed under "previous": verifies under that key, NOT under "current".
+        assert!(verify_envelope(b"previous-key", body.as_bytes(), &sig_prev).is_ok());
+        assert_eq!(
+            verify_envelope(b"current-key", body.as_bytes(), &sig_prev),
+            Err(SignatureError::Mismatch)
+        );
     }
 
     #[test]

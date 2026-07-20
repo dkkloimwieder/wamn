@@ -31,8 +31,8 @@ use clap::Args;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_postgres::{Client, NoTls};
 use wamn_node_invoke::{
-    NodeInvokeRequest, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL, SignatureError, WirePayload,
-    WireRunContext, granted_credentials, sign_envelope,
+    NodeInvokeRequest, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL, SIGNING_KEY_CREDENTIAL_PREVIOUS,
+    SignatureError, WirePayload, WireRunContext, granted_credentials, sign_envelope,
 };
 use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
@@ -58,6 +58,8 @@ const SIBLING_SECRET: &str = "sibling-secret-do-not-leak";
 /// runner-credentials Secret in production. A wrong key the negatives forge with.
 const SIGNING_KEY: &str = "fqg22-per-project-env-hmac-0a1b2c3d4e5f";
 const WRONG_KEY: &str = "attacker-guessed-the-wrong-key";
+/// The PREVIOUS per-project-env key for the wamn-fqg.30 rotation-window assert.
+const PREV_KEY: &str = "fqg30-previous-rotation-key-9f8e7d6c";
 
 #[derive(Debug, Args)]
 pub struct NodeInvokeArgs {
@@ -649,6 +651,54 @@ async fn gate_body(
         &mut ok,
         "NETWORK-TRUST (fqg.31): the DEFAULT keyless host admits an unsigned invocation (backward-compatible)",
         keyless_default.verify_signature(body.as_bytes(), None).is_ok(),
+    );
+
+    // -------------------------------------------------------------------------
+    // wamn-fqg.30 — dual-key acceptance (rotation window). A serve-node holding
+    // the CURRENT + PREVIOUS reserved keys accepts an envelope signed with EITHER
+    // (the flowrunner always signs with the current key; the previous key covers
+    // the window while runners pick up the new one). Garbage still 401s. A mutant
+    // that only ever checks the current key rejects the previous-key signature →
+    // the first check flips.
+    // -------------------------------------------------------------------------
+    let dual_vault = Arc::new(WamnCredentials::from_projects(
+        std::collections::HashMap::from([(
+            PROJECT.to_string(),
+            std::collections::HashMap::from([
+                (SIGNING_KEY_CREDENTIAL.to_string(), SIGNING_KEY.to_string()),
+                (
+                    SIGNING_KEY_CREDENTIAL_PREVIOUS.to_string(),
+                    PREV_KEY.to_string(),
+                ),
+            ]),
+        )]),
+    ));
+    let dual = ServeNode::new(
+        engine,
+        node_wasm,
+        dual_vault,
+        serve_node::DEFAULT_NODE_ID,
+        PROJECT,
+        Arc::from([]),
+        false,
+    )
+    .await
+    .context("build dual-key serve-node")?;
+    let prev_sig = sign_envelope(PREV_KEY.as_bytes(), body.as_bytes());
+    check(
+        &mut ok,
+        "DUAL-KEY (fqg.30): an envelope signed with the PREVIOUS key verifies during the rotation window",
+        dual.verify_signature(body.as_bytes(), Some(&prev_sig)).is_ok(),
+    );
+    check(
+        &mut ok,
+        "DUAL-KEY (fqg.30): the CURRENT key still verifies alongside the previous",
+        dual.verify_signature(body.as_bytes(), Some(&good_sig)).is_ok(),
+    );
+    check(
+        &mut ok,
+        "DUAL-KEY (fqg.30): a signature under NEITHER key is still refused (bad-signature)",
+        dual.verify_signature(body.as_bytes(), Some(&wrong_sig)) == Err(SignatureError::Mismatch),
     );
 
     // -------------------------------------------------------------------------
