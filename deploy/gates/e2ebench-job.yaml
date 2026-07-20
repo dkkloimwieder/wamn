@@ -52,6 +52,18 @@ spec:
         - name: e2ebench
           image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
+          env:
+            # Provenance truth for the ceilings record (docs/ceilings.md § C-E2E):
+            # the campaign of record runs here, on the release image, against the
+            # fixture postgres + the R3 evt-nats data plane.
+            - name: WAMN_E2E_ENV
+              value: in-cluster-kind
+            - name: WAMN_E2E_GUEST_PROFILE
+              value: release-guest-wasm
+            - name: WAMN_E2E_INFRA
+              value: "pg=fixture-pod-postgres:18(fsync=off,synchronous_commit=off,wal_level=logical) nats=evt-nats(3-node,R3-cluster;bench-stream-R1)"
+            - name: WAMN_E2E_MACHINE
+              value: kind-wamn/postgres-colocated
           args:
             - "--log-level"
             - "error"

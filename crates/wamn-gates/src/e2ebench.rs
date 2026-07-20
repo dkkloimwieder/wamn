@@ -987,15 +987,37 @@ pub async fn run(args: E2eBenchArgs) -> anyhow::Result<()> {
     };
 
     let machine = std::env::var("WAMN_E2E_MACHINE").unwrap_or_else(|_| "local-throwaway".into());
-    let guest_profile = if args.component.to_string_lossy().contains("/release/") {
-        "release-guest-wasm"
+    let env_label = std::env::var("WAMN_E2E_ENV").unwrap_or_else(|_| "local-throwaway".into());
+    let host_profile = if cfg!(debug_assertions) {
+        "debug-host-binaries"
     } else {
-        "debug-guest-wasm"
+        "release-host-binaries"
     };
+    let guest_profile = match std::env::var("WAMN_E2E_GUEST_PROFILE") {
+        Ok(p) => p,
+        Err(_) => {
+            let path = args.component.to_string_lossy().into_owned();
+            if path.contains("/release/") {
+                "release-guest-wasm".into()
+            } else if path.contains("/debug/") {
+                "debug-guest-wasm".into()
+            } else {
+                "unspecified-guest-wasm".into()
+            }
+        }
+    };
+    let standing = if env_label == "local-throwaway" {
+        "METHODOLOGY VALIDATION (shape, not ceilings)"
+    } else {
+        "CAMPAIGN OF RECORD"
+    };
+    let infra = std::env::var("WAMN_E2E_INFRA").unwrap_or_else(|_| {
+        "pg=postgres:18(fsync=off,synchronous_commit=off,wal_level=logical) nats=nats:2(1-replica)"
+            .into()
+    });
     let provenance = format!(
-        "# provenance: env=local-throwaway build=debug-host-binaries {guest_profile} \
-         pg=postgres:18(fsync=off,synchronous_commit=off,wal_level=logical) nats=nats:2(1-replica) \
-         disp_poll_ms={} fetch_ms={} machine={} — METHODOLOGY VALIDATION (shape, not ceilings)",
+        "# provenance: env={env_label} build={host_profile} {guest_profile} {infra} \
+         disp_poll_ms={} fetch_ms={} machine={} — {standing}",
         args.disp_poll_ms, args.fetch_ms, machine
     );
     println!("{provenance}");
@@ -1224,6 +1246,15 @@ pub async fn run(args: E2eBenchArgs) -> anyhow::Result<()> {
     if run_burst {
         println!("\n## phase C: burst ({}× spike)", args.burst_mult);
         add_new_regs(&db, 1).await?;
+        // Same pre-phase cleanup the other phases carry: setup-warmup runs must
+        // not leak into the completeness count.
+        db.batch_execute(&format!(
+            "DELETE FROM wamn_run.run_queue WHERE tenant_id = '{TENANT}'; \
+             DELETE FROM wamn_run.runs WHERE tenant_id = '{TENANT}'; \
+             DELETE FROM wamn_run.outbox WHERE tenant_id = '{TENANT}';"
+        ))
+        .await
+        .context("burst pre-phase cleanup")?;
         let old_tbl = table_name("old", 1);
         let new_tbl = table_name("new", 1);
         let new_durable = durable_name(&reg_id(1, 0));
@@ -1316,11 +1347,26 @@ pub async fn run(args: E2eBenchArgs) -> anyhow::Result<()> {
             "  new-cdc:    peak pending {new_peak} msgs, drained {} after spike end",
             new_drain.map_or("(not within window)".into(), |d| format!("{}ms", d))
         );
-        check("burst: old-path backlog built then drained", old_peak > 0);
+        // Completeness is the gate: every burst event minted exactly one run on
+        // each path (1 registration / 1 flow in this phase). The OBSERVED
+        // peak/drain stay reported measurements only — a zero observed new-path
+        // peak is a valid fast-drain result: consumer pending can rise and fall
+        // entirely between sampler ticks on a release build.
+        let old_runs = enqueued_rows(&db, Path::Old).await?.len() as u64;
+        let new_runs = enqueued_rows(&db, Path::New).await?.len() as u64;
         check(
-            "burst: new-path consumer pending built then drained",
-            new_peak > 0,
+            &format!("burst: old path minted one run per event ({old_runs}/{sent})"),
+            old_runs == sent,
         );
+        check(
+            &format!("burst: new path minted one run per event ({new_runs}/{sent})"),
+            new_runs == sent,
+        );
+        if new_peak == 0 {
+            println!(
+                "  note: new-path pending never sampled >0 — the drain outpaced the sampler cadence"
+            );
+        }
 
         // App-path latency per 1s window, per path.
         let mut app_csv = String::from("window_s,path,app_p50_ms,app_p99_ms,writes\n");
