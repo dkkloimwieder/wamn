@@ -662,6 +662,7 @@ dependencies = [
  "serde_json",
  "wamn-catalog",
  "wamn-ddl",
+ "wamn-event-reg",
 ]
 
 [[package]]

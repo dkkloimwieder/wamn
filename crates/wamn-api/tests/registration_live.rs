@@ -13,9 +13,12 @@
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, NoTls};
 
+use serde_json::json;
+
 use wamn_api::SqlValue;
 use wamn_api::registration;
 use wamn_api::router::Compiled;
+use wamn_api::{attach_warning, pending_replica_identity_warning};
 use wamn_catalog::Catalog;
 use wamn_event_reg::{EventRegistration, Op, SCHEMA_VERSION, validate};
 
@@ -200,8 +203,64 @@ async fn live_registration_crud_and_rls_isolation() {
     );
     assert_eq!(run(&app, &registration::list("shop")).await.len(), 0);
 
-    // teardown — leave nothing behind.
-    su.batch_execute("DROP SCHEMA IF EXISTS catalog CASCADE")
+    // ---- EVT-RI-ORCH (wamn-l5i9.66): the pending-reconcile response warning --
+    // A registration that needs the entity's OLD image (here a `delete`
+    // subscription) is written under `wamn_app`, which cannot ALTER — so while
+    // the entity's table is at REPLICA IDENTITY DEFAULT the write opens an
+    // old-image gap the periodic CronJob (wamn-l5i9.65) will close. Prove the
+    // warning surface against the LIVE `pg_class.relreplident`, both directions.
+    su.batch_execute("CREATE TABLE IF NOT EXISTS orders (id uuid PRIMARY KEY)")
         .await
-        .expect("teardown catalog schema");
+        .expect("provision the entity's data table at DEFAULT");
+    let reg_del = EventRegistration {
+        schema_version: SCHEMA_VERSION.to_string(),
+        registration_id: "on-order-deleted".to_string(),
+        catalog_id: "shop".to_string(),
+        flow_id: "purge".to_string(),
+        entity: "sales_orders".into(),
+        ops: vec![Op::Delete],
+        condition: None,
+        partition_key: None,
+    };
+    validate(&reg_del, &cat).expect("delete registration validates");
+
+    // Table at DEFAULT → gap open → warning PRESENT, and the response envelope
+    // carries an additive `warnings` array naming the entity.
+    assert!(!relreplident_is_full(&su, "orders").await, "table starts at DEFAULT");
+    let w = pending_replica_identity_warning(&reg_del, relreplident_is_full(&su, "orders").await);
+    assert!(w.is_some(), "delete reg on a DEFAULT table → pending-reconcile warning");
+    let resp = attach_warning(json!({ "registration_id": "on-order-deleted" }), w);
+    let warnings = resp["warnings"].as_array().expect("response carries warnings");
+    assert_eq!(warnings[0]["code"], "pending-replica-identity-reconcile");
+    assert_eq!(warnings[0]["entity"], "sales_orders");
+
+    // Flip the entity's table to FULL (as the CronJob/verb would) → gap closed →
+    // warning ABSENT, and the response has no `warnings` field.
+    su.batch_execute("ALTER TABLE orders REPLICA IDENTITY FULL")
+        .await
+        .expect("reconcile the entity's table to FULL");
+    assert!(relreplident_is_full(&su, "orders").await, "table is now FULL");
+    let w2 = pending_replica_identity_warning(&reg_del, relreplident_is_full(&su, "orders").await);
+    assert!(w2.is_none(), "table at FULL → no gap → no warning");
+    let resp2 = attach_warning(json!({ "registration_id": "on-order-deleted" }), w2);
+    assert!(resp2.get("warnings").is_none(), "no warning → no warnings field");
+
+    // teardown — leave nothing behind.
+    su.batch_execute("DROP TABLE IF EXISTS orders; DROP SCHEMA IF EXISTS catalog CASCADE")
+        .await
+        .expect("teardown catalog schema + entity table");
+}
+
+/// The entity table's live `pg_class.relreplident == 'f'` in `public` — the
+/// single live input the pending-reconcile warning folds (the guest reads this;
+/// `wamn_app` may READ `pg_class` even though it cannot ALTER).
+async fn relreplident_is_full(su: &Client, table: &str) -> bool {
+    su.query_one(
+        "SELECT relreplident = 'f' FROM pg_class \
+         WHERE relname = $1 AND relnamespace = 'public'::regnamespace",
+        &[&table],
+    )
+    .await
+    .expect("read relreplident")
+    .get(0)
 }

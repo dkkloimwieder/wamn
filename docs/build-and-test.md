@@ -878,21 +878,35 @@ pinned identifiers, `$n` values, `tenant_id` server-side). NO materializer, NO
 reader change, NO UI (parked). The condition/partition-key are stored as JMESPath
 strings, validated for SYNTAX at write time (the materializer owns evaluation); a
 condition referencing `old` ("changed-to") is expressible but its old image needs
-REPLICA IDENTITY FULL (l5i9.31) — this surface never flips replica identity.
+REPLICA IDENTITY FULL (l5i9.31) — this surface never flips replica identity. It
+does DETECT the gap (EVT-RI-ORCH, wamn-l5i9.66): a create/update that needs the
+old image on an entity still at DEFAULT returns an additive
+`pending-replica-identity-reconcile` warning (the pure
+`wamn_api::pending_replica_identity_warning` + `attach_warning`, keyed on the
+SAME `EventRegistration::requires_replica_identity_full` predicate the l5i9.31
+reconciler folds, so it can never diverge), so a caller sees the gap the periodic
+CronJob (wamn-l5i9.65) will close. Detect-only — still no ALTER under `wamn_app`.
+Note: the api-gateway does not yet ROUTE registration writes over HTTP (the
+l5i9.16 CRUD is builders-only); the guest links this warning surface and builds
+clean for wasm32, and attaches the warning when that route lands (deferred).
 
 ```bash
 cargo test -p wamn-event-reg              # validation rules (entity-by-id, ops non-empty/dedup, JMESPath syntax, schema-version, round-trip)
-cargo test -p wamn-api                     # +registration builder shapes + the storage-schema drift guard
+cargo test -p wamn-api                     # +registration builder shapes + storage-schema drift guard + the l5i9.66 pending-reconcile warning (pure: detector direction + additive-envelope PRESENT/ABSENT)
 cargo clippy -p wamn-event-reg -p wamn-api --all-targets
 # Local live-apply gate (throwaway PG): applies the REAL catalog-schema.sql, then
 # drives create/list/get/update/delete through the wamn-api builders AS wamn_app
-# under a tenant claim — round-trips the document + proves RLS tenant isolation.
+# under a tenant claim — round-trips the document + proves RLS tenant isolation;
+# then (l5i9.66 phase) provisions the entity table, flips it 'd'->'f' live, and
+# asserts the warning is PRESENT on the DEFAULT table / ABSENT once FULL.
 # Hermetic (drops+recreates the catalog schema, teardown leaves nothing):
 docker run -d --name evtreg-pg -p 55433:5432 -e POSTGRES_PASSWORD=postgres postgres:18
 WAMN_API_PG_URL=postgres://postgres:postgres@127.0.0.1:55433/postgres \
   cargo test -p wamn-api --test registration_live
 docker rm -f evtreg-pg
-# wamn-api is an api-gateway guest dep; confirm the wasm build (dev-deps excluded):
+# wamn-api is an api-gateway guest dep; confirm the wasm build. wamn-event-reg is
+# now a RUNTIME dep of wamn-api (the l5i9.66 warning keys on it) — pure, so it and
+# jmespath/schemars compile for wasm32 (the migration engine stays out):
 (cd components && cargo build -p api-gateway --target wasm32-wasip2)
 ```
 

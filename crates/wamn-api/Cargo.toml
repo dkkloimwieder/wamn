@@ -11,13 +11,16 @@ license.workspace = true
 # identifier quoting (the single source of truth for quoting — do not duplicate).
 wamn-catalog = { path = "../wamn-catalog" }
 wamn-ddl = { path = "../wamn-ddl" }
+# EVT-RI-ORCH (wamn-l5i9.66): the registration model + the SINGLE
+# requires_replica_identity_full predicate the pending-reconcile warning keys on
+# (the same detector wamn-migrate's reconciler and the materializer's guard
+# fold), so the warning can never diverge. Pure — builds for wasm32-wasip2 (the
+# guest links it), so the whole migration engine (wamn-schema → wamn-registry)
+# stays out of the component.
+wamn-event-reg = { path = "../wamn-event-reg" }
 serde_json = "1"
 
 [dev-dependencies]
-# The event-registration model (EVT-REG) is validated + serialized here to drive
-# the live CRUD gate; it is NOT a runtime dep of the gateway (the guest links
-# only the [dependencies] above), so the api-gateway wasm build stays lean.
-wamn-event-reg = { path = "../wamn-event-reg" }
 # Live-apply gate only (registration_live.rs): a throwaway Postgres.
 tokio = { workspace = true }
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }

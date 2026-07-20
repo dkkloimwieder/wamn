@@ -52,11 +52,13 @@
 
 pub mod error;
 pub mod registration;
+pub mod replica_identity;
 pub mod router;
 pub mod shape;
 pub mod value;
 
 pub use error::ApiError;
+pub use replica_identity::{Warning, attach_warning, pending_replica_identity_warning};
 pub use router::{Compiled, Expand, ExpandDir, Method, Plan, PlanKind, Router};
 pub use shape::{attach_expansion, shape_row, shape_rows};
 pub use value::SqlValue;
@@ -64,3 +66,7 @@ pub use value::SqlValue;
 // Re-exported so a consumer (the serving component) names the catalog through
 // this one crate.
 pub use wamn_catalog::Catalog;
+// Re-exported so the serving component names the registration type the
+// replica-identity warning surface (EVT-RI-ORCH) folds without a direct
+// dependency on wamn-event-reg.
+pub use wamn_event_reg::EventRegistration;
