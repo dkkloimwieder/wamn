@@ -744,6 +744,36 @@ fn unknown_node_type_is_terminal() {
     assert_eq!(terminal_code(&e), "unknown-node-type");
 }
 
+/// C2-3 (wamn-bd5): the PUBLIC node-resolution surface is descriptor-only — a
+/// caller can learn that a type exists and what it may touch, but can NOT obtain
+/// a runnable `&dyn Node` and skip the capability gate. This test pins that
+/// surface: it references `describe` / `NodeDescriptor` / `is_standard` (so
+/// reverting the tightening — re-exposing `pub fn node` and dropping the
+/// descriptor surface — fails to COMPILE here) and asserts the descriptor
+/// carries the same policy row `required_capabilities` reports. The ONLY run
+/// path out of the crate stays `dispatch`, which is gate-tested below.
+#[test]
+fn public_resolution_surface_is_descriptor_only() {
+    use wamn_nodes::{NodeDescriptor, describe, is_standard};
+
+    // Pin the descriptor-returning signature (compile-time API-surface guard).
+    let resolve: fn(&str) -> Option<NodeDescriptor> = describe;
+
+    let d = resolve("http-request").expect("http-request is a standard node");
+    assert_eq!(d.node_type, "http-request");
+    assert_eq!(d.capabilities, &[Capability::HttpEgress][..]);
+    // The descriptor's row and the capability query agree, by construction.
+    assert_eq!(Some(d.capabilities), required_capabilities("http-request"));
+
+    // The existence check the flow-runner uses (the non-running replacement for
+    // the old `node(t).is_some()` leak) covers exactly the shipped types.
+    for t in wamn_nodes::NODE_TYPES {
+        assert!(is_standard(t), "{t} is a standard node");
+    }
+    assert!(!is_standard("custom"), "a custom node is not standard-library");
+    assert!(describe("delay").is_none(), "delay is runner-intrinsic");
+}
+
 /// The dispatch-time capability policy table, pinned row by row.
 #[test]
 fn capability_table_rows_are_exact() {

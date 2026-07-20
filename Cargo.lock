@@ -4301,6 +4301,7 @@ dependencies = [
  "clap",
  "deadpool-postgres",
  "futures-util",
+ "hyper",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -4309,8 +4310,11 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "wamn-event-wire",
+ "wamn-node-invoke",
  "wamn-registry",
  "wash-runtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -4344,6 +4348,14 @@ dependencies = [
  "serde_json",
  "wamn-node-sdk",
  "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "wamn-node-invoke"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

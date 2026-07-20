@@ -67,7 +67,13 @@ use wamn_run_queue::{
     record_success_and_renew_sql, release_partition_sql, renew_partition_sql,
 };
 use wamn_runner::{
-    Dispatch, ERROR_PORT, NodeError, NodeOutcome, Plan, RetryPolicy, RunStatus, Step,
+    Dispatch, ERROR_PORT, ErrorDetail, NodeError, NodeOutcome, Plan, RateLimitDetail, RetryPolicy,
+    RunStatus, Step,
+};
+
+use wamn_node_invoke::{
+    NodeInvokeRequest, NodeInvokeResponse, WireErrorDetail, WireNodeError, WirePayload,
+    WireRunContext, granted_credentials,
 };
 
 use wamn::postgres::client::{self};
@@ -75,7 +81,10 @@ use wamn::postgres::types::{PgError, SqlValue};
 
 use wasi::clocks::wall_clock;
 use wasi::http::outgoing_handler;
-use wasi::http::types::{Fields, Method, OutgoingRequest, Scheme};
+use wasi::http::types::{
+    ErrorCode, Fields, IncomingResponse, Method, OutgoingBody, OutgoingRequest, Scheme,
+};
+use wasi::io::streams::StreamError;
 
 struct Component;
 export!(Component);
@@ -390,6 +399,197 @@ fn http_get(url: &str) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// 5.6 / wamn-bd5: custom-node invocation (the in-cluster HTTP hop)
+// ---------------------------------------------------------------------------
+
+/// Dispatch a `custom` node: the v0 runner->node HTTP hop. Reads the node's
+/// Service endpoint from the node step's config (registry-recorded, no
+/// EndpointSlice controller in v0), derives this step's credential grant, POSTs
+/// the invocation envelope, and folds the reply into a [`NodeOutcome`]. A
+/// transport / envelope failure becomes a classified [`NodeError`] so the engine
+/// decides retry-vs-error-vs-fail mechanically, exactly as for a standard node.
+fn custom_node_dispatch(d: &Dispatch, run_id: &str, flow: &Flow) -> Result<NodeAction, String> {
+    // Endpoint discovery (v0): the node step's config carries the in-cluster
+    // Service URL. A missing endpoint is a flow authoring error — terminal,
+    // routed like any other node failure (never a runner panic).
+    let Some(endpoint) = d.config.get("endpoint").and_then(Value::as_str) else {
+        return Ok(NodeAction::Emit(NodeOutcome::Error(NodeError::Terminal(
+            ErrorDetail::coded(
+                "custom-node-misconfigured",
+                "custom node step is missing config.endpoint (the serve-node Service URL)",
+            ),
+        ))));
+    };
+    let url = if endpoint.ends_with("/run") {
+        endpoint.to_string()
+    } else {
+        format!("{}/run", endpoint.trim_end_matches('/'))
+    };
+
+    let req = NodeInvokeRequest {
+        ctx: WireRunContext {
+            run_id: run_id.to_string(),
+            flow_id: flow.flow_id.clone(),
+            flow_version: flow.version,
+            node_id: d.node.clone(),
+            attempt: d.attempt,
+            idempotency_key: d.idempotency_key.clone(),
+            deadline_ms: d.deadline_ms,
+            // 9.2: a host-invoked runner has no inbound request to read a
+            // traceparent from; outbound calls are host-stamped. Stays None
+            // until the queue/dispatch path carries a per-run trace context.
+            traceparent: None,
+            tracestate: None,
+            config: d.config.to_string(),
+        },
+        input: WirePayload::Inline(d.payload.to_string()),
+        // cjv.3: EXACTLY this node step's declared credential(s) — the shared
+        // pure helper, so the grant cannot silently widen to the whole project.
+        grant: granted_credentials(d.credential.as_deref()),
+    };
+
+    let body = match http_post_run(&url, &req.to_json()) {
+        Ok(b) => b,
+        Err(e) => return Ok(NodeAction::Emit(NodeOutcome::Error(e))),
+    };
+    let resp = NodeInvokeResponse::from_json(&body)
+        .map_err(|e| format!("custom node returned an undecodable response: {e}"))?;
+    let outcome = match resp {
+        NodeInvokeResponse::Ok(em) => {
+            let payload = match em.payload.inline() {
+                Some(s) => serde_json::from_str(s)
+                    .map_err(|e| format!("custom node output payload is not JSON: {e}"))?,
+                None => Value::Null,
+            };
+            match em.port {
+                Some(p) => NodeOutcome::ok_on(payload, p),
+                None => NodeOutcome::ok(payload),
+            }
+        }
+        NodeInvokeResponse::Err(we) => NodeOutcome::Error(wire_error_to_runner(we)),
+    };
+    Ok(NodeAction::Emit(outcome))
+}
+
+/// The frozen `node-error` taxonomy off the wire -> the engine's error type,
+/// variant for variant (the engine routes/ retries/fails off the variant).
+fn wire_error_to_runner(e: WireNodeError) -> NodeError {
+    match e {
+        WireNodeError::Retryable(d) => NodeError::Retryable(wire_detail(d)),
+        WireNodeError::RateLimited(r) => NodeError::RateLimited(RateLimitDetail {
+            detail: wire_detail(r.detail),
+            retry_after_ms: r.retry_after_ms,
+            target_host: r.target_host,
+        }),
+        WireNodeError::Terminal(d) => NodeError::Terminal(wire_detail(d)),
+        WireNodeError::InvalidInput(d) => NodeError::InvalidInput(wire_detail(d)),
+        WireNodeError::Cancelled => NodeError::Cancelled,
+    }
+}
+
+fn wire_detail(d: WireErrorDetail) -> ErrorDetail {
+    ErrorDetail {
+        message: d.message,
+        code: d.code,
+        data: d.data.and_then(|s| serde_json::from_str(&s).ok()),
+    }
+}
+
+/// A retryable transport failure of the runner->node hop.
+fn node_transport(msg: impl Into<String>) -> NodeError {
+    NodeError::Retryable(ErrorDetail::coded("NODE_TRANSPORT", msg))
+}
+
+/// A `wasi:http` refusal on the runner->node hop -> a classified node error: a
+/// host egress DENIAL is terminal (the node Service host is not allowlisted — a
+/// misconfiguration, not a transient), anything else is a retryable transport
+/// failure.
+fn hop_egress_error(code: ErrorCode) -> NodeError {
+    match code {
+        ErrorCode::HttpRequestDenied => NodeError::Terminal(ErrorDetail::coded(
+            "egress-denied",
+            "runner->node hop denied by the egress allowlist (node Service host not allowed)",
+        )),
+        other => node_transport(format!("runner->node hop failed: {other:?}")),
+    }
+}
+
+/// POST `body` to the custom node's `serve-node` endpoint and return the
+/// response body. Egress leaves the flow ONLY here (wasi:http), so the host
+/// egress guard + the flow's `allowed-hosts` govern the hop.
+fn http_post_run(url: &str, body: &str) -> Result<String, NodeError> {
+    let Some((scheme, authority, path)) = parse_http_url(url) else {
+        return Err(NodeError::Terminal(ErrorDetail::coded(
+            "bad-endpoint",
+            format!("unparseable custom-node endpoint {url:?}"),
+        )));
+    };
+    let req = OutgoingRequest::new(Fields::new());
+    if req.set_method(&Method::Post).is_err()
+        || req.set_scheme(Some(&scheme)).is_err()
+        || req.set_authority(Some(&authority)).is_err()
+        || req.set_path_with_query(Some(&path)).is_err()
+    {
+        return Err(node_transport("runner->node request fields rejected"));
+    }
+    let out_body = req
+        .body()
+        .map_err(|_| node_transport("runner->node request body unavailable"))?;
+    {
+        let stream = out_body
+            .write()
+            .map_err(|_| node_transport("runner->node body stream unavailable"))?;
+        // blocking_write_and_flush accepts at most 4096 bytes per call.
+        for chunk in body.as_bytes().chunks(4096) {
+            if stream.blocking_write_and_flush(chunk).is_err() {
+                return Err(node_transport("runner->node body write failed"));
+            }
+        }
+        // `stream` (a child resource of `out_body`) is dropped here, before finish.
+    }
+    if OutgoingBody::finish(out_body, None).is_err() {
+        return Err(node_transport("runner->node body finish failed"));
+    }
+    let fut = match outgoing_handler::handle(req, None) {
+        Ok(f) => f,
+        Err(code) => return Err(hop_egress_error(code)), // host refused before dispatch
+    };
+    let pollable = fut.subscribe();
+    pollable.block();
+    let resp = match fut.get() {
+        Some(Ok(Ok(resp))) => resp,
+        Some(Ok(Err(code))) => return Err(hop_egress_error(code)),
+        _ => return Err(node_transport("no response from custom node")),
+    };
+    let status = resp.status();
+    if status != 200 {
+        return Err(node_transport(format!(
+            "custom node host returned HTTP {status}"
+        )));
+    }
+    read_response_body(resp)
+}
+
+/// Drain an incoming response body to a `String`.
+fn read_response_body(resp: IncomingResponse) -> Result<String, NodeError> {
+    let body = resp
+        .consume()
+        .map_err(|_| node_transport("custom node response body already consumed"))?;
+    let stream = body
+        .stream()
+        .map_err(|_| node_transport("custom node response body stream unavailable"))?;
+    let mut out = Vec::new();
+    loop {
+        match stream.blocking_read(64 * 1024) {
+            Ok(chunk) => out.extend_from_slice(&chunk),
+            Err(StreamError::Closed) => break,
+            Err(_) => return Err(node_transport("custom node response body read failed")),
+        }
+    }
+    String::from_utf8(out).map_err(|_| node_transport("custom node response body is not UTF-8"))
+}
+
+// ---------------------------------------------------------------------------
 // Standard node library glue (5.3): the wamn-nodes vocabulary dispatches
 // through the SHARED capability facade `wamn_node_guest::caps::CapsCtx`
 // (SR2) over this component's real imports — the WIT<->SDK mirrors and the
@@ -582,11 +782,20 @@ fn dispatch_node(
             *http_status = http_get(url);
             Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
         }
+        // 5.6 / wamn-bd5: a CUSTOM node — a separately-deployed, untrusted node
+        // component served by a `serve-node` host. v0 dispatch is a boring
+        // in-cluster HTTP hop: POST the invocation envelope (ctx + input + this
+        // step's declared credential GRANT) to the node's Service endpoint over
+        // wasi:http (governed by the host egress guard + the flow's
+        // allowed-hosts), then fold the node's emission / node-error back into
+        // the walk. The grant is EXACTLY `node.credential` (never the project's
+        // whole set); the serve-node host installs it before invoking, get-only.
+        "custom" => custom_node_dispatch(d, run_id, flow),
         // The standard node library (5.3): everything the library ships
         // dispatches through the capability policy table over this
         // component's real imports. A NodeError feeds the engine, which
         // decides retry-vs-error-path-vs-fail mechanically from the variant.
-        t if wamn_nodes::node(t).is_some() => {
+        t if wamn_nodes::is_standard(t) => {
             let run_ctx = sdk::RunContext {
                 run_id,
                 flow_id: &flow.flow_id,

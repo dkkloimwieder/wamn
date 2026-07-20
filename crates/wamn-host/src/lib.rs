@@ -13,6 +13,7 @@ pub mod egress_guard;
 pub mod engine;
 pub mod host;
 pub mod plugins;
+pub mod serve_node;
 
 /// Advertise the platform memory ceiling to the fork's per-store limiter
 /// (docs/wash-runtime-fork.md): a workload budget above this is a hard

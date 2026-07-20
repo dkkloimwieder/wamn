@@ -1,0 +1,16 @@
+[package]
+name = "wamn-node-invoke"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The v0 custom-node invocation protocol (5.6 / wamn-bd5): the wire envelope the
+# trusted flow-runner POSTs to a `serve-node` host, plus the warm-instance
+# config-parse memoization (design-note 9b) and the per-step grant derivation.
+# PURE — serde only, no DB / clock / wasm / network — so BOTH the flowrunner
+# GUEST (wasm32-wasip2) and the serve-node HOST link the identical encode/decode
+# and the wire shape cannot drift between the two ends.
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -31,6 +31,12 @@ wamn-nodes = { path = "../../crates/wamn-nodes" }
 # wamn:postgres + outbound wasi:http live in the scaffolding crate's `caps`
 # feature — this shell links them instead of copying them.
 wamn-node-guest = { path = "../../crates/wamn-node-guest", features = ["caps"] }
+# 5.6 / wamn-bd5: the v0 custom-node invocation protocol — the wire envelope the
+# runner POSTs to a `serve-node` host and the per-step grant derivation. The
+# SAME crate the serve-node HOST links, so the wire shape cannot drift between
+# the two ends. Pure serde; the guest links only the envelope + the grant helper
+# (never the host-side ConfigCache).
+wamn-node-invoke = { path = "../../crates/wamn-node-invoke" }
 
 [lib]
 crate-type = ["cdylib"]

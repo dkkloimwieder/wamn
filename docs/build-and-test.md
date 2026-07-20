@@ -2148,3 +2148,68 @@ predicate broken (`:outbox:` → `:evt:`; killed by unit
 (drops the `== N` check; killed by unit
 `fanout_sanity_requires_every_event_at_exactly_n`); apply/test/restore with
 sha256, DEBUG builds, never `git checkout`.
+
+### [NODE-INVOKE / wamn-bd5] production runner ↔ custom-node invocation (5.6)
+
+Docs: docs/platform-plan.md §5.6, docs/wamn-node.wit, docs/p0-results.md §S4.
+v0 dispatch of a dynamically-loaded CUSTOM node is a boring in-cluster HTTP hop:
+the trusted flow-runner (a custom-node step) POSTs an invocation envelope over
+`wasi:http` to a `serve-node` host that runs the node under the REAL frozen
+`wamn:node` world. The wire shape (envelope + per-step grant derivation + the
+config-parse memoization, note 9b) is the pure `wamn-node-invoke` crate, linked
+by BOTH ends so it cannot drift. HOST-changed (the `wamn-host serve-node`
+subcommand + the `serve_node` library core) AND GUEST-changed (the flowrunner's
+`custom` dispatch arm) — the in-cluster gate rebakes the host image + rebuilds
+the flowrunner wasm.
+
+Trust model (v0, honest): in-cluster callers are trusted at the NETWORK layer;
+the serve-node host installs the request's declared grant GET-ONLY (a node
+cannot self-grant — it never links `wamn:runner/credentials`) and scopes
+resolution to its OWN `--project` (never the request), so a forged envelope
+cannot cross projects. Runner↔node authn (mTLS / signed envelope) is out of
+scope (a named deferral). The E17 tenant import allowlist is screened at load
+(a node importing `wamn:postgres` / `wasi:sockets` / `wamn:runner` is refused).
+
+```bash
+# Pure unit tests (envelope encode/decode, grant derivation, config memoization,
+# the descriptor-returning wamn_nodes surface):
+cargo test -p wamn-node-invoke
+cargo test -p wamn-nodes public_resolution_surface_is_descriptor_only
+cargo build -p wamn-host   # the serve_node core + `serve-node` subcommand
+
+# Guest + node builds (release wasm32-wasip2; node-cred is the credential-reading
+# custom node under the real wamn:node world):
+(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner -p node-cred)
+
+# Local live gate — the WHOLE path on ONE task (real RunWorker -> wasi:http hop ->
+# real serve-node -> node-cred): payload round-trip, the declared credential
+# readable, an UNDECLARED credential not-granted, config parsed once across N runs.
+# Throwaway PG (wamn-bd5-pg on 5463) with a wamn_app role; NATS is optional.
+docker run -d --name wamn-bd5-pg -e POSTGRES_PASSWORD=postgres -p 5463:5432 \
+  postgres:18 -c fsync=off -c synchronous_commit=off
+docker exec wamn-bd5-pg psql -U postgres -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+./target/debug/wamn-gates --log-level error nodeinvoke \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --node-cred components/target/wasm32-wasip2/release/node_cred.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5463/postgres \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5463/postgres \
+  --node-port 8091 --iters 12
+docker rm -f wamn-bd5-pg
+# Mutation harness (3 mutants, each must exit non-zero): scratchpad mutate_bd5.py
+#   (a) grant widened beyond the declared set; (b) config cache never invalidated;
+#   (c) the pub runnable wamn_nodes::node leak restored.
+
+# In-cluster (the main loop runs this — image rebake riders):
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev . \
+  && kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
+# The custom node ships as a ConfigMap (v0; the OCI image-fetch sidecar is a
+# deferral). serve-node runs from the wamn-host image (`serve-node` subcommand):
+kubectl -n wamn-system create configmap wamn-custom-node \
+  --from-file=node.wasm=components/target/wasm32-wasip2/release/node_cred.wasm
+kubectl -n wamn-system apply -f deploy/platform/serve-node.yaml
+kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
+# The flow's custom node step points config.endpoint at the Service DNS
+# (http://serve-node.wamn-system.svc.cluster.local:8080) and declares that host
+# in the flow's allowed-hosts; the runner host allowlist must also admit it.
+```

@@ -95,6 +95,7 @@ dependencies = [
  "serde_json",
  "wamn-flow",
  "wamn-node-guest",
+ "wamn-node-invoke",
  "wamn-node-sdk",
  "wamn-nodes",
  "wamn-run-queue",
@@ -312,6 +313,14 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "memhog"
 version = "0.1.0"
+
+[[package]]
+name = "node-cred"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen",
+]
 
 [[package]]
 name = "node-rs"
@@ -623,6 +632,14 @@ dependencies = [
  "serde_json",
  "wamn-node-sdk",
  "wit-bindgen",
+]
+
+[[package]]
+name = "wamn-node-invoke"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

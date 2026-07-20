@@ -1,0 +1,11 @@
+[package]
+name = "node-cred"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wit-bindgen = "0.44"
+serde_json = "1"
+
+[lib]
+crate-type = ["cdylib"]

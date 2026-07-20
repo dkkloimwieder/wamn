@@ -62,6 +62,18 @@ world jetstream-plugin {
   import wamn:jetstream/doorbell@0.1.0;
 }
 
+/// Host-side bindgen world for the PRODUCTION `serve-node` custom-node host
+/// (5.6 / wamn-bd5): the host CALLS a dynamically-loaded custom node's exported
+/// `wamn:node/handler.run` over the REAL frozen `wamn:node` world. The node's
+/// OPTIONAL imports are satisfied host-side by the vault (`credentials`,
+/// get-only — never the trusted `set-granted` channel), the control stub, and
+/// outbound `wasi:http` — the E17 tenant-node profile. Distinct from `node-bench`
+/// below (which links the S4 `wait-ns` stand-in for I/O); this world is the
+/// production invocation path. See crates/wamn-host/src/serve_node.rs.
+world serve-node {
+  export wamn:node/handler@0.1.0;
+}
+
 /// Host-side bindgen world for the S4 `nodebench` / `serve-node` harness: the
 /// host CALLS a bench node's exported `handler.run` and IMPLEMENTS the bench
 /// `wait-ns` import (a real async host sleep) used to model an I/O-bound node

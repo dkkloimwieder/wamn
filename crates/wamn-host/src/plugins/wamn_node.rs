@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 mod bindings {
@@ -22,6 +23,16 @@ mod bindings {
 use bindings::wamn::node::control::{self, CancelReason};
 
 pub const WAMN_NODE_ID: &str = "wamn-node";
+
+/// Wire the `wamn:node/control` `cancelled` host function into a linker directly
+/// (the serve-node path / wamn-bd5; the wash workload path uses
+/// [`HostPlugin::on_workload_item_bind`]). The S1 stub always answers "not
+/// cancelled" — cooperative cancellation over the real WIT boundary is 5.12.
+/// A custom node MAY link this (it is on the tenant-node profile); a node that
+/// does not import it simply never gets the offer.
+pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
+    control::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
+}
 
 #[derive(Default)]
 pub struct WamnNodeControl;

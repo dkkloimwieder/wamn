@@ -61,7 +61,16 @@ static POSTGRES_QUERY: postgres::PostgresQuery = postgres::PostgresQuery;
 static RESPOND: respond::Respond = respond::Respond;
 
 /// The implementation behind a standard node type, if this library ships it.
-pub fn node(node_type: &str) -> Option<&'static dyn Node> {
+///
+/// C2-3 (wamn-bd5): this is **`pub(crate)`**, not `pub`. Handing out a runnable
+/// `&dyn Node` bypasses the dispatch-time capability gate ([`dispatch`]'s grant
+/// check + the narrowing [`policy::GatedCtx`]) — an external caller could
+/// `node(t).run(unnarrowed_ctx, ..)` and reach a capability the node never
+/// declared. So the ONLY way out of this crate to *run* a standard node is
+/// [`dispatch`]; callers that merely need to know a type exists or what it may
+/// use take the descriptor surface ([`describe`] / [`is_standard`] /
+/// [`required_capabilities`]), which cannot run anything.
+pub(crate) fn node(node_type: &str) -> Option<&'static dyn Node> {
     match node_type {
         "transform" => Some(&TRANSFORM),
         "conditional" => Some(&CONDITIONAL),
@@ -73,9 +82,42 @@ pub fn node(node_type: &str) -> Option<&'static dyn Node> {
     }
 }
 
+/// What a standard node type IS, without a handle that can run it (C2-3): the
+/// type name and its declared capability row. This is the public resolution
+/// surface — a caller inspecting the library (does this type exist? what may it
+/// touch?) gets a descriptor, never a runnable `&dyn Node`. To actually execute
+/// a standard node, go through [`dispatch`], which gates on the grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeDescriptor {
+    /// The node type this describes (one of [`NODE_TYPES`]).
+    pub node_type: &'static str,
+    /// The capabilities a dispatch of it may use (its policy row).
+    pub capabilities: &'static [Capability],
+}
+
+/// The descriptor for a standard node type, or `None` if this library does not
+/// ship it. The runnable node stays behind the [`dispatch`] gate (C2-3).
+pub fn describe(node_type: &str) -> Option<NodeDescriptor> {
+    NODE_TYPES
+        .iter()
+        .find(|t| **t == node_type)
+        .and_then(|t| node(t).map(|n| (t, n)))
+        .map(|(t, n)| NodeDescriptor {
+            node_type: t,
+            capabilities: n.capabilities(),
+        })
+}
+
+/// Whether this library ships `node_type` — the existence check the flow-runner
+/// makes before treating a step as a standard node. A non-running replacement
+/// for the old `node(t).is_some()` leak (C2-3).
+pub fn is_standard(node_type: &str) -> bool {
+    describe(node_type).is_some()
+}
+
 /// The capability policy row for a node type — what a dispatch of it may use.
 pub fn required_capabilities(node_type: &str) -> Option<&'static [Capability]> {
-    node(node_type).map(|n| n.capabilities())
+    describe(node_type).map(|d| d.capabilities)
 }
 
 /// Dispatch one standard node under the policy table:

@@ -24,6 +24,7 @@ mod ladderproof;
 mod logbench;
 mod matbench;
 mod nodebench;
+mod nodeinvoke;
 mod outboxbench;
 mod pgbench;
 mod provisionbench;
@@ -87,6 +88,8 @@ enum Command {
     Nodebench(nodebench::NodeBenchArgs),
     /// Serve a wamn:node component over HTTP (S4 hop node host)
     ServeNode(nodebench::ServeNodeArgs),
+    /// Run the 5.6/wamn-bd5 production custom-node invocation gate (real runner -> HTTP hop -> serve-node; grant + not-granted + config memoization)
+    Nodeinvoke(nodeinvoke::NodeInvokeArgs),
     /// Run the S5 logging-capture gates (overhead / loss / drops / enrichment)
     Logbench(logbench::LogBenchArgs),
     /// Run the 9.1 OTel trace-pipeline gate (host spans → Tempo; enriched single trace)
@@ -157,6 +160,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Credproof(args) => credproof::run(args).await,
         Command::Nodebench(args) => nodebench::run(args).await,
         Command::ServeNode(args) => nodebench::serve(args).await,
+        Command::Nodeinvoke(args) => nodeinvoke::run(args).await,
         Command::Logbench(args) => logbench::run(args).await,
         Command::Tracebench(args) => tracebench::run(args).await,
         Command::Traceproof(args) => traceproof::run(args).await,

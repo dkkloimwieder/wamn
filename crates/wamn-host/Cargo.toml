@@ -39,3 +39,14 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 deadpool-postgres = "0.14"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures-util = "0.3"
+# 5.6 / wamn-bd5: the production `serve-node` custom-node host links the REAL
+# wamn:node world (credentials get-only + control + outbound wasi:http — the
+# E17 tenant-node profile) into a warm node instance and calls its handler
+# export. Same wasmtime rev as run-worker so cargo unifies to one wasmtime.
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+hyper = "1"
+# The pure invocation protocol (wire envelope + config-parse memoization +
+# grant derivation) shared verbatim with the flowrunner guest — one source of
+# truth for the wire shape, so the two ends cannot drift.
+wamn-node-invoke = { path = "../wamn-node-invoke" }

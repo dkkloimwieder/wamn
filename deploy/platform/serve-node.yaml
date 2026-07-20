@@ -1,0 +1,126 @@
+# 5.6 / wamn-bd5 — PRODUCTION custom-node host (v0 in-cluster HTTP invocation).
+#
+# The node end of the runner->custom-node path: `wamn-host serve-node` warm-
+# instantiates ONE published custom-node component under the REAL frozen
+# wamn:node world and serves POST /run. The trusted flow-runner
+# (deploy/platform/runner.yaml) reaches it by the operator-managed Service below,
+# carrying the per-invocation credential grant in the request envelope; this host
+# installs that grant get-only (never the trusted set-granted channel — a custom
+# node cannot self-grant) and scopes credential resolution to ITS OWN injected
+# --project, so a forged envelope can never cross projects. Config parse is
+# memoized per (node, flow-version, config-identity) on the warm instance (9b).
+#
+#   kubectl -n wamn-system apply -f deploy/platform/runner-credentials.example.yaml   # once (per project; shared with the runner)
+#   kubectl -n wamn-system apply -f deploy/platform/serve-node.yaml
+#   kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
+#
+# SINGLE-NODE, SINGLE-PROJECT (the api-gateway / runner analog): one Deployment
+# per published custom node per project — the node artifact, the project, and its
+# vault scope are this Deployment's config. Discovery in v0 is the flow/node
+# manifest's recorded Service URL (the node step's config.endpoint), so the flow
+# points at THIS Service name; an operator that renders serve-node Deployments +
+# EndpointSlices from the registry on publish is the follow-up (see the bd5
+# deferrals).
+#
+# NODE ARTIFACT (v0 gap, deferred): the node .wasm is a published OCI artifact;
+# until an image-fetch/init sidecar pulls it, v0 mounts it from a ConfigMap (or
+# bakes it into a per-node image). The path below is the mount point.
+#
+# TRUST MODEL (honest, v0): in-cluster callers are trusted at the NETWORK layer —
+# any pod that can reach this Service can POST /run with an arbitrary grant set
+# (bounded by --project, never beyond it). Runner<->node authn (mTLS / a signed
+# envelope) is NOT in scope here; it is a named bd5 deferral. The host-enforced
+# invariants that hold regardless: get-only credential linking (no self-grant),
+# the host-owned project (no cross-project read), and the E17 import allowlist
+# screened at load (a node importing wamn:postgres / wasi:sockets / wamn:runner
+# is refused).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: serve-node
+  namespace: wamn-system
+  labels: { app: serve-node }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: serve-node }
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  minReadySeconds: 10
+  template:
+    metadata:
+      labels: { app: serve-node }
+    spec:
+      # serve-node never talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      volumes:
+        # The published custom-node component (v0: from a ConfigMap; the OCI
+        # image-fetch sidecar is the follow-up). `binaryData` holds the .wasm.
+        - name: node-artifact
+          configMap:
+            name: wamn-custom-node
+            optional: true
+        # [5.9] The per-project credential vault source, shared with the runner
+        # Deployment's Secret. OPTIONAL: absent = empty vault (every granted
+        # resolution is `unavailable`) — a credential-less node deploys cleanly.
+        - name: credentials
+          secret:
+            secretName: wamn-runner-credentials
+            optional: true
+            defaultMode: 420
+      containers:
+        - name: serve-node
+          # serve-node is a `wamn-host` subcommand (the washlet image), not a
+          # separate binary — no long-lived NATS/DB path, just the HTTP server.
+          image: wamn-host:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            # The project whose vault credentials this node's invocations may
+            # read — host-injected, NOT read from the request.
+            - name: WAMN_PROJECT
+              value: demo-project
+            - name: WAMN_CREDENTIALS_FILE
+              value: /etc/wamn/credentials/credentials.json
+          volumeMounts:
+            - name: node-artifact
+              mountPath: /components
+              readOnly: true
+            - name: credentials
+              mountPath: /etc/wamn/credentials
+              readOnly: true
+          args:
+            - "--log-level"
+            - "info"
+            - "serve-node"
+            - "--node"
+            - "/components/node.wasm"
+            - "--port"
+            - "8080"
+            # The node's OWN outbound wasi:http egress allowlist (EMPTY =
+            # deny-all, fail-closed). Distinct from the runner->node hop; set it
+            # for a node that calls external APIs.
+            # - "--allowed-hosts"
+            # - "api.example.com:443"
+          ports:
+            - containerPort: 8080
+          resources:
+            # No CPU limit (the S2 CFS lesson): a quota would stall the guest
+            # invocation with scheduler throttles.
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { memory: "384Mi" }
+---
+# The operator-managed Service the flow's node step points at (config.endpoint =
+# http://serve-node.wamn-system.svc.cluster.local:8080). v0 uses this stable
+# Service DNS; a per-node EndpointSlice controller is the follow-up.
+apiVersion: v1
+kind: Service
+metadata:
+  name: serve-node
+  namespace: wamn-system
+spec:
+  selector: { app: serve-node }
+  ports:
+    - port: 8080
+      targetPort: 8080

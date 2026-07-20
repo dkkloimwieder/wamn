@@ -1,0 +1,14 @@
+// The wamn-bd5 credential-reading custom node (5.6). Imports the frozen public
+// `wamn:node/credentials` interface DIRECTLY — exactly as an untrusted custom
+// node does at the real WIT boundary — and exports `wamn:node/handler`. It does
+// NOT import the trusted `wamn:runner/credentials` grant channel, so it cannot
+// self-grant; the `serve-node` host installs its per-invocation grant. This is
+// the live-path counterpart of the `cred-probe` fixture: cred-probe proves
+// not-granted in isolation, this proves it end-to-end THROUGH the runner->node
+// hop while a DECLARED credential reads successfully.
+package wamn:node-cred@0.1.0;
+
+world node-cred {
+  import wamn:node/credentials@0.1.0;
+  export wamn:node/handler@0.1.0;
+}
