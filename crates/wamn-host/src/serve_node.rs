@@ -275,6 +275,10 @@ pub struct ServeNode {
 impl ServeNode {
     /// Compile, screen (E17 tenant profile), link the real `wamn:node` world,
     /// register the host-owned project, and warm-instantiate the node.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "construction wires the node, vault, identity, and the authn policy knobs (key requirement, freshness window) in one call"
+    )]
     pub async fn new(
         engine: &Engine,
         wasm: &[u8],

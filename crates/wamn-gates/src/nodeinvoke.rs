@@ -350,7 +350,6 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[expect(clippy::too_many_arguments, reason = "the gate wires the whole live path from one call")]
 async fn gate_body(
     engine: &wash_runtime::engine::Engine,
     flowrunner: &[u8],
