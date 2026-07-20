@@ -91,8 +91,10 @@ pub struct RunnerBenchArgs {
 }
 
 /// The union DDL (identical shape to failoverbench): the flow tables the guest
-/// walks + the 5.14 `run_queue` the runner claims from, schema-qualified with
-/// the house tenant floor.
+/// walks + the 5.14 `run_queue` the runner claims from + the `partition_owner`
+/// lease table the fqg.9 guest-side partitioned claim path leases against,
+/// schema-qualified with the house tenant floor. Kept aligned with
+/// `deploy/sql/run-queue.sql` by the drift guard in this module's tests.
 fn runner_ddl(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.flows (\
@@ -146,6 +148,8 @@ fn runner_ddl(schema: &str) -> String {
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.node_runs TO wamn_app;\
          CREATE TABLE {schema}.run_queue (\
             tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
+            partition_policy text NOT NULL DEFAULT 'blocking' \
+              CHECK (partition_policy IN ('blocking','leapfrog')), \
             priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
             lease_owner text, lease_expires_at timestamptz, \
             attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
@@ -154,12 +158,24 @@ fn runner_ddl(schema: &str) -> String {
             PRIMARY KEY (tenant_id, run_id), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
+         CREATE INDEX run_queue_partition ON {schema}.run_queue (tenant_id, partition_key) WHERE partition_key IS NOT NULL;\
          ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
          CREATE POLICY run_queue_tenant ON {schema}.run_queue \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;\
+         CREATE TABLE {schema}.partition_owner (\
+            tenant_id text NOT NULL, partition_key text NOT NULL, \
+            lease_owner text NOT NULL, lease_expires_at timestamptz NOT NULL, \
+            acquired_at timestamptz NOT NULL DEFAULT now(), \
+            PRIMARY KEY (tenant_id, partition_key));\
+         ALTER TABLE {schema}.partition_owner ENABLE ROW LEVEL SECURITY;\
+         ALTER TABLE {schema}.partition_owner FORCE ROW LEVEL SECURITY;\
+         CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
+            USING (tenant_id = current_setting('app.tenant', true)) \
+            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;"
     )
 }
 
@@ -511,4 +527,111 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         bail!("runnerbench gate failed");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wamn_run_queue::PartitionPolicy;
+
+    /// The schema of record, compiled in — the guard reads the SHIPPED column
+    /// set out of it so it cannot silently drift from what we assert against.
+    const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
+
+    /// The top-level column names of `CREATE TABLE {table} ( ... )` in `ddl`
+    /// (one column per line in deploy/sql), skipping comments and the
+    /// PRIMARY/FOREIGN/CONSTRAINT/CHECK constraint clauses. Used to lift the
+    /// run_queue / partition_owner column sets straight out of the schema of
+    /// record so the parity assertion below tracks it automatically.
+    fn table_columns(ddl: &str, table: &str) -> Vec<String> {
+        let mut cols = Vec::new();
+        let mut in_table = false;
+        for line in ddl.lines() {
+            let t = line.trim();
+            if !in_table {
+                if t.starts_with(&format!("CREATE TABLE {table} (")) {
+                    in_table = true;
+                }
+                continue;
+            }
+            if t.starts_with(')') {
+                break; // end of the CREATE TABLE body
+            }
+            if t.is_empty() || t.starts_with("--") {
+                continue;
+            }
+            let Some(tok) = t.split_whitespace().next() else {
+                continue;
+            };
+            if matches!(
+                tok,
+                "PRIMARY" | "FOREIGN" | "CONSTRAINT" | "CHECK" | "UNIQUE"
+            ) {
+                continue;
+            }
+            cols.push(tok.to_string());
+        }
+        cols
+    }
+
+    /// wamn-nhjg [GATE-DRIFT]: the ephemeral stand-in `runner_ddl` is a modified
+    /// variant of `deploy/sql/run-queue.sql` (schema-qualified, joined to the
+    /// flowrunner flow tables), so it cannot be `include_str!`'d verbatim — this
+    /// guard pins it against the schema of record instead. It fails the moment
+    /// the stand-in drops a column/object the fqg.9 guest-side partitioned claim
+    /// path (`acquire_partitions_sql` / `claim_partition_head_sql`) reads:
+    /// run-next falls through to that path once the global queue drains, so a
+    /// missing `partition_owner` table or `partition_policy` column is an
+    /// undefined-relation/undefined-column failure the next time runnerbench runs
+    /// (the wamn-9cn6 / wamn-9mg8 drift class).
+    #[test]
+    fn runner_stand_in_ddl_tracks_run_queue_schema_of_record() {
+        let standin = runner_ddl("wamn_run");
+
+        // run_queue column parity with the schema of record: every shipped column
+        // must be present in the stand-in (add a column to deploy/sql/run-queue.sql
+        // and this fails until the stand-in carries it too).
+        let queue_cols = table_columns(RUN_QUEUE_SQL, "wamn_run.run_queue");
+        assert!(
+            queue_cols.contains(&"partition_policy".to_string()),
+            "parser sanity: partition_policy should be a run_queue column of record"
+        );
+        for col in &queue_cols {
+            assert!(
+                standin.contains(col),
+                "runnerbench run_queue stand-in missing column `{col}` \
+                 (drifted from deploy/sql/run-queue.sql)"
+            );
+        }
+
+        // The per-partition ownership lease table + its full column set: the
+        // fqg.9 guest path INSERTs/JOINs against it once the global claim drains.
+        assert!(
+            standin.contains("CREATE TABLE wamn_run.partition_owner"),
+            "runnerbench stand-in missing the partition_owner lease table \
+             (fqg.9 guest-side partitioned claim path needs it)"
+        );
+        for col in table_columns(RUN_QUEUE_SQL, "wamn_run.partition_owner") {
+            assert!(
+                standin.contains(&col),
+                "runnerbench partition_owner stand-in missing column `{col}` \
+                 (drifted from deploy/sql/run-queue.sql)"
+            );
+        }
+
+        // The partition index the acquire/claim path scans on.
+        assert!(
+            standin.contains("run_queue_partition"),
+            "runnerbench stand-in missing the run_queue_partition index"
+        );
+
+        // D20: the partition_policy CHECK carries exactly the model's literals.
+        for p in PartitionPolicy::ALL {
+            assert!(
+                standin.contains(&format!("'{}'", p.as_sql())),
+                "runnerbench stand-in partition_policy CHECK missing literal `{}`",
+                p.as_sql()
+            );
+        }
+    }
 }
