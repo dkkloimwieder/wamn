@@ -85,6 +85,60 @@ pub async fn run(args: ReconcileReplicaIdentityArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The operational caller (EVT-RI-ORCH, wamn-l5i9.61): run the RI reconcile as a
+/// post-apply step INSIDE `publish-catalog` / `migrate-catalog`, so a catalog
+/// apply never leaves an entity that needs the old image on REPLICA IDENTITY
+/// DEFAULT (the non-retroactive flip makes that window a permanent old-image
+/// gap). Those verbs already connect as the superuser `ALTER … REPLICA IDENTITY`
+/// requires; this reuses the SAME tested `reconcile` path the standalone verb and
+/// the live gate exercise, applies the flips, and prints a concise summary.
+///
+/// Blast radius: scoped STRICTLY to `schema` — the project-env's own data schema
+/// the verb was already writing to. The cross-tenant union is only in WHICH
+/// registrations demand FULL (RI is per-table, tables are shared within the
+/// schema); no table outside `schema` is ever read or altered. Idempotent: a
+/// reconcile at target flips nothing. The verbs gate this behind
+/// `--skip-reconcile-replica-identity` for the rare operator who wants to run the
+/// standalone verb separately.
+pub async fn reconcile_after_apply(
+    client: &tokio_postgres::Client,
+    catalog: &wamn_catalog::Catalog,
+    schema: &str,
+) -> anyhow::Result<()> {
+    let plan = reconcile(client, catalog, schema, true).await?;
+    print_apply_summary(&plan);
+    Ok(())
+}
+
+/// Concise post-apply reconcile summary (distinct from the standalone verb's
+/// per-flip `print_plan`): names the closed old-image gaps (the correctness bit)
+/// and the count of DEFAULT resets, or reports a clean no-op.
+fn print_apply_summary(plan: &ReplicaIdentityPlan) {
+    if plan.is_noop() {
+        println!(
+            "replica identity reconciled: no flips ({} entities already at target)",
+            plan.unchanged.len()
+        );
+        return;
+    }
+    let gaps = plan.pending_old_image_gap();
+    let resets = plan.flips.len() - gaps.len();
+    if !gaps.is_empty() {
+        println!(
+            "replica identity reconciled: flipped {} entit{} to FULL (old-image gap closed): {}",
+            gaps.len(),
+            if gaps.len() == 1 { "y" } else { "ies" },
+            gaps.join(", "),
+        );
+    }
+    if resets > 0 {
+        println!(
+            "replica identity reconciled: reset {resets} entit{} to DEFAULT (no longer need the old image)",
+            if resets == 1 { "y" } else { "ies" }
+        );
+    }
+}
+
 /// The reusable core: read the catalog's registrations (across all tenants) and
 /// the schema's current `pg_class.relreplident`, plan the reconcile, and — when
 /// `apply` — run the flips. Returns the plan (for reporting / gate assertions).

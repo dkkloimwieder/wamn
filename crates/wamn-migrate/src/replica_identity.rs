@@ -95,6 +95,27 @@ impl ReplicaIdentityPlan {
     pub fn is_noop(&self) -> bool {
         self.flips.is_empty()
     }
+
+    /// The entity ids with an OPEN OLD-IMAGE GAP: a registration requires
+    /// REPLICA IDENTITY FULL but the table is still at DEFAULT (the flips whose
+    /// target is `Full`). This is the correctness-critical direction — until the
+    /// flip is applied, the entity's old-value / delete conditions refuse
+    /// `old-image-absent`, and the flip is NON-RETROACTIVE, so the gap is a
+    /// permanent old-image hole for events captured meanwhile. It is the
+    /// "entity needs RI reconcile" surface (EVT-RI-ORCH, l5i9.61): a read-only
+    /// caller (an operator's `--dry-run`, the API registration path — which runs
+    /// as `wamn_app` and cannot ALTER but CAN read `pg_class`) computes a plan and
+    /// asks this to know a control-plane reconcile is due; run against a plan the
+    /// reconciler JUST applied, it is the set of gaps that were closed. Distinct
+    /// from [`Self::flips`], which also carries the harmless reset-to-DEFAULT
+    /// direction that leaves no gap.
+    pub fn pending_old_image_gap(&self) -> Vec<&str> {
+        self.flips
+            .iter()
+            .filter(|f| f.to == ReplicaIdentity::Full)
+            .map(|f| f.entity_id.as_str())
+            .collect()
+    }
 }
 
 /// The set of catalog **entity ids** that must run REPLICA IDENTITY FULL,
@@ -285,6 +306,41 @@ mod tests {
         // notes has no table row → skipped, not flipped.
         assert_eq!(plan.skipped_absent, vec!["notes".to_string()]);
         assert!(plan.unchanged.is_empty());
+    }
+
+    /// The detect-and-surface primitive (EVT-RI-ORCH, l5i9.61): the pending
+    /// old-image gap is EXACTLY the flip-UP-to-FULL direction, never the
+    /// reset-to-DEFAULT one. It reports entity ids (the caller-meaningful name),
+    /// not table names.
+    #[test]
+    fn pending_old_image_gap_is_the_flip_up_direction_by_entity_id() {
+        let cat = catalog();
+        // orders needs FULL (delete) → a gap while it is at DEFAULT; lines is at
+        // FULL from a since-removed registration → resets to DEFAULT (no gap).
+        let regs = vec![reg("r1", "orders", &["delete"], None)];
+        let current = BTreeMap::from([
+            ("sales_orders".to_string(), ReplicaIdentity::Default),
+            ("line_items".to_string(), ReplicaIdentity::Full),
+        ]);
+        let plan = reconcile_replica_identity(&cat, &regs, &current, "app");
+        // entity id "orders" (not the table "sales_orders"); the DEFAULT reset of
+        // "lines" is NOT a gap.
+        assert_eq!(plan.pending_old_image_gap(), vec!["orders"]);
+    }
+
+    /// A reconcile whose only flips reset to DEFAULT surfaces NO gap — the pure
+    /// no-op case and the reset-only case must both report an empty gap.
+    #[test]
+    fn no_gap_when_nothing_needs_full() {
+        let cat = catalog();
+        // No registration needs FULL, but line_items is stray-FULL and resets.
+        let regs = vec![reg("r1", "orders", &["insert"], None)];
+        let current = BTreeMap::from([("line_items".to_string(), ReplicaIdentity::Full)]);
+        let plan = reconcile_replica_identity(&cat, &regs, &current, "app");
+        assert_eq!(plan.flips.len(), 1, "the stray FULL resets to DEFAULT");
+        assert!(plan.pending_old_image_gap().is_empty(), "a reset is not a gap");
+        // And a genuine no-op plan is trivially gap-free.
+        assert!(ReplicaIdentityPlan::default().pending_old_image_gap().is_empty());
     }
 
     #[test]

@@ -76,6 +76,13 @@ pub struct PublishCatalogArgs {
     /// the flow registry (repeatable; prior versions of the flow deactivate).
     #[arg(long)]
     pub flow: Vec<PathBuf>,
+
+    /// Skip the post-publish REPLICA IDENTITY reconcile (EVT-RI-ORCH, l5i9.61).
+    /// By default publish reconciles RI for the catalog's data schema so an
+    /// entity that needs the old image is never left on DEFAULT; pass this to run
+    /// `reconcile-replica-identity` separately instead.
+    #[arg(long)]
+    pub skip_reconcile_replica_identity: bool,
 }
 
 /// A bare SQL identifier safe to embed after validating: starts with a
@@ -277,6 +284,16 @@ async fn publish(
     // for an env CDC-enabled after its catalog was published — re-running
     // publish-catalog populates the map.
     upsert_entity_map(client, cat, schema).await?;
+
+    // EVT-RI-ORCH (wamn-l5i9.61): reconcile REPLICA IDENTITY for this schema as
+    // the automatic operational caller — the catalog's table/registration set
+    // just changed, so an entity that needs the old image must be flipped to FULL
+    // here rather than waiting for a manual verb run (the flip is non-retroactive,
+    // so the gap would be permanent for events captured meanwhile). Idempotent and
+    // scoped strictly to `schema`; a schema without the floor yet is a clean no-op.
+    if !args.skip_reconcile_replica_identity {
+        crate::reconcile_replica_identity::reconcile_after_apply(client, cat, schema).await?;
+    }
 
     Ok(())
 }

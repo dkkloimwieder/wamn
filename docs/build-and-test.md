@@ -2101,6 +2101,48 @@ M3 `alter_replica_identity_sql` emits the wrong keyword (killed by
 `replica_identity::tests::alter_and_read_sql_are_pinned`); apply/test/restore
 with sha256, DEBUG builds.
 
+### [EVT-RI-ORCH / wamn-l5i9.61] publish/migrate-catalog auto-reconcile REPLICA IDENTITY
+
+Docs: docs/provisioning.md (`reconcile-replica-identity`, "Automatic caller").
+Wires the l5i9.31 reconciler into an OPERATIONAL caller: `publish-catalog` and
+`migrate-catalog` run the RI reconcile as their last step (they already connect
+as the superuser `ALTER … REPLICA IDENTITY` needs), scoped strictly to the
+verb's `--schema`, so a catalog apply never leaves an entity that needs the old
+image on DEFAULT — a permanent gap, since the flip is non-retroactive.
+**Decision:** run reconcile INSIDE the verbs (auto-ALTER), NOT a D24-style
+refuse-if-drifted, because the verbs' role can already ALTER and the pass is
+idempotent + schema-scoped (no cross-schema blast; the cross-tenant union is only
+in WHICH registrations demand FULL, all tables in the one schema). Escape hatch:
+`--skip-reconcile-replica-identity`. The registration-change path (writes under
+`wamn_app`, which cannot ALTER) is left to the automatic caller + the manual verb
+for now; the pure detect surface is `ReplicaIdentityPlan::pending_old_image_gap`
+(the entities with an open old-image gap). Shared shell:
+`reconcile_replica_identity::reconcile_after_apply`.
+
+```bash
+cargo test -p wamn-migrate --lib   # pending_old_image_gap direction + no-gap-on-reset (+ the l5i9.31 derivation)
+cargo clippy -p wamn-migrate -p wamn-ctl --tests
+# Live gate (throwaway PG; plain postgres:18 — the flip sets the pg_class flag,
+# no wal_level=logical needed): drives the REAL verbs — publish --provision
+# provisions the floor AND flips the needing entity 'd'->'f' (cross-tenant union)
+# while the bystander stays 'd'; re-publish is idempotent; --skip-reconcile-
+# replica-identity leaves RI as-is; a plain re-publish resets 'f'->'d'; and a
+# first-materialization migrate flips the entity to FULL after its apply tx
+# commits. Hermetic (drops+recreates its schemas):
+docker run --rm -d --name wave5-riorch-pg -e POSTGRES_PASSWORD=postgres -p 56011:5432 postgres:18
+WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:56011/postgres \
+  cargo test -p wamn-ctl --test ri_orch_live -- --nocapture
+docker rm -f wave5-riorch-pg
+```
+
+Mutation harness: scratchpad `mutate_l5i9_61.py` — M1 `pending_old_image_gap`
+keys on the reset direction (killed by
+`replica_identity::tests::pending_old_image_gap_is_the_flip_up_direction_by_entity_id`),
+M2 `reconcile_after_apply` plans but never applies the flips (killed by the
+`ri_orch_live` live gate), M3 the `--skip-reconcile-replica-identity` escape hatch
+inverted in publish-catalog (killed by the `ri_orch_live` live gate);
+apply/test/restore with sha256, DEBUG builds.
+
 ### [EVT-C-E2E / wamn-l5i9.22] e2ebench outbox-vs-CDC before/after (measurement, not a gate)
 
 Docs: docs/event-plane-jetstream.md §7 Phase 2 + §8 · docs/ceilings.md § C-E2E.

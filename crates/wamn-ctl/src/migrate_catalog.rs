@@ -68,6 +68,13 @@ pub struct MigrateCatalogArgs {
     /// (the 3.2 gate). Required to apply a plan that drops/retypes.
     #[arg(long)]
     pub confirm_with_backup: bool,
+
+    /// Skip the post-migrate REPLICA IDENTITY reconcile (EVT-RI-ORCH, l5i9.61).
+    /// By default a successful migration reconciles RI for the data schema so an
+    /// entity that needs the old image is never left on DEFAULT; pass this to run
+    /// `reconcile-replica-identity` separately instead. No effect with `--dry-run`.
+    #[arg(long)]
+    pub skip_reconcile_replica_identity: bool,
 }
 
 pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
@@ -147,6 +154,19 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
             bail!("{}", MigrationError::AlreadyApplied { version })
         }
     };
+
+    // EVT-RI-ORCH (wamn-l5i9.61): reconcile REPLICA IDENTITY as the automatic
+    // operational caller now the migration committed — the table set and the
+    // registration set may both have changed, so an entity that needs the old
+    // image is flipped to FULL here rather than waiting for a manual verb run (the
+    // flip is non-retroactive; the gap would be permanent for events captured
+    // meanwhile). Runs on the same superuser connection AFTER commit (reads the
+    // post-migration table set), scoped strictly to the data schema. Idempotent.
+    if !args.skip_reconcile_replica_identity {
+        crate::reconcile_replica_identity::reconcile_after_apply(&client, &target, &args.schema)
+            .await?;
+    }
+
     conn_task.abort();
 
     let from = plan

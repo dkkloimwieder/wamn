@@ -493,10 +493,21 @@ is not yet applied is skipped. The `wamn-ctl` shell executes them.
 AFTER it — events captured before the flip permanently lack the old image; a
 newly registered changed-to condition evaluates only from the flip forward (the
 materializer treats an absent old image as cannot-evaluate, never
-condition-false). **Operational note:** run this whenever the catalog or its
-registrations change (after `publish-catalog` / `migrate-catalog`, and after a
-registration create/delete that adds or removes an old-image / delete
-subscription). It is idempotent — a reconcile at target flips nothing.
+condition-false). It is idempotent — a reconcile at target flips nothing.
+
+**Automatic caller (EVT-RI-ORCH, wamn-l5i9.61).** `publish-catalog` and
+`migrate-catalog` now run this reconcile automatically as their last step (they
+already connect as the superuser the `ALTER` needs), scoped strictly to the
+verb's `--schema`, so a catalog apply never leaves an entity that needs the old
+image on DEFAULT. Pass `--skip-reconcile-replica-identity` to opt out and run the
+standalone verb yourself. **The remaining manual trigger** is a REGISTRATION
+change on an already-applied catalog: a registration create/update/delete that
+adds or removes an old-image / delete subscription is written via the wamn-api
+surface under `wamn_app`, which cannot `ALTER`. Until the API path grows an
+automatic control-plane reconcile hop (deferred), close the gap by running this
+verb — or simply re-running `publish-catalog`, which reconciles — after such a
+change; `reconcile-replica-identity --dry-run` is the read-only surface that
+names every entity still needing a flip.
 
 ## `provisionbench` — the four-tier extension (wamn-q3n.8)
 

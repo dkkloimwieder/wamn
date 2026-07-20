@@ -749,6 +749,9 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         base: None,
         dry_run: false,
         confirm_with_backup: false,
+        // This drill asserts REPLICA IDENTITY DEFAULT behavior directly; keep the
+        // EVT-RI-ORCH post-apply reconcile (l5i9.61) out of it.
+        skip_reconcile_replica_identity: true,
     })
     .await
     .expect("migrate-catalog v1 (create the drill entity)");
@@ -777,6 +780,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         runstate: false,
         seed_dataset: None,
         flow: vec![],
+        skip_reconcile_replica_identity: true,
     })
     .await
     .expect("publish-catalog (the map backfill path)");
@@ -806,6 +810,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         base: None,
         dry_run: false,
         confirm_with_backup: true,
+        skip_reconcile_replica_identity: true,
     })
     .await
     .expect("migrate-catalog v2 (the rename)");
