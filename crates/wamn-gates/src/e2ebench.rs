@@ -987,8 +987,13 @@ pub async fn run(args: E2eBenchArgs) -> anyhow::Result<()> {
     };
 
     let machine = std::env::var("WAMN_E2E_MACHINE").unwrap_or_else(|_| "local-throwaway".into());
+    let guest_profile = if args.component.to_string_lossy().contains("/release/") {
+        "release-guest-wasm"
+    } else {
+        "debug-guest-wasm"
+    };
     let provenance = format!(
-        "# provenance: env=local-throwaway build=debug-host-binaries release-guest-wasm \
+        "# provenance: env=local-throwaway build=debug-host-binaries {guest_profile} \
          pg=postgres:18(fsync=off,synchronous_commit=off,wal_level=logical) nats=nats:2(1-replica) \
          disp_poll_ms={} fetch_ms={} machine={} — METHODOLOGY VALIDATION (shape, not ceilings)",
         args.disp_poll_ms, args.fetch_ms, machine
