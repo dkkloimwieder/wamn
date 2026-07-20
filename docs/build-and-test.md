@@ -251,13 +251,20 @@ Docs: docs/security-db-path.md
 
 ```bash
 REL=components/target/wasm32-wasip2/release
+# E17 polarity (wamn-o3u6): first-party DB-touching workload via --flowrunner;
+# genuinely allowlist-clean tenants via --component; wamn:postgres importers MUST
+# be REFUSED via --reject-tenant. (Pre-E17 this swept everything under --component,
+# which now FAILS: the allowlist v1 refuses the wamn:postgres importers.)
 ./target/release/wamn-gates --log-level warn egressbench \
   --flowrunner $REL/flowrunner.wasm \
-  --component $REL/pgprobe.wasm --component $REL/node_rs.wasm \
-  --component $REL/flow_composed.wasm --component $REL/hello.wasm \
-  --component $REL/api_gateway.wasm \
-  --component $REL/poc_webhook_f1.wasm \
-  --component $REL/sample_node.wasm  # webhook/api: {wamn:postgres,wasi:http}; 5.4 sample node: ZERO egress
+  --component $REL/sample_node.wasm --component $REL/hello.wasm \
+  --reject-tenant $REL/pgprobe.wasm \
+  --reject-tenant $REL/api_gateway.wasm \
+  --reject-tenant $REL/poc_webhook_f1.wasm
+  # sample-node: ZERO egress; hello: wasi:cli/clocks/io only — both CLEAR the
+  # allowlist. pgprobe/api-gateway/poc-webhook import wamn:postgres → refused.
+  # node-rs / flow-composed are nodebench fixtures (import the bench-only
+  # wamn:nodebench) — exercised by the nodebench gate, not this DB-path review.
 
 cargo clippy -p wamn-host -p wamn-run-worker -p wamn-gates -p wamn-gate-harness --all-targets \
   && cargo fmt -p wamn-host -p wamn-run-worker -p wamn-gates -p wamn-gate-harness --check
