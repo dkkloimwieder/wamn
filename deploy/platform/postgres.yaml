@@ -86,3 +86,21 @@ spec:
   ports:
     - port: 5432
       targetPort: 5432
+---
+# The fixture's superuser credential as a Secret, so admin Jobs (f1-provision,
+# the replica-identity-reconcile CronJob) reference it via secretKeyRef instead
+# of inline plaintext — one rotation point. Mirrors POSTGRES_PASSWORD above;
+# key shape matches the CNPG-generated `<cluster>-superuser` Secrets so job env
+# wiring is portable between the fixture and a CNPG target.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-fixture-superuser
+  namespace: wamn-system
+  labels: { app: postgres }
+type: Opaque
+stringData:
+  username: postgres
+  password: postgres
+  host: postgres.wamn-system.svc.cluster.local
+  port: "5432"

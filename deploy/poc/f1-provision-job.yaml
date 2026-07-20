@@ -44,8 +44,24 @@ spec:
               "--flow", "/fixtures/f1-flow.json",
             ]
           env:
+            # Admin credential sourced from the `postgres-fixture-superuser`
+            # Secret (secretKeyRef, defined in deploy/platform/postgres.yaml) —
+            # no inline plaintext superuser password; the target stays the
+            # fixture pod's `wamn` database, where poc_f1 lives. k8s expands
+            # $(VAR) in a later env value against the earlier secretKeyRef vars,
+            # so those must precede WAMN_PG_ADMIN_URL. Against a CNPG target,
+            # swap the Secret name for the cluster's `<cluster>-superuser`
+            # (same key shape) and the database for the env's DB.
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
             - name: WAMN_PG_ADMIN_URL
-              value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn
+              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/wamn
           volumeMounts:
             - name: fixtures
               mountPath: /fixtures

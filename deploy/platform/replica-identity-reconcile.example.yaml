@@ -84,10 +84,25 @@ spec:
               env:
                 # Superuser URL to the project DB — `ALTER … REPLICA IDENTITY`
                 # needs table ownership, so `wamn_app` cannot run it (the same
-                # credential the f1 provisioning Job uses). In production,
-                # source this from a Secret (secretKeyRef) rather than inline.
+                # credential the f1 provisioning Job uses). Sourced from the
+                # `postgres-fixture-superuser` Secret (secretKeyRef, defined in
+                # deploy/platform/postgres.yaml), NOT inline plaintext; the demo
+                # project envs live in the fixture pod's `wamn` database. k8s
+                # expands $(VAR) in a later env value against the earlier
+                # secretKeyRef vars, which must precede WAMN_PG_ADMIN_URL.
+                # Against a CNPG target, swap the Secret name for the cluster's
+                # `<cluster>-superuser` (same key shape) and the database for
+                # the env's DB.
+                - name: PGUSER
+                  valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+                - name: PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+                - name: PGHOST
+                  valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+                - name: PGPORT
+                  valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
                 - name: WAMN_PG_ADMIN_URL
-                  value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn
+                  value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/wamn
               volumeMounts:
                 - name: fixtures
                   mountPath: /fixtures
