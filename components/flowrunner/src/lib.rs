@@ -592,6 +592,23 @@ fn http_post_run(url: &str, body: &str, signature: Option<&str>) -> Result<Strin
         _ => return Err(node_transport("no response from custom node")),
     };
     let status = resp.status();
+    // wamn-fqg.29: a 401 is the serve-node's signature REFUSAL
+    // (`invocation-unauthorized`) — a persistent authn mismatch (a wrong/rotated
+    // signing key, a fail-closed keyless host) that is identical on every
+    // attempt, so retrying it only burns the node's whole retry budget before the
+    // run fails anyway. Map it to a TERMINAL node failure so the engine routes it
+    // immediately (the flow's error path, else a `terminal` run failure), exactly
+    // as `hop_egress_error` treats an egress DENIAL. `node_transport` below stays
+    // for genuinely transient transport faults (a 5xx, a dropped connection). The
+    // refusal body carries only the MAC-free reason class (no oracle); it rides
+    // the detail message for operators.
+    if status == 401 {
+        let reason = read_response_body(resp).unwrap_or_default();
+        return Err(NodeError::Terminal(ErrorDetail::coded(
+            "invocation-unauthorized",
+            format!("runner->node signature refused by the serve-node (HTTP 401): {reason}"),
+        )));
+    }
     if status != 200 {
         return Err(node_transport(format!(
             "custom node host returned HTTP {status}"

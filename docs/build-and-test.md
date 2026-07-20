@@ -2287,3 +2287,21 @@ signing key must be present in the deployed `wamn-runner-credentials` Secret
 (add the reserved entry — see runner-credentials.example.yaml), then rebake the
 host image + rebuild the flowrunner wasm and re-run nodeinvoke against the
 deployed serve-node (the rebake riders under [NODE-INVOKE / wamn-bd5]).
+
+### [NODE-INVOKE-HARDENING / wamn-fqg.29·.31·.30·.32] authn follow-ups
+
+Docs: docs/platform-plan.md §5.6, deploy/platform/serve-node.yaml + runner-credentials.example.yaml.
+Four surgical hardenings on the fqg.22 signed-envelope path, all asserted by the
+SAME `nodeinvoke` gate (extra checks on top of the fqg.22 authn set):
+
+* **fqg.29 — terminal on refusal.** The flowrunner maps the serve-node's 401
+  `invocation-unauthorized` refusal to a TERMINAL node failure (was: any non-200
+  → retryable transport error, so a persistent key mismatch burned the node's
+  whole retry budget). Gate: `AUTHN-MISMATCH-TERMINAL` — a runner with the WRONG
+  vault key drives a run that fails `terminal`/`call` in ONE claim (failed=1,
+  parked=0), its queue row dequeued (never parked for retry).
+
+The live gate is the SAME `nodeinvoke` command as [NODE-INVOKE / wamn-bd5];
+rebuild the flowrunner guest + wamn-gates first (the fqg.32 flowrunner change
+below re-touches the guest). Mutation harness: scratchpad `mutate_lane_a.py`
+(≥3 mutants; each must fail a NAMED gate check / unit test).

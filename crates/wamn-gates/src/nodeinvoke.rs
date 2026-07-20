@@ -401,7 +401,7 @@ async fn gate_body(
             schema: Some(SCHEMA),
             project: PROJECT,
         },
-        allowed,
+        allowed.clone(),
         30_000,
     )
     .await?;
@@ -597,6 +597,83 @@ async fn gate_body(
     );
     println!(
         "  authn: grants(after positive drain)={grants_after_positive}; refusals installed 0 grants (before={grants_before_negatives} after={grants_after_negatives}); raw-signed accepted"
+    );
+
+    // -------------------------------------------------------------------------
+    // wamn-fqg.29 — a persistent key mismatch fails the run TERMINALLY (no retry
+    // budget burn). A runner whose vault holds the WRONG signing key signs every
+    // custom-node POST wrong, so the keyed serve-node 401s each one identically.
+    // The flowrunner maps that `invocation-unauthorized` refusal to a TERMINAL
+    // node failure, so the engine fails the run on the FIRST attempt instead of
+    // scheduling its full retry budget of transport retries against a refusal
+    // that can never succeed. A mutant reverting the mapping to `Retryable` parks
+    // the run for a backoff retry (failed=0, parked=1) → this check kills it.
+    // -------------------------------------------------------------------------
+    seed_run(&mut seed_conn, "ni-mismatch", "\"hello\"").await?;
+    let mismatch_vault = Arc::new(WamnCredentials::from_projects(
+        std::collections::HashMap::from([(
+            PROJECT.to_string(),
+            std::collections::HashMap::from([(
+                SIGNING_KEY_CREDENTIAL.to_string(),
+                WRONG_KEY.to_string(),
+            )]),
+        )]),
+    ));
+    let mut mismatch_cfg = WamnPostgresConfig::from_env();
+    mismatch_cfg.database_url = Some(app_url.to_string());
+    let mismatch_plugin = Arc::new(WamnPostgres::new(mismatch_cfg)?);
+    let mut mismatch_worker = RunWorker::instantiate(
+        engine,
+        flowrunner,
+        mismatch_plugin,
+        mismatch_vault,
+        RunnerIdentity {
+            owner: "nodeinvoke-mismatch",
+            tenant: TENANT,
+            schema: Some(SCHEMA),
+            project: PROJECT,
+        },
+        allowed.clone(),
+        30_000,
+    )
+    .await?;
+    let mreport = mismatch_worker.drain().await?;
+    check(
+        &mut ok,
+        "AUTHN-MISMATCH-TERMINAL (fqg.29): a wrong-key run fails TERMINALLY in one claim (no park / retry-budget burn)",
+        mreport.claimed == 1 && mreport.failed == 1 && mreport.parked == 0 && mreport.completed == 0,
+    );
+    let mrow = seed_conn
+        .query_one(
+            &format!(
+                "SELECT status, fail_kind, fail_node FROM {SCHEMA}.runs WHERE run_id = 'ni-mismatch'"
+            ),
+            &[],
+        )
+        .await?;
+    let mstatus: String = mrow.get(0);
+    let mkind: Option<String> = mrow.get(1);
+    let mnode: Option<String> = mrow.get(2);
+    check(
+        &mut ok,
+        "AUTHN-MISMATCH-TERMINAL (fqg.29): run recorded failed/terminal on the custom-node step",
+        mstatus == "failed" && mkind.as_deref() == Some("terminal") && mnode.as_deref() == Some("call"),
+    );
+    // The queue row is GONE (dequeued on a terminal outcome, never parked for a
+    // retry): the retry budget was never engaged.
+    let mismatch_q = count(
+        &seed_conn,
+        &format!("SELECT count(*) FROM {SCHEMA}.run_queue WHERE run_id = 'ni-mismatch'"),
+    )
+    .await?;
+    check(
+        &mut ok,
+        "AUTHN-MISMATCH-TERMINAL (fqg.29): the failed run's queue row was dequeued (not parked for retry)",
+        mismatch_q == 0,
+    );
+    println!(
+        "  fqg.29 mismatch: claimed={} failed={} parked={} status={mstatus} fail_kind={:?} fail_node={:?}",
+        mreport.claimed, mreport.failed, mreport.parked, mkind, mnode
     );
 
     Ok(ok)
