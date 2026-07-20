@@ -2317,6 +2317,16 @@ SAME `nodeinvoke` gate (extra checks on top of the fqg.22 authn set):
   `{project:{name:secret}}` shape. Gate: `DUAL-KEY` — a previous-key signature
   verifies, the current key still verifies, garbage is still `bad-signature`.
 
+* **fqg.32 — replay freshness (opt-in).** An additive signed timestamp: the
+  flowrunner stamps `x-wamn-timestamp` (unix seconds) folded into the HMAC bytes
+  (version-safe — no timestamp ⇒ byte-identical to fqg.22). New serve-node flag
+  `--signature-max-age-secs` (env `WAMN_SIGNATURE_MAX_AGE_SECS`), OFF by default
+  (replay-within-project-env stays the documented accepted risk): when set, a
+  signed IN-WINDOW timestamp is required, checked AFTER the MAC (never a freshness
+  oracle). Gate: `FRESHNESS-FRESH` (fresh accepted when enforced),
+  `FRESHNESS-STALE` (a signed-but-stale envelope → `stale-timestamp`),
+  `FRESHNESS-LEGACY` (a timestamp-less envelope still verifies when OFF).
+
 The live gate is the SAME `nodeinvoke` command as [NODE-INVOKE / wamn-bd5];
 rebuild the flowrunner guest + wamn-gates first (the fqg.32 flowrunner change
 below re-touches the guest). Mutation harness: scratchpad `mutate_lane_a.py`

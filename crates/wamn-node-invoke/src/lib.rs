@@ -24,6 +24,7 @@
 //! canonical signed bytes ([`sign_envelope`] / [`verify_envelope`]) are shared
 //! so signer and verifier cannot drift; mTLS remains the later infra upgrade.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -186,6 +187,13 @@ impl NodeInvokeResponse {
 /// unencoded.
 pub const SIGNATURE_HEADER: &str = "x-wamn-signature";
 
+/// wamn-fqg.32: the request header carrying the invocation's freshness timestamp
+/// (unix seconds, ASCII decimal). Its bytes are folded into the signed message
+/// (see [`sign_envelope_with_timestamp`]), so the MAC binds it and a
+/// stripped/edited timestamp fails verification. Absent = a legacy (fqg.22)
+/// timestamp-less envelope.
+pub const TIMESTAMP_HEADER: &str = "x-wamn-timestamp";
+
 /// The reserved credential-vault name the per-project-env HMAC signing key is
 /// banked under, distributed via the EXISTING runner-credentials Secret pattern
 /// (`{project: {name: secret}}` — no new Secret, no new WIT). The colon marks it
@@ -249,6 +257,15 @@ pub enum SignatureError {
     /// is configured, so it refuses ALL invocations rather than silently
     /// reverting to network trust. A misconfiguration signal, not a caller fault.
     Unconfigured,
+    /// wamn-fqg.32: freshness is enforced but the request carried no
+    /// `x-wamn-timestamp` — an envelope that cannot prove freshness is refused.
+    MissingTimestamp,
+    /// wamn-fqg.32: the `x-wamn-timestamp` header was present but not a decimal
+    /// unix-seconds integer.
+    MalformedTimestamp,
+    /// wamn-fqg.32: a well-signed envelope whose timestamp is outside the
+    /// configured max-age window (a stale / replayed request).
+    Stale,
 }
 
 impl SignatureError {
@@ -259,6 +276,9 @@ impl SignatureError {
             SignatureError::Malformed => "malformed-signature",
             SignatureError::Mismatch => "bad-signature",
             SignatureError::Unconfigured => "signing-key-required",
+            SignatureError::MissingTimestamp => "missing-timestamp",
+            SignatureError::MalformedTimestamp => "malformed-timestamp",
+            SignatureError::Stale => "stale-timestamp",
         }
     }
 }
@@ -283,6 +303,59 @@ pub fn verify_envelope(key: &[u8], body: &[u8], signature_hex: &str) -> Result<(
     mac.update(body);
     mac.verify_slice(&provided)
         .map_err(|_| SignatureError::Mismatch)
+}
+
+/// The canonical bytes signed by [`sign_envelope_with_timestamp`] /
+/// [`verify_envelope_with_timestamp`]: the EXACT body, OPTIONALLY extended with a
+/// freshness timestamp (wamn-fqg.32). ADDITIVE and VERSION-SAFE — with no
+/// timestamp the signed bytes ARE the body, byte-identical to the fqg.22
+/// definition, so a legacy signer/verifier is unaffected and a keyed host with
+/// freshness OFF still verifies a legacy (timestamp-less) envelope. A present
+/// timestamp appends a domain-separated `\n<header>:<value>` suffix over the raw
+/// header bytes; the MAC binds it, so stripping the timestamp (verifying
+/// body-only) or editing it breaks the signature.
+fn signed_message<'a>(body: &'a [u8], timestamp: Option<&str>) -> Cow<'a, [u8]> {
+    match timestamp {
+        None => Cow::Borrowed(body),
+        Some(ts) => {
+            let mut m = Vec::with_capacity(body.len() + TIMESTAMP_HEADER.len() + ts.len() + 2);
+            m.extend_from_slice(body);
+            m.push(b'\n');
+            m.extend_from_slice(TIMESTAMP_HEADER.as_bytes());
+            m.push(b':');
+            m.extend_from_slice(ts.as_bytes());
+            Cow::Owned(m)
+        }
+    }
+}
+
+/// Sign the body with an OPTIONAL freshness timestamp folded in (wamn-fqg.32).
+/// `timestamp` is `None` for a legacy (fqg.22) envelope — then this is exactly
+/// [`sign_envelope`] over the body — or `Some(unix-seconds-decimal)`, the same
+/// string carried in the [`TIMESTAMP_HEADER`].
+pub fn sign_envelope_with_timestamp(key: &[u8], body: &[u8], timestamp: Option<&str>) -> String {
+    sign_envelope(key, &signed_message(body, timestamp))
+}
+
+/// Verify a signature over the body + optional timestamp (wamn-fqg.32). The
+/// caller passes the [`TIMESTAMP_HEADER`] value exactly as received (or `None`
+/// for a legacy envelope); the freshness (max-age) decision is the host's
+/// ([`timestamp_fresh`]) — this only binds the timestamp to the MAC.
+pub fn verify_envelope_with_timestamp(
+    key: &[u8],
+    body: &[u8],
+    timestamp: Option<&str>,
+    signature_hex: &str,
+) -> Result<(), SignatureError> {
+    verify_envelope(key, &signed_message(body, timestamp), signature_hex)
+}
+
+/// Whether `timestamp` (unix seconds) is within `max_age_secs` of `now` (unix
+/// seconds) in EITHER direction — a future timestamp beyond the window (clock
+/// skew / forgery) is as stale as an old one. Pure arithmetic (the host owns the
+/// clock, this owns only the window test), so it unit-tests without a clock.
+pub fn timestamp_fresh(timestamp: u64, now: u64, max_age_secs: u64) -> bool {
+    timestamp.abs_diff(now) <= max_age_secs
 }
 
 // ---------------------------------------------------------------------------
@@ -560,6 +633,54 @@ mod tests {
         assert_eq!(SignatureError::Mismatch.reason(), "bad-signature");
         // wamn-fqg.31: the fail-closed refusal reason.
         assert_eq!(SignatureError::Unconfigured.reason(), "signing-key-required");
+        // wamn-fqg.32: the freshness refusal reasons.
+        assert_eq!(SignatureError::MissingTimestamp.reason(), "missing-timestamp");
+        assert_eq!(
+            SignatureError::MalformedTimestamp.reason(),
+            "malformed-timestamp"
+        );
+        assert_eq!(SignatureError::Stale.reason(), "stale-timestamp");
+    }
+
+    /// wamn-fqg.32: the timestamp extension is ADDITIVE and VERSION-SAFE. With no
+    /// timestamp the signed bytes are byte-identical to fqg.22 (body-only). A
+    /// present timestamp is bound by the MAC — stripping it (verifying body-only)
+    /// or editing it breaks the signature.
+    #[test]
+    fn timestamp_signing_is_additive_and_version_safe() {
+        let key = b"per-project-env-hmac-key";
+        let body = sample_request().to_json();
+
+        // No timestamp == the fqg.22 body-only signature, byte-identical.
+        assert_eq!(
+            sign_envelope_with_timestamp(key, body.as_bytes(), None),
+            sign_envelope(key, body.as_bytes())
+        );
+
+        let ts = "1721470000";
+        let sig = sign_envelope_with_timestamp(key, body.as_bytes(), Some(ts));
+        // Verifies WITH that exact timestamp.
+        assert!(verify_envelope_with_timestamp(key, body.as_bytes(), Some(ts), &sig).is_ok());
+        // Stripping the timestamp (body-only) fails — the MAC bound it.
+        assert_eq!(
+            verify_envelope_with_timestamp(key, body.as_bytes(), None, &sig),
+            Err(SignatureError::Mismatch)
+        );
+        // Editing the timestamp fails.
+        assert_eq!(
+            verify_envelope_with_timestamp(key, body.as_bytes(), Some("1721470001"), &sig),
+            Err(SignatureError::Mismatch)
+        );
+    }
+
+    /// wamn-fqg.32: the freshness window is symmetric and inclusive.
+    #[test]
+    fn timestamp_freshness_window() {
+        assert!(timestamp_fresh(1000, 1000, 30));
+        assert!(timestamp_fresh(1000, 1030, 30)); // exactly max age (old)
+        assert!(timestamp_fresh(1030, 1000, 30)); // exactly max age (future skew)
+        assert!(!timestamp_fresh(1000, 1031, 30)); // too old
+        assert!(!timestamp_fresh(1031, 1000, 30)); // too far in the future
     }
 
     /// wamn-fqg.30: the reserved names are distinct stable strings — a body

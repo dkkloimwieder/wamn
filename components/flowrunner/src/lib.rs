@@ -73,8 +73,8 @@ use wamn_runner::{
 
 use wamn_node_invoke::{
     NodeInvokeRequest, NodeInvokeResponse, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL,
-    WireErrorDetail, WireNodeError, WirePayload, WireRunContext, granted_credentials,
-    sign_envelope,
+    TIMESTAMP_HEADER, WireErrorDetail, WireNodeError, WirePayload, WireRunContext,
+    granted_credentials, sign_envelope_with_timestamp,
 };
 
 use wamn::postgres::client::{self};
@@ -458,8 +458,23 @@ fn custom_node_dispatch(d: &Dispatch, run_id: &str, flow: &Flow) -> Result<NodeA
     // network-trust, accepted only by a keyless serve-node). The key is NEVER
     // logged, echoed, or placed in the envelope grant.
     let body = req.to_json();
-    let signature = read_signing_key().map(|key| sign_envelope(key.as_bytes(), body.as_bytes()));
-    let body = match http_post_run(&url, &body, signature.as_deref()) {
+    // wamn-fqg.32: when we hold a key, stamp a freshness timestamp (unix seconds)
+    // that is COVERED BY the signature and rides the `x-wamn-timestamp` header.
+    // The serve-node enforces max-age only when configured (OFF by default), but
+    // always sending it means a freshness-enabled env needs no flowrunner change;
+    // a keyless deployment signs (and stamps) nothing. The timestamp folds into
+    // the signed bytes additively (version-safe in wamn-node-invoke).
+    let signed = read_signing_key().map(|key| {
+        let ts = wall_now_secs().to_string();
+        let sig = sign_envelope_with_timestamp(key.as_bytes(), body.as_bytes(), Some(&ts));
+        (ts, sig)
+    });
+    let body = match http_post_run(
+        &url,
+        &body,
+        signed.as_ref().map(|(_, sig)| sig.as_str()),
+        signed.as_ref().map(|(ts, _)| ts.as_str()),
+    ) {
         Ok(b) => b,
         Err(e) => return Ok(NodeAction::Emit(NodeOutcome::Error(e))),
     };
@@ -539,9 +554,16 @@ fn read_signing_key() -> Option<String> {
 /// POST `body` to the custom node's `serve-node` endpoint and return the
 /// response body. Egress leaves the flow ONLY here (wasi:http), so the host
 /// egress guard + the flow's `allowed-hosts` govern the hop. `signature`, when
-/// present, is the hex HMAC of `body` carried in the `x-wamn-signature` header
-/// (wamn-fqg.22) so the serve-node verifies before installing the grant.
-fn http_post_run(url: &str, body: &str, signature: Option<&str>) -> Result<String, NodeError> {
+/// present, is the hex HMAC over `body` (+ `timestamp`, wamn-fqg.32) carried in
+/// the `x-wamn-signature` header (wamn-fqg.22) so the serve-node verifies before
+/// installing the grant; `timestamp` (unix seconds) rides `x-wamn-timestamp` and
+/// is bound by that signature.
+fn http_post_run(
+    url: &str,
+    body: &str,
+    signature: Option<&str>,
+    timestamp: Option<&str>,
+) -> Result<String, NodeError> {
     let Some((scheme, authority, path)) = parse_http_url(url) else {
         return Err(NodeError::Terminal(ErrorDetail::coded(
             "bad-endpoint",
@@ -553,6 +575,12 @@ fn http_post_run(url: &str, body: &str, signature: Option<&str>) -> Result<Strin
         && headers.append(SIGNATURE_HEADER, sig.as_bytes()).is_err()
     {
         return Err(node_transport("runner->node signature header rejected"));
+    }
+    // wamn-fqg.32: the freshness timestamp header (bound by the signature above).
+    if let Some(ts) = timestamp
+        && headers.append(TIMESTAMP_HEADER, ts.as_bytes()).is_err()
+    {
+        return Err(node_transport("runner->node timestamp header rejected"));
     }
     let req = OutgoingRequest::new(headers);
     if req.set_method(&Method::Post).is_err()

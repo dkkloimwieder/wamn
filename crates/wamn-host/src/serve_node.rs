@@ -71,8 +71,8 @@ use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestC
 
 use wamn_node_invoke::{
     ConfigCache, NodeInvokeRequest, NodeInvokeResponse, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL,
-    SIGNING_KEY_CREDENTIAL_PREVIOUS, SignatureError, WireEmission, WireErrorDetail, WireNodeError,
-    WirePayload, WireRateLimit, verify_envelope,
+    SIGNING_KEY_CREDENTIAL_PREVIOUS, SignatureError, TIMESTAMP_HEADER, WireEmission, WireErrorDetail,
+    WireNodeError, WirePayload, WireRateLimit, timestamp_fresh, verify_envelope_with_timestamp,
 };
 
 use crate::egress_guard::screen_tenant_compiled;
@@ -147,6 +147,15 @@ pub struct ServeNodeArgs {
     /// behavior (unkeyed = network-trust, warned loudly at startup).
     #[arg(long = "require-signing-key", env = "WAMN_REQUIRE_SIGNING_KEY")]
     pub require_signing_key: bool,
+
+    /// wamn-fqg.32: REPLAY-FRESHNESS max-age in seconds. When set, a signed
+    /// envelope MUST carry a `x-wamn-timestamp` (covered by the signature) within
+    /// this many seconds of the host clock, else it is refused (401
+    /// `stale-timestamp`). OFF by default (replay-within-project-env is the
+    /// documented accepted risk); this is the opt-in tightening. A legacy
+    /// (timestamp-less) envelope keeps verifying while this is unset.
+    #[arg(long = "signature-max-age-secs", env = "WAMN_SIGNATURE_MAX_AGE_SECS")]
+    pub signature_max_age_secs: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +261,10 @@ pub struct ServeNode {
     /// configured, every invocation is REFUSED (`Unconfigured`) rather than
     /// admitted under network trust. Inert when a key IS configured.
     require_signing_key: bool,
+    /// wamn-fqg.32: replay-freshness max-age (seconds). `Some` enforces a signed,
+    /// in-window `x-wamn-timestamp` on every invocation; `None` (default) skips
+    /// the age check, so a legacy timestamp-less envelope still verifies.
+    max_signature_age_secs: Option<u64>,
     /// Count of per-invocation grants INSTALLED (cjv.3). The verify-before-grant
     /// witness (wamn-fqg.22): a refused request never reaches `invoke`, so a
     /// refusal must not advance this. The gate reads it via
@@ -270,6 +283,7 @@ impl ServeNode {
         project: &str,
         allowed_hosts: Arc<[AllowedHost]>,
         require_signing_key: bool,
+        max_signature_age_secs: Option<u64>,
     ) -> anyhow::Result<Self> {
         let raw = engine.inner();
         let component =
@@ -303,6 +317,13 @@ impl ServeNode {
                 project,
                 key = SIGNING_KEY_CREDENTIAL_PREVIOUS,
                 "serve-node: a PREVIOUS signing key is also accepted (wamn-fqg.30 rotation window)"
+            );
+        }
+        if let Some(max_age) = max_signature_age_secs {
+            tracing::info!(
+                project,
+                max_age_secs = max_age,
+                "serve-node: replay-freshness ENFORCED (wamn-fqg.32; a signed in-window x-wamn-timestamp is required)"
             );
         }
         match (&signing_key, require_signing_key) {
@@ -346,6 +367,7 @@ impl ServeNode {
             signing_key,
             previous_signing_key,
             require_signing_key,
+            max_signature_age_secs,
             grant_installs: AtomicU64::new(0),
         })
     }
@@ -360,6 +382,8 @@ impl ServeNode {
         &self,
         body: &[u8],
         signature: Option<&str>,
+        timestamp: Option<&str>,
+        now_secs: u64,
     ) -> Result<(), SignatureError> {
         let Some(key) = self.signing_key.as_deref() else {
             // wamn-fqg.31: with no key configured, a FAIL-CLOSED host refuses ALL
@@ -373,16 +397,34 @@ impl ServeNode {
         };
         let sig = signature.ok_or(SignatureError::Missing)?;
         // wamn-fqg.30: accept the CURRENT key, else the PREVIOUS key if one is
-        // configured (a rotation window). The canonical constant-time verify
-        // lives in wamn-node-invoke; we call it once per key. Garbage
-        // (non-hex / wrong) still fails both and is refused.
-        match verify_envelope(key, body, sig) {
-            Ok(()) => Ok(()),
+        // configured (a rotation window). wamn-fqg.32: the `x-wamn-timestamp`
+        // (when present) is COVERED BY the MAC — pass it through so the signed
+        // bytes match, so a stripped/edited timestamp fails here. The canonical
+        // constant-time verify lives in wamn-node-invoke; we call it once per key.
+        match verify_envelope_with_timestamp(key, body, timestamp, sig) {
+            Ok(()) => {}
             Err(e) => match self.previous_signing_key.as_deref() {
-                Some(prev) => verify_envelope(prev, body, sig),
-                None => Err(e),
+                Some(prev) => verify_envelope_with_timestamp(prev, body, timestamp, sig)?,
+                None => return Err(e),
             },
         }
+        // wamn-fqg.32: freshness gate — OFF by default (replay-within-project-env
+        // is the documented accepted risk). When a max-age is configured, a
+        // timestamp is REQUIRED and must be in-window. Checked AFTER signature
+        // verification, so a freshness refusal is only ever returned to an
+        // authenticated caller — a forged envelope always gets `bad-signature`,
+        // never a freshness oracle.
+        if let Some(max_age) = self.max_signature_age_secs {
+            let ts = timestamp.ok_or(SignatureError::MissingTimestamp)?;
+            let ts = ts
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| SignatureError::MalformedTimestamp)?;
+            if !timestamp_fresh(ts, now_secs, max_age) {
+                return Err(SignatureError::Stale);
+            }
+        }
+        Ok(())
     }
 
     /// How many per-invocation grants have been INSTALLED (cjv.3) — the
@@ -570,15 +612,18 @@ async fn serve_connection(sock: TcpStream, node: &ServeNode) -> anyhow::Result<(
     sock.set_nodelay(true)?;
     let mut reader = BufReader::new(sock);
     loop {
-        let (body, signature) = match read_http_request_body(&mut reader).await? {
+        let (body, signature, timestamp) = match read_http_request_body(&mut reader).await? {
             Some(parts) => parts,
             None => break, // clean EOF
         };
         // wamn-fqg.22: verify the signature over the RAW body BEFORE parsing the
         // envelope or installing the grant. A refusal is a 401-class response
         // that never reaches `invoke` — verify-before-grant, the load-bearing
-        // property.
-        if let Err(e) = node.verify_signature(&body, signature.as_deref()) {
+        // property. wamn-fqg.32: pass the freshness timestamp + the host clock so
+        // a stale envelope is refused when the max-age gate is enabled.
+        if let Err(e) =
+            node.verify_signature(&body, signature.as_deref(), timestamp.as_deref(), now_unix_secs())
+        {
             tracing::warn!(
                 reason = e.reason(),
                 "serve-node: invocation REFUSED — runner→node signature check failed (before grant install)"
@@ -625,18 +670,20 @@ fn unauthorized_response(err: SignatureError) -> String {
     )
 }
 
-/// Read one HTTP message's headers+body (server side), returning the body and
-/// the `x-wamn-signature` header value (wamn-fqg.22) if present. None on a clean
-/// EOF. Handles BOTH `Content-Length` and `Transfer-Encoding: chunked` — the
-/// `wasi:http` outbound path frames a streamed body as chunked (no
-/// Content-Length), so a Content-Length-only parser would read an empty body.
+/// Read one HTTP message's headers+body (server side), returning the body, the
+/// `x-wamn-signature` header value (wamn-fqg.22), and the `x-wamn-timestamp`
+/// header value (wamn-fqg.32) if present. None on a clean EOF. Handles BOTH
+/// `Content-Length` and `Transfer-Encoding: chunked` — the `wasi:http` outbound
+/// path frames a streamed body as chunked (no Content-Length), so a
+/// Content-Length-only parser would read an empty body.
 async fn read_http_request_body<R: tokio::io::AsyncBufRead + Unpin>(
     reader: &mut R,
-) -> anyhow::Result<Option<(Vec<u8>, Option<String>)>> {
+) -> anyhow::Result<Option<(Vec<u8>, Option<String>, Option<String>)>> {
     let mut content_length = 0usize;
     let mut chunked = false;
     let mut saw_any = false;
     let mut signature: Option<String> = None;
+    let mut timestamp: Option<String> = None;
     let mut line = String::new();
     loop {
         line.clear();
@@ -666,6 +713,13 @@ async fn read_http_request_body<R: tokio::io::AsyncBufRead + Unpin>(
             // line is faithful. The exact `header:` prefix avoids matching a
             // longer header name.
             signature = Some(v.trim().to_string());
+        } else if let Some(v) = lower
+            .strip_prefix(TIMESTAMP_HEADER)
+            .and_then(|r| r.strip_prefix(':'))
+        {
+            // wamn-fqg.32: "<header>:<decimal>" — an ASCII decimal, so the
+            // lowercased line is faithful.
+            timestamp = Some(v.trim().to_string());
         }
     }
     let body = if chunked {
@@ -675,7 +729,17 @@ async fn read_http_request_body<R: tokio::io::AsyncBufRead + Unpin>(
         reader.read_exact(&mut body).await?;
         body
     };
-    Ok(Some((body, signature)))
+    Ok(Some((body, signature, timestamp)))
+}
+
+/// The host clock in whole unix seconds — the reference the wamn-fqg.32 freshness
+/// gate compares a request's `x-wamn-timestamp` against. A pre-epoch clock (never
+/// in practice) reads 0, which simply fails every freshness check closed.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Decode a `Transfer-Encoding: chunked` body: `<hexlen>\r\n<data>\r\n` chunks
@@ -751,6 +815,7 @@ pub async fn run(args: ServeNodeArgs) -> anyhow::Result<()> {
             &args.project,
             allowed_hosts,
             args.require_signing_key,
+            args.signature_max_age_secs,
         )
         .await?,
     );

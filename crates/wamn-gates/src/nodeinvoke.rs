@@ -33,6 +33,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_node_invoke::{
     NodeInvokeRequest, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL, SIGNING_KEY_CREDENTIAL_PREVIOUS,
     SignatureError, WirePayload, WireRunContext, granted_credentials, sign_envelope,
+    sign_envelope_with_timestamp,
 };
 use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
@@ -322,6 +323,7 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
             PROJECT,
             Arc::from([]),
             false, // authn keyed below; not fail-closed (a key is present)
+            None,  // wamn-fqg.32: replay-freshness OFF (default) for the E2E drain
         )
         .await
         .context("build serve-node")?,
@@ -543,6 +545,11 @@ async fn gate_body(
     // Drive the serve-node directly over raw HTTP to exercise the refusal arms
     // the happy path cannot forge — the exact envelope the flowrunner sends.
     let body = canonical_request().to_json();
+    // The host clock (unix seconds) the fqg.32 freshness asserts compare against.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let good_sig = sign_envelope(SIGNING_KEY.as_bytes(), body.as_bytes());
     let wrong_sig = sign_envelope(WRONG_KEY.as_bytes(), body.as_bytes());
     let grants_before_negatives = serve.grant_install_count();
@@ -622,18 +629,20 @@ async fn gate_body(
         PROJECT,
         Arc::from([]),
         true, // fail-closed
+        None,
     )
     .await
     .context("build keyless fail-closed serve-node")?;
     check(
         &mut ok,
         "FAIL-CLOSED (fqg.31): a keyless require-signing-key host REFUSES an unsigned invocation (signing-key-required)",
-        keyless_failclosed.verify_signature(body.as_bytes(), None) == Err(SignatureError::Unconfigured),
+        keyless_failclosed.verify_signature(body.as_bytes(), None, None, now)
+            == Err(SignatureError::Unconfigured),
     );
     check(
         &mut ok,
         "FAIL-CLOSED (fqg.31): it also refuses a SIGNED invocation — no key to verify, so refuse ALL",
-        keyless_failclosed.verify_signature(body.as_bytes(), Some(&good_sig))
+        keyless_failclosed.verify_signature(body.as_bytes(), Some(&good_sig), None, now)
             == Err(SignatureError::Unconfigured),
     );
     let keyless_default = ServeNode::new(
@@ -644,13 +653,16 @@ async fn gate_body(
         PROJECT,
         Arc::from([]),
         false, // default: legacy network-trust
+        None,
     )
     .await
     .context("build keyless default serve-node")?;
     check(
         &mut ok,
         "NETWORK-TRUST (fqg.31): the DEFAULT keyless host admits an unsigned invocation (backward-compatible)",
-        keyless_default.verify_signature(body.as_bytes(), None).is_ok(),
+        keyless_default
+            .verify_signature(body.as_bytes(), None, None, now)
+            .is_ok(),
     );
 
     // -------------------------------------------------------------------------
@@ -681,6 +693,7 @@ async fn gate_body(
         PROJECT,
         Arc::from([]),
         false,
+        None,
     )
     .await
     .context("build dual-key serve-node")?;
@@ -688,17 +701,76 @@ async fn gate_body(
     check(
         &mut ok,
         "DUAL-KEY (fqg.30): an envelope signed with the PREVIOUS key verifies during the rotation window",
-        dual.verify_signature(body.as_bytes(), Some(&prev_sig)).is_ok(),
+        dual.verify_signature(body.as_bytes(), Some(&prev_sig), None, now)
+            .is_ok(),
     );
     check(
         &mut ok,
         "DUAL-KEY (fqg.30): the CURRENT key still verifies alongside the previous",
-        dual.verify_signature(body.as_bytes(), Some(&good_sig)).is_ok(),
+        dual.verify_signature(body.as_bytes(), Some(&good_sig), None, now)
+            .is_ok(),
     );
     check(
         &mut ok,
         "DUAL-KEY (fqg.30): a signature under NEITHER key is still refused (bad-signature)",
-        dual.verify_signature(body.as_bytes(), Some(&wrong_sig)) == Err(SignatureError::Mismatch),
+        dual.verify_signature(body.as_bytes(), Some(&wrong_sig), None, now)
+            == Err(SignatureError::Mismatch),
+    );
+
+    // -------------------------------------------------------------------------
+    // wamn-fqg.32 — replay freshness (timestamp, OFF by default). A serve-node
+    // with a max-age configured requires a SIGNED, in-window timestamp; a stale
+    // one is refused (stale-timestamp), a fresh one accepted. With freshness OFF
+    // (the main keyed `serve` above), a LEGACY timestamp-less envelope still
+    // verifies. A mutant that drops the age check accepts the stale envelope →
+    // FRESHNESS-STALE flips; one that always checks freshness rejects the legacy
+    // envelope → FRESHNESS-LEGACY flips.
+    // -------------------------------------------------------------------------
+    let fresh_vault = Arc::new(WamnCredentials::from_projects(
+        std::collections::HashMap::from([(
+            PROJECT.to_string(),
+            std::collections::HashMap::from([(
+                SIGNING_KEY_CREDENTIAL.to_string(),
+                SIGNING_KEY.to_string(),
+            )]),
+        )]),
+    ));
+    let fresh = ServeNode::new(
+        engine,
+        node_wasm,
+        fresh_vault,
+        serve_node::DEFAULT_NODE_ID,
+        PROJECT,
+        Arc::from([]),
+        false,
+        Some(60), // enforce a 60s freshness window
+    )
+    .await
+    .context("build freshness-enforcing serve-node")?;
+    let fresh_ts = now.to_string();
+    let fresh_sig = sign_envelope_with_timestamp(SIGNING_KEY.as_bytes(), body.as_bytes(), Some(&fresh_ts));
+    check(
+        &mut ok,
+        "FRESHNESS-FRESH (fqg.32): a fresh timestamped envelope is accepted when max-age is enforced",
+        fresh
+            .verify_signature(body.as_bytes(), Some(&fresh_sig), Some(&fresh_ts), now)
+            .is_ok(),
+    );
+    let stale_ts = now.saturating_sub(3600).to_string();
+    let stale_sig =
+        sign_envelope_with_timestamp(SIGNING_KEY.as_bytes(), body.as_bytes(), Some(&stale_ts));
+    check(
+        &mut ok,
+        "FRESHNESS-STALE (fqg.32): a correctly-signed but STALE envelope is refused (stale-timestamp)",
+        fresh.verify_signature(body.as_bytes(), Some(&stale_sig), Some(&stale_ts), now)
+            == Err(SignatureError::Stale),
+    );
+    check(
+        &mut ok,
+        "FRESHNESS-LEGACY (fqg.32): a legacy timestamp-less envelope still verifies when freshness is OFF",
+        serve
+            .verify_signature(body.as_bytes(), Some(&good_sig), None, now)
+            .is_ok(),
     );
 
     // -------------------------------------------------------------------------
