@@ -62,8 +62,9 @@ use wamn_run_store::{NodeRunRecord, RunRecord, sql as run_sql};
 // The combined claim/checkpoint/complete statements are the fqg.18 record-stream
 // amortization: one statement where the split path spent two or three.
 use wamn_run_queue::{
-    claim_dispatch_sql, complete_dequeue_sql, dequeue_sql, park_sql, record_error_and_renew_sql,
-    record_success_and_renew_sql,
+    acquire_partitions_sql, claim_dispatch_sql, claim_partition_head_sql, complete_dequeue_sql,
+    dequeue_sql, mark_running_sql, park_sql, record_error_and_renew_sql,
+    record_success_and_renew_sql, release_partition_sql, renew_partition_sql,
 };
 use wamn_runner::{
     Dispatch, ERROR_PORT, NodeError, NodeOutcome, Plan, RetryPolicy, RunStatus, Step,
@@ -1039,6 +1040,164 @@ fn park(run_id: &str, park_ms: u64) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Guest-side PARTITIONED claim (fqg.9): the per-partition counterpart of the
+// unpartitioned self-claim above. A `partitioned(key)` run is dispatched ONLY
+// through per-partition ownership — the guest leases a partition, claims its
+// HEAD in stream order (one in flight per key), drives it, renews the partition
+// lease alongside the run lease, and steps down (releases the lease) when the
+// partition drains — so a key's runs never dispatch out of order or two at once
+// across replicas. The pure decisions (`plan_acquire` / `plan_partition_claim`)
+// and the SQL (`acquire_partitions_sql` / `claim_partition_head_sql`) live in
+// wamn-run-queue and are host-gated by queuebench; fqg.9 is their first GUEST
+// caller, mirroring how fqg.4 was the first guest caller of `claim_batch_sql`.
+// ---------------------------------------------------------------------------
+
+/// A partition head claimed for this replica: the run to drive plus the key it
+/// belongs to (needed to renew/release the partition lease around the walk).
+struct PartitionHead {
+    run_id: String,
+    partition_key: String,
+}
+
+/// Lease up to one ACQUIRABLE partition for `owner` (unowned, or lease-expired =
+/// failover). Idempotent for partitions this replica already holds live — the
+/// `acquire_partitions_sql` `ON CONFLICT` only steals an *expired* lease — so a
+/// replica accrues ownership across `run-next` calls without churning its live
+/// leases. Returns the partition keys this call newly leased (0 or 1).
+fn acquire_partitions(owner: &str, ttl_ms: i64) -> Result<Vec<String>, String> {
+    let rs = client::query(&acquire_partitions_sql(1), &[text(owner), int64(ttl_ms)])
+        .map_err(|e| err_name(&e))?;
+    let mut keys = Vec::with_capacity(rs.rows.len());
+    for row in &rs.rows {
+        match row.first() {
+            Some(SqlValue::Text(s)) => keys.push(s.clone()),
+            other => return Err(format!("acquire partition_key shape: {other:?}")),
+        }
+    }
+    Ok(keys)
+}
+
+/// Claim the single globally-earliest HEAD across every partition `owner` holds a
+/// live lease on — head-first, one in flight per key (`claim_partition_head_sql`
+/// encodes the D20 policy + the one-in-flight guard). Returns None when no owned
+/// partition has a claimable head (drained, or the head is unavailable/blocked).
+fn claim_partition_head(owner: &str, ttl_ms: i64) -> Result<Option<PartitionHead>, String> {
+    let rs = client::query(&claim_partition_head_sql(1), &[text(owner), int64(ttl_ms)])
+        .map_err(|e| err_name(&e))?;
+    let Some(row) = rs.rows.first() else {
+        return Ok(None);
+    };
+    let run_id = match row.first() {
+        Some(SqlValue::Text(s)) => s.clone(),
+        other => return Err(format!("partition head run_id shape: {other:?}")),
+    };
+    let partition_key = match row.get(1) {
+        Some(SqlValue::Text(s)) => s.clone(),
+        other => return Err(format!("partition head partition_key shape: {other:?}")),
+    };
+    Ok(Some(PartitionHead {
+        run_id,
+        partition_key,
+    }))
+}
+
+/// Read a claimed run's dispatch inputs (the recorded flow + trigger input) — the
+/// partition head claim returns only `(run_id, partition_key)`, so the guest reads
+/// what the combined unpartitioned `claim_dispatch_sql` returns inline.
+fn read_dispatch(run_id: &str) -> Result<(String, Value), String> {
+    let rs = client::query(&run_sql::select_run_dispatch_sql(), &[text(run_id)])
+        .map_err(|e| err_name(&e))?;
+    let row = rs
+        .rows
+        .first()
+        .ok_or("claimed partition head has no runs row")?;
+    let flow_id = match row.first() {
+        Some(SqlValue::Text(s)) => s.clone(),
+        other => return Err(format!("runs.flow_id shape: {other:?}")),
+    };
+    let input = match row.get(1) {
+        Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => {
+            serde_json::from_str(s).map_err(|e| format!("runs.input_json parse: {e}"))?
+        }
+        _ => Value::Null,
+    };
+    Ok((flow_id, input))
+}
+
+/// Flip a partition-head run `dispatched` -> `running`. The unpartitioned
+/// `claim_dispatch_sql` does this inline (its `marked` CTE); the partition head
+/// claim does not, so the guest marks it before driving.
+fn mark_running(run_id: &str) -> Result<(), String> {
+    client::execute(&mark_running_sql(), &[text(run_id)]).map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Heartbeat a held partition lease (owner-guarded — a no-op if this replica lost
+/// it). Extends the lease by `ttl_ms`, keeping the replica the key's owner across
+/// a long head walk. See [`execute_claimed`]'s per-node renewal.
+fn renew_partition(partition_key: &str, ttl_ms: i64, owner: &str) -> Result<(), String> {
+    client::execute(
+        &renew_partition_sql(),
+        &[text(partition_key), int64(ttl_ms), text(owner)],
+    )
+    .map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Release a held partition lease (a drained key / step-down), owner-guarded.
+fn release_partition(partition_key: &str, owner: &str) -> Result<(), String> {
+    client::execute(
+        &release_partition_sql(),
+        &[text(partition_key), text(owner)],
+    )
+    .map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Settle a driven run's terminal outcome (shared by both claim paths): completed
+/// (0) already dropped its queue row inside [`complete_and_dequeue`]; parked (1)
+/// pushes `available_at` and releases the run lease; failed (2) dequeues.
+fn settle(run_id: &str, claim: &ClaimOutcome) -> Result<(), String> {
+    match claim.outcome {
+        0 => {}                            // completed: already dequeued
+        1 => park(run_id, claim.park_ms)?, // parked -> re-offered at wake
+        _ => dequeue(run_id)?,             // failed -> terminal
+    }
+    Ok(())
+}
+
+/// The PARTITIONED turn of the dispatch loop (fqg.9): lease a partition, claim
+/// the earliest head across the partitions this replica owns, and drive it via
+/// the shared [`execute_claimed`] path (renewing the partition lease per node).
+/// On drain — no owned partition has a claimable head — STEP DOWN from the
+/// partition just acquired ([`release_partition`]) so another replica (or a later
+/// wake) can take it; a lease retained from a served-then-drained partition ages
+/// out (`gc_orphan_partitions_sql`). Returns the driven `(run_id, outcome)`, or
+/// None when there is no partitioned work to do this turn.
+fn claim_partition_run(owner: &str, ttl_ms: i64) -> Result<Option<(String, u32)>, String> {
+    let acquired = acquire_partitions(owner, ttl_ms)?;
+    let Some(head) = claim_partition_head(owner, ttl_ms)? else {
+        for key in &acquired {
+            release_partition(key, owner)?;
+        }
+        return Ok(None);
+    };
+    mark_running(&head.run_id)?;
+    let (flow_id, input) = read_dispatch(&head.run_id)?;
+    let flow = active_flow(&flow_id, None)?;
+    let claim = execute_claimed(
+        &head.run_id,
+        &flow,
+        input,
+        owner,
+        ttl_ms,
+        Some(&head.partition_key),
+    )?;
+    settle(&head.run_id, &claim)?;
+    Ok(Some((head.run_id, claim.outcome)))
+}
+
 /// Drive a run CLAIMED from the queue: like [`execute`] but the flow + input come
 /// from the dispatcher-persisted `runs` row (not a fixture id / wrapped string),
 /// the lease is renewed per node, and terminal states become an `outcome` code
@@ -1051,6 +1210,7 @@ fn execute_claimed(
     input: Value,
     owner: &str,
     ttl_ms: i64,
+    partition: Option<&str>,
 ) -> Result<ClaimOutcome, String> {
     // l5i9.12.2: the production dispatch path (run-next) — declare this run's
     // causation BEFORE any write so the wamn:postgres plugin stamps
@@ -1143,6 +1303,15 @@ fn execute_claimed(
                             }
                             NodeOutcome::Error(_) => {}
                         }
+                        // fqg.9: when driving a partition HEAD, renew the partition
+                        // lease alongside the run lease so this replica stays the
+                        // key's stable owner across a long head walk (no needless
+                        // mid-run partition steal). Owner-guarded, so a lease this
+                        // replica already lost is a no-op. Inert (never called) for
+                        // the unpartitioned path.
+                        if let Some(pk) = partition {
+                            renew_partition(pk, ttl_ms, owner)?;
+                        }
                         plan.apply(&mut st, &d, outcome, 0);
                     }
                     NodeAction::Park => {
@@ -1170,17 +1339,19 @@ fn execute_claimed(
 fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
     let ttl = i64::try_from(lease_ttl_ms).map_err(|_| "lease-ttl-ms too large".to_string())?;
     let owner = runner_owner()?;
-    let Some(claimed) = claim_dispatch(&owner, ttl)? else {
-        return Ok((false, None, 0)); // queue drained
-    };
-    let flow = active_flow(&claimed.flow_id, claimed.active_version)?;
-    let claim = execute_claimed(&claimed.run_id, &flow, claimed.input, &owner, ttl)?;
-    match claim.outcome {
-        0 => {} // completed: complete_and_dequeue already dropped the queue row
-        1 => park(&claimed.run_id, claim.park_ms)?, // parked -> re-offered at wake
-        _ => dequeue(&claimed.run_id)?, // failed -> terminal
+    // Unpartitioned first: the global `FOR UPDATE SKIP LOCKED` claim drains
+    // unordered NULL-key runs concurrently across replicas (the fqg.4 path).
+    if let Some(claimed) = claim_dispatch(&owner, ttl)? {
+        let flow = active_flow(&claimed.flow_id, claimed.active_version)?;
+        let claim = execute_claimed(&claimed.run_id, &flow, claimed.input, &owner, ttl, None)?;
+        settle(&claimed.run_id, &claim)?;
+        return Ok((true, Some(claimed.run_id), claim.outcome));
     }
-    Ok((true, Some(claimed.run_id), claim.outcome))
+    // Then partitioned: lease a partition and drive its head in order (fqg.9).
+    if let Some((run_id, outcome)) = claim_partition_run(&owner, ttl)? {
+        return Ok((true, Some(run_id), outcome));
+    }
+    Ok((false, None, 0)) // queue drained (unpartitioned + owned partitions)
 }
 
 // ---------------------------------------------------------------------------

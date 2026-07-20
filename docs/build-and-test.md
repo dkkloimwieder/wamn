@@ -1077,6 +1077,64 @@ kubectl -n wamn-system wait --for=condition=complete job/failoverbench --timeout
 kubectl -n wamn-system logs job/failoverbench
 ```
 
+### [5.14 / wamn-fqg.9] guest-side partitioned claim
+
+Docs: docs/run-queue.md §Head-unavailability policy + §Per-partition ownership
+
+The guest `run-next` export now also serves `partitioned(key)` runs: when the
+global (unpartitioned) `claim_dispatch_sql` is empty it leases a partition
+(`acquire_partitions_sql(1)`), claims the earliest HEAD across the partitions it
+owns in stream order (`claim_partition_head_sql(1)` — one in flight per key, D20
+policy on the row), drives it via the SHARED `execute_claimed` path (renewing the
+partition lease per node alongside the run lease), and STEPS DOWN
+(`release_partition_sql`) from a just-acquired partition that yields no head. The
+WIT is unchanged (`run-next` signature identical) and `RunWorker.drain` loops it
+unchanged. The partition SQL/pure builders already existed (host-gated by
+queuebench); fqg.9 is their first GUEST caller — the same shape as fqg.4 for
+`claim_batch_sql`. All partition builders live in `sql.rs`/`partition.rs` OUTSIDE
+the `dispatcher` feature, so `default-features = false` already exposes them —
+nothing moved.
+
+```bash
+cargo test -p wamn-run-queue --test queue guest_partition_loop_drives_each_key_in_stream_order  # pure: the guest limit-1 loop drives each key in (enqueued_at, stream_seq, run_id) order
+cargo clippy -p wamn-run-queue -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-run-queue -p wamn-gates --check
+(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)   # guest CHANGED
+cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
+# Local live gates (throwaway postgres:18 + wamn_app; guest CHANGED so rebuild wasm first):
+docker run -d --name wave3-pg-fqg9 -p 55434:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+docker exec wave3-pg-fqg9 psql -U postgres -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55434/postgres \
+  ./target/debug/wamn-gates --log-level error failoverbench \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:55434/postgres --mode partition-order
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55434/postgres \
+  ./target/debug/wamn-gates --log-level error failoverbench \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:55434/postgres --mode partition-failover
+docker rm -f wave3-pg-fqg9
+```
+
+`failoverbench --mode all` now also runs `partition-order` + `partition-failover`.
+`partition-order`: one runner drains two interleaved keyed streams IN STREAM
+ORDER per key — `kseq` (equal enqueued_at, distinct stream_seq) + `kenq` (equal
+stream_seq, distinct enqueued_at), each seeded so stream order REVERSES run-id
+order, so a head decision that dropped either tiebreak re-orders a key — while 5
+unordered NULL-key rows drain via the old global claim (exactly once).
+`partition-failover`: owner A drives a key's head then dies (its partition lease
+force-expired — the queuebench lease-timestamp idiom); replica B reacquires the
+key and resumes IN ORDER from the next head with no skipped/duplicated run.
+Terminal-BUSINESS-failure wedging of a `blocking` partition head is NOT
+fqg.9's scope (D20 wedging covers crash-exhaustion via `janitor_sweep_sql`, and
+head-UNAVAILABILITY via `claim_partition_head_sql`; a partitioned head that
+RUNS to a terminal `failed` dequeues like the unpartitioned path — filed as a
+follow-up). Mutation harness: scratchpad `mutate_fqg9.py` — M1 pure (drop
+stream_seq from `partition::stream_key`) fails the pure test; M2 SQL builder
+(drop stream_seq from `claim_partition_head_sql`'s blocking arm) + M3 guest loop
+(short-circuit `claim_partition_run`) fail `partition-order` live.
+
 ### [5.14] production runner (run-worker, fqg.8)
 
 Docs: docs/run-queue.md · Manifests: deploy/platform/runner.yaml + deploy/platform/runner-db.example.yaml

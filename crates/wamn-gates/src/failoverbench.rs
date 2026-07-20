@@ -103,6 +103,15 @@ pub enum Mode {
     /// lease across a long walk (no spurious reclaim), even under a short TTL and
     /// a contending replica.
     Heartbeat,
+    /// fqg.9: the guest claims PARTITIONED(key) runs in order — a single runner
+    /// leases each partition, drives its head in stream order (one in flight per
+    /// key), and drains interleaved keyed streams (mixed stream_seq/enqueued_at)
+    /// while unordered NULL-key rows still claim via the old path.
+    PartitionOrder,
+    /// fqg.9: partition failover — owner A drives a key's head then dies (its
+    /// partition lease force-expired); replica B acquires the key and resumes IN
+    /// ORDER from the next head, no skipped/duplicated run.
+    PartitionFailover,
     All,
 }
 
@@ -219,12 +228,24 @@ fn failover_ddl(schema: &str) -> String {
             PRIMARY KEY (tenant_id, run_id), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
+         CREATE INDEX run_queue_partition ON {schema}.run_queue (tenant_id, partition_key) WHERE partition_key IS NOT NULL;\
          ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
          CREATE POLICY run_queue_tenant ON {schema}.run_queue \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;\
+         CREATE TABLE {schema}.partition_owner (\
+            tenant_id text NOT NULL, partition_key text NOT NULL, \
+            lease_owner text NOT NULL, lease_expires_at timestamptz NOT NULL, \
+            acquired_at timestamptz NOT NULL DEFAULT now(), \
+            PRIMARY KEY (tenant_id, partition_key));\
+         ALTER TABLE {schema}.partition_owner ENABLE ROW LEVEL SECURITY;\
+         ALTER TABLE {schema}.partition_owner FORCE ROW LEVEL SECURITY;\
+         CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
+            USING (tenant_id = current_setting('app.tenant', true)) \
+            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;"
     )
 }
 
@@ -271,7 +292,9 @@ async fn reset(admin_url: &str) -> anyhow::Result<()> {
     let (client, conn) = tokio_postgres::connect(admin_url, NoTls).await?;
     let conn_task = tokio::spawn(conn);
     let r = client
-        .batch_execute(&format!("TRUNCATE {SCHEMA}.runs, {SCHEMA}.sink CASCADE;"))
+        .batch_execute(&format!(
+            "TRUNCATE {SCHEMA}.runs, {SCHEMA}.sink, {SCHEMA}.partition_owner CASCADE;"
+        ))
         .await
         .map_err(|e| anyhow::anyhow!("reset failover tables: {e}"));
     drop(client);
@@ -570,6 +593,12 @@ pub async fn run(args: FailoverBenchArgs) -> anyhow::Result<()> {
         }
         if run_all || args.mode == Mode::Heartbeat {
             pass &= heartbeat_phase(&harness, &app_url, &admin_url).await?;
+        }
+        if run_all || args.mode == Mode::PartitionOrder {
+            pass &= partition_order_phase(&harness, &app_url, &admin_url).await?;
+        }
+        if run_all || args.mode == Mode::PartitionFailover {
+            pass &= partition_failover_phase(&harness, &app_url, &admin_url).await?;
         }
         anyhow::Ok(())
     }
@@ -1336,5 +1365,252 @@ async fn heartbeat_phase(
     );
     let pass = advanced && completed;
     println!("PASS(heartbeat: per-node renewal advances the lease across the walk): {pass}");
+    Ok(pass)
+}
+
+// ===========================================================================
+// fqg.9: the guest claims PARTITIONED(key) runs in order. The flowrunner
+// `run-next` export now, when the global (unpartitioned) claim is empty, leases
+// a partition (`acquire_partitions_sql`), claims its HEAD in stream order
+// (`claim_partition_head_sql` — one in flight per key, D20 policy on the row),
+// drives it via the shared `execute_claimed` path (renewing the partition lease
+// per node), and steps down (`release_partition_sql`) when the partition drains.
+// These phases drive that export against the SAME ephemeral schema the failover
+// phases use (now carrying `partition_owner` + the partition index).
+// ===========================================================================
+
+/// Seed a PARTITIONED run the way a keyed producer does: the write-ahead
+/// `dispatched` runs row (poc-receipt) co-transacted with a `run_queue` row
+/// bound to `key` under the default `blocking` policy, available now, with an
+/// explicit `enqueued_at` and `stream_seq` — the two blocking stream-order
+/// coordinates the head claim ranks by. `enqueued_at` is anchored to a FIXED
+/// past instant + `enq_ms` (NOT `now()`, which drifts per seeding transaction and
+/// would let insertion order — not the seeded coordinates — decide the stream
+/// order); larger `enq_ms` = later in the stream.
+async fn seed_partition_run(
+    client: &mut Client,
+    run_id: &str,
+    key: &str,
+    enq_ms: i64,
+    stream_seq: i64,
+) -> anyhow::Result<()> {
+    let tx = client.transaction().await?;
+    tx.execute(
+        &write_ahead_triggered_run_sql(),
+        &[&run_id, &FLOW_ID, &1i32, &"cron", &"\"receipt\""],
+    )
+    .await?;
+    tx.execute(
+        &format!(
+            "INSERT INTO {SCHEMA}.run_queue \
+               (tenant_id, run_id, partition_key, partition_policy, priority, available_at, enqueued_at, stream_seq) \
+             VALUES (current_setting('app.tenant', true), $1, $2, 'blocking', 0, now(), \
+                     TIMESTAMPTZ '2000-01-01 00:00:00+00' + ($3::bigint * interval '1 millisecond'), $4)"
+        ),
+        &[&run_id, &key, &enq_ms, &stream_seq],
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// partition-order: a single runner drains interleaved keyed streams IN STREAM
+// ORDER per key (one in flight per key), while unordered NULL-key rows drain via
+// the old global claim. Two keys exercise BOTH tiebreak fields: `kseq` (equal
+// enqueued_at, distinct stream_seq) and `kenq` (equal stream_seq, distinct
+// enqueued_at). Each is seeded so the stream order REVERSES run-id order, so a
+// head decision that dropped stream_seq or enqueued_at re-orders a key and fails.
+// ---------------------------------------------------------------------------
+
+async fn partition_order_phase(
+    harness: &Harness,
+    app_url: &str,
+    admin_url: &str,
+) -> anyhow::Result<bool> {
+    println!(
+        "\n## partition-order — guest drives partitioned(key) runs in stream order (one in flight/key); NULL-key rows via the old path"
+    );
+    reset(admin_url).await?;
+    let (mut seed, _h) = connect_app(app_url).await?;
+    seed_flow(&seed, FLOW_ID, &crate::flowbench::flow_json(1)).await?;
+
+    // kseq: run-ids ks0,ks1,ks2 with EQUAL enqueued_at and stream_seq 2,1,0 ->
+    // stream order ks2,ks1,ks0 (stream_seq is the sole discriminator).
+    for (i, seq) in [(0i64, 2i64), (1, 1), (2, 0)] {
+        seed_partition_run(&mut seed, &format!("ks{i}"), "kseq", 0, seq).await?;
+    }
+    // kenq: run-ids ke0,ke1,ke2 with EQUAL stream_seq and enqueued-offsets 200,100,0
+    // (smaller = earlier) -> stream order ke2,ke1,ke0 (enqueued_at is the sole
+    // discriminator).
+    for (i, off) in [(0i64, 200i64), (1, 100), (2, 0)] {
+        seed_partition_run(&mut seed, &format!("ke{i}"), "kenq", off, 0).await?;
+    }
+    // Unordered NULL-key rows (the global SKIP-LOCKED claim path).
+    for i in 0..5 {
+        seed_claim_run(&mut seed, &format!("pu-{i}"), FLOW_ID, "\"receipt\"").await?;
+    }
+
+    let ttl: u64 = 30_000;
+    let mut worker = harness.worker_claim("po").await?;
+    // A single runner drains the whole queue; record the completion order.
+    let mut drive_order: Vec<String> = Vec::new();
+    loop {
+        let (claimed, rid, outcome) = worker.call_run_next(ttl).await?;
+        if !claimed {
+            break;
+        }
+        if outcome == 0
+            && let Some(id) = rid
+        {
+            drive_order.push(id);
+        }
+    }
+
+    let per = |prefix: &str| -> Vec<String> {
+        drive_order
+            .iter()
+            .filter(|id| id.starts_with(prefix))
+            .cloned()
+            .collect()
+    };
+    let kseq = per("ks");
+    let kenq = per("ke");
+    let nulls = per("pu-");
+    let kseq_ok = kseq == ["ks2", "ks1", "ks0"];
+    let kenq_ok = kenq == ["ke2", "ke1", "ke0"];
+    let null_ok = nulls.len() == 5;
+
+    let queued = count_rows(&seed, &format!("SELECT count(*) FROM {SCHEMA}.run_queue")).await?;
+    let completed = count_rows(
+        &seed,
+        &format!("SELECT count(*) FROM {SCHEMA}.runs WHERE status='completed'"),
+    )
+    .await?;
+    // No run drove twice: max sink rows for any keyed run is 1 (exactly-once).
+    let max_sink = count_rows(
+        &seed,
+        &format!(
+            "SELECT COALESCE(MAX(c),0) FROM (SELECT count(*) c FROM {SCHEMA}.sink GROUP BY run_id) s"
+        ),
+    )
+    .await?;
+    let leases_left = count_rows(
+        &seed,
+        &format!("SELECT count(*) FROM {SCHEMA}.partition_owner WHERE lease_expires_at > now()"),
+    )
+    .await?;
+    let total = 6 + 5;
+
+    println!("  kseq (stream_seq tiebreak) order {kseq:?} (want ks2,ks1,ks0) -> {kseq_ok}");
+    println!("  kenq (enqueued_at tiebreak) order {kenq:?} (want ke2,ke1,ke0) -> {kenq_ok}");
+    println!(
+        "  NULL-key drained {}/5 -> {null_ok}, queue drained = {} (rows={queued}), completed={completed}/{total}, max sink/run={max_sink} (<=1), live partition leases left={leases_left} (retained; gc'd on expiry)",
+        nulls.len(),
+        queued == 0
+    );
+    let pass = kseq_ok
+        && kenq_ok
+        && null_ok
+        && queued == 0
+        && completed as usize == total
+        && max_sink <= 1;
+    println!(
+        "PASS(partition-order: per-key stream order + one-in-flight + NULL-key via old path, exactly once): {pass}"
+    );
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// partition-failover: owner A drives a key's head then dies (its partition lease
+// force-expired — the established gate idiom); replica B acquires the key and
+// resumes IN ORDER from the next head, no skipped or duplicated run.
+// ---------------------------------------------------------------------------
+
+async fn partition_failover_phase(
+    harness: &Harness,
+    app_url: &str,
+    admin_url: &str,
+) -> anyhow::Result<bool> {
+    println!(
+        "\n## partition-failover — owner A drives the head then dies; replica B reacquires the key and resumes in order"
+    );
+    reset(admin_url).await?;
+    let (mut seed, _h) = connect_app(app_url).await?;
+    seed_flow(&seed, FLOW_ID, &crate::flowbench::flow_json(1)).await?;
+    // One key, three ordered runs (stream_seq 0,1,2 = stream order pf-0,pf-1,pf-2).
+    for seq in 0..3i64 {
+        seed_partition_run(&mut seed, &format!("pf-{seq}"), "pf", 0, seq).await?;
+    }
+
+    let ttl: u64 = 30_000;
+    // Replica A: ONE run-next -> lease pf, drive + complete its head pf-0 (A now
+    // owns pf, lease live).
+    let mut a = harness.worker_claim("pfa").await?;
+    let (a_claimed, a_rid, a_out) = a.call_run_next(ttl).await?;
+    let a_head_ok = a_claimed && a_rid.as_deref() == Some("pf-0") && a_out == 0;
+
+    // A "dies": force-expire its partition lease directly (A never renews again),
+    // exactly the lease-timestamp idiom queuebench's partition failover uses.
+    seed.execute(
+        &format!(
+            "UPDATE {SCHEMA}.partition_owner SET lease_expires_at = now() - interval '1 hour' WHERE partition_key = 'pf'"
+        ),
+        &[],
+    )
+    .await?;
+
+    // Replica B: reacquires pf (steals the expired lease) and resumes IN ORDER.
+    let mut b = harness.worker_claim("pfb").await?;
+    let mut b_order: Vec<String> = Vec::new();
+    loop {
+        let (claimed, rid, outcome) = b.call_run_next(ttl).await?;
+        if !claimed {
+            break;
+        }
+        if outcome == 0
+            && let Some(id) = rid
+        {
+            b_order.push(id);
+        }
+    }
+    let b_in_order = b_order == ["pf-1", "pf-2"];
+
+    let completed = count_rows(
+        &seed,
+        &format!(
+            "SELECT count(*) FROM {SCHEMA}.runs WHERE run_id LIKE 'pf-%' AND status='completed'"
+        ),
+    )
+    .await?;
+    // No skip / dup: exactly one sink row per pf run (three total).
+    let sinks = count_rows(
+        &seed,
+        &format!("SELECT count(*) FROM {SCHEMA}.sink WHERE run_id LIKE 'pf-%'"),
+    )
+    .await?;
+    let queued = count_rows(
+        &seed,
+        &format!("SELECT count(*) FROM {SCHEMA}.run_queue WHERE run_id LIKE 'pf-%'"),
+    )
+    .await?;
+    let final_owner: Option<String> = seed
+        .query_opt(
+            &format!("SELECT lease_owner FROM {SCHEMA}.partition_owner WHERE partition_key='pf'"),
+            &[],
+        )
+        .await?
+        .and_then(|r| r.get(0));
+
+    println!("  A drove head = {a_rid:?} outcome={a_out} -> {a_head_ok}");
+    println!("  B resumed order {b_order:?} (want pf-1,pf-2) -> {b_in_order}");
+    println!(
+        "  completed={completed}/3, sinks={sinks}/3 (exactly once), queue drained = {} , key owner after B = {final_owner:?}",
+        queued == 0
+    );
+    let pass = a_head_ok && b_in_order && completed == 3 && sinks == 3 && queued == 0;
+    println!(
+        "PASS(partition-failover: A drove the head, B reacquired + resumed in order, exactly once): {pass}"
+    );
     Ok(pass)
 }

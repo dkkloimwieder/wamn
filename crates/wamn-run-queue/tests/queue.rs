@@ -13,12 +13,12 @@ use wamn_run_queue::{
     cron_tick_of, dequeue_sql, due_tick, enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql,
     enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql,
     janitor_verdict, lease_deadline, lease_live, mark_running_sql, match_outbox, mint_cron_run_id,
-    mint_evt_run_id, next_fire, next_interval,
-    next_reconcile, orphans, outbox_ack_sql, outbox_hold_sql, outbox_insert_sql, outbox_poll_sql,
-    outbox_prune_sql, park_sql, parked_due_sql, partition_lease_live, plan_ack, plan_acquire,
-    plan_claim, plan_hold, plan_partition_claim, reconcile_due, record_error_and_renew_sql,
-    record_success_and_renew_sql, release_partition_sql, renew_lease_sql, renew_partition_sql,
-    should_renew, write_ahead_run_sql, write_ahead_triggered_run_sql,
+    mint_evt_run_id, next_fire, next_interval, next_reconcile, orphans, outbox_ack_sql,
+    outbox_hold_sql, outbox_insert_sql, outbox_poll_sql, outbox_prune_sql, park_sql,
+    parked_due_sql, partition_lease_live, plan_ack, plan_acquire, plan_claim, plan_hold,
+    plan_partition_claim, reconcile_due, record_error_and_renew_sql, record_success_and_renew_sql,
+    release_partition_sql, renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
+    write_ahead_triggered_run_sql,
 };
 
 // ---- claim eligibility -----------------------------------------------------
@@ -794,6 +794,81 @@ fn plan_partition_claim_advances_in_order_and_limits_across_partitions() {
     let after: Vec<QueueEntry> = rows.into_iter().filter(|e| e.run_id != "a-0").collect();
     let next = plan_partition_claim(&after, &owned, 1_000, 1, 60_000);
     assert_eq!(next.claimed[0].run_id, "a-1"); // in order
+}
+
+/// fqg.9: the GUEST loop (`components/flowrunner` `claim_partition_run`) modelled
+/// purely — accumulate ownership with `plan_acquire(.., 1)`, claim ONE head with
+/// `plan_partition_claim(.., 1)`, "drive + dequeue" it, repeat — over partitions
+/// with MIXED `(enqueued_at, stream_seq)` so the per-key stream order differs from
+/// run-id order. The drive order, filtered per key, must be each key's blocking
+/// stream order `(enqueued_at, stream_seq, run_id)` — never lexical run-id order.
+/// This is the pure-plan mutant surface for the guest's partitioned dispatch:
+/// dropping the `stream_seq` or `enqueued_at` field from the head decision
+/// re-orders a key and fails here.
+#[test]
+fn guest_partition_loop_drives_each_key_in_stream_order() {
+    // A partitioned row available now (available_at 0), with an explicit
+    // (enqueued_at, stream_seq) — the blocking stream-order coordinates.
+    let row = |run_id: &str, key: &str, enq: i64, seq: i64| QueueEntry {
+        enqueued_at: enq,
+        stream_seq: seq,
+        ..QueueEntry::ready_partition("t1", run_id, key, 0, 20)
+    };
+    // kA: run-id order a0,a1,a2,a3 -> stream order a2,a1,a0,a3 (differs on every
+    // field). kB: b0,b1,b2 -> b2,b1,b0.
+    let rows = vec![
+        row("a0", "kA", 100, 2),
+        row("a1", "kA", 100, 1),
+        row("a2", "kA", 50, 9),
+        row("a3", "kA", 200, 0),
+        row("b0", "kB", 300, 5),
+        row("b1", "kB", 100, 5),
+        row("b2", "kB", 100, 4),
+    ];
+    let now: i64 = 1_000;
+    let ttl: i64 = 60_000;
+    let total = rows.len();
+
+    let mut remaining = rows;
+    let mut owned: HashSet<String> = HashSet::new();
+    let mut drive_order: Vec<String> = Vec::new();
+    // Bound the loop so a stuck model fails loudly instead of hanging.
+    for _ in 0..(total + 4) {
+        // acquire up to one NOT-yet-owned partition (live leases exclude the rest).
+        let owners: Vec<PartitionOwner> = owned
+            .iter()
+            .map(|k| PartitionOwner::new("t1", k.as_str(), "me", now + ttl))
+            .collect();
+        for k in plan_acquire(&remaining, &owners, now, 1) {
+            owned.insert(k);
+        }
+        // claim ONE head across the owned partitions, then "drive + dequeue" it.
+        let owned_set: HashSet<&str> = owned.iter().map(String::as_str).collect();
+        let plan = plan_partition_claim(&remaining, &owned_set, now, 1, ttl);
+        let Some(head) = plan.claimed.first() else {
+            break;
+        };
+        let run_id = head.run_id.clone();
+        drive_order.push(run_id.clone());
+        remaining.retain(|e| e.run_id != run_id);
+    }
+
+    // Every run dispatched exactly once.
+    assert_eq!(drive_order.len(), total, "drive order: {drive_order:?}");
+    // Per-key subsequence (run_ids share the key's leading letter) == the blocking
+    // stream order, NOT run-id order.
+    let per_key = |prefix: char| -> Vec<String> {
+        drive_order
+            .iter()
+            .filter(|id| id.starts_with(prefix))
+            .cloned()
+            .collect()
+    };
+    assert_eq!(per_key('a'), ["a2", "a1", "a0", "a3"]);
+    assert_eq!(per_key('b'), ["b2", "b1", "b0"]);
+    // Guard the discriminator: the expected order is NOT the lexical run-id order,
+    // so a head decision that ignored stream_seq/enqueued_at would fail above.
+    assert_ne!(per_key('a'), ["a0", "a1", "a2", "a3"]);
 }
 
 #[test]
@@ -1666,8 +1741,8 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .expect("read deploy/sql/run-queue.sql");
     // The flow registry: claim_dispatch_sql's active-version probe joins it.
-    let flows_ddl =
-        std::fs::read_to_string(format!("{root}/deploy/sql/flows.sql")).expect("read deploy/sql/flows.sql");
+    let flows_ddl = std::fs::read_to_string(format!("{root}/deploy/sql/flows.sql"))
+        .expect("read deploy/sql/flows.sql");
 
     // Exercise the REAL builders (not hand-copied SQL) via PREPARE/EXECUTE, so a
     // bug in claim_batch_sql / janitor_sweep_sql / the partition builders is caught here.
