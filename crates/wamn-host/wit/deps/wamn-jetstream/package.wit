@@ -23,9 +23,13 @@ package wamn:jetstream@0.1.0;
 /// - A publish waits for the server ack: the returned `publish-ack` is the only
 ///   delivery truth (async-nats: send future, then server-ack future).
 ///
-/// STATUS: DRAFT 0.1.0 (2026-07-19). MVP surface the Service-first materializer
-/// needs; unfrozen until the materializer (l5i9.17) binds it unchanged, at
-/// which point it freezes like `wamn:postgres` did after S2/S6.
+/// STATUS: FROZEN 0.1.0 (2026-07-19, l5i9.17). The Service-first materializer
+/// binds this exact file (types + consumer + doorbell) — gated by matbench
+/// (decide/enqueue/redelivery/doorbell) and the in-cluster CRD-deployed e2e
+/// (CDC write → reader → stream → materializer → executed run). The `doorbell`
+/// interface landed inside the draft window as the l5i9.17 wake-takeover
+/// surface. Compatibility rule: 0.1.x admits only additive or clarifying
+/// changes; any breaking change waits for 0.2.
 /// Ledger exit condition: upstream `wasmcloud:nats` (#5065) landing with
 /// durable-consumer + header semantics retires this package.
 interface types {
@@ -131,6 +135,32 @@ interface consumer {
   /// Bind (or rebind) a durable pull consumer over an existing stream. Idempotent
   /// on the durable name: rebinding an existing durable returns a handle to it.
   bind: func(config: consumer-config) -> result<durable-consumer, js-error>;
+}
+
+/// Post-commit wake hint — the l5i9.17 doorbell takeover. The dispatcher rings
+/// `wamn.doorbell.<tenant>` (CONTROL-plane core NATS, fire-and-forget) after
+/// each firing commits so a parked run-worker wakes at doorbell latency; the
+/// materializer, which enqueues evt runs itself, must ring the same bell after
+/// its write-ahead + enqueue transaction COMMITS — else async latency degrades
+/// to the reconciliation sweep.
+///
+/// Host-enforced invariants (the `wamn:postgres` claims posture):
+/// - The `<tenant>` subject segment is derived from the executing workload's
+///   identity (`wamn.tenant` config, registered at bind time) — there is
+///   deliberately NO way for a guest to name a tenant, so it can never ring
+///   another tenant's bell.
+/// - The control-plane connection is the host's own (never guest-named);
+///   unconfigured ⇒ `connection-unavailable`.
+/// - Best-effort BY DESIGN: a lost/failed hint only raises wake latency (the
+///   run-worker's poll-backoff sweep guarantees pickup), so a caller treats an
+///   error as an observable to count, never a reason to fail the firing.
+interface doorbell {
+  use types.{js-error};
+
+  /// Ring the caller's tenant doorbell with one run id (the enqueued run),
+  /// strictly AFTER the enqueue transaction committed — a hint for uncommitted
+  /// work would wake a runner into an empty claim.
+  ring: func(run-id: string) -> result<_, js-error>;
 }
 
 interface producer {

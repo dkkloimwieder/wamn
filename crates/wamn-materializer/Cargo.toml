@@ -1,0 +1,36 @@
+[package]
+name = "wamn-materializer"
+description = "wamn CDC materializer decisions (EVT-MAT, D19 v3 §5, l5i9.17): the PURE per-event pipeline — registration match, tenant guard, causation budget, condition eval (REPLICA IDENTITY DEFAULT contract), partition key/policy resolution, deterministic run-id + run-input mint — as functions of (registration, flow declaration, envelope, stream_seq). PURE — no DB, no NATS, no clock; the Service guest (components/materializer) supplies the wamn:postgres + wamn:jetstream effects."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The wire contract the decisions consume: Envelope/Op/Causation (WORKING
+# DRAFT until the l5i9.30 freeze — this crate tracks it, adds no drift guards).
+wamn-event-wire = { path = "../wamn-event-wire" }
+# The declaration the materializer serves: EventRegistration (entity id, ops,
+# condition, partition-key expr).
+wamn-event-reg = { path = "../wamn-event-reg" }
+# The flow-level ordering declaration (fqg.20) + head-unavailability policy
+# (D20): Ordering::partition_key_for owns the key-folding rules (never NULL for
+# an ordered flow); this crate consumes them, never re-implements them.
+wamn-flow = { path = "../wamn-flow" }
+# The evt run-id mint + the queue's policy storage enum (as_sql owns the
+# literal). `default-features = false`: the guest links this crate into wasm —
+# no croner/chrono (the fqg.4 flowrunner posture).
+wamn-run-queue = { path = "../wamn-run-queue", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Condition + partition-key evaluation — the codebase's one expression
+# language; 0.3 is the wamn-nodes/wamn-flow/wamn-event-reg pin.
+jmespath = "0.3"
+
+[dev-dependencies]
+# Tests construct wire envelopes (commit_ts is a chrono instant on the wire
+# contract); runtime code never reads a clock.
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+
+# No DB / wasm / clock dependency: every decision is a pure function of the
+# delivered event + the declarations. The guest (components/materializer) owns
+# every effect; the matbench gate drives the same decisions live.

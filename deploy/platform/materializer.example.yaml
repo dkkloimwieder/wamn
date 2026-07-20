@@ -1,0 +1,78 @@
+# wamn-l5i9.17 CDC materializer (D19 v3 §5) — EXAMPLE WorkloadDeployment for
+# ONE project-env × tenant. Per-env config (stream/org/project/env + the
+# tenant/schema claims) makes this an example the provisioning runbook
+# instantiates, not an apply-as-is manifest; the demo values below match the
+# matbench fixture triple.
+#
+#   # after: provision-project-env + enable-cdc-project-env + the event reader
+#   # is publishing that env's EVT_ stream, and materializer.wasm is pushed to
+#   # the in-cluster registry (the api-gateway push recipe):
+#   kubectl -n wamn-system apply -f <instantiated copy of this file>
+#
+# SERVICE-FIRST (E11/D21 + E12): this is a wasmCloud SERVICE workload —
+# `spec.service`, a wasi:cli/run command component the host runs in its
+# restart loop — NOT a hand-rolled Deployment. The washlet host provides both
+# imports as plugins; `hostInterfaces` is the host-plugin ALLOWLIST
+# (bind_plugins binds only what is declared here).
+#
+# IDENTITY (host-injected, non-spoofable): `wamn.tenant` drives BOTH the
+# wamn:postgres RLS claim and the doorbell subject (`wamn.doorbell.<tenant>`);
+# `wamn.schema` is the search_path its unqualified runs/run_queue/flows reads
+# resolve in; `wamn.project` selects the per-project pool. The WAMN_MAT_*
+# environment is guest-side SUBSCRIPTION config only (stream name + subject
+# segments + the tenant label for the event tenant-guard compare) — RLS holds
+# regardless of what the env claims.
+#
+# ONE TENANT PER WORKLOAD (v1): registrations, claims, and the doorbell are
+# tenant-scoped, so a multi-tenant project-env runs one materializer workload
+# per tenant. Multi-registration fan-out within the tenant is one workload
+# (a durable consumer per registration).
+#
+# EXACTLY-ONCE: run_id = <flow>:evt:<stream_seq> (zero-padded) + ON CONFLICT
+# DO NOTHING on both the write-ahead and the enqueue — replicas > 1 is SAFE
+# (duplicates collapse; the matbench redelivery phase proves it) but 1 is the
+# v1 shape: JetStream redelivery, not replica count, is the availability story.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: materializer-demo
+  namespace: wamn-system
+spec:
+  replicas: 1
+  template:
+    spec:
+      hostSelector:
+        hostgroup: default
+      hostInterfaces:
+        # The host's hostInterfaces are the ALLOWLIST for host plugins — the
+        # materializer imports wamn:postgres AND wamn:jetstream; both must be
+        # listed or the component fails to instantiate.
+        - namespace: wamn
+          package: postgres
+          version: "0.1.0"
+          interfaces: [types, client]
+        - namespace: wamn
+          package: jetstream
+          version: "0.1.0"
+          interfaces: [types, consumer, doorbell]
+      service:
+        image: registry.wamn-system.svc.cluster.local:5000/wamn/materializer:dev
+        # Mutable :dev tag — always re-pull so a re-pushed component is picked
+        # up on the next workload start.
+        imagePullPolicy: Always
+        # The host restarts a failed run up to this many times; transient
+        # errors are handled INSIDE the guest loop (nack + retry), so a
+        # restart here means repeated hard failure (bad config, trap).
+        maxRestarts: 5
+        localResources:
+          config:
+            wamn.tenant: t1
+            wamn.project: default
+            wamn.schema: wamn_run
+          environment:
+            config:
+              WAMN_MAT_STREAM: EVT_morg_menv
+              WAMN_MAT_ORG: morg
+              WAMN_MAT_PROJECT: mproj
+              WAMN_MAT_ENV: menv
+              WAMN_MAT_TENANT: t1

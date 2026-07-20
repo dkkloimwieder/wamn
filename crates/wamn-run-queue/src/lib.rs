@@ -73,6 +73,9 @@ mod claim;
 mod cron;
 #[cfg(feature = "dispatcher")]
 mod dispatch;
+// Evt-run identity (D19 §5 / E4): dep-free, always-on — the materializer guest
+// links it through the same `default-features = false` core.
+mod evt;
 mod janitor;
 mod lease;
 mod model;
@@ -89,6 +92,7 @@ pub use cron::{CronError, cron_firing, cron_tick_of, due_tick, mint_cron_run_id,
 pub use dispatch::{
     Cadence, CadenceError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, Firing, next_interval,
 };
+pub use evt::mint_evt_run_id;
 pub use janitor::{JanitorVerdict, janitor_verdict, orphans};
 pub use lease::{lease_deadline, lease_live, should_renew};
 pub use model::{Millis, PartitionOwner, PartitionPolicy, QueueEntry};
@@ -98,12 +102,12 @@ pub use partition::{partition_lease_live, plan_acquire, plan_partition_claim};
 pub use reconcile::{next_reconcile, reconcile_due};
 pub use sql::{
     acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_dispatch_sql,
-    claim_partition_head_sql, complete_dequeue_sql, cron_last_run_sql, dequeue_sql, enqueue_sql,
-    enqueue_with_policy_sql, gc_orphan_partitions_sql, janitor_sweep_sql, mark_running_sql,
-    outbox_ack_sql, outbox_hold_sql, outbox_insert_sql, outbox_poll_sql, outbox_prune_sql,
-    park_sql, parked_due_sql, record_error_and_renew_sql, record_success_and_renew_sql,
-    release_partition_sql, renew_lease_sql, renew_partition_sql, write_ahead_run_sql,
-    write_ahead_triggered_run_sql,
+    claim_partition_head_sql, complete_dequeue_sql, cron_last_run_sql, dequeue_sql,
+    enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql,
+    gc_orphan_partitions_sql, janitor_sweep_sql, mark_running_sql, outbox_ack_sql, outbox_hold_sql,
+    outbox_insert_sql, outbox_poll_sql, outbox_prune_sql, park_sql, parked_due_sql,
+    record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
+    renew_lease_sql, renew_partition_sql, write_ahead_run_sql, write_ahead_triggered_run_sql,
 };
 
 // The queue drives the 5.7 run lifecycle rather than redefining it: the

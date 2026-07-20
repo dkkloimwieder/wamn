@@ -92,6 +92,10 @@ COPY components/target/wasm32-wasip2/release/logspewer.wasm /bench/logspewer.was
 # 4.1 generated REST API gateway (exports wasi:http/incoming-handler, imports
 # wamn:postgres; the apibench gate drives it via ProxyPre).
 COPY components/target/wasm32-wasip2/release/api_gateway.wasm /bench/api-gateway.wasm
+# l5i9.17 materializer Service guest (wasi:cli/run; imports wamn:postgres +
+# wamn:jetstream; the matbench gate drives it via CommandPre — the same wasm the
+# WorkloadDeployment pulls from the registry in production).
+COPY components/target/wasm32-wasip2/release/materializer.wasm /bench/materializer.wasm
 # POC-F1 sync-webhook ingress (exports wasi:http/incoming-handler, imports
 # wamn:postgres, embeds the wamn-runner engine; the f1bench gate drives it).
 COPY components/target/wasm32-wasip2/release/poc_webhook_f1.wasm /bench/poc-webhook-f1.wasm

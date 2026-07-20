@@ -20,6 +20,7 @@ mod failoverbench;
 mod flowbench;
 mod ladderproof;
 mod logbench;
+mod matbench;
 mod nodebench;
 mod outboxbench;
 mod pgbench;
@@ -97,6 +98,8 @@ enum Command {
     Egressbench(egressbench::EgressBenchArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
     Socketguard(socketguard::SocketGuardArgs),
+    /// Run the l5i9.17 materializer gate (decide/refuse/enqueue/doorbell + C-MAT numbers)
+    Matbench(matbench::MatBenchArgs),
     /// Run the 4.1 generated-REST-API-gateway gates (CRUD / expand / RLS / injection)
     Apibench(apibench::ApiBenchArgs),
     /// Publish a catalog snapshot with the bundled 4.1b demo seed (wraps the
@@ -152,6 +155,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Testhostbench(args) => testhostbench::run(args).await,
         Command::Egressbench(args) => egressbench::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
+        Command::Matbench(args) => matbench::run(args).await,
         Command::Apibench(args) => apibench::run(args).await,
         Command::PublishCatalog(args) => publish_catalog_demo::run(args).await,
         Command::Apiproof(args) => apiproof::run(args).await,

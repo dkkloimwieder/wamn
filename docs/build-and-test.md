@@ -922,6 +922,52 @@ docker rm -f evtreg-pg
 (cd components && cargo build -p api-gateway --target wasm32-wasip2)
 ```
 
+### [EVT-MAT / wamn-l5i9.17] materializer — CDC events → flow runs (Service-first)
+
+Docs: docs/event-plane-jetstream.md §5 · decisions D19–D24. The Service-first
+materializer: a wasi:cli/run SERVICE workload (`spec.service`, E11/D21 + E12 —
+deploy/platform/materializer.example.yaml) and the **first `wamn:jetstream`
+importer** (the plugin is now wired in the washlet; the doorbell rides the
+host's control-plane NATS client). Per event: registration match (rename-proof
+entity-id) → tenant guard (unscopable = alertable refusal, never a cross-tenant
+enqueue) → causation budget (depth 16; the chain THREADS: the run input carries
+`{run,root,depth}`, the flowrunner declares it, so the next hop's envelopes
+carry `depth+1`) → condition eval (root-`old` conditions HELD until l5i9.31 —
+old-absent is cannot-evaluate, never condition-false) → deterministic
+`run_id = <flow>:evt:<stream_seq>` (zero-padded 20, `mint_evt_run_id`) →
+write-ahead + `enqueue_evt[_with_policy]_sql` in ONE transaction (REAL
+`stream_seq` on the row — E4; key+policy stamp kq0z-coherently) → post-commit
+doorbell → ack. Decisions are the PURE `wamn-materializer` crate; the guest
+(`components/materializer`) is the effect shell.
+
+```bash
+cargo test -p wamn-materializer -p wamn-run-queue          # decide/condition/causation/mint + E4 model/SQL pins
+cargo test -p wamn-host --lib plugins::wamn_jetstream      # doorbell subject/tenant map (+ live round-trip w/ WAMN_EVT_NATS_URL)
+cargo test -p wamn-host --test jetstream_wit_coherence     # docs WIT == built WIT (doorbell included)
+(cd components && cargo build -p materializer --target wasm32-wasip2 --release)
+# Live gate — REAL guest + REAL deploy/sql DDL (include_str! — drift-proof) +
+# REAL JetStream; 17 asserts: rows/ids/keys/policy, causation thread, distinct
+# refusal counters, doorbell rings, burst drain (C-MAT numbers), and a full
+# server-side-consumer-delete redelivery proving ON CONFLICT exactly-once:
+docker run -d --name mat-pg -p 55461:5432 -e POSTGRES_PASSWORD=matpass postgres:18
+docker run -d --name mat-nats -p 44461:4222 nats:2.10 -js
+./target/debug/wamn-gates matbench \
+  --component components/target/wasm32-wasip2/release/materializer.wasm \
+  --admin-database-url postgres://postgres:matpass@127.0.0.1:55461/postgres \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:55461/postgres \
+  --nats-url nats://127.0.0.1:44461
+docker rm -f mat-pg mat-nats
+# In-cluster: rebake host (plugin wiring) + run-worker (flowrunner causation
+# thread) + gates (matbench + /bench/materializer.wasm), kind load, then the
+# matbench Job / the CDC-write→reader→stream→materializer→run e2e.
+```
+
+Mutation harness: scratchpad `mutate_l5i9_17.py` — M1 depth guard off-by-one,
+M2 root-`old` detection loses Subexpr context, M3 `enqueue_evt_sql` drops
+`stream_seq`, M4 `plan_claim` loses the numeric tiebreak, M6 doorbell-subject
+typo — each fails a NAMED unit test; M5 (guest skips the doorbell ring) fails
+matbench's `8 doorbell rings` assert. Apply/test/restore with sha256, DEBUG.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

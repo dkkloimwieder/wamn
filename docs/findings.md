@@ -407,7 +407,12 @@ tenant predicate on the four RLS-only statements = wamn-2jkm.53)* ·
 **R8c** outbox amplification/GC *(**reopened**, R10)* · **R8d** cron misfire
 collapse *(open, doc)* · **R9a** reserve the `wamn_` identifier prefix at
 catalog validation *(open)* · **R9b** rename × row-event registration
-*(open — partly dissolved by CDC; see E3)* · **R9c** one-transaction apply
+*(closed at `wamn-l5i9.17` — the decode half landed at l5i9.11 (OID→entity-id
+keying, rename drill live) and the registration-continuity half now rides the
+materializer's id-keyed match: `catalog.event_registrations.entity_id` ==
+`envelope.entity`, both the STABLE catalog id, so a table rename orphans
+nothing (matbench + the `wamn-materializer` entity-guard units); the
+schema-qualifier residual is E3 = `wamn-l5i9.52`)* · **R9c** one-transaction apply
 expiry (`CREATE INDEX CONCURRENTLY`) *(open, doc)*.
 
 ### R17–R23 — lower-severity, each with an ID and a board row

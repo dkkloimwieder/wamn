@@ -71,10 +71,10 @@ pub fn plan_acquire(
 /// with any live-leased run yields no head) and **head-first** under the row's
 /// [`PartitionPolicy`] (D20) — are what preserve per-key order. Under
 /// `blocking` (the default) the head is the earliest run in the key's *stream
-/// order* `(enqueued_at, run_id)` — a backed-off/parked/exhausted earlier run
-/// still blocks, so the key waits (or wedges) rather than reorder. Under
-/// `leapfrog` only an earlier *currently-ready* sibling blocks, in
-/// `(available_at, run_id)` order — an unavailable head yields the key.
+/// order* `(enqueued_at, stream_seq, run_id)` — a backed-off/parked/exhausted
+/// earlier run still blocks, so the key waits (or wedges) rather than reorder.
+/// Under `leapfrog` only an earlier *currently-ready* sibling blocks, in
+/// `(available_at, stream_seq, run_id)` order — an unavailable head yields the key.
 pub fn plan_partition_claim(
     rows: &[QueueEntry],
     owned: &HashSet<&str>,
@@ -136,16 +136,16 @@ fn blocks(b: &QueueEntry, c: &QueueEntry, now: Millis) -> bool {
     }
 }
 
-/// The dispatch-order key: `(available_at, run_id)`. The SQL carries a numeric
-/// `stream_seq` tiebreak between the two (E4), inert while every enqueue writes
-/// `stream_seq = 0`; see [`crate::plan_claim`]'s note for when the model adopts it.
-fn ord_key(e: &QueueEntry) -> (Millis, &str) {
-    (e.available_at, e.run_id.as_str())
+/// The dispatch-order key: `(available_at, stream_seq, run_id)` — the numeric
+/// `stream_seq` tiebreak (E4) mirrors the SQL, so evt runs order by stream
+/// position, never lexical run-id; inert (`0`) on every non-CDC enqueue.
+fn ord_key(e: &QueueEntry) -> (Millis, i64, &str) {
+    (e.available_at, e.stream_seq, e.run_id.as_str())
 }
 
-/// The `blocking` policy's stream order: `(enqueued_at, run_id)` — stamped at
-/// enqueue, never moved by a park/backoff (unlike `available_at`). The SQL carries
-/// the same `stream_seq` tiebreak here, between `enqueued_at` and `run_id` (E4).
-fn stream_key(e: &QueueEntry) -> (Millis, &str) {
-    (e.enqueued_at, e.run_id.as_str())
+/// The `blocking` policy's stream order: `(enqueued_at, stream_seq, run_id)` —
+/// stamped at enqueue, never moved by a park/backoff (unlike `available_at`),
+/// with the same numeric `stream_seq` tiebreak as the SQL (E4).
+fn stream_key(e: &QueueEntry) -> (Millis, i64, &str) {
+    (e.enqueued_at, e.stream_seq, e.run_id.as_str())
 }

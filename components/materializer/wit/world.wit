@@ -1,0 +1,28 @@
+package wamn:materializer@0.1.0;
+
+/// The Service-first materializer (EVT-MAT, D19 v3 §5 / l5i9.17): a
+/// wasi:cli/run SERVICE workload (CRD `spec.service`) — the first importer of
+/// `wamn:jetstream` — that turns CDC row events into flow runs.
+///
+/// Per delivered event: registration match (rename-proof entity-id keying) →
+/// tenant guard → causation budget (depth 16, alertable refusals) → condition
+/// eval (hot-editable; filtered-out events REMAIN on the stream, so condition
+/// edits replay) → deterministic `run_id = <flow>:evt:<stream_seq>` minted →
+/// write-ahead run + enqueue in ONE `wamn:postgres` transaction with
+/// `ON CONFLICT DO NOTHING` (the exactly-once guarantee; the JetStream dedupe
+/// window is only the fast path) → post-commit doorbell ring → ack.
+///
+/// The decision pipeline is the PURE `wamn-materializer` crate; this component
+/// is the effect shell. Identity is host-injected end-to-end: the DB tenant
+/// claim and the doorbell tenant ride `wamn.tenant` workload config (never
+/// guest-chosen), the schema rides `wamn.schema`, the event-plane NATS is the
+/// host plugin's own connection. The guest's env (`WAMN_MAT_*`) carries only
+/// what it must know to SUBSCRIBE: stream name, subject segments, its own
+/// tenant label for the guard, and cadence knobs.
+world materializer {
+  import wamn:postgres/types@0.1.0;
+  import wamn:postgres/client@0.1.0;
+  import wamn:jetstream/types@0.1.0;
+  import wamn:jetstream/consumer@0.1.0;
+  import wamn:jetstream/doorbell@0.1.0;
+}

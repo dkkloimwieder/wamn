@@ -45,6 +45,9 @@ fn contract_declares_the_mvp_surface() {
         "stream-seq: u64,",
         "delivered: u64,",
         "publish: func(subject: string, headers: list<header>, body: list<u8>) -> result<publish-ack, js-error>;",
+        // l5i9.17: the post-commit doorbell takeover — run-id only; the tenant
+        // is host-derived from the workload's wamn.tenant, never a parameter.
+        "ring: func(run-id: string) -> result<_, js-error>;",
     ] {
         assert!(
             docs.contains(needle),

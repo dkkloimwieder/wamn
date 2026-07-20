@@ -58,6 +58,38 @@ pub fn enqueue_with_policy_sql() -> String {
         .to_string()
 }
 
+/// The materializer's evt-run enqueue (D19 §5 / E4, l5i9.17): [`enqueue_sql`]
+/// carrying the REAL CDC `stream_seq` so the numeric tiebreak the claim keys
+/// order by (`(available_at, stream_seq, run_id)` and the partition orders) is
+/// live for evt runs — every other writer leaves the column's 0 default and
+/// stays byte-identical. An UNKEYED evt row: like [`enqueue_sql`], it writes no
+/// `partition_policy` (the column default — D20; the kq0z coherence rule). The
+/// keyed variant is [`enqueue_evt_with_policy_sql`]. Params: `$1` run_id
+/// (minted by [`crate::mint_evt_run_id`] — zero-padded, the belt to this
+/// column's suspenders), `$2` partition_key (NULL here), `$3` priority,
+/// `$4` delay_ms, `$5` stream_seq.
+pub fn enqueue_evt_sql() -> String {
+    "INSERT INTO run_queue (tenant_id, run_id, partition_key, priority, available_at, stream_seq) \
+     VALUES (current_setting('app.tenant', true), $1, $2, $3, \
+             now() + ($4::bigint * interval '1 millisecond'), $5) \
+     ON CONFLICT (tenant_id, run_id) DO NOTHING"
+        .to_string()
+}
+
+/// [`enqueue_evt_sql`] for a KEYED (strict/partitioned) evt row: the flow's
+/// declared head-unavailability policy is materialized alongside the key,
+/// exactly like [`enqueue_with_policy_sql`] (D20 / kq0z — policy and key stamp
+/// coherently, never one without the other). Params: `$1` run_id,
+/// `$2` partition_key, `$3` priority, `$4` delay_ms, `$5` stream_seq, `$6` the
+/// policy literal ([`PartitionPolicy::as_sql`], CHECK-constrained by the DDL).
+pub fn enqueue_evt_with_policy_sql() -> String {
+    "INSERT INTO run_queue (tenant_id, run_id, partition_key, priority, available_at, stream_seq, partition_policy) \
+     VALUES (current_setting('app.tenant', true), $1, $2, $3, \
+             now() + ($4::bigint * interval '1 millisecond'), $5, $6) \
+     ON CONFLICT (tenant_id, run_id) DO NOTHING"
+        .to_string()
+}
+
 /// The `FOR UPDATE SKIP LOCKED` batch claim for **unpartitioned** runs: atomically
 /// lease up to `limit` claimable rows (visible, unleased or lease-expired,
 /// **redelivery budget not spent**) for `$1` lease_owner with a `$2` lease_ttl_ms

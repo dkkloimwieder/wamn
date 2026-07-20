@@ -16,7 +16,7 @@ use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
 use crate::engine::build_engine;
-use crate::plugins::{WamnLogging, WamnNodeControl, WamnPostgres};
+use crate::plugins::{WamnJetstream, WamnLogging, WamnNodeControl, WamnPostgres};
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -41,8 +41,10 @@ pub struct HostArgs {
     pub scheduler_nats_tls_key: Option<PathBuf>,
 
     /// NATS URL for data-plane communications. Accepted for chart
-    /// compatibility; wamn-host registers no data-plane plugins in S1, so no
-    /// connection is opened.
+    /// compatibility; the DATA-plane plugin (`wamn:jetstream`, l5i9.17) is
+    /// instead configured by `WAMN_EVT_NATS_URL` (the event plane's own env
+    /// contract, deploy/infra Service `evt-nats`) — this flag's chart default
+    /// points at the control plane, which is the wrong NATS for JetStream.
     #[arg(long = "data-nats-url", default_value = "nats://localhost:4222")]
     pub data_nats_url: String,
 
@@ -112,6 +114,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     )
     .await
     .context("failed to connect to scheduler NATS")?;
+    // l5i9.17: the wamn:jetstream doorbell rides the SAME control-plane
+    // connection (the dispatcher publishes and the run-worker subscribes
+    // `wamn.doorbell.<tenant>` on this NATS) — no second connection.
+    let doorbell_client = scheduler_nats_client.clone();
 
     let engine = build_engine(&args.wasm_proposals)?;
     if args.epoch_tick_ms > 0 {
@@ -148,6 +154,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .with_plugin(Arc::new(
             WamnPostgres::from_env().context("wamn:postgres plugin init")?,
         ))?
+        // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
+        // Service-first materializer. Data-plane URL from WAMN_EVT_NATS_URL
+        // (absent ⇒ links but returns connection-unavailable, the WAMN_PG_*
+        // posture); the doorbell rings on the control-plane client above.
+        .with_plugin(Arc::new(
+            WamnJetstream::from_env().with_doorbell(doorbell_client),
+        ))?
         .with_plugin(Arc::new(WamnNodeControl))?;
 
     if let Some(host_name) = &args.host_name {
@@ -173,7 +186,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let cluster_host = builder.build().context("failed to build cluster host")?;
     tracing::info!(
-        "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:node/control[stub])"
+        "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:node/control[stub])"
     );
     let cleanup = wash_runtime::washlet::run_cluster_host(cluster_host)
         .await

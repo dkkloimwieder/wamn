@@ -341,3 +341,20 @@ dedicated cluster).
 - `docs/ceilings-data/cwal0-perop.csv`, `cwal0-mixed.csv` (extracted from the job
   log's `=== BEGIN CSV … ===` blocks).
 - Reproduce: `docs/build-and-test.md` § [EVT-C-WAL-0 / wamn-l5i9.4].
+
+## C-MAT — materializer deliveries→enqueue (wamn-l5i9.17, first numbers)
+
+**Provenance: LOCAL, DEBUG-build harness, release guest wasm, in-process
+runtime (matbench), single-node throwaway NATS + postgres:18 (fsync=off).**
+These are *shape* numbers, not ceilings: the drain wall-clock is dominated by
+the sweep structure (per-registration fetch long-polls of `fetch_ms=1500` and
+`ceil(burst/batch)+2` sweeps), not by decide/enqueue cost. The in-cluster
+C-MAT campaign re-measures on the real rig with tuned batch/fetch windows.
+
+| metric | value | notes |
+|---|---|---|
+| fixture tape (7 events × 4 registrations) | 8 fires, 4+3+1+2 skips/refusals | one guest run, 2 sweeps, ~4.5 s |
+| burst drain | 200 events → 600 runs in ~10–14 s | 3 servings/event; ~15–20 deliveries/s, ~44–61 enqueues/s |
+| duplicate storm (full redelivery, 207 events × 3) | 608 `ON CONFLICT` collisions, **0 new rows** | consumers deleted server-side; exactly-once holds |
+
+- Reproduce: `docs/build-and-test.md` § [EVT-MAT / wamn-l5i9.17].

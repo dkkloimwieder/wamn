@@ -10,9 +10,10 @@ use wamn_run_queue::{
     OutboxRow, PartitionOwner, PartitionPolicy, QueueEntry, RowEventFlow, RunStatus,
     acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_dispatch_sql,
     claim_partition_head_sql, claim_state, complete_dequeue_sql, cron_firing, cron_last_run_sql,
-    cron_tick_of, dequeue_sql, due_tick, enqueue_sql, enqueue_with_policy_sql,
-    gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline,
-    lease_live, mark_running_sql, match_outbox, mint_cron_run_id, next_fire, next_interval,
+    cron_tick_of, dequeue_sql, due_tick, enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql,
+    enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql,
+    janitor_verdict, lease_deadline, lease_live, mark_running_sql, match_outbox, mint_cron_run_id,
+    mint_evt_run_id, next_fire, next_interval,
     next_reconcile, orphans, outbox_ack_sql, outbox_hold_sql, outbox_insert_sql, outbox_poll_sql,
     outbox_prune_sql, park_sql, parked_due_sql, partition_lease_live, plan_ack, plan_acquire,
     plan_claim, plan_hold, plan_partition_claim, reconcile_due, record_error_and_renew_sql,
@@ -89,6 +90,41 @@ fn plan_claim_orders_by_available_then_run_id_and_limits() {
     let all = plan_claim(&rows, 1_000, 10, 60_000);
     let ids: Vec<&str> = all.claimed.iter().map(|c| c.run_id.as_str()).collect();
     assert_eq!(ids, ["a", "z", "b"]);
+}
+
+#[test]
+fn plan_claim_and_partition_orders_carry_the_stream_seq_tiebreak() {
+    // E4 (adopted at l5i9.17): the model mirrors the SQL's
+    // (available_at, stream_seq, run_id) — a numerically-earlier stream position
+    // dispatches first even when its run_id sorts lexically LATER. The run_ids
+    // here are deliberately inverted against the seqs so a model that still
+    // sorts (available_at, run_id) fails.
+    let rows = vec![
+        QueueEntry::ready("t1", "z-first", 100, 20).with_stream_seq(1),
+        QueueEntry::ready("t1", "a-second", 100, 20).with_stream_seq(2),
+    ];
+    let all = plan_claim(&rows, 1_000, 10, 60_000);
+    let ids: Vec<&str> = all.claimed.iter().map(|c| c.run_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["z-first", "a-second"],
+        "numeric stream_seq outranks lexical run_id"
+    );
+
+    // The partition head orders carry the same tiebreak: under `blocking`
+    // (stream order (enqueued_at, stream_seq, run_id)) the seq-1 row is the head
+    // and seq-2 stays blocked behind it.
+    let key_rows = vec![
+        QueueEntry::ready_partition("t1", "z-first", "k", 100, 20).with_stream_seq(1),
+        QueueEntry::ready_partition("t1", "a-second", "k", 100, 20).with_stream_seq(2),
+    ];
+    let owned: HashSet<&str> = HashSet::from(["k"]);
+    let head = plan_partition_claim(&key_rows, &owned, 1_000, 10, 60_000);
+    assert_eq!(head.claimed.len(), 1, "one in flight per partition");
+    assert_eq!(
+        head.claimed[0].run_id, "z-first",
+        "the blocking head is the numerically-earliest stream position"
+    );
 }
 
 // ---- leases ----------------------------------------------------------------
@@ -930,6 +966,35 @@ fn enqueue_and_maintenance_sql_are_tenant_scoped_and_parameterized() {
     assert_eq!(PartitionPolicy::default(), PartitionPolicy::Blocking);
 }
 
+#[test]
+fn evt_enqueue_builders_carry_stream_seq_and_stay_kq0z_coherent() {
+    // E4/l5i9.17: the materializer's enqueue writes the REAL stream position;
+    // the pins are the load-bearing drift guard (runtime gates can be
+    // insensitive to a dropped column while every row is still 0).
+    let unkeyed = enqueue_evt_sql();
+    assert!(unkeyed.contains("current_setting('app.tenant', true)"));
+    assert!(unkeyed.contains("stream_seq"));
+    assert!(unkeyed.contains("$5"));
+    assert!(unkeyed.contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
+    // kq0z coherence: the UNKEYED evt row takes the column-default policy —
+    // writing the policy column without a key would decohere the D20 stamp.
+    assert!(
+        !unkeyed.contains("partition_policy"),
+        "an unkeyed evt enqueue must leave partition_policy to the column default"
+    );
+
+    let keyed = enqueue_evt_with_policy_sql();
+    assert!(keyed.contains("current_setting('app.tenant', true)"));
+    assert!(keyed.contains("stream_seq"));
+    assert!(keyed.contains("partition_policy"));
+    assert!(keyed.contains("$6"));
+    assert!(keyed.contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
+
+    // The mint's zero-pad (the belt) keeps lexical order equal to numeric order.
+    assert_eq!(mint_evt_run_id("f1", 9), "f1:evt:00000000000000000009");
+    assert!(mint_evt_run_id("f1", 9) < mint_evt_run_id("f1", 10));
+}
+
 // ---- trigger dispatcher: cron ------------------------------------------------
 
 /// 2026-01-01 00:00:00 UTC.
@@ -1480,10 +1545,12 @@ fn queue_entry_round_trips_as_kebab_json() {
         enqueued_at: 1_699_999_998_000,
         ..QueueEntry::ready("t1", "run-9", 1_699_999_999_000, 20)
             .with_policy(PartitionPolicy::Leapfrog)
+            .with_stream_seq(42)
     };
     let json = serde_json::to_string(&e).unwrap();
     assert!(json.contains("\"partition-key\":\"site-7\""));
     assert!(json.contains("\"partition-policy\":\"leapfrog\""));
+    assert!(json.contains("\"stream-seq\":42"));
     assert!(json.contains("\"enqueued-at\":1699999998000"));
     assert!(json.contains("\"lease-expires-at\":1700000000000"));
     assert!(json.contains("\"max-attempts\":20"));
@@ -1627,6 +1694,9 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     let complete_dequeue = complete_dequeue_sql();
     let record_success_renew = record_success_and_renew_sql();
     let record_error_renew = record_error_and_renew_sql();
+    // The materializer's evt enqueue pair (E4 / l5i9.17).
+    let enq_evt = enqueue_evt_sql();
+    let enq_evt_pol = enqueue_evt_with_policy_sql();
 
     let mut script = String::new();
     // Provision wamn_app (NOSUPERUSER/NOBYPASSRLS, like production) + a fresh schema.
@@ -2297,6 +2367,46 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          COMMIT;\n",
     );
+
+    // ------------------------------------------------------------------------
+    // l5i9.17: the REAL materializer enqueue pair (write-ahead + enqueue_evt in
+    // one transaction, the fire() shape) as wamn_app under t1. Asserts: the row
+    // carries the REAL stream_seq; the run_id is the zero-padded mint; a
+    // duplicate re-fire (redelivery past the JetStream dedupe window) collapses
+    // on ON CONFLICT — the exactly-once guarantee; the KEYED variant stamps
+    // policy + key coherently (kq0z) while the unkeyed row keeps the column
+    // defaults.
+    // ------------------------------------------------------------------------
+    let evt_run_unkeyed = mint_evt_run_id("fe", 907);
+    let evt_run_keyed = mint_evt_run_id("fk", 908);
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE wat_stmt (text, text, int, text, text) AS {triggered_sql};\n\
+         PREPARE enq_evt (text, text, int, bigint, bigint) AS {enq_evt};\n\
+         PREPARE enq_evt_pol (text, text, int, bigint, bigint, text) AS {enq_evt_pol};\n\
+         EXECUTE wat_stmt('{evt_run_unkeyed}', 'fe', 1, 'evt:907', '{{\"trigger\":\"event\"}}');\n\
+         EXECUTE enq_evt('{evt_run_unkeyed}', NULL, 0, 0, 907);\n\
+         EXECUTE wat_stmt('{evt_run_keyed}', 'fk', 1, 'evt:908', '{{\"trigger\":\"event\"}}');\n\
+         EXECUTE enq_evt_pol('{evt_run_keyed}', 'site-9', 0, 0, 908, 'leapfrog');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT stream_seq FROM run_queue WHERE run_id='{evt_run_unkeyed}') = 907, 'the evt enqueue writes the REAL stream_seq'; \
+           ASSERT (SELECT partition_key FROM run_queue WHERE run_id='{evt_run_unkeyed}') IS NULL, 'unkeyed evt row has no partition key'; \
+           ASSERT (SELECT partition_policy FROM run_queue WHERE run_id='{evt_run_unkeyed}') = 'blocking', 'unkeyed evt row takes the column-default policy (kq0z coherence)'; \
+           ASSERT (SELECT stream_seq FROM run_queue WHERE run_id='{evt_run_keyed}') = 908, 'the keyed evt enqueue writes the REAL stream_seq'; \
+           ASSERT (SELECT partition_key FROM run_queue WHERE run_id='{evt_run_keyed}') = 'site-9', 'keyed evt row carries its key'; \
+           ASSERT (SELECT partition_policy FROM run_queue WHERE run_id='{evt_run_keyed}') = 'leapfrog', 'keyed evt row carries the declared policy'; \
+         END $$;\n\
+         -- Exactly-once: a redelivered firing re-mints the same id; both halves\n\
+         -- collapse on ON CONFLICT (0 rows inserted), never a second run/queue row.\n\
+         EXECUTE wat_stmt('{evt_run_unkeyed}', 'fe', 1, 'evt:907', '{{\"trigger\":\"event\"}}');\n\
+         EXECUTE enq_evt('{evt_run_unkeyed}', NULL, 0, 0, 907);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM runs WHERE run_id='{evt_run_unkeyed}') = 1, 'redelivery mints no second run row'; \
+           ASSERT (SELECT count(*) FROM run_queue WHERE run_id='{evt_run_unkeyed}') = 1, 'redelivery mints no second queue row'; \
+         END $$;\n\
+         COMMIT;\n"
+    ));
 
     // ------------------------------------------------------------------------
     // SR12b / R8b-b: the dispatcher's registry scan (active_flows_sql) — the one

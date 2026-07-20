@@ -91,12 +91,11 @@ pub struct ClaimPlan {
 /// (queuebench) exercises; this models the eligibility + ordering + limit a single
 /// claimer sees.
 ///
-/// NOTE (E4): the SQL's `ORDER BY` carries a numeric `stream_seq` tiebreak AHEAD of
-/// `run_id` — `(available_at, stream_seq, run_id)`. This model omits it because
-/// every enqueue today writes `stream_seq = 0`, so the tiebreak is inert and the
-/// two orders coincide. When the CDC materializer starts minting real `stream_seq`
-/// values (`<flow>:evt:<stream_seq>` runs), [`QueueEntry`] should gain a
-/// `stream_seq` field and this sort a matching tiebreak to stay a faithful mirror.
+/// The sort mirrors the SQL's `ORDER BY (available_at, stream_seq, run_id)` (E4):
+/// the numeric `stream_seq` tiebreak rides AHEAD of `run_id`, so evt runs
+/// (`<flow>:evt:<seq>`, real stream positions minted by the materializer,
+/// l5i9.17) dispatch by numeric stream position; every non-CDC enqueue writes
+/// `stream_seq = 0`, keeping the tiebreak inert there.
 pub fn plan_claim(
     candidates: &[QueueEntry],
     now: Millis,
@@ -110,6 +109,7 @@ pub fn plan_claim(
     eligible.sort_by(|a, b| {
         a.available_at
             .cmp(&b.available_at)
+            .then_with(|| a.stream_seq.cmp(&b.stream_seq))
             .then_with(|| a.run_id.cmp(&b.run_id))
     });
     let claimed = eligible

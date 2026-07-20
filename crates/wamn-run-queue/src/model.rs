@@ -22,15 +22,15 @@ pub type Millis = i64;
 pub enum PartitionPolicy {
     /// The default: an unavailable head — backed off, parked, or
     /// budget-exhausted — still **blocks** its key. The per-key stream order is
-    /// `(enqueued_at, run_id)` (stamped at enqueue, never moved by a
+    /// `(enqueued_at, stream_seq, run_id)` (stamped at enqueue, never moved by a
     /// park/backoff), and a head that exhausts its redelivery budget **wedges**
     /// the key: the janitor leaves it for an operator, later runs wait.
     #[default]
     Blocking,
     /// Opt-in: a later ready run may overtake an unavailable head (the
-    /// `(available_at, run_id)` order among currently-ready siblings), and the
-    /// janitor's `infrastructure-failure` verdict on an exhausted head releases
-    /// the key.
+    /// `(available_at, stream_seq, run_id)` order among currently-ready
+    /// siblings), and the janitor's `infrastructure-failure` verdict on an
+    /// exhausted head releases the key.
     Leapfrog,
 }
 
@@ -82,11 +82,20 @@ pub struct QueueEntry {
     pub available_at: Millis,
     /// When this row was enqueued — stamped **once** and never updated, unlike
     /// `available_at` which a park/backoff pushes into the future. This is the
-    /// stable per-key stream order (`(enqueued_at, run_id)`) the `blocking`
-    /// policy ranks by: a parked head sorts *later* than its ready sibling on
-    /// `available_at`, so blocking order cannot be expressed over it.
+    /// stable per-key stream order (`(enqueued_at, stream_seq, run_id)`) the
+    /// `blocking` policy ranks by: a parked head sorts *later* than its ready
+    /// sibling on `available_at`, so blocking order cannot be expressed over it.
     #[serde(default)]
     pub enqueued_at: Millis,
+    /// The per-flow monotone CDC stream position (D19 §5 / E4): the JetStream
+    /// `stream_seq` a materializer-minted evt run (`<flow>:evt:<seq>`) is keyed
+    /// by, carried as a numeric tiebreak AHEAD of `run_id` in every dispatch
+    /// order so evt runs claim by NUMERIC stream position, never lexical run-id
+    /// order (`f1:evt:10` must not precede `f1:evt:9` — the R6/D20 corruption
+    /// class arriving through a string comparison). `0` for every non-CDC
+    /// enqueue (the column default), which keeps the tiebreak inert there.
+    #[serde(default)]
+    pub stream_seq: i64,
     /// The runner replica currently holding a lease, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_owner: Option<String>,
@@ -123,6 +132,7 @@ impl QueueEntry {
             // available; a delayed enqueue's `enqueued_at` precedes it (the DB
             // stamps `now()` while `available_at` = `now() + delay`).
             enqueued_at: available_at,
+            stream_seq: 0,
             lease_owner: None,
             lease_expires_at: None,
             attempts: 0,
@@ -133,6 +143,13 @@ impl QueueEntry {
     /// The same entry under an explicit head-unavailability policy (D20).
     pub fn with_policy(mut self, policy: PartitionPolicy) -> QueueEntry {
         self.partition_policy = policy;
+        self
+    }
+
+    /// The same entry carrying a real CDC stream position (E4) — what the
+    /// materializer's evt enqueue stamps; every other writer leaves the 0 default.
+    pub fn with_stream_seq(mut self, stream_seq: i64) -> QueueEntry {
+        self.stream_seq = stream_seq;
         self
     }
 

@@ -660,14 +660,44 @@ fn declare_run_egress(flow: &Flow) {
 /// causation channel, so the `wamn:postgres` plugin stamps a TRANSACTIONAL
 /// `wamn.causation` message ({run, root, depth}) onto every run-owned txn it
 /// opens — which the CDC reader (l5i9.12.1) stitches onto the txn's row events.
-/// A root run — every run the flow-runner claims from the queue today — is its
-/// own root at depth 0; event-triggered runs (materializer, l5i9.17) carry a
-/// real root/depth, and this shape is ready for them unchanged.
+/// A root run — a cron/outbox/webhook firing — is its own root at depth 0.
 fn declare_run_context(run_id: &str) {
+    declare_run_context_at(run_id, run_id.to_string(), 0);
+}
+
+/// l5i9.17: the event-chain thread. An evt run's input envelope (minted by the
+/// TRUSTED materializer) carries `causation: {run, root, depth}` — the chain
+/// position the materializer computed from the CDC envelope's stitched stamp
+/// (parent depth + 1, bounded at 16 with an alertable refusal). Declaring THAT
+/// root/depth here makes this run's own writes emit the incremented stamp, so
+/// the NEXT hop's events carry it and the loop budget is real — without it,
+/// every run would re-root at depth 0 and the materializer's ceiling could
+/// never trip. `run` is ALWAYS the claimed run id (never read from input); a
+/// missing/malformed `causation` falls back to self-root depth 0 (every
+/// non-evt trigger: cron, outbox, webhook, manual). Trust note: `input_json`
+/// is minted by platform writers (dispatcher / materializer / gateway
+/// envelope), not raw tenant bytes — a tenant's webhook BODY lands under
+/// `payload`, never at the envelope's top level.
+fn declare_run_context_from(run_id: &str, input: &Value) {
+    let causation = input.get("causation");
+    let root = causation
+        .and_then(|c| c.get("root"))
+        .and_then(Value::as_str)
+        .unwrap_or(run_id)
+        .to_string();
+    let depth = causation
+        .and_then(|c| c.get("depth"))
+        .and_then(Value::as_u64)
+        .and_then(|d| u32::try_from(d).ok())
+        .unwrap_or(0);
+    declare_run_context_at(run_id, root, depth);
+}
+
+fn declare_run_context_at(run_id: &str, root: String, depth: u32) {
     let ctx = wamn::runner::causation::RunContext {
         run: run_id.to_string(),
-        root: run_id.to_string(),
-        depth: 0,
+        root,
+        depth,
     };
     wamn::runner::causation::set_run_context(Some(&ctx));
 }
@@ -1026,8 +1056,10 @@ fn execute_claimed(
     // causation BEFORE any write so the wamn:postgres plugin stamps
     // {run, root, depth} onto every run-owned txn (checkpoints included; the CDC
     // reader drops the platform-schema ones and stitches the app-table writes).
+    // l5i9.17: an evt run's input carries the materializer-minted chain
+    // position (root, depth) — declared here so the chain budget accumulates.
     // The guard clears it on return so the next claim starts clean.
-    declare_run_context(run_id);
+    declare_run_context_from(run_id, &input);
     let _run_ctx = RunContextGuard;
 
     declare_run_grant(flow);

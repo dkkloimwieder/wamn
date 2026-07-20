@@ -4311,6 +4311,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-materializer"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "jmespath",
+ "serde",
+ "serde_json",
+ "wamn-event-reg",
+ "wamn-event-wire",
+ "wamn-flow",
+ "wamn-run-queue",
+]
+
+[[package]]
 name = "wamn-migrate"
 version = "0.1.0"
 dependencies = [

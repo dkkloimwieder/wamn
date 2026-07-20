@@ -163,9 +163,27 @@ mechanical row changes ride one pipeline, distinguished by subject.
   the fast path). Delivery order = stream order = **commit order per DB**
   (stronger than the outbox's per-project seq). `partitioned(key)` extracts the
   key from the payload; **R6 `blocking` is load-bearing — decide before
-  Phase 2.** v1 native in dispatcher; target: component per org
-  (`wasmcloud:nats` + `wamn:postgres`, `WorkloadDeployment`, #5336 trigger
-  service) — the low-risk proving ground for adoption-plan Phase 4.
+  Phase 2.** ~~v1 native in dispatcher~~ *(superseded by the Service-first
+  rework, E11/D21+E12)*. *Shipped 2026-07-19 (wamn-l5i9.17), SERVICE-FIRST: a
+  wasi:cli/run Service workload (`spec.service`,
+  deploy/platform/materializer.example.yaml) — the first `wamn:jetstream`
+  importer (plugin wired into the washlet; the post-commit doorbell rides the
+  host's control-plane client, tenant host-derived). Decisions are the pure
+  `wamn-materializer` crate: tenant guard (a DELETE under REPLICA IDENTITY
+  DEFAULT or a tenant-less table is an alertable refusal, never a cross-tenant
+  enqueue), causation depth 16 with the chain THREADED through the run input
+  (the flowrunner declares the materializer-minted `{run,root,depth}`, so hop
+  N+1's envelopes carry `depth+1` — the budget is real), root-`old` conditions
+  HELD until l5i9.31 (old-absent = cannot-evaluate, never condition-false),
+  key+policy stamped kq0z-coherently from the flow's fqg.20 declaration (the
+  registration's extractor evaluates over the event context), and the E4
+  `stream_seq` BIGINT carried on every evt row (run ids zero-padded — the
+  belt). Gate: matbench (real guest + real deploy/sql DDL via `include_str!` +
+  real JetStream; 17 asserts incl. a server-side-consumer-delete full
+  redelivery — 608 collisions, zero new rows); recipe
+  docs/build-and-test.md [EVT-MAT]; first C-MAT numbers in docs/ceilings.md.
+  One workload per project-env × tenant (v1); replay + EVT-COMPONENT
+  (per-org #5336 component) stay downstream.*
 - **Replay:** new consumer at past position; replay-namespaced run ids
   (`<flow>:replay:<id>:<seq>`); **re-executes side effects** — opt-in,
   permission-gated, audited.
@@ -246,12 +264,19 @@ consumer-count/storage-per-event/heal time).
 
 ### Phase 2 — materialize + cutover (~2–3 wks)
 Registration surface (catalog + minimal API; editor panel later); materializer
-(native v1) with condition eval, causation enforcement, `ON CONFLICT` enqueue;
+(~~native v1~~ Service-first per E11/D21+E12) with condition eval, causation
+enforcement, `ON CONFLICT` enqueue;
 shadow (dual-run vs old path, one week of POC traffic) → cutover → **execute
 the §3 teardown** (delete poller, trigger emission, outbox GC; migrate
 dispatchbench modes). Functional-verification beads (crash orderings,
 redelivery, ordering-under-failure) land here — implementation-time, per owner
 instruction not pre-specified as gates.
+*Registration surface shipped (wamn-l5i9.16, 2026-07-19). Materializer shipped
+(wamn-l5i9.17, 2026-07-19, §5 status note): Service workload + wamn:jetstream
+first importer + causation thread + matbench gate; first C-MAT numbers
+(deliveries→enqueue + duplicate-storm cost) recorded in docs/ceilings.md
+(local provenance — the in-cluster campaign re-measures). Next on this phase:
+l5i9.30 wire-schema freeze, l5i9.32 cluster knobs, l5i9.18 shadow/cutover.*
 **Benches:** C-MAT (deliveries→enqueue rate, duplicate-storm cost), C-E2E
 (commit→run-start distribution; fan-out 1→N vs old path — the one
 before/after chart), C-INTERFERENCE (app-CRUD p99 while capture+materialize run

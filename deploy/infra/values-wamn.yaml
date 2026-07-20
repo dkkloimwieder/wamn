@@ -31,6 +31,11 @@ runtime:
       env:
         - name: WAMN_PG_URL
           value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+        # [l5i9.17] The data-plane (event-plane) NATS for the wamn:jetstream
+        # plugin — the materializer Service workload's stream/doorbell path.
+        # Absent, the plugin still links and returns connection-unavailable.
+        - name: WAMN_EVT_NATS_URL
+          value: nats://evt-nats.wamn-system.svc.cluster.local:4222
       # [4.1b] Allow plain-HTTP OCI pulls so the host can pull locally-built
       # component images from the in-cluster registry (deploy/platform/registry.yaml).
       extraArgs:

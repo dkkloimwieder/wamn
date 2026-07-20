@@ -50,12 +50,16 @@ world causation-plugin {
 /// IMPLEMENTS durable-consumer binding + pull/fetch + per-message ack/nack/term
 /// and header-carrying publish over the async-nats JetStream client — the
 /// surface `wasmcloud:messaging@0.2.0` cannot provide (no ack, no durable
-/// consumers, no headers, so no `Nats-Msg-Id` dedupe). The Service-first
-/// materializer (l5i9.17) is the first importer. See plugins/wamn_jetstream.rs.
+/// consumers, no headers, so no `Nats-Msg-Id` dedupe) — plus the post-commit
+/// `doorbell.ring` wake hint on the CONTROL-plane core-NATS connection, with
+/// the tenant subject segment derived from the workload's `wamn.tenant` config
+/// (never guest-named). The Service-first materializer (l5i9.17) is the first
+/// importer. See plugins/wamn_jetstream.rs.
 world jetstream-plugin {
   import wamn:jetstream/types@0.1.0;
   import wamn:jetstream/consumer@0.1.0;
   import wamn:jetstream/producer@0.1.0;
+  import wamn:jetstream/doorbell@0.1.0;
 }
 
 /// Host-side bindgen world for the S4 `nodebench` / `serve-node` harness: the

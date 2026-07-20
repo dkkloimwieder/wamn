@@ -18,6 +18,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "autocfg"
+version = "1.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
+
+[[package]]
 name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -38,6 +44,16 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "chrono"
+version = "0.4.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
+dependencies = [
+ "num-traits",
+ "serde",
+]
 
 [[package]]
 name = "cred-probe"
@@ -268,6 +284,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "materializer"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wamn-event-reg",
+ "wamn-event-wire",
+ "wamn-flow",
+ "wamn-materializer",
+ "wamn-run-queue",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -284,6 +313,15 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
+]
+
+[[package]]
+name = "num-traits"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
+dependencies = [
+ "autocfg",
 ]
 
 [[package]]
@@ -521,6 +559,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-event-reg"
+version = "0.1.0"
+dependencies = [
+ "jmespath",
+ "serde",
+ "serde_json",
+ "wamn-catalog",
+ "wamn-event-wire",
+]
+
+[[package]]
+name = "wamn-event-wire"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "wamn-f1"
 version = "0.1.0"
 dependencies = [
@@ -536,6 +594,19 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "wamn-materializer"
+version = "0.1.0"
+dependencies = [
+ "jmespath",
+ "serde",
+ "serde_json",
+ "wamn-event-reg",
+ "wamn-event-wire",
+ "wamn-flow",
+ "wamn-run-queue",
 ]
 
 [[package]]
