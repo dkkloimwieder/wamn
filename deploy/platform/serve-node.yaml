@@ -85,8 +85,20 @@ spec:
           env:
             # The project whose vault credentials this node's invocations may
             # read — host-injected, NOT read from the request.
+            #
+            # [wamn-gdii] SCOPE ALIGNED TO `default`. The run-worker
+            # (deploy/platform/runner.yaml) sets no WAMN_PROJECT, so its vault
+            # reads (and the flowrunner's signing-key read) land under `default`,
+            # where the demo credproof mapping AND the reserved
+            # `wamn:node-invoke-signing-key` live (runner-credentials.example.yaml).
+            # This host previously read `demo-project`, forcing the signing key to
+            # be MIRRORED under both projects for authn to work — and silently
+            # falling back to network-trust when it wasn't. One scope, one key
+            # copy: matching the runner's `default` is the minimal coherent fix
+            # (moving the runner to demo-project would instead break the credproof
+            # mapping under `default` unless notify-token moved too).
             - name: WAMN_PROJECT
-              value: demo-project
+              value: default
             - name: WAMN_CREDENTIALS_FILE
               value: /etc/wamn/credentials/credentials.json
             # [wamn-fqg.31] FAIL-CLOSED. Set to "true" to REQUIRE a per-project-env
