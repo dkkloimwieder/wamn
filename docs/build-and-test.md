@@ -1200,7 +1200,7 @@ docker exec wamn-fqg8-pg psql -U postgres -c \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5490/postgres \
   --admin-database-url postgres://postgres:postgres@127.0.0.1:5490/postgres
-# 7 phases: drain + reuse + empty + RUNAWAY (cjv.4 anti-wedge, LOCAL gate of
+# 8 phases: drain + reuse + empty + RUNAWAY (cjv.4 anti-wedge, LOCAL gate of
 # record: a never-terminating cyclic flow drives the engine's default 10k
 # dispatch budget, ends failed/runaway-budget + DEQUEUES, and the run queued
 # behind it still completes — under the phase's own 180s wall guard so a
@@ -1218,7 +1218,17 @@ docker exec wamn-fqg8-pg psql -U postgres -c \
 # claim path through the long-lived runner [failoverbench drives it via the
 # gate-local Worker]. Dispatch order is read from a gate-local sink.dispatch_seq
 # IDENTITY witness [execution order, not seed order]; the nhjg drift guard still
-# pins the run_queue/partition_owner stand-in DDL against deploy/sql/run-queue.sql).
+# pins the run_queue/partition_owner stand-in DDL against deploy/sql/run-queue.sql)
+# + PARTITION-TERMINAL (wamn-v8cv, D20 dead-letter + continue: a blocking key's
+# HEAD fails terminally under the runner's eyes [a postgres-query node dies
+# Terminal("capability-denied") with the D8 flag off — deterministic, one step]
+# -> the dequeue lands the run_dead_letters marker in the SAME txn
+# [dead_letter_dequeue_sql] and the key CONTINUES — the runs behind it complete
+# in order; the total-ledger-count assert doubles as the polarity proof that the
+# phase-4 UNPARTITIONED runaway failure wrote no marker. The composed builder's
+# conditionality matrix [blocking -> marker, leapfrog/unpartitioned -> none,
+# redelivery idempotent, RLS isolation, key-advances] is the run-queue live
+# suite: cargo test -p wamn-run-queue + WAMN_RUN_QUEUE_PG_URL).
 # Engine units: cargo test -p wamn-runner
 # (budget section) + cargo test -p wamn-run-store (fail_kind literal + DDL
 # drift guard). Combined-builder shape + live-apply (PREPARE/EXECUTE the real
@@ -1233,7 +1243,11 @@ docker exec wamn-fqg8-pg psql -U postgres -c \
 # the real in-order dispatch then FAILS the `partition-order` assert (a
 # host-only mutation — rebuild wamn-gates, no wasm rebuild; the production claim
 # comparator lives in the guest, covered by the fqg.9/fqg.10 partition-order
-# mutants above).
+# mutants above). mutate_v8cv.py (3 killed, one per layer): the DL insert's
+# policy predicate flipped blocking->leapfrog (killer: the run-queue LIVE
+# suite), the guest settle terminal arm reverted to the plain dequeue (killer:
+# runnerbench `partition-terminal`; wasm rebuild to reach the gate), and
+# dead_letters_on_terminal dropping the policy check (killer: its unit test).
 docker rm -f wamn-fqg8-pg
 # In-cluster live smoke = gate of record (HOST changed — the run-worker module +
 # flowrunner.wasm baked into the prod image — so FULL rebuild BOTH stages + kind load):

@@ -9,14 +9,15 @@ use wamn_run_queue::{
     ClaimState, CronError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, JanitorVerdict,
     PartitionOwner, PartitionPolicy, QueueEntry, RunStatus, acquire_partitions_sql,
     active_flows_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql, claim_state,
-    complete_dequeue_sql, cron_firing, cron_last_run_sql, cron_tick_of, dequeue_sql, due_tick,
-    enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql,
-    gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline,
-    lease_live, mark_running_sql, mint_cron_run_id, mint_evt_run_id, next_fire, next_interval,
-    next_reconcile, orphans, park_sql, parked_due_sql, partition_lease_live, plan_acquire,
-    plan_claim, plan_partition_claim, reconcile_due, record_error_and_renew_sql,
-    record_success_and_renew_sql, release_partition_sql, renew_lease_sql, renew_partition_sql,
-    should_renew, write_ahead_run_sql, write_ahead_triggered_run_sql,
+    complete_dequeue_sql, cron_firing, cron_last_run_sql, cron_tick_of, dead_letter_dequeue_sql,
+    dead_letters_on_terminal, dequeue_sql, due_tick, enqueue_evt_sql, enqueue_evt_with_policy_sql,
+    enqueue_sql, enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable,
+    janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live, mark_running_sql,
+    mint_cron_run_id, mint_evt_run_id, next_fire, next_interval, next_reconcile, orphans, park_sql,
+    parked_due_sql, partition_lease_live, plan_acquire, plan_claim, plan_partition_claim,
+    reconcile_due, record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
+    renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
+    write_ahead_triggered_run_sql,
 };
 
 // ---- claim eligibility -----------------------------------------------------
@@ -371,6 +372,57 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
     assert!(re.contains("$8::bigint * interval '1 millisecond'"));
     assert!(re.contains("AND run_id = $1 AND lease_owner = $9"));
     assert!(!re.contains("$10"));
+}
+
+// ---- wamn-v8cv: the terminal dead-letter dequeue ---------------------------
+
+/// The composed terminal dequeue (D20 dead-letter + continue): the plain
+/// dequeue rides VERBATIM (shared `$1`), the ledger insert is scoped to
+/// blocking-partitioned rows in the SAME statement, and the arity is exactly
+/// `$1` run_id + `$2` reason. A mutation that widens the predicate (any
+/// partitioned row), narrows it (leapfrog), or drops the ledger half fails here
+/// by string; the live gate proves the behaviour.
+#[test]
+fn dead_letter_dequeue_composes_the_ledger_insert_with_the_dequeue() {
+    let dl = dead_letter_dequeue_sql();
+    assert!(
+        dl.contains(&dequeue_sql()),
+        "dead_letter_dequeue_sql no longer composes dequeue_sql verbatim"
+    );
+    assert!(dl.contains(
+        "INSERT INTO run_dead_letters (tenant_id, run_id, partition_key, flow_id, reason)"
+    ));
+    // Blocking-partitioned only — the strict-ordering promise is what the marker
+    // records; unpartitioned/leapfrog rows degenerate to the plain dequeue.
+    assert!(dl.contains("q.partition_key IS NOT NULL"));
+    assert!(dl.contains("q.partition_policy = 'blocking'"));
+    assert!(!dl.contains("'leapfrog'"));
+    // flow_id rides from the run's own row; redelivery collapses on the PK.
+    assert!(dl.contains("JOIN runs AS r ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id"));
+    assert!(dl.contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
+    // R8b-b: the explicit tenant predicate, like every other builder.
+    assert!(dl.contains("q.tenant_id = current_setting('app.tenant', true)"));
+    // Arity: $1 (shared run_id) + $2 (reason), nothing beyond.
+    assert!(dl.contains("$2"));
+    assert!(!dl.contains("$3"));
+}
+
+/// The pure twin of the insert predicate: only a blocking-policy PARTITIONED
+/// row dead-letters on a guest-observed terminal failure.
+#[test]
+fn dead_letters_on_terminal_is_blocking_partitioned_only() {
+    let unpartitioned = QueueEntry::ready("t1", "r", 0, 20);
+    assert!(!dead_letters_on_terminal(&unpartitioned));
+    // The column default IS blocking (D20) — a plain keyed row dead-letters.
+    let blocking = QueueEntry::ready_partition("t1", "r", "k", 0, 20);
+    assert!(dead_letters_on_terminal(&blocking));
+    let leapfrog =
+        QueueEntry::ready_partition("t1", "r", "k", 0, 20).with_policy(PartitionPolicy::Leapfrog);
+    assert!(!dead_letters_on_terminal(&leapfrog));
+    // The policy column is inert without a key: still no ledger row.
+    let unpart_blocking =
+        QueueEntry::ready("t1", "r", 0, 20).with_policy(PartitionPolicy::Blocking);
+    assert!(!dead_letters_on_terminal(&unpart_blocking));
 }
 
 #[test]
@@ -1371,6 +1423,22 @@ fn run_queue_sql_matches_the_model() {
     assert!(sql.contains("CREATE POLICY partition_owner_tenant ON wamn_run.partition_owner"));
     // The partition index the acquire/claim path scans on.
     assert!(sql.contains("CREATE INDEX run_queue_partition"));
+
+    // wamn-v8cv: the terminal dead-letter ledger — tenant floor, FK into the run
+    // history, and APPEND-ONLY from the app role (SELECT + INSERT, no
+    // UPDATE/DELETE — redrive/purge is a control-plane follow-up).
+    assert!(sql.contains("CREATE TABLE wamn_run.run_dead_letters"));
+    assert!(sql.contains("CREATE POLICY run_dead_letters_tenant ON wamn_run.run_dead_letters"));
+    assert!(sql.contains("GRANT SELECT, INSERT ON wamn_run.run_dead_letters TO wamn_app"));
+    assert!(
+        !sql.contains("DELETE ON wamn_run.run_dead_letters"),
+        "run_dead_letters must stay append-only for wamn_app"
+    );
+    // The marker columns the composed insert writes (partition_key is NOT NULL
+    // here, unlike run_queue's — a ledger row exists only for a keyed head).
+    assert!(sql.contains("partition_key text NOT NULL"));
+    assert!(sql.contains("reason        text NOT NULL"));
+    assert!(sql.contains("failed_at     timestamptz NOT NULL DEFAULT now()"));
 }
 
 // ---- live-apply gate (optional) --------------------------------------------
@@ -1435,6 +1503,8 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // The materializer's evt enqueue pair (E4 / l5i9.17).
     let enq_evt = enqueue_evt_sql();
     let enq_evt_pol = enqueue_evt_with_policy_sql();
+    // The terminal dead-letter dequeue (wamn-v8cv).
+    let dl_dequeue = dead_letter_dequeue_sql();
 
     let mut script = String::new();
     // Provision wamn_app (NOSUPERUSER/NOBYPASSRLS, like production) + a fresh schema.
@@ -2018,6 +2088,72 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM af_t2) = 1, 'the registry scan is tenant-scoped: t2 sees only its own active flow'; \
            ASSERT (SELECT flow_id FROM af_t2) = 'g', 't2 sees flow g, never t1''s f (R8b-b predicate + RLS)'; \
+         END $$;\n\
+         COMMIT;\n"
+    ));
+
+    // ------------------------------------------------------------------------
+    // wamn-v8cv (D20 dead-letter + continue): the REAL dead_letter_dequeue_sql
+    // via PREPARE/EXECUTE. A guest-observed terminal failure of a BLOCKING
+    // partition head dequeues + lands the run_dead_letters marker in ONE
+    // statement (one txn), and the key CONTINUES — the next same-key run is
+    // head-claimable. A leapfrog head and an unpartitioned run dequeue with NO
+    // marker (no strict-ordering promise), redelivery collapses on the PK, and
+    // the ledger is tenant-isolated under RLS.
+    // ------------------------------------------------------------------------
+    script.push_str(&format!(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status, fail_kind) VALUES \
+           ('t1','dl-blk-0','f',1,'failed','terminal'), \
+           ('t1','dl-blk-1','f',1,'dispatched',NULL), \
+           ('t1','dl-lf-0','f',1,'failed','terminal'), \
+           ('t1','dl-un-0','f',1,'failed','terminal');\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, partition_key, available_at, enqueued_at, attempts, max_attempts) VALUES \
+           ('t1','dl-blk-0','dl-key', now(), now() - interval '2 min', 0, 20), \
+           ('t1','dl-blk-1','dl-key', now(), now() - interval '1 min', 0, 20), \
+           ('t1','dl-un-0', NULL,     now(), now(),                    0, 20);\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, partition_key, available_at, enqueued_at, attempts, max_attempts, partition_policy) VALUES \
+           ('t1','dl-lf-0','dl-lf-key', now(), now(), 0, 20, 'leapfrog');\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE dl_stmt (text, text) AS {dl_dequeue};\n\
+         -- The blocking head: dequeue + marker, atomically.\n\
+         EXECUTE dl_stmt('dl-blk-0', 'terminal: n1: capability-denied');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM run_queue WHERE run_id='dl-blk-0') = 0, 'terminal blocking head dequeued (the key continues)'; \
+           ASSERT (SELECT count(*) FROM run_dead_letters WHERE run_id='dl-blk-0') = 1, 'the dequeue landed the dead-letter marker in the same statement'; \
+           ASSERT (SELECT partition_key FROM run_dead_letters WHERE run_id='dl-blk-0') = 'dl-key', 'the marker names the breached key'; \
+           ASSERT (SELECT flow_id FROM run_dead_letters WHERE run_id='dl-blk-0') = 'f', 'the marker carries the flow from the run''s own row'; \
+           ASSERT (SELECT reason FROM run_dead_letters WHERE run_id='dl-blk-0') = 'terminal: n1: capability-denied', 'the marker carries the failure verdict'; \
+           ASSERT (SELECT failed_at FROM run_dead_letters WHERE run_id='dl-blk-0') IS NOT NULL, 'the marker is stamped server-side'; \
+         END $$;\n\
+         -- Redelivery: a second terminal settle of the SAME (now-dequeued) run\n\
+         -- inserts nothing and deletes nothing — converged, no error.\n\
+         EXECUTE dl_stmt('dl-blk-0', 'terminal: n1: capability-denied');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM run_dead_letters WHERE run_id='dl-blk-0') = 1, 'redelivered terminal settle mints no second marker'; \
+         END $$;\n\
+         -- Leapfrog head + unpartitioned run: dequeue, NO marker.\n\
+         EXECUTE dl_stmt('dl-lf-0', 'terminal: n1: capability-denied');\n\
+         EXECUTE dl_stmt('dl-un-0', 'terminal: n1: capability-denied');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM run_queue WHERE run_id IN ('dl-lf-0','dl-un-0')) = 0, 'leapfrog/unpartitioned terminal runs still dequeue'; \
+           ASSERT (SELECT count(*) FROM run_dead_letters WHERE run_id IN ('dl-lf-0','dl-un-0')) = 0, 'no ordering promise -> no dead-letter marker (leapfrog + unpartitioned)'; \
+         END $$;\n\
+         -- The key CONTINUES: with the failed head gone, the next same-key run\n\
+         -- is acquirable + head-claimable through the REAL partition builders.\n\
+         EXECUTE acquire_stmt('DL', 60000);\n\
+         EXECUTE claimhead_stmt('DL', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='dl-blk-1') = 'DL', 'the key advances to the next run in order past the dead-lettered head'; \
+         END $$;\n\
+         COMMIT;\n\
+         -- RLS: the marker is tenant-scoped — t2 sees nothing.\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't2';\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM run_dead_letters) = 0, 'the dead-letter ledger is tenant-isolated (RLS)'; \
          END $$;\n\
          COMMIT;\n"
     ));

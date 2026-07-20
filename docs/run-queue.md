@@ -213,6 +213,29 @@ key has a claimable head at all. This is inert on unpartitioned rows (the global
 `claim_batch_sql` and the janitor treat `partition_key IS NULL` as always
 reapable).
 
+### Terminal business failure of a blocking head (wamn-v8cv)
+
+The wedge above covers **crash exhaustion** — the janitor's verdict on a head
+nobody could finish driving. A head the runner *did* finish driving to a
+**terminal failure** (a business failure with no error route, retries exhausted,
+an invalid input — the guest watched the run die) is the other terminal path,
+and D20's wedge would be the wrong answer there: no redelivery will ever fix it,
+so wedging trades the key's availability for a failure that needs a human
+anyway. The owner-decided contract (2026-07-20) is **dead-letter + continue**:
+the runner dequeues the failed head so the key continues in order, and the SAME
+statement/transaction (`dead_letter_dequeue_sql`) inserts one row into
+`wamn_run.run_dead_letters` — tenant, run id, partition key, flow, the failure
+verdict, `failed_at` — as the alertable marker that strict ordering proceeded
+past a failure. The dequeue can never commit without its marker. Scope is
+**`blocking`-partitioned rows only**: an unpartitioned or `leapfrog` terminal
+dequeue made no strict-ordering promise and degenerates to the plain dequeue
+(the pure twin is `dead_letters_on_terminal`). The run's own history stays on
+`runs` (5.7, `fail_kind`/`fail_node`/`fail_reason`); the ledger is append-only
+for `wamn_app` (SELECT + INSERT — the redrive/purge verb is a control-plane
+follow-up, wamn-umt4). Rejected at the decision point: wedge+alert (leapfrog
+already names the availability opt-out; a wedge here helps nobody) and a
+per-flow wedge-on-terminal knob (surface for a case leapfrog mostly covers).
+
 ## Checkpoint/resume on replica loss
 
 Failover composes the two halves 5.14 and 5.7 already built: the run-queue **lease

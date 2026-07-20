@@ -245,7 +245,19 @@ fn failover_ddl(schema: &str) -> String {
          CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;\
+         CREATE TABLE {schema}.run_dead_letters (\
+            tenant_id text NOT NULL, run_id text NOT NULL, partition_key text NOT NULL, \
+            flow_id text NOT NULL, reason text NOT NULL, \
+            failed_at timestamptz NOT NULL DEFAULT now(), \
+            PRIMARY KEY (tenant_id, run_id), \
+            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
+         ALTER TABLE {schema}.run_dead_letters ENABLE ROW LEVEL SECURITY;\
+         ALTER TABLE {schema}.run_dead_letters FORCE ROW LEVEL SECURITY;\
+         CREATE POLICY run_dead_letters_tenant ON {schema}.run_dead_letters \
+            USING (tenant_id = current_setting('app.tenant', true)) \
+            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
+         GRANT SELECT, INSERT ON {schema}.run_dead_letters TO wamn_app;"
     )
 }
 

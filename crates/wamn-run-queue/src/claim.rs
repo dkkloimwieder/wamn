@@ -3,7 +3,7 @@
 //! batch claim would take, in the same order the SQL uses ([`crate::claim_batch_sql`]),
 //! so the SQL's behaviour is unit-testable without a database.
 
-use crate::model::{Millis, QueueEntry};
+use crate::model::{Millis, PartitionPolicy, QueueEntry};
 
 /// A queue row's claimability at a given instant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +59,20 @@ pub fn claim_state(entry: &QueueEntry, now: Millis) -> ClaimState {
 /// Whether a claim would take this row right now.
 pub fn is_claimable(entry: &QueueEntry, now: Millis) -> bool {
     claim_state(entry, now) == ClaimState::Ready
+}
+
+/// Whether a GUEST-OBSERVED terminal failure of this row's run must land a
+/// `run_dead_letters` marker alongside its dequeue (wamn-v8cv, the D20
+/// dead-letter + continue decision) — the pure twin of
+/// [`crate::dead_letter_dequeue_sql`]'s insert predicate. True only for the
+/// head of a **`blocking`-policy partition**: that row's key promised strict
+/// ordering, so proceeding past its failure needs the alertable marker. An
+/// unpartitioned row made no ordering promise, and a `leapfrog` row opted out
+/// of it — both dequeue with no ledger row. (The janitor's crash-exhaustion
+/// verdict is the OTHER terminal path and still WEDGES a blocking key —
+/// [`crate::janitor_sweep_sql`]'s exemption is untouched by this.)
+pub fn dead_letters_on_terminal(entry: &QueueEntry) -> bool {
+    entry.partition_key.is_some() && entry.partition_policy == PartitionPolicy::Blocking
 }
 
 /// The result of claiming one row: the new lease deadline and the attempt count

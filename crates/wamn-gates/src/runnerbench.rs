@@ -72,6 +72,25 @@ fn runaway_flow_json() -> String {
     )
 }
 
+/// The wamn-v8cv partition-terminal fixture: the single work node is a
+/// `postgres-query`, whose dispatch dies `Terminal("capability-denied")` at the
+/// standard-library grant check while the D8 raw-SQL flag is off (as it is in
+/// this substrate and production) — a deterministic, one-step, no-I/O
+/// GUEST-OBSERVED terminal business failure (no error edge, nothing crashed).
+const TERMINAL_FLOW_ID: &str = "terminal-head";
+
+fn terminal_flow_json() -> String {
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"{TERMINAL_FLOW_ID}","version":1,
+            "trigger":{{"type":"manual"}},"entry":"in",
+            "nodes":[
+              {{"id":"in","type":"webhook-in"}},
+              {{"id":"q","type":"postgres-query","config":{{}}}}
+            ],
+            "edges":[{{"from":"in","to":"q"}}]}}"#
+    )
+}
+
 #[derive(Debug, Args)]
 pub struct RunnerBenchArgs {
     /// The flowrunner guest (`flowrunner.wasm`) the runner instantiates + drives.
@@ -185,7 +204,19 @@ fn runner_ddl(schema: &str) -> String {
          CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;\
+         CREATE TABLE {schema}.run_dead_letters (\
+            tenant_id text NOT NULL, run_id text NOT NULL, partition_key text NOT NULL, \
+            flow_id text NOT NULL, reason text NOT NULL, \
+            failed_at timestamptz NOT NULL DEFAULT now(), \
+            PRIMARY KEY (tenant_id, run_id), \
+            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
+         ALTER TABLE {schema}.run_dead_letters ENABLE ROW LEVEL SECURITY;\
+         ALTER TABLE {schema}.run_dead_letters FORCE ROW LEVEL SECURITY;\
+         CREATE POLICY run_dead_letters_tenant ON {schema}.run_dead_letters \
+            USING (tenant_id = current_setting('app.tenant', true)) \
+            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
+         GRANT SELECT, INSERT ON {schema}.run_dead_letters TO wamn_app;"
     )
 }
 
@@ -276,11 +307,20 @@ async fn seed_flow_run(client: &mut Client, run_id: &str, flow_id: &str) -> anyh
 /// the intended stream order (the `run_id` tiebreak makes the phase
 /// deterministic even if two seeds land in the same `now()` microsecond).
 async fn seed_keyed_run(client: &mut Client, run_id: &str, key: &str) -> anyhow::Result<()> {
+    seed_keyed_flow_run(client, run_id, FLOW_ID, key).await
+}
+
+async fn seed_keyed_flow_run(
+    client: &mut Client,
+    run_id: &str,
+    flow_id: &str,
+    key: &str,
+) -> anyhow::Result<()> {
     let policy = PartitionPolicy::Blocking.as_sql();
     let tx = client.transaction().await?;
     tx.execute(
         &write_ahead_triggered_run_sql(),
-        &[&run_id, &FLOW_ID, &1i32, &"cron", &"\"receipt\""],
+        &[&run_id, &flow_id, &1i32, &"cron", &"\"receipt\""],
     )
     .await?;
     tx.execute(
@@ -629,8 +669,106 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             r7.claimed, r7.completed, q7 == 0
         );
 
+        // --- (8) PARTITION-TERMINAL (wamn-v8cv, the D20 dead-letter + continue
+        // decision): the HEAD of a blocking key fails TERMINALLY under the
+        // runner's own eyes (a business failure, not a crash) -> the dequeue
+        // lands the run_dead_letters marker in the SAME transaction and the key
+        // CONTINUES in order — the runs behind it dispatch and complete. The
+        // total-ledger-count assert doubles as the polarity proof: phase 4's
+        // runaway run ALSO failed terminally, but UNPARTITIONED — it must have
+        // written no marker.
+        wamn_gate_harness::seed_flow_version(
+            &seed_conn,
+            TENANT,
+            TERMINAL_FLOW_ID,
+            1,
+            true,
+            &terminal_flow_json(),
+            true,
+        )
+        .await?;
+        // The failing head FIRST (earliest enqueued_at = the blocking stream
+        // head), then two normal runs queued behind it on the same key.
+        seed_keyed_flow_run(&mut seed_conn, "kt0", TERMINAL_FLOW_ID, "pk-t").await?;
+        seed_keyed_run(&mut seed_conn, "kt1", "pk-t").await?;
+        seed_keyed_run(&mut seed_conn, "kt2", "pk-t").await?;
+        let r8 = worker.drain().await?;
+        let q8 = count(&seed_conn, &queued).await?;
+        let head_verdict: (String, Option<String>) = {
+            let row = seed_conn
+                .query_one(
+                    &format!("SELECT status, fail_kind FROM {SCHEMA}.runs WHERE run_id = 'kt0'"),
+                    &[],
+                )
+                .await?;
+            (row.get(0), row.get(1))
+        };
+        // ONE marker in the whole ledger: kt0's — not rw-loop's (unpartitioned
+        // terminal failures make no ordering promise).
+        let dl_total = count(
+            &seed_conn,
+            &format!("SELECT count(*) FROM {SCHEMA}.run_dead_letters"),
+        )
+        .await?;
+        let dl_marker: Option<(String, String, String)> = seed_conn
+            .query_opt(
+                &format!(
+                    "SELECT partition_key, flow_id, reason FROM {SCHEMA}.run_dead_letters \
+                     WHERE run_id = 'kt0' AND failed_at IS NOT NULL"
+                ),
+                &[],
+            )
+            .await?
+            .map(|row| (row.get(0), row.get(1), row.get(2)));
+        let marker_ok = matches!(
+            &dl_marker,
+            Some((key, flow, reason))
+                if key == "pk-t" && flow == TERMINAL_FLOW_ID && reason.starts_with("terminal:")
+        );
+        // The key CONTINUED in order: the followers dispatched after the failed
+        // head (kt0 has no pg-write node, so the sink witness carries only them).
+        let order_t = dispatch_order(&seed_conn, "kt").await?;
+        let followers_done = count(
+            &seed_conn,
+            &format!(
+                "SELECT count(*) FROM {SCHEMA}.runs \
+                 WHERE run_id IN ('kt1','kt2') AND status = 'completed'"
+            ),
+        )
+        .await?;
+        let partition_terminal_ok = r8.claimed == 3
+            && r8.failed == 1
+            && r8.completed == 2
+            && head_verdict.0 == "failed"
+            && head_verdict.1.as_deref() == Some("terminal")
+            && dl_total == 1
+            && marker_ok
+            && order_t == vec!["kt1".to_string(), "kt2".to_string()]
+            && followers_done == 2
+            && q8 == 0;
+        println!(
+            "## partition-terminal — blocking head kt0 fails terminally via RunWorker::drain: \
+             claimed {}/3 failed {} completed {}, head = {}/{} (want failed/terminal), \
+             dead-letter rows = {dl_total} (want exactly 1 -> unpartitioned rw-loop wrote none), \
+             marker {dl_marker:?} -> {marker_ok}, followers order {order_t:?} (want kt1,kt2), \
+             followers completed = {followers_done}/2, queue drained = {} -> {partition_terminal_ok}",
+            r8.claimed,
+            r8.failed,
+            r8.completed,
+            head_verdict.0,
+            head_verdict.1.as_deref().unwrap_or("<null>"),
+            q8 == 0
+        );
+
         anyhow::Ok(
-            drain1 && reuse && empty && runaway && stream_ok && reload_ok && partition_ok,
+            drain1
+                && reuse
+                && empty
+                && runaway
+                && stream_ok
+                && reload_ok
+                && partition_ok
+                && partition_terminal_ok,
         )
     }
     .await;
@@ -748,6 +886,24 @@ mod tests {
                 standin.contains(&format!("'{}'", p.as_sql())),
                 "runnerbench stand-in partition_policy CHECK missing literal `{}`",
                 p.as_sql()
+            );
+        }
+
+        // wamn-v8cv: the terminal dead-letter ledger — the guest's settle path
+        // references it on EVERY terminal failure (the composed
+        // dead_letter_dequeue_sql names it unconditionally; conditionality is in
+        // its predicate), so a stand-in without it is an undefined-relation
+        // failure on the first failed run.
+        assert!(
+            standin.contains("CREATE TABLE wamn_run.run_dead_letters"),
+            "runnerbench stand-in missing the run_dead_letters ledger \
+             (the v8cv terminal dequeue references it)"
+        );
+        for col in table_columns(RUN_QUEUE_SQL, "wamn_run.run_dead_letters") {
+            assert!(
+                standin.contains(&col),
+                "runnerbench run_dead_letters stand-in missing column `{col}` \
+                 (drifted from deploy/sql/run-queue.sql)"
             );
         }
     }

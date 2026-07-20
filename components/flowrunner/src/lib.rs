@@ -63,7 +63,7 @@ use wamn_run_store::{NodeRunRecord, RunRecord, sql as run_sql};
 // amortization: one statement where the split path spent two or three.
 use wamn_run_queue::{
     acquire_partitions_sql, claim_dispatch_sql, claim_partition_head_sql, complete_dequeue_sql,
-    dequeue_sql, mark_running_sql, park_sql, record_error_and_renew_sql,
+    dead_letter_dequeue_sql, mark_running_sql, park_sql, record_error_and_renew_sql,
     record_success_and_renew_sql, release_partition_sql, renew_partition_sql,
 };
 use wamn_runner::{
@@ -1132,10 +1132,13 @@ fn execute(
 // ---------------------------------------------------------------------------
 
 /// The claim-path result: `outcome` (0 = completed, 1 = parked, 2 = failed) plus
-/// the wake delay to park the queue row by when `outcome == 1`.
+/// the wake delay to park the queue row by when `outcome == 1`, and — for
+/// `outcome == 2` — the failure verdict the dead-letter marker records
+/// (wamn-v8cv; the structured fail_kind/fail_node/fail_reason stay on `runs`).
 struct ClaimOutcome {
     outcome: u32,
     park_ms: u64,
+    fail_reason: Option<String>,
 }
 
 /// The host-injected durable-queue lease owner (`app.runner`, fqg.4). The plugin
@@ -1317,9 +1320,17 @@ fn complete_and_dequeue(run_id: &str, result: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Remove a run's queue row on a terminal outcome (the `runs` history stays).
-fn dequeue(run_id: &str) -> Result<(), String> {
-    client::execute(&dequeue_sql(), &[text(run_id)]).map_err(|e| err_name(&e))?;
+/// Remove a run's queue row on a guest-observed TERMINAL failure (the `runs`
+/// history stays) — and, iff the row is a `blocking`-partition head, land the
+/// `run_dead_letters` marker in the SAME statement/transaction (wamn-v8cv, the
+/// D20 dead-letter + continue decision): the key continues in order, never
+/// silently. Unpartitioned and `leapfrog` rows degenerate to a plain dequeue —
+/// the conditionality lives in the SQL, keyed on the row's own materialized
+/// policy, so the guest cannot disagree with the queue about which promise was
+/// made.
+fn dead_letter_dequeue(run_id: &str, reason: &str) -> Result<(), String> {
+    client::execute(&dead_letter_dequeue_sql(), &[text(run_id), text(reason)])
+        .map_err(|e| err_name(&e))?;
     Ok(())
 }
 
@@ -1449,12 +1460,14 @@ fn release_partition(partition_key: &str, owner: &str) -> Result<(), String> {
 
 /// Settle a driven run's terminal outcome (shared by both claim paths): completed
 /// (0) already dropped its queue row inside [`complete_and_dequeue`]; parked (1)
-/// pushes `available_at` and releases the run lease; failed (2) dequeues.
+/// pushes `available_at` and releases the run lease; failed (2) dequeues — via
+/// [`dead_letter_dequeue`], so a `blocking`-partition head's key continues past
+/// the failure WITH its ledger marker in the same transaction (wamn-v8cv).
 fn settle(run_id: &str, claim: &ClaimOutcome) -> Result<(), String> {
     match claim.outcome {
         0 => {}                            // completed: already dequeued
         1 => park(run_id, claim.park_ms)?, // parked -> re-offered at wake
-        _ => dequeue(run_id)?,             // failed -> terminal
+        _ => dead_letter_dequeue(run_id, claim.fail_reason.as_deref().unwrap_or("failed"))?,
     }
     Ok(())
 }
@@ -1538,16 +1551,29 @@ fn execute_claimed(
                 return Ok(ClaimOutcome {
                     outcome: 0,
                     park_ms: 0,
+                    fail_reason: None,
                 });
             }
             Step::Done(status) => {
-                if let Some(f) = st.failure() {
-                    let _ = mark_failed(run_id, fail_kind_sql(&f.kind), &f.node, &f.detail.message);
-                }
-                let _ = status;
+                // The verdict lands on `runs` (structured) AND travels to settle
+                // as the dead-letter marker's display string (wamn-v8cv).
+                let fail_reason = match st.failure() {
+                    Some(f) => {
+                        let _ =
+                            mark_failed(run_id, fail_kind_sql(&f.kind), &f.node, &f.detail.message);
+                        format!(
+                            "{}: {}: {}",
+                            fail_kind_sql(&f.kind),
+                            f.node,
+                            f.detail.message
+                        )
+                    }
+                    None => format!("run ended in {status:?}"),
+                };
                 return Ok(ClaimOutcome {
                     outcome: 2,
                     park_ms: 0,
+                    fail_reason: Some(fail_reason),
                 });
             }
             // R32: a scheduled retry not yet due — persist the attempt and PARK
@@ -1567,6 +1593,7 @@ fn execute_claimed(
                 return Ok(ClaimOutcome {
                     outcome: 1,
                     park_ms: until_ms,
+                    fail_reason: None,
                 });
             }
             Step::Dispatch(d) => {
@@ -1618,6 +1645,7 @@ fn execute_claimed(
                         return Ok(ClaimOutcome {
                             outcome: 1,
                             park_ms,
+                            fail_reason: None,
                         });
                     }
                 }

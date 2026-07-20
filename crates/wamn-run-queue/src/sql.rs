@@ -331,6 +331,46 @@ pub fn dequeue_sql() -> String {
         .to_string()
 }
 
+/// The TERMINAL-failure dequeue (wamn-v8cv, the D20 dead-letter + continue
+/// decision): ONE statement that dequeues a run the guest watched fail
+/// terminally (business failure / retries exhausted with no error route) and,
+/// iff the row is the head of a **`blocking`-policy partition**, lands the
+/// `run_dead_letters` marker in the SAME transaction — so strict ordering never
+/// proceeds past a failed head silently, and the dequeue can never commit
+/// without its ledger row. For an unpartitioned or `leapfrog` row the insert's
+/// predicate matches nothing and the statement degenerates to [`dequeue_sql`]
+/// (no ordering promise was made — see [`crate::dead_letters_on_terminal`],
+/// the pure twin of the predicate). `flow_id` rides from the run's own `runs`
+/// row (the FK guarantees it); `failed_at` is server-side `now()`. Idempotent
+/// on redelivery: `ON CONFLICT DO NOTHING` on the ledger PK, and a re-run
+/// against an already-dequeued row inserts nothing (the SELECT is over the
+/// queue row). Params: `$1` run_id (shared with the dequeue tail), `$2` the
+/// failure verdict text (the `runs` row keeps the structured
+/// fail_kind/fail_node/fail_reason — this is the marker's display string).
+///
+/// SR12 (composed statement): the pure tests pin the text, the composition, and
+/// the predicate literals; they cannot observe the single-statement CTE
+/// semantics (the insert's SELECT and the DELETE see the same snapshot, so the
+/// insert reads the row the delete removes) or RLS on either half — that is
+/// the run-queue live gate.
+pub fn dead_letter_dequeue_sql() -> String {
+    format!(
+        "WITH dead_lettered AS ( \
+             INSERT INTO run_dead_letters (tenant_id, run_id, partition_key, flow_id, reason) \
+             SELECT q.tenant_id, q.run_id, q.partition_key, r.flow_id, $2 \
+               FROM run_queue AS q \
+               JOIN runs AS r ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id \
+              WHERE q.tenant_id = current_setting('app.tenant', true) \
+                AND q.run_id = $1 \
+                AND q.partition_key IS NOT NULL \
+                AND q.partition_policy = '{blocking}' \
+             ON CONFLICT (tenant_id, run_id) DO NOTHING \
+        ) {dequeue}",
+        blocking = PartitionPolicy::Blocking.as_sql(),
+        dequeue = dequeue_sql(),
+    )
+}
+
 /// Park a claimed run for a later wake (a `delay` node / backoff): push
 /// `available_at` out by `$2` ms and release the lease so no replica holds it while
 /// it sleeps. Param `$1` run_id. Reconciliation/doorbell picks it up at wake.

@@ -86,7 +86,9 @@ mod partition;
 mod reconcile;
 mod sql;
 
-pub use claim::{ClaimPlan, ClaimState, Claimed, claim_state, is_claimable, plan_claim};
+pub use claim::{
+    ClaimPlan, ClaimState, Claimed, claim_state, dead_letters_on_terminal, is_claimable, plan_claim,
+};
 #[cfg(feature = "dispatcher")]
 pub use cron::{CronError, cron_firing, cron_tick_of, due_tick, mint_cron_run_id, next_fire};
 #[cfg(feature = "dispatcher")]
@@ -101,11 +103,12 @@ pub use partition::{partition_lease_live, plan_acquire, plan_partition_claim};
 pub use reconcile::{next_reconcile, reconcile_due};
 pub use sql::{
     acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_dispatch_sql,
-    claim_partition_head_sql, complete_dequeue_sql, cron_last_run_sql, dequeue_sql,
-    enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql,
-    gc_orphan_partitions_sql, janitor_sweep_sql, mark_running_sql, park_sql, parked_due_sql,
-    record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
-    renew_lease_sql, renew_partition_sql, write_ahead_run_sql, write_ahead_triggered_run_sql,
+    claim_partition_head_sql, complete_dequeue_sql, cron_last_run_sql, dead_letter_dequeue_sql,
+    dequeue_sql, enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql,
+    enqueue_with_policy_sql, gc_orphan_partitions_sql, janitor_sweep_sql, mark_running_sql,
+    park_sql, parked_due_sql, record_error_and_renew_sql, record_success_and_renew_sql,
+    release_partition_sql, renew_lease_sql, renew_partition_sql, write_ahead_run_sql,
+    write_ahead_triggered_run_sql,
 };
 
 // The queue drives the 5.7 run lifecycle rather than redefining it: the

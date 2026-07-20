@@ -45,6 +45,10 @@
 -- `infrastructure-failure` and removes the row — EXCEPT a 'blocking'-policy
 -- partitioned row (D20): that row stays and WEDGES its key (operator release),
 -- since reaping it would silently reorder a flow that opted into strict ordering.
+-- A GUEST-OBSERVED terminal failure (business failure / retries exhausted with no
+-- error route — the runner watched the run die, nothing crashed) is the OTHER
+-- terminal path (wamn-v8cv): the runner dequeues the head and the key CONTINUES,
+-- but the dequeue lands a `run_dead_letters` row in the same transaction (below).
 -- The FK to `runs` ON DELETE CASCADE
 -- ties the claim machinery to the run's immutable history. Status/lifecycle live
 -- on `runs` (5.7) — the queue is the claim/lease layer, not a second run-state.
@@ -119,3 +123,40 @@ CREATE POLICY partition_owner_tenant ON wamn_run.partition_owner
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.partition_owner TO wamn_app;
+
+-- ---------------------------------------------------------------------------
+-- run_dead_letters: the ordering-proceeded-past-failure ledger (wamn-v8cv, the
+-- D20 terminal-business-failure decision: DEAD-LETTER + CONTINUE). When the HEAD
+-- of a 'blocking'-policy partition fails TERMINALLY under the runner's own eyes
+-- (business failure / retries exhausted with no error route — a guest-observed
+-- verdict, NOT the janitor's crash-exhaustion evidence), wedging the key forever
+-- would trade availability for a failure no retry will fix, and dequeuing
+-- silently would break the strict-ordering promise without a trace. The chosen
+-- contract: the runner dequeues the head so the key CONTINUES in order, and the
+-- SAME transaction inserts one row here (`dead_letter_dequeue_sql` in
+-- crates/wamn-run-queue) as the alertable marker that ordering proceeded past a
+-- failed run. Scope: 'blocking' partitioned rows ONLY — an unpartitioned or
+-- 'leapfrog' terminal dequeue made no strict-ordering promise and writes
+-- nothing. The run's own history (status, fail_kind/fail_node/fail_reason)
+-- stays on `runs` (5.7); this ledger is the ordering-breach marker, not a
+-- second run state. APPEND-ONLY from the app role (no UPDATE/DELETE grant): the
+-- operator redrive/purge verb is a control-plane follow-up. Janitor
+-- crash-exhaustion of a blocking head still WEDGES the key (above) — the two
+-- terminal paths stay distinct.
+-- ---------------------------------------------------------------------------
+CREATE TABLE wamn_run.run_dead_letters (
+    tenant_id     text NOT NULL CHECK (tenant_id <> ''),
+    run_id        text NOT NULL,
+    partition_key text NOT NULL,
+    flow_id       text NOT NULL,
+    reason        text NOT NULL,
+    failed_at     timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, run_id),
+    FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
+);
+ALTER TABLE wamn_run.run_dead_letters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.run_dead_letters FORCE ROW LEVEL SECURITY;
+CREATE POLICY run_dead_letters_tenant ON wamn_run.run_dead_letters
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT, INSERT ON wamn_run.run_dead_letters TO wamn_app;
