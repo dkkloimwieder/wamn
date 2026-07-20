@@ -54,7 +54,7 @@ prerequisite that makes everything else findable.
 | R3 | Per-component memory limits | Med-High | **closed** | `c3356ea` (wamn-bp4.1) + fork ResourceLimiter commit |
 | R4 | Fork-based upstream management | — | **closed** | `dd0d60d` (wamn-bp4.2) |
 | R6 | `partitioned(key)` ordering under retry/park | High | **closed** | `84233fa` (policy materialized on the row; D20 is the decision, not the evidence) |
-| R8c | Outbox amplification + GC | Med | **reopened** | see R10 |
+| R8c | Outbox amplification + GC | Med | **closed** | `f0cebca` (wamn-l5i9.19 teardown removed the subject — the outbox + its GC are deleted; wamn-2jkm.31) |
 | SR1/SR3/SR6 | Gates split, repo tiering, conventions written down | — | **closed** | `3dfee03` / `4a637e2` / `d8e1366` |
 | E14 | Q1: `ev.lsn` is per-message — dedupe design sound | — | **closed** | evidence: `pg-walstream stream.rs:1093,1066` (question-class closure) |
 | SR12 | Pure/effect split can't test statement-level bugs | High | **closed** | live-test half `c705c9e` (wamn-2jkm.23); header qualification + composed-statement convention `0d7231f` (wamn-2jkm.17) |
@@ -404,7 +404,7 @@ no `wamn_dispatch` role has ever existed; the dispatcher runs as `wamn_app`,
 verified `NOBYPASSRLS` non-owner under FORCE RLS, statically and live.
 **R8b-a** narrow dedicated role stays open = wamn-286; **R8b-b** explicit
 tenant predicate on the four RLS-only statements = wamn-2jkm.53)* ·
-**R8c** outbox amplification/GC *(**reopened**, R10)* · **R8d** cron misfire
+**R8c** outbox amplification/GC *(**closed** at `f0cebca` — the l5i9.19 teardown removed the subject; wamn-2jkm.31)* · **R8d** cron misfire
 collapse *(open, doc)* · **R9a** reserve the `wamn_` identifier prefix at
 catalog validation *(open)* · **R9b** rename × row-event registration
 *(closed at `wamn-l5i9.17` — the decode half landed at l5i9.11 (OID→entity-id
