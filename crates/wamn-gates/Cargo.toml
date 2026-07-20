@@ -43,6 +43,9 @@ wamn-ddl = { path = "../wamn-ddl" }
 # / T3 tier modes (wamn-q3n.8) also drive the registry model + saga SQL builders.
 wamn-provision = { path = "../wamn-provision" }
 wamn-registry = { path = "../wamn-registry" }
+# nodeinvoke crafts + signs raw invocation envelopes for the wamn-fqg.22 authn
+# negatives (the same pure wire crate both hop ends link).
+wamn-node-invoke = { path = "../wamn-node-invoke" }
 # queuebench/failoverbench/dispatchbench drive the pure queue/cron/outbox
 # builders over tokio_postgres.
 wamn-run-queue = { path = "../wamn-run-queue" }

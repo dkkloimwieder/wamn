@@ -26,14 +26,20 @@
 # until an image-fetch/init sidecar pulls it, v0 mounts it from a ConfigMap (or
 # bakes it into a per-node image). The path below is the mount point.
 #
-# TRUST MODEL (honest, v0): in-cluster callers are trusted at the NETWORK layer —
-# any pod that can reach this Service can POST /run with an arbitrary grant set
-# (bounded by --project, never beyond it). Runner<->node authn (mTLS / a signed
-# envelope) is NOT in scope here; it is a named bd5 deferral. The host-enforced
-# invariants that hold regardless: get-only credential linking (no self-grant),
-# the host-owned project (no cross-project read), and the E17 import allowlist
-# screened at load (a node importing wamn:postgres / wasi:sockets / wamn:runner
-# is refused).
+# TRUST MODEL (wamn-fqg.22 — SIGNED INVOCATION ENVELOPE): runner<->node authn is
+# a per-project-env HMAC-SHA256 over the exact request body. The reserved vault
+# entry `wamn:node-invoke-signing-key` in the SAME wamn-runner-credentials Secret
+# mounted below is the key: the flowrunner SIGNS each POST, and this host VERIFIES
+# the `x-wamn-signature` header BEFORE parsing the envelope or installing the
+# grant — a missing/malformed/wrong signature is a 401 refusal that never reaches
+# the node. A pod that lacks the env's key can therefore no longer POST /run with
+# attacker-chosen input/grant. With NO key configured the host falls back to the
+# legacy network-trust posture (unsigned POSTs admitted), warned loudly at
+# startup — so bank the key for every project-env. mTLS (SPIFFE/cert-manager) is
+# the named LATER infra upgrade, not this path. The host-enforced invariants that
+# hold regardless: get-only credential linking (no self-grant), the host-owned
+# project (no cross-project read), and the E17 import allowlist screened at load
+# (a node importing wamn:postgres / wasi:sockets / wamn:runner is refused).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

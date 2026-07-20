@@ -28,7 +28,12 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use clap::Args;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_postgres::{Client, NoTls};
+use wamn_node_invoke::{
+    NodeInvokeRequest, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL, WirePayload, WireRunContext,
+    granted_credentials, sign_envelope,
+};
 use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use wamn_gate_harness::check;
@@ -47,6 +52,12 @@ const PROJECT: &str = "default";
 /// Distinctive secrets so `ok:<secret>` / the leak are unambiguous.
 const SECRET: &str = "node-secret-7c1f2a";
 const SIBLING_SECRET: &str = "sibling-secret-do-not-leak";
+/// The per-project-env HMAC signing key (wamn-fqg.22), banked in BOTH the
+/// runner's vault (so the flowrunner guest signs) and the serve-node's vault (so
+/// it verifies) under the reserved `SIGNING_KEY_CREDENTIAL` name — the shared
+/// runner-credentials Secret in production. A wrong key the negatives forge with.
+const SIGNING_KEY: &str = "fqg22-per-project-env-hmac-0a1b2c3d4e5f";
+const WRONG_KEY: &str = "attacker-guessed-the-wrong-key";
 
 #[derive(Debug, Args)]
 pub struct NodeInvokeArgs {
@@ -270,10 +281,9 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
         .or_else(|| std::env::var("WAMN_PG_URL").ok())
         .or_else(|| std::env::var("DATABASE_URL").ok())
         .context("no app database url: pass --database-url or set WAMN_PG_URL / DATABASE_URL")?;
-    let admin_url = args
-        .admin_database_url
-        .clone()
-        .context("nodeinvoke needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL")?;
+    let admin_url = args.admin_database_url.clone().context(
+        "nodeinvoke needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL",
+    )?;
     let port = args.node_port;
     let n = args.iters;
 
@@ -288,13 +298,19 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
     // The serve-node host: a warm node-cred instance whose vault has the granted
     // secret AND an ungranted sibling in the same project. The runner->node hop
     // is loopback; the node's OWN egress is deny-all (it makes none).
-    let node_vault = Arc::new(WamnCredentials::from_projects(std::collections::HashMap::from([(
-        PROJECT.to_string(),
-        std::collections::HashMap::from([
-            ("granted".to_string(), SECRET.to_string()),
-            ("sibling".to_string(), SIBLING_SECRET.to_string()),
-        ]),
-    )])));
+    let node_vault = Arc::new(WamnCredentials::from_projects(
+        std::collections::HashMap::from([(
+            PROJECT.to_string(),
+            std::collections::HashMap::from([
+                ("granted".to_string(), SECRET.to_string()),
+                ("sibling".to_string(), SIBLING_SECRET.to_string()),
+                // wamn-fqg.22: the serve-node reads its per-project-env signing key
+                // from THIS vault (the shared runner-credentials Secret in prod) and
+                // enforces verify-before-grant.
+                (SIGNING_KEY_CREDENTIAL.to_string(), SIGNING_KEY.to_string()),
+            ]),
+        )]),
+    ));
     let serve = Arc::new(
         ServeNode::new(
             &engine,
@@ -339,7 +355,13 @@ async fn gate_body(
 ) -> anyhow::Result<bool> {
     let (mut seed_conn, _h) = connect_app(app_url).await?;
     wamn_gate_harness::seed_flow_version(
-        &seed_conn, TENANT, FLOW_ID, 1, true, &flow_json(port), true,
+        &seed_conn,
+        TENANT,
+        FLOW_ID,
+        1,
+        true,
+        &flow_json(port),
+        true,
     )
     .await?;
 
@@ -350,10 +372,23 @@ async fn gate_body(
     let mut cfg = WamnPostgresConfig::from_env();
     cfg.database_url = Some(app_url.to_string());
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
-    let runner_vault = Arc::new(WamnCredentials::empty());
+    // wamn-fqg.22: the runner's vault carries the SAME per-project-env signing
+    // key (the shared runner-credentials Secret in prod) so the flowrunner guest
+    // resolves it via `wamn:node/credentials.get` and signs the hop envelope. The
+    // node's own credentials still resolve at the serve-node's vault, not here.
+    let runner_vault = Arc::new(WamnCredentials::from_projects(
+        std::collections::HashMap::from([(
+            PROJECT.to_string(),
+            std::collections::HashMap::from([(
+                SIGNING_KEY_CREDENTIAL.to_string(),
+                SIGNING_KEY.to_string(),
+            )]),
+        )]),
+    ));
     // The runner host allowlist admits the loopback serve-node (the outer bound;
     // the flow's declared allowed-hosts is the inner — both must pass).
-    let allowed: Arc<[AllowedHost]> = vec![format!("127.0.0.1:{port}").parse::<AllowedHost>()?].into();
+    let allowed: Arc<[AllowedHost]> =
+        vec![format!("127.0.0.1:{port}").parse::<AllowedHost>()?].into();
 
     let mut worker = RunWorker::instantiate(
         engine,
@@ -377,7 +412,11 @@ async fn gate_body(
     }
     let report = worker.drain().await?;
 
-    let queued = count(&seed_conn, &format!("SELECT count(*) FROM {SCHEMA}.run_queue")).await?;
+    let queued = count(
+        &seed_conn,
+        &format!("SELECT count(*) FROM {SCHEMA}.run_queue"),
+    )
+    .await?;
     let completed = count(
         &seed_conn,
         &format!("SELECT count(*) FROM {SCHEMA}.runs WHERE status = 'completed'"),
@@ -477,5 +516,147 @@ async fn gate_body(
         report.completed
     );
 
+    // -------------------------------------------------------------------------
+    // wamn-fqg.22 — runner→node authn (signed invocation envelope).
+    // -------------------------------------------------------------------------
+    // The drain above ALREADY proves the signed positive end-to-end: the
+    // serve-node holds a key, so it REQUIRES a valid signature; every run
+    // completing means the REAL flowrunner signed the exact body correctly (an
+    // unsigned or forged runner would 401 → DELIVERY would have failed).
+    check(
+        &mut ok,
+        "AUTHN-POSITIVE: the signed hop drained N runs (a keyed serve-node accepted the flowrunner's real signature)",
+        report.completed == n,
+    );
+    let grants_after_positive = serve.grant_install_count();
+    check(
+        &mut ok,
+        "AUTHN-POSITIVE: each accepted invocation installed its grant (grant_install_count advanced by ≥N)",
+        grants_after_positive >= n as u64,
+    );
+
+    // Drive the serve-node directly over raw HTTP to exercise the refusal arms
+    // the happy path cannot forge — the exact envelope the flowrunner sends.
+    let body = canonical_request().to_json();
+    let good_sig = sign_envelope(SIGNING_KEY.as_bytes(), body.as_bytes());
+    let wrong_sig = sign_envelope(WRONG_KEY.as_bytes(), body.as_bytes());
+    let grants_before_negatives = serve.grant_install_count();
+
+    // (1) UNSIGNED — no x-wamn-signature header at all.
+    let (status, rbody) = raw_post(port, &body, None).await?;
+    check(
+        &mut ok,
+        "AUTHN-UNSIGNED: an unsigned envelope is refused 401 (missing-signature)",
+        status == 401 && rbody.contains("missing-signature"),
+    );
+
+    // (2) TAMPERED — a valid signature over the ORIGINAL body, but a MUTATED body
+    // (attacker-chosen input) posted under it.
+    let tampered = tampered_request().to_json();
+    assert_ne!(tampered, body, "the tamper must actually change the body");
+    let (status, rbody) = raw_post(port, &tampered, Some(&good_sig)).await?;
+    check(
+        &mut ok,
+        "AUTHN-TAMPERED: a body that does not match its signature is refused 401 (bad-signature)",
+        status == 401 && rbody.contains("bad-signature"),
+    );
+
+    // (3) WRONG-KEY — a well-formed signature under a key the attacker does not
+    // share with the project-env.
+    let (status, rbody) = raw_post(port, &body, Some(&wrong_sig)).await?;
+    check(
+        &mut ok,
+        "AUTHN-WRONG-KEY: a signature under the wrong key is refused 401 (bad-signature)",
+        status == 401 && rbody.contains("bad-signature"),
+    );
+    check(
+        &mut ok,
+        "AUTHN-NO-ORACLE: a refusal body never carries the expected MAC",
+        !rbody.contains(&good_sig),
+    );
+
+    // VERIFY-BEFORE-GRANT (the load-bearing property, wamn-fqg.22): none of the
+    // three refusals reached `invoke`, so NOT ONE installed a grant. A mutant
+    // that removes/moves the verification lets a refused request install its
+    // grant here → this named check kills it.
+    let grants_after_negatives = serve.grant_install_count();
+    check(
+        &mut ok,
+        "VERIFY-BEFORE-GRANT: not one refused request installed a grant (verify precedes grant install)",
+        grants_after_negatives == grants_before_negatives,
+    );
+
+    // (4) RAW-SIGNED positive — a correctly-signed raw POST IS accepted (200) and
+    // DOES install its grant, so the refusals above are a real contrast (the
+    // check is not vacuously passing on a serve-node that refuses everything).
+    let (status, _rbody) = raw_post(port, &body, Some(&good_sig)).await?;
+    check(
+        &mut ok,
+        "AUTHN-SIGNED: a correctly-signed raw envelope is accepted (200) and installs exactly one grant",
+        status == 200 && serve.grant_install_count() == grants_after_negatives + 1,
+    );
+    println!(
+        "  authn: grants(after positive drain)={grants_after_positive}; refusals installed 0 grants (before={grants_before_negatives} after={grants_after_negatives}); raw-signed accepted"
+    );
+
     Ok(ok)
+}
+
+/// The exact envelope the flowrunner's custom-node hop POSTs for this flow — the
+/// substrate the raw authn checks sign, tamper, and mis-key.
+fn canonical_request() -> NodeInvokeRequest {
+    NodeInvokeRequest {
+        ctx: WireRunContext {
+            run_id: "authn-raw".into(),
+            flow_id: FLOW_ID.into(),
+            flow_version: 1,
+            node_id: "call".into(),
+            attempt: 0,
+            idempotency_key: "authn-raw:call".into(),
+            deadline_ms: Some(30_000),
+            traceparent: None,
+            tracestate: None,
+            config: r#"{"endpoint":"http://127.0.0.1","probe":"granted","forbidden":"sibling"}"#
+                .into(),
+        },
+        input: WirePayload::Inline("\"hello\"".into()),
+        grant: granted_credentials(Some("granted")),
+    }
+}
+
+/// The canonical envelope with an attacker-chosen input — the "forged input"
+/// tamper the signature must catch.
+fn tampered_request() -> NodeInvokeRequest {
+    let mut r = canonical_request();
+    r.input = WirePayload::Inline("\"attacker-chosen-input\"".into());
+    r
+}
+
+/// POST a raw `/run` body to the loopback serve-node with an OPTIONAL
+/// `x-wamn-signature`, returning (status-code, full-response-text). Half-closes
+/// the write side so the server's keep-alive read EOFs and the response drains.
+async fn raw_post(port: u16, body: &str, signature: Option<&str>) -> anyhow::Result<(u16, String)> {
+    let mut sock = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
+    let mut req = format!(
+        "POST /run HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+        body.len()
+    );
+    if let Some(sig) = signature {
+        req.push_str(&format!("{SIGNATURE_HEADER}: {sig}\r\n"));
+    }
+    req.push_str("\r\n");
+    req.push_str(body);
+    sock.write_all(req.as_bytes()).await?;
+    sock.flush().await?;
+    sock.shutdown().await?; // half-close: the server's next read EOFs cleanly
+    let mut resp = Vec::new();
+    sock.read_to_end(&mut resp).await?;
+    let text = String::from_utf8_lossy(&resp).into_owned();
+    let status = text
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|c| c.parse::<u16>().ok())
+        .unwrap_or(0);
+    Ok((status, text))
 }

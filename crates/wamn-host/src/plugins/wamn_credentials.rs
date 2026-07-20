@@ -231,6 +231,16 @@ impl WamnCredentials {
         self.resolve(&project, handle)
     }
 
+    /// Resolve a raw `(project, name)` secret HOST-SIDE, bypassing the
+    /// per-component grant/identity gate — for a host that needs the material
+    /// itself, not on a guest's behalf. The serve-node reads its per-project-env
+    /// HMAC signing key (wamn-fqg.22) this way at startup; a guest NEVER reaches
+    /// this (a guest `get` always goes through [`authorize`]). `None` if the
+    /// name is absent or no source is configured.
+    pub fn lookup(&self, project: &str, name: &str) -> Option<String> {
+        self.resolve(project, name).ok()
+    }
+
     /// Resolve `name` within `project` — the vault semantics the WIT errors
     /// mirror (see the module docs for the unavailable/not-found split).
     fn resolve(&self, project: &str, name: &str) -> Result<String, CredentialError> {

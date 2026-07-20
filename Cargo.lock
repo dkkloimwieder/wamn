@@ -4277,6 +4277,7 @@ dependencies = [
  "wamn-flow",
  "wamn-gate-harness",
  "wamn-host",
+ "wamn-node-invoke",
  "wamn-provision",
  "wamn-registry",
  "wamn-run-queue",
@@ -4354,8 +4355,11 @@ dependencies = [
 name = "wamn-node-invoke"
 version = "0.1.0"
 dependencies = [
+ "hex",
+ "hmac",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]

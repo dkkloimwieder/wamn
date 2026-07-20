@@ -14,3 +14,10 @@ license.workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# runner->node authn (wamn-fqg.22): HMAC-SHA256 over the exact request body,
+# hex-carried in a header. All pure Rust + wasm32-wasip2-clean (the guest signs,
+# the host verifies) and already resolved in the workspace lock — hmac's
+# `verify_slice` is the constant-time (subtle-backed) MAC check.
+hmac = "0.13"
+sha2 = "0.11"
+hex = "0.4"

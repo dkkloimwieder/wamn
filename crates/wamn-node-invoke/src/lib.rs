@@ -18,19 +18,21 @@
 //!   the warm serve-node instance parses/validates a given config ONCE per
 //!   `(node, flow-version, config-identity)` and reuses it across invocations.
 //!
-//! PURE — serde only, no DB / clock / wasm / network — so BOTH the flowrunner
-//! GUEST (wasm32-wasip2) and the serve-node HOST link the identical bytes. The
-//! trust model is documented on the invocation path itself (v0 trusts
-//! in-cluster callers at the network layer; runner↔node authn is a named
-//! follow-up).
+//! PURE — serde + the HMAC signing primitives, no DB / clock / wasm / network —
+//! so BOTH the flowrunner GUEST (wasm32-wasip2) and the serve-node HOST link the
+//! identical bytes. Runner↔node authn (wamn-fqg.22) lives HERE too — the
+//! canonical signed bytes ([`sign_envelope`] / [`verify_envelope`]) are shared
+//! so signer and verifier cannot drift; mTLS remains the later infra upgrade.
 
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::Sha256;
 
 // ---------------------------------------------------------------------------
 // Wire envelope: runner -> serve-node (request) and back (response)
@@ -176,6 +178,96 @@ impl NodeInvokeResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Runner -> node authn: a SIGNED invocation envelope (wamn-fqg.22)
+// ---------------------------------------------------------------------------
+
+/// The request header carrying the lower-hex HMAC-SHA256 signature of the
+/// request body (runner→node authn). ASCII-safe so it rides an HTTP header
+/// unencoded.
+pub const SIGNATURE_HEADER: &str = "x-wamn-signature";
+
+/// The reserved credential-vault name the per-project-env HMAC signing key is
+/// banked under, distributed via the EXISTING runner-credentials Secret pattern
+/// (`{project: {name: secret}}` — no new Secret, no new WIT). The colon marks it
+/// non-colliding with a user-authored `wamn-flow` credential name (those are
+/// bare logical names); the serve-node additionally REFUSES to install it into
+/// any node grant, so a custom node can never read the signing key back through
+/// `wamn:node/credentials`.
+pub const SIGNING_KEY_CREDENTIAL: &str = "wamn:node-invoke-signing-key";
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// Compute the canonical runner→node signature: HMAC-SHA256 over the EXACT
+/// request body bytes (the serialized [`NodeInvokeRequest`] JSON that is
+/// POSTed), lower-hex encoded. Signing the raw body — not a re-derived canonical
+/// form — is deliberate: the verifier MACs the bytes it received off the wire
+/// BEFORE parsing, so signer and verifier agree with zero normalization risk.
+///
+/// REPLAY (accepted risk for v0, per wamn-fqg.22): the MAC binds the body but
+/// carries no timestamp/nonce, so a captured VALID envelope can be replayed
+/// WITHIN its project-env — the per-project-env key scopes it, never across
+/// project-envs, and never cross-project (the serve-node pins its OWN
+/// `--project`, ignoring the request). This is accepted because the signature
+/// closes the NAMED threat: a FORGED envelope with attacker-chosen input/grant,
+/// which requires the key an in-cluster attacker does not hold. A replay only
+/// re-invokes the node with the SAME bytes the legitimate runner already sent;
+/// `ctx.run_id` / `ctx.idempotency_key` ride the envelope but the serve-node is
+/// stateless and does NOT dedupe on them, so a freshness check would require
+/// serve-node nonce state or a synchronized absolute clock — neither is cheap
+/// here, so none is added (no speculative machinery).
+pub fn sign_envelope(key: &[u8], body: &[u8]) -> String {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts a key of any length");
+    mac.update(body);
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Why a runner→node signature was refused. A distinct, MAC-free taxonomy the
+/// serve-node maps to a 401-class refusal and the gate asserts on; it NEVER
+/// carries the expected MAC (a refusal must not become a verification oracle).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignatureError {
+    /// No `x-wamn-signature` header on a request to a key-configured host.
+    Missing,
+    /// The header was present but is not valid lower-hex.
+    Malformed,
+    /// A well-formed signature that does not match the body under the key.
+    Mismatch,
+}
+
+impl SignatureError {
+    /// A stable, MAC-free reason code for the refusal body / gate asserts.
+    pub fn reason(self) -> &'static str {
+        match self {
+            SignatureError::Missing => "missing-signature",
+            SignatureError::Malformed => "malformed-signature",
+            SignatureError::Mismatch => "bad-signature",
+        }
+    }
+}
+
+impl std::fmt::Display for SignatureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "runner→node signature refused: {}", self.reason())
+    }
+}
+
+impl std::error::Error for SignatureError {}
+
+/// Verify a hex signature over `body` under `key` in CONSTANT TIME: [`hmac`]'s
+/// `verify_slice` compares via `subtle`, so a wrong signature never leaks how
+/// many leading bytes matched. The signer is [`sign_envelope`]; the two live in
+/// one crate so the bytes cannot drift. A `Missing` header is the caller's to
+/// distinguish (there is nothing to verify) — this reports `Malformed` for
+/// non-hex and `Mismatch` for a valid-but-wrong tag.
+pub fn verify_envelope(key: &[u8], body: &[u8], signature_hex: &str) -> Result<(), SignatureError> {
+    let provided = hex::decode(signature_hex).map_err(|_| SignatureError::Malformed)?;
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts a key of any length");
+    mac.update(body);
+    mac.verify_slice(&provided)
+        .map_err(|_| SignatureError::Mismatch)
+}
+
+// ---------------------------------------------------------------------------
 // Grant derivation (cjv.3): exactly the node step's declared credentials
 // ---------------------------------------------------------------------------
 
@@ -189,10 +281,7 @@ impl NodeInvokeResponse {
 /// the load-bearing property the credprobe negative gate proves; widening it
 /// here is the cjv.3 hole.
 pub fn granted_credentials(node_credential: Option<&str>) -> Vec<String> {
-    node_credential
-        .into_iter()
-        .map(str::to_string)
-        .collect()
+    node_credential.into_iter().map(str::to_string).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -380,13 +469,86 @@ mod tests {
             port: None,
         });
         let wire = ok.to_json();
-        assert!(!wire.contains("port"), "absent port must not serialize: {wire}");
+        assert!(
+            !wire.contains("port"),
+            "absent port must not serialize: {wire}"
+        );
+    }
+
+    // --- runner->node authn (wamn-fqg.22) -----------------------------------
+
+    fn sample_request() -> NodeInvokeRequest {
+        NodeInvokeRequest {
+            ctx: sample_ctx(),
+            input: WirePayload::Inline(r#"{"x":7}"#.into()),
+            grant: vec!["notify-token".into()],
+        }
+    }
+
+    /// The signed bytes ARE the request body, and a body signed with a key
+    /// verifies under that key — the canonical roundtrip both ends share.
+    #[test]
+    fn signed_envelope_bytes_are_the_body_and_verify() {
+        let key = b"per-project-env-hmac-key";
+        let body = sample_request().to_json();
+        let sig = sign_envelope(key, body.as_bytes());
+        // Deterministic over the exact serialized envelope.
+        assert_eq!(sig, sign_envelope(key, body.as_bytes()));
+        assert!(verify_envelope(key, body.as_bytes(), &sig).is_ok());
+    }
+
+    /// A one-byte tamper of the body (an attacker editing the grant/input the
+    /// legitimate runner never sent) is `Mismatch`. Kills the client-side
+    /// "sign the wrong bytes" mutant: the verifier only accepts the exact bytes.
+    #[test]
+    fn a_tampered_body_is_mismatch() {
+        let key = b"per-project-env-hmac-key";
+        let body = sample_request().to_json();
+        let sig = sign_envelope(key, body.as_bytes());
+
+        let mut tampered = sample_request();
+        tampered.grant = vec!["sibling-token".into()]; // forge a wider grant
+        let tampered_body = tampered.to_json();
+        assert_ne!(body, tampered_body);
+        assert_eq!(
+            verify_envelope(key, tampered_body.as_bytes(), &sig),
+            Err(SignatureError::Mismatch)
+        );
+    }
+
+    /// A signature made under a DIFFERENT key never verifies (per-project-env
+    /// scoping): an attacker without the env's key cannot forge.
+    #[test]
+    fn a_wrong_key_signature_is_mismatch() {
+        let body = sample_request().to_json();
+        let sig = sign_envelope(b"key-project-a", body.as_bytes());
+        assert_eq!(
+            verify_envelope(b"key-project-b", body.as_bytes(), &sig),
+            Err(SignatureError::Mismatch)
+        );
+    }
+
+    /// A non-hex header is `Malformed` (distinct from a well-formed wrong tag),
+    /// and the reason codes are the stable, MAC-free strings the gate asserts.
+    #[test]
+    fn malformed_signature_and_reason_codes() {
+        let key = b"k";
+        assert_eq!(
+            verify_envelope(key, b"body", "not-hex!!"),
+            Err(SignatureError::Malformed)
+        );
+        assert_eq!(SignatureError::Missing.reason(), "missing-signature");
+        assert_eq!(SignatureError::Malformed.reason(), "malformed-signature");
+        assert_eq!(SignatureError::Mismatch.reason(), "bad-signature");
     }
 
     #[test]
     fn grant_is_exactly_the_declared_credential() {
         // A node that declared one credential grants exactly that one.
-        assert_eq!(granted_credentials(Some("notify-token")), vec!["notify-token"]);
+        assert_eq!(
+            granted_credentials(Some("notify-token")),
+            vec!["notify-token"]
+        );
         // A node that declared none grants NOTHING — never a broad default.
         assert!(granted_credentials(None).is_empty());
     }
@@ -416,7 +578,11 @@ mod tests {
         let a = cache.prepared("n0", 1, r#"{"v":1}"#).unwrap();
         assert_eq!(*a, serde_json::json!({"v":1}));
         let b = cache.prepared("n0", 1, r#"{"v":2}"#).unwrap();
-        assert_eq!(*b, serde_json::json!({"v":2}), "changed config must not be stale");
+        assert_eq!(
+            *b,
+            serde_json::json!({"v":2}),
+            "changed config must not be stale"
+        );
         assert_eq!(cache.parse_count(), 2, "two distinct configs = two parses");
     }
 

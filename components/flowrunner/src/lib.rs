@@ -72,8 +72,9 @@ use wamn_runner::{
 };
 
 use wamn_node_invoke::{
-    NodeInvokeRequest, NodeInvokeResponse, WireErrorDetail, WireNodeError, WirePayload,
-    WireRunContext, granted_credentials,
+    NodeInvokeRequest, NodeInvokeResponse, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL,
+    WireErrorDetail, WireNodeError, WirePayload, WireRunContext, granted_credentials,
+    sign_envelope,
 };
 
 use wamn::postgres::client::{self};
@@ -448,7 +449,17 @@ fn custom_node_dispatch(d: &Dispatch, run_id: &str, flow: &Flow) -> Result<NodeA
         grant: granted_credentials(d.credential.as_deref()),
     };
 
-    let body = match http_post_run(&url, &req.to_json()) {
+    // wamn-fqg.22: sign the exact request body with the per-project-env HMAC key
+    // BEFORE the hop, so the serve-node verifies before installing the grant. The
+    // key reaches this GUEST the SAME way every per-project credential does — the
+    // vault via `wamn:node/credentials.get` (no new WIT) — under the reserved
+    // name the runner grants itself (`declare_run_grant`). A deployment with NO
+    // key configured resolves nothing here and sends unsigned (legacy
+    // network-trust, accepted only by a keyless serve-node). The key is NEVER
+    // logged, echoed, or placed in the envelope grant.
+    let body = req.to_json();
+    let signature = read_signing_key().map(|key| sign_envelope(key.as_bytes(), body.as_bytes()));
+    let body = match http_post_run(&url, &body, signature.as_deref()) {
         Ok(b) => b,
         Err(e) => return Ok(NodeAction::Emit(NodeOutcome::Error(e))),
     };
@@ -514,17 +525,36 @@ fn hop_egress_error(code: ErrorCode) -> NodeError {
     }
 }
 
+/// Read the per-project-env HMAC signing key from the vault (wamn-fqg.22),
+/// scoped to the runner's host-injected project — the SAME channel every
+/// per-project credential reaches this guest through
+/// (`wamn:node/credentials.get`), so no new WIT. `None` when no key is
+/// configured (a keyless deployment signs nothing — legacy network-trust) or the
+/// reserved name is not granted/resolvable. The secret is handed back for
+/// signing ONLY and is never logged or echoed.
+fn read_signing_key() -> Option<String> {
+    wamn::node::credentials::get(SIGNING_KEY_CREDENTIAL).ok()
+}
+
 /// POST `body` to the custom node's `serve-node` endpoint and return the
 /// response body. Egress leaves the flow ONLY here (wasi:http), so the host
-/// egress guard + the flow's `allowed-hosts` govern the hop.
-fn http_post_run(url: &str, body: &str) -> Result<String, NodeError> {
+/// egress guard + the flow's `allowed-hosts` govern the hop. `signature`, when
+/// present, is the hex HMAC of `body` carried in the `x-wamn-signature` header
+/// (wamn-fqg.22) so the serve-node verifies before installing the grant.
+fn http_post_run(url: &str, body: &str, signature: Option<&str>) -> Result<String, NodeError> {
     let Some((scheme, authority, path)) = parse_http_url(url) else {
         return Err(NodeError::Terminal(ErrorDetail::coded(
             "bad-endpoint",
             format!("unparseable custom-node endpoint {url:?}"),
         )));
     };
-    let req = OutgoingRequest::new(Fields::new());
+    let headers = Fields::new();
+    if let Some(sig) = signature
+        && headers.append(SIGNATURE_HEADER, sig.as_bytes()).is_err()
+    {
+        return Err(node_transport("runner->node signature header rejected"));
+    }
+    let req = OutgoingRequest::new(headers);
     if req.set_method(&Method::Post).is_err()
         || req.set_scheme(Some(&scheme)).is_err()
         || req.set_authority(Some(&authority)).is_err()
@@ -852,7 +882,15 @@ fn dispatch_node(
 /// both. Called on every walk (including a resume) since the grant lives on the
 /// long-lived instance and each run overwrites the prior declaration.
 fn declare_run_grant(flow: &Flow) {
-    let names: Vec<String> = flow.credentials.iter().map(|c| c.name.clone()).collect();
+    let mut names: Vec<String> = flow.credentials.iter().map(|c| c.name.clone()).collect();
+    // wamn-fqg.22: the runner also grants ITSELF the reserved per-project-env
+    // signing key so `read_signing_key` (the custom-node hop) can resolve it
+    // through the same `wamn:node/credentials.get` channel every credential uses
+    // — infrastructure, not flow-declared. It never enters the invocation
+    // envelope grant (`granted_credentials` reads only `node.credential`), and
+    // the serve-node strips it from any grant defensively; a keyless deployment
+    // simply resolves nothing.
+    names.push(SIGNING_KEY_CREDENTIAL.to_string());
     wamn::runner::credentials::set_granted(&names);
 }
 

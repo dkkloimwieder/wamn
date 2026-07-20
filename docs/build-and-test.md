@@ -2255,3 +2255,63 @@ kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
 # (http://serve-node.wamn-system.svc.cluster.local:8080) and declares that host
 # in the flow's allowed-hosts; the runner host allowlist must also admit it.
 ```
+
+### [NODE-INVOKE-AUTHN / wamn-fqg.22] runner ↔ node authn — signed envelope
+
+Docs: docs/platform-plan.md §5.6, deploy/platform/serve-node.yaml + runner-credentials.example.yaml.
+v0 trusted in-cluster callers at the NETWORK layer — any pod reaching the
+serve-node Service could POST an envelope with attacker-chosen input/grant.
+wamn-fqg.22 adds authn as a **SIGNED INVOCATION ENVELOPE**: a per-project-env
+HMAC-SHA256 over the EXACT request body bytes, carried in the `x-wamn-signature`
+header. The canonical signed bytes live in the pure `wamn-node-invoke` crate
+(`sign_envelope` / `verify_envelope`, hmac's constant-time `verify_slice`), so
+the flowrunner GUEST (signer) and the serve-node HOST (verifier) cannot drift.
+
+Key path (BOTH ends, one Secret, no new WIT): the reserved vault entry
+`wamn:node-invoke-signing-key` in the shared `wamn-runner-credentials` Secret.
+The flowrunner reads it via `wamn:node/credentials.get` (the same channel every
+per-project credential reaches the guest through) and signs; the serve-node reads
+it host-side from the same mounted vault and VERIFIES **before installing the
+grant** (`ServeNode::verify_signature` precedes `invoke`). Missing / malformed /
+wrong signature ⇒ a 401-class refusal (`{"error":"invocation-unauthorized",
+"reason":...}`) that never reaches the node. Replay-within-project-env is the
+accepted residual risk (documented on `sign_envelope`): the key scopes replay to
+one env, the signature closes the named FORGERY threat, and the stateless
+serve-node would need nonce state or a synced clock to add freshness — out of
+scope for v0. mTLS is the later infra upgrade.
+
+The `nodeinvoke` gate (same command as above) now also asserts, on top of
+DELIVERY/GRANT/NOT-GRANTED/MEMOIZED: AUTHN-POSITIVE (the real signed hop drains N
+runs against a keyed serve-node + grant-install count advances), AUTHN-UNSIGNED /
+AUTHN-TAMPERED / AUTHN-WRONG-KEY (raw POSTs → 401 with the reason class),
+AUTHN-NO-ORACLE (a refusal never echoes the expected MAC), VERIFY-BEFORE-GRANT
+(no refused request advanced `grant_install_count`), and AUTHN-SIGNED (a correct
+raw POST is accepted 200 and installs exactly one grant).
+
+```bash
+# Unit tests — canonical signing bytes + MAC roundtrip + tamper/wrong-key/malformed:
+cargo test -p wamn-node-invoke signed_envelope_bytes_are_the_body_and_verify \
+  a_tampered_body_is_mismatch a_wrong_key_signature_is_mismatch \
+  malformed_signature_and_reason_codes
+
+# The live gate is the SAME nodeinvoke command as [NODE-INVOKE] above (the gate
+# banks the signing key in both vaults; the flowrunner signs, the serve-node
+# verifies). Rebuild the flowrunner guest + wamn-gates first:
+(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner -p node-cred)
+cargo build -p wamn-gates --bin wamn-gates
+# then run the nodeinvoke command from [NODE-INVOKE / wamn-bd5].
+
+# Mutation harness (3 mutants, each must exit non-zero): scratchpad mutate_fqg22.py
+#   (a) serve-node DROPS verify-before-grant (verify_signature call removed);
+#   (b) verify_envelope compare always Ok (skip constant-time / accept any MAC);
+#   (c) the flowrunner signs the WRONG bytes (empty body instead of the envelope).
+# Killers: (a) VERIFY-BEFORE-GRANT + AUTHN-UNSIGNED; (b) AUTHN-WRONG-KEY +
+#   a_wrong_key_signature_is_mismatch; (c) AUTHN-POSITIVE (DELIVERY) + the
+#   signed_envelope unit roundtrip.
+```
+
+In-cluster gate of record (the MAIN LOOP runs this after integration): the
+signing key must be present in the deployed `wamn-runner-credentials` Secret
+(add the reserved entry — see runner-credentials.example.yaml), then rebake the
+host image + rebuild the flowrunner wasm and re-run nodeinvoke against the
+deployed serve-node (the rebake riders under [NODE-INVOKE / wamn-bd5]).

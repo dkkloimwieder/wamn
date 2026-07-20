@@ -31,17 +31,24 @@
 //!    validates a given `(node, flow-version, config-identity)` ONCE
 //!    ([`ConfigCache`]) and reuses it across invocations.
 //!
-//! ## Trust model (honestly stated)
-//! v0 trusts in-cluster callers at the NETWORK layer: any pod that can reach
-//! the node's Service can POST a `/run` with an arbitrary grant set (bounded by
-//! the host's project, never beyond it). Runner↔node authn (mTLS / a signed
-//! envelope) is a NAMED follow-up, out of scope here. The load-bearing
-//! host-enforced invariants that hold regardless are: get-only linking (no
-//! self-grant), the host-owned project (no cross-project read), and the E17
-//! import allowlist screened at load.
+//! ## Trust model
+//! Runner↔node authn is a SIGNED INVOCATION ENVELOPE (wamn-fqg.22): a
+//! per-project-env HMAC-SHA256 over the exact request body, distributed via the
+//! existing runner-credentials Secret (the reserved [`SIGNING_KEY_CREDENTIAL`]
+//! vault entry). When a key is configured this host VERIFIES the signature
+//! ([`ServeNode::verify_signature`]) BEFORE parsing the envelope or installing
+//! the grant — a missing/malformed/wrong signature is a 401-class refusal that
+//! never reaches [`ServeNode::invoke`], so a caller who lacks the env's key can
+//! no longer POST attacker-chosen input/grant. mTLS (SPIFFE/cert-manager) is the
+//! named later infra upgrade, not this path. With NO key configured the host
+//! falls back to the v0 network-trust posture (unsigned POSTs admitted), logged
+//! loudly at startup. The load-bearing host-enforced invariants that hold
+//! regardless are: get-only linking (no self-grant), the host-owned project (no
+//! cross-project read), and the E17 import allowlist screened at load.
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
@@ -63,8 +70,9 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
 use wamn_node_invoke::{
-    ConfigCache, NodeInvokeRequest, NodeInvokeResponse, WireEmission, WireErrorDetail,
-    WireNodeError, WirePayload, WireRateLimit,
+    ConfigCache, NodeInvokeRequest, NodeInvokeResponse, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL,
+    SignatureError, WireEmission, WireErrorDetail, WireNodeError, WirePayload, WireRateLimit,
+    verify_envelope,
 };
 
 use crate::egress_guard::screen_tenant_compiled;
@@ -125,7 +133,11 @@ pub struct ServeNodeArgs {
     /// `host[:port]`, `scheme://host`, `*.domain`, or `*`). EMPTY = DENY-ALL,
     /// the fail-closed posture. Governs the node's egress, distinct from the
     /// runner→node hop.
-    #[arg(long = "allowed-hosts", env = "WAMN_ALLOWED_HOSTS", value_delimiter = ',')]
+    #[arg(
+        long = "allowed-hosts",
+        env = "WAMN_ALLOWED_HOSTS",
+        value_delimiter = ','
+    )]
     pub allowed_hosts: Vec<String>,
 }
 
@@ -220,6 +232,15 @@ pub struct ServeNode {
     instance: Mutex<NodeInstance>,
     vault: Arc<WamnCredentials>,
     node_id: String,
+    /// The per-project-env HMAC signing key (wamn-fqg.22), resolved once from
+    /// the vault's reserved [`SIGNING_KEY_CREDENTIAL`] entry. `None` = no key
+    /// configured (legacy v0 network-trust: POSTs are admitted unsigned).
+    signing_key: Option<Vec<u8>>,
+    /// Count of per-invocation grants INSTALLED (cjv.3). The verify-before-grant
+    /// witness (wamn-fqg.22): a refused request never reaches `invoke`, so a
+    /// refusal must not advance this. The gate reads it via
+    /// [`ServeNode::grant_install_count`].
+    grant_installs: AtomicU64,
 }
 
 impl ServeNode {
@@ -246,6 +267,26 @@ impl ServeNode {
         // host-injected claim, registered ONCE here for this served component.
         vault.set_project(node_id, project)?;
 
+        // wamn-fqg.22: resolve the per-project-env signing key from the SAME
+        // vault (the reserved entry banked in the runner-credentials Secret) — a
+        // host-side lookup, never installed into any node grant. Absent = the
+        // legacy network-trust posture, warned loudly so an unauthed deploy is
+        // never silent.
+        let signing_key = vault
+            .lookup(project, SIGNING_KEY_CREDENTIAL)
+            .map(String::into_bytes);
+        match &signing_key {
+            Some(_) => tracing::info!(
+                project,
+                "serve-node: runner→node authn ENABLED (per-project-env signed envelope; verify-before-grant)"
+            ),
+            None => tracing::warn!(
+                project,
+                key = SIGNING_KEY_CREDENTIAL,
+                "serve-node: NO signing key in the vault — runner→node authn DISABLED (v0 network-trust; unsigned POSTs admitted). Bank the reserved key in the runner-credentials Secret to enable."
+            ),
+        }
+
         let mut linker: Linker<SharedCtx> = Linker::new(raw);
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
@@ -259,12 +300,40 @@ impl ServeNode {
         // it fails instantiation, exactly as the frozen contract prescribes.
         let pre: InstancePre<SharedCtx> = linker.instantiate_pre(&component)?;
 
-        let instance = Self::instantiate(engine, &pre, vault.clone(), node_id, allowed_hosts).await?;
+        let instance =
+            Self::instantiate(engine, &pre, vault.clone(), node_id, allowed_hosts).await?;
         Ok(Self {
             instance: Mutex::new(instance),
             vault,
             node_id: node_id.to_string(),
+            signing_key,
+            grant_installs: AtomicU64::new(0),
         })
+    }
+
+    /// Verify the runner→node signature over the RAW request body BEFORE any
+    /// parse or grant install (wamn-fqg.22, the load-bearing property). With a
+    /// per-project-env key configured, a request MUST carry a matching
+    /// `x-wamn-signature`; with NO key (legacy v0 network-trust) every request is
+    /// admitted. Refusals return a MAC-free [`SignatureError`] — never the
+    /// expected MAC (no verification oracle).
+    pub fn verify_signature(
+        &self,
+        body: &[u8],
+        signature: Option<&str>,
+    ) -> Result<(), SignatureError> {
+        let Some(key) = self.signing_key.as_deref() else {
+            return Ok(()); // no key configured: legacy network-trust mode
+        };
+        let sig = signature.ok_or(SignatureError::Missing)?;
+        verify_envelope(key, body, sig)
+    }
+
+    /// How many per-invocation grants have been INSTALLED (cjv.3) — the
+    /// verify-before-grant witness (wamn-fqg.22). A signature-refused request
+    /// never reaches [`ServeNode::invoke`], so a refusal must not advance this.
+    pub fn grant_install_count(&self) -> u64 {
+        self.grant_installs.load(Ordering::Relaxed)
     }
 
     async fn instantiate(
@@ -274,8 +343,10 @@ impl ServeNode {
         node_id: &str,
         allowed_hosts: Arc<[AllowedHost]>,
     ) -> anyhow::Result<NodeInstance> {
-        let mut plugins: std::collections::HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> =
-            std::collections::HashMap::new();
+        let mut plugins: std::collections::HashMap<
+            &'static str,
+            Arc<dyn HostPlugin + Send + Sync>,
+        > = std::collections::HashMap::new();
         plugins.insert(
             WAMN_CREDENTIALS_ID,
             vault as Arc<dyn HostPlugin + Send + Sync>,
@@ -306,9 +377,19 @@ impl ServeNode {
     pub async fn invoke(&self, req: NodeInvokeRequest) -> NodeInvokeResponse {
         // Install EXACTLY this invocation's declared grant BEFORE dispatch. The
         // project stays the host's own (set once in `new`); a `get` for anything
-        // outside `req.grant` is `not-granted` host-side.
-        self.vault
-            .set_granted_credentials(&self.node_id, req.grant.iter().cloned());
+        // outside `req.grant` is `not-granted` host-side. The per-project-env
+        // signing key is a RUNNER secret, never a node grant — strip it
+        // defensively (a well-behaved runner never sends it; this closes a
+        // flow-authoring footgun where a node.credential collides with the
+        // reserved name). The install is COUNTED so the gate can prove a
+        // signature-refused request never got this far (wamn-fqg.22).
+        let grant = req
+            .grant
+            .iter()
+            .filter(|n| n.as_str() != SIGNING_KEY_CREDENTIAL)
+            .cloned();
+        self.vault.set_granted_credentials(&self.node_id, grant);
+        self.grant_installs.fetch_add(1, Ordering::Relaxed);
 
         let mut inst = self.instance.lock().await;
 
@@ -370,9 +451,7 @@ fn wire_payload(p: Payload) -> WirePayload {
         // v0 nodes emit inline; a streamed emission waits for the payload store
         // (5.10). Surface it as an inline handle marker so nothing silently
         // vanishes (the runner never sees streamed in v0).
-        Payload::Streamed(r) => {
-            WirePayload::Inline(format!("{{\"streamed\":{:?}}}", r.handle))
-        }
+        Payload::Streamed(r) => WirePayload::Inline(format!("{{\"streamed\":{:?}}}", r.handle)),
     }
 }
 
@@ -430,10 +509,24 @@ async fn serve_connection(sock: TcpStream, node: &ServeNode) -> anyhow::Result<(
     sock.set_nodelay(true)?;
     let mut reader = BufReader::new(sock);
     loop {
-        let body = match read_http_request_body(&mut reader).await? {
-            Some(b) => b,
+        let (body, signature) = match read_http_request_body(&mut reader).await? {
+            Some(parts) => parts,
             None => break, // clean EOF
         };
+        // wamn-fqg.22: verify the signature over the RAW body BEFORE parsing the
+        // envelope or installing the grant. A refusal is a 401-class response
+        // that never reaches `invoke` — verify-before-grant, the load-bearing
+        // property.
+        if let Err(e) = node.verify_signature(&body, signature.as_deref()) {
+            tracing::warn!(
+                reason = e.reason(),
+                "serve-node: invocation REFUSED — runner→node signature check failed (before grant install)"
+            );
+            let http = unauthorized_response(e);
+            reader.get_mut().write_all(http.as_bytes()).await?;
+            reader.get_mut().flush().await?;
+            continue;
+        }
         let resp = match NodeInvokeRequest::from_json(&String::from_utf8_lossy(&body)) {
             Ok(req) => node.invoke(req).await,
             Err(e) => NodeInvokeResponse::Err(WireNodeError::InvalidInput(WireErrorDetail {
@@ -454,16 +547,35 @@ async fn serve_connection(sock: TcpStream, node: &ServeNode) -> anyhow::Result<(
     Ok(())
 }
 
-/// Read one HTTP message's headers+body (server side). None on a clean EOF.
-/// Handles BOTH `Content-Length` and `Transfer-Encoding: chunked` — the
+/// A 401-class refusal for a runner→node signature failure (wamn-fqg.22).
+/// Carries ONLY the MAC-free reason class — never the expected MAC, so a refusal
+/// can never become a verification oracle. Distinct from the `NodeInvokeResponse`
+/// envelope (which is a NODE outcome), so the gate — and the runner — tell an
+/// authn refusal apart from a node error.
+fn unauthorized_response(err: SignatureError) -> String {
+    let body = format!(
+        r#"{{"error":"invocation-unauthorized","reason":"{}"}}"#,
+        err.reason()
+    );
+    format!(
+        "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
+        body.len(),
+        body
+    )
+}
+
+/// Read one HTTP message's headers+body (server side), returning the body and
+/// the `x-wamn-signature` header value (wamn-fqg.22) if present. None on a clean
+/// EOF. Handles BOTH `Content-Length` and `Transfer-Encoding: chunked` — the
 /// `wasi:http` outbound path frames a streamed body as chunked (no
 /// Content-Length), so a Content-Length-only parser would read an empty body.
 async fn read_http_request_body<R: tokio::io::AsyncBufRead + Unpin>(
     reader: &mut R,
-) -> anyhow::Result<Option<Vec<u8>>> {
+) -> anyhow::Result<Option<(Vec<u8>, Option<String>)>> {
     let mut content_length = 0usize;
     let mut chunked = false;
     let mut saw_any = false;
+    let mut signature: Option<String> = None;
     let mut line = String::new();
     loop {
         line.clear();
@@ -485,14 +597,24 @@ async fn read_http_request_body<R: tokio::io::AsyncBufRead + Unpin>(
             content_length = v.trim().parse().unwrap_or(0);
         } else if let Some(v) = lower.strip_prefix("transfer-encoding:") {
             chunked = v.contains("chunked");
+        } else if let Some(v) = lower
+            .strip_prefix(SIGNATURE_HEADER)
+            .and_then(|r| r.strip_prefix(':'))
+        {
+            // "<header>:<hex>" — the hex is case-insensitive, so the lowercased
+            // line is faithful. The exact `header:` prefix avoids matching a
+            // longer header name.
+            signature = Some(v.trim().to_string());
         }
     }
-    if chunked {
-        return Ok(Some(read_chunked_body(reader).await?));
-    }
-    let mut body = vec![0u8; content_length];
-    reader.read_exact(&mut body).await?;
-    Ok(Some(body))
+    let body = if chunked {
+        read_chunked_body(reader).await?
+    } else {
+        let mut body = vec![0u8; content_length];
+        reader.read_exact(&mut body).await?;
+        body
+    };
+    Ok(Some((body, signature)))
 }
 
 /// Decode a `Transfer-Encoding: chunked` body: `<hexlen>\r\n<data>\r\n` chunks
