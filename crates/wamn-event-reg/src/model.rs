@@ -142,4 +142,29 @@ impl EventRegistration {
         // Infallible for this type; a plain data struct never fails to encode.
         serde_json::to_string_pretty(self).expect("EventRegistration serializes")
     }
+
+    /// Whether this registration's condition reads the ROOT `old` image — the
+    /// "changed-to" shape that needs the entity's REPLICA IDENTITY FULL
+    /// (l5i9.31). Delegates to the single detector ([`crate::condition_references_old`]).
+    pub fn condition_references_old_image(&self) -> bool {
+        self.condition
+            .as_deref()
+            .is_some_and(crate::condition_references_old)
+    }
+
+    /// Whether this registration subscribes to `delete` events. A delete's old
+    /// image carries the tenant-scoping (and any delete-payload condition), so a
+    /// delete subscription needs REPLICA IDENTITY FULL for the event to be
+    /// scopable at all — a DELETE under DEFAULT is an alertable unscopable refusal.
+    pub fn subscribes_to_delete(&self) -> bool {
+        self.ops.contains(&wamn_event_wire::Op::Delete)
+    }
+
+    /// Whether serving this registration requires the entity to run REPLICA
+    /// IDENTITY FULL — the union rule the reconciler folds across every
+    /// registration on an entity (l5i9.31): an old-image condition OR a delete
+    /// subscription.
+    pub fn requires_replica_identity_full(&self) -> bool {
+        self.condition_references_old_image() || self.subscribes_to_delete()
+    }
 }

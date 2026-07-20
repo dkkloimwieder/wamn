@@ -2042,3 +2042,61 @@ kubectl -n wamn-system logs job/f1proof
 docker build --target host -t wamn-host:dev . \
   && docker build --target gates -t wamn-gates:dev .   # fork git dep fetched in the builder stage
 ```
+
+### [EVT-REPLICA-IDENT / wamn-l5i9.31] per-entity REPLICA IDENTITY FULL reconciler
+
+Docs: docs/event-plane-jetstream.md §5 ("Old images") + docs/provisioning.md
+(`reconcile-replica-identity`). `REPLICA IDENTITY FULL` is a platform-managed
+per-entity knob (l5i9.1 decision d): an entity runs FULL only when a registered
+row-event needs the OLD image — any registration whose condition reads root
+`old` ("changed-to") OR that subscribes to `delete` — and DEFAULT (pkey-only)
+everywhere else keeps WAL minimal (the global default is never flipped). The
+pure decision + SQL builders live in `wamn-migrate`
+(`reconcile_replica_identity`, `alter_replica_identity_sql`,
+`select_replica_identity_sql`); the root-`old` detection is the SINGLE
+`wamn_event_reg` detector the materializer's per-event old-absent guard also
+keys on. The `wamn-ctl reconcile-replica-identity` verb reads the catalog's
+registrations across ALL tenants + each table's `pg_class.relreplident`, plans
+the idempotent flips, and (unless `--dry-run`) runs `ALTER TABLE … REPLICA
+IDENTITY FULL|DEFAULT` as a superuser (ALTER needs table ownership). The flip is
+**NON-RETROACTIVE**: it enriches only WAL written after it, and the materializer
+refuses an absent old image (`old-image-absent`, alertable) rather than evaluate
+`old` as null.
+
+```bash
+cargo test -p wamn-event-reg -p wamn-materializer   # one root-old detector + the per-event old-absent guard + delete-under-FULL fires
+cargo test -p wamn-migrate                          # reconciler derivation (old-cond/delete-op/cross-tenant union/none-required→DEFAULT) + SQL pins
+cargo clippy -p wamn-migrate -p wamn-ctl --all-targets
+# Live gate (throwaway wal_level=logical PG18): drives the REAL reconcile path —
+# a registration on an entity flips its table 'd'->'f' live (pg_class.relreplident),
+# an unrelated entity stays 'd', removing the registrations flips back 'f'->'d',
+# and a reconcile at target is a no-op; then a test_decoding slot proves the WAL
+# truth NON-RETROACTIVELY: under DEFAULT an UPDATE carries no old image and a
+# DELETE's old image is the pkey only (no tenant_id); after the flip an UPDATE
+# carries the old image and a DELETE's old image carries tenant_id.
+docker run -d --name wamn-ri-pg -p 5462:5432 -e POSTGRES_PASSWORD=postgres \
+  postgres:18 -c wal_level=logical -c fsync=off -c synchronous_commit=off
+WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:5462/postgres \
+  cargo test -p wamn-ctl --test replica_identity_live -- --nocapture
+docker rm -f wamn-ri-pg
+# Dry-run the verb against a provisioned project DB (prints flips + no-ops):
+./target/debug/wamn-ctl reconcile-replica-identity \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5462/postgres \
+  --catalog path/to/applied-catalog.json --schema app --dry-run
+# Materializer end-to-end (rebuild the guest — the served old condition + the
+# old-image-absent refusal changed): matbench adds an UPDATE carrying a FULL old
+# image that evaluates end to end and fires (f-old:evt:8); cutbench phase 3
+# reconciles the delete entity to FULL so disp-del cuts over and its post-flip
+# delete fires a scoped :evt: run (the EXPECTED-DELETE-RI divergence retires)
+# while the pre-flip DEFAULT refusals stand. Recipes: [EVT-MAT], [EVT-CUTOVER].
+(cd components && cargo build -p materializer --target wasm32-wasip2)
+```
+
+Mutation harness: scratchpad `mutate_l5i9_31.py` — M1 the reconciler drops the
+delete-op rule (killed by
+`replica_identity::tests::a_delete_only_registration_requires_full_even_without_a_condition`),
+M2 the materializer guard treats an absent old image as condition-false (killed
+by `decide::tests::old_value_conditions_are_serviceable_and_guarded_per_event`),
+M3 `alter_replica_identity_sql` emits the wrong keyword (killed by
+`replica_identity::tests::alter_and_read_sql_are_pinned`); apply/test/restore
+with sha256, DEBUG builds.

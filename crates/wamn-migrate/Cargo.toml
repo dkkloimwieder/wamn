@@ -17,6 +17,10 @@ license.workspace = true
 wamn-catalog = { path = "../wamn-catalog" }
 wamn-ddl = { path = "../wamn-ddl" }
 wamn-schema = { path = "../wamn-schema" }
+# EVT-REPLICA-IDENT (wamn-l5i9.31): the registration model + the SINGLE root-`old`
+# detector, so the RI-FULL derivation and the materializer's per-event old-absent
+# guard can never diverge (one parser). Light closure (catalog/event-wire/jmespath).
+wamn-event-reg = { path = "../wamn-event-reg" }
 
 [dev-dependencies]
 # The live-apply gate builds catalogs as structs and renders the apply plan into

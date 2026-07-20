@@ -10,7 +10,8 @@ use std::str::FromStr as _;
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
     copy_project_env, dump_project_env, enable_cdc_project_env, migrate_catalog, provision,
-    provision_org, provision_project_env, publish_catalog, restore_project_env,
+    provision_org, provision_project_env, publish_catalog, reconcile_replica_identity,
+    restore_project_env,
 };
 
 #[derive(Parser)]
@@ -44,6 +45,8 @@ enum Command {
     CopyProjectEnv(copy_project_env::CopyProjectEnvArgs),
     /// Apply a catalog to a project DB: versioned, forward-only migration + lifecycle + history (2.5)
     MigrateCatalog(migrate_catalog::MigrateCatalogArgs),
+    /// Reconcile per-entity REPLICA IDENTITY FULL from the catalog's registrations (old-image/delete needs) — idempotent ALTERs (wamn-l5i9.31)
+    ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),
 }
 
 #[tokio::main]
@@ -72,5 +75,6 @@ async fn main() -> anyhow::Result<()> {
         Command::RestoreProjectEnv(args) => restore_project_env::run(args).await,
         Command::CopyProjectEnv(args) => copy_project_env::run(args).await,
         Command::MigrateCatalog(args) => migrate_catalog::run(args).await,
+        Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,
     }
 }

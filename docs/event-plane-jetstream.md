@@ -153,8 +153,21 @@ change waits for 0.2.
   self-root, depth 0.)*
 - **Old images:** `REPLICA IDENTITY FULL` is a **per-entity knob the DDL
   engine manages**, set only where a registration needs old-image conditions
-  ("changed-to") — WAL cost is paid per table, not universally. Materializer
-  tolerates TOAST unchanged-column markers.
+  ("changed-to") or subscribes to `delete` (delete tenant-scoping needs the old
+  image) — WAL cost is paid per table, not universally. Materializer tolerates
+  TOAST unchanged-column markers. *Shipped 2026-07-20 (wamn-l5i9.31): the pure
+  reconciler (`wamn_migrate::reconcile_replica_identity`) derives the FULL set
+  from the union of a catalog's registrations across ALL tenants (RI is
+  per-TABLE, tables are shared) and emits idempotent `ALTER TABLE … REPLICA
+  IDENTITY FULL|DEFAULT`; the `wamn-ctl reconcile-replica-identity` verb executes
+  it as a superuser (ALTER needs table ownership — `wamn_app` cannot). The root-
+  `old` detection is the SINGLE `wamn_event_reg` detector the materializer's
+  per-event guard also keys on.* **NON-RETROACTIVE (the binding caveat):** a
+  flip to FULL enriches only WAL written AFTER it. Events captured before the
+  flip permanently lack the old image; a newly registered changed-to condition
+  evaluates only from the flip forward, and an absent old image is
+  cannot-evaluate (an alertable refusal), never condition-false. Run the
+  reconcile whenever the catalog or its registrations change.
 - **Oversize payloads:** claim-check into the payload store (5.10 —
   prerequisite).
 - **Library policy:** pg_walstream (BSD-3, v0.8, single-author) is
@@ -190,7 +203,9 @@ change waits for 0.2.
   enqueue), causation depth 16 with the chain THREADED through the run input
   (the flowrunner declares the materializer-minted `{run,root,depth}`, so hop
   N+1's envelopes carry `depth+1` — the budget is real), root-`old` conditions
-  HELD until l5i9.31 (old-absent = cannot-evaluate, never condition-false),
+  SERVED and guarded per event (wamn-l5i9.31: old-image-present evaluates both
+  outcomes; old-image-absent is an alertable cannot-evaluate refusal, never
+  condition-false),
   key+policy stamped kq0z-coherently from the flow's fqg.20 declaration (the
   registration's extractor evaluates over the event context), and the E4
   `stream_seq` BIGINT carried on every evt row (run ids zero-padded — the

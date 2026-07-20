@@ -22,10 +22,11 @@
 //!   run id collapses any half-applied fire.
 //!
 //! A registration that cannot be SERVED — unparseable doc, missing/inactive/
-//! invalid flow, or a root-`old` condition (blocked until the l5i9.31 FULL
-//! knob) — is HELD: no consumer is fetched, so its events stay on the stream
-//! (delayed, never lost — the dispatcher's invalid-flow posture) and every
-//! sweep warns.
+//! invalid flow, or a syntactically invalid condition — is HELD: no consumer is
+//! fetched, so its events stay on the stream (delayed, never lost — the
+//! dispatcher's invalid-flow posture) and every sweep warns. A root-`old`
+//! condition is NO LONGER held (l5i9.31): it is served, and an event that
+//! carries no old image is refused per event (`old-image-absent`, alertable).
 //!
 //! Identity is host-injected: DB claims + doorbell tenant ride `wamn.tenant`
 //! workload config; the guest env copy (`WAMN_MAT_TENANT`) only scopes the
@@ -150,7 +151,7 @@ struct Counters {
     skip_condition_false: u64,
     refuse_depth: u64,
     refuse_tenant_unscopable: u64,
-    refuse_old_condition: u64,
+    refuse_old_image_absent: u64,
     refuse_condition_error: u64,
     refuse_seq: u64,
     held_registrations: u64,
@@ -170,7 +171,7 @@ impl Counters {
         format!(
             "{{\"sweeps\":{},\"fired\":{},\"duplicate\":{},\"skip-entity\":{},\"skip-op\":{},\
              \"skip-foreign-tenant\":{},\"skip-condition-false\":{},\"refuse-depth\":{},\
-             \"refuse-tenant-unscopable\":{},\"refuse-old-condition\":{},\
+             \"refuse-tenant-unscopable\":{},\"refuse-old-image-absent\":{},\
              \"refuse-condition-error\":{},\"refuse-seq\":{},\"held-registrations\":{},\
              \"poison\":{},\"effect-retry\":{},\"doorbell-failed\":{},\
              \"shadow-fire\":{},\"shadow-skip\":{},\"shadow-refuse\":{}}}",
@@ -183,7 +184,7 @@ impl Counters {
             self.skip_condition_false,
             self.refuse_depth,
             self.refuse_tenant_unscopable,
-            self.refuse_old_condition,
+            self.refuse_old_image_absent,
             self.refuse_condition_error,
             self.refuse_seq,
             self.held_registrations,
@@ -291,7 +292,7 @@ fn load_servings(cfg: &Config, counters: &mut Counters) -> Result<Vec<Serving>, 
             Err(DecideError::UnserviceableCondition(why)) => {
                 counters.held_registrations += 1;
                 eprintln!(
-                    "wamn::materializer HELD registration {reg_id}: condition not serviceable ({why:?}) — old-value conditions wait for the l5i9.31 REPLICA IDENTITY FULL knob; events stay on the stream"
+                    "wamn::materializer HELD registration {reg_id}: condition not serviceable ({why:?}) — invalid JMESPath syntax (write-time validation backstop); events stay on the stream"
                 );
                 continue;
             }
@@ -455,7 +456,7 @@ fn refuse_token(reason: &RefuseReason) -> &'static str {
     match reason {
         RefuseReason::DepthExceeded { .. } => "depth-exceeded",
         RefuseReason::TenantUnscopable => "tenant-unscopable",
-        RefuseReason::OldValueConditionBlocked => "old-value-condition-blocked",
+        RefuseReason::OldImageAbsent => "old-image-absent",
         RefuseReason::ConditionError(_) => "condition-error",
         RefuseReason::SeqOverflow(_) => "seq-overflow",
     }
@@ -683,11 +684,11 @@ fn serve(cfg: &Config, s: &Serving, counters: &mut Counters) {
                             meta.stream_seq, envelope.table
                         );
                     }
-                    RefuseReason::OldValueConditionBlocked => {
-                        counters.refuse_old_condition += 1;
+                    RefuseReason::OldImageAbsent => {
+                        counters.refuse_old_image_absent += 1;
                         eprintln!(
-                            "wamn::materializer REFUSED stream_seq={}: old-value condition blocked until l5i9.31",
-                            meta.stream_seq
+                            "wamn::materializer REFUSED stream_seq={} table={}: condition reads old but the event carries no old image (REPLICA IDENTITY not FULL, or an op with no prior row) — cannot-evaluate, never condition-false (l5i9.31)",
+                            meta.stream_seq, envelope.table
                         );
                     }
                     RefuseReason::ConditionError(e) => {

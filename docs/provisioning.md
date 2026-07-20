@@ -457,6 +457,47 @@ Teardown (gate/de-provision): drop the **slot first** (releases the pinned
 WAL), then publication/database/role, then delete the registration (or the org
 row — `event_readers` cascades through `project_envs`).
 
+## `wamn-ctl reconcile-replica-identity` (wamn-l5i9.31, D19 v3 §5)
+
+Reconcile per-entity **`REPLICA IDENTITY FULL`** from a catalog's event
+registrations (docs/event-plane-jetstream.md §5, "Old images"). `FULL` is a
+platform-managed knob (l5i9.1 decision d), NOT an author-facing one: an entity
+runs FULL only when a registered row-event needs the OLD image, and `DEFAULT`
+(pkey-only) everywhere else keeps WAL minimal (the global default is NEVER
+flipped — the poc/cdc1 TOAST test ships a 22.4KB old value under FULL).
+
+**Which entities need FULL** — the union of the catalog's registrations across
+ALL tenants (RI is per-TABLE and tables are shared, so the requirement is the
+union): any registration whose condition reads root `old` ("changed-to"), OR any
+registration subscribing to `delete` (delete tenant-scoping + delete-payload
+conditions need the old image — a DELETE under DEFAULT carries only the pkey, so
+it cannot even be tenant-scoped). The root-`old` detection is the SINGLE
+`wamn_event_reg` detector the materializer's per-event guard also keys on (one
+parser, never divergent).
+
+The pure decision (`wamn_migrate::reconcile_replica_identity`) reads the catalog
+(entity id → table), the registrations, and each table's CURRENT
+`pg_class.relreplident`, and emits the idempotent flips: an entity that needs
+FULL and is not FULL flips `d -> f`; an entity that no longer needs it flips back
+`f -> d`; a table already at its target is a no-op; a catalog entity whose floor
+is not yet applied is skipped. The `wamn-ctl` shell executes them.
+
+| flag | meaning |
+| --- | --- |
+| `--admin-database-url` | superuser URL to the PROJECT database (`WAMN_PG_ADMIN_URL`) — `ALTER … REPLICA IDENTITY` needs table ownership, so `wamn_app` cannot run it |
+| `--catalog` | the applied catalog JSON (the entity-id → table-name map) |
+| `--schema` | the data schema the entity tables live in (default `public`) |
+| `--dry-run` | print the flips (+ no-ops + skipped) without applying |
+
+**NON-RETROACTIVE (the sharp edge):** a flip to FULL enriches only WAL written
+AFTER it — events captured before the flip permanently lack the old image; a
+newly registered changed-to condition evaluates only from the flip forward (the
+materializer treats an absent old image as cannot-evaluate, never
+condition-false). **Operational note:** run this whenever the catalog or its
+registrations change (after `publish-catalog` / `migrate-catalog`, and after a
+registration create/delete that adds or removes an old-image / delete
+subscription). It is idempotent — a reconcile at target flips nothing.
+
 ## `provisionbench` — the four-tier extension (wamn-q3n.8)
 
 `provisionbench` gains `--mode` (the pgbench / queuebench precedent):

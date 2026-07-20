@@ -12,9 +12,11 @@
 //!
 //! Phases:
 //!   1. decide  — seed 4 flows + 4 registrations (unconditional / conditional /
-//!      partitioned-with-extractor / old-value HELD), publish a fixture tape of
-//!      7 envelopes (fires, condition-false, foreign tenant, unscopable table,
-//!      unscopable DELETE, causation depth 3, causation depth 16), run the
+//!      partitioned-with-extractor / old-value SERVED, l5i9.31), publish a
+//!      fixture tape of 8 envelopes (fires, condition-false, foreign tenant,
+//!      unscopable table, unscopable DELETE, causation depth 3, causation depth
+//!      16, and an UPDATE carrying a FULL old image → the changed-to eval fires),
+//!      run the
 //!      guest, and assert: the run/queue rows (padded run ids, REAL
 //!      `stream_seq`, kq0z-coherent key+policy), the causation thread
 //!      (`input_json.causation.depth = parent+1`), the doorbell rings, and the
@@ -337,9 +339,13 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         ),
         ("r-key", "f-key", vec!["insert"], None, Some("new.site")),
         (
+            // l5i9.31: a root-`old` condition is SERVED now (no longer held). It
+            // refuses old-image-absent on the inserts (old absent under RI
+            // DEFAULT — cannot-evaluate, never condition-false) and FIRES on the
+            // UPDATE that carries a full old image (E8 — the changed-to eval).
             "r-old",
             "f-old",
-            vec!["insert"],
+            vec!["insert", "update"],
             Some("new.status != old.status"),
             None,
         ),
@@ -360,7 +366,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             .await
             .with_context(|| format!("seed registration {rid}"))?;
     }
-    println!("seeded 4 flows + 4 registrations (r-old is the HELD old-condition case)");
+    println!("seeded 4 flows + 4 registrations (r-old is the SERVED old-condition case — l5i9.31)");
 
     // --- NATS: throwaway stream + the fixture tape --------------------------
     let nats = async_nats::connect(&args.nats_url)
@@ -387,11 +393,15 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
 
     let subject = |op: &str| format!("evt.{ORG}.{PROJECT}.{ENV}.{ENTITY}.{op}");
 
-    // The tape (stream seqs 1..=7 in publish order):
+    // The tape (stream seqs 1..=8 in publish order):
     //  1 fires plain+cond+key; 2 fires plain+key, condition-false on cond;
     //  3 foreign tenant; 4 unscopable (no tenant_id); 5 unscopable DELETE
     //  (r-plain registers deletes); 6 chained at depth 3 → child depth 4;
-    //  7 chained at depth 16 → the loop-bound refusal.
+    //  7 chained at depth 16 → the loop-bound refusal; 8 is an UPDATE carrying a
+    //  FULL old image (RI FULL, l5i9.31): r-old evaluates `new.status !=
+    //  old.status` end to end and FIRES (f-old:evt:8). The inserts 1/2/6/7 that
+    //  reach r-old's condition have NO old image → old-image-absent refusals
+    //  (cannot-evaluate, never condition-false).
     let tape: Vec<(&'static str, String)> = vec![
         (
             "insert",
@@ -473,6 +483,24 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
                 Some((16, "loop-root")),
             ),
         ),
+        (
+            // E8: an UPDATE carrying a FULL old image (the entity at REPLICA
+            // IDENTITY FULL, l5i9.31). r-old subscribes update, reads root `old`,
+            // and evaluates `new.status != old.status` → 'received' != 'draft' →
+            // TRUE → fires f-old:evt:8 (the end-to-end old-image evaluation).
+            "update",
+            envelope_json(
+                "update",
+                Some(
+                    serde_json::json!({"id": "8", "tenant_id": TENANT, "status": "draft", "site": "s-1"}),
+                ),
+                Some(
+                    serde_json::json!({"id": "8", "tenant_id": TENANT, "status": "received", "site": "s-1"}),
+                ),
+                8,
+                None,
+            ),
+        ),
     ];
     for (i, (op, body)) in tape.iter().enumerate() {
         let lsn = (i + 1) as u64;
@@ -487,7 +515,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             .await
             .context("publish ack")?;
     }
-    println!("published the 7-event fixture tape (stream seqs 1..=7)");
+    println!("published the 8-event fixture tape (stream seqs 1..=8)");
 
     // --- Plugins + engine + guest -------------------------------------------
     let mut cfg = WamnPostgresConfig::from_env();
@@ -564,10 +592,10 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .await?
         .get(0);
     check(
-        "8 runs written ahead (3 f-plain + 2 f-cond + 3 f-key)",
-        runs == 8,
+        "9 runs written ahead (3 f-plain + 2 f-cond + 3 f-key + 1 f-old update)",
+        runs == 9,
     );
-    check("8 queue rows co-transacted", queued == 8);
+    check("9 queue rows co-transacted", queued == 9);
 
     // E1 through f-plain: unkeyed, blocking default, REAL stream_seq, padded id.
     let plain_e1 = mint_evt_run_id("f-plain", 1);
@@ -632,27 +660,47 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .get(0);
     check("depth-16 chain fired no run (loop bound)", e7_runs == 0);
 
+    // E8: the old-image evaluation fires end to end (l5i9.31). r-old read root
+    // `old`, compared `new.status != old.status` over the FULL old image, and
+    // fired a real f-old run — proving the served (no-longer-held) old condition.
+    let old_e8 = mint_evt_run_id("f-old", 8);
+    let e8 = admin
+        .query_one(
+            "SELECT trigger_source, input_json->>'trigger' FROM wamn_run.runs \
+             WHERE tenant_id = $1 AND run_id = $2",
+            &[&TENANT, &old_e8],
+        )
+        .await
+        .with_context(|| format!("old-image fire {old_e8} (E8 must fire under RI FULL)"))?;
+    check(
+        "old-image UPDATE evaluates end to end and fires (f-old:evt:8)",
+        e8.get::<_, String>(0) == "evt:8" && e8.get::<_, String>(1) == "event",
+    );
+
     // The guest's DISTINCT counters (v3 §4 alertable refusals).
-    check("report: fired = 8", counter(&report, "fired") == 8);
+    check("report: fired = 9 (8 inserts + the E8 old-image update)", counter(&report, "fired") == 9);
     check(
         "report: condition-false skip counted (E2 on r-cond)",
         counter(&report, "skip-condition-false") == 1,
     );
     check(
-        "report: foreign-tenant skips counted (E3 across 3 servings)",
-        counter(&report, "skip-foreign-tenant") == 3,
+        "report: foreign-tenant skips counted (E3 across 4 servings incl. r-old)",
+        counter(&report, "skip-foreign-tenant") == 4,
     );
     check(
-        "report: unscopable refusals counted (E4 x3 + the DELETE on r-plain)",
-        counter(&report, "refuse-tenant-unscopable") == 4,
+        "report: unscopable refusals counted (E4 x4 servings + the DELETE on r-plain)",
+        counter(&report, "refuse-tenant-unscopable") == 5,
     );
     check(
-        "report: depth refusals counted (E7 across 3 servings)",
+        "report: depth refusals counted (E7 across 3 servings; r-old refuses old-image first)",
         counter(&report, "refuse-depth") == 3,
     );
     check(
-        "report: the old-condition registration is HELD every sweep",
-        counter(&report, "held-registrations") >= 1,
+        // l5i9.31: r-old is SERVED, not held; its 4 matching inserts (E1/E2/E6/E7)
+        // carry no old image → old-image-absent refusals (cannot-evaluate).
+        "report: old-image-absent refusals counted (r-old E1/E2/E6/E7) and NOTHING held",
+        counter(&report, "refuse-old-image-absent") == 4
+            && counter(&report, "held-registrations") == 0,
     );
     check(
         "report: no duplicates yet",
@@ -662,15 +710,15 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     // Doorbells: exactly one ring per WON firing, strictly post-commit.
     let mut rings = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(3);
-    while rings.len() < 8 && Instant::now() < deadline {
+    while rings.len() < 9 && Instant::now() < deadline {
         match tokio::time::timeout(Duration::from_millis(300), bells.next()).await {
             Ok(Some(msg)) => rings.push(String::from_utf8_lossy(&msg.payload).to_string()),
             _ => break,
         }
     }
     check(
-        "8 doorbell rings observed on wamn.doorbell.t1",
-        rings.len() == 8,
+        "9 doorbell rings observed on wamn.doorbell.t1",
+        rings.len() == 9,
     );
     check(
         "doorbell payloads are the minted run ids",
@@ -736,7 +784,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
 
     // --- Phase 3: redeliver (exactly-once past the dedupe window) ------------
     let stream = js.get_stream(STREAM).await.context("get stream")?;
-    for rid in ["r-plain", "r-cond", "r-key"] {
+    for rid in ["r-plain", "r-cond", "r-key", "r-old"] {
         // The guest's durable grammar: mat_<tenant>_<catalog>_<registration>
         // ('-' is NATS-legal and survives the guest's sanitize).
         let name = format!("mat_{TENANT}_matcat_{rid}");

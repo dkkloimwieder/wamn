@@ -14,9 +14,11 @@
 //! `entity_id` storage column.
 
 mod model;
+mod oldref;
 mod validate;
 
 pub use model::{EventRegistration, RegistrationState, SCHEMA_VERSION};
+pub use oldref::{condition_references_old, references_old};
 pub use validate::validate;
 
 // Re-exported so a consumer names the op set through this one crate; it is the

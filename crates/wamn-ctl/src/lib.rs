@@ -18,4 +18,5 @@ pub mod provision;
 pub mod provision_org;
 pub mod provision_project_env;
 pub mod publish_catalog;
+pub mod reconcile_replica_identity;
 pub mod restore_project_env;

@@ -32,11 +32,16 @@
 //!      YIELD the cut-over flows (their outbox rows consume unmatched) while
 //!      the materializer fires them for real — including the writes that
 //!      landed DURING the flip window (delayed, never lost, exactly once).
-//!      `disp-del` deliberately stays shadow (its registration refuses
+//!      `disp-del` stays shadow through phase 2 (its registration refuses
 //!      REPLICA-IDENTITY-DEFAULT deletes), proving cutover is per-flow and a
-//!      delete-subscribed flow keeps its old-path coverage until l5i9.31.
-//!      A cross-path join on (flow, row-id) must be EMPTY — no source row
+//!      delete-subscribed flow keeps its old-path coverage until its entity runs
+//!      FULL. A cross-path join on (flow, row-id) must be EMPTY — no source row
 //!      fires on both paths.
+//!   3. ri-flip — the l5i9.31 reconcile flips the delete entity to REPLICA
+//!      IDENTITY FULL, `disp-del` cuts over (shadow -> live), and a post-flip
+//!      delete fires a SCOPED `:evt:` run (the FULL old image carries
+//!      `tenant_id`) — the EXPECTED-DELETE-RI divergence retires — while the
+//!      pre-flip DEFAULT refusals stand (the flip is non-retroactive).
 //!
 //! Needs: `--admin-database-url` (SUPERUSER on a `wal_level=logical` PG —
 //! the gate creates/drops the throwaway `wamn_cutbench` database, the slot,
@@ -214,6 +219,20 @@ fn counter(report: &serde_json::Value, key: &str) -> i64 {
 
 async fn scalar(db: &tokio_postgres::Client, sql: &str) -> anyhow::Result<i64> {
     Ok(db.query_one(sql, &[]).await.with_context(|| sql.to_string())?.get(0))
+}
+
+/// A table's `pg_class.relreplident` in the app data schema ('d'/'f'/'n'/'i').
+async fn relreplident(db: &tokio_postgres::Client, table: &str) -> anyhow::Result<String> {
+    Ok(db
+        .query_one(
+            "SELECT c.relreplident::text FROM pg_class c \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = 'app' AND c.relname = $1",
+            &[&table],
+        )
+        .await
+        .context("read relreplident")?
+        .get(0))
 }
 
 // ---------------------------------------------------------------------------
@@ -1100,6 +1119,113 @@ pub async fn run(args: CutBenchArgs) -> anyhow::Result<()> {
         }
     }
     check("14 doorbell rings for the 14 live fires", rings == 14);
+
+    // ========================================================================
+    // Phase 3 — RI FLIP (l5i9.31): reconcile dispositions -> REPLICA IDENTITY
+    // FULL. Under FULL a delete's old image carries tenant_id, so the
+    // EXPECTED-DELETE-RI divergence retires and the delete-subscribed flow
+    // (disp-del) becomes cut-over-able. The pre-flip DEFAULT pin still stands
+    // (non-retroactive: the earlier refusals are the truth for pre-flip WAL).
+    // ========================================================================
+    println!("\n## phase 3: replica-identity flip (the delete divergence retires)");
+
+    // Pin the pre-flip DEFAULT truth BEFORE flipping: disp-del refused every
+    // delete under RI DEFAULT (3 tenant-unscopable refusals across phases 1-2).
+    check(
+        "pre-flip DEFAULT pin: 3 tenant-unscopable refusals stand (RI DEFAULT truth)",
+        scalar(
+            &db,
+            "SELECT count(*) FROM wamn_run.evt_shadow WHERE tenant_id = 't1' \
+             AND flow_id = 'disp-del' AND verdict = 'refuse' AND reason = 'tenant-unscopable'",
+        )
+        .await?
+            == 3,
+    );
+
+    // (a) The REAL reconcile verb path (l5i9.31): derive FULL from the
+    // registrations (r-del subscribes delete) and flip dispositions live —
+    // notes (no registration) stays DEFAULT.
+    let ri_plan =
+        wamn_ctl::reconcile_replica_identity::reconcile(&db, &catalog()?, "app", true).await?;
+    check(
+        "reconcile flips ONLY dispositions -> FULL (delete subscription drives it)",
+        ri_plan.flips.len() == 1
+            && ri_plan.flips[0].table == TABLE
+            && relreplident(&db, TABLE).await? == "f",
+    );
+    check("notes stays DEFAULT (no registration needs its old image)", relreplident(&db, "notes").await? == "d");
+
+    // (b) Cut r-del over: shadow -> live (FULL makes deletes scopable). A live
+    // registration on disp-del makes the dispatcher yield it too.
+    db.execute(
+        "UPDATE catalog.event_registrations \
+         SET registration = jsonb_set(registration, '{state}', '\"live\"') \
+         WHERE tenant_id = $1 AND registration_id = 'r-del'",
+        &[&TENANT],
+    )
+    .await
+    .context("flip r-del live")?;
+
+    // (c) A NEW delete AFTER the flip (non-retroactive: only post-flip WAL
+    // carries the full old image). Delete an existing row inserted in phase 2.
+    let ri_deleted = post_ids[0].clone();
+    writer.delete(&ri_deleted).await?;
+
+    // The old path must YIELD disp-del now (a live registration on the flow).
+    let ri_fired = drain_dispatcher(&mut dispatcher, &mut now_ms).await?;
+    check("dispatcher yields the now-live delete flow (fires nothing old-path)", ri_fired.is_empty());
+
+    // The new path drains the delete; disp-del fires a SCOPED :evt: run — the
+    // FULL old image carries tenant_id, so tenant_of scopes it (no refusal).
+    wait_stream_count(&js, &stream_name, 19 + 2 + 7 + 1, 60).await?;
+    let report3 = harness.run_guest(3, 64).await?;
+    println!("ri-flip guest report: {report3}");
+
+    check(
+        "disp-del fires ONE scoped :evt: delete run under FULL (retired divergence)",
+        scalar(
+            &db,
+            "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = 't1' \
+             AND flow_id = 'disp-del' AND trigger_source LIKE 'evt:%'",
+        )
+        .await?
+            == 1,
+    );
+    check(
+        "the retired delete fired EXACTLY ONCE, on the new path (evt yes, outbox no)",
+        {
+            let evt: i64 = db
+                .query_one(
+                    "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = 't1' \
+                     AND flow_id = 'disp-del' AND trigger_source LIKE 'evt:%' \
+                     AND input_json->'payload'->>'id' = $1",
+                    &[&ri_deleted],
+                )
+                .await?
+                .get(0);
+            let outbox: i64 = db
+                .query_one(
+                    "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = 't1' \
+                     AND flow_id = 'disp-del' AND trigger_source LIKE 'outbox:%' \
+                     AND input_json->'payload'->>'id' = $1",
+                    &[&ri_deleted],
+                )
+                .await?
+                .get(0);
+            evt == 1 && outbox == 0
+        },
+    );
+    check(
+        "pre-flip DEFAULT pin preserved: the 3 earlier tenant-unscopable refusals are unchanged",
+        scalar(
+            &db,
+            "SELECT count(*) FROM wamn_run.evt_shadow WHERE tenant_id = 't1' \
+             AND flow_id = 'disp-del' AND verdict = 'refuse' AND reason = 'tenant-unscopable'",
+        )
+        .await?
+            == 3,
+    );
+    check("no cross-path double-fire after the RI flip", scalar(&db, DOUBLE_FIRE_SQL).await? == 0);
 
     // --- teardown (zero residue: slot FIRST, then stream, then the db) ------
     token.cancel();

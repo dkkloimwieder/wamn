@@ -64,6 +64,7 @@
 mod engine;
 mod model;
 mod orphan;
+mod replica_identity;
 pub mod sql;
 
 pub use engine::{dry_run, plan_migration, rollback_plan};
@@ -72,6 +73,14 @@ pub use model::{
     SqlStatement, Value,
 };
 pub use orphan::{OrphaningPublish, RegistrationRef, check_registration_orphans};
+pub use replica_identity::{
+    ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, alter_replica_identity_sql,
+    entities_requiring_full, reconcile_replica_identity, select_replica_identity_sql,
+};
+
+// Re-exported so a driver can name the registration type the reconciler folds
+// without a direct dependency on wamn-event-reg.
+pub use wamn_event_reg::EventRegistration;
 
 // Re-exported so a driver can name the wamn-ddl / wamn-schema types the engine
 // returns without a direct dependency on those crates.

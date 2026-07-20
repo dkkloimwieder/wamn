@@ -83,10 +83,15 @@ pub enum RefuseReason {
     /// The event cannot be tenant-scoped: a DELETE under REPLICA IDENTITY
     /// DEFAULT (old image = key only) or a table with no `tenant_id` column.
     /// Enqueuing it under the workload's tenant would be a cross-tenant leak.
+    /// Retires per entity as l5i9.31 flips it to FULL — a FULL delete's old
+    /// image carries `tenant_id`, so the delete becomes scopable.
     TenantUnscopable,
-    /// The registration's condition references the ROOT `old` image — blocked
-    /// until l5i9.31 (belt: [`serviceable`] should have HELD the registration).
-    OldValueConditionBlocked,
+    /// A condition reads the ROOT `old` image, but the delivered event carries
+    /// no old image at all (REPLICA IDENTITY DEFAULT, or an op with no prior
+    /// row) — the predicate is CANNOT-EVALUATE (l5i9.31). Alertable: either the
+    /// entity's REPLICA IDENTITY FULL is not yet reconciled, or the registration
+    /// subscribes an op (insert) that has no old image. NEVER condition-false.
+    OldImageAbsent,
     /// The condition failed to evaluate (never silently condition-false).
     ConditionError(String),
     /// `stream_seq` doesn't fit the queue's BIGINT (practically unreachable;
@@ -107,14 +112,16 @@ pub enum Verdict {
 /// the dispatcher's invalid-flow HOLD posture).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecideError {
-    /// Condition present but not serviceable (bad syntax, or root-`old`
-    /// blocked until l5i9.31).
+    /// Condition present but not serviceable (bad syntax — the write-time
+    /// validation backstop). A root-`old` condition is NO LONGER unserviceable
+    /// (l5i9.31): it compiles and is guarded per event.
     UnserviceableCondition(ConditionOutcome),
 }
 
-/// Pre-flight a registration for serving: compiles the condition (if any)
-/// under the v1 REPLICA IDENTITY DEFAULT contract. Call once per sweep per
-/// registration; the compiled condition is reused across the fetched batch.
+/// Pre-flight a registration for serving: compiles the condition (if any). Only
+/// invalid syntax is unserviceable now — a root-`old` condition compiles and is
+/// guarded per event ([`decide`], old-absent = cannot-evaluate). Call once per
+/// sweep per registration; the compiled condition is reused across the batch.
 pub fn serviceable(reg: &EventRegistration) -> Result<Option<CompiledCondition>, DecideError> {
     match &reg.condition {
         None => Ok(None),
@@ -222,15 +229,25 @@ pub fn decide(
         Some(t) if t != tenant => return Verdict::Skip(SkipReason::ForeignTenant),
         Some(_) => {}
     }
-    // 4. Condition, over the event context.
+    // 4. Condition, over the event context. A predicate that reads the ROOT
+    //    `old` image cannot be evaluated when the event carries no old image
+    //    (REPLICA IDENTITY DEFAULT, or an op with no prior row): old-absent is
+    //    CANNOT-EVALUATE — an alertable refusal, NEVER condition-false (l5i9.31).
+    //    Evaluating an absent `old` as JMESPath `null` is the exact corruption
+    //    the contract forbids (`new.status != old.status` would fire spuriously).
     let event_ctx = event_context(envelope);
     if reg.condition.is_some() {
         let Some(cond) = condition else {
-            // The caller passed no compile for a condition-bearing registration
-            // — the serviceable() hold should have prevented this; refuse
-            // rather than fire unfiltered.
-            return Verdict::Refuse(RefuseReason::OldValueConditionBlocked);
+            // A condition-bearing registration reached decide with no compile —
+            // the serviceable() hold (invalid syntax) should have prevented
+            // this; refuse rather than fire unfiltered.
+            return Verdict::Refuse(RefuseReason::ConditionError(
+                "condition present but not compiled".into(),
+            ));
         };
+        if cond.references_old() && envelope.old.is_none() {
+            return Verdict::Refuse(RefuseReason::OldImageAbsent);
+        }
         match cond.matches(&event_ctx) {
             Ok(true) => {}
             Ok(false) => return Verdict::Skip(SkipReason::ConditionFalse),
@@ -426,17 +443,87 @@ mod tests {
     }
 
     #[test]
-    fn old_value_conditions_are_held_at_serviceability() {
-        // The l5i9.31 gate: a changed-from condition cannot be served under
-        // REPLICA IDENTITY DEFAULT — the registration is HELD, not
-        // silently evaluated (old-absent = cannot-evaluate, never false).
+    fn old_value_conditions_are_serviceable_and_guarded_per_event() {
+        // l5i9.31: a changed-to condition is now SERVICEABLE (no longer held).
         let reg = registration(Some("new.status != old.status"), None);
+        let cond = serviceable(&reg).expect("old-ref is serviceable");
+        assert!(cond.is_some(), "condition compiles to Some");
+        let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
+
+        // Old image ABSENT (RI DEFAULT / an op with no prior row) → an alertable
+        // cannot-evaluate refusal, NOT condition-false, NOT a hold.
+        let no_old = envelope(Op::Update, json!({"tenant_id": "t1", "status": "shipped"}));
+        assert_eq!(
+            decide(&reg, &f, cond.as_ref(), &no_old, 1, "t1", 16),
+            Verdict::Refuse(RefuseReason::OldImageAbsent),
+            "old-absent is cannot-evaluate, never condition-false"
+        );
+
+        // Old image PRESENT (RI FULL) → the predicate evaluates — both outcomes.
+        let changed = Envelope {
+            op: Op::Update,
+            old: Some(json!({"status": "draft"}).as_object().unwrap().clone()),
+            new: Some(json!({"tenant_id": "t1", "status": "shipped"}).as_object().unwrap().clone()),
+            entity: Some("receipts".into()),
+            table: "receipts".into(),
+            lsn: 1,
+            txid: 1,
+            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            causation: None,
+        };
         assert!(matches!(
-            serviceable(&reg),
-            Err(DecideError::UnserviceableCondition(
-                ConditionOutcome::OldValueBlocked
-            ))
+            decide(&reg, &f, cond.as_ref(), &changed, 2, "t1", 16),
+            Verdict::Fire(_)
         ));
+        let mut unchanged = changed.clone();
+        unchanged.old = Some(json!({"status": "shipped"}).as_object().unwrap().clone());
+        assert_eq!(
+            decide(&reg, &f, cond.as_ref(), &unchanged, 3, "t1", 16),
+            Verdict::Skip(SkipReason::ConditionFalse),
+            "old-present + no change is a normal condition-false skip"
+        );
+    }
+
+    #[test]
+    fn delete_under_full_is_scopable_and_fires() {
+        // l5i9.31: with the entity at REPLICA IDENTITY FULL a DELETE's old image
+        // carries tenant_id, so the delete becomes scopable and fires — the
+        // EXPECTED-DELETE-RI divergence class retires for FULL entities.
+        let reg = EventRegistration::from_json(
+            &json!({
+                "schema-version": "0.1", "registration-id": "r1", "catalog-id": "cat",
+                "flow-id": "f1", "entity": "receipts", "ops": ["delete"],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
+        let full_del = Envelope {
+            op: Op::Delete,
+            old: Some(json!({"id": "7", "tenant_id": "t1"}).as_object().unwrap().clone()),
+            new: None,
+            entity: Some("receipts".into()),
+            table: "receipts".into(),
+            lsn: 1,
+            txid: 1,
+            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            causation: None,
+        };
+        assert!(matches!(
+            decide(&reg, &f, None, &full_del, 1, "t1", 16),
+            Verdict::Fire(_)
+        ));
+        // A foreign tenant's FULL delete is a normal skip, never ours to fire.
+        let mut foreign = full_del.clone();
+        foreign.old = Some(json!({"id": "7", "tenant_id": "t2"}).as_object().unwrap().clone());
+        assert_eq!(
+            decide(&reg, &f, None, &foreign, 2, "t1", 16),
+            Verdict::Skip(SkipReason::ForeignTenant)
+        );
     }
 
     #[test]
