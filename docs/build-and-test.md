@@ -1060,11 +1060,12 @@ docker run -d --name wamn-lanec-rie-nats -p 57232:4222 nats:2.10 -js
   --admin-database-url postgres://postgres:postgres@127.0.0.1:57231/postgres \
   --nats-url nats://127.0.0.1:57232
 docker rm -f wamn-lanec-rie-pg wamn-lanec-rie-nats
-# In-cluster: rie2ebench needs a wal_level=logical DB + a replication slot; the
-# existing matbench-job fixture Postgres has NEITHER (matbench publishes a
-# synthetic tape, no reader). It rides the [EVT-READER]/CDC live-DB shape, NOT
-# the matbench-job — a rie2ebench-job would need a CDC-capable throwaway DB
-# (wal_level=logical) + the data-plane evt-nats, mirroring the readerbench Job.
+# In-cluster: deploy/gates/rie2ebench-job.yaml (cutbench-job's shape) — the
+# fixture Postgres runs wal_level=logical since l5i9.18, and the gate owns a
+# throwaway DATABASE (wamn_rie2e, created/dropped WITH FORCE) + its slot +
+# its EVT stream, so the shared fixture keeps zero residue:
+kubectl -n wamn-system apply -f deploy/gates/rie2ebench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/rie2ebench --timeout=600s
 ```
 
 Mutation harness: scratchpad `mutate_lane_c.py` — M_RI neuters the production
