@@ -2301,6 +2301,14 @@ SAME `nodeinvoke` gate (extra checks on top of the fqg.22 authn set):
   vault key drives a run that fails `terminal`/`call` in ONE claim (failed=1,
   parked=0), its queue row dequeued (never parked for retry).
 
+* **fqg.31 — fail-closed toggle.** New serve-node flag `--require-signing-key`
+  (env `WAMN_REQUIRE_SIGNING_KEY`): when set and NO signing key is configured for
+  the project, REFUSE ALL invocations (401 `signing-key-required`) instead of
+  silently reverting to network trust. Default OFF stays backward-compatible
+  (unkeyed = network-trust + loud warning). Gate: `FAIL-CLOSED` (a keyless
+  require host refuses both an unsigned AND a signed POST) + `NETWORK-TRUST` (the
+  default keyless host admits an unsigned POST) — both via `verify_signature`.
+
 The live gate is the SAME `nodeinvoke` command as [NODE-INVOKE / wamn-bd5];
 rebuild the flowrunner guest + wamn-gates first (the fqg.32 flowrunner change
 below re-touches the guest). Mutation harness: scratchpad `mutate_lane_a.py`

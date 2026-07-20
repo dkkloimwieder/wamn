@@ -139,6 +139,14 @@ pub struct ServeNodeArgs {
         value_delimiter = ','
     )]
     pub allowed_hosts: Vec<String>,
+
+    /// wamn-fqg.31: FAIL-CLOSED — require a per-project-env signing key. When set
+    /// and NO key is configured for this project, REFUSE ALL invocations
+    /// (401 `signing-key-required`) instead of silently reverting to the legacy
+    /// network-trust posture. Default `false` keeps the backward-compatible
+    /// behavior (unkeyed = network-trust, warned loudly at startup).
+    #[arg(long = "require-signing-key", env = "WAMN_REQUIRE_SIGNING_KEY")]
+    pub require_signing_key: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +244,10 @@ pub struct ServeNode {
     /// the vault's reserved [`SIGNING_KEY_CREDENTIAL`] entry. `None` = no key
     /// configured (legacy v0 network-trust: POSTs are admitted unsigned).
     signing_key: Option<Vec<u8>>,
+    /// wamn-fqg.31: FAIL-CLOSED posture. When `true` and no `signing_key` is
+    /// configured, every invocation is REFUSED (`Unconfigured`) rather than
+    /// admitted under network trust. Inert when a key IS configured.
+    require_signing_key: bool,
     /// Count of per-invocation grants INSTALLED (cjv.3). The verify-before-grant
     /// witness (wamn-fqg.22): a refused request never reaches `invoke`, so a
     /// refusal must not advance this. The gate reads it via
@@ -253,6 +265,7 @@ impl ServeNode {
         node_id: &str,
         project: &str,
         allowed_hosts: Arc<[AllowedHost]>,
+        require_signing_key: bool,
     ) -> anyhow::Result<Self> {
         let raw = engine.inner();
         let component =
@@ -275,15 +288,22 @@ impl ServeNode {
         let signing_key = vault
             .lookup(project, SIGNING_KEY_CREDENTIAL)
             .map(String::into_bytes);
-        match &signing_key {
-            Some(_) => tracing::info!(
+        match (&signing_key, require_signing_key) {
+            (Some(_), _) => tracing::info!(
                 project,
                 "serve-node: runner→node authn ENABLED (per-project-env signed envelope; verify-before-grant)"
             ),
-            None => tracing::warn!(
+            // wamn-fqg.31: fail-closed with no key is a MISCONFIGURATION — the
+            // host will refuse every invocation. Loud, at error level.
+            (None, true) => tracing::error!(
                 project,
                 key = SIGNING_KEY_CREDENTIAL,
-                "serve-node: NO signing key in the vault — runner→node authn DISABLED (v0 network-trust; unsigned POSTs admitted). Bank the reserved key in the runner-credentials Secret to enable."
+                "serve-node: FAIL-CLOSED (--require-signing-key) but NO signing key in the vault — REFUSING ALL invocations (401 signing-key-required). Bank the reserved key in the runner-credentials Secret."
+            ),
+            (None, false) => tracing::warn!(
+                project,
+                key = SIGNING_KEY_CREDENTIAL,
+                "serve-node: NO signing key in the vault — runner→node authn DISABLED (v0 network-trust; unsigned POSTs admitted). Bank the reserved key in the runner-credentials Secret, or set --require-signing-key to fail closed."
             ),
         }
 
@@ -307,6 +327,7 @@ impl ServeNode {
             vault,
             node_id: node_id.to_string(),
             signing_key,
+            require_signing_key,
             grant_installs: AtomicU64::new(0),
         })
     }
@@ -323,7 +344,14 @@ impl ServeNode {
         signature: Option<&str>,
     ) -> Result<(), SignatureError> {
         let Some(key) = self.signing_key.as_deref() else {
-            return Ok(()); // no key configured: legacy network-trust mode
+            // wamn-fqg.31: with no key configured, a FAIL-CLOSED host refuses ALL
+            // invocations rather than silently reverting to network trust; the
+            // default (backward-compatible) admits them under legacy network-trust.
+            return if self.require_signing_key {
+                Err(SignatureError::Unconfigured)
+            } else {
+                Ok(())
+            };
         };
         let sig = signature.ok_or(SignatureError::Missing)?;
         verify_envelope(key, body, sig)
@@ -689,6 +717,7 @@ pub async fn run(args: ServeNodeArgs) -> anyhow::Result<()> {
             DEFAULT_NODE_ID,
             &args.project,
             allowed_hosts,
+            args.require_signing_key,
         )
         .await?,
     );

@@ -89,6 +89,14 @@ spec:
               value: demo-project
             - name: WAMN_CREDENTIALS_FILE
               value: /etc/wamn/credentials/credentials.json
+            # [wamn-fqg.31] FAIL-CLOSED. Set to "true" to REQUIRE a per-project-env
+            # signing key: with no key configured the host refuses ALL invocations
+            # (401 signing-key-required) instead of silently reverting to network
+            # trust. Default (unset) keeps the backward-compatible network-trust
+            # fallback (warned loudly at startup). Turn this on once every
+            # project-env has its `wamn:node-invoke-signing-key` banked.
+            # - name: WAMN_REQUIRE_SIGNING_KEY
+            #   value: "true"
           volumeMounts:
             - name: node-artifact
               mountPath: /components

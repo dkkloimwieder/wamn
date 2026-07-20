@@ -31,8 +31,8 @@ use clap::Args;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_postgres::{Client, NoTls};
 use wamn_node_invoke::{
-    NodeInvokeRequest, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL, WirePayload, WireRunContext,
-    granted_credentials, sign_envelope,
+    NodeInvokeRequest, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL, SignatureError, WirePayload,
+    WireRunContext, granted_credentials, sign_envelope,
 };
 use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
@@ -319,6 +319,7 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
             serve_node::DEFAULT_NODE_ID,
             PROJECT,
             Arc::from([]),
+            false, // authn keyed below; not fail-closed (a key is present)
         )
         .await
         .context("build serve-node")?,
@@ -327,7 +328,7 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
     // Drive the gate while the serve-node accept loop runs concurrently on the
     // SAME task (select!): when the gate logic returns, the server future drops.
     let serve_loop = serve_node::serve(serve.clone(), port);
-    let gate = gate_body(&engine, &flowrunner, &app_url, serve.clone(), port, n);
+    let gate = gate_body(&engine, &flowrunner, &node_wasm, &app_url, serve.clone(), port, n);
 
     let outcome = tokio::select! {
         r = serve_loop => r.map(|_| false), // the server only ends on error
@@ -345,9 +346,11 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments, reason = "the gate wires the whole live path from one call")]
 async fn gate_body(
     engine: &wash_runtime::engine::Engine,
     flowrunner: &[u8],
+    node_wasm: &[u8],
     app_url: &str,
     serve: Arc<ServeNode>,
     port: u16,
@@ -597,6 +600,55 @@ async fn gate_body(
     );
     println!(
         "  authn: grants(after positive drain)={grants_after_positive}; refusals installed 0 grants (before={grants_before_negatives} after={grants_after_negatives}); raw-signed accepted"
+    );
+
+    // -------------------------------------------------------------------------
+    // wamn-fqg.31 — fail-closed toggle (BOTH postures). verify_signature is the
+    // pure verify-before-grant decision the accept loop makes; drive it directly
+    // on two KEYLESS serve-nodes (an empty vault, no reserved signing key):
+    //   * --require-signing-key  ⇒ REFUSE ALL (Unconfigured / signing-key-required),
+    //     signed or unsigned — no silent revert to network trust;
+    //   * default                ⇒ ADMIT unsigned (legacy network-trust, warned).
+    // A mutant that drops the fail-closed arm admits the unsigned POST → the
+    // FAIL-CLOSED check flips.
+    // -------------------------------------------------------------------------
+    let keyless_failclosed = ServeNode::new(
+        engine,
+        node_wasm,
+        Arc::new(WamnCredentials::empty()),
+        serve_node::DEFAULT_NODE_ID,
+        PROJECT,
+        Arc::from([]),
+        true, // fail-closed
+    )
+    .await
+    .context("build keyless fail-closed serve-node")?;
+    check(
+        &mut ok,
+        "FAIL-CLOSED (fqg.31): a keyless require-signing-key host REFUSES an unsigned invocation (signing-key-required)",
+        keyless_failclosed.verify_signature(body.as_bytes(), None) == Err(SignatureError::Unconfigured),
+    );
+    check(
+        &mut ok,
+        "FAIL-CLOSED (fqg.31): it also refuses a SIGNED invocation — no key to verify, so refuse ALL",
+        keyless_failclosed.verify_signature(body.as_bytes(), Some(&good_sig))
+            == Err(SignatureError::Unconfigured),
+    );
+    let keyless_default = ServeNode::new(
+        engine,
+        node_wasm,
+        Arc::new(WamnCredentials::empty()),
+        serve_node::DEFAULT_NODE_ID,
+        PROJECT,
+        Arc::from([]),
+        false, // default: legacy network-trust
+    )
+    .await
+    .context("build keyless default serve-node")?;
+    check(
+        &mut ok,
+        "NETWORK-TRUST (fqg.31): the DEFAULT keyless host admits an unsigned invocation (backward-compatible)",
+        keyless_default.verify_signature(body.as_bytes(), None).is_ok(),
     );
 
     // -------------------------------------------------------------------------

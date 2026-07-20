@@ -232,6 +232,10 @@ pub enum SignatureError {
     Malformed,
     /// A well-formed signature that does not match the body under the key.
     Mismatch,
+    /// wamn-fqg.31: the host is fail-closed (a signing key is REQUIRED) but none
+    /// is configured, so it refuses ALL invocations rather than silently
+    /// reverting to network trust. A misconfiguration signal, not a caller fault.
+    Unconfigured,
 }
 
 impl SignatureError {
@@ -241,6 +245,7 @@ impl SignatureError {
             SignatureError::Missing => "missing-signature",
             SignatureError::Malformed => "malformed-signature",
             SignatureError::Mismatch => "bad-signature",
+            SignatureError::Unconfigured => "signing-key-required",
         }
     }
 }
@@ -540,6 +545,8 @@ mod tests {
         assert_eq!(SignatureError::Missing.reason(), "missing-signature");
         assert_eq!(SignatureError::Malformed.reason(), "malformed-signature");
         assert_eq!(SignatureError::Mismatch.reason(), "bad-signature");
+        // wamn-fqg.31: the fail-closed refusal reason.
+        assert_eq!(SignatureError::Unconfigured.reason(), "signing-key-required");
     }
 
     #[test]
