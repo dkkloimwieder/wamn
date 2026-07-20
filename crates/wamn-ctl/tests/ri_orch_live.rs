@@ -19,6 +19,12 @@
 //! - **migrate flips**: a first-materialization `migrate-catalog` creates the
 //!   tables and, after the apply transaction commits, flips the needing entity to
 //!   FULL while the bystander stays DEFAULT.
+//! - **registration-change cadence** (wamn-l5i9.65): a registration create on an
+//!   ALREADY-applied catalog (written on the API path under `wamn_app`, which
+//!   cannot ALTER) opens an old-image gap that `pending_old_image_gap` detects;
+//!   running the standalone `reconcile-replica-identity` verb EXACTLY as the
+//!   periodic CronJob's command line does (`reconcile_replica_identity::run`)
+//!   closes it `'d' -> 'f'`, and a second run is a no-op (idempotence).
 //!
 //! The flip itself is wal_level-independent (it sets the `pg_class` flag), so this
 //! gate needs no `wal_level=logical`; the non-retroactive WAL truth is proven by
@@ -28,7 +34,7 @@
 
 use tokio_postgres::{Client, NoTls};
 
-use wamn_ctl::{migrate_catalog, publish_catalog};
+use wamn_ctl::{migrate_catalog, publish_catalog, reconcile_replica_identity};
 
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const DATA_SCHEMA: &str = "riorch_data";
@@ -128,6 +134,18 @@ fn publish_args(
     }
 }
 
+fn reconcile_args(
+    catalog: std::path::PathBuf,
+    url: &str,
+) -> reconcile_replica_identity::ReconcileReplicaIdentityArgs {
+    reconcile_replica_identity::ReconcileReplicaIdentityArgs {
+        admin_database_url: url.to_string(),
+        catalog,
+        schema: DATA_SCHEMA.to_string(),
+        dry_run: false,
+    }
+}
+
 fn migrate_args(target: std::path::PathBuf, url: &str) -> migrate_catalog::MigrateCatalogArgs {
     migrate_catalog::MigrateCatalogArgs {
         admin_database_url: url.to_string(),
@@ -154,6 +172,7 @@ async fn publish_and_migrate_reconcile_replica_identity() {
     let su = connect(&url).await;
     publish_scenario(&su, &url).await;
     migrate_scenario(&su, &url).await;
+    registration_change_scenario(&su, &url).await;
 }
 
 async fn publish_scenario(su: &Client, url: &str) {
@@ -243,6 +262,113 @@ async fn publish_scenario(su: &Client, url: &str) {
         "d",
         "reconcile resets an entity that no longer needs the old image"
     );
+
+    su.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"
+    ))
+    .await
+    .expect("teardown");
+}
+
+/// The API-path registration-change hop (EVT-RI-ORCH, wamn-l5i9.65): a
+/// registration create/update/delete is written on the API path under the
+/// `wamn_app` role, which CANNOT `ALTER … REPLICA IDENTITY`. A registration
+/// that newly adds an old-image / delete subscription on an ALREADY-applied
+/// catalog therefore leaves the entity's table at DEFAULT — an old-image gap —
+/// until the periodic `reconcile-replica-identity` CronJob's next tick. This
+/// drives the verb EXACTLY as that CronJob's command line does
+/// (`reconcile_replica_identity::run` = `wamn-ctl reconcile-replica-identity
+/// --admin-database-url … --catalog … --schema …`) and proves the gap that
+/// `pending_old_image_gap` detects closes on the tick and stays closed.
+async fn registration_change_scenario(su: &Client, url: &str) {
+    reset(su).await;
+    let v1 = write_tmp("riorch_reg.json", &cat_json(1));
+    let catalog = wamn_catalog::Catalog::from_json(&cat_json(1)).expect("catalog parses");
+
+    // Apply the catalog with only a benign insert-only registration: publish
+    // --provision creates both floors and reconciles RI, leaving BOTH entities
+    // at DEFAULT (no old-image requirement yet). This is the "already-applied
+    // catalog" the API-path change will later mutate.
+    insert_reg(
+        su,
+        "t1",
+        "r-ins",
+        "orders",
+        &reg_doc("r-ins", "ingest", "orders", "\"insert\"", "null"),
+    )
+    .await;
+    publish_catalog::run(publish_args(v1.clone(), url, true, false))
+        .await
+        .expect("publish --provision the already-applied catalog");
+    assert_eq!(
+        relreplident(su, "sales_orders").await,
+        "d",
+        "no old-image requirement yet — orders stays DEFAULT"
+    );
+
+    // API-path registration change: a NEW delete subscription on `orders` lands
+    // in catalog.event_registrations. On the real API path this write is made by
+    // `wamn_app`, which cannot ALTER — so the table STAYS at DEFAULT: an open
+    // old-image gap. (The row insert models that write; the untouched RI is the
+    // point of the scenario.)
+    insert_reg(
+        su,
+        "t2",
+        "r-del",
+        "orders",
+        &reg_doc("r-del", "purge", "orders", "\"delete\"", "null"),
+    )
+    .await;
+    assert_eq!(
+        relreplident(su, "sales_orders").await,
+        "d",
+        "the API-path write cannot ALTER — the old-image gap is open"
+    );
+
+    // The pure detect surface names the open gap — the read half the CronJob and
+    // wamn-l5i9.66's api-gateway warning both key on.
+    let before = reconcile_replica_identity::reconcile(su, &catalog, DATA_SCHEMA, false)
+        .await
+        .expect("dry-run reconcile reads the live gap");
+    assert_eq!(
+        before.pending_old_image_gap(),
+        vec!["orders"],
+        "pending_old_image_gap detects the registration-change gap"
+    );
+
+    // A cadence tick: run the verb EXACTLY as the CronJob's command line does.
+    // The superuser ALTER closes the gap 'd' -> 'f'.
+    reconcile_replica_identity::run(reconcile_args(v1.clone(), url))
+        .await
+        .expect("reconcile-replica-identity verb (the CronJob command line)");
+    assert_eq!(
+        relreplident(su, "sales_orders").await,
+        "f",
+        "the cadence tick flips the gapped entity to FULL"
+    );
+    assert_eq!(
+        relreplident(su, "line_items").await,
+        "d",
+        "the bystander entity stays DEFAULT"
+    );
+
+    // A SECOND tick is a no-op: the gap is closed, RI unchanged (idempotence).
+    reconcile_replica_identity::run(reconcile_args(v1, url))
+        .await
+        .expect("second reconcile tick is a no-op");
+    assert_eq!(
+        relreplident(su, "sales_orders").await,
+        "f",
+        "idempotent: a second tick leaves the entity at FULL"
+    );
+    let after = reconcile_replica_identity::reconcile(su, &catalog, DATA_SCHEMA, false)
+        .await
+        .expect("dry-run reconcile after the tick");
+    assert!(
+        after.pending_old_image_gap().is_empty(),
+        "the gap is closed — no pending reconcile remains"
+    );
+    assert!(after.is_noop(), "reconcile at target flips nothing");
 
     su.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"

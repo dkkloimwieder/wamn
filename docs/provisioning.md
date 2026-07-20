@@ -500,14 +500,24 @@ condition-false). It is idempotent — a reconcile at target flips nothing.
 already connect as the superuser the `ALTER` needs), scoped strictly to the
 verb's `--schema`, so a catalog apply never leaves an entity that needs the old
 image on DEFAULT. Pass `--skip-reconcile-replica-identity` to opt out and run the
-standalone verb yourself. **The remaining manual trigger** is a REGISTRATION
-change on an already-applied catalog: a registration create/update/delete that
-adds or removes an old-image / delete subscription is written via the wamn-api
-surface under `wamn_app`, which cannot `ALTER`. Until the API path grows an
-automatic control-plane reconcile hop (deferred), close the gap by running this
-verb — or simply re-running `publish-catalog`, which reconciles — after such a
-change; `reconcile-replica-identity --dry-run` is the read-only surface that
-names every entity still needing a flip.
+standalone verb yourself.
+
+**Registration-change caller (EVT-RI-ORCH, wamn-l5i9.65).** A REGISTRATION
+change on an ALREADY-applied catalog — a registration create/update/delete that
+adds or removes an old-image / delete subscription — is written via the wamn-api
+surface under `wamn_app`, which cannot `ALTER`, so it leaves the entity's table
+at DEFAULT: an old-image gap until the next publish/migrate. That path is now
+covered automatically by a periodic **CronJob** that runs this verb per
+project-env on a ~5 min cadence (`deploy/platform/replica-identity-reconcile.example.yaml`
+— deploy one per project-env; the owner decision was a CronJob over the shipped
+verb, NOT a new long-lived service or a dispatcher-drained queue). The gap
+therefore closes within one cadence (≤5 min); the manual "run the verb after a
+registration change" step is **retired** in favor of that cadence. wamn-l5i9.66
+surfaces a `pending-replica-identity-reconcile` warning in the api-gateway
+registration create/update response so a caller sees the gap immediately —
+covering the ≤1-cadence window. `reconcile-replica-identity --dry-run` remains
+the read-only surface that names every entity still needing a flip (an operator
+force-tick is `kubectl create job --from=cronjob/…`).
 
 ## `provisionbench` — the four-tier extension (wamn-q3n.8)
 

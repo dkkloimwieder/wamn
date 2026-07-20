@@ -2052,12 +2052,22 @@ cargo clippy -p wamn-migrate -p wamn-ctl --tests
 # while the bystander stays 'd'; re-publish is idempotent; --skip-reconcile-
 # replica-identity leaves RI as-is; a plain re-publish resets 'f'->'d'; and a
 # first-materialization migrate flips the entity to FULL after its apply tx
-# commits. Hermetic (drops+recreates its schemas):
+# commits; and (wamn-l5i9.65 phase) a registration create on an ALREADY-applied
+# catalog opens an old-image gap `pending_old_image_gap` detects, which the
+# standalone verb run EXACTLY as the periodic CronJob's command line
+# (`reconcile_replica_identity::run` = `wamn-ctl reconcile-replica-identity
+# --catalog … --schema …`) closes 'd'->'f', a second run being a no-op.
+# Hermetic (drops+recreates its schemas):
 docker run --rm -d --name wave5-riorch-pg -e POSTGRES_PASSWORD=postgres -p 56011:5432 postgres:18
 WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:56011/postgres \
   cargo test -p wamn-ctl --test ri_orch_live -- --nocapture
 docker rm -f wave5-riorch-pg
 ```
+
+The registration-change reconcile CronJob (wamn-l5i9.65) is
+`deploy/platform/replica-identity-reconcile.example.yaml` (one per project-env);
+in-cluster it is `kubectl apply`'d and a tick is forced with `kubectl create job
+--from=cronjob/replica-identity-reconcile-poc-f1 …`.
 
 Mutation harness: scratchpad `mutate_l5i9_61.py` — M1 `pending_old_image_gap`
 keys on the reset direction (killed by

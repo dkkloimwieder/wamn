@@ -1,0 +1,104 @@
+# EXAMPLE per-project-env REPLICA IDENTITY reconcile CronJob (EVT-RI-ORCH,
+# wamn-l5i9.65). Periodically runs the SHIPPED `wamn-ctl
+# reconcile-replica-identity` verb (wamn-l5i9.31) on one project-env's data
+# schema so an old-image gap opened by an API-path registration change closes
+# on a cadence — no new long-lived service, no queue.
+#
+# WHY (the gap this closes): `publish-catalog` / `migrate-catalog` already
+# auto-reconcile REPLICA IDENTITY as their last step (wamn-l5i9.61), so a
+# catalog apply never leaves an entity that needs the old image on DEFAULT.
+# But a registration create/update/delete on the API path is written via the
+# wamn-api surface under the `wamn_app` role, which CANNOT `ALTER TABLE …
+# REPLICA IDENTITY` (table ownership). A registration that newly adds an
+# old-image / delete subscription on an ALREADY-applied catalog therefore
+# leaves the entity's table at DEFAULT — an old-image gap — until the next
+# publish/migrate or a manual verb run. Correctness is protected (the
+# materializer treats an absent old image as an alertable cannot-evaluate
+# refusal, never condition-false), so this is an operational-latency gap. This
+# CronJob is the automatic caller for that path: the verb connects as the
+# superuser the `ALTER` needs and is idempotent (a reconcile at target flips
+# nothing), so a periodic run is safe to repeat. The gap closes within one
+# cadence (≤5 min); wamn-l5i9.66 surfaces a pending-reconcile warning in the
+# api-gateway registration response so a caller sees the gap immediately,
+# covering the window.
+#
+# OWNER DECISION (2026-07-20, recorded on wamn-l5i9.65): mechanism = periodic
+# CronJob over the existing verb. REJECTED: a dispatcher-drained reconcile
+# queue (the dispatcher runs as `wamn_app` — no ALTER; draining would add a
+# superuser credential to an always-on service, against the R8b scoping
+# posture) and detect+runbook-only (leaves the gap open indefinitely).
+#
+# PER-PROJECT-ENV (the `.example` convention, like
+# dispatcher-projects.example.yaml): the verb reconciles ONE project-env
+# (`--catalog` + `--schema` + a superuser URL to that project's DB), so deploy
+# ONE CronJob per project-env, substituting the schema, the catalog ConfigMap,
+# and the admin URL. This example wires the poc_f1 project-env, reusing the
+# f1-fixtures ConfigMap catalog the f1 provisioning Job mounts (see
+# deploy/poc/f1-provision-job.yaml):
+#
+#   kubectl -n wamn-system apply -f deploy/platform/replica-identity-reconcile.example.yaml
+#   kubectl -n wamn-system get cronjob replica-identity-reconcile-poc-f1
+#   # force a tick without waiting for the schedule:
+#   kubectl -n wamn-system create job --from=cronjob/replica-identity-reconcile-poc-f1 ri-reconcile-manual
+#   kubectl -n wamn-system logs job/ri-reconcile-manual
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: replica-identity-reconcile-poc-f1
+  namespace: wamn-system
+  labels: { app: replica-identity-reconcile, project-env: poc-f1 }
+spec:
+  # ~5 min cadence (owner decision). The gap closes within one tick.
+  schedule: "*/5 * * * *"
+  # Never overlap: a slow reconcile must finish before the next tick starts —
+  # the flips are idempotent, but a second concurrent superuser ALTER pass is
+  # pointless churn.
+  concurrencyPolicy: Forbid
+  # A tick missed while the controller was down still runs if it is <2 min late
+  # (the reconcile is idempotent, so a late catch-up is harmless).
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels: { app: replica-identity-reconcile, project-env: poc-f1 }
+        spec:
+          restartPolicy: Never
+          # This Job never talks to the Kubernetes API — don't mount the
+          # default ServiceAccount token as idle attack surface.
+          automountServiceAccountToken: false
+          containers:
+            - name: reconcile
+              image: wamn-ctl:dev
+              imagePullPolicy: IfNotPresent
+              args:
+                [
+                  "--log-level", "error",
+                  "reconcile-replica-identity",
+                  "--catalog", "/fixtures/poc-receiving.catalog.json",
+                  "--schema", "poc_f1",
+                ]
+              env:
+                # Superuser URL to the project DB — `ALTER … REPLICA IDENTITY`
+                # needs table ownership, so `wamn_app` cannot run it (the same
+                # credential the f1 provisioning Job uses). In production,
+                # source this from a Secret (secretKeyRef) rather than inline.
+                - name: WAMN_PG_ADMIN_URL
+                  value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn
+              volumeMounts:
+                - name: fixtures
+                  mountPath: /fixtures
+                  readOnly: true
+              resources:
+                requests: { cpu: "100m", memory: "128Mi" }
+                limits: { memory: "256Mi" }
+          volumes:
+            # The applied catalog JSON (entity-id → table-name map the verb
+            # flips against) — the SAME f1-fixtures ConfigMap the f1
+            # provisioning Job mounts.
+            - name: fixtures
+              configMap:
+                name: f1-fixtures
