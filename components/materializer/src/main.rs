@@ -47,7 +47,10 @@ use wamn_materializer::{
     decide, serviceable,
     sql::{select_active_flow_sql, select_registrations_sql},
 };
-use wamn_run_queue::{enqueue_evt_sql, enqueue_evt_with_policy_sql, write_ahead_triggered_run_sql};
+use wamn_run_queue::{
+    enqueue_evt_sql, enqueue_evt_with_policy_sql, mint_evt_run_id, shadow_observe_sql,
+    write_ahead_triggered_run_sql,
+};
 
 use wamn::jetstream::consumer::{self, ConsumerConfig};
 use wamn::jetstream::doorbell;
@@ -154,6 +157,12 @@ struct Counters {
     poison: u64,
     effect_retry: u64,
     doorbell_failed: u64,
+    /// EVT-CUTOVER (l5i9.18) shadow-mode ledger writes, by verdict — a shadow
+    /// registration counts its decide() outcome in the counters above AND one
+    /// of these; `fired` stays zero in shadow (nothing fires).
+    shadow_fire: u64,
+    shadow_skip: u64,
+    shadow_refuse: u64,
 }
 
 impl Counters {
@@ -163,7 +172,8 @@ impl Counters {
              \"skip-foreign-tenant\":{},\"skip-condition-false\":{},\"refuse-depth\":{},\
              \"refuse-tenant-unscopable\":{},\"refuse-old-condition\":{},\
              \"refuse-condition-error\":{},\"refuse-seq\":{},\"held-registrations\":{},\
-             \"poison\":{},\"effect-retry\":{},\"doorbell-failed\":{}}}",
+             \"poison\":{},\"effect-retry\":{},\"doorbell-failed\":{},\
+             \"shadow-fire\":{},\"shadow-skip\":{},\"shadow-refuse\":{}}}",
             self.sweeps,
             self.fired,
             self.duplicate,
@@ -180,6 +190,9 @@ impl Counters {
             self.poison,
             self.effect_retry,
             self.doorbell_failed,
+            self.shadow_fire,
+            self.shadow_skip,
+            self.shadow_refuse,
         )
     }
 }
@@ -386,6 +399,68 @@ fn fire_txn(plan: &FirePlan) -> Result<bool, String> {
     Ok(inserted == 1)
 }
 
+/// The SHADOW observation (EVT-CUTOVER, l5i9.18): for a `state: shadow`
+/// registration the decision lands in the `evt_shadow` ledger instead of
+/// firing — no run, no queue row, no doorbell. The ledger PK's `ON CONFLICT DO
+/// NOTHING` makes redelivery the same exactly-once no-op as the fire path's
+/// write-ahead, so the cutover comparison stays count-exact.
+#[allow(clippy::too_many_arguments)]
+fn shadow_observe(
+    registration_id: &str,
+    stream_seq: i64,
+    run_id: &str,
+    flow_id: &str,
+    verdict: &str,
+    reason: Option<&str>,
+    envelope: &Envelope,
+    partition_key: Option<&str>,
+    partition_policy: Option<&str>,
+    input_json: Option<&str>,
+) -> Result<(), String> {
+    let opt = |v: Option<&str>| v.map_or(SqlValue::Null, text);
+    client::execute(
+        &shadow_observe_sql(),
+        &[
+            text(registration_id),
+            int64(stream_seq),
+            text(run_id),
+            text(flow_id),
+            text(verdict),
+            opt(reason),
+            text(&envelope.table),
+            text(envelope.op.as_str()),
+            opt(envelope.entity.as_deref()),
+            opt(partition_key),
+            opt(partition_policy),
+            opt(input_json),
+        ],
+    )
+    .map(|_| ())
+    .map_err(|e| pg_name(&e))
+}
+
+/// The ledger's skip discriminant (stable comparator tokens — the cutbench
+/// divergence classes key on these).
+fn skip_token(reason: &SkipReason) -> &'static str {
+    match reason {
+        SkipReason::EntityMismatch => "entity-mismatch",
+        SkipReason::OpMismatch => "op-mismatch",
+        SkipReason::ForeignTenant => "foreign-tenant",
+        SkipReason::ConditionFalse => "condition-false",
+    }
+}
+
+/// The ledger's refuse discriminant (stable comparator tokens).
+fn refuse_token(reason: &RefuseReason) -> &'static str {
+    match reason {
+        RefuseReason::DepthExceeded { .. } => "depth-exceeded",
+        RefuseReason::TenantUnscopable => "tenant-unscopable",
+        RefuseReason::OldValueConditionBlocked => "old-value-condition-blocked",
+        RefuseReason::ConditionError(_) => "condition-error",
+        RefuseReason::SeqOverflow(_) => "seq-overflow",
+    }
+}
+
 /// Serve one registration for one sweep: bind its durable consumer, fetch a
 /// bounded batch, decide + effect each message.
 fn serve(cfg: &Config, s: &Serving, counters: &mut Counters) {
@@ -448,6 +523,10 @@ fn serve(cfg: &Config, s: &Serving, counters: &mut Counters) {
             let _ = msg.nack(cfg.nack_delay_ms);
             continue;
         }
+        // EVT-CUTOVER (l5i9.18): a shadow registration observes instead of
+        // firing — every verdict below lands in the evt_shadow ledger and the
+        // fire arm never touches runs/queue/doorbell.
+        let shadow = s.reg.state.is_shadow();
         match decide(
             &s.reg,
             &s.flow,
@@ -457,6 +536,35 @@ fn serve(cfg: &Config, s: &Serving, counters: &mut Counters) {
             &cfg.tenant,
             cfg.max_depth,
         ) {
+            Verdict::Fire(plan) if shadow => {
+                match shadow_observe(
+                    &s.reg.registration_id,
+                    plan.stream_seq,
+                    &plan.run_id,
+                    &plan.flow_id,
+                    "fire",
+                    None,
+                    &envelope,
+                    plan.partition_key.as_deref(),
+                    Some(plan.policy.as_sql()),
+                    Some(&plan.input_json),
+                ) {
+                    Ok(()) => {
+                        counters.shadow_fire += 1;
+                        let _ = msg.ack();
+                    }
+                    Err(e) => {
+                        // The observation IS the shadow effect — retry it like
+                        // a fire (the ledger PK absorbs the redelivery).
+                        counters.effect_retry += 1;
+                        eprintln!(
+                            "wamn::materializer shadow observe failed for {} ({e}) — nack for redelivery",
+                            plan.run_id
+                        );
+                        let _ = msg.nack(cfg.nack_delay_ms);
+                    }
+                }
+            }
             Verdict::Fire(plan) => match fire_txn(&plan) {
                 Ok(won) => {
                     if won {
@@ -487,6 +595,36 @@ fn serve(cfg: &Config, s: &Serving, counters: &mut Counters) {
                 }
             },
             Verdict::Skip(reason) => {
+                // Shadow: ledger the skip so the comparator can CLASSIFY a
+                // missing new-path firing (condition-narrowed registration vs a
+                // real capture gap). ForeignTenant stays unledgered — the old
+                // path never sees other tenants' events either, so it carries
+                // no comparison signal. A ledger failure retries via nack.
+                if shadow
+                    && !matches!(reason, SkipReason::ForeignTenant)
+                    && let Ok(seq) = i64::try_from(meta.stream_seq)
+                {
+                    if let Err(e) = shadow_observe(
+                        &s.reg.registration_id,
+                        seq,
+                        &mint_evt_run_id(&s.flow.flow_id, meta.stream_seq),
+                        &s.flow.flow_id,
+                        "skip",
+                        Some(skip_token(&reason)),
+                        &envelope,
+                        None,
+                        None,
+                        None,
+                    ) {
+                        counters.effect_retry += 1;
+                        eprintln!(
+                            "wamn::materializer shadow observe (skip) failed ({e}) — nack for redelivery"
+                        );
+                        let _ = msg.nack(cfg.nack_delay_ms);
+                        continue;
+                    }
+                    counters.shadow_skip += 1;
+                }
                 match reason {
                     SkipReason::EntityMismatch => counters.skip_entity += 1,
                     SkipReason::OpMismatch => counters.skip_op += 1,
@@ -496,6 +634,35 @@ fn serve(cfg: &Config, s: &Serving, counters: &mut Counters) {
                 let _ = msg.ack();
             }
             Verdict::Refuse(reason) => {
+                // Shadow: ledger the refusal (its token is a declared cutover
+                // divergence class — e.g. a DELETE the old path fires but this
+                // path refuses under REPLICA IDENTITY DEFAULT). SeqOverflow
+                // cannot bind the ledger's bigint — counted-only, like live.
+                if shadow
+                    && !matches!(reason, RefuseReason::SeqOverflow(_))
+                    && let Ok(seq) = i64::try_from(meta.stream_seq)
+                {
+                    if let Err(e) = shadow_observe(
+                        &s.reg.registration_id,
+                        seq,
+                        &mint_evt_run_id(&s.flow.flow_id, meta.stream_seq),
+                        &s.flow.flow_id,
+                        "refuse",
+                        Some(refuse_token(&reason)),
+                        &envelope,
+                        None,
+                        None,
+                        None,
+                    ) {
+                        counters.effect_retry += 1;
+                        eprintln!(
+                            "wamn::materializer shadow observe (refuse) failed ({e}) — nack for redelivery"
+                        );
+                        let _ = msg.nack(cfg.nack_delay_ms);
+                        continue;
+                    }
+                    counters.shadow_refuse += 1;
+                }
                 // v3 §4: refusals are a DISTINCT, alertable outcome.
                 match &reason {
                     RefuseReason::DepthExceeded { parent } => {

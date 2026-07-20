@@ -5,7 +5,7 @@
 //! test (flip the rule and exactly one test goes red).
 
 use wamn_catalog::Catalog;
-use wamn_event_reg::{EventRegistration, Op, SCHEMA_VERSION, validate};
+use wamn_event_reg::{EventRegistration, Op, RegistrationState, SCHEMA_VERSION, validate};
 
 /// A two-entity catalog. The entity **id** `sales_orders` deliberately differs
 /// from its table **name** `orders`, so a registration proven to resolve is
@@ -38,6 +38,7 @@ fn reg() -> EventRegistration {
         ops: vec![Op::Insert, Op::Update],
         condition: Some("new.status == 'shipped' && old.status != 'shipped'".into()),
         partition_key: Some("new.status".into()),
+        state: RegistrationState::default(),
     }
 }
 
@@ -193,5 +194,42 @@ fn unknown_fields_are_rejected_on_import() {
     // deny_unknown_fields: a smuggled key is not silently dropped.
     let json = r#"{"schema-version":"0.1","registration-id":"x","catalog-id":"shop",
         "flow-id":"f","entity":"sales_orders","ops":["insert"],"surprise":1}"#;
+    assert!(EventRegistration::from_json(json).is_err());
+}
+
+#[test]
+fn state_defaults_to_live_and_live_is_omitted_on_export() {
+    // EVT-CUTOVER (l5i9.18) additive-compat: every pre-state document reads as
+    // LIVE, and a live registration serializes byte-identically to before the
+    // field existed (the frozen-wire golden above stays authoritative).
+    let json = r#"{"schema-version":"0.1","registration-id":"x","catalog-id":"shop",
+        "flow-id":"f","entity":"sales_orders","ops":["insert"]}"#;
+    let r = EventRegistration::from_json(json).unwrap();
+    assert_eq!(r.state, RegistrationState::Live);
+    assert!(!r.state.is_shadow());
+    assert!(!r.to_json().contains("\"state\""));
+}
+
+#[test]
+fn shadow_state_round_trips_and_gates_nothing_else() {
+    let mut r = reg();
+    r.state = RegistrationState::Shadow;
+    let json = serde_json::to_string(&r).unwrap();
+    assert!(json.ends_with(r#""state":"shadow"}"#), "state rides last: {json}");
+    let back = EventRegistration::from_json(&json).unwrap();
+    assert!(back.state.is_shadow());
+    assert_eq!(back, r);
+    // Shadow is an ACTIVATION state, not a validity state — validation is
+    // unchanged (a shadow registration must already be consumable, since the
+    // ledger records what live mode WOULD do).
+    validate(&r, &catalog()).expect("shadow registration validates");
+}
+
+#[test]
+fn a_bogus_state_is_rejected_on_import() {
+    // The dispatcher yields only on 'live' and the materializer parses via this
+    // enum — an unknown state must fail parse (→ HELD), never silently fire.
+    let json = r#"{"schema-version":"0.1","registration-id":"x","catalog-id":"shop",
+        "flow-id":"f","entity":"sales_orders","ops":["insert"],"state":"bogus"}"#;
     assert!(EventRegistration::from_json(json).is_err());
 }

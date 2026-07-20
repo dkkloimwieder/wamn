@@ -427,6 +427,39 @@ pub fn active_flows_sql() -> String {
         .to_string()
 }
 
+/// Does this project database carry the registration surface at all? The
+/// dispatcher's yield guard ([`cdc_live_flows_sql`]) reads
+/// `catalog.event_registrations`, which a project provisioned before the
+/// catalog surface (or a gate's self-contained fixture DB) may not have —
+/// referencing a missing table is a parse-time error that would kill the whole
+/// poll transaction, so the guard is a two-step: this probe first, the read
+/// only when it resolves. `to_regclass` is NULL-not-error on a missing name.
+pub fn event_registrations_exist_sql() -> String {
+    "SELECT to_regclass('catalog.event_registrations') IS NOT NULL".to_string()
+}
+
+/// The dispatcher's CUTOVER YIELD set (EVT-CUTOVER, l5i9.18): every flow with a
+/// **live** event registration. A live registration means the CDC materializer
+/// fires this flow (`<flow>:evt:<stream_seq>` ids), and the two paths' run-id
+/// namespaces never collide under `ON CONFLICT` — so the outbox path must not
+/// fire it too: `match_outbox` runs with these flows excluded, and their rows
+/// consume as unmatched (acked-unfired; the stream is their delivery now).
+///
+/// State rides the stored jsonb document; an ABSENT key is `live` (the
+/// pre-l5i9.18 default — see `wamn_event_reg::RegistrationState`), so the
+/// COALESCE makes exactly the non-shadow registrations yield. A registration
+/// whose document is malformed beyond the state key still yields here when its
+/// state reads `live` — on the materializer side that document is HELD, so the
+/// event is delayed-never-lost (the invalid-flow posture), never double-fired.
+/// Read INSIDE the poll transaction, alongside the registry re-read, so a state
+/// flip and a poll serialize on the same snapshot.
+pub fn cdc_live_flows_sql() -> String {
+    "SELECT DISTINCT flow_id FROM catalog.event_registrations \
+      WHERE tenant_id = current_setting('app.tenant', true) \
+        AND COALESCE(registration->>'state', 'live') = 'live'"
+        .to_string()
+}
+
 /// Poll the pending outbox batch, oldest-first. `FOR UPDATE SKIP LOCKED` gives
 /// two dispatcher replicas polling concurrently disjoint batches: each row stays
 /// locked until its poll transaction (fire + ack) commits, and a crashed
@@ -510,6 +543,31 @@ pub fn outbox_prune_sql(limit: usize) -> String {
 pub fn outbox_insert_sql() -> String {
     "INSERT INTO outbox (tenant_id, table_name, event, payload) \
      VALUES (current_setting('app.tenant', true), $1, $2, $3::text::jsonb)"
+        .to_string()
+}
+
+/// The materializer's SHADOW observation (EVT-CUTOVER, l5i9.18): for a
+/// registration in `state: shadow` the guest records the full decision — what
+/// live mode WOULD do — instead of firing. One row per (registration,
+/// stream_seq) delivery; the PK `ON CONFLICT DO NOTHING` is the same
+/// exactly-once discipline as the fire path, so JetStream redelivery never
+/// inflates the ledger and the comparison stays count-exact. No run, no queue
+/// row, no doorbell — the ledger IS the entire shadow effect.
+///
+/// Params: `$1` registration_id, `$2` stream_seq, `$3` run_id (the id live
+/// mode would mint — [`crate::mint_evt_run_id`]), `$4` flow_id, `$5` verdict
+/// (`fire`|`skip`|`refuse`), `$6` reason (the skip/refuse discriminant token;
+/// NULL for fire), `$7` table_name, `$8` op, `$9` entity (nullable — the
+/// unmapped marker), `$10` partition_key (nullable), `$11` partition_policy
+/// (nullable; fire-only), `$12` input_json (JSON text, nullable; fire-only —
+/// what live mode would submit as the run input).
+pub fn shadow_observe_sql() -> String {
+    "INSERT INTO evt_shadow (tenant_id, registration_id, stream_seq, run_id, flow_id, \
+                             verdict, reason, table_name, op, entity, \
+                             partition_key, partition_policy, input_json) \
+     VALUES (current_setting('app.tenant', true), $1, $2, $3, $4, $5, $6, $7, $8, $9, \
+             $10, $11, $12::text::jsonb) \
+     ON CONFLICT (tenant_id, registration_id, stream_seq) DO NOTHING"
         .to_string()
 }
 
@@ -771,5 +829,55 @@ mod tests {
         let c = complete_dequeue_sql();
         assert!(c.contains(wamn_run_store::sql::update_run_completed().text()));
         assert!(c.contains(&dequeue_sql()));
+    }
+
+    /// EVT-CUTOVER (l5i9.18): the shadow observation is exactly-once per
+    /// (registration, stream_seq) and tenant-scoped like every other writer —
+    /// and its column list cannot drift from the shipped evt_shadow DDL.
+    #[test]
+    fn shadow_observe_is_deduped_tenant_scoped_and_ddl_coherent() {
+        let s = shadow_observe_sql();
+        assert!(s.contains("INSERT INTO evt_shadow"), "unqualified — search_path");
+        assert!(s.contains("current_setting('app.tenant', true)"));
+        assert!(s.contains("ON CONFLICT (tenant_id, registration_id, stream_seq) DO NOTHING"));
+        assert!(s.contains("$12::text::jsonb"), "input_json binds as text");
+        assert!(!s.contains("$13"));
+
+        // Drift guard against deploy/sql/run-queue.sql: every inserted column
+        // exists in the CREATE TABLE block (the matbench include_str! lesson).
+        let ddl = include_str!("../../../deploy/sql/run-queue.sql");
+        let table = ddl
+            .split("CREATE TABLE wamn_run.evt_shadow")
+            .nth(1)
+            .expect("evt_shadow DDL present")
+            .split(';')
+            .next()
+            .unwrap();
+        for col in [
+            "tenant_id", "registration_id", "stream_seq", "run_id", "flow_id",
+            "verdict", "reason", "table_name", "op", "entity",
+            "partition_key", "partition_policy", "input_json",
+        ] {
+            assert!(table.contains(col), "evt_shadow DDL missing column {col}");
+        }
+        assert!(table.contains("PRIMARY KEY (tenant_id, registration_id, stream_seq)"));
+    }
+
+    /// EVT-CUTOVER (l5i9.18): the dispatcher's yield set is the LIVE-state
+    /// registrations (absent state = live, the pre-cutover default), read
+    /// tenant-scoped, and guarded by the table-existence probe (referencing a
+    /// missing catalog.event_registrations would kill the poll transaction).
+    #[test]
+    fn cdc_live_flows_reads_live_state_with_default_and_probe() {
+        let probe = event_registrations_exist_sql();
+        assert!(probe.contains("to_regclass('catalog.event_registrations')"));
+
+        let s = cdc_live_flows_sql();
+        assert!(s.contains("SELECT DISTINCT flow_id FROM catalog.event_registrations"));
+        assert!(s.contains("current_setting('app.tenant', true)"));
+        assert!(
+            s.contains("COALESCE(registration->>'state', 'live') = 'live'"),
+            "absent state must read as live"
+        );
     }
 }

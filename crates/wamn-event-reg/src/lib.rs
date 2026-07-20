@@ -16,7 +16,7 @@
 mod model;
 mod validate;
 
-pub use model::{EventRegistration, SCHEMA_VERSION};
+pub use model::{EventRegistration, RegistrationState, SCHEMA_VERSION};
 pub use validate::validate;
 
 // Re-exported so a consumer names the op set through this one crate; it is the

@@ -54,7 +54,7 @@
 //! that project's cadence and clears its stale cron wake-hint (the durable
 //! anchor re-fires the tick exactly once on the next successful sweep).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr as _;
 use std::time::Duration;
@@ -65,11 +65,11 @@ use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
 use wamn_flow::{Flow, Ordering, Trigger};
 use wamn_run_queue::{
-    Firing, OutboxRow, PartitionPolicy, RowEventFlow, active_flows_sql, cron_firing,
-    cron_last_run_sql, cron_tick_of, due_tick, enqueue_sql, enqueue_with_policy_sql, match_outbox,
-    next_fire, next_interval, next_reconcile, outbox_ack_sql, outbox_hold_sql, outbox_poll_sql,
-    outbox_prune_sql, parked_due_sql, plan_ack, plan_hold, reconcile_due,
-    write_ahead_triggered_run_sql,
+    Firing, OutboxRow, PartitionPolicy, RowEventFlow, active_flows_sql, cdc_live_flows_sql,
+    cron_firing, cron_last_run_sql, cron_tick_of, due_tick, enqueue_sql, enqueue_with_policy_sql,
+    event_registrations_exist_sql, match_outbox, next_fire, next_interval, next_reconcile,
+    outbox_ack_sql, outbox_hold_sql, outbox_poll_sql, outbox_prune_sql, parked_due_sql, plan_ack,
+    plan_hold, reconcile_due, write_ahead_triggered_run_sql,
 };
 
 // R16b (wamn-2jkm.20): the dispatcher's pinned session `SET`s interpolate the
@@ -377,6 +377,41 @@ fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
     reg
 }
 
+/// The flows the outbox path must YIELD (EVT-CUTOVER, l5i9.18): every flow with
+/// a live event registration, read within the poll transaction. Two-step: the
+/// `to_regclass` probe first — a project database without the catalog surface
+/// (pre-catalog provisioning, a gate's self-contained fixture) has no
+/// registrations and must not error the poll.
+async fn cdc_live_flows(
+    tx: &tokio_postgres::Transaction<'_>,
+) -> anyhow::Result<HashSet<String>> {
+    let present: bool = tx
+        .query_one(&event_registrations_exist_sql(), &[])
+        .await?
+        .get(0);
+    if !present {
+        return Ok(HashSet::new());
+    }
+    Ok(tx
+        .query(&cdc_live_flows_sql(), &[])
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect())
+}
+
+/// Pure yield filter (EVT-CUTOVER, l5i9.18): drop every row-event flow the CDC
+/// materializer owns (a LIVE registration exists), keep the rest. Only the
+/// match set shrinks — a yielded flow is neither held (its rows consume as
+/// unmatched) nor touched on the cron path (yield is a row-event concern).
+fn yield_cdc_live(row_events: &[RowEventFlow], live_cdc: &HashSet<String>) -> Vec<RowEventFlow> {
+    row_events
+        .iter()
+        .filter(|f| !live_cdc.contains(&f.flow_id))
+        .cloned()
+        .collect()
+}
+
 /// The dispatcher: per-project state + the optional doorbell client + the
 /// cadence config. One instance is one replica; running several is safe (the
 /// deterministic-id `ON CONFLICT` story — gated by dispatchbench `race`).
@@ -544,6 +579,16 @@ impl Dispatcher {
                 // flow-activation race). Deterministic ids keep any boundary
                 // re-fire exactly-once.
                 let reg = parse_registry(&p.spec.name, &tx.query(&active_flows_sql(), &[]).await?);
+                // EVT-CUTOVER (l5i9.18): a flow with a LIVE event registration
+                // is fired by the CDC materializer (`<flow>:evt:<seq>` ids);
+                // the two paths' run-id namespaces are disjoint, so ON CONFLICT
+                // cannot collapse a double-fire — this path must YIELD the flow
+                // instead. Read inside the poll transaction (with the registry)
+                // so a registration state flip and a poll serialize on one
+                // snapshot; a row whose only match was a yielded flow consumes
+                // as unmatched (acked-unfired — the stream owns its delivery).
+                let live_cdc = cdc_live_flows(&tx).await?;
+                let row_events = yield_cdc_live(&reg.row_events, &live_cdc);
                 let polled: Vec<OutboxRow> = rows
                     .iter()
                     .map(|r| OutboxRow {
@@ -556,7 +601,7 @@ impl Dispatcher {
                     })
                     .collect();
                 let triggered = write_ahead_triggered_run_sql();
-                for f in match_outbox(&polled, &reg.row_events) {
+                for f in match_outbox(&polled, &row_events) {
                     // 5.11 ordering + D20 policy: the partition key from the
                     // flow's declaration, evaluated over this firing's row-event
                     // input, and — for a keyed row — its declared
@@ -1003,9 +1048,9 @@ fn init_crypto() {
 mod tests {
     use super::{
         Ordering, PartitionPolicy, Registry, TickReport, partition_key_for_firing,
-        partition_policy_for_firing, valid_tenant,
+        partition_policy_for_firing, valid_tenant, yield_cdc_live,
     };
-    use wamn_run_queue::Firing;
+    use wamn_run_queue::{Firing, RowEventFlow};
 
     fn firing(flow_id: &str, input_json: &str) -> Firing {
         Firing {
@@ -1116,5 +1161,32 @@ mod tests {
             ..TickReport::default()
         };
         assert!(backlog.found_work());
+    }
+
+    /// EVT-CUTOVER (l5i9.18): a flow with a LIVE event registration is yielded
+    /// from the outbox match set — the CDC materializer owns its firing and the
+    /// disjoint run-id namespaces (`:outbox:` vs `:evt:`) mean ON CONFLICT
+    /// cannot collapse a double-fire. Flows without a live registration (which
+    /// includes SHADOW registrations — absent from the live set) keep firing.
+    #[test]
+    fn live_cdc_registration_yields_the_flow_from_outbox_matching() {
+        let rev = |flow_id: &str| RowEventFlow {
+            flow_id: flow_id.into(),
+            flow_version: 1,
+            table: "dispositions".into(),
+            event: "insert".into(),
+        };
+        let row_events = vec![rev("cut-over"), rev("still-old"), rev("shadowing")];
+
+        // "cut-over" is live on CDC; "shadowing" has only a shadow registration
+        // (not in the live set) — it must keep firing on the outbox path, that
+        // is the whole point of the compare-only shadow.
+        let live: std::collections::HashSet<String> = ["cut-over".to_string()].into();
+        let kept = yield_cdc_live(&row_events, &live);
+        assert_eq!(kept, vec![rev("still-old"), rev("shadowing")]);
+
+        // No live registrations (or no catalog surface at all) = identity.
+        let none = std::collections::HashSet::new();
+        assert_eq!(yield_cdc_live(&row_events, &none), row_events);
     }
 }

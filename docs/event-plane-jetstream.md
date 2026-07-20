@@ -299,8 +299,47 @@ first importer + causation thread + matbench gate; first C-MAT numbers
 (local provenance — the in-cluster campaign re-measures). Wire schemas FROZEN
 0.1.0 into code (wamn-l5i9.30, 2026-07-19, §4 status block). Cluster knobs
 rendered (wamn-l5i9.32, 2026-07-20; the one-time live wamn-pg WAL-bound
-retrofit is an owner-run `kubectl patch`, see the bead notes). Next on this
-phase: l5i9.18 shadow/cutover — both its gates (.30 + .32) are closed.*
+retrofit is an owner-run `kubectl patch`, see the bead notes).*
+
+*Shadow/cutover shipped (wamn-l5i9.18, 2026-07-20). **The comparison,
+defined** (the open question this bead carried; executable form = `cutbench`):
+the shadow is **compare-only by construction** — a registration gains
+`state: shadow | live` (additive under the 0.1.x freeze; an absent field reads
+live), and a shadow registration's materializer runs the FULL decision
+pipeline but writes only the `wamn_run.evt_shadow` ledger (verdict + would-be
+run id + input + kq0z key/policy; PK `(tenant, registration, stream_seq)`
+`ON CONFLICT DO NOTHING` = redelivery-exact) — no run, no queue row, no
+doorbell. Equivalence vs the old path joins ledger `fire` rows against
+outbox-sourced `runs` on **(flow, table, op, payload row id)** — never run id
+(the `:outbox:`/`:evt:` namespaces are disjoint by design) and never seq (the
+outbox IDENTITY and the stream seq share no domain) — with payloads compared
+under the table-type canonicalization
+`to_jsonb(jsonb_populate_record(NULL::app.<t>, payload))` (CDC's text-typed
+images and the trigger's `to_jsonb` meet at the column types), key+policy
+equal pairwise, and every unmatched old-path firing accounted to a **declared
+divergence class**: `condition-false` (registration narrower than the
+trigger), `tenant-unscopable` (DELETE under REPLICA IDENTITY DEFAULT —
+retires with the l5i9.31 knob), `depth-exceeded` (causation budget). An
+unclassified gap on either side FAILS — that is the capture gap / double-fire
+the shadow exists to catch. **The cutover** is per-flow and structural: the
+dispatcher's poll transaction reads the live-state registrations
+(`cdc_live_flows_sql`, same-snapshot with the registry re-read) and YIELDS
+those flows from outbox matching (their rows consume unmatched) — a live
+registration is simultaneously the materializer's on-switch and the outbox
+path's off-switch, closing the double-fire the v2→v3 run-id change reopened
+by mutual exclusion instead of id collision. Flip runbook + the in-flight
+window: §11. Gate: `cutbench` (deploy/gates/cutbench-job.yaml) — ONE real
+write program drives triggers→outbox→dispatcher AND slot→pg_walstream
+reader→JetStream→materializer.wasm concurrently, 26 asserts + a 4-mutant
+kill; recipe docs/build-and-test.md [EVT-CUTOVER]. The plan text's "one week
+of POC traffic" is an OPERATIONAL shadow window for a real deployment (§11
+runbook), not a repo state: no production flow rides the outbox today (F1 is
+a sync webhook; F4 is born ON the CDC path per its bead note), so the
+platform cutover ships with an empty migrating set and cutbench + the POC-F4
+regression gate (wamn-lxk, now unblocked) carry the evidence. Teardown (§3)
+is next: l5i9.19, which also owns removing the shadow scaffolding (bead
+note); the under-sustained-traffic migration fence is deliberately unbuilt
+(wamn-0ynt, P4).*
 **Benches:** C-MAT (deliveries→enqueue rate, duplicate-storm cost), C-E2E
 (commit→run-start distribution; fan-out 1→N vs old path — the one
 before/after chart), C-INTERFERENCE (app-CRUD p99 while capture+materialize run
@@ -365,6 +404,24 @@ credentials = new top privilege tier; stream retains *every* change (bigger
 honeypot → per-org accounts mandatory; GDPR answer = bounded retention, in
 writing); two-layer exactly-once interleavings verified at Phase 2; second
 durability domain on-call (raft, disk, lag, retention).
+
+**Runbook — per-flow cutover flip (l5i9.18):** a flow moves outbox→CDC by its
+registration's `state`: keep `shadow` while the comparison window runs (the
+`evt_shadow` ledger accrues; the outbox path keeps firing), then flip in the
+order **deactivate the flow → verify settled (no pending outbox rows for it;
+one poll interval elapsed) → set `state: live` → reactivate**. In the window
+the old path consumes-unfired (an inactive flow is unmatched) and the
+materializer HOLDS the registration (inactive flow), so window events fire
+exactly once, on the new path, after reactivation — delayed, never lost.
+Flipping under active traffic WITHOUT the quiesce leaves a seconds-wide
+overlap (an in-flight pre-flip poll and the materializer can both fire one
+event; the disjoint run-id namespaces cannot collapse it) — flip in a quiet
+window; the hard fence is deliberately unbuilt while no production flow rides
+the outbox (wamn-0ynt). A delete-subscribed flow must NOT go live before its
+entity's REPLICA IDENTITY FULL knob (l5i9.31): its registration refuses
+RI-DEFAULT deletes (the EXPECTED-DELETE-RI class) and cutover would drop its
+delete coverage — cutbench pins the per-flow (selective) flip for exactly
+this case.
 
 **Runbook — sustained publish stall (E2):** a held LSN is delivery being
 *delayed, never lost* — but it also freezes WAL retention on the source DB, so

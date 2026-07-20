@@ -179,3 +179,60 @@ CREATE POLICY outbox_tenant ON wamn_run.outbox
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.outbox TO wamn_app;
+
+-- ---------------------------------------------------------------------------
+-- evt_shadow — the EVT-CUTOVER (l5i9.18) shadow ledger. CUTOVER SCAFFOLDING:
+-- lives only until the §3 teardown completes (removal rides wamn-l5i9.19 with
+-- the outbox machinery it exists to compare against).
+--
+-- For a registration in `state: shadow` the materializer runs its FULL
+-- decision pipeline per delivered event and records the verdict here instead
+-- of firing — what live mode WOULD have done (the would-be run id, the input
+-- envelope, the kq0z key+policy pair) with no run row, no queue row, and no
+-- doorbell. The v2→v3 run-id change (`{flow}:outbox:{seq}` vs
+-- `<flow>:evt:<stream_seq>`) removed cross-path ON CONFLICT collision safety,
+-- so dual-running is observe-only BY CONSTRUCTION: this table is the entire
+-- shadow effect. The cutover comparison then joins these rows against the
+-- outbox path's `runs` (trigger_source LIKE 'outbox:%') on
+-- (flow, table, op, payload identity) — cutbench is the executable form.
+--
+-- One row per (registration, stream_seq) delivery; the PK's ON CONFLICT DO
+-- NOTHING is the fire path's exactly-once discipline, so JetStream redelivery
+-- never inflates the ledger and the comparison stays count-exact. `verdict`
+-- covers every decision (fires AND skips/refusals) so the comparator can
+-- CLASSIFY divergence — an old-path firing with no ledger row at all is a
+-- capture gap, the failure the shadow exists to catch. Foreign-tenant skips
+-- are not recorded (the old path never sees other tenants' events either;
+-- RLS scopes this table exactly like the outbox).
+-- ---------------------------------------------------------------------------
+CREATE TABLE wamn_run.evt_shadow (
+    tenant_id        text NOT NULL CHECK (tenant_id <> ''),
+    registration_id  text NOT NULL,
+    stream_seq       bigint NOT NULL,
+    -- The run id live mode would mint (mint_evt_run_id — zero-padded 20).
+    run_id           text NOT NULL,
+    flow_id          text NOT NULL,
+    verdict          text NOT NULL CHECK (verdict IN ('fire', 'skip', 'refuse')),
+    -- The skip/refuse discriminant token (NULL for fire): condition-false,
+    -- op-mismatch, entity-mismatch, depth-exceeded, tenant-unscopable,
+    -- old-value-condition-blocked, condition-error, seq-overflow.
+    reason           text,
+    table_name       text NOT NULL,
+    op               text NOT NULL,
+    -- The envelope's stable entity id (ABSENT/NULL = the unmapped marker).
+    entity           text,
+    -- Fire-only: the kq0z-coherent pair live mode would stamp on the queue row.
+    partition_key    text,
+    partition_policy text,
+    -- Fire-only: the run input live mode would submit (the comparison's
+    -- payload side).
+    input_json       jsonb,
+    observed_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, registration_id, stream_seq)
+);
+ALTER TABLE wamn_run.evt_shadow ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.evt_shadow FORCE ROW LEVEL SECURITY;
+CREATE POLICY evt_shadow_tenant ON wamn_run.evt_shadow
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.evt_shadow TO wamn_app;

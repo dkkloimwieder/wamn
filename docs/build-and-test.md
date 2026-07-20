@@ -1026,6 +1026,63 @@ docker rm -f sample-nats
 #   kubectl -n wamn-system logs job/samplebench
 ```
 
+### [EVT-CUTOVER / wamn-l5i9.18] shadow equivalence + the per-flow flip (cutbench)
+
+Docs: docs/event-plane-jetstream.md §7 Phase 2 (THE COMPARISON, defined) + §11
+(the flip runbook). A registration gains `state: shadow | live` (absent = live
+— additive 0.1.x): shadow = the materializer observes into the
+`wamn_run.evt_shadow` ledger (no run/queue/doorbell); live = it fires AND the
+dispatcher YIELDS the flow from outbox matching (`cdc_live_flows_sql`, read in
+the poll transaction) — mutual exclusion replaces the id-collision safety the
+v2→v3 run-id change removed. `cutbench` is the gate of record: ONE write
+program (a wamn_app session on floor tables carrying the REAL outbox triggers
+AND a REAL logical slot) feeds the real dispatcher engine and the embedded
+real `wamn-cdc-reader` → JetStream → `materializer.wasm` concurrently; the
+comparator joins on (flow, table, op, payload row id) with
+`jsonb_populate_record` canonicalization and declared divergence classes,
+then the phase-2 flip drills the §11 runbook (flip-window writes fire exactly
+once, on the new path; `disp-del` proves the flip is per-flow).
+
+```bash
+cargo test -p wamn-event-reg      # state: default-live, shadow round-trip, bogus rejected
+cargo test -p wamn-run-queue      # shadow_observe/cdc_live_flows pins + evt_shadow DDL coherence
+cargo test -p wamn-dispatcher     # the pure yield filter (live yields; shadow keeps firing)
+cargo test -p wamn-gates cutbench # fixture frozen-type + comparator join-key drift guards
+# Local live gate (throwaway PG18 `wal_level=logical` + JetStream; ~60s):
+docker run -d --name wamn-cut-pg -e POSTGRES_PASSWORD=postgres -p 5449:5432 \
+  postgres:18 -c wal_level=logical -c fsync=off
+docker run -d --name wamn-cut-nats -p 4262:4222 nats:2.10-alpine -js -sd /data
+(cd components && cargo build -p materializer --target wasm32-wasip2)
+cargo build -p wamn-gates
+./target/debug/wamn-gates cutbench \
+  --component components/target/wasm32-wasip2/debug/materializer.wasm \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5449/postgres \
+  --nats-url nats://127.0.0.1:4262
+# Regressions on the same rig: matbench (default-live registrations + the new
+# evt_shadow DDL) and dispatchbench (the missing-catalog probe path).
+docker rm -f wamn-cut-pg wamn-cut-nats
+# In-cluster gate of record (two-stage image; the fixture postgres carries
+# wal_level=logical — deploy/platform/postgres.yaml — apply + restart once):
+(cd components && cargo build --release --target wasm32-wasip2)
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system apply -f deploy/platform/postgres.yaml
+kubectl -n wamn-system delete pod -l app=postgres   # pick up the wal_level knob
+kubectl -n wamn-system delete job cutbench --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/cutbench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/cutbench --timeout=600s
+kubectl -n wamn-system logs job/cutbench | tail -45
+```
+
+Mutation harness: scratchpad `mutate_l5i9_18.py` — M1 the dispatcher yield
+filter dropped (killed by cutbench "dispatcher yields the live flows"), M2 the
+guest ignores shadow state (cutbench "shadow fired NOTHING real"), M3
+`shadow_observe_sql` loses ON CONFLICT (named unit
+`shadow_observe_is_deduped_tenant_scoped_and_ddl_coherent`), M4 the
+registration state defaults to shadow (named unit
+`state_defaults_to_live_and_live_is_omitted_on_export`); apply/test/restore
+with sha256, DEBUG builds.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

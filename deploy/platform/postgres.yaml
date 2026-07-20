@@ -46,6 +46,11 @@ spec:
             - "fsync=off"
             - "-c"
             - "synchronous_commit=off"
+            # cutbench (l5i9.18) runs a REAL logical slot + pg_walstream session
+            # against its throwaway database on this fixture — matching the
+            # CNPG default the production pools carry (l5i9.32).
+            - "-c"
+            - "wal_level=logical"
           ports:
             - containerPort: 5432
           volumeMounts:
