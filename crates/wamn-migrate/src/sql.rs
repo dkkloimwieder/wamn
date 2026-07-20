@@ -80,6 +80,21 @@ pub fn record_migration_sql() -> String {
         .to_string()
 }
 
+/// Select every event registration for `catalog_id` across ALL tenants (the
+/// driver connects as a superuser, so RLS is bypassed and every tenant's row is
+/// returned), projecting the columns the D24 orphan guard needs
+/// ([`crate::check_registration_orphans`]). Cross-tenant on purpose: a shared
+/// entity table's removal orphans every tenant's registration on it, and the
+/// refusal must name each. Ordered for a deterministic error listing. SR12: the
+/// pure decision has no RLS/superuser — the throwaway-PG orphan-guard gate
+/// (wamn-ctl `tests/orphan_guard_live.rs`) covers that this really sees all
+/// tenants' rows.
+pub fn select_registrations_for_catalog_sql() -> String {
+    "SELECT registration_id, tenant_id, entity_id FROM catalog.event_registrations \
+     WHERE catalog_id = $1 ORDER BY tenant_id, registration_id"
+        .to_string()
+}
+
 /// A cheap, dependency-free checksum (FNV-1a 64) of the applied DDL script — an
 /// integrity/audit fingerprint stored in the history row, not a security hash.
 pub fn ddl_checksum(sql: &str) -> String {

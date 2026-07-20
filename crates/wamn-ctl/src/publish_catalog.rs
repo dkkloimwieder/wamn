@@ -133,6 +133,12 @@ async fn publish(
 ) -> anyhow::Result<()> {
     let schema = &args.schema;
 
+    // D24 (EVT-REG, wamn-rmxa): refuse a publish that would drop an entity still
+    // referenced by an event registration — BEFORE any mutation, naming every
+    // orphan. The owner deletes the registrations via the API first; publish
+    // never seeds or prunes them.
+    guard_registration_orphans(client, cat).await?;
+
     // Ensure the non-superuser runtime role exists (pre-created in production).
     client
         .batch_execute(
@@ -296,6 +302,50 @@ pub async fn upsert_entity_map(
             .with_context(|| format!("upsert entity map row for {:?}", e.id))?;
     }
     Ok(())
+}
+
+/// The D24 registration-orphan guard (EVT-REG, wamn-rmxa), shared by
+/// publish-catalog and migrate-catalog. Reads every event registration for
+/// `cat`'s catalog id across ALL tenants (the caller connects as a superuser, so
+/// RLS is bypassed) and refuses when any references an entity `cat` does not
+/// keep, naming every orphan (the pure decision `wamn_migrate::check_registration_orphans`).
+/// A DB with no `catalog.event_registrations` table (a project not yet
+/// registration-provisioned) has nothing to orphan, so the probe returns a clean
+/// pass. Read-only: a refusal mutates nothing.
+pub(crate) async fn guard_registration_orphans(
+    client: &impl tokio_postgres::GenericClient,
+    cat: &wamn_catalog::Catalog,
+) -> anyhow::Result<()> {
+    let table_present: bool = client
+        .query_one(
+            "SELECT to_regclass('catalog.event_registrations') IS NOT NULL",
+            &[],
+        )
+        .await
+        .context("probe catalog.event_registrations")?
+        .get(0);
+    if !table_present {
+        return Ok(());
+    }
+    let rows = client
+        .query(
+            &wamn_migrate::sql::select_registrations_for_catalog_sql(),
+            &[&cat.catalog_id],
+        )
+        .await
+        .context("read event registrations for the D24 orphan guard")?;
+    let referenced: Vec<wamn_migrate::RegistrationRef> = rows
+        .iter()
+        .map(|row| wamn_migrate::RegistrationRef {
+            registration_id: row.get(0),
+            tenant: row.get(1),
+            entity_id: row.get(2),
+        })
+        .collect();
+    let present: std::collections::BTreeSet<&str> =
+        cat.entities.iter().map(|e| e.id.as_str()).collect();
+    wamn_migrate::check_registration_orphans(&present, &referenced)
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 // ---------------------------------------------------------------------------

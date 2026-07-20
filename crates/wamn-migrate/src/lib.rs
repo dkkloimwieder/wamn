@@ -63,6 +63,7 @@
 
 mod engine;
 mod model;
+mod orphan;
 pub mod sql;
 
 pub use engine::{dry_run, plan_migration, rollback_plan};
@@ -70,6 +71,7 @@ pub use model::{
     ApplyPlan, Confirmation, Env, MigrationError, MigrationReport, MigrationRequest, RollbackPlan,
     SqlStatement, Value,
 };
+pub use orphan::{OrphaningPublish, RegistrationRef, check_registration_orphans};
 
 // Re-exported so a driver can name the wamn-ddl / wamn-schema types the engine
 // returns without a direct dependency on those crates.

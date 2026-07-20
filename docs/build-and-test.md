@@ -922,6 +922,31 @@ docker rm -f evtreg-pg
 (cd components && cargo build -p api-gateway --target wasm32-wasip2)
 ```
 
+### [EVT-REG/D24 / wamn-rmxa] publish/migrate-catalog refuse an orphaning publish
+
+Docs: platform-plan decision table D24. Both `publish-catalog` and
+`migrate-catalog` REFUSE a catalog that would remove an entity still referenced
+by a row in `catalog.event_registrations` — naming every orphaned registration
+(id + tenant + entity) across ALL tenants — and never seed or prune
+registrations (the owner deletes them via the wamn-api registration surface
+first). The pure decision + the `$n` read builder live in `wamn-migrate`
+(`check_registration_orphans`, `sql::select_registrations_for_catalog_sql`); the
+two `wamn-ctl` verbs share one read-only guard helper
+(`publish_catalog::guard_registration_orphans`) that runs BEFORE any mutation.
+
+```bash
+cargo test -p wamn-migrate                 # pure decision + mutation-flavored unit tests
+cargo clippy -p wamn-migrate -p wamn-ctl --all-targets
+# Live gate (throwaway PG): drives the REAL verbs — seed+publish a catalog, register
+# entity A as two tenants, attempt a publish/migrate that removes A → REFUSAL naming
+# both tenants' rows + NOTHING mutated; delete the registrations → proceeds; and a
+# removal of an UNREFERENCED entity proceeds. Hermetic (drops+recreates its schemas):
+docker run -d --name wave3-pg-rmxa -p 55431:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:55431/postgres \
+  cargo test -p wamn-ctl --test orphan_guard_live -- --nocapture
+docker rm -f wave3-pg-rmxa
+```
+
 ### [EVT-MAT / wamn-l5i9.17] materializer — CDC events → flow runs (Service-first)
 
 Docs: docs/event-plane-jetstream.md §5 · decisions D19–D24. The Service-first

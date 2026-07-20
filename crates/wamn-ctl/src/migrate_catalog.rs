@@ -121,6 +121,14 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // D24 (EVT-REG, wamn-rmxa): refuse a migration that would remove an entity
+    // still referenced by an event registration — across ALL tenants, since the
+    // entity table is shared. Read-only pre-check on the same superuser
+    // connection, BEFORE the apply transaction opens, so a refusal mutates
+    // nothing and fires independently of the destructive-backup gate. Shared
+    // with publish-catalog (the bead's carrier verb).
+    crate::publish_catalog::guard_registration_orphans(&client, &target).await?;
+
     let plan = match apply_catalog_target(
         &mut client,
         &args.tenant,
