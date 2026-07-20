@@ -1,0 +1,22 @@
+package wamn:js-sample@0.1.0;
+
+/// The FIRST `wamn:jetstream/producer` importer + the adopter template (E10-e2e,
+/// wamn-l5i9.57). A wasi:cli/run command component that drains a durable pull
+/// consumer and re-publishes a derived message per event — the smallest thing
+/// that exercises BOTH sides of the package (consume + produce) end-to-end.
+///
+/// The materializer (l5i9.17) was the first importer, but it only CONSUMES
+/// (types + consumer + doorbell); nothing published through `producer` until
+/// this sample. It deliberately imports NEITHER `wamn:postgres` NOR the
+/// `doorbell` — a producer/consumer adopter needs only these three interfaces,
+/// and keeping the surface minimal is the whole point of a template.
+///
+/// Config rides `wasi:cli` env (`WAMN_SAMPLE_*`), never the WIT: the stream +
+/// durable name to bind, the subject filter, the output subject, and the
+/// `Nats-Msg-Id` prefix. The connection itself is host-injected — a guest never
+/// names a NATS URL (the `wamn:jetstream` ownership invariant).
+world sample {
+  import wamn:jetstream/types@0.1.0;
+  import wamn:jetstream/consumer@0.1.0;
+  import wamn:jetstream/producer@0.1.0;
+}

@@ -993,6 +993,39 @@ M2 root-`old` detection loses Subexpr context, M3 `enqueue_evt_sql` drops
 typo — each fails a NAMED unit test; M5 (guest skips the doorbell ring) fails
 matbench's `8 doorbell rings` assert. Apply/test/restore with sha256, DEBUG.
 
+### [E10-E2E / wamn-l5i9.57] samplebench — component-driven wamn:jetstream e2e + the js-sample adopter template
+
+Docs: docs/event-plane-jetstream.md §5 · docs/wamn-jetstream.wit (FROZEN 0.1.0).
+`components/samples/js-sample` is the **adopter template** — the smallest
+wasi:cli/run guest that drives BOTH sides of the frozen `wamn:jetstream@0.1.0`
+package and the **first `producer` importer** (the materializer, l5i9.17, only
+consumes). It binds a durable pull consumer, drains it, and per event PUBLISHes
+a derived message carrying a deterministic `Nats-Msg-Id` (`<prefix>:<input
+stream-seq>` — so a redelivered input re-publishes an identical id and dedupes),
+then acks; a persistent `publish-rejected` terminates the input. `samplebench`
+drives it via CommandPre + the REAL `WamnJetstream` plugin over a throwaway
+JetStream (input + output streams), asserting: N fetched+acked, N derived stored
+on the output subject with server acks, ack-floor-advanced (rebind fetches
+nothing), full-redelivery dedupe (delete the durable → same ids come back
+`duplicate = true`, output count unchanged), and the producer error path
+(publish to an uncovered subject → `publish-rejected` surfaces as a `js-error`).
+
+```bash
+cargo test -p wamn-host --test jetstream_wit_coherence   # docs WIT == host + both vendored guest copies (materializer + js-sample)
+(cd components && cargo build -p js-sample --target wasm32-wasip2 --release)
+# Local gate — REAL guest + REAL WamnJetstream plugin + REAL JetStream:
+docker run -d --name sample-nats -p 44232:4222 nats:2.10 -js
+./target/debug/wamn-gates samplebench \
+  --component components/target/wasm32-wasip2/release/js-sample.wasm \
+  --nats-url nats://127.0.0.1:44232
+docker rm -f sample-nats
+# In-cluster: rebake gates (samplebench + /bench/js-sample.wasm), kind load,
+# then the samplebench Job against the data-plane evt-nats (no Postgres):
+#   kubectl -n wamn-system apply -f deploy/gates/samplebench-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/samplebench --timeout=300s
+#   kubectl -n wamn-system logs job/samplebench
+```
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

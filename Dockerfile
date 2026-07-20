@@ -96,6 +96,11 @@ COPY components/target/wasm32-wasip2/release/api_gateway.wasm /bench/api-gateway
 # wamn:jetstream; the matbench gate drives it via CommandPre — the same wasm the
 # WorkloadDeployment pulls from the registry in production).
 COPY components/target/wasm32-wasip2/release/materializer.wasm /bench/materializer.wasm
+# l5i9.57 E10-e2e wamn:jetstream sample guest (wasi:cli/run; imports
+# wamn:jetstream consumer + producer — the first producer importer + the adopter
+# template; the samplebench gate drives it via CommandPre). Bin crate, so the
+# artifact keeps its hyphen (js-sample.wasm), unlike the cdylib underscore names.
+COPY components/target/wasm32-wasip2/release/js-sample.wasm /bench/js-sample.wasm
 # POC-F1 sync-webhook ingress (exports wasi:http/incoming-handler, imports
 # wamn:postgres, embeds the wamn-runner engine; the f1bench gate drives it).
 COPY components/target/wasm32-wasip2/release/poc_webhook_f1.wasm /bench/poc-webhook-f1.wasm

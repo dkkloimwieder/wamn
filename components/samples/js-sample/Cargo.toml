@@ -1,0 +1,13 @@
+[package]
+name = "js-sample"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wit-bindgen = "0.44"
+
+# A COMMAND component (wasi:cli/run via `main`), like the materializer — NOT a
+# cdylib. It binds a durable consumer, drains it, re-publishes, and exits: the
+# minimal wamn:jetstream consumer+producer adopter template (E10-e2e). No
+# serde/postgres/flow deps on purpose — the whole point is the smallest possible
+# surface a real importer needs.

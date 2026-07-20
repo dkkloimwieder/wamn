@@ -29,6 +29,7 @@ mod publish_catalog_demo;
 mod queuebench;
 mod readerbench;
 mod runnerbench;
+mod samplebench;
 mod socketguard;
 mod streambench;
 mod testhostbench;
@@ -100,6 +101,8 @@ enum Command {
     Socketguard(socketguard::SocketGuardArgs),
     /// Run the l5i9.17 materializer gate (decide/refuse/enqueue/doorbell + C-MAT numbers)
     Matbench(matbench::MatBenchArgs),
+    /// Run the l5i9.57 E10-e2e wamn:jetstream sample gate (bind/fetch/ack/publish/dedupe/reject via the js-sample guest)
+    Samplebench(samplebench::SampleBenchArgs),
     /// Run the 4.1 generated-REST-API-gateway gates (CRUD / expand / RLS / injection)
     Apibench(apibench::ApiBenchArgs),
     /// Publish a catalog snapshot with the bundled 4.1b demo seed (wraps the
@@ -156,6 +159,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Egressbench(args) => egressbench::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
         Command::Matbench(args) => matbench::run(args).await,
+        Command::Samplebench(args) => samplebench::run(args).await,
         Command::Apibench(args) => apibench::run(args).await,
         Command::PublishCatalog(args) => publish_catalog_demo::run(args).await,
         Command::Apiproof(args) => apiproof::run(args).await,

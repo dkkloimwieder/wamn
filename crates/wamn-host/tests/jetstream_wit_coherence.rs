@@ -26,6 +26,30 @@ fn docs_wit_matches_built_copy() {
 }
 
 #[test]
+fn component_copies_match_docs() {
+    // Every guest that binds wamn:jetstream vendors its OWN byte-identical copy
+    // of the contract under wit/deps (wit-bindgen resolves from there, not from
+    // docs). The materializer (l5i9.17, consumer + doorbell) and the js-sample
+    // (l5i9.57, consumer + producer — the first producer importer) each carry
+    // one; editing docs without re-vendoring both fails HERE rather than
+    // shipping a guest built against a stale contract.
+    let docs = fs::read_to_string(root().join("../../docs/wamn-jetstream.wit"))
+        .expect("docs/wamn-jetstream.wit reads");
+    for copy in [
+        "../../components/materializer/wit/deps/wamn-jetstream/package.wit",
+        "../../components/samples/js-sample/wit/deps/wamn-jetstream/package.wit",
+    ] {
+        let vendored =
+            fs::read_to_string(root().join(copy)).unwrap_or_else(|e| panic!("{copy} reads: {e}"));
+        assert_eq!(
+            docs, vendored,
+            "{copy} drifted from docs/wamn-jetstream.wit — the vendored guest \
+             copy must stay byte-identical (edit both, or neither)"
+        );
+    }
+}
+
+#[test]
 fn contract_declares_the_mvp_surface() {
     // The materializer (l5i9.17) binds exactly these; a rename/removal of any
     // load-bearing line is a breaking change that must move the plugin too.

@@ -1,0 +1,187 @@
+package wamn:jetstream@0.1.0;
+
+/// Host-plugin interface for JetStream event consumption + publication (E10).
+///
+/// WHY A NEW PACKAGE. The only messaging WIT the pinned wasmCloud fork carries
+/// is `wasmcloud:messaging@0.2.0` (core NATS: `broker-message {subject, body,
+/// reply-to}`, `handler.handle-message`, `consumer.{request, publish}`). It has
+/// no ack/nack/term, no durable-consumer config, no pull/fetch, no redelivery
+/// count, no `stream_seq`, and NO HEADERS — so a component cannot set
+/// `Nats-Msg-Id` and therefore cannot participate in JetStream dedupe on either
+/// side. The materializer (l5i9.17) needs every one of those. `wamn:jetstream`
+/// is a NEW namespace, deliberately never a forked `wasmcloud:messaging`:
+/// namespace collisions are worse than new namespaces (E10).
+///
+/// Security / ownership invariants (enforced by the HOST, invisible to guests):
+/// - The guest NEVER holds a NATS socket; only resource handles. The JetStream
+///   connection lives in the plugin, built from host-injected config
+///   (`WAMN_EVT_NATS_URL`), never named by the guest.
+/// - Streams are provisioned out-of-band (per-org `EVT_<org>_<env>` streams,
+///   D19 §5). A guest binds a durable consumer by name and publishes to a
+///   subject; it CANNOT create, configure, or delete a stream through this
+///   interface.
+/// - A publish waits for the server ack: the returned `publish-ack` is the only
+///   delivery truth (async-nats: send future, then server-ack future).
+///
+/// STATUS: FROZEN 0.1.0 (2026-07-19, l5i9.17). The Service-first materializer
+/// binds this exact file (types + consumer + doorbell) — gated by matbench
+/// (decide/enqueue/redelivery/doorbell) and the in-cluster CRD-deployed e2e
+/// (CDC write → reader → stream → materializer → executed run). The `doorbell`
+/// interface landed inside the draft window as the l5i9.17 wake-takeover
+/// surface. Compatibility rule: 0.1.x admits only additive or clarifying
+/// changes; any breaking change waits for 0.2.
+/// Ledger exit condition: upstream `wasmcloud:nats` (#5065) landing with
+/// durable-consumer + header semantics retires this package.
+interface types {
+  /// One message header. NATS headers are multi-value in principle; the
+  /// materializer needs single-value get/set (`Nats-Msg-Id` in particular), so
+  /// the wire shape is a flat list of pairs — duplicate names are permitted and
+  /// travel in delivery order.
+  record header {
+    name: string,
+    value: string,
+  }
+
+  /// Delivery metadata JetStream attaches to a message pulled from a stream.
+  record message-meta {
+    /// Monotonic per-stream sequence — the total commit order the materializer
+    /// keys its deterministic `run_id` on.
+    stream-seq: u64,
+    /// Delivery attempt count: 1 on first delivery, incremented on every
+    /// redelivery. A value > 1 means a prior delivery was not acked within
+    /// `ack-wait-ms`, or was nacked.
+    delivered: u64,
+  }
+
+  /// Error taxonomy. Mirrors the wamn:node retry posture so a consumer can map
+  /// mechanically: `connection-unavailable` is transient (retry); the rest carry
+  /// a server message for diagnostics. Per-org stream isolation means there is
+  /// no cross-tenant reconnaissance concern, so errors carry detail.
+  variant js-error {
+    /// The data-plane NATS is unreachable, unconfigured, or the JetStream API
+    /// call timed out. Transient — safe to retry.
+    connection-unavailable,
+    /// No stream or consumer with that name (a bind against a stream not yet
+    /// provisioned, or a typo). Carries the name that missed.
+    not-found(string),
+    /// The publish future resolved but the server did not store the message
+    /// (no stream covers the subject, or a wait timeout). Carries the server
+    /// message. NOT a duplicate — a deduped publish is a successful `publish-ack`.
+    publish-rejected(string),
+    /// An ack / nack / term could not be delivered to the server.
+    ack-failed(string),
+    /// Anything else: a message from the client.
+    other(string),
+  }
+}
+
+interface consumer {
+  use types.{header, message-meta, js-error};
+
+  /// Binding config for a durable PULL consumer over an EXISTING stream. The
+  /// stream is provisioned out-of-band; the guest binds by name, never creates.
+  record consumer-config {
+    /// The JetStream stream to bind against, e.g. "EVT_acme_prod". (`stream` is
+    /// a reserved WIT keyword, hence `stream-name`.)
+    stream-name: string,
+    /// The durable consumer name — persists server-side across restarts, and is
+    /// what redelivery + the ack floor track against. A registration's stable id.
+    durable: string,
+    /// Server-side subject filter, e.g. "evt.acme.proj.prod.<entity>.insert".
+    /// Empty = the whole stream (no filter).
+    filter-subject: string,
+    /// How long the server waits for an ack before redelivering, milliseconds.
+    /// 0 = the server default.
+    ack-wait-ms: u64,
+    /// Redelivery ceiling: after this many delivery attempts the server stops
+    /// redelivering (the message then needs a term / DLQ path). 0 = unlimited
+    /// (the server default).
+    max-deliver: u32,
+  }
+
+  /// A bound durable pull consumer. Dropping the resource releases the client
+  /// handle only; the durable state persists server-side, so binding the same
+  /// name again resumes from the ack floor.
+  resource durable-consumer {
+    /// Pull up to `max-messages` now, waiting up to `expires-ms` for at least
+    /// one to arrive. An empty list means none were available within the window
+    /// — NOT an error. Bounded batch: never more than `max-messages`.
+    fetch: func(max-messages: u32, expires-ms: u64) -> result<list<message>, js-error>;
+  }
+
+  /// One delivered message. Ack disposition is explicit: call exactly ONE of
+  /// ack / nack / term. Dropping a message without any leaves it to redeliver
+  /// after `ack-wait-ms` (at-least-once delivery).
+  resource message {
+    /// The stored payload bytes (the CDC envelope JSON).
+    body: func() -> list<u8>;
+    /// The subject it was published on.
+    subject: func() -> string;
+    /// All headers (`Nats-Msg-Id` included) in delivery order.
+    headers: func() -> list<header>;
+    /// Delivery metadata (`stream-seq`, redelivery count).
+    metadata: func() -> message-meta;
+    /// Positively acknowledge — the server advances the ack floor and stops
+    /// redelivering this message.
+    ack: func() -> result<_, js-error>;
+    /// Negatively acknowledge — redeliver after `delay-ms` (0 = as soon as the
+    /// server can, subject to `ack-wait-ms`). Counts against `max-deliver`.
+    nack: func(delay-ms: u64) -> result<_, js-error>;
+    /// Terminate — stop redelivering this message regardless of `max-deliver`
+    /// (a poison message the consumer will never successfully process).
+    term: func() -> result<_, js-error>;
+  }
+
+  /// Bind (or rebind) a durable pull consumer over an existing stream. Idempotent
+  /// on the durable name: rebinding an existing durable returns a handle to it.
+  bind: func(config: consumer-config) -> result<durable-consumer, js-error>;
+}
+
+/// Post-commit wake hint — the l5i9.17 doorbell takeover. The dispatcher rings
+/// `wamn.doorbell.<tenant>` (CONTROL-plane core NATS, fire-and-forget) after
+/// each firing commits so a parked run-worker wakes at doorbell latency; the
+/// materializer, which enqueues evt runs itself, must ring the same bell after
+/// its write-ahead + enqueue transaction COMMITS — else async latency degrades
+/// to the reconciliation sweep.
+///
+/// Host-enforced invariants (the `wamn:postgres` claims posture):
+/// - The `<tenant>` subject segment is derived from the executing workload's
+///   identity (`wamn.tenant` config, registered at bind time) — there is
+///   deliberately NO way for a guest to name a tenant, so it can never ring
+///   another tenant's bell.
+/// - The control-plane connection is the host's own (never guest-named);
+///   unconfigured ⇒ `connection-unavailable`.
+/// - Best-effort BY DESIGN: a lost/failed hint only raises wake latency (the
+///   run-worker's poll-backoff sweep guarantees pickup), so a caller treats an
+///   error as an observable to count, never a reason to fail the firing.
+interface doorbell {
+  use types.{js-error};
+
+  /// Ring the caller's tenant doorbell with one run id (the enqueued run),
+  /// strictly AFTER the enqueue transaction committed — a hint for uncommitted
+  /// work would wake a runner into an empty claim.
+  ring: func(run-id: string) -> result<_, js-error>;
+}
+
+interface producer {
+  use types.{header, js-error};
+
+  /// Server-confirmed publish result — the only delivery truth.
+  record publish-ack {
+    /// The stream that stored (or deduped) the message. (`stream` is a reserved
+    /// WIT keyword, hence `stream-name`.)
+    stream-name: string,
+    /// The assigned stream sequence.
+    stream-seq: u64,
+    /// True when JetStream deduped this publish against a prior `Nats-Msg-Id`
+    /// within the stream's duplicate window (the message was NOT re-stored).
+    /// A duplicate is a SUCCESS, not an error.
+    duplicate: bool,
+  }
+
+  /// Publish with headers to a JetStream subject and WAIT for the server ack.
+  /// Set a `Nats-Msg-Id` header to participate in the stream's dedupe window
+  /// — the whole reason this package carries headers on publish (the CDC reader
+  /// and any guest emitter both need it, and `wasmcloud:messaging` cannot).
+  publish: func(subject: string, headers: list<header>, body: list<u8>) -> result<publish-ack, js-error>;
+}

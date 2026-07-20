@@ -199,7 +199,12 @@ change waits for 0.2.
   redelivery — 608 collisions, zero new rows); recipe
   docs/build-and-test.md [EVT-MAT]; first C-MAT numbers in docs/ceilings.md.
   One workload per project-env × tenant (v1); replay + EVT-COMPONENT
-  (per-org #5336 component) stay downstream.*
+  (per-org #5336 component) stay downstream.* *Second importer 2026-07-19
+  (wamn-l5i9.57): `components/samples/js-sample` — the adopter template and the
+  FIRST `wamn:jetstream/producer` importer (the materializer only consumes) —
+  drives bind/fetch/ack/publish end-to-end with deterministic `Nats-Msg-Id`
+  dedupe; gate `samplebench` (component-driven, throwaway JetStream; recipe
+  docs/build-and-test.md [E10-E2E]).*
 - **Replay:** new consumer at past position; replay-namespaced run ids
   (`<flow>:replay:<id>:<seq>`); **re-executes side effects** — opt-in,
   permission-gated, audited.
