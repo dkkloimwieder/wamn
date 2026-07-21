@@ -364,8 +364,7 @@ pub async fn run(args: QueueBenchArgs) -> anyhow::Result<()> {
             pass &= janitor_phase(&app_url, &admin_url).await?;
         }
         if run_all || args.mode == Mode::Doorbell {
-            pass &=
-                doorbell_phase(&app_url, &admin_url, &args, args.mode == Mode::Doorbell).await?;
+            pass &= doorbell_phase(&app_url, &admin_url, &args).await?;
         }
         if run_all || args.mode == Mode::Partition {
             pass &= partition_phase(&app_url, &admin_url, &args).await?;
@@ -884,7 +883,6 @@ async fn doorbell_phase(
     app_url: &str,
     admin_url: &str,
     args: &QueueBenchArgs,
-    required: bool,
 ) -> anyhow::Result<bool> {
     use futures_util::StreamExt;
     use wash_runtime::washlet::{NatsConnectionOptions, connect_nats};
@@ -900,18 +898,12 @@ async fn doorbell_phase(
         tls_cert: args.nats_tls_cert.clone(),
         tls_key: args.nats_tls_key.clone(),
     };
+    // Doorbell only ever runs under --mode doorbell or --mode all, and both
+    // require a real doorbell path: a missing NATS is a hard failure, never a
+    // soft skip that greens the Job (docs/review-2026-07.md C7-2).
     let nats = match connect_nats(args.nats_url.clone(), nats_opts).await {
         Ok(c) => c,
-        Err(e) => {
-            if required {
-                bail!("doorbell mode needs NATS at {}: {e}", args.nats_url);
-            }
-            println!(
-                "(skipping doorbell gate: no NATS at {} — {e})",
-                args.nats_url
-            );
-            return Ok(true);
-        }
+        Err(e) => bail!("doorbell gate needs NATS at {}: {e}", args.nats_url),
     };
 
     let subject = format!("wamn.doorbell.{TENANT}");
