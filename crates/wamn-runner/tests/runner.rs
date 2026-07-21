@@ -164,6 +164,11 @@ fn merge_visits_carry_distinct_occurrences() {
         [("s", 0), ("a", 0), ("b", 0), ("m", 0), ("m", 1)],
         "each arrival at the merge is a distinct occurrence"
     );
+    // R25: distinct visits carry DISTINCT idempotency keys — an external
+    // system honoring idempotency headers must not dedupe the merge's second
+    // execution away.
+    assert_eq!(t.visited[3].idempotency_key, "r1:m:0");
+    assert_eq!(t.visited[4].idempotency_key, "r1:m:1");
 }
 
 #[test]
@@ -323,9 +328,10 @@ fn retryable_retries_then_succeeds_with_stable_idempotency_key() {
     assert_eq!(t.waits[0].1, 100); // now(0) + backoff(0)=100
     assert_eq!(t.waits[1].1, 300); // now(100) + backoff(1)=200
     assert!(t.waits.iter().all(|(_, _, thr)| thr.is_none())); // plain retryable, no throttle
-    // Idempotency key stable across retries.
+    // Idempotency key stable across retries of one visit (R25: the trailing
+    // occurrence stays 0 — retries never mint a new key).
     let key = &t.visited[0].idempotency_key;
-    assert_eq!(key, "run-9:b");
+    assert_eq!(key, "run-9:b:0");
     assert!(t.visited.iter().all(|d| &d.idempotency_key == key));
     // step_seq counts only the one successful completion.
     assert_eq!(t.state.step_seq(), 1);
@@ -719,12 +725,14 @@ fn resume_diamond_killed_mid_merge_reconstructs_and_completes() {
     ];
     let mut st = plan.resume("r1", json!({}), &completed).unwrap();
     let mut resumed = Vec::new();
+    let mut keys = Vec::new();
     let status = plan.drive(
         &mut st,
         || 0,
         |_, _| {},
         |d| {
             resumed.push((d.node.clone(), d.occurrence));
+            keys.push(d.idempotency_key.clone());
             NodeOutcome::ok(json!({ "at": d.node }))
         },
     );
@@ -734,6 +742,10 @@ fn resume_diamond_killed_mid_merge_reconstructs_and_completes() {
         [("d".to_string(), 1)],
         "only D's second visit is outstanding, at occurrence 1"
     );
+    // R25: the resumed second visit carries the SAME key it would have live —
+    // replay rebuilds the visit counts, so the key does not collide with D's
+    // recorded first execution.
+    assert_eq!(keys, ["r1:d:1"]);
 }
 
 #[test]

@@ -195,7 +195,10 @@ pub struct Dispatch {
     /// advances it) — the loop-safe part of the `node_runs` idempotency key
     /// `(run, node, occurrence)` the driver persists (wamn-03m / R24).
     pub occurrence: u32,
-    /// Stable across retries of this node in this run — forward to external
+    /// `run:node:occurrence` — stable across RETRIES of one visit, distinct
+    /// across VISITS (merge arrivals, loop laps), so an external system
+    /// honoring idempotency headers dedupes replays of the same execution
+    /// without swallowing a legitimate second one (R25). Forward to external
     /// systems that support idempotency headers.
     pub idempotency_key: String,
     /// Remaining time budget for this node, if the flow set one.
@@ -383,6 +386,7 @@ impl<'f> Plan<'f> {
         // The node is guaranteed present: the entry token and every enqueued
         // edge target resolve against the validated flow.
         let node = self.node(&a.node).expect("active node in flow");
+        let occurrence = state.visits.get(&a.node).copied().unwrap_or(0);
         Dispatch {
             node: a.node.clone(),
             node_type: node.node_type.clone(),
@@ -390,8 +394,10 @@ impl<'f> Plan<'f> {
             credential: node.credential.clone(),
             payload: a.payload.clone(),
             attempt: a.attempt,
-            occurrence: state.visits.get(&a.node).copied().unwrap_or(0),
-            idempotency_key: format!("{}:{}", state.run_id, a.node),
+            occurrence,
+            // R25: the occurrence keeps distinct visits distinct while retries
+            // of one visit keep their key.
+            idempotency_key: format!("{}:{}:{occurrence}", state.run_id, a.node),
             deadline_ms: node.config.get("deadline-ms").and_then(Value::as_u64),
         }
     }
