@@ -104,7 +104,14 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
     let conn_task = tokio::spawn(conn);
 
     if args.dry_run {
-        ensure_data_schema(&client, &args.schema).await?;
+        // STRICTLY read-only (the 1wdq reconcile-run-plane standard): NO
+        // ensure_data_schema — a dry run must not CREATE SCHEMA. Planning against
+        // a not-yet-existing data schema is coherent: the pure planner consumes
+        // only `current` (read below, fully catalog-qualified) and `target`, never
+        // the live data schema; and `SET search_path = <absent>, catalog` is
+        // tolerated by Postgres (a missing schema is skipped in name resolution),
+        // so the hypothetical env still yields a plan, not an error. The real
+        // (non-dry) apply path creates the schema (see apply_catalog_target).
         let tx = client.transaction().await.context("begin")?;
         tx.batch_execute(&format!(
             "SET LOCAL search_path = {schema}, catalog",

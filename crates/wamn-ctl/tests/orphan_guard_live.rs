@@ -95,6 +95,29 @@ async fn table_present(su: &Client, qualified: &str) -> bool {
     .get(0)
 }
 
+/// The full set of schema names present (the proof a dry run created no schema).
+async fn schema_names(su: &Client) -> Vec<String> {
+    su.query(
+        "SELECT schema_name FROM information_schema.schemata ORDER BY schema_name",
+        &[],
+    )
+    .await
+    .expect("list schemas")
+    .iter()
+    .map(|r| r.get::<_, String>(0))
+    .collect()
+}
+
+async fn schema_present(su: &Client, name: &str) -> bool {
+    su.query_one(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1)",
+        &[&name],
+    )
+    .await
+    .expect("probe schema")
+    .get(0)
+}
+
 fn publish_args(catalog: std::path::PathBuf, url: &str) -> publish_catalog::PublishCatalogArgs {
     publish_catalog::PublishCatalogArgs {
         catalog,
@@ -173,6 +196,7 @@ async fn orphan_guard_refuses_then_proceeds() {
     publish_scenario(&su, &url).await;
     migrate_scenario(&su, &url).await;
     dry_run_scenario(&su, &url).await;
+    dry_run_no_data_schema_scenario(&su, &url).await;
 }
 
 async fn publish_scenario(su: &Client, url: &str) {
@@ -389,6 +413,65 @@ async fn dry_run_scenario(su: &Client, url: &str) {
     migrate_catalog::run(migrate_dry_run_args(b_v2, url))
         .await
         .expect("dry-run proceeds once the registrations are gone");
+
+    su.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"
+    ))
+    .await
+    .expect("teardown");
+}
+
+/// wamn-nr61: `migrate-catalog --dry-run` must be STRICTLY read-only (the 1wdq
+/// reconcile-run-plane standard) — it must NOT run `ensure_data_schema`'s
+/// CREATE SCHEMA. Against an env whose data schema does not exist yet, the dry
+/// run still plans coherently and exits cleanly (the pure planner never touches
+/// the live data schema; the read is catalog-qualified; `SET search_path` skips
+/// the absent schema), while the schema set stays byte-identical — then a real
+/// run provisions it.
+async fn dry_run_no_data_schema_scenario(su: &Client, url: &str) {
+    reset(su).await; // drops DATA_SCHEMA; recreates the catalog metadata schema
+
+    // Precondition: the data schema does not exist.
+    assert!(
+        !schema_present(su, DATA_SCHEMA).await,
+        "precondition: the data schema is absent before the dry run"
+    );
+    let before = schema_names(su).await;
+
+    let ab = write_tmp(
+        "nr61_dry_ab.json",
+        &cat_json(1, &format!("{E_SALES},{E_LINES}")),
+    );
+
+    // A dry run against the not-yet-existing data schema plans cleanly (no
+    // registrations → no orphan) — the planner tolerates the absent schema.
+    migrate_catalog::run(migrate_dry_run_args(ab.clone(), url))
+        .await
+        .expect("dry-run against an absent data schema plans cleanly");
+
+    // THE NAMED ASSERT (nr61 mutant target): the dry run created NOTHING — the
+    // schema set is unchanged and the data schema is still absent. Reinstating
+    // `ensure_data_schema` on the dry-run path CREATEs DATA_SCHEMA and fails here.
+    assert_eq!(
+        schema_names(su).await,
+        before,
+        "dry-run must not create the data schema (schema set unchanged)"
+    );
+    assert!(
+        !schema_present(su, DATA_SCHEMA).await,
+        "dry-run left the data schema absent"
+    );
+
+    // A real (non-dry) run then provisions the schema + materializes the tables.
+    migrate_catalog::run(migrate_args(ab, url, false))
+        .await
+        .expect("the real run provisions the data schema");
+    assert!(
+        schema_present(su, DATA_SCHEMA).await,
+        "the real run created the data schema"
+    );
+    assert!(table_present(su, &format!("{DATA_SCHEMA}.orders")).await);
+    assert!(table_present(su, &format!("{DATA_SCHEMA}.lines")).await);
 
     su.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"
