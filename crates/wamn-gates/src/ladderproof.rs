@@ -210,9 +210,14 @@ pub(crate) fn valid_ident(s: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// The flow tables the runner walks + the 5.14 `run_queue` it claims from, in the
-/// house tenant floor (the runnerbench shape, minus the pg-write `sink` — the
-/// ladder flows have no pg-write node).
+/// The flow tables the runner walks + the 5.14 `run_queue` it claims from (plus
+/// the `partition_owner` lease table the fqg.9 partition fallthrough probes), in
+/// the house tenant floor (the runnerbench shape, minus the pg-write `sink` — the
+/// ladder flows have no pg-write node). The ladder seeds only unpartitioned runs,
+/// but the deployed `run-next` walks the partition path whenever the global claim
+/// drains (`acquire_partitions_sql` names `partition_owner`, `claim_partition_head_sql`
+/// reads `partition_policy`), so the stand-in must DEFINE both for that probe to be
+/// a no-op rather than an undefined-relation failure.
 pub(crate) fn ladder_ddl(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.flows (\
@@ -256,6 +261,7 @@ pub(crate) fn ladder_ddl(schema: &str) -> String {
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.node_runs TO wamn_app;\
          CREATE TABLE {schema}.run_queue (\
             tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
+            partition_policy text NOT NULL DEFAULT 'blocking' CHECK (partition_policy IN ('blocking', 'leapfrog')), \
             priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
             lease_owner text, lease_expires_at timestamptz, \
             attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
@@ -264,12 +270,24 @@ pub(crate) fn ladder_ddl(schema: &str) -> String {
             PRIMARY KEY (tenant_id, run_id), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
+         CREATE INDEX run_queue_partition ON {schema}.run_queue (tenant_id, partition_key) WHERE partition_key IS NOT NULL;\
          ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
          CREATE POLICY run_queue_tenant ON {schema}.run_queue \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;\
+         CREATE TABLE {schema}.partition_owner (\
+            tenant_id text NOT NULL, partition_key text NOT NULL, \
+            lease_owner text NOT NULL, lease_expires_at timestamptz NOT NULL, \
+            acquired_at timestamptz NOT NULL DEFAULT now(), \
+            PRIMARY KEY (tenant_id, partition_key));\
+         ALTER TABLE {schema}.partition_owner ENABLE ROW LEVEL SECURITY;\
+         ALTER TABLE {schema}.partition_owner FORCE ROW LEVEL SECURITY;\
+         CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
+            USING (tenant_id = current_setting('app.tenant', true)) \
+            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;"
     )
 }
 
@@ -609,21 +627,24 @@ mod tests {
     use crate::schema_drift::{Need, assert_stand_in};
 
     /// wamn-9mg8 [GATE-DRIFT]: ladderproof's `run_queue` stand-in vs the schema of
-    /// record, through the uniform guard. The rung-1 conformance proof seeds ONE
-    /// unpartitioned manual run via `enqueue_sql()` (which writes no
-    /// `partition_policy` — the column takes its default) and never drives a
-    /// terminal-failure or partitioned run, so its stand-in needs neither
-    /// `partition_owner`/`run_dead_letters` (AbsentByDesign) nor the
-    /// `partition_policy` column (an explicit run_queue exemption). Every OTHER
-    /// run_queue column is still pinned against the source of truth.
+    /// record, through the uniform guard. The proof seeds only UNPARTITIONED manual
+    /// runs, but the DEPLOYED `run-next` (wamn-fqg.9) probes the partition path
+    /// whenever the global claim drains — `acquire_partitions_sql` names
+    /// `partition_owner` and `claim_partition_head_sql` reads `run_queue.partition_policy`
+    /// — so the stand-in must DEFINE both (Required, plus the `run_queue_partition`
+    /// index the claim path scans) or that fallthrough is an undefined-relation
+    /// failure against ladderproof's schema once the runner image carries fqg.9.
+    /// `run_dead_letters` stays AbsentByDesign: the ladder flows always reach
+    /// `completed` (see `assert_run`), so the guest terminal-settle path
+    /// (`dead_letter_dequeue`, which names `run_dead_letters`) is never driven.
     #[test]
     fn ladderproof_stand_in_tracks_run_queue_schema_of_record() {
         assert_stand_in(
             "ladderproof",
             &ladder_ddl("wamn_run"),
             &[
-                ("run_queue", Need::RequiredExcept(&["partition_policy"])),
-                ("partition_owner", Need::AbsentByDesign),
+                ("run_queue", Need::Required),
+                ("partition_owner", Need::Required),
                 ("run_dead_letters", Need::AbsentByDesign),
             ],
         );

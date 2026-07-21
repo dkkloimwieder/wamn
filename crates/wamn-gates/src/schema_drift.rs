@@ -27,10 +27,6 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 pub(crate) enum Need {
     /// The table is present with FULL column parity (every shipped column).
     Required,
-    /// The table is present, but these columns are exempt — the gate's
-    /// claim/enqueue path provably never reads them. An EXPLICIT, documented
-    /// exemption, not silent drift.
-    RequiredExcept(&'static [&'static str]),
     /// The table is absent BY DESIGN (the gate has no code path that touches it).
     /// The stand-in must NOT create it, so the exemption stays load-bearing: if a
     /// later edit adds the table, this fails and forces a re-decision.
@@ -115,13 +111,12 @@ fn stand_in_table_body<'a>(standin: &'a str, table: &str) -> Option<&'a str> {
 /// Required/AbsentByDesign decision, and a stale entry (a table no longer of
 /// record) fails too.
 ///
-/// - `Required` / `RequiredExcept`: the stand-in must CREATE the table and carry
-///   every shipped column (minus the exempt set), checked within the table body
-///   so a same-named index column can't mask a dropped definition. When
-///   `run_queue` carries `partition_policy`, both `PartitionPolicy` literals must
-///   appear (the CHECK must accept what the enqueue writers materialize); when
-///   `partition_owner` is Required, the `run_queue_partition` index the claim path
-///   scans must be present.
+/// - `Required`: the stand-in must CREATE the table and carry every shipped
+///   column, checked within the table body so a same-named index column can't
+///   mask a dropped definition. When `run_queue` is Required, both
+///   `PartitionPolicy` literals must appear (the CHECK must accept what the
+///   enqueue writers materialize); when `partition_owner` is Required, the
+///   `run_queue_partition` index the claim path scans must be present.
 /// - `AbsentByDesign`: the stand-in must NOT create the table.
 pub(crate) fn assert_stand_in(gate: &str, standin: &str, spec: &[(&str, Need)]) {
     // The spec classifies exactly the schema-of-record tables — no gaps, no rot.
@@ -153,31 +148,23 @@ pub(crate) fn assert_stand_in(gate: &str, standin: &str, spec: &[(&str, Need)]) 
                      the table)"
                 );
             }
-            Need::Required | Need::RequiredExcept(_) => {
+            Need::Required => {
                 let body = stand_in_table_body(standin, table).unwrap_or_else(|| {
                     panic!(
                         "{gate}: stand-in is missing the `wamn_run.{table}` table the \
                          drift spec marks Required (drifted from deploy/sql/run-queue.sql)"
                     )
                 });
-                let exempt: &[&str] = match need {
-                    Need::RequiredExcept(cols) => cols,
-                    _ => &[],
-                };
                 for col in record_columns(table) {
-                    if exempt.contains(&col.as_str()) {
-                        continue;
-                    }
                     assert!(
                         body.contains(&col),
                         "{gate}: `wamn_run.{table}` stand-in missing column `{col}` \
                          (drifted from deploy/sql/run-queue.sql)"
                     );
                 }
-                // run_queue's partition_policy is a CHECK'd enum: if the stand-in
-                // carries the column, its CHECK must accept every literal the
-                // enqueue writers materialize (D20). Skip when the column is exempt.
-                if *table == "run_queue" && !exempt.contains(&"partition_policy") {
+                // run_queue's partition_policy is a CHECK'd enum: its CHECK must
+                // accept every literal the enqueue writers materialize (D20).
+                if *table == "run_queue" {
                     for p in PartitionPolicy::ALL {
                         assert!(
                             standin.contains(&format!("'{}'", p.as_sql())),
