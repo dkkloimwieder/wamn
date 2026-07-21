@@ -1314,6 +1314,11 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     let wake = parked_due_sql(100);
     assert!(wake.contains("available_at <= now()"));
     assert!(wake.contains("lease_expires_at IS NULL OR lease_expires_at <= now()"));
+    // wamn-2jkm.29: the wake scan carries the SAME partition guard the global
+    // claim CTE carries, so it surfaces only rows the global claim would take
+    // (ACTIONABLE work). Without it a partitioned follower wedged behind a D20
+    // blocking head is surfaced every sweep and pins found_work()/cadence at min.
+    assert!(wake.contains("partition_key IS NULL"));
     // R8b-b: the explicit tenant predicate (inert under RLS, defense-in-depth).
     assert!(wake.contains("tenant_id = current_setting('app.tenant', true)"));
     // Mirrors the claim predicate incl. the wamn-fqg.7 disjunct: a woken budget-spent
@@ -1815,6 +1820,57 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          COMMIT;\n",
     ));
+
+    // wamn-2jkm.29: the wake scan carries the global claim's `partition_key IS
+    // NULL` guard, so it never surfaces a PARTITIONED row — the cadence reflects
+    // ACTIONABLE (global-claimable) work only. The killer scenario is a D20
+    // `blocking` WEDGE: `wc-wg-0` is an exhausted head (expired lease past grace,
+    // budget spent) the janitor is EXEMPT from reaping, and `wc-wg-1` is a due,
+    // unleased, budget-remaining FOLLOWER that `claim_partition_head_sql` holds
+    // behind the wedge forever. Pre-fix, the follower matched the wake scan every
+    // sweep -> `found_work()` true -> `next_interval` pinned at min PERMANENTLY.
+    // The scenario proves: (a) the wedged follower (and the head) are NOT woken;
+    // (b) an unpartitioned due park IS still woken; (c) a non-wedged partitioned
+    // due park stays claimable via its OWN partition path (never stranded).
+    script.push_str(
+        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+           ('t1','wc-unp','f',1,'dispatched'), \
+           ('t1','wc-wg-0','f',1,'running'),('t1','wc-wg-1','f',1,'dispatched'), \
+           ('t1','wc-ok-0','f',1,'dispatched');\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, partition_key, available_at, enqueued_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
+           ('t1','wc-unp', NULL,     now() - interval '1 min', now() - interval '2 min', NULL,  NULL,                      0,  20), \
+           ('t1','wc-wg-0','wc-wg', now() - interval '3 hour', now() - interval '2 min','dead', now() - interval '2 hour', 20, 20), \
+           ('t1','wc-wg-1','wc-wg', now() - interval '30 sec', now() - interval '1 min', NULL,  NULL,                      0,  20), \
+           ('t1','wc-ok-0','wc-ok', now() - interval '30 sec', now() - interval '1 min', NULL,  NULL,                      0,  20);\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         -- (a)+(b): the read-only wake scan surfaces the unpartitioned due park\n\
+         -- and NONE of the partitioned rows (the wedged follower can never pin it).\n\
+         CREATE TEMP TABLE cad_woken AS EXECUTE parked_stmt;\n\
+         DO $$ BEGIN \
+           ASSERT EXISTS (SELECT 1 FROM cad_woken WHERE run_id='wc-unp'), 'an unpartitioned due park is still woken (the guard does not over-exclude)'; \
+           ASSERT NOT EXISTS (SELECT 1 FROM cad_woken WHERE run_id='wc-wg-1'), 'a due partitioned follower behind a blocking wedge is NOT woken (would pin cadence at min: wamn-2jkm.29)'; \
+           ASSERT NOT EXISTS (SELECT 1 FROM cad_woken WHERE run_id='wc-wg-0'), 'the wedged partitioned head is NOT woken'; \
+           ASSERT NOT EXISTS (SELECT 1 FROM cad_woken WHERE run_id='wc-ok-0'), 'even a claimable partitioned head is not on the (global) wake path'; \
+         END $$;\n\
+         -- The wedge is genuine: the follower is NOT claimable via the partition\n\
+         -- path either (blocked behind the exhausted head), so excluding it from\n\
+         -- the wake scan strands nothing that WAS actionable.\n\
+         EXECUTE acquire_stmt('WC', 60000);\n\
+         EXECUTE claimhead_stmt('WC', 60000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='wc-wg-1') IS NULL, 'the wedged follower is not claimable via the partition path either (genuinely not actionable)'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='wc-ok-0') = 'WC', '(c) a non-wedged partitioned due park stays claimable via its OWN partition path — never stranded by the wake-scan exclusion'; \
+         END $$;\n\
+         -- And the janitor leaves the blocking wedge (D20 exemption) — the reason\n\
+         -- the follower cannot make progress and must not pin the cadence.\n\
+         EXECUTE janitor_stmt(3600000);\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM run_queue WHERE run_id='wc-wg-0') = 1, 'the exhausted blocking head is NOT reaped (D20 wedge) — the follower stays permanently blocked'; \
+         END $$;\n\
+         COMMIT;\n",
+    );
 
     // wamn-fqg.7: the wedge. A budget-spent run (attempts == max_attempts) whose lease
     // a park RELEASED (NULL) must WAKE — a NULL lease is proof the last owner was alive

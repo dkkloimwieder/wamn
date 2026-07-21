@@ -485,20 +485,36 @@ pub fn cron_last_run_sql() -> String {
 }
 
 /// The wake / reconciliation scan: every currently-due, unleased (or lease-expired)
-/// queue row that a claim would take — budget-remaining, OR budget-spent with a
-/// released (NULL) lease (a parked run that spent its crash budget still wakes,
-/// matching `claim_batch_sql`; wamn-fqg.7). A parked run whose `available_at`
-/// arrived, or a run whose enqueue-time doorbell hint was lost.
+/// **unpartitioned** queue row that the global claim would take — budget-remaining,
+/// OR budget-spent with a released (NULL) lease (a parked run that spent its crash
+/// budget still wakes, matching `claim_batch_sql`; wamn-fqg.7). A parked run whose
+/// `available_at` arrived, or a run whose enqueue-time doorbell hint was lost.
 /// The dispatcher publishes a doorbell hint per row; a duplicate hint is
 /// harmless (fire-and-forget — the claim is the arbiter), which is what lets one
 /// read-only scan double as both the parked-wake and the lost-hint
 /// reconciliation backstop. `limit` is a numeric literal. Carries the explicit
 /// `tenant_id = current_setting('app.tenant', true)` predicate (R8b-b) — inert
 /// (RLS injects the identical filter) but defense-in-depth, like the claim.
+///
+/// The `partition_key IS NULL` guard mirrors [`global_claim_cte`]'s (wamn-2jkm.29):
+/// the wake scan surfaces exactly the rows the GLOBAL claim would take, so
+/// `found_work` reflects **actionable** work. Without it, a partitioned FOLLOWER
+/// behind a D20 `blocking` head is surfaced every sweep (it is due, unleased,
+/// budget-remaining) yet is never claimable — `claim_partition_head_sql` holds it
+/// behind the head — so a wedged head (the janitor is exempt from reaping a
+/// blocking head by design) would pin the dispatcher cadence at `min` PERMANENTLY,
+/// defeating zero-continuous-polling. Partitioned runs are claimed **only** through
+/// the per-partition ownership path ([`acquire_partitions_sql`] +
+/// [`claim_partition_head_sql`]), whose own due-scan the run-worker's `run-next`
+/// drives on its independent poll-with-backoff reconcile — so excluding them here
+/// does NOT strand a due partitioned park (it wakes on the run-worker's own cadence,
+/// the same backstop the whole system relies on for a lost doorbell hint), it only
+/// stops a never-claimable partitioned row from masquerading as work.
 pub fn parked_due_sql(limit: usize) -> String {
     format!(
         "SELECT run_id FROM run_queue \
           WHERE tenant_id = current_setting('app.tenant', true) \
+            AND partition_key IS NULL \
             AND available_at <= now() + interval '250 milliseconds' \
             AND (lease_expires_at IS NULL OR lease_expires_at <= now()) \
             AND (attempts < max_attempts OR lease_expires_at IS NULL) \
