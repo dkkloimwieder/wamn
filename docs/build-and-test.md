@@ -74,6 +74,25 @@ kubectl -n wamn-system apply -f deploy/gates/pgbench-multiproject-job.yaml
 kubectl -n wamn-system logs -f job/pgbench-multiproject
 ```
 
+#### [R18-NEG] standard_conforming_strings fail-closed (live negative)
+
+The R18 connect-time assert (`standard_conforming_strings_hook`) fails a pool
+checkout CLOSED when the server has `standard_conforming_strings` off. The
+positive is covered by stock PG; this env-gated live negative proves the
+fail-closed branch against a real server booted with the setting off.
+
+```bash
+# Throwaway server with the setting OFF (own name/port — do not reuse):
+docker run -d --rm --name wamn-lb3-pg -p 5465:5432 -e POSTGRES_PASSWORD=postgres \
+  postgres:18 -c standard_conforming_strings=off
+# GOTCHA: postgres:18 inits-then-restarts — wait >=10s before the first connect,
+# then verify the setting IS off before running the test:
+sleep 12 && docker exec wamn-lb3-pg psql -U postgres -c "SHOW standard_conforming_strings"  # => off
+WAMN_SCS_OFF_PG_URL=postgres://postgres:postgres@127.0.0.1:5465/postgres \
+  cargo test -p wamn-host live_scs_off_server_fails_checkout_closed -- --nocapture
+docker stop wamn-lb3-pg
+```
+
 ### [2.3] managed Postgres provisioning
 
 Docs: docs/provisioning.md

@@ -1136,4 +1136,82 @@ mod tests {
             .get(0);
         assert_eq!(scs, "on");
     }
+
+    // R18-neg (wamn-2jkm.65) — the fail-CLOSED branch, exercised against a REAL
+    // server booted with standard_conforming_strings=off. The positive above
+    // proves the hook passes on a stock server; this proves it REJECTS an unsafe
+    // one and that the guest sees `connection-unavailable`. Gated on a SEPARATE
+    // url (WAMN_SCS_OFF_PG_URL) so it never runs against the stock test server;
+    // skipped LOUDLY when unset. Recipe: docs/build-and-test.md [R18-NEG].
+    #[tokio::test]
+    async fn live_scs_off_server_fails_checkout_closed() {
+        let Some(url) = std::env::var("WAMN_SCS_OFF_PG_URL").ok() else {
+            eprintln!(
+                "WAMN_SCS_OFF_PG_URL unset — skipping the wamn-2jkm.65 R18 live negative \
+                 (boot a postgres:18 with -c standard_conforming_strings=off; see \
+                 docs/build-and-test.md [R18-NEG])"
+            );
+            return;
+        };
+
+        // CONTROL: the server must be REACHABLE and genuinely report scs=off, so
+        // the checkout failure below is the HOOK rejecting a live server, not a
+        // dead url or a network-level connect failure. A raw connect that returns
+        // "off" proves both — and if the url were dead this connect would panic,
+        // so the test cannot false-pass against a server-down url.
+        let raw = connect_raw(&url).await;
+        let scs: String = raw
+            .query_one("SHOW standard_conforming_strings", &[])
+            .await
+            .expect("control: server reachable for the scs probe")
+            .get(0);
+        assert_eq!(
+            scs, "off",
+            "control: point WAMN_SCS_OFF_PG_URL at a server booted with \
+             standard_conforming_strings=off (got {scs:?}); otherwise this test is vacuous"
+        );
+
+        // The production path: build the plugin exactly as production does and
+        // check out. build_pool installs the R18 post_create hook, which runs
+        // `SHOW standard_conforming_strings` on the new physical connection and
+        // fails the create; checkout maps that pool error to the WIT
+        // `connection-unavailable` variant the guest sees.
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            database_url: Some(url.clone()),
+            pool_max_size: 1,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .unwrap();
+        // (`matches!`, not `expect_err`, so the Ok type need not be `Debug`.)
+        let result = pg.checkout(DEFAULT_PROJECT).await;
+        assert!(
+            matches!(result, Err(PgError::ConnectionUnavailable)),
+            "scs=off must fail CLOSED as the guest-visible connection-unavailable \
+             variant — a checkout that succeeded means the hook did not reject"
+        );
+
+        // Hook-SPECIFICITY: reach the raw pool error (which checkout collapses to
+        // connection-unavailable) and confirm it is the R18 post_create hook —
+        // not an auth/other failure that ALSO maps to connection-unavailable. The
+        // control above already ruled out server-down; this pins the cause.
+        let pool = WamnPostgres::build_pool(&ProjectConfig {
+            database_url: url,
+            pool_max_size: 1,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .expect("pool builds (url parses; the hook runs at checkout, not build)");
+        let raw_err = match pool.get().await {
+            Ok(_) => panic!("raw checkout unexpectedly SUCCEEDED against a scs=off server"),
+            Err(e) => e,
+        };
+        let rendered = raw_err.to_string();
+        assert!(
+            rendered.contains("standard_conforming_strings"),
+            "the pool error must be the R18 fail-closed hook, got: {rendered}"
+        );
+    }
 }
