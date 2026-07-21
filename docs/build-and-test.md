@@ -617,7 +617,11 @@ publish → the `EVT_<org>_<env>` stream (subjects
 `evt.<org>.<project>.<env>.<entity>.<op>`), `Nats-Msg-Id = <project_env>:<lsn>`
 dedupe, consume in commit order, and R3 survives node loss. Accounts: single
 shared (default) account — per-org accounts + replication creds are the
-wamn-4xw seam (§11).
+wamn-4xw seam (§11). `--mode all` / `--mode publish` also run the **E14 standing
+guard** (docs/findings.md §3): over a batch shaped like the rows of ONE large
+multi-row txn (dense per-event LSNs, one commit xid), published-event count ==
+distinct `Nats-Msg-Id` count — the server-side stream-delta is the honest
+detector, since any msg-id collision is a silent JetStream dedupe.
 
 ```bash
 cargo build -p wamn-gates   # streambench compiles into the suite

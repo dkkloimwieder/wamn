@@ -118,6 +118,14 @@ const ENTITIES: [&str; 3] = ["receipts", "receipt_lines", "quality_holds"];
 const OPS: [Op; 3] = [Op::Insert, Op::Update, Op::Delete];
 /// A fixed synthetic base LSN so the ids look like real confirmed positions.
 const LSN_BASE: u64 = 0x0100_0000;
+/// A distinct base LSN for the E14 txn-shaped distinctness batch, chosen well
+/// above `LSN_BASE + messages` so its ids can never collide with the functional
+/// publish batch's — a collision would be silently deduped and mask the guard.
+const TXN_LSN_BASE: u64 = 0x0200_0000;
+/// The single commit txid every row of the modeled transaction shares: a real
+/// multi-row txn commits once, so all its rows carry one xid; only the per-row
+/// `wal_start` LSN differs (E14/Q1 — that per-event LSN is what dedupe keys on).
+const TXN_XID: u32 = 0x00C0_FFEE;
 
 /// The i-th event's subject, LSN, Nats-Msg-Id, and a REAL `wamn_event_wire`
 /// envelope payload — the frozen wire contract (wamn-l5i9.30), no stand-in copy.
@@ -139,6 +147,39 @@ fn event(args: &StreamBenchArgs, i: usize) -> (String, u64, String, Bytes) {
         table: entity.to_string(),
         lsn,
         txid: 1 + i as u32,
+        commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
+            .expect("valid rfc3339")
+            .with_timezone(&chrono::Utc),
+        causation: None,
+    };
+    let payload = Bytes::from(serde_json::to_vec(&env).expect("serialize envelope"));
+    (subject, lsn, msg_id, payload)
+}
+
+/// The i-th row of a batch shaped like ONE large multi-row transaction: every row
+/// shares the single commit txid `TXN_XID` but carries a DENSE consecutive
+/// per-event LSN (`TXN_LSN_BASE + i`, spacing 1) — exactly how `pg-walstream`
+/// emits the rows of a transaction (each XLogData frame carries its own
+/// `wal_start`; E14/Q1). The distinct per-event LSNs make the `Nats-Msg-Id`s
+/// pairwise distinct by construction — the property `Nats-Msg-Id` dedupe depends
+/// on. Same REAL frozen `wamn_event_wire` builders as [`event`], no stand-in.
+fn txn_event(args: &StreamBenchArgs, i: usize) -> (String, u64, String, Bytes) {
+    let entity = ENTITIES[i % ENTITIES.len()];
+    let op = OPS[i % OPS.len()];
+    let lsn = TXN_LSN_BASE + i as u64;
+    let subject = subject(&args.org, &args.project, &args.env, entity, op);
+    let msg_id = msg_id(&args.project, &args.env, lsn);
+    let mut new = serde_json::Map::new();
+    new.insert("id".into(), serde_json::Value::String(i.to_string()));
+    let env = Envelope {
+        op,
+        old: None,
+        new: Some(new),
+        entity: Some(entity.to_string()),
+        table: entity.to_string(),
+        lsn,
+        // All rows of one transaction share the commit xid — only wal_start moves.
+        txid: TXN_XID,
         commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
             .expect("valid rfc3339")
             .with_timezone(&chrono::Utc),
@@ -184,6 +225,11 @@ pub async fn run(args: StreamBenchArgs) -> anyhow::Result<()> {
     match args.mode {
         Mode::Publish => {
             recreate_stream(&js, &args).await?;
+            // E14 guard on the fresh stream, then wipe it so the node-loss runbook
+            // (`--mode publish` → delete pod → `--mode heal`) still sees exactly
+            // `--messages` rows for its survival count.
+            pass &= txn_distinctness_phase(&js, &args).await?;
+            recreate_stream(&js, &args).await?;
             pass &= publish_phase(&js, &args).await?;
         }
         Mode::Consume => {
@@ -197,6 +243,10 @@ pub async fn run(args: StreamBenchArgs) -> anyhow::Result<()> {
             pass &= heal_phase(&js, &args).await?;
         }
         Mode::All => {
+            recreate_stream(&js, &args).await?;
+            // E14 guard on the fresh stream, then wipe it so publish/consume/heal
+            // downstream see exactly `--messages` rows.
+            pass &= txn_distinctness_phase(&js, &args).await?;
             recreate_stream(&js, &args).await?;
             pass &= publish_phase(&js, &args).await?;
             pass &= dedupe_phase(&js, &args).await?;
@@ -315,6 +365,69 @@ async fn publish_phase(
         &mut pass,
         &format!("stored still {n} after re-publish (no growth)"),
         stored_again as usize == n,
+    );
+    Ok(pass)
+}
+
+/// E14 standing guard (docs/findings.md §3): over a batch shaped like the rows of
+/// ONE large multi-row transaction — dense consecutive per-event LSNs, one shared
+/// commit txid — the count of published events must equal the count of distinct
+/// `Nats-Msg-Id`s the stream accepted. JetStream turns any msg-id collision into a
+/// SILENT drop (`PubAck.duplicate`), so the **server-side** stream count is the
+/// honest detector: if two rows ever shared an LSN, the stream would grow short.
+/// Runs on the freshly-recreated (empty) stream; the caller wipes it afterward so
+/// the functional publish/consume/heal flow sees exactly `--messages`.
+async fn txn_distinctness_phase(
+    js: &async_nats::jetstream::Context,
+    args: &StreamBenchArgs,
+) -> anyhow::Result<bool> {
+    let n = args.messages;
+    println!("\n## E14 txn-distinctness — {n}-row txn-shaped batch: published == distinct Nats-Msg-Id");
+    let name = args.stream_name();
+    let (before, _l, _p, _r) = stream_state(js, &name).await?;
+
+    // (a) client-side: the batch's msg-ids are pairwise distinct — asserted
+    //     BEFORE any publish, from the same `txn_event` source the publish loop
+    //     below uses (so a collision fault reaches both this check and the wire).
+    let mut ids = std::collections::HashSet::new();
+    for i in 0..n {
+        let (_subject, _lsn, msg_id, _payload) = txn_event(args, i);
+        ids.insert(msg_id);
+    }
+    let distinct_ids = ids.len();
+    let mut pass = true;
+    check(
+        &mut pass,
+        &format!("txn batch msg-ids pairwise distinct ({distinct_ids}/{n})"),
+        distinct_ids == n,
+    );
+
+    // Publish the txn-shaped batch onto the (fresh) stream.
+    for i in 0..n {
+        let (subject, _lsn, msg_id, payload) = txn_event(args, i);
+        let mut headers = HeaderMap::new();
+        headers.insert(NATS_MESSAGE_ID, msg_id.as_str());
+        js.publish_with_headers(subject, headers, payload)
+            .await
+            .context("publish txn event")?
+            .await
+            .context("publish txn ack")?;
+    }
+
+    // (b) server-side (the load-bearing one): the stream grew by EXACTLY n. A
+    //     duplicate Nats-Msg-Id inside the batch would have been silently deduped
+    //     and this delta would come up short — it catches the fault even if (a)
+    //     were blind (see the M1 mutant, which neuters (a) to isolate this check).
+    let (after, _l2, _p2, _r2) = stream_state(js, &name).await?;
+    let delta = after.saturating_sub(before);
+    check(
+        &mut pass,
+        &format!("stream grew by exactly {n} (no Nats-Msg-Id silently deduped)"),
+        delta as usize == n,
+    );
+
+    println!(
+        "  E14: txn-shaped batch published={n} distinct-msg-ids={distinct_ids} stream-delta={delta}"
     );
     Ok(pass)
 }
@@ -559,4 +672,50 @@ async fn heal_phase(
     // And they are still consumable end-to-end.
     pass &= consume_phase(js, args, expect).await?;
     Ok(pass)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{Mode, StreamBenchArgs, txn_event};
+
+    fn args(n: usize) -> StreamBenchArgs {
+        StreamBenchArgs {
+            nats_url: "nats://localhost:4222".into(),
+            mode: Mode::Publish,
+            org: "demo".into(),
+            project: "receiving".into(),
+            env: "prod".into(),
+            messages: n,
+            replicas: 1,
+            dup_window_secs: 120,
+            expect_messages: None,
+        }
+    }
+
+    /// E14 (docs/findings.md §3): the multi-row-txn-shaped batch carries a DENSE
+    /// consecutive per-event LSN — and therefore a distinct `Nats-Msg-Id` — for
+    /// every row, by construction. That distinctness is exactly what `Nats-Msg-Id`
+    /// dedupe depends on; a collision would be a silent drop.
+    #[test]
+    fn txn_batch_has_distinct_lsns_and_msg_ids() {
+        let n = 512;
+        let a = args(n);
+        let mut lsns = HashSet::new();
+        let mut ids = HashSet::new();
+        let mut prev: Option<u64> = None;
+        for i in 0..n {
+            let (_subject, lsn, msg_id, _payload) = txn_event(&a, i);
+            // Dense + strictly increasing, spacing 1 — as pg-walstream emits.
+            if let Some(p) = prev {
+                assert_eq!(lsn, p + 1, "txn LSNs must be dense consecutive (spacing 1)");
+            }
+            prev = Some(lsn);
+            lsns.insert(lsn);
+            ids.insert(msg_id);
+        }
+        assert_eq!(lsns.len(), n, "every txn row must carry a distinct LSN");
+        assert_eq!(ids.len(), n, "every txn row must carry a distinct Nats-Msg-Id");
+    }
 }
