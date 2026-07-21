@@ -21,6 +21,20 @@ pub enum ApiError {
     UnknownField { entity: String, field: String },
     /// `?expand=` names a relation not reachable from the entity.
     UnknownRelation { entity: String, relation: String },
+    /// `?expand=` resolves a relation whose cardinality v1 cannot serve as a
+    /// one-level embed (`many-to-many`, `hierarchical`). Distinct from an unknown
+    /// relation: the relation exists, but embedding it needs the join table /
+    /// recursion that arrives with GraphQL (wamn-tsn). `cardinality` is the kebab
+    /// label naming why (cjv.14).
+    UnsupportedExpansion {
+        entity: String,
+        relation: String,
+        cardinality: &'static str,
+    },
+    /// `?expand=` resolves a relation that carries no backing foreign-key field,
+    /// so there is no key to join on — a malformed / unservable catalog relation,
+    /// distinct from an unknown one (cjv.14).
+    UnservableRelation { entity: String, relation: String },
     /// A value failed type/format/range validation for its field.
     InvalidValue { field: String, message: String },
     /// The request was malformed (bad path, unparseable limit, empty update, …).
@@ -49,6 +63,8 @@ impl ApiError {
             ApiError::UnknownEntity(_) => "unknown-entity",
             ApiError::UnknownField { .. } => "unknown-field",
             ApiError::UnknownRelation { .. } => "unknown-relation",
+            ApiError::UnsupportedExpansion { .. } => "unsupported-expansion",
+            ApiError::UnservableRelation { .. } => "unservable-relation",
             ApiError::InvalidValue { .. } => "invalid-value",
             ApiError::InvalidRequest(_) => "invalid-request",
             ApiError::PayloadRequired => "payload-required",
@@ -69,6 +85,18 @@ impl ApiError {
             }
             ApiError::UnknownRelation { entity, relation } => {
                 format!("no such relation on {entity}: {relation}").into()
+            }
+            ApiError::UnsupportedExpansion {
+                entity,
+                relation,
+                cardinality,
+            } => format!(
+                "expansion of {cardinality} relation {relation} on {entity} is not supported"
+            )
+            .into(),
+            ApiError::UnservableRelation { entity, relation } => {
+                format!("relation {relation} on {entity} is not expandable (no foreign-key field)")
+                    .into()
             }
             ApiError::InvalidValue { field, message } => {
                 format!("invalid value for {field}: {message}").into()

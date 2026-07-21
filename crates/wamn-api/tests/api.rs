@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use wamn_api::{
     ApiError, ExpandDir, Method, PlanKind, Router, SqlValue, attach_expansion, shape_rows,
 };
-use wamn_catalog::Catalog;
+use wamn_catalog::{Cardinality, Catalog, Entity, Field, FieldType, Relation};
 
 const POC: &str = include_str!("../../wamn-catalog/tests/fixtures/poc-receiving.catalog.json");
 
@@ -587,6 +587,211 @@ fn duplicate_expand_names_are_deduped_first_occurrence_order() {
         .unwrap();
     let names: Vec<&str> = plan.expands().iter().map(|e| e.name()).collect();
     assert_eq!(names, vec!["lines", "material"], "repeated params");
+}
+
+// ---- expansion cardinality (cjv.14) ---------------------------------------
+//
+// The POC fixture is all one-to-many, so these use an in-code catalog carrying
+// the shapes it lacks: a many-to-many, a self-referential hierarchical, and a
+// one-to-many missing its backing FK field. Built directly — `Catalog::from_json`
+// (how the fixture loads) does no validation, so these need not pass `validate()`
+// — and touching no shared fixture.
+
+fn odd_catalog() -> Catalog {
+    Catalog {
+        schema_version: "0.1".to_string(),
+        catalog_id: "cjv14".to_string(),
+        version: 1,
+        name: None,
+        entities: vec![
+            ent("articles", vec![text("title"), reference("tag_id", "tags")]),
+            ent("tags", vec![text("label")]),
+            ent(
+                "article_tags",
+                vec![
+                    reference("article_id", "articles"),
+                    reference("tag_id", "tags"),
+                ],
+            ),
+            ent(
+                "categories",
+                vec![text("cat_name"), reference("parent_id", "categories")],
+            ),
+            ent("authors", vec![text("author_name")]),
+        ],
+        relations: vec![
+            // A stray from_field is deliberately present so the "silently
+            // mis-served as a to-one" mutant has a field to serve against; the fix
+            // must reject by cardinality regardless.
+            rel(
+                "m2m",
+                "tags",
+                Cardinality::ManyToMany,
+                "articles",
+                "tags",
+                Some("tag_id"),
+                Some("article_tags"),
+            ),
+            rel(
+                "tree",
+                "subcategories",
+                Cardinality::Hierarchical,
+                "categories",
+                "categories",
+                Some("parent_id"),
+                None,
+            ),
+            rel(
+                "auth",
+                "author",
+                Cardinality::OneToMany,
+                "articles",
+                "authors",
+                None,
+                None,
+            ),
+        ],
+    }
+}
+
+fn ent(name: &str, fields: Vec<Field>) -> Entity {
+    Entity {
+        id: name.into(),
+        name: name.to_string(),
+        is_system: false,
+        label: None,
+        description: None,
+        fields,
+        indexes: Vec::new(),
+        constraints: Vec::new(),
+    }
+}
+
+fn text(name: &str) -> Field {
+    field(name, FieldType::Text { max_len: None })
+}
+
+fn reference(name: &str, target: &str) -> Field {
+    field(
+        name,
+        FieldType::Reference {
+            entity: target.into(),
+        },
+    )
+}
+
+fn field(name: &str, field_type: FieldType) -> Field {
+    Field {
+        id: name.into(),
+        name: name.to_string(),
+        field_type,
+        nullable: true,
+        default: None,
+        sensitive: false,
+        is_system: false,
+        label: None,
+        description: None,
+    }
+}
+
+fn rel(
+    id: &str,
+    name: &str,
+    cardinality: Cardinality,
+    from: &str,
+    to: &str,
+    from_field: Option<&str>,
+    through: Option<&str>,
+) -> Relation {
+    Relation {
+        id: id.to_string(),
+        name: name.to_string(),
+        cardinality,
+        from: from.into(),
+        to: to.into(),
+        from_field: from_field.map(Into::into),
+        through: through.map(Into::into),
+        description: None,
+    }
+}
+
+#[test]
+fn many_to_many_expansion_is_unsupported_not_unknown() {
+    // A many-to-many relation is rejected by cardinality with a distinct error —
+    // never mis-served as a direct FK read against the wrong table (cjv.14).
+    let cat = odd_catalog();
+    let err = Router::new(&cat)
+        .compile(
+            Method::Get,
+            "/api/rest/articles",
+            &q(&[("expand", "tags")]),
+            None,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, ApiError::UnsupportedExpansion { ref relation, cardinality, .. }
+            if relation == "tags" && cardinality == "many-to-many"),
+        "{err:?}"
+    );
+    assert_eq!(err.status(), 400);
+}
+
+#[test]
+fn hierarchical_expansion_is_unsupported_not_to_one() {
+    // A self-referential hierarchical relation used to always take the to-one
+    // branch; now it is cleanly rejected as unsupported (cjv.14).
+    let cat = odd_catalog();
+    let err = Router::new(&cat)
+        .compile(
+            Method::Get,
+            "/api/rest/categories",
+            &q(&[("expand", "subcategories")]),
+            None,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, ApiError::UnsupportedExpansion { ref relation, cardinality, .. }
+            if relation == "subcategories" && cardinality == "hierarchical"),
+        "{err:?}"
+    );
+    assert_eq!(err.status(), 400);
+}
+
+#[test]
+fn one_to_many_missing_from_field_is_unservable_not_unknown() {
+    // A matched one-to-many with no backing FK field is a malformed/unservable
+    // relation — reported distinctly from a truly-unknown relation (cjv.14).
+    let cat = odd_catalog();
+    let err = Router::new(&cat)
+        .compile(
+            Method::Get,
+            "/api/rest/articles",
+            &q(&[("expand", "author")]),
+            None,
+        )
+        .unwrap_err();
+    assert!(!matches!(err, ApiError::UnknownRelation { .. }), "{err:?}");
+    assert!(
+        matches!(err, ApiError::UnservableRelation { ref relation, .. } if relation == "author"),
+        "{err:?}"
+    );
+    assert_eq!(err.status(), 400);
+}
+
+#[test]
+fn truly_unknown_relation_is_still_unknown() {
+    // The unknown-name path is unchanged by the cardinality switch: a name that
+    // matches no relation is still UnknownRelation, not the new variants.
+    let cat = odd_catalog();
+    let err = Router::new(&cat)
+        .compile(
+            Method::Get,
+            "/api/rest/articles",
+            &q(&[("expand", "nope")]),
+            None,
+        )
+        .unwrap_err();
+    assert!(matches!(err, ApiError::UnknownRelation { .. }), "{err:?}");
 }
 
 // ---- exact-decimal round-trip (no float, end to end) ----------------------

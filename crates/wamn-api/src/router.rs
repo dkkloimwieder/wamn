@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 
 use serde_json::Value;
-use wamn_catalog::{Catalog, Entity, Field, FieldType};
+use wamn_catalog::{Cardinality, Catalog, Entity, Field, FieldType};
 use wamn_ddl::sql::quote_ident;
 
 use crate::error::ApiError;
@@ -669,20 +669,56 @@ impl<'a> Router<'a> {
     }
 
     /// Resolve `?expand=` relation names into executable [`Expand`]s.
+    ///
+    /// The relation's declared [`Cardinality`] drives serving — never the
+    /// from/to position or `from_field` presence (cjv.14):
+    ///
+    /// * `one-to-many` is served, direction chosen by which side the requesting
+    ///   entity is on (holds-the-FK → to-one parent; is-the-parent → to-many
+    ///   children). `from_field` is required; a matched relation missing it is a
+    ///   malformed catalog ([`ApiError::UnservableRelation`]), not an unknown one.
+    /// * `many-to-many` / `hierarchical` are rejected up front
+    ///   ([`ApiError::UnsupportedExpansion`]): embedding them needs the join
+    ///   table / recursion that arrives with GraphQL (wamn-tsn), not a direct FK
+    ///   read. Never silently mis-served as a to-one against the wrong table.
     fn resolve_expands(&self, entity: &Entity, names: &[String]) -> Result<Vec<Expand>, ApiError> {
         let mut out = Vec::with_capacity(names.len());
         for name in names {
-            let unknown = || ApiError::UnknownRelation {
-                entity: entity.name.clone(),
-                relation: name.clone(),
-            };
             let rel = self
                 .catalog
                 .relations
                 .iter()
                 .find(|r| &r.name == name && (r.from == entity.id || r.to == entity.id))
-                .ok_or_else(unknown)?;
-            let from_field_id = rel.from_field.as_ref().ok_or_else(unknown)?;
+                .ok_or_else(|| ApiError::UnknownRelation {
+                    entity: entity.name.clone(),
+                    relation: name.clone(),
+                })?;
+
+            match rel.cardinality {
+                Cardinality::ManyToMany => {
+                    return Err(ApiError::UnsupportedExpansion {
+                        entity: entity.name.clone(),
+                        relation: name.clone(),
+                        cardinality: "many-to-many",
+                    });
+                }
+                Cardinality::Hierarchical => {
+                    return Err(ApiError::UnsupportedExpansion {
+                        entity: entity.name.clone(),
+                        relation: name.clone(),
+                        cardinality: "hierarchical",
+                    });
+                }
+                Cardinality::OneToMany => {}
+            }
+
+            // A matched one-to-many that resolves no backing FK field is a
+            // malformed catalog, not an unknown relation.
+            let unservable = || ApiError::UnservableRelation {
+                entity: entity.name.clone(),
+                relation: name.clone(),
+            };
+            let from_field_id = rel.from_field.as_ref().ok_or_else(unservable)?;
 
             if rel.from == entity.id {
                 // This entity holds the FK → embed the single parent (to-one).
@@ -690,12 +726,12 @@ impl<'a> Router<'a> {
                     .by_id
                     .get(rel.to.as_str())
                     .copied()
-                    .ok_or_else(unknown)?;
+                    .ok_or_else(unservable)?;
                 let fk = entity
                     .fields
                     .iter()
                     .find(|f| &f.id == from_field_id)
-                    .ok_or_else(unknown)?;
+                    .ok_or_else(unservable)?;
                 out.push(Expand {
                     name: name.clone(),
                     dir: ExpandDir::ToOne,
@@ -710,12 +746,12 @@ impl<'a> Router<'a> {
                     .by_id
                     .get(rel.from.as_str())
                     .copied()
-                    .ok_or_else(unknown)?;
+                    .ok_or_else(unservable)?;
                 let fk = child
                     .fields
                     .iter()
                     .find(|f| &f.id == from_field_id)
-                    .ok_or_else(unknown)?;
+                    .ok_or_else(unservable)?;
                 out.push(Expand {
                     name: name.clone(),
                     dir: ExpandDir::ToMany,
