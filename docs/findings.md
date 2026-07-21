@@ -56,7 +56,7 @@ prerequisite that makes everything else findable.
 | R6 | `partitioned(key)` ordering under retry/park | High | **closed** | `84233fa` (policy materialized on the row; D20 is the decision, not the evidence) |
 | R8c | Outbox amplification + GC | Med | **closed** | `f0cebca` (wamn-l5i9.19 teardown removed the subject — the outbox + its GC are deleted; wamn-2jkm.31) |
 | SR1/SR3/SR6 | Gates split, repo tiering, conventions written down | — | **closed** | `3dfee03` / `4a637e2` / `d8e1366` |
-| E14 | Q1: `ev.lsn` is per-message — dedupe design sound | — | **closed** | evidence: `pg-walstream stream.rs:1093,1066` (question-class closure) |
+| E14 | Q1: `ev.lsn` is per-message — dedupe design sound | — | **closed** | evidence: `pg-walstream stream.rs:1093,1066` (question-class closure); standing guard shipped `7440d33` (wamn-l5i9.55) |
 | SR12 | Pure/effect split can't test statement-level bugs | High | **closed** | live-test half `c705c9e` (wamn-2jkm.23); header qualification + composed-statement convention `0d7231f` (wamn-2jkm.17) |
 | SR9 | `wamn-host` is three programs in one crate | Med | **closed** | `d4fe3aa`+`7262679`+`157b61b`+`685a7fc` (wamn-2jkm.22) — wamn-ctl / wamn-dispatcher / wamn-run-worker / wamn-cdc-reader split; washlet strings-clean; in-cluster rollout rides wamn-2jkm.41 |
 | E7/E8 | Reader as a service: extraction + placement/ownership | Med/High | **closed** | E7 `f044b5f` (wamn-l5i9.48; extraction = SR9 `d4fe3aa`/`157b61b`/`685a7fc`, remainder = zero-grant ServiceAccount + credential scope; in-cluster apply rides wamn-2jkm.41) · E8 = **D22** `055dfe6` (wamn-l5i9.46 ratified; lease-sharded fleet, per-org escape hatch; `.33`/`.34` implement) |
@@ -665,7 +665,10 @@ construction; `StreamingMode::Off` rules out the v2+ streaming edge.
 **Standing guard:** a `streambench` assertion that published-event count ==
 distinct `Nats-Msg-Id` count over a run containing a large multi-row
 transaction. `poc/cdc1` establishes *monotonicity*; this establishes
-*distinctness*, which is what `msg_id` depends on.
+*distinctness*, which is what `msg_id` depends on. **Shipped** `7440d33`
+(wamn-l5i9.55): txn-shaped 200-row batch (dense per-event LSNs, one XID),
+client-side pairwise-distinct msg-ids + server-side stream-delta == N with
+JetStream dedupe as the silent-drop detector; runs under `--mode publish`/`all`.
 
 ### E3, E5–E9 — remainder
 **E3** `entity` is an unqualified table name (publication is single-schema
