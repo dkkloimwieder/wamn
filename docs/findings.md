@@ -67,10 +67,10 @@ prerequisite that makes everything else findable.
 | SR2 | flowrunner re-implements run-state SQL | Med | open | before F3/F4 |
 | R17 | `NAMEDATALEN` truncation: `wamn_mig_drop_` + long entity collides; `TempNameCollision` compares untruncated | Med | open | with the next migration-engine touch |
 | R18 | `standard_conforming_strings` assumed, never asserted | Med | **closed** | `d770302` (wamn-2jkm.21; `post_create` SHOW assert per physical connection, fail closed) |
-| R19 | `row_to_map` lossy on non-UTF-8 (`from_utf8_lossy`) | Low | open | with reader work |
-| R20 | Author-supplied retry `cap-ms` unbounded | Low | open | with runner work |
+| R19 | `row_to_map` lossy on non-UTF-8 (`from_utf8_lossy`) | Low | **closed** | `1f21432` (wamn-2jkm.35) — fallible `row_to_map`, non-UTF-8 refuses `Config`→`Fatal` (loud exit, slot holds WAL) instead of `U+FFFD` corruption |
+| R20 | Author-supplied retry `cap-ms` unbounded | Low | **closed** | `225dfec` (wamn-2jkm.36) — parse-time clamp to `CAP_MS_CEILING` 1 h (the janitor reap grace); default untouched |
 | R21 | `classify` matches `Display` text; PG17+ floor unstated | Low | open | with reader work |
-| R22 | `subject_token` collisions (`a.b` ≡ `a_b`) | Low | open | with E3 |
+| R22 | `subject_token` collisions (`a.b` ≡ `a_b`) | Low | **closed** | `fa79b79` (wamn-2jkm.38) — stable FNV-1a hash-suffix when sanitization changed the string; clean tokens byte-identical (freeze held); E3 (cross-schema) stays open, decoupled — post-freeze it is a 0.2 wire change; residual: wamn-iaq9 |
 | R23 | Unbounded `OFFSET` in the API gateway | Low | open | with keyset pagination |
 | R24 | Merge/loop flows unresumable (occurrence collapse) | Med | open | wamn-2jkm.42 — before a multi-visit flow needs resume |
 | R25 | `idempotency_key` collides across visits | Low | open | wamn-2jkm.43, with R24 |
@@ -79,9 +79,9 @@ prerequisite that makes everything else findable.
 | R28 | CDC replication credential blast radius is cluster-wide, not "one registration" | Med | open | wamn-2jkm.46, with the l5i9.32 knobs |
 | R29 | Replication-slot shape never reconciled (R12 class) | Low | open | wamn-2jkm.47 |
 | R30 | Vault secrets plaintext-resident, no zeroization | Low | open | wamn-2jkm.48 |
-| R31 | Plugin claim/grant registries never cleared on unbind | Low | open | wamn-2jkm.49 — before wamn-bd5 grants |
+| R31 | Plugin claim/grant registries never cleared on unbind | Low | **closed** | `f072590`+`fa96675` (wamn-2jkm.49) — `on_workload_unbind` reaps both plugins' per-component registries (fork builtin convention); serve-node per-invocation grant revoked by Drop-guard; nodeinvoke GRANT-REVOKED witness |
 | R32 | `Retryable` node errors abort the invocation and hold the lease (prod dispatch path) | High | **closed** | `a59619d` (wamn-2jkm.50) — Step::Wait → park in BOTH drivers, attempt persists across reclaim; in-cluster verify rides wamn-2jkm.41 |
-| R33 | Delay wake key is global per run — second delay never delays | Low | open | wamn-2jkm.51 |
+| R33 | Delay wake key is global per run — second delay never delays | Low | **closed** | `579bb05` (wamn-2jkm.51, 2026-07-20 cleanup wave) — wake keyed by node id, cleared on emit; legacy bare wake = ignore-and-clear (row swept late: the fix predates this sweep) |
 | E15/E16 | UDP egress allow-all; `UdpBind` all-interfaces (the arms E13's fix left) | High/Med | **closed** | fork `eef76cd8`/pin `4e82c8f` (wamn-7j0.2) — same opt-in as E13, UdpBind = TcpBind posture; runtime gate rides wamn-2jkm.41; **5 carried commits = past the fork escalation threshold** |
 | E17 | `egressbench` would PASS a tenant `wamn:postgres` importer | Med (latent) | **closed** | `91659ff` (wamn-2jkm.52) — tenant positive allowlist single-sourced in `egress_guard`; unblocks wamn-bd5; builder interface lint = wamn-2jkm.68 |
 | R8b-b | Tenant predicate on the four RLS-only queue statements | Low | **closed** | `79e414b` (wamn-2jkm.53; four builders carry the predicate; R8b-a stays wamn-286) |
