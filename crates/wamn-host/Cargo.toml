@@ -50,3 +50,10 @@ hyper = "1"
 # grant derivation) shared verbatim with the flowrunner guest — one source of
 # truth for the wire shape, so the two ends cannot drift.
 wamn-node-invoke = { path = "../wamn-node-invoke" }
+
+[dev-dependencies]
+# The 5.5a interface-level lint tests synthesize minimal adversarial + standard
+# custom-node components in-process (the socketguard pattern) and screen the REAL
+# compiled bytes through the builder lint — no external fixture build. Pinned to
+# the wasm-encoder already in the graph via the wasmtime rev.
+wasm-encoder = "0.251"

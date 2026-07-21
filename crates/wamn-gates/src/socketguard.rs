@@ -154,6 +154,9 @@ mod tests {
             Err(EgressGuardError::DisallowedTenantImport { .. }) => {
                 panic!("socket denylist produced a tenant-allowlist refusal — wrong classifier")
             }
+            Err(EgressGuardError::DisallowedNodeInterface { .. }) => {
+                panic!("socket denylist produced an interface-lint refusal — wrong classifier")
+            }
             Ok(()) => panic!("guard ADMITTED a wasi:sockets importer — the bypass is open"),
         }
     }

@@ -4315,6 +4315,7 @@ dependencies = [
  "wamn-node-invoke",
  "wamn-registry",
  "wash-runtime",
+ "wasm-encoder 0.251.0",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
 ]
