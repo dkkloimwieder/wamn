@@ -488,6 +488,15 @@ impl ServeNode {
         self.grant_installs.load(Ordering::Relaxed)
     }
 
+    /// Gate-side revoke witness (R31): whether the served node currently holds
+    /// a granted-credentials entry. After an invocation returns this must be
+    /// `false` — the per-invocation grant must not outlive its invocation. A
+    /// mutant that stops arming the [`GrantGuard`] in [`ServeNode::invoke`]
+    /// leaves the grant installed and fails the gate's GRANT-REVOKED check.
+    pub fn invocation_grant_active(&self) -> bool {
+        self.vault.has_granted_credentials(&self.node_id)
+    }
+
     async fn instantiate(
         engine: &Engine,
         pre: &InstancePre<SharedCtx>,

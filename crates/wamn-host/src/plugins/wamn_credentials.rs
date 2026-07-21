@@ -207,6 +207,16 @@ impl WamnCredentials {
             .remove(component_id);
     }
 
+    /// Whether the component holds ANY granted-credentials entry — the R31
+    /// revoke-witness probe (`ServeNode::invocation_grant_active`): after an
+    /// invocation returns, its per-invocation grant must be gone.
+    pub fn has_granted_credentials(&self, component_id: &str) -> bool {
+        self.grants
+            .read()
+            .expect("grants lock poisoned")
+            .contains_key(component_id)
+    }
+
     /// The component's registered project, or `None` if unregistered (which
     /// `authorize` treats as fail-closed — cjv.3, no fail-open default).
     fn project_for(&self, component_id: &str) -> Option<String> {

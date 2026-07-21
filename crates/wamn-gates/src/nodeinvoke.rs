@@ -564,6 +564,14 @@ async fn gate_body(
         "AUTHN-POSITIVE: each accepted invocation installed its grant (grant_install_count advanced by ≥N)",
         grants_after_positive >= n as u64,
     );
+    // R31 (wamn-2jkm.49): the grant is per-invocation — after the drain returns,
+    // none may remain installed. A mutant that stops arming the revoke guard in
+    // `invoke` leaves the last grant live and fails here.
+    check(
+        &mut ok,
+        "GRANT-REVOKED: after the drain no per-invocation grant remains installed (the grant does not outlive its invocation)",
+        !serve.invocation_grant_active(),
+    );
 
     // Drive the serve-node directly over raw HTTP to exercise the refusal arms
     // the happy path cannot forge — the exact envelope the flowrunner sends.
@@ -629,6 +637,11 @@ async fn gate_body(
         &mut ok,
         "AUTHN-SIGNED: a correctly-signed raw envelope is accepted (200) and installs exactly one grant",
         status == 200 && serve.grant_install_count() == grants_after_negatives + 1,
+    );
+    check(
+        &mut ok,
+        "GRANT-REVOKED: the raw-signed invocation's grant was revoked on return (R31)",
+        !serve.invocation_grant_active(),
     );
     println!(
         "  authn: grants(after positive drain)={grants_after_positive}; refusals installed 0 grants (before={grants_before_negatives} after={grants_after_negatives}); raw-signed accepted"
