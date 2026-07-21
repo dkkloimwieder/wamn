@@ -347,7 +347,7 @@ impl RunWorker {
         let ctx = Ctx::builder(owner.to_string(), owner.to_string())
             .with_plugins(plugins)
             .with_http_handler(Arc::new(RunnerEgress {
-                inner: DefaultOutgoingHandler::default(),
+                inner: DefaultOutgoingHandler,
                 policy: egress_policy,
             }))
             .with_allowed_hosts(allowed_hosts)

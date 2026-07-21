@@ -996,7 +996,7 @@ async fn drain(
         // First row event of a relation this session: resolve its entity id
         // from the map (by OID — rename-proof). `None` is cached too, so an
         // unmapped table costs one lookup per session, not one per event.
-        if !entities.contains_key(&relation_oid) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = entities.entry(relation_oid) {
             let resolved = match resolve_entity(args, &schema, relation_oid).await {
                 Ok(r) => r,
                 Err(e) => return DrainOutcome::Severed(e, summary),
@@ -1007,7 +1007,7 @@ async fn drain(
                 entity = resolved.as_deref().unwrap_or("(unmapped)"),
                 "entity resolved"
             );
-            entities.insert(relation_oid, resolved);
+            slot.insert(resolved);
         }
         let entity = entities.get(&relation_oid).cloned().flatten();
         // Buffer the row; it publishes at Commit, once the txn's causation
