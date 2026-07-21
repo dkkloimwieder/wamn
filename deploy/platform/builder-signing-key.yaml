@@ -1,0 +1,26 @@
+# 5.5d — the builder's ed25519 SIGNING KEY Secret (shape documentation only).
+#
+# The MAIN LOOP generates the real keypair and creates this Secret from it — the
+# placeholder below never signs anything:
+#
+#   # generate the keypair (hex-PKCS#8 private + hex public)
+#   docker run --rm -v "$PWD:/out" wamn-builder:dev keygen \
+#     --private-key /out/builder-signing-key.hex --public-key /out/builder-public-key.hex
+#   # bank the PRIVATE key as the Secret the builder Job mounts
+#   kubectl -n wamn-system create secret generic wamn-builder-signing-key \
+#     --from-file=signing-key.hex=builder-signing-key.hex
+#   # keep the PUBLIC key for buildproof (--public-key "$(cat builder-public-key.hex)")
+#
+# The builder Job (builder-job.yaml) mounts this Secret and passes --signing-key;
+# buildproof verifies wamn.node.signature against the matching public key.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-builder-signing-key
+  namespace: wamn-system
+  labels: { app: wamn-builder }
+type: Opaque
+stringData:
+  # hex-PKCS#8 ed25519 private key (from `wamn-builder keygen --private-key`).
+  # PLACEHOLDER — not a valid key; the main loop overwrites it with the real one.
+  signing-key.hex: "REPLACE_ME_with_hex_pkcs8_ed25519_private_key_from_keygen"

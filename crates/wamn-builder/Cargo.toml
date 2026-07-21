@@ -34,6 +34,11 @@ http-body-util = "0.1"
 bytes = "1"
 # Content-addressing (the OCI sha256 digest); the wamn-node-invoke sha2/hex line.
 sha2 = "0.11"
+hex = "0.4"
+# 5.5d artifact provenance: an ed25519 detached signature over sha256(wasm).
+# `ring` is already resolved in the workspace lock (transitive via the TLS
+# stack); its Ed25519KeyPair is a clean detached-signature API — no new heavy dep.
+ring = "0.17"
 
 [dev-dependencies]
 # The 5.5e push gate stands up an in-process registry-v2 STUB (a hyper server)

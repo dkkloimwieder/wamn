@@ -23,6 +23,8 @@ struct Cli {
 enum Command {
     /// Build a custom node (cargo|jco) into a wasm component, screened through the 5.5 import lint
     Build(wamn_builder::build::BuildArgs),
+    /// Generate an ed25519 signing keypair (hex-PKCS#8 private + hex public) for artifact signing (5.5d)
+    Keygen(wamn_builder::keygen::KeygenArgs),
 }
 
 #[tokio::main]
@@ -40,5 +42,6 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Build(args) => wamn_builder::build::run(args).await,
+        Command::Keygen(args) => wamn_builder::keygen::run(args).await,
     }
 }

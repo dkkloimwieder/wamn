@@ -36,10 +36,21 @@ spec:
       # The build sandbox never talks to the Kubernetes API (6.2: no cluster creds).
       automountServiceAccountToken: false
       restartPolicy: Never
+      volumes:
+        # 5.5d: the ed25519 signing key (builder-signing-key.yaml). OPTIONAL —
+        # absent = an UNSIGNED push (warned); present = wamn.node.signature.
+        - name: signing-key
+          secret:
+            secretName: wamn-builder-signing-key
+            optional: true
       containers:
         - name: wamn-builder
           image: wamn-builder:dev
           imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: signing-key
+              mountPath: /etc/wamn/signing
+              readOnly: true
           args:
             - "--log-level"
             - "info"
@@ -53,8 +64,17 @@ spec:
             - "cargo"
             - "--package"
             - "sample-node"
-            # 5.5e OCI push args (--registry / --repository / --tag) are added by
-            # the wamn-0si.5 commit once the push stage exists.
+            # 5.5e OCI push to the in-cluster registry (plain HTTP).
+            - "--registry"
+            - "registry.wamn-system.svc.cluster.local:5000"
+            - "--repository"
+            - "wamn/sample-node"
+            - "--tag"
+            - "dev"
+            # 5.5d: sign the artifact (records wamn.node.signature + public-key +
+            # signed-digest). Drop this flag + the volume for an unsigned push.
+            - "--signing-key"
+            - "/etc/wamn/signing/signing-key.hex"
           resources:
             # No CPU limit (the S2 CFS-throttling lesson): a quota would stall the
             # cargo/rustc build under scheduler throttles. Memory IS capped.

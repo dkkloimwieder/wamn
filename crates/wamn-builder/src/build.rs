@@ -88,6 +88,12 @@ pub struct BuildArgs {
     /// metadata) REQUIRES it to push.
     #[arg(long)]
     pub node_type: Option<String>,
+
+    /// 5.5d: the hex-PKCS#8 ed25519 signing key file. When set (with `--registry`)
+    /// the push records the detached signature + public-key fingerprint + signed
+    /// digest as OCI annotations. Absent = an UNSIGNED push (warned).
+    #[arg(long, env = "WAMN_BUILDER_SIGNING_KEY")]
+    pub signing_key: Option<PathBuf>,
 }
 
 impl BuildArgs {
@@ -263,28 +269,71 @@ fn push_target(args: &BuildArgs) -> anyhow::Result<Option<crate::registry::Regis
     }))
 }
 
-/// The OCI annotations attached at push. 5.5e writes the `wamn.node.manifest`
-/// annotation; 5.5d (signing / SBOM) adds its annotations to this map.
-fn base_annotations(node_manifest: &wamn_node_manifest::NodeManifest) -> BTreeMap<String, String> {
+/// The OCI annotations attached at push: `wamn.node.manifest` (5.5e), the
+/// CycloneDX SBOM (5.5d), and — when a signing key is present — the ed25519
+/// signature + signed digest + public-key fingerprint (5.5d).
+fn build_push_annotations(
+    node_manifest: &wamn_node_manifest::NodeManifest,
+    wasm: &[u8],
+    signing: Option<&crate::sign::SigningKey>,
+    sbom: &str,
+) -> BTreeMap<String, String> {
     let mut annotations = BTreeMap::new();
     annotations.insert(
         wamn_node_manifest::ANNOTATION_KEY.to_string(),
         node_manifest.to_json(),
     );
+    annotations.insert(crate::sbom::SBOM_ANNOTATION.to_string(), sbom.to_string());
+    if let Some(key) = signing {
+        annotations.insert(
+            crate::sign::SIGNATURE_ANNOTATION.to_string(),
+            key.sign_artifact(wasm),
+        );
+        annotations.insert(
+            crate::sign::SIGNED_DIGEST_ANNOTATION.to_string(),
+            format!("sha256:{}", crate::sign::artifact_digest_hex(wasm)),
+        );
+        annotations.insert(
+            crate::sign::PUBLIC_KEY_ANNOTATION.to_string(),
+            key.public_key_hex(),
+        );
+    }
     annotations
 }
 
-/// Push the built artifact with the `wamn.node.manifest` annotation (5.5e). The
-/// manifest is built + validated (`is_valid`) BEFORE push.
+/// Load the signing key if `--signing-key` is set; warn loudly on an UNSIGNED
+/// push so a missing signature is never silent.
+async fn load_signing_key(args: &BuildArgs) -> anyhow::Result<Option<crate::sign::SigningKey>> {
+    match &args.signing_key {
+        Some(path) => Ok(Some(crate::sign::SigningKey::from_file(path).await?)),
+        None => {
+            tracing::warn!(
+                "builder: NO --signing-key — pushing an UNSIGNED artifact (no wamn.node.signature)"
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// Push the built artifact with the `wamn.node.manifest` + SBOM + (optional)
+/// signature annotations (5.5e/5.5d). The manifest is validated (`is_valid`)
+/// BEFORE push.
 async fn push_artifact(
     target: &crate::registry::RegistryRef,
     node_manifest: &wamn_node_manifest::NodeManifest,
     wasm: &[u8],
+    signing: Option<&crate::sign::SigningKey>,
+    sbom: &str,
 ) -> anyhow::Result<()> {
-    let annotations = base_annotations(node_manifest);
+    let annotations = build_push_annotations(node_manifest, wasm, signing, sbom);
+    let signed = if signing.is_some() {
+        "signed"
+    } else {
+        "UNSIGNED"
+    };
     let pushed = crate::registry::push(target, wasm, annotations).await?;
     println!(
-        "pushed node artifact {} (manifest {} / layer {})",
+        "pushed {signed} node artifact {} (manifest {} / layer {})",
         pushed.image, pushed.manifest_digest, pushed.layer_digest
     );
     Ok(())
@@ -318,7 +367,16 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
                 if let Some(node_type) = &args.node_type {
                     node_manifest.node_type = node_type.clone();
                 }
-                push_artifact(&target, &node_manifest, &artifact.wasm).await?;
+                let sbom = crate::sbom::cyclonedx_from_metadata(&metadata_json, &package)?;
+                let signing = load_signing_key(&args).await?;
+                push_artifact(
+                    &target,
+                    &node_manifest,
+                    &artifact.wasm,
+                    signing.as_ref(),
+                    &sbom,
+                )
+                .await?;
             }
         }
         BuildKind::Jco => {
@@ -342,7 +400,16 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
                     "0.1.0",
                     crate::manifest_build::DEFAULT_CONTRACT,
                 )?;
-                push_artifact(&target, &node_manifest, &artifact.wasm).await?;
+                let sbom = crate::sbom::cyclonedx_single(&node_type, "0.1.0");
+                let signing = load_signing_key(&args).await?;
+                push_artifact(
+                    &target,
+                    &node_manifest,
+                    &artifact.wasm,
+                    signing.as_ref(),
+                    &sbom,
+                )
+                .await?;
             }
         }
     }

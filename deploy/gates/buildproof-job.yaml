@@ -25,6 +25,13 @@ spec:
         - name: buildproof
           image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
+          env:
+            # 5.5d: the hex ed25519 public key the wamn.node.signature must
+            # verify against — the PUBLIC half of the builder's keygen output.
+            # The main loop sets this to the real value; when unset, buildproof
+            # SKIPS the signature check (v0 posture).
+            - name: WAMN_BUILDER_PUBLIC_KEY
+              value: "REPLACE_ME_with_hex_ed25519_public_key_from_keygen"
           args:
             - "--log-level"
             - "warn"
@@ -35,8 +42,13 @@ spec:
             - "wamn/sample-node"
             - "--reference"
             - "dev"
-            # 5.5d: --public-key <hex> (or WAMN_BUILDER_PUBLIC_KEY) is added by the
-            # wamn-0si.4 commit once the signature/SBOM checks land.
+            # 5.5d: the SBOM must list the load-bearing node-SDK packages.
+            - "--expect-package"
+            - "wamn-node-sdk"
+            - "--expect-package"
+            - "wamn-node-guest"
+            - "--expect-package"
+            - "serde_json"
           resources:
             requests: { cpu: "250m", memory: "256Mi" }
             limits: { memory: "512Mi" }

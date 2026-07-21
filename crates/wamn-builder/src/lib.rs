@@ -23,5 +23,8 @@
 
 pub mod allowlist;
 pub mod build;
+pub mod keygen;
 pub mod manifest_build;
 pub mod registry;
+pub mod sbom;
+pub mod sign;
