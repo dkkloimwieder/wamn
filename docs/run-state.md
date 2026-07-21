@@ -112,18 +112,18 @@ the original run and its node-runs immutable — an audit/billing-safe lineage c
   re-applies its effect is the node's own idempotency concern (5.3), so 5.7
   recomputes from capture by default.
 
-### v1 driver limitations
+### Resume pins the run's persisted version
 
-The `wamn-run-store` crate and the `runs`/`node_runs` schema are loop- and
-version-general; one limitation lives only in the v1 `components/flowrunner`
-driver and is a tracked follow-up:
-
-- **Resume reconstructs against the *active* flow version**, not the run's
-  persisted `flow_version` (which `runs` already records). This is safe while a
-  flow's versions stay structurally compatible, and `Plan::resume` raises
-  `Mismatch` if they diverge; pinning a resume to the run's own version is the
-  robust follow-up. Which version a run executes is otherwise a hot-reload /
-  dispatcher concern (4.4 / 5.14).
+A resume reconstructs against the run's **persisted `flow_version`** — the
+version stamped on the `runs` row when the run first opened, which the dispatcher
+sets to the active version at write-ahead time — not whatever is active now
+(wamn-cox). So a flow edited or hot-reloaded mid-run can never make a resume fold
+its recorded `node_runs` against a divergent graph: the `components/flowrunner`
+driver loads the exact version on every drive path (the direct `execute`, the
+unpartitioned claim, and the partitioned claim all pin it), and a hot-reload is
+still picked up because newly dispatched runs carry the new version. `Plan::resume`
+still raises `Mismatch` as the backstop against a corrupt history. Which version a
+*new* run executes is a hot-reload / dispatcher concern (4.4 / 5.14).
 
 ## Scope (5.7) vs. siblings
 

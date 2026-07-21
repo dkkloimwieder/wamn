@@ -102,6 +102,25 @@ fn merge_flow_json() -> String {
     )
 }
 
+/// A STRUCTURALLY DIFFERENT v2 of the merge-resume flow (wamn-cox): a bare linear
+/// `in -> r`, no diamond and no delay-merge. Registered + activated MID-RUN while
+/// mr-0 (stamped v1) is parked at its delay-merge. A resume that pins the run's
+/// PERSISTED v1 reconstructs the recorded diamond node_runs against v1 and
+/// completes; a resume that (wrongly) loaded the ACTIVE v2 would fold the
+/// recorded `ba`/`bb`/`m` visits against a graph that has none — `Plan::resume`
+/// dies `Mismatch`. So this v2, ignored, is the cox mutant detector.
+fn merge_flow_v2_json() -> String {
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"{MERGE_FLOW_ID}","version":2,
+            "trigger":{{"type":"manual"}},"entry":"in",
+            "nodes":[
+              {{"id":"in","type":"webhook-in"}},
+              {{"id":"r","type":"respond"}}
+            ],
+            "edges":[{{"from":"in","to":"r"}}]}}"#
+    )
+}
+
 /// The wamn-v8cv partition-terminal fixture: the single work node is a
 /// `postgres-query`, whose dispatch dies `Terminal("capability-denied")` at the
 /// standard-library grant check while the D8 raw-SQL flag is off (as it is in
@@ -307,15 +326,24 @@ async fn connect_app(app_url: &str) -> anyhow::Result<(Client, tokio::task::Join
 
 /// Seed a run the way the DISPATCHER does: the write-ahead `dispatched` row +
 /// the queue row, co-transacted — the exact producer state the runner claims.
+/// Defaults to flow_version 1 (the FLOW_ID fixture's only-registered version);
+/// [`seed_flow_run`] takes an explicit version for phases that dispatch under a
+/// non-default active version (wamn-cox: the run's stamped `flow_version` is the
+/// version the guest resume pins to, so it must name a real flows row).
 async fn seed_run(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
-    seed_flow_run(client, run_id, FLOW_ID).await
+    seed_flow_run(client, run_id, FLOW_ID, 1).await
 }
 
-async fn seed_flow_run(client: &mut Client, run_id: &str, flow_id: &str) -> anyhow::Result<()> {
+async fn seed_flow_run(
+    client: &mut Client,
+    run_id: &str,
+    flow_id: &str,
+    version: i32,
+) -> anyhow::Result<()> {
     let tx = client.transaction().await?;
     tx.execute(
         &write_ahead_triggered_run_sql(),
-        &[&run_id, &flow_id, &1i32, &"cron", &"\"receipt\""],
+        &[&run_id, &flow_id, &version, &"cron", &"\"receipt\""],
     )
     .await?;
     tx.execute(
@@ -506,7 +534,7 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         .await?;
         // The runaway run first (earlier available_at → claimed first), then a
         // normal run stuck behind it.
-        seed_flow_run(&mut seed_conn, "rw-loop", RUNAWAY_FLOW_ID).await?;
+        seed_flow_run(&mut seed_conn, "rw-loop", RUNAWAY_FLOW_ID, 1).await?;
         seed_run(&mut seed_conn, "rw-after").await?;
         // The gate's own wall guard: with the engine budget in force the drain
         // ends in seconds (10k dispatches, DB round trips dominating); a
@@ -622,8 +650,13 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         .await?;
         wamn_gate_harness::set_active_flow_version(&seed_conn, TENANT, FLOW_ID, 2).await?;
         let m2 = (m / 4).max(8);
+        // wamn-cox: stamp flow_version 2 on these runs (the version now active) —
+        // the guest resume pins the run's PERSISTED version, so a run stamped v1
+        // would (correctly) drive v1's `upper` and fail the v2 `reverse` witness.
+        // This mirrors the real dispatcher, which stamps the active version at
+        // write-ahead time.
         for i in 0..m2 {
-            seed_run(&mut seed_conn, &format!("sv-{i}")).await?;
+            seed_flow_run(&mut seed_conn, &format!("sv-{i}"), FLOW_ID, 2).await?;
         }
         let r6 = worker.drain().await?;
         let sv_sinks_v2 = count(
@@ -810,13 +843,37 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             true,
         )
         .await?;
-        seed_flow_run(&mut seed_conn, "mr-0", MERGE_FLOW_ID).await?;
+        seed_flow_run(&mut seed_conn, "mr-0", MERGE_FLOW_ID, 1).await?;
         let mut mr_claims = 0usize;
         let mr_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let mr_status = format!("SELECT status FROM {SCHEMA}.runs WHERE run_id = 'mr-0'");
+
+        // FIRST drain: mr-0 (v1) is claimed and parks at the delay-merge `m`, with
+        // in/ba/bb already recorded under v1.
+        let r0 = worker.drain().await?;
+        mr_claims += r0.claimed;
+
+        // wamn-cox LIVE PROOF (the cox mutant detector): mid-run — while mr-0 is
+        // parked at `m` — register AND activate a STRUCTURALLY DIFFERENT v2
+        // (linear in -> r). The resumed claims MUST keep driving the run's
+        // PERSISTED v1: reconstruction folds the recorded diamond node_runs
+        // against v1's graph and converges. Without the pin the resume would load
+        // the now-ACTIVE v2 and `Plan::resume` dies Mismatch (recorded ba/bb/m
+        // absent from v2), so the asserts below — completed, 7 rows, m/r visits
+        // (2,0,1) — are the mutant detector.
+        wamn_gate_harness::seed_flow_version(
+            &seed_conn,
+            TENANT,
+            MERGE_FLOW_ID,
+            2,
+            true,
+            &merge_flow_v2_json(),
+            true,
+        )
+        .await?;
+        wamn_gate_harness::set_active_flow_version(&seed_conn, TENANT, MERGE_FLOW_ID, 2).await?;
+
         loop {
-            let r = worker.drain().await?;
-            mr_claims += r.claimed;
             let status: String = seed_conn.query_one(&mr_status, &[]).await?.get(0);
             if status == "completed" {
                 break;
@@ -825,7 +882,12 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
                 bail!("merge-resume FAIL: run mr-0 still '{status}' after 30s ({mr_claims} claims)");
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let r = worker.drain().await?;
+            mr_claims += r.claimed;
         }
+        // Restore v1 active so a re-run of the binary starts from the same state
+        // (the phase-6 pattern).
+        wamn_gate_harness::set_active_flow_version(&seed_conn, TENANT, MERGE_FLOW_ID, 1).await?;
         let mr_rows = count(
             &seed_conn,
             &format!("SELECT count(*) FROM {SCHEMA}.node_runs WHERE run_id = 'mr-0'"),
@@ -868,7 +930,9 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             "## merge-resume — diamond with delay-merge via RunWorker::drain: completed after \
              {mr_claims} claims (>=3 -> parked mid-merge and resumed), node_runs rows = {mr_rows} \
              (want 7 — one PER VISIT), m visits = {mr_m:?} (want (2,0,1)), r visits = {mr_r:?} \
-             (want (2,0,1)), queue drained = {} -> {merge_resume_ok}",
+             (want (2,0,1)), queue drained = {} — and a structurally-different v2 (linear in->r) \
+             was activated MID-RUN yet the pinned resume kept driving the run's persisted v1 \
+             (wamn-cox; an active-version resume would die Mismatch) -> {merge_resume_ok}",
             q9 == 0
         );
 

@@ -307,7 +307,9 @@ fn claim_sql_is_skip_locked_and_bounded() {
 #[test]
 fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
     // claim_dispatch = the claim scan (shared fragment with claim_batch_sql) +
-    // the mark-running guard + the dispatch read + the active-version probe.
+    // the mark-running guard + the dispatch read + the run's PERSISTED
+    // flow_version (wamn-cox: the plan-cache probe pins the run's own version,
+    // not whatever is active now).
     let cd = claim_dispatch_sql();
     for pin in [
         // The claim scan, verbatim from the shared fragment (fence + predicate).
@@ -323,13 +325,17 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
         // The mark-running arm (the mark_running_sql guard, in-statement).
         "SET status = 'running'",
         "AND r.status = 'dispatched'",
-        // The dispatch read + the ACTIVE-version probe (the plan-cache input).
-        "r.flow_id, r.input_json::text",
-        "SELECT max(f.version) FROM flows AS f",
-        "AND f.active",
+        // The dispatch read + the PERSISTED flow_version (the plan-cache input).
+        "r.flow_id, r.input_json::text, r.flow_version AS flow_version",
     ] {
         assert!(cd.contains(pin), "claim_dispatch_sql missing: {pin}");
     }
+    // The 4th column is the run's OWN version column, never a max-over-active
+    // subselect (the wamn-cox pin: a resume must not re-derive the active version).
+    assert!(
+        !cd.contains("SELECT max(f.version)") && !cd.contains("f.active"),
+        "claim_dispatch_sql must project runs.flow_version, not the active-version probe: {cd}"
+    );
     assert!(!cd.contains(") IN ("));
     assert!(!cd.contains("FROM ("));
     // The scan is shared with claim_batch_sql structurally — same fragment, so
@@ -1483,7 +1489,8 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
         .expect("read deploy/sql/run-state.sql");
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .expect("read deploy/sql/run-queue.sql");
-    // The flow registry: claim_dispatch_sql's active-version probe joins it.
+    // The flow registry: active_flows_sql (the dispatcher's registry scan) reads
+    // it, and cd-0's discriminating fixture (ACTIVE=4 vs PERSISTED=3) seeds it.
     let flows_ddl = std::fs::read_to_string(format!("{root}/deploy/sql/flows.sql"))
         .expect("read deploy/sql/flows.sql");
 
@@ -1708,18 +1715,21 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     );
 
     // The fqg.18 combined statements via the REAL builders. Seed a dedicated run
-    // (cd-0) + an active flow v3 (and an INACTIVE v4, so the version probe must
-    // filter on `active`, not take max over all versions). All earlier
-    // unpartitioned rows are leased/parked/spent by now, so the LIMIT-1 combined
-    // claim deterministically takes cd-0.
+    // (cd-0) whose PERSISTED flow_version is 3, and DISCRIMINATE against the
+    // active version: register v3 INACTIVE and v4 ACTIVE, so ACTIVE=4 while the
+    // run's own version is 3 (wamn-cox). The combined claim must return the run's
+    // PERSISTED flow_version (3), not the active one (4) — a resume pins the
+    // version the run started under. All earlier unpartitioned rows are
+    // leased/parked/spent by now, so the LIMIT-1 combined claim deterministically
+    // takes cd-0.
     script.push_str(
         "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status, input_json) \
            VALUES ('t1','cd-0','f',3,'dispatched','\"rec\"'::jsonb);\n\
          INSERT INTO wamn_run.run_queue (tenant_id, run_id, available_at, attempts, max_attempts) \
            VALUES ('t1','cd-0', now(), 0, 20);\n\
          INSERT INTO wamn_run.flows (tenant_id, flow_id, version, active, graph_json) VALUES \
-           ('t1','f',3,true,'{}'::jsonb), \
-           ('t1','f',4,false,'{}'::jsonb);\n",
+           ('t1','f',3,false,'{}'::jsonb), \
+           ('t1','f',4,true,'{}'::jsonb);\n",
     );
     script.push_str(&format!(
         "BEGIN;\n\
@@ -1728,14 +1738,14 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          PREPARE csr_stmt (text, text, int, int, text, jsonb, jsonb, bigint, text) AS {record_success_renew};\n\
          PREPARE cer_stmt (text, text, int, int, jsonb, jsonb, text, jsonb, bigint, text) AS {record_error_renew};\n\
          PREPARE cdq_stmt (text, jsonb) AS {complete_dequeue};\n\
-         -- ONE statement: claim + mark running + dispatch read + version probe.\n\
+         -- ONE statement: claim + mark running + dispatch read + persisted version.\n\
          CREATE TEMP TABLE cd_probe AS EXECUTE cd_stmt('cd-owner', 60000);\n\
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM cd_probe) = 1, 'combined claim takes exactly one run'; \
            ASSERT (SELECT run_id FROM cd_probe) = 'cd-0', 'combined claim takes the ready run'; \
            ASSERT (SELECT flow_id FROM cd_probe) = 'f', 'combined claim returns the dispatch flow'; \
            ASSERT (SELECT input_json FROM cd_probe) = '\"rec\"', 'combined claim returns the trigger input'; \
-           ASSERT (SELECT active_version FROM cd_probe) = 3, 'version probe returns the ACTIVE version, not the inactive max'; \
+           ASSERT (SELECT flow_version FROM cd_probe) = 3, 'claim returns the run''s persisted flow_version (3), not the active one (4)'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='cd-0') = 'cd-owner', 'combined claim leased the row'; \
            ASSERT (SELECT status FROM runs WHERE run_id='cd-0') = 'running', 'combined claim marked the run running in-statement'; \
          END $$;\n\
@@ -2145,8 +2155,8 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          PREPARE active_flows AS {active_flows};\n\
          CREATE TEMP TABLE af_t1 AS EXECUTE active_flows;\n\
          DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM af_t1) = 1, 'the registry scan returns t1''s single ACTIVE flow (the inactive v4 is excluded)'; \
-           ASSERT (SELECT flow_id FROM af_t1) = 'f' AND (SELECT version FROM af_t1) = 3, 't1 sees flow f v3, not t2''s g'; \
+           ASSERT (SELECT count(*) FROM af_t1) = 1, 'the registry scan returns t1''s single ACTIVE flow (the inactive v3 is excluded)'; \
+           ASSERT (SELECT flow_id FROM af_t1) = 'f' AND (SELECT version FROM af_t1) = 4, 't1 sees active flow f v4, not the inactive v3 nor t2''s g'; \
          END $$;\n\
          COMMIT;\n\
          BEGIN;\n\

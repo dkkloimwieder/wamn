@@ -174,6 +174,47 @@ fn load_active_flow(flow_id: &str) -> Result<Flow, String> {
     Flow::from_json(&raw).map_err(|e| format!("flow parse: {e}"))
 }
 
+/// Read a SPECIFIC flow version's definition from the catalog (wamn-cox): a
+/// resume loads the run's persisted `runs.flow_version`, not whatever is active
+/// now, so a flow edited mid-run cannot make reconstruction diverge from the
+/// graph the run started on. `version` is absent only if the row was deleted
+/// under the run — surfaced as an explicit error rather than a silent fallback
+/// to the active version.
+fn load_flow_at(flow_id: &str, version: u32) -> Result<Flow, String> {
+    let rs = client::query(
+        "SELECT graph_json::text FROM flows WHERE flow_id = $1 AND version = $2",
+        &[text(flow_id), int32(version as i32)],
+    )
+    .map_err(|e| err_name(&e))?;
+    let row = rs
+        .rows
+        .first()
+        .ok_or_else(|| format!("no flow at persisted version {version}"))?;
+    let raw = match row.first() {
+        Some(SqlValue::Text(s)) => s.clone(),
+        Some(SqlValue::Json(s)) => s.clone(),
+        other => return Err(format!("unexpected graph_json shape: {other:?}")),
+    };
+    Flow::from_json(&raw).map_err(|e| format!("flow parse: {e}"))
+}
+
+/// Read the run's persisted `flow_version` — the version the dispatcher (or the
+/// direct driver's own `open_run`) stamped when the run row was written.
+/// `Some(v)` on a resume (the row exists); `None` for a fresh run whose row this
+/// `execute` call is about to open.
+fn load_persisted_version(run_id: &str) -> Result<Option<u32>, String> {
+    let rs = client::query(
+        "SELECT flow_version FROM runs WHERE run_id = $1",
+        &[text(run_id)],
+    )
+    .map_err(|e| err_name(&e))?;
+    match rs.rows.first().and_then(|r| r.first()) {
+        Some(SqlValue::Int32(v)) => Ok(u32::try_from(*v).ok()),
+        Some(SqlValue::Int64(v)) => Ok(u32::try_from(*v).ok()),
+        _ => Ok(None),
+    }
+}
+
 /// Open (or re-open) the run row: a fresh run records its trigger input and
 /// `running` status; a resumed run is a no-op (ON CONFLICT DO NOTHING) — its
 /// node_runs history is the durable progress.
@@ -1114,17 +1155,24 @@ fn execute(
     declare_run_context(run_id);
     let _run_ctx = RunContextGuard;
 
-    // v1 reconstructs against the ACTIVE flow version (safe while a flow's
-    // versions stay structurally compatible — `Plan::resume` raises Mismatch if
-    // not); pinning a resume to the run's persisted `flow_version` is a follow-up
-    // (docs/run-state.md).
-    let flow = load_active_flow(flow_id)?;
+    let input = Value::String(payload.to_string());
+    // wamn-cox: a resume pins the run's PERSISTED `flow_version` — the version
+    // recorded when the run first opened — so a flow edited mid-run cannot make
+    // reconstruction diverge from the graph the run started on. A fresh run
+    // (`None`, no row yet) loads the ACTIVE version and `open_run` stamps it; a
+    // resume (`Some(v)`) loads exactly that version.
+    let flow = match load_persisted_version(run_id)? {
+        Some(v) => load_flow_at(flow_id, v)?,
+        None => {
+            let flow = load_active_flow(flow_id)?;
+            open_run(run_id, flow_id, flow.version, &input)?;
+            flow
+        }
+    };
     declare_run_grant(&flow);
     declare_run_egress(&flow);
     let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
     let version = plan.version();
-    let input = Value::String(payload.to_string());
-    open_run(run_id, flow_id, version, &input)?;
 
     // Reconstruct the frontier from what already completed (empty on a fresh run
     // => a plain start); the driver continues from there, re-dispatching only
@@ -1272,9 +1320,11 @@ thread_local! {
     /// is immutable for this instance's lifetime.
     static RUNNER_OWNER: RefCell<Option<String>> = const { RefCell::new(None) };
     /// Parsed flows keyed by `flow_id` -> (version, flow) — the fqg.18 plan
-    /// cache. Probed against the ACTIVE version the claim statement returns, so
-    /// a version flip (hot reload) invalidates on the very next record; an
-    /// in-place graph edit that does NOT bump the version is not picked up, and
+    /// cache. Probed against the RUN'S PERSISTED `flow_version` (what the claim
+    /// statement returns, wamn-cox), so each claimed run drives the exact version
+    /// it was dispatched under. A hot reload is still picked up because newly
+    /// dispatched runs carry the new version, which misses the cache and reloads;
+    /// an in-place graph edit that does NOT bump the version is not picked up, and
     /// registration always bumps versions (register_flow + i7i).
     static FLOW_CACHE: RefCell<HashMap<String, (u32, Rc<Flow>)>> = RefCell::new(HashMap::new());
 }
@@ -1294,16 +1344,18 @@ struct ClaimedRun {
     run_id: String,
     flow_id: String,
     input: Value,
-    /// The ACTIVE flow version at claim time — the plan-cache probe. `None`
-    /// when no version is active (the flow load then reports it).
-    active_version: Option<u32>,
+    /// The run's PERSISTED `flow_version` (wamn-cox) — the version the run was
+    /// dispatched under, the plan-cache probe. `None` only if the column is
+    /// somehow unreadable (the flow load then reports it).
+    flow_version: Option<u32>,
 }
 
 /// Claim ONE currently-claimable **unpartitioned** run for `owner` and return
 /// its dispatch inputs — the single [`claim_dispatch_sql`] statement that also
-/// flips the run `running` and reads the active flow version (what the split
-/// path spent three round trips on). Returns None when the queue is drained.
-/// Partitioned runs stay on the per-partition ownership path (fqg.1/fqg.9).
+/// flips the run `running` and reads the run's persisted flow version (what the
+/// split path spent three round trips on). Returns None when the queue is
+/// drained. Partitioned runs stay on the per-partition ownership path
+/// (fqg.1/fqg.9).
 fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String> {
     let rs = client::query(&claim_dispatch_sql(), &[text(owner), int64(ttl_ms)])
         .map_err(|e| err_name(&e))?;
@@ -1324,7 +1376,7 @@ fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String
         }
         _ => Value::Null,
     };
-    let active_version = match row.get(3) {
+    let flow_version = match row.get(3) {
         Some(SqlValue::Int32(v)) => u32::try_from(*v).ok(),
         Some(SqlValue::Int64(v)) => u32::try_from(*v).ok(),
         _ => None,
@@ -1333,14 +1385,19 @@ fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String
         run_id,
         flow_id,
         input,
-        active_version,
+        flow_version,
     }))
 }
 
-/// The flow to drive: the cached parse when it matches the active version,
-/// else a fresh load (which also refreshes the cache). See [`FLOW_CACHE`].
-fn active_flow(flow_id: &str, active_version: Option<u32>) -> Result<Rc<Flow>, String> {
-    if let Some(v) = active_version {
+/// The flow to drive at a PINNED version (wamn-cox): the cached parse when it
+/// matches the requested `version`, else a fresh load (which also refreshes the
+/// cache). `Some(v)` — the run's persisted version — loads exactly v via
+/// [`load_flow_at`], never the active version, so a resume reconstructs against
+/// the graph the run started on; `None` (no version known) falls back to the
+/// active version. The cache is keyed by the loaded flow's own version, so a
+/// later claim of the same version is served from cache. See [`FLOW_CACHE`].
+fn flow_at(flow_id: &str, version: Option<u32>) -> Result<Rc<Flow>, String> {
+    if let Some(v) = version {
         let hit = FLOW_CACHE.with(|c| {
             c.borrow()
                 .get(flow_id)
@@ -1350,7 +1407,10 @@ fn active_flow(flow_id: &str, active_version: Option<u32>) -> Result<Rc<Flow>, S
             return Ok(flow);
         }
     }
-    let flow = Rc::new(load_active_flow(flow_id)?);
+    let flow = Rc::new(match version {
+        Some(v) => load_flow_at(flow_id, v)?,
+        None => load_active_flow(flow_id)?,
+    });
     FLOW_CACHE.with(|c| {
         c.borrow_mut()
             .insert(flow_id.to_string(), (flow.version, flow.clone()));
@@ -1525,10 +1585,13 @@ fn claim_partition_head(owner: &str, ttl_ms: i64) -> Result<Option<PartitionHead
     }))
 }
 
-/// Read a claimed run's dispatch inputs (the recorded flow + trigger input) — the
-/// partition head claim returns only `(run_id, partition_key)`, so the guest reads
-/// what the combined unpartitioned `claim_dispatch_sql` returns inline.
-fn read_dispatch(run_id: &str) -> Result<(String, Value), String> {
+/// Read a claimed run's dispatch inputs (the recorded flow, its persisted
+/// `flow_version`, and the trigger input) — the partition head claim returns only
+/// `(run_id, partition_key)`, so the guest reads what the combined unpartitioned
+/// `claim_dispatch_sql` returns inline. The `flow_version` (wamn-cox) pins the
+/// partitioned resume to the version the run started under, exactly as the
+/// unpartitioned claim does.
+fn read_dispatch(run_id: &str) -> Result<(String, Option<u32>, Value), String> {
     let rs = client::query(&run_sql::select_run_dispatch_sql(), &[text(run_id)])
         .map_err(|e| err_name(&e))?;
     let row = rs
@@ -1539,13 +1602,18 @@ fn read_dispatch(run_id: &str) -> Result<(String, Value), String> {
         Some(SqlValue::Text(s)) => s.clone(),
         other => return Err(format!("runs.flow_id shape: {other:?}")),
     };
-    let input = match row.get(1) {
+    let flow_version = match row.get(1) {
+        Some(SqlValue::Int32(v)) => u32::try_from(*v).ok(),
+        Some(SqlValue::Int64(v)) => u32::try_from(*v).ok(),
+        _ => None,
+    };
+    let input = match row.get(2) {
         Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => {
             serde_json::from_str(s).map_err(|e| format!("runs.input_json parse: {e}"))?
         }
         _ => Value::Null,
     };
-    Ok((flow_id, input))
+    Ok((flow_id, flow_version, input))
 }
 
 /// Flip a partition-head run `dispatched` -> `running`. The unpartitioned
@@ -1609,8 +1677,8 @@ fn claim_partition_run(owner: &str, ttl_ms: i64) -> Result<Option<(String, u32)>
         return Ok(None);
     };
     mark_running(&head.run_id)?;
-    let (flow_id, input) = read_dispatch(&head.run_id)?;
-    let flow = active_flow(&flow_id, None)?;
+    let (flow_id, flow_version, input) = read_dispatch(&head.run_id)?;
+    let flow = flow_at(&flow_id, flow_version)?;
     let claim = execute_claimed(
         &head.run_id,
         &flow,
@@ -1796,7 +1864,7 @@ fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
     // Unpartitioned first: the global `FOR UPDATE SKIP LOCKED` claim drains
     // unordered NULL-key runs concurrently across replicas (the fqg.4 path).
     if let Some(claimed) = claim_dispatch(&owner, ttl)? {
-        let flow = active_flow(&claimed.flow_id, claimed.active_version)?;
+        let flow = flow_at(&claimed.flow_id, claimed.flow_version)?;
         let claim = execute_claimed(&claimed.run_id, &flow, claimed.input, &owner, ttl, None)?;
         settle(&claimed.run_id, &claim)?;
         return Ok((true, Some(claimed.run_id), claim.outcome));

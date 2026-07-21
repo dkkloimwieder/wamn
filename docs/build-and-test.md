@@ -396,6 +396,32 @@ cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target
   && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
 ```
 
+### [5.7-resume-pin / wamn-cox] resume pins the run's persisted flow_version
+
+Docs: docs/run-state.md § *Resume pins the run's persisted version*
+
+```bash
+# A resume loads the run's PERSISTED runs.flow_version (stamped at write-ahead
+# time), never the active version — so a flow edited/hot-reloaded mid-run cannot
+# make reconstruction fold against a divergent graph. All three drive paths pin
+# it: the direct execute (reads flow_version, load_flow_at), the unpartitioned
+# claim (claim_dispatch_sql projects r.flow_version, the guest flow_at pins it),
+# and the partitioned claim (select_run_dispatch_sql projects flow_version).
+cargo test -p wamn-run-store -p wamn-run-queue   # pure text pins + queue.rs live
+#   discriminating fixture (cd-0 PERSISTED=3 vs ACTIVE=4 -> claim returns 3)
+# Gate of record: runnerbench MERGE-RESUME phase (phase 9). mr-0 (v1) parks at its
+# delay-merge; a structurally-different v2 (linear in->r) is registered+activated
+# MID-RUN; the pinned resume keeps driving v1 (completed, 7 node_runs rows, m/r
+# visits (2,0,1)). See [5.14] production runner (run-worker, fqg.8) for the run cmd.
+# Mutants (scratchpad mutate_cox.py; apply/test/restore with sha256):
+#   (a) GUEST: flow_at drops the version pin (loads the ACTIVE flow instead of
+#       load_flow_at) -> runnerbench merge-resume FAILS (Plan::resume Mismatch /
+#       wrong node_runs shape); rebuild the release guest for the mutant + restore.
+#   (b) QUEUE: claim_dispatch_sql reverted to the max-active-version subselect ->
+#       the queue.rs live cd_probe assert FAILS ('claim returns the run's
+#       persisted flow_version (3), not the active one (4)').
+```
+
 ### [5.9] credential vault (plugins/wamn_credentials + credproof)
 
 Docs: docs/credential-vault.md

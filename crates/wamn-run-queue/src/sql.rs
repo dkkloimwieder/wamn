@@ -203,12 +203,16 @@ const CLAIM_LEASE_SET: &str = "SET lease_owner = $1, \
 /// preamble previously spent three on — claim the next unpartitioned run
 /// ([`claim_batch_sql`]'s exact scan + lease write, via the shared fragments),
 /// flip its run `dispatched` -> `running` (the [`mark_running_sql`] guard), and
-/// return the dispatch inputs (`flow_id`, `input_json`) plus the ACTIVE flow
-/// version so the guest's plan cache can probe for free. Params: `$1` owner,
-/// `$2` ttl_ms. Returns 0 or 1 row: `(run_id, flow_id, input_json::text,
-/// active_version)`; `active_version` is `max(version)` over active rows —
-/// registration keeps at most one active (i7i), `max` just refuses to duplicate
-/// the claim row if that invariant is ever violated.
+/// return the dispatch inputs (`flow_id`, `input_json`) plus the run's
+/// **persisted** `flow_version` so the guest's plan cache can probe for free.
+/// Params: `$1` owner, `$2` ttl_ms. Returns 0 or 1 row: `(run_id, flow_id,
+/// input_json::text, flow_version)`. `flow_version` is the run's OWN column
+/// (`runs.flow_version`), the version the dispatcher stamped at write-ahead
+/// time (the active version THEN) — not whatever is active NOW. That is what
+/// pins a resume to the version the run started under (wamn-cox): a flow edited
+/// mid-run cannot make a resumed claim reconstruct against a divergent graph, and
+/// a hot-reload is still picked up because newly dispatched runs carry the new
+/// version.
 pub fn claim_dispatch_sql() -> String {
     format!(
         "WITH claimed AS MATERIALIZED ( {cte} ), \
@@ -226,10 +230,7 @@ pub fn claim_dispatch_sql() -> String {
              WHERE r.tenant_id = leased.tenant_id AND r.run_id = leased.run_id \
                AND r.status = '{dispatched}' \
          ) \
-         SELECT l.run_id, r.flow_id, r.input_json::text, \
-                (SELECT max(f.version) FROM flows AS f \
-                  WHERE f.tenant_id = l.tenant_id AND f.flow_id = r.flow_id AND f.active) \
-                AS active_version \
+         SELECT l.run_id, r.flow_id, r.input_json::text, r.flow_version AS flow_version \
            FROM leased AS l \
            JOIN runs AS r ON r.tenant_id = l.tenant_id AND r.run_id = l.run_id",
         cte = global_claim_cte(1),
