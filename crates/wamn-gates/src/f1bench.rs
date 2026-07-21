@@ -46,10 +46,10 @@ use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
 use crate::f1fixture::{
     self, BURST_HOLDS, F1_FLOW_JSON, F1_SEED_JSON, F1_TENANT, burst, in_spec_receipt, receipt,
 };
+use wamn_ctl::publish_catalog;
 use wamn_gate_harness::{as_array, check};
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
-use wamn_ctl::publish_catalog;
 
 #[derive(Debug, Args)]
 pub struct F1BenchArgs {

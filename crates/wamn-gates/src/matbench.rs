@@ -693,7 +693,10 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     );
 
     // The guest's DISTINCT counters (v3 §4 alertable refusals).
-    check("report: fired = 9 (8 inserts + the E8 old-image update)", counter(&report, "fired") == 9);
+    check(
+        "report: fired = 9 (8 inserts + the E8 old-image update)",
+        counter(&report, "fired") == 9,
+    );
     check(
         "report: condition-false skip counted (E2 on r-cond)",
         counter(&report, "skip-condition-false") == 1,

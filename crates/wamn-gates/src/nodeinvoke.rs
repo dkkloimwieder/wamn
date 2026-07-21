@@ -348,7 +348,15 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
     // Drive the gate while the serve-node accept loop runs concurrently on the
     // SAME task (select!): when the gate logic returns, the server future drops.
     let serve_loop = serve_node::serve(serve.clone(), port);
-    let gate = gate_body(&engine, &flowrunner, &node_wasm, &app_url, serve.clone(), port, n);
+    let gate = gate_body(
+        &engine,
+        &flowrunner,
+        &node_wasm,
+        &app_url,
+        serve.clone(),
+        port,
+        n,
+    );
 
     let outcome = tokio::select! {
         r = serve_loop => r.map(|_| false), // the server only ends on error
@@ -771,7 +779,8 @@ async fn gate_body(
     .await
     .context("build freshness-enforcing serve-node")?;
     let fresh_ts = now.to_string();
-    let fresh_sig = sign_envelope_with_timestamp(SIGNING_KEY.as_bytes(), body.as_bytes(), Some(&fresh_ts));
+    let fresh_sig =
+        sign_envelope_with_timestamp(SIGNING_KEY.as_bytes(), body.as_bytes(), Some(&fresh_ts));
     check(
         &mut ok,
         "FRESHNESS-FRESH (fqg.32): a fresh timestamped envelope is accepted when max-age is enforced",
@@ -838,7 +847,10 @@ async fn gate_body(
     check(
         &mut ok,
         "AUTHN-MISMATCH-TERMINAL (fqg.29): a wrong-key run fails TERMINALLY in one claim (no park / retry-budget burn)",
-        mreport.claimed == 1 && mreport.failed == 1 && mreport.parked == 0 && mreport.completed == 0,
+        mreport.claimed == 1
+            && mreport.failed == 1
+            && mreport.parked == 0
+            && mreport.completed == 0,
     );
     let mrow = seed_conn
         .query_one(
@@ -854,7 +866,9 @@ async fn gate_body(
     check(
         &mut ok,
         "AUTHN-MISMATCH-TERMINAL (fqg.29): run recorded failed/terminal on the custom-node step",
-        mstatus == "failed" && mkind.as_deref() == Some("terminal") && mnode.as_deref() == Some("call"),
+        mstatus == "failed"
+            && mkind.as_deref() == Some("terminal")
+            && mnode.as_deref() == Some("call"),
     );
     // The queue row is GONE (dequeued on a terminal outcome, never parked for a
     // retry): the retry budget was never engaged.

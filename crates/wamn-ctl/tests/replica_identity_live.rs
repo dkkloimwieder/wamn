@@ -171,7 +171,9 @@ async fn reconcile_flips_relreplident_and_the_flip_enriches_wal_non_retroactivel
     .expect("create test_decoding slot");
 
     // --- 1a. No registrations yet → everything reconciles to DEFAULT (no-op). ---
-    let plan = reconcile(&su, &cat, DATA_SCHEMA, true).await.expect("reconcile");
+    let plan = reconcile(&su, &cat, DATA_SCHEMA, true)
+        .await
+        .expect("reconcile");
     assert!(plan.is_noop(), "fresh floor + no registrations → no flips");
     assert_eq!(relreplident(&su, "sales_orders").await, "d");
     assert_eq!(relreplident(&su, "line_items").await, "d");
@@ -193,8 +195,14 @@ async fn reconcile_flips_relreplident_and_the_flip_enriches_wal_non_retroactivel
     .await
     .expect("default-era update+delete");
     let before = drain_changes(&su, "sales_orders").await;
-    let upd_before = before.iter().find(|l| l.contains("UPDATE:")).expect("an update line");
-    let del_before = before.iter().find(|l| l.contains("DELETE:")).expect("a delete line");
+    let upd_before = before
+        .iter()
+        .find(|l| l.contains("UPDATE:"))
+        .expect("an update line");
+    let del_before = before
+        .iter()
+        .find(|l| l.contains("DELETE:"))
+        .expect("a delete line");
     assert!(
         !upd_before.contains("old-key"),
         "DEFAULT: an UPDATE carries no old image: {upd_before}"
@@ -212,7 +220,13 @@ async fn reconcile_flips_relreplident_and_the_flip_enriches_wal_non_retroactivel
         "t1",
         "r-cond",
         "orders",
-        &reg_doc("r-cond", "notify", "orders", "\"update\"", "\"new.status != old.status\""),
+        &reg_doc(
+            "r-cond",
+            "notify",
+            "orders",
+            "\"update\"",
+            "\"new.status != old.status\"",
+        ),
     )
     .await;
     insert_reg(
@@ -232,7 +246,9 @@ async fn reconcile_flips_relreplident_and_the_flip_enriches_wal_non_retroactivel
     )
     .await;
 
-    let plan = reconcile(&su, &cat, DATA_SCHEMA, true).await.expect("reconcile");
+    let plan = reconcile(&su, &cat, DATA_SCHEMA, true)
+        .await
+        .expect("reconcile");
     let flip = plan
         .flips
         .iter()
@@ -240,9 +256,21 @@ async fn reconcile_flips_relreplident_and_the_flip_enriches_wal_non_retroactivel
         .expect("sales_orders flips");
     assert_eq!(flip.from, ReplicaIdentity::Default);
     assert_eq!(flip.to, ReplicaIdentity::Full);
-    assert_eq!(plan.flips.len(), 1, "only sales_orders flips (the union of t1+t2 regs)");
-    assert_eq!(relreplident(&su, "sales_orders").await, "f", "flipped to FULL live");
-    assert_eq!(relreplident(&su, "line_items").await, "d", "bystander stays DEFAULT");
+    assert_eq!(
+        plan.flips.len(),
+        1,
+        "only sales_orders flips (the union of t1+t2 regs)"
+    );
+    assert_eq!(
+        relreplident(&su, "sales_orders").await,
+        "f",
+        "flipped to FULL live"
+    );
+    assert_eq!(
+        relreplident(&su, "line_items").await,
+        "d",
+        "bystander stays DEFAULT"
+    );
 
     // --- 2. WAL truth AFTER the flip: an UPDATE carries the old image; a DELETE's
     // old image carries tenant_id (so the delete is now tenant-scopable). ---
@@ -261,8 +289,14 @@ async fn reconcile_flips_relreplident_and_the_flip_enriches_wal_non_retroactivel
     .await
     .expect("full-era update+delete");
     let after = drain_changes(&su, "sales_orders").await;
-    let upd_after = after.iter().find(|l| l.contains("UPDATE:")).expect("an update line");
-    let del_after = after.iter().find(|l| l.contains("DELETE:")).expect("a delete line");
+    let upd_after = after
+        .iter()
+        .find(|l| l.contains("UPDATE:"))
+        .expect("an update line");
+    let del_after = after
+        .iter()
+        .find(|l| l.contains("DELETE:"))
+        .expect("a delete line");
     assert!(
         upd_after.contains("old-key"),
         "FULL: an UPDATE carries the old image: {upd_after}"
@@ -279,7 +313,9 @@ async fn reconcile_flips_relreplident_and_the_flip_enriches_wal_non_retroactivel
     )
     .await
     .expect("delete registrations");
-    let plan = reconcile(&su, &cat, DATA_SCHEMA, true).await.expect("reconcile back");
+    let plan = reconcile(&su, &cat, DATA_SCHEMA, true)
+        .await
+        .expect("reconcile back");
     let back = plan
         .flips
         .iter()
@@ -287,10 +323,16 @@ async fn reconcile_flips_relreplident_and_the_flip_enriches_wal_non_retroactivel
         .expect("sales_orders flips back");
     assert_eq!(back.from, ReplicaIdentity::Full);
     assert_eq!(back.to, ReplicaIdentity::Default);
-    assert_eq!(relreplident(&su, "sales_orders").await, "d", "flipped back to DEFAULT");
+    assert_eq!(
+        relreplident(&su, "sales_orders").await,
+        "d",
+        "flipped back to DEFAULT"
+    );
 
     // --- 4. A reconcile at the target state is a no-op (idempotent). ---
-    let plan = reconcile(&su, &cat, DATA_SCHEMA, true).await.expect("reconcile idempotent");
+    let plan = reconcile(&su, &cat, DATA_SCHEMA, true)
+        .await
+        .expect("reconcile idempotent");
     assert!(plan.is_noop(), "reconcile at target flips nothing");
 
     // teardown: drop the slot (releases pinned WAL), then the schemas.

@@ -71,8 +71,9 @@ use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestC
 
 use wamn_node_invoke::{
     ConfigCache, NodeInvokeRequest, NodeInvokeResponse, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL,
-    SIGNING_KEY_CREDENTIAL_PREVIOUS, SignatureError, TIMESTAMP_HEADER, WireEmission, WireErrorDetail,
-    WireNodeError, WirePayload, WireRateLimit, timestamp_fresh, verify_envelope_with_timestamp,
+    SIGNING_KEY_CREDENTIAL_PREVIOUS, SignatureError, TIMESTAMP_HEADER, WireEmission,
+    WireErrorDetail, WireNodeError, WirePayload, WireRateLimit, timestamp_fresh,
+    verify_envelope_with_timestamp,
 };
 
 use crate::egress_guard::screen_tenant_compiled;
@@ -636,9 +637,12 @@ async fn serve_connection(sock: TcpStream, node: &ServeNode) -> anyhow::Result<(
         // that never reaches `invoke` — verify-before-grant, the load-bearing
         // property. wamn-fqg.32: pass the freshness timestamp + the host clock so
         // a stale envelope is refused when the max-age gate is enabled.
-        if let Err(e) =
-            node.verify_signature(&body, signature.as_deref(), timestamp.as_deref(), now_unix_secs())
-        {
+        if let Err(e) = node.verify_signature(
+            &body,
+            signature.as_deref(),
+            timestamp.as_deref(),
+            now_unix_secs(),
+        ) {
             tracing::warn!(
                 reason = e.reason(),
                 "serve-node: invocation REFUSED — runner→node signature check failed (before grant install)"
