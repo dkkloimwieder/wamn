@@ -18,8 +18,9 @@ wit_bindgen::generate!({
     generate_all,
 });
 
+use std::cell::RefCell;
 use std::collections::HashSet;
-use std::sync::OnceLock;
+use std::rc::Rc;
 
 use serde_json::{Value, json};
 
@@ -46,10 +47,20 @@ impl Guest for Component {
 
 export!(Component);
 
-/// The project's catalog snapshot, loaded once from the database and memoized
-/// for the lifetime of the instance (the 4.4 hot-reload doorbell will refresh
-/// it; v1 reads it once). `OnceLock` because a Wasm component is single-threaded.
-static CATALOG: OnceLock<Catalog> = OnceLock::new();
+thread_local! {
+    /// The project's catalog snapshot. In v1 it is loaded exactly once — on the
+    /// first request that needs it — and cached for the rest of the instance
+    /// lifetime; it is never invalidated, so behavior is identical to the former
+    /// `OnceLock`: one `SELECT … FROM wamn_catalog` per instance, same responses.
+    ///
+    /// A Wasm component is single-threaded, so a `thread_local!` `RefCell` is the
+    /// whole synchronization story. The shape is `RefCell<Option<Rc<…>>>` rather
+    /// than a set-once cell purely to give the 4.4 hot-reload doorbell (wamn-32n,
+    /// NOT wired here) an in-place swap seam — see [`replace_catalog`]. Handing
+    /// out `Rc<Catalog>` (not `&'static`) means an in-flight request keeps serving
+    /// the snapshot it started with even across a future swap.
+    static CATALOG: RefCell<Option<Rc<Catalog>>> = const { RefCell::new(None) };
+}
 
 // ---- request pipeline -----------------------------------------------------
 
@@ -75,7 +86,7 @@ fn process(request: &IncomingRequest) -> (u16, Option<Vec<u8>>) {
         Ok(c) => c,
         Err(e) => return error(503, "catalog-unavailable", &e),
     };
-    let router = Router::new(catalog);
+    let router = Router::new(&catalog);
 
     let plan = match router.compile(method, &path, &query, body_json.as_ref()) {
         Ok(p) => p,
@@ -173,14 +184,24 @@ fn apply_expands(
 
 // ---- catalog snapshot -----------------------------------------------------
 
-fn catalog() -> Result<&'static Catalog, String> {
-    if let Some(c) = CATALOG.get() {
+fn catalog() -> Result<Rc<Catalog>, String> {
+    if let Some(c) = CATALOG.with(|c| c.borrow().clone()) {
         return Ok(c);
     }
     let json = load_catalog_json()?;
     let cat = Catalog::from_json(&json).map_err(|e| format!("catalog snapshot parse error: {e}"))?;
-    let _ = CATALOG.set(cat);
-    CATALOG.get().ok_or_else(|| "catalog init race".to_string())
+    let rc = Rc::new(cat);
+    CATALOG.with(|c| *c.borrow_mut() = Some(rc.clone()));
+    Ok(rc)
+}
+
+/// Swap the cached catalog snapshot in place. This is the seam the 4.4
+/// hot-reload doorbell (wamn-32n) will call when a new catalog version is
+/// published; it is deliberately NOT wired to any subscription in v1 — it exists
+/// only so the swap path is present for that work to plug into.
+#[allow(dead_code)]
+fn replace_catalog(cat: Catalog) {
+    CATALOG.with(|c| *c.borrow_mut() = Some(Rc::new(cat)));
 }
 
 /// Read the single catalog snapshot row for this project. RLS scopes the read
