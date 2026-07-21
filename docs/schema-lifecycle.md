@@ -4,8 +4,8 @@
 
 A catalog does not go straight from edited to live. Each version moves through a
 **lifecycle** — `draft → staged → applied` (with `superseded` for prior applied
-versions) — and is **promoted** between **environments** (`dev`, `canary`,
-`prod`) of the same application. This crate owns that lifecycle and promotion
+versions) — and is **promoted** between **environments** (`dev`, `prod`, …) of
+the same application. This crate owns that lifecycle and promotion
 policy. It **composes** the shipped model crates rather than duplicating them:
 
 - [`wamn-catalog`](catalog-model.md) (3.1) — the canonical model, its version
@@ -14,9 +14,11 @@ policy. It **composes** the shipped model crates rather than duplicating them:
   additive/destructive confirmation gate, reused verbatim to compile a
   promotion's migration;
 - [`wamn-registry`](registry-model.md) (`wamn-q3n.1`) — the control-plane
-  `(org, project, env)` `Triple` and the closed `Env` set (`dev` / `canary` /
-  `prod`), so an environment's identity and the same-application promotion guard
-  speak one vocabulary.
+  `(org, project, env)` `Triple` and the validated `Env` slug (the D18 generic
+  env model: env is **data, not a closed type** — the default policy set is
+  `dev` / `prod`, with `canary` and others addable as `EnvPolicy` rows), so an
+  environment's identity and the same-application promotion guard speak one
+  vocabulary.
 
 - **Issue:** wamn-d6d `[3.4]` + `wamn-q3n.5` (`(org, project, env)` triple +
   `canary`); **Epic:** E3 Schema Designer / D6.
@@ -67,23 +69,24 @@ enforced by `Environment`:
 ## Environments
 
 An **environment** is a deployment target identified by the `(org, project, env)`
-`Triple` (`wamn-q3n.1`); `env` is one of the closed set `dev` / `canary` / `prod`
-(`canary` is prod-shaped validation that shares prod's failure domain). In the
+`Triple` (`wamn-q3n.1`); `env` is a validated slug resolving an `EnvPolicy` by
+name (D18) — the default set is `dev` / `prod`, and a `canary` policy (prod-shaped
+validation sharing prod's failure domain) is addable per org. In the
 per-project-database model (2.2 / 2.3) it is a project-env's database. Version
 numbers are **globally unique per catalog** (promotion mints a fresh version in
 the target environment), so `environment` is an *attribute* of each version
 rather than part of its identity.
 
 ```rust
-use wamn_schema::{Environment, Env, Triple, promote, Confirmation};
+use wamn_schema::{Environment, Triple, promote, Confirmation};
 
-let app = |env| Triple::new("acme", "receiving", env);
-let mut dev = Environment::new(app(Env::Dev), &catalog.catalog_id);
+let app = |env: &str| Triple::new("acme", "receiving", env);
+let mut dev = Environment::new(app("dev"), &catalog.catalog_id);
 dev.add_draft(catalog, None)?;   // first version (no base)
 dev.stage(1)?;
 dev.apply(1)?;                   // now live in dev
 
-let prod = Environment::new(app(Env::Prod), dev.catalog_id());
+let prod = Environment::new(app("prod"), dev.catalog_id());
 let plan = promote(&dev, &prod)?;         // same app, prod empty -> a fresh CREATE
 let sql = plan.sql(Confirmation::None)?;  // additive: no confirmation needed
 ```
@@ -101,8 +104,9 @@ promotion only ever runs between one application's environments:
 - target has an applied version → `Migration::migrate(target, source)` (a diff,
   which may be destructive).
 
-Promotion normally runs `dev → canary → prod`; a non-forward move (e.g.
-`prod → dev`) is not an error but adds a non-fatal env-order warning.
+`promote` is **order-agnostic**: enforcing forward environment order (via the
+D18 `env_policies.promotion_rank`) is a policy-aware caller's job — this pure
+crate carries no env-ordering knowledge.
 
 The lower-level `promote_catalog(source, target_applied)` takes catalogs directly
 (the same call, environment-independent). Both return a `PromotionPlan`:
@@ -128,10 +132,10 @@ own beyond what `wamn-ddl` produces.
 - `state text` — the lifecycle state (`draft` / `staged` / `applied` /
   `superseded`), generalizing the earlier `active` boolean. Its values are
   exactly `wamn_schema::State::as_sql`, tied to the crate by a test.
-- `environment text` — the deployment target (first-class), constrained by a
-  `CHECK (environment IN ('dev', 'canary', 'prod'))` whose literals are exactly
-  `wamn_registry::Env::as_str` (tied to the crate by a test) and defaulting to
-  `dev`.
+- `environment text` — the deployment target (first-class), defaulting to
+  `dev`. A **validated slug** (D18, wamn-8df.3) — there is deliberately no
+  closed `CHECK`; the env vocabulary is policy data (`registry.env_policies`),
+  and a drift-guard test asserts the old closed `CHECK` stays retired.
 - `base_version int` — the applied version a draft/staged one was branched from
   (backs the stale-base guard).
 - a partial unique index enforcing single-applied:
@@ -148,11 +152,12 @@ cargo clippy -p wamn-schema --all-targets && cargo fmt -p wamn-schema --check
 
 Tests cover the transition table, the single-applied and stale-base guards,
 promotion (first `CREATE`, additive, gated destructive, environment-aware — incl.
-the same-application guard and the `dev → canary → prod` env-order advisory), and
-drift guards tying `State` **and** `Env` to the storage `CHECK`s in
-`catalog-schema.sql`. The storage additions re-apply cleanly on a throwaway
-Postgres 18 (as with 3.1 / 3.2), where the `environment` `CHECK` accepts `canary`
-and rejects an out-of-set value.
+the same-application guard and `promote` being order-agnostic), and the storage
+drift guards in `tests/schema.rs`: `State` stays in lockstep with the `state`
+`CHECK` in `catalog-schema.sql`, and the `environment` column exists, defaults
+to `dev`, and carries **no** closed `IN (...)` `CHECK` (D18 — env is an open
+slug). The storage additions re-apply cleanly on a throwaway Postgres 18 (as
+with 3.1 / 3.2).
 
 ## References
 
