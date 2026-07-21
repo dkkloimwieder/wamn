@@ -131,14 +131,41 @@ pub fn stream_name(org: &str, env: &str) -> String {
 /// `*`/`>` (wildcards), and whitespace/control break parsing — each becomes
 /// `_`. Catalog-managed tables are already clean idents; this is the backstop
 /// for hand-created tables the schema-scoped publication auto-includes.
+///
+/// Bare sanitization collides: `a.b` and `a_b` both become `a_b`. So when
+/// sanitization CHANGED the string, a short stable hash of the RAW name is
+/// appended (`a_b_108bf50c`), keeping distinct raws distinct (R22). An
+/// already-clean input is returned byte-identical — the frozen-token guarantee
+/// (l5i9.30): only dirty names (which never reach here from the catalog path)
+/// change shape.
 pub fn subject_token(raw: &str) -> String {
-    raw.chars()
+    let sanitized: String = raw
+        .chars()
         .map(|c| match c {
             '.' | '*' | '>' => '_',
             c if c.is_whitespace() || c.is_control() => '_',
             c => c,
         })
-        .collect()
+        .collect();
+    if sanitized == raw {
+        sanitized
+    } else {
+        format!("{sanitized}_{}", raw_hash(raw))
+    }
+}
+
+/// A short, build-stable hash of `raw` (FNV-1a, 32-bit, hex) used to
+/// disambiguate sanitized tokens. Deterministic across Rust versions — unlike
+/// `DefaultHasher` — because the token is a wire subject the materializer and
+/// `streambench` pin; it must not shift under us. Its alphabet ([0-9a-f]) is
+/// itself a safe token.
+fn raw_hash(raw: &str) -> String {
+    let mut hash: u32 = 0x811c_9dc5; // FNV-1a 32-bit offset basis
+    for b in raw.as_bytes() {
+        hash ^= u32::from(*b);
+        hash = hash.wrapping_mul(0x0100_0193); // FNV-1a 32-bit prime
+    }
+    format!("{hash:08x}")
 }
 
 #[cfg(test)]
@@ -177,9 +204,21 @@ mod tests {
 
     #[test]
     fn subject_token_neutralizes_nats_specials() {
-        assert_eq!(subject_token("weird.name*x"), "weird_name_x");
-        assert_eq!(subject_token("a>b c\td"), "a_b_c_d");
+        // A DIRTY name is sanitized AND suffixed with a stable hash of the raw
+        // (R22) — the specials are gone and the token is one safe segment.
+        assert_eq!(subject_token("weird.name*x"), "weird_name_x_f5638491");
+        assert_eq!(subject_token("a>b c\td"), "a_b_c_d_495ab2f0");
+        // An already-clean name is byte-identical — the frozen-token guarantee.
         assert_eq!(subject_token("receipt_lines"), "receipt_lines");
+    }
+
+    #[test]
+    fn subject_token_distinguishes_dot_from_underscore() {
+        // R22: `a.b` and `a_b` used to collide on `a_b`. Now `a_b` is clean
+        // (byte-identical) and `a.b` sanitizes-then-hashes, so they diverge.
+        assert_eq!(subject_token("a_b"), "a_b");
+        assert_eq!(subject_token("a.b"), "a_b_108bf50c");
+        assert_ne!(subject_token("a.b"), subject_token("a_b"));
     }
 
     #[test]
