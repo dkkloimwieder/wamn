@@ -177,6 +177,281 @@ fn check_expression(issues: &mut Vec<Issue>, code: &'static str, path: String, e
     }
 }
 
+/// Postgres truncates every identifier at `NAMEDATALEN - 1` = **63 bytes** (a
+/// byte limit, not a character limit). Exposed so the DDL compiler (3.2) budgets
+/// its migration-aside names against the same constant (wamn-2jkm.30).
+pub const MAX_IDENTIFIER_BYTES: usize = 63;
+
+/// The byte budget for an entity's logical name. Every generated table carries an
+/// implicit `<name>_pkey` index in Postgres's schema-wide relation namespace
+/// (`pg_class`), so an entity name must leave room for the 5-byte `_pkey` suffix
+/// or that index name is truncated — drifting the name the migration compiler
+/// renames (`rename_pkey_op`) and reclaims (the `wamn_mig_drop_*` aside logic).
+/// `_pkey` is the tightest *collision-critical* suffix derived from the entity
+/// name alone; the per-table `<name>_tenant` RLS policy (7 bytes) may still
+/// truncate but stays unique per table, and the *composite*
+/// `<table>_<field>_fkey` is guarded by comparing PG-visible (truncated) names
+/// in [`check_identifier_collisions`], not by this budget.
+const ENTITY_NAME_BUDGET: usize = MAX_IDENTIFIER_BYTES - "_pkey".len();
+
+/// A name as Postgres stores it: truncated to [`MAX_IDENTIFIER_BYTES`] at a UTF-8
+/// character boundary (matching PG's `pg_mbcliplen`). Two identifiers differing
+/// only past byte 63 collapse to the same value here — which is exactly how PG
+/// sees them, so a collision guard MUST compare through this. (No ASCII charset
+/// rule is in force at this revision — cjv.20 lands later — so a name may be
+/// multibyte; truncating on a char boundary never splits a code point.)
+fn pg_visible(name: &str) -> &str {
+    if name.len() <= MAX_IDENTIFIER_BYTES {
+        return name;
+    }
+    let mut end = MAX_IDENTIFIER_BYTES;
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    &name[..end]
+}
+
+/// A DDL-synthesized identifier and the catalog path that produced it.
+struct Derived {
+    name: String,
+    path: String,
+}
+
+/// Every SQL identifier the DDL compiler (3.2) synthesizes for a catalog, grouped
+/// by the Postgres namespace it occupies. This is the single derivation the
+/// schema-wide uniqueness guard reads AND that wamn-ddl's drift-guard test
+/// cross-checks against the actually-emitted DDL — wamn-catalog cannot depend on
+/// wamn-ddl, so the two crates' name synthesis must not drift.
+struct DerivedIdentifiers {
+    /// The schema-wide relation namespace (`pg_class`), grouped per entity (in
+    /// `catalog.entities` order): table names, the implicit `<table>_pkey`
+    /// backing index, secondary indexes, and unique-constraint backing indexes.
+    /// The guard checks them under ONE map across all groups — a duplicate is a
+    /// real `42P07`/`42710` mid-migration.
+    relations: Vec<Vec<Derived>>,
+    /// The per-table constraint namespace (`pg_constraint`), one Vec per entity:
+    /// the `<table>_pkey` primary key, the user unique/check constraints, and the
+    /// synthesized `<table>_<field>_fkey` foreign keys. (A FK creates no backing
+    /// index, so it is per-table only, never schema-wide — folding it into the
+    /// relation namespace would falsely reject two legitimately-distinct tables
+    /// whose FK names happen to spell the same string.)
+    constraints: Vec<Vec<Derived>>,
+}
+
+/// Reproduce, from the catalog alone, exactly the identifiers `emit.rs` will
+/// synthesize. Kept in lockstep with the emit path by the wamn-ddl drift-guard
+/// test `synthesized_identifiers_cover_every_emitted_relation_and_constraint`.
+fn derive_identifiers(catalog: &Catalog) -> DerivedIdentifiers {
+    let mut relations = Vec::with_capacity(catalog.entities.len());
+    let mut constraints = Vec::with_capacity(catalog.entities.len());
+    for (ei, e) in catalog.entities.iter().enumerate() {
+        let ep = format!("entities[{ei}]");
+        let mut rels = vec![
+            Derived {
+                name: e.name.clone(),
+                path: format!("{ep}.name"),
+            },
+            Derived {
+                name: format!("{}_pkey", e.name),
+                path: format!("{ep} (implicit primary-key index)"),
+            },
+        ];
+        let mut cons = vec![Derived {
+            name: format!("{}_pkey", e.name),
+            path: format!("{ep} (implicit primary-key constraint)"),
+        }];
+        for (ii, idx) in e.indexes.iter().enumerate() {
+            rels.push(Derived {
+                name: idx.name.clone(),
+                path: format!("{ep}.indexes[{ii}].name"),
+            });
+        }
+        for (ci, c) in e.constraints.iter().enumerate() {
+            let cp = format!("{ep}.constraints[{ci}].name");
+            cons.push(Derived {
+                name: c.name().to_string(),
+                path: cp.clone(),
+            });
+            // A unique constraint's backing index shares `pg_class`; a CHECK does
+            // not, so it stays out of the relation namespace.
+            if let Constraint::Unique { .. } = c {
+                rels.push(Derived {
+                    name: c.name().to_string(),
+                    path: cp,
+                });
+            }
+        }
+        for (fi, f) in e.fields.iter().enumerate() {
+            if let FieldType::Reference { .. } = f.field_type {
+                cons.push(Derived {
+                    name: format!("{}_{}_fkey", e.name, f.name),
+                    path: format!("{ep}.fields[{fi}] (foreign-key constraint)"),
+                });
+            }
+        }
+        relations.push(rels);
+        constraints.push(cons);
+    }
+    DerivedIdentifiers {
+        relations,
+        constraints,
+    }
+}
+
+/// The relation- and constraint-namespace identifiers the DDL compiler (3.2)
+/// will synthesize for `catalog`. Public so wamn-ddl's drift-guard test can prove
+/// its emitted DDL never produces an identifier this crate's schema-wide guard
+/// did not account for (the two crates derive `<table>_pkey` /
+/// `<table>_<field>_fkey` independently — this keeps them honest).
+pub fn synthesized_identifiers(catalog: &Catalog) -> SynthesizedIdentifiers {
+    let d = derive_identifiers(catalog);
+    SynthesizedIdentifiers {
+        relation_names: d.relations.into_iter().flatten().map(|x| x.name).collect(),
+        constraint_names: d
+            .constraints
+            .into_iter()
+            .flatten()
+            .map(|x| x.name)
+            .collect(),
+    }
+}
+
+/// The synthesized identifiers of a catalog, by Postgres namespace. See
+/// [`synthesized_identifiers`].
+pub struct SynthesizedIdentifiers {
+    /// Names in the schema-wide relation namespace (`pg_class`): table names,
+    /// `<table>_pkey` backing indexes, secondary indexes, unique backing indexes.
+    pub relation_names: Vec<String>,
+    /// Names in the per-table constraint namespace (`pg_constraint`), flattened
+    /// across entities: `<table>_pkey`, user unique/check constraints, and
+    /// `<table>_<field>_fkey` foreign keys.
+    pub constraint_names: Vec<String>,
+}
+
+/// A parenthetical noting the PG-visible (truncated) form of an over-long name,
+/// or empty when the name already fits.
+fn truncation_note(name: &str) -> String {
+    if name.len() > MAX_IDENTIFIER_BYTES {
+        format!(" (Postgres truncates it to {:?})", pg_visible(name))
+    } else {
+        String::new()
+    }
+}
+
+/// Reject a user identifier Postgres would silently truncate — its byte length
+/// exceeds the class budget. Truncation is dangerous twice over: it silently
+/// rewrites the author's name, and it can defeat the collision guards (two names
+/// identical in their first 63 bytes become the same relation).
+fn check_identifier_lengths(issues: &mut Vec<Issue>, catalog: &Catalog) {
+    let too_long =
+        |issues: &mut Vec<Issue>, path: String, kind: &str, name: &str, budget: usize| {
+            if name.len() > budget {
+                issues.push(Issue::error(
+                    "identifier-too-long",
+                    path,
+                    format!(
+                        "{kind} name {name:?} is {} bytes; the budget is {budget} \
+                     (Postgres truncates identifiers at {MAX_IDENTIFIER_BYTES} bytes)",
+                        name.len()
+                    ),
+                ));
+            }
+        };
+    for (ei, e) in catalog.entities.iter().enumerate() {
+        too_long(
+            issues,
+            format!("entities[{ei}].name"),
+            "entity",
+            &e.name,
+            ENTITY_NAME_BUDGET,
+        );
+        for (fi, f) in e.fields.iter().enumerate() {
+            too_long(
+                issues,
+                format!("entities[{ei}].fields[{fi}].name"),
+                "field",
+                &f.name,
+                MAX_IDENTIFIER_BYTES,
+            );
+        }
+        for (ii, idx) in e.indexes.iter().enumerate() {
+            too_long(
+                issues,
+                format!("entities[{ei}].indexes[{ii}].name"),
+                "index",
+                &idx.name,
+                MAX_IDENTIFIER_BYTES,
+            );
+        }
+        for (ci, c) in e.constraints.iter().enumerate() {
+            too_long(
+                issues,
+                format!("entities[{ei}].constraints[{ci}].name"),
+                "constraint",
+                c.name(),
+                MAX_IDENTIFIER_BYTES,
+            );
+        }
+    }
+}
+
+/// Schema-wide and per-table identifier-collision detection over the FULL
+/// synthesized set, comparing names AS POSTGRES SEES THEM (truncated to 63
+/// bytes). The per-entity `duplicate-index-name` / `duplicate-constraint-name`
+/// checks above catch user-vs-user duplicates within one entity; this catches
+/// what they cannot — a name colliding ACROSS entities, with a synthesized
+/// `<table>_pkey` / `<table>_<field>_fkey`, or only after truncation. Both are a
+/// real mid-migration `42P07`/`42710` that rolls back the whole (possibly
+/// prod-promotion) apply.
+fn check_identifier_collisions(issues: &mut Vec<Issue>, catalog: &Catalog) {
+    let d = derive_identifiers(catalog);
+
+    // `pg_class`: ONE namespace across the whole schema. (Moving `seen` inside
+    // the loop would scope it per-entity and miss every cross-entity collision.)
+    let mut seen: HashMap<&str, &str> = HashMap::new();
+    for group in &d.relations {
+        for id in group {
+            let key = pg_visible(&id.name);
+            if let Some(&first) = seen.get(key) {
+                issues.push(Issue::error(
+                    "identifier-collision",
+                    id.path.clone(),
+                    format!(
+                        "identifier {:?} collides in the schema-wide relation namespace with \
+                         {first} — tables, indexes, and unique/primary-key backing indexes all \
+                         share it{}",
+                        id.name,
+                        truncation_note(&id.name),
+                    ),
+                ));
+            } else {
+                seen.insert(key, id.path.as_str());
+            }
+        }
+    }
+
+    // `pg_constraint`: one namespace PER table.
+    for group in &d.constraints {
+        let mut seen: HashMap<&str, &str> = HashMap::new();
+        for id in group {
+            let key = pg_visible(&id.name);
+            if let Some(&first) = seen.get(key) {
+                issues.push(Issue::error(
+                    "identifier-collision",
+                    id.path.clone(),
+                    format!(
+                        "constraint identifier {:?} collides with {first} on the same table{}",
+                        id.name,
+                        truncation_note(&id.name),
+                    ),
+                ));
+            } else {
+                seen.insert(key, id.path.as_str());
+            }
+        }
+    }
+}
+
 /// Every issue (errors and warnings) for a catalog, in a stable order.
 pub fn validate(catalog: &Catalog) -> Vec<Issue> {
     let mut issues = Vec::new();
@@ -479,6 +754,14 @@ pub fn validate(catalog: &Catalog) -> Vec<Issue> {
         }
     }
 
+    // --- schema-wide identifier length + collision (cjv.9 / review C1-2) -----
+    // Postgres's relation/constraint namespaces are schema-/table-wide, not
+    // per-entity; and it truncates every identifier at 63 bytes. Validate the
+    // FULL synthesized identifier set as PG sees it, so a collision surfaces at
+    // design time rather than as a 42P07 mid-migration.
+    check_identifier_lengths(&mut issues, catalog);
+    check_identifier_collisions(&mut issues, catalog);
+
     issues
 }
 
@@ -618,6 +901,7 @@ impl Catalog {
 
 #[cfg(test)]
 mod tests {
+    use super::{ENTITY_NAME_BUDGET, MAX_IDENTIFIER_BYTES};
     use crate::types::{
         Cardinality, Catalog, Constraint, Entity, Field, FieldType, Index, Relation,
     };
@@ -984,5 +1268,190 @@ mod tests {
         let found = codes(&c);
         assert!(found.contains(&"empty-check-expression"));
         assert!(!found.contains(&"unsafe-check-expression"));
+    }
+
+    // --- schema-wide identifier collisions + length (cjv.9 / review C1-2) ----
+
+    /// Build an entity with a given physical `name` (the `entity` helper reuses
+    /// the id as the name).
+    fn named_entity(id: &str, name: &str, fields: Vec<Field>) -> Entity {
+        let mut e = entity(id, fields);
+        e.name = name.into();
+        e
+    }
+
+    fn reference(id: &str, target: &str) -> Field {
+        field(
+            id,
+            FieldType::Reference {
+                entity: target.into(),
+            },
+        )
+    }
+
+    fn collision_codes(c: &Catalog) -> Vec<&'static str> {
+        c.issues()
+            .into_iter()
+            .filter(|i| i.code == "identifier-collision")
+            .map(|i| i.code)
+            .collect()
+    }
+
+    #[test]
+    fn cross_entity_duplicate_index_name_is_a_collision() {
+        // Postgres index names live in the schema-wide relation namespace: two
+        // DIFFERENT entities may not both create an index `by_created_at`. The
+        // per-entity `duplicate-index-name` check cannot see this (different
+        // entities) — the schema-wide guard must.
+        let idx = |name: &str| Index {
+            name: name.into(),
+            fields: vec!["v".into()],
+            unique: false,
+        };
+        let mut a = named_entity("a", "a", vec![field("v", FieldType::Int)]);
+        a.indexes.push(idx("by_created_at"));
+        let mut b = named_entity("b", "b", vec![field("v", FieldType::Int)]);
+        b.indexes.push(idx("by_created_at"));
+        let mut c = minimal();
+        c.entities = vec![a, b];
+
+        assert!(
+            codes(&c).contains(&"identifier-collision"),
+            "{:?}",
+            c.issues()
+        );
+        // The per-entity check must NOT fire — the collision is cross-entity.
+        assert!(!codes(&c).contains(&"duplicate-index-name"));
+        assert!(!c.is_valid());
+    }
+
+    #[test]
+    fn synthesized_pkey_collision_is_detected() {
+        // Entity `a` gets an implicit `a_pkey` backing index; an entity literally
+        // named `a_pkey` claims the same relation name — a real 42P07.
+        let a = named_entity("a", "a", vec![field("v", FieldType::Int)]);
+        let clash = named_entity("b", "a_pkey", vec![field("v", FieldType::Int)]);
+        let mut c = minimal();
+        c.entities = vec![a, clash];
+
+        assert!(
+            codes(&c).contains(&"identifier-collision"),
+            "{:?}",
+            c.issues()
+        );
+        assert!(!c.is_valid());
+    }
+
+    #[test]
+    fn synthesized_fkey_collides_with_a_user_constraint() {
+        // A `reference` field on `orders` synthesizes the FK `orders_customer_fkey`
+        // (pg_constraint, per-table). A user UNIQUE constraint of the SAME name on
+        // the same table collides there — a real 42710 the per-entity checks miss
+        // (a FK is not a catalog constraint).
+        let mut orders = named_entity(
+            "orders",
+            "orders",
+            vec![
+                field("label", FieldType::Int),
+                reference("customer", "cust"),
+            ],
+        );
+        orders.constraints.push(Constraint::Unique {
+            name: "orders_customer_fkey".into(),
+            fields: vec!["label".into()],
+        });
+        let customers = named_entity("cust", "customers", vec![field("v", FieldType::Int)]);
+        let mut c = minimal();
+        c.entities = vec![orders, customers];
+
+        assert!(!collision_codes(&c).is_empty(), "{:?}", c.issues());
+        assert!(!c.is_valid());
+    }
+
+    #[test]
+    fn truncated_fkey_names_collide() {
+        // Two reference fields whose names differ only past the point where the
+        // derived FK name reaches 63 bytes: `orders_<c*60>_fkey` and
+        // `orders_<c*56 d*4>_fkey` both TRUNCATE to `orders_<c*56>` — a real
+        // collision Postgres sees but an untruncated comparison would miss.
+        // (Field names are 60 bytes, within the 63-byte budget.)
+        let f1 = "c".repeat(60);
+        let f2 = format!("{}{}", "c".repeat(56), "d".repeat(4));
+        let orders = named_entity(
+            "orders",
+            "orders",
+            vec![reference("f1", "cust"), reference("f2", "cust")],
+        );
+        // Give the fields the colliding physical names.
+        let mut orders = orders;
+        orders.fields[0].name = f1;
+        orders.fields[1].name = f2;
+        let customers = named_entity("cust", "customers", vec![field("v", FieldType::Int)]);
+        let mut c = minimal();
+        c.entities = vec![orders, customers];
+
+        assert!(
+            codes(&c).contains(&"identifier-collision"),
+            "{:?}",
+            c.issues()
+        );
+        // The field names themselves fit — the collision is purely truncation.
+        assert!(!codes(&c).contains(&"identifier-too-long"));
+        assert!(!c.is_valid());
+    }
+
+    #[test]
+    fn identifier_length_budget_is_enforced() {
+        // Entity name over the 58-byte budget (63 minus the `_pkey` suffix).
+        let mut c = minimal();
+        c.entities[0].name = "e".repeat(ENTITY_NAME_BUDGET + 1);
+        assert!(
+            codes(&c).contains(&"identifier-too-long"),
+            "{:?}",
+            c.issues()
+        );
+        assert!(!c.is_valid());
+
+        // A 63-byte index name is fine; 64 bytes is rejected.
+        let ok = Index {
+            name: "i".repeat(MAX_IDENTIFIER_BYTES),
+            fields: vec!["label".into()],
+            unique: false,
+        };
+        let mut c = minimal();
+        c.entities[0].indexes.push(ok);
+        assert!(
+            c.is_valid(),
+            "63-byte index name should fit: {:?}",
+            c.issues()
+        );
+
+        let too_long = Index {
+            name: "i".repeat(MAX_IDENTIFIER_BYTES + 1),
+            fields: vec!["label".into()],
+            unique: false,
+        };
+        let mut c = minimal();
+        c.entities[0].indexes.push(too_long);
+        assert!(codes(&c).contains(&"identifier-too-long"));
+    }
+
+    #[test]
+    fn valid_multi_entity_catalog_with_references_has_no_collision() {
+        // Regression: ordinary distinct entities + FKs must NOT trip the new
+        // guard (no false positives from `_pkey` / `_fkey` derivations).
+        let orders = named_entity(
+            "orders",
+            "orders",
+            vec![
+                field("label", FieldType::Int),
+                reference("customer", "cust"),
+            ],
+        );
+        let customers = named_entity("cust", "customers", vec![field("v", FieldType::Int)]);
+        let mut c = minimal();
+        c.entities = vec![orders, customers];
+        assert!(c.is_valid(), "{:?}", c.issues());
+        assert!(collision_codes(&c).is_empty());
     }
 }

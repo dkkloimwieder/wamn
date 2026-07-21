@@ -2000,3 +2000,85 @@ fn chaining_check_expression_never_reaches_postgres() {
         String::from_utf8_lossy(&out.stdout)
     );
 }
+
+/// The first double-quoted identifier appearing after `marker` in `s`.
+fn quoted_after<'a>(s: &'a str, marker: &str) -> Option<&'a str> {
+    let after = &s[s.find(marker)? + marker.len()..];
+    let start = after.find('"')? + 1;
+    let end = after[start..].find('"')? + start;
+    Some(&after[start..end])
+}
+
+/// Drift guard (wamn-cjv.9 / review C1-2): wamn-catalog derives `<table>_pkey`
+/// and `<table>_<field>_fkey` for its schema-wide identifier-collision guard
+/// WITHOUT depending on this crate. If either derivation drifts from what the
+/// emit path actually produces, the guard would miss a real collision. Prove it
+/// cannot: every relation/constraint identifier the compiler emits for the POC
+/// catalog must be a member of `wamn_catalog::synthesized_identifiers`.
+#[test]
+fn synthesized_identifiers_cover_every_emitted_relation_and_constraint() {
+    let c = poc();
+    let ids = wamn_catalog::synthesized_identifiers(&c);
+    let is_relation = |n: &str| ids.relation_names.iter().any(|r| r == n);
+    let is_constraint = |n: &str| ids.constraint_names.iter().any(|r| r == n);
+
+    let create = Migration::create(&c).expect("compiles");
+    let (mut saw_table, mut saw_index, mut saw_unique, mut saw_fk) = (false, false, false, false);
+    for op in &create.operations {
+        let sql = op.sql.as_str();
+        if sql.starts_with("CREATE TABLE ") {
+            let t = quoted_after(sql, "CREATE TABLE ").expect("table name");
+            assert!(is_relation(t), "table {t:?} not in synthesized relations");
+            saw_table = true;
+        }
+        if sql.starts_with("CREATE INDEX ") || sql.starts_with("CREATE UNIQUE INDEX ") {
+            let n = quoted_after(sql, "INDEX ").expect("index name");
+            assert!(is_relation(n), "index {n:?} not in synthesized relations");
+            saw_index = true;
+        }
+        if let Some(n) = quoted_after(sql, "ADD CONSTRAINT ") {
+            assert!(
+                is_constraint(n),
+                "constraint {n:?} not in synthesized constraints"
+            );
+            if sql.contains(" UNIQUE (") {
+                assert!(
+                    is_relation(n),
+                    "unique backing index {n:?} not a synthesized relation"
+                );
+                saw_unique = true;
+            }
+            if sql.contains(" FOREIGN KEY ") {
+                saw_fk = true;
+            }
+        }
+    }
+    assert!(
+        saw_table && saw_index && saw_unique && saw_fk,
+        "the POC fixture must exercise every emitted identifier class"
+    );
+
+    // `<table>_pkey` is implicit in a CREATE — it only surfaces as a named
+    // identifier on a table rename. Rename an entity and confirm the renamed
+    // primary-key index is a member of the synthesized relation set.
+    let mut v2 = c.clone();
+    v2.version = 2;
+    v2.entities
+        .iter_mut()
+        .find(|e| e.id == "sites")
+        .unwrap()
+        .name = "locations".into();
+    let mig = Migration::migrate(&c, &v2).expect("compiles");
+    let ids2 = wamn_catalog::synthesized_identifiers(&v2);
+    let pkey_op = mig
+        .operations
+        .iter()
+        .find(|o| o.sql.contains("RENAME TO") && o.sql.contains("_pkey"))
+        .expect("a pkey rename op");
+    let target = quoted_after(&pkey_op.sql, "RENAME TO ").expect("rename target");
+    assert_eq!(target, "locations_pkey");
+    assert!(
+        ids2.relation_names.iter().any(|r| r == "locations_pkey"),
+        "renamed pkey {target:?} not in synthesized relations"
+    );
+}

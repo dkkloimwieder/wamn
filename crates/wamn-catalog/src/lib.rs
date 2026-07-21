@@ -29,7 +29,10 @@ pub use types::{
     Cardinality, Catalog, Constraint, Entity, EntityId, Field, FieldId, FieldType, Index, Relation,
     SCHEMA_VERSION,
 };
-pub use validate::{Issue, Severity, unsafe_expression_reason, validate};
+pub use validate::{
+    Issue, MAX_IDENTIFIER_BYTES, Severity, SynthesizedIdentifiers, synthesized_identifiers,
+    unsafe_expression_reason, validate,
+};
 
 /// The JSON Schema for [`Catalog`], generated from the Rust types (the single
 /// source of truth). Serialized to `docs/catalog-model.schema.json`; a drift
