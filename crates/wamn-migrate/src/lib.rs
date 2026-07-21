@@ -65,6 +65,7 @@ mod engine;
 mod model;
 mod orphan;
 mod replica_identity;
+mod run_plane;
 pub mod sql;
 
 pub use engine::{dry_run, plan_migration, rollback_plan};
@@ -76,6 +77,13 @@ pub use orphan::{OrphaningPublish, RegistrationRef, check_registration_orphans};
 pub use replica_identity::{
     ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, alter_replica_identity_sql,
     entities_requiring_full, reconcile_replica_identity, select_replica_identity_sql,
+};
+pub use run_plane::{
+    LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME, RunPlaneAction, RunPlaneActionKind,
+    RunPlaneObservation, RunPlanePlan, catalog_schema_present_sql,
+    count_stale_registration_state_sql, plan_run_plane, rewrite_schema,
+    select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
+    select_schema_columns_sql, select_schema_indexes_sql, strip_registration_state_sql,
 };
 
 // Re-exported so a driver can name the registration type the reconciler folds

@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use wamn_ctl::{
     copy_project_env, dump_project_env, enable_cdc_project_env, migrate_catalog, provision,
     provision_org, provision_project_env, publish_catalog, reconcile_replica_identity,
-    restore_project_env,
+    reconcile_run_plane, restore_project_env,
 };
 
 #[derive(Parser)]
@@ -47,6 +47,8 @@ enum Command {
     MigrateCatalog(migrate_catalog::MigrateCatalogArgs),
     /// Reconcile per-entity REPLICA IDENTITY FULL from the catalog's registrations (old-image/delete needs) — idempotent ALTERs (wamn-l5i9.31)
     ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),
+    /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
+    ReconcileRunPlane(reconcile_run_plane::ReconcileRunPlaneArgs),
 }
 
 #[tokio::main]
@@ -76,5 +78,6 @@ async fn main() -> anyhow::Result<()> {
         Command::CopyProjectEnv(args) => copy_project_env::run(args).await,
         Command::MigrateCatalog(args) => migrate_catalog::run(args).await,
         Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,
+        Command::ReconcileRunPlane(args) => reconcile_run_plane::run(args).await,
     }
 }

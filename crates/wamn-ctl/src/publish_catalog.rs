@@ -35,6 +35,11 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::NoTls;
 
+// The canonical `wamn_run` → project-schema deploy-DDL rewrite: the single
+// owner is the reconcile-run-plane planner's crate (dot-anchored; `schema` has
+// already passed [`valid_ident`], so bare interpolation is safe).
+use wamn_migrate::rewrite_schema;
+
 #[derive(Debug, Args)]
 pub struct PublishCatalogArgs {
     /// Path to the catalog JSON to snapshot (the applied catalog for the project).
@@ -147,16 +152,7 @@ async fn publish(
     guard_registration_orphans(client, cat).await?;
 
     // Ensure the non-superuser runtime role exists (pre-created in production).
-    client
-        .batch_execute(
-            "DO $$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                 CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
-               END IF; \
-             END $$;",
-        )
-        .await
-        .context("ensure wamn_app role")?;
+    ensure_wamn_app_role(client).await?;
 
     // Create the schema if absent and pin this session's search_path to it, so
     // every statement below — and the parameterized UPSERT — resolves unqualified
@@ -371,13 +367,20 @@ pub(crate) async fn guard_registration_orphans(
 // provisioning uses.
 // ---------------------------------------------------------------------------
 
-/// The canonical deploy DDL, embedded at compile time and rewritten from the
-/// `wamn_run` schema to the target project schema. The dot-anchored replace
-/// leaves prose mentions like `wamn_run_store` untouched; `schema` has already
-/// passed [`valid_ident`], so bare interpolation is safe.
-fn rewrite_schema(ddl: &str, schema: &str) -> String {
-    ddl.replace("wamn_run.", &format!("{schema}."))
-        .replace("SCHEMA wamn_run", &format!("SCHEMA {schema}"))
+/// Ensure the non-superuser runtime role exists (pre-created in production;
+/// bare gate/throwaway databases lack it). Shared with `reconcile-run-plane`,
+/// whose sections GRANT to it.
+pub(crate) async fn ensure_wamn_app_role(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    client
+        .batch_execute(
+            "DO $$ BEGIN \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
+                 CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+               END IF; \
+             END $$;",
+        )
+        .await
+        .context("ensure wamn_app role")
 }
 
 /// Apply `deploy/sql/run-state.sql` (runs + node_runs) into `schema` when its
@@ -534,35 +537,10 @@ pub async fn register_flow(
 
 #[cfg(test)]
 mod tests {
-    use super::{rewrite_schema, valid_ident};
+    use super::valid_ident;
 
-    /// The embedded deploy DDL is the canonical file (include_str!), and the
-    /// schema rewrite must touch only schema references: qualified names and
-    /// the schema header — never prose like `wamn_run_store`.
-    #[test]
-    fn schema_rewrite_is_dot_anchored() {
-        let run_state = include_str!("../../../deploy/sql/run-state.sql");
-        let flows = include_str!("../../../deploy/sql/flows.sql");
-        for (ddl, table) in [(run_state, "runs"), (flows, "flows")] {
-            let out = rewrite_schema(ddl, "poc_f1");
-            assert!(
-                out.contains(&format!("CREATE TABLE poc_f1.{table}")),
-                "{table}"
-            );
-            assert!(!out.contains("wamn_run."), "no qualified wamn_run left");
-            assert!(!out.contains("SCHEMA wamn_run"), "schema header rewritten");
-        }
-        // The prose mention of the wamn_run_store crate must survive verbatim.
-        assert!(rewrite_schema(run_state, "poc_f1").contains("wamn_run_store"));
-        // node_runs rides along with runs in run-state.sql.
-        assert!(rewrite_schema(run_state, "poc_f1").contains("CREATE TABLE poc_f1.node_runs"));
-        // The webhook-path collision backstop rewrites into the project schema
-        // (register_flow's pre-check relies on this index existing there).
-        assert!(
-            rewrite_schema(flows, "poc_f1")
-                .contains("CREATE UNIQUE INDEX flows_active_webhook_path ON poc_f1.flows")
-        );
-    }
+    // The dot-anchored `rewrite_schema` pins live with their owner
+    // (`wamn_migrate::run_plane`, `schema_rewrite_is_dot_anchored`).
 
     #[test]
     fn identifier_validation() {

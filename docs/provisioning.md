@@ -519,6 +519,57 @@ covering the ≤1-cadence window. `reconcile-replica-identity --dry-run` remains
 the read-only surface that names every entity still needing a flip (an operator
 force-tick is `kubectl create job --from=cronjob/…`).
 
+## `wamn-ctl reconcile-run-plane` (wamn-1wdq, E4/R14-migration)
+
+Reconcile ONE project-env's **run-plane schema** to the deploy/sql schema of
+record (`run-state.sql` + `flows.sql` + `run-queue.sql`, embedded at compile
+time and rewritten `wamn_run` → `--schema`), plus the per-database `catalog`
+metadata schema (`catalog-schema.sql`). This is the durable migration path the
+run plane previously lacked: the deploy files evolve (E4 `stream_seq`, D20
+`partition_policy`, fqg.20 `partition_owner`, v8cv `run_dead_letters`), but
+nothing migrated schemas instantiated from older revisions — and the demo
+fixture pod is EPHEMERAL, so a restart wipes every provisioned schema.
+
+The pure decision (`wamn_migrate::plan_run_plane`) diffs what the shell observed
+live against the record and emits the idempotent, **additive** plan, executed in
+order:
+
+- **missing tables** created from their record sections (DDL + indexes + RLS +
+  policy + grants), in FK order — from-zero on a bare database included (the
+  verb also ensures the `wamn_app` role there);
+- **missing record columns** added via `ALTER TABLE … ADD COLUMN <record
+  definition>` (defaults backfill existing rows: `stream_seq` 0,
+  `partition_policy` `'blocking'`);
+- **index drift**: a record index absent live is created; a present one whose
+  live definition lost a record column (the pre-E4 `run_queue_claimable`
+  without `stream_seq`) is dropped and recreated from record;
+- **the pre-l5i9.19 outbox era** torn down: `outbox`/`evt_shadow` tables, the
+  `wamn_outbox_event` trigger (per table) and function (trigger first — the
+  function drop is RESTRICT), and legacy registration `state` keys stripped;
+- **the `catalog` schema** applied whole when absent, or its missing tables
+  individually (e.g. a pre-l5i9.16 catalog without `event_registrations`).
+
+| flag | meaning |
+| --- | --- |
+| `--admin-database-url` | superuser URL to the project database (`WAMN_PG_ADMIN_URL`) — CREATE/ALTER/DROP need table ownership |
+| `--schema` | the project-env schema (e.g. `wamn_runner_demo`, `poc_f1`) |
+| `--dry-run` | print the plan without applying — STRICTLY read-only (no role ensure, no writes) |
+
+**Additive only:** no live column, no non-legacy table, and no data row is ever
+dropped; live columns the record does not know are printed (`[extra]`), never
+touched. Constraint drift on an EXISTING column (a legacy `fail_kind` CHECK
+missing `'runaway-budget'`) is the wamn-fqg.16 sibling class and is deliberately
+out of scope. So are the tenant floor (`publish-catalog --provision` /
+`migrate-catalog`) and flow/seed CONTENT (`publish-catalog --flow` /
+`--seed-dataset`) — after a from-zero restore, run this verb for the schemas,
+then the provisioning verbs for content (the f1 recipe:
+`deploy/poc/f1-provision-job.yaml`, then this verb for the queue tables).
+
+One-shot Job template: `deploy/platform/run-plane-reconcile.example.yaml` (one
+per project-env — substitute `--schema` and the admin URL). Idempotent: a
+schema at record plans nothing, so re-running after a deploy/sql evolution is
+the intended upgrade path.
+
 ## `provisionbench` — the four-tier extension (wamn-q3n.8)
 
 `provisionbench` gains `--mode` (the pgbench / queuebench precedent):

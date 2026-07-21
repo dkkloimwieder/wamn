@@ -1,0 +1,76 @@
+# EXAMPLE per-project-env run-plane schema reconcile Job (E4/R14-migration,
+# wamn-1wdq). One-shot run of the SHIPPED `wamn-ctl reconcile-run-plane` verb:
+# the durable migration path that brings ONE project-env's run-plane schema to
+# the deploy/sql schema of record — created from older revisions, restored from
+# pre-teardown snapshots, or wiped by an ephemeral-fixture restart.
+#
+# WHAT IT COVERS (idempotent, ADDITIVE — a schema at record is a no-op):
+#   - missing record columns  (E4 stream_seq, D20 partition_policy, …)
+#   - a stale claimable-index definition (recreated WITH stream_seq)
+#   - wholly-missing tables   (run_queue/partition_owner/run_dead_letters,
+#                              flows, runs/node_runs — from-zero included)
+#   - the pre-l5i9.19 outbox-era teardown (outbox/evt_shadow tables, the
+#     wamn_outbox_event trigger/function, legacy registration `state` keys)
+#   - the per-database `catalog` metadata schema when absent
+# It never drops a live column or a non-legacy table; floor/entity tables and
+# flow/seed CONTENT are out of scope (publish-catalog / f1-provision own those).
+#
+# PER-PROJECT-ENV (the `.example` convention): the verb reconciles ONE schema
+# (`--schema` + a superuser URL to that project's DB), so run ONE Job per
+# project-env, substituting the schema and the admin URL. This example wires
+# the runner demo schema on the fixture pod's `wamn` database:
+#
+#   kubectl -n wamn-system apply -f deploy/platform/run-plane-reconcile.example.yaml
+#   kubectl -n wamn-system logs -f job/run-plane-reconcile-runner-demo
+#   # re-run (Jobs are immutable): delete it first
+#   kubectl -n wamn-system delete job run-plane-reconcile-runner-demo
+#
+# Pass `--dry-run` in args to print the plan without applying (strictly
+# read-only). Against a CNPG target, swap the Secret for the cluster's
+# `<cluster>-superuser` (same key shape) and the database for the env's DB.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: run-plane-reconcile-runner-demo
+  namespace: wamn-system
+  labels: { app: run-plane-reconcile, project-env: runner-demo }
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: run-plane-reconcile, project-env: runner-demo }
+    spec:
+      restartPolicy: Never
+      # Never talks to the Kubernetes API — no ServiceAccount token.
+      automountServiceAccountToken: false
+      containers:
+        - name: reconcile
+          image: wamn-ctl:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            [
+              "--log-level", "error",
+              "reconcile-run-plane",
+              "--schema", "wamn_runner_demo",
+            ]
+          env:
+            # Superuser URL — CREATE/ALTER/DROP need table ownership, so
+            # `wamn_app` cannot run the reconcile. Sourced from the
+            # `postgres-fixture-superuser` Secret (secretKeyRef, defined in
+            # deploy/platform/postgres.yaml), NOT inline plaintext; the demo
+            # project envs live in the fixture pod's `wamn` database. k8s
+            # expands $(VAR) in a later env value against the earlier
+            # secretKeyRef vars, which must precede WAMN_PG_ADMIN_URL.
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
+            - name: WAMN_PG_ADMIN_URL
+              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/wamn
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { memory: "256Mi" }
