@@ -34,6 +34,18 @@ impl RetryPolicy {
         cap_ms: 30_000,
     };
 
+    /// Platform ceiling on the *author-supplied* backoff cap (`cap-ms`),
+    /// 3_600_000 ms (1 h). A single retry backoff must not out-park the janitor's
+    /// reap grace — the longest timescale the run lifecycle acknowledges before a
+    /// stuck non-terminal run is reaped as `infrastructure-failure` (the 1 h
+    /// grace the janitor sweep is invoked with, run-queue `janitor_sweep_sql`).
+    /// A retry is error *recovery*, not an intentional `delay`-node wait (which
+    /// parks unboundedly by design); an author cap past this horizon turns the
+    /// exponential backoff into an effectively-infinite park, indistinguishable
+    /// from a wedged run, so it is clamped here at parse time. The bound applies
+    /// only to author input — the default (30 s) is well under it and unchanged.
+    const CAP_MS_CEILING: u64 = 3_600_000;
+
     /// Read the policy from a node's opaque `config`, honoring a reserved
     /// `"retry"` object (`max-attempts` / `base-ms` / `factor` / `cap-ms`, all
     /// optional). A missing object, a non-object config, or a `Null` config all
@@ -61,6 +73,7 @@ impl RetryPolicy {
             cap_ms: retry
                 .get("cap-ms")
                 .and_then(Value::as_u64)
+                .map(|n| n.min(Self::CAP_MS_CEILING))
                 .unwrap_or(d.cap_ms),
         }
     }
@@ -85,5 +98,38 @@ impl RetryPolicy {
             scaled as u64
         };
         scaled.min(self.cap_ms)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // R20: an author cap-ms past the platform ceiling (the janitor reap grace) is
+    // clamped at parse time — a retry must not out-park the run lifecycle's own
+    // horizon. A day-long cap lands on the 1 h ceiling.
+    #[test]
+    fn author_cap_ms_over_ceiling_is_clamped() {
+        let cfg = json!({ "retry": { "cap-ms": 86_400_000u64 } });
+        assert_eq!(
+            RetryPolicy::from_config(&cfg).cap_ms,
+            RetryPolicy::CAP_MS_CEILING
+        );
+    }
+
+    // An in-range author cap-ms passes through untouched.
+    #[test]
+    fn author_cap_ms_in_range_passes_through() {
+        let cfg = json!({ "retry": { "cap-ms": 60_000u64 } });
+        assert_eq!(RetryPolicy::from_config(&cfg).cap_ms, 60_000);
+    }
+
+    // The default policy (no `retry` object) is unchanged: cap stays at 30 s,
+    // well under the ceiling.
+    #[test]
+    fn default_cap_ms_unchanged() {
+        assert_eq!(RetryPolicy::from_config(&json!({})), RetryPolicy::DEFAULT);
+        assert_eq!(RetryPolicy::DEFAULT.cap_ms, 30_000);
     }
 }
