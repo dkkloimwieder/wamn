@@ -1,0 +1,43 @@
+# 5.5 / wamn-0si — egress-deny NetworkPolicy for the build sandbox (6.2).
+#
+# The 6.2 threat class for isolated build sandboxes: the pod must reach ONLY the
+# in-cluster registry (to push the finished artifact) and DNS (to resolve it) —
+# never the wider cluster or the internet. This policy denies all egress from
+# app=wamn-builder pods except (a) DNS to kube-dns and (b) the registry Service
+# on :5000.
+#
+# ⚠️ ENFORCEMENT IS A DEFERRAL (wamn-0si): kind's default CNI (kindnetd) does
+# NOT enforce NetworkPolicy — this manifest is a correct policy that a
+# policy-enforcing CNI (Calico / Cilium) honors, but on the kind dev cluster it
+# is INERT (documentation of intent, not a live control). Egress restriction in
+# kind is tracked as a follow-up bead; until then the sandbox's isolation rests
+# on the credential-less pod (no service-account token) + the offline build.
+#
+#   kubectl -n wamn-system apply -f deploy/platform/builder-netpol.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: builder-egress-deny-except-registry
+  namespace: wamn-system
+spec:
+  podSelector:
+    matchLabels: { app: wamn-builder }
+  policyTypes:
+    - Egress
+  egress:
+    # DNS resolution (kube-dns / CoreDNS in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The in-cluster OCI registry (plain HTTP :5000) — the ONLY non-DNS egress.
+    - to:
+        - podSelector:
+            matchLabels: { app: registry }
+      ports:
+        - protocol: TCP
+          port: 5000

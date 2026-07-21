@@ -4098,6 +4098,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-builder"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wamn-host",
+]
+
+[[package]]
 name = "wamn-catalog"
 version = "0.1.0"
 dependencies = [

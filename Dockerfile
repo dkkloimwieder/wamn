@@ -6,6 +6,7 @@
 #   docker build --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
 #   docker build --target waker      -t wamn-waker:dev      .  # scale-to-zero wake actuator
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
+#   docker build --target builder-svc -t wamn-builder:dev   .  # 5.5 node build sandbox (cargo+jco)
 # Later invocations are fully layer-cached off the one builder stage. The
 # washlet artifact ships no provisioning / replication-credential / gate code
 # (SR9 strings spot-check); the gates image layers the suite on top of the
@@ -25,7 +26,7 @@ COPY deploy ./deploy
 # (docs/wash-runtime-fork.md); cargo fetches it during the build.
 # rust-toolchain.toml would force a rustup download inside the container;
 # the base image already ships the right version.
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-waker -p wamn-gates
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-waker -p wamn-gates -p wamn-builder
 
 # ---- washlet image: the host binary only ------------------------------------
 FROM debian:trixie-slim AS host
@@ -115,3 +116,22 @@ COPY components/target/wasm32-wasip2/release/js-sample.wasm /bench/js-sample.was
 # wamn:postgres, embeds the wamn-runner engine; the f1bench gate drives it).
 COPY components/target/wasm32-wasip2/release/poc_webhook_f1.wasm /bench/poc-webhook-f1.wasm
 ENTRYPOINT ["/usr/local/bin/wamn-gates"]
+
+# ---- builder-svc image: the 5.5 node build sandbox (cargo + jco) ------------
+# FROM the cargo-ful `builder` stage (rust:1.97-trixie, WORKDIR /build, the full
+# repo source + the release target dir already cached), so `wamn-builder build`
+# can run the toolchains itself at runtime: cargo (wasm32-wasip2 target added
+# here) for a Rust cdylib node, jco for a JS/TS ES module. This is the ONLY
+# cargo-ful runtime image; kept LAST so a `--target host/ctl/…` build never
+# pulls the node toolchain in. Threat model (6.2): the Job runs this with no
+# service-account token and an egress-deny NetworkPolicy — see
+# deploy/platform/builder-job.yaml + builder-netpol.yaml.
+FROM builder AS builder-svc
+RUN rustup target add wasm32-wasip2 \
+ && apt-get update && apt-get install -y --no-install-recommends nodejs npm ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g @bytecodealliance/jco @bytecodealliance/componentize-js
+# The compiled verb binary (built in the `builder` stage above) on PATH.
+RUN cp /build/target/release/wamn-builder /usr/local/bin/wamn-builder
+ENV HOME=/tmp
+ENTRYPOINT ["/usr/local/bin/wamn-builder"]

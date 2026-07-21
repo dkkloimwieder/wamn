@@ -1,0 +1,62 @@
+# 5.5 / wamn-0si — the custom-node BUILD SANDBOX Job (6.2 threat class).
+#
+# `wamn-builder build` runs a tenant node's toolchain (cargo for a Rust cdylib,
+# jco for a JS/TS module) inside an isolated, credential-less pod, then screens
+# the artifact through the 5.5 import lint + dependency allowlist and (5.5d/e)
+# signs + SBOMs + pushes it. The 6.2 posture: NO service-account token, an
+# egress-deny NetworkPolicy (builder-netpol.yaml), a memory cap, and a wall-clock
+# deadline. A build is a one-shot Job — succeed or fail, never restart.
+#
+# v0 SCOPE (deferral): real user-source INGESTION (fetching untrusted source into
+# the sandbox) is out of scope — this Job builds the baked-in `sample-node`
+# fixture that ships in the builder-svc image (WORKDIR /build/components). Swap
+# --source/--package (and add an init-container that populates a source volume)
+# when ingestion lands.
+#
+#   docker build --target builder-svc -t wamn-builder:dev .
+#   kind load docker-image wamn-builder:dev --name wamn
+#   kubectl -n wamn-system apply -f deploy/platform/builder-netpol.yaml
+#   kubectl -n wamn-system apply -f deploy/platform/builder-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/wamn-builder --timeout=900s
+#   kubectl -n wamn-system logs job/wamn-builder
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: wamn-builder
+  namespace: wamn-system
+spec:
+  # One shot: a failed build is a failed build — no restart storm.
+  backoffLimit: 0
+  # ~15 min wall-clock ceiling (a cargo cold build of a node crate + jco).
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels: { app: wamn-builder }
+    spec:
+      # The build sandbox never talks to the Kubernetes API (6.2: no cluster creds).
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: wamn-builder
+          image: wamn-builder:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "info"
+            - "build"
+            # --source is the directory cargo runs in (the components workspace
+            # root); --package selects the member so cargo's target/ lands under
+            # <source>/target, where the executor reads the artifact back.
+            - "--source"
+            - "/build/components"
+            - "--kind"
+            - "cargo"
+            - "--package"
+            - "sample-node"
+            # 5.5e OCI push args (--registry / --repository / --tag) are added by
+            # the wamn-0si.5 commit once the push stage exists.
+          resources:
+            # No CPU limit (the S2 CFS-throttling lesson): a quota would stall the
+            # cargo/rustc build under scheduler throttles. Memory IS capped.
+            requests: { cpu: "1", memory: "2Gi" }
+            limits: { memory: "4Gi" }
