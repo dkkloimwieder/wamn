@@ -1,0 +1,101 @@
+# wakeproof (wamn-fqg.12, POC-F3) — the DEPLOYED scale-to-zero wake gate of
+# record. Parks the runner Deployment at 0 replicas, seeds an every-second cron
+# flow into the schema the LIVE dispatcher sweeps (wamn_runner_demo/demo-tenant),
+# and proves, purely from DB state + the k8s scale API:
+#   1. the LIVE dispatcher fires a cron run (the project IS swept),
+#   2. the waker (deploy/platform/waker.yaml) scales the runner 0 -> 1 on the doorbell,
+#   3. the woken runner drives a cron run to completed,
+# then tears the flow down and restores the runner scale. The gate itself NEVER
+# enqueues or doorbells — the LIVE dispatcher's cron fire must, which is the
+# acceptance criterion.
+#
+# PRECONDITIONS (the live cluster must satisfy these — see docs/build-and-test.md):
+#   * deploy/platform/waker.yaml is applied (the actuator);
+#   * the runner + its wamn_runner_demo schema (run-state + run-queue + flows) exist;
+#   * the dispatcher's wamn-dispatch-projects Secret has a runner-demo entry
+#     {"url": "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn",
+#      "tenant": "demo-tenant", "schema": "wamn_runner_demo"} alongside its others,
+#     and the dispatcher was rolled out to pick it up — ELSE the dispatcher never
+#     sweeps this project and the `dispatcher-fires` phase FAILS (by design: it
+#     separates a wiring gap from a wake failure).
+#
+#   kubectl -n wamn-system apply -f deploy/platform/waker.yaml
+#   kubectl -n wamn-system delete job wakeproof --ignore-not-found   # Jobs are immutable
+#   kubectl -n wamn-system apply -f deploy/gates/wakeproof-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/wakeproof --timeout=300s
+#   kubectl -n wamn-system logs job/wakeproof   # -> overall PASS: true
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wakeproof-gate
+  namespace: wamn-system
+---
+# The gate parks + restores the runner scale, so it needs the SAME
+# deployments/scale get+patch grant the waker has (it is a scale actuator too).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wakeproof-gate
+  namespace: wamn-system
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wakeproof-gate
+  namespace: wamn-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: wakeproof-gate
+subjects:
+  - kind: ServiceAccount
+    name: wakeproof-gate
+    namespace: wamn-system
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: wakeproof
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: wakeproof
+    spec:
+      restartPolicy: Never
+      # The k8s scale client reads the mounted service-account token (default
+      # automount stays ON — this Job actuates the runner scale).
+      serviceAccountName: wakeproof-gate
+      containers:
+        - name: wakeproof
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            [
+              "--log-level", "error",
+              "wakeproof",
+              "--schema", "wamn_runner_demo",
+              "--tenant", "demo-tenant",
+              "--deployment", "runner",
+              "--timeout-secs", "120",
+            ]
+          env:
+            # The project's app (wamn_app) URL — the same Secret the runner uses,
+            # so the seed lands under the same tenant/RLS floor the runner claims.
+            - name: WAMN_PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-runner-db
+                  key: url
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              memory: "256Mi"

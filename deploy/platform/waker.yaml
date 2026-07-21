@@ -1,0 +1,123 @@
+# Scale-to-zero wake actuator (wamn-fqg.12, POC-F3) — a tiny always-on service
+# that scales a PARKED runner Deployment 0 -> 1 when the dispatcher rings its
+# doorbell. Runs the wamn-waker binary (its own SR9 image target).
+#
+#   kubectl -n wamn-system apply -f deploy/platform/waker.yaml
+#   kubectl -n wamn-system rollout status deploy/waker --timeout=120s
+#   kubectl -n wamn-system logs -l app=waker --tail=20
+#
+# WHY A DEDICATED SERVICE (decided; not KEDA): the dispatcher deliberately never
+# talks to the Kubernetes API (deploy/platform/dispatcher.yaml sets
+# automountServiceAccountToken: false), KEDA is not installed (a third-party
+# infra install is an owner decision), and the dispatcher already re-hints every
+# currently-due unleased queue row on every sweep (wamn_run_queue::parked_due_sql)
+# — so a doorbell lost while the runner is at 0 self-heals on the next sweep, and
+# THAT re-hint is the waker's retry path. The waker has no polling loop of its own.
+#
+# SCALE-UP ONLY: idle -> 0 (scale-down) automation is out of scope and tracked as
+# a follow-up. The waker only ever raises a parked Deployment to 1.
+#
+# K8s PRIVILEGE: this component is the ONE place a wamn service is granted the
+# Kubernetes scale privilege (deployments/scale get+patch, namespace-scoped). It
+# is intentionally the only pod here with automountServiceAccountToken: true.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: waker
+  namespace: wamn-system
+---
+# The narrowest grant that actuates a wake: read + patch the scale subresource of
+# Deployments in this namespace, nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: waker
+  namespace: wamn-system
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: waker
+  namespace: wamn-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: waker
+subjects:
+  - kind: ServiceAccount
+    name: waker
+    namespace: wamn-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waker
+  namespace: wamn-system
+  labels: { app: waker }
+spec:
+  # One replica: the actuation is idempotent (a second hint reads spec.replicas
+  # already > 0 and no-ops), and the dispatcher's re-hint covers a restart gap.
+  replicas: 1
+  selector:
+    matchLabels: { app: waker }
+  template:
+    metadata:
+      labels: { app: waker }
+    spec:
+      serviceAccountName: waker
+      # DELIBERATE: the waker is the ONE component that talks to the Kubernetes
+      # API, so it is the ONE place the service-account token is mounted. Every
+      # other wamn service sets this false.
+      automountServiceAccountToken: true
+      initContainers:
+        - name: wait-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            # NATS is the waker's only input; wait for it (bounded — async-nats
+            # reconnects, so a slow broker is not a permanent wedge).
+            - >-
+              i=0; until nc -z nats 4222 || [ $i -ge 30 ]; do i=$((i+1)); echo waiting for nats; sleep 1; done
+      volumes:
+        # The operator NATS uses mTLS (verify_and_map). Reuse the runtime cert the
+        # host groups connect with so the doorbell subject is permitted — the
+        # dispatcher pattern. Same residual credential-scope note as the
+        # dispatcher/runner (the CN maps to an allow-all-subjects user; a scoped
+        # subscribe-only identity is the long-term shape).
+        - name: runtime-cert
+          secret:
+            secretName: wasmcloud-runtime-tls
+            defaultMode: 420
+      containers:
+        - name: waker
+          image: wamn-waker:dev
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: runtime-cert
+              mountPath: /runtime-cert
+              readOnly: true
+          args:
+            - "--log-level"
+            - "info"
+            - "--nats-url"
+            - "nats://nats.wamn-system.svc.cluster.local:4222"
+            - "--nats-tls-ca"
+            - "/runtime-cert/ca.crt"
+            - "--nats-tls-cert"
+            - "/runtime-cert/tls.crt"
+            - "--nats-tls-key"
+            - "/runtime-cert/tls.key"
+            # <doorbell-tenant>=<Deployment>: the tenant the dispatcher publishes
+            # (wamn.doorbell.demo-tenant) mapped to the runner Deployment to wake.
+            - "--wake"
+            - "demo-tenant=runner"
+          resources:
+            # Mirror the dispatcher (a modest reactive service; no CPU limit — the
+            # S2 CFS lesson — so a wake patch is never throttled).
+            requests: { cpu: "100m", memory: "64Mi" }
+            limits: { memory: "256Mi" }

@@ -39,6 +39,7 @@ mod streambench;
 mod testhostbench;
 mod tracebench;
 mod traceproof;
+mod wakeproof;
 mod walbench;
 
 use std::str::FromStr as _;
@@ -124,6 +125,8 @@ enum Command {
     F1proof(f1proof::F1ProofArgs),
     /// Run the exec-ladder rung-1 conformance proof against the deployed runner (seed one manual run, assert it executes correctly)
     Ladderproof(ladderproof::LadderProofArgs),
+    /// Run the POC-F3 scale-to-zero wake proof (park the runner at 0; a LIVE dispatcher cron fire wakes it via the waker and it completes)
+    Wakeproof(wakeproof::WakeProofArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -176,6 +179,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::F1bench(args) => f1bench::run(args).await,
         Command::F1proof(args) => f1proof::run(args).await,
         Command::Ladderproof(args) => ladderproof::run(args).await,
+        Command::Wakeproof(args) => wakeproof::run(args).await,
     };
 
     shutdown_observability();

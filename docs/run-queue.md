@@ -561,6 +561,42 @@ cron ticks exactly once each (the then-live outbox row fired + acked too —
 that path is retired), `EXPLAIN` confirmed the anchor query uses
 `runs_cron_anchor`, and SIGTERM shutdown measured 13 ms.
 
+### Scale-to-zero wake (POC-F3, wamn-fqg.12)
+
+A runner Deployment can be **parked at 0 replicas** to save idle cost; a cron
+fire (or any enqueue) must then be able to **wake** it. The three pieces already
+in this crate's doorbell story compose into the wake path with one small new
+actuator:
+
+- **doorbell = the wake signal.** The dispatcher's cron fire enqueues the run
+  and publishes `wamn.doorbell.<tenant>` exactly as above — but a hint published
+  while the runner is at 0 replicas has no subscriber and is *lost*.
+- **dispatcher re-hint = the retry.** The wake / reconciliation scan
+  (`parked_due_sql`, lifecycle step 3) re-hints every currently-due unleased
+  queue row on **every** sweep, and duplicate hints are harmless by design — so
+  a lost first hint self-heals on the next sweep. No first-hint delivery
+  guarantee is needed.
+- **waker = the actuation.** A tiny always-on service (`wamn-waker`,
+  `deploy/platform/waker.yaml`) subscribes to the doorbell for its configured
+  tenants and, on a hint whose mapped runner Deployment sits at 0 replicas,
+  scales it `0 -> 1` via the Kubernetes `apps/v1` Deployment `scale`
+  subresource. The woken runner then subscribes to the same doorbell and drains
+  the enqueued run. The waker's decision is pure over
+  `(tenant, mapping, current_replicas)` — a no-op unless the tenant is mapped
+  AND the Deployment is at exactly 0 — and it has **no polling loop of its own**
+  (the dispatcher re-hint is its only retry). It scales **up only**: idle `-> 0`
+  scale-down automation is out of scope (a follow-up).
+
+The waker is the **one** wamn component granted a Kubernetes privilege
+(`deployments/scale` get+patch, namespace-scoped, `automountServiceAccountToken:
+true`): the dispatcher deliberately never talks to the API server
+(`deploy/platform/dispatcher.yaml`, `automountServiceAccountToken: false`), and a
+dedicated actuator keeps that boundary intact. **KEDA** (a `ScaledObject` on a
+queue-depth trigger) is the obvious off-the-shelf alternative and was **not
+taken**: it is an owner-level third-party infra install, whereas a ~200-line
+service that reuses the existing doorbell needs nothing new in the cluster.
+Proven end-to-end by the `wakeproof` gate.
+
 ## Scope (5.14) vs. siblings
 
 This issue built the D3 hybrid queue: the SKIP LOCKED queue, the write-ahead / fast

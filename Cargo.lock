@@ -4284,6 +4284,7 @@ dependencies = [
  "wamn-run-store",
  "wamn-run-worker",
  "wamn-seed",
+ "wamn-waker",
  "wash-runtime",
  "wasm-encoder 0.251.0",
  "wasmtime-wasi",
@@ -4498,6 +4499,22 @@ dependencies = [
  "wamn-catalog",
  "wamn-ddl",
  "wamn-rls",
+]
+
+[[package]]
+name = "wamn-waker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "clap",
+ "futures-util",
+ "reqwest",
+ "rustls",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

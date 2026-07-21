@@ -1,0 +1,28 @@
+[package]
+name = "wamn-waker"
+description = "wamn scale-to-zero wake actuator (wamn-fqg.12, POC-F3): a tiny always-on service that scales a parked runner Deployment 0->1 on a doorbell hint via the Kubernetes API — the ONE component granted k8s scale privilege"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time"] }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json = "1"
+futures-util = "0.3"
+# The doorbell client. Same version req as the runtime's so cargo unifies to one
+# crate instance across the workspace build (the dispatcher/run-worker pattern).
+async-nats = { version = "0.47", default-features = false }
+# init_crypto: standardize the process rustls provider on aws-lc-rs (the local
+# copy of the fork's wash_runtime::init_crypto — same feature shape as the
+# dispatcher, so the mTLS doorbell handshake has a deterministic provider).
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws-lc-rs"] }
+# The in-cluster Kubernetes scale client (GET/PATCH .../scale over HTTPS, trusting
+# only the service-account CA). reqwest 0.13 is ALREADY in the workspace lock
+# (oci-client via wash-runtime) built on the rustls stack, so a direct dep with
+# the `rustls` feature (aws-lc-rs provider) adds no new lock entries. Shared
+# with the wakeproof gate.
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }

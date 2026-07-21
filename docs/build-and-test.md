@@ -1447,6 +1447,58 @@ kubectl -n wamn-system wait --for=condition=complete job/ladderproof --timeout=1
 kubectl -n wamn-system logs job/ladderproof   # -> overall PASS: true
 ```
 
+### [POC-F3] scale-to-zero / parked-project wake (wamn-fqg.12)
+
+Docs: docs/run-queue.md (Scale-to-zero wake) · Actuator: crates/wamn-waker +
+deploy/platform/waker.yaml · Manifest: deploy/gates/wakeproof-job.yaml
+
+`wakeproof` parks the runner Deployment at 0 replicas, seeds an every-second
+cron flow into the schema the LIVE dispatcher sweeps (wamn_runner_demo/
+demo-tenant), and proves — purely from DB state + the k8s scale API — that the
+LIVE dispatcher fires a cron run, the `wamn-waker` scales the runner `0 -> 1` on
+the doorbell hint, and the woken runner drives a run to `completed`; then it
+deletes the flow and restores the runner scale. The gate NEVER enqueues or
+doorbells — the LIVE dispatcher's cron fire must (the acceptance criterion). A
+distinct `dispatcher-fires` phase separates a projects-Secret wiring gap from a
+wake failure.
+
+```bash
+cargo test -p wamn-waker -p wamn-gates   # decision units (parse/decide/scale-parse) + cron-flow drift guard
+cargo clippy -p wamn-waker -p wamn-gates --all-targets
+# Mutation (decision is a load-bearing assert): flip `current_replicas == 0` in
+# crates/wamn-waker/src/lib.rs decide() -> `!= 0`; then
+#   cargo test -p wamn-waker decide_skips_an_already_awake_deployment   # MUST fail
+# restore the file and re-run (green). sha256 the file before/after to confirm.
+# In-cluster gate of record (NEW image: wamn-waker; gates rebuilt for the subcommand):
+docker build --target waker -t wamn-waker:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-waker:dev --name wamn
+kind load docker-image wamn-gates:dev --name wamn
+# PRECONDITION 1 — the actuator:
+kubectl -n wamn-system apply -f deploy/platform/waker.yaml
+kubectl -n wamn-system rollout status deploy/waker --timeout=120s
+# PRECONDITION 2 — the dispatcher MUST sweep the runner's project. The
+# wamn-dispatch-projects Secret is per-environment (NOT manifest-managed), so add
+# a runner-demo entry ALONGSIDE any existing entries, then restart the dispatcher.
+# (Merge with the live value; do not drop other projects — e.g. f1.)
+kubectl -n wamn-system create secret generic wamn-dispatch-projects \
+  --from-literal=projects.json='{
+    "f1": {"url":"postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn","tenant":"f1-tenant","schema":"poc_f1"},
+    "runner-demo": {"url":"postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn","tenant":"demo-tenant","schema":"wamn_runner_demo"}
+  }' --dry-run=client -o yaml | kubectl -n wamn-system apply -f -
+kubectl -n wamn-system rollout restart deploy/dispatcher
+kubectl -n wamn-system rollout status deploy/dispatcher --timeout=120s
+# The runner + its wamn_runner_demo schema (run-state + run-queue + flows) must be
+# live (the fqg.8 / EXEC-LADDER bring-up above provisions them). Then run the gate
+# (Jobs are immutable — delete before re-apply):
+kubectl -n wamn-system delete job wakeproof --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/wakeproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/wakeproof --timeout=300s
+kubectl -n wamn-system logs job/wakeproof   # -> overall PASS: true
+# Post-run: wakeproof restores the runner scale itself (teardown floors at 1).
+# Confirm no residue + the runner is back up:
+kubectl -n wamn-system get deploy/runner   # READY should return to its pre-gate replicas
+```
+
 ### [5.14] shared trigger dispatcher
 
 Docs: docs/run-queue.md

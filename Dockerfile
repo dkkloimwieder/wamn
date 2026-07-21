@@ -4,6 +4,7 @@
 #   docker build --target dispatcher -t wamn-dispatcher:dev .  # trigger dispatcher
 #   docker build --target run-worker -t wamn-run-worker:dev .  # flow runner (+flowrunner.wasm)
 #   docker build --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
+#   docker build --target waker      -t wamn-waker:dev      .  # scale-to-zero wake actuator
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
 # Later invocations are fully layer-cached off the one builder stage. The
 # washlet artifact ships no provisioning / replication-credential / gate code
@@ -24,7 +25,7 @@ COPY deploy ./deploy
 # (docs/wash-runtime-fork.md); cargo fetches it during the build.
 # rust-toolchain.toml would force a rustup download inside the container;
 # the base image already ships the right version.
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-gates
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-waker -p wamn-gates
 
 # ---- washlet image: the host binary only ------------------------------------
 FROM debian:trixie-slim AS host
@@ -66,6 +67,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=builder /build/target/release/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-cdc-reader"]
+
+# ---- waker image: the scale-to-zero wake actuator (fqg.12, POC-F3) ----------
+# Watches the doorbell and scales a parked runner Deployment 0->1 via the k8s
+# API. The ONE component granted k8s scale privilege (deploy/platform/waker.yaml).
+FROM debian:trixie-slim AS waker
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /build/target/release/wamn-waker /usr/local/bin/wamn-waker
+ENV HOME=/tmp
+ENTRYPOINT ["/usr/local/bin/wamn-waker"]
 
 # ---- gates image: the host stage + the gate suite + wasm fixtures -----------
 FROM host AS gates

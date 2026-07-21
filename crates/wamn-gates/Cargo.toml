@@ -14,6 +14,9 @@ wamn-ctl = { path = "../wamn-ctl" }
 # SR9: the per-service crates whose engines the bench gates drive directly.
 wamn-dispatcher = { path = "../wamn-dispatcher" }
 wamn-run-worker = { path = "../wamn-run-worker" }
+# wakeproof (fqg.12) drives the deployed waker's k8s scale client to park +
+# restore the runner Deployment around the scale-to-zero wake proof.
+wamn-waker = { path = "../wamn-waker" }
 wamn-gate-harness = { path = "../wamn-gate-harness" }
 wash-runtime = { workspace = true }
 # Bench harnesses instantiate command components directly (CommandPre) and
