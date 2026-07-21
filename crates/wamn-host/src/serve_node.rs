@@ -285,6 +285,44 @@ pub struct ServeNodeAuthn {
     pub max_signature_age_secs: Option<u64>,
 }
 
+/// Revokes the per-invocation credential grant when the invocation returns
+/// (cjv.3 / R31). The grant is installed before dispatch; without this it would
+/// OUTLIVE the invocation, so the NEXT invocation — or a rebound node id —
+/// inherits it. This is why the fqg.22 per-invocation grant path needs a revoke:
+/// the vault entry is per node id, reused across invocations. Drops on EVERY
+/// exit path (success, node error, trap, and the early invalid-config return) —
+/// the flowrunner causation-context Drop-guard precedent. The host-owned PROJECT
+/// claim (set once in `new`) is deliberately left intact; only the grant clears.
+struct GrantGuard<'a> {
+    vault: &'a WamnCredentials,
+    node_id: &'a str,
+}
+
+impl Drop for GrantGuard<'_> {
+    fn drop(&mut self) {
+        self.vault.clear_granted_credentials(self.node_id);
+    }
+}
+
+/// Install EXACTLY this invocation's declared grant on the vault (cjv.3) and hand
+/// back the [`GrantGuard`] that revokes it when the invocation returns (R31).
+/// BOTH reserved signing-key names are stripped — they are RUNNER secrets, never
+/// a node grant (a well-behaved runner never sends them; this closes the
+/// flow-authoring footgun where a `node.credential` collides with a reserved
+/// name). Kept a free fn over `&WamnCredentials` so the install+revoke lifecycle
+/// is unit-testable without a warm wasm instance.
+fn install_invocation_grant<'a>(
+    vault: &'a WamnCredentials,
+    node_id: &'a str,
+    requested: &[String],
+) -> GrantGuard<'a> {
+    let grant = requested.iter().filter(|n| {
+        n.as_str() != SIGNING_KEY_CREDENTIAL && n.as_str() != SIGNING_KEY_CREDENTIAL_PREVIOUS
+    });
+    vault.set_granted_credentials(node_id, grant.cloned());
+    GrantGuard { vault, node_id }
+}
+
 impl ServeNode {
     /// Compile, screen (E17 tenant profile), link the real `wamn:node` world,
     /// register the host-owned project, and warm-instantiate the node.
@@ -489,25 +527,15 @@ impl ServeNode {
     /// validate + memoize the config (9b), then call the node's handler over the
     /// real `wamn:node` world and shape the reply.
     pub async fn invoke(&self, req: NodeInvokeRequest) -> NodeInvokeResponse {
-        // Install EXACTLY this invocation's declared grant BEFORE dispatch. The
-        // project stays the host's own (set once in `new`); a `get` for anything
-        // outside `req.grant` is `not-granted` host-side. The per-project-env
-        // signing key is a RUNNER secret, never a node grant — strip it
-        // defensively (a well-behaved runner never sends it; this closes a
-        // flow-authoring footgun where a node.credential collides with the
-        // reserved name). The install is COUNTED so the gate can prove a
+        // Install EXACTLY this invocation's declared grant BEFORE dispatch and
+        // ARM the revoke guard (R31): the grant must NOT outlive the invocation,
+        // or the next invocation / a rebound node id inherits it. `_grant` drops
+        // on every return below — the early invalid-config path, a node error, a
+        // trap, and success. The project stays the host's own (set once in
+        // `new`); a `get` for anything outside `req.grant` is `not-granted`
+        // host-side. The install is COUNTED so the gate can prove a
         // signature-refused request never got this far (wamn-fqg.22).
-        let grant = req
-            .grant
-            .iter()
-            .filter(|n| {
-                // wamn-fqg.30: BOTH reserved signing-key names are runner secrets,
-                // never node grants.
-                n.as_str() != SIGNING_KEY_CREDENTIAL
-                    && n.as_str() != SIGNING_KEY_CREDENTIAL_PREVIOUS
-            })
-            .cloned();
-        self.vault.set_granted_credentials(&self.node_id, grant);
+        let _grant = install_invocation_grant(self.vault.as_ref(), &self.node_id, &req.grant);
         self.grant_installs.fetch_add(1, Ordering::Relaxed);
 
         let mut inst = self.instance.lock().await;
@@ -851,4 +879,58 @@ pub async fn run(args: ServeNodeArgs) -> anyhow::Result<()> {
     let result = serve(node, args.port).await;
     ticker.abort();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn probe_vault() -> WamnCredentials {
+        WamnCredentials::from_projects(HashMap::from([(
+            "default".to_string(),
+            HashMap::from([
+                ("granted".to_string(), "s3cr3t".to_string()),
+                ("sibling".to_string(), "x".to_string()),
+            ]),
+        )]))
+    }
+
+    /// R31 — the per-invocation grant is installed for the served node id, then
+    /// REVOKED when the guard drops (i.e. when the invocation returns). This is
+    /// the mutant-(b) witness: a no-op `GrantGuard::drop` leaves the grant
+    /// installed and fails the post-drop assertion. The grant is scoped to the
+    /// exact node id so a REBOUND / next invocation starts clean.
+    #[test]
+    fn install_invocation_grant_grants_then_revokes_on_drop() {
+        let vault = probe_vault();
+        vault.set_project(DEFAULT_NODE_ID, "default").unwrap();
+
+        {
+            let _guard =
+                install_invocation_grant(&vault, DEFAULT_NODE_ID, &["granted".to_string()]);
+            // Installed for the duration of the invocation.
+            assert!(vault.is_granted(DEFAULT_NODE_ID, "granted"));
+        }
+        // Guard dropped == invocation returned: the grant is gone (no inheritance
+        // by the next invocation).
+        assert!(!vault.is_granted(DEFAULT_NODE_ID, "granted"));
+    }
+
+    /// R31 / fqg.22+fqg.30 — the grant-strip logic is unaffected by the revoke:
+    /// the declared credential is granted, but BOTH reserved signing-key names
+    /// (runner secrets) are stripped and never become a node grant.
+    #[test]
+    fn install_invocation_grant_strips_reserved_signing_key_names() {
+        let vault = probe_vault();
+        let requested = vec![
+            "granted".to_string(),
+            SIGNING_KEY_CREDENTIAL.to_string(),
+            SIGNING_KEY_CREDENTIAL_PREVIOUS.to_string(),
+        ];
+        let _guard = install_invocation_grant(&vault, DEFAULT_NODE_ID, &requested);
+        assert!(vault.is_granted(DEFAULT_NODE_ID, "granted"));
+        assert!(!vault.is_granted(DEFAULT_NODE_ID, SIGNING_KEY_CREDENTIAL));
+        assert!(!vault.is_granted(DEFAULT_NODE_ID, SIGNING_KEY_CREDENTIAL_PREVIOUS));
+    }
 }

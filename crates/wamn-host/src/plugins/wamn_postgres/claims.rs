@@ -481,6 +481,40 @@ impl WamnPostgres {
             .cloned()
     }
 
+    /// Reap EVERY per-component-id claim registry this plugin keeps for a workload
+    /// on teardown (R31): tenant, project, search_path schema, runner lease-owner,
+    /// and the causation run context — all set at workload bind (or via the
+    /// runner channel) and keyed by component id. Without this a stale claim
+    /// survives unbind, the maps grow across workload churn, and a rebound
+    /// component id inherits the prior claim. The `pools` map is deliberately NOT
+    /// touched: it is keyed by PROJECT (shared, memoized for the plugin's
+    /// lifetime), not by component id. Keyed like the fork's builtin postgres
+    /// plugin — a workload's component ids are prefixed by the workload id — so
+    /// everything NOT under it is retained; an unknown workload id is a no-op.
+    pub(super) fn clear_component_claims(&self, workload_id: &str) {
+        let retain = |c: &String| !c.starts_with(workload_id);
+        self.tenants
+            .write()
+            .expect("tenants lock poisoned")
+            .retain(|c, _| retain(c));
+        self.projects
+            .write()
+            .expect("projects lock poisoned")
+            .retain(|c, _| retain(c));
+        self.schemas
+            .write()
+            .expect("schemas lock poisoned")
+            .retain(|c, _| retain(c));
+        self.runners
+            .write()
+            .expect("runners lock poisoned")
+            .retain(|c, _| retain(c));
+        self.current_run
+            .write()
+            .expect("current_run lock poisoned")
+            .retain(|c, _| retain(c));
+    }
+
     /// Connections destroyed instead of repooled since startup.
     pub fn destroyed_connections(&self) -> u64 {
         self.destroyed.load(Ordering::Relaxed)
@@ -845,6 +879,56 @@ mod tests {
         // None clears it.
         pg.set_current_run("c1", None);
         assert!(pg.current_run_for("c1").is_none());
+    }
+
+    // R31 — unbind reaps ALL FIVE per-component claim registries for a workload
+    // (tenant/project/schema/runner/causation) while leaving another workload's
+    // component untouched; the project-keyed `pools` map is never touched here.
+    // Keyed by the workload-id prefix (the fork's builtin convention). An unknown
+    // workload id is a no-op.
+    #[test]
+    fn clear_component_claims_reaps_all_registries_for_the_workload() {
+        let pg =
+            WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
+        // Two components under workload "wl-a", one under "wl-b".
+        for c in ["wl-a-component-0", "wl-b-component-0"] {
+            pg.set_tenant(c, "acme").unwrap();
+            pg.set_project(c, "proj").unwrap();
+            pg.set_schema(c, "s_run").unwrap();
+            pg.set_runner(c, "owner-1").unwrap();
+            pg.set_current_run(
+                c,
+                Some(Causation {
+                    run: "r1".into(),
+                    root: "r1".into(),
+                    depth: 0,
+                }),
+            );
+        }
+
+        // Unbinding an UNKNOWN workload clears nothing.
+        pg.clear_component_claims("wl-unknown");
+        assert_eq!(pg.tenant_for("wl-a-component-0").as_deref(), Some("acme"));
+
+        pg.clear_component_claims("wl-a");
+
+        // Every registry emptied for the unbound workload's component.
+        assert_eq!(pg.tenant_for("wl-a-component-0"), None);
+        // project_for falls back to DEFAULT_PROJECT once the claim is gone.
+        assert_eq!(pg.project_for("wl-a-component-0"), DEFAULT_PROJECT);
+        assert_eq!(pg.schema_for("wl-a-component-0"), None);
+        assert_eq!(pg.runner_for("wl-a-component-0"), None);
+        assert!(pg.current_run_for("wl-a-component-0").is_none());
+
+        // The other workload's component is untouched across the board.
+        assert_eq!(pg.tenant_for("wl-b-component-0").as_deref(), Some("acme"));
+        assert_eq!(pg.project_for("wl-b-component-0"), "proj");
+        assert_eq!(pg.schema_for("wl-b-component-0").as_deref(), Some("s_run"));
+        assert_eq!(
+            pg.runner_for("wl-b-component-0").as_deref(),
+            Some("owner-1")
+        );
+        assert_eq!(pg.current_run_for("wl-b-component-0").unwrap().run, "r1");
     }
 
     // ------------------------------------------------------------------

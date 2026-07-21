@@ -195,6 +195,18 @@ impl WamnCredentials {
             .insert(component_id.to_string(), names.into_iter().collect());
     }
 
+    /// Revoke a component's granted-credentials entry (cjv.3 / R31): the inverse
+    /// of [`set_granted_credentials`]. The serve-node calls this after each
+    /// invocation so a per-invocation grant never outlives its invocation (a
+    /// later `get` — or a rebound node id — is `not-granted` again). Removing an
+    /// absent entry is a no-op.
+    pub fn clear_granted_credentials(&self, component_id: &str) {
+        self.grants
+            .write()
+            .expect("grants lock poisoned")
+            .remove(component_id);
+    }
+
     /// The component's registered project, or `None` if unregistered (which
     /// `authorize` treats as fail-closed — cjv.3, no fail-open default).
     fn project_for(&self, component_id: &str) -> Option<String> {
@@ -206,8 +218,9 @@ impl WamnCredentials {
     }
 
     /// Whether `component_id` was granted `name` (cjv.3). Fail-closed: an
-    /// unregistered component grants nothing.
-    fn is_granted(&self, component_id: &str, name: &str) -> bool {
+    /// unregistered component grants nothing. `pub(crate)` so the serve-node's
+    /// per-invocation grant/revoke tests can probe the vault directly (R31).
+    pub(crate) fn is_granted(&self, component_id: &str, name: &str) -> bool {
         self.grants
             .read()
             .expect("grants lock poisoned")
@@ -288,6 +301,29 @@ impl HostPlugin for WamnCredentials {
             );
         }
         credentials::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
+        Ok(())
+    }
+
+    /// Reap a workload's per-component registrations on teardown (R31): its
+    /// project claim AND its granted-credentials entry. Without this a stale
+    /// project claim + grant survive unbind, the maps grow across workload churn,
+    /// and a REBOUND component id inherits the prior grant. Keyed like the fork's
+    /// builtin postgres plugin — a workload's component ids are prefixed by the
+    /// workload id — so everything NOT under it is retained. An unknown workload
+    /// id clears nothing (no-op).
+    async fn on_workload_unbind(
+        &self,
+        workload_id: &str,
+        _interfaces: WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        self.components
+            .write()
+            .expect("components lock poisoned")
+            .retain(|component_id, _| !component_id.starts_with(workload_id));
+        self.grants
+            .write()
+            .expect("grants lock poisoned")
+            .retain(|component_id, _| !component_id.starts_with(workload_id));
         Ok(())
     }
 }
@@ -469,6 +505,89 @@ mod tests {
             empty.authorize("node", "missing"),
             Err(CredentialError::Unavailable)
         ));
+    }
+
+    /// R31 — unbind reaps a component's BOTH registries (project claim + grant)
+    /// so nothing survives teardown and a rebound id starts clean. `on_workload_
+    /// unbind` receives the WORKLOAD id; a component id is prefixed by it (the
+    /// fork's builtin-plugin convention), so a bare-id single-component workload
+    /// and a `<workload>-component-n` id both reap. This is the mutant-(a) witness:
+    /// a no-op unbind leaves the maps populated and fails here.
+    #[tokio::test]
+    async fn unbind_reaps_project_and_grant_and_leaves_others() {
+        let vault = one_project_vault();
+        vault.set_project("proj-a-node", "proj-a").unwrap();
+        vault.set_granted_credentials("proj-a-node", ["notify-token".to_string()]);
+        // A second workload's component must survive the first's unbind.
+        vault.set_project("other-node", "proj-a").unwrap();
+        vault.set_granted_credentials("other-node", ["notify-token".to_string()]);
+
+        assert_eq!(vault.project_for("proj-a-node").as_deref(), Some("proj-a"));
+        assert!(vault.is_granted("proj-a-node", "notify-token"));
+
+        let empty = HashSet::new();
+        vault
+            .on_workload_unbind("proj-a-node", WitInterfaces::new(&empty))
+            .await
+            .unwrap();
+
+        // Both registries emptied for the unbound component.
+        assert_eq!(vault.project_for("proj-a-node"), None);
+        assert!(!vault.is_granted("proj-a-node", "notify-token"));
+        // The other workload's registrations are untouched.
+        assert_eq!(vault.project_for("other-node").as_deref(), Some("proj-a"));
+        assert!(vault.is_granted("other-node", "notify-token"));
+    }
+
+    /// R31 — a REBOUND component id starts clean: after unbind, re-registering the
+    /// same id with NO grant yields not-granted (it never inherits the prior
+    /// grant). Unbinding an unknown id is a harmless no-op.
+    #[tokio::test]
+    async fn rebound_component_id_does_not_inherit_grant() {
+        let vault = one_project_vault();
+        vault.set_project("node", "proj-a").unwrap();
+        vault.set_granted_credentials("node", ["notify-token".to_string()]);
+        assert_eq!(vault.authorize("node", "notify-token").unwrap(), "s3cr3t");
+
+        let empty = HashSet::new();
+        // Unbind of an UNKNOWN id changes nothing (the grant still resolves).
+        vault
+            .on_workload_unbind("stranger", WitInterfaces::new(&empty))
+            .await
+            .unwrap();
+        assert_eq!(vault.authorize("node", "notify-token").unwrap(), "s3cr3t");
+
+        // Unbind the real id, then rebind ONLY the project (no grant) — the
+        // rebound id is fail-closed, not carrying the prior grant.
+        vault
+            .on_workload_unbind("node", WitInterfaces::new(&empty))
+            .await
+            .unwrap();
+        vault.set_project("node", "proj-a").unwrap();
+        assert!(matches!(
+            vault.authorize("node", "notify-token"),
+            Err(CredentialError::NotGranted)
+        ));
+    }
+
+    /// R31 — the explicit per-invocation revoke ([`clear_granted_credentials`])
+    /// drops the grant while leaving the project claim intact (the serve-node
+    /// keeps its host-owned project, set once, across invocations). Clearing an
+    /// absent grant is a no-op.
+    #[test]
+    fn clear_granted_credentials_drops_grant_keeps_project() {
+        let vault = one_project_vault();
+        vault.set_project("node", "proj-a").unwrap();
+        vault.set_granted_credentials("node", ["notify-token".to_string()]);
+        assert!(vault.is_granted("node", "notify-token"));
+
+        vault.clear_granted_credentials("node");
+        assert!(!vault.is_granted("node", "notify-token"));
+        // The project claim survives the grant revoke.
+        assert_eq!(vault.project_for("node").as_deref(), Some("proj-a"));
+        // Clearing an already-absent grant is a no-op.
+        vault.clear_granted_credentials("node");
+        assert!(!vault.is_granted("node", "notify-token"));
     }
 
     /// The mounted-file shape is the WAMN_PG_PROJECTS_FILE pattern:

@@ -203,6 +203,20 @@ impl HostPlugin for WamnPostgres {
         client::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
         Ok(())
     }
+
+    /// R31: on workload teardown, reap the per-component claim registries
+    /// ([`WamnPostgres::clear_component_claims`]) so a stale tenant / project /
+    /// schema / runner / causation claim cannot survive unbind or be inherited by
+    /// a rebound component id. The project pools stay — they are project-keyed
+    /// (shared, memoized), not per component.
+    async fn on_workload_unbind(
+        &self,
+        workload_id: &str,
+        _interfaces: WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        self.clear_component_claims(workload_id);
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
