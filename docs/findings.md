@@ -72,9 +72,9 @@ prerequisite that makes everything else findable.
 | R21 | `classify` matches `Display` text; PG17+ floor unstated | Low | open | with reader work |
 | R22 | `subject_token` collisions (`a.b` ≡ `a_b`) | Low | **closed** | `fa79b79` (wamn-2jkm.38) — stable FNV-1a hash-suffix when sanitization changed the string; clean tokens byte-identical (freeze held); E3 (cross-schema) stays open, decoupled — post-freeze it is a 0.2 wire change; residual: wamn-iaq9 |
 | R23 | Unbounded `OFFSET` in the API gateway | Low | open | with keyset pagination |
-| R24 | Merge/loop flows unresumable (occurrence collapse) | Med | open | wamn-2jkm.42 — before a multi-visit flow needs resume |
-| R25 | `idempotency_key` collides across visits | Low | open | wamn-2jkm.43, with R24 |
-| R26 | `resume` folds error-routes as Success (`step_seq`/`result` drift) | Low | open | wamn-2jkm.44 |
+| R24 | Merge/loop flows unresumable (occurrence collapse) | Med | **closed** | `6edd545` (wamn-03m+cjv.10+2jkm.42) — engine-computed per-visit occurrence end-to-end (builders bind `$3`, never literal 0); visit-by-visit replay; legacy collapsed history fails LOUD (Mismatch); standing guard = runnerbench merge-resume phase (park-mid-merge reconstruction, 7 per-visit rows); in-cluster failoverbench/ladderproof re-run PASS on the rolled runner |
+| R25 | `idempotency_key` collides across visits | Low | **closed** | `6b525e7` (wamn-2jkm.43) — `run:node:occurrence`; retries keep their key, distinct visits differ, resumed visits reconstruct the same key |
+| R26 | `resume` folds error-routes as Success (`step_seq`/`result` drift) | Low | **closed** | `4918df7` (wamn-2jkm.44) — replay routes ERROR_PORT records via the helper shared with live `error_or_fail`: step_seq/result untouched, occurrence still advances |
 | R27 | Slug `--` separator not injective — cross-tenant name collision on the shared pool | High | **closed** | `0d560b6` (wamn-2jkm.45) — both validators + SQL CHECK reject `--` runs; injectivity test; live PG gate |
 | R28 | CDC replication credential blast radius is cluster-wide, not "one registration" | Med | open | wamn-2jkm.46, with the l5i9.32 knobs |
 | R29 | Replication-slot shape never reconciled (R12 class) | Low | open | wamn-2jkm.47 |
@@ -447,13 +447,24 @@ PK that collapses repeats, while `Plan::resume` (`engine.rs:529–557`) demands
 one record per dispatch — a resumed merge/loop run dies with a spurious
 `Mismatch`/`Overrun`. Latent (shipped fixtures acyclic); escalates to High when
 a multi-visit flow needs resume. Occurrence end-to-end + visit-aware match
-(wamn-2jkm.42). ·
+(wamn-2jkm.42). **Shipped `6edd545`** (with wamn-03m + wamn-cjv.10, one fix):
+the engine computes `Dispatch::occurrence` from completed visits, both guests
+bind it (the store builders take it as `$3` — never a literal 0 again), replay
+walks the history visit-by-visit, and a legacy collapsed history now fails a
+LOUD `Mismatch` instead of silently re-running recorded effects. Standing
+guard: the runnerbench merge-resume phase (a delay-merge diamond parks between
+merge visits; the production claim path reconstructs a partially-recorded
+merge — 7 per-visit rows or the gate fails). ·
 **R25 (Low)** `idempotency_key = run_id:node` is identical across visits — an
 external dedupe drops a legitimate second merge arrival re-dispatched on
-resume; include the occurrence (wamn-2jkm.43, with R24). ·
+resume; include the occurrence (wamn-2jkm.43, with R24). **Shipped `6b525e7`**:
+`run:node:occurrence` — retries keep their key, visits differ, a resumed visit
+reconstructs the key it would have carried live. ·
 **R26 (Low)** `resume` folds error-routed records through the Success arm
 (`engine.rs:541–549`), bumping `step_seq` and `result` where live routing
-touches neither (wamn-2jkm.44). ·
+touches neither (wamn-2jkm.44). **Shipped `4918df7`**: replay routes an
+ERROR_PORT record through the same helper live `error_or_fail` uses —
+`step_seq`/`result` untouched, occurrence still advances. ·
 **R27 (High, isolation)** The slug validators permit interior `--`
 (`name.rs:86–88` — test `:235` asserts `a--b` valid; registry
 `validate.rs:76–82`; the DB CHECK) while `--`/`__` are the derived-name
