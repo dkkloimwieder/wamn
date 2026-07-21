@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
-use wamn_catalog::{Catalog, Constraint, Entity, FieldType, Index};
+use wamn_catalog::{Catalog, Constraint, Entity, FieldType, Index, MAX_IDENTIFIER_BYTES};
 
 use crate::CompileError;
 use crate::plan::{MigrationPlan, Operation, Safety};
@@ -21,6 +21,67 @@ pub(crate) const RESERVED_COLUMNS: &[&str] = &["id", "tenant_id"];
 /// Transient-name prefix for a dropped table (and its indexes) renamed aside
 /// because the name is reclaimed in the same migration (see [`migrate_plan`]).
 pub(crate) const TEMP_DROP_PREFIX: &str = "wamn_mig_drop_";
+
+/// The migration-aside name for a relation renamed out of the way so its own name
+/// can be reclaimed in the same plan (see [`migrate_plan`]).
+///
+/// Byte-stable when `wamn_mig_drop_<src>` fits Postgres's 63-byte identifier
+/// limit — the R22 house convention: hash-suffix ONLY when the derivation had to
+/// alter the name, so unchanged names keep their exact readable form. When the
+/// naive prefix+name would overflow 63 bytes (a ~50-char name plus the 14-byte
+/// prefix), the base is truncated at a UTF-8 char boundary and a short stable
+/// hash of the FULL source is appended: the result is `<= 63` bytes AND unique
+/// per distinct `src` (two long names sharing a truncated prefix get DIFFERENT
+/// hashes), and [`migrate_plan`] then compares the name Postgres actually sees —
+/// closing the R17 gap where the untruncated `TempNameCollision` check could not
+/// see the very collision it exists for.
+///
+/// `wamn-cjv.9`'s catalog-side length budget keeps *new* catalogs from reaching
+/// the overflow branch, but `migrate_plan` is the internal, unvalidated entry
+/// (defense-in-depth), and pre-budget catalogs exist — so this stays as the
+/// compile-time guard.
+fn aside_name(src: &str) -> String {
+    let full = format!("{TEMP_DROP_PREFIX}{src}");
+    if full.len() <= MAX_IDENTIFIER_BYTES {
+        return full;
+    }
+    let suffix = format!("_{}", fnv1a_hex(src)); // "_" + 16 hex = 17 bytes
+    let base_budget = MAX_IDENTIFIER_BYTES - TEMP_DROP_PREFIX.len() - suffix.len();
+    let base = truncate_on_boundary(src, base_budget);
+    format!("{TEMP_DROP_PREFIX}{base}{suffix}")
+}
+
+/// A stable 64-bit FNV-1a hash as lowercase hex — deterministic across platforms
+/// and toolchain versions (unlike `std::hash::DefaultHasher`), so a derived aside
+/// name is reproducible for the [`CompileError::TempNameCollision`] comparison.
+fn fnv1a_hex(s: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// Truncate `s` to at most `max_bytes`, never splitting a UTF-8 code point
+/// (matching how Postgres's `pg_mbcliplen` clips an over-long identifier).
+fn truncate_on_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// A relation name as Postgres stores it — clipped to 63 bytes. The aside
+/// collision scan compares against these, not the untruncated catalog names, so
+/// it sees the collision PG would hit even for a pre-budget over-long name.
+fn pg_visible(name: &str) -> &str {
+    truncate_on_boundary(name, MAX_IDENTIFIER_BYTES)
+}
 
 /// Quote a SQL identifier. Delegates to the shared [`crate::sql`] helpers so DDL
 /// and RLS-policy emission (3.5) quote identically.
@@ -461,6 +522,10 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan
                         .map(str::to_string),
                 )
         })
+        // Compare against the names Postgres actually stores: an over-long
+        // pre-budget name is clipped to 63 bytes, and the fitting aside must be
+        // checked against that clipped form (R17).
+        .map(|n| pg_visible(&n).to_string())
         .collect();
     let mut temp_named: HashMap<&str, String> = HashMap::new();
     for id in &d.entities_removed {
@@ -496,13 +561,13 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan
         }
         aside_sources.extend(index_asides.iter().map(String::as_str));
         for src in &aside_sources {
-            let tmp = format!("{TEMP_DROP_PREFIX}{src}");
+            let tmp = aside_name(src);
             if all_relnames.contains(&tmp) {
                 return Err(CompileError::TempNameCollision { name: tmp });
             }
         }
         if table_reclaimed {
-            let tmp = format!("{TEMP_DROP_PREFIX}{}", e.name);
+            let tmp = aside_name(&e.name);
             plan.push(temp_rename_table_op(e, &tmp));
             temp_named.insert(e.id.as_str(), tmp);
         }
@@ -868,7 +933,7 @@ fn temp_rename_index_op(e: &Entity, name: &str) -> Operation {
         sql: format!(
             "ALTER INDEX IF EXISTS {} RENAME TO {}",
             q(name),
-            q(&format!("{TEMP_DROP_PREFIX}{name}"))
+            q(&aside_name(name))
         ),
         safety: Safety::Destructive,
         entity: e.id.to_string(),
@@ -1228,5 +1293,84 @@ mod tests {
             }
             other => panic!("expected TempNameCollision for the index aside, got {other:?}"),
         }
+    }
+
+    // --- NAMEDATALEN aside-name derivation (wamn-2jkm.30 / review R17) --------
+
+    #[test]
+    fn aside_name_is_byte_stable_for_short_names() {
+        // R22: a name that already fits keeps its exact `wamn_mig_drop_<name>`
+        // form — no hash suffix on an unaltered derivation.
+        assert_eq!(super::aside_name("audit"), "wamn_mig_drop_audit");
+        assert_eq!(
+            super::aside_name("quality_holds_site_idx"),
+            "wamn_mig_drop_quality_holds_site_idx"
+        );
+    }
+
+    #[test]
+    fn aside_name_fits_63_bytes_and_is_unique_for_long_names() {
+        // R17: a 61-char source overflows `wamn_mig_drop_<name>` (75 bytes) AND
+        // its naive aside truncates to the SAME 63 bytes as its sibling — so
+        // Postgres would see a collision. The derived aside must (a) fit 63 bytes
+        // and (b) stay distinct as PG sees it. Removing the length/hash handling
+        // makes (a) fail.
+        let a = format!("{}X", "a".repeat(60)); // 61 bytes, identical first 60
+        let b = format!("{}Y", "a".repeat(60));
+        let na = super::aside_name(&a);
+        let nb = super::aside_name(&b);
+        assert!(na.len() <= 63, "aside {na:?} is {} bytes", na.len());
+        assert!(nb.len() <= 63, "aside {nb:?} is {} bytes", nb.len());
+        assert_ne!(na, nb, "distinct sources must get distinct asides");
+        assert!(na.starts_with("wamn_mig_drop_"));
+    }
+
+    #[test]
+    fn migrate_plan_avoids_a_truncated_aside_collision() {
+        // R17 end-to-end on the internal (unvalidated) entry: a dropped-and-
+        // reclaimed table with a 55-char name. Under the old untruncated
+        // derivation `wamn_mig_drop_<name>` was 69 bytes — Postgres would clip it
+        // to 63 and could land on a live relation the collision check (comparing
+        // untruncated names) never saw. The hashed aside now fits 63 bytes and is
+        // unique, so the plan compiles instead of failing 42P07 mid-migration.
+        let long = "t".repeat(55);
+        let v1 = mini(
+            1,
+            vec![
+                entity("x", &long, vec![text_field("v")]),
+                entity("t", "keeper", vec![text_field("v")]),
+            ],
+        );
+        let v2 = mini(
+            2,
+            vec![
+                entity("e", &long, vec![text_field("v")]), // reclaims `long`
+                entity("t", "keeper", vec![text_field("v")]),
+            ],
+        );
+        let plan = migrate_plan(&v1, &v2).expect("compiles with a fitting hashed aside");
+        let aside = plan
+            .operations
+            .iter()
+            .find(|o| o.sql.contains("RENAME TO") && o.sql.contains("wamn_mig_drop_"))
+            .expect("an aside rename op");
+        let target = aside
+            .sql
+            .rsplit("RENAME TO ")
+            .next()
+            .unwrap()
+            .trim()
+            .trim_matches('"');
+        assert!(
+            target.len() <= 63,
+            "aside target {target:?} is {} bytes",
+            target.len()
+        );
+        assert!(target.starts_with("wamn_mig_drop_"));
+        assert_ne!(
+            target,
+            format!("wamn_mig_drop_{long}"),
+            "must not be the naive overflowing name"
+        );
     }
 }
