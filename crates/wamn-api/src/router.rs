@@ -780,11 +780,15 @@ fn split_op(v: &str) -> (&str, &str) {
     ("eq", v)
 }
 
-/// Push comma-separated names from a query value onto `out`.
+/// Push comma-separated names from a query value onto `out`, de-duplicating
+/// against what is already there so a repeated name — within this value or
+/// across an earlier `expand=` param — yields a single entry, first-occurrence
+/// order preserved. Without this, `?expand=x,x,…` compiles to one [`Expand`] per
+/// token, i.e. one redundant DB round-trip each (cjv.13).
 fn collect_names(raw: &str, out: &mut Vec<String>) {
     for part in raw.split(',') {
         let p = part.trim();
-        if !p.is_empty() {
+        if !p.is_empty() && !out.iter().any(|n| n == p) {
             out.push(p.to_string());
         }
     }

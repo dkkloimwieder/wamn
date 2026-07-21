@@ -538,6 +538,57 @@ fn expand_merge_embeds_records() {
     assert_eq!(line["quantity"], json!("3.000")); // exact-decimal string, not a float
 }
 
+#[test]
+fn duplicate_expand_names_are_deduped_first_occurrence_order() {
+    // A repeated relation name — within one `expand=` value or across several —
+    // must collapse to a single Expand (one DB round-trip), first-occurrence
+    // order preserved. Without the dedup, `?expand=lines,lines,…` amplifies into
+    // one identical expansion query per token (cjv.13). receipt_lines expands two
+    // distinct relations: `lines` (parent receipt) and `material`.
+    let cat = catalog();
+
+    // List path: duplicates within a single value collapse to [lines, material].
+    let plan = Router::new(&cat)
+        .compile(
+            Method::Get,
+            "/api/rest/receipt_lines",
+            &q(&[("expand", "lines,lines,material,lines")]),
+            None,
+        )
+        .unwrap();
+    let names: Vec<&str> = plan.expands().iter().map(|e| e.name()).collect();
+    assert_eq!(names, vec!["lines", "material"], "list path");
+
+    // Get path: same collapse on the single-resource route.
+    let path = format!("/api/rest/receipt_lines/{A_UUID}");
+    let plan = Router::new(&cat)
+        .compile(
+            Method::Get,
+            &path,
+            &q(&[("expand", "lines,lines,material,lines")]),
+            None,
+        )
+        .unwrap();
+    let names: Vec<&str> = plan.expands().iter().map(|e| e.name()).collect();
+    assert_eq!(names, vec!["lines", "material"], "get path");
+
+    // Repeated `expand=` params also collapse (collect_names appends across them).
+    let plan = Router::new(&cat)
+        .compile(
+            Method::Get,
+            "/api/rest/receipt_lines",
+            &q(&[
+                ("expand", "lines"),
+                ("expand", "material"),
+                ("expand", "lines"),
+            ]),
+            None,
+        )
+        .unwrap();
+    let names: Vec<&str> = plan.expands().iter().map(|e| e.name()).collect();
+    assert_eq!(names, vec!["lines", "material"], "repeated params");
+}
+
 // ---- exact-decimal round-trip (no float, end to end) ----------------------
 
 #[test]
