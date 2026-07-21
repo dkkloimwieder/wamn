@@ -139,6 +139,13 @@ impl RunState {
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
     }
+    /// The shared-throttle key the currently-active node carries, if any — the
+    /// gate a `rate-limited` retry must coordinate on before its next dispatch.
+    /// Exposed so a driver (and [`Plan::restore_retry`]'s round-trip test) can
+    /// read the key restored after a reclaim (wamn-2jkm.66).
+    pub fn current_throttle(&self) -> Option<&ThrottleKey> {
+        self.current.as_ref().and_then(|a| a.throttle.as_ref())
+    }
 }
 
 /// What the driver should do next.
@@ -614,7 +621,21 @@ impl<'f> Plan<'f> {
     /// [`next`](Self::next) would promote): returns whether it did. A stale record
     /// — the node has since completed on an earlier claim, so it is no longer the
     /// front — is a no-op, leaving the walk to promote the true front fresh.
-    pub fn restore_retry(&self, state: &mut RunState, node: &str, attempt: u32) -> bool {
+    ///
+    /// `throttle` is the shared-throttle key a `rate-limited` retry carried when it
+    /// parked (wamn-2jkm.66): the per-run backoff rides the queue park
+    /// (`available_at`), but the CROSS-run gate identity would otherwise be dropped
+    /// here (`throttle: None`), so a driver coordinating the shared gate after a
+    /// reclaim would lose the key. Persisting it alongside `(node, attempt)` in
+    /// `state_json` and restoring it onto the promoted node keeps the reclaim
+    /// faithful. Nothing consumes the key across runs yet; this is restore fidelity.
+    pub fn restore_retry(
+        &self,
+        state: &mut RunState,
+        node: &str,
+        attempt: u32,
+        throttle: Option<ThrottleKey>,
+    ) -> bool {
         if state.status.is_terminal() || state.current.is_some() || self.node(node).is_none() {
             return false;
         }
@@ -628,7 +649,7 @@ impl<'f> Plan<'f> {
                     // Due now: the queue park (available_at) served the backoff,
                     // so the engine must not re-wait on a stale monotonic deadline.
                     retry_until_ms: 0,
-                    throttle: None,
+                    throttle,
                 });
                 true
             }

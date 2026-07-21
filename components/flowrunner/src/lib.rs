@@ -68,7 +68,7 @@ use wamn_run_queue::{
 };
 use wamn_runner::{
     Dispatch, ERROR_PORT, ErrorDetail, NodeError, NodeOutcome, Plan, RateLimitDetail, RetryPolicy,
-    RunStatus, Step,
+    RunStatus, Step, ThrottleKey,
 };
 
 use wamn_node_invoke::{
@@ -322,21 +322,38 @@ fn save_wake(run_id: &str, wake_secs: u64) -> Result<(), String> {
 /// so at most one park's state is live at a time, and both readers re-validate
 /// against the reconstructed frontier (`restore_retry` no-ops off the front;
 /// `load_wake` only fires while its node is outstanding).
-fn save_retry(run_id: &str, node: &str, attempt: u32) -> Result<(), String> {
+fn save_retry(
+    run_id: &str,
+    node: &str,
+    attempt: u32,
+    throttle: Option<&ThrottleKey>,
+) -> Result<(), String> {
+    // wamn-2jkm.66: persist the shared-throttle key alongside (node, attempt) so
+    // a `rate-limited` retry's CROSS-run gate identity survives the park (the
+    // per-run backoff already rides the queue's `available_at`). Absent key =>
+    // no `throttle` sub-object, so an ordinary retryable retry round-trips None.
+    let mut retry = json!({ "node": node, "attempt": attempt });
+    if let Some(t) = throttle {
+        retry["throttle"] = json!({
+            "node-type": t.node_type,
+            "credential": t.credential,
+            "host": t.host,
+        });
+    }
     client::execute(
         &run_sql::update_run_state_sql(),
-        &[
-            text(run_id),
-            text(json!({ "retry": { "node": node, "attempt": attempt } }).to_string()),
-        ],
+        &[text(run_id), text(json!({ "retry": retry }).to_string())],
     )
     .map_err(|e| err_name(&e))?;
     Ok(())
 }
 
-/// Load a persisted in-flight retry cursor `(node, attempt)` from `state_json`,
-/// if any — the reconstruction seam feeds it to [`Plan::restore_retry`].
-fn load_retry(run_id: &str) -> Result<Option<(String, u32)>, String> {
+/// Load a persisted in-flight retry cursor `(node, attempt, throttle)` from
+/// `state_json`, if any — the reconstruction seam feeds it to
+/// [`Plan::restore_retry`]. The `throttle` sub-object (wamn-2jkm.66) restores the
+/// shared-throttle key a `rate-limited` retry parked with; it is absent for a
+/// plain retryable retry, which restores with no key.
+fn load_retry(run_id: &str) -> Result<Option<(String, u32, Option<ThrottleKey>)>, String> {
     let rs = client::query(&run_sql::select_run_state_sql(), &[text(run_id)])
         .map_err(|e| err_name(&e))?;
     let raw = match rs.rows.first().and_then(|r| r.first()) {
@@ -351,7 +368,18 @@ fn load_retry(run_id: &str) -> Result<Option<(String, u32)>, String> {
         retry.get("node").and_then(|n| n.as_str()),
         retry.get("attempt").and_then(|a| a.as_u64()),
     ) {
-        (Some(node), Some(attempt)) => Ok(Some((node.to_string(), attempt as u32))),
+        (Some(node), Some(attempt)) => {
+            let throttle = retry.get("throttle").map(|t| {
+                ThrottleKey::new(
+                    t.get("node-type").and_then(|v| v.as_str()).unwrap_or(""),
+                    t.get("credential")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    t.get("host").and_then(|v| v.as_str()).map(String::from),
+                )
+            });
+            Ok(Some((node.to_string(), attempt as u32, throttle)))
+        }
         _ => Ok(None),
     }
 }
@@ -1043,8 +1071,8 @@ fn execute(
     // R32: restore an in-flight retry parked on a prior invocation — the
     // outstanding node re-enters carrying its persisted attempt (the queue served
     // the backoff) so the retry budget advances instead of resetting to 0.
-    if let Some((node, attempt)) = load_retry(run_id)? {
-        plan.restore_retry(&mut st, &node, attempt);
+    if let Some((node, attempt, throttle)) = load_retry(run_id)? {
+        plan.restore_retry(&mut st, &node, attempt, throttle);
     }
     let mut http_status: u32 = 0;
 
@@ -1074,8 +1102,13 @@ fn execute(
             // attempt and PARK the run (outcome=1), so the next invocation restores
             // the attempt (DUE now, the park served the backoff) and re-dispatches;
             // the budget advances until success, error-route, or RetryExhausted.
-            Step::Wait { node, attempt, .. } => {
-                save_retry(run_id, &node, attempt)?;
+            Step::Wait {
+                node,
+                attempt,
+                throttle,
+                ..
+            } => {
+                save_retry(run_id, &node, attempt, throttle.as_ref())?;
                 return Ok(RunOutcome {
                     version,
                     outcome: 1,
@@ -1539,8 +1572,8 @@ fn execute_claimed(
     // R32: restore an in-flight retry parked on a prior claim — the outstanding
     // node re-enters carrying its persisted attempt (the queue served the
     // backoff) so the retry budget advances instead of resetting to 0.
-    if let Some((node, attempt)) = load_retry(run_id)? {
-        plan.restore_retry(&mut st, &node, attempt);
+    if let Some((node, attempt, throttle)) = load_retry(run_id)? {
+        plan.restore_retry(&mut st, &node, attempt, throttle);
     }
     let mut http_status: u32 = 0;
 
@@ -1587,9 +1620,9 @@ fn execute_claimed(
                 node,
                 until_ms,
                 attempt,
-                ..
+                throttle,
             } => {
-                save_retry(run_id, &node, attempt)?;
+                save_retry(run_id, &node, attempt, throttle.as_ref())?;
                 return Ok(ClaimOutcome {
                     outcome: 1,
                     park_ms: until_ms,

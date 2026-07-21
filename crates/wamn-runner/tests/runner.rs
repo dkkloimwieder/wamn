@@ -940,13 +940,16 @@ fn drive_across_parks(
     mut dispatch_fn: impl FnMut(&Dispatch) -> NodeOutcome,
 ) -> ParkTrace {
     let mut completed: Vec<Recorded> = Vec::new();
-    let mut retry: Option<(String, u32)> = None; // the persisted state_json cursor
+    // The persisted state_json cursor: (node, attempt, shared-throttle key). The
+    // throttle rides the cursor so it survives park->reclaim exactly as the driver
+    // round-trips it (wamn-2jkm.66).
+    let mut retry: Option<(String, u32, Option<ThrottleKey>)> = None;
     let mut dispatches = Vec::new();
     let mut parks = 0usize;
     for claim in 1..=max_claims {
         let mut st = plan.resume(run_id, input.clone(), &completed).unwrap();
-        if let Some((node, attempt)) = &retry {
-            plan.restore_retry(&mut st, node, *attempt);
+        if let Some((node, attempt, throttle)) = &retry {
+            plan.restore_retry(&mut st, node, *attempt, throttle.clone());
         }
         loop {
             match plan.next(&mut st, 0) {
@@ -959,8 +962,15 @@ fn drive_across_parks(
                         failure: st.failure().map(|f| f.kind),
                     };
                 }
-                Step::Wait { node, attempt, .. } => {
-                    retry = Some((node, attempt)); // persist the budget cursor, then park
+                Step::Wait {
+                    node,
+                    attempt,
+                    throttle,
+                    ..
+                } => {
+                    // Persist the budget cursor AND the shared-throttle key, then
+                    // park (the driver's state_json round-trip — wamn-2jkm.66).
+                    retry = Some((node, attempt, throttle));
                     parks += 1;
                     break;
                 }
@@ -1035,7 +1045,7 @@ fn restore_retry_promotes_the_outstanding_node_due_now_with_its_attempt() {
     let f = one_retryable_node("");
     let plan = Plan::compile(&f).unwrap();
     let mut st = plan.resume("r1", json!({}), &[]).unwrap(); // fresh: b outstanding
-    assert!(plan.restore_retry(&mut st, "b", 2));
+    assert!(plan.restore_retry(&mut st, "b", 2, None));
     match plan.next(&mut st, 0) {
         Step::Dispatch(d) => {
             assert_eq!(d.node, "b");
@@ -1049,6 +1059,33 @@ fn restore_retry_promotes_the_outstanding_node_due_now_with_its_attempt() {
 }
 
 #[test]
+fn restore_retry_carries_the_persisted_shared_throttle_key() {
+    // wamn-2jkm.66: a `rate-limited` retry parks carrying its shared-throttle key
+    // (node type, credential, target host). The per-run backoff is served by the
+    // queue park, but the cross-run GATE identity must survive the reclaim too —
+    // restore_retry must promote the node carrying the ORIGINAL key, not None.
+    let f = one_retryable_node("");
+    let plan = Plan::compile(&f).unwrap();
+    let mut st = plan.resume("r1", json!({}), &[]).unwrap(); // fresh: b outstanding
+    let key = ThrottleKey::new("http-call", Some("erp".into()), Some("erp.example".into()));
+    assert!(plan.restore_retry(&mut st, "b", 2, Some(key.clone())));
+    assert_eq!(
+        st.current_throttle(),
+        Some(&key),
+        "the restored node carries the persisted shared-throttle key"
+    );
+
+    // The absent-key round-trip stays None (a plain retryable retry has no gate).
+    let mut st2 = plan.resume("r2", json!({}), &[]).unwrap();
+    assert!(plan.restore_retry(&mut st2, "b", 1, None));
+    assert_eq!(
+        st2.current_throttle(),
+        None,
+        "a retry that carried no throttle restores with no key"
+    );
+}
+
+#[test]
 fn restore_retry_is_a_noop_for_a_node_that_is_not_the_front() {
     // Stale state_json (the node already completed on an earlier claim, so it is
     // no longer the frontier front) must NOT hijack the walk, nor must an unknown
@@ -1056,8 +1093,8 @@ fn restore_retry_is_a_noop_for_a_node_that_is_not_the_front() {
     let f = linear4();
     let plan = Plan::compile(&f).unwrap();
     let mut st = plan.resume("r1", json!("go"), &[]).unwrap(); // front is "a"
-    assert!(!plan.restore_retry(&mut st, "c", 5)); // c is not the front
-    assert!(!plan.restore_retry(&mut st, "nope", 5)); // unknown node
+    assert!(!plan.restore_retry(&mut st, "c", 5, None)); // c is not the front
+    assert!(!plan.restore_retry(&mut st, "nope", 5, None)); // unknown node
     // The walk is untouched: the next dispatch is still the real front, fresh.
     match plan.next(&mut st, 0) {
         Step::Dispatch(d) => {
