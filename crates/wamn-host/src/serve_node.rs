@@ -242,8 +242,8 @@ impl NodeInstance {
 }
 
 /// The production custom-node host: one warm node behind a mutex (requests are
-/// served sequentially — single instance), a fixed component identity the grant
-/// + project are keyed by, and the shared vault. Reusable core (SR1): the
+/// served sequentially — single instance), a fixed component identity the grant +
+/// project are keyed by, and the shared vault. Reusable core (SR1): the
 /// `nodeinvoke` gate drives THIS, the binary wraps it in the accept loop.
 pub struct ServeNode {
     instance: Mutex<NodeInstance>,
@@ -467,7 +467,7 @@ impl ServeNode {
         let ctx = Ctx::builder(node_id.to_string(), node_id.to_string())
             .with_plugins(plugins)
             .with_http_handler(Arc::new(NodeEgress {
-                inner: DefaultOutgoingHandler::default(),
+                inner: DefaultOutgoingHandler,
             }))
             .with_allowed_hosts(allowed_hosts)
             .build();
