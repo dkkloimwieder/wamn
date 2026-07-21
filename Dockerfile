@@ -131,6 +131,21 @@ RUN rustup target add wasm32-wasip2 \
  && apt-get update && apt-get install -y --no-install-recommends nodejs npm ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @bytecodealliance/jco @bytecodealliance/componentize-js
+# The v0 sandbox Job builds the baked-in components-workspace fixtures. The
+# builder stage above copies only crates/poc/deploy, and its cargo caches are
+# BuildKit mounts that do not persist into image layers — so copy the
+# components source here (member dirs only, never the 3G components/target)
+# and warm the crate cache into the image: the in-pod `cargo metadata
+# --offline` and `cargo build` must run without network.
+COPY components/Cargo.toml components/Cargo.lock ./components/
+COPY components/api-gateway ./components/api-gateway
+COPY components/fixtures ./components/fixtures
+COPY components/flow-driver ./components/flow-driver
+COPY components/flowrunner ./components/flowrunner
+COPY components/materializer ./components/materializer
+COPY components/poc-webhook-f1 ./components/poc-webhook-f1
+COPY components/samples ./components/samples
+RUN cd components && cargo fetch
 # The compiled verb binary (built in the `builder` stage above) on PATH.
 RUN cp /build/target/release/wamn-builder /usr/local/bin/wamn-builder
 ENV HOME=/tmp
