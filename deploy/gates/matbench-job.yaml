@@ -53,13 +53,22 @@ spec:
           image: postgres:18
           command:
             - psql
-            - postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/postgres
+            - postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/postgres
             - -v
             - ON_ERROR_STOP=1
             - -c
             - DROP DATABASE IF EXISTS wamn_matbench WITH (FORCE)
             - -c
             - CREATE DATABASE wamn_matbench
+          env:
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
       containers:
         - name: matbench
           image: wamn-gates:dev
@@ -77,8 +86,16 @@ spec:
             - name: WAMN_PG_URL
               value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn_matbench
             # Admin: superuser, used ONLY to apply/drop the throwaway schemas.
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
             - name: WAMN_PG_ADMIN_URL
-              value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn_matbench
+              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/wamn_matbench
           resources:
             # No CPU limit on purpose (the S2 CFS-throttling lesson); memory capped.
             requests: { cpu: "2", memory: "512Mi" }

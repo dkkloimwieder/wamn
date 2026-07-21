@@ -31,8 +31,16 @@ spec:
               "--mode", "all",
             ]
           env:
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
             - name: WAMN_PG_ADMIN_URL
-              value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn
+              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/wamn
           resources:
             requests:
               cpu: "250m"

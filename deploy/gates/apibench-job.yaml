@@ -52,8 +52,16 @@ spec:
             - name: WAMN_PG_URL
               value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
             # Admin: superuser, used ONLY to provision/seed/drop the ephemeral schema.
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
             - name: WAMN_PG_ADMIN_URL
-              value: postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/wamn
+              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/wamn
           resources:
             # No CPU limit on purpose: a CFS quota would throttle the runtime and
             # add scheduler stalls to the request path rather than real work —

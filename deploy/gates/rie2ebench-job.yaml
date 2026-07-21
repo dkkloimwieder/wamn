@@ -55,9 +55,18 @@ spec:
             - "--component"
             - "/bench/materializer.wasm"
             - "--admin-database-url"
-            - "postgres://postgres:postgres@postgres.wamn-system.svc.cluster.local:5432/postgres"
+            - "postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/postgres"
             - "--nats-url"
             - "nats://evt-nats.wamn-system.svc.cluster.local:4222"
+          env:
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
           resources:
             # No CPU limit on purpose (the S2 CFS-throttling lesson); memory capped.
             requests: { cpu: "2", memory: "512Mi" }
