@@ -65,7 +65,7 @@ prerequisite that makes everything else findable.
 | SR4 | `wamn_postgres.rs` split (grew 18% since filing) | Med | **closed** | `7f91e3a` (wamn-cjv.18; `{mod,types,pool,claims,resources}.rs`; claims.rs = the claim boundary as one unit) |
 | SR10 | `wamn-gates` flat at 18.8k lines | Med | open | next bench |
 | SR2 | flowrunner re-implements run-state SQL | Med | open | before F3/F4 |
-| R17 | `NAMEDATALEN` truncation: `wamn_mig_drop_` + long entity collides; `TempNameCollision` compares untruncated | Med | open | with the next migration-engine touch |
+| R17 | `NAMEDATALEN` truncation: `wamn_mig_drop_` + long entity collides; `TempNameCollision` compares untruncated | Med | **closed** | `df9fc38` (wamn-2jkm.30) — aside derivation truncates + stable hash-suffix at 63 bytes, `TempNameCollision` compares PG-visible names; the schema-wide truncation-aware catalog guard landed alongside (`dbe0026`, C1-2/wamn-cjv.9) |
 | R18 | `standard_conforming_strings` assumed, never asserted | Med | **closed** | `d770302` (wamn-2jkm.21; `post_create` SHOW assert per physical connection, fail closed) |
 | R19 | `row_to_map` lossy on non-UTF-8 (`from_utf8_lossy`) | Low | **closed** | `1f21432` (wamn-2jkm.35) — fallible `row_to_map`, non-UTF-8 refuses `Config`→`Fatal` (loud exit, slot holds WAL) instead of `U+FFFD` corruption |
 | R20 | Author-supplied retry `cap-ms` unbounded | Low | **closed** | `225dfec` (wamn-2jkm.36) — parse-time clamp to `CAP_MS_CEILING` 1 h (the janitor reap grace); default untouched |
@@ -88,7 +88,7 @@ prerequisite that makes everything else findable.
 | Q1 (§5.1) | `--features caps` not tenant-reachable; `wamn-1nd` stays future conditioning | — | **closed** | evidence in §5.1 (wamn-2jkm.15; minted E17) |
 | Q2 (§5.1) | REPLICA IDENTITY de-facto contract = DEFAULT, key-only; `l5i9.31` is non-retroactive | — | **closed** | evidence in §5.1 (wamn-l5i9.56; design para → l5i9.17) |
 | Q3 (§5.1) | No `wamn_dispatch` role exists; `wamn_app` verified `NOBYPASSRLS` non-owner FORCE-RLS, live | — | **closed** | evidence in §5.1 (wamn-2jkm.16; R8b split → wamn-286 / wamn-2jkm.53) |
-| R5, R7, R9a–c, R15, E3, E5, SR7 | see sections below | Low–Med | open | opportunistic (E6 closed `9ea8da0`; E9 closed `db4d891`) |
+| R5, R7, R9a–c, R15, E3, E5, SR7 | see sections below | Low–Med | open | opportunistic (E6 closed `9ea8da0`; E9 closed `db4d891`; R9a closed — shipped `30be826`, coverage verified wamn-2jkm.32) |
 
 **Deferred by owner decision:** CI/LICENSE (§5.4 records the evidence-based
 re-open argument, unactioned); TRUNCATE handling (E5 — the prior question is
@@ -406,7 +406,10 @@ verified `NOBYPASSRLS` non-owner under FORCE RLS, statically and live.
 tenant predicate on the four RLS-only statements = wamn-2jkm.53)* ·
 **R8c** outbox amplification/GC *(**closed** at `f0cebca` — the l5i9.19 teardown removed the subject; wamn-2jkm.31)* · **R8d** cron misfire
 collapse *(open, doc)* · **R9a** reserve the `wamn_` identifier prefix at
-catalog validation *(open)* · **R9b** rename × row-event registration
+catalog validation *(**closed** — already shipped at `30be826` (wamn-66x);
+coverage over all four author-identifier classes verified complete and
+pinned, wamn-2jkm.32 — synthesized/enum/relation/seed identifiers confirmed
+non-gaps)* · **R9b** rename × row-event registration
 *(closed at `wamn-l5i9.17` — the decode half landed at l5i9.11 (OID→entity-id
 keying, rename drill live) and the registration-continuity half now rides the
 materializer's id-keyed match: `catalog.event_registrations.entity_id` ==
