@@ -540,6 +540,28 @@ async fn seed_s6_flow(
     .await
 }
 
+/// Re-seed `poc-s6` v1 as the TWO-delay fixture (wamn-2jkm.51), replacing the
+/// single-delay graph in place (ON CONFLICT DO UPDATE) so `run-s6` drives the
+/// two-delay flow. The direct `execute` path re-reads the active flow per call
+/// (no plan cache), so the new graph is picked up immediately.
+async fn seed_s6_twodelay_flow(
+    admin: &tokio_postgres::Client,
+    schema: &str,
+    delay_secs: u64,
+) -> anyhow::Result<()> {
+    wamn_gate_harness::scope_session(admin, TENANT, schema).await?;
+    wamn_gate_harness::seed_flow_version(
+        admin,
+        TENANT,
+        "poc-s6",
+        1,
+        true,
+        &crate::flowbench::flow_json_s6_twodelay(delay_secs),
+        true,
+    )
+    .await
+}
+
 // ---------------------------------------------------------------------------
 // Loopback echo server (the real egress target for expected/prod calls)
 // ---------------------------------------------------------------------------
@@ -844,11 +866,37 @@ async fn delay_phase(
     );
 
     let time_ok = wall < Duration::from_secs(1);
-    let pass = parked && completed && sink == 1 && time_ok && prod_parks;
+    let single_pass = parked && completed && sink == 1 && time_ok && prod_parks;
     println!(
-        "PASS(delay < 1s under virtual time; real clock stays parked): {pass} (parked={parked}, completed={completed}, wall_ok={time_ok}, prod_parks={prod_parks})"
+        "PASS(delay < 1s under virtual time; real clock stays parked): {single_pass} (parked={parked}, completed={completed}, wall_ok={time_ok}, prod_parks={prod_parks})"
     );
-    Ok(pass)
+
+    // wamn-2jkm.51: two delay nodes must park INDEPENDENTLY. Re-seed poc-s6 as a
+    // TWO-delay flow (in -> d1 -> d2 -> pg-write -> respond) and drive it. Pre-fix,
+    // one global `wake` key made d2 read d1's already-elapsed deadline and emit
+    // AT ONCE, so the run COMPLETED after a single clock advance. Post-fix (wake
+    // keyed by node id + cleared on emit), d1's elapse leaves d2 to arm a FRESH
+    // deadline and PARK again — the run needs a SECOND advance to complete.
+    println!("\n## two-delay (wamn-2jkm.51) — the second delay actually delays");
+    seed_s6_twodelay_flow(admin, EPH_SCHEMA, delay_secs).await?;
+    let r2 = "delay-twodelay";
+    test.call_reset(r2).await?;
+    let (a1, _) = test.call_run_s6(r2, "receipt").await?; // parks on d1
+    let d1_parked = a1 == 1;
+    vclock.advance_secs(delay_secs + 1);
+    let (a2, _) = test.call_run_s6(r2, "receipt").await?; // d1 emits -> d2 must PARK
+    let d2_parked = a2 == 1;
+    let sink_mid = test.call_sink_count(r2).await?; // still 0 — pg-write not reached
+    vclock.advance_secs(delay_secs + 1);
+    let (a3, _) = test.call_run_s6(r2, "receipt").await?; // d2 emits -> completes
+    let two_done = a3 == 0;
+    let sink_two = test.call_sink_count(r2).await?;
+    let two_pass = d1_parked && d2_parked && sink_mid == 0 && two_done && sink_two == 1;
+    println!(
+        "PASS(second delay actually delays): {two_pass} (d1_parked={d1_parked}, d2_parked={d2_parked} [pre-fix: false — d2 emits at once], sink_after_d1={sink_mid}, completed={two_done}, sink_final={sink_two})"
+    );
+
+    Ok(single_pass && two_pass)
 }
 
 // ---------------------------------------------------------------------------

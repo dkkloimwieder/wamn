@@ -289,25 +289,78 @@ fn wall_now_secs() -> u64 {
     wall_clock::now().seconds
 }
 
-/// Load the parked-wake deadline (epoch seconds) recorded in the run's
-/// `state_json`, if any.
-fn load_wake(run_id: &str) -> Result<Option<u64>, String> {
+/// Load the parked-wake deadline (epoch seconds) recorded for delay node `node`
+/// in the run's `state_json`, if any. Wake is keyed BY NODE ID
+/// (`{"wake": {"<node>": secs}}`, wamn-2jkm.51): a single global `wake` key let a
+/// flow's SECOND delay node read the FIRST's stale (already-elapsed) deadline and
+/// emit without ever delaying. A LEGACY bare `{"wake": <number>}` (a run parked
+/// before this upgrade) is IGNORED (None), so the node re-parks once under the
+/// keyed form — a benign one-time re-delay, not a lost or double-run.
+fn load_wake(run_id: &str, node: &str) -> Result<Option<u64>, String> {
     let rs = client::query(&run_sql::select_run_state_sql(), &[text(run_id)])
         .map_err(|e| err_name(&e))?;
     let raw = match rs.rows.first().and_then(|r| r.first()) {
         Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s.clone(),
         _ => return Ok(None), // NULL / absent
     };
-    let v: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|e| format!("state_json parse: {e}"))?;
-    Ok(v.get("wake").and_then(|w| w.as_u64()))
+    let v: Value = serde_json::from_str(&raw).map_err(|e| format!("state_json parse: {e}"))?;
+    // A keyed wake object -> this node's deadline; a legacy bare number -> None.
+    Ok(v.get("wake")
+        .and_then(|w| w.as_object())
+        .and_then(|m| m.get(node))
+        .and_then(|w| w.as_u64()))
 }
 
-/// Persist the parked-wake deadline for the run.
-fn save_wake(run_id: &str, wake_secs: u64) -> Result<(), String> {
+/// Persist the parked-wake deadline for delay node `node`, keyed by node id
+/// (wamn-2jkm.51). Shares the `state_json` home with the retry cursor; the engine
+/// drives ONE node at a time, so at most one park's state is live and this
+/// last-writer overwrite is safe (each reader re-validates against the
+/// reconstructed frontier: `load_wake` fires only while its node is outstanding).
+fn save_wake(run_id: &str, node: &str, wake_secs: u64) -> Result<(), String> {
+    let mut per_node = serde_json::Map::new();
+    per_node.insert(node.to_string(), Value::from(wake_secs));
+    let mut top = serde_json::Map::new();
+    top.insert("wake".to_string(), Value::Object(per_node));
     client::execute(
         &run_sql::update_run_state_sql(),
-        &[text(run_id), text(format!(r#"{{"wake":{wake_secs}}}"#))],
+        &[text(run_id), text(Value::Object(top).to_string())],
+    )
+    .map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// Clear delay node `node`'s recorded wake when it EMITS (its deadline elapsed),
+/// so a later REVISIT of the same node (a cycle) re-arms a fresh deadline instead
+/// of reading the stale (elapsed) one and emitting immediately (wamn-2jkm.51).
+/// Removes only this node's entry (dropping the `wake` object once empty) and any
+/// legacy bare `wake` scalar, preserving a co-resident retry cursor.
+fn clear_wake(run_id: &str, node: &str) -> Result<(), String> {
+    let rs = client::query(&run_sql::select_run_state_sql(), &[text(run_id)])
+        .map_err(|e| err_name(&e))?;
+    let raw = match rs.rows.first().and_then(|r| r.first()) {
+        Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s.clone(),
+        _ => return Ok(()), // no state -> nothing to clear
+    };
+    let mut v: Value = serde_json::from_str(&raw).map_err(|e| format!("state_json parse: {e}"))?;
+    let Some(obj) = v.as_object_mut() else {
+        return Ok(());
+    };
+    match obj.get_mut("wake").and_then(|w| w.as_object_mut()) {
+        Some(map) => {
+            map.remove(node);
+            if map.is_empty() {
+                obj.remove("wake");
+            }
+        }
+        // A legacy bare `wake` scalar (or none): drop it so the stale deadline
+        // cannot leak to another node.
+        None => {
+            obj.remove("wake");
+        }
+    }
+    client::execute(
+        &run_sql::update_run_state_sql(),
+        &[text(run_id), text(v.to_string())],
     )
     .map_err(|e| err_name(&e))?;
     Ok(())
@@ -863,20 +916,22 @@ fn dispatch_node(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
             let now = wall_now_secs();
-            // First reach records the deadline in the run's state_json and parks
-            // WITHOUT writing a node_runs row, so a resume re-enters this node;
-            // later reaches compare against it.
-            let wake = match load_wake(run_id)? {
+            // First reach records the deadline (keyed by node id, wamn-2jkm.51)
+            // and parks WITHOUT writing a node_runs row, so a resume re-enters this
+            // node; later reaches compare against it, and the emit CLEARS it so a
+            // revisit (a cycle) re-arms a fresh deadline instead of firing at once.
+            let wake = match load_wake(run_id, &d.node)? {
                 Some(w) => w,
                 None => {
                     let w = now.saturating_add(delay_secs);
-                    save_wake(run_id, w)?;
+                    save_wake(run_id, &d.node, w)?;
                     w
                 }
             };
             if now < wake {
                 Ok(NodeAction::Park)
             } else {
+                clear_wake(run_id, &d.node)?;
                 Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
             }
         }
@@ -1672,7 +1727,7 @@ fn execute_claimed(
                         // host's — the test host virtualizes it, so a 24h delay is
                         // instant there and the wake is immediate).
                         let now = wall_now_secs();
-                        let park_ms = load_wake(run_id)?
+                        let park_ms = load_wake(run_id, &d.node)?
                             .map(|wake| wake.saturating_sub(now).saturating_mul(1000))
                             .unwrap_or(0);
                         return Ok(ClaimOutcome {

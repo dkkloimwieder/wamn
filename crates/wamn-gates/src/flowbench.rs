@@ -141,6 +141,28 @@ pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
     )
 }
 
+/// A TWO-delay `poc-s6` fixture: `webhook-in -> delay(d1) -> delay(d2) ->
+/// pg-write -> respond` (wamn-2jkm.51). Both delays use the same `delay_secs`.
+/// The two delay nodes must park INDEPENDENTLY: after the first elapses the
+/// second must actually delay (park again), never inherit the first's stale
+/// (already-elapsed) wake and emit at once. Seeded as `poc-s6` v1 (ON CONFLICT
+/// DO UPDATE replaces the single-delay graph in place), so `run-s6` drives it.
+pub fn flow_json_s6_twodelay(delay_secs: u64) -> String {
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,
+            "trigger":{{"type":"webhook"}},"entry":"in",
+            "nodes":[
+              {{"id":"in","type":"webhook-in"}},
+              {{"id":"d1","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
+              {{"id":"d2","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
+              {{"id":"w","type":"pg-write"}},
+              {{"id":"out","type":"respond"}}
+            ],
+            "edges":[{{"from":"in","to":"d1"}},{{"from":"d1","to":"d2"}},
+                     {{"from":"d2","to":"w"}},{{"from":"w","to":"out"}}]}}"#
+    )
+}
+
 /// Open a fixture-scoped app connection (tenant claim + s3 search_path) and
 /// seed the two S3 flow versions with v1 active — the host-side replacement
 /// for the guest's retired `seed`/`set-active` exports.
