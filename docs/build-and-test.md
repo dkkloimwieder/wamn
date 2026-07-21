@@ -50,7 +50,11 @@ docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
   -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
 ./target/release/wamn-gates --log-level error pgbench \
   --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all --skip-multiproject
+# --skip-multiproject: under --mode all, no WAMN_PG_ADMIN_URL means the [2.2]
+# multiproject gate can't run; this flag declares that its coverage lives in the
+# sibling superuser recipe below. Without it, --mode all now REFUSES up front
+# (a preflight bail) rather than silently skipping to a false-green (C7-2).
 # --mode attack is the wamn-cjv.2 in-band claim-override gate (pgprobe ops 7/8/9);
 # guard unit tests: cargo test -p wamn-host guard_
 # Mutation harness (3 guard mutants, each must fail --mode attack): scratchpad/mutate_cjv2.py
@@ -1441,6 +1445,8 @@ docker stop wamn-rq-pg wamn-rq-nats
 # dispatchbench modes: cron/ordering/race/fairness/wake/live/all (the outbox +
 # prune modes retired with the outbox path at l5i9.19 — row events are
 # matbench/streambench/readerbench territory).
+# wake (and thus --mode all) now HARD-REQUIRES NATS: a missing/unreachable
+# --nats-url is a loud bail, never a soft skip that greens the Job (C7-2).
 # The production service is `wamn-dispatcher --projects-file <json>` (one entry
 # In-cluster gate of record (co-located with postgres,
 # HOST change => full docker rebuild (both --target stages + kind load BOTH images):

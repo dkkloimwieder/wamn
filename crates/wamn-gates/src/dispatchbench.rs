@@ -328,7 +328,7 @@ pub async fn run(args: DispatchBenchArgs) -> anyhow::Result<()> {
             pass &= fairness_phase(&app_url, &admin_url).await?;
         }
         if run_all || args.mode == Mode::Wake {
-            pass &= wake_phase(&app_url, &admin_url, &args, args.mode == Mode::Wake).await?;
+            pass &= wake_phase(&app_url, &admin_url, &args).await?;
         }
         if run_all || args.mode == Mode::Live {
             pass &= live_phase(&app_url, &admin_url, &args).await?;
@@ -817,7 +817,6 @@ async fn wake_phase(
     app_url: &str,
     admin_url: &str,
     args: &DispatchBenchArgs,
-    required: bool,
 ) -> anyhow::Result<bool> {
     use futures_util::StreamExt;
     use wash_runtime::washlet::{NatsConnectionOptions, connect_nats};
@@ -832,15 +831,12 @@ async fn wake_phase(
         tls_cert: args.nats_tls_cert.clone(),
         tls_key: args.nats_tls_key.clone(),
     };
+    // Wake only ever runs under --mode wake or --mode all, and both require a
+    // real doorbell path: a missing NATS is a hard failure, never a soft skip
+    // that greens the Job (docs/review-2026-07.md C7-2).
     let nats = match connect_nats(args.nats_url.clone(), nats_opts).await {
         Ok(c) => c,
-        Err(e) => {
-            if required {
-                bail!("wake mode needs NATS at {}: {e}", args.nats_url);
-            }
-            println!("(skipping wake gate: no NATS at {} — {e})", args.nats_url);
-            return Ok(true);
-        }
+        Err(e) => bail!("wake gate needs NATS at {}: {e}", args.nats_url),
     };
 
     let subject = format!("wamn.doorbell.{TENANT_A}");
@@ -872,18 +868,11 @@ async fn wake_phase(
             }
         }
         if !delivering {
-            if required {
-                bail!(
-                    "wake mode: NATS at {} accepted the subscription but never delivered \
-                     a probe within 3s (server-side interest not ready)",
-                    args.nats_url
-                );
-            }
-            println!(
-                "(skipping wake gate: NATS at {} not delivering — probe round-trip timed out)",
+            bail!(
+                "wake gate: NATS at {} accepted the subscription but never delivered \
+                 a probe within 3s (server-side interest not ready)",
                 args.nats_url
             );
-            return Ok(true);
         }
     }
 

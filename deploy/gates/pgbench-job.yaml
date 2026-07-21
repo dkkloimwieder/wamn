@@ -45,6 +45,12 @@ spec:
             - "10"
             - "--concurrency"
             - "16"
+            # This Job is the unprivileged S2 perf/RLS gate (no superuser creds).
+            # The [2.2] multiproject gate needs a superuser url to provision the
+            # per-project databases, so its coverage lives in the sibling Job
+            # deploy/gates/pgbench-multiproject-job.yaml; declare the skip here so
+            # --mode all runs clean instead of refusing on the absent admin url.
+            - "--skip-multiproject"
           env:
             - name: WAMN_PG_URL
               value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn

@@ -74,6 +74,14 @@ pub struct PgBenchArgs {
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: Option<String>,
 
+    /// Under `--mode all`, declare that the [2.2] multiproject gate is covered
+    /// elsewhere (its sibling superuser Job) so running WITHOUT an admin url is
+    /// an operator-declared skip, not a silent false-green. Without this flag,
+    /// `--mode all` with no admin url refuses to run at all — see
+    /// docs/review-2026-07.md C7-2.
+    #[arg(long)]
+    pub skip_multiproject: bool,
+
     /// Which measurement/gate to run
     #[arg(long, value_enum, default_value_t = Mode::All)]
     pub mode: Mode,
@@ -216,8 +224,64 @@ impl Harness {
     }
 }
 
+/// What `run()` does with the [2.2] multiproject phase, decided purely from
+/// (mode, whether a superuser admin url is present, whether `--skip-multiproject`
+/// was given). Kept pure so the refusal is a PREFLIGHT — instant, before any
+/// bench phase runs — and unit-testable (docs/review-2026-07.md C7-2).
+#[derive(Debug, PartialEq, Eq)]
+enum MultiprojectDisposition {
+    /// Execute the multiproject phase (an admin url is present).
+    Run,
+    /// Legitimately not run: either the mode never includes the phase, or under
+    /// `--mode all` the operator declared `--skip-multiproject`.
+    SkipDeclared,
+    /// Refuse: the phase is in scope, has no admin url, and no one declared a
+    /// skip. `run()` bails on this before running any phase.
+    Refuse,
+}
+
+fn multiproject_disposition(
+    mode: Mode,
+    has_admin_url: bool,
+    skip_flag: bool,
+) -> MultiprojectDisposition {
+    // Modes that never include the multiproject phase: nothing to run, nothing
+    // to refuse.
+    if !matches!(mode, Mode::All | Mode::Multiproject) {
+        return MultiprojectDisposition::SkipDeclared;
+    }
+    if has_admin_url {
+        return MultiprojectDisposition::Run;
+    }
+    match mode {
+        // `--mode multiproject` explicitly asked for the phase — no admin url is
+        // always a refusal (--skip-multiproject cannot wave it away).
+        Mode::Multiproject => MultiprojectDisposition::Refuse,
+        // `--mode all`: absence is a declared skip only with the explicit flag;
+        // otherwise refuse loudly rather than green a Job that skipped [2.2].
+        _ if skip_flag => MultiprojectDisposition::SkipDeclared,
+        _ => MultiprojectDisposition::Refuse,
+    }
+}
+
 pub async fn run(args: PgBenchArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
+
+    // Preflight the [2.2] disposition FIRST so a gate that can't cover it (and
+    // wasn't told to skip it) refuses instantly — before reading the guest,
+    // touching the DB, or running any bench phase.
+    let disposition = multiproject_disposition(
+        args.mode,
+        args.admin_database_url.is_some(),
+        args.skip_multiproject,
+    );
+    if disposition == MultiprojectDisposition::Refuse {
+        bail!(
+            "[2.2] multiproject gate cannot run: no --admin-database-url / WAMN_PG_ADMIN_URL. \
+             Pass the superuser url, or under --mode all pass --skip-multiproject to declare that \
+             its coverage lives in the sibling superuser Job (pgbench-multiproject-job.yaml)."
+        );
+    }
 
     let guest = std::fs::read(&args.pgprobe)
         .with_context(|| format!("failed to read {}", args.pgprobe.display()))?;
@@ -269,16 +333,18 @@ pub async fn run(args: PgBenchArgs) -> anyhow::Result<()> {
     if run_all || args.mode == Mode::Attack {
         pass &= attack_phase(&harness, &args).await?;
     }
-    if run_all || args.mode == Mode::Multiproject {
-        if args.admin_database_url.is_some() {
+    // Disposition was decided in the preflight; Refuse already bailed.
+    match disposition {
+        MultiprojectDisposition::Run => {
             pass &= multiproject_phase(&guest, &cfg, &args).await?;
-        } else if args.mode == Mode::Multiproject {
-            bail!("multiproject mode needs --admin-database-url / WAMN_PG_ADMIN_URL");
-        } else {
+        }
+        MultiprojectDisposition::SkipDeclared if run_all && args.skip_multiproject => {
             println!(
-                "\n(skipping [2.2] multiproject gate: no --admin-database-url / WAMN_PG_ADMIN_URL)"
+                "\n(skipping [2.2] multiproject gate: --skip-multiproject declared — its coverage \
+                 lives in the sibling superuser Job pgbench-multiproject-job.yaml)"
             );
         }
+        _ => {}
     }
 
     ticker.abort();
@@ -915,4 +981,76 @@ async fn multiproject_phase(
     let pass = route_ok && policy_ok && rls_ok && isolation_ok;
     println!("PASS([2.2] per-project pooling + credentials + policy): {pass}");
     Ok(pass)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Mode, MultiprojectDisposition, multiproject_disposition};
+
+    // docs/review-2026-07.md C7-2: under --mode all, a missing admin url must not
+    // silently skip the [2.2] gate to a false-green. The disposition fn is the
+    // preflight decision; these pin every (mode, has_admin_url, skip_flag) cell.
+
+    #[test]
+    fn all_with_admin_url_runs() {
+        assert_eq!(
+            multiproject_disposition(Mode::All, true, false),
+            MultiprojectDisposition::Run
+        );
+        // The skip flag is inert when an admin url is present.
+        assert_eq!(
+            multiproject_disposition(Mode::All, true, true),
+            MultiprojectDisposition::Run
+        );
+    }
+
+    #[test]
+    fn all_without_admin_url_and_flag_is_declared_skip() {
+        assert_eq!(
+            multiproject_disposition(Mode::All, false, true),
+            MultiprojectDisposition::SkipDeclared
+        );
+    }
+
+    #[test]
+    fn all_without_admin_url_no_flag_refuses() {
+        // The false-green this bead closes: --mode all, no admin url, no flag.
+        assert_eq!(
+            multiproject_disposition(Mode::All, false, false),
+            MultiprojectDisposition::Refuse
+        );
+    }
+
+    #[test]
+    fn multiproject_mode_needs_admin_url() {
+        assert_eq!(
+            multiproject_disposition(Mode::Multiproject, true, false),
+            MultiprojectDisposition::Run
+        );
+        // --skip-multiproject cannot wave away an explicitly requested phase.
+        assert_eq!(
+            multiproject_disposition(Mode::Multiproject, false, false),
+            MultiprojectDisposition::Refuse
+        );
+        assert_eq!(
+            multiproject_disposition(Mode::Multiproject, false, true),
+            MultiprojectDisposition::Refuse
+        );
+    }
+
+    #[test]
+    fn unrelated_modes_never_refuse() {
+        // Modes that don't include the phase never block the run, url or not.
+        for mode in [Mode::Qps, Mode::Rls, Mode::Injection, Mode::Attack] {
+            for &url in &[false, true] {
+                for &skip in &[false, true] {
+                    assert_eq!(
+                        multiproject_disposition(mode, url, skip),
+                        MultiprojectDisposition::SkipDeclared,
+                        "mode={mode:?} url={url} skip={skip}"
+                    );
+                }
+            }
+        }
+    }
 }
