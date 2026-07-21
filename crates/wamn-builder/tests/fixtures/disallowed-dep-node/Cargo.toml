@@ -1,0 +1,17 @@
+# 5.5c negative fixture (wamn-0si.3): a node crate whose transitive closure
+# introduces `hex` — a crate NOT on the default allowlist. The allowlist stage
+# must refuse it, naming `hex`. Detached (`[workspace]`) so the parent workspace
+# never tries to build it.
+[package]
+name = "disallowed-dep-node"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+hex = "0.4"
+
+[lib]
+crate-type = ["cdylib"]
+
+[workspace]

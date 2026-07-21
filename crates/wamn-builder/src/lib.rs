@@ -21,4 +21,5 @@
 //!
 //! Spec: `docs/builder.md`.
 
+pub mod allowlist;
 pub mod build;

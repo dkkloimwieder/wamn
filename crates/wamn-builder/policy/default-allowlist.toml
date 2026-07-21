@@ -1,0 +1,68 @@
+# wamn-builder dependency allowlist v1 (5.5c / wamn-0si.3).
+#
+# The set of crate NAMES a custom node's RESOLVED transitive package set may
+# contain — a supply-chain surface policy, enforced by `cargo metadata` BEFORE
+# the build (a denied dependency refuses the build, naming it). The node crate
+# itself is NOT listed (the allowlist governs its dependencies, not the node).
+#
+# Pinned to the ACTUAL transitive closure of `components/samples/sample-node`
+# (the reference cargo node): serde_json + the wamn-node-{sdk,guest} SDK path,
+# plus the wit-bindgen / wit-component build-time toolchain the guest scaffolding
+# pulls in. wamn-node-sdk's OWN direct deps are deliberately {serde_json} only —
+# the SDK is the leaf of the node dependency graph — so this closure is dominated
+# by the componentization toolchain, not runtime baggage.
+#
+# Name-keyed (version-agnostic): the policy is which crates may APPEAR, not which
+# versions — minor toolchain version drift must not break every node build. A
+# tenant node whose closure introduces a name off this list is refused; widening
+# the allowlist is a reviewed policy change.
+allowed = [
+  "anyhow",
+  "bitflags",
+  "equivalent",
+  "foldhash",
+  "futures",
+  "futures-channel",
+  "futures-core",
+  "futures-executor",
+  "futures-io",
+  "futures-macro",
+  "futures-sink",
+  "futures-task",
+  "futures-util",
+  "hashbrown",
+  "heck",
+  "id-arena",
+  "indexmap",
+  "itoa",
+  "leb128fmt",
+  "log",
+  "memchr",
+  "once_cell",
+  "pin-project-lite",
+  "prettyplease",
+  "proc-macro2",
+  "quote",
+  "semver",
+  "serde",
+  "serde_core",
+  "serde_derive",
+  "serde_json",
+  "slab",
+  "syn",
+  "unicode-ident",
+  "unicode-xid",
+  "wamn-node-guest",
+  "wamn-node-sdk",
+  "wasm-encoder",
+  "wasm-metadata",
+  "wasmparser",
+  "wit-bindgen",
+  "wit-bindgen-core",
+  "wit-bindgen-rt",
+  "wit-bindgen-rust",
+  "wit-bindgen-rust-macro",
+  "wit-component",
+  "wit-parser",
+  "zmij",
+]

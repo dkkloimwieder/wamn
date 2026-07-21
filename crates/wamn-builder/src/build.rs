@@ -62,6 +62,22 @@ pub struct BuildArgs {
     /// `components/samples/node-ts` fixture world).
     #[arg(long, default_value = "node-bench")]
     pub world: String,
+
+    /// 5.5c: the dependency allowlist policy (TOML). Default: the built-in
+    /// pinned policy (`policy/default-allowlist.toml`).
+    #[arg(long)]
+    pub allowlist: Option<PathBuf>,
+}
+
+impl BuildArgs {
+    /// The cargo package name to build — `--package`, else the `--source` dir
+    /// name. Shared by the allowlist stage and the build stage.
+    pub fn cargo_package(&self) -> anyhow::Result<String> {
+        self.package
+            .clone()
+            .or_else(|| source_dir_name(&self.source))
+            .context("cargo build: pass --package or a named --source directory")
+    }
 }
 
 /// A built node artifact: the wasm bytes and where they landed.
@@ -147,11 +163,7 @@ async fn run_tool(program: &str, argv: &[String], cwd: &Path) -> anyhow::Result<
 pub async fn build_artifact(args: &BuildArgs) -> anyhow::Result<BuiltArtifact> {
     let wasm_path = match args.kind {
         BuildKind::Cargo => {
-            let package = args
-                .package
-                .clone()
-                .or_else(|| source_dir_name(&args.source))
-                .context("cargo build: pass --package or a named --source directory")?;
+            let package = args.cargo_package()?;
             run_tool("cargo", &cargo_build_argv(&package), &args.source).await?;
             args.out.clone().unwrap_or_else(|| {
                 args.source
@@ -192,9 +204,36 @@ pub fn lint_artifact(wasm: &[u8], label: &str) -> anyhow::Result<()> {
         .context("built artifact failed the 5.5 builder import lint")
 }
 
-/// The `build` verb: build the node, then screen it through the 5.5a lint.
-/// Later stages (allowlist, sign, SBOM, push, emit) extend this pipeline.
+/// 5.5c — enforce the dependency allowlist BEFORE the build (so an off-policy
+/// crate's `build.rs` never runs): the cargo path checks the resolved package
+/// set against the policy; the jco path asserts single-module.
+async fn enforce_dependency_policy(args: &BuildArgs) -> anyhow::Result<()> {
+    match args.kind {
+        BuildKind::Cargo => {
+            let package = args.cargo_package()?;
+            let policy = match &args.allowlist {
+                Some(path) => crate::allowlist::Policy::load(path).await?,
+                None => crate::allowlist::Policy::default_policy(),
+            };
+            let manifest = args.source.join("Cargo.toml");
+            let resolved = crate::allowlist::resolved_package_names(&manifest, &package).await?;
+            crate::allowlist::check_allowlist(&resolved, &policy, &package)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!(
+                "dependency allowlist: {} transitive package(s), all allowed",
+                resolved.len()
+            );
+        }
+        BuildKind::Jco => crate::allowlist::assert_jco_single_module(&args.source).await?,
+    }
+    Ok(())
+}
+
+/// The `build` verb: enforce the dependency allowlist (5.5c), build the node,
+/// then screen it through the 5.5a lint. Later stages (sign, SBOM, push, emit)
+/// extend this pipeline.
 pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
+    enforce_dependency_policy(&args).await?;
     let artifact = build_artifact(&args).await?;
     lint_artifact(&artifact.wasm, &artifact.wasm_path.display().to_string())?;
     println!(
