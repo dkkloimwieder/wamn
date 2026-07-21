@@ -26,7 +26,7 @@
 //! cluster to an arbitrary instant, then carve one DB out) needs WAL/PITR and is
 //! wamn-e1g — cross-referenced from the runbook, not implemented here.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as Proc;
 
 use anyhow::Context as _;
@@ -147,7 +147,7 @@ async fn resolve_dump_dir(
     )?;
     let key = match &args.object_key {
         Some(k) => k.clone(),
-        None => latest_dump_key(system_url, triple).await?,
+        None => latest_dump_key(system_url, triple, &args.dump_root).await?,
     };
     // The dump is staged locally under <dump-root>/<timestamp> (the object key's
     // last segment — the dump-project-env --run-now --out-dir layout).
@@ -159,23 +159,70 @@ async fn resolve_dump_dir(
     Ok((args.dump_root.join(timestamp), Some(key)))
 }
 
-/// Read the latest recorded dump's object key for a project-env from the catalog
-/// (as the `wamn_system` owner). Errors if no dump has been recorded.
-async fn latest_dump_key(system_url: &str, triple: &Triple) -> anyhow::Result<String> {
+/// Resolve restore-to-last-dump's dump key: the genuinely NEWEST dump across the
+/// `provisioning.dumps` **catalog** (imperative `--run-now` dumps record there) AND a
+/// direct **listing** of the dump key prefix staged under `--dump-root`. The listing is
+/// the fallback for scheduled CronJob dumps, which upload to object storage but record
+/// NO catalog row — that pod holds only the project-env DB URL + object-store creds, not
+/// the `wamn_system` connection (wamn-cjv.19). Without it those dumps are invisible and
+/// restore-to-last-dump errors "no dump recorded" though dumps exist. Folding the
+/// catalog's own latest key into the candidate set also lets a newer STAGED dump beat a
+/// stale recorded one — the last dump, not merely the last *recorded* one. Prints WHICH
+/// path found the chosen dump; errors only if neither offers one.
+async fn latest_dump_key(
+    system_url: &str,
+    triple: &Triple,
+    dump_root: &Path,
+) -> anyhow::Result<String> {
+    let recorded = recorded_latest_dump_key(system_url, triple).await?;
+
+    let prefix = wamn_provision::dump::dump_key_prefix(triple);
+    let mut candidates = staged_dump_keys(dump_root, &prefix);
+    if let Some(key) = &recorded {
+        candidates.push(key.clone());
+    }
+    let key =
+        wamn_provision::dump::select_latest_dump_key(&prefix, &candidates).with_context(|| {
+            format!(
+                "no dump recorded for {triple} in provisioning.dumps, and none staged under {} — \
+                 run dump-project-env --run-now first, or stage a scheduled dump under --dump-root",
+                dump_root.display()
+            )
+        })?;
+
+    if recorded.as_deref() == Some(key.as_str()) {
+        println!("restore-to-last-dump: newest dump {key} (from the provisioning.dumps catalog)");
+    } else {
+        println!(
+            "restore-to-last-dump: newest dump {key} (found by listing the dump prefix {prefix:?} \
+             staged under --dump-root — NOT in the provisioning.dumps catalog, e.g. a scheduled \
+             CronJob dump)"
+        );
+    }
+    Ok(key)
+}
+
+/// The latest recorded dump's object key for a project-env from the catalog (as the
+/// `wamn_system` owner), or `None` when no dump is recorded. Unlike a hard error,
+/// `None` lets [`latest_dump_key`] fall back to the prefix listing (wamn-cjv.19).
+async fn recorded_latest_dump_key(
+    system_url: &str,
+    triple: &Triple,
+) -> anyhow::Result<Option<String>> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
-    let result = do_latest_dump_key(&client, triple).await;
+    let result = do_recorded_latest_dump_key(&client, triple).await;
     drop(client);
     let _ = conn_task.await;
     result
 }
 
-async fn do_latest_dump_key(
+async fn do_recorded_latest_dump_key(
     client: &tokio_postgres::Client,
     triple: &Triple,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Option<String>> {
     client
         .batch_execute("SET ROLE wamn_system")
         .await
@@ -187,11 +234,27 @@ async fn do_latest_dump_key(
             &[&triple.org, &triple.project, &env],
         )
         .await
-        .context("read latest dump from provisioning.dumps")?
-        .with_context(|| {
-            format!("no dump recorded for {triple}: run dump-project-env --run-now first")
-        })?;
-    Ok(row.get("object_key"))
+        .context("read latest dump from provisioning.dumps")?;
+    Ok(row.map(|r| r.get("object_key")))
+}
+
+/// The dump keys currently STAGED under `--dump-root` for a project-env, in the
+/// object-key form [`select_latest_dump_key`](wamn_provision::dump::select_latest_dump_key)
+/// ranks over. Until the shared object store lands (wamn-e1g), `--dump-root` is the local
+/// mirror restore reads dump bytes from, so each timestamp subdirectory holding a
+/// complete `-Fd` dump (a `toc.dat`) IS a listed dump. The `toc.dat` gate is the local
+/// mirror's completeness signal (a torn/partial directory is skipped). A missing or
+/// unreadable root ⇒ no staged dumps.
+fn staged_dump_keys(dump_root: &Path, prefix: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dump_root) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|e| e.path().join("toc.dat").is_file())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .map(|name| format!("{prefix}/{name}"))
+        .collect()
 }
 
 /// Restore into a fresh scratch database (non-destructive). The scratch DB is left
@@ -326,6 +389,39 @@ mod tests {
         // timestamp is the object key's trailing segment (the --run-now layout).
         let key = "dumps/acme/billing/dev/1720000000";
         assert_eq!(key.rsplit('/').next(), Some("1720000000"));
+    }
+
+    #[test]
+    fn staged_dump_keys_lists_only_complete_dumps_and_the_fallback_picks_the_newest() {
+        // The restore-to-last-dump fallback over the LOCAL --dump-root mirror
+        // (wamn-cjv.19): a scheduled CronJob dump staged here but absent from the
+        // catalog is still found. Only complete dumps (a `toc.dat`) are candidates —
+        // a torn newest directory is skipped in favour of the complete older one.
+        let root = std::env::temp_dir().join(format!("wamn-cjv19-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (ts, complete) in [("100", true), ("300", true), ("400", false)] {
+            let dir = root.join(ts);
+            std::fs::create_dir_all(&dir).unwrap();
+            if complete {
+                std::fs::write(dir.join("toc.dat"), b"x").unwrap();
+            }
+        }
+        std::fs::write(root.join("readme"), b"not a dump").unwrap(); // a stray non-dir
+
+        let triple = Triple::new("acme", "billing", "dev");
+        let prefix = wamn_provision::dump::dump_key_prefix(&triple);
+        let mut keys = staged_dump_keys(&root, &prefix);
+        keys.sort();
+        // Only the complete (toc.dat) timestamp dirs, in <prefix>/<ts> object-key form;
+        // the torn `400` and the stray `readme` are excluded.
+        assert_eq!(keys, vec![format!("{prefix}/100"), format!("{prefix}/300")]);
+        // The fallback picks the newest COMPLETE staged dump (300), not the torn 400.
+        assert_eq!(
+            wamn_provision::dump::select_latest_dump_key(&prefix, &keys),
+            Some(format!("{prefix}/300"))
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

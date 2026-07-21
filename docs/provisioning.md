@@ -749,6 +749,23 @@ locally until the shared object store lands (**Q2**, wamn-e1g); the catalog deci
 (newest first, tiebroken by the timestamp-suffixed key); `select_dumps_sql` lists
 the window.
 
+**Prefix-listing fallback (wamn-cjv.19).** Only the imperative `--run-now` path
+records a `provisioning.dumps` row — the scheduled dump **CronJob** (the actual RPO
+mechanism) uploads to object storage but records nothing, because that pod holds
+only the project-env DB URL + object-store creds, not the `wamn_system` connection
+`record_dump_sql` needs. A catalog-only read would therefore report "no dump
+recorded" at recovery even though scheduled dumps exist. So when the catalog has no
+row for a project-env — or when a staged dump is *newer* than the latest recorded
+one — restore lists the deterministic dump key **prefix**
+(`dumps/<org>/<project>/<env>`) staged under `--dump-root` and picks the newest
+complete dump (`wamn_provision::dump::select_latest_dump_key`, a pure
+listing→key selector: numeric-timestamp ordering, foreign/malformed keys ignored;
+the local mirror gates completeness on `toc.dat`). This needs no new credential
+surface — restore already reads the dump bytes from `--dump-root` — and the output
+says loudly WHICH path found the dump (catalog row vs prefix listing). A live
+recursive store listing (post-wamn-e1g) wants a real dump-completion marker to rule
+out a torn `mc mirror`; that is a follow-up, not part of this fix.
+
 **Verification.** The restore is validated **substrate-agnostically**: a
 `WAMN_RESTORE_PG_URL` round-trip gate (`crates/wamn-provision/tests/restore.rs`)
 seeds a database, dumps it with the real `pg_dump_argv`, restores with the real

@@ -90,6 +90,45 @@ pub fn dump_object_key(triple: &Triple, timestamp: &str) -> String {
     format!("{}/{}", dump_key_prefix(triple), timestamp)
 }
 
+/// From a **listing** of object keys under a project-env's dump [`dump_key_prefix`],
+/// pick the key of the LATEST dump — the one whose embedded timestamp (the first path
+/// segment after the prefix, per the [`dump_object_key`] layout `<prefix>/<timestamp>`)
+/// is numerically greatest. Returns the bare dump key `<prefix>/<timestamp>`, or `None`
+/// for an empty / all-foreign listing.
+///
+/// This powers **restore-to-last-dump's fallback** (wamn-cjv.19): the scheduled dump
+/// CronJob uploads to object storage but records NO `provisioning.dumps` catalog row
+/// (it holds only the project-env DB URL + object-store creds, not the `wamn_system`
+/// connection), so those dumps are invisible to a catalog-only read. Restore lists the
+/// deterministic prefix directly and picks the newest from the store's own key layout —
+/// no new credential surface. The caller may fold the catalog's own latest recorded key
+/// into `keys`, so the newest across catalog + listing is chosen (the genuinely last
+/// dump, not merely the last *recorded* one).
+///
+/// Robust against a real (recursive) store listing: keys that don't sit under
+/// `prefix`/ (foreign orgs/projects/envs), or whose timestamp segment isn't a positive
+/// integer (malformed / stray objects), are ignored — they never mask or outrank a real
+/// dump. The timestamp is compared NUMERICALLY (`u64`), independently of listing order
+/// (a lexical or listing-order max would pick the wrong dump). A `<prefix>/<ts>/toc.dat`
+/// and a `<prefix>/<ts>/3.dat` collapse to the one dump `<prefix>/<ts>`.
+///
+/// **Completeness:** the `-Fd` layout carries no terminal completion marker (`pg_dump`
+/// writes `toc.dat` + data files; `mc mirror` copies them in no guaranteed order), so
+/// this picks the latest WELL-FORMED dump key per the layout — it does not redesign the
+/// dump format. The caller applies whatever completeness signal it has (the local
+/// mirror gates on `toc.dat` presence; restore's own `toc.dat` check backstops the
+/// chosen directory). Torn-dump detection for a live recursive store listing wants a
+/// real completion marker — a follow-up, not this fix.
+pub fn select_latest_dump_key(prefix: &str, keys: &[String]) -> Option<String> {
+    let want = format!("{prefix}/");
+    keys.iter()
+        .filter_map(|k| k.strip_prefix(&want))
+        .filter_map(|rest| rest.split('/').next())
+        .filter_map(|seg| seg.parse::<u64>().ok())
+        .max()
+        .map(|ts| format!("{prefix}/{ts}"))
+}
+
 /// The default scheduled-dump cadence, a 5-field cron: **daily** (03:00). Under
 /// D18 the dump cadence is no longer a closed-tier knob — a per-env `dump_cadence`
 /// policy field is a future additive column (`docs/deployment-model.md` §Region:
@@ -314,6 +353,70 @@ mod tests {
         // The prod and dev envs of one project never share a key prefix.
         let prod = Triple::new("acme", "billing", "prod");
         assert_ne!(dump_key_prefix(&t()), dump_key_prefix(&prod));
+    }
+
+    #[test]
+    fn select_latest_dump_key_returns_the_latest_of_many() {
+        // The fallback (wamn-cjv.19): pick the newest dump from a prefix listing when
+        // the catalog has no row. Disabling the fallback (always `None`) fails here.
+        let prefix = dump_key_prefix(&t());
+        let keys = vec![
+            format!("{prefix}/100/toc.dat"),
+            format!("{prefix}/300/toc.dat"),
+            format!("{prefix}/300/3.dat"), // same dump, extra data file — collapses
+            format!("{prefix}/200/toc.dat"),
+        ];
+        assert_eq!(
+            select_latest_dump_key(&prefix, &keys),
+            Some(format!("{prefix}/300")),
+            "the newest dump directory, returned as the bare key <prefix>/<ts>"
+        );
+    }
+
+    #[test]
+    fn select_latest_dump_key_orders_by_embedded_timestamp_not_listing_order() {
+        // The timestamp is compared NUMERICALLY, not lexically or in listing order:
+        // "100" sorts before "90" lexically, but 100 is the newer dump. Picking the
+        // OLDEST (a flipped max→min) returns <prefix>/90 and fails here.
+        let prefix = dump_key_prefix(&t());
+        let keys = vec![format!("{prefix}/100"), format!("{prefix}/90")];
+        assert_eq!(
+            select_latest_dump_key(&prefix, &keys),
+            Some(format!("{prefix}/100")),
+            "newest is the numerically-greatest timestamp, not the lexical/listing max"
+        );
+    }
+
+    #[test]
+    fn select_latest_dump_key_ignores_foreign_and_malformed_keys() {
+        // A real (recursive) store listing carries other envs' objects and stray keys;
+        // none may mask or outrank a real dump under this project-env's prefix.
+        let prefix = dump_key_prefix(&t()); // dumps/acme/billing/dev
+        let keys = vec![
+            "dumps/acme/billing/prod/999/toc.dat".to_string(), // foreign env, newer ts
+            "dumps/other/billing/dev/999".to_string(),         // foreign org
+            format!("{prefix}/notanumber/toc.dat"),            // malformed timestamp
+            prefix.clone(),                                    // the bare prefix, no ts
+            format!("{prefix}/150/toc.dat"),                   // the only real dump
+        ];
+        assert_eq!(
+            select_latest_dump_key(&prefix, &keys),
+            Some(format!("{prefix}/150")),
+            "foreign-prefix and non-numeric-timestamp keys are ignored"
+        );
+    }
+
+    #[test]
+    fn select_latest_dump_key_is_none_for_empty_or_all_foreign() {
+        // No dump under the prefix ⇒ `None`, so restore falls through to the existing
+        // "no dump recorded" error path (the fallback never invents a dump).
+        let prefix = dump_key_prefix(&t());
+        assert_eq!(select_latest_dump_key(&prefix, &[]), None);
+        let foreign = vec![
+            "dumps/acme/billing/prod/1".to_string(),
+            "unrelated/object".to_string(),
+        ];
+        assert_eq!(select_latest_dump_key(&prefix, &foreign), None);
     }
 
     #[test]
