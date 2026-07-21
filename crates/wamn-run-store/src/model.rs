@@ -123,7 +123,9 @@ pub struct NodeRunRecord {
 }
 
 impl NodeRunRecord {
-    /// A completed successful node-run emitting `payload` on `port`.
+    /// A completed successful node-run emitting `payload` on `port`, at
+    /// `occurrence` 0 (the first visit) — a loader materializing a later visit
+    /// sets the public `occurrence` field from the row.
     pub fn success(
         run_id: impl Into<String>,
         node_id: impl Into<String>,

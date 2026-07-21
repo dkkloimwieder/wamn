@@ -137,6 +137,93 @@ fn fan_out_and_merge_without_a_join_barrier() {
 }
 
 #[test]
+fn merge_visits_carry_distinct_occurrences() {
+    // A merge runs once per arriving token; each visit is its own occurrence
+    // (wamn-03m / R24) so the driver's node_runs rows never collide on the
+    // (run, node, occurrence) key.
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"fan","version":1,
+            "trigger":{"type":"manual"},"entry":"s",
+            "nodes":[{"id":"s","type":"echo"},{"id":"a","type":"echo"},
+                     {"id":"b","type":"echo"},{"id":"m","type":"echo"}],
+            "edges":[{"from":"s","to":"a"},{"from":"s","to":"b"},
+                     {"from":"a","to":"m"},{"from":"b","to":"m"}]}"#,
+    );
+    let plan = Plan::compile(&f).unwrap();
+    let t = run(&plan, "r1", json!({}), |d| {
+        NodeOutcome::ok(json!({ "at": d.node }))
+    });
+    assert_eq!(t.status, RunStatus::Completed);
+    let visits: Vec<(&str, u32)> = t
+        .visited
+        .iter()
+        .map(|d| (d.node.as_str(), d.occurrence))
+        .collect();
+    assert_eq!(
+        visits,
+        [("s", 0), ("a", 0), ("b", 0), ("m", 0), ("m", 1)],
+        "each arrival at the merge is a distinct occurrence"
+    );
+}
+
+#[test]
+fn occurrence_is_stable_across_retries_of_one_visit() {
+    // Retries share the visit (attempt bumps, occurrence does not) — the
+    // node_runs row identity is per-visit, not per-attempt.
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"retry-occ","version":1,
+            "trigger":{"type":"manual"},"entry":"b",
+            "nodes":[{"id":"b","type":"call"}],"edges":[]}"#,
+    );
+    let plan = Plan::compile(&f).unwrap();
+    let attempts = Cell::new(0u32);
+    let t = run(&plan, "r1", json!({}), |_| {
+        let n = attempts.replace(attempts.get() + 1);
+        if n < 2 {
+            NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("x")))
+        } else {
+            NodeOutcome::ok(json!({}))
+        }
+    });
+    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.visited.len(), 3);
+    assert!(t.visited.iter().all(|d| d.occurrence == 0));
+    assert_eq!(t.visited[2].attempt, 2);
+}
+
+#[test]
+fn an_error_routed_visit_advances_the_occurrence() {
+    // b's first visit error-routes (a COMPLETED visit — the driver persists its
+    // error row), h loops back, and b's second visit must be occurrence 1: a
+    // driver keying rows off occurrence would otherwise collide the revisit
+    // with the recorded error visit.
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"err-loop","version":1,
+            "trigger":{"type":"manual"},"entry":"a",
+            "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"call"},
+                     {"id":"h","type":"handler"}],
+            "edges":[{"from":"a","to":"b"},
+                     {"from":"b","from-port":"error","to":"h"},
+                     {"from":"h","to":"b"}]}"#,
+    );
+    let plan = Plan::compile(&f).unwrap();
+    let first = Cell::new(true);
+    let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
+        "b" if first.replace(false) => {
+            NodeOutcome::Error(NodeError::Terminal(wamn_runner::ErrorDetail::msg("boom")))
+        }
+        _ => NodeOutcome::ok(json!({ "at": d.node })),
+    });
+    assert_eq!(t.status, RunStatus::Completed);
+    let visits: Vec<(&str, u32)> = t
+        .visited
+        .iter()
+        .map(|d| (d.node.as_str(), d.occurrence))
+        .collect();
+    assert_eq!(visits, [("a", 0), ("b", 0), ("h", 0), ("b", 1)]);
+}
+
+#[test]
 fn a_leaf_with_no_successors_just_ends() {
     let f = flow(
         r#"{"schema-version":"0.1","flow-id":"leaf","version":1,
@@ -589,6 +676,134 @@ fn resume_kill_mid_branch_then_resume_completes_the_correct_branch() {
     );
     assert_eq!(status, RunStatus::Completed);
     assert_eq!(resumed, ["n2"]); // the false branch completes; y1/y2 never run
+}
+
+/// The R24 acceptance flow: a diamond A -> {B, C} -> D, acyclic yet D runs
+/// twice (once per arriving token).
+fn diamond() -> Flow {
+    flow(
+        r#"{"schema-version":"0.1","flow-id":"dia","version":1,
+            "trigger":{"type":"manual"},"entry":"a",
+            "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"echo"},
+                     {"id":"c","type":"echo"},{"id":"d","type":"echo"}],
+            "edges":[{"from":"a","to":"b"},{"from":"a","to":"c"},
+                     {"from":"b","to":"d"},{"from":"c","to":"d"}]}"#,
+    )
+}
+
+/// A bounded 2-node loop with a port exit: in -> x, x --next--> y -> x,
+/// x --done--> out. The dispatcher decides when x emits "done".
+fn bounded_loop() -> Flow {
+    flow(
+        r#"{"schema-version":"0.1","flow-id":"loop","version":1,
+            "trigger":{"type":"manual"},"entry":"in",
+            "nodes":[{"id":"in","type":"echo"},{"id":"x","type":"echo"},
+                     {"id":"y","type":"echo"},{"id":"out","type":"echo"}],
+            "edges":[{"from":"in","to":"x"},{"from":"x","from-port":"next","to":"y"},
+                     {"from":"y","to":"x"},{"from":"x","from-port":"done","to":"out"}]}"#,
+    )
+}
+
+#[test]
+fn resume_diamond_killed_mid_merge_reconstructs_and_completes() {
+    // The R24 VERIFY: a diamond killed mid-D — D's first visit recorded, its
+    // second outstanding — reconstructs without Mismatch/Overrun and completes
+    // with exactly the one remaining visit, at the right occurrence.
+    let f = diamond();
+    let plan = Plan::compile(&f).unwrap();
+    let completed = [
+        Recorded::new("a", "main", json!({ "at": "a" })),
+        Recorded::new("b", "main", json!({ "at": "b" })),
+        Recorded::new("c", "main", json!({ "at": "c" })),
+        Recorded::new("d", "main", json!({ "at": "d" })), // D's FIRST visit only
+    ];
+    let mut st = plan.resume("r1", json!({}), &completed).unwrap();
+    let mut resumed = Vec::new();
+    let status = plan.drive(
+        &mut st,
+        || 0,
+        |_, _| {},
+        |d| {
+            resumed.push((d.node.clone(), d.occurrence));
+            NodeOutcome::ok(json!({ "at": d.node }))
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(
+        resumed,
+        [("d".to_string(), 1)],
+        "only D's second visit is outstanding, at occurrence 1"
+    );
+}
+
+#[test]
+fn resume_of_a_fully_recorded_diamond_is_idempotent() {
+    // All five visits recorded (D twice): resume folds the per-visit history and
+    // completes with nothing re-dispatched — the merge history no longer
+    // collapses (pre-R24 the dropped second D row made this walk re-run D).
+    let f = diamond();
+    let plan = Plan::compile(&f).unwrap();
+    let completed = [
+        Recorded::new("a", "main", json!({ "at": "a" })),
+        Recorded::new("b", "main", json!({ "at": "b" })),
+        Recorded::new("c", "main", json!({ "at": "c" })),
+        Recorded::new("d", "main", json!({ "d": 1 })),
+        Recorded::new("d", "main", json!({ "d": 2 })),
+    ];
+    let mut st = plan.resume("r1", json!({}), &completed).unwrap();
+    let mut resumed = Vec::new();
+    let status = plan.drive(
+        &mut st,
+        || 0,
+        |_, _| {},
+        |d| {
+            resumed.push(d.node.clone());
+            NodeOutcome::ok(d.payload.clone())
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert!(resumed.is_empty());
+    assert_eq!(st.result(), &json!({ "d": 2 })); // the LAST visit's emission
+}
+
+#[test]
+fn resume_mid_loop_continues_at_the_right_visit() {
+    // A loop killed after its second lap replays visit-by-visit and continues
+    // at the correct occurrence — pre-R24 a loop crashing after 2 visits was
+    // permanently unrecoverable (its collapsed history could not replay).
+    let f = bounded_loop();
+    let plan = Plan::compile(&f).unwrap();
+    // Two full laps recorded (x emitting "next"), killed with x's third visit
+    // outstanding: in, x@0, y@0, x@1, y@1.
+    let completed = [
+        Recorded::new("in", "main", json!(0)),
+        Recorded::new("x", "next", json!(1)),
+        Recorded::new("y", "main", json!(1)),
+        Recorded::new("x", "next", json!(2)),
+        Recorded::new("y", "main", json!(2)),
+    ];
+    let mut st = plan.resume("r1", json!(0), &completed).unwrap();
+    let mut resumed = Vec::new();
+    let status = plan.drive(
+        &mut st,
+        || 0,
+        |_, _| {},
+        |d| {
+            resumed.push((d.node.clone(), d.occurrence));
+            // The resumed third visit of x exits the loop.
+            if d.node == "x" {
+                NodeOutcome::ok_on(json!(3), "done")
+            } else {
+                NodeOutcome::ok(d.payload.clone())
+            }
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(
+        resumed,
+        [("x".to_string(), 2), ("out".to_string(), 0)],
+        "the walk resumes at x's THIRD visit (occurrence 2), then exits"
+    );
 }
 
 #[test]

@@ -69,6 +69,15 @@ as an emission on the `error` port carrying the `{"error": …}` payload, so
 reconstruction needs no error taxonomy). A node with a persisted record is never
 re-dispatched — its effect does not repeat.
 
+`occurrence` is engine-computed (`Dispatch::occurrence`: the count of the node's
+prior **completed** visits in the run), so any node visited more than once — a
+loop, or a **merge**, which runs once per arriving token even in an acyclic flow —
+persists one row per visit, and replay walks the history visit-by-visit. Retries
+of one visit share its row (`attempt` bumps; `occurrence` advances only on
+completion). The old v1 shortcut (`occurrence = 0` always) silently collapsed a
+revisited node's history: correct only when **no node is visited more than
+once**, a condition merges break even in acyclic flows (wamn-03m / cjv.10 / R24).
+
 A record whose node does not match what the flow dispatches at that point is a
 `ResumeError::Mismatch` — a drift guard against a corrupt history or a flow-version
 skew. A completed node with no captured emission (9.6 capture off) makes the run
@@ -106,13 +115,9 @@ the original run and its node-runs immutable — an audit/billing-safe lineage c
 ### v1 driver limitations
 
 The `wamn-run-store` crate and the `runs`/`node_runs` schema are loop- and
-version-general; two limitations live only in the v1 `components/flowrunner`
-driver and are tracked follow-ups:
+version-general; one limitation lives only in the v1 `components/flowrunner`
+driver and is a tracked follow-up:
 
-- **`occurrence`** is always written as `0`. That is exact for the acyclic flows
-  the driver runs; a flow that revisits a node needs the driver to compute
-  `occurrence` from the node's prior visits (the PK and `seq`-ordered
-  reconstruction already accommodate it).
 - **Resume reconstructs against the *active* flow version**, not the run's
   persisted `flow_version` (which `runs` already records). This is safe while a
   flow's versions stay structurally compatible, and `Plan::resume` raises

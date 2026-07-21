@@ -32,14 +32,14 @@ pub fn update_run_completed() -> Sql {
     Sql::new(update_run_completed_sql(), 2)
 }
 
-/// [`insert_node_run_success_sql`] carried with its param arity (`$1..$6`).
+/// [`insert_node_run_success_sql`] carried with its param arity (`$1..$7`).
 pub fn insert_node_run_success() -> Sql {
-    Sql::new(insert_node_run_success_sql(), 6)
+    Sql::new(insert_node_run_success_sql(), 7)
 }
 
-/// [`insert_node_run_error_sql`] carried with its param arity (`$1..$7`).
+/// [`insert_node_run_error_sql`] carried with its param arity (`$1..$8`).
 pub fn insert_node_run_error() -> Sql {
-    Sql::new(insert_node_run_error_sql(), 7)
+    Sql::new(insert_node_run_error_sql(), 8)
 }
 
 /// Idempotent run open (caller-minted run id): a fresh run records its trigger
@@ -121,14 +121,17 @@ pub fn update_run_state_sql() -> String {
 
 /// Record a completed node execution — the durable per-node checkpoint,
 /// written after the node's effect commits; idempotent by
-/// `(run_id, node_id, occurrence)`. `occurrence` is 0 in v1 drivers (exact
-/// for acyclic flows — wamn-03m). `$1` run_id, `$2` node_id, `$3` seq,
-/// `$4` output_port, `$5` output_json, `$6` input_json.
+/// `(run_id, node_id, occurrence)`. `occurrence` is the engine-computed visit
+/// number ([`Dispatch::occurrence`](wamn_runner::Dispatch)) — a merge/loop
+/// node's Nth visit is its own row, so ON CONFLICT dedupes only a REPLAY of
+/// the same visit, never a distinct one (wamn-03m / cjv.10 / R24). `$1`
+/// run_id, `$2` node_id, `$3` occurrence, `$4` seq, `$5` output_port,
+/// `$6` output_json, `$7` input_json.
 pub fn insert_node_run_success_sql() -> String {
     format!(
         "INSERT INTO node_runs \
            (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json) \
-         VALUES (current_setting('app.tenant', true), $1, $2, 0, $3, '{success}', $4, $5, $6) \
+         VALUES (current_setting('app.tenant', true), $1, $2, $3, $4, '{success}', $5, $6, $7) \
          ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING",
         success = NodeRunStatus::Success.as_sql(),
     )
@@ -138,14 +141,15 @@ pub fn insert_node_run_success_sql() -> String {
 /// carrying the `{"error": {...}}` payload the engine routes — exactly what
 /// 5.7 reconstruction replays (no error taxonomy needed to resume); the
 /// taxonomy lands in `error_kind`/`error_detail` for the run history.
-/// `$1` run_id, `$2` node_id, `$3` seq, `$4` output_json (the error payload),
-/// `$5` input_json, `$6` error_kind, `$7` error_detail.
+/// `$1` run_id, `$2` node_id, `$3` occurrence (the engine-computed visit),
+/// `$4` seq, `$5` output_json (the error payload), `$6` input_json,
+/// `$7` error_kind, `$8` error_detail.
 pub fn insert_node_run_error_sql() -> String {
     format!(
         "INSERT INTO node_runs \
            (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json, \
             error_kind, error_detail) \
-         VALUES (current_setting('app.tenant', true), $1, $2, 0, $3, '{error}', 'error', $4, $5, $6, $7) \
+         VALUES (current_setting('app.tenant', true), $1, $2, $3, $4, '{error}', 'error', $5, $6, $7, $8) \
          ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING",
         error = NodeRunStatus::Error.as_sql(),
     )
@@ -157,7 +161,7 @@ pub fn insert_node_run_error_sql() -> String {
 /// re-dispatches. `$1` run_id.
 pub fn select_completed_node_runs_sql() -> String {
     format!(
-        "SELECT node_id, seq, output_port, output_json::text FROM node_runs \
+        "SELECT node_id, occurrence, seq, output_port, output_json::text FROM node_runs \
          WHERE run_id = $1 AND status IN ('{success}', '{error}') ORDER BY seq",
         success = NodeRunStatus::Success.as_sql(),
         error = NodeRunStatus::Error.as_sql(),
@@ -212,8 +216,8 @@ mod tests {
         }
         // The exact contract wamn-run-queue composes against, pinned.
         assert_eq!(update_run_completed().arity(), 2);
-        assert_eq!(insert_node_run_success().arity(), 6);
-        assert_eq!(insert_node_run_error().arity(), 7);
+        assert_eq!(insert_node_run_success().arity(), 7);
+        assert_eq!(insert_node_run_error().arity(), 8);
     }
 
     /// The builders stay in the house shape: unqualified tables, claim-scoped
@@ -239,6 +243,14 @@ mod tests {
                 sql.contains("ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING"),
                 "{sql}"
             );
+            // occurrence is the $3 PARAM (the engine-computed visit), never a
+            // literal 0 — a literal collapses a merge/loop node's N visits onto
+            // one row and ON CONFLICT silently drops the rest (cjv.10 / R24).
+            assert!(
+                sql.contains("VALUES (current_setting('app.tenant', true), $1, $2, $3, $4"),
+                "occurrence must bind as $3: {sql}"
+            );
+            assert!(!sql.contains(", 0,"), "no literal occurrence: {sql}");
         }
     }
 
@@ -270,6 +282,9 @@ mod tests {
         assert!(insert_node_run_error_sql().contains("'error', 'error'"));
         assert!(select_completed_node_runs_sql().contains("IN ('success', 'error')"));
         assert!(select_completed_node_runs_sql().contains("ORDER BY seq"));
+        // The reconstruction read carries the per-visit occurrence so the loaded
+        // records are faithful to the rows (partial re-run selects by it).
+        assert!(select_completed_node_runs_sql().contains("SELECT node_id, occurrence, seq"));
     }
 
     /// Every column the builders write exists in the canonical DDL — the

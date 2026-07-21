@@ -167,9 +167,15 @@ fn drive(plan: &Plan<'_>, run_id: &str, input: Value) -> (u16, Value) {
             Step::Dispatch(d) => {
                 let outcome = dispatch_node(&d, &mut http_status);
                 let recorded = match &outcome {
-                    NodeOutcome::Success { payload, port } => {
-                        record_success(run_id, &d.node, next_seq, port, payload, &d.payload)
-                    }
+                    NodeOutcome::Success { payload, port } => record_success(
+                        run_id,
+                        &d.node,
+                        d.occurrence,
+                        next_seq,
+                        port,
+                        payload,
+                        &d.payload,
+                    ),
                     // Record an error row ONLY when the node has an error edge
                     // (the emission actually routes): 5.7 reconstruction folds
                     // every completed row as an emission on its port, so an
@@ -177,7 +183,7 @@ fn drive(plan: &Plan<'_>, run_id: &str, input: Value) -> (u16, Value) {
                     // FAILED run as Completed. A run-failing node's record is
                     // the runs.fail_* columns — the flowrunner contract.
                     NodeOutcome::Error(err) if !plan.successors(&d.node, ERROR_PORT).is_empty() => {
-                        record_error(run_id, &d.node, next_seq, err, &d.payload)
+                        record_error(run_id, &d.node, d.occurrence, next_seq, err, &d.payload)
                     }
                     NodeOutcome::Error(_) => Ok(()),
                 };
@@ -497,8 +503,8 @@ fn write_ahead(flow_id: &str, version: u32, input: &Value) -> Result<String, Str
 
 fn mark_running(run_id: &str) -> Result<(), String> {
     client::execute(&run_sql::update_run_running_sql(), &[text(run_id)])
-    .map(|_| ())
-    .map_err(|e| pg_tag(&e))
+        .map(|_| ())
+        .map_err(|e| pg_tag(&e))
 }
 
 fn mark_completed(run_id: &str, result: &Value) -> Result<(), String> {
@@ -524,6 +530,7 @@ fn mark_failed(run_id: &str, kind: &str, node: &str, reason: &str) -> Result<(),
 fn record_success(
     run_id: &str,
     node_id: &str,
+    occurrence: u32,
     seq: i32,
     port: &str,
     output: &Value,
@@ -534,6 +541,7 @@ fn record_success(
         &[
             text(run_id),
             text(node_id),
+            SqlValue::Int32(occurrence as i32),
             SqlValue::Int32(seq),
             text(port),
             jsonb(output),
@@ -551,6 +559,7 @@ fn record_success(
 fn record_error(
     run_id: &str,
     node_id: &str,
+    occurrence: u32,
     seq: i32,
     err: &NodeError,
     input: &Value,
@@ -561,6 +570,7 @@ fn record_error(
         &[
             text(run_id),
             text(node_id),
+            SqlValue::Int32(occurrence as i32),
             SqlValue::Int32(seq),
             jsonb(&error_payload(detail)),
             jsonb(input),

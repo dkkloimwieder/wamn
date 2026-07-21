@@ -260,17 +260,17 @@ pub fn complete_dequeue_sql() -> String {
 }
 
 /// Per-node checkpoint + heartbeat as ONE statement (fqg.18): composes the 5.7
-/// [`wamn_run_store::sql::insert_node_run_success`] (`$1`..`$6`, idempotent by
+/// [`wamn_run_store::sql::insert_node_run_success`] (`$1`..`$7`, idempotent by
 /// `(run_id, node_id, occurrence)`) with the [`renew_lease_sql`] write (ttl_ms,
 /// owner — owner-guarded, sharing `$1` run_id). The renew fires even when the
-/// record is a conflict no-op (a cycle re-visiting a node), so a long cyclic
-/// walk's lease stays live exactly as the split pair kept it.
+/// record is a conflict no-op (a replay of an already-recorded visit), so a
+/// long cyclic walk's lease stays live exactly as the split pair kept it.
 pub fn record_success_and_renew_sql() -> String {
     checkpoint_then_renew(wamn_run_store::sql::insert_node_run_success())
 }
 
 /// The error-routed twin of [`record_success_and_renew_sql`]: composes
-/// [`wamn_run_store::sql::insert_node_run_error`] (`$1`..`$7`) with the
+/// [`wamn_run_store::sql::insert_node_run_error`] (`$1`..`$8`) with the
 /// owner-guarded lease renew.
 pub fn record_error_and_renew_sql() -> String {
     checkpoint_then_renew(wamn_run_store::sql::insert_node_run_error())
@@ -280,8 +280,8 @@ pub fn record_error_and_renew_sql() -> String {
 /// they share (fqg.18). SR11: the tail SHARES the head's `$1` (run_id) and appends
 /// two NEW params — ttl_ms and the owner guard — numbered against the head's arity
 /// ([`Sql::param`]), so a param added upstream (a different crate) can never
-/// silently shift them onto the wrong bind. Success head arity 6 → the renew binds
-/// land at `$7`/`$8`; error head arity 7 → `$8`/`$9`.
+/// silently shift them onto the wrong bind. Success head arity 7 → the renew binds
+/// land at `$8`/`$9`; error head arity 8 → `$9`/`$10`.
 ///
 /// SR12 (composed statement): the pure tests pin the text and the arity
 /// arithmetic; they cannot observe the data-modifying-CTE snapshot semantics,
@@ -723,19 +723,19 @@ mod tests {
     }
 
     /// The real composed statements bind exactly the head's arity + the renew's two
-    /// new params: success $1..$8, error $1..$9, complete $1..$2 (dequeue shares
+    /// new params: success $1..$9, error $1..$10, complete $1..$2 (dequeue shares
     /// $1, adds none). Pinned against the arity the producing crate declares.
     #[test]
     fn composed_arity_flows_from_the_producing_crate() {
-        assert_eq!(wamn_run_store::sql::insert_node_run_success().arity(), 6);
+        assert_eq!(wamn_run_store::sql::insert_node_run_success().arity(), 7);
         let s = record_success_and_renew_sql();
-        assert!(s.contains("AND run_id = $1 AND lease_owner = $8"));
-        assert!(!s.contains("$9"));
+        assert!(s.contains("AND run_id = $1 AND lease_owner = $9"));
+        assert!(!s.contains("$10"));
 
-        assert_eq!(wamn_run_store::sql::insert_node_run_error().arity(), 7);
+        assert_eq!(wamn_run_store::sql::insert_node_run_error().arity(), 8);
         let e = record_error_and_renew_sql();
-        assert!(e.contains("AND run_id = $1 AND lease_owner = $9"));
-        assert!(!e.contains("$10"));
+        assert!(e.contains("AND run_id = $1 AND lease_owner = $10"));
+        assert!(!e.contains("$11"));
 
         assert_eq!(wamn_run_store::sql::update_run_completed().arity(), 2);
         let c = complete_dequeue_sql();

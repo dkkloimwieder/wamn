@@ -355,23 +355,23 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
     );
 
     // record+renew = the 5.7 checkpoint insert verbatim + the owner-guarded
-    // renew tail; param numbering pinned ($7/$8 success, $8/$9 error).
+    // renew tail; param numbering pinned ($8/$9 success, $9/$10 error).
     let rs = record_success_and_renew_sql();
     assert!(
         rs.contains(&wamn_run_store::sql::insert_node_run_success_sql()),
         "record_success_and_renew_sql no longer composes insert_node_run_success_sql verbatim"
     );
-    assert!(rs.contains("$7::bigint * interval '1 millisecond'"));
-    assert!(rs.contains("AND run_id = $1 AND lease_owner = $8"));
-    assert!(!rs.contains("$9"));
+    assert!(rs.contains("$8::bigint * interval '1 millisecond'"));
+    assert!(rs.contains("AND run_id = $1 AND lease_owner = $9"));
+    assert!(!rs.contains("$10"));
     let re = record_error_and_renew_sql();
     assert!(
         re.contains(&wamn_run_store::sql::insert_node_run_error_sql()),
         "record_error_and_renew_sql no longer composes insert_node_run_error_sql verbatim"
     );
-    assert!(re.contains("$8::bigint * interval '1 millisecond'"));
-    assert!(re.contains("AND run_id = $1 AND lease_owner = $9"));
-    assert!(!re.contains("$10"));
+    assert!(re.contains("$9::bigint * interval '1 millisecond'"));
+    assert!(re.contains("AND run_id = $1 AND lease_owner = $10"));
+    assert!(!re.contains("$11"));
 }
 
 // ---- wamn-v8cv: the terminal dead-letter dequeue ---------------------------
@@ -1725,8 +1725,8 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
         "BEGIN;\n\
          SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
          PREPARE cd_stmt (text, bigint) AS {claim_dispatch};\n\
-         PREPARE csr_stmt (text, text, int, text, jsonb, jsonb, bigint, text) AS {record_success_renew};\n\
-         PREPARE cer_stmt (text, text, int, jsonb, jsonb, text, jsonb, bigint, text) AS {record_error_renew};\n\
+         PREPARE csr_stmt (text, text, int, int, text, jsonb, jsonb, bigint, text) AS {record_success_renew};\n\
+         PREPARE cer_stmt (text, text, int, int, jsonb, jsonb, text, jsonb, bigint, text) AS {record_error_renew};\n\
          PREPARE cdq_stmt (text, jsonb) AS {complete_dequeue};\n\
          -- ONE statement: claim + mark running + dispatch read + version probe.\n\
          CREATE TEMP TABLE cd_probe AS EXECUTE cd_stmt('cd-owner', 60000);\n\
@@ -1741,21 +1741,31 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          -- Per-node checkpoint + heartbeat: record advances the lease (owner-guarded).\n\
          CREATE TEMP TABLE lease_t0 AS SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0';\n\
-         EXECUTE csr_stmt('cd-0','n1',0,'main','\"out\"','\"in\"',120000,'cd-owner');\n\
+         EXECUTE csr_stmt('cd-0','n1',0,0,'main','\"out\"','\"in\"',120000,'cd-owner');\n\
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND node_id='n1' AND status='success') = 1, 'combined record wrote the checkpoint'; \
            ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') > (SELECT lease_expires_at FROM lease_t0), 'combined record renewed the lease'; \
          END $$;\n\
+         -- Per-visit occurrence (wamn-03m/cjv.10): a REPLAY of visit 0 is an\n\
+         -- ON CONFLICT no-op (first writer wins), while visit 1 of the SAME\n\
+         -- node is a distinct row — N visits persist N rows.\n\
+         EXECUTE csr_stmt('cd-0','n1',0,90,'main','\"out-replay\"','\"in\"',120000,'cd-owner');\n\
+         EXECUTE csr_stmt('cd-0','n1',1,91,'main','\"out-v2\"','\"in2\"',120000,'cd-owner');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND node_id='n1') = 2, 'distinct visits persist distinct rows'; \
+           ASSERT (SELECT output_json FROM node_runs WHERE run_id='cd-0' AND node_id='n1' AND occurrence=0) = '\"out\"', 'a replayed visit does not overwrite its row'; \
+           ASSERT (SELECT output_json FROM node_runs WHERE run_id='cd-0' AND node_id='n1' AND occurrence=1) = '\"out-v2\"', 'the second visit carries its own emission'; \
+         END $$;\n\
          -- A straggler with the WRONG owner still records (idempotent checkpoint,\n\
          -- same as the split path) but cannot renew the lease.\n\
          CREATE TEMP TABLE lease_t1 AS SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0';\n\
-         EXECUTE csr_stmt('cd-0','n2',1,'main','\"out\"','\"in\"',300000,'not-the-owner');\n\
+         EXECUTE csr_stmt('cd-0','n2',0,1,'main','\"out\"','\"in\"',300000,'not-the-owner');\n\
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND node_id='n2') = 1, 'wrong-owner record still checkpoints'; \
            ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') = (SELECT lease_expires_at FROM lease_t1), 'wrong-owner record does NOT renew the lease'; \
          END $$;\n\
          -- The error-routed twin.\n\
-         EXECUTE cer_stmt('cd-0','n3',2,'{{\"error\":{{}}}}','\"in\"','terminal','{{\"message\":\"x\"}}',240000,'cd-owner');\n\
+         EXECUTE cer_stmt('cd-0','n3',0,2,'{{\"error\":{{}}}}','\"in\"','terminal','{{\"message\":\"x\"}}',240000,'cd-owner');\n\
          DO $$ BEGIN \
            ASSERT (SELECT error_kind FROM node_runs WHERE run_id='cd-0' AND node_id='n3') = 'terminal', 'combined error record carries the taxonomy'; \
            ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') > (SELECT lease_expires_at FROM lease_t1), 'error record renews the lease too'; \

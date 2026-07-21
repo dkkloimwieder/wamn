@@ -25,7 +25,7 @@
 //! only `step_seq` (completed-step count), which the driver uses for the linear
 //! resume path.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use serde_json::Value;
 
@@ -109,6 +109,11 @@ pub struct RunState {
     /// per-invocation counter the dispatch budget (cjv.4) is checked against.
     /// Reconstruction ([`Plan::resume`]) does not count.
     dispatched: u64,
+    /// COMPLETED visits per node (a success or an error-ROUTED emission; retries
+    /// of one visit do not count) — the source of [`Dispatch::occurrence`], so a
+    /// merge/loop node's Nth visit persists as its own `node_runs` row instead of
+    /// colliding on occurrence 0 (wamn-03m / R24).
+    visits: HashMap<String, u32>,
     result: Value,
     failure: Option<Failure>,
 }
@@ -184,6 +189,12 @@ pub struct Dispatch {
     pub payload: Value,
     /// 0 on first execution, incremented per retry.
     pub attempt: u32,
+    /// Which VISIT of this node in this run (0 = first): a merge runs once per
+    /// arriving token and a loop revisits its nodes, each visit a distinct
+    /// occurrence. Stable across retries of one visit (only a completed visit
+    /// advances it) — the loop-safe part of the `node_runs` idempotency key
+    /// `(run, node, occurrence)` the driver persists (wamn-03m / R24).
+    pub occurrence: u32,
     /// Stable across retries of this node in this run — forward to external
     /// systems that support idempotency headers.
     pub idempotency_key: String,
@@ -290,6 +301,7 @@ impl<'f> Plan<'f> {
             current: None,
             step_seq: 0,
             dispatched: 0,
+            visits: HashMap::new(),
             result: Value::Null,
             failure: None,
         }
@@ -378,6 +390,7 @@ impl<'f> Plan<'f> {
             credential: node.credential.clone(),
             payload: a.payload.clone(),
             attempt: a.attempt,
+            occurrence: state.visits.get(&a.node).copied().unwrap_or(0),
             idempotency_key: format!("{}:{}", state.run_id, a.node),
             deadline_ms: node.config.get("deadline-ms").and_then(Value::as_u64),
         }
@@ -408,6 +421,7 @@ impl<'f> Plan<'f> {
             NodeOutcome::Success { payload, port } => {
                 state.current = None;
                 state.step_seq += 1;
+                *state.visits.entry(dispatch.node.clone()).or_default() += 1;
                 state.result = payload.clone();
                 self.enqueue_successors(state, &dispatch.node, &port, payload);
             }
@@ -483,6 +497,10 @@ impl<'f> Plan<'f> {
                 detail,
             });
         } else {
+            // An error-ROUTED emission is a COMPLETED visit (the driver persists
+            // its `node_runs` row), so it advances the node's occurrence exactly
+            // as a success does; a run-ending failure above does not.
+            *state.visits.entry(node.to_string()).or_default() += 1;
             let payload = detail.to_error_payload();
             for edge in error_edges {
                 state.frontier.push_back(Token {
@@ -602,6 +620,7 @@ impl<'f> Plan<'f> {
             current: None,
             step_seq: 0,
             dispatched: 0,
+            visits: HashMap::new(),
             result: Value::Null,
             failure: None,
         })

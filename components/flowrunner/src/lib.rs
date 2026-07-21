@@ -207,22 +207,29 @@ fn load_completed(run_id: &str) -> Result<Vec<NodeRunRecord>, String> {
             Some(SqlValue::Text(s)) => s.clone(),
             other => return Err(format!("node_runs.node_id shape: {other:?}")),
         };
-        let seq = match row.get(1) {
+        let occurrence = match row.get(1) {
+            Some(SqlValue::Int32(n)) => *n as u32,
+            Some(SqlValue::Int64(n)) => *n as u32,
+            other => return Err(format!("node_runs.occurrence shape: {other:?}")),
+        };
+        let seq = match row.get(2) {
             Some(SqlValue::Int32(n)) => *n as u32,
             Some(SqlValue::Int64(n)) => *n as u32,
             other => return Err(format!("node_runs.seq shape: {other:?}")),
         };
-        let port = match row.get(2) {
+        let port = match row.get(3) {
             Some(SqlValue::Text(s)) => s.clone(),
             _ => "main".to_string(),
         };
-        let output = match row.get(3) {
+        let output = match row.get(4) {
             Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => {
                 serde_json::from_str(s).map_err(|e| format!("node_runs.output_json parse: {e}"))?
             }
             _ => Value::Null,
         };
-        out.push(NodeRunRecord::success(run_id, node_id, seq, port, output));
+        let mut rec = NodeRunRecord::success(run_id, node_id, seq, port, output);
+        rec.occurrence = occurrence;
+        out.push(rec);
     }
     Ok(out)
 }
@@ -242,13 +249,14 @@ fn pg_write(run_id: &str, step: i32, payload: &str) -> Result<(), String> {
 }
 
 /// Record a completed node execution — the durable per-node checkpoint, written
-/// after the node's effect commits. Idempotent by (run_id, node_id, occurrence).
-/// v1 writes `occurrence = 0`: exact for the acyclic fixture flows; a flow that
-/// revisits a node would compute occurrence from its prior visits (the schema +
-/// `wamn-run-store` reconstruction already accommodate that — see docs/run-state.md).
+/// after the node's effect commits. Idempotent by (run_id, node_id, occurrence):
+/// `occurrence` is the engine-computed visit ([`Dispatch::occurrence`]), so a
+/// merge/loop node's Nth visit lands as its own row and ON CONFLICT dedupes only
+/// a replay of the SAME visit (wamn-03m / R24).
 fn record_node_run(
     run_id: &str,
     node_id: &str,
+    occurrence: u32,
     seq: i32,
     port: &str,
     output: &Value,
@@ -259,6 +267,7 @@ fn record_node_run(
         &[
             text(run_id),
             text(node_id),
+            int32(occurrence as i32),
             int32(seq),
             text(port),
             jsonb(output),
@@ -776,6 +785,7 @@ fn will_error_route(err: &NodeError, d: &Dispatch) -> bool {
 fn record_error(
     run_id: &str,
     node_id: &str,
+    occurrence: u32,
     seq: i32,
     err: &NodeError,
     input: &Value,
@@ -786,6 +796,7 @@ fn record_error(
         &[
             text(run_id),
             text(node_id),
+            int32(occurrence as i32),
             int32(seq),
             jsonb(&payload),
             jsonb(input),
@@ -1178,7 +1189,13 @@ fn execute(
                             // commits) so a later invocation reconstructs past it.
                             NodeOutcome::Success { payload, port } => {
                                 record_node_run(
-                                    run_id, &d.node, next_seq, port, payload, &d.payload,
+                                    run_id,
+                                    &d.node,
+                                    d.occurrence,
+                                    next_seq,
+                                    port,
+                                    payload,
+                                    &d.payload,
                                 )?;
                                 next_seq += 1;
                             }
@@ -1192,7 +1209,14 @@ fn execute(
                                 if will_error_route(err, &d)
                                     && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
                             {
-                                record_error(run_id, &d.node, next_seq, err, &d.payload)?;
+                                record_error(
+                                    run_id,
+                                    &d.node,
+                                    d.occurrence,
+                                    next_seq,
+                                    err,
+                                    &d.payload,
+                                )?;
                                 next_seq += 1;
                             }
                             NodeOutcome::Error(_) => {}
@@ -1341,11 +1365,12 @@ fn active_flow(flow_id: &str, active_version: Option<u32>) -> Result<Rc<Flow>, S
 /// node, each record covers the next.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the checkpoint row's six columns plus the renew pair, mirroring the statement"
+    reason = "the checkpoint row's seven columns plus the renew pair, mirroring the statement"
 )]
 fn record_node_run_and_renew(
     run_id: &str,
     node_id: &str,
+    occurrence: u32,
     seq: i32,
     port: &str,
     output: &Value,
@@ -1358,6 +1383,7 @@ fn record_node_run_and_renew(
         &[
             text(run_id),
             text(node_id),
+            int32(occurrence as i32),
             int32(seq),
             text(port),
             jsonb(output),
@@ -1371,9 +1397,14 @@ fn record_node_run_and_renew(
 }
 
 /// The error-routed twin of [`record_node_run_and_renew`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the error row's columns plus the renew pair, mirroring the statement"
+)]
 fn record_error_and_renew(
     run_id: &str,
     node_id: &str,
+    occurrence: u32,
     seq: i32,
     err: &NodeError,
     input: &Value,
@@ -1386,6 +1417,7 @@ fn record_error_and_renew(
         &[
             text(run_id),
             text(node_id),
+            int32(occurrence as i32),
             int32(seq),
             jsonb(&payload),
             jsonb(input),
@@ -1694,7 +1726,14 @@ fn execute_claimed(
                         match &outcome {
                             NodeOutcome::Success { payload, port } => {
                                 record_node_run_and_renew(
-                                    run_id, &d.node, next_seq, port, payload, &d.payload, ttl_ms,
+                                    run_id,
+                                    &d.node,
+                                    d.occurrence,
+                                    next_seq,
+                                    port,
+                                    payload,
+                                    &d.payload,
+                                    ttl_ms,
                                     owner,
                                 )?;
                                 next_seq += 1;
@@ -1704,7 +1743,14 @@ fn execute_claimed(
                                     && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
                             {
                                 record_error_and_renew(
-                                    run_id, &d.node, next_seq, err, &d.payload, ttl_ms, owner,
+                                    run_id,
+                                    &d.node,
+                                    d.occurrence,
+                                    next_seq,
+                                    err,
+                                    &d.payload,
+                                    ttl_ms,
+                                    owner,
                                 )?;
                                 next_seq += 1;
                             }

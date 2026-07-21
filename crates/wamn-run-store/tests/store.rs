@@ -136,6 +136,106 @@ fn reconstruct_replays_an_error_routed_node() {
     assert_eq!(drive_collect(&plan, &mut st), ["h"]); // error branch, not "ok"
 }
 
+/// A diamond a -> {b, c} -> d -> e: acyclic, yet d runs twice (once per
+/// arriving token) and e twice downstream of it.
+fn diamond_e() -> Flow {
+    flow(
+        r#"{"schema-version":"0.1","flow-id":"dia","version":1,
+            "trigger":{"type":"manual"},"entry":"a",
+            "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"echo"},
+                     {"id":"c","type":"echo"},{"id":"d","type":"echo"},
+                     {"id":"e","type":"echo"}],
+            "edges":[{"from":"a","to":"b"},{"from":"a","to":"c"},
+                     {"from":"b","to":"d"},{"from":"c","to":"d"},
+                     {"from":"d","to":"e"}]}"#,
+    )
+}
+
+/// A per-visit row: [`NodeRunRecord::success`] at the given occurrence — the
+/// shape the driver now persists for a revisited node (wamn-03m / R24).
+fn success_at(node: &str, occurrence: u32, seq: u32) -> NodeRunRecord {
+    let mut nr = NodeRunRecord::success(
+        "r1",
+        node,
+        seq,
+        "main",
+        json!({ "at": node, "occ": occurrence }),
+    );
+    nr.occurrence = occurrence;
+    nr
+}
+
+#[test]
+fn reconstruct_replays_per_visit_merge_rows() {
+    // R24: a diamond killed mid-merge — d's first visit persisted as its own
+    // row (occurrence 0), the second outstanding. Reconstruction replays the
+    // per-visit history and re-dispatches ONLY the missing second visit.
+    let f = diamond_e();
+    let plan = Plan::compile(&f).unwrap();
+    let run = RunRecord::new("r1", "dia", 1, json!({}));
+    let node_runs = [
+        success_at("a", 0, 0),
+        success_at("b", 0, 1),
+        success_at("c", 0, 2),
+        success_at("d", 0, 3), // first arrival recorded; second visit killed
+    ];
+    let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
+    assert_eq!(
+        drive_collect(&plan, &mut st),
+        ["d", "e", "e"],
+        "the second merge visit and its downstream remain outstanding"
+    );
+}
+
+#[test]
+fn reconstruct_full_per_visit_history_is_idempotent() {
+    // Every visit of the diamond recorded (d and e twice each, in the BFS
+    // dispatch order the walk actually took — d's second token dispatches
+    // before e's first): resume folds seven rows and completes without
+    // re-dispatching anything.
+    let f = diamond_e();
+    let plan = Plan::compile(&f).unwrap();
+    let run = RunRecord::new("r1", "dia", 1, json!({}));
+    let node_runs = [
+        success_at("a", 0, 0),
+        success_at("b", 0, 1),
+        success_at("c", 0, 2),
+        success_at("d", 0, 3),
+        success_at("d", 1, 4),
+        success_at("e", 0, 5),
+        success_at("e", 1, 6),
+    ];
+    let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
+    assert_eq!(drive_collect(&plan, &mut st), Vec::<String>::new());
+}
+
+#[test]
+fn reconstruct_detects_legacy_collapsed_merge_history() {
+    // A run recorded under the old occurrence=0 shortcut: the merge's second
+    // visit (and e's) were ON CONFLICT-dropped, so the surviving history claims
+    // single visits. Replay is visit-by-visit, so the walk dispatches d's
+    // second visit where the history says e — a loud Mismatch, never a silent
+    // divergence (the damage is pre-existing; the guard makes it detectable).
+    let f = diamond_e();
+    let plan = Plan::compile(&f).unwrap();
+    let run = RunRecord::new("r1", "dia", 1, json!({}));
+    let node_runs = [
+        success_at("a", 0, 0),
+        success_at("b", 0, 1),
+        success_at("c", 0, 2),
+        success_at("d", 0, 3),
+        success_at("e", 0, 4), // the collapsed post-merge row
+    ];
+    let err = reconstruct(&plan, &run, &node_runs).unwrap_err();
+    assert_eq!(
+        err,
+        ReconstructError::Resume(ResumeError::Mismatch {
+            recorded: "e".into(),
+            dispatched: "d".into()
+        })
+    );
+}
+
 #[test]
 fn reconstruct_capture_off_run_is_not_replayable() {
     let f = linear4();

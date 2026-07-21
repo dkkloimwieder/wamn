@@ -30,6 +30,11 @@
 //!     via the gate-local `Worker`, proven here through the long-lived runner.
 //!     Dispatch order is read from a gate-local `sink.dispatch_seq` IDENTITY
 //!     witness (execution order, not seed order).
+//!   * MERGE-RESUME (wamn-03m/cjv.10/wamn-2jkm.42, R24): a diamond whose merge
+//!     is a delay node parks between the merge's two visits; every re-claim
+//!     reconstructs the partially-recorded merge, and each visit persists its
+//!     OWN `node_runs` row (occurrence 0/1) — the per-visit occurrence proof
+//!     through the production claim path.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -69,6 +74,31 @@ fn runaway_flow_json() -> String {
             ],
             "edges":[{{"from":"in","to":"a"}},{{"from":"a","to":"b"}},
                      {{"from":"b","to":"a"}}]}}"#
+    )
+}
+
+/// The wamn-03m/R24 merge-resume fixture: a diamond in -> {ba, bb} -> m -> r
+/// whose MERGE is a `delay` node, so the claim path PARKS between the merge's
+/// two visits — every re-claim reconstructs a partially-recorded merge from
+/// `node_runs` through the production resume seam. Pre-R24 the second visit's
+/// row was ON CONFLICT-dropped (occurrence hardcoded 0) and the history
+/// collapsed; the phase asserts one row PER VISIT.
+const MERGE_FLOW_ID: &str = "merge-resume";
+
+fn merge_flow_json() -> String {
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"{MERGE_FLOW_ID}","version":1,
+            "trigger":{{"type":"manual"}},"entry":"in",
+            "nodes":[
+              {{"id":"in","type":"webhook-in"}},
+              {{"id":"ba","type":"transform","config":{{"op":"upper"}}}},
+              {{"id":"bb","type":"transform","config":{{"op":"reverse"}}}},
+              {{"id":"m","type":"delay","config":{{"delay-secs":1}}}},
+              {{"id":"r","type":"respond"}}
+            ],
+            "edges":[{{"from":"in","to":"ba"}},{{"from":"in","to":"bb"}},
+                     {{"from":"ba","to":"m"}},{{"from":"bb","to":"m"}},
+                     {{"from":"m","to":"r"}}]}}"#
     )
 }
 
@@ -760,6 +790,88 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             q8 == 0
         );
 
+        // --- (9) MERGE-RESUME (wamn-03m / cjv.10 / wamn-2jkm.42, R24): a
+        // diamond whose merge `m` is a delay node. The walk parks at m's FIRST
+        // arrival, again between m's two visits, and each re-claim
+        // RECONSTRUCTS the run from node_runs through the production resume
+        // seam — after m's first visit is recorded, the replay folds a
+        // partially-recorded merge (the kill-mid-D shape, via parks). The
+        // occurrence fix is what makes this converge: each visit persists its
+        // OWN row (m@0/m@1, r@0/r@1 — 7 rows total). Pre-R24 the second-visit
+        // inserts were ON CONFLICT-dropped (5 rows), history collapsed, and a
+        // later resume of such a run died Mismatch.
+        wamn_gate_harness::seed_flow_version(
+            &seed_conn,
+            TENANT,
+            MERGE_FLOW_ID,
+            1,
+            true,
+            &merge_flow_json(),
+            true,
+        )
+        .await?;
+        seed_flow_run(&mut seed_conn, "mr-0", MERGE_FLOW_ID).await?;
+        let mut mr_claims = 0usize;
+        let mr_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mr_status = format!("SELECT status FROM {SCHEMA}.runs WHERE run_id = 'mr-0'");
+        loop {
+            let r = worker.drain().await?;
+            mr_claims += r.claimed;
+            let status: String = seed_conn.query_one(&mr_status, &[]).await?.get(0);
+            if status == "completed" {
+                break;
+            }
+            if std::time::Instant::now() > mr_deadline {
+                bail!("merge-resume FAIL: run mr-0 still '{status}' after 30s ({mr_claims} claims)");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        let mr_rows = count(
+            &seed_conn,
+            &format!("SELECT count(*) FROM {SCHEMA}.node_runs WHERE run_id = 'mr-0'"),
+        )
+        .await?;
+        let mr_m: (i64, i32, i32) = {
+            let row = seed_conn
+                .query_one(
+                    &format!(
+                        "SELECT count(*), min(occurrence)::int, max(occurrence)::int \
+                         FROM {SCHEMA}.node_runs WHERE run_id = 'mr-0' AND node_id = 'm'"
+                    ),
+                    &[],
+                )
+                .await?;
+            (row.get(0), row.get(1), row.get(2))
+        };
+        let mr_r: (i64, i32, i32) = {
+            let row = seed_conn
+                .query_one(
+                    &format!(
+                        "SELECT count(*), min(occurrence)::int, max(occurrence)::int \
+                         FROM {SCHEMA}.node_runs WHERE run_id = 'mr-0' AND node_id = 'r'"
+                    ),
+                    &[],
+                )
+                .await?;
+            (row.get(0), row.get(1), row.get(2))
+        };
+        let q9 = count(&seed_conn, &queued).await?;
+        // >= 3 claims: the fresh claim + at least one park-wake reclaim BEFORE
+        // m's first record and one AFTER it — the latter is the replay of a
+        // partially-recorded merge this phase exists to prove.
+        let merge_resume_ok = mr_rows == 7
+            && mr_m == (2, 0, 1)
+            && mr_r == (2, 0, 1)
+            && mr_claims >= 3
+            && q9 == 0;
+        println!(
+            "## merge-resume — diamond with delay-merge via RunWorker::drain: completed after \
+             {mr_claims} claims (>=3 -> parked mid-merge and resumed), node_runs rows = {mr_rows} \
+             (want 7 — one PER VISIT), m visits = {mr_m:?} (want (2,0,1)), r visits = {mr_r:?} \
+             (want (2,0,1)), queue drained = {} -> {merge_resume_ok}",
+            q9 == 0
+        );
+
         anyhow::Ok(
             drain1
                 && reuse
@@ -768,7 +880,8 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
                 && stream_ok
                 && reload_ok
                 && partition_ok
-                && partition_terminal_ok,
+                && partition_terminal_ok
+                && merge_resume_ok,
         )
     }
     .await;

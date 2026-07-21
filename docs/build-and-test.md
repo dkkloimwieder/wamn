@@ -2500,3 +2500,31 @@ The live gate is the SAME `nodeinvoke` command as [NODE-INVOKE / wamn-bd5];
 rebuild the flowrunner guest + wamn-gates first (the fqg.32 flowrunner change
 below re-touches the guest). Mutation harness: scratchpad `mutate_lane_a.py`
 (≥3 mutants; each must fail a NAMED gate check / unit test).
+
+### [R24 / wamn-03m + wamn-cjv.10 + wamn-2jkm.42] per-visit occurrence — merge/loop history + resume
+
+Docs: docs/run-state.md (branch-aware replay — the occurrence paragraph)
+
+The engine computes `Dispatch::occurrence` (prior COMPLETED visits of the node
+in the run); both guests bind it into the `node_runs` insert builders
+(occurrence is `$3`, never a literal 0), so a merge/loop node's N visits
+persist N rows and reconstruction replays visit-by-visit.
+
+```bash
+cargo test -p wamn-runner    # occurrence semantics + diamond/loop resume (R24 VERIFY)
+cargo test -p wamn-run-store # per-visit reconstruction + legacy collapsed-history Mismatch
+cargo test -p wamn-run-queue # composed-statement arity renumbering ($8/$9, $9/$10)
+# live builders (throwaway PG; the queue live script pins replay-no-op vs distinct-visit row):
+WAMN_RUN_QUEUE_PG_URL=... WAMN_RUN_STORE_PG_URL=... cargo test -p wamn-run-queue -p wamn-run-store
+# guests + the gate of record (runnerbench merge-resume: a diamond whose merge is a
+# delay node parks between the merge's visits; every re-claim reconstructs — want
+# 7 node_runs rows, m/r visits (2,0,1)):
+(cd components/flowrunner && cargo build --release --target wasm32-wasip2)
+(cd components/poc-webhook-f1 && cargo build --release --target wasm32-wasip2)
+./target/debug/wamn-gates runnerbench --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url ... --admin-database-url ...
+# regressions: failoverbench (all), flowbench (all), testhostbench (all), f1bench (all).
+# mutants (apply/test/restore, each fails a NAMED check): engine occurrence:=0 ->
+# merge_visits_carry_distinct_occurrences; builder occurrence:=literal 0 ->
+# builders_are_claim_scoped_and_parameterized; success-arm visits bump dropped ->
+# merge/diamond/loop tests; guest claim path records 0 -> runnerbench merge-resume (5 rows).
