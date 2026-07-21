@@ -94,6 +94,21 @@ pub struct BuildArgs {
     /// digest as OCI annotations. Absent = an UNSIGNED push (warned).
     #[arg(long, env = "WAMN_BUILDER_SIGNING_KEY")]
     pub signing_key: Option<PathBuf>,
+
+    /// 5.5f: write the node's serve-node runtime Deployment manifest to this path
+    /// (grants derived from imports). Requires `--registry` (for the OCI ref).
+    #[arg(long)]
+    pub emit_deployment: Option<PathBuf>,
+
+    /// 5.5f: a host the node's outbound `wasi:http` may reach (repeatable). The
+    /// emitted `--allowed-hosts` grant — REQUIRED iff the node imports
+    /// `wasi:http`, REFUSED otherwise.
+    #[arg(long = "allowed-host")]
+    pub allowed_host: Vec<String>,
+
+    /// 5.5f: the project whose vault the emitted node reads (`WAMN_PROJECT`).
+    #[arg(long, default_value = "default")]
+    pub project: String,
 }
 
 impl BuildArgs {
@@ -317,14 +332,14 @@ async fn load_signing_key(args: &BuildArgs) -> anyhow::Result<Option<crate::sign
 
 /// Push the built artifact with the `wamn.node.manifest` + SBOM + (optional)
 /// signature annotations (5.5e/5.5d). The manifest is validated (`is_valid`)
-/// BEFORE push.
+/// BEFORE push. Returns the push result (for the 5.5f deployment emission).
 async fn push_artifact(
     target: &crate::registry::RegistryRef,
     node_manifest: &wamn_node_manifest::NodeManifest,
     wasm: &[u8],
     signing: Option<&crate::sign::SigningKey>,
     sbom: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<crate::registry::Pushed> {
     let annotations = build_push_annotations(node_manifest, wasm, signing, sbom);
     let signed = if signing.is_some() {
         "signed"
@@ -336,6 +351,34 @@ async fn push_artifact(
         "pushed {signed} node artifact {} (manifest {} / layer {})",
         pushed.image, pushed.manifest_digest, pushed.layer_digest
     );
+    Ok(pushed)
+}
+
+/// 5.5f — write the serve-node deployment manifest (grants derived from the
+/// built component's imports) when `--emit-deployment` is set.
+async fn emit_deployment_if_requested(
+    args: &BuildArgs,
+    node_type: &str,
+    wasm: &[u8],
+    pushed: &crate::registry::Pushed,
+    signing: Option<&crate::sign::SigningKey>,
+) -> anyhow::Result<()> {
+    let Some(path) = &args.emit_deployment else {
+        return Ok(());
+    };
+    let engine = build_engine(&[])?;
+    let grants =
+        wamn_host::egress_guard::derive_grants_from_component(engine.inner(), wasm, node_type)?;
+    let inputs = crate::deploy_emit::EmitInputs {
+        node_type: node_type.to_string(),
+        image: pushed.image.clone(),
+        signed_digest: format!("sha256:{}", crate::sign::artifact_digest_hex(wasm)),
+        signature: signing.map(|k| k.sign_artifact(wasm)),
+        project: args.project.clone(),
+        allowed_hosts: args.allowed_host.clone(),
+    };
+    crate::deploy_emit::write_deployment(path, &inputs, &grants).await?;
+    println!("emitted serve-node deployment manifest: {}", path.display());
     Ok(())
 }
 
@@ -344,6 +387,9 @@ async fn push_artifact(
 /// Signing / SBOM (5.5d) extend the push annotations.
 pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
     let target = push_target(&args)?;
+    if args.emit_deployment.is_some() && target.is_none() {
+        bail!("--emit-deployment requires --registry (the emitted OCI ref comes from the push)");
+    }
 
     match args.kind {
         BuildKind::Cargo => {
@@ -369,12 +415,20 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
                 }
                 let sbom = crate::sbom::cyclonedx_from_metadata(&metadata_json, &package)?;
                 let signing = load_signing_key(&args).await?;
-                push_artifact(
+                let pushed = push_artifact(
                     &target,
                     &node_manifest,
                     &artifact.wasm,
                     signing.as_ref(),
                     &sbom,
+                )
+                .await?;
+                emit_deployment_if_requested(
+                    &args,
+                    &node_manifest.node_type,
+                    &artifact.wasm,
+                    &pushed,
+                    signing.as_ref(),
                 )
                 .await?;
             }
@@ -402,12 +456,20 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
                 )?;
                 let sbom = crate::sbom::cyclonedx_single(&node_type, "0.1.0");
                 let signing = load_signing_key(&args).await?;
-                push_artifact(
+                let pushed = push_artifact(
                     &target,
                     &node_manifest,
                     &artifact.wasm,
                     signing.as_ref(),
                     &sbom,
+                )
+                .await?;
+                emit_deployment_if_requested(
+                    &args,
+                    &node_manifest.node_type,
+                    &artifact.wasm,
+                    &pushed,
+                    signing.as_ref(),
                 )
                 .await?;
             }

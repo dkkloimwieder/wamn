@@ -395,6 +395,22 @@ pub fn derive_grants<'a>(import_names: impl IntoIterator<Item = &'a str>) -> Der
     }
 }
 
+/// Compile `wasm` and [`derive_grants`] from its imports (the builder's
+/// deployment-emission path, 5.5f). `Err` only if the bytes do not compile —
+/// grant derivation itself is total.
+pub fn derive_grants_from_component(
+    engine: &RawEngine,
+    wasm: &[u8],
+    label: &str,
+) -> anyhow::Result<DerivedGrants> {
+    let component = WasmtimeComponent::new(engine, wasm)
+        .map_err(|e| anyhow::anyhow!("compile {label}: {e}"))?;
+    let eng = component.engine();
+    let ty = component.component_type();
+    let imports: Vec<String> = ty.imports(eng).map(|(name, _)| name.to_string()).collect();
+    Ok(derive_grants(imports.iter().map(String::as_str)))
+}
+
 /// A mismatch between a component's DERIVED grants and a declared `allowedHosts`
 /// list — the "derived, never declared twice" rule (design-note 7): an
 /// `allowedHosts` grant is REQUIRED iff `wasi:http` is imported, and REFUSED

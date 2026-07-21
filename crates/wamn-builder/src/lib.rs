@@ -23,6 +23,7 @@
 
 pub mod allowlist;
 pub mod build;
+pub mod deploy_emit;
 pub mod keygen;
 pub mod manifest_build;
 pub mod registry;

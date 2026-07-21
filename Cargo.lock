@@ -4168,6 +4168,7 @@ dependencies = [
  "tracing-subscriber",
  "wamn-host",
  "wamn-node-manifest",
+ "wasm-encoder 0.251.0",
 ]
 
 [[package]]

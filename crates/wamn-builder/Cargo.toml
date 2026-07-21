@@ -44,3 +44,6 @@ ring = "0.17"
 # The 5.5e push gate stands up an in-process registry-v2 STUB (a hyper server)
 # and asserts the exact bytes/manifest/annotations PUT — the lane's push gate.
 hyper = { version = "1", features = ["server", "http1"] }
+# 5.5f golden tests synthesize world-node vs http-node components in-process
+# (the socketguard pattern) and derive their grants from the compiled bytes.
+wasm-encoder = "0.251"
