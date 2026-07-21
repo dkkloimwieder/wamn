@@ -142,7 +142,8 @@ Nodes never string-match; the maps are fixed and unit-pinned:
   amended `run` to return an emission record `{payload, port: option<string>}`
   (absent = `main`) before freezing 0.1 — WIT and SDK coincide, drift-guarded
   by `crates/wamn-node-sdk/tests/wit_coherence.rs`. Remaining SDK-side
-  deferrals: `streamed` payloads (5.10) and the credentials facade (5.9).
+  deferral: `streamed` payloads (5.10) — the credentials facade (5.9) shipped
+  with the vault (wamn-17o).
 
 ## Gates
 

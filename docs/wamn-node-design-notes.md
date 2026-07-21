@@ -20,10 +20,13 @@ mirror (`crates/wamn-node-sdk`) coincide from day one:
    node's own outbound calls the error is the only carrier of that host.
 
 Compatibility: 0.1.x is additive/clarifying only; breaking changes wait for
-0.2 (first candidate: the WASI 0.3 native-async revision, 5.16). The optional
-imports are frozen but have NO host implementations yet — `payloads` (5.10),
-`credentials` (5.9), `control` (5.12); linking one fails instantiation until
-its host side lands. Vendored copies of the WIT (three S4 guests, the
+0.2 (first candidate: the WASI 0.3 native-async revision, 5.16). Host status
+of the frozen optional imports (matching the WIT header): `credentials` (5.9)
+is SHIPPED — the wamn-host vault plugin implements `get` (per-project
+resolution + audit log) and the flowrunner links it; `control` (5.12) is
+bound as an S1 stub (cooperative cancellation, never cancelled);
+`payloads` (5.10) has no host implementation yet — linking it fails
+instantiation until its host side lands. Vendored copies of the WIT (three S4 guests, the
 `wamn-node-guest` scaffolding, the host bindgen copy) are drift-guarded by
 `crates/wamn-node-sdk/tests/wit_coherence.rs`, which also pins the exact WIT
 lines the SDK mirrors. The `nodebench` gate proves the ABI cross-language
