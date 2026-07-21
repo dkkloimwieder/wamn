@@ -2625,3 +2625,52 @@ kubectl -n wamn-system apply -f deploy/platform/run-plane-reconcile.example.yaml
 #   wamn_runner_demo.flows (tenant demo-tenant) — then ladderproof-job proves the plane.
 # gates of record, SEQUENTIAL: pgbench-job, pgbench-multiproject-job, queuebench-job.
 ```
+
+### [5.5 / wamn-0si] custom-node builder — build Job + buildproof
+
+Subsystem spec: `docs/builder.md`. The builder is its OWN cargo-ful image
+(`--target builder-svc`); the build Job runs the whole pipeline (allowlist →
+build → 5.5 lint → sign + SBOM → OCI push) on the baked-in `sample-node` fixture,
+and `buildproof` verifies the pushed artifact FROM the registry.
+
+```bash
+# Lane-local (no cluster): unit + integration gates (allowlist refusal, push vs
+# an in-process registry stub, sign/verify, golden deployment manifests, the
+# buildproof manifest/signature/SBOM checks).
+cargo test -p wamn-builder
+cargo test -p wamn-gates --bin wamn-gates -- buildproof   # verify_* units
+cargo test -p wamn-host egress_guard                      # 5.5a lint + derived grants
+# regen the emission golden files after an intentional shape change:
+BLESS=1 cargo test -p wamn-builder --test golden_deploy
+
+# In-cluster gate of record (the registry must be up: deploy/platform/registry.yaml).
+# 1. Build BOTH new/changed images + kind load:
+docker build --target builder-svc -t wamn-builder:dev .   # NEW, large (cargo + jco)
+docker build --target gates       -t wamn-gates:dev .
+kind load docker-image wamn-builder:dev --name wamn
+kind load docker-image wamn-gates:dev   --name wamn
+# 2. Generate the signing keypair + bank the Secret (keep the PUBLIC key):
+docker run --rm -v "$PWD:/out" wamn-builder:dev keygen \
+  --private-key /out/builder-signing-key.hex --public-key /out/builder-public-key.hex
+kubectl -n wamn-system create secret generic wamn-builder-signing-key \
+  --from-file=signing-key.hex=builder-signing-key.hex
+# 3. Run the build sandbox Job (builds sample-node, signs, pushes wamn/sample-node:dev):
+kubectl -n wamn-system apply -f deploy/platform/builder-netpol.yaml   # INERT under kindnetd (deferral)
+kubectl -n wamn-system apply -f deploy/platform/builder-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/wamn-builder --timeout=900s
+kubectl -n wamn-system logs job/wamn-builder    # expect: allowlist OK, built+linted, pushed signed …
+# 4. Run buildproof with the PUBLIC key (edit deploy/gates/buildproof-job.yaml's
+#    WAMN_BUILDER_PUBLIC_KEY to $(cat builder-public-key.hex)):
+kubectl -n wamn-system apply -f deploy/gates/buildproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/buildproof --timeout=180s
+kubectl -n wamn-system logs job/buildproof
+#   expect PASS lines: wamn.node.manifest valid; layer digest matches;
+#   wamn.node.signature verifies; SBOM present (expected packages listed).
+# teardown:
+kubectl -n wamn-system delete job/wamn-builder job/buildproof
+```
+
+Verify against the LIVE cluster FIRST: the `registry:2` pod is `emptyDir`
+(EPHEMERAL) — if it restarted, its blobs are gone; re-run the builder Job before
+buildproof. `builder-netpol.yaml` does not actually restrict egress under kind
+(kindnetd ignores NetworkPolicy).
