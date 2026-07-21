@@ -9,6 +9,7 @@
 //! (`deploy/platform/builder-job.yaml`) builds a baked-in fixture source. This
 //! module is the toolchain-invocation core the ingestion path will feed.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
@@ -67,6 +68,26 @@ pub struct BuildArgs {
     /// pinned policy (`policy/default-allowlist.toml`).
     #[arg(long)]
     pub allowlist: Option<PathBuf>,
+
+    /// 5.5e: the OCI registry `host:port` to push to. When absent the build
+    /// stops after the lint (no push). Plain HTTP (the in-cluster registry).
+    #[arg(long)]
+    pub registry: Option<String>,
+
+    /// 5.5e: the repository path to push under (e.g. `wamn/sample-node`).
+    /// Required when `--registry` is set.
+    #[arg(long)]
+    pub repository: Option<String>,
+
+    /// 5.5e: the tag to push (`--registry`). Default `dev`.
+    #[arg(long, default_value = "dev")]
+    pub tag: String,
+
+    /// 5.5e: the node-type slug for the manifest. cargo defaults it from
+    /// `[package.metadata.wamn-node]` / the package name; jco (no cargo
+    /// metadata) REQUIRES it to push.
+    #[arg(long)]
+    pub node_type: Option<String>,
 }
 
 impl BuildArgs {
@@ -204,43 +225,127 @@ pub fn lint_artifact(wasm: &[u8], label: &str) -> anyhow::Result<()> {
         .context("built artifact failed the 5.5 builder import lint")
 }
 
-/// 5.5c — enforce the dependency allowlist BEFORE the build (so an off-policy
-/// crate's `build.rs` never runs): the cargo path checks the resolved package
-/// set against the policy; the jco path asserts single-module.
-async fn enforce_dependency_policy(args: &BuildArgs) -> anyhow::Result<()> {
-    match args.kind {
-        BuildKind::Cargo => {
-            let package = args.cargo_package()?;
-            let policy = match &args.allowlist {
-                Some(path) => crate::allowlist::Policy::load(path).await?,
-                None => crate::allowlist::Policy::default_policy(),
-            };
-            let manifest = args.source.join("Cargo.toml");
-            let resolved = crate::allowlist::resolved_package_names(&manifest, &package).await?;
-            crate::allowlist::check_allowlist(&resolved, &policy, &package)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            println!(
-                "dependency allowlist: {} transitive package(s), all allowed",
-                resolved.len()
-            );
-        }
-        BuildKind::Jco => crate::allowlist::assert_jco_single_module(&args.source).await?,
-    }
+/// 5.5c — the dependency allowlist over a pre-fetched `cargo metadata` document
+/// (cargo path). Refuses if the resolved package set carries an off-policy crate.
+async fn enforce_cargo_allowlist(
+    args: &BuildArgs,
+    metadata_json: &str,
+    package: &str,
+) -> anyhow::Result<()> {
+    let policy = match &args.allowlist {
+        Some(path) => crate::allowlist::Policy::load(path).await?,
+        None => crate::allowlist::Policy::default_policy(),
+    };
+    let resolved = crate::allowlist::closure_names(metadata_json, package)?;
+    crate::allowlist::check_allowlist(&resolved, &policy, package)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!(
+        "dependency allowlist: {} transitive package(s), all allowed",
+        resolved.len()
+    );
     Ok(())
 }
 
-/// The `build` verb: enforce the dependency allowlist (5.5c), build the node,
-/// then screen it through the 5.5a lint. Later stages (sign, SBOM, push, emit)
-/// extend this pipeline.
-pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
-    enforce_dependency_policy(&args).await?;
-    let artifact = build_artifact(&args).await?;
-    lint_artifact(&artifact.wasm, &artifact.wasm_path.display().to_string())?;
-    println!(
-        "built + linted node artifact: {} ({} bytes)",
-        artifact.wasm_path.display(),
-        artifact.wasm.len()
+/// Assemble the push target from the args (`None` when `--registry` is absent).
+fn push_target(args: &BuildArgs) -> anyhow::Result<Option<crate::registry::RegistryRef>> {
+    let Some(registry) = &args.registry else {
+        return Ok(None);
+    };
+    let repository = args
+        .repository
+        .clone()
+        .context("--registry requires --repository (e.g. wamn/sample-node)")?;
+    Ok(Some(crate::registry::RegistryRef {
+        registry: registry.clone(),
+        repository,
+        reference: args.tag.clone(),
+        insecure: true,
+    }))
+}
+
+/// The OCI annotations attached at push. 5.5e writes the `wamn.node.manifest`
+/// annotation; 5.5d (signing / SBOM) adds its annotations to this map.
+fn base_annotations(node_manifest: &wamn_node_manifest::NodeManifest) -> BTreeMap<String, String> {
+    let mut annotations = BTreeMap::new();
+    annotations.insert(
+        wamn_node_manifest::ANNOTATION_KEY.to_string(),
+        node_manifest.to_json(),
     );
+    annotations
+}
+
+/// Push the built artifact with the `wamn.node.manifest` annotation (5.5e). The
+/// manifest is built + validated (`is_valid`) BEFORE push.
+async fn push_artifact(
+    target: &crate::registry::RegistryRef,
+    node_manifest: &wamn_node_manifest::NodeManifest,
+    wasm: &[u8],
+) -> anyhow::Result<()> {
+    let annotations = base_annotations(node_manifest);
+    let pushed = crate::registry::push(target, wasm, annotations).await?;
+    println!(
+        "pushed node artifact {} (manifest {} / layer {})",
+        pushed.image, pushed.manifest_digest, pushed.layer_digest
+    );
+    Ok(())
+}
+
+/// The `build` verb: dependency allowlist (5.5c) → build (5.5b) → import lint
+/// (5.5a) → optional OCI push with the `wamn.node.manifest` annotation (5.5e).
+/// Signing / SBOM (5.5d) extend the push annotations.
+pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
+    let target = push_target(&args)?;
+
+    match args.kind {
+        BuildKind::Cargo => {
+            let package = args.cargo_package()?;
+            let manifest_path = args.source.join("Cargo.toml");
+            // One `cargo metadata` run, reused by the allowlist + the manifest.
+            let metadata_json = crate::allowlist::cargo_metadata_json(&manifest_path).await?;
+            enforce_cargo_allowlist(&args, &metadata_json, &package).await?;
+
+            let artifact = build_artifact(&args).await?;
+            lint_artifact(&artifact.wasm, &artifact.wasm_path.display().to_string())?;
+            println!(
+                "built + linted node artifact: {} ({} bytes)",
+                artifact.wasm_path.display(),
+                artifact.wasm.len()
+            );
+
+            if let Some(target) = target {
+                let mut node_manifest =
+                    crate::manifest_build::manifest_from_metadata(&metadata_json, &package)?;
+                if let Some(node_type) = &args.node_type {
+                    node_manifest.node_type = node_type.clone();
+                }
+                push_artifact(&target, &node_manifest, &artifact.wasm).await?;
+            }
+        }
+        BuildKind::Jco => {
+            crate::allowlist::assert_jco_single_module(&args.source).await?;
+            let artifact = build_artifact(&args).await?;
+            lint_artifact(&artifact.wasm, &artifact.wasm_path.display().to_string())?;
+            println!(
+                "built + linted node artifact: {} ({} bytes)",
+                artifact.wasm_path.display(),
+                artifact.wasm.len()
+            );
+
+            if let Some(target) = target {
+                let node_type = args
+                    .node_type
+                    .clone()
+                    .context("jco push requires --node-type (no cargo metadata to derive it)")?;
+                let node_manifest = crate::manifest_build::minimal_manifest(
+                    &node_type,
+                    &node_type,
+                    "0.1.0",
+                    crate::manifest_build::DEFAULT_CONTRACT,
+                )?;
+                push_artifact(&target, &node_manifest, &artifact.wasm).await?;
+            }
+        }
+    }
     Ok(())
 }
 

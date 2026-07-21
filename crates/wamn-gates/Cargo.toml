@@ -49,6 +49,10 @@ wamn-registry = { path = "../wamn-registry" }
 # nodeinvoke crafts + signs raw invocation envelopes for the wamn-fqg.22 authn
 # negatives (the same pure wire crate both hop ends link).
 wamn-node-invoke = { path = "../wamn-node-invoke" }
+# buildproof drives the 5.5 builder's OCI fetch (registry client) + verifies the
+# pushed artifact against the SAME NodeManifest model the builder wrote.
+wamn-builder = { path = "../wamn-builder" }
+wamn-node-manifest = { path = "../wamn-node-manifest" }
 # queuebench/failoverbench/dispatchbench drive the pure queue/cron
 # builders over tokio_postgres.
 wamn-run-queue = { path = "../wamn-run-queue" }

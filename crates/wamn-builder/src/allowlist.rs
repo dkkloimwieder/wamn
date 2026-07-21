@@ -138,8 +138,10 @@ struct ResolveDep {
 
 /// The crate NAMES of `package`'s transitive dependency closure, parsed from a
 /// `cargo metadata` JSON document — EXCLUDING `package` itself (the allowlist
-/// governs dependencies, not the node). Sorted + de-duplicated.
-fn closure_names(metadata_json: &str, package: &str) -> anyhow::Result<Vec<String>> {
+/// governs dependencies, not the node). Sorted + de-duplicated. Pub so the build
+/// pipeline can run `cargo metadata` ONCE ([`cargo_metadata_json`]) and reuse the
+/// document for both the allowlist and the manifest build.
+pub fn closure_names(metadata_json: &str, package: &str) -> anyhow::Result<Vec<String>> {
     let meta: Metadata =
         serde_json::from_str(metadata_json).context("parse cargo metadata JSON")?;
     let root_id = meta
@@ -183,13 +185,11 @@ fn closure_names(metadata_json: &str, package: &str) -> anyhow::Result<Vec<Strin
     Ok(names)
 }
 
-/// Run `cargo metadata --offline` for `manifest_path` (a build sandbox is
-/// egress-denied, so the graph must resolve from the vendored/cached index) and
-/// return `package`'s transitive dependency closure names.
-pub async fn resolved_package_names(
-    manifest_path: &Path,
-    package: &str,
-) -> anyhow::Result<Vec<String>> {
+/// Run `cargo metadata --offline` for `manifest_path` and return the raw JSON. A
+/// build sandbox is egress-denied, so the graph must resolve from the
+/// vendored/cached index. Shared by the allowlist stage and the manifest build
+/// (one metadata run per build).
+pub async fn cargo_metadata_json(manifest_path: &Path) -> anyhow::Result<String> {
     let output = Command::new("cargo")
         .args([
             "metadata",
@@ -209,7 +209,16 @@ pub async fn resolved_package_names(
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let json = String::from_utf8(output.stdout).context("cargo metadata output is not UTF-8")?;
+    String::from_utf8(output.stdout).context("cargo metadata output is not UTF-8")
+}
+
+/// [`cargo_metadata_json`] + [`closure_names`] — `package`'s transitive
+/// dependency closure names.
+pub async fn resolved_package_names(
+    manifest_path: &Path,
+    package: &str,
+) -> anyhow::Result<Vec<String>> {
+    let json = cargo_metadata_json(manifest_path).await?;
     closure_names(&json, package)
 }
 

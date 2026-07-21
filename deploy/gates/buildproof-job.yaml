@@ -1,0 +1,42 @@
+# 5.5 buildproof in-cluster Job (wamn-0si). Verifies a builder-pushed node
+# artifact FROM THE in-cluster registry over plain HTTP: the wamn.node.manifest
+# annotation parses + validates, layers[0] is the pullable application/wasm layer
+# (digest integrity), and (5.5d) the ed25519 signature verifies + the SBOM lists
+# the expected package set. Run AFTER the builder Job has pushed the artifact.
+#
+#   kubectl -n wamn-system apply -f deploy/platform/builder-job.yaml   # push first
+#   kubectl -n wamn-system wait --for=condition=complete job/wamn-builder --timeout=900s
+#   kubectl -n wamn-system apply -f deploy/gates/buildproof-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/buildproof --timeout=180s
+#   kubectl -n wamn-system logs job/buildproof
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: buildproof
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: buildproof }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: buildproof
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "warn"
+            - "buildproof"
+            - "--registry"
+            - "registry.wamn-system.svc.cluster.local:5000"
+            - "--repository"
+            - "wamn/sample-node"
+            - "--reference"
+            - "dev"
+            # 5.5d: --public-key <hex> (or WAMN_BUILDER_PUBLIC_KEY) is added by the
+            # wamn-0si.4 commit once the signature/SBOM checks land.
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { memory: "512Mi" }

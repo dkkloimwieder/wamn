@@ -21,3 +21,21 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # (reused verbatim by the builder), and the builder screens through the SAME
 # production engine the host runs.
 wamn-host = { path = "../wamn-host" }
+# 5.5e: the canonical wamn.node.manifest model (ANNOTATION_KEY, NodeManifest,
+# from_json/to_json, is_valid) — the builder writes the annotation, never a
+# second copy of the schema.
+wamn-node-manifest = { path = "../wamn-node-manifest" }
+# 5.5e: the hand-rolled OCI registry-v2 writer (the repo's first Rust OCI push)
+# rides the hyper 1 stack already in the graph — a plain-HTTP client for the
+# in-cluster registry:2, full control of the manifest media types + annotations.
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+# Content-addressing (the OCI sha256 digest); the wamn-node-invoke sha2/hex line.
+sha2 = "0.11"
+
+[dev-dependencies]
+# The 5.5e push gate stands up an in-process registry-v2 STUB (a hyper server)
+# and asserts the exact bytes/manifest/annotations PUT — the lane's push gate.
+hyper = { version = "1", features = ["server", "http1"] }

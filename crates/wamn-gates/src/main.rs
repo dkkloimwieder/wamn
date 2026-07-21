@@ -9,6 +9,7 @@ mod apibench;
 mod apifixture;
 mod apiproof;
 mod bench;
+mod buildproof;
 mod cdcbench;
 mod credprobe;
 mod credproof;
@@ -104,6 +105,8 @@ enum Command {
     Testhostbench(testhostbench::TestHostBenchArgs),
     /// Run the 2.6 DB-path egress review gate (no shipped workload imports wasi:sockets)
     Egressbench(egressbench::EgressBenchArgs),
+    /// Run the 5.5 buildproof gate (verify a builder-pushed node artifact from the registry: wamn.node.manifest + signature + SBOM + layer media type)
+    Buildproof(buildproof::BuildproofArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
     Socketguard(socketguard::SocketGuardArgs),
     /// Run the l5i9.17 materializer gate (decide/refuse/enqueue/doorbell + C-MAT numbers)
@@ -169,6 +172,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Testhostbench(args) => testhostbench::run(args).await,
         Command::Egressbench(args) => egressbench::run(args).await,
+        Command::Buildproof(args) => buildproof::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
         Command::Matbench(args) => matbench::run(args).await,
         Command::Rie2ebench(args) => rie2ebench::run(args).await,

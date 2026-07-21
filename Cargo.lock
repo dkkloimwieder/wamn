@@ -4152,14 +4152,20 @@ name = "wamn-builder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "toml",
  "tracing",
  "tracing-subscriber",
  "wamn-host",
+ "wamn-node-manifest",
 ]
 
 [[package]]
@@ -4332,6 +4338,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
+ "wamn-builder",
  "wamn-catalog",
  "wamn-cdc-reader",
  "wamn-ctl",
@@ -4343,6 +4350,7 @@ dependencies = [
  "wamn-gate-harness",
  "wamn-host",
  "wamn-node-invoke",
+ "wamn-node-manifest",
  "wamn-provision",
  "wamn-registry",
  "wamn-run-queue",

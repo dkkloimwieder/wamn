@@ -23,3 +23,5 @@
 
 pub mod allowlist;
 pub mod build;
+pub mod manifest_build;
+pub mod registry;

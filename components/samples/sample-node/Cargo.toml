@@ -17,3 +17,12 @@ wamn-node-guest = { path = "../../../crates/wamn-node-guest" }
 
 [lib]
 crate-type = ["cdylib"]
+
+# The 5.5 builder reads this table to build the wamn.node.manifest OCI annotation
+# (design-note 8); it matches the committed sample-echo.manifest.json identity.
+# Ignored by `cargo build` (metadata only) — the wasm is unaffected.
+[package.metadata.wamn-node]
+node-type = "sample-echo"
+name = "Sample Echo"
+description = "Reference zero-import custom node (5.4): echoes its input on a config-selected port; the frozen wamn:node 0.1 conformance fixture."
+ordering = ["unordered"]
