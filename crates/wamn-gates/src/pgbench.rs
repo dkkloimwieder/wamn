@@ -127,6 +127,13 @@ impl Rng {
 const TENANT_A: &str = "tenant-a";
 const TENANT_B: &str = "tenant-b";
 
+/// Rows seeded per tenant in `s2.rls_secrets`, named `secret-<tenant>-1..N`.
+/// Mirrors the `generate_series(1, 1000)` seed in deploy/sql/postgres-init.sql
+/// (~L68-71). The RLS read probe salts foreign LIKE patterns from `1..=N` so
+/// EVERY probe addresses at least one real seeded row — a "0 rows" answer then
+/// proves RLS confinement, not an empty key space (docs/review-2026-07.md C7-3).
+const SEEDED_SECRETS_PER_TENANT: u64 = 1000;
+
 /// A checkout is claim-free when no *active tenant* is set. Postgres reverts a
 /// custom GUC (`app.tenant`) to the empty string — not NULL — once it has been
 /// `SET LOCAL` in a session, so a connection that previously served a real
@@ -517,15 +524,33 @@ async fn rls_phase(harness: &Harness, args: &PgBenchArgs) -> anyhow::Result<bool
     let mut denied_writes: u64 = 0;
     let mut write_attempts: u64 = 0;
     let mut unexpected: u64 = 0;
+    // Honesty guard (docs/review-2026-07.md C7-3): count read probes whose salt
+    // falls in the seeded key range. With the salt drawn from `1..=SEEDED` every
+    // probe is addressable by construction; if the draw ever drifts wider (a
+    // mutant, or a fixture that shrank), these fall short and the phase fails.
+    let mut addressable: u64 = 0;
+    // Positive control: every Nth iteration, replay the SAME salted pattern as
+    // the OWNING tenant's own read and require >=1 row. This proves an
+    // "addressable" salt genuinely matches a seeded row — so a drift in the seed
+    // range (e.g. shrunk to 1..500 while SEEDED stayed 1000) is caught here even
+    // though the foreign read still returns 0.
+    const POSITIVE_CONTROL_EVERY: usize = 100;
+    let mut positive_controls: u64 = 0;
+    let mut positive_control_hits: u64 = 0;
 
-    for _ in 0..args.rls_iters {
+    for i in 0..args.rls_iters {
         let a_side = rng.next_u64() & 1 == 0;
-        // Randomize the foreign pattern to defeat any pattern-specific luck.
-        let salt = rng.below(100000);
-        let (worker, foreign) = if a_side {
-            (&mut a, TENANT_B)
+        // Salt drawn from the SEEDED key range (1..=SEEDED_SECRETS_PER_TENANT):
+        // `secret-<tenant>-<salt>%` then matches at least `secret-<tenant>-<salt>`
+        // itself, so every foreign read addresses a real row.
+        let salt = rng.below(SEEDED_SECRETS_PER_TENANT) + 1;
+        if (1..=SEEDED_SECRETS_PER_TENANT).contains(&salt) {
+            addressable += 1;
+        }
+        let (worker, foreign, own) = if a_side {
+            (&mut a, TENANT_B, TENANT_A)
         } else {
-            (&mut b, TENANT_A)
+            (&mut b, TENANT_A, TENANT_B)
         };
         // Attempt to read the OTHER tenant's secrets by pattern.
         let pattern = format!("secret-{foreign}-{salt}%");
@@ -538,6 +563,23 @@ async fn rls_phase(harness: &Harness, args: &PgBenchArgs) -> anyhow::Result<bool
             Err(e) => {
                 unexpected += 1;
                 tracing::warn!(error = e, "unexpected rls read error");
+            }
+        }
+        // Positive control: the SAME salt, but read the worker's OWN tenant. A
+        // hit (>=1 row) proves the salt is addressable; a miss means the seed
+        // range drifted out from under the foreign-read's "0 == confined" claim.
+        if i % POSITIVE_CONTROL_EVERY == 0 {
+            positive_controls += 1;
+            let own_pattern = format!("secret-{own}-{salt}%");
+            match worker.call(2, &own_pattern).await? {
+                Ok(n) if n >= 1 => positive_control_hits += 1,
+                Ok(_) => {
+                    tracing::error!(own, salt, "positive control saw 0 own rows — seed drift?");
+                }
+                Err(e) => {
+                    unexpected += 1;
+                    tracing::warn!(error = e, "positive control read error");
+                }
             }
         }
         // Occasionally attempt a cross-tenant WRITE (must be permission-denied).
@@ -560,9 +602,23 @@ async fn rls_phase(harness: &Harness, args: &PgBenchArgs) -> anyhow::Result<bool
     println!(
         "cross-tenant rows leaked = {leaks}, cross-tenant writes denied = {denied_writes}/{write_attempts}, unexpected errors = {unexpected}"
     );
-    let pass =
-        leaks == 0 && unexpected == 0 && denied_writes == write_attempts && write_attempts > 0;
-    println!("PASS(rls: zero leakage, writes denied, no detail): {pass}");
+    println!(
+        "addressable read probes = {addressable}/{} (salt in 1..={SEEDED_SECRETS_PER_TENANT}), positive controls (own-side >=1 row) = {positive_control_hits}/{positive_controls}",
+        args.rls_iters
+    );
+    // Every probe must have addressed a seeded foreign row (else "0 leaked" is
+    // vacuous), and the positive control must have fired and always hit.
+    let all_addressable = addressable == args.rls_iters as u64;
+    let positive_control_ok = positive_controls > 0 && positive_control_hits == positive_controls;
+    let pass = leaks == 0
+        && unexpected == 0
+        && denied_writes == write_attempts
+        && write_attempts > 0
+        && all_addressable
+        && positive_control_ok;
+    println!(
+        "PASS(rls: zero leakage, writes denied, all probes addressable, positive control holds): {pass} (all_addressable={all_addressable}, positive_control_ok={positive_control_ok})"
+    );
     Ok(pass)
 }
 
