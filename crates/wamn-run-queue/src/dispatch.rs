@@ -18,18 +18,6 @@ pub const DEFAULT_MIN_INTERVAL_MS: Millis = 250;
 /// cadence — the 30 s–5 min band's floor).
 pub const DEFAULT_MAX_INTERVAL_MS: Millis = 30_000;
 
-/// The next sweep interval for one project: work tightens to `min`, idleness
-/// doubles toward `max`. `min <= max` is the caller's contract (the `clamp`
-/// below panics on an inverted range); [`Cadence`] is how a production caller
-/// upholds it once, at the config boundary.
-pub fn next_interval(current: Millis, found_work: bool, min: Millis, max: Millis) -> Millis {
-    if found_work {
-        min
-    } else {
-        current.saturating_mul(2).clamp(min, max)
-    }
-}
-
 /// The floor both cadence bounds are raised to: a sub-10 ms sweep interval is a
 /// busy-loop, not a cadence.
 const MIN_INTERVAL_FLOOR_MS: Millis = 10;
@@ -37,10 +25,11 @@ const MIN_INTERVAL_FLOOR_MS: Millis = 10;
 /// A validated adaptive-cadence band: the tightest (`min`) and widest (`max`)
 /// per-project sweep intervals, with `min <= max` guaranteed and both floored at
 /// [`MIN_INTERVAL_FLOOR_MS`]. Built once, at the config boundary, from
-/// unvalidated CLI/env millis — so [`next_interval`]'s `clamp`, which panics on
-/// an inverted range, can never see `min > max` (M-STRONG-TYPES-GUARD; and
-/// M-PANIC-ON-BUG: bad user input is rejected at the boundary, not panicked on
-/// downstream during an idle sweep).
+/// unvalidated CLI/env millis — so [`Cadence::next_interval`]'s `clamp` (which
+/// would panic on an inverted range) can never see `min > max`: the band is the
+/// method's own receiver, so an inverted range is unrepresentable
+/// (M-STRONG-TYPES-GUARD; and M-PANIC-ON-BUG: bad user input is rejected at the
+/// boundary, not panicked on downstream during an idle sweep).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cadence {
     min: Millis,
@@ -68,6 +57,17 @@ impl Cadence {
     /// The widest sweep interval (an idle project's reconciliation cadence).
     pub fn max(&self) -> Millis {
         self.max
+    }
+
+    /// The next sweep interval for one project: work tightens to `min`, idleness
+    /// doubles `current` toward `max`. `min <= max` holds by construction (it is
+    /// this band's own invariant), so the `clamp` can never see an inverted range.
+    pub fn next_interval(&self, current: Millis, found_work: bool) -> Millis {
+        if found_work {
+            self.min
+        } else {
+            current.saturating_mul(2).clamp(self.min, self.max)
+        }
     }
 }
 
@@ -137,5 +137,24 @@ mod tests {
             (c.min(), c.max()),
             (DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS)
         );
+    }
+
+    // R13-hardening: `next_interval` as an inherent method preserves the exact
+    // progression the free fn had — work snaps to `min` from anywhere, idleness
+    // doubles and caps at `max`, a degenerate `current` clamps up into the band.
+    #[test]
+    fn next_interval_progression_via_inherent_method() {
+        let c = Cadence::new(DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS).unwrap();
+        let (min, max) = (c.min(), c.max());
+        // Work snaps the cadence to the tight bound, from anywhere.
+        assert_eq!(c.next_interval(max, true), min);
+        assert_eq!(c.next_interval(min, true), min);
+        // Idleness decays exponentially and caps at max (the reconciliation band).
+        assert_eq!(c.next_interval(min, false), 2 * min);
+        assert_eq!(c.next_interval(2 * min, false), 4 * min);
+        assert_eq!(c.next_interval(20_000, false), max); // 40k clamps to 30k
+        assert_eq!(c.next_interval(max, false), max);
+        // A degenerate current clamps up into the band.
+        assert_eq!(c.next_interval(0, false), min);
     }
 }

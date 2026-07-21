@@ -23,7 +23,7 @@
 //! Idle handling mirrors the dispatcher (NATS-optional): a doorbell hint on
 //! `wamn.doorbell.<tenant>` — the subject the dispatcher already publishes to —
 //! wakes an immediate drain, and a poll-with-backoff reconcile (reusing the
-//! dispatcher's [`wamn_run_queue::next_interval`] cadence) guarantees pickup
+//! dispatcher's [`wamn_run_queue::Cadence::next_interval`] cadence) guarantees pickup
 //! even when a hint is lost or NATS is absent. SIGTERM is handled explicitly
 //! (PID 1 in-container gets no default disposition), so a rollout exits in
 //! milliseconds instead of waiting out the grace period; abrupt death is safe
@@ -417,7 +417,7 @@ impl RunWorker {
     ) -> anyhow::Result<()> {
         use futures_util::StreamExt;
 
-        let (min, max) = (cadence.min(), cadence.max());
+        let min = cadence.min();
         let mut sub = match &nats {
             Some(c) => Some(c.subscribe(self.subject.clone()).await?),
             None => None,
@@ -442,7 +442,7 @@ impl RunWorker {
                     false
                 }
             };
-            idle = wamn_run_queue::next_interval(idle, found_work, min, max);
+            idle = cadence.next_interval(idle, found_work);
 
             tokio::select! {
                 hint = async {
@@ -641,11 +641,12 @@ mod tests {
     fn idle_backoff_resets_on_work_and_doubles_while_idle() {
         // The runner reuses the dispatcher cadence: work resets to min, idleness
         // doubles toward max.
-        let (min, max) = (250i64, 30_000i64);
-        assert_eq!(wamn_run_queue::next_interval(min, true, min, max), min);
-        let a = wamn_run_queue::next_interval(min, false, min, max);
-        let b = wamn_run_queue::next_interval(a, false, min, max);
+        let cadence = wamn_run_queue::Cadence::new(250, 30_000).unwrap();
+        let (min, max) = (cadence.min(), cadence.max());
+        assert_eq!(cadence.next_interval(min, true), min);
+        let a = cadence.next_interval(min, false);
+        let b = cadence.next_interval(a, false);
         assert!(a > min && b > a && b <= max);
-        assert_eq!(wamn_run_queue::next_interval(a, true, min, max), min);
+        assert_eq!(cadence.next_interval(a, true), min);
     }
 }

@@ -7,7 +7,7 @@
 //!
 //! Every decision is the pure crate's ([`wamn_run_queue`]): cron due-tick
 //! evaluation over an injected `now` ([`due_tick`]), deterministic trigger run
-//! ids, the adaptive per-project cadence ([`next_interval`]). This module is
+//! ids, the adaptive per-project cadence ([`Cadence::next_interval`]). This module is
 //! the DRIVER — tokio_postgres effects, the NATS-core doorbell, the real
 //! clock — split exactly so a virtual-time driver (the `dispatchbench` gate)
 //! can run the same [`Dispatcher::tick_project`] engine with stepped time and
@@ -56,8 +56,8 @@ use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
 use wamn_flow::{Flow, Ordering, Trigger};
 use wamn_run_queue::{
-    Firing, PartitionPolicy, active_flows_sql, cron_firing, cron_last_run_sql, cron_tick_of,
-    due_tick, enqueue_sql, enqueue_with_policy_sql, next_fire, next_interval, next_reconcile,
+    Cadence, Firing, PartitionPolicy, active_flows_sql, cron_firing, cron_last_run_sql,
+    cron_tick_of, due_tick, enqueue_sql, enqueue_with_policy_sql, next_fire, next_reconcile,
     parked_due_sql, reconcile_due, write_ahead_triggered_run_sql,
 };
 
@@ -208,16 +208,23 @@ impl TickReport {
 }
 
 pub struct DispatcherConfig {
-    pub min_interval_ms: i64,
-    pub max_interval_ms: i64,
+    /// The validated adaptive poll cadence: an inverted `min > max` band is
+    /// rejected at [`Cadence::new`], so the dispatcher's interval math can never
+    /// see one (R13-hardening — inverted ranges are unrepresentable here).
+    pub cadence: Cadence,
     pub batch: usize,
 }
 
 impl Default for DispatcherConfig {
     fn default() -> Self {
         Self {
-            min_interval_ms: wamn_run_queue::DEFAULT_MIN_INTERVAL_MS,
-            max_interval_ms: wamn_run_queue::DEFAULT_MAX_INTERVAL_MS,
+            // The default band is a compile-time-known valid range; an Err here
+            // would be a broken constant, not user input (M-PANIC-ON-BUG).
+            cadence: Cadence::new(
+                wamn_run_queue::DEFAULT_MIN_INTERVAL_MS,
+                wamn_run_queue::DEFAULT_MAX_INTERVAL_MS,
+            )
+            .expect("default cadence bounds are valid"),
             batch: 64,
         }
     }
@@ -332,7 +339,7 @@ impl Dispatcher {
                 spec: spec.clone(),
                 client,
                 _conn: handle,
-                interval_ms: cfg.min_interval_ms,
+                interval_ms: cfg.cadence.min(),
                 last_sweep_ms: 0,
                 next_cron_fire: None,
                 last_fired: HashMap::new(),
@@ -352,11 +359,7 @@ impl Dispatcher {
     /// real clock, the gate passes stepped time); the SQL's own `now()` instants
     /// are server-side timestamps and orthogonal to the trigger decisions.
     pub async fn tick_project(&mut self, idx: usize, now_ms: i64) -> anyhow::Result<TickReport> {
-        let (batch, min_ms, max_ms) = (
-            self.cfg.batch,
-            self.cfg.min_interval_ms,
-            self.cfg.max_interval_ms,
-        );
+        let (batch, cadence) = (self.cfg.batch, self.cfg.cadence);
         let nats = self.nats.as_ref();
 
         // A dropped connection (DB restart, failover, network blip) is
@@ -470,7 +473,7 @@ impl Dispatcher {
         }
 
         // 4. Adaptive cadence.
-        p.interval_ms = next_interval(p.interval_ms, report.found_work(), min_ms, max_ms);
+        p.interval_ms = cadence.next_interval(p.interval_ms, report.found_work());
         p.last_sweep_ms = now_ms;
         Ok(report)
     }
@@ -487,8 +490,7 @@ impl Dispatcher {
     ) -> anyhow::Result<()> {
         // Generous per-sweep deadline: wedge protection against hours-long
         // black holes, far above any healthy sweep.
-        let sweep_deadline =
-            Duration::from_millis((2 * self.cfg.max_interval_ms).max(5_000) as u64);
+        let sweep_deadline = Duration::from_millis((2 * self.cfg.cadence.max()).max(5_000) as u64);
         loop {
             let now = epoch_ms();
             for i in 0..self.projects.len() {
@@ -515,10 +517,10 @@ impl Dispatcher {
                     }
                 };
                 if failed {
-                    let (min_ms, max_ms) = (self.cfg.min_interval_ms, self.cfg.max_interval_ms);
+                    let cadence = self.cfg.cadence;
                     let p = &mut self.projects[i];
                     p.last_sweep_ms = now;
-                    p.interval_ms = next_interval(p.interval_ms, false, min_ms, max_ms);
+                    p.interval_ms = cadence.next_interval(p.interval_ms, false);
                     // A stale past wake-hint would pin the due-check (and the
                     // sleep) hot against a down DB; the durable anchor re-fires
                     // the tick exactly once on the next successful sweep.
@@ -535,8 +537,8 @@ impl Dispatcher {
                     p.next_cron_fire.map_or(sweep, |c| sweep.min(c))
                 })
                 .min()
-                .unwrap_or(now + self.cfg.max_interval_ms);
-            let sleep_ms = (next - now).clamp(10, self.cfg.max_interval_ms) as u64;
+                .unwrap_or(now + self.cfg.cadence.max());
+            let sleep_ms = (next - now).clamp(10, self.cfg.cadence.max()) as u64;
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
                 _ = shutdown.changed() => {
@@ -733,8 +735,7 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
     let cadence = wamn_run_queue::Cadence::new(args.min_interval_ms, args.max_interval_ms)
         .context("invalid poll cadence (--min-interval-ms / --max-interval-ms)")?;
     let cfg = DispatcherConfig {
-        min_interval_ms: cadence.min(),
-        max_interval_ms: cadence.max(),
+        cadence,
         batch: args.batch.max(1),
     };
     let mut dispatcher = Dispatcher::connect(&specs, nats, cfg).await?;
@@ -827,8 +828,8 @@ fn init_crypto() {
 #[cfg(test)]
 mod tests {
     use super::{
-        Ordering, PartitionPolicy, Registry, partition_key_for_firing, partition_policy_for_firing,
-        valid_tenant,
+        DispatcherConfig, Ordering, PartitionPolicy, Registry, partition_key_for_firing,
+        partition_policy_for_firing, valid_tenant,
     };
     use wamn_run_queue::Firing;
 
@@ -922,5 +923,16 @@ mod tests {
     fn dispatcher_and_plugin_agree_on_a_65_char_tenant() {
         assert!(valid_tenant(&"a".repeat(64)));
         assert!(!valid_tenant(&"a".repeat(65)));
+    }
+
+    // R13-hardening (wamn-2jkm.58): DispatcherConfig stores a validated Cadence,
+    // so an inverted `min > max` band is unrepresentable — it is rejected at
+    // Cadence::new before it can reach the config. A valid band round-trips in.
+    #[test]
+    fn dispatcher_config_cadence_is_validated() {
+        assert!(wamn_run_queue::Cadence::new(5_000, 1_000).is_err());
+        let cadence = wamn_run_queue::Cadence::new(250, 30_000).expect("valid band");
+        let cfg = DispatcherConfig { cadence, batch: 64 };
+        assert_eq!((cfg.cadence.min(), cfg.cadence.max()), (250, 30_000));
     }
 }

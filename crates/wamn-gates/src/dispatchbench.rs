@@ -1021,8 +1021,7 @@ async fn live_phase(
         &specs,
         nats,
         DispatcherConfig {
-            min_interval_ms: 50,
-            max_interval_ms: 1_000,
+            cadence: wamn_run_queue::Cadence::new(50, 1_000).unwrap(),
             batch: 64,
         },
     )
@@ -1098,8 +1097,7 @@ async fn live_phase(
         &[spec("a", app_url, SCHEMA_A, TENANT_A)],
         None,
         DispatcherConfig {
-            min_interval_ms: 5_000,
-            max_interval_ms: 5_000,
+            cadence: wamn_run_queue::Cadence::new(5_000, 5_000).unwrap(),
             batch: 64,
         },
     )

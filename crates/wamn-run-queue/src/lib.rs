@@ -93,7 +93,7 @@ pub use claim::{
 pub use cron::{CronError, cron_firing, cron_tick_of, due_tick, mint_cron_run_id, next_fire};
 #[cfg(feature = "dispatcher")]
 pub use dispatch::{
-    Cadence, CadenceError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, Firing, next_interval,
+    Cadence, CadenceError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, Firing,
 };
 pub use evt::mint_evt_run_id;
 pub use janitor::{JanitorVerdict, janitor_verdict, orphans};

@@ -6,14 +6,14 @@
 use std::collections::HashSet;
 
 use wamn_run_queue::{
-    ClaimState, CronError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, JanitorVerdict,
-    PartitionOwner, PartitionPolicy, QueueEntry, RunStatus, acquire_partitions_sql,
+    Cadence, ClaimState, CronError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS,
+    JanitorVerdict, PartitionOwner, PartitionPolicy, QueueEntry, RunStatus, acquire_partitions_sql,
     active_flows_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql, claim_state,
     complete_dequeue_sql, cron_firing, cron_last_run_sql, cron_tick_of, dead_letter_dequeue_sql,
     dead_letters_on_terminal, dequeue_sql, due_tick, enqueue_evt_sql, enqueue_evt_with_policy_sql,
     enqueue_sql, enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable,
     janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live, mark_running_sql,
-    mint_cron_run_id, mint_evt_run_id, next_fire, next_interval, next_reconcile, orphans, park_sql,
+    mint_cron_run_id, mint_evt_run_id, next_fire, next_reconcile, orphans, park_sql,
     parked_due_sql, partition_lease_live, plan_acquire, plan_claim, plan_partition_claim,
     reconcile_due, record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
     renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
@@ -1264,17 +1264,18 @@ fn cron_run_ids_are_deterministic_and_ordered() {
 
 #[test]
 fn adaptive_interval_tightens_on_work_and_decays_to_max() {
-    let (min, max) = (DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS);
+    let cadence = Cadence::new(DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS).unwrap();
+    let (min, max) = (cadence.min(), cadence.max());
     // Work snaps the cadence to the tight bound, from anywhere.
-    assert_eq!(next_interval(max, true, min, max), min);
-    assert_eq!(next_interval(min, true, min, max), min);
+    assert_eq!(cadence.next_interval(max, true), min);
+    assert_eq!(cadence.next_interval(min, true), min);
     // Idleness decays exponentially and caps at max (the reconciliation band).
-    assert_eq!(next_interval(min, false, min, max), 2 * min);
-    assert_eq!(next_interval(2 * min, false, min, max), 4 * min);
-    assert_eq!(next_interval(20_000, false, min, max), max); // 40k clamps to 30k
-    assert_eq!(next_interval(max, false, min, max), max);
+    assert_eq!(cadence.next_interval(min, false), 2 * min);
+    assert_eq!(cadence.next_interval(2 * min, false), 4 * min);
+    assert_eq!(cadence.next_interval(20_000, false), max); // 40k clamps to 30k
+    assert_eq!(cadence.next_interval(max, false), max);
     // A degenerate current clamps up into the band.
-    assert_eq!(next_interval(0, false, min, max), min);
+    assert_eq!(cadence.next_interval(0, false), min);
 }
 
 // ---- trigger dispatcher: SQL builders --------------------------------------------
