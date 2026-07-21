@@ -8,6 +8,18 @@
 > wamn-dzhw. C7 measured the run queue, which survives the CDC pivot, so that
 > number stays live; C2's subject (outbox capture) disappears at the D19
 > Phase-2 teardown.
+>
+> **ADDENDUM (wamn-dzhw, 2026-07-21):** the fixture pod now runs `fsync=on` +
+> `synchronous_commit=on` (`deploy/platform/postgres.yaml`); every fixture-pod
+> figure dated after 2026-07-21 is a durable-commit figure. The latency gates
+> of record re-ran under durable commits and ALL SLOs held: pgbench 13,804 qps,
+> p50 998 µs / p99 3.59 ms (fsync=off record: 16,215 qps / p99 2.50 ms — ≈15%
+> qps cost, p99 +1.1 ms); pgbench-multiproject 14,162 qps / p99 3.06 ms;
+> queuebench D15 write-ahead p99 6.94 ms (< 15 ms), fast-path p99 6.06 ms
+> (< 10 ms), doorbell warm p50 6.3 ms / p99 9.5 ms (< 25/100 ms). Figures
+> dated earlier remain shape-only. The C7 knee-curve re-measurement stays
+> deferred to the z7b.6 phase-2 pass (per-commit fsync on this shared-disk
+> host is signal for SLO gates, noise for knee searches).
 
 The capacity-model ledger the event-plane program publishes into
 (`docs/event-plane-jetstream.md` §10 "curves and ceilings, not verdicts" +

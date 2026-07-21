@@ -2554,3 +2554,22 @@ WAMN_RUN_QUEUE_PG_URL=... WAMN_RUN_STORE_PG_URL=... cargo test -p wamn-run-queue
 # merge_visits_carry_distinct_occurrences; builder occurrence:=literal 0 ->
 # builders_are_claim_scoped_and_parameterized; success-arm visits bump dropped ->
 # merge/diamond/loop tests; guest claim path records 0 -> runnerbench merge-resume (5 rows).
+
+### [S2/D15-durable / wamn-dzhw] fixture pod on durable commits
+
+`deploy/platform/postgres.yaml` runs `fsync=on` + `synchronous_commit=on` since
+2026-07-21 (wamn-dzhw; addenda in docs/ceilings.md provenance banner +
+docs/p0-results.md §S2). The pod is EPHEMERAL: any restart (including applying
+a knob change) wipes provisioned schemas — restore BEFORE re-running gates:
+
+```bash
+# initdb reruns the pg-init ConfigMap (role, wamn DB, s2+s3 fixtures) — keep it
+# fresh (wamn-v1pp): kubectl -n wamn-system create configmap pg-init \
+#   --from-file=init.sql=deploy/sql/postgres-init.sql --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n wamn-system exec -i deploy/postgres -- psql -U postgres -d wamn -f - < deploy/sql/catalog-schema.sql
+kubectl -n wamn-system apply -f deploy/platform/run-plane-reconcile.example.yaml   # wamn_runner_demo
+# poc_f1: f1-provision-job, then the reconcile Job sed'd to poc_f1 (queue tables)
+# rung flow content: INSERT deploy/gates/ladder/rung{1,2,3}.flow.json into
+#   wamn_runner_demo.flows (tenant demo-tenant) — then ladderproof-job proves the plane.
+# gates of record, SEQUENTIAL: pgbench-job, pgbench-multiproject-job, queuebench-job.
+```

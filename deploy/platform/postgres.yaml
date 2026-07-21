@@ -37,15 +37,23 @@ spec:
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           args:
-            # PoC throughput knobs; ephemeral pod, so durability is moot.
             - "-c"
             - "max_connections=200"
             - "-c"
             - "shared_buffers=256MB"
+            # DURABLE commits (wamn-dzhw): the latency gates of record measured
+            # against this fixture (pgbench S2 qps/p99, queuebench D15 dispatch
+            # SLOs) were systematically optimistic under fsync=off — a "durable
+            # write-ahead" p99 without the WAL flush that makes it durable.
+            # fsync=on + synchronous_commit=on matches every fsync-on deployment
+            # (the CNPG pools always ran on). The pod stays EPHEMERAL: any
+            # restart (including the one applying THIS change) wipes provisioned
+            # schemas — restore per the wamn-1wdq runbook (reconcile-run-plane +
+            # catalog-schema.sql + fixture reseeds) before re-running gates.
             - "-c"
-            - "fsync=off"
+            - "fsync=on"
             - "-c"
-            - "synchronous_commit=off"
+            - "synchronous_commit=on"
             # cutbench (l5i9.18) runs a REAL logical slot + pg_walstream session
             # against its throwaway database on this fixture — matching the
             # CNPG default the production pools carry (l5i9.32).

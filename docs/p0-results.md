@@ -184,6 +184,19 @@ SECURITY` with policies keyed on `current_setting('app.tenant', true)`.
 > concurrent with a full-workspace release compile on the host measured p99
 > 14.7 ms — interference, discarded (the CFS/co-location lesson: measure quiet).
 
+> **Addendum (2026-07-21, wamn-dzhw — DURABLE COMMITS):** the fixture pod
+> flipped to `fsync=on` + `synchronous_commit=on` (all rows above were measured
+> under `fsync=off` — systematically optimistic, see the ceilings.md provenance
+> banner). Re-run under durable commits, in-cluster: **13,804 qps**, p50
+> **998 µs**, p90 1.80 ms, p99 **3.59 ms**, max 34.6 ms, 0 errors — **PASS**
+> (thresholds unchanged: qps ≥ 2,000, p99 < 10 ms). The durability cost vs the
+> 2026-07-19 addendum: ≈15% qps, p99 +1.1 ms. Multiproject sibling: 14,162 qps,
+> p99 3.06 ms, addressability 10,000/10,000. All security gates re-passed in
+> the same runs. queuebench D15 dispatch SLOs also held durable: write-ahead
+> p99 6.94 ms (< 15 ms), fast-path p99 6.06 ms (< 10 ms), doorbell warm p50
+> 6.3 ms / p99 9.46 ms (< 25/100 ms). Fixture-pod figures from this date
+> forward are durable-commit figures.
+
 **Security gates (all mandatory) — all PASS in-cluster:**
 
 - **Chaos** (epoch-kill mid-transaction 100×): the guest `begin()`s a
