@@ -83,7 +83,8 @@ pub use run_plane::{
     RunPlaneObservation, RunPlanePlan, catalog_schema_present_sql,
     count_stale_registration_state_sql, plan_run_plane, rewrite_schema,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
-    select_schema_columns_sql, select_schema_indexes_sql, strip_registration_state_sql,
+    select_runs_fail_kind_check_sql, select_schema_columns_sql, select_schema_indexes_sql,
+    strip_registration_state_sql,
 };
 
 // Re-exported so a driver can name the registration type the reconciler folds

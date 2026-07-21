@@ -18,12 +18,16 @@
 //!   index) recreated,
 //! - the pre-l5i9.19 outbox-era teardown (tables, triggers, function, the
 //!   legacy registration `state` keys),
-//! - the `catalog` metadata schema when absent (or its missing tables).
+//! - the `catalog` metadata schema when absent (or its missing tables),
+//! - the `runs.fail_kind` CHECK when it drifted from the record literal set
+//!   (wamn-fqg.16 — a pre-cjv.4 schema missing `'runaway-budget'`): dropped by
+//!   its observed name and re-added under the convergent auto-name.
 //!
-//! **Additive:** no live column, no non-legacy table, and no data row is ever
-//! dropped; live columns the record does not know are printed, not touched.
-//! Constraint drift on an existing column (a legacy `fail_kind` CHECK) is the
-//! wamn-fqg.16 sibling class, deliberately not covered.
+//! **Additive, with one targeted constraint exception:** no live column, no
+//! non-legacy table, and no data row is ever dropped; live columns the record
+//! does not know are printed, not touched. The sole constraint rewritten is the
+//! `runs.fail_kind` CHECK above (a widening literal set every existing row still
+//! satisfies) — not a generic constraint reconciler.
 //!
 //! **Ownership:** CREATE/ALTER/DROP need table ownership — `wamn_app` cannot
 //! run them — so this connects as a **superuser** (or the schema owner), like
@@ -45,7 +49,8 @@ use tokio_postgres::NoTls;
 use wamn_migrate::{
     RunPlaneObservation, RunPlanePlan, catalog_schema_present_sql,
     count_stale_registration_state_sql, plan_run_plane, select_outbox_function_present_sql,
-    select_outbox_trigger_tables_sql, select_schema_columns_sql, select_schema_indexes_sql,
+    select_outbox_trigger_tables_sql, select_runs_fail_kind_check_sql, select_schema_columns_sql,
+    select_schema_indexes_sql,
 };
 
 #[derive(Debug, Args)]
@@ -132,6 +137,13 @@ async fn observe(
     {
         obs.indexes.insert(row.get(0), row.get(1));
     }
+    // The live runs.fail_kind CHECK (name + canonical def), for the fqg.16
+    // literal-drift repair — zero rows when runs / the CHECK is absent.
+    obs.runs_fail_kind_check = client
+        .query_opt(select_runs_fail_kind_check_sql(), &[&schema])
+        .await
+        .context("read runs.fail_kind check constraint")?
+        .map(|row| (row.get(0), row.get(1)));
     for row in client
         .query(select_outbox_trigger_tables_sql(), &[&schema])
         .await

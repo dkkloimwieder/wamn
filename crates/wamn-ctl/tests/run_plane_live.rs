@@ -25,11 +25,16 @@
 //!   sections' grants + RLS isolation end-to-end.
 //! - **current = no-op**: a schema at the schema of record plans NOTHING, in
 //!   both dry-run and apply mode (the idempotence contract).
+//! - **fail_kind CHECK drift** (wamn-fqg.16): a schema whose `runs.fail_kind`
+//!   CHECK predates cjv.4's `'runaway-budget'` literal REJECTS a runaway
+//!   `mark_failed` UPDATE. The verb drops the observed CHECK and re-adds the
+//!   4-literal record form; the runaway UPDATE then succeeds and a re-run is a
+//!   no-op (the reconciled CHECK converges with fresh provisioning).
 
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
-use wamn_migrate::rewrite_schema;
+use wamn_migrate::{RunPlaneActionKind, rewrite_schema};
 
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
@@ -103,6 +108,7 @@ async fn run_plane_reconcile_live() {
     queue_missing_leg(&su).await;
     from_zero_leg(&su).await;
     current_noop_leg(&su).await;
+    fail_kind_check_drift_leg(&su).await;
 }
 
 /// Manifestations 1 + 4: the 2jkm.41-sweep drift set plus the outbox era.
@@ -464,4 +470,106 @@ async fn current_noop_leg(su: &Client) {
         "current schema apply is a no-op: {:#?}",
         apply.actions
     );
+}
+
+/// wamn-fqg.16: a schema whose `runs.fail_kind` CHECK predates cjv.4's
+/// `'runaway-budget'` literal rejects a runaway `mark_failed` UPDATE — the
+/// verdict is lost from the audit row. The reconcile drops the observed CHECK
+/// and re-adds the 4-literal record form; the runaway UPDATE then succeeds, the
+/// canonical def carries `runaway-budget`, and a re-run is a no-op.
+async fn fail_kind_check_drift_leg(su: &Client) {
+    reset(su).await;
+    // Provision the CURRENT run plane (fresh 4-literal fail_kind CHECK)…
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, SCHEMA))
+        .await
+        .expect("apply run-state");
+    su.batch_execute(&rewrite_schema(FLOWS_SQL, SCHEMA))
+        .await
+        .expect("apply flows");
+    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, SCHEMA))
+        .await
+        .expect("apply run-queue");
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog-schema");
+    // …then REGRESS runs.fail_kind to the pre-cjv.4 3-literal CHECK (drop the
+    // fresh auto-named one, re-add without 'runaway-budget') — the exact state a
+    // schema provisioned from the old run-state.sql carries.
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.runs DROP CONSTRAINT runs_fail_kind_check; \
+         ALTER TABLE {SCHEMA}.runs ADD CONSTRAINT runs_fail_kind_check \
+             CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input'));"
+    ))
+    .await
+    .expect("regress fail_kind CHECK to the legacy 3 literals");
+    // A run whose runaway verdict we will try to record.
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs (tenant_id, run_id, flow_id, flow_version) \
+             VALUES ('t1', 'r-budget', 'f', 1);"
+    ))
+    .await
+    .expect("seed a run");
+    // Under the legacy CHECK the runaway verdict is REJECTED (the fqg.16 bug).
+    let rejected = su
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET fail_kind = 'runaway-budget' \
+                 WHERE tenant_id = 't1' AND run_id = 'r-budget'"
+            ),
+            &[],
+        )
+        .await;
+    assert!(
+        rejected.is_err(),
+        "legacy 3-literal CHECK rejects the runaway verdict"
+    );
+
+    // Reconcile: exactly the fail_kind CHECK repair is planned + applied.
+    let plan = reconcile_run_plane::reconcile(su, SCHEMA, true)
+        .await
+        .expect("reconcile applies");
+    assert!(
+        plan.actions
+            .iter()
+            .any(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck),
+        "the fail_kind CHECK repair is planned: {:#?}",
+        plan.actions
+    );
+
+    // (i) the canonical constraint def now admits 'runaway-budget'.
+    let def: String = su
+        .query_one(
+            "SELECT pg_get_constraintdef(con.oid) FROM pg_constraint con \
+             JOIN pg_class c ON c.oid = con.conrelid \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = $1 AND c.relname = 'runs' \
+               AND con.conname = 'runs_fail_kind_check'",
+            &[&SCHEMA],
+        )
+        .await
+        .expect("read fail_kind constraintdef")
+        .get(0);
+    assert!(
+        def.contains("runaway-budget"),
+        "reconciled CHECK admits runaway-budget: {def}"
+    );
+
+    // (ii) the runaway `mark_failed` UPDATE now SUCCEEDS — the verdict lands.
+    let updated = su
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET fail_kind = 'runaway-budget' \
+                 WHERE tenant_id = 't1' AND run_id = 'r-budget'"
+            ),
+            &[],
+        )
+        .await
+        .expect("runaway verdict now accepted");
+    assert_eq!(updated, 1, "the runaway verdict lands on the audit row");
+
+    // (iii) a second reconcile plans nothing (idempotence + convergence).
+    let again = reconcile_run_plane::reconcile(su, SCHEMA, false)
+        .await
+        .expect("re-plan");
+    assert!(again.is_noop(), "re-run is a no-op: {:#?}", again.actions);
 }

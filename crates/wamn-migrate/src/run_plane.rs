@@ -39,13 +39,22 @@
 //! 5. **From-zero restore** — an empty database plans the full set, including
 //!    `deploy/sql/catalog-schema.sql` (the `catalog` metadata schema the
 //!    registration storage and the RI reconcile read).
+//! 6. **`fail_kind` CHECK literal drift** (wamn-fqg.16) — a `runs.fail_kind`
+//!    CHECK provisioned before cjv.4 added the `'runaway-budget'` literal admits
+//!    only the 3 legacy literals, so a runaway run's `mark_failed` UPDATE is
+//!    rejected and the failure verdict silently lost from the audit row. The
+//!    CHECK is DROPped by its OBSERVED name and re-ADDed under the auto-name
+//!    fresh provisioning yields (`runs_fail_kind_check`) with the record's
+//!    literals, so a reconciled schema converges byte-for-byte with a freshly
+//!    provisioned one in `pg_constraint`.
 //!
-//! **Additive only:** the plan never drops a live column, table, or index other
-//! than the named legacy outbox-era objects and a stale-definition record
-//! index; live columns not in the record are SURFACED (`extra_columns`), never
-//! touched. Constraint drift on an existing column (e.g. a legacy `fail_kind`
-//! CHECK missing `'runaway-budget'`) is the wamn-fqg.16 sibling class and is
-//! deliberately NOT reconciled here.
+//! **Additive only, with one targeted constraint exception:** the plan never
+//! drops a live column, table, or index other than the named legacy outbox-era
+//! objects and a stale-definition record index; live columns not in the record
+//! are SURFACED (`extra_columns`), never touched. The sole constraint it
+//! rewrites is the `runs.fail_kind` CHECK above (drop-and-re-add of a widening
+//! literal set — every existing row still satisfies it); this is NOT a generic
+//! constraint reconciler, scoped strictly to that one CHECK.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -71,6 +80,13 @@ pub const LEGACY_OUTBOX_TABLES: [&str; 2] = ["outbox", "evt_shadow"];
 /// so it landed in the apply-time schema).
 pub const OUTBOX_TRIGGER_NAME: &str = "wamn_outbox_event";
 
+/// The constraint name Postgres auto-generates for the inline unnamed
+/// `runs.fail_kind` CHECK in `run-state.sql` (empirically `runs_fail_kind_check`
+/// — the `<table>_<column>_check` rule). The fqg.16 repair re-adds under this
+/// name so a reconciled schema converges byte-for-byte with a freshly
+/// provisioned one in `pg_constraint`.
+const FAIL_KIND_CHECK_NAME: &str = "runs_fail_kind_check";
+
 /// What the driver observed live, scoped to ONE project-env schema (plus the
 /// per-database `catalog` metadata schema). Everything here is a read — the
 /// pure planner turns it into the action list.
@@ -95,6 +111,12 @@ pub struct RunPlaneObservation {
     /// Rows in `catalog.event_registrations` still carrying the legacy `state`
     /// key (0 when the table is absent — nothing to strip).
     pub stale_registration_state_rows: i64,
+    /// The live CHECK constraint on `runs.fail_kind`: `(constraint name,
+    /// canonical `pg_get_constraintdef`)`, or `None` when `runs` or the CHECK is
+    /// absent. The planner compares its literal set against the record and
+    /// repairs legacy literal drift (wamn-fqg.16 — the missing
+    /// `'runaway-budget'`).
+    pub runs_fail_kind_check: Option<(String, String)>,
 }
 
 /// What one plan action does (for reporting; the SQL is on the action).
@@ -107,6 +129,9 @@ pub enum RunPlaneActionKind {
     CreateTable,
     /// Add a record column missing from a present table.
     AddColumn,
+    /// Drop the legacy `runs.fail_kind` CHECK (by its observed name) and re-add
+    /// it with the record's literals (the missing `'runaway-budget'`).
+    RepairFailKindCheck,
     /// Create a record index absent from a present table.
     CreateIndex,
     /// Drop + recreate a present index whose live definition lost a record
@@ -215,6 +240,66 @@ pub fn plan_run_plane(schema: &str, obs: &RunPlaneObservation) -> RunPlanePlan {
                     plan.extra_columns.push((table.clone(), col.clone()));
                 }
             }
+        }
+    }
+
+    // 2b. `runs.fail_kind` CHECK literal drift (wamn-fqg.16): a schema
+    //    provisioned before cjv.4 added `'runaway-budget'` carries only the 3
+    //    legacy literals, so a runaway `mark_failed` UPDATE is CHECK-rejected and
+    //    the verdict lost. Repaired ONLY when `runs` and its `fail_kind` column
+    //    are BOTH present live — a missing table/column already gets the record's
+    //    inline 4-literal CHECK via CreateTable / AddColumn above. Comparison is
+    //    on the LITERAL SET parsed from the canonical `pg_get_constraintdef`
+    //    (robust to the `IN (…)` → `= ANY (ARRAY[…])` rewrite pg applies); the
+    //    re-add lists the record's literals in record order under the auto-name
+    //    for byte-identical convergence with fresh provisioning.
+    if obs
+        .tables
+        .get("runs")
+        .is_some_and(|cols| cols.contains("fail_kind"))
+    {
+        let record = fail_kind_literals(&record_fail_kind_definition());
+        let expected: BTreeSet<&str> = record.iter().map(String::as_str).collect();
+        let add = format!(
+            "ADD CONSTRAINT {} CHECK (fail_kind IN ({}))",
+            quote_ident(FAIL_KIND_CHECK_NAME),
+            record
+                .iter()
+                .map(|lit| format!("'{lit}'"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        let repair_sql = match &obs.runs_fail_kind_check {
+            // Present and admits exactly the record literals → nothing to do.
+            Some((_, def))
+                if fail_kind_literals(def)
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>()
+                    == expected =>
+            {
+                None
+            }
+            // Drifted: drop the OBSERVED name, re-add the convergent one.
+            Some((name, _)) => Some(format!(
+                "ALTER TABLE {}.{} DROP CONSTRAINT {}, {add}",
+                quote_ident(schema),
+                quote_ident("runs"),
+                quote_ident(name),
+            )),
+            // Column present but the CHECK is absent → ADD only.
+            None => Some(format!(
+                "ALTER TABLE {}.{} {add}",
+                quote_ident(schema),
+                quote_ident("runs"),
+            )),
+        };
+        if let Some(sql) = repair_sql {
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::RepairFailKindCheck,
+                target: "runs.fail_kind".to_string(),
+                sql,
+            });
         }
     }
 
@@ -357,6 +442,30 @@ fn ident_tokens(sql: &str) -> BTreeSet<&str> {
         .collect()
 }
 
+/// The single-quoted string literals in a SQL fragment, in order. Used to pull
+/// the `fail_kind` CHECK literals out of BOTH the record column definition and
+/// the live `pg_get_constraintdef` — the drift check compares this list's SET,
+/// so the `IN (…)` vs `= ANY (ARRAY[…])` canonicalization pg applies is
+/// irrelevant. Assumes literals free of embedded quotes (the fail_kind enum is).
+fn fail_kind_literals(sql: &str) -> Vec<String> {
+    sql.split('\'')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
+}
+
+/// The `runs.fail_kind` column definition from the record — the inline CHECK
+/// carries the canonical literal list in record order (the `mark_failed` verdicts
+/// the schema must admit).
+fn record_fail_kind_definition() -> String {
+    record_columns(RUN_STATE_SQL, "wamn_run", "runs")
+        .into_iter()
+        .find(|(col, _)| col == "fail_kind")
+        .expect("runs.fail_kind in the schema of record")
+        .1
+}
+
 fn quote_ident(s: &str) -> String {
     wamn_ddl::sql::quote_ident(s)
 }
@@ -414,6 +523,22 @@ pub fn catalog_schema_present_sql() -> &'static str {
 /// (the shell runs this only when the table was observed present).
 pub fn count_stale_registration_state_sql() -> &'static str {
     "SELECT count(*) FROM catalog.event_registrations WHERE registration ? 'state'"
+}
+
+/// The live CHECK constraint on `$1.runs.fail_kind`: `(conname,
+/// pg_get_constraintdef)`, or zero rows when `runs`/the CHECK is absent.
+/// Identified by CONKEY — the CHECK whose ONLY referenced column is `fail_kind`
+/// — never by name, so a legacy auto-name is found regardless of what it is; the
+/// fqg.16 repair then DROPs exactly that observed name. `query_opt` in the shell.
+pub fn select_runs_fail_kind_check_sql() -> &'static str {
+    "SELECT con.conname, pg_get_constraintdef(con.oid) \
+     FROM pg_constraint con \
+     JOIN pg_class c ON c.oid = con.conrelid \
+     JOIN pg_namespace n ON n.oid = c.relnamespace \
+     WHERE n.nspname = $1 AND c.relname = 'runs' AND con.contype = 'c' \
+       AND con.conkey = ARRAY[( \
+         SELECT a.attnum FROM pg_attribute a \
+         WHERE a.attrelid = c.oid AND a.attname = 'fail_kind')]"
 }
 
 // ---------------------------------------------------------------------------
@@ -630,6 +755,20 @@ mod tests {
         obs.catalog_tables = record_tables(CATALOG_SCHEMA_SQL, "catalog")
             .into_iter()
             .collect();
+        // The runs.fail_kind CHECK as fresh provisioning leaves it: the auto-name
+        // plus the canonical `= ANY (ARRAY[…])` form pg reports, built from the
+        // record literals so the fixture tracks the record.
+        let lits = fail_kind_literals(&record_fail_kind_definition());
+        obs.runs_fail_kind_check = Some((
+            FAIL_KIND_CHECK_NAME.to_string(),
+            format!(
+                "CHECK ((fail_kind = ANY (ARRAY[{}])))",
+                lits.iter()
+                    .map(|l| format!("'{l}'::text"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+        ));
         obs
     }
 
@@ -928,6 +1067,133 @@ mod tests {
         assert!(plan.is_noop(), "extras plan no action: {:#?}", plan.actions);
     }
 
+    /// fqg.16: a schema provisioned before cjv.4 carries the 3-literal legacy
+    /// `runs.fail_kind` CHECK → DROP the observed name + ADD the record's 4
+    /// literals under the convergent auto-name.
+    #[test]
+    fn legacy_three_literal_fail_kind_check_plans_drop_and_add() {
+        let mut obs = observation_at_record();
+        obs.runs_fail_kind_check = Some((
+            "runs_fail_kind_check".to_string(),
+            "CHECK ((fail_kind = ANY (ARRAY['terminal'::text, \
+             'retry-exhausted'::text, 'invalid-input'::text])))"
+                .to_string(),
+        ));
+        let plan = plan_run_plane("demo", &obs);
+        let repair = plan
+            .actions
+            .iter()
+            .find(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck)
+            .expect("legacy fail_kind CHECK is repaired");
+        assert_eq!(repair.target, "runs.fail_kind");
+        assert_eq!(
+            repair.sql,
+            "ALTER TABLE \"demo\".\"runs\" DROP CONSTRAINT \"runs_fail_kind_check\", \
+             ADD CONSTRAINT \"runs_fail_kind_check\" CHECK (fail_kind IN \
+             ('terminal', 'retry-exhausted', 'invalid-input', 'runaway-budget'))"
+        );
+        // runs was touched, so it is not reported at target.
+        assert!(!plan.at_target.contains(&"runs".to_string()));
+    }
+
+    /// The DROP must target the OBSERVED name (never an assumed one) while the
+    /// ADD uses the convergent auto-name — proven with a hand-named legacy CHECK.
+    #[test]
+    fn fail_kind_repair_drops_the_observed_constraint_name() {
+        let mut obs = observation_at_record();
+        obs.runs_fail_kind_check = Some((
+            "legacy_fk_ck".to_string(),
+            "CHECK ((fail_kind = ANY (ARRAY['terminal'::text, \
+             'retry-exhausted'::text, 'invalid-input'::text])))"
+                .to_string(),
+        ));
+        let repair = plan_run_plane("demo", &obs)
+            .actions
+            .into_iter()
+            .find(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck)
+            .expect("repair emitted");
+        assert!(
+            repair.sql.contains("DROP CONSTRAINT \"legacy_fk_ck\","),
+            "drops the observed name: {}",
+            repair.sql
+        );
+        assert!(
+            repair
+                .sql
+                .contains("ADD CONSTRAINT \"runs_fail_kind_check\" CHECK"),
+            "re-adds the convergent name: {}",
+            repair.sql
+        );
+    }
+
+    /// Set-equality comparison: the 4 record literals in a different order and
+    /// surface form (`IN (…)` vs `= ANY (ARRAY[…])`) plan NO repair.
+    #[test]
+    fn matching_fail_kind_check_plans_no_repair() {
+        let mut obs = observation_at_record();
+        obs.runs_fail_kind_check = Some((
+            "runs_fail_kind_check".to_string(),
+            "CHECK (fail_kind IN ('runaway-budget', 'invalid-input', \
+             'retry-exhausted', 'terminal'))"
+                .to_string(),
+        ));
+        let plan = plan_run_plane("demo", &obs);
+        assert!(
+            !plan
+                .actions
+                .iter()
+                .any(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck),
+            "matching literal set plans no repair: {:#?}",
+            plan.actions
+        );
+        assert!(plan.is_noop());
+    }
+
+    /// Column present but the CHECK absent (manually dropped) → ADD only.
+    #[test]
+    fn absent_fail_kind_check_plans_add_only() {
+        let mut obs = observation_at_record();
+        obs.runs_fail_kind_check = None;
+        let repair = plan_run_plane("demo", &obs)
+            .actions
+            .into_iter()
+            .find(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck)
+            .expect("absent CHECK is added");
+        assert_eq!(
+            repair.sql,
+            "ALTER TABLE \"demo\".\"runs\" ADD CONSTRAINT \"runs_fail_kind_check\" \
+             CHECK (fail_kind IN \
+             ('terminal', 'retry-exhausted', 'invalid-input', 'runaway-budget'))"
+        );
+        assert!(!repair.sql.contains("DROP CONSTRAINT"));
+    }
+
+    /// When `runs` is absent, CreateTable carries the record's inline CHECK — no
+    /// separate fail_kind repair fires even against a stale check observation.
+    #[test]
+    fn fail_kind_check_not_repaired_when_runs_table_absent() {
+        let mut obs = observation_at_record();
+        obs.tables.remove("runs");
+        obs.runs_fail_kind_check = Some((
+            "runs_fail_kind_check".to_string(),
+            "CHECK ((fail_kind = ANY (ARRAY['terminal'::text])))".to_string(),
+        ));
+        let plan = plan_run_plane("demo", &obs);
+        assert!(
+            !plan
+                .actions
+                .iter()
+                .any(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck),
+            "no fail_kind repair when runs is (re)created"
+        );
+        assert!(
+            plan.actions
+                .iter()
+                .any(|a| a.kind == RunPlaneActionKind::CreateTable && a.target == "runs"),
+            "runs is created instead"
+        );
+    }
+
     /// The queue-missing manifestation (the live poc_f1 case): run-state +
     /// flows present, queue absent → exactly the three queue creates (+ the
     /// schema ensure, which is idempotent).
@@ -994,6 +1260,9 @@ mod tests {
         assert!(select_outbox_trigger_tables_sql().contains("'wamn_outbox_event'"));
         assert!(select_outbox_function_present_sql().contains("pg_proc"));
         assert!(catalog_schema_present_sql().contains("'catalog'"));
+        // fqg.16: the fail_kind CHECK is found by CONKEY, not by name.
+        assert!(select_runs_fail_kind_check_sql().contains("con.conkey = ARRAY["));
+        assert!(select_runs_fail_kind_check_sql().contains("pg_get_constraintdef"));
         assert_eq!(
             strip_registration_state_sql(),
             "UPDATE catalog.event_registrations SET registration = registration - 'state' \
