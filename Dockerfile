@@ -24,7 +24,7 @@ COPY deploy ./deploy
 # (docs/wash-runtime-fork.md); cargo fetches it during the build.
 # rust-toolchain.toml would force a rustup download inside the container;
 # the base image already ships the right version.
-RUN rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-gates
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-gates
 
 # ---- washlet image: the host binary only ------------------------------------
 FROM debian:trixie-slim AS host
