@@ -358,18 +358,34 @@ async fn resolve_entity(
 /// pgoutput text row → the envelope's column→value map. Values stay in text
 /// representation (string or null); an unchanged TOAST column is ABSENT from
 /// the source `RowData`, so it stays absent here (distinguishable from NULL).
-fn row_to_map(row: &RowData) -> serde_json::Map<String, serde_json::Value> {
+///
+/// The v3 wire carries each value as a JSON string, so it must be valid UTF-8.
+/// A non-UTF-8 value means the source database is not UTF-8-encoded — refuse it
+/// LOUDLY (a `Config` error, classified `Fatal`: non-retryable, the reader
+/// exits and the slot holds WAL) rather than corrupt it with a lossy `U+FFFD`
+/// substitution (R19). Postgres validates text on input, so a UTF-8 source
+/// never reaches this path; hitting it is a misconfiguration a human must fix.
+fn row_to_map(
+    row: &RowData,
+) -> Result<serde_json::Map<String, serde_json::Value>, ReplicationError> {
     let mut map = serde_json::Map::with_capacity(row.len());
     for (name, value) in row.iter() {
         let v = match value {
             ColumnValue::Null => serde_json::Value::Null,
             other => {
-                serde_json::Value::String(String::from_utf8_lossy(other.as_bytes()).into_owned())
+                let s = std::str::from_utf8(other.as_bytes()).map_err(|e| {
+                    ReplicationError::Config(format!(
+                        "non-UTF-8 value in column {name} ({e}) — the v3 wire carries \
+                         pgoutput text as JSON strings; refusing rather than corrupting \
+                         it (R19). The source database encoding must be UTF-8."
+                    ))
+                })?;
+                serde_json::Value::String(s.to_owned())
             }
         };
         map.insert(name.to_string(), v);
     }
-    map
+    Ok(map)
 }
 
 /// Decode a logical-decoding `Message` frame into a causation stamp, or `None`
@@ -1018,10 +1034,18 @@ async fn drain(
                 summary,
             );
         };
+        let old = match old.as_ref().map(row_to_map).transpose() {
+            Ok(m) => m,
+            Err(e) => return DrainOutcome::Severed(e, summary),
+        };
+        let new = match new.as_ref().map(row_to_map).transpose() {
+            Ok(m) => m,
+            Err(e) => return DrainOutcome::Severed(e, summary),
+        };
         frame.rows.push(PendingRow {
             op,
-            old: old.as_ref().map(row_to_map),
-            new: new.as_ref().map(row_to_map),
+            old,
+            new,
             entity,
             table: table.to_string(),
             lsn,
@@ -1523,10 +1547,40 @@ mod tests {
             ("note", ColumnValue::Null),
             // "big" (unchanged TOAST) is ABSENT from the pgoutput row.
         ]);
-        let map = row_to_map(&row);
+        let map = row_to_map(&row).unwrap();
         assert_eq!(map.get("id").unwrap(), "7");
         assert!(map.get("note").unwrap().is_null());
         assert!(map.get("big").is_none());
+    }
+
+    #[test]
+    fn row_to_map_passes_clean_utf8_through_unchanged() {
+        // Clean UTF-8 (incl. multibyte) maps verbatim — no refusal, no rewrite.
+        let row = RowData::from_pairs(vec![
+            ("id", ColumnValue::text("7")),
+            ("name", ColumnValue::text("naïve café")),
+        ]);
+        let map = row_to_map(&row).expect("clean UTF-8 maps without refusal");
+        assert_eq!(map.get("id").unwrap(), "7");
+        assert_eq!(map.get("name").unwrap(), "naïve café");
+    }
+
+    #[test]
+    fn row_to_map_refuses_non_utf8_rather_than_corrupting() {
+        // A non-UTF-8 value (a non-UTF-8 source database) cannot be a JSON
+        // string on the frozen v3 wire. The reader REFUSES loudly — a `Config`
+        // error, classified `Fatal` (non-retryable) — instead of the old lossy
+        // `U+FFFD` substitution (R19).
+        let row = RowData::from_pairs(vec![
+            ("id", ColumnValue::text("7")),
+            (
+                "bad",
+                ColumnValue::text_bytes(bytes::Bytes::from_static(&[0xff, 0xfe])),
+            ),
+        ]);
+        let err = row_to_map(&row).expect_err("non-UTF-8 must not map lossily");
+        assert!(matches!(err, ReplicationError::Config(_)));
+        assert_eq!(classify(&err), SessionFate::Fatal);
     }
 
     #[test]
