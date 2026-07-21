@@ -851,6 +851,144 @@ fn resume_reconstructs_an_error_routed_branch() {
     assert_eq!(resumed, ["h"]); // the error branch, not the success node "ok"
 }
 
+/// a error-routes to h; a's UNTAKEN main edge a->ok must never run. h succeeds.
+/// The R26 shape: replaying a's error-routed record must reproduce the LIVE
+/// step_seq/result, not the pre-fix success-fold (which bumped both).
+fn error_route_flow() -> Flow {
+    flow(
+        r#"{"schema-version":"0.1","flow-id":"r26","version":1,
+            "trigger":{"type":"manual"},"entry":"a",
+            "nodes":[{"id":"a","type":"call"},{"id":"h","type":"handler"},
+                     {"id":"ok","type":"echo"}],
+            "edges":[{"from":"a","to":"ok"},
+                     {"from":"a","from-port":"error","to":"h"}]}"#,
+    )
+}
+
+#[test]
+fn resumed_error_routed_run_matches_live_step_seq_and_result() {
+    // R26: an error-ROUTED record must replay as the live error-route transition,
+    // NOT a success fold. Drive LIVE, then resume from the full per-visit records
+    // and assert step_seq and result match live exactly (pre-fix the resumed
+    // step_seq was one higher — the error record wrongly bumped it).
+    let f = error_route_flow();
+    let plan = Plan::compile(&f).unwrap();
+
+    // LIVE: a fails terminally -> error-routes to h; ok never runs; h succeeds.
+    let live = run(&plan, "live", json!({}), |d| match d.node.as_str() {
+        "a" => NodeOutcome::Error(NodeError::Terminal(wamn_runner::ErrorDetail::coded(
+            "HTTP_500", "boom",
+        ))),
+        _ => NodeOutcome::ok(json!({ "handled": true })),
+    });
+    assert_eq!(live.status, RunStatus::Completed);
+    assert_eq!(live.nodes(), ["a", "h"]); // ok skipped
+    assert_eq!(live.state.step_seq(), 1); // only h's success counts
+    // The error payload a actually emitted (h's live input) — reuse it verbatim
+    // so the record matches what the run emitted.
+    let error_payload = live
+        .visited
+        .iter()
+        .find(|d| d.node == "h")
+        .unwrap()
+        .payload
+        .clone();
+
+    // RESUME from the full per-visit records: [a@error, h@main].
+    let records = [
+        Recorded::new("a", "error", error_payload.clone()),
+        Recorded::new("h", "main", json!({ "handled": true })),
+    ];
+    let mut st = plan.resume("resumed", json!({}), &records).unwrap();
+    assert_eq!(
+        st.step_seq(),
+        live.state.step_seq(),
+        "the error record must not bump step_seq"
+    );
+    assert_eq!(
+        st.result(),
+        live.state.result(),
+        "the error record must not overwrite result"
+    );
+
+    // Nothing outstanding: the resume completes with nothing re-dispatched.
+    let mut resumed = Vec::new();
+    let status = plan.drive(
+        &mut st,
+        || 0,
+        |_, _| {},
+        |d| {
+            resumed.push(d.node.clone());
+            NodeOutcome::ok(d.payload.clone())
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert!(resumed.is_empty());
+}
+
+#[test]
+fn resume_partial_after_error_route_leaves_step_seq_zero_and_null_result() {
+    // Only a's error record replayed: after routing (before h), the LIVE state is
+    // step_seq 0 / result Null — the error route touches neither. Driving on
+    // completes via h, which receives the error payload as its input.
+    let f = error_route_flow();
+    let plan = Plan::compile(&f).unwrap();
+    let error_payload = json!({ "error": { "message": "boom", "code": "HTTP_500" } });
+    let records = [Recorded::new("a", "error", error_payload.clone())];
+    let mut st = plan.resume("partial", json!({}), &records).unwrap();
+    assert_eq!(st.step_seq(), 0, "an error route is not a completed step");
+    assert_eq!(st.result(), &Value::Null, "no success has set a result yet");
+
+    // The live remainder: h runs with the error payload as its input, then done.
+    let mut seen = Vec::new();
+    let status = plan.drive(
+        &mut st,
+        || 0,
+        |_, _| {},
+        |d| {
+            seen.push((d.node.clone(), d.payload.clone()));
+            NodeOutcome::ok(json!({ "handled": true }))
+        },
+    );
+    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(seen, [("h".to_string(), error_payload)]);
+}
+
+#[test]
+fn resume_error_route_still_advances_the_occurrence() {
+    // The err-loop shape a->b, b--error-->h, h->b. Resume from [a@main, b@error,
+    // h@main]: b's error-routed record must still advance b's visit count, so the
+    // NEXT dispatch is b's SECOND visit (occurrence 1, key "r1:b:1"). Proves the
+    // new replay path keeps the occurrence-advancing semantics live has.
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"err-loop","version":1,
+            "trigger":{"type":"manual"},"entry":"a",
+            "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"call"},
+                     {"id":"h","type":"handler"}],
+            "edges":[{"from":"a","to":"b"},
+                     {"from":"b","from-port":"error","to":"h"},
+                     {"from":"h","to":"b"}]}"#,
+    );
+    let plan = Plan::compile(&f).unwrap();
+    let records = [
+        Recorded::new("a", "main", json!({ "at": "a" })),
+        Recorded::new("b", "error", json!({ "error": { "message": "boom" } })),
+        Recorded::new("h", "main", json!({ "at": "h" })),
+    ];
+    let mut st = plan.resume("r1", json!({}), &records).unwrap();
+    match plan.next(&mut st, 0) {
+        Step::Dispatch(d) => {
+            assert_eq!(d.node, "b");
+            assert_eq!(
+                d.occurrence, 1,
+                "the replayed error route advanced b's visit count"
+            );
+            assert_eq!(d.idempotency_key, "r1:b:1");
+        }
+        other => panic!("expected b's second visit, got {other:?}"),
+    }
+}
+
 #[test]
 fn resume_detects_history_drift() {
     let f = linear4();

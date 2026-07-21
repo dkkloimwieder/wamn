@@ -206,12 +206,14 @@ pub struct Dispatch {
 }
 
 /// One completed node execution, replayed to reconstruct a run's frontier on
-/// resume (5.7). The engine folds each as a `Success { payload, port }` through
-/// [`Plan::apply`], so an **error-routed** node is recorded as an emission on
-/// [`ERROR_PORT`](crate::ERROR_PORT) carrying the `{"error": …}` payload:
-/// reconstruction needs no error taxonomy, only the `(node, port, payload)` the
-/// run actually emitted, and a node with a persisted record is never
-/// re-dispatched (its effect does not repeat).
+/// resume (5.7). A record on `MAIN_PORT` or a branch port folds as a
+/// `Success { payload, port }` through [`Plan::apply`]; an **error-routed** record
+/// (port [`ERROR_PORT`](crate::ERROR_PORT), payload the `{"error": …}` object)
+/// instead replays as the LIVE error-route transition (advance the visit,
+/// re-enter the error branch — no `step_seq`/`result` effect), matching live
+/// `error_or_fail` (R26). Either way reconstruction needs no error taxonomy, only
+/// the `(node, port, payload)` the run actually emitted, and a node with a
+/// persisted record is never re-dispatched (its effect does not repeat).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Recorded {
     /// The node that completed.
@@ -480,6 +482,19 @@ impl<'f> Plan<'f> {
         }
     }
 
+    /// The error-ROUTE transition, shared by [`error_or_fail`](Self::error_or_fail)'s
+    /// routed arm and the [`resume`](Self::resume) fold so live and replay cannot
+    /// drift: clear the active slot, count the COMPLETED visit (an error-routed
+    /// emission advances the node's occurrence exactly as a success does — R24),
+    /// and enqueue the [`ERROR_PORT`](crate::outcome::ERROR_PORT) successors carrying
+    /// `payload`. Deliberately leaves `step_seq` and `result` untouched: an error
+    /// route is not a success completion (R26).
+    fn route_error(&self, state: &mut RunState, node: &str, payload: Value) {
+        state.current = None;
+        *state.visits.entry(node.to_string()).or_default() += 1;
+        self.enqueue_successors(state, node, crate::outcome::ERROR_PORT, payload);
+    }
+
     /// Mark the active node for a retry at `until_ms` (keeping the same input
     /// payload), coordinating on `throttle` if set.
     fn schedule_retry(&self, state: &mut RunState, until_ms: u64, throttle: Option<ThrottleKey>) {
@@ -505,15 +520,9 @@ impl<'f> Plan<'f> {
         } else {
             // An error-ROUTED emission is a COMPLETED visit (the driver persists
             // its `node_runs` row), so it advances the node's occurrence exactly
-            // as a success does; a run-ending failure above does not.
-            *state.visits.entry(node.to_string()).or_default() += 1;
-            let payload = detail.to_error_payload();
-            for edge in error_edges {
-                state.frontier.push_back(Token {
-                    node: edge.to.clone(),
-                    payload: payload.clone(),
-                });
-            }
+            // as a success does; a run-ending failure above does not. Shared with
+            // the resume fold so replay reproduces this transition exactly (R26).
+            self.route_error(state, node, detail.to_error_payload());
         }
     }
 
@@ -545,11 +554,14 @@ impl<'f> Plan<'f> {
 
     /// Reconstruct a run's state by replaying its `completed` node executions —
     /// the **branch-aware durable resume** the driver uses instead of the S3
-    /// linear `step_seq` (5.7). Each [`Recorded`] step is folded as a success
-    /// emission through [`apply`](Self::apply), so the rebuilt frontier is exactly
-    /// what the original walk left outstanding: the same branch was taken, the
-    /// same merges arrived, error-routed nodes re-entered their error branch. The
-    /// returned [`RunState`] is positioned to continue — the driver calls
+    /// linear `step_seq` (5.7). A success/branch [`Recorded`] step folds as a
+    /// success emission through [`apply`](Self::apply); an [`ERROR_PORT`](crate::ERROR_PORT)
+    /// step replays as the LIVE error-route transition (advance the visit,
+    /// re-enter the error branch, leaving `step_seq` and `result` untouched —
+    /// R26), so the rebuilt frontier is exactly what the original walk left
+    /// outstanding: the same branch was taken, the same merges arrived,
+    /// error-routed nodes re-entered their error branch. The returned
+    /// [`RunState`] is positioned to continue — the driver calls
     /// [`next`](Self::next)/[`apply`](Self::apply) from there, re-dispatching only
     /// nodes that have no record (so their effects run at-least-once, deduped by
     /// the node's own idempotency).
@@ -577,15 +589,26 @@ impl<'f> Plan<'f> {
                             dispatched: d.node,
                         });
                     }
-                    self.apply(
-                        &mut state,
-                        &d,
-                        NodeOutcome::Success {
-                            payload: rec.payload.clone(),
-                            port: rec.port.clone(),
-                        },
-                        0,
-                    );
+                    if rec.port == crate::outcome::ERROR_PORT {
+                        // R26: an error-ROUTED record replays as the LIVE
+                        // error-route transition, NOT a success fold. Folding it
+                        // through apply(Success) would bump `step_seq` and
+                        // overwrite `result` — neither of which live `error_or_fail`
+                        // does; only the visit/occurrence advance and the
+                        // error-branch enqueue are real. Sharing `route_error`
+                        // keeps replay == live.
+                        self.route_error(&mut state, &rec.node, rec.payload.clone());
+                    } else {
+                        self.apply(
+                            &mut state,
+                            &d,
+                            NodeOutcome::Success {
+                                payload: rec.payload.clone(),
+                                port: rec.port.clone(),
+                            },
+                            0,
+                        );
+                    }
                 }
                 Step::Wait { node, .. } => return Err(ResumeError::UnexpectedWait { node }),
                 Step::Done(_) => {
