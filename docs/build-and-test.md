@@ -1095,6 +1095,65 @@ refused, and rie2ebench's `post-flip DELETE fired ONE scoped :evt: delete run`
 assert FAILS. Apply/test/restore with sha256, DEBUG; rebuild wamn-gates after
 restoring the dep.
 
+### [EVT-C-CDC / wamn-l5i9.14] cdcbench ceiling campaign (measurement, not a gate)
+
+Docs: docs/event-plane-jetstream.md §7/§8/§11 · record docs/ceilings.md § C-CDC.
+Four axes on the rie2ebench substrate (gate-owned throwaway `wamn_ccdc`
+database on a `wal_level=logical` PG, REAL deploy/sql DDL + wamn-provision/
+wamn-registry builders, the REAL embedded reader via
+`wamn_cdc_reader::run_with_token`, slot per-variant + always-run teardown,
+zero residue): **drain** — bulk import lands behind the slot with the reader
+down, then the reader starts and the gate samples stream depth + slot lag to
+catch-up (variants: batched narrow, one-txn narrow, one-txn narrow decoded
+under a 64kB `logical_decoding_work_mem` role GUC — the forced-spill leg of
+the wamn-mu4h evidence, `pg_stat_replication_slots` counters recorded — and
+one-txn wide/TOASTy); **lag** — reader live, offered single-row-txn rate
+step-ramped across writer connections, slot lag sampled through every step
+(the §8 knee = lag divergence), eventual completeness asserted; **ri** —
+per-op WAL at REPLICA IDENTITY DEFAULT then FULL (flipped by the REAL
+l5i9.31/l5i9.61 reconcile off seeded delete registrations), narrow + wide
+shapes + the wide non-TOAST-column update (FULL flattens the unchanged 6 KiB
+old image — the l5i9.63 number); per-op WAL brackets with the MEDIAN as the
+delta statistic (FPI outliers + shared-instance ambient WAL excluded — the
+C-WAL-0 per-event discipline), C-WAL-0 as the pre-CDC denominator;
+**switchover** — the timed availability drill (separate mode + target: see
+deploy/gates/cdcbench-switchover-job.yaml), cdc1's no-gap shape with the REAL
+reader's R11 re-open ladder as the recovery, write blackout / publish gap /
+catch-up timed from commit wall-times + JetStream ingest timestamps.
+`--mode all` = drain+lag+ri; switchover is always explicit.
+
+```bash
+cargo test -p wamn-gates cdcbench            # fixture drift guards (frozen registration parse, catalog shapes, URL helpers)
+# Local bring-up — REAL reader + REAL DDL + REAL JetStream (numbers are NOT
+# the record; the record is the in-cluster release-image job):
+docker run -d --name wamn-ccdc-pg -p 55444:5432 -e POSTGRES_PASSWORD=postgres \
+  postgres:18 -c wal_level=logical -c fsync=off -c synchronous_commit=off
+docker run -d --name wamn-ccdc-nats -p 44222:4222 nats:2 -js
+./target/debug/wamn-gates cdcbench \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:55444/postgres \
+  --nats-url nats://127.0.0.1:44222 --mode all
+# switchover bring-up: run --mode switchover --secs 45 and `docker restart
+# wamn-ccdc-pg` inside the drill window.
+docker rm -f wamn-ccdc-pg wamn-ccdc-nats
+# In-cluster CAMPAIGN OF RECORD (release gates image, sequential with other
+# jobs — the z7b.7 noise defense; CSVs from the job log → docs/ceilings-data/):
+kubectl -n wamn-system apply -f deploy/gates/cdcbench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/cdcbench --timeout=2400s
+# Axis 4 vs the LIVE wamn-pg pool (single-instance today → timed primary
+# recreate; trigger INSIDE the drill window, watch the log for the banner):
+kubectl -n wamn-system apply -f deploy/gates/cdcbench-switchover-job.yaml
+kubectl -n wamn-system logs -f job/cdcbench-switchover   # wait for DRILL WINDOW OPEN
+kubectl -n wamn-system delete pod wamn-pg-1              # the trigger
+```
+
+Mutation harness: scratchpad `mutate_l5i9_14.py` — M1 neuters the reconcile
+apply (the ri legs become identical; the named `narrow DELETE grows under
+FULL` + `wide upd-slim pays the flattened old image` asserts FAIL), M2
+off-by-ones the drain completeness target (the named `stream holds exactly N
+row events` assert FAILS), M3 skips the lag final catch-up wait (the named
+`eventual completeness` assert FAILS on a still-draining stream). Apply/test/
+restore with sha256, DEBUG builds; rebuild wamn-gates after restoring a dep.
+
 ### [5.14] checkpoint/resume on replica loss
 
 Docs: docs/run-queue.md

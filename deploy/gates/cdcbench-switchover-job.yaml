@@ -1,0 +1,76 @@
+# EVT-C-CDC axis 4 (wamn-l5i9.14): the TIMED availability drill against the
+# LIVE wamn-pg CNPG pool. The gate provisions a throwaway database + failover
+# slot + the REAL embedded reader on wamn-pg, writes one row every 200 ms, and
+# an OPERATOR triggers the availability event INSIDE the drill window; the run
+# times the write blackout, the publish gap, and catch-up, and asserts the
+# cdc1 no-gap property (every committed row on the stream exactly once — the
+# reader's R11 re-open ladder is the recovery under test).
+#
+#   kubectl -n wamn-system apply -f deploy/gates/cdcbench-switchover-job.yaml
+#   kubectl -n wamn-system logs -f job/cdcbench-switchover
+#   # …wait for ">>> DRILL WINDOW OPEN <<<" in the log, then TRIGGER:
+#   #   multi-instance pool:  kubectl cnpg promote wamn-pg <standby-pod>
+#   #   single-instance pool: kubectl -n wamn-system delete pod wamn-pg-1
+#   # (wamn-pg is single-instance today — the drill times the CNPG primary
+#   #  recreate; the F2 spike's multi-instance graceful switchover, ~2-3 min
+#   #  primary-less on this rig, is the reference for the >=2 topology.)
+#
+# ISOLATION / RESIDUE: the throwaway `wamn_ccdc` database, the
+# `wamn_cdc_ccdc__app__dev` slot+role, and the `EVT_ccdc_dev` stream are all
+# gate-scoped; teardown ALWAYS runs on fresh connections (the drill kills the
+# old ones) and wamn-pg carries max_slot_wal_keep_size=1GB (l5i9.32) as the
+# §11 backstop — but never rely on it: if the job is killed mid-run, re-run it
+# (its hermetic preamble drops leftovers) or drop the slot/database by hand.
+# `wamn_app` and the schema-owner roles already exist on wamn-pg (verified);
+# the writer runs as the superuser with an explicit tenant, so no
+# cluster-level role is created or dropped beyond the CDC role.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cdcbench-switchover
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  # 120 s drill window + up to 300 s catch-up + provisioning/teardown.
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels: { app: cdcbench-switchover }
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "until nc -z wamn-pg-rw 5432 && nc -z evt-nats 4222; do echo waiting for wamn-pg+evt-nats; sleep 1; done"
+      containers:
+        - name: cdcbench-switchover
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "warn"
+            - "cdcbench"
+            - "--mode"
+            - "switchover"
+            - "--secs"
+            - "120"
+            - "--write-interval-ms"
+            - "200"
+            - "--nats-url"
+            - "nats://evt-nats.wamn-system.svc.cluster.local:4222"
+          env:
+            # The CNPG-generated superuser Secret; the -rw Service follows the
+            # primary across the availability event (CNPG passwords are
+            # alphanumeric, URL-safe). Path /postgres — the gate owns wamn_ccdc.
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: wamn-pg-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: wamn-pg-superuser, key: password } }
+            - name: WAMN_PG_ADMIN_URL
+              value: postgres://$(PGUSER):$(PGPASSWORD)@wamn-pg-rw.wamn-system.svc.cluster.local:5432/postgres
+          resources:
+            requests: { cpu: "1", memory: "256Mi" }
+            limits: { memory: "1Gi" }

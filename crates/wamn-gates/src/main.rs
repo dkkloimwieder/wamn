@@ -9,6 +9,7 @@ mod apibench;
 mod apifixture;
 mod apiproof;
 mod bench;
+mod cdcbench;
 mod credprobe;
 mod credproof;
 mod dispatchbench;
@@ -79,6 +80,8 @@ enum Command {
     Readerbench(readerbench::ReaderBenchArgs),
     /// Run the EVT-C-WAL-0 pre-CDC WAL-volume baseline (per-op WAL/op + representative-load bytes/s)
     Walbench(walbench::WalBenchArgs),
+    /// Run the EVT-C-CDC ceiling campaign (decode drain / slot-lag knee / RI-FULL WAL delta / timed switchover drill)
+    Cdcbench(cdcbench::CdcBenchArgs),
     /// Run the 5.9 credential-vault proof (delivery to serve-echo + no-leak containment)
     Credprobe(credprobe::CredProbeArgs),
     Credproof(credproof::CredProofArgs),
@@ -151,6 +154,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Streambench(args) => streambench::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::Walbench(args) => walbench::run(args).await,
+        Command::Cdcbench(args) => cdcbench::run(args).await,
         Command::Credprobe(args) => credprobe::run(args).await,
         Command::Credproof(args) => credproof::run(args).await,
         Command::Nodebench(args) => nodebench::run(args).await,

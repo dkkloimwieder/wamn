@@ -128,7 +128,7 @@ fn parse_rates(s: &str) -> anyhow::Result<Vec<f64>> {
 /// below the ~2 KB TOAST threshold). Not `rand` (`Math.random`/`Date` are
 /// unavailable in the sandbox and we want a reproducible record) — an LCG
 /// seeded by the row index, its high bits mapped onto a 64-char alphabet.
-fn wide_blob(seed: usize, size: usize) -> String {
+pub(crate) fn wide_blob(seed: usize, size: usize) -> String {
     const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut x = (seed as u64)
         .wrapping_mul(0x9E37_79B9_7F4A_7C15)

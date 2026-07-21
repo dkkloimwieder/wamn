@@ -1,0 +1,5 @@
+variant,rows,txns,import_secs,import_wal_bytes,backlog_bytes,drain_secs,rows_per_sec,backlog_mb_per_sec,spill_txns,spill_count,spill_bytes,stream_txns,stream_bytes,total_txns,total_bytes
+batched-narrow,50000,200,2.7,10602680,10602680,0.81,61573,13.06,0,0,0,0,0,200,9627780
+singletxn-narrow,50000,1,2.7,11017912,11017912,0.83,60096,13.24,0,0,0,0,0,6,9660796
+singletxn-narrow-spill64kb,50000,1,2.6,10636624,10637088,1.01,49411,10.51,1,147,9627780,0,0,2,9628144
+singletxn-wide,12000,1,1.2,83072152,83072520,0.90,13372,92.57,1,2,82800890,0,0,2,2335950

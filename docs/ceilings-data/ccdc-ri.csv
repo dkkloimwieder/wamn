@@ -1,0 +1,15 @@
+shape,op,regime,n,p50_ms,p99_ms,wal_bytes_per_op_p50,wal_bytes_per_op_mean
+narrow,insert,default-logical,1000,0.064,0.107,256,277
+narrow,update,default-logical,1000,0.064,0.376,248,398
+narrow,delete,default-logical,1000,0.068,0.134,128,314
+wide,insert,default-logical,1000,0.110,0.231,6960,6993
+wide,update,default-logical,1000,0.133,0.261,13600,14460
+wide,upd-slim,default-logical,1000,0.066,0.110,320,457
+wide,delete,default-logical,1000,0.071,0.146,6712,6878
+narrow,insert,full-logical,1000,0.066,0.179,256,281
+narrow,update,full-logical,1000,0.064,0.133,328,474
+narrow,delete,full-logical,1000,0.068,0.143,176,288
+wide,insert,full-logical,1000,0.104,0.184,6952,6985
+wide,update,full-logical,1000,0.125,0.256,19832,20017
+wide,upd-slim,full-logical,1000,0.073,0.130,6560,6686
+wide,delete,full-logical,1000,0.075,0.174,12936,13078

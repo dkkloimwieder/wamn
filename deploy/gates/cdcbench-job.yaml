@@ -1,0 +1,104 @@
+# EVT-C-CDC ceiling campaign (wamn-l5i9.14): the cdcbench subcommand, modes
+# drain + lag + ri (`--mode all`) — decode drain rate after a bulk import (with
+# the logical_decoding_work_mem spill probe, the wamn-mu4h evidence), the
+# slot-lag knee vs sustained write rate, and the REPLICA IDENTITY FULL per-op
+# WAL delta per table class. A MEASUREMENT run (§8: curves and knees, no
+# pass/fail) — only the sanity/completeness asserts gate. The switchover axis
+# is a SEPARATE job (cdcbench-switchover-job.yaml): it needs an external
+# trigger and targets the CNPG pool, not the fixture.
+#
+#   kubectl -n wamn-system apply -f deploy/gates/cdcbench-job.yaml
+#   kubectl -n wamn-system logs -f job/cdcbench
+#
+# The curves land in the logs as `=== BEGIN CSV <name> ===` blocks; extract
+# them into docs/ceilings-data/ (ccdc-drain / ccdc-drain-series / ccdc-lag /
+# ccdc-lag-series / ccdc-ri) and cite them from docs/ceilings.md § C-CDC with
+# full provenance. C-WAL-0 (measured pre-CDC on this same fixture class) is
+# the denominator the WAL-delta figures divide by.
+#
+# ISOLATION: cdcbench owns the throwaway DATABASE `wamn_ccdc` (created and
+# dropped WITH (FORCE); the slot is created per-variant and dropped — teardown
+# always runs, zero residue). Needs the fixture's `wal_level=logical`
+# (deploy/platform/postgres.yaml carries it since l5i9.18). The `EVT_ccdc_dev`
+# bench stream on evt-nats is R1 and deleted at teardown (the C-E2E
+# bench-stream practice). Run SEQUENTIALLY with other gate jobs on the shared
+# fixture (the z7b.7 noise defense) — ambient WAL from sibling services is
+# visible in the slot-lag numbers and recorded in provenance.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cdcbench
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  # drain (4 variants incl. two ~50k-row single txns) + lag (6 steps × 20 s +
+  # catch-up) + ri (14 per-op batches × 1000 with per-op WAL brackets).
+  activeDeadlineSeconds: 2400
+  template:
+    metadata:
+      labels: { app: cdcbench }
+    spec:
+      restartPolicy: Never
+      # Co-located with Postgres, the p0 reference topology (C2/C7/C-WAL-0).
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: postgres }
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "until nc -z postgres 5432 && nc -z evt-nats 4222; do echo waiting for postgres+evt-nats; sleep 1; done"
+      containers:
+        - name: cdcbench
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "warn"
+            - "cdcbench"
+            - "--mode"
+            - "all"
+            # Record knobs (defaults, pinned here for the provenance label):
+            # 50k narrow rows (250/txn batched + one-txn + one-txn@64kB spill),
+            # 12k wide 6 KiB rows; lag steps 100..3200/s × 20 s over 4 writers;
+            # 1000 ops per ri batch.
+            - "--drain-rows"
+            - "50000"
+            - "--drain-txn-rows"
+            - "250"
+            - "--drain-wide-rows"
+            - "12000"
+            - "--lag-rates"
+            - "100,200,400,800,1600,3200"
+            - "--lag-step-secs"
+            - "20"
+            - "--lag-writers"
+            - "4"
+            - "--ri-iters"
+            - "1000"
+            - "--nats-url"
+            - "nats://evt-nats.wamn-system.svc.cluster.local:4222"
+          env:
+            # SUPERUSER (path /postgres): the gate creates/drops wamn_ccdc,
+            # the slot, and the replication role. Sourced from the
+            # postgres-fixture-superuser Secret (the l5i9.68 pattern).
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
+            - name: WAMN_PG_ADMIN_URL
+              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/postgres
+          resources:
+            # No CPU limit on purpose (the S2 CFS-throttling lesson): a quota
+            # would throttle the writers/decoder and measure the scheduler.
+            requests: { cpu: "2", memory: "512Mi" }
+            limits: { memory: "2Gi" }

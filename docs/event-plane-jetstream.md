@@ -301,6 +301,13 @@ split sibling l5i9.12.2.*
 sustained write rate; WAL delta under FULL identity per table class;
 switchover drill timed), C-JS (JetStream bare ceilings: publish/deliver/
 consumer-count/storage-per-event/heal time).
+*C-CDC measured (wamn-l5i9.14, 2026-07-20, `cdcbench`, in-cluster record —
+docs/ceilings.md § C-CDC): drain ~60 k events/s narrow / 92.6 MB/s wide; no
+lag knee up to writer saturation (3.2 k/s, catch-up 0.3 s); RI-FULL delta =
+one flattened old image (+~50–80 B narrow; 20× on a wide non-TOAST-column
+update — the l5i9.31 selective-flip vindication); reorder-buffer spill
+evidence recorded (the wamn-mu4h gate: no always-on raise justified). The
+live-pool availability drill's record run is operator-triggered (job header).*
 
 ### Phase 2 — materialize + cutover (~2–3 wks)
 Registration surface (catalog + minimal API; editor panel later); materializer
@@ -420,7 +427,9 @@ Rule: no number enters a design doc unlabeled.
 Slot pins WAL → `max_slot_wal_keep_size` (now rendered ALWAYS-ON by `provision-org`
 on every cluster, wamn-l5i9.32) + invalidation alert + resync runbook
 (a slot invalidation IS a gap — first-class incident); serial decode per
-project-env is the new capture ceiling (C-CDC measures; streamed-txn support is
+project-env is the new capture ceiling (C-CDC measured it 2026-07-20: ~60 k
+events/s narrow / ~93 MB/s wide on the reference rig — docs/ceilings.md
+§ C-CDC; streamed-txn support is
 the unbounded-memory answer); failover-slot continuity is verified, not
 assumed; single-author library → vendored/pinned/ledgered; replication
 credentials = new top privilege tier; stream retains *every* change (bigger

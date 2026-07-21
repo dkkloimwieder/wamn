@@ -550,3 +550,139 @@ fan-out (wamn-l5i9.64 — softened by the record run's flat slope, reading 3
 above); the app-CRUD-p99-under-capture C-INTERFERENCE bench (sibling, D19 §7).
 The before/after record predates EVT-TEARDOWN (l5i9.19) as required — the old
 path was alive for every row above.
+
+## C-CDC — capture-path ceilings (wamn-l5i9.14)
+
+**Date:** 2026-07-20 · **Git rev:** the `wamn-l5i9.14` commit (parent
+`55ea5f5`) · **Bench:** `wamn-gates cdcbench`
+(`deploy/gates/cdcbench-job.yaml` for drain/lag/ri;
+`deploy/gates/cdcbench-switchover-job.yaml` for the drill).
+
+**Provenance (axes 1–3, CAMPAIGN OF RECORD):** `env=in-cluster-kind
+build=release-gates-image pg=fixture-pod-postgres:18.4(fsync=off,
+synchronous_commit=off,wal_level=logical,logical_decoding_work_mem=64MB)
+nats=evt-nats(3-node;bench-stream-R1,gate-owned,deleted-at-teardown)
+machine=kind-wamn/postgres-colocated, quiet host, no sibling gate jobs`. The
+substrate is the gate-owned throwaway `wamn_ccdc` database (real deploy/sql
+DDL + real wamn-provision/wamn-registry builders, the poc-receiving 3.2 floor
+— the same app model C-WAL-0 measured), the REAL embedded reader
+(`wamn_cdc_reader::run_with_token` — decode → envelope → pipelined publish →
+ack → LSN advance, the full capture path), the slot created per-variant and
+dropped, zero residue verified. **Serial decode per project-env is the capture
+ceiling (§11) — these are its numbers.** All 21 sanity/completeness asserts
+held (every figure below sits on an exact stream count).
+
+### (a) decode drain after a bulk import (`ccdc-drain.csv`, `-series.csv`)
+
+The slot exists, the import lands with the reader DOWN, the reader starts and
+drains the backlog to the `EVT_` stream; drain window includes session open.
+
+| variant | rows | txns | backlog | drain | rows/s | MB/s | reorder-buffer spill |
+|---|---|---|---|---|---|---|---|
+| batched narrow (250/txn) | 50 000 | 200 | 10.6 MB | 0.81 s | **61 573** | 13.1 | none |
+| single-txn narrow | 50 000 | 1 | 11.0 MB | 0.83 s | **60 096** | 13.2 | none (9.6 MB buffered < 64 MB) |
+| single-txn narrow @ 64 kB work_mem | 50 000 | 1 | 10.6 MB | 1.01 s | 49 411 | 10.5 | **spilled** 9.6 MB / 147 batches |
+| single-txn wide (6 KiB TOAST) | 12 000 | 1 | 83.1 MB | 0.90 s | 13 372 | **92.6** | **spilled** 82.8 MB at the DEFAULT 64 MB |
+
+Readings: (1) the capture path drains **~60 k row events/s** (narrow) — txn
+batching shape is irrelevant (batched ≡ single-txn within 2%). (2) Row width,
+not event count, bounds throughput: wide rows drain at 13.4 k rows/s but
+**92.6 MB/s** of WAL — the decoder+publisher is byte-bound far above any
+plausible app write rate. (3) A 50 k-row narrow txn holds only ~9.6 MB of
+reorder buffer (~190 B/change: tuple + TOAST pointers) — the default 64 MB
+first spills near **~330 k narrow changes in ONE transaction**. (4) Wide rows
+buffer their TOAST content: the 12 k × 6 KiB single-txn import (82.8 MB)
+**does** spill at the default — and still drains at 92.6 MB/s.
+
+### (b) slot-lag knee vs sustained write rate (`ccdc-lag.csv`, `-series.csv`)
+
+Reader live; offered single-row-txn rate step-ramped (4 `wamn_app` writers,
+20 s/step); slot lag = insert LSN − `confirmed_flush_lsn`, sampled at 500 ms.
+
+| offered/s | achieved/s | published/s | lag end | lag max |
+|---|---|---|---|---|
+| 100 | 100 | 100 | 15 KB | 134 KB |
+| 400 | 398 | 399 | 60 KB | 105 KB |
+| 1600 | 1594 | 1590 | 141 KB | 464 KB |
+| 3200 | 3187 | 3173 | 324 KB | 865 KB |
+
+**No knee was reached:** at every step the published rate tracks the achieved
+write rate and lag returns toward the floor; post-ramp catch-up was **0.3 s**.
+The 3200/s step saturated the *writers* (achieved 3187/s), not the reader —
+consistent with (a): the capture ceiling (~60 k/s) sits ~20× above what a
+4-connection writer commits on this rig. Capture keeps up with any write rate
+the fixture itself sustains; lag divergence needs the (a)-scale backlog shapes.
+
+### (c) WAL delta under REPLICA IDENTITY FULL (`ccdc-ri.csv`)
+
+Per-op WAL at DEFAULT then FULL, both `wal_level=logical`, flipped by the REAL
+l5i9.31/l5i9.61 reconcile off seeded delete registrations. The statistic is
+the **median of per-op brackets** (FPI outliers + ambient WAL excluded; the
+mean column in the CSV is the FPI-inclusive C-WAL-0-comparable figure).
+C-WAL-0 (DEFAULT @ `wal_level=replica`) is the pre-CDC denominator: its narrow
+INSERT (253 B mean) vs this run's 256 B median/277 B mean shows the
+`wal_level=logical` tax on the write path is **negligible** for inserts.
+
+| shape | op | DEFAULT | FULL | delta |
+|---|---|---|---|---|
+| narrow (`suppliers`) | insert | 256 B | 256 B | 0 (control) |
+| narrow | update | 248 B | 328 B | +80 B (+32%) |
+| narrow | delete | 128 B | 176 B | +48 B (+38%) |
+| wide (`users`, 6 KiB TOAST) | insert | 6 960 B | 6 952 B | 0 (control) |
+| wide | update (TOAST rewrite) | 13 600 B | 19 832 B | +6.2 KB (+46%) |
+| wide | update (non-TOAST col) | **320 B** | **6 560 B** | **+6.2 KB (20×)** |
+| wide | delete | 6 712 B | 12 936 B | +6.2 KB (+93%) |
+
+Readings: (1) the FULL tax is exactly **one flattened old row image** on every
+UPDATE/DELETE — ~+50–80 B narrow, ~+6.2 KB for the 6 KiB-blob row. (2) The
+sharp edge is the **non-TOAST-column update: 20×** — FULL flattens the
+*unchanged* out-of-line TOAST value into WAL on a 2-byte column change (the
+wamn-l5i9.63 number: the decoded envelope still omits the unchanged column;
+the WAL pays for it anyway). Selective per-entity flips (l5i9.31's design)
+are vindicated: FULL on a wide, hot-updating table multiplies its WAL; FULL
+on narrow tables is noise. (3) Latency is unaffected (p50 0.06–0.13 ms both
+regimes).
+
+### (d) switchover drill — timed (mechanism proven; live-pool record pending)
+
+The drill: reconnecting writer (1 row/200 ms, committed-only counting) + the
+REAL reader (its R11 re-open ladder is the recovery) across an availability
+event; write blackout / publish gap / catch-up timed from commit wall-times +
+JetStream ingest timestamps; the cdc1 no-gap check (every committed row on the
+stream exactly once).
+
+**LOCAL bring-up (provenance `local-throwaway`, `docker restart` of the PG
+container as the event):** 222/222 committed rows delivered, **0 missing, 0
+dupes**; write blackout 467 ms; publish gap 2.17 s; catch-up 2.0 s;
+commit→ingest p50 89 ms during the run. **LIVE wamn-pg steady-state
+(in-cluster job, no event triggered — the sever assert correctly failed that
+run):** 574/574 delivered exactly-once, commit→ingest **p50 0–1 ms** — the
+steady-state capture latency on the production pool. The live *availability*
+record needs the operator trigger inside the drill window
+(`kubectl -n wamn-system delete pod wamn-pg-1` on today's single-instance
+pool — see the job header; the classifier reserves live-primary deletion to
+the operator). Reference for the ≥2-instance topology: the F2 spike measured
+a graceful CNPG switchover at **~2–3 min primary-less** on this rig with
+failover-slot continuity across 3 ownership changes (`missing=[]`,
+`lsn_regressions=0`).
+
+### The wamn-mu4h verdict (evidence, reported not enacted)
+
+`logical_decoding_work_mem` stays at the 64 MB default; **no always-on raise
+is justified by these numbers.** (1) Narrow-row workloads cannot plausibly
+spill: ~190 B/change means a single transaction needs ~330 k row changes to
+cross 64 MB. (2) The controlled spill-cost pair (single-txn narrow at 64 kB
+vs default) prices spilling at **−18% drain rate** (49.4 k vs 60.1 k rows/s)
+under a pathological 1000× starve — bounded, not cliff-shaped. (3) The one
+real spill case — a 12 000 × 6 KiB single-transaction wide import — still
+drained at 92.6 MB/s. Raising the knob would trade backend memory for at most
+~18% on giant-import drains; if a tenant's workload lives in that regime the
+knob is a per-cluster tuning lever (the mu4h bead's own gate), not a rendered
+default.
+
+### Raw data
+
+- `docs/ceilings-data/ccdc-drain.csv`, `ccdc-drain-series.csv`, `ccdc-lag.csv`,
+  `ccdc-lag-series.csv`, `ccdc-ri.csv` (extracted from the record job log's
+  `=== BEGIN CSV … ===` blocks).
+- Reproduce: `docs/build-and-test.md` § [EVT-C-CDC / wamn-l5i9.14].
