@@ -196,7 +196,15 @@ async fn send(
         .header("Host", format!("{host}:{port}"))
         .header("Content-Length", body.len().to_string());
     if let Some(ct) = content_type {
-        builder = builder.header("Content-Type", ct);
+        // A GET has no body: the media type is what we ACCEPT, not what we
+        // send. registry:2 refuses to serve an OCI manifest without the
+        // explicit Accept (MANIFEST_UNKNOWN) — the live buildproof run
+        // surfaced this; the in-process stub now pins the header.
+        if method == "GET" {
+            builder = builder.header("Accept", ct);
+        } else {
+            builder = builder.header("Content-Type", ct);
+        }
     }
     let req = builder
         .body(Full::new(Bytes::from(body)))

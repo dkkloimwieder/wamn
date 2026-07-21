@@ -40,6 +40,12 @@ async fn handle(
     let method = req.method().clone();
     let path = req.uri().path().to_string();
     let query = req.uri().query().unwrap_or("").to_string();
+    let accept = req
+        .headers()
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     let body = req
         .into_body()
         .collect()
@@ -94,8 +100,19 @@ async fn handle(
             .unwrap());
     }
 
-    // GET /v2/<repo>/manifests/<ref>  -> 200 + manifest
+    // GET /v2/<repo>/manifests/<ref>  -> 200 + manifest. Like the real
+    // registry:2, REFUSE to serve an OCI manifest unless the request Accepts
+    // the OCI media type (the live registry answers MANIFEST_UNKNOWN
+    // otherwise — the first in-cluster buildproof run hit exactly that).
     if method == hyper::Method::GET && path.contains("/manifests/") {
+        if !accept.contains("application/vnd.oci.image.manifest.v1+json") {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Full::new(Bytes::from_static(
+                    b"{\"errors\":[{\"code\":\"MANIFEST_UNKNOWN\",\"message\":\"OCI manifest found, but accept header does not support OCI manifests\"}]}",
+                )))
+                .unwrap());
+        }
         let reference = path.rsplit("/manifests/").next().unwrap();
         let m = store.lock().unwrap().manifests.get(reference).cloned();
         return Ok(match m {
