@@ -245,9 +245,13 @@ pub fn screen_tenant_component(engine: &RawEngine, wasm: &[u8], label: &str) -> 
 
 /// Within the `wamn:node` package a custom node may import ONLY these
 /// interfaces (5.5 interface-level tightening; the frozen `docs/wamn-node.wit`
-/// stream-node/http-node worlds import exactly this subset). `handler` is an
-/// EXPORT, never imported.
-pub const NODE_ALLOWED_INTERFACES: &[&str] = &["payloads", "credentials", "control"];
+/// stream-node/http-node worlds import exactly the capability subset).
+/// `handler` is an EXPORT, never imported. `types` is NOT a capability: it is
+/// the type-only instance import wit-bindgen materializes because the exported
+/// `handler` `use`s its types — every real node artifact carries it (the
+/// componentized sample-node does), it grants nothing, and it is deliberately
+/// absent from [`GRANTABLE_HOST_INTERFACES`].
+pub const NODE_ALLOWED_INTERFACES: &[&str] = &["types", "payloads", "credentials", "control"];
 
 /// Within the `wasi:http` package a custom node may import ONLY the outbound
 /// chokepoint (`outgoing-handler`) — never `incoming-handler` / `types` / a
@@ -665,7 +669,8 @@ mod tests {
             "wasi:http/types@0.2.6",             // refused
             "wasi:http/incoming-handler@0.2.6",  // refused
             "wamn:node/credentials@0.1.0",       // allowed
-            "wamn:node/types@0.1.0",             // refused
+            "wamn:node/types@0.1.0",             // allowed (type-only, grants nothing)
+            "wamn:node/handler@0.1.0",           // refused (an EXPORT, never imported)
             "wasi:clocks/monotonic-clock@0.2.3", // untouched (other package)
         ];
         assert_eq!(
@@ -673,7 +678,7 @@ mod tests {
             vec![
                 "wasi:http/types@0.2.6".to_string(),
                 "wasi:http/incoming-handler@0.2.6".to_string(),
-                "wamn:node/types@0.1.0".to_string(),
+                "wamn:node/handler@0.1.0".to_string(),
             ]
         );
     }
@@ -713,6 +718,20 @@ mod tests {
     #[test]
     fn builder_lint_passes_empty_world_node() {
         assert!(screen_builder(&[], "node.wasm").is_ok());
+    }
+
+    /// The REAL componentized `world node` artifact is not import-free: the
+    /// exported `handler` `use`s `wamn:node/types`, so wit-bindgen materializes
+    /// a type-only `wamn:node/types` instance import (the in-cluster
+    /// sample-node build surfaced this). It must clear the lint AND derive
+    /// nothing — types is absent from [`GRANTABLE_HOST_INTERFACES`].
+    #[test]
+    fn types_only_import_passes_the_lint_and_grants_nothing() {
+        let names = ["wamn:node/types@0.1.0"];
+        assert!(screen_builder(&names, "sample_node.wasm").is_ok());
+        let grants = derive_grants(names);
+        assert!(grants.host_interfaces.is_empty());
+        assert!(!grants.requires_allowed_hosts);
     }
 
     /// MUTATION (a) TARGET. A `wasi:sockets` importer is REFUSED by the builder
