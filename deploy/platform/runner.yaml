@@ -126,6 +126,23 @@ spec:
             # (optional Secret absent) = empty vault, warned at startup.
             - name: WAMN_CREDENTIALS_FILE
               value: /etc/wamn/credentials/credentials.json
+            # [wamn-yf3] Run-path observability. The flowrunner emits a few
+            # structured wasi:logging records per run (node/run lifecycle) that
+            # the wamn:logging plugin enriches (host-injected tenant/project +
+            # guest flow/run/node + the run's traceparent) and ships OTLP/gRPC to
+            # the collector, which forwards to Loki. Without OTEL_* the plugin
+            # links but drops to a no-op provider (nothing exported).
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.wamn-system.svc:4317" }
+            - { name: OTEL_EXPORTER_OTLP_PROTOCOL, value: "grpc" }
+            # [wamn-yf3] The wamn:logging pipeline knobs (WamnLoggingConfig) — set
+            # to their defaults here so the tunable surface is visible + editable
+            # in place. queue_capacity is the ONLY intentional drop point (a full
+            # queue increments wamn.logging.dropped, never blocks the run).
+            - { name: WAMN_LOG_QUEUE_CAP, value: "65536" }
+            - { name: WAMN_LOG_DRAIN_RATE, value: "0" }          # 0 = unpaced
+            - { name: WAMN_LOG_BATCH_QUEUE, value: "524288" }
+            - { name: WAMN_LOG_BATCH_EXPORT, value: "8192" }
+            - { name: WAMN_LOG_BATCH_SCHEDULE_MS, value: "200" }
           volumeMounts:
             - name: runtime-cert
               mountPath: /runtime-cert

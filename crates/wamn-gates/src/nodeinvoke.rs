@@ -425,6 +425,7 @@ async fn gate_body(
         flowrunner,
         plugin,
         runner_vault,
+        Arc::new(wamn_host::plugins::wamn_logging::WamnLogging::from_env()?),
         RunnerIdentity {
             owner: OWNER,
             tenant: TENANT,
@@ -846,6 +847,7 @@ async fn gate_body(
         flowrunner,
         mismatch_plugin,
         mismatch_vault,
+        Arc::new(wamn_host::plugins::wamn_logging::WamnLogging::from_env()?),
         RunnerIdentity {
             owner: "nodeinvoke-mismatch",
             tenant: TENANT,

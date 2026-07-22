@@ -60,6 +60,7 @@ use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestC
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_host::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
 use wamn_host::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
+use wamn_host::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
 use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 /// Default in-image path of the flowrunner component (baked into the prod host
@@ -259,6 +260,17 @@ pub struct RunnerIdentity<'a> {
     pub project: &'a str,
 }
 
+/// Register this replica's HOST-INJECTED wasi:logging claim: the run-path log
+/// records enrich with the runner's own `(tenant, project)` — the same
+/// non-spoofable identity the postgres session carries — keyed by the component
+/// id (== the lease `owner`, the id the store's `Ctx` is built with). A guest
+/// can NOT set its tenant; it only supplies flow/run/node in the log context.
+/// Factored out so the run-worker wiring test can assert the identity landed
+/// without a full instantiate.
+fn register_logging_claim(logging: &WamnLogging, identity: &RunnerIdentity<'_>) {
+    logging.set_claim(identity.owner, identity.tenant, identity.project);
+}
+
 /// The production flow runner: a single long-lived flowrunner instance whose
 /// plugin session carries the host-injected lease owner + tenant + schema.
 /// [`drain`] pulls every currently-claimable run to a terminal (or parked)
@@ -277,11 +289,16 @@ impl RunWorker {
     /// owner (one process = one project = one owner, the single-project shape).
     /// Mirrors the failoverbench claimer store-build (SR1: the gate drives the
     /// same code).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the engine + guest + the three session plugins (postgres/credentials/logging) + identity + egress + ttl are each a distinct host-injected input; grouping them into a struct would only move the list"
+    )]
     pub async fn instantiate(
         engine: &Engine,
         guest: &[u8],
         plugin: Arc<WamnPostgres>,
         vault: Arc<WamnCredentials>,
+        logging: Arc<WamnLogging>,
         identity: RunnerIdentity<'_>,
         allowed_hosts: Arc<[AllowedHost]>,
         ttl_ms: u64,
@@ -302,6 +319,10 @@ impl RunWorker {
         // 5.9: the vault resolves per (project, name); the project is a
         // host-injected claim like the tenant/schema/runner above.
         vault.set_project(owner, project)?;
+        // wamn-yf3: the wasi:logging tenant/project claim is host-injected too —
+        // the guest's run-path log records enrich with THIS replica's identity,
+        // never a guest-chosen one (the same trust boundary as the tenant above).
+        register_logging_claim(&logging, &identity);
 
         let raw = engine.inner();
         let component = WasmtimeComponent::new(raw, guest)
@@ -325,6 +346,12 @@ impl RunWorker {
         // plugin stamps a transactional wamn.causation message onto every
         // run-owned txn (the CDC reader stitches it).
         wamn_postgres::add_runner_causation_to_linker(&mut linker)?;
+        // wamn-yf3: wasi:logging — the flowrunner emits a few structured records
+        // per run (node/run lifecycle) that the wamn:logging plugin enriches +
+        // ships. The guest imports it unconditionally, so the linker must satisfy
+        // it (as with credentials); with OTEL unset the plugin's provider is a
+        // no-op, so this links safely with no collector.
+        wamn_logging::add_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
 
         let egress_policy = Arc::new(RunnerEgressPolicy::default());
@@ -340,6 +367,10 @@ impl RunWorker {
         plugins.insert(
             RUNNER_EGRESS_ID,
             egress_policy.clone() as Arc<dyn HostPlugin + Send + Sync>,
+        );
+        plugins.insert(
+            WAMN_LOGGING_ID,
+            logging as Arc<dyn HostPlugin + Send + Sync>,
         );
         // The egress handler is unconditional (an outbound call without one
         // TRAPS); the allowlists gate it — the host-level list here plus the
@@ -516,6 +547,11 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
         None => WamnCredentials::empty(),
     });
 
+    // wamn-yf3: THE guest-log pipeline (its own OTLP LoggerProvider). Config from
+    // WAMN_LOG_* env (from_env); with OTEL unset it links + drops to a no-op
+    // provider, so a collector-less runner still instantiates cleanly.
+    let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
+
     // The outbound egress allowlist (empty = deny-all, fail-closed).
     let allowed_hosts: Arc<[AllowedHost]> = args
         .allowed_hosts
@@ -533,6 +569,7 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
         &guest,
         plugin,
         vault,
+        logging,
         RunnerIdentity {
             owner: &owner,
             tenant: &args.tenant,
@@ -602,6 +639,31 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// wamn-yf3: the run-path wasi:logging claim is HOST-INJECTED — the
+    /// registration keys the runner's own `(tenant, project)` under the component
+    /// id (== the lease owner). A mutant that swaps in a guest-supplied value,
+    /// drops a field, or swaps tenant/project fails this readback.
+    #[tokio::test]
+    async fn register_logging_claim_uses_host_injected_identity() {
+        let logging =
+            WamnLogging::new(wamn_host::plugins::wamn_logging::WamnLoggingConfig::default())
+                .expect("logging plugin");
+        let identity = RunnerIdentity {
+            owner: "runner-replica-7",
+            tenant: "acme",
+            schema: Some("wamn_run"),
+            project: "receiving",
+        };
+        register_logging_claim(&logging, &identity);
+        // Keyed by the component id (== owner); the enrichment is the runner's.
+        assert_eq!(
+            logging.claim_snapshot("runner-replica-7"),
+            Some(("acme".to_string(), "receiving".to_string()))
+        );
+        // Nothing registered under any other id (no accidental broad claim).
+        assert_eq!(logging.claim_snapshot("some-other-id"), None);
+    }
 
     #[test]
     fn owner_falls_back_from_arg_to_hostname_to_fixed() {

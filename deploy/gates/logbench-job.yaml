@@ -50,6 +50,15 @@ spec:
             - { name: RUST_LOG, value: "error" }
             - { name: LOKI_URL, value: "http://loki:3100" }
             - { name: COLLECTOR_METRICS_URL, value: "http://otel-collector:8888/metrics" }
+            # [wamn-yf3] The wamn:logging pipeline knobs (WamnLoggingConfig),
+            # shown for the tunable surface. The overhead/throughput/saturation/
+            # enrichment phases set their own config in code; the from_env path
+            # (the `runpath` mode + the production runner) honors these.
+            - { name: WAMN_LOG_QUEUE_CAP, value: "65536" }
+            - { name: WAMN_LOG_DRAIN_RATE, value: "0" }
+            - { name: WAMN_LOG_BATCH_QUEUE, value: "524288" }
+            - { name: WAMN_LOG_BATCH_EXPORT, value: "8192" }
+            - { name: WAMN_LOG_BATCH_SCHEDULE_MS, value: "200" }
           resources:
             # No CPU limit (CFS-quota tail artifact — the S2 lesson).
             requests: { cpu: "2", memory: "512Mi" }

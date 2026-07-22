@@ -172,7 +172,7 @@ pub struct RunnerBenchArgs {
 /// lease table the fqg.9 guest-side partitioned claim path leases against,
 /// schema-qualified with the house tenant floor. Kept aligned with
 /// `deploy/sql/run-queue.sql` by the drift guard in this module's tests.
-fn runner_ddl(schema: &str) -> String {
+pub(crate) fn runner_ddl(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.flows (\
             tenant_id text NOT NULL, flow_id text NOT NULL, version int NOT NULL, \
@@ -459,11 +459,13 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         // is EMPTY (no fixture here declares a credential; credproof gates the
         // vault path) but must be present — the guest imports it unconditionally.
         let vault = Arc::new(wamn_host::plugins::wamn_credentials::WamnCredentials::empty());
+        let logging = Arc::new(wamn_host::plugins::wamn_logging::WamnLogging::from_env()?);
         let mut worker = RunWorker::instantiate(
             &engine,
             &guest,
             plugin.clone(),
             vault,
+            logging,
             wamn_run_worker::RunnerIdentity {
                 owner: OWNER,
                 tenant: TENANT,

@@ -19,11 +19,37 @@
 //!     Everything downstream (a generously sized batch processor → collector →
 //!     Loki) is sized not to drop, so unaccounted loss ≈ 0.
 //!
-//! The plugin owns its OWN `SdkLoggerProvider` rather than reusing the vendored
-//! `observability.rs` logs pipeline because that pipeline's batch queue is fixed
-//! at 2048 and its OTLP filter is tied to `--log-level` — both would bottleneck
-//! or misfilter a 10k lines/s bench. Owning the provider is also the real
-//! production shape (9.3 / wamn-yf3).
+//! # Single owner of the guest-log pipeline (9.3 / wamn-yf3)
+//!
+//! This plugin is THE guest-log pipeline: it owns its OWN `SdkLoggerProvider`
+//! (generous batch queue → OTLP gRPC → collector → Loki) rather than reusing the
+//! fork's vendored `observability.rs` logs pipeline. That fork pipeline is
+//! **host-internal tracing only** — its batch queue is fixed at 2048 and its OTLP
+//! filter is tied to `--log-level`, so it exists to ship the HOST's own `tracing`
+//! events, and both limits would bottleneck or misfilter a 10k lines/s stream of
+//! GUEST logs. Keeping the two pipelines separate is deliberate: the host tracing
+//! path and the guest-log path have different back-pressure, sizing, and
+//! filtering needs, and folding guest logs into the fork pipeline would force one
+//! set of knobs on both. So "fold into host observability wiring" (the bead's
+//! delta) is satisfied by construction, not fusion: the provider is built ONCE
+//! from [`WamnLoggingConfig::from_env`] (the `WAMN_LOG_*` knobs, surfaced in the
+//! deploy manifests that run this plugin — the runner + logbench Job), and no
+//! fork edit is required.
+//!
+//! ## Trace context (9.2/9.3)
+//!
+//! The guest `context` string may carry a W3C `traceparent` (+ `tracestate`); the
+//! drain task parses it and sets the OTel `LogRecord`'s trace context
+//! (trace_id/span_id/flags) so a guest log correlates with its run's trace in the
+//! backend. The emitting runner (the flowrunner run path) includes the run's
+//! traceparent in that context object.
+//!
+//! ## Production shape (run path)
+//!
+//! Beyond the S5 bench, the production flowrunner emits a few structured
+//! `wasi:logging` records per run (node completion, node error CLASS, run
+//! completion) through THIS plugin, linked into the wamn-run-worker store with
+//! the host-injected (unspoofable) tenant/project claim.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -31,6 +57,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use opentelemetry::logs::{AnyValue, LogRecord as _, Logger as _, LoggerProvider as _, Severity};
+use opentelemetry::{SpanId, TraceFlags, TraceId};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::logs::{BatchConfigBuilder, BatchLogProcessor, SdkLoggerProvider};
 use tokio::sync::mpsc;
@@ -144,7 +171,57 @@ struct Rec {
     node: String,
     seq: Option<i64>,
     run_label: String,
+    /// W3C `traceparent` the emitter attached (the run's trace), parsed in the
+    /// drain task onto the `LogRecord`'s trace context. `None` when the guest
+    /// carries no trace (the S5 bench guest).
+    traceparent: Option<String>,
+    tracestate: Option<String>,
     message: String,
+}
+
+// ---------------------------------------------------------------------------
+// Capture seam (gate-facing): an OPT-IN in-memory sink the drain task mirrors
+// each emitted record into, so a local gate (logbench `runpath`) can assert
+// enrichment + attached trace_id at the Rec layer WITHOUT a collector/Loki. Off
+// by default (a `None` handle), so production pays nothing beyond one branch.
+// ---------------------------------------------------------------------------
+
+/// One record as it was emitted, for gate inspection. Mirrors the enriched
+/// fields plus the `trace_id` actually set on the `LogRecord` (the W3C parse
+/// result — `None` when no/garbage traceparent).
+#[derive(Clone, Debug)]
+pub struct CapturedRec {
+    pub severity: Severity,
+    pub tenant: String,
+    pub project: String,
+    pub flow: String,
+    pub run: String,
+    pub node: String,
+    pub seq: Option<i64>,
+    pub run_label: String,
+    pub trace_id: Option<String>,
+    pub message: String,
+}
+
+/// A shared, inspectable capture buffer. Cloneable handle shared between the
+/// plugin's drain task and the gate that reads it.
+#[derive(Default)]
+pub struct Capture {
+    records: std::sync::Mutex<Vec<CapturedRec>>,
+}
+
+impl Capture {
+    /// A snapshot of every record emitted so far.
+    pub fn snapshot(&self) -> Vec<CapturedRec> {
+        self.records.lock().expect("capture lock poisoned").clone()
+    }
+
+    fn push(&self, rec: CapturedRec) {
+        self.records
+            .lock()
+            .expect("capture lock poisoned")
+            .push(rec);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +241,19 @@ pub struct WamnLogging {
 
 impl WamnLogging {
     pub fn new(cfg: WamnLoggingConfig) -> anyhow::Result<Self> {
+        Self::build(cfg, None)
+    }
+
+    /// Build the plugin with a capture sink attached (the gate seam): the drain
+    /// task mirrors every emitted record into the returned [`Capture`], so a
+    /// local gate can assert enrichment + attached trace_id without a collector.
+    pub fn new_with_capture(cfg: WamnLoggingConfig) -> anyhow::Result<(Self, Arc<Capture>)> {
+        let capture = Arc::new(Capture::default());
+        let plugin = Self::build(cfg, Some(capture.clone()))?;
+        Ok((plugin, capture))
+    }
+
+    fn build(cfg: WamnLoggingConfig, capture: Option<Arc<Capture>>) -> anyhow::Result<Self> {
         let resource = Resource::builder()
             .with_attribute(opentelemetry::KeyValue::new("service.name", "wamn-host"))
             .build();
@@ -206,7 +296,7 @@ impl WamnLogging {
         let drain_counters = counters.clone();
         let drain_rate = cfg.drain_rate_per_sec;
         let drain = tokio::spawn(async move {
-            drain_loop(rx, logger, drain_counters, drain_rate).await;
+            drain_loop(rx, logger, drain_counters, drain_rate, capture).await;
         });
 
         Ok(Self {
@@ -232,6 +322,17 @@ impl WamnLogging {
                 project: project.to_string(),
             },
         );
+    }
+
+    /// Read back the registered `(tenant, project)` claim for a component id, or
+    /// `None` when nothing was registered (the `claim_for` sentinel path). The
+    /// run-worker wiring test asserts the host-injected identity landed here.
+    pub fn claim_snapshot(&self, component_id: &str) -> Option<(String, String)> {
+        self.claims
+            .read()
+            .expect("claims lock poisoned")
+            .get(component_id)
+            .map(|c| (c.tenant.clone(), c.project.clone()))
     }
 
     fn claim_for(&self, component_id: &str) -> Claim {
@@ -262,6 +363,8 @@ impl WamnLogging {
             node: ctx.node,
             seq: ctx.seq,
             run_label: ctx.run_label,
+            traceparent: ctx.traceparent,
+            tracestate: ctx.tracestate,
             message,
         };
         match self.tx.try_send(rec) {
@@ -312,21 +415,59 @@ struct ParsedContext {
     node: String,
     seq: Option<i64>,
     run_label: String,
+    /// The run's W3C `traceparent` / `tracestate` when present (the run path
+    /// attaches them so a guest log correlates with its run's trace). An absent
+    /// or non-string field is simply `None`.
+    traceparent: Option<String>,
+    tracestate: Option<String>,
 }
 
 impl ParsedContext {
-    /// Guest `context` is `{"flow":..,"run":..,"node":..,"seq":N,"run_label":..}`.
+    /// Guest `context` is
+    /// `{"flow":..,"run":..,"node":..,"seq":N,"run_label":..,"traceparent":..}`.
     fn parse(context: &str) -> Self {
         let v: serde_json::Value = serde_json::from_str(context).unwrap_or(serde_json::Value::Null);
         let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let opt = |k: &str| {
+            v.get(k)
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        };
         Self {
             flow: s("flow"),
             run: s("run"),
             node: s("node"),
             seq: v.get("seq").and_then(|x| x.as_u64()).map(|n| n as i64),
             run_label: s("run_label"),
+            traceparent: opt("traceparent"),
+            tracestate: opt("tracestate"),
         }
     }
+}
+
+/// Parse a W3C `traceparent` (`<version>-<trace-id>-<span-id>-<flags>`) into the
+/// OTel trace-context triple, or `None` for ANYTHING malformed (wrong field
+/// count, non-hex, or an all-zero/invalid id). Total and panic-free: a garbage
+/// context must never trap the drain task or a guest.
+fn parse_w3c_traceparent(tp: &str) -> Option<(TraceId, SpanId, TraceFlags)> {
+    let mut parts = tp.split('-');
+    let _version = parts.next()?;
+    let trace_hex = parts.next()?;
+    let span_hex = parts.next()?;
+    let flags_hex = parts.next()?;
+    // Exactly four fields — a fifth means this is not a bare traceparent.
+    if parts.next().is_some() {
+        return None;
+    }
+    let trace_id = TraceId::from_hex(trace_hex).ok()?;
+    let span_id = SpanId::from_hex(span_hex).ok()?;
+    // A zero id is "invalid" per W3C — reject so we never set a bogus context.
+    if trace_id == TraceId::INVALID || span_id == SpanId::INVALID {
+        return None;
+    }
+    let flags = u8::from_str_radix(flags_hex, 16).ok()?;
+    Some((trace_id, span_id, TraceFlags::new(flags)))
 }
 
 fn map_level(level: Level) -> Severity {
@@ -349,6 +490,7 @@ async fn drain_loop(
     logger: opentelemetry_sdk::logs::SdkLogger,
     counters: Arc<Counters>,
     drain_rate_per_sec: u64,
+    capture: Option<Arc<Capture>>,
 ) {
     // Optional pacing: at a positive rate, sleep the per-record interval after
     // each emit. Only used at the low rates of the saturation demo, where a
@@ -360,6 +502,36 @@ async fn drain_loop(
         let mut lr = logger.create_log_record();
         lr.set_severity_number(rec.severity);
         lr.set_severity_text(rec.severity.name());
+        // The run's W3C trace context, when the emitter attached one: a valid
+        // traceparent sets trace_id/span_id/flags so the log joins its run's
+        // trace; garbage/absent leaves the record untraced (never a trap). The
+        // triple is `Copy`, so it costs nothing to keep for the capture below.
+        let parsed = rec.traceparent.as_deref().and_then(parse_w3c_traceparent);
+        if let Some((trace_id, span_id, flags)) = parsed {
+            lr.set_trace_context(trace_id, span_id, Some(flags));
+        }
+        // `tracestate` is vendor trace state, meaningful only alongside a valid
+        // `traceparent` (W3C) — carry it as an attribute when both are present.
+        if let Some(ts) = rec.tracestate.filter(|_| parsed.is_some()) {
+            lr.add_attribute("tracestate", ts);
+        }
+        // Mirror into the capture sink (OFF by default) BEFORE the enriched
+        // fields move into the log record — so production (no capture) clones
+        // nothing and pays only the branch.
+        if let Some(cap) = &capture {
+            cap.push(CapturedRec {
+                severity: rec.severity,
+                tenant: rec.tenant.clone(),
+                project: rec.project.clone(),
+                flow: rec.flow.clone(),
+                run: rec.run.clone(),
+                node: rec.node.clone(),
+                seq: rec.seq,
+                run_label: rec.run_label.clone(),
+                trace_id: parsed.map(|(t, _, _)| format!("{t:032x}")),
+                message: rec.message.clone(),
+            });
+        }
         lr.set_body(AnyValue::from(rec.message));
         lr.add_attribute("tenant", rec.tenant);
         lr.add_attribute("project", rec.project);
@@ -462,5 +634,104 @@ impl HostPlugin for WamnLogging {
         self.set_claim(item.id(), &tenant, &project);
         logging::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A valid W3C traceparent we control (the W3C example); `01` = sampled.
+    const VALID_TP: &str = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const VALID_TRACE_ID: &str = "0af7651916cd43dd8448eb211c80319c";
+
+    /// Drain until the plugin has emitted everything it accepted (a bounded wait
+    /// so a wiring regression fails the test instead of hanging it).
+    async fn wait_drained(plugin: &WamnLogging) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while plugin.emitted() < plugin.accepted() {
+            assert!(std::time::Instant::now() < deadline, "drain did not settle");
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+
+    #[test]
+    fn parse_w3c_traceparent_valid_absent_garbage() {
+        // Valid -> the exact triple, panic-free.
+        let (trace_id, span_id, flags) = parse_w3c_traceparent(VALID_TP).expect("valid parses");
+        assert_eq!(format!("{trace_id}"), VALID_TRACE_ID);
+        assert_eq!(format!("{span_id}"), "b7ad6b7169203331");
+        assert_eq!(flags, TraceFlags::SAMPLED);
+        // Absent / garbage / structurally-wrong -> None, never a panic.
+        assert!(parse_w3c_traceparent("").is_none());
+        assert!(parse_w3c_traceparent("garbage").is_none());
+        assert!(parse_w3c_traceparent("00-nothex-b7ad6b7169203331-01").is_none());
+        // A fifth field is not a bare traceparent.
+        assert!(parse_w3c_traceparent(&format!("{VALID_TP}-extra")).is_none());
+        // An all-zero (INVALID) trace id is rejected.
+        assert!(
+            parse_w3c_traceparent("00-00000000000000000000000000000000-b7ad6b7169203331-01")
+                .is_none()
+        );
+    }
+
+    /// Enrichment is HOST-injected: the registered claim's tenant/project win
+    /// over any guest-supplied `tenant` in the context, while flow/run/node come
+    /// from the (guest-legitimate) context. Kills a mutant that reads the tenant
+    /// from the guest context (spoofable) or drops the claim enrichment.
+    #[tokio::test]
+    async fn ingest_enriches_from_host_claim_over_guest_context() {
+        let (plugin, capture) =
+            WamnLogging::new_with_capture(WamnLoggingConfig::default()).expect("plugin");
+        plugin.set_claim("comp-1", "acme", "receiving");
+        // The context carries a SPOOFED tenant the guest must not be able to set.
+        let ctx = format!(
+            r#"{{"flow":"receipt-flow","run":"run-9","node":"log-node","seq":7,"tenant":"evil-tenant","traceparent":"{VALID_TP}"}}"#
+        );
+        plugin.ingest("comp-1", Level::Info, &ctx, "hello".into());
+        wait_drained(&plugin).await;
+
+        let recs = capture.snapshot();
+        assert_eq!(recs.len(), 1, "one emitted record");
+        let r = &recs[0];
+        assert_eq!(
+            r.tenant, "acme",
+            "tenant is the host claim, NOT the guest's"
+        );
+        assert_eq!(r.project, "receiving");
+        assert_eq!(r.flow, "receipt-flow");
+        assert_eq!(r.run, "run-9");
+        assert_eq!(r.node, "log-node");
+        assert_eq!(r.seq, Some(7));
+        assert_eq!(r.trace_id.as_deref(), Some(VALID_TRACE_ID));
+    }
+
+    /// A valid traceparent attaches the run's trace_id to the record; an absent
+    /// one leaves it untraced. Kills a mutant that breaks the W3C parse (always
+    /// None) — the first record would then carry no trace_id.
+    #[tokio::test]
+    async fn traceparent_sets_trace_id_on_record() {
+        let (plugin, capture) =
+            WamnLogging::new_with_capture(WamnLoggingConfig::default()).expect("plugin");
+        plugin.set_claim("comp-1", "acme", "receiving");
+        let with_tp =
+            format!(r#"{{"flow":"f","run":"r","node":"n","seq":0,"traceparent":"{VALID_TP}"}}"#);
+        plugin.ingest("comp-1", Level::Info, &with_tp, "traced".into());
+        // No traceparent key at all.
+        let no_tp = r#"{"flow":"f","run":"r","node":"n","seq":1}"#;
+        plugin.ingest("comp-1", Level::Info, no_tp, "untraced".into());
+        wait_drained(&plugin).await;
+
+        let recs = capture.snapshot();
+        assert_eq!(recs.len(), 2);
+        assert_eq!(
+            recs[0].trace_id.as_deref(),
+            Some(VALID_TRACE_ID),
+            "a valid traceparent sets trace_id"
+        );
+        assert_eq!(
+            recs[1].trace_id, None,
+            "no traceparent leaves the record untraced"
+        );
     }
 }

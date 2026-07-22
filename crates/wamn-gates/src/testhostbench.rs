@@ -322,6 +322,10 @@ impl Harness {
         // l5i9.12.2: the trusted per-run causation channel (the flowrunner world
         // now imports it; instantiation traps without it).
         wamn_postgres::add_runner_causation_to_linker(&mut linker)?;
+        // wamn-yf3: the flowrunner world now imports wasi:logging (run-path
+        // emission). This harness registers no wamn:logging plugin, so log() is a
+        // best-effort no-op — but the import must be linked or instantiation traps.
+        wamn_host::plugins::wamn_logging::add_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self {
             engine,

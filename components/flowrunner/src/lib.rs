@@ -1142,6 +1142,78 @@ impl Drop for RunContextGuard {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Run-path observability (wamn-yf3): a few structured wasi:logging records per
+// run — node completion, node error CLASS, and run completion — enriched
+// host-side (unspoofable tenant/project) with the run's flow/run/node/seq and a
+// per-run W3C traceparent so a log joins its run's trace. NEVER node output
+// payloads or credential/secret material: identifiers + outcome + error class
+// only. A handful of records per run (not per row), so it never dominates a walk.
+// ---------------------------------------------------------------------------
+
+use wasi::logging::logging::{self as wasi_logging, Level as LogLevel};
+
+/// The `node` value on a run-SCOPE (not per-node) record, so every emitted
+/// record still carries a non-empty `node` for the enrichment gate.
+const RUN_SCOPE_NODE: &str = "<run>";
+
+/// FNV-1a 64 — a tiny, dependency-free, deterministic hash used ONLY to derive a
+/// per-run trace id (not security-sensitive).
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Mint this run's W3C `traceparent` deterministically from the `run_id`, so
+/// every record of one run shares a trace_id (its logs correlate) and the value
+/// is stable across the run's re-claims. Until the persisted per-run traceparent
+/// column lands (wamn-fl3) this IS the run's trace identity; when it lands, read
+/// it from the runs row instead. Both ids are forced non-zero so the value is a
+/// valid (non-INVALID) W3C traceparent.
+fn run_traceparent(run_id: &str) -> String {
+    let hi = fnv1a64(run_id.as_bytes());
+    let lo = fnv1a64(&[run_id.as_bytes(), b"\x01"].concat()) | 1;
+    let span = fnv1a64(&[b"span:", run_id.as_bytes()].concat()) | 1;
+    format!("00-{hi:016x}{lo:016x}-{span:016x}-01")
+}
+
+/// The wasi:logging `context` JSON the plugin enriches: the run's identifiers +
+/// its traceparent. serde_json escapes every value. The key SET is a contract
+/// with the plugin's `ParsedContext`.
+fn log_context(flow_id: &str, run_id: &str, node: &str, seq: i32, traceparent: &str) -> String {
+    json!({
+        "flow": flow_id,
+        "run": run_id,
+        "node": node,
+        "seq": seq,
+        "traceparent": traceparent,
+    })
+    .to_string()
+}
+
+/// Emit a node-completion record (identifiers + the outcome port only).
+fn emit_node_complete(flow_id: &str, run_id: &str, node: &str, seq: i32, tp: &str, port: &str) {
+    let ctx = log_context(flow_id, run_id, node, seq, tp);
+    wasi_logging::log(LogLevel::Info, &ctx, &format!("node completed -> {port}"));
+}
+
+/// Emit a node-failure record carrying ONLY the error CLASS — never the message,
+/// which could echo node output.
+fn emit_node_error(flow_id: &str, run_id: &str, node: &str, seq: i32, tp: &str, class: &str) {
+    let ctx = log_context(flow_id, run_id, node, seq, tp);
+    wasi_logging::log(LogLevel::Error, &ctx, &format!("node failed: {class}"));
+}
+
+/// Emit the run's terminal record (completed / failed-class) at run scope.
+fn emit_run_end(flow_id: &str, run_id: &str, seq: i32, tp: &str, outcome: &str) {
+    let ctx = log_context(flow_id, run_id, RUN_SCOPE_NODE, seq, tp);
+    wasi_logging::log(LogLevel::Info, &ctx, &format!("run {outcome}"));
+}
+
 fn execute(
     run_id: &str,
     payload: &str,
@@ -1719,6 +1791,8 @@ fn execute_claimed(
     declare_run_egress(flow);
     let plan = Plan::compile(flow).map_err(|e| e.to_string())?;
     let version = plan.version();
+    // wamn-yf3: the run's trace identity, shared by every log record it emits.
+    let tp = run_traceparent(run_id);
     let completed = load_completed(run_id)?;
     let mut next_seq = completed.len() as i32;
     let run_rec = RunRecord::new(run_id, &flow.flow_id, version, input);
@@ -1736,6 +1810,7 @@ fn execute_claimed(
         match plan.next(&mut st, 0) {
             Step::Done(RunStatus::Completed) => {
                 complete_and_dequeue(run_id, st.result())?;
+                emit_run_end(&flow.flow_id, run_id, next_seq, &tp, "completed");
                 return Ok(ClaimOutcome {
                     outcome: 0,
                     park_ms: 0,
@@ -1758,6 +1833,19 @@ fn execute_claimed(
                     }
                     None => format!("run ended in {status:?}"),
                 };
+                // Run-scope failure record carries the fail CLASS only (never the
+                // detail message, which could echo node output).
+                let fail_class = st
+                    .failure()
+                    .map(|f| fail_kind_sql(&f.kind))
+                    .unwrap_or("failed");
+                emit_run_end(
+                    &flow.flow_id,
+                    run_id,
+                    next_seq,
+                    &tp,
+                    &format!("failed:{fail_class}"),
+                );
                 return Ok(ClaimOutcome {
                     outcome: 2,
                     park_ms: 0,
@@ -1805,6 +1893,14 @@ fn execute_claimed(
                                     owner,
                                 )?;
                                 next_seq += 1;
+                                emit_node_complete(
+                                    &flow.flow_id,
+                                    run_id,
+                                    &d.node,
+                                    next_seq - 1,
+                                    &tp,
+                                    port,
+                                );
                             }
                             NodeOutcome::Error(err)
                                 if will_error_route(err, &d)
@@ -1821,6 +1917,14 @@ fn execute_claimed(
                                     owner,
                                 )?;
                                 next_seq += 1;
+                                emit_node_error(
+                                    &flow.flow_id,
+                                    run_id,
+                                    &d.node,
+                                    next_seq - 1,
+                                    &tp,
+                                    error_row_values(err).0,
+                                );
                             }
                             NodeOutcome::Error(_) => {}
                         }

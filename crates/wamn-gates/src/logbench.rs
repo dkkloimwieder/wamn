@@ -39,6 +39,13 @@ use wash_runtime::wasmtime::component::{Component, InstancePre, Linker, TypedFun
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_host::plugins::wamn_logging::{self, WamnLogging, WamnLoggingConfig};
 
+// runpath (wamn-yf3): the production run-path drives a real Postgres through the
+// run-worker instantiate path.
+use tokio_postgres::{Client, NoTls};
+use wamn_host::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
+use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_worker::{RunWorker, RunnerIdentity};
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -53,7 +60,13 @@ pub enum Mode {
     Saturation,
     /// 100% of delivered records carry tenant/project/flow/run/node.
     Enrichment,
-    /// Every gate in sequence.
+    /// wamn-yf3: the RUN PATH end-to-end — drive the REAL flowrunner through the
+    /// production run-worker instantiate path and assert its emitted records
+    /// (per node, 100% enrichment, traceparent attached) at the plugin Rec layer
+    /// via the capture seam (no collector needed; needs a Postgres DB).
+    Runpath,
+    /// Every gate in sequence (excludes `runpath`, which needs a DB not a
+    /// collector — run it explicitly with `--mode runpath`).
     All,
 }
 
@@ -110,6 +123,18 @@ pub struct LogBenchArgs {
     pub tenant: String,
     #[arg(long, default_value = "receiving")]
     pub project: String,
+
+    // --- runpath (wamn-yf3) -------------------------------------------------
+    /// runpath: the flowrunner guest the run-worker instantiates + drives.
+    #[arg(long, default_value = "/bench/flowrunner.wasm")]
+    pub flowrunner: PathBuf,
+    /// runpath: app (runner) Postgres URL — the NOSUPERUSER wamn_app role.
+    /// Overrides WAMN_PG_URL / DATABASE_URL.
+    #[arg(long)]
+    pub database_url: Option<String>,
+    /// runpath: superuser URL that provisions/drops the ephemeral schema.
+    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    pub admin_database_url: Option<String>,
 }
 
 const BENCH_ID: &str = "s5-logbench";
@@ -227,6 +252,12 @@ fn summarize(mut s: Vec<u64>) -> Stats {
 pub async fn run(args: LogBenchArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
     println!("# wamn-host S5 logbench");
+    // runpath (wamn-yf3) proves the run-path emission at the plugin Rec layer via
+    // the capture seam — it needs a Postgres DB, NOT a collector/Loki, so it runs
+    // before (and instead of) the OTLP-export gates.
+    if args.mode == Mode::Runpath {
+        return runpath_phase(&args).await;
+    }
     println!(
         "loki = {}, collector metrics = {}, tenant = {}, project = {}",
         args.loki_url, args.collector_metrics_url, args.tenant, args.project
@@ -696,4 +727,244 @@ fn percent_encode(s: &str) -> String {
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// runpath gate (wamn-yf3): the production run-path emission, end-to-end, WITHOUT
+// a cluster. Drives the REAL flowrunner through the production wamn-run-worker
+// instantiate path against an ephemeral schema (the runnerbench DDL, so the
+// flow/queue tables match the schema of record), with a CAPTURE-enabled
+// wamn:logging plugin. A small flow run then emits via wasi:logging into that
+// plugin, and the phase asserts the emitted records at the Rec layer: one per
+// node, 100% enrichment (host-injected tenant/project + guest flow/run/node),
+// and the run's traceparent attached (trace_id set). OTLP export is NOT needed
+// — the in-cluster job (the `throughput`/`enrichment` modes) covers Loki
+// delivery; this proves the EMISSION + enrichment + trace threading locally.
+// ---------------------------------------------------------------------------
+
+const RUNPATH_SCHEMA: &str = "wamn_logbench_runpath";
+const RUNPATH_TENANT: &str = "acme";
+const RUNPATH_PROJECT: &str = "receiving";
+const RUNPATH_OWNER: &str = "logbench-runpath";
+const RUNPATH_FLOW: &str = "poc-receipt";
+/// The nodes the `poc-receipt` v1 fixture walks (crate::flowbench::flow_json(1)).
+const RUNPATH_NODES: &[&str] = &["in", "t", "w", "c", "out"];
+/// The run-scope record's `node` sentinel — must match the flowrunner's.
+const RUNPATH_RUN_SCOPE_NODE: &str = "<run>";
+
+async fn runpath_provision(admin_url: &str) -> anyhow::Result<()> {
+    let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
+        .await
+        .context("admin connect for ephemeral schema")?;
+    let conn_task = tokio::spawn(conn);
+    let result = async {
+        client
+            .batch_execute(&format!(
+                "DROP SCHEMA IF EXISTS {RUNPATH_SCHEMA} CASCADE; \
+                 CREATE SCHEMA {RUNPATH_SCHEMA} AUTHORIZATION postgres; \
+                 GRANT USAGE ON SCHEMA {RUNPATH_SCHEMA} TO wamn_app;"
+            ))
+            .await
+            .context("create ephemeral schema")?;
+        client
+            .batch_execute(&crate::runnerbench::runner_ddl(RUNPATH_SCHEMA))
+            .await
+            .context("apply runner DDL")?;
+        anyhow::Ok(())
+    }
+    .await;
+    drop(client);
+    let _ = conn_task.await;
+    result
+}
+
+async fn runpath_teardown(admin_url: &str) -> anyhow::Result<()> {
+    let (client, conn) = tokio_postgres::connect(admin_url, NoTls).await?;
+    let conn_task = tokio::spawn(conn);
+    let r = client
+        .batch_execute(&format!("DROP SCHEMA IF EXISTS {RUNPATH_SCHEMA} CASCADE;"))
+        .await
+        .map_err(|e| anyhow::anyhow!("drop ephemeral schema: {e}"));
+    drop(client);
+    let _ = conn_task.await;
+    r.map(|_| ())
+}
+
+/// A wamn_app connection pinned to the ephemeral schema + tenant claim — the same
+/// RLS floor + search_path the runner's plugin session runs under.
+async fn runpath_connect_app(
+    app_url: &str,
+) -> anyhow::Result<(Client, tokio::task::JoinHandle<()>)> {
+    let (client, conn) = tokio_postgres::connect(app_url, NoTls)
+        .await
+        .context("app (wamn_app) connect")?;
+    let handle = tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    client
+        .batch_execute(&format!(
+            "SET search_path TO {RUNPATH_SCHEMA}; SET app.tenant TO '{RUNPATH_TENANT}';"
+        ))
+        .await
+        .context("set search_path + tenant claim")?;
+    Ok((client, handle))
+}
+
+/// Seed one run the way the dispatcher does: a write-ahead `dispatched` runs row
+/// + a queue row, co-transacted (the exact producer state the runner claims).
+async fn runpath_seed_run(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
+    let tx = client.transaction().await?;
+    tx.execute(
+        &write_ahead_triggered_run_sql(),
+        &[&run_id, &RUNPATH_FLOW, &1i32, &"cron", &"\"receipt\""],
+    )
+    .await?;
+    tx.execute(
+        &enqueue_sql(),
+        &[&run_id, &Option::<&str>::None, &0i32, &0i64],
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn runpath_phase(args: &LogBenchArgs) -> anyhow::Result<()> {
+    println!("\n## runpath — drive the REAL flowrunner via the run-worker instantiate path");
+
+    let app_url = args
+        .database_url
+        .clone()
+        .or_else(|| std::env::var("WAMN_PG_URL").ok())
+        .or_else(|| std::env::var("DATABASE_URL").ok())
+        .context(
+            "runpath needs an app db url: pass --database-url or set WAMN_PG_URL / DATABASE_URL",
+        )?;
+    let admin_url = args
+        .admin_database_url
+        .clone()
+        .context("runpath needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL")?;
+    let guest = std::fs::read(&args.flowrunner)
+        .with_context(|| format!("read flowrunner {}", args.flowrunner.display()))?;
+
+    runpath_provision(&admin_url)
+        .await
+        .context("provision ephemeral schema")?;
+
+    let engine = build_engine(&[])?;
+    let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
+
+    let outcome = async {
+        let (mut seed_conn, _h) = runpath_connect_app(&app_url).await?;
+        wamn_gate_harness::seed_flow_version(
+            &seed_conn,
+            RUNPATH_TENANT,
+            RUNPATH_FLOW,
+            1,
+            true,
+            &crate::flowbench::flow_json(1),
+            true,
+        )
+        .await?;
+        runpath_seed_run(&mut seed_conn, "rp-0").await?;
+
+        // The production wamn:postgres pool + an EMPTY vault (no credential in
+        // this fixture) + a CAPTURE-enabled wamn:logging plugin.
+        let mut cfg = WamnPostgresConfig::from_env();
+        cfg.database_url = Some(app_url.clone());
+        let pg = Arc::new(WamnPostgres::new(cfg)?);
+        let vault = Arc::new(wamn_host::plugins::wamn_credentials::WamnCredentials::empty());
+        let (logging, capture) = WamnLogging::new_with_capture(WamnLoggingConfig::from_env())?;
+        let logging = Arc::new(logging);
+
+        // The EXACT production instantiate path (SR1): same struct the run-worker
+        // binary runs — the wasi:logging claim is host-injected inside it.
+        let mut worker = RunWorker::instantiate(
+            &engine,
+            &guest,
+            pg,
+            vault,
+            logging.clone(),
+            RunnerIdentity {
+                owner: RUNPATH_OWNER,
+                tenant: RUNPATH_TENANT,
+                schema: Some(RUNPATH_SCHEMA),
+                project: RUNPATH_PROJECT,
+            },
+            std::sync::Arc::from([]), // deny-all egress: no http node in this flow
+            30_000,
+        )
+        .await?;
+
+        let report = worker.drain().await?;
+        // Let the plugin's drain task finish emitting everything it accepted, so
+        // the capture is complete (no OTLP export needed — Rec-layer assertions).
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while logging.emitted() < logging.accepted() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        let recs = capture.snapshot();
+        let run_completed = report.claimed == 1 && report.completed == 1;
+
+        // (a) A record present for EACH node the run walked.
+        let per_node: Vec<&_> = recs
+            .iter()
+            .filter(|r| r.node != RUNPATH_RUN_SCOPE_NODE)
+            .collect();
+        let each_node = RUNPATH_NODES
+            .iter()
+            .all(|n| per_node.iter().any(|r| r.node == *n));
+        // (b) A run-completion record at run scope.
+        let run_end = recs.iter().any(|r| r.node == RUNPATH_RUN_SCOPE_NODE);
+        // (c) 100% enrichment: every record carries the HOST claim + guest ids,
+        // all non-empty, and the tenant is the host-injected one (never spoofed).
+        let enriched = !recs.is_empty()
+            && recs.iter().all(|r| {
+                r.tenant == RUNPATH_TENANT
+                    && r.project == RUNPATH_PROJECT
+                    && r.flow == RUNPATH_FLOW
+                    && r.run == "rp-0"
+                    && !r.node.is_empty()
+            });
+        // (d) traceparent attached: every record has trace_id set, and one run =
+        // one shared trace_id.
+        let traces: std::collections::HashSet<&str> =
+            recs.iter().filter_map(|r| r.trace_id.as_deref()).collect();
+        let traceparent_attached =
+            !recs.is_empty() && recs.iter().all(|r| r.trace_id.is_some()) && traces.len() == 1;
+
+        println!(
+            "records = {} ({} per-node, run-end = {run_end}); \
+             each-node = {each_node}, 100%-enriched = {enriched}, \
+             traceparent-attached = {traceparent_attached} (distinct trace_ids = {})",
+            recs.len(),
+            per_node.len(),
+            traces.len()
+        );
+        for r in &recs {
+            println!(
+                "  node={:<6} seq={:?} tenant={} project={} flow={} run={} trace_id={}",
+                r.node,
+                r.seq,
+                r.tenant,
+                r.project,
+                r.flow,
+                r.run,
+                r.trace_id.as_deref().unwrap_or("<none>")
+            );
+        }
+
+        anyhow::Ok(run_completed && each_node && run_end && enriched && traceparent_attached)
+    }
+    .await;
+
+    ticker.abort();
+    let _ = runpath_teardown(&admin_url).await;
+    let pass = outcome?;
+
+    println!("\nlogbench runpath complete — PASS: {pass}");
+    if !pass {
+        bail!("logbench runpath gate failed");
+    }
+    Ok(())
 }
