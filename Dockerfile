@@ -22,6 +22,9 @@ COPY poc ./poc
 # The canonical deploy DDL (sql/run-state.sql / sql/flows.sql) is include_str!'d by
 # publish-catalog's provisioning helpers — single source of truth, no clones.
 COPY deploy ./deploy
+# wamn-gates testgate include_str!'s the disposition-node seed cases (11.5);
+# only these two fixtures are needed, not the components workspace.
+COPY components/samples/disposition-node/cases.json components/samples/disposition-node/cases-refusal-fixture.json ./components/samples/disposition-node/
 # wash-runtime resolves as a git dep from the fork pinned in Cargo.toml
 # (docs/wash-runtime-fork.md); cargo fetches it during the build.
 # rust-toolchain.toml would force a rustup download inside the container;
