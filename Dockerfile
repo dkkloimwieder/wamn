@@ -124,6 +124,13 @@ COPY components/target/wasm32-wasip2/release/poc_webhook_f1.wasm /bench/poc-webh
 # 11.4 assertion-library fixture: the checked-in Vec<TestCase> the testkitbench
 # gate loads (the cases-as-data path). Static JSON, not a compiled artifact.
 COPY deploy/gates/testkit-cases.json /bench/testkit-cases.json
+# POC-TESTS (wamn-3rj): the F1/F3/F4 stored suite envelopes the pocsuiteproof
+# gate seeds + drives. Static JSON, not compiled artifacts; every wasm this gate
+# needs (poc-webhook-f1.wasm, flowrunner.wasm, disposition-node.wasm) is already
+# baked above, so this gate adds NO host/guest rebuild — only these three files.
+COPY deploy/gates/poc-f1-suite.json /bench/poc-f1-suite.json
+COPY deploy/gates/poc-f3-suite.json /bench/poc-f3-suite.json
+COPY deploy/gates/poc-f4-suite.json /bench/poc-f4-suite.json
 ENTRYPOINT ["/usr/local/bin/wamn-gates"]
 
 # ---- builder-svc image: the 5.5 node build sandbox (cargo + jco) ------------

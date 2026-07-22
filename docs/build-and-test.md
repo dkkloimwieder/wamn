@@ -1263,6 +1263,91 @@ docker rm -f lane-828-pg
 # M3 RLS policy dropped from flow-tests.sql → suiteproof RLS zero-rows assert.
 ```
 
+### [POC-TESTS / wamn-3rj] F1/F3/F4 stored suites + drive-and-fold (pocsuiteproof)
+
+Docs: docs/poc-material-receiving.md ("Tests", L37–39). The F1/F3/F4 POC test
+suites as STORED DATA — `wamn-flow-tests` envelopes
+(`deploy/gates/poc-f{1,3,4}-suite.json`, case bodies = `wamn_testkit::TestCase`)
+seeded into `wamn_run.test_suites`/`test_cases` (the 11.2 tables) and then PROVEN
+REAL: the `pocsuiteproof` gate seeds them and drives each flow ONCE through its
+own harness path, folding every stored assertion through `wamn_testkit::evaluate`.
+
+What the stored suites cover (the expressible core) vs what stays in the sibling
+proof gates:
+- **F1** (`poc-f1-suite`): flow-level cases over `receipt-received` v1, driven via
+  `poc-webhook-f1.wasm` on `wasi:http/incoming-handler` (ProxyPre). The sync
+  response body rides `DbState` on `runs.result_json` (portable to the generic
+  0lfu executor); the final DB state (holds created) rides `DbState` row-count on
+  `quality_holds`; the outcome rides `RunOutcome`. `f1bench` retains the imperative
+  node-trace / RLS / burst asserts.
+- **F3** (`poc-f3-suite`): `escalate-stale-holds` v1 under the RunWorker
+  test-double set at a fixed virtual epoch. The **48h cutoff** is proven by
+  time-offset arithmetic (`fire-at-ms − 48h`) against **epoch-anchored** seed rows
+  (2 stale opened 49h before the epoch, 1 fresh AT it, 1 stale-disposed) — 48h
+  evaluated in wall-clock milliseconds. Asserts escalated=2 / open=1 / disposed=1
+  (`DbState`) + the two notify `Egress{count 2, none-denied}`. The credential
+  digest + cycle-visit count stay in `f3proof`.
+- **F4** (`poc-f4-suite`): `disposition-recorded` v1 under the double set + a real
+  serve-node hosting `disposition-node.wasm` (the F2 hop) + a loopback ERP sink.
+  The **egress spy** = `Egress{ExactlyThese([POST /run, POST /dispositions])}` —
+  exactly the F2 node hop + the ONE ERP callback, nothing else (an extra call
+  fails the set) — plus `none-denied` + `RunOutcome`. The registered graph carries
+  `idempotency-key: true`. The 429/Retry-After park, no-reclaim-during-backoff,
+  one-effective-delivery, and no-stampede mechanics are NOT expressible in the
+  stored vocabulary (the ERP ledger is an in-memory audit, not a DB table) and stay
+  in `f4proof`.
+
+The gate is `suiteproof` generalized to the three real POC flows + a fixture-
+realism pass; it is NOT the generic PG-loading executor (sibling lane 0lfu) — it is
+hard-wired per-POC-flow so it can drive F1, whose node types are baked into
+`poc-webhook-f1` (NOT flowrunner-drivable).
+
+```bash
+# Unit / drift / coherence tests (pure — no DB): the 3 embedded suites parse +
+# validate-on-write, the F1 flow-ref binding, the F3/F4 graph copies mirror the
+# committed source fixtures (deploy/poc/f3-flow.json,
+# crates/wamn-flow/tests/fixtures/f4-disposition-recorded.flow.json), the F3
+# epoch-anchor straddles the cutoff, the F4 egress-spy names exactly {/run,/dispositions}:
+cargo test -p wamn-gates pocsuiteproof
+cargo test -p wamn-flow-tests            # the envelope + validate-on-write
+
+# Build the gate + the three guests this drive needs (all release wasm):
+cargo build -p wamn-gates
+(cd components && cargo build --release --target wasm32-wasip2 \
+   -p flowrunner -p poc-webhook-f1 -p disposition-node)
+
+# Local drive (throwaway PG; the gate owns wamn_pocsuiteproof + _f1/_f3/_f4):
+docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+REL=components/target/wasm32-wasip2/release
+./target/debug/wamn-gates --log-level error pocsuiteproof \
+  --webhook-entry $REL/poc_webhook_f1.wasm \
+  --flowrunner   $REL/flowrunner.wasm \
+  --node         $REL/disposition_node.wasm \
+  --database-url       postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn
+docker rm -f wamn-pg
+
+# Seed-only (the wave-end composition gate's path): seed the 3 suites into a
+# shared target schema/tenant at a flow version and STOP (no drive, no drop) —
+# 0lfu then loads them by flow@version + tenant:
+./target/debug/wamn-gates --log-level error pocsuiteproof --seed-only \
+  --schema poc_f1 --tenant demo-tenant --flow-version 1 \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn
+
+# IN-CLUSTER gate of record (gates image only — no host/guest rebuild; the wasm
+# poc-webhook-f1/flowrunner/disposition-node + the 3 suite JSONs are baked):
+kubectl -n wamn-system apply -f deploy/gates/pocsuiteproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/pocsuiteproof --timeout=300s
+kubectl -n wamn-system logs job/pocsuiteproof
+# 3 mutants killed (apply/test/restore via sha256 byte-restore, debug builds):
+# M1 F1/F3/F4 seed step skipped in Phase A → embedded_suites/STORE counts + drive
+#   "no run facts captured"; M2 the ExactlyThese fold inverted (evaluate.rs
+#   unexpected-check) → f4_egress_spy + exactly_these_catches_an_extra_call; M3 the
+#   F3 epoch anchor broken (stale seeded now()-relative) → f3_epoch_anchor_straddles
+#   + the live escalated=2/open=1 DbState asserts.
+```
+
 ### [11.8 / wamn-wvb] schema-change impact analysis — affected flows/suites/API
 
 Docs: docs/impact-analysis.md. Before a migration applies, enumerate the

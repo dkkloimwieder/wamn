@@ -56,6 +56,8 @@ mod walbench;
 mod impactproof;
 // [9.9] wamn-b4e: appended so cherry-picks compose (sibling lanes touch this file too).
 mod dashproof;
+// [POC-TESTS] wamn-3rj: appended at END so cherry-picks compose (sibling lanes touch this file too).
+mod pocsuiteproof;
 
 use std::str::FromStr as _;
 
@@ -168,6 +170,8 @@ enum Command {
     Metricbench(metricbench::MetricBenchArgs),
     /// Run the 9.9 dashboards proof (wamn-b4e): assert a deployed Grafana — health, the three datasources present+healthy (Tempo/Loki soft in --local), the static SRE dashboard/folder, and every registry org's per-tenant folder+dashboard after provision-dashboards
     Dashproof(dashproof::DashproofArgs),
+    /// Run the POC-TESTS gate (wamn-3rj): seed the F1/F3/F4 stored suites as catalog data + drive each flow once through its real path, folding the stored assertions (F1 webhook body+DB, F3 virtual-time 48h cutoff, F4 egress spy); --seed-only for the composition gate
+    Pocsuiteproof(pocsuiteproof::PocSuiteProofArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -234,6 +238,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Impactproof(args) => impactproof::run(args).await,
         Command::Metricbench(args) => metricbench::run(args).await,
         Command::Dashproof(args) => dashproof::run(args).await,
+        Command::Pocsuiteproof(args) => pocsuiteproof::run(args).await,
     };
 
     shutdown_observability();

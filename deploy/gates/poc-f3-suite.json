@@ -1,0 +1,36 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "escalate-stale-holds",
+  "flow-version": 1,
+  "suite-id": "poc-f3-suite",
+  "name": "POC-F3 escalate-stale-holds under virtual time (48h cutoff in wall-clock ms)",
+  "cases": [
+    {
+      "case-id": "escalates-48h-stale",
+      "ordinal": 0,
+      "case": {
+        "schema-version": "0.1",
+        "name": "escalates-48h-stale",
+        "flow-ref": { "flow-id": "escalate-stale-holds", "version": 1 },
+        "input": { "trigger": "cron", "schedule": "* * * * *", "fire-at-ms": 1700000000000 },
+        "expect": [
+          { "run-outcome": { "status": "completed" } },
+          { "db-state": {
+              "query": "SELECT to_jsonb(t) FROM (SELECT count(*) AS n FROM quality_holds WHERE status = 'escalated') t",
+              "params": [],
+              "expect": { "first-row": { "row": { "n": 2 }, "subset": true } } } },
+          { "db-state": {
+              "query": "SELECT to_jsonb(t) FROM (SELECT count(*) AS n FROM quality_holds WHERE status = 'open') t",
+              "params": [],
+              "expect": { "first-row": { "row": { "n": 1 }, "subset": true } } } },
+          { "db-state": {
+              "query": "SELECT to_jsonb(t) FROM (SELECT count(*) AS n FROM quality_holds WHERE status = 'disposed') t",
+              "params": [],
+              "expect": { "first-row": { "row": { "n": 1 }, "subset": true } } } },
+          { "egress": { "flow": "escalate-stale-holds", "calls": { "count": 2 } } },
+          { "egress": { "flow": "escalate-stale-holds", "calls": "none-denied" } }
+        ]
+      }
+    }
+  ]
+}

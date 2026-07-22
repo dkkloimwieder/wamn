@@ -1,0 +1,98 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "receipt-received",
+  "flow-version": 1,
+  "suite-id": "poc-f1-suite",
+  "name": "POC-F1 receipt-received fixtures (pinned from real runs, secret-free)",
+  "cases": [
+    {
+      "case-id": "happy-in-spec",
+      "ordinal": 0,
+      "case": {
+        "schema-version": "0.1",
+        "name": "happy-in-spec",
+        "flow-ref": { "flow-id": "receipt-received", "version": 1 },
+        "input": {
+          "receipt_no": "r-2001",
+          "supplier": "acme",
+          "site": "hq",
+          "received_at": "2026-07-12T08:00:00Z",
+          "lines": [
+            { "material": "resin-a", "quantity": "100.000", "moisture_pct": "11.20", "weight_kg": "99.980" }
+          ]
+        },
+        "expect": [
+          { "run-outcome": { "status": "completed" } },
+          { "db-state": {
+              "query": "SELECT result_json FROM runs WHERE input_json->>'receipt_no' = $1",
+              "params": ["r-2001"],
+              "expect": { "first-row": { "row": { "holds": [] }, "subset": true } } } },
+          { "db-state": {
+              "query": "SELECT to_jsonb(t) FROM (SELECT count(*) AS n FROM quality_holds q JOIN receipt_lines l ON q.line_id = l.id JOIN receipts r ON l.receipt_id = r.id WHERE r.receipt_no = $1) t",
+              "params": ["r-2001"],
+              "expect": { "first-row": { "row": { "n": 0 }, "subset": true } } } }
+        ]
+      }
+    },
+    {
+      "case-id": "out-of-spec-creates-hold",
+      "ordinal": 1,
+      "case": {
+        "schema-version": "0.1",
+        "name": "out-of-spec-creates-hold",
+        "flow-ref": { "flow-id": "receipt-received", "version": 1 },
+        "input": {
+          "receipt_no": "r-2002",
+          "supplier": "acme",
+          "site": "west",
+          "received_at": "2026-07-12T08:00:00Z",
+          "lines": [
+            { "material": "resin-a", "quantity": "40.000", "moisture_pct": "13.00", "weight_kg": "40.010" },
+            { "material": "pigment-c", "quantity": "20.000", "moisture_pct": "4.90", "weight_kg": "20.050" },
+            { "material": "solvent-b", "quantity": "10.000", "moisture_pct": "0.05", "weight_kg": "10.100" }
+          ]
+        },
+        "expect": [
+          { "run-outcome": { "status": "completed" } },
+          { "db-state": {
+              "query": "SELECT result_json FROM runs WHERE input_json->>'receipt_no' = $1",
+              "params": ["r-2002"],
+              "expect": { "first-row": { "row": { "holds": [ { "status": "open" } ] }, "subset": true } } } },
+          { "db-state": {
+              "query": "SELECT to_jsonb(t) FROM (SELECT count(*) AS n FROM quality_holds q JOIN receipt_lines l ON q.line_id = l.id JOIN receipts r ON l.receipt_id = r.id WHERE r.receipt_no = $1) t",
+              "params": ["r-2002"],
+              "expect": { "first-row": { "row": { "n": 2 }, "subset": true } } } }
+        ]
+      }
+    },
+    {
+      "case-id": "malformed-invalid-input",
+      "ordinal": 2,
+      "case": {
+        "schema-version": "0.1",
+        "name": "malformed-invalid-input",
+        "flow-ref": { "flow-id": "receipt-received", "version": 1 },
+        "input": {
+          "receipt_no": "r-3003",
+          "supplier": "wayne-enterprises",
+          "site": "hq",
+          "received_at": "2026-07-12T08:00:00Z",
+          "lines": [
+            { "material": "resin-a", "quantity": "1.000", "moisture_pct": "1.00", "weight_kg": "1.000" }
+          ]
+        },
+        "expect": [
+          { "run-outcome": { "status": "completed" } },
+          { "db-state": {
+              "query": "SELECT result_json FROM runs WHERE input_json->>'receipt_no' = $1",
+              "params": ["r-3003"],
+              "expect": { "first-row": { "row": { "error": { "code": "invalid-input" } }, "subset": true } } } },
+          { "db-state": {
+              "query": "SELECT to_jsonb(t) FROM (SELECT count(*) AS n FROM quality_holds q JOIN receipt_lines l ON q.line_id = l.id JOIN receipts r ON l.receipt_id = r.id WHERE r.receipt_no = $1) t",
+              "params": ["r-3003"],
+              "expect": { "first-row": { "row": { "n": 0 }, "subset": true } } } }
+        ]
+      }
+    }
+  ]
+}
