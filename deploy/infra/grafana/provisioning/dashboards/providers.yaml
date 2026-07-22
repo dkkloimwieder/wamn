@@ -1,0 +1,18 @@
+# [9.9] Grafana dashboard provider (file provisioning). Loads every *.json under
+# the dashboards path into ONE shared "wamn SRE" folder — the static SRE set
+# (the per-tenant folders are created at runtime by `wamn-ctl
+# provision-dashboards`, which static provisioning cannot express). This file is
+# BOTH mounted for local docker and embedded in deploy/infra/grafana.yaml's
+# ConfigMap (kept in sync by hand, the tempo/tempo-local precedent). wamn-b4e.
+apiVersion: 1
+providers:
+  - name: wamn-sre
+    orgId: 1
+    folder: "wamn SRE"
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

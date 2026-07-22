@@ -1,0 +1,17 @@
+# [9.9] Local single-binary Prometheus config (docker iteration). Mounted at
+# /etc/prometheus/prometheus.yml; the same shape as deploy/infra/prometheus.yaml's
+# ConfigMap, but the scrape target is the LOCAL collector container on the
+# wamn-s5 docker network (not the in-cluster Service DNS).
+#   docker run -d --name laneb4e-prometheus --network wamn-s5 -p 127.0.0.1:19091:9090 \
+#     -v "$PWD/deploy/infra/prometheus-local.yaml:/etc/prometheus/prometheus.yml:ro" \
+#     prom/prometheus:v3.1.0
+global:
+  scrape_interval: 10s
+  scrape_timeout: 5s
+scrape_configs:
+  - job_name: wamn-app-metrics
+    static_configs:
+      - targets: ["laneb4e-otelcol:8889"]
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["laneb4e-otelcol:8888"]

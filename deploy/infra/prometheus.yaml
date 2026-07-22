@@ -1,0 +1,81 @@
+# [9.9] Metrics store: single-binary Prometheus (the 9.8 metric-set has NO
+# server — the OTel Collector only EXPOSES wamn_* as Prometheus text on :8889;
+# nothing scrapes/stores it). This adds the missing scrape+TSDB so Grafana
+# (deploy/infra/grafana.yaml) has a metrics datasource. Single-binary, emptyDir,
+# short retention — the Loki/Tempo dev posture (HA is 9.5, out of scope). wamn-b4e.
+#
+#   kubectl -n wamn-system apply -f deploy/infra/prometheus.yaml
+#   kubectl -n wamn-system rollout status deploy/prometheus --timeout=120s
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: wamn-system
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 10s
+      scrape_timeout: 5s
+    scrape_configs:
+      # The 9.8 app metrics (wamn_*) the collector re-exposes as Prometheus text
+      # (deploy/infra/otel-collector.yaml `prometheus` exporter, :8889,
+      # add_metric_suffixes:false). Default metrics path (/metrics).
+      - job_name: wamn-app-metrics
+        static_configs:
+          - targets: ["otel-collector:8889"]
+      # The collector's OWN telemetry (otelcol_*), :8888 — useful for the
+      # export-loss cross-check; not required by any dashboard.
+      - job_name: otel-collector
+        static_configs:
+          - targets: ["otel-collector:8888"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: wamn-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: prometheus }
+  template:
+    metadata:
+      labels: { app: prometheus }
+    spec:
+      # prom/prometheus runs as uid 65534 (nobody); make the emptyDir writable.
+      securityContext:
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.1.0
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            # Short retention — this is a dev metrics store, not a warehouse.
+            - "--storage.tsdb.retention.time=24h"
+            - "--web.listen-address=0.0.0.0:9090"
+          ports:
+            - { name: http, containerPort: 9090 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+            - { name: data, mountPath: /prometheus }
+          resources:
+            # No CPU limit (CFS-quota tail artifact — the S2 lesson); a scrape
+            # store must not be throttled while a bench drives metrics through it.
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { memory: "1Gi" }
+      volumes:
+        - name: config
+          configMap: { name: prometheus-config }
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: wamn-system
+spec:
+  selector: { app: prometheus }
+  ports:
+    - { name: http, port: 9090, targetPort: 9090 }

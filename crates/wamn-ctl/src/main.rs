@@ -15,6 +15,8 @@ use wamn_ctl::{
 };
 // [11.8] wamn-wvb: appended so cherry-picks compose (sibling lanes touch this use block too).
 use wamn_ctl::impact_report;
+// [9.9] wamn-b4e: appended so cherry-picks compose (sibling lanes touch this use block too).
+use wamn_ctl::provision_dashboards;
 
 #[derive(Parser)]
 #[command(name = "wamn-ctl", version, about)]
@@ -57,6 +59,8 @@ enum Command {
     PinRun(pin_run::PinRunArgs),
     /// Report the schema-change impact of a --target catalog: affected entities (additive/destructive) → flows via event registration + node config → their suites → generated-API resources. Read-only, mutates nothing (11.8, wamn-wvb)
     ImpactReport(impact_report::ImpactReportArgs),
+    /// Provision per-tenant Grafana dashboards ([9.9], wamn-b4e): --emit-sre renders the SRE dashboards-as-code JSON; otherwise enumerate registry.orgs and drive the Grafana HTTP API (one folder + a tenant-pinned dashboard per org)
+    ProvisionDashboards(provision_dashboards::ProvisionDashboardsArgs),
 }
 
 #[tokio::main]
@@ -90,5 +94,6 @@ async fn main() -> anyhow::Result<()> {
         Command::PruneRunHistory(args) => prune_run_history::run(args).await,
         Command::PinRun(args) => pin_run::run(args).await,
         Command::ImpactReport(args) => impact_report::run(args).await,
+        Command::ProvisionDashboards(args) => provision_dashboards::run(args).await,
     }
 }

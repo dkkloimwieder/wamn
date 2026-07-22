@@ -1,0 +1,126 @@
+# [9.9] Grafana — the observability presentation layer over the three sinks
+# 9.1 (Tempo), S5/9.3 (Loki), 9.8+b4e (Prometheus). File-provisions the three
+# datasources with FIXED uids and the STATIC SRE dashboard folder; the per-tenant
+# folders are created at runtime by `wamn-ctl provision-dashboards` (the Grafana
+# HTTP API — static provisioning cannot express a folder-per-tenant). Single
+# replica, emptyDir, no CPU limit — the Loki/Tempo dev posture. wamn-b4e.
+#
+# The SRE dashboards + provider ride in ConfigMaps built from the CHECKED-IN
+# provisioning source (the `--from-file` precedent of deploy/platform/postgres.yaml
+# and deploy/poc/f1-provision-job.yaml) — the SAME files the local docker recipe
+# mounts, so there is one dashboards-as-code source. Build them FIRST, then apply:
+#
+#   kubectl -n wamn-system create configmap grafana-dashboard-provider \
+#     --from-file=providers.yaml=deploy/infra/grafana/provisioning/dashboards/providers.yaml \
+#     --dry-run=client -o yaml | kubectl -n wamn-system apply -f -
+#   kubectl -n wamn-system create configmap grafana-dashboards-sre \
+#     --from-file=deploy/infra/grafana/dashboards/wamn-sre.json \
+#     --dry-run=client -o yaml | kubectl -n wamn-system apply -f -
+#   kubectl -n wamn-system apply -f deploy/infra/grafana.yaml
+#   kubectl -n wamn-system rollout status deploy/grafana --timeout=120s
+#
+# (regenerate wamn-sre.json after a dashboard change:
+#   wamn-ctl provision-dashboards --emit-sre deploy/infra/grafana/dashboards)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-admin
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/managed-by: wamn
+    app.kubernetes.io/component: dashboards
+type: Opaque
+stringData:
+  # Dev default — OVERRIDE in a real deployment. dashproof reads the same pair
+  # (GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD) for its Basic auth.
+  admin-user: admin
+  admin-password: admin
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: wamn-system
+data:
+  # In-cluster datasources with STABLE uids — dashboard panels (SRE + the
+  # per-tenant templates) reference a datasource by uid, so the uid must survive
+  # re-provision. The local docker variant (deploy/infra/grafana-local.yaml)
+  # mirrors this with local-network URLs.
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: wamn-prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+      - name: Tempo
+        uid: wamn-tempo
+        type: tempo
+        access: proxy
+        url: http://tempo:3200
+      - name: Loki
+        uid: wamn-loki
+        type: loki
+        access: proxy
+        url: http://loki:3100
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: wamn-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: grafana }
+  template:
+    metadata:
+      labels: { app: grafana }
+    spec:
+      # grafana/grafana runs as uid 472; make the emptyDir writable by it.
+      securityContext:
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.4.0
+          ports:
+            - { name: http, containerPort: 3000 }
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom: { secretKeyRef: { name: grafana-admin, key: admin-user } }
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: grafana-admin, key: admin-password } }
+            # Dev dashboards server: no sign-up, no analytics phone-home.
+            - { name: GF_USERS_ALLOW_SIGN_UP, value: "false" }
+            - { name: GF_ANALYTICS_REPORTING_ENABLED, value: "false" }
+            - { name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false" }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/grafana }
+            - { name: datasources, mountPath: /etc/grafana/provisioning/datasources }
+            - { name: dashboard-provider, mountPath: /etc/grafana/provisioning/dashboards }
+            - { name: dashboards-sre, mountPath: /var/lib/grafana/dashboards }
+          resources:
+            # No CPU limit (the S2 CFS-quota lesson); requests-only.
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { memory: "512Mi" }
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: datasources
+          configMap: { name: grafana-datasources }
+        - name: dashboard-provider
+          configMap: { name: grafana-dashboard-provider }
+        - name: dashboards-sre
+          configMap: { name: grafana-dashboards-sre }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: wamn-system
+spec:
+  selector: { app: grafana }
+  ports:
+    - { name: http, port: 3000, targetPort: 3000 }

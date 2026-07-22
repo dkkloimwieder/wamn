@@ -54,6 +54,8 @@ mod wakeproof;
 mod walbench;
 // [11.8] wamn-wvb: appended so cherry-picks compose (sibling lanes touch this file too).
 mod impactproof;
+// [9.9] wamn-b4e: appended so cherry-picks compose (sibling lanes touch this file too).
+mod dashproof;
 
 use std::str::FromStr as _;
 
@@ -164,6 +166,8 @@ enum Command {
     Impactproof(impactproof::ImpactProofArgs),
     /// Run the 9.8 metric-set gate (run executions/success-ratio / queue depth / drive duration / memory denial+high-water / pool+query latency; api RPS in-cluster-only)
     Metricbench(metricbench::MetricBenchArgs),
+    /// Run the 9.9 dashboards proof (wamn-b4e): assert a deployed Grafana — health, the three datasources present+healthy (Tempo/Loki soft in --local), the static SRE dashboard/folder, and every registry org's per-tenant folder+dashboard after provision-dashboards
+    Dashproof(dashproof::DashproofArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -229,6 +233,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Pinproof(args) => pinproof::run(args).await,
         Command::Impactproof(args) => impactproof::run(args).await,
         Command::Metricbench(args) => metricbench::run(args).await,
+        Command::Dashproof(args) => dashproof::run(args).await,
     };
 
     shutdown_observability();

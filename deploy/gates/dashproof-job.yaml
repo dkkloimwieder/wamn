@@ -1,0 +1,69 @@
+# [9.9] in-cluster dashboards gate of record (wamn-b4e). Runs the dashproof
+# subcommand of the wamn-gates image (SR1) against the DEPLOYED Grafana: it
+# asserts /api/health, the three datasources present + healthy (Prometheus,
+# Tempo, Loki — ALL hard in-cluster, no --local), the static SRE dashboard +
+# folder, and — after `provision-dashboards` has run — every registry org's
+# per-tenant folder + dashboard (orgs read from the T1 system DB). Local docker
+# runs (docs/dashboards.md) are for iteration.
+#
+#   # infra: Prometheus + Grafana (+ the SRE dashboards ConfigMaps, see grafana.yaml)
+#   kubectl -n wamn-system apply -f deploy/infra/prometheus.yaml
+#   kubectl -n wamn-system create configmap grafana-dashboard-provider \
+#     --from-file=providers.yaml=deploy/infra/grafana/provisioning/dashboards/providers.yaml \
+#     --dry-run=client -o yaml | kubectl -n wamn-system apply -f -
+#   kubectl -n wamn-system create configmap grafana-dashboards-sre \
+#     --from-file=deploy/infra/grafana/dashboards/wamn-sre.json \
+#     --dry-run=client -o yaml | kubectl -n wamn-system apply -f -
+#   kubectl -n wamn-system apply -f deploy/infra/grafana.yaml
+#   kubectl -n wamn-system rollout status deploy/prometheus deploy/grafana --timeout=120s
+#   # per-tenant folders (one-off ctl pod / Job driving the Grafana API — see docs)
+#   kubectl -n wamn-system apply -f deploy/gates/dashproof-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/dashproof --timeout=180s
+#   kubectl -n wamn-system logs job/dashproof
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dashproof
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: dashproof }
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-grafana
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "until nc -z grafana 3000; do echo waiting for grafana; sleep 1; done"
+      containers:
+        - name: dashproof
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "info"
+            - "dashproof"
+            - "--grafana-url"
+            - "http://grafana:3000"
+          env:
+            # Admin Basic-auth (same Secret the Grafana Deployment mounts).
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom: { secretKeyRef: { name: grafana-admin, key: admin-user } }
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: grafana-admin, key: admin-password } }
+            # Enumerate registry.orgs from the T1 system DB (wamn-sysdb superuser,
+            # enableSuperuserAccess) so EVERY provisioned org's folder is asserted.
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: wamn-sysdb-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: wamn-sysdb-superuser, key: password } }
+            - name: WAMN_SYSTEM_ADMIN_URL
+              value: postgres://$(PGUSER):$(PGPASSWORD)@wamn-sysdb-rw.wamn-system.svc.cluster.local:5432/wamn_system
+          resources:
+            # No CPU limit (the S2 CFS lesson); a proof pod need not be throttled.
+            requests: { cpu: "250m", memory: "128Mi" }
+            limits: { memory: "256Mi" }

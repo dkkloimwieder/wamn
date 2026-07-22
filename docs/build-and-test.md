@@ -2967,3 +2967,68 @@ Verify against the LIVE cluster FIRST: the `registry:2` pod is `emptyDir`
 (EPHEMERAL) — if it restarted, its blobs are gone; re-run the builder Job before
 buildproof. `builder-netpol.yaml` does not actually restrict egress under kind
 (kindnetd ignores NetworkPolicy).
+
+### [9.9] Dashboards (per-tenant Grafana + SRE)
+
+Docs: docs/dashboards.md
+
+```bash
+# Unit tests (dashboards-as-code drift guards: metric names vs docs/metrics.md,
+# the checked-in SRE JSON vs the render, tenant->folder uid mapping, base64/auth):
+cargo test -p wamn-ctl -p wamn-gates provision_dashboards
+# (regenerate the SRE dashboard JSON after a panel change:)
+cargo run -p wamn-ctl -- provision-dashboards --emit-sre deploy/infra/grafana/dashboards
+# Local iteration: Prometheus + Grafana (SRE dashboards file-provisioned) + a
+# throwaway registry Postgres. provision-dashboards creates the per-tenant folders;
+# dashproof --local asserts everything (Tempo/Loki health soft-skipped — no
+# backends locally; Prometheus is HARD). Images pinned to the k8s manifests.
+docker network create wamn-s5 2>/dev/null || true
+docker run -d --name laneb4e-prometheus --network wamn-s5 -p 127.0.0.1:19091:9090 \
+  -v "$PWD/deploy/infra/prometheus-local.yaml:/etc/prometheus/prometheus.yml:ro" \
+  prom/prometheus:v3.1.0
+docker run -d --name laneb4e-grafana --network wamn-s5 -p 127.0.0.1:13001:3000 \
+  -e GF_SECURITY_ADMIN_USER=admin -e GF_SECURITY_ADMIN_PASSWORD=admin \
+  -v "$PWD/deploy/infra/grafana-local.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro" \
+  -v "$PWD/deploy/infra/grafana/provisioning/dashboards/providers.yaml:/etc/grafana/provisioning/dashboards/providers.yaml:ro" \
+  -v "$PWD/deploy/infra/grafana/dashboards:/var/lib/grafana/dashboards:ro" \
+  grafana/grafana:11.4.0
+docker run -d --name laneb4e-pg --network wamn-s5 -e POSTGRES_PASSWORD=pg \
+  -p 127.0.0.1:15621:5432 postgres:18
+until docker exec laneb4e-pg pg_isready -U postgres; do sleep 1; done
+docker exec -e PGPASSWORD=pg laneb4e-pg psql -U postgres -c \
+  "CREATE SCHEMA registry;
+   CREATE TABLE registry.orgs (id text PRIMARY KEY, placement_kind text NOT NULL, pool_cluster text);
+   INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
+     VALUES ('acme','dedicated',NULL), ('globex','pooled','wamn-pg');"
+SYS=postgres://postgres:pg@127.0.0.1:15621/postgres
+until curl -sf http://127.0.0.1:13001/api/health >/dev/null; do sleep 1; done
+./target/debug/wamn-ctl provision-dashboards --grafana-url http://127.0.0.1:13001 \
+  --user admin --password admin --system-database-url "$SYS"
+./target/debug/wamn-gates --log-level info dashproof --grafana-url http://127.0.0.1:13001 \
+  --user admin --password admin --local --system-database-url "$SYS"
+docker rm -f laneb4e-prometheus laneb4e-grafana laneb4e-pg
+# In-cluster gate of record (real Prometheus + Grafana; Tempo/Loki HARD; rebake
+# the gates + ctl images ONLY — no host/guest change):
+docker build --target ctl -t wamn-ctl:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-ctl:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system apply -f deploy/infra/prometheus.yaml
+kubectl -n wamn-system create configmap grafana-dashboard-provider \
+  --from-file=providers.yaml=deploy/infra/grafana/provisioning/dashboards/providers.yaml \
+  --dry-run=client -o yaml | kubectl -n wamn-system apply -f -
+kubectl -n wamn-system create configmap grafana-dashboards-sre \
+  --from-file=deploy/infra/grafana/dashboards/wamn-sre.json \
+  --dry-run=client -o yaml | kubectl -n wamn-system apply -f -
+kubectl -n wamn-system apply -f deploy/infra/grafana.yaml
+kubectl -n wamn-system rollout status deploy/prometheus deploy/grafana --timeout=120s
+# per-tenant folders: a one-off ctl pod driving the Grafana API against registry.orgs
+# (creds from the grafana-admin + wamn-sysdb-superuser Secrets):
+GFPW=$(kubectl -n wamn-system get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d)
+SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
+kubectl -n wamn-system run provision-dashboards --rm -i --restart=Never \
+  --image=wamn-ctl:dev --command -- wamn-ctl provision-dashboards \
+  --grafana-url http://grafana:3000 --user admin --password "$GFPW" \
+  --system-database-url "postgres://postgres:$SYSPW@wamn-sysdb-rw:5432/wamn_system"
+kubectl -n wamn-system apply -f deploy/gates/dashproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/dashproof --timeout=180s
+kubectl -n wamn-system logs job/dashproof
+```
