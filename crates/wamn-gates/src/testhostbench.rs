@@ -68,6 +68,13 @@ use wamn_host::plugins::wamn_credentials::WamnCredentials;
 use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_run_worker::{RunWorker, RunnerIdentity};
+// 11.4: the schemacase + runworker inline asserts now route through the pure
+// assertion vocabulary (the extraction-regression proof that the vocabulary
+// expresses the existing cases — behaviour identical to the old booleans).
+use wamn_testkit::{
+    Assertion, Captured, DbCapture, DbExpect, EgressAssertion, EgressMatcher, FlowRef, RunFacts,
+    RunStatus, TestCase, evaluate,
+};
 
 /// The virtual-clock epoch + `wasi:random` seed the test host uses (fixed for
 /// reproducibility, matching the run-worker `--test-doubles` constants).
@@ -433,7 +440,7 @@ async fn seed_s6_twodelay_flow(
 /// A minimal HTTP/1.1 server that answers every request with `200 ok` and
 /// closes. It gives the prod host (and the test host's *expected* calls) a real
 /// reachable endpoint so the same http-call node succeeds for real.
-async fn spawn_echo() -> anyhow::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+pub(crate) async fn spawn_echo() -> anyhow::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let handle = tokio::spawn(async move {
@@ -968,6 +975,25 @@ async fn scheduler_phase(
 // schemacase (delta 4): N sequential ephemeral schema cases prove isolation
 // ---------------------------------------------------------------------------
 
+/// A synthetic DB capture standing in for a `count(*)` result: `n` empty-object
+/// rows, so a `RowCount(n)`/`Empty` assertion reproduces the count check. Keeps
+/// the schemacase retrofit behaviour-identical without changing the queries.
+fn count_capture(query: &str, n: i64) -> DbCapture {
+    DbCapture {
+        query: query.to_string(),
+        params: vec![],
+        rows: (0..n.max(0)).map(|_| serde_json::json!({})).collect(),
+    }
+}
+
+/// The canonical `poc-s6` flow ref the S6 cases target (both retrofits).
+fn s6_flow_ref() -> Option<FlowRef> {
+    Some(FlowRef {
+        flow_id: "poc-s6".to_string(),
+        version: 1,
+    })
+}
+
 async fn schemacase_phase(
     harness: &Harness,
     cfg: &WamnPostgresConfig,
@@ -1026,7 +1052,62 @@ async fn schemacase_phase(
             .await?
             .get(0);
 
-        let case_ok = before == 0 && outcome == 0 && sink == 1 && after == 1;
+        // 11.4 retrofit: the four booleans (before==0 && outcome==0 && sink==1
+        // && after==1) expressed through the assertion vocabulary and folded by
+        // evaluate() — identical verdict, now stated as data.
+        let captured = Captured {
+            run: Some(RunFacts {
+                status: if outcome == 0 {
+                    RunStatus::Completed
+                } else {
+                    RunStatus::Failed
+                },
+                fail_kind: None,
+                fail_node: None,
+            }),
+            db: vec![
+                count_capture("sink-before", before),
+                count_capture("sink-count", sink as i64),
+                count_capture("sink-after", after),
+            ],
+            ..Default::default()
+        };
+        let case = TestCase {
+            schema_version: wamn_testkit::SCHEMA_VERSION.to_string(),
+            name: format!("schemacase-{schema}"),
+            flow_ref: s6_flow_ref(),
+            node_ref: None,
+            input: serde_json::json!("receipt"),
+            config: None,
+            ctx: None,
+            expect: vec![
+                // fresh_before == 0
+                Assertion::DbState {
+                    query: "sink-before".to_string(),
+                    params: vec![],
+                    expect: DbExpect::Empty,
+                },
+                // completed
+                Assertion::RunOutcome {
+                    status: RunStatus::Completed,
+                    fail_kind: None,
+                    fail_node: None,
+                },
+                // sink == 1
+                Assertion::DbState {
+                    query: "sink-count".to_string(),
+                    params: vec![],
+                    expect: DbExpect::RowCount(1),
+                },
+                // after == 1
+                Assertion::DbState {
+                    query: "sink-after".to_string(),
+                    params: vec![],
+                    expect: DbExpect::RowCount(1),
+                },
+            ],
+        };
+        let case_ok = evaluate(&case, &captured).passed();
         println!(
             "case {schema}: fresh_before={before} (want 0), completed={}, sink={sink}, after={after} -> {case_ok}",
             outcome == 0
@@ -1131,17 +1212,63 @@ async fn runworker_phase(
     .context("instantiate RunWorker with the test double set")?;
 
     let report = worker.drain().await.context("drain run_queue")?;
-    let egress_ok = recorder.saw_authority(echo_authority) && recorder.denied().is_empty();
-    let drain_ok = report.claimed == 1 && report.completed == 1 && report.failed == 0;
+    // 11.4 retrofit: the drain + egress asserts routed through the assertion
+    // vocabulary. Identical to `drain_ok && egress_ok`: claimed/completed/failed
+    // via PathEquals on the drain report, the echo call via Includes, and no
+    // denials via NoneDenied (all records here are RW_OWNER's).
+    let captured = Captured {
+        node_output: Some(serde_json::json!({
+            "claimed": report.claimed,
+            "completed": report.completed,
+            "parked": report.parked,
+            "failed": report.failed,
+        })),
+        egress: recorder.records(),
+        ..Default::default()
+    };
+    let case = TestCase {
+        schema_version: wamn_testkit::SCHEMA_VERSION.to_string(),
+        name: "runworker-drain".to_string(),
+        flow_ref: s6_flow_ref(),
+        node_ref: None,
+        input: serde_json::json!("receipt"),
+        config: None,
+        ctx: None,
+        expect: vec![
+            Assertion::PathEquals {
+                pointer: "/claimed".to_string(),
+                value: serde_json::json!(1),
+            },
+            Assertion::PathEquals {
+                pointer: "/completed".to_string(),
+                value: serde_json::json!(1),
+            },
+            Assertion::PathEquals {
+                pointer: "/failed".to_string(),
+                value: serde_json::json!(0),
+            },
+            Assertion::Egress {
+                flow: RW_OWNER.to_string(),
+                calls: EgressAssertion::Includes(vec![EgressMatcher {
+                    method: None,
+                    authority: Some(echo_authority.to_string()),
+                    path: None,
+                }]),
+            },
+            Assertion::Egress {
+                flow: RW_OWNER.to_string(),
+                calls: EgressAssertion::NoneDenied,
+            },
+        ],
+    };
+    let outcome = evaluate(&case, &captured);
+    let pass = outcome.passed();
     println!(
         "runworker: {report:?}, egress_recorded={}, denied={:?}",
         recorder.saw_authority(echo_authority),
         recorder.denied()
     );
-    let pass = drain_ok && egress_ok;
-    println!(
-        "PASS(RunWorker --test-doubles claims + drives a flow; egress recorded): {pass} (drain_ok={drain_ok}, egress_ok={egress_ok})"
-    );
+    println!("PASS(RunWorker --test-doubles claims + drives a flow; egress recorded): {pass}");
 
     drop(worker);
     drop(plugin);

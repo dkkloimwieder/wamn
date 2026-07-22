@@ -49,6 +49,10 @@ wamn-registry = { path = "../wamn-registry" }
 # nodeinvoke crafts + signs raw invocation envelopes for the wamn-fqg.22 authn
 # negatives (the same pure wire crate both hop ends link).
 wamn-node-invoke = { path = "../wamn-node-invoke" }
+# testkitbench (11.4) loads Vec<TestCase>, drives node/flow cases, and folds each
+# AssertionResult into check — the pure assertion vocabulary. testhostbench's
+# schemacase/runworker retrofit routes its inline asserts through the same.
+wamn-testkit = { path = "../wamn-testkit" }
 # buildproof drives the 5.5 builder's OCI fetch (registry client) + verifies the
 # pushed artifact against the SAME NodeManifest model the builder wrote.
 wamn-builder = { path = "../wamn-builder" }

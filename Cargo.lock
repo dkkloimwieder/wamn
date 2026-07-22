@@ -4360,6 +4360,7 @@ dependencies = [
  "wamn-run-store",
  "wamn-run-worker",
  "wamn-seed",
+ "wamn-testkit",
  "wamn-waker",
  "wash-runtime",
  "wasm-encoder 0.251.0",
@@ -4391,6 +4392,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-node-invoke",
  "wamn-registry",
+ "wamn-testkit",
  "wash-runtime",
  "wasm-encoder 0.251.0",
  "wasmtime-wasi",
@@ -4577,6 +4579,16 @@ dependencies = [
  "wamn-catalog",
  "wamn-ddl",
  "wamn-rls",
+]
+
+[[package]]
+name = "wamn-testkit"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wamn-node-invoke",
+ "wamn-run-store",
 ]
 
 [[package]]

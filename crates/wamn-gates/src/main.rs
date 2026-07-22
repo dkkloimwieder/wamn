@@ -40,6 +40,7 @@ mod schema_drift;
 mod socketguard;
 mod streambench;
 mod testhostbench;
+mod testkitbench;
 mod tracebench;
 mod traceproof;
 mod wakeproof;
@@ -105,6 +106,8 @@ enum Command {
     ServeEcho(traceproof::ServeEchoArgs),
     /// Run the S6 test-host plugin-swap gates (sameness / delay / egress / regression)
     Testhostbench(testhostbench::TestHostBenchArgs),
+    /// Run the 11.4 assertion-library gate (cases-as-data → node-level ServeNode invokes + flow-level doubles harness, folded through wamn_testkit::evaluate)
+    Testkitbench(testkitbench::TestKitBenchArgs),
     /// Run the 2.6 DB-path egress review gate (no shipped workload imports wasi:sockets)
     Egressbench(egressbench::EgressBenchArgs),
     /// Run the 5.5 buildproof gate (verify a builder-pushed node artifact from the registry: wamn.node.manifest + signature + SBOM + layer media type)
@@ -177,6 +180,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Traceproof(args) => traceproof::run(args).await,
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Testhostbench(args) => testhostbench::run(args).await,
+        Command::Testkitbench(args) => testkitbench::run(args).await,
         Command::Egressbench(args) => egressbench::run(args).await,
         Command::Buildproof(args) => buildproof::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,

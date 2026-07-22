@@ -1,0 +1,52 @@
+[
+  {
+    "schema-version": "0.1",
+    "name": "disposition-reject",
+    "node-ref": { "node-id": "recommend" },
+    "input": { "hold": { "material": "resin-A", "moisture_pct": "12.00", "moisture_max_pct": "5.00" } },
+    "expect": [
+      { "subset": { "recommended": "reject" } },
+      { "path-equals": { "pointer": "/recommended", "value": "reject" } },
+      { "port": "main" }
+    ]
+  },
+  {
+    "schema-version": "0.1",
+    "name": "disposition-use-as-is",
+    "node-ref": {},
+    "input": { "hold": { "material": "resin-A", "moisture_pct": "6.00", "moisture_max_pct": "5.00" } },
+    "expect": [
+      { "subset": { "recommended": "use-as-is" } }
+    ]
+  },
+  {
+    "schema-version": "0.1",
+    "name": "disposition-accept",
+    "node-ref": {},
+    "input": { "hold": { "material": "resin-A", "moisture_pct": "4.00", "moisture_max_pct": "5.00" } },
+    "expect": [
+      { "subset": { "recommended": "accept" } }
+    ]
+  },
+  {
+    "schema-version": "0.1",
+    "name": "disposition-invalid-input",
+    "node-ref": {},
+    "input": { "hold": { "material": "resin-A", "moisture_pct": "not-a-decimal", "moisture_max_pct": "5.00" } },
+    "expect": [
+      { "error-class": { "node-error": "invalid-input" } }
+    ]
+  },
+  {
+    "schema-version": "0.1",
+    "name": "poc-s6-happy-path",
+    "flow-ref": { "flow-id": "poc-s6", "version": 1 },
+    "input": "receipt",
+    "expect": [
+      { "run-outcome": { "status": "completed" } },
+      { "egress": { "flow": "tk-runworker", "calls": { "count": 1 } } },
+      { "egress": { "flow": "tk-runworker", "calls": "none-denied" } },
+      { "db-state": { "query": "SELECT to_jsonb(t) FROM sink t", "params": [], "expect": { "row-count": 1 } } }
+    ]
+  }
+]

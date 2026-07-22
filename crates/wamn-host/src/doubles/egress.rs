@@ -26,21 +26,12 @@ use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
-/// One recorded outbound request.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EgressRecord {
-    /// The declaring flow/component (the store's workload id).
-    pub workload_id: String,
-    /// The request method (`GET`, `POST`, …).
-    pub method: String,
-    /// The target authority (`host[:port]`) — the allow/deny key.
-    pub authority: String,
-    /// The request path.
-    pub path: String,
-    /// Whether the recorder forwarded it (`true`) or denied it as unexpected
-    /// (`false`).
-    pub allowed: bool,
-}
+// One recorded outbound request. LIFTED into `wamn-testkit` (11.4) so a captured
+// fact bundle is serde-serializable and the pure assertion evaluator can read it
+// without a host dependency. Re-exported here so this recorder's API
+// (`records()` / `denied()` returning `Vec<EgressRecord>`) is UNCHANGED for its
+// callers — it produces the identical struct, now with serde derives.
+pub use wamn_testkit::EgressRecord;
 
 /// Records every outbound request; optionally denies any not on its flow's
 /// per-flow expectation list.

@@ -1,0 +1,19 @@
+[package]
+name = "wamn-testkit"
+description = "The flow/node test-case + assertion vocabulary (11.4). PURE — serde only, no DB / clock / wasm / host — so a case is data (loaded from JSON or a catalog jsonb column) and evaluate(case, captured) is a pure fold of a fact bundle into a pass/fail Outcome. The gate (wamn-gates testkitbench) is the effect shell that FILLS the Captured bundle; this crate only decides. The status/kind taxonomy is REUSED verbatim from wamn-run-store; the run-context mirrors wamn-node-invoke's wire type — no parallel vocabularies."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The persisted status/kind taxonomy (RunStatus / FailKind / NodeErrorKind) is
+# REUSED verbatim — an assertion about a run outcome or a node error is stated in
+# the SAME enums the store persists, so the vocabulary cannot drift from what the
+# runner records. wamn-run-store is PURE (serde + wamn-runner + wamn-sql).
+wamn-run-store = { path = "../wamn-run-store" }
+# The case's optional run-context mirrors the frozen wamn:node run-context: reuse
+# wamn-node-invoke's WireRunContext rather than minting a third ctx type. PURE
+# (serde + hmac/sha2/hex), guest-and-host-linkable.
+wamn-node-invoke = { path = "../wamn-node-invoke" }

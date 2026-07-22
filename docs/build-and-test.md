@@ -268,6 +268,33 @@ kubectl -n wamn-system apply -f deploy/gates/testhostbench-job.yaml
 kubectl -n wamn-system logs -f job/testhostbench
 ```
 
+### [11.4] assertion library (testkitbench)
+
+Docs: docs/testkit.md · Crate: crates/wamn-testkit · Fixture: deploy/gates/testkit-cases.json
+
+```bash
+# Unit tests (the pure vocabulary: serde drift-guards, subset semantics, the
+# evaluate() truth table, ExactlyThese set-equality):
+cargo test -p wamn-testkit
+
+# The gate loads a checked-in Vec<TestCase>, drives node-level cases through a
+# warm ServeNode and flow-level cases through the RunWorker test-double set, and
+# folds each evaluate() AssertionResult into a PASS/FAIL line.
+# Local iteration (throwaway container + the same fixture SQL):
+docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
+  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
+# (node cases need only the wasm; flow cases need the DB URLs)
+./target/release/wamn-gates --log-level error testkitbench \
+  --cases deploy/gates/testkit-cases.json \
+  --node components/target/wasm32-wasip2/release/disposition_node.wasm \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn
+# In-cluster gate of record:
+kubectl -n wamn-system apply -f deploy/gates/testkitbench-job.yaml
+kubectl -n wamn-system logs -f job/testkitbench
+```
+
 ### [2.6] DB-path egress review
 
 Docs: docs/security-db-path.md

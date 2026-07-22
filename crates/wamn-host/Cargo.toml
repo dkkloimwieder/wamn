@@ -50,6 +50,11 @@ hyper = "1"
 # grant derivation) shared verbatim with the flowrunner guest — one source of
 # truth for the wire shape, so the two ends cannot drift.
 wamn-node-invoke = { path = "../wamn-node-invoke" }
+# 11.4: the test-case + assertion vocabulary. The doubles' `EgressRecord` LIVES
+# here (a serde-serializable fact the pure evaluator asserts over); this crate's
+# egress recorder re-exports it, so the recorder API is unchanged. Pure crate,
+# no cycle (wamn-testkit does not depend on wamn-host).
+wamn-testkit = { path = "../wamn-testkit" }
 # wamn-t92 test-host doubles: the deterministic `wasi:random` seed double
 # (delta 5) implements the fallible `TryRng`; rand_core blanket-impls the `Rng`
 # the pinned wasmtime_wasi `secure_random`/`insecure_random` overrides want.

@@ -1,0 +1,71 @@
+# 11.4 assertion-library gate. Runs the testkitbench subcommand of the
+# wamn-gates image (SR1) against the in-cluster Postgres (deploy/platform/postgres.yaml).
+# This Job is the gate of record; local docker runs are for iteration.
+#
+#   kubectl -n wamn-system apply -f deploy/gates/testkitbench-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/testkitbench --timeout=300s
+#   kubectl -n wamn-system logs job/testkitbench
+#
+# The gate loads a checked-in Vec<TestCase> fixture (/bench/testkit-cases.json,
+# baked into the image), drives the node-level cases through a warm ServeNode
+# over /bench/disposition-node.wasm and the flow-level cases through the RunWorker
+# test-double set, and folds each evaluate() AssertionResult into a PASS/FAIL line.
+#
+# The flow-level path provisions a fresh ephemeral schema through the Postgres
+# superuser (WAMN_PG_ADMIN_URL) — the runner's wamn_app role is
+# NOSUPERUSER/NOCREATEDB and cannot create schemas, exactly as in production. The
+# DB-state asserts read through that same superuser session (RLS-bypassing).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: testkitbench
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: testkitbench }
+    spec:
+      restartPolicy: Never
+      # Co-locate with Postgres: the flow-level cases make real DB round trips;
+      # pinning the Job to the Postgres node keeps those off the cross-node
+      # overlay hop (see the S2/S3 job rationale).
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: postgres }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: testkitbench
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "error"
+            - "testkitbench"
+            - "--cases"
+            - "/bench/testkit-cases.json"
+            - "--node"
+            - "/bench/disposition-node.wasm"
+            - "--flowrunner"
+            - "/bench/flowrunner.wasm"
+          env:
+            # Runner pool: the non-superuser, non-BYPASSRLS app role.
+            - name: WAMN_PG_URL
+              value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+            # Admin: superuser, used to provision/drop the ephemeral schema AND run
+            # the DB-state assertion queries.
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
+            - name: WAMN_PG_ADMIN_URL
+              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/wamn
+          resources:
+            requests: { cpu: "2", memory: "512Mi" }
+            limits: { memory: "1Gi" }
