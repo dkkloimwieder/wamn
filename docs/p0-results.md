@@ -557,7 +557,7 @@ logging plugin 9.3 (wamn-yf3) and feeds [P0-EXIT] wamn-2rl.
 with two nodes that touch *non-deterministic* host capabilities — a **`delay`**
 node (reads `wasi:clocks/wall-clock`, parks durably) and an **`http-call`** node
 (makes a `wasi:http/outgoing-handler` outbound request) — plus a `wamn-host
-testhostbench` subcommand (`crates/wamn-host/src/testhostbench.rs`) that compiles
+testhostbench` subcommand (`crates/wamn-gates/src/testhostbench.rs`) that compiles
 the extended runner **once** and instantiates the *identical bytes* into two
 stores that differ only in host-injected capabilities:
 
