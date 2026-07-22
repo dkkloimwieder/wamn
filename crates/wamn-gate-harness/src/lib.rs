@@ -58,30 +58,6 @@ pub fn has_name(rows: &[Value], name: &str) -> bool {
         .any(|r| r.get("name").and_then(Value::as_str) == Some(name))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn percentile_is_empty_safe_and_indexes_the_sorted_tail() {
-        assert_eq!(percentile(&[], 0.99), Duration::ZERO);
-        let s = [1, 2, 3, 4].map(Duration::from_millis).to_vec();
-        assert_eq!(percentile(&s, 0.0), Duration::from_millis(1));
-        assert_eq!(percentile(&s, 1.0), Duration::from_millis(4));
-    }
-
-    #[test]
-    fn check_folds_into_the_pass_flag() {
-        let mut pass = true;
-        check(&mut pass, "ok", true);
-        assert!(pass);
-        check(&mut pass, "bad", false);
-        assert!(!pass);
-        check(&mut pass, "ok again", true);
-        assert!(!pass, "a failed check must stick");
-    }
-}
-
 // ---------------------------------------------------------------------------
 // PG fixture helpers (SR2): host-side flow-fixture seeding. The gates hold
 // the connection (app-role with claims, or superuser); the harness holds the
@@ -132,6 +108,65 @@ pub async fn seed_flow_version(
     Ok(())
 }
 
+/// Seed one 11.2 test-suite row (idempotent) for a flow version. Version-bound:
+/// the `(tenant, flow_id, flow_version)` must already exist in `flows` (the FK).
+/// Table names are unqualified — the caller's `search_path` (scope_session)
+/// selects the schema.
+pub async fn seed_test_suite(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    flow_id: &str,
+    flow_version: i32,
+    suite_id: &str,
+    name: &str,
+) -> anyhow::Result<()> {
+    client
+        .execute(
+            "INSERT INTO test_suites (tenant_id, flow_id, flow_version, suite_id, name) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (tenant_id, flow_id, flow_version, suite_id) \
+               DO UPDATE SET name = excluded.name, updated_at = now()",
+            &[&tenant, &flow_id, &flow_version, &suite_id, &name],
+        )
+        .await?;
+    Ok(())
+}
+
+/// Seed one 11.2 test-case row (idempotent). The `case_json` BODY is opaque
+/// jsonb (bound via `::text::jsonb`); FKs into the suite of the same
+/// `(tenant, flow_id, flow_version, suite_id)`.
+#[allow(clippy::too_many_arguments)]
+pub async fn seed_test_case(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    flow_id: &str,
+    flow_version: i32,
+    suite_id: &str,
+    case_id: &str,
+    ordinal: i32,
+    case_json: &str,
+) -> anyhow::Result<()> {
+    client
+        .execute(
+            "INSERT INTO test_cases \
+               (tenant_id, flow_id, flow_version, suite_id, case_id, ordinal, case_body) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb) \
+             ON CONFLICT (tenant_id, flow_id, flow_version, suite_id, case_id) \
+               DO UPDATE SET ordinal = excluded.ordinal, case_body = excluded.case_body",
+            &[
+                &tenant,
+                &flow_id,
+                &flow_version,
+                &suite_id,
+                &case_id,
+                &ordinal,
+                &case_json,
+            ],
+        )
+        .await?;
+    Ok(())
+}
+
 /// Flip the active flow version: exactly one active version per flow.
 pub async fn set_active_flow_version(
     client: &tokio_postgres::Client,
@@ -146,4 +181,30 @@ pub async fn set_active_flow_version(
         )
         .await?;
     Ok(())
+}
+
+// The test module lives at the end so no items follow it
+// (clippy::items_after_test_module).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percentile_is_empty_safe_and_indexes_the_sorted_tail() {
+        assert_eq!(percentile(&[], 0.99), Duration::ZERO);
+        let s = [1, 2, 3, 4].map(Duration::from_millis).to_vec();
+        assert_eq!(percentile(&s, 0.0), Duration::from_millis(1));
+        assert_eq!(percentile(&s, 1.0), Duration::from_millis(4));
+    }
+
+    #[test]
+    fn check_folds_into_the_pass_flag() {
+        let mut pass = true;
+        check(&mut pass, "ok", true);
+        assert!(pass);
+        check(&mut pass, "bad", false);
+        assert!(!pass);
+        check(&mut pass, "ok again", true);
+        assert!(!pass, "a failed check must stick");
+    }
 }

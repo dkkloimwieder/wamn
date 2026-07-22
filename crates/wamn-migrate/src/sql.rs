@@ -109,6 +109,28 @@ pub fn select_registration_docs_for_catalog_sql() -> String {
         .to_string()
 }
 
+/// The 11.2 suite-orphan guard read (wamn-828): the test suites a definition
+/// copy carries for `$1` (tenant), from `<schema>.test_suites`, projecting
+/// `(suite_id, tenant_id, flow_id, flow_version)` — what [`crate::check_suite_orphans`]
+/// folds against the flow versions the copy will install. Unlike the pinned
+/// `catalog`-schema builders above, `schema` is the copy verb's `--flow-schema`
+/// (the `wamn_run` → project-schema convention): it is interpolated, so the
+/// caller passes a VALIDATED bare identifier (`is_bare_ident`); the value is `$1`.
+/// Ordered for a deterministic refusal listing.
+pub fn select_suites_for_tenant_sql(schema: &str) -> String {
+    format!(
+        "SELECT suite_id, tenant_id, flow_id, flow_version FROM {schema}.test_suites \
+         WHERE tenant_id = $1 ORDER BY flow_id, flow_version, suite_id"
+    )
+}
+
+/// The 11.2 suite-orphan guard read: the `(flow_id, version)` pairs present in
+/// `<schema>.flows` for `$1` (tenant) — the versions a suite may pin. Same
+/// validated-bare-`schema` contract as [`select_suites_for_tenant_sql`]; value `$1`.
+pub fn select_flow_versions_for_tenant_sql(schema: &str) -> String {
+    format!("SELECT flow_id, version FROM {schema}.flows WHERE tenant_id = $1")
+}
+
 /// A cheap, dependency-free checksum (FNV-1a 64) of the applied DDL script — an
 /// integrity/audit fingerprint stored in the history row, not a security hash.
 pub fn ddl_checksum(sql: &str) -> String {

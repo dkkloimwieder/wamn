@@ -1,0 +1,12 @@
+[package]
+name = "wamn-flow-tests"
+description = "wamn flow test-suite envelope (11.2): a suite of test cases stored as catalog data, versioned WITH the flow it tests — pins (flow-id, flow-version), round-trips to/from the deploy/sql/flow-tests.sql rows. The case BODY is an opaque Value in v0; the canonical case/assertion vocabulary (wamn-testkit) validates on write at integration."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# The suite is import/export-able (TestSuite::from_json/to_json) and each case
+# BODY is stored as opaque jsonb (a serde_json::Value in v0).
+serde_json = "1"

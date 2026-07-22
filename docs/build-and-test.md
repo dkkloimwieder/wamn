@@ -1035,6 +1035,46 @@ WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:55431/postgres \
 docker rm -f wave3-pg-rmxa
 ```
 
+### [11.2 / wamn-828] test cases as catalog data — flow-tests schema, promote-with-flow
+
+Docs: docs/flow-tests.md. A flow's test suites/cases live as catalog data
+(`deploy/sql/flow-tests.sql`: `wamn_run.test_suites` + `wamn_run.test_cases`,
+both FORCE-RLS + `wamn_app` grants), versioned WITH the flow via the FK to
+`wamn_run.flows` ON DELETE CASCADE. They promote together through
+`copy-project-env --include definition` (block 5, after flows in block 2);
+`wamn-migrate::check_suite_orphans` refuses FIRST (D24 shape) a copy carrying a
+suite pinned to a version the destination will not hold. Envelope +
+round-trip/validation: `crates/wamn-flow-tests` (the case BODY is opaque jsonb in
+v0 — the gyt `wamn-testkit` vocabulary validates on write at integration).
+reconcile-run-plane manages the new tables (they are in `RUN_PLANE_FILES`).
+
+```bash
+cargo test -p wamn-flow-tests -p wamn-migrate            # envelope + suite-orphan decision + run_plane pins (test_suites/test_cases)
+cargo test -p wamn-ctl                                    # driver units
+cargo clippy -p wamn-flow-tests -p wamn-migrate -p wamn-ctl -p wamn-gates --all-targets
+# Live promote gate (throwaway PG): drives the REAL copy-project-env verb across
+# two project-env databases — flow v1 + its suite/cases promote version-bound
+# (matching counts), a foreign tenant sees ZERO suites (RLS), dropping flow v1
+# CASCADES its suite (FK), and an orphan-pinned suite copy is REFUSED. Applies
+# deploy/sql/postgres-init.sql (dedicated DB `wamn`); URLs target /wamn:
+docker run -d --name lane-828-pg -p 5465:5432 -e POSTGRES_PASSWORD=postgres \
+  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
+# (postgres:18 inits-then-restarts — wait for a DOUBLE pg_isready before connecting)
+WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:5465/wamn \
+  cargo test -p wamn-ctl --test suite_promote_live -- --nocapture
+# In-cluster gate-of-record candidate: the same arc in an ephemeral schema
+# (envelope round-trip + version binding + RLS + FK cascade):
+WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5465/wamn \
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5465/wamn \
+  ./target/debug/wamn-gates --log-level error suiteproof
+docker rm -f lane-828-pg
+# IN-CLUSTER: deploy/gates/suiteproof-job.yaml (kubectl apply; wait complete; logs).
+# 3 mutants killed (apply/test/restore, debug builds): M1 copy block #5 skipped →
+# suite_promote_live PROMOTE assert; M2 suite-orphan guard inverted →
+# suite_promote_live GUARD assert (+ orphan.rs suite_pinned_to_an_absent_version…);
+# M3 RLS policy dropped from flow-tests.sql → suiteproof RLS zero-rows assert.
+```
+
 ### [EVT-MAT / wamn-l5i9.17] materializer — CDC events → flow runs (Service-first)
 
 Docs: docs/event-plane-jetstream.md §5 · decisions D19–D24. The Service-first

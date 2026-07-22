@@ -9,9 +9,12 @@
 //! * `include: definition` — the src env's **applied catalogs** promote into the
 //!   dst through the 2.5 migrate engine (the same one-transaction apply
 //!   `migrate-catalog` runs), plus the **flow registrations**, the **RLS
-//!   policy rows** (re-compiled and applied on the dst), and the **event
-//!   registration rows** (EVT-REG — copied verbatim, no re-apply). Config has no
-//!   defined artifact yet — deferred, noted at runtime.
+//!   policy rows** (re-compiled and applied on the dst), the **event
+//!   registration rows** (EVT-REG — copied verbatim, no re-apply), and the
+//!   **11.2 flow test suites + cases** (copied verbatim, version-bound to the
+//!   flows copied alongside them). A suite-orphan guard refuses FIRST, naming
+//!   any suite that pins a flow version the destination will not hold. Config
+//!   has no defined artifact yet — deferred, noted at runtime.
 //! * `include: data` — `pg_restore --data-only --disable-triggers` of the data
 //!   schema from a fresh `pg_dump -Fd` snapshot (the q3n.10 artifact, recorded
 //!   in `provisioning.dumps`).
@@ -53,12 +56,13 @@ use wamn_provision::{
 use wamn_registry::Triple;
 
 use crate::migrate_catalog::{ApplyOutcome, apply_catalog_target, is_bare_ident};
-use crate::publish_catalog::{ensure_flow_registry, ensure_runstate};
+use crate::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
 use crate::restore_project_env::swap_db;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum IncludeArg {
-    /// Structure only: catalog + flows + RLS policies + event registrations.
+    /// Structure only: catalog + flows + RLS policies + event registrations +
+    /// 11.2 flow test suites/cases.
     Definition,
     /// Rows only: `pg_restore --data-only` of the data schema.
     Data,
@@ -447,9 +451,9 @@ async fn exec_snapshot(
 }
 
 /// The definition pass: applied catalogs (via the 2.5 migrate engine), flow
-/// registrations, RLS policy rows + their compiled application, and event
-/// registration rows (copied verbatim). Config has no defined artifact yet —
-/// deferred.
+/// registrations, RLS policy rows + their compiled application, event
+/// registration rows, and the 11.2 flow test suites/cases (all copied verbatim).
+/// Config has no defined artifact yet — deferred.
 async fn exec_copy_definition(
     ctx: &mut ExecCtx<'_>,
     _src: &Triple,
@@ -476,6 +480,15 @@ async fn exec_copy_definition(
             "{side} database has no catalog.catalogs — {hint}"
         );
     }
+
+    // 0. The 11.2 suite-orphan guard — BEFORE any mutation (the D24 shape). A
+    //    definition copy carries the tenant's test suites (block 5); each pins a
+    //    concrete flow version. Refuse if a suite pins a version present in
+    //    NEITHER the src flow registry (what block 2 installs) NOR the dst's
+    //    existing flows — the `test_suites → flows` FK would otherwise reject the
+    //    insert with a bare error mid-copy. src has no test-suite table ⇒ clean
+    //    pass. Runs on the flow_schema (a validated bare ident, checked upfront).
+    guard_suite_orphans(&src_client, &dst_client, &ctx.args.flow_schema, tenant).await?;
 
     // 1. Applied catalogs: promote each of the src env's applied catalogs into
     //    the dst env through the migrate engine (one-transaction apply each).
@@ -655,6 +668,103 @@ async fn exec_copy_definition(
         "  event registrations: {} row(s) copied",
         registrations.len()
     );
+
+    // 5. Flow test suites + cases (11.2): copy the tenant's suite/case rows
+    //    verbatim (per-row INSERT ... ON CONFLICT DO UPDATE, the flows-block
+    //    shape). Both are version-bound: each row pins `(flow_id, flow_version)`
+    //    and FKs into the flows copied in block 2 — so the target ALWAYS exists
+    //    by the time block 5 runs (and the block-0 guard has already refused any
+    //    orphan). Suites BEFORE cases: `test_cases → test_suites` FK. Superuser
+    //    bypasses the tenant-FORCE RLS; the tenant filter scopes the read.
+    let src_has_suites: Option<String> = src_client
+        .query_one(
+            &format!("SELECT to_regclass('{fs}.test_suites')::text"),
+            &[],
+        )
+        .await?
+        .get(0);
+    if src_has_suites.is_some() {
+        // ensure_flow_registry already ran in block 2 (a suite implies a flow),
+        // so the FK target table exists on the dst before ensure_flow_tests.
+        ensure_flow_tests(&dst_client, fs).await?;
+        let suites = src_client
+            .query(
+                &format!(
+                    "SELECT flow_id, flow_version, suite_id, name \
+                     FROM {fs}.test_suites WHERE tenant_id = $1"
+                ),
+                &[&tenant],
+            )
+            .await
+            .context("read src test suites")?;
+        for row in &suites {
+            let flow_id: String = row.get(0);
+            let flow_version: i32 = row.get(1);
+            let suite_id: String = row.get(2);
+            let name: String = row.get(3);
+            dst_client
+                .execute(
+                    &format!(
+                        "INSERT INTO {fs}.test_suites \
+                           (tenant_id, flow_id, flow_version, suite_id, name) \
+                         VALUES ($1, $2, $3, $4, $5) \
+                         ON CONFLICT (tenant_id, flow_id, flow_version, suite_id) DO UPDATE SET \
+                           name = EXCLUDED.name, updated_at = now()"
+                    ),
+                    &[&tenant, &flow_id, &flow_version, &suite_id, &name],
+                )
+                .await
+                .with_context(|| {
+                    format!("copy test suite {suite_id} ({flow_id} v{flow_version})")
+                })?;
+        }
+        let cases = src_client
+            .query(
+                &format!(
+                    "SELECT flow_id, flow_version, suite_id, case_id, ordinal, case_body::text \
+                     FROM {fs}.test_cases WHERE tenant_id = $1"
+                ),
+                &[&tenant],
+            )
+            .await
+            .context("read src test cases")?;
+        for row in &cases {
+            let flow_id: String = row.get(0);
+            let flow_version: i32 = row.get(1);
+            let suite_id: String = row.get(2);
+            let case_id: String = row.get(3);
+            let ordinal: i32 = row.get(4);
+            let case_body: String = row.get(5);
+            dst_client
+                .execute(
+                    &format!(
+                        "INSERT INTO {fs}.test_cases \
+                           (tenant_id, flow_id, flow_version, suite_id, case_id, ordinal, case_body) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb) \
+                         ON CONFLICT (tenant_id, flow_id, flow_version, suite_id, case_id) DO UPDATE SET \
+                           ordinal = EXCLUDED.ordinal, case_body = EXCLUDED.case_body"
+                    ),
+                    &[
+                        &tenant,
+                        &flow_id,
+                        &flow_version,
+                        &suite_id,
+                        &case_id,
+                        &ordinal,
+                        &case_body,
+                    ],
+                )
+                .await
+                .with_context(|| format!("copy test case {case_id} of suite {suite_id}"))?;
+        }
+        println!(
+            "  flow tests: {} suite(s) + {} case(s) copied",
+            suites.len(),
+            cases.len()
+        );
+    } else {
+        println!("  flow tests: src has no {fs}.test_suites — skipped");
+    }
     println!("  config: no defined artifact yet — deferred");
 
     drop(src_client);
@@ -662,6 +772,71 @@ async fn exec_copy_definition(
     let _ = src_task.await;
     let _ = dst_task.await;
     Ok(())
+}
+
+/// The 11.2 suite-orphan guard (wamn-828): refuse a definition copy that would
+/// carry a suite pinning a flow version the destination will not have. Reads the
+/// src's suites (scoped to `tenant`) and the `(flow_id, version)` pairs the copy
+/// will make present — the UNION of the src flow registry (block 2 installs it)
+/// and the dst's existing flows — then runs the pure
+/// [`wamn_migrate::check_suite_orphans`]. A src without the `test_suites` table
+/// (never provisioned for suites) has nothing to orphan: a clean pass. Read-only.
+async fn guard_suite_orphans(
+    src: &tokio_postgres::Client,
+    dst: &tokio_postgres::Client,
+    flow_schema: &str,
+    tenant: &str,
+) -> anyhow::Result<()> {
+    let src_has_suites: Option<String> = src
+        .query_one(
+            &format!("SELECT to_regclass('{flow_schema}.test_suites')::text"),
+            &[],
+        )
+        .await?
+        .get(0);
+    if src_has_suites.is_none() {
+        return Ok(());
+    }
+    let suites_sql = wamn_migrate::sql::select_suites_for_tenant_sql(flow_schema);
+    let referenced: Vec<wamn_migrate::SuiteRef> = src
+        .query(&suites_sql, &[&tenant])
+        .await
+        .context("read src test suites for the suite-orphan guard")?
+        .iter()
+        .map(|row| wamn_migrate::SuiteRef {
+            suite_id: row.get(0),
+            tenant: row.get(1),
+            flow_id: row.get(2),
+            flow_version: row.get(3),
+        })
+        .collect();
+    if referenced.is_empty() {
+        return Ok(());
+    }
+    // The versions the destination WILL hold: src flows (block 2 copies them) ∪
+    // dst's current flows. A flows table absent on the dst reads as empty.
+    let versions_sql = wamn_migrate::sql::select_flow_versions_for_tenant_sql(flow_schema);
+    let mut present: std::collections::BTreeSet<(String, i32)> = std::collections::BTreeSet::new();
+    for client in [src, dst] {
+        let has_flows: Option<String> = client
+            .query_one(
+                &format!("SELECT to_regclass('{flow_schema}.flows')::text"),
+                &[],
+            )
+            .await?
+            .get(0);
+        if has_flows.is_none() {
+            continue;
+        }
+        for row in client
+            .query(&versions_sql, &[&tenant])
+            .await
+            .context("read flow versions for the suite-orphan guard")?
+        {
+            present.insert((row.get(0), row.get(1)));
+        }
+    }
+    wamn_migrate::check_suite_orphans(&present, &referenced).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// Re-compile the copied RLS policy rows per catalog and apply the compiled
@@ -821,11 +996,22 @@ async fn exec_verify(
                 "event registrations",
                 "SELECT count(*) FROM catalog.event_registrations WHERE tenant_id = $1".to_string(),
             ),
+            (
+                "test suites",
+                format!("SELECT count(*) FROM {fs}.test_suites WHERE tenant_id = $1"),
+            ),
+            (
+                "test cases",
+                format!("SELECT count(*) FROM {fs}.test_cases WHERE tenant_id = $1"),
+            ),
         ] {
             let s: i64 = match src_client.query_one(sql.as_str(), &[&tenant]).await {
                 Ok(row) => row.get(0),
-                // The src may have no flow registry at all — nothing to compare.
-                Err(_) if label == "flows" => continue,
+                // The src may have no flow registry / test-suite tables at all —
+                // nothing to compare.
+                Err(_) if label == "flows" || label == "test suites" || label == "test cases" => {
+                    continue;
+                }
                 Err(e) => return Err(e).context("verify src counts"),
             };
             let d: i64 = dst_client
@@ -840,7 +1026,7 @@ async fn exec_verify(
         }
         println!(
             "  verified: {} applied catalog(s) byte-equal; flows + RLS + \
-             event-registration counts match",
+             event-registration + test-suite/case counts match",
             src_rows.len()
         );
     }

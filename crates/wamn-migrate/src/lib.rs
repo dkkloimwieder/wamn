@@ -73,7 +73,10 @@ pub use model::{
     ApplyPlan, Confirmation, Env, MigrationError, MigrationReport, MigrationRequest, RollbackPlan,
     SqlStatement, Value,
 };
-pub use orphan::{OrphaningPublish, RegistrationRef, check_registration_orphans};
+pub use orphan::{
+    OrphaningPublish, OrphaningSuiteCopy, RegistrationRef, SuiteRef, check_registration_orphans,
+    check_suite_orphans,
+};
 pub use replica_identity::{
     ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, alter_replica_identity_sql,
     entities_requiring_full, reconcile_replica_identity, select_replica_identity_sql,

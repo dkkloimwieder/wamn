@@ -63,12 +63,14 @@ use std::collections::{BTreeMap, BTreeSet};
 /// stand-in drift guard pins.
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
+const FLOW_TESTS_SQL: &str = include_str!("../../../deploy/sql/flow-tests.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 /// The run-plane record files in APPLY ORDER: run-state first (schema header +
-/// `runs`, which everything FKs), then the flow registry, then the queue.
-const RUN_PLANE_FILES: [&str; 3] = [RUN_STATE_SQL, FLOWS_SQL, RUN_QUEUE_SQL];
+/// `runs`, which everything FKs), then the flow registry, then the 11.2 flow
+/// test-suite tables (FK to `flows`, so AFTER it), then the queue.
+const RUN_PLANE_FILES: [&str; 4] = [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL, RUN_QUEUE_SQL];
 
 /// The outbox-era tables the l5i9.19 teardown retired. A pre-teardown schema
 /// (or one restored from a pre-teardown snapshot) still carries them.
@@ -780,6 +782,10 @@ mod tests {
         );
         assert_eq!(record_tables(FLOWS_SQL, "wamn_run"), ["flows"]);
         assert_eq!(
+            record_tables(FLOW_TESTS_SQL, "wamn_run"),
+            ["test_suites", "test_cases"]
+        );
+        assert_eq!(
             record_tables(RUN_QUEUE_SQL, "wamn_run"),
             ["run_queue", "partition_owner", "run_dead_letters"]
         );
@@ -912,8 +918,8 @@ mod tests {
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            7,
-            "all seven run-plane tables at target"
+            9,
+            "all nine run-plane tables at target (incl. the 11.2 test-suite tables)"
         );
     }
 
@@ -1029,6 +1035,8 @@ mod tests {
                 "cron_anchor",
                 "node_runs",
                 "flows",
+                "test_suites",
+                "test_cases",
                 "run_queue",
                 "partition_owner",
                 "run_dead_letters"

@@ -73,6 +73,9 @@ wamn-cdc-reader = { path = "../wamn-cdc-reader" }
 wamn-event-reg = { path = "../wamn-event-reg" }
 pg_walstream = { workspace = true }
 wamn-flow = { path = "../wamn-flow" }
+# suiteproof: the 11.2 flow test-suite envelope — round-tripped against the
+# deploy/sql/flow-tests.sql rows it seeds.
+wamn-flow-tests = { path = "../wamn-flow-tests" }
 # queuebench/dispatchbench doorbell hints (same version req as wash-runtime's
 # so cargo unifies to one crate instance).
 async-nats = { version = "0.47", default-features = false }

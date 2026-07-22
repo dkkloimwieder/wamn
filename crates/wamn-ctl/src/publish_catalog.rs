@@ -18,10 +18,11 @@
 //! is ever dropped or altered (the shared-cluster guardrail).
 //!
 //! POC-F1 extended this into the one project-provisioning tool: `--runstate`
-//! applies the run-state storage (`deploy/sql/run-state.sql`: runs/node_runs) and
-//! the flow registry (`deploy/sql/flows.sql`) into the project schema — the
-//! canonical deploy files, embedded at compile time and rewritten from
-//! `wamn_run` to the target schema — when their tables are absent;
+//! applies the run-state storage (`deploy/sql/run-state.sql`: runs/node_runs),
+//! the flow registry (`deploy/sql/flows.sql`), and the 11.2 flow test-suite
+//! tables (`deploy/sql/flow-tests.sql`: test_suites/test_cases) into the project
+//! schema — the canonical deploy files, embedded at compile time and rewritten
+//! from `wamn_run` to the target schema — when their tables are absent;
 //! `--seed-dataset` compiles a wamn-seed (3.6) dataset against the catalog and
 //! applies it (deterministic ids, `ON CONFLICT DO NOTHING` — idempotent); and
 //! `--flow` validates a wamn-flow (5.1) graph and registers it ACTIVE in the
@@ -231,6 +232,12 @@ async fn publish(
         } else {
             println!("flow registry already present in schema {schema}; skipping");
         }
+        // 11.2 test-suite tables (FK to flows, so AFTER ensure_flow_registry).
+        if ensure_flow_tests(client, schema).await? {
+            println!("applied flow test-suite tables (test_suites/test_cases) in schema {schema}");
+        } else {
+            println!("flow test-suite tables already present in schema {schema}; skipping");
+        }
     }
 
     // Optionally compile + apply a wamn-seed dataset against this catalog.
@@ -414,6 +421,25 @@ pub async fn ensure_flow_registry(
         .batch_execute(&ddl)
         .await
         .context("apply flow registry")?;
+    Ok(true)
+}
+
+/// Apply `deploy/sql/flow-tests.sql` (the 11.2 test-suite tables) into `schema`
+/// when its `test_suites` table is absent. Returns whether it applied. The FK to
+/// `flows` means [`ensure_flow_registry`] MUST have run first — publish calls
+/// them in that order below.
+pub async fn ensure_flow_tests(
+    client: &tokio_postgres::Client,
+    schema: &str,
+) -> anyhow::Result<bool> {
+    if table_exists(client, schema, "test_suites").await? {
+        return Ok(false);
+    }
+    let ddl = rewrite_schema(include_str!("../../../deploy/sql/flow-tests.sql"), schema);
+    client
+        .batch_execute(&ddl)
+        .await
+        .context("apply flow test-suite tables")?;
     Ok(true)
 }
 

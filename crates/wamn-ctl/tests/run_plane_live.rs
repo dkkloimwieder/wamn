@@ -38,6 +38,7 @@ use wamn_migrate::{RunPlaneActionKind, rewrite_schema};
 
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
+const FLOW_TESTS_SQL: &str = include_str!("../../../deploy/sql/flow-tests.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
@@ -445,6 +446,9 @@ async fn current_noop_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(FLOWS_SQL, SCHEMA))
         .await
         .expect("apply flows");
+    su.batch_execute(&rewrite_schema(FLOW_TESTS_SQL, SCHEMA))
+        .await
+        .expect("apply flow-tests");
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, SCHEMA))
         .await
         .expect("apply run-queue");
@@ -460,7 +464,7 @@ async fn current_noop_leg(su: &Client) {
         "current schema dry-run is a no-op: {:#?}",
         dry.actions
     );
-    assert_eq!(dry.at_target.len(), 6, "all six run-plane tables at target");
+    assert_eq!(dry.at_target.len(), 9, "all nine run-plane tables at target");
 
     let apply = reconcile_run_plane::reconcile(su, SCHEMA, true)
         .await

@@ -1,0 +1,67 @@
+# 11.2 in-cluster gate of record: suiteproof drives "test cases as catalog data"
+# (wamn-828) against the shared postgres, provisioning its own EPHEMERAL schema
+# (wamn_suiteproof) through the superuser url — no shared-schema mutation, dropped
+# at the end. It applies the deploy/sql/flow-tests.sql tables via the SAME
+# publish-catalog --runstate ensure_* path production uses, seeds a suite + cases
+# from the wamn-flow-tests envelope, and asserts version binding + RLS (a foreign
+# tenant sees zero suites) + the test_suites/test_cases → flows FK cascade.
+# Co-located with postgres, NO cpu limit (the S2 CFS lesson). Run bench/proof Jobs
+# SEQUENTIALLY on the shared postgres.
+#
+#   kubectl -n wamn-system apply -f deploy/gates/suiteproof-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/suiteproof --timeout=120s
+#   kubectl -n wamn-system logs job/suiteproof
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: suiteproof
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: suiteproof
+    spec:
+      restartPolicy: Never
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: postgres
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-postgres
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z postgres.wamn-system.svc.cluster.local 5432; do sleep 1; done"]
+      containers:
+        - name: suiteproof
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            [
+              "--log-level", "error",
+              "suiteproof",
+            ]
+          env:
+            # App reads/writes: the non-superuser, non-BYPASSRLS role (RLS-scoped).
+            - name: WAMN_PG_URL
+              value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+            # Admin: superuser, used ONLY to provision/drop the ephemeral schema.
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
+            - name: WAMN_PG_ADMIN_URL
+              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/wamn
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              memory: "1Gi"

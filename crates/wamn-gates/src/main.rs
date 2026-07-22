@@ -39,6 +39,7 @@ mod samplebench;
 mod schema_drift;
 mod socketguard;
 mod streambench;
+mod suiteproof;
 mod testhostbench;
 mod testkitbench;
 mod tracebench;
@@ -139,6 +140,8 @@ enum Command {
     Wakeproof(wakeproof::WakeProofArgs),
     /// Run the POC-F3 escalate-stale-holds proof (time-shift cutoff + structural cycle drain + credentialed notify + egress allowlist; local seed or in-cluster park→wake)
     F3proof(f3proof::F3ProofArgs),
+    /// Run the 11.2 flow test-suite gate (test cases as catalog data: envelope round-trip + version binding + RLS + FK cascade in an ephemeral schema)
+    Suiteproof(suiteproof::SuiteProofArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -196,6 +199,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Ladderproof(args) => ladderproof::run(args).await,
         Command::Wakeproof(args) => wakeproof::run(args).await,
         Command::F3proof(args) => f3proof::run(args).await,
+        Command::Suiteproof(args) => suiteproof::run(args).await,
     };
 
     shutdown_observability();

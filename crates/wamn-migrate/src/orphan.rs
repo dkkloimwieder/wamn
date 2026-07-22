@@ -83,6 +83,82 @@ pub fn check_registration_orphans(
     }
 }
 
+// ---------------------------------------------------------------------------
+// The 11.2 suite-orphan guard (test cases as catalog data, wamn-828).
+//
+// A definition copy (copy-project-env --include definition) carries a tenant's
+// test suites, each pinning a concrete `(flow_id, flow_version)`. The copy also
+// installs the src's flow registrations; a suite whose pinned version is present
+// in NEITHER the src registry (what the copy installs) NOR the dst's existing
+// flows would land as an orphan — the `test_suites → flows` FK ON DELETE CASCADE
+// would reject the insert with a bare FK error. This is the PURE decision that
+// refuses the copy FIRST, naming the orphaned suites, exactly as the D24
+// registration guard above refuses an orphaning publish before any mutation.
+// ---------------------------------------------------------------------------
+
+/// One suite the guard inspects: its id, owning tenant, and the concrete flow
+/// version it pins. Rows come from the src's `<schema>.test_suites`, scoped to
+/// the copy's `--tenant` (the copy is per-tenant, unlike the cross-tenant D24
+/// entity guard — a flow version is tenant-owned).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuiteRef {
+    pub suite_id: String,
+    pub tenant: String,
+    pub flow_id: String,
+    pub flow_version: i32,
+}
+
+/// A definition copy refused because it would carry these suites onto flow
+/// versions absent from the destination (11.2). Mirrors [`OrphaningPublish`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrphaningSuiteCopy {
+    /// The suites whose pinned `(flow_id, flow_version)` is absent from the
+    /// destination, in the driver's read order.
+    pub orphans: Vec<SuiteRef>,
+}
+
+impl std::fmt::Display for OrphaningSuiteCopy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "refusing this definition copy: {} test suite(s) pin a flow version the destination \
+             will not have — the flow version must be copied (or already present) first:",
+            self.orphans.len()
+        )?;
+        for o in &self.orphans {
+            write!(
+                f,
+                "\n  - suite {:?} (tenant {:?}) pins {:?} v{}, which is absent",
+                o.suite_id, o.tenant, o.flow_id, o.flow_version
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for OrphaningSuiteCopy {}
+
+/// The pure 11.2 decision: refuse if any `referenced` suite pins a
+/// `(flow_id, flow_version)` absent from `present` (the flow versions the copy
+/// will install plus the dst's existing ones), naming every orphan in input
+/// order. `Ok(())` when the destination will hold every pinned version (or there
+/// are no suites).
+pub fn check_suite_orphans(
+    present: &BTreeSet<(String, i32)>,
+    referenced: &[SuiteRef],
+) -> Result<(), OrphaningSuiteCopy> {
+    let orphans: Vec<SuiteRef> = referenced
+        .iter()
+        .filter(|s| !present.contains(&(s.flow_id.clone(), s.flow_version)))
+        .cloned()
+        .collect();
+    if orphans.is_empty() {
+        Ok(())
+    } else {
+        Err(OrphaningSuiteCopy { orphans })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +221,56 @@ mod tests {
         let present = BTreeSet::from(["kept"]);
         let refs = vec![r("r1", "t1", "dropped")];
         assert!(check_registration_orphans(&present, &refs).is_err());
+    }
+
+    // --- 11.2 suite-orphan guard ---
+
+    fn s(suite: &str, tenant: &str, flow: &str, version: i32) -> SuiteRef {
+        SuiteRef {
+            suite_id: suite.into(),
+            tenant: tenant.into(),
+            flow_id: flow.into(),
+            flow_version: version,
+        }
+    }
+
+    #[test]
+    fn suite_copy_proceeds_when_every_pinned_version_is_present() {
+        let present = BTreeSet::from([("f1".to_string(), 1), ("f1".to_string(), 2)]);
+        let suites = vec![s("smoke", "t1", "f1", 1), s("regress", "t1", "f1", 2)];
+        assert!(check_suite_orphans(&present, &suites).is_ok());
+    }
+
+    #[test]
+    fn no_suites_is_a_clean_proceed() {
+        let present = BTreeSet::from([("f1".to_string(), 1)]);
+        assert!(check_suite_orphans(&present, &[]).is_ok());
+    }
+
+    #[test]
+    fn suite_copy_refuses_and_names_the_orphan() {
+        // v1 is present; v99 (a drifted pin) is not — only that suite is named.
+        let present = BTreeSet::from([("f1".to_string(), 1)]);
+        let suites = vec![s("keep", "t1", "f1", 1), s("orphan", "t1", "f1", 99)];
+        let err = check_suite_orphans(&present, &suites).unwrap_err();
+        assert_eq!(err.orphans, vec![s("orphan", "t1", "f1", 99)]);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("orphan") && msg.contains("f1") && msg.contains("99"),
+            "{msg}"
+        );
+        assert!(!msg.contains("keep"), "the present suite is not named");
+    }
+
+    /// Mutation guard (11.2): a version-blind check — the flow_id compared but
+    /// not the version, or the membership test inverted — would pass a suite
+    /// pinned to an absent version. It MUST refuse.
+    #[test]
+    fn suite_pinned_to_an_absent_version_is_never_silently_allowed() {
+        // Same flow_id present at a DIFFERENT version: a flow-id-only check would
+        // wrongly accept this.
+        let present = BTreeSet::from([("f1".to_string(), 1)]);
+        let suites = vec![s("s", "t1", "f1", 2)];
+        assert!(check_suite_orphans(&present, &suites).is_err());
     }
 }
