@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::TestCase;
 use crate::assertion::{Assertion, DbExpect, EgressAssertion, EgressMatcher};
 use crate::captured::{Captured, DbCapture, EgressRecord};
+use crate::normalize::{Normalize, normalize};
 
 /// One assertion's verdict, carrying the assertion itself (so a report is
 /// self-describing) and, on failure, a human detail.
@@ -62,11 +63,12 @@ pub fn subset_match(expected: &Value, actual: &Value) -> bool {
 
 /// Evaluate every assertion of `case` against `captured`.
 pub fn evaluate(case: &TestCase, captured: &Captured) -> Outcome {
+    let norm = case.normalize.as_ref();
     let results = case
         .expect
         .iter()
         .map(|a| {
-            let (passed, detail) = eval_one(a, captured);
+            let (passed, detail) = eval_one(a, captured, norm);
             AssertionResult {
                 assertion: a.clone(),
                 passed,
@@ -204,21 +206,39 @@ fn eval_db(
     }
 }
 
+/// Apply the case's normalization to a value, or clone it unchanged when the
+/// case carries no rules. Used to normalize BOTH the expected and the captured
+/// node output identically before a node-output comparison (11.3).
+fn maybe_normalize(norm: Option<&Normalize>, v: &Value) -> Value {
+    match norm {
+        Some(rules) => normalize(v, rules),
+        None => v.clone(),
+    }
+}
+
 /// Evaluate one assertion; the `Option<String>` is the failure detail (ignored
-/// when it passed).
-fn eval_one(a: &Assertion, captured: &Captured) -> (bool, Option<String>) {
+/// when it passed). `norm`, when present, normalizes the node output on BOTH
+/// sides of a node-output comparison (a no-op for the other assertion families).
+fn eval_one(
+    a: &Assertion,
+    captured: &Captured,
+    norm: Option<&Normalize>,
+) -> (bool, Option<String>) {
     match a {
         Assertion::Equals(expected) => match &captured.node_output {
             None => (false, Some("no node output captured".into())),
             Some(actual) => (
-                actual == expected,
+                maybe_normalize(norm, actual) == maybe_normalize(norm, expected),
                 Some(format!("node output {actual} != {expected}")),
             ),
         },
         Assertion::Subset(expected) => match &captured.node_output {
             None => (false, Some("no node output captured".into())),
             Some(actual) => (
-                subset_match(expected, actual),
+                subset_match(
+                    &maybe_normalize(norm, expected),
+                    &maybe_normalize(norm, actual),
+                ),
                 Some(format!(
                     "node output {actual} is not a subset-match of {expected}"
                 )),
@@ -226,16 +246,19 @@ fn eval_one(a: &Assertion, captured: &Captured) -> (bool, Option<String>) {
         },
         Assertion::PathEquals { pointer, value } => match &captured.node_output {
             None => (false, Some("no node output captured".into())),
-            Some(actual) => match actual.pointer(pointer) {
-                None => (
-                    false,
-                    Some(format!("node output has no value at pointer {pointer:?}")),
-                ),
-                Some(at) => (
-                    at == value,
-                    Some(format!("node output at {pointer:?} = {at} != {value}")),
-                ),
-            },
+            Some(actual) => {
+                let actual_n = maybe_normalize(norm, actual);
+                match actual_n.pointer(pointer) {
+                    None => (
+                        false,
+                        Some(format!("node output has no value at pointer {pointer:?}")),
+                    ),
+                    Some(at) => (
+                        *at == maybe_normalize(norm, value),
+                        Some(format!("node output at {pointer:?} = {at} != {value}")),
+                    ),
+                }
+            }
         },
         Assertion::Port(port) => (
             captured.node_port.as_deref() == Some(port.as_str()),
@@ -297,6 +320,7 @@ mod tests {
             config: None,
             ctx: None,
             expect,
+            normalize: None,
         }
     }
 
@@ -384,6 +408,49 @@ mod tests {
         cap.node_port = Some("true".into());
         let out = evaluate(&node_case("n", vec![Assertion::Port("main".into())]), &cap);
         assert!(!out.passed());
+    }
+
+    /// 11.3: a case carrying `normalize` collapses same-shaped volatile leaves on
+    /// BOTH sides, so an Equals passes when only a UUID/timestamp differs but
+    /// still fails on a real-field difference. Guards the evaluate normalize
+    /// threading directly (a mutant that drops the normalize application fails
+    /// the volatile leg; one that over-normalizes fails the real leg).
+    #[test]
+    fn normalize_collapses_volatile_but_keeps_real_on_both_sides() {
+        let mut case = node_case(
+            "n",
+            vec![Assertion::Equals(json!({
+                "result": "accepted",
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+            }))],
+        );
+        case.normalize = Some(crate::Normalize {
+            ignore_paths: vec![],
+            canonicalize: true,
+        });
+
+        // A different UUID passes (both canonicalize to `[uuid]`).
+        let cap = Captured {
+            node_output: Some(json!({
+                "result": "accepted",
+                "id": "11111111-2222-3333-4444-555555555555",
+            })),
+            ..Default::default()
+        };
+        assert!(evaluate(&case, &cap).passed(), "volatile id must not fail");
+
+        // A different real field fails.
+        let cap = Captured {
+            node_output: Some(json!({
+                "result": "rejected",
+                "id": "11111111-2222-3333-4444-555555555555",
+            })),
+            ..Default::default()
+        };
+        assert!(
+            !evaluate(&case, &cap).passed(),
+            "a real-field change must fail"
+        );
     }
 
     #[test]

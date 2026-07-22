@@ -45,6 +45,8 @@
 mod assertion;
 mod captured;
 mod evaluate;
+mod normalize;
+mod pin;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -52,6 +54,8 @@ use serde_json::Value;
 pub use assertion::{Assertion, DbExpect, EgressAssertion, EgressMatcher};
 pub use captured::{Captured, DbCapture, EgressRecord, RunFacts};
 pub use evaluate::{AssertionResult, Outcome, evaluate, subset_match};
+pub use normalize::{Normalize, normalize};
+pub use pin::{PinError, PinOptions, pin_run};
 // The run-context is reused verbatim from the frozen wamn:node wire type.
 pub use wamn_node_invoke::WireRunContext;
 // The status/kind taxonomy is reused verbatim from the store — an assertion
@@ -112,6 +116,13 @@ pub struct TestCase {
     pub ctx: Option<WireRunContext>,
     /// The assertions this case's output/run must satisfy.
     pub expect: Vec<Assertion>,
+    /// Optional normalization applied SYMMETRICALLY to the expected value and the
+    /// captured node output before a node-output assertion compares them (11.3):
+    /// drop volatile fields by RFC-6901 pointer and/or canonicalize UUID /
+    /// RFC-3339 timestamp leaves. Absent ⇒ no normalization (the 11.4 behavior);
+    /// a no-op for run-outcome / egress / db-state assertions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalize: Option<Normalize>,
 }
 
 /// Exact vs deep-subset matching for an `ok` node-case emission.
@@ -223,6 +234,7 @@ impl NodeCase {
             config: self.config,
             ctx: None,
             expect,
+            normalize: None,
         }
     }
 }
@@ -246,6 +258,7 @@ mod tests {
                 Assertion::Subset(json!({"recommended": "reject"})),
                 Assertion::Port("main".into()),
             ],
+            normalize: None,
         };
         let wire = serde_json::to_string(&case).unwrap();
         let back: TestCase = serde_json::from_str(&wire).unwrap();

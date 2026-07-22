@@ -31,6 +31,7 @@ mod matbench;
 mod nodebench;
 mod nodeinvoke;
 mod pgbench;
+mod pinproof;
 mod provisionbench;
 mod publish_catalog_demo;
 mod queuebench;
@@ -154,6 +155,8 @@ enum Command {
     F4proof(f4proof::F4ProofArgs),
     /// Serve the POC-F4 ERP callback simulator (429 + Retry-After for the first K requests per idempotency key, then 202; GET /audit)
     ErpSim(erp_sim::ErpSimArgs),
+    /// Run the 11.3 record-and-replay gate (pin a full-capture run via the real ctl core: secret scrubbed + volatile normalized + replay round-trip + preview-run refusal, ephemeral schema)
+    Pinproof(pinproof::PinProofArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -216,6 +219,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Suiteproof(args) => suiteproof::run(args).await,
         Command::F4proof(args) => f4proof::run(args).await,
         Command::ErpSim(args) => erp_sim::run(args).await,
+        Command::Pinproof(args) => pinproof::run(args).await,
     };
 
     shutdown_observability();

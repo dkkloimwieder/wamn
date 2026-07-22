@@ -14,6 +14,7 @@ pub mod dump_project_env;
 pub mod enable_cdc_project_env;
 mod env_policies;
 pub mod migrate_catalog;
+pub mod pin_run;
 pub mod provision;
 pub mod provision_org;
 pub mod provision_project_env;

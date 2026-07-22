@@ -24,7 +24,8 @@ stated in the same enums the runner records and the node contract freezes.
   "input": { "hold": { "moisture_pct": "12.00" } },     // node input / flow trigger
   "config": null,                       // optional node config document
   // "ctx": { … WireRunContext … },     // optional explicit run-context
-  "expect": [ /* assertions */ ]
+  "expect": [ /* assertions */ ],
+  // "normalize": { "canonicalize": true, "ignore-paths": ["/meta/run-id"] } // 11.3, optional
 }
 ```
 
@@ -127,6 +128,59 @@ So the sibling lanes' reconcile is a **re-import, not a rewrite**: they express
 `NodeCase` and call `.into_test_case()`, or lower to the canonical `TestCase`
 vocabulary directly.
 
+## Record-and-replay: pin a run (11.3)
+
+A recorded run is a fixture for free. `pin_run(run, node_runs, opts)` (module
+`pin`) is the PURE transform from a stored run (a `wamn_run_store` `RunRecord` +
+its `node_runs`) to a canonical `TestCase`; the `wamn-ctl pin-run` verb is the
+effect shell that reads the rows and writes the case into the flow's
+`test_suites`/`test_cases` (11.2 storage). Dependency direction: this reads STORE
+records and writes a testkit case, so it lives in testkit (which already depends
+on `wamn-run-store`) — not in run-store, which would be a cycle.
+
+The pinned case (minimal-correct v0 shape):
+- **flow-level** — `flow-ref` = the run's `(flow_id, flow_version)`; `input` = the
+  run's trigger input; `expect` = a `RunOutcome` (the run's terminal
+  status/fail-kind/fail-node) PLUS, when the run recorded a replayable terminal
+  node, an `Equals` over that node's emission (the reconstruction-relevant
+  payload, where volatile ids live); `normalize` = `canonicalize` on + any caller
+  `ignore-paths`.
+- 9.6 captures NODE I/O only — egress + DB state are filled by the LIVE harness,
+  not `node_runs`, so those assertions cannot be pinned from history in v0.
+  `Captured::node_output` is a single value (no whole-run node map), so a
+  multi-node run pins the FLOW outcome + its TERMINAL node output, not a per-node
+  map. Both are deliberate v0 scoping.
+
+**Secret redaction at pin time.** Every payload that becomes part of the case (the
+trigger input, the pinned node output) is passed through
+`wamn_run_store::capture::scrub` first, so a pinned case NEVER contains a secret
+even from a `full`-capture run (where the stored `node_runs` payloads are
+faithful). Scrub is idempotent — a `scrubbed` row is safe to re-scrub.
+
+**Capture-mode policy.** `off`/`preview` → the terminal node has no stored output
+→ `PinError::NotCaptured` (nothing written); `scrubbed`/`full` → pin
+(re-scrubbed).
+
+### Normalization (volatile fields)
+
+A case's optional `normalize` is applied SYMMETRICALLY to the expected value and
+the captured node output by `evaluate` before a node-output assertion
+(`Equals`/`Subset`/`PathEquals`) compares them — a no-op for run-outcome / egress
+/ db-state. Two knobs, both pure (`serde_json` only, guest-compilable, **no
+regex**):
+
+| field | wire | effect |
+| --- | --- | --- |
+| `ignore-paths` | `["/meta/run-id", "/xs/1"]` | drop each RFC-6901 pointer from BOTH sides (an unresolved pointer is a no-op) |
+| `canonicalize` | `true` | replace UUID-shaped (`8-4-4-4-12` hex) and narrow RFC-3339-`Z` timestamp string leaves with `[uuid]` / `[timestamp]` on BOTH sides |
+
+Because normalization runs on both sides, a same-shaped volatile value (a fresh
+UUID, a later timestamp) collapses to the placeholder and matches, while a REAL
+field difference survives — this is the record-and-replay round-trip: pin a run,
+rebuild a `Captured` from its recorded facts, and `evaluate` passes; a mutated
+volatile field still passes, a mutated real field fails.
+
 ## Running the gate
 
-See `docs/build-and-test.md` → **[11.4] assertion library (testkitbench)**.
+See `docs/build-and-test.md` → **[11.4] assertion library (testkitbench)** and
+**[11.3] record-and-replay fixtures (pinproof)**.

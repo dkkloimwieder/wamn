@@ -182,6 +182,36 @@ pub fn select_completed_node_runs_sql() -> String {
     )
 }
 
+/// Read a run's pinnable facts — the flow it ran, its terminal outcome, and its
+/// trigger input — for the 11.3 `pin-run` verb (which folds them into a
+/// `wamn_testkit::TestCase`). Unlike [`select_run_dispatch_sql`] (which reads only
+/// the flow + input to DISPATCH a claimed run) this also projects the terminal
+/// `status`/`fail_kind`/`fail_node` a pinned `RunOutcome` assertion needs. `$1`
+/// run_id; RLS scopes the tenant.
+pub fn select_run_for_pin_sql() -> String {
+    "SELECT flow_id, flow_version, status, input_json::text, fail_kind, fail_node \
+     FROM runs WHERE run_id = $1"
+        .to_string()
+}
+
+/// Load a run's completed node executions with the columns the 11.3 `pin-run`
+/// verb needs — the emission payload + input + the 9.6 capture provenance
+/// (`capture_mode`/`redacted`) — so the pin can gate an `off`/`preview` row (NULL
+/// `output_json`) as non-pinnable and decide whether to re-scrub. Unlike
+/// [`select_completed_node_runs_sql`] (reconstruction, which needs only the
+/// emission) this also projects `status`, `input_json`, `capture_mode`, and
+/// `redacted`. Completed (`success`/`error`) rows only, in dispatch (`seq`) order
+/// — the pin keys the TERMINAL node off the highest `seq`. `$1` run_id.
+pub fn select_node_runs_for_pin_sql() -> String {
+    format!(
+        "SELECT node_id, occurrence, seq, status, output_port, output_json::text, \
+                input_json::text, capture_mode, redacted FROM node_runs \
+         WHERE run_id = $1 AND status IN ('{success}', '{error}') ORDER BY seq",
+        success = NodeRunStatus::Success.as_sql(),
+        error = NodeRunStatus::Error.as_sql(),
+    )
+}
+
 /// Prune terminal run history older than a retention window (9.6, wamn-srb): the
 /// `prune-run-history` verb's statement. DELETE the current tenant's `runs` rows
 /// in a TERMINAL state ([`RunStatus::is_terminal`] — completed / failed /
@@ -374,6 +404,48 @@ mod tests {
         ] {
             assert!(ddl.contains(col), "node_runs column {col} missing from DDL");
         }
+    }
+
+    /// The 11.3 pin read builders project exactly the columns the `pin-run` verb
+    /// decodes, unqualified (search_path schema) and `$1`-scoped by run_id —
+    /// drift here silently mis-binds the verb's row decode.
+    #[test]
+    fn pin_reads_project_the_pinnable_columns() {
+        let run = select_run_for_pin_sql();
+        assert!(
+            run.contains(
+                "SELECT flow_id, flow_version, status, input_json::text, fail_kind, fail_node"
+            ),
+            "{run}"
+        );
+        assert!(run.contains("FROM runs WHERE run_id = $1"), "{run}");
+        assert!(
+            !run.contains("wamn_run."),
+            "schema must be unqualified: {run}"
+        );
+
+        let nodes = select_node_runs_for_pin_sql();
+        // The capture-provenance columns the reconstruction read omits.
+        for col in [
+            "node_id",
+            "occurrence",
+            "seq",
+            "status",
+            "output_port",
+            "output_json::text",
+            "input_json::text",
+            "capture_mode",
+            "redacted",
+        ] {
+            assert!(nodes.contains(col), "pin node read missing {col}: {nodes}");
+        }
+        assert!(nodes.contains("WHERE run_id = $1"), "{nodes}");
+        assert!(nodes.contains("IN ('success', 'error')"), "{nodes}");
+        assert!(nodes.contains("ORDER BY seq"), "{nodes}");
+        assert!(
+            !nodes.contains("wamn_run."),
+            "schema must be unqualified: {nodes}"
+        );
     }
 
     /// The 9.6 prune statement targets `runs` (cascading to `node_runs`), scoped

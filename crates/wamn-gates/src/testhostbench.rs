@@ -1108,6 +1108,7 @@ async fn schemacase_phase(
                     expect: DbExpect::RowCount(1),
                 },
             ],
+            normalize: None,
         };
         let case_ok = evaluate(&case, &captured).passed();
         println!(
@@ -1262,6 +1263,7 @@ async fn runworker_phase(
                 calls: EgressAssertion::NoneDenied,
             },
         ],
+        normalize: None,
     };
     let outcome = evaluate(&case, &captured);
     let pass = outcome.passed();

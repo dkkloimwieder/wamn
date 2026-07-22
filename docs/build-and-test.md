@@ -295,6 +295,39 @@ kubectl -n wamn-system apply -f deploy/gates/testkitbench-job.yaml
 kubectl -n wamn-system logs -f job/testkitbench
 ```
 
+### [11.3 / wamn-htn] record-and-replay fixtures (pin-run + pinproof)
+
+Docs: docs/testkit.md → "Record-and-replay: pin a run". The pure `pin_run`
+transform (a `wamn_run_store` run + its `node_runs` → a `wamn_testkit::TestCase`)
+lives in `crates/wamn-testkit` (module `pin`), alongside the additive `normalize`
+vocabulary (`ignore-paths` + `canonicalize`, no regex). The `wamn-ctl pin-run`
+verb is the effect shell (app-role read + pure pin + INSERT into
+`test_suites`/`test_cases`); secrets are scrubbed at pin time (even from a `full`
+run), volatile ids/timestamps are normalized, and an `off`/`preview` run is
+refused (`PinError::NotCaptured`).
+
+```bash
+# Unit tests (pure pin/normalize logic + the run-store pin read builders):
+cargo test -p wamn-testkit -p wamn-run-store -p wamn-ctl
+
+# pinproof (host-side, provisions an ephemeral schema via the SAME ensure_* path
+# production uses; seeds a full-capture run carrying a secret + volatile fields,
+# pins it via the REAL ctl core, asserts scrub + normalize + replay round-trip
+# (volatile mutation passes, real mutation fails) + preview-run refusal). Any
+# throwaway PG works (it provisions the wamn_app role + schema itself):
+docker run -d --name wamn-pg -e POSTGRES_PASSWORD=postgres -p 5461:5432 postgres:18
+WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5461/postgres \
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5461/postgres \
+  ./target/debug/wamn-gates --log-level error pinproof
+docker rm -f wamn-pg
+# IN-CLUSTER: deploy/gates/pinproof-job.yaml (kubectl apply; wait complete; logs).
+# 3 mutants killed (apply/test/restore, debug builds): M1 skip scrub-on-pin →
+# pin_full_run_scrubs_secrets (+ pinproof SCRUB assert); M2 treat None output as
+# replayable → pin_preview_run_is_refused (+ pinproof REFUSE assert); M3 normalize
+# no-op / over-removes → replay_round_trip_tolerates_volatile_but_rejects_real (+
+# normalize_collapses_volatile_but_keeps_real_on_both_sides).
+```
+
 ### [2.6] DB-path egress review
 
 Docs: docs/security-db-path.md
