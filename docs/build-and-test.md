@@ -1329,7 +1329,10 @@ docker rm -f wamn-pg
 
 # Seed-only (the wave-end composition gate's path): seed the 3 suites into a
 # shared target schema/tenant at a flow version and STOP (no drive, no drop) —
-# 0lfu then loads them by flow@version + tenant:
+# 0lfu then loads them by flow@version + tenant. seed-only is ADDITIVE on a
+# LIVE target: it ensure_*s the tables IF NOT EXISTS (never DROPs the schema)
+# and registers missing flows ON CONFLICT DO NOTHING (a production-registered
+# flow row keeps its graph_json/active untouched):
 ./target/debug/wamn-gates --log-level error pocsuiteproof --seed-only \
   --schema poc_f1 --tenant demo-tenant --flow-version 1 \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \

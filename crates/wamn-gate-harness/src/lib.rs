@@ -108,6 +108,28 @@ pub async fn seed_flow_version(
     Ok(())
 }
 
+/// Register a flow version ONLY if absent (`ON CONFLICT DO NOTHING`) — the
+/// seed-into-a-LIVE-schema path (composition seeding must never rewrite the
+/// graph_json or active flag of a production-registered flow row).
+pub async fn seed_flow_version_if_absent(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    flow_id: &str,
+    version: i32,
+    active: bool,
+    graph_json: &str,
+) -> anyhow::Result<()> {
+    client
+        .execute(
+            "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
+             VALUES ($1, $2, $3, $4, $5::text::jsonb) \
+             ON CONFLICT (tenant_id, flow_id, version) DO NOTHING",
+            &[&tenant, &flow_id, &version, &active, &graph_json],
+        )
+        .await?;
+    Ok(())
+}
+
 /// Seed one 11.2 test-suite row (idempotent) for a flow version. Version-bound:
 /// the `(tenant, flow_id, flow_version)` must already exist in `flows` (the FK).
 /// Table names are unqualified — the caller's `search_path` (scope_session)

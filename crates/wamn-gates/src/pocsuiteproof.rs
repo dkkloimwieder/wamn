@@ -66,7 +66,10 @@ use wamn_ctl::publish_catalog::{
     ensure_flow_registry, ensure_flow_tests, ensure_runstate, register_flow, seed_dataset_sql,
 };
 use wamn_flow_tests::TestSuite;
-use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_case, seed_test_suite};
+use wamn_gate_harness::{
+    check, scope_session, seed_flow_version, seed_flow_version_if_absent, seed_test_case,
+    seed_test_suite,
+};
 use wamn_host::doubles::{DoubleSet, EgressRecorder, EphemeralSchemaProvisioner};
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_host::plugins::wamn_credentials::WamnCredentials;
@@ -328,19 +331,39 @@ pub async fn run(args: PocSuiteProofArgs) -> anyhow::Result<()> {
 
     // --- Phase A: provision the DATA schema + seed all three suites ---
     let (admin, admin_task) = connect(&admin_url).await?;
-    provision_data_schema(&admin, &args.schema).await?;
+    if args.seed_only {
+        // seed-only targets a LIVE schema (the composition path seeds poc_f1):
+        // NEVER drop it — additively ensure the run-plane + flow-test tables via
+        // the same IF-NOT-EXISTS `ensure_*` path production reconcile uses.
+        ensure_runstate(&admin, &args.schema)
+            .await
+            .context("ensure run-state (additive)")?;
+        ensure_flow_registry(&admin, &args.schema)
+            .await
+            .context("ensure flow registry (additive)")?;
+        ensure_flow_tests(&admin, &args.schema)
+            .await
+            .context("ensure flow-test tables (additive)")?;
+        println!(
+            "## seed-only: additive ensure on live schema {} (no drop)",
+            args.schema
+        );
+    } else {
+        provision_data_schema(&admin, &args.schema).await?;
+    }
 
     let (app, app_task) = connect(&app_url).await?;
     scope_session(&app, &args.tenant, &args.schema).await?;
     for suite in suites {
-        seed_flow_version(
+        // If-absent: a LIVE target (seed-only into poc_f1) keeps its
+        // production-registered graph_json/active untouched.
+        seed_flow_version_if_absent(
             &app,
             &args.tenant,
             &suite.flow_id,
             args.flow_version,
             true,
             &data_schema_graph(&suite.flow_id),
-            true,
         )
         .await
         .with_context(|| format!("register flow {}", suite.flow_id))?;
