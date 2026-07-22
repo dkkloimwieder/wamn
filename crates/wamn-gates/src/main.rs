@@ -28,6 +28,7 @@ mod flowbench;
 mod ladderproof;
 mod logbench;
 mod matbench;
+mod metricbench;
 mod nodebench;
 mod nodeinvoke;
 mod pgbench;
@@ -161,6 +162,8 @@ enum Command {
     Pinproof(pinproof::PinProofArgs),
     /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert wamn_impact names the affected flow/suite/api resource and gates a destructive change with dependents behind acknowledgement
     Impactproof(impactproof::ImpactProofArgs),
+    /// Run the 9.8 metric-set gate (run executions/success-ratio / queue depth / drive duration / memory denial+high-water / pool+query latency; api RPS in-cluster-only)
+    Metricbench(metricbench::MetricBenchArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -225,6 +228,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ErpSim(args) => erp_sim::run(args).await,
         Command::Pinproof(args) => pinproof::run(args).await,
         Command::Impactproof(args) => impactproof::run(args).await,
+        Command::Metricbench(args) => metricbench::run(args).await,
     };
 
     shutdown_observability();

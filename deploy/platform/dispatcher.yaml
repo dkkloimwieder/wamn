@@ -108,6 +108,15 @@ spec:
         - name: dispatcher
           image: wamn-dispatcher:dev
           imagePullPolicy: IfNotPresent
+          env:
+            # [9.8] wamn.run_queue.depth gauge. The dispatcher links no runtime,
+            # so it builds its OWN OTEL_*-gated meter provider (main.rs); these
+            # point it at the collector's OTLP/gRPC ingest and pace its periodic
+            # reader at 1s (the 60s default would starve a bounded gate). Absent
+            # OTEL_* the provider is never built (the gauge stays a no-op).
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.wamn-system.svc:4317" }
+            - { name: OTEL_EXPORTER_OTLP_PROTOCOL, value: "grpc" }
+            - { name: OTEL_METRIC_EXPORT_INTERVAL, value: "1000" }
           volumeMounts:
             - name: runtime-cert
               mountPath: /runtime-cert

@@ -19,6 +19,9 @@ wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
+# [9.8] run/drive metrics on the global meter the fork's observability init
+# installs (reused, not a second provider) — API only, no SDK.
+opentelemetry = { version = "0.31", default-features = false, features = ["metrics"] }
 tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros", "signal", "sync"] }
 tracing = { workspace = true }
 futures-util = "0.3"

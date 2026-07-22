@@ -134,6 +134,11 @@ spec:
             # links but drops to a no-op provider (nothing exported).
             - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.wamn-system.svc:4317" }
             - { name: OTEL_EXPORTER_OTLP_PROTOCOL, value: "grpc" }
+            # [9.8] The metric export interval. The OTel periodic reader defaults
+            # to 60s; at 1s the run/drive/memory metrics land within a scrape
+            # window instead of starving a bounded gate. The reader honors this
+            # env var directly (no code path sets it).
+            - { name: OTEL_METRIC_EXPORT_INTERVAL, value: "1000" }
             # [wamn-yf3] The wamn:logging pipeline knobs (WamnLoggingConfig) — set
             # to their defaults here so the tunable surface is visible + editable
             # in place. queue_capacity is the ONLY intentional drop point (a full

@@ -537,6 +537,62 @@ impl WamnPostgres {
         self.pool_status_of(DEFAULT_PROJECT)
     }
 
+    /// `(project, (size, available, waiting))` for every built pool — the
+    /// snapshot the [9.8] pool-saturation observable gauges fold over.
+    pub fn pool_status_all(&self) -> Vec<(String, (usize, usize, usize))> {
+        self.pools
+            .read()
+            .expect("pools lock poisoned")
+            .iter()
+            .map(|(project, pp)| {
+                let s = pp.pool.status();
+                (project.clone(), (s.size, s.available, s.waiting))
+            })
+            .collect()
+    }
+
+    /// [9.8] Register the `wamn.postgres.pool.{size,available,waiting}` observable
+    /// gauges (deadpool `Pool::status()`), keyed by `wamn.project`. The callbacks
+    /// hold a `Weak` back to the plugin so registration never keeps it alive, and
+    /// they observe every currently-built pool at export time. Call ONCE per
+    /// process (observable instruments warn on duplicate registration); a no-op
+    /// until the global meter provider is installed (`OTEL_*`).
+    pub fn register_pool_metrics(self: &std::sync::Arc<Self>) {
+        use opentelemetry::KeyValue;
+        let meter = opentelemetry::global::meter("wamn-postgres");
+        let specs: [(&str, &str, fn(&(usize, usize, usize)) -> u64); 3] = [
+            (
+                "wamn.postgres.pool.size",
+                "deadpool connections currently allocated for a project's pool",
+                |s| s.0 as u64,
+            ),
+            (
+                "wamn.postgres.pool.available",
+                "deadpool connections idle + ready to check out",
+                |s| s.1 as u64,
+            ),
+            (
+                "wamn.postgres.pool.waiting",
+                "tasks queued waiting for a pool checkout (saturation signal)",
+                |s| s.2 as u64,
+            ),
+        ];
+        for (name, desc, read) in specs {
+            let weak = std::sync::Arc::downgrade(self);
+            let _ = meter
+                .u64_observable_gauge(name)
+                .with_description(desc)
+                .with_callback(move |o| {
+                    if let Some(plugin) = weak.upgrade() {
+                        for (project, status) in plugin.pool_status_all() {
+                            o.observe(read(&status), &[KeyValue::new("wamn.project", project)]);
+                        }
+                    }
+                })
+                .build();
+        }
+    }
+
     /// Check out a raw connection from the default project and report its state
     /// *before* any claim injection. Gate verification only.
     pub async fn probe_checkout(&self) -> anyhow::Result<CheckoutProbe> {

@@ -4254,6 +4254,9 @@ dependencies = [
  "anyhow",
  "async-nats",
  "clap",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
  "rustls",
  "serde",
  "serde_json",
@@ -4556,6 +4559,7 @@ dependencies = [
  "clap",
  "futures-util",
  "hyper",
+ "opentelemetry",
  "tokio",
  "tracing",
  "wamn-host",
@@ -4645,7 +4649,7 @@ dependencies = [
 [[package]]
 name = "wash-runtime"
 version = "2.5.2"
-source = "git+https://github.com/dkkloimwieder/wasmCloud?rev=eef76cd8ab950966b6a74430545e7c4c4060b85e#eef76cd8ab950966b6a74430545e7c4c4060b85e"
+source = "git+https://github.com/dkkloimwieder/wasmCloud?rev=981fdc56ebc1840f08161aef5edec592538e5d4c#981fdc56ebc1840f08161aef5edec592538e5d4c"
 dependencies = [
  "anyhow",
  "async-nats",

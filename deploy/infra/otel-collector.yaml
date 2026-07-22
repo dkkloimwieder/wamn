@@ -44,6 +44,15 @@ data:
           queue_size: 10000
         retry_on_failure:
           enabled: true
+      # [9.8] RECEIVED OTLP app metrics (wamn.*) re-exposed as Prometheus text on
+      # :8889 for metricbench to scrape. add_metric_suffixes:false keeps the OTel
+      # names verbatim (dots→underscores only: wamn.run.executions →
+      # wamn_run_executions), so the gate greps stable names. This is distinct
+      # from the collector's OWN telemetry on :8888 (otelcol_* under
+      # service.telemetry.metrics).
+      prometheus:
+        endpoint: 0.0.0.0:8889
+        add_metric_suffixes: false
     service:
       telemetry:
         metrics:
@@ -63,6 +72,11 @@ data:
           receivers: [otlp]
           processors: [batch]
           exporters: [otlp/tempo]
+        # [9.8] host/service app metrics → Prometheus text on :8889.
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [prometheus]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -84,6 +98,8 @@ spec:
           ports:
             - { name: otlp-grpc, containerPort: 4317 }
             - { name: metrics, containerPort: 8888 }
+            # [9.8] received app metrics (wamn.*) as Prometheus text.
+            - { name: app-metrics, containerPort: 8889 }
           volumeMounts:
             - { name: config, mountPath: /etc/otelcol }
           resources:
@@ -104,3 +120,5 @@ spec:
   ports:
     - { name: otlp-grpc, port: 4317, targetPort: 4317 }
     - { name: metrics, port: 8888, targetPort: 8888 }
+    # [9.8] app-metrics scrape (wamn_*) for metricbench.
+    - { name: app-metrics, port: 8889, targetPort: 8889 }

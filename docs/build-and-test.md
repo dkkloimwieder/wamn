@@ -220,6 +220,42 @@ kubectl -n wamn-system wait --for=condition=complete job/tracebench --timeout=18
 kubectl -n wamn-system logs job/tracebench
 ```
 
+### [9.8] OTel metric set
+
+Docs: docs/metrics.md
+
+```bash
+cargo test -p wamn-host -p wamn-run-worker -p wamn-dispatcher -p wamn-gates --no-fail-fast
+# Local iteration: a throwaway Postgres (+ the NOSUPERUSER wamn_app role) and the
+# local collector with the new :8889 metrics pipeline. metricbench drives the
+# real run/queue/pool/memory seams, then scrapes :8889 for the wamn_* families.
+docker run -d --name lane-metric-pg -e POSTGRES_PASSWORD=pg -p 127.0.0.1:15503:5432 postgres:18
+until docker exec lane-metric-pg pg_isready -U postgres; do sleep 1; done
+docker exec -e PGPASSWORD=pg lane-metric-pg psql -U postgres -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+docker run -d --name lane-metric-otelcol -p 127.0.0.1:4317:4317 -p 127.0.0.1:8889:8889 \
+  -v "$PWD/deploy/infra/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
+  otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
+  OTEL_METRIC_EXPORT_INTERVAL=1000 RUST_LOG=error \
+  ./target/debug/wamn-gates --log-level info metricbench \
+  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:15503/postgres \
+  --admin-database-url postgres://postgres:pg@127.0.0.1:15503/postgres \
+  --metrics-url http://127.0.0.1:8889/metrics
+docker rm -f lane-metric-pg lane-metric-otelcol
+# Phases 1-5 PASS; phase 6 (api RPS) honest-skips (in-cluster only — ProxyPre
+# bypasses the host HTTP server). In-cluster gate of record (real collector +
+# Postgres, no cpu limit — the :8889 metrics pipeline rides the same collector):
+docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system apply -f deploy/infra/otel-collector.yaml
+kubectl -n wamn-system rollout status deploy/otel-collector --timeout=120s
+kubectl -n wamn-system apply -f deploy/gates/metricbench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/metricbench --timeout=300s
+kubectl -n wamn-system logs job/metricbench
+```
+
 ### [9.2] trace context propagation
 
 Docs: docs/wash-runtime-fork.md, docs/tracing.md

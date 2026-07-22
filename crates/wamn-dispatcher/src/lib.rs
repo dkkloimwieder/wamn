@@ -51,6 +51,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr as _;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
@@ -69,6 +70,32 @@ use wamn_run_queue::{
 // tenant/schema, so these validators are the injection boundary HERE — and they
 // are the SAME rule the wamn:postgres plugin enforces, held in one owner.
 use wamn_registry::identifiers::{valid_schema, valid_tenant};
+
+/// [9.8] The claimable run-queue depth for the pinned session's tenant. Mirrors
+/// EXACTLY the claim predicate of `wamn_run_queue::claim_batch_sql`
+/// (`crates/wamn-run-queue/src/sql.rs`: `available_at` reached, lease NULL-or-
+/// expired, budget-remaining), so the gauge counts precisely the rows a runner
+/// could claim right now. Inverting a clause (e.g. `available_at > now()`) makes
+/// a seeded queue read 0 — metricbench phase 2's mutant.
+pub const RUN_QUEUE_DEPTH_SQL: &str = "SELECT count(*)::bigint FROM run_queue \
+     WHERE tenant_id = current_setting('app.tenant', true) \
+       AND available_at <= now() \
+       AND (lease_expires_at IS NULL OR lease_expires_at <= now()) \
+       AND (attempts < max_attempts OR lease_expires_at IS NULL)";
+
+/// [9.8] One project's last-sampled claimable queue depth, with the tenant its
+/// gauge series is labelled by.
+#[derive(Clone, Debug)]
+pub struct DepthSample {
+    pub tenant: String,
+    pub depth: i64,
+}
+
+/// [9.8] Shared per-project depth samples (keyed by project name) the
+/// `wamn.run_queue.depth` observable gauge folds at export time. [`Dispatcher::tick_project`]
+/// republishes its project's sample each sweep — no new loop, the sweep IS the
+/// interval.
+pub type DepthRegistry = Arc<Mutex<HashMap<String, DepthSample>>>;
 
 #[derive(Debug, Args)]
 pub struct DispatchArgs {
@@ -319,6 +346,9 @@ pub struct Dispatcher {
     pub projects: Vec<ProjectState>,
     nats: Option<async_nats::Client>,
     cfg: DispatcherConfig,
+    /// [9.8] Per-project claimable-queue-depth samples the `wamn.run_queue.depth`
+    /// gauge reads; refreshed each sweep by [`Dispatcher::tick_project`].
+    depth: DepthRegistry,
 }
 
 impl Dispatcher {
@@ -356,7 +386,15 @@ impl Dispatcher {
             projects,
             nats,
             cfg,
+            depth: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// [9.8] The shared depth registry to register the `wamn.run_queue.depth`
+    /// gauge over ([`register_queue_depth_gauge`]). Cloned so the gauge callback
+    /// and the sweep loop share it.
+    pub fn depth_registry(&self) -> DepthRegistry {
+        self.depth.clone()
     }
 
     /// One sweep of one project at `now_ms` — the whole engine, pure decisions
@@ -366,6 +404,8 @@ impl Dispatcher {
     pub async fn tick_project(&mut self, idx: usize, now_ms: i64) -> anyhow::Result<TickReport> {
         let (batch, cadence) = (self.cfg.batch, self.cfg.cadence);
         let nats = self.nats.as_ref();
+        // [9.8] cloned before the &mut borrow of projects, updated after the scan.
+        let depth = self.depth.clone();
 
         // A dropped connection (DB restart, failover, network blip) is
         // re-dialed rather than fatal: an always-on dispatcher must outlive its
@@ -483,6 +523,20 @@ impl Dispatcher {
             let run_id: String = row.get("run_id");
             doorbells.push(run_id.clone());
             report.woken.push(run_id);
+        }
+
+        // [9.8] republish this project's CLAIMABLE queue depth (the same
+        // predicate a runner claims by) for the wamn.run_queue.depth gauge —
+        // piggybacked on the existing sweep, no new loop.
+        let queue_depth: i64 = p.client.query_one(RUN_QUEUE_DEPTH_SQL, &[]).await?.get(0);
+        if let Ok(mut d) = depth.lock() {
+            d.insert(
+                p.spec.name.clone(),
+                DepthSample {
+                    tenant: p.spec.tenant.clone(),
+                    depth: queue_depth,
+                },
+            );
         }
 
         // Doorbells strictly after the effects committed (a hint for
@@ -707,6 +761,32 @@ async fn fire(
     Ok(inserted == 1)
 }
 
+/// [9.8] Register the `wamn.run_queue.depth` observable gauge over the
+/// dispatcher's shared depth registry, keyed by `wamn.tenant` / `wamn.project`.
+/// Uses the global meter (the provider `main` installs when `OTEL_*` is set) — a
+/// no-op otherwise. Call ONCE (observable instruments warn on duplicate
+/// registration); the callback folds every project's last-sampled depth.
+pub fn register_queue_depth_gauge(depth: &DepthRegistry) {
+    let depth = depth.clone();
+    let _ = opentelemetry::global::meter("wamn-dispatcher")
+        .i64_observable_gauge("wamn.run_queue.depth")
+        .with_description("claimable runs waiting in a project's run_queue")
+        .with_callback(move |o| {
+            if let Ok(d) = depth.lock() {
+                for (project, sample) in d.iter() {
+                    o.observe(
+                        sample.depth,
+                        &[
+                            opentelemetry::KeyValue::new("wamn.tenant", sample.tenant.clone()),
+                            opentelemetry::KeyValue::new("wamn.project", project.clone()),
+                        ],
+                    );
+                }
+            }
+        })
+        .build();
+}
+
 pub fn epoch_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -777,6 +857,9 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         batch: args.batch.max(1),
     };
     let mut dispatcher = Dispatcher::connect(&specs, nats, cfg).await?;
+    // [9.8] the run-queue-depth gauge reads the dispatcher's shared registry each
+    // sweep refreshes; a no-op until main installs a meter provider (OTEL_*).
+    register_queue_depth_gauge(&dispatcher.depth_registry());
     tracing::info!(
         projects = dispatcher.projects.len(),
         min_interval_ms = args.min_interval_ms,
@@ -866,10 +949,38 @@ fn init_crypto() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DispatcherConfig, Ordering, PartitionPolicy, Registry, partition_key_for_firing,
-        partition_policy_for_firing, valid_tenant,
+        DispatcherConfig, Ordering, PartitionPolicy, RUN_QUEUE_DEPTH_SQL, Registry,
+        partition_key_for_firing, partition_policy_for_firing, valid_tenant,
     };
     use wamn_run_queue::Firing;
+
+    // [9.8] the run_queue.depth count must reuse the CLAIMABLE predicate (rows a
+    // runner could take now), not its inverse. A mutant that counts parked rows
+    // (`available_at > now()`) or drops a clause diverges here and at metricbench
+    // phase 2. The clauses are asserted verbatim against the same trio
+    // `wamn_run_queue::claim_batch_sql` fences the claim with.
+    #[test]
+    fn depth_sql_counts_claimable_not_parked() {
+        let sql = RUN_QUEUE_DEPTH_SQL;
+        assert!(
+            sql.contains("available_at <= now()"),
+            "delay must have elapsed"
+        );
+        assert!(sql.contains("lease_expires_at IS NULL OR lease_expires_at <= now()"));
+        assert!(sql.contains("attempts < max_attempts OR lease_expires_at IS NULL"));
+        assert!(
+            sql.contains("current_setting('app.tenant', true)"),
+            "tenant floor"
+        );
+        // The inverted-predicate mutant must not be what we count.
+        assert!(!sql.contains("available_at > now()"));
+        // The claim path fences with the SAME clauses (drift guard). It aliases
+        // the queue table (`c.`), so match alias-surviving substrings.
+        let claim = wamn_run_queue::claim_batch_sql(1);
+        assert!(claim.contains("available_at <= now()"));
+        assert!(claim.contains("lease_expires_at IS NULL"));
+        assert!(claim.contains("attempts < "));
+    }
 
     fn firing(flow_id: &str, input_json: &str) -> Firing {
         Firing {

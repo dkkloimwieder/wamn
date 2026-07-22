@@ -13,6 +13,7 @@ pub mod doubles;
 pub mod egress_guard;
 pub mod engine;
 pub mod host;
+pub mod memory_metrics;
 pub mod plugins;
 pub mod serve_node;
 

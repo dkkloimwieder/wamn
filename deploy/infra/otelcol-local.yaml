@@ -28,6 +28,11 @@ exporters:
       queue_size: 10000
     retry_on_failure:
       enabled: true
+  # [9.8] received app metrics (wamn.*) as Prometheus text on :8889 — the local
+  # metricbench scrape target (add_metric_suffixes:false keeps names verbatim).
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    add_metric_suffixes: false
 service:
   telemetry:
     metrics:
@@ -46,3 +51,8 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlp/tempo]
+    # [9.8] app metrics → Prometheus text on :8889 (metricbench).
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]

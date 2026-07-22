@@ -211,6 +211,30 @@ impl causation::Host for ActiveCtx<'_> {
     }
 }
 
+/// [9.8] Guest DB-call latency histogram (ms), labelled by `db.operation`
+/// (query / execute / txn.query / txn.execute) and `wamn.project`. On the global
+/// meter beside the 9.1 `wamn.postgres` span — a no-op until a provider is
+/// installed (`OTEL_*`). Recorded around the awaited call at each `db_span` site.
+static QUERY_DURATION_MS: std::sync::LazyLock<opentelemetry::metrics::Histogram<f64>> =
+    std::sync::LazyLock::new(|| {
+        opentelemetry::global::meter("wamn-postgres")
+            .f64_histogram("wamn.postgres.query.duration_ms")
+            .with_description("wamn:postgres guest DB call latency in ms, by db.operation")
+            .build()
+    });
+
+/// Record one guest DB call's wall time on [`QUERY_DURATION_MS`]. `op` matches
+/// the `db_span` operation; `project` is the executing component's project.
+fn record_query_ms(op: &'static str, project: &str, elapsed: std::time::Duration) {
+    QUERY_DURATION_MS.record(
+        elapsed.as_secs_f64() * 1000.0,
+        &[
+            opentelemetry::KeyValue::new("db.operation", op),
+            opentelemetry::KeyValue::new("wamn.project", project.to_string()),
+        ],
+    );
+}
+
 /// [9.1] A `wamn.postgres` span over one guest DB call, enriched host-side with
 /// the executing component's tenant/project (the same claim maps that inject
 /// `app.tenant`; the guest cannot spoof them). Emitted through the process's
@@ -242,17 +266,18 @@ impl client::Host for ActiveCtx<'_> {
         let plugin = plugin_of(self)?;
         let component_id = self.component_id.to_string();
         let span = db_span(&plugin, &component_id, "query");
-        Ok(
-            match plugin
-                .one_shot(&component_id, &sql, &params, true)
-                .instrument(span)
-                .await
-            {
-                Ok(OneShotResult::Rows(rs)) => Ok(rs),
-                Ok(OneShotResult::Count(_)) => unreachable!("one_shot(want_rows) returns rows"),
-                Err(e) => Err(e),
-            },
-        )
+        let project = plugin.project_for(&component_id);
+        let t0 = std::time::Instant::now();
+        let result = plugin
+            .one_shot(&component_id, &sql, &params, true)
+            .instrument(span)
+            .await;
+        record_query_ms("query", &project, t0.elapsed());
+        Ok(match result {
+            Ok(OneShotResult::Rows(rs)) => Ok(rs),
+            Ok(OneShotResult::Count(_)) => unreachable!("one_shot(want_rows) returns rows"),
+            Err(e) => Err(e),
+        })
     }
 
     async fn execute(
@@ -263,17 +288,18 @@ impl client::Host for ActiveCtx<'_> {
         let plugin = plugin_of(self)?;
         let component_id = self.component_id.to_string();
         let span = db_span(&plugin, &component_id, "execute");
-        Ok(
-            match plugin
-                .one_shot(&component_id, &sql, &params, false)
-                .instrument(span)
-                .await
-            {
-                Ok(OneShotResult::Count(n)) => Ok(n),
-                Ok(OneShotResult::Rows(_)) => unreachable!("one_shot(!want_rows) returns count"),
-                Err(e) => Err(e),
-            },
-        )
+        let project = plugin.project_for(&component_id);
+        let t0 = std::time::Instant::now();
+        let result = plugin
+            .one_shot(&component_id, &sql, &params, false)
+            .instrument(span)
+            .await;
+        record_query_ms("execute", &project, t0.elapsed());
+        Ok(match result {
+            Ok(OneShotResult::Count(n)) => Ok(n),
+            Ok(OneShotResult::Rows(_)) => unreachable!("one_shot(!want_rows) returns count"),
+            Err(e) => Err(e),
+        })
     }
 
     async fn begin(
@@ -329,11 +355,14 @@ impl client::HostTransaction for ActiveCtx<'_> {
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
         let plugin = plugin_of(self)?;
-        let span = db_span(&plugin, self.component_id.as_ref(), "txn.query");
+        let component_id = self.component_id.to_string();
+        let span = db_span(&plugin, &component_id, "txn.query");
+        let project = plugin.project_for(&component_id);
         let txn = self.table.get(&rep)?;
         let row_limit = txn.row_limit;
         let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
-        Ok(with_txn_conn(&state, &destroyed, |conn| async move {
+        let t0 = std::time::Instant::now();
+        let out = with_txn_conn(&state, &destroyed, |conn| async move {
             let r = run_query(&conn, &sql, &params, row_limit).await;
             // run_query maps errors already; re-split for with_txn_conn's
             // fatal/statement distinction by probing conn liveness.
@@ -341,7 +370,9 @@ impl client::HostTransaction for ActiveCtx<'_> {
         })
         .instrument(span)
         .await
-        .and_then(|r| r))
+        .and_then(|r| r);
+        record_query_ms("txn.query", &project, t0.elapsed());
+        Ok(out)
     }
 
     async fn execute(
@@ -351,16 +382,21 @@ impl client::HostTransaction for ActiveCtx<'_> {
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
         let plugin = plugin_of(self)?;
-        let span = db_span(&plugin, self.component_id.as_ref(), "txn.execute");
+        let component_id = self.component_id.to_string();
+        let span = db_span(&plugin, &component_id, "txn.execute");
+        let project = plugin.project_for(&component_id);
         let txn = self.table.get(&rep)?;
         let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
-        Ok(with_txn_conn(&state, &destroyed, |conn| async move {
+        let t0 = std::time::Instant::now();
+        let out = with_txn_conn(&state, &destroyed, |conn| async move {
             let r = run_execute(&conn, &sql, &params).await;
             (conn, flatten_mapped(r))
         })
         .instrument(span)
         .await
-        .and_then(|r| r))
+        .and_then(|r| r);
+        record_query_ms("txn.execute", &project, t0.elapsed());
+        Ok(out)
     }
 
     async fn open_cursor(

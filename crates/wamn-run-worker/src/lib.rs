@@ -41,9 +41,11 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Args;
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Counter, Histogram};
 use tokio::sync::watch;
 use wash_runtime::engine::Engine;
-use wash_runtime::engine::ctx::{Ctx, SharedCtx};
+use wash_runtime::engine::ctx::{Ctx, SharedCtx, WamnStoreLimiter};
 use wash_runtime::engine::workload::ResolvedWorkload;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::{
@@ -59,6 +61,7 @@ use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestC
 
 use wamn_host::doubles::{DoubleSet, EgressRecorder};
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_host::memory_metrics::{self, MemoryMeter};
 use wamn_host::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
 use wamn_host::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
 use wamn_host::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
@@ -307,6 +310,87 @@ fn register_logging_claim(logging: &WamnLogging, identity: &RunnerIdentity<'_>) 
     logging.set_claim(identity.owner, identity.tenant, identity.project);
 }
 
+/// [9.8] Map a guest drive outcome code to its `outcome` metric attribute:
+/// 0 completed, 1 parked, anything else failed — the SAME fold [`DrainReport`]
+/// uses for its tally. A mutant that folds `failed` into the completed bucket (or
+/// drops the attribute) is caught by metricbench phase 1's forced-failure check.
+fn outcome_label(outcome: u32) -> &'static str {
+    match outcome {
+        0 => "completed",
+        1 => "parked",
+        _ => "failed",
+    }
+}
+
+/// [9.8] The run-worker's OTel instruments plus this replica's `(tenant, project)`
+/// base attributes: `wamn.run.executions` (by `outcome`) and the per-drive
+/// `wamn.run.drive.duration_ms` histogram. On the global meter the fork's
+/// observability init installs (the S5/9.1 provider — never a second one); inert
+/// until `OTEL_*` selects a real provider. NO `run_id` attribute (unbounded).
+struct RunMetrics {
+    executions: Counter<u64>,
+    drive_ms: Histogram<f64>,
+    tenant: String,
+    project: String,
+}
+
+impl RunMetrics {
+    fn register(tenant: &str, project: &str) -> Self {
+        let meter = opentelemetry::global::meter("wamn-run-worker");
+        Self {
+            executions: meter
+                .u64_counter("wamn.run.executions")
+                .with_description(
+                    "flow-run drives by terminal outcome (completed / parked / failed)",
+                )
+                .build(),
+            drive_ms: meter
+                .f64_histogram("wamn.run.drive.duration_ms")
+                .with_description(
+                    "wall time to drive one claimed run through run-next, in ms \
+                     (whole-run drive; true per-node duration is guest-side — deferred)",
+                )
+                .build(),
+            tenant: tenant.to_string(),
+            project: project.to_string(),
+        }
+    }
+
+    /// Record one claimed drive: the duration histogram (tenant/project) and the
+    /// executions counter (tenant/project + the terminal `outcome`).
+    fn record_drive(&self, elapsed: Duration, outcome: u32) {
+        let base = [
+            KeyValue::new("wamn.tenant", self.tenant.clone()),
+            KeyValue::new("wamn.project", self.project.clone()),
+        ];
+        self.drive_ms.record(elapsed.as_secs_f64() * 1000.0, &base);
+        self.executions.add(
+            1,
+            &[
+                KeyValue::new("wamn.tenant", self.tenant.clone()),
+                KeyValue::new("wamn.project", self.project.clone()),
+                KeyValue::new("outcome", outcome_label(outcome)),
+            ],
+        );
+    }
+}
+
+/// [9.8] Attach the D16 per-store memory limiter to the flowrunner store when a
+/// budget is configured (`WAMN_MEMORY_LIMIT_MB`), so its high-water + any denials
+/// feed the `wamn.memory.*` gauges (mirrors the fork's `new_store_from_templates`
+/// resolution, env-only here). Unbudgeted (the default) attaches NOTHING —
+/// byte-identical to before, and the long-lived flowrunner never risks a grow
+/// trap. Returns the process memory meter to snapshot into, or `None`.
+fn attach_memory_limiter(store: &mut Store<SharedCtx>, component_id: &str) -> Option<MemoryMeter> {
+    let budget_mb: u64 = std::env::var("WAMN_MEMORY_LIMIT_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())?;
+    store.data_mut().wamn_limiter =
+        WamnStoreLimiter::new((budget_mb as usize) << 20, Arc::from(component_id));
+    store.limiter(|ctx| &mut ctx.wamn_limiter);
+    Some(memory_metrics::global_memory_meter())
+}
+
 /// The production flow runner: a single long-lived flowrunner instance whose
 /// plugin session carries the host-injected lease owner + tenant + schema.
 /// [`drain`] pulls every currently-claimable run to a terminal (or parked)
@@ -317,6 +401,11 @@ pub struct RunWorker {
     ttl_ms: u64,
     /// The doorbell subject this runner listens on (`wamn.doorbell.<tenant>`).
     subject: String,
+    /// [9.8] run/drive instruments + this replica's tenant/project attributes.
+    metrics: RunMetrics,
+    /// [9.8] `Some` when a memory limiter is attached (a budget was configured);
+    /// each drive then publishes the store's high-water into the meter.
+    mem: Option<MemoryMeter>,
 }
 
 impl RunWorker {
@@ -432,6 +521,10 @@ impl RunWorker {
                 .build(),
         };
         let mut store = Store::new(raw, SharedCtx::new(ctx));
+        // [9.8] Attach the D16 memory limiter when a budget is configured (before
+        // instantiation, so baseline-memory creation is counted) — unbudgeted =
+        // no limiter, unchanged behavior.
+        let mem = attach_memory_limiter(&mut store, owner);
         // No kill semantics: a huge deadline so the epoch (which the ticker
         // still advances) never traps a legitimately long run.
         store.set_epoch_deadline(u64::MAX / 2);
@@ -443,6 +536,8 @@ impl RunWorker {
             run_next,
             ttl_ms,
             subject: format!("wamn.doorbell.{tenant}"),
+            metrics: RunMetrics::register(tenant, project),
+            mem,
         })
     }
 
@@ -464,15 +559,25 @@ impl RunWorker {
     pub async fn drain(&mut self) -> anyhow::Result<DrainReport> {
         let mut report = DrainReport::default();
         loop {
+            // [9.8] time the whole run-drive; record only for a CLAIMED run (an
+            // empty claim is the idle poll, not a drive).
+            let t0 = std::time::Instant::now();
             let (claimed, run_id, outcome) = self.call_run_next().await?;
             if !claimed {
                 break;
             }
+            let elapsed = t0.elapsed();
             report.claimed += 1;
             match outcome {
                 0 => report.completed += 1,
                 1 => report.parked += 1,
                 _ => report.failed += 1,
+            }
+            // [9.8] the drive's duration + outcome, then the flowrunner store's
+            // memory high-water when a limiter is attached.
+            self.metrics.record_drive(elapsed, outcome);
+            if let Some(mem) = &self.mem {
+                mem.snapshot_from(&self.store.data().wamn_limiter);
             }
             tracing::info!(
                 run_id = run_id.as_deref().unwrap_or("?"),
@@ -587,6 +692,9 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
     let mut cfg = WamnPostgresConfig::from_env();
     cfg.database_url = Some(url);
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
+    // [9.8] pool-saturation gauges over this worker's own project pool(s) — once
+    // per process (a no-op without OTEL_*).
+    plugin.register_pool_metrics();
 
     // 5.9: the credential vault, sourced from the mounted file when present
     // (a missing file = an empty vault, warned inside from_file).
@@ -744,6 +852,19 @@ mod tests {
         // An empty arg is ignored (falls through to HOSTNAME/fallback).
         let via_env = resolve_owner(Some(String::new()));
         assert!(!via_env.is_empty());
+    }
+
+    // [9.8] the executions counter's `outcome` attribute maps 0/1/other to
+    // completed/parked/failed — the SAME fold DrainReport uses. A mutant folding
+    // `failed` into `completed` (or dropping the attribute) diverges here and at
+    // metricbench phase 1.
+    #[test]
+    fn outcome_label_maps_codes_to_buckets() {
+        assert_eq!(outcome_label(0), "completed");
+        assert_eq!(outcome_label(1), "parked");
+        assert_eq!(outcome_label(2), "failed");
+        // Any non-0/1 code is a failure (defensive — the guest only emits 0/1/2).
+        assert_eq!(outcome_label(99), "failed");
     }
 
     #[test]
