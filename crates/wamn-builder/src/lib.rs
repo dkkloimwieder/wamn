@@ -11,12 +11,15 @@
 //!    (a cdylib on the node SDK) or `jco componentize` (a JS/TS ES module);
 //! 3. **import lint** (5.5a, [`wamn_host::egress_guard::screen_builder_component`])
 //!    — the package allowlist + the interface tightening, over the built bytes;
-//! 4. **sign + SBOM** ([`sign`] / [`sbom`], 5.5d) — an ed25519 detached signature
+//! 4. **test gate** ([`test_gate`], 11.5) — the crate's `cases.json` (if present)
+//!    run against the built artifact under the frozen `wamn:node` world; a
+//!    failing case REFUSES the publish (run-if-present, before any push);
+//! 5. **sign + SBOM** ([`sign`] / [`sbom`], 5.5d) — an ed25519 detached signature
 //!    over `sha256(wasm)` + a minimal CycloneDX SBOM;
-//! 5. **OCI push** ([`registry`] + [`manifest_build`], 5.5e) — the wasm layer +
+//! 6. **OCI push** ([`registry`] + [`manifest_build`], 5.5e) — the wasm layer +
 //!    the `wamn.node.manifest` / signature / SBOM annotations, pushed so the
 //!    wash-runtime host can still pull it;
-//! 6. **deployment emission** ([`deploy_emit`], 5.5f) — the serve-node runtime
+//! 7. **deployment emission** ([`deploy_emit`], 5.5f) — the serve-node runtime
 //!    manifest with grants DERIVED from the imports (design-note 7).
 //!
 //! Spec: `docs/builder.md`.
@@ -29,3 +32,4 @@ pub mod manifest_build;
 pub mod registry;
 pub mod sbom;
 pub mod sign;
+pub mod test_gate;

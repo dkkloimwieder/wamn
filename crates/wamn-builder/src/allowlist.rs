@@ -11,7 +11,7 @@
 //! single-module is a deferral.
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
 use serde::Deserialize;
@@ -121,6 +121,11 @@ struct Metadata {
 struct MetaPkg {
     id: String,
     name: String,
+    /// The absolute path of the package's `Cargo.toml` — its ROOT (the parent)
+    /// is where sibling files like `cases.json` (11.5) live. Reused from the
+    /// single `cargo metadata` run so a workspace build discovers the crate dir
+    /// (the `--source` is the workspace, not the crate).
+    manifest_path: String,
 }
 #[derive(Deserialize)]
 struct Resolve {
@@ -183,6 +188,20 @@ pub fn closure_names(metadata_json: &str, package: &str) -> anyhow::Result<Vec<S
     names.sort();
     names.dedup();
     Ok(names)
+}
+
+/// The filesystem path of `package`'s `Cargo.toml`, parsed from the SAME
+/// `cargo metadata` document. The node crate's ROOT — the manifest's parent — is
+/// where sibling files like `cases.json` (11.5) are discovered, because a
+/// workspace build's `--source` is the workspace dir, not the crate dir.
+pub fn package_manifest_path(metadata_json: &str, package: &str) -> anyhow::Result<PathBuf> {
+    let meta: Metadata =
+        serde_json::from_str(metadata_json).context("parse cargo metadata JSON")?;
+    meta.packages
+        .iter()
+        .find(|p| p.name == package)
+        .map(|p| PathBuf::from(&p.manifest_path))
+        .with_context(|| format!("package {package:?} not found in cargo metadata"))
 }
 
 /// Run `cargo metadata --offline` for `manifest_path` and return the raw JSON. A
@@ -305,26 +324,41 @@ mod tests {
         }
     }
 
+    /// Minimal synthetic cargo-metadata doc: root -> a -> b (each with the
+    /// `manifest_path` real cargo metadata always carries).
+    const SYNTHETIC_METADATA: &str = r#"{
+      "packages": [
+        {"id":"root 0.1.0 (path+file:///r)","name":"root","manifest_path":"/r/samples/root/Cargo.toml"},
+        {"id":"a 1.0.0 (registry)","name":"a","manifest_path":"/home/.cargo/a/Cargo.toml"},
+        {"id":"b 2.0.0 (registry)","name":"b","manifest_path":"/home/.cargo/b/Cargo.toml"}
+      ],
+      "resolve": {
+        "nodes": [
+          {"id":"root 0.1.0 (path+file:///r)","deps":[{"pkg":"a 1.0.0 (registry)"}]},
+          {"id":"a 1.0.0 (registry)","deps":[{"pkg":"b 2.0.0 (registry)"}]},
+          {"id":"b 2.0.0 (registry)","deps":[]}
+        ]
+      }
+    }"#;
+
     #[test]
     fn closure_names_excludes_root_and_walks_deps() {
-        // Minimal synthetic cargo-metadata doc: root -> a -> b.
-        let json = r#"{
-          "packages": [
-            {"id":"root 0.1.0 (path+file:///r)","name":"root"},
-            {"id":"a 1.0.0 (registry)","name":"a"},
-            {"id":"b 2.0.0 (registry)","name":"b"}
-          ],
-          "resolve": {
-            "nodes": [
-              {"id":"root 0.1.0 (path+file:///r)","deps":[{"pkg":"a 1.0.0 (registry)"}]},
-              {"id":"a 1.0.0 (registry)","deps":[{"pkg":"b 2.0.0 (registry)"}]},
-              {"id":"b 2.0.0 (registry)","deps":[]}
-            ]
-          }
-        }"#;
         assert_eq!(
-            closure_names(json, "root").unwrap(),
+            closure_names(SYNTHETIC_METADATA, "root").unwrap(),
             vec!["a".to_string(), "b".to_string()]
         );
+    }
+
+    #[test]
+    fn package_manifest_path_reads_the_named_crate_root() {
+        // 11.5: the crate ROOT (the manifest's parent) is where cases.json lives.
+        let path = package_manifest_path(SYNTHETIC_METADATA, "root").unwrap();
+        assert_eq!(path, PathBuf::from("/r/samples/root/Cargo.toml"));
+        assert_eq!(
+            path.parent().unwrap().join("cases.json"),
+            PathBuf::from("/r/samples/root/cases.json")
+        );
+        // An unknown package is an error (not a silent skip).
+        assert!(package_manifest_path(SYNTHETIC_METADATA, "nope").is_err());
     }
 }

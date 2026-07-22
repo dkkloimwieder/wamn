@@ -8,12 +8,14 @@
 //! the copy-project-env definition path, and the FK to `wamn_run.flows` ON
 //! DELETE CASCADE makes that binding structural.
 //!
-//! **Purity + the v0 seam.** This crate is pure (serde + serde_json only): it
-//! validates the ENVELOPE (ids, ordinals, the schema-version discriminator), not
-//! the case body. The case body is an opaque [`serde_json::Value`] in v0 — the
-//! canonical case/assertion vocabulary is a sibling crate (`wamn-testkit`); at
-//! integration [`TestSuite`] gains a validate-on-write pass that parses each
-//! `case` against those serde types. Until then a body is any well-formed JSON.
+//! **Purity + validate-on-write.** This crate is pure (serde only): it validates
+//! the ENVELOPE (ids, ordinals, the schema-version discriminator) AND, since the
+//! 828 reconcile, each case BODY against the canonical case/assertion vocabulary
+//! ([`wamn_testkit::TestCase`]). [`TestSuite::validate`] runs the envelope checks
+//! first, then a validate-on-write pass that parses every `case` as a `TestCase`
+//! — a malformed body is rejected, naming the offending `case-id`. The body is
+//! still STORED as an opaque [`serde_json::Value`] (round-trips verbatim);
+//! validation only gates writes.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -56,8 +58,9 @@ pub struct CaseEntry {
     /// The case's position in the suite. Ordinals are unique across the suite
     /// (two cases cannot claim the same slot).
     pub ordinal: u32,
-    /// The opaque case body (v0). At integration this is parsed against the
-    /// `wamn-testkit` case/assertion vocabulary; here it is any valid JSON.
+    /// The opaque case body. STORED verbatim (round-trips as-is), but parsed
+    /// against the [`wamn_testkit::TestCase`] vocabulary by [`TestSuite::validate`]
+    /// (validate-on-write) — a malformed body is rejected on write.
     pub case: Value,
 }
 
@@ -75,6 +78,10 @@ pub enum TestSuiteError {
     DuplicateCaseId { case_id: String },
     /// Two cases share an `ordinal`.
     DuplicateOrdinal { ordinal: u32 },
+    /// A case body did not parse against the canonical case/assertion vocabulary
+    /// ([`wamn_testkit::TestCase`]) — the validate-on-write pass. Names the
+    /// offending `case-id` and the serde detail.
+    CaseBody { case_id: String, error: String },
 }
 
 impl std::fmt::Display for TestSuiteError {
@@ -91,6 +98,9 @@ impl std::fmt::Display for TestSuiteError {
             }
             TestSuiteError::DuplicateOrdinal { ordinal } => {
                 write!(f, "duplicate ordinal {ordinal}")
+            }
+            TestSuiteError::CaseBody { case_id, error } => {
+                write!(f, "case {case_id:?} body is not a valid test case: {error}")
             }
         }
     }
@@ -113,8 +123,11 @@ impl TestSuite {
     }
 
     /// Validate the envelope: the schema-version discriminator, non-empty ids,
-    /// unique case ids, and coherent (unique) ordinals. The case BODY is NOT
-    /// validated here (v0 opaque seam).
+    /// unique case ids, and coherent (unique) ordinals. THEN a validate-on-write
+    /// pass (828 reconcile) parses each opaque case BODY against the canonical
+    /// [`wamn_testkit::TestCase`] vocabulary. Envelope checks run FIRST, so a
+    /// structural defect (empty/duplicate id, duplicate ordinal) is reported
+    /// before any body defect.
     pub fn validate(&self) -> Result<(), TestSuiteError> {
         if self.schema_version != SCHEMA_VERSION {
             return Err(TestSuiteError::SchemaVersion {
@@ -144,6 +157,17 @@ impl TestSuite {
                 });
             }
         }
+        // Validate-on-write: each opaque body must additionally parse against the
+        // canonical case/assertion vocabulary. A SEPARATE pass so an envelope
+        // defect above is reported before a body defect here.
+        for case in &self.cases {
+            if let Err(e) = serde_json::from_value::<wamn_testkit::TestCase>(case.case.clone()) {
+                return Err(TestSuiteError::CaseBody {
+                    case_id: case.case_id.clone(),
+                    error: e.to_string(),
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -168,18 +192,47 @@ mod tests {
     #[test]
     fn round_trips_through_json() {
         let src = suite_json(json!([
-            { "case-id": "c1", "ordinal": 0, "case": { "input": { "x": 1 }, "expect": "ok" } },
-            { "case-id": "c2", "ordinal": 1, "case": [1, 2, 3] },
+            { "case-id": "c1", "ordinal": 0,
+              "case": { "name": "c1", "node-ref": {}, "input": { "x": 1 },
+                        "expect": [ { "subset": { "recommended": "reject" } } ] } },
+            { "case-id": "c2", "ordinal": 1,
+              "case": { "name": "c2", "flow-ref": { "flow-id": "escalate-holds", "version": 1 },
+                        "input": [1, 2, 3], "expect": [ { "run-outcome": { "status": "completed" } } ] } },
         ]));
         let suite = TestSuite::from_json(&src).expect("valid suite parses");
         assert_eq!(suite.flow_id, "escalate-holds");
         assert_eq!(suite.flow_version, 1);
         assert_eq!(suite.cases.len(), 2);
-        // The opaque body survives verbatim.
-        assert_eq!(suite.cases[0].case["expect"], json!("ok"));
+        // The opaque body survives verbatim (stored as-is, not normalized).
+        assert_eq!(suite.cases[0].case["input"], json!({ "x": 1 }));
         // from_json(to_json(x)) == x.
         let back = TestSuite::from_json(&suite.to_json()).expect("re-parse");
         assert_eq!(back, suite);
+    }
+
+    /// Validate-on-write (828 reconcile): a case body that is not a valid
+    /// `wamn-testkit` TestCase is rejected, naming the offending case-id.
+    #[test]
+    fn rejects_an_invalid_case_body() {
+        // A body missing the required `input`/`expect` is not a TestCase.
+        let src = suite_json(json!([
+            { "case-id": "bad", "ordinal": 0, "case": { "nope": 1 } },
+        ]));
+        assert!(matches!(
+            TestSuite::from_json(&src),
+            Err(TestSuiteError::CaseBody { case_id, .. }) if case_id == "bad"
+        ));
+    }
+
+    /// A valid `wamn-testkit` TestCase body passes validate-on-write.
+    #[test]
+    fn accepts_a_valid_testkit_case_body() {
+        let src = suite_json(json!([
+            { "case-id": "ok", "ordinal": 0,
+              "case": { "name": "ok", "node-ref": {}, "input": {},
+                        "expect": [ { "error-class": { "node-error": "invalid-input" } } ] } },
+        ]));
+        assert!(TestSuite::from_json(&src).is_ok());
     }
 
     #[test]

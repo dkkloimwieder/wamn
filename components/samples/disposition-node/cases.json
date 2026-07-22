@@ -1,0 +1,115 @@
+{
+  "schema-version": "wamn-node-cases/v0",
+  "cases": [
+    {
+      "name": "severe-moisture-recommends-reject",
+      "input": { "hold": { "material": "resin-A", "moisture_pct": "12.00", "moisture_max_pct": "5.00" } },
+      "expect": { "ok": { "value": { "recommended": "reject", "confidence": 0.8 }, "match": "subset" } }
+    },
+    {
+      "name": "severe-not-overridden-by-use-as-is-history",
+      "input": {
+        "hold": { "material": "resin-A", "moisture_pct": "12.00", "moisture_max_pct": "5.00" },
+        "history": [ { "decision": "use-as-is" }, { "decision": "use-as-is" } ]
+      },
+      "expect": { "ok": { "value": { "recommended": "reject", "confidence": 0.8 }, "match": "subset" } }
+    },
+    {
+      "name": "mild-default-use-as-is-exact-output",
+      "input": { "hold": { "material": "resin-A", "moisture_pct": "6.00", "moisture_max_pct": "5.00" } },
+      "expect": {
+        "ok": {
+          "value": {
+            "recommended": "use-as-is",
+            "confidence": 0.5,
+            "rationale": "resin-A: mild exceedance with no prior dispositions — recommend use-as-is"
+          },
+          "match": "exact"
+        }
+      }
+    },
+    {
+      "name": "mild-with-reject-majority-recommends-reject",
+      "input": {
+        "hold": { "material": "resin-A", "moisture_pct": "6.00", "moisture_max_pct": "5.00" },
+        "history": [ { "decision": "reject" }, { "decision": "reject" }, { "decision": "use-as-is" } ]
+      },
+      "expect": { "ok": { "value": { "recommended": "reject" }, "match": "subset" } }
+    },
+    {
+      "name": "no-exceedance-recommends-accept",
+      "input": { "hold": { "material": "resin-A", "moisture_pct": "4.00", "moisture_max_pct": "5.00" } },
+      "expect": { "ok": { "value": { "recommended": "accept", "confidence": 0.7 }, "match": "subset" } }
+    },
+    {
+      "name": "weight-dimension-drives-severity",
+      "input": { "hold": { "material": "billet-9", "weight_kg": "110.000", "quantity_kg": "100.000", "weight_tolerance_kg": "2.000" } },
+      "expect": { "ok": { "value": { "recommended": "reject" }, "match": "subset" } }
+    },
+    {
+      "name": "worst-dimension-wins-across-moisture-and-weight",
+      "input": {
+        "hold": {
+          "material": "mix-1",
+          "moisture_pct": "6.00", "moisture_max_pct": "5.00",
+          "weight_kg": "50.000", "quantity_kg": "10.000", "weight_tolerance_kg": "1.000"
+        }
+      },
+      "expect": { "ok": { "value": { "recommended": "reject" }, "match": "subset" } }
+    },
+    {
+      "name": "severe-confidence-rises-to-full-support",
+      "input": {
+        "hold": { "material": "resin-A", "moisture_pct": "12.00", "moisture_max_pct": "5.00" },
+        "history": [ { "decision": "reject" }, { "decision": "reject" } ]
+      },
+      "expect": { "ok": { "value": { "recommended": "reject", "confidence": 0.95 }, "match": "subset" } }
+    },
+    {
+      "name": "severe-confidence-at-half-support",
+      "input": {
+        "hold": { "material": "resin-A", "moisture_pct": "12.00", "moisture_max_pct": "5.00" },
+        "history": [ { "decision": "reject" }, { "decision": "accept" } ]
+      },
+      "expect": { "ok": { "value": { "recommended": "reject", "confidence": 0.88 }, "match": "subset" } }
+    },
+    {
+      "name": "no-hold-is-invalid-input",
+      "input": {},
+      "expect": { "error": "invalid-input" }
+    },
+    {
+      "name": "no-material-is-invalid-input",
+      "input": { "hold": { "moisture_pct": "6.00", "moisture_max_pct": "5.00" } },
+      "expect": { "error": "invalid-input" }
+    },
+    {
+      "name": "no-spec-dimension-is-invalid-input",
+      "input": { "hold": { "material": "x" } },
+      "expect": { "error": "invalid-input" }
+    },
+    {
+      "name": "half-a-dimension-is-invalid-input",
+      "input": { "hold": { "material": "x", "moisture_pct": "6.00" } },
+      "expect": { "error": "invalid-input" }
+    },
+    {
+      "name": "bad-decimal-is-invalid-input",
+      "input": { "hold": { "material": "x", "moisture_pct": "abc", "moisture_max_pct": "5.00" } },
+      "expect": { "error": "invalid-input" }
+    },
+    {
+      "name": "float-not-string-is-invalid-input",
+      "input": { "hold": { "material": "x", "moisture_pct": 6.0, "moisture_max_pct": "5.00" } },
+      "expect": { "error": "invalid-input" }
+    },
+    {
+      "name": "unknown-history-decision-is-invalid-input",
+      "input": {
+        "hold": { "material": "resin-A", "moisture_pct": "6.00", "moisture_max_pct": "5.00" },
+        "history": [ { "decision": "approve" } ]
+      },
+      "expect": { "error": "invalid-input" }
+    }
+  ]
+}

@@ -1,0 +1,139 @@
+# 11.5 custom-node TEST-GATE Jobs (wamn-7se): the in-cluster proof that a node's
+# cases.json is a PUBLISH gate — a passing suite publishes, a failing case
+# REFUSES the publish so nothing reaches the registry. Two Jobs drive the SAME
+# builder image + baked disposition-node source (the builder-svc image COPYs
+# components/samples wholesale, so cases.json + the refusal fixture are present):
+#
+#   f2-testgate-pass    — the real cases.json (discovered at the crate root) all
+#                         PASS, then the artifact is signed + pushed. SUCCESS =
+#                         Job complete + a new registry digest under :testgate-pass.
+#
+#   f2-testgate-refusal — a deliberately-wrong --cases fixture (severe moisture
+#                         WRONGLY expected to `accept`) makes the test gate REFUSE.
+#                         SUCCESS = Job FAILURE (condition=failed) + NO new registry
+#                         digest under :testgate-refusal. The gate runs AFTER the
+#                         import lint and BEFORE the OCI push, so a refusal exits
+#                         non-zero before anything is pushed — the whole point.
+#
+# Same 6.2 sandbox posture as f2-build-job.yaml (no service-account token, the
+# egress-deny NetworkPolicy via app=wamn-builder, a memory cap, a wall-clock
+# deadline, one-shot). The MAIN LOOP runs these; do not apply from a lane.
+#
+#   docker build --target builder-svc -t wamn-builder:dev .
+#   kind load docker-image wamn-builder:dev --name wamn
+#   kubectl -n wamn-system apply -f deploy/platform/builder-netpol.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/f2-testgate-job.yaml
+#   # pass arm:
+#   kubectl -n wamn-system wait --for=condition=complete job/f2-testgate-pass --timeout=900s
+#   kubectl -n wamn-system logs job/f2-testgate-pass          # "test gate (11.5): all case(s) passed" + a push line
+#   # refusal arm — EXPECT it to FAIL (a passing refusal Job would be the bug):
+#   kubectl -n wamn-system wait --for=condition=failed job/f2-testgate-refusal --timeout=900s
+#   kubectl -n wamn-system logs job/f2-testgate-refusal       # a TestGateError naming the wrong case; NO "pushed" line
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: f2-testgate-pass
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      # app=wamn-builder so the builder egress-deny NetworkPolicy applies.
+      labels: { app: wamn-builder }
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      volumes:
+        - name: signing-key
+          secret:
+            secretName: wamn-builder-signing-key
+            optional: true
+      containers:
+        - name: wamn-builder
+          image: wamn-builder:dev
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: signing-key
+              mountPath: /etc/wamn/signing
+              readOnly: true
+          # No --cases: the gate DISCOVERS cases.json at the disposition-node crate
+          # root (from the package manifest path). The suite passes, then the push
+          # runs — a complete Job with a new :testgate-pass digest.
+          args:
+            - "--log-level"
+            - "info"
+            - "build"
+            - "--source"
+            - "/build/components"
+            - "--kind"
+            - "cargo"
+            - "--package"
+            - "disposition-node"
+            - "--registry"
+            - "registry.wamn-system.svc.cluster.local:5000"
+            - "--repository"
+            - "wamn/disposition-node"
+            - "--tag"
+            - "testgate-pass"
+            - "--signing-key"
+            - "/etc/wamn/signing/signing-key.hex"
+          resources:
+            # No CPU limit (the S2 CFS-throttling lesson); memory IS capped.
+            requests: { cpu: "1", memory: "2Gi" }
+            limits: { memory: "4Gi" }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: f2-testgate-refusal
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels: { app: wamn-builder }
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      volumes:
+        - name: signing-key
+          secret:
+            secretName: wamn-builder-signing-key
+            optional: true
+      containers:
+        - name: wamn-builder
+          image: wamn-builder:dev
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: signing-key
+              mountPath: /etc/wamn/signing
+              readOnly: true
+          # --cases overrides discovery with the DELIBERATELY-WRONG fixture. The
+          # test gate refuses (a TestGateError) and exits non-zero BEFORE the push
+          # block — so --registry is set only to prove NO :testgate-refusal digest
+          # is ever written. EXPECTED OUTCOME: Job condition=failed.
+          args:
+            - "--log-level"
+            - "info"
+            - "build"
+            - "--source"
+            - "/build/components"
+            - "--kind"
+            - "cargo"
+            - "--package"
+            - "disposition-node"
+            - "--cases"
+            - "/build/components/samples/disposition-node/cases-refusal-fixture.json"
+            - "--registry"
+            - "registry.wamn-system.svc.cluster.local:5000"
+            - "--repository"
+            - "wamn/disposition-node"
+            - "--tag"
+            - "testgate-refusal"
+            - "--signing-key"
+            - "/etc/wamn/signing/signing-key.hex"
+          resources:
+            requests: { cpu: "1", memory: "2Gi" }
+            limits: { memory: "4Gi" }

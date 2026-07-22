@@ -69,6 +69,13 @@ pub struct BuildArgs {
     #[arg(long)]
     pub allowlist: Option<PathBuf>,
 
+    /// 11.5: the custom-node test cases (`cases.json`) run against the built
+    /// artifact as a publish gate. Default: the node crate root's `cases.json`
+    /// (cargo: the package's manifest dir; jco: `--source`) — run-if-present. An
+    /// explicit path is REQUIRED to exist; a failing case REFUSES the publish.
+    #[arg(long)]
+    pub cases: Option<PathBuf>,
+
     /// 5.5e: the OCI registry `host:port` to push to. When absent the build
     /// stops after the lint (no push). Plain HTTP (the in-cluster registry).
     #[arg(long)]
@@ -246,6 +253,53 @@ pub fn lint_artifact(wasm: &[u8], label: &str) -> anyhow::Result<()> {
         .context("built artifact failed the 5.5 builder import lint")
 }
 
+/// 11.5 — the custom-node test gate: run the crate's `cases.json` against the
+/// just-built artifact under the frozen `wamn:node` world, REFUSING the publish
+/// (a [`crate::test_gate::TestGateError`] → non-zero exit → nothing pushed) if
+/// any case fails. Runs AFTER the import lint and BEFORE any push.
+///
+/// v0 is run-if-present: a DISCOVERED `cases.json` that does not exist is a
+/// silent skip (a stdout note, like the unsigned-push warning). An EXPLICIT
+/// `--cases <path>` is REQUIRED to exist (a named-but-missing file is an error,
+/// never a silent skip).
+async fn run_test_gate(
+    explicit: Option<&Path>,
+    discovered: Option<PathBuf>,
+    wasm: &[u8],
+) -> anyhow::Result<()> {
+    let (path, required) = match explicit {
+        Some(p) => (Some(p.to_path_buf()), true),
+        None => (discovered, false),
+    };
+    let Some(path) = path else {
+        println!("test gate (11.5): no cases file discovered — skipped (run-if-present)");
+        return Ok(());
+    };
+    if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        if required {
+            bail!("--cases {} does not exist", path.display());
+        }
+        println!(
+            "test gate (11.5): no cases.json at {} — skipped (run-if-present)",
+            path.display()
+        );
+        return Ok(());
+    }
+    let src = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("read cases file {}", path.display()))?;
+    let cases = crate::test_gate::CaseFile::from_json(&src)
+        .with_context(|| format!("parse cases file {}", path.display()))?;
+    println!(
+        "test gate (11.5): {} case(s) from {}",
+        cases.cases.len(),
+        path.display()
+    );
+    crate::test_gate::run_cases(wasm, &cases).await?;
+    println!("test gate (11.5): all case(s) passed");
+    Ok(())
+}
+
 /// 5.5c — the dependency allowlist over a pre-fetched `cargo metadata` document
 /// (cargo path). Refuses if the resolved package set carries an off-policy crate.
 async fn enforce_cargo_allowlist(
@@ -383,8 +437,10 @@ async fn emit_deployment_if_requested(
 }
 
 /// The `build` verb: dependency allowlist (5.5c) → build (5.5b) → import lint
-/// (5.5a) → optional OCI push with the `wamn.node.manifest` annotation (5.5e).
-/// Signing / SBOM (5.5d) extend the push annotations.
+/// (5.5a) → test gate (11.5, run-if-present) → optional OCI push with the
+/// `wamn.node.manifest` annotation (5.5e). Signing / SBOM (5.5d) extend the push
+/// annotations. A test-gate refusal short-circuits BEFORE the push, so a node
+/// whose cases fail never reaches the registry.
 pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
     let target = push_target(&args)?;
     if args.emit_deployment.is_some() && target.is_none() {
@@ -406,6 +462,14 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
                 artifact.wasm_path.display(),
                 artifact.wasm.len()
             );
+
+            // 11.5: cases live at the node crate ROOT — discovered from the
+            // package's manifest_path (the `--source` is the workspace, not the
+            // crate). A failing case refuses BEFORE any push below.
+            let discovered = crate::allowlist::package_manifest_path(&metadata_json, &package)?
+                .parent()
+                .map(|dir| dir.join("cases.json"));
+            run_test_gate(args.cases.as_deref(), discovered, &artifact.wasm).await?;
 
             if let Some(target) = target {
                 let mut node_manifest =
@@ -442,6 +506,10 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
                 artifact.wasm_path.display(),
                 artifact.wasm.len()
             );
+
+            // 11.5: no cargo graph on the jco path — cases.json sits at `--source`.
+            let discovered = Some(args.source.join("cases.json"));
+            run_test_gate(args.cases.as_deref(), discovered, &artifact.wasm).await?;
 
             if let Some(target) = target {
                 let node_type = args

@@ -10,3 +10,7 @@ serde = { version = "1", features = ["derive"] }
 # The suite is import/export-able (TestSuite::from_json/to_json) and each case
 # BODY is stored as opaque jsonb (a serde_json::Value in v0).
 serde_json = "1"
+# 11.2 validate-on-write (828 reconcile): TestSuite::validate additionally parses
+# each opaque case BODY against the canonical case/assertion vocabulary. PURE
+# (serde only) — the body is still stored verbatim; validation only gates writes.
+wamn-testkit = { path = "../wamn-testkit" }

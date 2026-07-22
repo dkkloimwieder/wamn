@@ -354,6 +354,29 @@ kubectl -n wamn-system wait --for=condition=complete job/socketguard --timeout=1
 kubectl -n wamn-system logs job/socketguard
 ```
 
+### [11.5] custom-node test gate (testgate)
+
+Docs: docs/builder.md §11.5 · Manifest: deploy/gates/f2-testgate-job.yaml
+
+```bash
+# A node's cases.json is a PUBLISH gate: the builder runs it against the built
+# artifact under the frozen wamn:node world, and a failing case REFUSES the
+# publish (nothing is pushed). Build the disposition-node wasm the gate drives:
+cd components && cargo build --release --target wasm32-wasip2 -p disposition-node && cd ..
+cargo test -p wamn-builder            # test_gate serde/subset/display units
+cargo test -p wamn-gates testgate     # run_cases over the compiled node: pass / value-mismatch / error-variant / port
+# Hermetic (positive arm passes; negative arm REFUSES with the typed error before any push):
+./target/debug/wamn-gates --log-level warn testgate \
+  --node components/target/wasm32-wasip2/release/disposition_node.wasm
+cargo clippy -p wamn-builder -p wamn-gates --all-targets
+# in-cluster (the builder image bakes cases.json + the refusal fixture) — the
+# refusal Job is EXPECTED to FAIL (Job failed + no new registry digest):
+kubectl -n wamn-system apply -f deploy/gates/f2-testgate-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/f2-testgate-pass --timeout=900s
+kubectl -n wamn-system wait --for=condition=failed   job/f2-testgate-refusal --timeout=900s
+kubectl -n wamn-system logs job/f2-testgate-refusal   # a TestGateError naming the wrong case; no "pushed" line
+```
+
 ### [5.1] flow-graph schema crate (crates/wamn-flow)
 
 Docs: docs/flow-schema.md

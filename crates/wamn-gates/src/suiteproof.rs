@@ -66,9 +66,21 @@ fn suite_envelope() -> TestSuite {
         "name": "escalate-holds smoke suite",
         "cases": [
             { "case-id": "escalates-stale", "ordinal": 0,
-              "case": { "input": { "age-hours": 72 }, "expect": { "status": "escalated" } } },
+              "case": {
+                  "schema-version": "0.1",
+                  "name": "escalates-stale",
+                  "flow-ref": { "flow-id": FLOW_ID, "version": 1 },
+                  "input": { "age-hours": 72 },
+                  "expect": [ { "run-outcome": { "status": "completed" } } ]
+              } },
             { "case-id": "keeps-fresh", "ordinal": 1,
-              "case": { "input": { "age-hours": 1 }, "expect": { "status": "open" } } },
+              "case": {
+                  "schema-version": "0.1",
+                  "name": "keeps-fresh",
+                  "flow-ref": { "flow-id": FLOW_ID, "version": 1 },
+                  "input": { "age-hours": 1 },
+                  "expect": [ { "run-outcome": { "status": "completed" } } ]
+              } },
         ],
     })
     .to_string();
@@ -176,16 +188,26 @@ pub async fn run(args: SuiteProofArgs) -> anyhow::Result<()> {
         &format!("BIND: every case pins flow_version = 1 (got {bound})"),
         bound == 2,
     );
-    // The opaque case body reached jsonb intact.
-    let body: String = scalar_text(
-        &app,
-        "SELECT case_body->'expect'->>'status' FROM test_cases WHERE case_id = 'escalates-stale'",
-    )
-    .await?;
+    // The opaque case body reached jsonb intact (round-trips to the seeded body)
+    // AND parses as a canonical wamn-testkit TestCase (11.4 validate-on-write).
+    let stored: serde_json::Value = app
+        .query_one(
+            "SELECT case_body FROM test_cases WHERE case_id = 'escalates-stale'",
+            &[],
+        )
+        .await
+        .context("read stored case body")?
+        .get(0);
+    let seeded = &suite.cases[0].case;
     check(
         &mut ok,
-        &format!("STORE: opaque case body preserved (expect.status = {body:?})"),
-        body == "escalated",
+        "STORE: opaque case body round-trips through jsonb intact",
+        &stored == seeded,
+    );
+    check(
+        &mut ok,
+        "STORE: stored case body parses as a wamn-testkit TestCase",
+        serde_json::from_value::<wamn_testkit::TestCase>(stored.clone()).is_ok(),
     );
 
     // --- RLS: a second tenant's claim sees ZERO suites ---
@@ -269,10 +291,6 @@ async fn provision(admin: &Client, schema: &str) -> anyhow::Result<()> {
 
 async fn scalar(c: &Client, sql: &str) -> anyhow::Result<i64> {
     Ok(c.query_one(sql, &[]).await.context("scalar count")?.get(0))
-}
-
-async fn scalar_text(c: &Client, sql: &str) -> anyhow::Result<String> {
-    Ok(c.query_one(sql, &[]).await.context("scalar text")?.get(0))
 }
 
 /// A bare lowercase SQL identifier (the ephemeral schema is interpolated).

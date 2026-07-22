@@ -4167,7 +4167,9 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wamn-host",
+ "wamn-node-invoke",
  "wamn-node-manifest",
+ "wamn-testkit",
  "wasm-encoder 0.251.0",
 ]
 
@@ -4320,6 +4322,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "wamn-testkit",
 ]
 
 [[package]]

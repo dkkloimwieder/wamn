@@ -24,11 +24,15 @@ cargo-ful image (`--target builder-svc`), distinct from the slim cargo-less
    allowlist (`wasi:sockets` / `wamn:postgres` refused) AND the INTERFACE
    tightening (within `wamn:node` only `payloads`/`credentials`/`control`, within
    `wasi:http` only `outgoing-handler`).
-4. **Sign + SBOM (5.5d)** — an ed25519 detached signature over `sha256(wasm)`
+4. **Test gate (11.5)** — the node's `cases.json` (if present) run against the
+   just-built artifact under the frozen `wamn:node` world; a failing case REFUSES
+   the publish. See [§11.5](#115--custom-node-test-gate) below. Run-if-present,
+   BEFORE any push.
+5. **Sign + SBOM (5.5d)** — an ed25519 detached signature over `sha256(wasm)`
    plus a minimal CycloneDX SBOM.
-5. **OCI push (5.5e)** — the wasm layer + the `wamn.node.manifest` / signature /
+6. **OCI push (5.5e)** — the wasm layer + the `wamn.node.manifest` / signature /
    SBOM annotations, pushed so the wash-runtime host can still pull it.
-6. **Deployment emission (5.5f, `--emit-deployment`)** — the serve-node runtime
+7. **Deployment emission (5.5f, `--emit-deployment`)** — the serve-node runtime
    manifest with grants DERIVED from the imports.
 
 ## 5.5a — interface lint + derived grants
@@ -49,6 +53,59 @@ additions over the package-level classifiers the publish gate already enforces:
   declared twice. The frozen worlds (`docs/wamn-node.wit`): `world node` imports
   nothing → empty grants; `http-node` imports `wasi:http/outgoing-handler` +
   `credentials` + `control` → those grants + `requires_allowed_hosts`.
+
+## 11.5 — custom-node test gate
+
+`crates/wamn-builder/src/test_gate.rs` — the node's OWN unit tests, run against
+the built artifact as a publish gate. User-supplied cases exercise the pure
+`wamn:node` `run(ctx, input)` contract; ANY failing case REFUSES the publish (a
+typed `TestGateError` → non-zero exit → nothing is pushed), exactly like the
+allowlist / import-lint stages before it. The stage runs AFTER the import lint
+and BEFORE any OCI push.
+
+- **Cases file** — `cases.json` at the node crate ROOT (a sibling of `Cargo.toml`,
+  the design-note-7 precedent: no manifest annotation pointer in v0). Discovery
+  reuses the single `cargo metadata` run — the package's `manifest_path`, whose
+  parent is the crate dir (a workspace build's `--source` is the workspace, not
+  the crate). The jco path (no cargo graph) looks in `--source`. `--cases <path>`
+  overrides. v0 is **run-if-present**: an absent discovered `cases.json` is a
+  silent skip (a stdout note); an explicit `--cases` is REQUIRED to exist.
+- **Case format** (kebab-case serde, `deny_unknown_fields`) —
+  `{schema-version, cases: [{ name, input: <json>, config?: <json>, grant?:
+  [<str>], expect }]}`, where `expect` is either
+  `{ok: {value: <json>, match: "exact"|"subset", port?: <str>}}` or
+  `{error: "retryable"|"rate-limited"|"terminal"|"invalid-input"|"cancelled"}`.
+  `subset` is a deep subset (object keys recursive; arrays order-insensitive:
+  each expected element subset-matches some actual element); `exact` is full JSON
+  equality. An expected `port` (present) must equal the emission's port.
+- **Executor** — `test_gate::run_cases(wasm, cases)` instantiates the just-built
+  bytes under the frozen `wamn:node` world via `wamn_host::serve_node::ServeNode`
+  (the production host), synthesizes a fixed `ctx` per case (the `f2invoke`
+  template — empty vault, no signing key, deny-all egress), builds a
+  `NodeInvokeRequest` (case config + grant ride it, everything else fixed),
+  `.invoke()`s, and asserts the case's expectation against the
+  `NodeInvokeResponse`. The ONE runner both the builder stage and the hermetic
+  `wamn-gates testgate` gate call.
+- **Seed** — `components/samples/disposition-node/cases.json` transcribes the
+  disposition node's `#[cfg(test)]` matrix (each disposition outcome + confidence
+  pins via subset, the malformed matrix as `invalid-input`). The Rust tests stay
+  (the node crate's own CI); the `cases.json` is the publish-gate transcription.
+- **Gate of record** — hermetic: `wamn-gates testgate` (a positive arm over the
+  real `cases.json` + a negative arm over `cases-refusal-fixture.json` that
+  REFUSES with the typed error before any push). In-cluster:
+  `deploy/gates/f2-testgate-job.yaml` (a pass Job + a refusal Job whose success
+  criterion is Job FAILURE + no new registry digest).
+
+**Vocabulary reconciliation (wamn-gyt):** the `Case`/`CaseFile`/`Expectation`
+types are a minimal, serde-driven LOCAL vocabulary. The sibling `wamn-testkit`
+crate (lane gyt) carries the canonical isomorphic shape; at integration these
+reconcile to imports of gyt's — a re-import, not a rewrite. The execution glue
+(`ServeNode` instantiation + wire mapping) stays in the builder regardless.
+
+**Open follow-up:** a manifest cases-pointer (an annotation naming a non-default
+cases path) is deferred (v0 keeps cases a sibling file per design-note-7);
+streamed-payload cases wait on the 5.10 payload store; output-schema conformance
+matching (beyond exact/subset) is a later match mode.
 
 ## Dependency allowlist policy
 

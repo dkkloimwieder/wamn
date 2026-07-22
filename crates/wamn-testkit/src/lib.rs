@@ -156,7 +156,42 @@ pub struct NodeCase {
     pub input: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<Value>,
+    /// The credential names granted to this invocation (rides the request as the
+    /// `wamn:node` grant). Absent = none. Carried for the 7se builder test-gate,
+    /// which reads it off the `NodeCase` when it builds the `NodeInvokeRequest`;
+    /// [`into_test_case`](Self::into_test_case) does NOT surface it — a
+    /// [`TestCase`] has no grant (a grant is an invocation input, not an
+    /// assertion).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<Vec<String>>,
     pub expect: NodeExpect,
+}
+
+/// A file of node test cases (a node crate's `cases.json`, or a gate `--cases`
+/// fixture): a free-form schema tag plus an ordered list of [`NodeCase`]s. The
+/// 7se builder test-gate parses this envelope, lowers each case to a
+/// [`TestCase`] via [`NodeCase::into_test_case`], and reads `grant` off the
+/// [`NodeCase`] when it builds the invocation.
+///
+/// `deny_unknown_fields` keeps a stray TOP-LEVEL key a hard parse error (the
+/// envelope stays strict); the case bodies themselves parse LOOSELY — an unknown
+/// key inside a [`NodeCase`] is tolerated (the canonical vocabulary is not
+/// `deny_unknown_fields`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct NodeCaseFile {
+    /// A free-form schema tag carried for forward-compat; not interpreted.
+    #[serde(default)]
+    pub schema_version: String,
+    /// The cases, in file order.
+    pub cases: Vec<NodeCase>,
+}
+
+impl NodeCaseFile {
+    /// Parse a node `cases.json` document.
+    pub fn from_json(src: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(src)
+    }
 }
 
 impl NodeCase {
@@ -263,6 +298,57 @@ mod tests {
             vec![Assertion::ErrorClass {
                 node_error: NodeErrorKind::InvalidInput
             }]
+        );
+    }
+
+    /// The 7se `grant` delta: an optional kebab-case field rides the node case,
+    /// round-trips through JSON, and defaults to absent (omitted on the wire).
+    #[test]
+    fn node_case_grant_round_trips_and_defaults_absent() {
+        let wire = json!({
+            "name": "granted",
+            "input": {"a": 1},
+            "grant": ["notify-token"],
+            "expect": {"error": "invalid-input"}
+        });
+        let nc: NodeCase = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(nc.grant.as_deref(), Some(&["notify-token".to_string()][..]));
+        assert_eq!(serde_json::to_value(&nc).unwrap(), wire);
+
+        // Absent grant defaults to None and is omitted on the wire.
+        let bare_wire = json!({"name": "n", "input": {}, "expect": {"error": "terminal"}});
+        let bare: NodeCase = serde_json::from_value(bare_wire.clone()).unwrap();
+        assert!(bare.grant.is_none());
+        assert_eq!(serde_json::to_value(&bare).unwrap(), bare_wire);
+    }
+
+    /// The `NodeCaseFile` envelope parses a `{schema-version, cases}` document,
+    /// carries the case-level `grant`, and `deny_unknown_fields` rejects a stray
+    /// TOP-LEVEL key while a case body still parses loosely.
+    #[test]
+    fn node_case_file_parses_grant_and_rejects_unknown_top_level_key() {
+        let cf = NodeCaseFile::from_json(
+            r#"{"schema-version":"wamn-node-cases/v0","cases":[
+                {"name":"c","input":{},"grant":["t"],"expect":{"error":"invalid-input"}}
+            ]}"#,
+        )
+        .expect("parses");
+        assert_eq!(cf.schema_version, "wamn-node-cases/v0");
+        assert_eq!(cf.cases.len(), 1);
+        assert_eq!(cf.cases[0].grant.as_deref(), Some(&["t".to_string()][..]));
+
+        // schema-version defaults to empty when absent.
+        let bare = NodeCaseFile::from_json(r#"{"cases":[]}"#).expect("parses");
+        assert!(bare.schema_version.is_empty());
+
+        // A stray TOP-LEVEL key is a hard error (the envelope stays strict)...
+        assert!(NodeCaseFile::from_json(r#"{"cases":[],"typo":1}"#).is_err());
+        // ...but an unknown key INSIDE a case is tolerated (loose case bodies).
+        assert!(
+            NodeCaseFile::from_json(
+                r#"{"cases":[{"name":"c","input":{},"typo":1,"expect":{"error":"terminal"}}]}"#
+            )
+            .is_ok()
         );
     }
 

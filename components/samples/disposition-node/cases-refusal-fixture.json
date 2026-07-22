@@ -1,0 +1,10 @@
+{
+  "schema-version": "wamn-node-cases/v0",
+  "cases": [
+    {
+      "name": "severe-moisture-WRONGLY-expects-accept",
+      "input": { "hold": { "material": "resin-A", "moisture_pct": "12.00", "moisture_max_pct": "5.00" } },
+      "expect": { "ok": { "value": { "recommended": "accept" }, "match": "subset" } }
+    }
+  ]
+}

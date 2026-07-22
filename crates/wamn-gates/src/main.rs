@@ -43,6 +43,7 @@ mod schema_drift;
 mod socketguard;
 mod streambench;
 mod suiteproof;
+mod testgate;
 mod testhostbench;
 mod testkitbench;
 mod tracebench;
@@ -120,6 +121,8 @@ enum Command {
     Buildproof(buildproof::BuildproofArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
     Socketguard(socketguard::SocketGuardArgs),
+    /// Run the 11.5 custom-node test-gate publish proof (the disposition node's cases.json passes; a deliberately-wrong expectation refuses with the typed error before any push)
+    Testgate(testgate::TestGateArgs),
     /// Run the l5i9.17 materializer gate (decide/refuse/enqueue/doorbell + C-MAT numbers)
     Matbench(matbench::MatBenchArgs),
     /// Run the wamn-3glr reader-inclusive RI-flip e2e gate (real reader → materializer: pre-flip refusal, live flip, post-flip scoped delete run, non-retroactive)
@@ -197,6 +200,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Egressbench(args) => egressbench::run(args).await,
         Command::Buildproof(args) => buildproof::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
+        Command::Testgate(args) => testgate::run(args).await,
         Command::Matbench(args) => matbench::run(args).await,
         Command::Rie2ebench(args) => rie2ebench::run(args).await,
         Command::Samplebench(args) => samplebench::run(args).await,
