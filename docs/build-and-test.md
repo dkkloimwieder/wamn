@@ -2313,6 +2313,68 @@ docker build --target host -t wamn-host:dev . \
   && docker build --target gates -t wamn-gates:dev .   # fork git dep fetched in the builder stage
 ```
 
+### [POC-F4] disposition-recorded CDC row-event flow + 429 throttle (wamn-lxk)
+
+Docs: docs/poc-material-receiving.md §F4. The `f4proof` gate is the F4
+end-to-end proof AND the **EVT-CUTOVER regression by construction**: it is the
+first gate to drive the WHOLE event-plane arc — REAL reader (`run_with_token`)
+→ REAL materializer guest → run queue → REAL production runner (`RunWorker` +
+`flowrunner.wasm`) → serve-node hosting the SHIPPED `disposition-node.wasm` →
+ERP callback — from a single real WAL insert, over a throwaway
+`wal_level=logical` Postgres + throwaway JetStream (rie2ebench substrate). ONE
+`INSERT INTO dispositions` is the sole stimulus.
+
+Three mechanics rest on it: (1) the **idempotency-key** — the `http-request`
+node's opt-in `"idempotency-key": true` stamps the dispatch's stable key
+(`RunContext::idempotency_key`, `{run_id}:{node}:{occurrence}` — stable across
+retries) as the `Idempotency-Key` header; the value is dispatch mechanics, NOT
+input-templated (24i). No flowrunner change was needed — the RunContext already
+carries the key to standard nodes. (2) **THROTTLE v0 = the queue-park property**:
+a 429 → `rate-limited` → the run PARKS (`available_at` pushed by `Retry-After`,
+lease released) and is NOT re-claimed before the wake; N concurrent 429'd runs
+each park with ONE claim, no thundering re-claim. The inert cross-run
+`ThrottleTable` is deferred (wamn-lxk.throttle). No park-side jitter: the gate
+shows synchronized wake produces NO duplicate ERP posts (idempotency + one-run
+completion per key). (3) the **ERP simulator** — a separate `erp-sim` subcommand
+(429 + `Retry-After` for the first `--fail-first-n` requests per idempotency
+key, then 202; the exactly-once witness; `GET /audit`), distinct from serve-echo
+so no always-200 consumer regresses.
+
+Insert-only registration ⇒ NO REPLICA IDENTITY FULL (the RI reconcile is a
+no-op, asserted). Redelivery leg: delete the durable consumer, re-run — ZERO new
+runs (ON CONFLICT DO NOTHING). Zero-residue teardown (slot/db/role/stream).
+
+```bash
+cargo test -p wamn-nodes                 # the idempotency-key config parse + header decision (+ the classify/taxonomy tests stay green)
+cargo test -p wamn-flow --test flows     # the f4-disposition-recorded fixture validates (endpoint + url + idempotency-key: true)
+(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner -p materializer -p disposition-node)
+# Local gate of record — REAL reader + materializer + runner + serve-node + ERP sim,
+# throwaway wal_level=logical PG + throwaway JetStream:
+docker run -d --name lane-f4-pg -p 5464:5432 -e POSTGRES_PASSWORD=postgres postgres:18 \
+  -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10
+docker run -d --name lane-f4-nats -p 4232:4222 nats:2.10 -js
+REL=components/target/wasm32-wasip2/release
+./target/debug/wamn-gates --log-level error f4proof \
+  --component $REL/materializer.wasm --flowrunner $REL/flowrunner.wasm \
+  --node $REL/disposition_node.wasm \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5464/postgres \
+  --nats-url nats://127.0.0.1:4232
+docker rm -f lane-f4-pg lane-f4-nats
+# In-cluster: the serve-node + ERP sim run IN-PROCESS on loopback (no external
+# Service, no platform runner.yaml allowed-hosts change). Needs the fixture
+# Postgres at wal_level=logical + the data-plane evt-nats:
+kubectl -n wamn-system apply -f deploy/gates/f4proof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/f4proof --timeout=600s
+kubectl -n wamn-system logs job/f4proof
+```
+
+Mutation harness (apply/test/restore with sha256): M1 the idempotency header
+push removed → `wamn-nodes` `idempotency_key_opt_in_stamps_the_dispatch_key`
+fails; M2 `park_sql` stops pushing `available_at` (claim-during-backoff allowed)
+→ f4proof's `an immediate re-drain claims NOTHING` assert fails (flowrunner guest
+rebuild); M3 the ERP sim always answers 202 → `erp_sim`
+`per_key_429_then_one_effective_then_idempotent_replays` fails.
+
 ### [EVT-REPLICA-IDENT / wamn-l5i9.31] per-entity REPLICA IDENTITY FULL reconciler
 
 Docs: docs/event-plane-jetstream.md §5 ("Old images") + docs/provisioning.md

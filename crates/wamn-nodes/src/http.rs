@@ -10,9 +10,13 @@
 //!   "body": "payload",                       // OPTIONAL jmespath over the
 //!                                            // input; null result = no body;
 //!                                            // else sent as JSON
-//!   "credential-header": "x-api-key"         // OPTIONAL header the node's
+//!   "credential-header": "x-api-key",        // OPTIONAL header the node's
 //!                                            // DECLARED credential (5.9) is
 //!                                            // sent as; default authorization
+//!   "idempotency-key": true                  // OPTIONAL opt-in (default off):
+//!                                            // stamp the dispatch's stable
+//!                                            // idempotency key as the
+//!                                            // Idempotency-Key header (F4)
 //! }
 //! ```
 //! Success payload: `{"status": n, "headers": {...}, "body": <json-or-string>}`.
@@ -56,6 +60,11 @@ impl Node for HttpRequestNode {
         // resolves through the vault and rides as a header. The secret never
         // touches config or flow data — it exists only in this request.
         apply_credential(ctx, run.config, &mut req.headers)?;
+        // F4: opt-in idempotency. The KEY is the dispatch's stable
+        // idempotency key (`RunContext::idempotency_key`), supplied by the
+        // caller — dispatch-level mechanics, never templated over `input`
+        // (the 24i input-scoped rule). Off unless the flow opts in.
+        apply_idempotency_key(run.config, &mut req.headers, run.idempotency_key);
         let host = url_host(&req.url).unwrap_or_default().to_string();
         match ctx.http(&req) {
             Ok(resp) => classify_response(&host, &resp),
@@ -163,6 +172,31 @@ fn apply_credential(
     }
 }
 
+/// F4: opt-in idempotency-key stamping. When config `"idempotency-key"` is the
+/// boolean `true`, add an `Idempotency-Key` header carrying `key` — the
+/// dispatch's runner-generated key (`RunContext::idempotency_key`), which is
+/// STABLE across retries of this node visit (R25), so a rate-limited callback
+/// re-sent after the queue backoff carries the SAME key and the upstream can
+/// dedupe it to one effective side effect. The value is dispatch-level
+/// mechanics passed in by the caller — never JMESPath-templated over `input`
+/// (the standing 24i input-scoped rule). An explicit config header of the same
+/// name wins (the trace-context / credential precedence rule); an empty key is
+/// never stamped.
+fn apply_idempotency_key(config: &Value, headers: &mut Vec<(String, String)>, key: &str) {
+    let opted_in = config
+        .get("idempotency-key")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if opted_in
+        && !key.is_empty()
+        && !headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("idempotency-key"))
+    {
+        headers.push(("idempotency-key".to_string(), key.to_string()));
+    }
+}
+
 /// The authority (host[:port]) of an absolute http(s) URL — the shared
 /// throttle's target-host key.
 pub(crate) fn url_host(url: &str) -> Option<&str> {
@@ -243,5 +277,69 @@ fn detail_for(status: u16, resp: &HttpResponse) -> ErrorDetail {
         message: format!("upstream answered HTTP {status}"),
         code: Some(format!("HTTP_{status}")),
         data: Some(serde_json::json!({"status": status, "body": head})),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// F4: the opt-in stamps the caller-supplied dispatch key verbatim.
+    #[test]
+    fn idempotency_key_opt_in_stamps_the_dispatch_key() {
+        let config = json!({"idempotency-key": true});
+        let mut headers = Vec::new();
+        apply_idempotency_key(&config, &mut headers, "run-7:callback:0");
+        assert_eq!(
+            headers,
+            vec![(
+                "idempotency-key".to_string(),
+                "run-7:callback:0".to_string()
+            )]
+        );
+    }
+
+    /// Default (flag absent) and an explicit `false` never stamp — a stray
+    /// Idempotency-Key must not appear on flows that did not opt in.
+    #[test]
+    fn idempotency_key_off_by_default() {
+        for config in [json!({}), json!({"idempotency-key": false})] {
+            let mut headers = Vec::new();
+            apply_idempotency_key(&config, &mut headers, "run-7:callback:0");
+            assert!(
+                headers.is_empty(),
+                "no idempotency header without opt-in: {config}"
+            );
+        }
+    }
+
+    /// An explicit config header of the same name wins (the trace/credential
+    /// precedence rule) and is not duplicated.
+    #[test]
+    fn explicit_idempotency_header_wins() {
+        let config = json!({"idempotency-key": true});
+        let mut headers = vec![("Idempotency-Key".to_string(), "explicit".to_string())];
+        apply_idempotency_key(&config, &mut headers, "run-7:callback:0");
+        let keys: Vec<_> = headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case("idempotency-key"))
+            .collect();
+        assert_eq!(keys.len(), 1, "exactly one idempotency-key header");
+        assert_eq!(keys[0].1, "explicit");
+    }
+
+    /// A non-boolean flag value is not truthy (the flag is a strict opt-in),
+    /// and an empty key is never stamped.
+    #[test]
+    fn non_bool_flag_and_empty_key_do_not_stamp() {
+        let mut headers = Vec::new();
+        apply_idempotency_key(&json!({"idempotency-key": "yes"}), &mut headers, "k");
+        assert!(
+            headers.is_empty(),
+            "a string flag is not the boolean opt-in"
+        );
+        apply_idempotency_key(&json!({"idempotency-key": true}), &mut headers, "");
+        assert!(headers.is_empty(), "an empty dispatch key is never stamped");
     }
 }

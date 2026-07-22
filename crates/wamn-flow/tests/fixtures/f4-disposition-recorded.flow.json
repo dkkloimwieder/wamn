@@ -6,8 +6,8 @@
   "trigger": { "type": "row-event", "table": "dispositions", "event": "insert" },
   "entry": "recommend",
   "nodes": [
-    { "id": "recommend", "type": "custom", "label": "F2 disposition recommendation", "config": { "component": "disposition-recommendation" } },
-    { "id": "callback", "type": "http-request", "label": "POST ERP callback", "config": { "method": "POST", "idempotency-key": "${run.id}" }, "credential": "erp-callback" }
+    { "id": "recommend", "type": "custom", "label": "F2 disposition recommendation", "config": { "endpoint": "http://serve-node:8091" } },
+    { "id": "callback", "type": "http-request", "label": "POST ERP callback", "config": { "method": "POST", "url": "http://erp.example/dispositions", "body": "@", "idempotency-key": true }, "credential": "erp-callback" }
   ],
   "edges": [
     { "from": "recommend", "to": "callback" }
@@ -15,5 +15,5 @@
   "credentials": [
     { "name": "erp-callback", "kind": "api-key", "description": "ERP disposition callback" }
   ],
-  "allowed-hosts": ["erp.example"]
+  "allowed-hosts": ["serve-node:8091", "erp.example"]
 }

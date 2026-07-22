@@ -15,11 +15,13 @@ mod credprobe;
 mod credproof;
 mod dispatchbench;
 mod egressbench;
+mod erp_sim;
 mod f1bench;
 mod f1fixture;
 mod f1proof;
 mod f2invoke;
 mod f3proof;
+mod f4proof;
 mod failoverbench;
 mod flowbench;
 mod ladderproof;
@@ -142,6 +144,10 @@ enum Command {
     F3proof(f3proof::F3ProofArgs),
     /// Run the 11.2 flow test-suite gate (test cases as catalog data: envelope round-trip + version binding + RLS + FK cascade in an ephemeral schema)
     Suiteproof(suiteproof::SuiteProofArgs),
+    /// Run the POC-F4 CDC row-event flow + 429-throttle proof (real reader→materializer→queue→runner drives a WAL insert to an ERP callback; idempotency-key, queue-park backoff, no stampede)
+    F4proof(f4proof::F4ProofArgs),
+    /// Serve the POC-F4 ERP callback simulator (429 + Retry-After for the first K requests per idempotency key, then 202; GET /audit)
+    ErpSim(erp_sim::ErpSimArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -200,6 +206,8 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Wakeproof(args) => wakeproof::run(args).await,
         Command::F3proof(args) => f3proof::run(args).await,
         Command::Suiteproof(args) => suiteproof::run(args).await,
+        Command::F4proof(args) => f4proof::run(args).await,
+        Command::ErpSim(args) => erp_sim::run(args).await,
     };
 
     shutdown_observability();

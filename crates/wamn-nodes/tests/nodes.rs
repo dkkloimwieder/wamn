@@ -563,6 +563,65 @@ fn http_request_explicit_traceparent_header_wins() {
     assert_eq!(tps[0].1, "00-explicit-01", "config header wins");
 }
 
+/// F4: the opt-in `"idempotency-key": true` stamps the run's dispatch
+/// idempotency key as the `Idempotency-Key` header on the outbound request —
+/// the value comes from `RunContext::idempotency_key` (dispatch mechanics),
+/// NOT templated over input. The MUTATION KILLER for a dropped idempotency
+/// header (the F4 exactly-once ERP callback depends on it).
+#[test]
+fn http_request_stamps_opt_in_idempotency_key() {
+    let mut mock = Mock::default();
+    mock.http_results.push_back(ok_http(202, &[], "{}"));
+    let config =
+        json!({"method": "post", "url": "http://erp.test/callback", "idempotency-key": true});
+    let rc = RunContext {
+        run_id: "disp:evt:9",
+        flow_id: "f",
+        flow_version: 1,
+        node_id: "callback",
+        attempt: 2,
+        idempotency_key: "disp:evt:9:callback:0",
+        deadline_ms: None,
+        traceparent: None,
+        tracestate: None,
+        config: &config,
+    };
+    dispatch(
+        "http-request",
+        granted_for(false),
+        &mut mock,
+        &rc,
+        &json!({}),
+    )
+    .unwrap();
+    let req = &mock.http_calls[0];
+    assert!(
+        req.headers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("idempotency-key") && v == "disp:evt:9:callback:0"),
+        "opt-in stamps the dispatch idempotency key; got {:?}",
+        req.headers
+    );
+}
+
+/// F4: without the opt-in flag, NO Idempotency-Key header is added (the
+/// default-off contract — the header must not leak onto unrelated flows).
+#[test]
+fn http_request_no_idempotency_key_without_opt_in() {
+    let mut mock = Mock::default();
+    mock.http_results.push_back(ok_http(200, &[], "{}"));
+    let config = json!({"method": "post", "url": "http://erp.test/callback"});
+    let em = go("http-request", &mut mock, &config, &json!({}));
+    em.unwrap();
+    assert!(
+        !mock.http_calls[0]
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("idempotency-key")),
+        "no idempotency header when the flow did not opt in"
+    );
+}
+
 /// 5.9: the node's DECLARED credential resolves through the vault and rides
 /// as the `authorization` header by default — the secret exists only in the
 /// outbound request, never in config or the emitted payload.
