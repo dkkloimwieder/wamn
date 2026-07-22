@@ -179,9 +179,12 @@ pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
     orgs.dedup();
 
     if orgs.is_empty() {
-        println!(
-            "## (4) per-tenant folders -> SKIP (no --expect-tenant / --system-database-url given)"
-        );
+        let why = if args.system_database_url.is_some() {
+            "registry.orgs has 0 rows and no --expect-tenant given"
+        } else {
+            "no --expect-tenant / --system-database-url given"
+        };
+        println!("## (4) per-tenant folders -> SKIP ({why})");
     } else {
         let folder_uids: std::collections::HashSet<&str> = folders
             .iter()
