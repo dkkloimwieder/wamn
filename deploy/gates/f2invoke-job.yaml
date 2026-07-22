@@ -1,0 +1,37 @@
+# POC-F2 (wamn-1ab) invocation gate: the "call it" proof for the zero-import
+# disposition-recommendation node. Runs the f2invoke subcommand of the wamn-gates
+# image (SR1) against the image's baked-in /bench/disposition-node.wasm: it
+# warm-instantiates the node in a REAL ServeNode host and .invoke()s it with one
+# representative input per disposition outcome (reject / use-as-is / accept) plus
+# a malformed one (InvalidInput). Fully in-proc — no DB, no external Service, no
+# cross-pod hop (a world node has no grants to prove at invocation; the
+# grant-derivation proof is the f2-build emission + buildproof side).
+#
+#   kubectl -n wamn-system apply -f deploy/gates/f2invoke-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/f2invoke --timeout=120s
+#   kubectl -n wamn-system logs job/f2invoke
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: f2invoke
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: f2invoke }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: f2invoke
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--log-level"
+            - "error"
+            - "f2invoke"
+            - "--node"
+            - "/bench/disposition-node.wasm"
+          resources:
+            requests: { cpu: "500m", memory: "256Mi" }
+            limits: { memory: "512Mi" }

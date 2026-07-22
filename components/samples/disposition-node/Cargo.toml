@@ -1,0 +1,28 @@
+[package]
+name = "disposition-node"
+version.workspace = true
+edition.workspace = true
+
+# The POC-F2 custom node (wamn-1ab) AND the reference disposition example: a
+# zero-import `world node` component on the wamn-node-guest scaffolding. Its deps
+# are EXACTLY sample-node's ({serde_json, wamn-node-{sdk,guest}}), so its resolved
+# closure stays inside the builder's pinned allowlist (5.5c) — no new crate name.
+# It recommends a disposition from a hold + material history with PURE compute
+# (hand-rolled exact-decimal severity + history frequency), imports nothing, and
+# so proves the builder emits EMPTY hostInterfaces / no --allowed-hosts (5.4-5.6).
+
+[dependencies]
+serde_json = "1"
+wamn-node-sdk = { path = "../../../crates/wamn-node-sdk" }
+wamn-node-guest = { path = "../../../crates/wamn-node-guest" }
+
+[lib]
+crate-type = ["cdylib"]
+
+# The 5.5 builder reads this table for the wamn.node.manifest OCI annotation.
+# node-type is the F2 slug the traceability row names ("disposition-recommendation").
+[package.metadata.wamn-node]
+node-type = "disposition-recommendation"
+name = "Disposition Recommendation"
+description = "POC-F2 zero-import custom node (5.4): recommends a quality-hold disposition (accept / reject / use-as-is) with a confidence from exact-decimal exceedance severity + prior-disposition frequency. Imports nothing."
+ordering = ["unordered"]

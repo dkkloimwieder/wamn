@@ -79,6 +79,87 @@ fn golden_world_node_empty_grants() {
 }
 
 #[test]
+fn golden_disposition_node_empty_grants() {
+    // POC-F2 (wamn-1ab): the disposition-recommendation node is a `world node`
+    // — imports NOTHING — so it emits empty grants and NO --allowed-hosts, the
+    // shape that proves builder grant derivation for the F2 traceability row.
+    let rendered = render_for(
+        &[],
+        EmitInputs {
+            node_type: "disposition-recommendation".to_string(),
+            image: "registry.wamn-system.svc.cluster.local:5000/wamn/disposition-node:dev"
+                .to_string(),
+            signed_digest:
+                "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+                    .to_string(),
+            signature: Some("fedcba".to_string()),
+            project: "default".to_string(),
+            allowed_hosts: vec![],
+        },
+    );
+    check_golden("disposition-node.deployment.yaml", &rendered);
+}
+
+/// The compiled disposition-node artifact (built by `cargo build --release
+/// --target wasm32-wasip2 -p disposition-node` inside the components workspace).
+/// Absent on a host that has not built it — the test then SKIPS (the nodebench
+/// `.exists()` precedent), so `cargo test -p wamn-builder` never requires a wasm
+/// toolchain, while a built tree exercises the real bytes.
+fn disposition_node_wasm() -> Option<Vec<u8>> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../components/target/wasm32-wasip2/release/disposition_node.wasm");
+    std::fs::read(&path).ok()
+}
+
+/// The dd71ccc lesson: a SYNTHESIZED empty-import component can miss a real
+/// artifact's import shape. So screen the REAL compiled disposition-node through
+/// the SAME builder import lint the pipeline runs, DERIVE its grants from the
+/// real component type, and assert they are empty / no --allowed-hosts.
+///
+/// MUTATION (ii) TARGET: marking `requires_allowed_hosts` for a zero-import node,
+/// or dropping the `if grants.requires_allowed_hosts` guard in the emitter, is
+/// caught here (empty-grants assert + a spurious --allowed-hosts refusal) AND by
+/// the two empty-grants goldens above.
+#[test]
+fn disposition_node_real_artifact_lints_and_derives_empty_grants() {
+    let Some(wasm) = disposition_node_wasm() else {
+        eprintln!("SKIP: disposition_node.wasm not built; run the wasm build to exercise it");
+        return;
+    };
+    // The real import lint the 5.5 pipeline runs — a zero-import node passes.
+    wamn_builder::build::lint_artifact(&wasm, "disposition_node.wasm")
+        .expect("the real disposition-node passes the builder import lint");
+
+    let engine = build_engine(&[]).expect("engine");
+    let grants = derive_grants_from_component(engine.inner(), &wasm, "disposition-recommendation")
+        .expect("derive grants");
+    assert!(
+        grants.host_interfaces.is_empty(),
+        "a world node grants no host interfaces, got {:?}",
+        grants.host_interfaces
+    );
+    assert!(
+        !grants.requires_allowed_hosts,
+        "a world node must not require --allowed-hosts"
+    );
+
+    // The emitted manifest carries no --allowed-hosts for these empty grants.
+    let inputs = EmitInputs {
+        node_type: "disposition-recommendation".to_string(),
+        image: "registry.wamn-system.svc.cluster.local:5000/wamn/disposition-node:dev".to_string(),
+        signed_digest: "sha256:0".to_string(),
+        signature: None,
+        project: "default".to_string(),
+        allowed_hosts: vec![],
+    };
+    let rendered = render_serve_node_deployment(&inputs, &grants).expect("render");
+    assert!(
+        !rendered.contains("--allowed-hosts"),
+        "a world node's deployment must not carry --allowed-hosts"
+    );
+}
+
+#[test]
 fn golden_http_node_with_allowed_hosts() {
     // `http-node`: wasi:http/outgoing-handler + credentials + control -> requires
     // allowedHosts, so the emitted manifest carries --allowed-hosts.

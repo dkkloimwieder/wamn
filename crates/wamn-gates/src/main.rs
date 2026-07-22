@@ -18,6 +18,7 @@ mod egressbench;
 mod f1bench;
 mod f1fixture;
 mod f1proof;
+mod f2invoke;
 mod failoverbench;
 mod flowbench;
 mod ladderproof;
@@ -126,6 +127,8 @@ enum Command {
     F1bench(f1bench::F1BenchArgs),
     /// Run the POC-F1 proof against the deployed poc-webhook-f1 + api-gateway over HTTP
     F1proof(f1proof::F1ProofArgs),
+    /// Run the POC-F2 disposition-node invocation gate (warm ServeNode over the zero-import node; one input per disposition outcome + InvalidInput)
+    F2invoke(f2invoke::F2InvokeArgs),
     /// Run the exec-ladder rung-1 conformance proof against the deployed runner (seed one manual run, assert it executes correctly)
     Ladderproof(ladderproof::LadderProofArgs),
     /// Run the POC-F3 scale-to-zero wake proof (park the runner at 0; a LIVE dispatcher cron fire wakes it via the waker and it completes)
@@ -182,6 +185,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Apiproof(args) => apiproof::run(args).await,
         Command::F1bench(args) => f1bench::run(args).await,
         Command::F1proof(args) => f1proof::run(args).await,
+        Command::F2invoke(args) => f2invoke::run(args).await,
         Command::Ladderproof(args) => ladderproof::run(args).await,
         Command::Wakeproof(args) => wakeproof::run(args).await,
     };

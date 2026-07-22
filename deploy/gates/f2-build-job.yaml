@@ -1,0 +1,72 @@
+# POC-F2 (wamn-1ab) custom-node BUILD Job: builds + signs + pushes the
+# zero-import disposition-recommendation node AND — unlike deploy/platform/
+# builder-job.yaml — EXERCISES the 5.5f deployment EMISSION (--emit-deployment),
+# the half that proves grant derivation end-to-end. The emitted manifest carries
+# EMPTY grants and NO --allowed-hosts (the node imports nothing); the Job cats it
+# to stdout after `---EMITTED---` so the main loop can capture + assert it.
+#
+# Same 6.2 sandbox posture as builder-job.yaml (no service-account token, the
+# egress-deny NetworkPolicy via the app=wamn-builder label, a memory cap, a
+# wall-clock deadline, one-shot). The baked-in source is components/samples/
+# disposition-node (the builder-svc image COPYs components/samples wholesale).
+#
+#   docker build --target builder-svc -t wamn-builder:dev .
+#   kind load docker-image wamn-builder:dev --name wamn
+#   kubectl -n wamn-system apply -f deploy/platform/builder-netpol.yaml
+#   kubectl -n wamn-system apply -f deploy/gates/f2-build-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/f2-build --timeout=900s
+#   kubectl -n wamn-system logs job/f2-build   # the tail after ---EMITTED--- is the manifest
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: f2-build
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      # app=wamn-builder so the builder egress-deny NetworkPolicy applies.
+      labels: { app: wamn-builder }
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      volumes:
+        - name: signing-key
+          secret:
+            secretName: wamn-builder-signing-key
+            optional: true
+        # The emitted 5.5f deployment manifest lands here, then is cat to stdout.
+        - name: out
+          emptyDir: {}
+      containers:
+        - name: wamn-builder
+          image: wamn-builder:dev
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: signing-key
+              mountPath: /etc/wamn/signing
+              readOnly: true
+            - name: out
+              mountPath: /out
+          # Override the entrypoint so we can cat the emitted manifest after the
+          # build succeeds (`&&`), fencing it with a marker the main loop greps.
+          command:
+            - sh
+            - -c
+            - >
+              wamn-builder --log-level info build
+              --source /build/components
+              --kind cargo
+              --package disposition-node
+              --registry registry.wamn-system.svc.cluster.local:5000
+              --repository wamn/disposition-node
+              --tag dev
+              --signing-key /etc/wamn/signing/signing-key.hex
+              --emit-deployment /out/disposition.deployment.yaml
+              && echo '---EMITTED---'
+              && cat /out/disposition.deployment.yaml
+          resources:
+            # No CPU limit (the S2 CFS-throttling lesson); memory IS capped.
+            requests: { cpu: "1", memory: "2Gi" }
+            limits: { memory: "4Gi" }

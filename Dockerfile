@@ -98,6 +98,9 @@ COPY components/samples/node-ts/node-ts.wasm /bench/node-ts.wasm
 # 5.4 frozen-contract conformance fixture: the scaffolding-built zero-import
 # sample node (nodebench --mode sample / the default `all`).
 COPY components/target/wasm32-wasip2/release/sample_node.wasm /bench/sample-node.wasm
+# POC-F2 (wamn-1ab) zero-import disposition-recommendation node: the f2invoke
+# gate warm-instantiates it in a ServeNode and calls it per disposition outcome.
+COPY components/target/wasm32-wasip2/release/disposition_node.wasm /bench/disposition-node.wasm
 # S5 logging-capture fixture (imports wasi:logging, exports overhead+emit-batch).
 COPY components/target/wasm32-wasip2/release/logspewer.wasm /bench/logspewer.wasm
 # 4.1 generated REST API gateway (exports wasi:http/incoming-handler, imports
