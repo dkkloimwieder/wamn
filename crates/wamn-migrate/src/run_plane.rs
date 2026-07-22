@@ -776,7 +776,7 @@ mod tests {
     fn record_tables_are_pinned() {
         assert_eq!(
             record_tables(RUN_STATE_SQL, "wamn_run"),
-            ["runs", "node_runs"]
+            ["runs", "cron_anchor", "node_runs"]
         );
         assert_eq!(record_tables(FLOWS_SQL, "wamn_run"), ["flows"]);
         assert_eq!(
@@ -912,8 +912,8 @@ mod tests {
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            6,
-            "all six run-plane tables at target"
+            7,
+            "all seven run-plane tables at target"
         );
     }
 
@@ -1026,6 +1026,7 @@ mod tests {
             creates,
             [
                 "runs",
+                "cron_anchor",
                 "node_runs",
                 "flows",
                 "run_queue",

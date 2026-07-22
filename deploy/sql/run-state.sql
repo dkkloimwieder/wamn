@@ -90,6 +90,34 @@ CREATE POLICY runs_tenant ON wamn_run.runs
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app;
 
 -- ---------------------------------------------------------------------------
+-- cron_anchor: the dispatcher's DURABLE last-fired cron tick per flow (5.14,
+-- wamn-fqg.6). One row per cron flow; `last_tick` is the epoch-ms instant of
+-- the most recent tick the dispatcher fired, upserted INSIDE the fire
+-- transaction (co-transacted with the write-ahead run + enqueue). This
+-- DECOUPLES cron dedupe from prunable run history: `cron_last_run_sql` recovers
+-- the anchor from max(run_id) over the flow's cron RUNS, but 9.6 retention
+-- (wamn-srb) prunes those runs when retention < the cron period — and a
+-- vanished anchor makes an already-fired tick RE-FIRE (the write-ahead ON
+-- CONFLICT cannot absorb it, because the conflicting run row was pruned). This
+-- table is never pruned, so the anchor survives; the runs-based recovery
+-- demotes to a BOOTSTRAP fallback for pre-anchor flows (those whose last fire
+-- predates this table). The upsert is monotonic — GREATEST(existing, incoming)
+-- — so a losing replica or a redelivered fire never rewinds the anchor.
+-- ---------------------------------------------------------------------------
+CREATE TABLE wamn_run.cron_anchor (
+    tenant_id  text   NOT NULL CHECK (tenant_id <> ''),
+    flow_id    text   NOT NULL,
+    last_tick  bigint NOT NULL,
+    PRIMARY KEY (tenant_id, flow_id)
+);
+ALTER TABLE wamn_run.cron_anchor ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.cron_anchor FORCE ROW LEVEL SECURITY;
+CREATE POLICY cron_anchor_tenant ON wamn_run.cron_anchor
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.cron_anchor TO wamn_app;
+
+-- ---------------------------------------------------------------------------
 -- node_runs: one row per node execution, the branch-aware reconstruction source.
 -- The idempotency key is (tenant_id, run_id, node_id, occurrence): `occurrence`
 -- disambiguates a node the flow LOOPS through (0 = first visit); retries of ONE

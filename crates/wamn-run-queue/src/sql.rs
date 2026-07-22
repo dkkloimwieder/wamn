@@ -485,6 +485,38 @@ pub fn cron_last_run_sql() -> String {
         .to_string()
 }
 
+/// Recover a flow's last fired cron tick from the DURABLE anchor (wamn-fqg.6):
+/// the `cron_anchor` row's `last_tick`, tenant-scoped exactly like the sibling
+/// builders. The anchor is upserted inside the fire transaction
+/// ([`upsert_cron_anchor_sql`]) and — unlike the `runs`-derived
+/// [`cron_last_run_sql`] — is NOT subject to 9.6 retention pruning, so it
+/// survives when a flow's cron runs are pruned with retention shorter than the
+/// cron period. That is what stops an already-fired tick from re-firing: the
+/// write-ahead `ON CONFLICT` cannot absorb a re-fire once the conflicting run
+/// row is pruned, so the anchor must outlive the run. Param: `$1` flow_id.
+/// Zero rows (a pre-anchor flow whose last fire predates this table) means the
+/// dispatcher falls back to [`cron_last_run_sql`].
+pub fn cron_anchor_sql() -> String {
+    "SELECT last_tick FROM cron_anchor \
+      WHERE tenant_id = current_setting('app.tenant', true) AND flow_id = $1"
+        .to_string()
+}
+
+/// Upsert a flow's last fired cron tick into the durable anchor (wamn-fqg.6),
+/// co-transacted with the write-ahead run + enqueue inside `fire()`. The
+/// conflict target is the `(tenant_id, flow_id)` PK, and the update is
+/// MONOTONIC — `GREATEST(existing, incoming)` — so a losing replica, a
+/// redelivered fire, or a misfire-collapsed catch-up can only advance the
+/// anchor, never rewind it (a rewind would let an already-fired tick re-fire).
+/// Params: `$1` flow_id, `$2` last_tick (epoch ms).
+pub fn upsert_cron_anchor_sql() -> String {
+    "INSERT INTO cron_anchor (tenant_id, flow_id, last_tick) \
+     VALUES (current_setting('app.tenant', true), $1, $2) \
+     ON CONFLICT (tenant_id, flow_id) DO UPDATE \
+       SET last_tick = GREATEST(cron_anchor.last_tick, EXCLUDED.last_tick)"
+        .to_string()
+}
+
 /// The wake / reconciliation scan: every currently-due, unleased (or lease-expired)
 /// **unpartitioned** queue row that the global claim would take — budget-remaining,
 /// OR budget-spent with a released (NULL) lease (a parked run that spent its crash

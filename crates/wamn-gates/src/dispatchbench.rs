@@ -23,6 +23,14 @@
 //!              misfire collapse after a multi-day outage, first-sight
 //!              bootstrap, and the fire's write-ahead + enqueue co-transaction
 //!              proven atomic by an enqueue-side trap.
+//!   retention — the durable cron anchor (wamn-fqg.6) decouples cron dedupe
+//!              from prunable run history: a real fire writes the anchor row
+//!              (co-transacted with the run + queue row); when 9.6 retention
+//!              prunes the run, a fresh dispatcher recovers the surviving anchor
+//!              and does NOT re-fire the pruned tick — while the CONTRAST (a
+//!              pre-anchor flow with NO anchor row and a stale first-seen) DOES
+//!              re-fire it through the runs-based fallback, pinning that
+//!              fallback's behavior honestly.
 //!   ordering — the flow-level ordering declaration (5.11, wamn-fqg.20) is
 //!              stamped onto run_queue.partition_key at fire(): an unordered
 //!              flow's runs carry a NULL key (today's global claim), a strict
@@ -74,6 +82,7 @@ const DAY: i64 = 86_400_000;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
     Cron,
+    Retention,
     Ordering,
     Race,
     Fairness,
@@ -139,6 +148,15 @@ fn dispatch_ddl(schema: &str) -> String {
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
+         CREATE TABLE {schema}.cron_anchor (\
+            tenant_id text NOT NULL, flow_id text NOT NULL, last_tick bigint NOT NULL, \
+            PRIMARY KEY (tenant_id, flow_id));\
+         ALTER TABLE {schema}.cron_anchor ENABLE ROW LEVEL SECURITY;\
+         ALTER TABLE {schema}.cron_anchor FORCE ROW LEVEL SECURITY;\
+         CREATE POLICY cron_anchor_tenant ON {schema}.cron_anchor \
+            USING (tenant_id = current_setting('app.tenant', true)) \
+            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.cron_anchor TO wamn_app;\
          CREATE TABLE {schema}.run_queue (\
             tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
             partition_policy text NOT NULL DEFAULT 'blocking' \
@@ -207,6 +225,7 @@ async fn reset(admin_url: &str, schema: &str) -> anyhow::Result<()> {
         admin_url,
         &format!(
             "TRUNCATE {schema}.runs CASCADE; \
+             TRUNCATE {schema}.cron_anchor; \
              TRUNCATE {schema}.flows;"
         ),
     )
@@ -268,6 +287,18 @@ async fn scalar_i64(client: &Client, sql: &str) -> anyhow::Result<i64> {
     Ok(client.query_one(sql, &[]).await?.get(0))
 }
 
+/// The durable `cron_anchor.last_tick` of one flow (NULL = no anchor row), for
+/// the retention gate's anchor-survives-prune assertions (wamn-fqg.6).
+async fn anchor_last_tick_of(client: &Client, flow_id: &str) -> anyhow::Result<Option<i64>> {
+    Ok(client
+        .query_opt(
+            "SELECT last_tick FROM cron_anchor WHERE flow_id = $1",
+            &[&flow_id],
+        )
+        .await?
+        .map(|r| r.get(0)))
+}
+
 /// The `run_queue.partition_key` of one run (NULL = unordered), for the ordering
 /// gate's per-run key assertions.
 async fn partition_key_of(client: &Client, run_id: &str) -> anyhow::Result<Option<String>> {
@@ -317,6 +348,9 @@ pub async fn run(args: DispatchBenchArgs) -> anyhow::Result<()> {
     let outcome = async {
         if run_all || args.mode == Mode::Cron {
             pass &= cron_phase(&app_url, &admin_url).await?;
+        }
+        if run_all || args.mode == Mode::Retention {
+            pass &= retention_phase(&app_url, &admin_url).await?;
         }
         if run_all || args.mode == Mode::Ordering {
             pass &= ordering_phase(&app_url, &admin_url).await?;
@@ -476,6 +510,162 @@ async fn cron_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
          atomicity(tick_failed={cron_tick_failed}, retracted={retracted}, refired={cron_refired})"
     );
     println!("PASS(cron exactly-once per tick + fire co-txn atomicity): {pass}");
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// retention (wamn-fqg.6): the durable cron anchor decouples cron dedupe from
+// prunable run history — a pruned run does NOT re-fire the tick; the pre-anchor
+// runs-based fallback DOES (pinned honestly as the contrast)
+// ---------------------------------------------------------------------------
+
+async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
+    println!(
+        "\n## retention — the durable cron anchor survives a pruned run (no re-fire); \
+         a pre-anchor flow's runs-based fallback re-fires the pruned tick (contrast)"
+    );
+    reset(admin_url, SCHEMA_A).await?;
+    let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
+
+    const SCHEDULE: &str = "0 2 * * *"; // nightly 2am
+    let t1 = BASE_MS + 2 * HOUR; // the first fired tick
+    let t2 = BASE_MS + DAY + 2 * HOUR; // the next day's tick
+
+    // --- Leg 1: a REAL fire writes the durable anchor, co-transacted with the
+    // run + queue row (fire() exercises upsert_cron_anchor_sql). Assert the
+    // triad: run row, queue row, anchor row all present with last_tick == t1.
+    let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
+    seed_flow(&seeder, "anchored", &cron_flow_json("anchored", SCHEDULE)).await?;
+    let mut d1 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    d1.tick_project(0, BASE_MS + HOUR).await?; // bootstrap (first sight, nothing due)
+    let fired = d1.tick_project(0, t1 + 300).await?;
+    let anchored_t1 = mint_cron_run_id("anchored", t1);
+    let fired_t1 = fired.cron_fired == [anchored_t1.clone()];
+    let row = seeder
+        .query_one(
+            "SELECT status, (SELECT count(*) FROM run_queue WHERE run_id = $1) AS queued \
+               FROM runs WHERE run_id = $1",
+            &[&anchored_t1],
+        )
+        .await?;
+    let triad = row.get::<_, String>("status") == "dispatched"
+        && row.get::<_, i64>("queued") == 1
+        && anchor_last_tick_of(&seeder, "anchored").await? == Some(t1);
+
+    // --- Leg 2 (THE FIX): 9.6 retention prunes the run (cascading its queue
+    // row); the durable anchor SURVIVES. A FRESH dispatcher recovers the anchor
+    // from the table — not the vanished run — so the pruned tick does NOT
+    // re-fire; only the next day's tick fires.
+    admin_exec(
+        admin_url,
+        &format!("DELETE FROM {SCHEMA_A}.runs WHERE run_id = '{anchored_t1}';"),
+    )
+    .await?;
+    let run_pruned = scalar_i64(
+        &seeder,
+        &format!("SELECT count(*) FROM runs WHERE run_id = '{anchored_t1}'"),
+    )
+    .await?
+        == 0;
+    let anchor_survived = anchor_last_tick_of(&seeder, "anchored").await? == Some(t1);
+    let mut d2 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let next = d2.tick_project(0, t2 + 300).await?;
+    let anchored_t2 = mint_cron_run_id("anchored", t2);
+    let only_next_fired = next.cron_fired == [anchored_t2];
+    let no_refire = scalar_i64(
+        &seeder,
+        &format!("SELECT count(*) FROM runs WHERE run_id = '{anchored_t1}'"),
+    )
+    .await?
+        == 0;
+
+    // --- Leg 3 (THE CONTRAST): a PRE-ANCHOR flow — NO anchor row, plus a stale
+    // first-seen from a bootstrap sweep before the tick. Its run is fired (by
+    // another replica) and then pruned BETWEEN this dispatcher's sweeps, so it
+    // never cached the tick and the runs-based fallback loses the anchor:
+    // due-tick falls back to the stale first-seen and RE-FIRES the pruned tick.
+    // This pins the fallback's honest behavior — the exact bug the durable
+    // anchor closes.
+    seed_flow(&seeder, "legacy", &cron_flow_json("legacy", SCHEDULE)).await?;
+    let mut d3 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    d3.tick_project(0, BASE_MS + HOUR).await?; // bootstrap: first_seen[legacy] = 1am (stale)
+    let legacy_t1 = mint_cron_run_id("legacy", t1);
+    admin_exec(
+        admin_url,
+        &format!(
+            "INSERT INTO {SCHEMA_A}.runs \
+               (tenant_id, run_id, flow_id, flow_version, status, trigger_source) \
+             VALUES ('{TENANT_A}', '{legacy_t1}', 'legacy', 1, 'completed', 'cron');"
+        ),
+    )
+    .await?;
+    admin_exec(
+        admin_url,
+        &format!("DELETE FROM {SCHEMA_A}.runs WHERE run_id = '{legacy_t1}';"),
+    )
+    .await?;
+    let refire = d3.tick_project(0, t1 + 12 * HOUR).await?;
+    let contrast_refired = refire.cron_fired == [legacy_t1];
+
+    // --- Leg 4 (co-transaction atomicity): the anchor upsert lives INSIDE the
+    // fire transaction, so a failed upsert retracts the write-ahead run + queue
+    // with it (one durability domain). Arm a BEFORE INSERT trap on cron_anchor,
+    // make a tick due through the REAL fire(), and assert it errors AND the run
+    // rolled back. If the upsert were a separate statement after commit, the run
+    // would survive the anchor failure — a crash window leaving a run with no
+    // anchor (the exact regression the durable-anchor decoupling depends on NOT
+    // having).
+    seed_flow(&seeder, "atomic", &cron_flow_json("atomic", SCHEDULE)).await?;
+    let mut d4 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    d4.tick_project(0, BASE_MS + HOUR).await?; // bootstrap before arming the trap
+    admin_exec(
+        admin_url,
+        &format!(
+            "CREATE FUNCTION {SCHEMA_A}.anchor_trap() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'anchor trap'; END $$; \
+             CREATE TRIGGER cron_anchor_trap BEFORE INSERT ON {SCHEMA_A}.cron_anchor \
+             FOR EACH ROW EXECUTE FUNCTION {SCHEMA_A}.anchor_trap();"
+        ),
+    )
+    .await?;
+    let atomic_t1 = mint_cron_run_id("atomic", t1);
+    let trapped = d4.tick_project(0, t1 + 300).await;
+    let anchor_txn_failed = trapped.is_err();
+    let anchor_retracted = scalar_i64(
+        &seeder,
+        &format!("SELECT count(*) FROM runs WHERE run_id = '{atomic_t1}'"),
+    )
+    .await?
+        == 0;
+    admin_exec(
+        admin_url,
+        &format!(
+            "DROP TRIGGER cron_anchor_trap ON {SCHEMA_A}.cron_anchor; \
+             DROP FUNCTION {SCHEMA_A}.anchor_trap();"
+        ),
+    )
+    .await?;
+
+    let pass = fired_t1
+        && triad
+        && run_pruned
+        && anchor_survived
+        && only_next_fired
+        && no_refire
+        && contrast_refired
+        && anchor_txn_failed
+        && anchor_retracted;
+    println!(
+        "leg1(fired_t1={fired_t1} triad={triad}) \
+         leg2_fix(run_pruned={run_pruned} anchor_survived={anchor_survived} \
+         only_next_fired={only_next_fired} no_refire={no_refire}) \
+         leg3_contrast(refired={contrast_refired}) \
+         leg4_atomicity(txn_failed={anchor_txn_failed}, retracted={anchor_retracted})"
+    );
+    println!(
+        "PASS(retention: durable anchor survives a pruned run — no re-fire; \
+         pre-anchor fallback re-fires; anchor upsert co-transacted): {pass}"
+    );
     Ok(pass)
 }
 

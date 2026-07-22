@@ -502,6 +502,17 @@ fn run_state_sql_matches_the_model() {
         sql.contains("CREATE INDEX runs_cron_anchor ON wamn_run.runs (tenant_id, flow_id, run_id)")
     );
     assert!(sql.contains("WHERE trigger_source = 'cron'"));
+    // wamn-fqg.6: the DURABLE cron anchor table decouples cron dedupe from
+    // prunable run history (the runs-based recovery above demotes to a bootstrap
+    // fallback). Same tenant floor (CHECK + RLS + policy) and grants as the
+    // sibling tables, keyed per (tenant, flow).
+    assert!(sql.contains("CREATE TABLE wamn_run.cron_anchor"));
+    assert!(sql.contains("last_tick  bigint NOT NULL"));
+    assert!(sql.contains("PRIMARY KEY (tenant_id, flow_id)"));
+    assert!(sql.contains("CREATE POLICY cron_anchor_tenant ON wamn_run.cron_anchor"));
+    assert!(
+        sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.cron_anchor TO wamn_app")
+    );
     // Reserved 5.10 / 9.6 seams.
     for seam in [
         "input_ref",

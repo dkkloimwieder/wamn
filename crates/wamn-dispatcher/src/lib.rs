@@ -20,9 +20,12 @@
 //!      fails to parse or validate is skipped with a warning (a bad flow must
 //!      not wedge the project);
 //!   2. cron — recover each flow's last-fired tick (in-memory cache, else the
-//!      run ids themselves via [`cron_last_run_sql`] — the runs table IS the
-//!      cron state), fire the due tick via the write-ahead + enqueue
-//!      co-transaction, doorbell the winner;
+//!      durable `cron_anchor` row via [`cron_anchor_sql`], else the run ids
+//!      themselves via [`cron_last_run_sql`] as a bootstrap fallback — the
+//!      anchor is decoupled from prunable run history so 9.6 retention cannot
+//!      make an already-fired tick re-fire, wamn-fqg.6), fire the due tick via
+//!      the write-ahead + enqueue + anchor-upsert co-transaction, doorbell the
+//!      winner;
 //!   3. wake — doorbell every currently-due unleased queue row (a parked run
 //!      whose `available_at` arrived, or a run whose enqueue hint was lost) —
 //!      one read-only scan doubling as the reconciliation backstop;
@@ -56,9 +59,10 @@ use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
 use wamn_flow::{Flow, Ordering, Trigger};
 use wamn_run_queue::{
-    Cadence, Firing, PartitionPolicy, active_flows_sql, cron_firing, cron_last_run_sql,
-    cron_tick_of, due_tick, enqueue_sql, enqueue_with_policy_sql, next_fire, next_reconcile,
-    parked_due_sql, reconcile_due, write_ahead_triggered_run_sql,
+    Cadence, Firing, PartitionPolicy, active_flows_sql, cron_anchor_sql, cron_firing,
+    cron_last_run_sql, cron_tick_of, due_tick, enqueue_sql, enqueue_with_policy_sql, next_fire,
+    next_reconcile, parked_due_sql, reconcile_due, upsert_cron_anchor_sql,
+    write_ahead_triggered_run_sql,
 };
 
 // R16b (wamn-2jkm.20): the dispatcher's pinned session `SET`s interpolate the
@@ -172,7 +176,8 @@ pub struct ProjectState {
     pub next_cron_fire: Option<i64>,
     /// Last fired tick per cron flow — an optimization only (skips the DB anchor
     /// recovery per sweep). Correctness never depends on it: a fresh replica
-    /// recovers the anchor from the run ids and ON CONFLICT absorbs any re-fire.
+    /// recovers the anchor from the durable `cron_anchor` row (else the run ids,
+    /// as a bootstrap fallback) and ON CONFLICT absorbs any re-fire.
     last_fired: HashMap<String, i64>,
     /// First-sight instant per cron flow with no fired tick yet: a cron flow
     /// starts firing from dispatcher-sight (no retroactive catch-up before the
@@ -385,6 +390,7 @@ impl Dispatcher {
         );
 
         // 2. Cron: recover the anchor, fire the due tick.
+        let anchor_sql = cron_anchor_sql();
         let last_run_sql = cron_last_run_sql();
         let mut doorbells: Vec<String> = Vec::new();
         for (flow_id, version, schedule) in &reg.crons {
@@ -398,18 +404,38 @@ impl Dispatcher {
             let anchor = match p.last_fired.get(flow_id) {
                 Some(&t) => t,
                 None => {
-                    // Flow-exclusive recovery: the flow's OWN cron runs, never a
-                    // lexical id range (collation/user-text hazards).
-                    let max: Option<String> =
-                        p.client.query_one(&last_run_sql, &[&flow_id]).await?.get(0);
-                    match max.as_deref().and_then(|id| cron_tick_of(flow_id, id)) {
+                    // Anchor recovery order (wamn-fqg.6): the DURABLE
+                    // `cron_anchor` row FIRST. It is co-transacted with the fire
+                    // and is NOT subject to 9.6 retention pruning, so it survives
+                    // a pruned run history that would otherwise vanish and let an
+                    // already-fired tick re-fire.
+                    let anchored: Option<i64> = p
+                        .client
+                        .query_opt(&anchor_sql, &[&flow_id])
+                        .await?
+                        .map(|row| row.get(0));
+                    match anchored {
                         Some(t) => {
                             p.last_fired.insert(flow_id.clone(), t);
                             t
                         }
-                        // Never fired: anchor at first sight — a cron flow
-                        // starts firing from when the dispatcher first sees it.
-                        None => *p.first_seen.entry(flow_id.clone()).or_insert(now_ms),
+                        None => {
+                            // BOOTSTRAP fallback for a PRE-ANCHOR flow (its last
+                            // fire predates the anchor table): flow-exclusive
+                            // recovery from the flow's OWN cron runs, never a
+                            // lexical id range (collation/user-text hazards).
+                            let max: Option<String> =
+                                p.client.query_one(&last_run_sql, &[&flow_id]).await?.get(0);
+                            match max.as_deref().and_then(|id| cron_tick_of(flow_id, id)) {
+                                Some(t) => {
+                                    p.last_fired.insert(flow_id.clone(), t);
+                                    t
+                                }
+                                // Never fired: anchor at first sight — a cron flow
+                                // starts firing from when the dispatcher first sees it.
+                                None => *p.first_seen.entry(flow_id.clone()).or_insert(now_ms),
+                            }
+                        }
                     }
                 }
             };
@@ -431,7 +457,7 @@ impl Dispatcher {
                 let key = partition_key_for_firing(&reg, &firing);
                 let policy = partition_policy_for_firing(&reg, &firing);
                 let span = trigger_span(&firing, &p.spec.tenant);
-                let won = fire(&mut p.client, &firing, key.as_deref(), policy)
+                let won = fire(&mut p.client, &firing, tick, key.as_deref(), policy)
                     .instrument(span)
                     .await?;
                 p.last_fired.insert(flow_id.clone(), tick);
@@ -646,6 +672,7 @@ async fn enqueue_firing(
 async fn fire(
     client: &mut Client,
     f: &Firing,
+    tick: i64,
     partition_key: Option<&str>,
     policy: &str,
 ) -> anyhow::Result<bool> {
@@ -665,6 +692,17 @@ async fn fire(
     if inserted == 1 {
         enqueue_firing(&tx, &f.run_id, partition_key, policy).await?;
     }
+    // The durable cron anchor (wamn-fqg.6), co-transacted with the write-ahead
+    // + enqueue so the run can never commit without its anchor. Upserted
+    // UNCONDITIONALLY — even on a dedupe hit (inserted == 0, another replica or
+    // a redelivery already fired this tick): the upsert is monotonic
+    // (GREATEST — upsert_cron_anchor_sql), so a losing writer's upsert is a
+    // no-op, while the unconditional write additionally HEALS the pruned-anchor
+    // + surviving-run edge (the run conflicts, yet the anchor is re-established
+    // in the same transaction). Guarding it on `inserted == 1` would gain
+    // nothing and lose the heal.
+    tx.execute(&upsert_cron_anchor_sql(), &[&f.flow_id, &tick])
+        .await?;
     tx.commit().await?;
     Ok(inserted == 1)
 }

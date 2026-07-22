@@ -467,25 +467,37 @@ One sweep of one project:
    — to the id that is actually embedded in `{flow}:cron:{tick}`.
 2. **Cron.** The due tick is the *latest* scheduled tick since the anchor —
    misfire collapse: an outage fires the latest missed tick once, never a
-   burst. The anchor is recovered from the run ids themselves,
-   **flow-exclusively**: `cron_last_run_sql` takes `max(run_id)` over the
-   flow's *own* cron runs (`flow_id = $1 AND trigger_source = 'cron'`) — never
-   a lexical run-id range, because flow ids are unconstrained user text and
-   `text` ordering is collation-dependent, so a range scan can leak a
-   *foreign* flow's ids into the max (a wrong anchor = silently lost ticks).
-   Within one flow the minted ticks are equal-length zero-padded digits, so
-   the max *is* the last fired tick (`cron_tick_of` parses it back by
-   exact-prefix strip) — the `runs` table is the dispatcher's only cron state,
-   and restarted or racing replicas agree by construction. A never-fired flow
-   starts from dispatcher-sight (no retroactive catch-up). A fire is the D15
-   write-ahead co-transaction with the trigger payload persisted
+   burst. The anchor is a **durable per-flow row** — `cron_anchor(tenant_id,
+   flow_id, last_tick)` (`deploy/sql/run-state.sql`) — upserted *inside the fire
+   transaction* (`upsert_cron_anchor_sql`, co-transacted with the write-ahead
+   run + enqueue) and recovered by `cron_anchor_sql`, so cron dedupe is
+   **decoupled from prunable run history** (wamn-fqg.6). Before this table the
+   `runs` table *was* the dispatcher's only cron state, recovered as
+   `max(run_id)` over the flow's cron runs; but 9.6 retention (wamn-srb) prunes
+   those runs when retention is shorter than the cron period, and then a
+   vanished anchor lets an already-fired tick **re-fire** — the write-ahead
+   `ON CONFLICT` cannot absorb it because the conflicting run row was pruned.
+   The `runs`-based recovery therefore **demotes to a bootstrap fallback**
+   (`cron_last_run_sql`, for pre-anchor flows whose last fire predates the
+   table), still **flow-exclusive**: `max(run_id)` over the flow's *own* cron
+   runs (`flow_id = $1 AND trigger_source = 'cron'`), never a lexical run-id
+   range, because flow ids are unconstrained user text and `text` ordering is
+   collation-dependent, so a range scan can leak a *foreign* flow's ids into the
+   max (a wrong anchor = silently lost ticks); within one flow the minted ticks
+   are equal-length zero-padded digits, so the max *is* the last fired tick
+   (`cron_tick_of` parses it back by exact-prefix strip). The upsert is
+   **monotonic** — `GREATEST(existing, incoming)` — so a losing replica, a
+   redelivery, or a misfire-collapsed catch-up can only advance the anchor,
+   never rewind it; restarted or racing replicas agree by construction. A
+   never-fired flow starts from dispatcher-sight (no retroactive catch-up). A
+   fire is the D15 write-ahead co-transaction with the trigger payload persisted
    (`write_ahead_triggered_run_sql` — `input_json` is what a replay re-runs,
-   `trigger_source` the audit tag) + the enqueue + a doorbell hint. Schedules
-   are classic cron (5-field, optional leading seconds field) evaluated in
-   **UTC** (croner); per-project timezones are a later refinement. An
-   **unsatisfiable schedule** (e.g. `0 0 30 2 *` — Feb 30 never comes) is an
-   *error*, not a silent no-op: the schedule is quarantined per project
-   (warned once, skipped, excluded from the cron-aware sleep) so it can
+   `trigger_source` the audit tag) + the enqueue + the anchor upsert + a
+   doorbell hint. Schedules are classic cron (5-field, optional leading seconds
+   field) evaluated in **UTC** (croner); per-project timezones are a later
+   refinement. An **unsatisfiable schedule** (e.g. `0 0 30 2 *` — Feb 30 never
+   comes) is an *error*, not a silent no-op: the schedule is quarantined per
+   project (warned once, skipped, excluded from the cron-aware sleep) so it can
    neither wedge the sweep nor burn a full croner horizon walk every tick.
 3. **Wake / reconciliation.** One read-only scan (`parked_due_sql`) surfaces
    every currently-due, unleased, budget-remaining queue row — a parked `delay`
@@ -551,15 +563,21 @@ milliseconds; even SIGKILL mid-sweep is safe — a sweep is one transaction, so
 abrupt death rolls back and redelivers. Rollouts are guarded without a
 readiness endpoint (`maxUnavailable: 0` + `minReadySeconds`): a new pod with a
 bad Secret crashes inside its fatal-dial timeout and stalls the rollout
-instead of replacing healthy replicas. Cron anchor recovery at production
-`runs`-table scale is served by the partial index `runs_cron_anchor` on
+instead of replacing healthy replicas. Cron anchor recovery reads the durable
+`cron_anchor` row by its `(tenant_id, flow_id)` PK — a point lookup, decoupled
+from prunable run history so a 9.6-retention prune of a flow's runs can never
+make an already-fired tick re-fire (wamn-fqg.6). The `runs`-based **fallback**
+(`cron_last_run_sql`, for pre-anchor flows) is still served at production
+`runs`-table scale by the partial index `runs_cron_anchor` on
 `runs (tenant_id, flow_id, run_id) WHERE trigger_source = 'cron'`
-(deploy/sql/run-state.sql) — an index-only backward scan for `cron_last_run_sql`'s
-per-flow `max(run_id)` instead of a seq scan. Proven live in-cluster
-(2026-07-12): two replicas against the demo project minted 4 consecutive 20s
-cron ticks exactly once each (the then-live outbox row fired + acked too —
-that path is retired), `EXPLAIN` confirmed the anchor query uses
-`runs_cron_anchor`, and SIGTERM shutdown measured 13 ms.
+(deploy/sql/run-state.sql) — an index-only backward scan for its per-flow
+`max(run_id)` instead of a seq scan. The `cron_anchor` table lands on existing
+project-envs additively through `reconcile-run-plane` (a `CreateTable`,
+wamn-1wdq) — no hand-written migration. Proven live in-cluster (2026-07-12):
+two replicas against the demo project minted 4 consecutive 20s cron ticks
+exactly once each (the then-live outbox row fired + acked too — that path is
+retired), `EXPLAIN` confirmed the fallback query uses `runs_cron_anchor`, and
+SIGTERM shutdown measured 13 ms.
 
 ### Scale-to-zero wake (POC-F3, wamn-fqg.12)
 
