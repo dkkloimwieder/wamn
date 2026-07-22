@@ -455,7 +455,9 @@ fn schema_holds_no_credential_column() {
 /// workload (gateway / runner / dispatcher / webhook) may.
 #[test]
 fn no_data_plane_manifest_references_the_system_cluster() {
-    const ALLOWLIST: &[&str] = &["wamn-sysdb.yaml"];
+    // dashproof-job.yaml is control-plane tooling: it enumerates registry.orgs
+    // (like `wamn-ctl provision-dashboards`) to assert per-tenant Grafana folders.
+    const ALLOWLIST: &[&str] = &["wamn-sysdb.yaml", "dashproof-job.yaml"];
 
     let mut offenders = Vec::new();
     let mut scanned = 0usize;
