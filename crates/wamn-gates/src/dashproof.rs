@@ -221,7 +221,11 @@ pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
 }
 
 /// `GET /api/datasources/uid/<uid>/health` -> `status: OK` (the datasource can
-/// reach its backend). Any transport error or non-OK reads as unhealthy.
+/// reach its backend). Any transport error or non-OK reads as unhealthy — except
+/// a 404: a frontend-only plugin (Tempo in Grafana 11) registers no backend
+/// health resource on this route, so fall back to the datasource PROXY echo
+/// (`/api/datasources/proxy/uid/<uid>/api/echo`), which proves the same
+/// property: Grafana can reach the backend and the backend answers.
 async fn datasource_healthy(base: &str, auth: &str, uid: &str) -> bool {
     let path = format!("/api/datasources/uid/{uid}/health");
     match http_json(base, "GET", &path, Some(auth), None).await {
@@ -235,6 +239,13 @@ async fn datasource_healthy(base: &str, auth: &str, uid: &str) -> bool {
                 })
                 .as_deref()
                 == Some("OK")
+        }
+        Ok((404, _)) => {
+            let proxy = format!("/api/datasources/proxy/uid/{uid}/api/echo");
+            matches!(
+                http_json(base, "GET", &proxy, Some(auth), None).await,
+                Ok((200, _))
+            )
         }
         _ => false,
     }
