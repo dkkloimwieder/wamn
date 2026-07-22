@@ -76,6 +76,97 @@ pub struct Flow {
     /// *within* a stream (orthogonal: this picks the stream, that ranks it).
     #[serde(default, skip_serializing_if = "Ordering::is_default")]
     pub ordering: Ordering,
+    /// The flow's node-level I/O capture policy (9.6): how each node's input /
+    /// output payloads are persisted to `node_runs` — faithfully, scrubbed of
+    /// secrets, preview-only, or not at all — plus the byte threshold above which
+    /// any mode stores a preview only. Absent = [`Capture::default`] (full
+    /// capture, 64 KiB threshold): the platform captures replayable payloads by
+    /// default. Rides `graph_json`; the flowrunner guest applies it at every
+    /// `node_runs` write ([`wamn_run_store::capture`](../wamn_run_store)).
+    #[serde(default, skip_serializing_if = "Capture::is_default")]
+    pub capture: Capture,
+}
+
+/// The default payload-size threshold (bytes) above which any capture mode
+/// stores a preview only: 64 KiB. Tunable per flow via [`Capture::max_bytes`].
+pub const DEFAULT_CAPTURE_MAX_BYTES: u64 = 64 * 1024;
+
+/// Node-level I/O capture policy (9.6): how a flow's per-node input/output
+/// payloads are persisted to `node_runs`, plus the size threshold that forces
+/// preview-only storage. The pure application logic — secret scrubbing, size
+/// truncation, and preview/size/hash derivation — lives in
+/// `wamn_run_store::capture`; this is the authored declaration that rides
+/// `graph_json` (the flow is in scope at every `node_runs` write site).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct Capture {
+    /// The capture mode. Absent = [`CaptureMode::Full`].
+    #[serde(default)]
+    pub mode: CaptureMode,
+    /// Payloads whose serialization exceeds this many bytes are stored
+    /// preview-only (head + size + hash, payload NULL) regardless of `mode`,
+    /// recorded as `capture_mode = 'preview'`. Absent =
+    /// [`DEFAULT_CAPTURE_MAX_BYTES`] (64 KiB).
+    #[serde(default = "default_capture_max_bytes", rename = "max-bytes")]
+    pub max_bytes: u64,
+}
+
+fn default_capture_max_bytes() -> u64 {
+    DEFAULT_CAPTURE_MAX_BYTES
+}
+
+impl Default for Capture {
+    fn default() -> Capture {
+        Capture {
+            mode: CaptureMode::Full,
+            max_bytes: DEFAULT_CAPTURE_MAX_BYTES,
+        }
+    }
+}
+
+impl Capture {
+    /// `true` for the default (full capture, 64 KiB threshold) — used to omit the
+    /// field on export so flows round-trip minimal (like `partition_policy` /
+    /// `ordering`).
+    pub fn is_default(&self) -> bool {
+        *self == Capture::default()
+    }
+}
+
+/// How a node's I/O payloads are persisted (9.6), most → least captured. The
+/// storage literal (`capture_mode`) is exactly the serde kebab-case name.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureMode {
+    /// Payloads stored faithfully (replayable). Secret scrubbing is applied to
+    /// the `preview_head` ONLY; the stored payload stays exact, `redacted` false.
+    /// The default.
+    #[default]
+    Full,
+    /// Secret scrubbing applied to the STORED payloads AND the preview
+    /// (`redacted = true`). A replay still runs, but replays the scrubbed values
+    /// — the documented capture/replay tradeoff (see `docs/run-state.md`).
+    Scrubbed,
+    /// Only the preview head + size + hash are stored; the payloads are NULL, so
+    /// the run reconstructs to `CaptureOff` (non-replayable).
+    Preview,
+    /// Nothing is captured (`capture_mode = 'off'`); payloads NULL, no preview.
+    Off,
+}
+
+impl CaptureMode {
+    /// The `node_runs.capture_mode` storage literal — exactly the serde
+    /// kebab-case name (tied to that by `capture_mode_literals_match_serde`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CaptureMode::Full => "full",
+            CaptureMode::Scrubbed => "scrubbed",
+            CaptureMode::Preview => "preview",
+            CaptureMode::Off => "off",
+        }
+    }
 }
 
 /// The flow's record-stream **ordering** (5.11): which ordered stream a run

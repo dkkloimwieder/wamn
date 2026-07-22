@@ -251,6 +251,8 @@ pub(crate) fn ladder_ddl(schema: &str) -> String {
             occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
             status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
             error_kind text, error_detail jsonb, resume_at timestamptz, \
+            preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
+            redacted boolean NOT NULL DEFAULT false, \
             PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\

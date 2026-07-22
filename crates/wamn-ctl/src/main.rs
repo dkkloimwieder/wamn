@@ -10,8 +10,8 @@ use std::str::FromStr as _;
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
     copy_project_env, dump_project_env, enable_cdc_project_env, migrate_catalog, provision,
-    provision_org, provision_project_env, publish_catalog, reconcile_replica_identity,
-    reconcile_run_plane, restore_project_env,
+    provision_org, provision_project_env, prune_run_history, publish_catalog,
+    reconcile_replica_identity, reconcile_run_plane, restore_project_env,
 };
 
 #[derive(Parser)]
@@ -49,6 +49,8 @@ enum Command {
     ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),
     /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
     ReconcileRunPlane(reconcile_run_plane::ReconcileRunPlaneArgs),
+    /// Prune a project-env's TERMINAL run history older than --retention-days (9.6): app-role, tenant-scoped DELETE; node_runs cascade, cron_anchor untouched (wamn-srb)
+    PruneRunHistory(prune_run_history::PruneRunHistoryArgs),
 }
 
 #[tokio::main]
@@ -79,5 +81,6 @@ async fn main() -> anyhow::Result<()> {
         Command::MigrateCatalog(args) => migrate_catalog::run(args).await,
         Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,
         Command::ReconcileRunPlane(args) => reconcile_run_plane::run(args).await,
+        Command::PruneRunHistory(args) => prune_run_history::run(args).await,
     }
 }

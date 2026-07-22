@@ -17,6 +17,7 @@ pub mod migrate_catalog;
 pub mod provision;
 pub mod provision_org;
 pub mod provision_project_env;
+pub mod prune_run_history;
 pub mod publish_catalog;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;

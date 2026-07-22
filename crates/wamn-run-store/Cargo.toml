@@ -9,6 +9,11 @@ license.workspace = true
 # The reconstruction/partial-re-run planners drive the pure engine's resume/
 # seed_at primitives; the model persists its RunStatus/FailKind/NodeError taxonomy.
 wamn-runner = { path = "../wamn-runner" }
+# 9.6 capture: the per-flow `Flow.capture` policy the pure `capture` module
+# applies at each node_runs write. Already in the closure via wamn-runner
+# (Plan::compile takes a Flow); this is the direct edge for the policy type, and
+# it is guest-compilable (the flowrunner guest already links wamn-flow).
+wamn-flow = { path = "../wamn-flow" }
 # SR11: the per-node checkpoint / completion builders that wamn-run-queue COMPOSES
 # are produced as `Sql` (text + param arity) so the consumer renumbers its tail
 # against the arity instead of hardcoding it. A leaf, no deps — keeps this crate
@@ -19,10 +24,6 @@ wamn-sql = { path = "../wamn-sql" }
 # contract (like wamn-ddl / wamn-api / wamn-runner).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-[dev-dependencies]
-# Tests build real flows and compile Plans to drive reconstruction end-to-end.
-wamn-flow = { path = "../wamn-flow" }
 
 # No DB / wasm / clock dependency: reconstruction is a pure function of
 # (plan, run record, node-run rows). The component owns every effect. The

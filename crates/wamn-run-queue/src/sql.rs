@@ -756,19 +756,21 @@ mod tests {
     }
 
     /// The real composed statements bind exactly the head's arity + the renew's two
-    /// new params: success $1..$9, error $1..$10, complete $1..$2 (dequeue shares
-    /// $1, adds none). Pinned against the arity the producing crate declares.
+    /// new params: success $1..$14, error $1..$15, complete $1..$2 (dequeue shares
+    /// $1, adds none). Pinned against the arity the producing crate declares — the
+    /// 9.6 capture columns (wamn-srb) grew the node-run heads (success 7 -> 12,
+    /// error 8 -> 13) and the renew tail renumbered here automatically.
     #[test]
     fn composed_arity_flows_from_the_producing_crate() {
-        assert_eq!(wamn_run_store::sql::insert_node_run_success().arity(), 7);
+        assert_eq!(wamn_run_store::sql::insert_node_run_success().arity(), 12);
         let s = record_success_and_renew_sql();
-        assert!(s.contains("AND run_id = $1 AND lease_owner = $9"));
-        assert!(!s.contains("$10"));
+        assert!(s.contains("AND run_id = $1 AND lease_owner = $14"));
+        assert!(!s.contains("$15"));
 
-        assert_eq!(wamn_run_store::sql::insert_node_run_error().arity(), 8);
+        assert_eq!(wamn_run_store::sql::insert_node_run_error().arity(), 13);
         let e = record_error_and_renew_sql();
-        assert!(e.contains("AND run_id = $1 AND lease_owner = $10"));
-        assert!(!e.contains("$11"));
+        assert!(e.contains("AND run_id = $1 AND lease_owner = $15"));
+        assert!(!e.contains("$16"));
 
         assert_eq!(wamn_run_store::sql::update_run_completed().arity(), 2);
         let c = complete_dequeue_sql();

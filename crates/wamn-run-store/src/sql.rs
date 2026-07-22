@@ -32,14 +32,14 @@ pub fn update_run_completed() -> Sql {
     Sql::new(update_run_completed_sql(), 2)
 }
 
-/// [`insert_node_run_success_sql`] carried with its param arity (`$1..$7`).
+/// [`insert_node_run_success_sql`] carried with its param arity (`$1..$12`).
 pub fn insert_node_run_success() -> Sql {
-    Sql::new(insert_node_run_success_sql(), 7)
+    Sql::new(insert_node_run_success_sql(), 12)
 }
 
-/// [`insert_node_run_error_sql`] carried with its param arity (`$1..$8`).
+/// [`insert_node_run_error_sql`] carried with its param arity (`$1..$13`).
 pub fn insert_node_run_error() -> Sql {
-    Sql::new(insert_node_run_error_sql(), 8)
+    Sql::new(insert_node_run_error_sql(), 13)
 }
 
 /// Idempotent run open (caller-minted run id): a fresh run records its trigger
@@ -130,12 +130,18 @@ pub fn update_run_state_sql() -> String {
 /// node's Nth visit is its own row, so ON CONFLICT dedupes only a REPLAY of
 /// the same visit, never a distinct one (wamn-03m / cjv.10 / R24). `$1`
 /// run_id, `$2` node_id, `$3` occurrence, `$4` seq, `$5` output_port,
-/// `$6` output_json, `$7` input_json.
+/// `$6` output_json, `$7` input_json, plus the 9.6 capture columns filled by
+/// [`crate::capture::derive`]: `$8` preview_head, `$9` payload_size,
+/// `$10` payload_hash, `$11` capture_mode, `$12` redacted. A `preview`/`off`
+/// capture leaves `output_json` (`$6`) NULL, which reconstruction reads as
+/// [`CaptureOff`](crate::ReconstructError::CaptureOff).
 pub fn insert_node_run_success_sql() -> String {
     format!(
         "INSERT INTO node_runs \
-           (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json) \
-         VALUES (current_setting('app.tenant', true), $1, $2, $3, $4, '{success}', $5, $6, $7) \
+           (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json, \
+            preview_head, payload_size, payload_hash, capture_mode, redacted) \
+         VALUES (current_setting('app.tenant', true), $1, $2, $3, $4, '{success}', $5, $6, $7, \
+                 $8, $9, $10, $11, $12) \
          ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING",
         success = NodeRunStatus::Success.as_sql(),
     )
@@ -147,13 +153,17 @@ pub fn insert_node_run_success_sql() -> String {
 /// taxonomy lands in `error_kind`/`error_detail` for the run history.
 /// `$1` run_id, `$2` node_id, `$3` occurrence (the engine-computed visit),
 /// `$4` seq, `$5` output_json (the error payload), `$6` input_json,
-/// `$7` error_kind, `$8` error_detail.
+/// `$7` error_kind, `$8` error_detail, plus the 9.6 capture columns filled by
+/// [`crate::capture::derive`] over the error payload: `$9` preview_head,
+/// `$10` payload_size, `$11` payload_hash, `$12` capture_mode, `$13` redacted.
 pub fn insert_node_run_error_sql() -> String {
     format!(
         "INSERT INTO node_runs \
            (tenant_id, run_id, node_id, occurrence, seq, status, output_port, output_json, input_json, \
-            error_kind, error_detail) \
-         VALUES (current_setting('app.tenant', true), $1, $2, $3, $4, '{error}', 'error', $5, $6, $7, $8) \
+            error_kind, error_detail, \
+            preview_head, payload_size, payload_hash, capture_mode, redacted) \
+         VALUES (current_setting('app.tenant', true), $1, $2, $3, $4, '{error}', 'error', $5, $6, $7, $8, \
+                 $9, $10, $11, $12, $13) \
          ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING",
         error = NodeRunStatus::Error.as_sql(),
     )
@@ -169,6 +179,33 @@ pub fn select_completed_node_runs_sql() -> String {
          WHERE run_id = $1 AND status IN ('{success}', '{error}') ORDER BY seq",
         success = NodeRunStatus::Success.as_sql(),
         error = NodeRunStatus::Error.as_sql(),
+    )
+}
+
+/// Prune terminal run history older than a retention window (9.6, wamn-srb): the
+/// `prune-run-history` verb's statement. DELETE the current tenant's `runs` rows
+/// in a TERMINAL state ([`RunStatus::is_terminal`] — completed / failed /
+/// cancelled / infrastructure-failure) whose `created_at` predates `$1` days ago.
+/// `node_runs` (and any surviving `run_queue` / `run_dead_letters` rows) cascade
+/// via their `ON DELETE CASCADE` FK to `runs`; `cron_anchor` is a SEPARATE table
+/// this never touches, so a pruned cron run cannot re-fire its tick (the durable
+/// anchor decouples cron dedupe from prunable history — wamn-fqg.6). A
+/// `dispatched`/`running` run is never pruned (it may still complete). Age-based
+/// only in v0 — replay lineage (`replay_of`/`root_run_id`) is not consulted.
+/// Param: `$1` retention_days. RLS + the explicit tenant predicate scope it to
+/// the claimed tenant, exactly like the other builders.
+pub fn prune_terminal_runs_sql() -> String {
+    let terminal: Vec<String> = RunStatus::ALL
+        .into_iter()
+        .filter(|s| s.is_terminal())
+        .map(|s| format!("'{}'", s.as_sql()))
+        .collect();
+    format!(
+        "DELETE FROM runs \
+          WHERE tenant_id = current_setting('app.tenant', true) \
+            AND status IN ({statuses}) \
+            AND created_at < now() - ($1::bigint * interval '1 day')",
+        statuses = terminal.join(", "),
     )
 }
 
@@ -218,10 +255,13 @@ mod tests {
                 stmt.text()
             );
         }
-        // The exact contract wamn-run-queue composes against, pinned.
+        // The exact contract wamn-run-queue composes against, pinned. The node-run
+        // arities grew by the five 9.6 capture columns (wamn-srb): success 7 -> 12,
+        // error 8 -> 13 — the composed renew tail renumbers against these
+        // automatically (wamn-run-queue's `checkpoint_then_renew`).
         assert_eq!(update_run_completed().arity(), 2);
-        assert_eq!(insert_node_run_success().arity(), 7);
-        assert_eq!(insert_node_run_error().arity(), 8);
+        assert_eq!(insert_node_run_success().arity(), 12);
+        assert_eq!(insert_node_run_error().arity(), 13);
     }
 
     /// The builders stay in the house shape: unqualified tables, claim-scoped
@@ -325,8 +365,47 @@ mod tests {
             "output_json",
             "error_kind",
             "error_detail",
+            // 9.6 capture columns the builders now write (wamn-srb).
+            "preview_head",
+            "payload_size",
+            "payload_hash",
+            "capture_mode",
+            "redacted",
         ] {
             assert!(ddl.contains(col), "node_runs column {col} missing from DDL");
         }
+    }
+
+    /// The 9.6 prune statement targets `runs` (cascading to `node_runs`), scoped
+    /// to the claim, and only TERMINAL statuses over an age predicate — never a
+    /// `running`/`dispatched` run, and never `cron_anchor`.
+    #[test]
+    fn prune_targets_terminal_runs_only() {
+        let sql = prune_terminal_runs_sql();
+        assert!(sql.starts_with("DELETE FROM runs"), "{sql}");
+        assert!(sql.contains("current_setting('app.tenant', true)"), "{sql}");
+        assert!(
+            sql.contains("created_at < now() - ($1::bigint * interval '1 day')"),
+            "{sql}"
+        );
+        // Exactly the terminal statuses appear; the non-terminal ones never do.
+        for s in RunStatus::ALL {
+            let present = sql.contains(&format!("'{}'", s.as_sql()));
+            assert_eq!(
+                present,
+                s.is_terminal(),
+                "status {} must be {} in the prune IN-list",
+                s.as_sql(),
+                if s.is_terminal() { "present" } else { "absent" }
+            );
+        }
+        assert!(
+            !sql.contains("cron_anchor"),
+            "prune never touches cron_anchor"
+        );
+        assert!(
+            !sql.contains("node_runs"),
+            "node_runs cascades, not deleted directly"
+        );
     }
 }

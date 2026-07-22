@@ -120,6 +120,29 @@ pub struct NodeRunRecord {
     /// Structured error detail for history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_detail: Option<Value>,
+    /// 9.6 capture: the effective capture mode this row was written under
+    /// (`full`/`scrubbed`/`preview`/`off`), or None for a pre-9.6 row. A
+    /// `preview`/`off` row's `output` is None, so reconstruction yields
+    /// [`CaptureOff`](crate::ReconstructError::CaptureOff).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_mode: Option<String>,
+    /// 9.6 capture: whether the STORED payloads were scrubbed (`scrubbed` mode).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub redacted: bool,
+    /// 9.6 capture: the scrubbed head preview of the output payload — retained
+    /// even when the payload itself is not (preview / oversized).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_head: Option<String>,
+    /// 9.6 capture: the full serialized byte length of the output payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_size: Option<i64>,
+    /// 9.6 capture: an `fnv1a64` content hash of the output payload serialization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_hash: Option<String>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl NodeRunRecord {
@@ -145,6 +168,11 @@ impl NodeRunRecord {
             input: None,
             error_kind: None,
             error_detail: None,
+            capture_mode: None,
+            redacted: false,
+            preview_head: None,
+            payload_size: None,
+            payload_hash: None,
         }
     }
 }

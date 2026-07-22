@@ -10,6 +10,7 @@ mod apifixture;
 mod apiproof;
 mod bench;
 mod buildproof;
+mod capturebench;
 mod cdcbench;
 mod credprobe;
 mod credproof;
@@ -82,6 +83,8 @@ enum Command {
     Runnerbench(runnerbench::RunnerBenchArgs),
     /// Run the 5.14 dispatcher gates (cron / ordering / race / fairness / wake / live)
     Dispatchbench(dispatchbench::DispatchBenchArgs),
+    /// Run the 9.6 node-I/O capture gates (toggle / truncate / scrub / retention)
+    Capturebench(capturebench::CaptureBenchArgs),
     /// Run the EVT-NATS data-plane JetStream gate (publish / consume / Nats-Msg-Id dedupe / R3 node-loss heal)
     Streambench(streambench::StreamBenchArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
@@ -175,6 +178,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Failoverbench(args) => failoverbench::run(args).await,
         Command::Runnerbench(args) => runnerbench::run(args).await,
         Command::Dispatchbench(args) => dispatchbench::run(args).await,
+        Command::Capturebench(args) => capturebench::run(args).await,
         Command::Streambench(args) => streambench::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::Walbench(args) => walbench::run(args).await,

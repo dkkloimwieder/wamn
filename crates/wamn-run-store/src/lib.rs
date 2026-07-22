@@ -60,6 +60,10 @@
 //! pure tests do NOT cover; the live half is the throwaway-PG gates over the
 //! real prepared-statement path (SR12b).
 
+/// Node-level I/O capture policy application (9.6): the pure scrub / truncate /
+/// preview-derivation the flowrunner guest links to fill a `node_runs` row's
+/// capture columns before the write.
+pub mod capture;
 mod model;
 mod reconstruct;
 mod rerun;
@@ -68,6 +72,7 @@ mod rerun;
 pub mod sql;
 mod status;
 
+pub use capture::{Captured, derive as derive_capture};
 pub use model::{NodeRunRecord, RunRecord};
 pub use reconstruct::{ReconstructError, reconstruct};
 pub use rerun::{PartialRerun, RerunError, plan_partial_rerun, plan_replay};

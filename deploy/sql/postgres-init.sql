@@ -234,6 +234,13 @@ CREATE TABLE s3.node_runs (
     error_kind    text,
     error_detail  jsonb,
     resume_at     timestamptz,
+    -- 9.6 capture seams the flowrunner guest fills (wamn-srb); mirrors
+    -- deploy/sql/run-state.sql so the S3 fixture accepts the guest's writes.
+    preview_head  text,
+    payload_size  bigint,
+    payload_hash  text,
+    capture_mode  text,
+    redacted      boolean NOT NULL DEFAULT false,
     PRIMARY KEY (tenant_id, run_id, node_id, occurrence),
     FOREIGN KEY (tenant_id, run_id) REFERENCES s3.runs (tenant_id, run_id) ON DELETE CASCADE
 );

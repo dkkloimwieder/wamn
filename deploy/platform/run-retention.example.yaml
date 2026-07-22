@@ -1,0 +1,83 @@
+# EXAMPLE per-project-env RUN-HISTORY retention CronJob (9.6, wamn-srb).
+# Periodically runs the SHIPPED `wamn-ctl prune-run-history` verb on one
+# project-env's run-plane schema, so terminal run history older than the
+# retention window is pruned on a cadence — no new long-lived service, no queue.
+#
+# WHY (platform-plan risk #5): node I/O snapshots in `node_runs` are the biggest
+# storage-cost driver, so the hot `runs`/`node_runs` store must be bounded. This
+# verb DELETEs the tenant's runs in a TERMINAL state (completed / failed /
+# cancelled / infrastructure-failure) older than `--retention-days`; `node_runs`
+# (and any stale queue / dead-letter rows) cascade via their `ON DELETE CASCADE`
+# FK. It is idempotent and safe to repeat.
+#
+# NOT the cron anchor: `cron_anchor` is a SEPARATE table this NEVER touches, so a
+# pruned cron run cannot re-fire its tick — the durable anchor (wamn-fqg.6)
+# decouples cron dedupe from prunable history. dispatchbench's `retention` mode
+# proves exactly this: a pruned run does not re-fire; the anchor survives.
+#
+# ROLE (differs from the reconcile CronJobs): pruning is an ORDINARY tenant-scoped
+# DELETE the `wamn_app` role is granted — NO superuser needed. The verb connects
+# as `wamn_app`, sets the `app.tenant` claim RLS scopes the delete to, and pins
+# `search_path` to the run-plane schema. Deploy ONE CronJob per project-env,
+# substituting the schema, the tenant, and the app URL.
+#
+# v0 LIMITATION: age-based only — replay lineage (`replay_of`/`root_run_id`) is
+# not consulted, so a retained replay whose ORIGIN aged out loses the origin's
+# captured history. A lineage-aware retention is a follow-up.
+#
+#   kubectl -n wamn-system apply -f deploy/platform/run-retention.example.yaml
+#   kubectl -n wamn-system get cronjob run-retention-poc-f1
+#   # force a tick without waiting for the schedule:
+#   kubectl -n wamn-system create job --from=cronjob/run-retention-poc-f1 run-retention-manual
+#   kubectl -n wamn-system logs job/run-retention-manual
+#   # preview first (no delete): add "--dry-run" to args below.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: run-retention-poc-f1
+  namespace: wamn-system
+  labels: { app: run-retention, project-env: poc-f1 }
+spec:
+  # Nightly at 03:30 (owner-tunable). Retention is coarse; a daily cadence keeps
+  # the hot store bounded without churn.
+  schedule: "30 3 * * *"
+  # Never overlap: a slow prune must finish before the next tick — the delete is
+  # idempotent, but a second concurrent pass is pointless churn.
+  concurrencyPolicy: Forbid
+  # A tick missed while the controller was down still runs if it is <10 min late.
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels: { app: run-retention, project-env: poc-f1 }
+        spec:
+          restartPolicy: Never
+          # This Job never talks to the Kubernetes API — don't mount the default
+          # ServiceAccount token as idle attack surface.
+          automountServiceAccountToken: false
+          containers:
+            - name: prune
+              image: wamn-ctl:dev
+              imagePullPolicy: IfNotPresent
+              args:
+                [
+                  "--log-level", "error",
+                  "prune-run-history",
+                  "--schema", "poc_f1",
+                  "--tenant", "poc-f1",
+                  "--retention-days", "30",
+                ]
+              env:
+                # App-role connection — pruning is a tenant-scoped DELETE the
+                # non-superuser `wamn_app` role is granted (no ALTER, no
+                # ownership). The demo project envs live in the fixture pod's
+                # `wamn` database.
+                - name: WAMN_PG_URL
+                  value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+              resources:
+                requests: { cpu: "100m", memory: "128Mi" }
+                limits: { memory: "256Mi" }

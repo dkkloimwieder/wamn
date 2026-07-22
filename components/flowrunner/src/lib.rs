@@ -116,6 +116,57 @@ fn jsonb(v: &Value) -> SqlValue {
     SqlValue::Text(v.to_string())
 }
 
+/// A boolean column bind (the 9.6 `redacted` flag).
+fn boolean(b: bool) -> SqlValue {
+    SqlValue::Boolean(b)
+}
+
+/// An already-serialized jsonb/text value or SQL NULL — the 9.6 capture columns
+/// (`output_json`/`input_json`/`preview_head`/`payload_hash`) are NULL when
+/// capture is off / preview / oversized.
+fn opt_text(s: Option<String>) -> SqlValue {
+    match s {
+        Some(v) => SqlValue::Text(v),
+        None => SqlValue::Null,
+    }
+}
+
+/// An optional bigint bind (the 9.6 `payload_size` column), NULL when absent.
+fn opt_int64(n: Option<i64>) -> SqlValue {
+    match n {
+        Some(v) => SqlValue::Int64(v),
+        None => SqlValue::Null,
+    }
+}
+
+/// The 9.6 capture columns for a `node_runs` write, derived from the flow's
+/// [`Flow::capture`] policy over `(output, input)` — the SEVEN trailing binds
+/// `insert_node_run_success_sql` / `insert_node_run_error_sql` share: the two
+/// STORED payloads (`output_json`/`input_json`, NULL under preview/off/oversized)
+/// then preview_head, payload_size, payload_hash, capture_mode, redacted. Returned
+/// with `redacted` as a plain `bool` too, so the error path can scrub its taxonomy
+/// `error_detail` (which can echo the payload) when the stored payloads were
+/// scrubbed.
+fn capture_binds(
+    capture: &wamn_flow::Capture,
+    output: &Value,
+    input: &Value,
+) -> ([SqlValue; 7], bool) {
+    let c = wamn_run_store::derive_capture(capture, output, input);
+    (
+        [
+            opt_text(c.output_json),
+            opt_text(c.input_json),
+            opt_text(c.preview_head),
+            opt_int64(c.payload_size),
+            opt_text(c.payload_hash),
+            text(c.capture_mode),
+            boolean(c.redacted),
+        ],
+        c.redacted,
+    )
+}
+
 /// Name a pg-error by its variant (no host detail beyond the taxonomy tag), so
 /// the harness can assert on the error kind. Mirrors pgprobe's `err_name`.
 fn err_name(e: &PgError) -> String {
@@ -262,13 +313,17 @@ fn load_completed(run_id: &str) -> Result<Vec<NodeRunRecord>, String> {
             Some(SqlValue::Text(s)) => s.clone(),
             _ => "main".to_string(),
         };
+        // A JSON value round-trips as `Some`; a SQL NULL output_json (9.6 capture
+        // off / preview) is `None`, which reconstruction surfaces as CaptureOff —
+        // distinct from a captured JSON `null` payload (Some(Value::Null)).
         let output = match row.get(4) {
-            Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => {
-                serde_json::from_str(s).map_err(|e| format!("node_runs.output_json parse: {e}"))?
-            }
-            _ => Value::Null,
+            Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => Some(
+                serde_json::from_str(s).map_err(|e| format!("node_runs.output_json parse: {e}"))?,
+            ),
+            _ => None,
         };
-        let mut rec = NodeRunRecord::success(run_id, node_id, seq, port, output);
+        let mut rec = NodeRunRecord::success(run_id, node_id, seq, port, Value::Null);
+        rec.output = output;
         rec.occurrence = occurrence;
         out.push(rec);
     }
@@ -294,6 +349,10 @@ fn pg_write(run_id: &str, step: i32, payload: &str) -> Result<(), String> {
 /// `occurrence` is the engine-computed visit ([`Dispatch::occurrence`]), so a
 /// merge/loop node's Nth visit lands as its own row and ON CONFLICT dedupes only
 /// a replay of the SAME visit (wamn-03m / R24).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the checkpoint row's seven columns plus the 9.6 capture policy"
+)]
 fn record_node_run(
     run_id: &str,
     node_id: &str,
@@ -302,7 +361,12 @@ fn record_node_run(
     port: &str,
     output: &Value,
     input: &Value,
+    capture: &wamn_flow::Capture,
 ) -> Result<(), String> {
+    // 9.6: the flow's capture policy fills the payload + preview/size/hash/mode/
+    // redacted columns before the jsonb choke point (scrub/truncate applied here).
+    let (binds, _) = capture_binds(capture, output, input);
+    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
     client::execute(
         &run_sql::insert_node_run_success_sql(),
         &[
@@ -311,8 +375,13 @@ fn record_node_run(
             int32(occurrence as i32),
             int32(seq),
             text(port),
-            jsonb(output),
-            jsonb(input),
+            out_j,
+            in_j,
+            preview,
+            size,
+            hash,
+            mode,
+            redacted,
         ],
     )
     .map_err(|e| err_name(&e))?;
@@ -823,6 +892,10 @@ fn will_error_route(err: &NodeError, d: &Dispatch) -> bool {
 /// the same `{"error": {...}}` payload the engine routes — exactly what 5.7
 /// reconstruction replays (poc-webhook-f1's shape verbatim); the taxonomy
 /// lands in `error_kind`/`error_detail` for the run history.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the error row's columns plus the 9.6 capture policy"
+)]
 fn record_error(
     run_id: &str,
     node_id: &str,
@@ -830,8 +903,18 @@ fn record_error(
     seq: i32,
     err: &NodeError,
     input: &Value,
+    capture: &wamn_flow::Capture,
 ) -> Result<(), String> {
-    let (kind, payload, detail_json) = error_row_values(err);
+    let (kind, payload, mut detail_json) = error_row_values(err);
+    // 9.6: capture the ERROR payload (the routed emission) under the flow policy.
+    let (binds, redacted) = capture_binds(capture, &payload, input);
+    // When the stored payloads were scrubbed, scrub the taxonomy detail too — it
+    // can echo the payload (message/data), so leaving it raw would leak past the
+    // scrub. Preview/off keep the small taxonomy blob (metadata, not the payload).
+    if redacted {
+        wamn_run_store::capture::scrub(&mut detail_json);
+    }
+    let [out_j, in_j, preview, size, hash, mode, red] = binds;
     client::execute(
         &run_sql::insert_node_run_error_sql(),
         &[
@@ -839,10 +922,15 @@ fn record_error(
             text(node_id),
             int32(occurrence as i32),
             int32(seq),
-            jsonb(&payload),
-            jsonb(input),
+            out_j,
+            in_j,
             text(kind),
             jsonb(&detail_json),
+            preview,
+            size,
+            hash,
+            mode,
+            red,
         ],
     )
     .map_err(|e| err_name(&e))?;
@@ -1316,6 +1404,7 @@ fn execute(
                                     port,
                                     payload,
                                     &d.payload,
+                                    &flow.capture,
                                 )?;
                                 next_seq += 1;
                             }
@@ -1336,6 +1425,7 @@ fn execute(
                                     next_seq,
                                     err,
                                     &d.payload,
+                                    &flow.capture,
                                 )?;
                                 next_seq += 1;
                             }
@@ -1497,7 +1587,7 @@ fn flow_at(flow_id: &str, version: Option<u32>) -> Result<Rc<Flow>, String> {
 /// node, each record covers the next.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the checkpoint row's seven columns plus the renew pair, mirroring the statement"
+    reason = "the checkpoint row's columns + the 9.6 capture policy + the renew pair"
 )]
 fn record_node_run_and_renew(
     run_id: &str,
@@ -1507,9 +1597,12 @@ fn record_node_run_and_renew(
     port: &str,
     output: &Value,
     input: &Value,
+    capture: &wamn_flow::Capture,
     ttl_ms: i64,
     owner: &str,
 ) -> Result<(), String> {
+    let (binds, _) = capture_binds(capture, output, input);
+    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
     client::execute(
         &record_success_and_renew_sql(),
         &[
@@ -1518,8 +1611,13 @@ fn record_node_run_and_renew(
             int32(occurrence as i32),
             int32(seq),
             text(port),
-            jsonb(output),
-            jsonb(input),
+            out_j,
+            in_j,
+            preview,
+            size,
+            hash,
+            mode,
+            redacted,
             int64(ttl_ms),
             text(owner),
         ],
@@ -1531,7 +1629,7 @@ fn record_node_run_and_renew(
 /// The error-routed twin of [`record_node_run_and_renew`].
 #[expect(
     clippy::too_many_arguments,
-    reason = "the error row's columns plus the renew pair, mirroring the statement"
+    reason = "the error row's columns + the 9.6 capture policy + the renew pair"
 )]
 fn record_error_and_renew(
     run_id: &str,
@@ -1540,10 +1638,16 @@ fn record_error_and_renew(
     seq: i32,
     err: &NodeError,
     input: &Value,
+    capture: &wamn_flow::Capture,
     ttl_ms: i64,
     owner: &str,
 ) -> Result<(), String> {
-    let (kind, payload, detail_json) = error_row_values(err);
+    let (kind, payload, mut detail_json) = error_row_values(err);
+    let (binds, redacted) = capture_binds(capture, &payload, input);
+    if redacted {
+        wamn_run_store::capture::scrub(&mut detail_json);
+    }
+    let [out_j, in_j, preview, size, hash, mode, red] = binds;
     client::execute(
         &record_error_and_renew_sql(),
         &[
@@ -1551,10 +1655,15 @@ fn record_error_and_renew(
             text(node_id),
             int32(occurrence as i32),
             int32(seq),
-            jsonb(&payload),
-            jsonb(input),
+            out_j,
+            in_j,
             text(kind),
             jsonb(&detail_json),
+            preview,
+            size,
+            hash,
+            mode,
+            red,
             int64(ttl_ms),
             text(owner),
         ],
@@ -1889,6 +1998,7 @@ fn execute_claimed(
                                     port,
                                     payload,
                                     &d.payload,
+                                    &flow.capture,
                                     ttl_ms,
                                     owner,
                                 )?;
@@ -1913,6 +2023,7 @@ fn execute_claimed(
                                     next_seq,
                                     err,
                                     &d.payload,
+                                    &flow.capture,
                                     ttl_ms,
                                     owner,
                                 )?;

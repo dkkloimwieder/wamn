@@ -2,6 +2,62 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {
+    "Capture": {
+      "additionalProperties": false,
+      "description": "Node-level I/O capture policy (9.6): how a flow's per-node input/output payloads are persisted to `node_runs`, plus the size threshold that forces preview-only storage. The pure application logic — secret scrubbing, size truncation, and preview/size/hash derivation — lives in `wamn_run_store::capture`; this is the authored declaration that rides `graph_json` (the flow is in scope at every `node_runs` write site).",
+      "properties": {
+        "max-bytes": {
+          "default": 65536,
+          "description": "Payloads whose serialization exceeds this many bytes are stored preview-only (head + size + hash, payload NULL) regardless of `mode`, recorded as `capture_mode = 'preview'`. Absent = [`DEFAULT_CAPTURE_MAX_BYTES`] (64 KiB).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CaptureMode"
+            }
+          ],
+          "default": "full",
+          "description": "The capture mode. Absent = [`CaptureMode::Full`]."
+        }
+      },
+      "type": "object"
+    },
+    "CaptureMode": {
+      "description": "How a node's I/O payloads are persisted (9.6), most → least captured. The storage literal (`capture_mode`) is exactly the serde kebab-case name.",
+      "oneOf": [
+        {
+          "description": "Payloads stored faithfully (replayable). Secret scrubbing is applied to the `preview_head` ONLY; the stored payload stays exact, `redacted` false. The default.",
+          "enum": [
+            "full"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Secret scrubbing applied to the STORED payloads AND the preview (`redacted = true`). A replay still runs, but replays the scrubbed values — the documented capture/replay tradeoff (see `docs/run-state.md`).",
+          "enum": [
+            "scrubbed"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Only the preview head + size + hash are stored; the payloads are NULL, so the run reconstructs to `CaptureOff` (non-replayable).",
+          "enum": [
+            "preview"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Nothing is captured (`capture_mode = 'off'`); payloads NULL, no preview.",
+          "enum": [
+            "off"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "CredentialRef": {
       "additionalProperties": false,
       "description": "A credential the flow references by logical name; the vault (5.9) resolves it to a lazy handle at run time. No secret material is ever stored in flow data.",
@@ -280,6 +336,14 @@
         "type": "string"
       },
       "type": "array"
+    },
+    "capture": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Capture"
+        }
+      ],
+      "description": "The flow's node-level I/O capture policy (9.6): how each node's input / output payloads are persisted to `node_runs` — faithfully, scrubbed of secrets, preview-only, or not at all — plus the byte threshold above which any mode stores a preview only. Absent = [`Capture::default`] (full capture, 64 KiB threshold): the platform captures replayable payloads by default. Rides `graph_json`; the flowrunner guest applies it at every `node_runs` write ([`wamn_run_store::capture`](../wamn_run_store))."
     },
     "credentials": {
       "description": "Credentials the flow needs, declared by logical name and resolved by the vault (5.9) at run time. Nodes reference these by [`Node::credential`]; secrets never appear in flow data.",

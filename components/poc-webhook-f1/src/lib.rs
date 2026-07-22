@@ -175,6 +175,7 @@ fn drive(plan: &Plan<'_>, run_id: &str, input: Value) -> (u16, Value) {
                         port,
                         payload,
                         &d.payload,
+                        &plan.flow().capture,
                     ),
                     // Record an error row ONLY when the node has an error edge
                     // (the emission actually routes): 5.7 reconstruction folds
@@ -183,7 +184,15 @@ fn drive(plan: &Plan<'_>, run_id: &str, input: Value) -> (u16, Value) {
                     // FAILED run as Completed. A run-failing node's record is
                     // the runs.fail_* columns — the flowrunner contract.
                     NodeOutcome::Error(err) if !plan.successors(&d.node, ERROR_PORT).is_empty() => {
-                        record_error(run_id, &d.node, d.occurrence, next_seq, err, &d.payload)
+                        record_error(
+                            run_id,
+                            &d.node,
+                            d.occurrence,
+                            next_seq,
+                            err,
+                            &d.payload,
+                            &plan.flow().capture,
+                        )
                     }
                     NodeOutcome::Error(_) => Ok(()),
                 };
@@ -434,6 +443,42 @@ fn jsonb(v: &Value) -> SqlValue {
     SqlValue::Text(v.to_string())
 }
 
+/// An already-serialized jsonb/text value or SQL NULL — the 9.6 capture columns
+/// are NULL under preview / off / oversized capture.
+fn opt_text(s: Option<String>) -> SqlValue {
+    match s {
+        Some(v) => SqlValue::Text(v),
+        None => SqlValue::Null,
+    }
+}
+
+/// The 9.6 capture columns for a `node_runs` write, derived from the flow's
+/// [`Flow::capture`] policy over `(output, input)` — the seven trailing binds the
+/// insert builders share, plus `redacted` as a bool for the error path's taxonomy
+/// scrub. Mirrors the flowrunner guest so both node-run authors write one shape.
+fn capture_binds(
+    capture: &wamn_flow::Capture,
+    output: &Value,
+    input: &Value,
+) -> ([SqlValue; 7], bool) {
+    let c = wamn_run_store::derive_capture(capture, output, input);
+    (
+        [
+            opt_text(c.output_json),
+            opt_text(c.input_json),
+            opt_text(c.preview_head),
+            match c.payload_size {
+                Some(v) => SqlValue::Int64(v),
+                None => SqlValue::Null,
+            },
+            opt_text(c.payload_hash),
+            text(c.capture_mode),
+            SqlValue::Boolean(c.redacted),
+        ],
+        c.redacted,
+    )
+}
+
 fn first_text(rs: &bindings::wamn::postgres::types::RowSet) -> Option<String> {
     match rs.rows.first()?.first()? {
         SqlValue::Text(s) | SqlValue::Uuid(s) | SqlValue::Numeric(s) => Some(s.clone()),
@@ -527,6 +572,10 @@ fn mark_failed(run_id: &str, kind: &str, node: &str, reason: &str) -> Result<(),
 
 /// Record a successful node emission — the flowrunner (5.7) shape verbatim, so
 /// reconstruction and the run-history read model see one format.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the checkpoint row's seven columns plus the 9.6 capture policy"
+)]
 fn record_success(
     run_id: &str,
     node_id: &str,
@@ -535,7 +584,10 @@ fn record_success(
     port: &str,
     output: &Value,
     input: &Value,
+    capture: &wamn_flow::Capture,
 ) -> Result<(), String> {
+    let (binds, _) = capture_binds(capture, output, input);
+    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
     client::execute(
         &run_sql::insert_node_run_success_sql(),
         &[
@@ -544,8 +596,13 @@ fn record_success(
             SqlValue::Int32(occurrence as i32),
             SqlValue::Int32(seq),
             text(port),
-            jsonb(output),
-            jsonb(input),
+            out_j,
+            in_j,
+            preview,
+            size,
+            hash,
+            mode,
+            redacted,
         ],
     )
     .map(|_| ())
@@ -556,6 +613,10 @@ fn record_success(
 /// `{"error": {...}}` payload the engine routes down the error edge — exactly
 /// what 5.7 reconstruction replays (it needs no error taxonomy; the taxonomy
 /// lands in `error_kind`/`error_detail` for the run history).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the error row's columns plus the 9.6 capture policy"
+)]
 fn record_error(
     run_id: &str,
     node_id: &str,
@@ -563,8 +624,18 @@ fn record_error(
     seq: i32,
     err: &NodeError,
     input: &Value,
+    capture: &wamn_flow::Capture,
 ) -> Result<(), String> {
     let (kind, detail) = error_parts(err);
+    let payload = error_payload(detail);
+    let mut detail_json = detail_json(detail);
+    let (binds, redacted) = capture_binds(capture, &payload, input);
+    // Scrub the taxonomy detail alongside the payload when the mode scrubs — it
+    // can echo the payload, so leaving it raw would leak past the scrub.
+    if redacted {
+        wamn_run_store::capture::scrub(&mut detail_json);
+    }
+    let [out_j, in_j, preview, size, hash, mode, red] = binds;
     client::execute(
         &run_sql::insert_node_run_error_sql(),
         &[
@@ -572,10 +643,15 @@ fn record_error(
             text(node_id),
             SqlValue::Int32(occurrence as i32),
             SqlValue::Int32(seq),
-            jsonb(&error_payload(detail)),
-            jsonb(input),
+            out_j,
+            in_j,
             text(kind),
-            jsonb(&detail_json(detail)),
+            jsonb(&detail_json),
+            preview,
+            size,
+            hash,
+            mode,
+            red,
         ],
     )
     .map(|_| ())

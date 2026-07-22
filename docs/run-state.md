@@ -125,6 +125,78 @@ still picked up because newly dispatched runs carry the new version. `Plan::resu
 still raises `Mismatch` as the backstop against a corrupt history. Which version a
 *new* run executes is a hot-reload / dispatcher concern (4.4 / 5.14).
 
+## Node-level I/O capture (9.6)
+
+5.7 stores each node's I/O inline; **9.6 (wamn-srb)** decides *how much* and *in
+what form*, per flow. Platform credentials are structurally absent (handles, per
+contract), but **user data flowing through nodes can still carry secrets**, and
+node I/O snapshots are the platform's biggest storage-cost driver — so capture is
+a policy, not an always-on faithful copy.
+
+The policy is a per-flow field, [`Flow.capture`](flow-schema.md), that rides
+`graph_json` (no new plumbing — the flow is in scope at every `node_runs` write).
+It has a **mode** and a **`max-bytes`** size threshold (default 64 KiB). The pure
+application logic — secret scrubbing, size truncation, preview/size/hash
+derivation — lives in `wamn_run_store::capture` (`capture::derive`), unit-tested
+off-cluster and linked by the flowrunner guest, which calls it at each
+`record_node_run*` / `record_error*` write *before* the `jsonb()` choke point.
+The 9.6 seam columns already reserved on `node_runs` (`preview_head`,
+`payload_size`, `payload_hash`, `capture_mode`, `redacted`) are filled there; the
+cold-path byte store (`input_ref`/`output_ref`) stays 5.10's and is left null.
+
+**Modes** (`capture_mode` records the *effective* mode per row):
+
+| mode | stored payloads | preview/size/hash | reconstruct | `redacted` |
+|---|---|---|---|---|
+| `full` (default) | faithful (replayable) | yes (preview scrubbed) | exact | false |
+| `scrubbed` | secret-scrubbed | yes | works, replays scrubbed values | **true** |
+| `preview` | NULL | yes | **CaptureOff** (non-replayable) | false |
+| `off` | NULL | none | **CaptureOff** | false |
+
+The `preview_head` (first 256 chars) is **always** derived from the *scrubbed*
+serialization, so the editor's inspection panel never surfaces a raw secret even
+under `full`. `payload_size` is the full serialized byte length and `payload_hash`
+is a pure `fnv1a64` content id of the output emission.
+
+**Size threshold.** In *any* mode, a payload whose serialization exceeds
+`max-bytes` is stored **preview-only** (payload NULL, `capture_mode = 'preview'`)
+with its full size/hash retained — v0 truncates in Postgres; 5.10 will move the
+bytes to the object store behind `*_ref`.
+
+**Scrubber (v0).** Pure, guest-compilable, no regex: JSON **key-name** redaction
+(case-insensitive substring on `password`/`passwd`/`secret`/`token`/`api_key`/
+`apikey`/`authorization`/`private_key`/`credential`) replacing the whole value
+with `[redacted]`, plus **value-shape** checks on string leaves (`Bearer ` tokens,
+`-----BEGIN` PEM blocks, `AKIA` AWS key ids). Recursive over the `Value`; a secret
+key's subtree is redacted wholesale (never recursed into). Kept off the `full` hot
+path — there it touches only the preview.
+
+**The `scrubbed`/replay tradeoff.** `scrubbed` mode scrubs the **stored**
+`input_json`/`output_json` (and the preview) and sets `redacted = true`, so no raw
+secret is left in the hot store — but a replay/partial-re-run then replays the
+*scrubbed* values, not the originals. `full` keeps replay exact at the cost of
+storing the raw payload; `preview`/`off` make the run non-replayable
+(`ReconstructError::CaptureOff`) by design. Choose per flow's PII stance.
+
+**Error rows.** The error payload (the routed `{"error": …}` emission) is captured
+under the same policy; when the stored payloads are scrubbed the taxonomy
+`error_detail` is scrubbed too (it can echo the payload).
+
+**Retention.** The `wamn-ctl prune-run-history` verb (app-role, tenant-scoped)
+deletes terminal runs (completed/failed/cancelled/infrastructure-failure) older
+than `--retention-days`; `node_runs` cascade via the FK. `cron_anchor` is a
+separate table it never touches, so a pruned cron run cannot re-fire its tick
+(wamn-fqg.6 — proven by dispatchbench's `retention` mode). v0 is **age-based
+only** — replay lineage is not consulted (a lineage-aware policy is a deferral).
+Deploy per project-env with `deploy/platform/run-retention.example.yaml`.
+
+**Gate.** `capturebench` (`--mode toggle|truncate|scrub|retention|all`) applies
+the real `run-state.sql` to a throwaway schema and drives the same pure capture +
+insert builders: toggle (NULL payloads + CaptureOff), truncate (oversized →
+preview head/size/hash), scrub (a known secret appears **nowhere** in `node_runs`,
+`redacted` set), retention (the real prune verb removes old terminal runs, keeps
+recent/non-terminal, leaves `cron_anchor`).
+
 ## Scope (5.7) vs. siblings
 
 5.7 owns the run-state schema, at-least-once idempotency, the run-history read
@@ -138,9 +210,11 @@ model, branch-aware replay, and partial re-run. It deliberately does **not** own
 | Per-node ordering (`strict`/`partitioned`/`unordered`) | 5.11 |
 | The `cancel(run, reason)` operation | 5.12 |
 
-The reserved nullable seam columns (`input_ref`, `output_ref`, `preview_head`,
-`payload_size`, `payload_hash`, `capture_mode`, `redacted`) are where 9.6 and 5.10
-will land without a schema change; 5.7 leaves them null and stores I/O inline.
+The reserved nullable seam columns are where 9.6 and 5.10 land without a schema
+change; 5.7 itself leaves them null and stores I/O inline. **9.6 (wamn-srb) now
+fills the capture columns** (`preview_head`, `payload_size`, `payload_hash`,
+`capture_mode`, `redacted`) per the per-flow policy — see *Node-level I/O capture*
+above; the cold-path byte-store pointers (`input_ref`/`output_ref`) remain 5.10's.
 
 ## Gates
 

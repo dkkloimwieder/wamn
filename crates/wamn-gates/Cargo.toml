@@ -64,6 +64,9 @@ wamn-run-queue = { path = "../wamn-run-queue" }
 # mark-running → complete → dequeue) as the comparison curve for the combined
 # statements.
 wamn-run-store = { path = "../wamn-run-store" }
+# capturebench (9.6) compiles a Plan to prove a capture-off run reconstructs to
+# CaptureOff — the pure engine's resume type.
+wamn-runner = { path = "../wamn-runner" }
 # readerbench consumes the REAL draft envelope type the reader publishes — the
 # stream-side assert deserializes with deny_unknown_fields (drift guard).
 wamn-event-wire = { path = "../wamn-event-wire" }

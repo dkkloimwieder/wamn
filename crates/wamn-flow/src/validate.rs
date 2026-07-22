@@ -359,7 +359,9 @@ impl Flow {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{Edge, Flow, Node, Ordering, PartitionPolicy, Trigger};
+    use crate::types::{
+        Capture, CaptureMode, Edge, Flow, Node, Ordering, PartitionPolicy, Trigger,
+    };
     use serde_json::json;
 
     fn node(id: &str, ty: &str) -> Node {
@@ -396,6 +398,7 @@ mod tests {
             allowed_hosts: vec![],
             partition_policy: PartitionPolicy::default(),
             ordering: Ordering::default(),
+            capture: Capture::default(),
         }
     }
 
@@ -510,6 +513,62 @@ mod tests {
         // An unknown policy value is a parse error, not a silent default.
         let bad = json.replace("leapfrog", "yolo");
         assert!(Flow::from_json(&bad).is_err());
+    }
+
+    #[test]
+    fn capture_defaults_to_full_and_round_trips() {
+        // Absent = full capture at the 64 KiB threshold; the default is omitted
+        // on export so flows round-trip minimal (like partition-policy/ordering).
+        let f = minimal();
+        assert_eq!(f.capture, Capture::default());
+        assert_eq!(f.capture.mode, CaptureMode::Full);
+        assert_eq!(f.capture.max_bytes, crate::DEFAULT_CAPTURE_MAX_BYTES);
+        assert!(f.is_valid());
+        assert!(!f.to_json().contains("capture"));
+
+        // An explicit scrubbed policy with a tuned threshold round-trips with its
+        // kebab-case field name.
+        let mut f = minimal();
+        f.capture = Capture {
+            mode: CaptureMode::Scrubbed,
+            max_bytes: 4096,
+        };
+        let json = f.to_json();
+        assert!(json.contains("\"capture\""));
+        assert!(json.contains("\"mode\": \"scrubbed\""));
+        assert!(json.contains("\"max-bytes\": 4096"));
+        assert_eq!(Flow::from_json(&json).unwrap().capture, f.capture);
+        assert!(f.is_valid());
+
+        // A mode alone defaults the threshold (partial object).
+        let with_mode_only = json!({
+            "schema-version": "0.1", "flow-id": "f", "version": 1,
+            "trigger": {"type": "manual"}, "entry": "a",
+            "nodes": [{"id": "a", "type": "respond"}],
+            "capture": {"mode": "off"},
+        })
+        .to_string();
+        let parsed = Flow::from_json(&with_mode_only).unwrap();
+        assert_eq!(parsed.capture.mode, CaptureMode::Off);
+        assert_eq!(parsed.capture.max_bytes, crate::DEFAULT_CAPTURE_MAX_BYTES);
+
+        // An unknown mode is a parse error, not a silent default.
+        let bad = json.replace("scrubbed", "loud");
+        assert!(Flow::from_json(&bad).is_err());
+    }
+
+    #[test]
+    fn capture_mode_literals_match_serde() {
+        // The `capture_mode` column literal (CaptureMode::as_str) is exactly the
+        // serde kebab-case name — the storage side and the wire side cannot drift.
+        for m in [
+            CaptureMode::Full,
+            CaptureMode::Scrubbed,
+            CaptureMode::Preview,
+            CaptureMode::Off,
+        ] {
+            assert_eq!(json!(m).as_str(), Some(m.as_str()));
+        }
     }
 
     #[test]

@@ -33,3 +33,6 @@ wamn-registry = { path = "../wamn-registry" }
 # policy rows and applies them on the dst.
 wamn-rls = { path = "../wamn-rls" }
 wamn-seed = { path = "../wamn-seed" }
+# 9.6 prune-run-history: the single-source run-state SQL builder
+# (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
+wamn-run-store = { path = "../wamn-run-store" }

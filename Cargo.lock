@@ -4231,6 +4231,7 @@ dependencies = [
  "wamn-provision",
  "wamn-registry",
  "wamn-rls",
+ "wamn-run-store",
  "wamn-seed",
 ]
 
@@ -4368,6 +4369,7 @@ dependencies = [
  "wamn-run-queue",
  "wamn-run-store",
  "wamn-run-worker",
+ "wamn-runner",
  "wamn-seed",
  "wamn-testkit",
  "wamn-waker",

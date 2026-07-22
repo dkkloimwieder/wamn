@@ -361,23 +361,24 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
     );
 
     // record+renew = the 5.7 checkpoint insert verbatim + the owner-guarded
-    // renew tail; param numbering pinned ($8/$9 success, $9/$10 error).
+    // renew tail; param numbering pinned against the head arity ($13/$14 success,
+    // $14/$15 error since the 9.6 capture columns grew the heads — wamn-srb).
     let rs = record_success_and_renew_sql();
     assert!(
         rs.contains(&wamn_run_store::sql::insert_node_run_success_sql()),
         "record_success_and_renew_sql no longer composes insert_node_run_success_sql verbatim"
     );
-    assert!(rs.contains("$8::bigint * interval '1 millisecond'"));
-    assert!(rs.contains("AND run_id = $1 AND lease_owner = $9"));
-    assert!(!rs.contains("$10"));
+    assert!(rs.contains("$13::bigint * interval '1 millisecond'"));
+    assert!(rs.contains("AND run_id = $1 AND lease_owner = $14"));
+    assert!(!rs.contains("$15"));
     let re = record_error_and_renew_sql();
     assert!(
         re.contains(&wamn_run_store::sql::insert_node_run_error_sql()),
         "record_error_and_renew_sql no longer composes insert_node_run_error_sql verbatim"
     );
-    assert!(re.contains("$9::bigint * interval '1 millisecond'"));
-    assert!(re.contains("AND run_id = $1 AND lease_owner = $10"));
-    assert!(!re.contains("$11"));
+    assert!(re.contains("$14::bigint * interval '1 millisecond'"));
+    assert!(re.contains("AND run_id = $1 AND lease_owner = $15"));
+    assert!(!re.contains("$16"));
 }
 
 // ---- wamn-v8cv: the terminal dead-letter dequeue ---------------------------

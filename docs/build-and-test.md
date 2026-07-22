@@ -1599,6 +1599,37 @@ kubectl -n wamn-system apply -f deploy/gates/dispatchbench-job.yaml
 kubectl -n wamn-system logs -f job/dispatchbench
 ```
 
+### [9.6] node-level I/O capture (wamn-srb)
+
+Docs: docs/run-state.md § *Node-level I/O capture (9.6)*
+
+```bash
+# Pure decision + SQL builders (scrub / truncate / preview derivation, the
+# per-flow Flow.capture parse, the prune builder, the model + arity guards):
+cargo test -p wamn-flow -p wamn-run-store -p wamn-run-queue
+cargo clippy -p wamn-flow -p wamn-run-store -p wamn-ctl -p wamn-gates --all-targets
+# If Flow.capture changed, regenerate the published schema (drift-guarded):
+cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
+# Rebuild the flowrunner guest (9.6 enforcement site; release-wasm exception):
+( cd components && cargo build --release --target wasm32-wasip2 -p flowrunner )
+
+# capturebench (host-side, applies the REAL run-state.sql to a throwaway schema
+# and drives the same pure capture + node_runs insert builders the guest binds):
+docker run -d --rm --name wamn-cap-pg -p 5461:5432 -e POSTGRES_PASSWORD=postgres \
+  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
+WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5461/wamn \
+WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5461/wamn \
+  ./target/debug/wamn-gates --log-level error capturebench --mode all
+docker stop wamn-cap-pg
+# capturebench modes: toggle (NULL payloads + CaptureOff) / truncate (oversized ->
+# preview head/size/hash) / scrub (secret NOWHERE in node_runs, redacted set) /
+# retention (the real prune-run-history verb) / all.
+# Retention verb (deployed per project-env; app-role, tenant-scoped DELETE):
+#   wamn-ctl prune-run-history --schema <run-schema> --tenant <t> --retention-days 30 [--dry-run]
+kubectl -n wamn-system apply -f deploy/gates/capturebench-job.yaml
+kubectl -n wamn-system logs -f job/capturebench
+```
+
 ### [D6/wamn-q3n.1] control-plane registry model crate
 
 Docs: docs/postgres-topology.md, docs/registry-model.md
