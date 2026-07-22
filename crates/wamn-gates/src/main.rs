@@ -119,7 +119,7 @@ enum Command {
     ServeEcho(traceproof::ServeEchoArgs),
     /// Run the S6 test-host plugin-swap gates (sameness / delay / egress / regression)
     Testhostbench(testhostbench::TestHostBenchArgs),
-    /// Run the 11.4 assertion-library gate (cases-as-data → node-level ServeNode invokes + flow-level doubles harness, folded through wamn_testkit::evaluate)
+    /// Run the 11.4 assertion-library gate (cases-as-data → node-level ServeNode invokes + flow-level doubles harness, folded through wamn_testkit::evaluate) AND the 11.2-exec stored-suite executor (--suite/--impact-report: load test_suites/test_cases from a schema, drive each case through the t92 doubles)
     Testkitbench(testkitbench::TestKitBenchArgs),
     /// Run the 2.6 DB-path egress review gate (no shipped workload imports wasi:sockets)
     Egressbench(egressbench::EgressBenchArgs),

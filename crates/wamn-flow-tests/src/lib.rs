@@ -17,6 +17,8 @@
 //! still STORED as an opaque [`serde_json::Value`] (round-trips verbatim);
 //! validation only gates writes.
 
+pub mod sql;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

@@ -331,6 +331,102 @@ kubectl -n wamn-system apply -f deploy/gates/testkitbench-job.yaml
 kubectl -n wamn-system logs -f job/testkitbench
 ```
 
+#### [11.2-exec / wamn-0lfu] stored-suite executor (testkitbench --suite / --impact-report)
+
+The 11.4 `testkitbench` subcommand doubles as the STORED-suite EXECUTOR: it loads
+`test_suites` / `test_cases` rows from a schema, re-validates each `case_body`
+against the `wamn-testkit` vocabulary on READ, and executes each case as its OWN
+run through the t92 doubles seam — a FRESH ephemeral schema per case (the source
+schema is read-only), the graph read from `{source_schema}.flows`,
+`DoubleSet::virtual_host` + `EgressRecorder` (allowlist derived from the case's
+own egress asserts) + `RunWorker` + drain, then `wamn_testkit::evaluate` per
+case. One `check` line per assertion + a per-suite/summary line; nonzero exit on
+any failure. This is the future callee of the 12g migrate-catalog auto-run seam.
+
+Selection (exactly one source; `--cases` file mode is preserved unchanged):
+- `--suite <flow_id>@<version> --tenant <t> --source-schema <s>` — runs EVERY
+  suite of that flow version (single tenant).
+- `--impact-report <path>` — a JSON array of `SuiteSelector`
+  `{tenant, flow_id, flow_version, suite_id}`, the flattened
+  `wamn_impact::SuiteEdge` tuples (the 12g input contract; a LOCAL deserialize
+  struct — wamn-impact has no serde derives yet, out of this bead's scope).
+- `--seed-demo` — the hermetic gate: self-seeds `--source-schema` (production
+  `ensure_*` path) with a drivable no-egress demo flow + suite, then runs the
+  stored path. No external data, no live egress target.
+
+RLS posture: the source suite/graph rows are read via the ADMIN (superuser,
+RLS-bypassing) session with an EXPLICIT `(tenant, flow_id, flow_version
+[, suite_id])` WHERE predicate — matching the impact/cross-tenant model; the
+`flow-tests.sql` FORCE-RLS floor is UNTOUCHED, and the running FLOW still
+exercises it via the `wamn_app` pool. SQL read builders:
+`wamn_flow_tests::sql::{select_suites_for_flow_sql, select_cases_for_suite_sql}`
+(drift-guarded against `deploy/sql/flow-tests.sql`).
+
+Drivability refusal (cross-lane contract): before driving, the executor checks
+the graph's `nodes[].type` against the drivable set — the flowrunner built-in
+dispatch arms (`BUILTIN_NODE_TYPES`, drift-guarded against
+`components/flowrunner/src/lib.rs`) ∪ the standard node library
+(`STANDARD_NODE_TYPES`, drift-guarded against `crates/wamn-nodes/src/lib.rs`
+`NODE_TYPES` name+count). A flow with a guest-baked type (F1's
+`validate-receipt`/`upsert-receipt`/`evaluate-specs`/`create-holds`) → a typed
+per-suite SKIP naming the undrivable types (NOT a crash, NOT a silent pass), so
+F1 refuses cleanly while F3/F4 (std nodes) drive.
+
+```bash
+# Unit tests (SuiteSelector = SuiteEdge shape, i32→u32 version boundary,
+# selection exclusivity, drivability, coherence, egress-allowlist derivation,
+# node-set drift guards) + the flow-tests sql drift/predicate guards:
+cargo test -p wamn-gates testkitbench:: -p wamn-flow-tests
+
+# Local FULL gate (throwaway PG). The flowrunner release wasm is reused (no
+# rebuild). --seed-demo is the simplest hermetic proof of the arc:
+docker run -d --name lane0lfu-pg -p 15617:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+export ADMIN=postgres://postgres:postgres@127.0.0.1:15617/postgres
+export APP=postgres://wamn_app:wamn_app@127.0.0.1:15617/postgres
+REL=components/target/wasm32-wasip2/release
+./target/debug/wamn-gates --log-level error testkitbench \
+  --seed-demo --tenant demo-tenant --source-schema wamn_suiteexec \
+  --flowrunner $REL/flowrunner.wasm --database-url "$APP" --admin-database-url "$ADMIN"
+# --impact-report over the SAME seeded suite (a JSON array of SuiteEdge tuples):
+echo '[{"tenant":"demo-tenant","flow_id":"tk-demo-flow","flow_version":1,"suite_id":"demo"}]' > /tmp/impact.json
+./target/debug/wamn-gates --log-level error testkitbench \
+  --impact-report /tmp/impact.json --source-schema wamn_suiteexec \
+  --flowrunner $REL/flowrunner.wasm --database-url "$APP" --admin-database-url "$ADMIN"
+# Refusal: seed an undrivable flow (a validate-receipt node) + a suite, then
+# --suite → a typed SKIP naming the undrivable type, exit 0 (a clean refusal is
+# not a failure). See the lane's local script.
+docker rm -f lane0lfu-pg
+
+# In-cluster gate of record (hermetic --seed-demo; gates image ONLY — no host /
+# guest / ctl rebuild is required by this bead):
+kubectl -n wamn-system apply -f deploy/gates/suiteexec-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/suiteexec --timeout=180s
+kubectl -n wamn-system logs job/suiteexec
+
+# Wave-end COMPOSITION gate (integrator-run, over the parallel lane's stored
+# POC suites in poc_f1 — F1 refuses cleanly, F3/F4 drive). The exact shape:
+#   testkitbench --suite <flow_id>@<version> --tenant <poc-tenant> \
+#     --source-schema poc_f1 --flowrunner /bench/flowrunner.wasm
+#     --database-url $WAMN_PG_URL --admin-database-url $WAMN_PG_ADMIN_URL
+# (or --impact-report over the flattened SuiteEdge tuples). F3/F4 flows that make
+# real egress (ERP/notify) need a reachable target or the case's egress asserts
+# to expect the exact authority — see (h) in the executor docs.
+
+# PER-CASE ISOLATION: a fresh exec schema per CASE (db-state asserts see only
+# that run's writes). Suites are small; provision_case (~5 runner_ddl tables)
+# is sub-second/case locally. Fall back to per-suite schema + unique run ids only
+# if a large suite makes provisioning dominate.
+# 4 mutants killed (python sha256 apply/test/restore, debug builds):
+# M1 suite-selection WHERE predicate (drop suite_id=$4) → wamn-flow-tests
+#    sql::tests::cases_predicate_is_scoped_by_all_four_keys;
+# M2 per-case fail aggregation fold (OR/last-only) → testkitbench
+#    fold_outcome_flips_ok_on_any_failing_assertion;
+# M3 impact-tuple parse field-swap (flow_id→flow) → testkitbench
+#    suite_selector_matches_the_suite_edge_shape;
+# M4 drivability check inverted → testkitbench
+#    drivability_refuses_guest_baked_and_accepts_std_and_builtin.
+```
+
 ### [11.3 / wamn-htn] record-and-replay fixtures (pin-run + pinproof)
 
 Docs: docs/testkit.md → "Record-and-replay: pin a run". The pure `pin_run`
@@ -1179,9 +1275,11 @@ next to their D24/suite siblings in `crates/wamn-migrate/src/sql.rs`. `wamn-ctl
 impact-report` is the read-only surface; `migrate-catalog` ALWAYS renders the
 report and `--acknowledge-impact` REFUSES a destructive plan with dependent
 flows/suites (typed error, non-zero exit, before the apply tx — nothing mutated),
-orthogonal to `--confirm-with-backup`. Suite EXECUTION is parked (wamn-0lfu); the
-report enumerates the `(tenant, flow_id, flow_version, suite_id)` tuples that would
-run.
+orthogonal to `--confirm-with-backup`. The report enumerates the
+`(tenant, flow_id, flow_version, suite_id)` tuples that would run; suite EXECUTION
+of those tuples is the wamn-0lfu executor (`testkitbench --impact-report`, see
+[11.2-exec] above) — the 12g migrate-catalog auto-run seam flattens
+`ImpactReport.entities[].suites[]` into that executor's `SuiteSelector` array.
 
 ```bash
 cargo test -p wamn-impact -p wamn-migrate                 # pure decision + drift-guard pins (3 mutants killed here)
