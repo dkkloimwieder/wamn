@@ -1,0 +1,116 @@
+# f3proof (wamn-24i, POC-F3) — the DEPLOYED escalate-stale-holds gate of record.
+# Provisions the quality_holds catalog + table + 2 stale/1 fresh holds into the
+# runner's OWN project (wamn_runner_demo/demo-tenant, ADDITIVE — never dropping
+# the live run-state), registers the F3 CRON gate flow, then PARKS the runner at
+# 0 replicas and proves, purely from DB state + the k8s scale API + serve-echo:
+#   1. the LIVE dispatcher fires a cron run of the parked project (swept),
+#   2. the waker (deploy/platform/waker.yaml) scales the runner 0 -> 1,
+#   3. the woken runner drains the cycle: BOTH stale holds -> escalated, the
+#      fresh hold untouched, one credentialed notify per hold delivered to
+#      serve-echo (fnv1a digest match) with the secret contained (in no recorded
+#      row), and the structural cycle terminated (the gate node visited 3x).
+# Then tears down its own residue (holds/catalog tables + the gate flow's rows)
+# and restores the runner scale floored at 1.
+#
+# PRECONDITIONS (see docs/build-and-test.md + the wakeproof-job header):
+#   * deploy/platform/waker.yaml applied (the scale actuator);
+#   * deploy/gates/serve-echo.yaml applied (the notify reflector, serve-echo:8091,
+#     already in the runner's host-level --allowed-hosts);
+#   * the runner + wamn_runner_demo schema exist and the dispatcher sweeps the
+#     runner-demo project (else `dispatcher-fires` FAILS by design — a wiring gap,
+#     not a wake failure);
+#   * the runner's wamn-runner-credentials Secret maps notify-webhook -> the
+#     f3proof demo secret under project "default" (see runner-credentials.example.yaml);
+#   * WAMN_PG_ADMIN_URL points at a superuser role (CREATE TABLE in the schema).
+#
+#   kubectl -n wamn-system delete job f3proof --ignore-not-found   # Jobs are immutable
+#   kubectl -n wamn-system apply -f deploy/gates/f3proof-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/f3proof --timeout=300s
+#   kubectl -n wamn-system logs job/f3proof   # -> overall PASS: true
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: f3proof-gate
+  namespace: wamn-system
+---
+# The gate parks + restores the runner scale, so it needs the SAME
+# deployments/scale get+patch grant the waker (and wakeproof) has.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: f3proof-gate
+  namespace: wamn-system
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: f3proof-gate
+  namespace: wamn-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: f3proof-gate
+subjects:
+  - kind: ServiceAccount
+    name: f3proof-gate
+    namespace: wamn-system
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: f3proof
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: f3proof
+    spec:
+      restartPolicy: Never
+      # The k8s scale client reads the mounted service-account token (default
+      # automount stays ON — this Job parks/wakes the runner).
+      serviceAccountName: f3proof-gate
+      containers:
+        - name: f3proof
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            [
+              "--log-level", "error",
+              "f3proof",
+              "--schema", "wamn_runner_demo",
+              "--tenant", "demo-tenant",
+              "--deployment", "runner",
+              "--echo-host", "serve-echo:8091",
+              "--offset-ms", "-60000",
+              "--setup",
+              "--teardown",
+              "--timeout-secs", "120",
+            ]
+          env:
+            # The app (wamn_app) URL — the same Secret the runner uses, so the
+            # seed lands under the tenant/RLS floor the runner claims.
+            - name: WAMN_PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-runner-db
+                  key: url
+            # A SUPERUSER URL — the hermetic preamble CREATEs the holds/catalog
+            # tables in the schema (the app role cannot). Provide via a Secret
+            # carrying a superuser connection string for this cluster's Postgres.
+            - name: WAMN_PG_ADMIN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-runner-db-admin
+                  key: url
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              memory: "256Mi"

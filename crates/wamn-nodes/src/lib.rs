@@ -11,6 +11,7 @@
 //! |------------------|-------------------------|--------------|
 //! | `transform`      | —                       | reshape the payload with a JMESPath expression |
 //! | `conditional`    | —                       | branch `true`/`false` on a JMESPath predicate |
+//! | `time-shift`     | —                       | shift an epoch-ms input by a signed offset (the arithmetic JMESPath lacks) |
 //! | `http-request`   | `HttpEgress`            | one outbound HTTP call, taxonomy-classified |
 //! | `postgres`       | `Postgres`              | catalog-derived entity ops via the audited 4.1 surface |
 //! | `postgres-query` | `Postgres` + `RawSql`   | author-written SQL, `$n`-bound — D8 flag, DEFAULT OFF |
@@ -30,6 +31,7 @@ mod http;
 mod policy;
 mod postgres;
 mod template;
+mod timeshift;
 mod transform;
 
 pub mod respond;
@@ -44,9 +46,10 @@ pub use wamn_node_sdk::{
 use serde_json::Value;
 
 /// Every node type this library implements (drift-guarded by docs + tests).
-pub const NODE_TYPES: [&str; 6] = [
+pub const NODE_TYPES: [&str; 7] = [
     "transform",
     "conditional",
+    "time-shift",
     "http-request",
     "postgres",
     "postgres-query",
@@ -55,6 +58,7 @@ pub const NODE_TYPES: [&str; 6] = [
 
 static TRANSFORM: transform::Transform = transform::Transform;
 static CONDITIONAL: conditional::Conditional = conditional::Conditional;
+static TIME_SHIFT: timeshift::TimeShift = timeshift::TimeShift;
 static HTTP_REQUEST: http::HttpRequestNode = http::HttpRequestNode;
 static POSTGRES: postgres::PostgresEntity = postgres::PostgresEntity;
 static POSTGRES_QUERY: postgres::PostgresQuery = postgres::PostgresQuery;
@@ -74,6 +78,7 @@ pub(crate) fn node(node_type: &str) -> Option<&'static dyn Node> {
     match node_type {
         "transform" => Some(&TRANSFORM),
         "conditional" => Some(&CONDITIONAL),
+        "time-shift" => Some(&TIME_SHIFT),
         "http-request" => Some(&HTTP_REQUEST),
         "postgres" => Some(&POSTGRES),
         "postgres-query" => Some(&POSTGRES_QUERY),

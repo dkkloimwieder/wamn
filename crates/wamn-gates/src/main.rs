@@ -19,6 +19,7 @@ mod f1bench;
 mod f1fixture;
 mod f1proof;
 mod f2invoke;
+mod f3proof;
 mod failoverbench;
 mod flowbench;
 mod ladderproof;
@@ -133,6 +134,8 @@ enum Command {
     Ladderproof(ladderproof::LadderProofArgs),
     /// Run the POC-F3 scale-to-zero wake proof (park the runner at 0; a LIVE dispatcher cron fire wakes it via the waker and it completes)
     Wakeproof(wakeproof::WakeProofArgs),
+    /// Run the POC-F3 escalate-stale-holds proof (time-shift cutoff + structural cycle drain + credentialed notify + egress allowlist; local seed or in-cluster park→wake)
+    F3proof(f3proof::F3ProofArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -188,6 +191,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::F2invoke(args) => f2invoke::run(args).await,
         Command::Ladderproof(args) => ladderproof::run(args).await,
         Command::Wakeproof(args) => wakeproof::run(args).await,
+        Command::F3proof(args) => f3proof::run(args).await,
     };
 
     shutdown_observability();

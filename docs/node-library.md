@@ -49,12 +49,26 @@ Properties that made it the fit:
 Expressions compile per dispatch; memoizing per (flow-version, node-id) is the
 note-9b refinement if profiles ever demand it.
 
+The one place JMESPath's missing arithmetic bites is **time math**: a flow
+cannot compute "48h before the cron tick" from the trigger's `fire-at-ms`. The
+`time-shift` node fills exactly that gap — a PURE, capability-free node that adds
+a signed millisecond offset to an epoch-ms input and emits the shifted instant
+(RFC 3339 for a `timestamptz` filter, or epoch-ms). It derives only from the
+tick the runner already handed the run, so it stays deterministic and
+virtual-time-friendly (a gate's virtual clock maps 48h → wall-clock seconds via
+the offset). It is the enabling node for F3 `escalate-stale-holds`, the
+reference **structural cycle**: `time-shift` computes the cutoff once, a
+`postgres` list captures the stale holds, and a `conditional`/`transform` loop
+(`gate → advance → gate`) drains them one per lap while `escalate`/`notify` hang
+off a dead-end branch — no loop node needed (see below).
+
 ## The vocabulary
 
 | type | capabilities | config | emits |
 |---|---|---|---|
 | `transform` | — | `{"expression"}` | the expression's result on `main` |
 | `conditional` | — | `{"expression"}` | input unchanged on `"true"`/`"false"` by JMESPath truthiness (`0` is truthy; `[]`/`""`/`{}`/`null`/`false` falsy) |
+| `time-shift` | — | `{"base" (jmespath → epoch-ms int; quote a hyphenated key, e.g. `"\"fire-at-ms\""`), "offset-ms" (signed int), "format"?: iso\|epoch-ms (default iso), "key"? (default `cutoff`)}` | `{<key>: <shifted>}` — RFC 3339 string or epoch-ms int |
 | `http-request` | `HttpEgress` | `{"method"?, "url" (templated), "headers"? (values templated), "body"? (jmespath; null ⇒ no body, else JSON), "credential-header"? (the header the node's DECLARED credential rides — 5.9 vault, default `authorization`; explicit config header wins)}` | `{"status", "headers", "body"}` on `main` |
 | `postgres` | `Postgres` | `{"entity", "op": create\|get\|update\|delete\|list, "id"? (jmespath, default `id`), "body"? (jmespath, default `@`; managed `id`/`tenant_id` stripped), "filters"?/"sort"?/"limit"?/"offset"?}` | the row / row array / `{"deleted", "id"}` |
 | `postgres-query` | `Postgres` + `RawSql` | `{"sql", "params"?: [jmespath per `$n`], "mode": query\|execute}` | `{"rows": [...]}` / `{"rows-affected": n}` |

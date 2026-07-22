@@ -162,11 +162,15 @@ spec:
             # [5.9] HOST-LEVEL egress allowlist — the outer bound (EMPTY =
             # deny-all, fail-closed). Since fqg.11 each flow must ALSO declare
             # its `allowed-hosts` (deny-all default; intersection with this
-            # list). serve-echo is the demo notify target the credproof gate
-            # drives; rendering per-project entries from provisioning is still
-            # open (nothing renders runner deploys today — hand-maintained).
+            # list). serve-echo is the demo notify target the credproof + f3proof
+            # gates drive; notify.example is the F3 (escalate-stale-holds)
+            # deployable example's manager-webhook authority (deploy/poc). Rendering
+            # per-project entries from provisioning is still open (nothing renders
+            # runner deploys today — hand-maintained).
             - "--allowed-hosts"
             - "serve-echo:8091"
+            - "--allowed-hosts"
+            - "notify.example"
             - "--nats-url"
             - "nats://nats.wamn-system.svc.cluster.local:4222"
             - "--nats-tls-ca"

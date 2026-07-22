@@ -219,6 +219,222 @@ fn conditional_branches_by_jmespath_truthiness() {
 }
 
 // ---------------------------------------------------------------------------
+// time-shift (deterministic time arithmetic — the F3 cutoff gap)
+// ---------------------------------------------------------------------------
+
+/// The F3 shape: shift the cron `fire-at-ms` back 48h into an RFC 3339 cutoff a
+/// `timestamptz` filter compares against. 1_700_000_000_000 ms = 2023-11-14
+/// 22:13:20Z; − 172_800_000 (48h) = 2023-11-12 22:13:20Z.
+#[test]
+fn time_shift_computes_an_iso_cutoff() {
+    let mut mock = Mock::default();
+    let config = json!({
+        "base": "\"fire-at-ms\"", "offset-ms": -172_800_000, "format": "iso", "key": "cutoff"
+    });
+    let input = json!({"trigger": "cron", "fire-at-ms": 1_700_000_000_000i64});
+    let em = go("time-shift", &mut mock, &config, &input).unwrap();
+    assert_eq!(em.port, "main");
+    assert_eq!(em.payload, json!({"cutoff": "2023-11-12T22:13:20.000Z"}));
+}
+
+/// MUTANT WITNESS (mutant #1): the offset SIGN is respected — a NEGATIVE offset
+/// yields an instant strictly EARLIER than the base, a positive one strictly
+/// later. A node that dropped the sign (added `|offset|`) or flipped it would
+/// escalate FRESH holds (cutoff in the future); this pins the direction.
+#[test]
+fn time_shift_offset_sign_is_respected() {
+    let mut mock = Mock::default();
+    let input = json!({"fire-at-ms": 1_700_000_000_000i64});
+
+    let back = go(
+        "time-shift",
+        &mut mock,
+        &json!({"base": "\"fire-at-ms\"", "offset-ms": -172_800_000, "format": "epoch-ms"}),
+        &input,
+    )
+    .unwrap();
+    assert_eq!(
+        back.payload,
+        json!({"cutoff": 1_699_827_200_000i64}),
+        "− subtracts"
+    );
+
+    let fwd = go(
+        "time-shift",
+        &mut mock,
+        &json!({"base": "\"fire-at-ms\"", "offset-ms": 172_800_000, "format": "epoch-ms"}),
+        &input,
+    )
+    .unwrap();
+    assert_eq!(
+        fwd.payload,
+        json!({"cutoff": 1_700_172_800_000i64}),
+        "+ adds"
+    );
+}
+
+/// `format`/`key` default to `iso`/`cutoff`; `key` is configurable.
+#[test]
+fn time_shift_format_and_key_defaults() {
+    let mut mock = Mock::default();
+    let input = json!({"fire-at-ms": 0});
+    // Defaults: iso under "cutoff".
+    let em = go(
+        "time-shift",
+        &mut mock,
+        &json!({"base": "\"fire-at-ms\"", "offset-ms": 0}),
+        &input,
+    )
+    .unwrap();
+    assert_eq!(em.payload, json!({"cutoff": "1970-01-01T00:00:00.000Z"}));
+    // Configurable key.
+    let em = go(
+        "time-shift",
+        &mut mock,
+        &json!({"base": "\"fire-at-ms\"", "offset-ms": 1000, "format": "epoch-ms", "key": "before"}),
+        &input,
+    )
+    .unwrap();
+    assert_eq!(em.payload, json!({"before": 1000}));
+}
+
+/// The base is a JMESPath over runtime INPUT: a missing or non-integer value is
+/// the input's fault (invalid-input, never retried) — not a flow-config bug.
+#[test]
+fn time_shift_bad_base_is_invalid_input() {
+    let mut mock = Mock::default();
+    let config = json!({"base": "\"fire-at-ms\"", "offset-ms": -1000});
+    // Missing path -> JMESPath null -> not an epoch-ms number.
+    let e = go("time-shift", &mut mock, &config, &json!({"other": 1})).unwrap_err();
+    assert!(
+        matches!(&e, NodeError::InvalidInput(d) if d.code.as_deref() == Some("invalid-base")),
+        "missing base is invalid-input: {e:?}"
+    );
+    // Present but a string, not a number.
+    let e = go(
+        "time-shift",
+        &mut mock,
+        &config,
+        &json!({"fire-at-ms": "soon"}),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&e, NodeError::InvalidInput(_)),
+        "non-number base: {e:?}"
+    );
+}
+
+/// Config faults (missing base / missing offset / unknown format) are terminal
+/// flow-authoring bugs.
+#[test]
+fn time_shift_config_faults_are_terminal() {
+    let mut mock = Mock::default();
+    let input = json!({"fire-at-ms": 0});
+    // Missing base string.
+    let e = go("time-shift", &mut mock, &json!({"offset-ms": 0}), &input).unwrap_err();
+    assert_eq!(terminal_code(&e), "invalid-config");
+    // Missing / non-integer offset-ms.
+    let e = go(
+        "time-shift",
+        &mut mock,
+        &json!({"base": "\"fire-at-ms\""}),
+        &input,
+    )
+    .unwrap_err();
+    assert_eq!(terminal_code(&e), "invalid-config");
+    // Unknown format.
+    let e = go(
+        "time-shift",
+        &mut mock,
+        &json!({"base": "\"fire-at-ms\"", "offset-ms": 0, "format": "unix"}),
+        &input,
+    )
+    .unwrap_err();
+    assert_eq!(terminal_code(&e), "invalid-config");
+}
+
+/// The F3 flow drains stale holds via a STRUCTURAL cycle whose loop state is an
+/// in-memory work-list threaded through `conditional` (pass-through) + a
+/// `transform` slice — `escalate`/`notify` hang off a dead-end branch and never
+/// carry loop state. This pins the exact JMESPath the fixture relies on, so a
+/// jmespath upgrade that broke slicing / indexing / array-truthiness would fail
+/// here rather than silently at run time.
+#[test]
+fn f3_cycle_jmespath_surface_holds() {
+    let mut mock = Mock::default();
+    let rows = json!([{"id": "h1"}, {"id": "h2"}, {"id": "h3"}]);
+
+    // gate: are there rows left? (empty array is falsy)
+    let more = go(
+        "conditional",
+        &mut mock,
+        &json!({"expression": "length(@) > `0`"}),
+        &rows,
+    )
+    .unwrap();
+    assert_eq!(more.port, "true");
+    let none = go(
+        "conditional",
+        &mut mock,
+        &json!({"expression": "length(@) > `0`"}),
+        &json!([]),
+    )
+    .unwrap();
+    assert_eq!(none.port, "false");
+
+    // escalate id selects the head row's id.
+    let head = go(
+        "transform",
+        &mut mock,
+        &json!({"expression": "[0].id"}),
+        &rows,
+    )
+    .unwrap();
+    assert_eq!(head.payload, json!("h1"));
+
+    // advance drops the head; the tail of a single-element list is the empty
+    // array (loop terminates), NOT null.
+    let tail = go(
+        "transform",
+        &mut mock,
+        &json!({"expression": "[1:]"}),
+        &rows,
+    )
+    .unwrap();
+    assert_eq!(tail.payload, json!([{"id": "h2"}, {"id": "h3"}]));
+    let done = go(
+        "transform",
+        &mut mock,
+        &json!({"expression": "[1:]"}),
+        &json!([{"id": "h1"}]),
+    )
+    .unwrap();
+    assert_eq!(done.payload, json!([]));
+
+    // escalate body is a constant object; notify body reshapes the escalated row.
+    let body = go(
+        "transform",
+        &mut mock,
+        &json!({"expression": "{status: 'escalated'}"}),
+        &rows,
+    )
+    .unwrap();
+    assert_eq!(body.payload, json!({"status": "escalated"}));
+    let row = json!({"id": "h1", "status": "escalated", "opened_at": "2026-01-01T00:00:00.000Z"});
+    let notify = go(
+        "transform",
+        &mut mock,
+        &json!({"expression": "{hold: id, status: status, opened_at: opened_at}"}),
+        &row,
+    )
+    .unwrap();
+    assert_eq!(
+        notify.payload,
+        json!({"hold": "h1", "status": "escalated", "opened_at": "2026-01-01T00:00:00.000Z"})
+    );
+}
+
+// ---------------------------------------------------------------------------
 // http-request
 // ---------------------------------------------------------------------------
 
@@ -770,7 +986,10 @@ fn public_resolution_surface_is_descriptor_only() {
     for t in wamn_nodes::NODE_TYPES {
         assert!(is_standard(t), "{t} is a standard node");
     }
-    assert!(!is_standard("custom"), "a custom node is not standard-library");
+    assert!(
+        !is_standard("custom"),
+        "a custom node is not standard-library"
+    );
     assert!(describe("delay").is_none(), "delay is runner-intrinsic");
 }
 
@@ -779,6 +998,7 @@ fn public_resolution_surface_is_descriptor_only() {
 fn capability_table_rows_are_exact() {
     assert_eq!(required_capabilities("transform"), Some(&[][..]));
     assert_eq!(required_capabilities("conditional"), Some(&[][..]));
+    assert_eq!(required_capabilities("time-shift"), Some(&[][..]));
     assert_eq!(required_capabilities("respond"), Some(&[][..]));
     assert_eq!(
         required_capabilities("http-request"),
@@ -814,6 +1034,35 @@ fn dispatch_refuses_ungranted_capability_rows() {
     .unwrap_err();
     assert_eq!(terminal_code(&e), "capability-denied");
     assert!(mock.http_calls.is_empty(), "the node never ran");
+}
+
+/// Drift guard: every node type the committed F3 fixture uses must be a node
+/// this library actually SHIPS (`is_standard`). The F3 flow (wamn-flow's
+/// fixtures) drives the deployed runner, whose std nodes are exactly this
+/// crate — so a fixture that named a type the library dropped (or renamed
+/// `time-shift`) would fail to dispatch in-cluster; this catches it in unit
+/// tests instead. Reads the sibling crate's fixture by manifest-relative path
+/// (the wit_coherence precedent), keeping the two crates decoupled.
+#[test]
+fn f3_fixture_node_types_are_all_standard() {
+    use wamn_nodes::is_standard;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../wamn-flow/tests/fixtures/f3-escalate-stale-holds.flow.json");
+    let raw = std::fs::read_to_string(&path).expect("read F3 fixture");
+    let flow: Value = serde_json::from_str(&raw).expect("F3 fixture is json");
+    let nodes = flow["nodes"].as_array().expect("nodes array");
+    let types: Vec<&str> = nodes.iter().map(|n| n["type"].as_str().unwrap()).collect();
+    for t in &types {
+        assert!(
+            is_standard(t),
+            "F3 node type {t:?} is not a shipped standard node"
+        );
+    }
+    // The cutoff-gap node is the one this lane adds — pin that it is present.
+    assert!(
+        types.contains(&"time-shift"),
+        "F3 must use the time-shift node"
+    );
 }
 
 #[test]
