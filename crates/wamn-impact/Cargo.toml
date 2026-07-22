@@ -1,0 +1,19 @@
+[package]
+name = "wamn-impact"
+description = "wamn schema-change impact analysis (11.8): the PURE decision that, given a migration plan and the dependency data (event registrations, active flow graphs, test suites), enumerates the affected entities (additive vs destructive), the flows that reference each — by rename-proof registration id AND by name-keyed node config — the suites those flows carry, and the generated-API resources over the catalog. No DB/clock/wasm: inputs are DATA, output a typed ImpactReport (the wamn-ctl verbs read the rows and call it)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The migration plan's per-op entity + additive/destructive classification (the
+# authoritative "affected entities" source — no SQL re-parse) and the catalog
+# model (entity names + relations for the generated-API edge).
+wamn-catalog = { path = "../wamn-catalog" }
+wamn-ddl = { path = "../wamn-ddl" }
+# The flow graph model: the name-keyed node-config edge scans each active flow's
+# nodes for a postgres node's config["entity"] (a catalog entity NAME).
+wamn-flow = { path = "../wamn-flow" }
+
+[dev-dependencies]
+serde_json = "1"

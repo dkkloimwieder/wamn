@@ -1131,6 +1131,47 @@ docker rm -f lane-828-pg
 # M3 RLS policy dropped from flow-tests.sql → suiteproof RLS zero-rows assert.
 ```
 
+### [11.8 / wamn-wvb] schema-change impact analysis — affected flows/suites/API
+
+Docs: docs/impact-analysis.md. Before a migration applies, enumerate the
+dependency graph a change touches: affected entities (additive/destructive, from
+the plan's per-op attribution) → flows via event registration (id-keyed,
+rename-proof) + node config (NAME-keyed `config["entity"]`, NOT rename-proof) →
+those flows' test suites (all versions) → the generated-API resources. The pure
+decision is `crates/wamn-impact` (`analyze` → `ImpactReport`); the `$n` reads live
+next to their D24/suite siblings in `crates/wamn-migrate/src/sql.rs`. `wamn-ctl
+impact-report` is the read-only surface; `migrate-catalog` ALWAYS renders the
+report and `--acknowledge-impact` REFUSES a destructive plan with dependent
+flows/suites (typed error, non-zero exit, before the apply tx — nothing mutated),
+orthogonal to `--confirm-with-backup`. Suite EXECUTION is parked (wamn-0lfu); the
+report enumerates the `(tenant, flow_id, flow_version, suite_id)` tuples that would
+run.
+
+```bash
+cargo test -p wamn-impact -p wamn-migrate                 # pure decision + drift-guard pins (3 mutants killed here)
+cargo test -p wamn-ctl                                    # driver units
+cargo clippy -p wamn-impact -p wamn-migrate -p wamn-ctl -p wamn-gates --all-targets
+# Live gate (throwaway PG): materialize v1 {orders, audit}, seed a dependent flow
+# per entity (registration + active node-config graph + suite), stage v2 =
+# destructive-on-orders (drop column) + additive-on-audit (add column) → the report
+# names EXACTLY orders' flow/suite/api and NOT audit's; migrate REFUSES without
+# --acknowledge-impact (nothing mutated) and PROCEEDS with it. Hermetic:
+docker run -d --name wave-wvb-pg -p 15502:5432 -e POSTGRES_PASSWORD=pg postgres:18
+WAMN_CTL_PG_URL=postgres://postgres:pg@127.0.0.1:15502/postgres \
+  cargo test -p wamn-ctl --test impact_report_live -- --nocapture
+# In-cluster gate-of-record candidate: the analysis in an ephemeral schema
+# (name-keyed node-config + suite + api edges; destructive gates, additive does not):
+WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:15502/postgres \
+WAMN_PG_ADMIN_URL=postgres://postgres:pg@127.0.0.1:15502/postgres \
+  ./target/debug/wamn-gates --log-level error impactproof
+docker rm -f wave-wvb-pg
+# IN-CLUSTER: deploy/gates/impactproof-job.yaml (kubectl apply; wait complete; logs).
+# 3 mutants killed (apply/test/restore, debug builds): M1 entity-match inverted →
+# wamn-impact untouched_entity_flows_are_not_reported; M2 destructive classification
+# forced additive → destructive_change_with_impact_requires_acknowledge; M3
+# node-config keyed on entity.id not name → node_config_edge_keys_on_entity_name_not_id.
+```
+
 ### [EVT-MAT / wamn-l5i9.17] materializer — CDC events → flow runs (Service-first)
 
 Docs: docs/event-plane-jetstream.md §5 · decisions D19–D24. The Service-first

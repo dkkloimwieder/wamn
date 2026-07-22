@@ -4229,6 +4229,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-ddl",
  "wamn-flow",
+ "wamn-impact",
  "wamn-migrate",
  "wamn-provision",
  "wamn-registry",
@@ -4412,6 +4413,16 @@ dependencies = [
  "wasm-encoder 0.251.0",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "wamn-impact"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wamn-catalog",
+ "wamn-ddl",
+ "wamn-flow",
 ]
 
 [[package]]

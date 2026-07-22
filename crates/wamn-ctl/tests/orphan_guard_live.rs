@@ -148,6 +148,7 @@ fn migrate_args(
         base: None,
         dry_run: false,
         confirm_with_backup: confirm,
+        acknowledge_impact: false,
         skip_reconcile_replica_identity: true,
     }
 }

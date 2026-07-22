@@ -131,6 +131,50 @@ pub fn select_flow_versions_for_tenant_sql(schema: &str) -> String {
     format!("SELECT flow_id, version FROM {schema}.flows WHERE tenant_id = $1")
 }
 
+// ---------------------------------------------------------------------------
+// Schema-impact analysis (11.8, wamn-wvb): the dependency-edge reads the
+// `impact-report` / `migrate-catalog` shell folds through `wamn_impact::analyze`.
+// All cross-tenant (the superuser driver bypasses RLS), like the D24 read above:
+// a shared entity's change hits every tenant's flow/suite, so the report must see
+// them all. SR12: the pure decision has no RLS/superuser — the throwaway-PG live
+// gate (wamn-ctl `tests/impact_report_live.rs`) covers that these see every tenant.
+// ---------------------------------------------------------------------------
+
+/// The 11.8 registration edge: like [`select_registrations_for_catalog_sql`] (the
+/// D24 read) but also projecting `flow_id`, so impact analysis names the
+/// SUBSCRIBING FLOW, not only the orphaned registration. Cross-tenant, ordered for
+/// a deterministic report.
+pub fn select_registration_flow_refs_for_catalog_sql() -> String {
+    "SELECT registration_id, tenant_id, entity_id, flow_id FROM catalog.event_registrations \
+     WHERE catalog_id = $1 ORDER BY tenant_id, registration_id"
+        .to_string()
+}
+
+/// The 11.8 node-config edge: every ACTIVE flow's `graph_json` across ALL tenants,
+/// so the analysis can scan each graph for a postgres node's `config["entity"]`
+/// (the name-keyed edge). Projects `(tenant_id, flow_id, version, graph_json)`.
+/// Same validated-bare-`schema` contract as [`select_suites_for_tenant_sql`]
+/// (the flow registry lives in the project schema, not the fixed `catalog` one).
+pub fn select_active_flows_sql(schema: &str) -> String {
+    format!(
+        "SELECT tenant_id, flow_id, version, graph_json::text FROM {schema}.flows \
+         WHERE active ORDER BY tenant_id, flow_id, version"
+    )
+}
+
+/// The 11.8 suite edge: every test suite across ALL tenants, so the analysis can
+/// keep the suites of the flows a change touches (all versions — the tuple the
+/// parked executor wamn-0lfu would run). Projects
+/// `(tenant_id, flow_id, flow_version, suite_id)`; the affected-flow filter is the
+/// pure decision's, not SQL's. Same validated-bare-`schema` contract as
+/// [`select_suites_for_tenant_sql`].
+pub fn select_all_suites_sql(schema: &str) -> String {
+    format!(
+        "SELECT tenant_id, flow_id, flow_version, suite_id FROM {schema}.test_suites \
+         ORDER BY tenant_id, flow_id, flow_version, suite_id"
+    )
+}
+
 /// A cheap, dependency-free checksum (FNV-1a 64) of the applied DDL script — an
 /// integrity/audit fingerprint stored in the history row, not a security hash.
 pub fn ddl_checksum(sql: &str) -> String {
@@ -140,4 +184,57 @@ pub fn ddl_checksum(sql: &str) -> String {
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{h:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    //! Drift guards (11.8, wamn-wvb): pin the dependency-edge reads against the
+    //! schema of record so a renamed column fails HERE, not only against a live
+    //! PG (the include_str! mirror of the gates `schema_drift` discipline).
+
+    const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+    const FLOWS_SCHEMA: &str = include_str!("../../../deploy/sql/flows.sql");
+    const FLOW_TESTS_SCHEMA: &str = include_str!("../../../deploy/sql/flow-tests.sql");
+
+    #[test]
+    fn registration_flow_refs_read_tracks_event_registrations() {
+        let sql = super::select_registration_flow_refs_for_catalog_sql();
+        assert!(CATALOG_SCHEMA.contains("CREATE TABLE catalog.event_registrations"));
+        for col in [
+            "registration_id",
+            "tenant_id",
+            "entity_id",
+            "flow_id",
+            "catalog_id",
+        ] {
+            assert!(sql.contains(col), "read references column {col}");
+            assert!(
+                CATALOG_SCHEMA.contains(col),
+                "catalog-schema.sql event_registrations no longer has {col}"
+            );
+        }
+    }
+
+    #[test]
+    fn active_flows_read_tracks_flows() {
+        let sql = super::select_active_flows_sql("app");
+        assert!(FLOWS_SCHEMA.contains("CREATE TABLE wamn_run.flows"));
+        for col in ["tenant_id", "flow_id", "version", "graph_json", "active"] {
+            assert!(sql.contains(col), "read references column {col}");
+            assert!(FLOWS_SCHEMA.contains(col), "flows.sql no longer has {col}");
+        }
+    }
+
+    #[test]
+    fn all_suites_read_tracks_test_suites() {
+        let sql = super::select_all_suites_sql("app");
+        assert!(FLOW_TESTS_SCHEMA.contains("CREATE TABLE wamn_run.test_suites"));
+        for col in ["tenant_id", "flow_id", "flow_version", "suite_id"] {
+            assert!(sql.contains(col), "read references column {col}");
+            assert!(
+                FLOW_TESTS_SCHEMA.contains(col),
+                "flow-tests.sql no longer has {col}"
+            );
+        }
+    }
 }

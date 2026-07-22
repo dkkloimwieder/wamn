@@ -40,3 +40,7 @@ wamn-run-store = { path = "../wamn-run-store" }
 # 11.3 pin-run: the pure `pin_run` transform (RunRecord + node_runs -> TestCase)
 # and the canonical case vocabulary the pinned case is serialized as.
 wamn-testkit = { path = "../wamn-testkit" }
+# 11.8 impact-report / migrate-catalog acknowledge gate: the PURE schema-change
+# impact analysis (entities → flows via registration + node config → suites →
+# generated-API). This shell reads the dependency rows and calls wamn_impact::analyze.
+wamn-impact = { path = "../wamn-impact" }

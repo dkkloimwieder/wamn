@@ -51,6 +51,8 @@ mod tracebench;
 mod traceproof;
 mod wakeproof;
 mod walbench;
+// [11.8] wamn-wvb: appended so cherry-picks compose (sibling lanes touch this file too).
+mod impactproof;
 
 use std::str::FromStr as _;
 
@@ -157,6 +159,8 @@ enum Command {
     ErpSim(erp_sim::ErpSimArgs),
     /// Run the 11.3 record-and-replay gate (pin a full-capture run via the real ctl core: secret scrubbed + volatile normalized + replay round-trip + preview-run refusal, ephemeral schema)
     Pinproof(pinproof::PinProofArgs),
+    /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert wamn_impact names the affected flow/suite/api resource and gates a destructive change with dependents behind acknowledgement
+    Impactproof(impactproof::ImpactProofArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -220,6 +224,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::F4proof(args) => f4proof::run(args).await,
         Command::ErpSim(args) => erp_sim::run(args).await,
         Command::Pinproof(args) => pinproof::run(args).await,
+        Command::Impactproof(args) => impactproof::run(args).await,
     };
 
     shutdown_observability();

@@ -70,6 +70,14 @@ pub struct MigrateCatalogArgs {
     #[arg(long)]
     pub confirm_with_backup: bool,
 
+    /// Acknowledge the schema-change impact (11.8). Required to APPLY a destructive
+    /// plan whose affected entities carry dependent flows or suites — the report is
+    /// always rendered; this asserts the operator has reviewed the blast radius.
+    /// Orthogonal to `--confirm-with-backup` (that gate is about data loss; this is
+    /// about downstream flows/suites). No effect on an additive or no-dependent plan.
+    #[arg(long)]
+    pub acknowledge_impact: bool,
+
     /// Skip the post-migrate REPLICA IDENTITY reconcile (EVT-RI-ORCH, l5i9.61).
     /// By default a successful migration reconciles RI for the data schema so an
     /// entity that needs the old image is never left on DEFAULT; pass this to run
@@ -133,6 +141,29 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         drop(tx);
         println!("{}", report.render());
 
+        // [11.8] (wamn-wvb): render the schema-change impact report — the SAME
+        // read-only dependency edges the apply path gates on, so a dry run previews
+        // the blast radius (affected flows via registration + node config, their
+        // suites, the generated-API resources). The --acknowledge-impact gate is
+        // OVERRIDABLE (like --confirm-with-backup), so a dry run SURFACES it rather
+        // than failing on it (unlike the unconditional D24 orphan refusal below).
+        let impact_plan = crate::impact_report::compile_plan(current.as_ref(), &target)?;
+        let impact = crate::impact_report::gather_impact(
+            &client,
+            &impact_plan,
+            current.as_ref(),
+            &target,
+            &args.schema,
+        )
+        .await?;
+        println!("{}", impact.render());
+        if impact.requires_acknowledgement() && !args.acknowledge_impact {
+            println!(
+                "[dry-run] apply would REFUSE without --acknowledge-impact \
+                 (destructive change with dependent flows/suites)"
+            );
+        }
+
         // D24 (EVT-REG, wamn-1bfe): run the SAME read-only registration-orphan
         // probe the apply path runs (guard_registration_orphans), so a dry run
         // cannot report clean while the real migrate-catalog would REFUSE before
@@ -158,6 +189,41 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
     // nothing and fires independently of the destructive-backup gate. Shared
     // with publish-catalog (the bead's carrier verb).
     crate::publish_catalog::guard_registration_orphans(&client, &target).await?;
+
+    // [11.8] (wamn-wvb): render the schema-change impact report and enforce the
+    // acknowledge gate BEFORE the apply transaction (a refusal mutates nothing,
+    // mirroring the D24 guard). The current-applied snapshot is read read-only and
+    // dropped; the authoritative apply below re-reads it under FOR UPDATE.
+    {
+        let snap = client
+            .transaction()
+            .await
+            .context("begin impact snapshot")?;
+        snap.batch_execute(&format!(
+            "SET LOCAL search_path = {schema}, catalog",
+            schema = args.schema
+        ))
+        .await
+        .context("set search_path")?;
+        let current =
+            read_current_applied(&snap, &args.tenant, &target.catalog_id, &env_str).await?;
+        drop(snap);
+        let impact_plan = crate::impact_report::compile_plan(current.as_ref(), &target)?;
+        let impact = crate::impact_report::gather_impact(
+            &client,
+            &impact_plan,
+            current.as_ref(),
+            &target,
+            &args.schema,
+        )
+        .await?;
+        println!("{}", impact.render());
+        if impact.requires_acknowledgement() && !args.acknowledge_impact {
+            // Typed refusal (non-zero exit), mirroring OrphaningPublish /
+            // RequiresConfirmation — the operator reviews the report + re-runs.
+            return Err(impact.acknowledgement_refusal().into());
+        }
+    }
 
     let plan = match apply_catalog_target(
         &mut client,
@@ -244,8 +310,9 @@ pub(crate) async fn ensure_data_schema(
 }
 
 /// Read the current applied version for `(tenant, catalog, environment)`,
-/// locked `FOR UPDATE` (the apply transaction holds it).
-async fn read_current_applied(
+/// locked `FOR UPDATE` (the apply transaction holds it). `pub(crate)` so the
+/// read-only `impact-report` verb (11.8) reads the same current-applied snapshot.
+pub(crate) async fn read_current_applied(
     tx: &tokio_postgres::Transaction<'_>,
     tenant: &str,
     catalog_id: &str,

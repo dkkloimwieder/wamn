@@ -13,6 +13,8 @@ use wamn_ctl::{
     provision, provision_org, provision_project_env, prune_run_history, publish_catalog,
     reconcile_replica_identity, reconcile_run_plane, restore_project_env,
 };
+// [11.8] wamn-wvb: appended so cherry-picks compose (sibling lanes touch this use block too).
+use wamn_ctl::impact_report;
 
 #[derive(Parser)]
 #[command(name = "wamn-ctl", version, about)]
@@ -53,6 +55,8 @@ enum Command {
     PruneRunHistory(prune_run_history::PruneRunHistoryArgs),
     /// Pin a recorded run as a versioned test case (11.3): secret-scrubbed + volatile-field-normalized, written to test_suites/test_cases; refuses an off/preview (non-replayable) run (wamn-htn)
     PinRun(pin_run::PinRunArgs),
+    /// Report the schema-change impact of a --target catalog: affected entities (additive/destructive) → flows via event registration + node config → their suites → generated-API resources. Read-only, mutates nothing (11.8, wamn-wvb)
+    ImpactReport(impact_report::ImpactReportArgs),
 }
 
 #[tokio::main]
@@ -85,5 +89,6 @@ async fn main() -> anyhow::Result<()> {
         Command::ReconcileRunPlane(args) => reconcile_run_plane::run(args).await,
         Command::PruneRunHistory(args) => prune_run_history::run(args).await,
         Command::PinRun(args) => pin_run::run(args).await,
+        Command::ImpactReport(args) => impact_report::run(args).await,
     }
 }
