@@ -892,6 +892,7 @@ async fn runpath_phase(args: &LogBenchArgs) -> anyhow::Result<()> {
             },
             std::sync::Arc::from([]), // deny-all egress: no http node in this flow
             30_000,
+            None, // no test doubles: the runpath gate pins the real store build
         )
         .await?;
 

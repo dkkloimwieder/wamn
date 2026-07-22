@@ -172,6 +172,8 @@ pub struct RunnerBenchArgs {
 /// lease table the fqg.9 guest-side partitioned claim path leases against,
 /// schema-qualified with the house tenant floor. Kept aligned with
 /// `deploy/sql/run-queue.sql` by the drift guard in this module's tests.
+// `pub(crate)` so the wamn-t92 testhostbench `runworker` mode drives the SAME
+// drift-guarded union schema when it exercises the run-worker `--test-doubles` path.
 pub(crate) fn runner_ddl(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.flows (\
@@ -474,6 +476,7 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             },
             std::sync::Arc::from([]), // no egress fixtures: deny-all
             30_000,
+            None, // wamn-t92: production host (no test doubles)
         )
         .await?;
 

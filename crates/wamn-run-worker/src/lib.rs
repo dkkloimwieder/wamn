@@ -57,11 +57,31 @@ use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
+use wamn_host::doubles::{DoubleSet, EgressRecorder};
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_host::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
 use wamn_host::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
 use wamn_host::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
 use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+
+/// The fixed unix-epoch second the `--test-doubles virtual` clock starts at, and
+/// the seed for its deterministic `wasi:random`. Constants (not args) so a test
+/// run-worker is byte-reproducible.
+const TEST_DOUBLES_EPOCH_SECS: u64 = 1_700_000_000;
+const TEST_DOUBLES_SEED: u64 = 0x7492_5EED_5EED_7492;
+
+/// The test-host double-set selector (wamn-t92). `Off` (default) is the
+/// production host; `Virtual` selects the test host (virtual clock + seeded
+/// random `WasiCtx` + an `EgressRecorder` swapped in for the prod egress
+/// handler). A build/config selection, never a runtime mode toggled on a live
+/// production service — the precedent is a second host build, not a test flag on
+/// the prod path (docs/archive/structure-review.md).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum TestDoubles {
+    #[default]
+    Off,
+    Virtual,
+}
 
 /// Default in-image path of the flowrunner component (baked into the prod host
 /// image — the runner IS the production flowrunner service, so the component
@@ -147,6 +167,22 @@ pub struct RunWorkerArgs {
     pub nats_tls_cert: Option<PathBuf>,
     #[arg(long)]
     pub nats_tls_key: Option<PathBuf>,
+
+    /// Test-host double-set selector (wamn-t92): `off` (default) = production
+    /// host; `virtual` = test host (virtual clock + seeded random + egress
+    /// recorder). NOT a production configuration — for a throwaway test runner.
+    #[arg(long, env = "WAMN_TEST_DOUBLES", default_value_t = TestDoubles::Off, value_enum)]
+    pub test_doubles: TestDoubles,
+
+    /// Under `--test-doubles virtual`, an authority this runner's flows may reach
+    /// (repeatable / comma-separated). The `EgressRecorder` records and DENIES
+    /// any outbound authority not listed. Ignored when `--test-doubles off`.
+    #[arg(
+        long = "test-egress-expect",
+        env = "WAMN_TEST_EGRESS_EXPECT",
+        value_delimiter = ','
+    )]
+    pub test_egress_expect: Vec<String>,
 }
 
 /// The `run-next` export's typed signature: `(lease-ttl-ms) -> (claimed, run-id,
@@ -291,7 +327,7 @@ impl RunWorker {
     /// same code).
     #[expect(
         clippy::too_many_arguments,
-        reason = "the engine + guest + the three session plugins (postgres/credentials/logging) + identity + egress + ttl are each a distinct host-injected input; grouping them into a struct would only move the list"
+        reason = "the engine + guest + the three session plugins (postgres/credentials/logging) + identity + egress + ttl + the wamn-t92 test-double selector are each a distinct host-injected input; grouping them into a struct would only move the list"
     )]
     pub async fn instantiate(
         engine: &Engine,
@@ -302,6 +338,7 @@ impl RunWorker {
         identity: RunnerIdentity<'_>,
         allowed_hosts: Arc<[AllowedHost]>,
         ttl_ms: u64,
+        doubles: Option<DoubleSet>,
     ) -> anyhow::Result<Self> {
         let RunnerIdentity {
             owner,
@@ -375,14 +412,25 @@ impl RunWorker {
         // The egress handler is unconditional (an outbound call without one
         // TRAPS); the allowlists gate it — the host-level list here plus the
         // per-flow declaration (fqg.11), both empty-deny-all, fail-closed.
-        let ctx = Ctx::builder(owner.to_string(), owner.to_string())
-            .with_plugins(plugins)
-            .with_http_handler(Arc::new(RunnerEgress {
-                inner: DefaultOutgoingHandler,
-                policy: egress_policy,
-            }))
-            .with_allowed_hosts(allowed_hosts)
-            .build();
+        let builder = Ctx::builder(owner.to_string(), owner.to_string()).with_plugins(plugins);
+        // wamn-t92: `Some(doubles)` selects the TEST HOST — the virtual-clock +
+        // seeded-random `WasiCtx` and the `EgressRecorder` swapped in for the
+        // prod egress handler. This is the ONLY production seam that can inject a
+        // per-workload `WasiCtx` (the washlet host cannot); see `wamn_host::doubles`.
+        // `None` is the production host, byte-unchanged.
+        let ctx = match doubles {
+            Some(ds) => builder
+                .with_http_handler(ds.egress)
+                .with_wasi_ctx(ds.wasi)
+                .build(),
+            None => builder
+                .with_http_handler(Arc::new(RunnerEgress {
+                    inner: DefaultOutgoingHandler,
+                    policy: egress_policy,
+                }))
+                .with_allowed_hosts(allowed_hosts)
+                .build(),
+        };
         let mut store = Store::new(raw, SharedCtx::new(ctx));
         // No kill semantics: a huge deadline so the epoch (which the ticker
         // still advances) never traps a legitimately long run.
@@ -564,6 +612,29 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
     let engine = build_engine(&[])?;
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
 
+    // wamn-t92: assemble the test-host double set when selected. A live serve
+    // loop has no scheduler to advance the virtual clock, so a delayed run would
+    // park indefinitely — this path is for a throwaway/manual test runner; the
+    // gate drives `instantiate` + `drain` directly. WARN so an accidental prod
+    // enablement is visible.
+    let doubles = match args.test_doubles {
+        TestDoubles::Off => None,
+        TestDoubles::Virtual => {
+            let recorder = Arc::new(EgressRecorder::spying());
+            recorder.expect(&owner, args.test_egress_expect.iter().cloned());
+            let (ds, _clock) = DoubleSet::virtual_host(
+                TEST_DOUBLES_EPOCH_SECS,
+                TEST_DOUBLES_SEED,
+                recorder as Arc<dyn HostHandler>,
+            );
+            tracing::warn!(
+                "run-worker: --test-doubles=virtual — TEST HOST (virtual clock + seeded \
+                 random + egress recorder), NOT a production configuration"
+            );
+            Some(ds)
+        }
+    };
+
     let mut worker = RunWorker::instantiate(
         &engine,
         &guest,
@@ -578,6 +649,7 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
         },
         allowed_hosts,
         args.lease_ttl_ms,
+        doubles,
     )
     .await?;
 

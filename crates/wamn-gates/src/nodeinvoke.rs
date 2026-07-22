@@ -434,6 +434,7 @@ async fn gate_body(
         },
         allowed.clone(),
         30_000,
+        None, // wamn-t92: production host (no test doubles)
     )
     .await?;
 
@@ -856,6 +857,7 @@ async fn gate_body(
         },
         allowed.clone(),
         30_000,
+        None, // wamn-t92: production host (no test doubles)
     )
     .await?;
     let mreport = mismatch_worker.drain().await?;

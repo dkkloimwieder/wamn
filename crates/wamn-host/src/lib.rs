@@ -9,6 +9,7 @@
 //! both consume this library where they embed the runtime, so gates exercise
 //! the identical host code they verify.
 
+pub mod doubles;
 pub mod egress_guard;
 pub mod engine;
 pub mod host;

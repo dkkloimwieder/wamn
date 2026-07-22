@@ -50,6 +50,11 @@ hyper = "1"
 # grant derivation) shared verbatim with the flowrunner guest — one source of
 # truth for the wire shape, so the two ends cannot drift.
 wamn-node-invoke = { path = "../wamn-node-invoke" }
+# wamn-t92 test-host doubles: the deterministic `wasi:random` seed double
+# (delta 5) implements the fallible `TryRng`; rand_core blanket-impls the `Rng`
+# the pinned wasmtime_wasi `secure_random`/`insecure_random` overrides want.
+# Pinned to the 0.10 line wasmtime_wasi uses so the `Rng` trait unifies.
+rand_core = "0.10"
 
 [dev-dependencies]
 # The 5.5a interface-level lint tests synthesize minimal adversarial + standard

@@ -38,34 +38,41 @@
 //! The runner uses UNQUALIFIED table names; each host injects the schema via
 //! `search_path`, so the schema is a host-swapped fixture like the tenant claim.
 
-use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio_postgres::NoTls;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
-use wash_runtime::engine::workload::ResolvedWorkload;
-use wash_runtime::host::http::{DefaultOutgoingHandler, HostHandler, OutgoingHandler};
+use wash_runtime::host::http::HostHandler;
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::{
     Component as WasmtimeComponent, InstancePre, Linker, TypedFunc,
 };
 use wash_runtime::wasmtime::{Engine as RawEngine, Store};
-use wasmtime_wasi::{HostWallClock, WasiCtxBuilder};
-use wasmtime_wasi_http::p2::HttpResult;
-use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
-use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
-use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
+use wamn_gate_harness::scope_session;
+// wamn-t92: the S6 doubles now live in the production host library as reusable
+// test-host machinery; this bench drives them (the regression proof that the
+// extraction changed nothing).
+use wamn_host::doubles::{
+    DoubleSet, EgressRecorder, EphemeralSchemaProvisioner, RUN_S6_WAKE_DEADLINES_SQL,
+    SchedulerBackend, TestScheduler, VirtualClock, build_virtual_wasi, case_pool,
+};
 use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_host::plugins::wamn_credentials::WamnCredentials;
 use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_worker::{RunWorker, RunnerIdentity};
+
+/// The virtual-clock epoch + `wasi:random` seed the test host uses (fixed for
+/// reproducibility, matching the run-worker `--test-doubles` constants).
+const TEST_EPOCH_SECS: u64 = 1_700_000_000;
+const TEST_SEED: u64 = 0x7492_5EED_5EED_7492;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
@@ -75,6 +82,16 @@ pub enum Mode {
     Delay,
     /// Egress spy catches a planted unexpected outbound call.
     Egress,
+    /// The test scheduler auto-advances the virtual clock to each parked-wake
+    /// deadline (no manual advance) and drives a 24h delay to completion < 1s.
+    Scheduler,
+    /// N sequential ephemeral schema CASES (create → run → drop) prove per-case
+    /// isolation via the test-runner-owned provisioner.
+    Schemacase,
+    /// The production `RunWorker` under the `--test-doubles` set: it claims from
+    /// a real `run_queue` and drives a flow with the virtual clock + seeded
+    /// random + egress recorder swapped in (the test host is the run-worker build).
+    Runworker,
     /// Re-run the S3 flowbench gates on the extended binary.
     Regression,
     /// Every gate in sequence.
@@ -125,134 +142,10 @@ const EPH_SCHEMA: &str = "s6_test";
 /// store's expectation list, so the egress spy must flag and deny it.
 const PLANTED_URL: &str = "http://169.254.169.254/latest/meta-data/";
 
-// ---------------------------------------------------------------------------
-// Virtual clock (the time capability the test host swaps in)
-// ---------------------------------------------------------------------------
-
-/// A wall clock the harness drives. Shared (Arc) so the harness can advance the
-/// same instant the store's `WasiCtx` reads.
-#[derive(Clone)]
-struct VirtualClock {
-    nanos: Arc<std::sync::atomic::AtomicU64>,
-}
-
-impl VirtualClock {
-    fn at_secs(secs: u64) -> Self {
-        Self {
-            nanos: Arc::new(std::sync::atomic::AtomicU64::new(
-                secs.saturating_mul(1_000_000_000),
-            )),
-        }
-    }
-    fn advance_secs(&self, secs: u64) {
-        self.nanos.fetch_add(
-            secs.saturating_mul(1_000_000_000),
-            std::sync::atomic::Ordering::SeqCst,
-        );
-    }
-    fn now_nanos(&self) -> u64 {
-        self.nanos.load(std::sync::atomic::Ordering::SeqCst)
-    }
-}
-
-/// `HostWallClock` backed by the shared [`VirtualClock`]. Injected into the test
-/// store's `WasiCtx` via `WasiCtxBuilder::wall_clock`.
-struct VirtualWallClock(VirtualClock);
-
-impl HostWallClock for VirtualWallClock {
-    fn resolution(&self) -> Duration {
-        Duration::from_nanos(1)
-    }
-    fn now(&self) -> Duration {
-        Duration::from_nanos(self.0.now_nanos())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Egress spy (the wasi:http capability the test host swaps in)
-// ---------------------------------------------------------------------------
-
-/// A shared, mutable log of egress URIs (recorded and flagged lists). Shared
-/// with the harness so a phase can read what the store's egress handler saw.
-type EgressLog = Arc<Mutex<Vec<String>>>;
-
-/// Records every outbound request and, in spy mode, denies any whose authority
-/// is not on the expectation list. Expected calls (and all calls in
-/// forward-all/prod mode) delegate to [`DefaultOutgoingHandler`] — a real HTTP
-/// send to the loopback echo.
-struct EgressHandler {
-    inner: DefaultOutgoingHandler,
-    /// `"METHOD uri"` for every outbound request seen.
-    records: EgressLog,
-    /// URIs that were flagged unexpected and denied.
-    flagged: EgressLog,
-    /// `Some(authorities)` = spy mode (deny anything not listed); `None` =
-    /// forward-all (prod).
-    expected: Option<HashSet<String>>,
-}
-
-impl EgressHandler {
-    fn shared() -> (EgressLog, EgressLog) {
-        (
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(Vec::new())),
-        )
-    }
-}
-
-#[async_trait::async_trait]
-impl HostHandler for EgressHandler {
-    async fn start(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
-    async fn stop(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
-    fn port(&self) -> u16 {
-        0
-    }
-    async fn on_workload_resolved(
-        &self,
-        _resolved: &ResolvedWorkload,
-        _component_id: &str,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-    async fn on_workload_unbind(&self, _workload_id: &str) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn outgoing_request(
-        &self,
-        workload_id: &str,
-        request: hyper::Request<HyperOutgoingBody>,
-        config: OutgoingRequestConfig,
-        _allowed_hosts: &[wash_runtime::host::allowed_hosts::AllowedHost],
-    ) -> HttpResult<HostFutureIncomingResponse> {
-        let authority = request
-            .uri()
-            .authority()
-            .map(|a| a.to_string())
-            .unwrap_or_default();
-        let uri = request.uri().to_string();
-        self.records
-            .lock()
-            .expect("records lock")
-            .push(format!("{} {}", request.method(), uri));
-
-        if let Some(expected) = &self.expected
-            && !expected.contains(&authority)
-        {
-            // Unexpected egress: record, flag, and stub a denial WITHOUT ever
-            // performing the request — the call never leaves the host.
-            self.flagged.lock().expect("flagged lock").push(uri);
-            return Ok(HostFutureIncomingResponse::ready(Ok(Err(
-                ErrorCode::HttpRequestDenied,
-            ))));
-        }
-        self.inner.send_request(workload_id, request, config)
-    }
-}
+// The virtual clock (`VirtualClock`/`VirtualWallClock`) and the egress spy
+// (`EgressRecorder`) that used to live here are now reusable test-host machinery
+// in `wamn_host::doubles` (wamn-t92). This bench drives that library — the
+// regression proof the extraction changed nothing.
 
 // ---------------------------------------------------------------------------
 // Worker: an instantiated flowrunner with the S6 exports resolved
@@ -483,42 +376,9 @@ fn template_ddl(schema: &str) -> String {
     )
 }
 
-/// Drop-and-recreate `schema` from the template DDL, via a superuser connection.
-async fn provision_schema(admin_url: &str, schema: &str) -> anyhow::Result<()> {
-    let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
-        .await
-        .context("admin connect for ephemeral schema")?;
-    let conn_task = tokio::spawn(conn);
-    let result = async {
-        client
-            .batch_execute(&format!(
-                "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema} AUTHORIZATION postgres; GRANT USAGE ON SCHEMA {schema} TO wamn_app;"
-            ))
-            .await
-            .context("create ephemeral schema")?;
-        client
-            .batch_execute(&template_ddl(schema))
-            .await
-            .context("apply template DDL")?;
-        anyhow::Ok(())
-    }
-    .await;
-    drop(client);
-    let _ = conn_task.await;
-    result
-}
-
-async fn drop_schema(admin_url: &str, schema: &str) -> anyhow::Result<()> {
-    let (client, conn) = tokio_postgres::connect(admin_url, NoTls).await?;
-    let conn_task = tokio::spawn(conn);
-    let r = client
-        .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE;"))
-        .await
-        .map_err(|e| anyhow::anyhow!("drop ephemeral schema: {e}"));
-    drop(client);
-    let _ = conn_task.await;
-    r.map(|_| ())
-}
+// Schema create/drop is now owned by `wamn_host::doubles::EphemeralSchemaProvisioner`
+// (`template_ddl` above is the case template it renders). The bench passes
+// `template_ddl` to the provisioner (delta 4).
 
 /// Seed the S6 flow (`poc-s6` v1, active) into `schema` host-side — the
 /// replacement for the guest's retired `seed-s6` export (SR2). `admin` is the
@@ -610,8 +470,16 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
         .with_context(|| format!("failed to read {}", args.flowrunner.display()))?;
 
     let run_all = args.mode == Mode::All;
-    let needs_testhost =
-        run_all || matches!(args.mode, Mode::Sameness | Mode::Delay | Mode::Egress);
+    let needs_testhost = run_all
+        || matches!(
+            args.mode,
+            Mode::Sameness
+                | Mode::Delay
+                | Mode::Egress
+                | Mode::Scheduler
+                | Mode::Schemacase
+                | Mode::Runworker
+        );
 
     println!("# wamn-host S6 testhostbench");
 
@@ -652,25 +520,21 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
         .await
         .context("prod postgres preflight")?;
 
-    // ---- provision the ephemeral test schema (superuser) ----
+    // ---- the test-runner-owned ephemeral schema provisioner (delta 4) ----
+    // Owns the persistent superuser session AND host-side flow seeding
+    // (RLS-bypassing; SR2 retired the guest's `seed-s6` export). Renders the
+    // flow tables per case from `template_ddl`.
     let admin_url = admin_url.expect("checked above");
-    provision_schema(&admin_url, EPH_SCHEMA)
+    let provisioner = EphemeralSchemaProvisioner::connect(&admin_url, template_ddl)
+        .await
+        .context("connect ephemeral schema provisioner")?;
+    provisioner
+        .provision_case(EPH_SCHEMA)
         .await
         .context("provision ephemeral schema")?;
     println!("provisioned ephemeral schema {EPH_SCHEMA} from template DDL");
 
-    // A persistent superuser connection for host-side flow seeding (SR2: the
-    // guest's `seed-s6` export is retired). Superuser bypasses RLS; each seed
-    // re-scopes `search_path` so the flow lands in the target schema (`s3` for the
-    // prod wiring, `s6_test` for the test wiring).
-    let (admin, admin_conn) = tokio_postgres::connect(&admin_url, NoTls)
-        .await
-        .context("admin connect for host-side flow seeding")?;
-    let admin_handle = tokio::spawn(async move {
-        let _ = admin_conn.await;
-    });
-
-    // ---- shared infra: engine, echo server, virtual clock, egress handlers ----
+    // ---- shared infra: engine, echo server, virtual clock, egress recorders ----
     let engine = build_engine(&[])?;
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
     let harness = Harness::new(engine, &guest)?;
@@ -684,34 +548,18 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
     let echo_url = format!("http://{echo_authority}/echo");
     println!("loopback echo listening on {echo_authority}");
 
-    // Prod egress: forward everything (no spy).
-    let (prod_rec, prod_flag) = EgressHandler::shared();
-    let prod_egress: Arc<dyn HostHandler> = Arc::new(EgressHandler {
-        inner: DefaultOutgoingHandler,
-        records: prod_rec,
-        flagged: prod_flag,
-        expected: None,
-    });
-    // Test egress spy: only the echo authority is expected; anything else is
-    // flagged and denied.
-    let (spy_rec, spy_flag) = EgressHandler::shared();
-    let mut expected = HashSet::new();
-    expected.insert(echo_authority.clone());
-    let spy_egress: Arc<dyn HostHandler> = Arc::new(EgressHandler {
-        inner: DefaultOutgoingHandler,
-        records: spy_rec.clone(),
-        flagged: spy_flag.clone(),
-        expected: Some(expected),
-    });
+    // Prod egress: forward everything (audit only). Test egress: a spy that
+    // denies any authority not on the flow's expectation list — the S6 spy
+    // generalized (delta 3). The bench flow key is the store's workload id.
+    let prod_egress: Arc<dyn HostHandler> = Arc::new(EgressRecorder::forwarding());
+    let spy = Arc::new(EgressRecorder::spying());
+    spy.expect(BENCH_ID, [echo_authority.clone()]);
+    let spy_egress: Arc<dyn HostHandler> = spy.clone();
 
-    let vclock = VirtualClock::at_secs(1_700_000_000); // arbitrary fixed epoch base
-    let test_wasi = || {
-        WasiCtxBuilder::new()
-            .args(&["main.wasm"])
-            .inherit_stderr()
-            .wall_clock(VirtualWallClock(vclock.clone()))
-            .build()
-    };
+    // The virtual clock the test store reads as its wall clock (and the seeded
+    // random) — the extracted double set.
+    let vclock = VirtualClock::at_secs(TEST_EPOCH_SECS);
+    let test_wasi = build_virtual_wasi(&vclock, TEST_SEED);
 
     // Build the two workers from the SAME InstancePre.
     let mut prod = harness
@@ -719,20 +567,21 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
         .await
         .context("build prod worker")?;
     let mut test = harness
-        .worker(&test_pg, Some(test_wasi()), spy_egress.clone())
+        .worker(&test_pg, Some(test_wasi), spy_egress.clone())
         .await
         .context("build test worker")?;
 
     let mut pass = true;
+    let admin = provisioner.admin();
 
     if run_all || args.mode == Mode::Sameness {
-        pass &= sameness_phase(&mut prod, &mut test, &admin, &echo_url, harness.digest).await?;
+        pass &= sameness_phase(&mut prod, &mut test, admin, &echo_url, harness.digest).await?;
     }
     if run_all || args.mode == Mode::Delay {
         pass &= delay_phase(
             &mut prod,
             &mut test,
-            &admin,
+            admin,
             &vclock,
             &echo_url,
             args.delay_secs,
@@ -740,27 +589,39 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
         .await?;
     }
     if run_all || args.mode == Mode::Egress {
-        pass &= egress_phase(
-            &mut test,
-            &admin,
-            &echo_url,
-            &echo_authority,
-            &spy_rec,
-            &spy_flag,
-        )
-        .await?;
+        pass &= egress_phase(&mut test, admin, &echo_url, &echo_authority, &spy).await?;
+    }
+    if run_all || args.mode == Mode::Scheduler {
+        pass &= scheduler_phase(&mut test, admin, &vclock, &echo_url, args.delay_secs).await?;
     }
 
-    // Tear down stores (and their pools) before dropping the ephemeral schema.
+    // Tear down the main stores (and pools) before dropping the ephemeral schema
+    // and before the self-contained phases reuse the DB.
     drop(prod);
     drop(test);
     drop(prod_pg);
     drop(test_pg);
-    drop(admin);
-    admin_handle.abort();
-    if let Err(e) = drop_schema(&admin_url, EPH_SCHEMA).await {
+    if let Err(e) = provisioner.drop_case(EPH_SCHEMA).await {
         tracing::warn!(error = %e, "ephemeral schema teardown failed (non-fatal)");
     }
+
+    // The per-case + run-worker phases own their own provisioning (a fresh
+    // schema per case; the run_queue union schema for the run-worker path).
+    if run_all || args.mode == Mode::Schemacase {
+        pass &= schemacase_phase(&harness, &cfg, &admin_url, &echo_url).await?;
+    }
+    if run_all || args.mode == Mode::Runworker {
+        pass &= runworker_phase(
+            &harness,
+            &guest,
+            &cfg,
+            &admin_url,
+            &echo_url,
+            &echo_authority,
+        )
+        .await?;
+    }
+
     echo_task.abort();
 
     if run_all {
@@ -912,42 +773,37 @@ async fn egress_phase(
     admin: &tokio_postgres::Client,
     echo_url: &str,
     echo_authority: &str,
-    records: &EgressLog,
-    flagged: &EgressLog,
+    spy: &EgressRecorder,
 ) -> anyhow::Result<bool> {
     println!("\n## egress — the spy catches an intentionally-added unexpected outbound call");
 
     // Scenario A: an EXPECTED call to the loopback echo — recorded, forwarded,
-    // 200, not flagged.
-    records.lock().expect("rec").clear();
-    flagged.lock().expect("flag").clear();
+    // 200, not denied.
+    spy.clear();
     let a = "egress-expected";
     test.call_reset(a).await?;
     seed_s6_flow(admin, EPH_SCHEMA, 0, echo_url).await?;
     let (_, http_a) = test.call_run_s6(a, "receipt").await?;
-    let flagged_a = flagged.lock().expect("flag").clone();
-    let saw_expected = records
-        .lock()
-        .expect("rec")
-        .iter()
-        .any(|r| r.contains(echo_authority));
+    let denied_a = spy.denied();
+    let saw_expected = spy.saw_authority(echo_authority);
     println!(
-        "expected call {echo_url}: http={http_a}, flagged={flagged_a:?}, recorded_expected={saw_expected}"
+        "expected call {echo_url}: http={http_a}, denied={denied_a:?}, recorded_expected={saw_expected}"
     );
-    let expected_ok = http_a == 200 && flagged_a.is_empty() && saw_expected;
+    let expected_ok = http_a == 200 && denied_a.is_empty() && saw_expected;
 
     // Scenario B: an intentionally-planted call to an UNEXPECTED authority — the
-    // spy must flag and DENY it (http status 0, never leaves the host).
-    records.lock().expect("rec").clear();
-    flagged.lock().expect("flag").clear();
+    // spy must record and DENY it (http status 0, never leaves the host).
+    spy.clear();
     let b = "egress-planted";
     test.call_reset(b).await?;
     seed_s6_flow(admin, EPH_SCHEMA, 0, PLANTED_URL).await?;
     let (outcome_b, http_b) = test.call_run_s6(b, "receipt").await?;
-    let flagged_b = flagged.lock().expect("flag").clone();
-    let caught = flagged_b.iter().any(|u| u.contains("169.254.169.254"));
+    let denied_b = spy.denied();
+    let caught = denied_b
+        .iter()
+        .any(|r| r.authority.contains("169.254.169.254"));
     println!(
-        "planted call {PLANTED_URL}: outcome={outcome_b}, http={http_b}, flagged={flagged_b:?}, caught={caught}"
+        "planted call {PLANTED_URL}: outcome={outcome_b}, http={http_b}, denied={denied_b:?}, caught={caught}"
     );
     // Denied => guest observed status 0 (no response), and the spy flagged it.
     let planted_ok = caught && http_b == 0;
@@ -984,4 +840,311 @@ async fn regression_phase(args: &TestHostBenchArgs) -> anyhow::Result<bool> {
             Ok(false)
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// scheduler (delta 2): the test scheduler auto-advances the virtual clock
+// ---------------------------------------------------------------------------
+
+/// A [`SchedulerBackend`] over the run-s6 path: the parked-wake deadlines live in
+/// `runs.state_json->'wake'` (epoch seconds, from the guest's virtual wall
+/// clock), and re-driving re-invokes `run-s6` for each still-parked run.
+struct RunS6Backend<'a> {
+    worker: &'a mut Worker,
+    admin: &'a tokio_postgres::Client,
+    schema: &'a str,
+    /// (run_id, payload) for each run still being driven; completed runs are
+    /// dropped so `run-s6` is never re-invoked on a finished run.
+    runs: Vec<(String, String)>,
+}
+
+#[async_trait::async_trait]
+impl SchedulerBackend for RunS6Backend<'_> {
+    async fn wake_deadlines_nanos(&mut self) -> anyhow::Result<Vec<u64>> {
+        // The admin (superuser) session must carry the tenant claim + search_path
+        // for the RLS-scoped, unqualified `runs` read to resolve.
+        scope_session(self.admin, TENANT, self.schema).await?;
+        let rows = self.admin.query(RUN_S6_WAKE_DEADLINES_SQL, &[]).await?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let secs: i64 = r.get(0);
+                (secs.max(0) as u64).saturating_mul(1_000_000_000)
+            })
+            .collect())
+    }
+
+    async fn redrive(&mut self) -> anyhow::Result<()> {
+        let active = std::mem::take(&mut self.runs);
+        let mut still = Vec::with_capacity(active.len());
+        for (run_id, payload) in active {
+            let (outcome, _http) = self.worker.call_run_s6(&run_id, &payload).await?;
+            if outcome != 0 {
+                still.push((run_id, payload));
+            }
+        }
+        self.runs = still;
+        Ok(())
+    }
+}
+
+async fn scheduler_phase(
+    test: &mut Worker,
+    admin: &tokio_postgres::Client,
+    vclock: &VirtualClock,
+    echo_url: &str,
+    delay_secs: u64,
+) -> anyhow::Result<bool> {
+    println!(
+        "\n## scheduler — the test scheduler auto-advances the virtual clock to each parked-wake deadline (no manual advance)"
+    );
+
+    // (1) A single 24h delay drives to completion in < 1s wall with the scheduler
+    //     reading the ACTUAL parked deadline (contrast the delay phase, which
+    //     advances by a hand-known amount).
+    let run_id = "sched-single";
+    test.call_reset(run_id).await?;
+    seed_s6_flow(admin, EPH_SCHEMA, delay_secs, echo_url).await?;
+    let t0 = Instant::now();
+    let (o1, _) = test.call_run_s6(run_id, "receipt").await?;
+    let parked = o1 == 1;
+    let steps = {
+        let mut backend = RunS6Backend {
+            worker: &mut *test,
+            admin,
+            schema: EPH_SCHEMA,
+            runs: vec![(run_id.to_string(), "receipt".to_string())],
+        };
+        TestScheduler::new(vclock.clone())
+            .drive_to_quiescence(&mut backend)
+            .await?
+    };
+    let wall = t0.elapsed();
+    let sink = test.call_sink_count(run_id).await?;
+    let single_ok = parked && steps == 1 && sink == 1 && wall < Duration::from_secs(1);
+    println!(
+        "PASS(single 24h delay auto-driven < 1s): {single_ok} (parked={parked}, steps={steps}, sink={sink}, wall={wall:?})"
+    );
+
+    // (2) Two runs with DISTINCT deadlines (delay Δ and 2Δ) must wake in ORDER:
+    //     the scheduler advances to the EARLIEST first (waking only run A), then
+    //     the later (waking run B) — TWO steps. A mutant that advanced to the
+    //     LATEST would wake both at once (ONE step) and fail this.
+    let (short_secs, long_secs) = (delay_secs.max(1), delay_secs.max(1) * 2);
+    let (ra, rb) = ("sched-a", "sched-b");
+    test.call_reset(ra).await?;
+    test.call_reset(rb).await?;
+    // Park A at +Δ, then re-seed the active flow to +2Δ and park B at +2Δ.
+    seed_s6_flow(admin, EPH_SCHEMA, short_secs, echo_url).await?;
+    let (pa, _) = test.call_run_s6(ra, "receipt").await?;
+    seed_s6_flow(admin, EPH_SCHEMA, long_secs, echo_url).await?;
+    let (pb, _) = test.call_run_s6(rb, "receipt").await?;
+    let both_parked = pa == 1 && pb == 1;
+    let ordered_steps = {
+        let mut backend = RunS6Backend {
+            worker: &mut *test,
+            admin,
+            schema: EPH_SCHEMA,
+            runs: vec![
+                (ra.to_string(), "receipt".to_string()),
+                (rb.to_string(), "receipt".to_string()),
+            ],
+        };
+        TestScheduler::new(vclock.clone())
+            .drive_to_quiescence(&mut backend)
+            .await?
+    };
+    let sink_a = test.call_sink_count(ra).await?;
+    let sink_b = test.call_sink_count(rb).await?;
+    let ordered_ok = both_parked && ordered_steps == 2 && sink_a == 1 && sink_b == 1;
+    println!(
+        "PASS(distinct deadlines wake earliest-first, 2 steps): {ordered_ok} (both_parked={both_parked}, steps={ordered_steps}, sink_a={sink_a}, sink_b={sink_b})"
+    );
+
+    Ok(single_ok && ordered_ok)
+}
+
+// ---------------------------------------------------------------------------
+// schemacase (delta 4): N sequential ephemeral schema cases prove isolation
+// ---------------------------------------------------------------------------
+
+async fn schemacase_phase(
+    harness: &Harness,
+    cfg: &WamnPostgresConfig,
+    admin_url: &str,
+    echo_url: &str,
+) -> anyhow::Result<bool> {
+    println!(
+        "\n## schemacase — N sequential ephemeral schema CASES (create → run → drop) prove per-case isolation"
+    );
+    let provisioner = EphemeralSchemaProvisioner::connect(admin_url, template_ddl)
+        .await
+        .context("connect schemacase provisioner")?;
+
+    let mut pass = true;
+    for i in 0..2u32 {
+        let schema = format!("s6_case_{i}");
+        provisioner
+            .provision_case(&schema)
+            .await
+            .with_context(|| format!("provision case {schema}"))?;
+
+        // A FRESH case must start empty — the isolation proof. If a prior case's
+        // rows survived (schema reuse), this count would be non-zero.
+        scope_session(provisioner.admin(), TENANT, &schema).await?;
+        let before: i64 = provisioner
+            .admin()
+            .query_one("SELECT count(*) FROM sink", &[])
+            .await?
+            .get(0);
+
+        // A fresh app-role pool per case (prepared plans never alias schemas).
+        let case_pg = case_pool(cfg, TENANT, &schema, BENCH_ID)?;
+        let mut worker = harness
+            .worker(
+                &case_pg,
+                Some(build_virtual_wasi(
+                    &VirtualClock::at_secs(TEST_EPOCH_SECS),
+                    TEST_SEED,
+                )),
+                Arc::new(EgressRecorder::forwarding()),
+            )
+            .await
+            .with_context(|| format!("build case worker {schema}"))?;
+
+        let run_id = format!("case-{i}");
+        worker.call_reset(&run_id).await?;
+        seed_s6_flow(provisioner.admin(), &schema, 0, echo_url).await?;
+        let (outcome, _http) = worker.call_run_s6(&run_id, "receipt").await?;
+        let sink = worker.call_sink_count(&run_id).await?;
+
+        // Confirm the write landed in THIS case's schema (and only here).
+        scope_session(provisioner.admin(), TENANT, &schema).await?;
+        let after: i64 = provisioner
+            .admin()
+            .query_one("SELECT count(*) FROM sink", &[])
+            .await?
+            .get(0);
+
+        let case_ok = before == 0 && outcome == 0 && sink == 1 && after == 1;
+        println!(
+            "case {schema}: fresh_before={before} (want 0), completed={}, sink={sink}, after={after} -> {case_ok}",
+            outcome == 0
+        );
+        pass &= case_ok;
+
+        drop(worker);
+        drop(case_pg);
+        provisioner.drop_case(&schema).await.ok();
+    }
+
+    println!("PASS(per-case ephemeral schema isolation across sequential cases): {pass}");
+    Ok(pass)
+}
+
+// ---------------------------------------------------------------------------
+// runworker (delta 1): the production RunWorker under the --test-doubles set
+// ---------------------------------------------------------------------------
+
+/// The tenant + owner the run-worker path runs under (kept distinct from the
+/// run-s6 tenant so the two schemas never alias).
+const RW_TENANT: &str = "s6-rw-tenant";
+const RW_OWNER: &str = "s6-runworker";
+const RW_SCHEMA: &str = "s6_runworker";
+
+async fn runworker_phase(
+    harness: &Harness,
+    guest: &[u8],
+    cfg: &WamnPostgresConfig,
+    admin_url: &str,
+    echo_url: &str,
+    echo_authority: &str,
+) -> anyhow::Result<bool> {
+    println!(
+        "\n## runworker — the production RunWorker claims from run_queue under the --test-doubles set (virtual clock + seeded random + egress recorder)"
+    );
+
+    // Provision the union schema (flow tables + run_queue) via the SAME
+    // drift-guarded DDL the runnerbench gate uses.
+    let provisioner =
+        EphemeralSchemaProvisioner::connect(admin_url, crate::runnerbench::runner_ddl)
+            .await
+            .context("connect runworker provisioner")?;
+    provisioner
+        .provision_case(RW_SCHEMA)
+        .await
+        .context("provision runworker schema")?;
+
+    // Seed the flow + a dispatched run + its queue row (delay 0 so it drives
+    // straight through: in → delay(0) → http-call(echo) → pg-write → respond).
+    let admin = provisioner.admin();
+    scope_session(admin, RW_TENANT, RW_SCHEMA).await?;
+    let flow_json = crate::flowbench::flow_json_s6(0, echo_url);
+    wamn_gate_harness::seed_flow_version(admin, RW_TENANT, "poc-s6", 1, true, &flow_json, true)
+        .await?;
+    let run_id = "rw-run-0";
+    admin
+        .execute(
+            &write_ahead_triggered_run_sql(),
+            &[&run_id, &"poc-s6", &1i32, &"cron", &"\"receipt\""],
+        )
+        .await
+        .context("seed dispatched runs row")?;
+    admin
+        .execute(
+            &enqueue_sql(),
+            &[&run_id, &Option::<&str>::None, &0i32, &0i64],
+        )
+        .await
+        .context("enqueue run_queue row")?;
+
+    // Build the production runner store under the test double set: virtual clock
+    // + seeded random `WasiCtx` and an EgressRecorder swapped in for the prod
+    // egress handler. The flow key is the runner owner (the store's workload id).
+    let plugin = Arc::new(WamnPostgres::new(cfg.clone())?);
+    let vault = Arc::new(WamnCredentials::empty());
+    let recorder = Arc::new(EgressRecorder::spying());
+    recorder.expect(RW_OWNER, [echo_authority.to_string()]);
+    let (doubles, _clock) = DoubleSet::virtual_host(
+        TEST_EPOCH_SECS,
+        TEST_SEED,
+        recorder.clone() as Arc<dyn HostHandler>,
+    );
+
+    let mut worker = RunWorker::instantiate(
+        &harness.engine,
+        guest,
+        plugin.clone(),
+        vault,
+        Arc::new(wamn_host::plugins::wamn_logging::WamnLogging::from_env()?),
+        RunnerIdentity {
+            owner: RW_OWNER,
+            tenant: RW_TENANT,
+            schema: Some(RW_SCHEMA),
+            project: "default",
+        },
+        Arc::from([]),
+        30_000,
+        Some(doubles),
+    )
+    .await
+    .context("instantiate RunWorker with the test double set")?;
+
+    let report = worker.drain().await.context("drain run_queue")?;
+    let egress_ok = recorder.saw_authority(echo_authority) && recorder.denied().is_empty();
+    let drain_ok = report.claimed == 1 && report.completed == 1 && report.failed == 0;
+    println!(
+        "runworker: {report:?}, egress_recorded={}, denied={:?}",
+        recorder.saw_authority(echo_authority),
+        recorder.denied()
+    );
+    let pass = drain_ok && egress_ok;
+    println!(
+        "PASS(RunWorker --test-doubles claims + drives a flow; egress recorded): {pass} (drain_ok={drain_ok}, egress_ok={egress_ok})"
+    );
+
+    drop(worker);
+    drop(plugin);
+    provisioner.drop_case(RW_SCHEMA).await.ok();
+    Ok(pass)
 }

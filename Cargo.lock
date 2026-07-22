@@ -4383,6 +4383,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "rand_core 0.10.1",
  "serde_json",
  "tokio",
  "tokio-postgres",
