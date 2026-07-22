@@ -87,7 +87,7 @@ spec:
               "--tenant", "demo-tenant",
               "--deployment", "runner",
               "--echo-host", "serve-echo:8091",
-              "--offset-ms", "-60000",
+              "--offset-ms=-60000",
               "--setup",
               "--teardown",
               "--timeout-secs", "120",
