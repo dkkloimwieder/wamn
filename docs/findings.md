@@ -2820,6 +2820,100 @@ additional `AUDIT-VERIFY` issue. No implementation or live gate ran.
 
 ---
 
+## R — Source-of-truth and drift structure (2026-07-23)
+
+This section is the STR6 result for `wamn-4tob.2.6` at baseline
+`c433a31d6f21c0f4e2bcdf421712dabd358d5c9a`. Every verified duplicate or
+generated family receives exactly one target policy:
+
+- **generate** from one authoritative input;
+- **byte-compare** when exact representation is the contract;
+- **structurally compare** when names, ordering, comments, environment, or a
+  deliberate subset may differ but semantics must agree; or
+- **deliberately version separately** when two authorities legitimately evolve
+  on independent horizons.
+
+**Executive verdict: amend the guards, not the crate map.** Most public
+contracts already have credible authority and validation. The remaining
+unprotected residue is real but deduplicates to existing owners: incomplete
+WIT discovery, gate stand-ins outside the platform-DDL guard, and builder YAML
+that is self-consistent but not structurally runnable. The audit does not
+preselect a `pg-core` crate, merge `wamn-sql`, or erase deliberately separate
+state stores.
+
+### R.1 Artifact policy matrix
+
+| Artifact family | Current authority, consumers, and guard | Compatibility horizon and consequence | Target policy and owner |
+|---|---|---|---|
+| **Seven platform DDL files ↔ partial Rust schema models** | Checked `deploy/sql/{system-schema,catalog-schema,app-schema,run-state,run-queue,flows,flow-tests}.sql` is current physical authority. Registry, sysschema, migrate, run-store, run-queue, and flow-tests have selective structural guards; `wamn-sysschema` explicitly describes its Rust manifest as curated rather than exhaustive (`crates/wamn-sysschema/src/lib.rs:4-11,94-103`). | Installed-database and mixed-fleet lifetime. Drift can break queries or omit RLS/CHECK constraints. The old SR13 claim that nothing is checked is overstated, but coverage remains incomplete. | **Generate** checked deploy SQL from owning Rust schema/migration descriptions; SQL remains authoritative until that migration lands. SR13/`wamn-2jkm.24`. |
+| **Platform DDL ↔ runtime query builders** | Physical DDL owns columns/constraints; store, queue, registry, migrate, and schema crates own statements. Existing tests pin selected tables, columns, and literals, not the whole contract. | Same platform-schema major and migration horizon; drift produces undefined columns or weaker tenant rules. | **Structurally compare** every owning query surface to the installed schema. SR13. |
+| **Platform DDL ↔ run-plane reconciler** | Reconciler embeds the checked files directly as the declared schema of record (`crates/wamn-migrate/src/run_plane.rs:17-21,61-73`), so there is no independent DDL definition. | Every platform-schema revision. | **Generate** applied plans directly from the checked authoritative files; retain parser and throwaway-Postgres tests. |
+| **Platform DDL ↔ gate stand-ins** | Production DDL is authoritative. Gates intentionally rename schemas and omit unused objects (`crates/wamn-gates/src/schema_drift.rs:1-24`), but the uniform guard covers only `run-queue.sql`; runner, dispatcher, and test-host repeat `flows`, `runs`, and `node_runs` outside it. | Same release as tested artifacts. Drift can make a gate fail for fixture-only reasons or pass against a shape production no longer has. | **Structurally compare** every stand-in table/column/constraint actually exercised. Extend SR13. |
+| **Catalog model ↔ generated tenant DDL/RLS/seed** | Versioned catalog is semantic authority; `wamn-ddl`, RLS, and seed compile plans and ctl applies them. | One catalog version and migration transaction. | **Generate**; retain compiler, adversarial quoting, and live-apply evidence. |
+| **`wamn:postgres` doc ↔ seven vendored WIT copies** | `docs/wamn-postgres.wit`; discovery plus comment-stripped semantic/code comparison and byte-identical comment clusters (`crates/wamn-host/tests/postgres_wit_coherence.rs:53-216`). | Frozen `0.1.x`; one-sided changes can prevent instantiation or alter host/guest meaning. | **Structurally compare** because documented comments/subsets may differ while code must agree. |
+| **`wamn:jetstream` doc ↔ host/materializer/sample copies** | `docs/wamn-jetstream.wit`; all copies are exact-pinned (`crates/wamn-host/tests/jetstream_wit_coherence.rs:15-49`). | Frozen `0.1.x`; host/guest linking and acknowledgement semantics. | **Byte-compare**. |
+| **`wamn:node` doc ↔ full and trimmed copies** | `docs/wamn-node.wit`; hard-coded handler/credential subset groups and SDK pins (`crates/wamn-node-sdk/tests/wit_coherence.rs:26-168`). The `node-cred` sample claims coverage but is absent from the inventory. | Frozen `0.1.x`; deliberate guest subsets may omit interfaces but cannot redefine them. | **Structurally compare** through exhaustive package discovery. SR7/`wamn-2jkm.27` and C3-6/`wamn-cjv.28`. |
+| **`wamn:runner` host ↔ flowrunner copies** | No canonical source or guard; the two production control-ABI copies are currently byte-identical. | Coupled host/runner release unless the upgrade decision requires mixed versions. | **Byte-compare** against one canonical source. SR23/`wamn-2jkm.95`. |
+| **`wamn:nodebench` and sample worlds** | Gate-fixture ownership; three nodebench packages and the Rust/TypeScript sample worlds are presently byte-identical but unguarded. | Same-release fixture horizon, not a customer protocol. | **Byte-compare** through the existing C3-6/SR7 inventory owner. |
+| **Vendored upstream WASI WIT** | The upstream package/version is authoritative; each component owns its dependency tree. | Component target dependencies may move independently. | **Deliberately version separately**, with package/lock/build compatibility rather than a repository canonical copy. |
+| **Rust catalog/flow/node-manifest types ↔ checked JSON Schemas** | Rust types declare single-source authority; owner tests compare exact generated bytes (`crates/wamn-catalog/tests/catalog.rs:74-86`; `crates/wamn-flow/tests/flows.rs:78-90`; `crates/wamn-node-manifest/tests/manifest.rs:123-131`). | Published schema-format lifetime. | **Generate** checked schemas from Rust. |
+| **Node-manifest generated schema ↔ procedural Rust validation** | Generated schema proves type shape; the Rust validator has stronger semantic rules. | Non-Rust builders otherwise accept documents Rust later rejects. | **Structurally compare** semantic constraints. C3-7/`wamn-cjv.28` and `wamn-fqg.27`. |
+| **Rust event-wire types ↔ golden JSON** | `wamn-event-wire` is authority; publisher/consumer import it and owner tests freeze serializer output (`crates/wamn-event-wire/src/lib.rs:1-13,299-330`). | Frozen `0.1.x` wire. | **Byte-compare** exact JSON plus round-trip/unknown-field behavior. |
+| **Canonical catalog fixture ↔ promoted POC copy** | Crate fixture is canonical; the POC deploy copy is currently byte-identical and parsed as the same `Catalog` (`poc/dm1/tests/dm1.rs:18-34`). Other POC/gate JSON files are independent scenarios, not copies. | Same scenario/catalog version. | **Structurally compare** parsed catalog/flow behavior. |
+| **Builder renderer ↔ builder golden YAML** | Renderer is authority; goldens snapshot its exact output (`crates/wamn-builder/tests/golden_deploy.rs:39-52`). | Same builder artifact. | **Byte-compare**. |
+| **Builder renderer ↔ shipped `serve-node` manifest** | Both claim the serve-node deploy shape, but the platform manifest supplies node and credential volumes/mounts absent from renderer output (`crates/wamn-builder/src/deploy_emit.rs:73-125`; `deploy/platform/serve-node.yaml:64-78,112-124`). | Generated YAML can start a pod without either required path and does not identify invoked bytes. | **Structurally compare** normalized required arguments, source, volumes, mounts, identity, and readiness. `wamn-fqg.21/.23`, R43/`wamn-0si.9`. |
+| **Dashboard renderer ↔ checked Grafana JSON** | `render_sre_dashboard()` is authority; checked JSON is mounted by infra and parsed equality is tested (`crates/wamn-ctl/src/provision_dashboards.rs:762-778`). | Same platform observability release. | **Generate** checked JSON. |
+| **Environment-specific infra configuration** | Each environment legitimately owns URLs, storage, and retention values. | Per deployment/profile. | **Deliberately version separately**; compare only required schema/invariants. |
+| **Component source/toolchain ↔ Wasm copied into images** | Source and pinned toolchain should own bytes; Docker currently accepts caller-built `components/target` artifacts (`Dockerfile:14-32,57-66,84-133`; `.dockerignore:1-8`). | Every image release. | **Generate** inside the attributable image build. SR17/`wamn-2jkm.80`, proof `.6.8`. |
+| **Built Wasm ↔ OCI digest/published/invoked bytes** | Immutable built-byte digest is authority. Registry and buildproof verify published blob identity, but current ConfigMap invocation is disconnected. | Artifact lifetime and rollback horizon. | **Byte-compare** source output, signed OCI blob, fetched bytes, and invoked bytes. R43, `wamn-fqg.23`, `wamn-0si.9`, proof `.6.7`. |
+| **Checked source ↔ ConfigMap data** | Named source file is authority, such as `deploy/sql/postgres-init.sql`; applied ConfigMaps are projections. | Until each refresh/reconcile. | **Generate** manifests/data from source and prove applied digest. `wamn-v1pp`. |
+| **Canonical SQL quoting ↔ provision's dependency-light copy** | `wamn-ddl::sql` is canonical; provision intentionally avoids the larger dependency closure. Exhaustive ASCII/adversarial equality protects it (`crates/wamn-provision/src/sql.rs:467-505`). | Every quoting primitive change. | **Byte-compare** behavior; retain the justified duplicate and do not merge `wamn-sql`. |
+
+### R.2 Durable-state identity policy
+
+These are not always duplicate files; they are two representations of one
+logical authority boundary and therefore require the same explicit policy.
+
+| State identity | Authority and present evidence/gap | Horizon and failure | Target policy and existing owner |
+|---|---|---|---|
+| **Committed WAL ↔ JetStream bytes/message IDs/ack floor** | WAL plus slot LSN is source authority; CDC advances confirmed LSN only after broker acknowledgement (`crates/wamn-cdc-reader/src/lib.rs:14-22`). Broker dedupe/replay is bounded. | WAL, dedupe, and replay retention; exhaustion creates a capture gap. | **Structurally compare** source position, capture epoch, published receipt, and target floor. R44/R50/R51 and `.1.17`. |
+| **Desired ↔ observed JetStream stream configuration** | Registration and reader request subjects/storage/replicas/dedupe; reader verifies some fields but not every correctness-relevant subject/retention field (`crates/wamn-cdc-reader/src/lib.rs:494-530,603-633`). | Stream lifetime; drift changes durability and replay. | **Structurally compare** all relevant fields and refuse or migrate explicitly. Existing event-plane owners. |
+| **Requested ↔ observed durable-consumer configuration** | Materializer/plugin requests durable, filter, ack policy/wait, and max delivery but accepts an existing consumer without reading them back (`crates/wamn-host/src/plugins/wamn_jetstream.rs:357-388`). | Consumer lifetime; stale filter silently omits/misroutes work. | **Structurally compare** and fail closed or migrate. E18/`wamn-l5i9.69`, proof `.6.10`. |
+| **CDC registration ↔ publication/slot live shape** | T1 names publication/slot; provision creates them and tests initial shape, while reader preflight checks existence/health/LSN rather than complete drift (`crates/wamn-provision/src/sql.rs:115-193`; `crates/wamn-provision/tests/cdc.rs:81-118`). | Slot lifetime, failover, and WAL retention. | **Structurally compare** all publication/slot invariants. R28/R29. |
+| **OCI/object artifact ↔ deployed bytes** | Signed digest is immutable byte authority; Kubernetes annotation/ConfigMap and running host are observations. | Artifact and rollback lifetime. | **Byte-compare** end to end. R43 and its existing handoff/proof owners. |
+| **Kubernetes desired ↔ observed generation/readiness/image** | Registry/manifests express intent; Kubernetes generation/status and dependency-aware readiness are operational observation. There is no convergent observed-generation owner. | Every rollout and placement cutover. | **Structurally compare** desired identity/generation to observed ready bytes before cutover. R34/R42 and `.1.17`. |
+| **Secret reference ↔ Secret bytes/version/cache** | Kubernetes Secret bytes are confidential authority; T1 deliberately stores only reference name/namespace. No immutable version, rotation receipt, or cache-invalidation contract exists. | Credential rotation and process cache lifetime. | **Deliberately version separately**, joined by an immutable reference/version and explicit rotation reconciliation. `.1.15`/`.1.17`. |
+| **Backup bytes/checkpoint ↔ T1 dump metadata/restore record** | Complete immutable backup bytes and checkpoint are recovery authority; T1 metadata is a projection. Current rows lack checksum/completion/checkpoint and `--run-now` may record a key without upload (`crates/wamn-ctl/src/dump_project_env.rs:134-170`; `deploy/sql/system-schema.sql:295-321`). | Backup retention, PITR, restore epoch. | **Structurally compare** object checksum/completion/checkpoint to registry and measured restore evidence. R40/R41/R48/R52 and existing dump/restore owners. |
+
+### R.3 Verified unprotected residue and routing
+
+1. **WIT discovery is incomplete.** The node coherence inventory omits at
+   least the `node-cred` sample; nodebench/sample exact copies are unguarded;
+   and production `wamn:runner` lacked a canonical owner. SR7/C3-6 now own
+   exhaustive node/fixture discovery, while SR23 separately owns the trusted
+   runner ABI. A one-sided mutation must fail the named guard.
+2. **Gate run-state/flow stand-ins evade the uniform guard.**
+   `runner_ddl`, `dispatch_ddl`, and test-host copies of `flows`, `runs`, and
+   `node_runs` are outside `schema_drift`, which currently classifies queue
+   tables only (`crates/wamn-gates/src/runnerbench.rs:177-230,976-993`;
+   `crates/wamn-gates/src/dispatchbench.rs:122-170,1324-1340`;
+   `crates/wamn-gates/src/testhostbench.rs:317-384`). SR13 now owns structural
+   comparison of every exercised stand-in, rather than its former overbroad
+   “nothing checks agreement” claim.
+3. **Generated serve-node YAML is frozen against itself, not the runnable
+   deployment.** It names `/components/node.wasm` and a credential path without
+   volumes or mounts; applying it before a future OCI operator mutation yields
+   an unusable pod. `wamn-fqg.21/.23` own runnable generation/fetch, while
+   R43/`wamn-0si.9` owns signed byte identity. This remains a High latent
+   artifact handoff already backed by proof `.6.7`, not a new SR finding.
+
+No new finding or proof issue is minted: every uncovered case has a granular
+existing owner, including newly created SR23 from STR5. No implementation or
+live gate ran, and the policy matrix does not claim that present deployed
+artifacts match source.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -2888,7 +2982,7 @@ prerequisite that makes everything else findable.
 | SR9 | `wamn-host` is three programs in one crate | Med | **closed** | `d4fe3aa`+`7262679`+`157b61b`+`685a7fc` (wamn-2jkm.22) — wamn-ctl / wamn-dispatcher / wamn-run-worker / wamn-cdc-reader split; washlet strings-clean; in-cluster rollout rides wamn-2jkm.41 |
 | E7/E8 | Reader as a service: extraction + placement/ownership | Med/High | **closed** | E7 `f044b5f` (wamn-l5i9.48; extraction = SR9 `d4fe3aa`/`157b61b`/`685a7fc`, remainder = zero-grant ServiceAccount + credential scope; in-cluster apply rides wamn-2jkm.41) · E8 = **D22** `055dfe6` (wamn-l5i9.46 ratified; lease-sharded fleet, per-org escape hatch; `.33`/`.34` implement) |
 | SR8 | `deploy/` 68 flat files — canonical: §1.6 | — | **closed** | `8123046`…`6ac07d9` (wamn-2jkm.6; local gates only — in-cluster run rides wamn-2jkm.41) |
-| SR13 | Two sources of truth for schema | Med | open | next platform-schema change |
+| SR13 | Platform DDL and gate stand-ins have incomplete drift coverage | Med | open | wamn-2jkm.24; next platform-schema change |
 | SR4 | `wamn_postgres.rs` split (grew 18% since filing) | Med | **closed** | `7f91e3a` (wamn-cjv.18; `{mod,types,pool,claims,resources}.rs`; claims.rs = the claim boundary as one unit) |
 | SR10 | `wamn-gates` flat at 18.8k lines | Med | open | next bench |
 | SR2 | flowrunner re-implements run-state SQL | Med | open | before F3/F4 |
