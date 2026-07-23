@@ -406,6 +406,180 @@ explicit owner unknowns for the current-state and alternatives waves.
 
 ---
 
+## C — Current system context and plane model (2026-07-23)
+
+This section records the current architecture for `wamn-4tob.1.2`
+(`AUDIT-ARC2`). It describes the source and desired deployments at
+`ffdbd1e0b2ce6d1c7d1faca23d9efbfe48cebfee`; it is not evidence that those
+artifacts are live. Section A's provenance restriction still applies.
+
+**ARC2 verdict:** the control database and event broker are structurally
+separate from tenant databases and scheduler NATS, and the native worker,
+dispatcher, reader, waker, and node-host are separate processes. The seven
+named planes are nevertheless **not seven trust or failure zones**. API and
+materializer components share one host group and its plugins; nearly all
+workloads share one namespace and cluster operators; several services reuse
+broad database or broker identities; observability and recovery share an
+object store; and human cluster administration crosses every plane. Later
+alternatives must evaluate these real boundaries, not the plane labels.
+
+### C.1 Current system context
+
+```mermaid
+flowchart LR
+    Tenant["Tenant owner / flow author"]
+    Caller["Application user / external system"]
+    PlatformOp["Platform operator"]
+    DataOp["Data / SRE operator"]
+    ArtifactOp["Builder / artifact operator"]
+
+    subgraph Cluster["Current Kubernetes cluster"]
+        subgraph Control["Control plane"]
+            CTL["wamn-ctl\none-shot operations"]
+            T1[("T1 wamn_system\nregistry + saga records")]
+            RuntimeOp["runtime operator\n+ scheduler/control NATS"]
+            CNPGOp["CNPG operator"]
+        end
+
+        subgraph Data["Tenant data plane"]
+            Host["default wamn-host group x3"]
+            API["api-gateway components"]
+            DB[("project-env Postgres\napp + catalog + run state")]
+        end
+
+        subgraph Flow["Flow execution plane"]
+            Dispatcher["dispatcher x2"]
+            Runner["run-worker x2/project"]
+            Waker["waker x1"]
+            Node["serve-node x1/node/project"]
+        end
+
+        subgraph Event["Event / trigger plane"]
+            Reader["CDC reader x1/project-env"]
+            EVT[("event JetStream x3")]
+            Materializer["materializer components"]
+        end
+
+        subgraph Supply["Component supply chain"]
+            Builder["builder Job"]
+            Registry[("ephemeral OCI registry")]
+        end
+
+        subgraph Observe["Observability / operations"]
+            OTel["OTel collector"]
+            Stores["Prometheus / Loki / Tempo / Grafana"]
+            Object[("MinIO\nlogs + dumps + backups")]
+        end
+    end
+
+    Caller -->|HTTP| API
+    Tenant -->|catalogs / flows / credentials| CTL
+    PlatformOp --> CTL
+    PlatformOp --> RuntimeOp
+    DataOp --> CNPGOp
+    ArtifactOp --> Builder
+
+    CTL --> T1
+    CTL --> CNPGOp
+    CNPGOp --> DB
+    RuntimeOp --> Host
+    Host --> API
+    Host --> Materializer
+    API --> DB
+
+    Dispatcher -->|SQL| DB
+    Dispatcher -->|doorbell| RuntimeOp
+    RuntimeOp --> Runner
+    Waker -->|scale 0 to 1| Runner
+    Runner --> DB
+    Runner -->|signed HTTP| Node
+
+    DB -->|WAL| Reader
+    Reader --> EVT
+    EVT --> Materializer
+    Materializer -->|run + queue transaction| DB
+    Materializer -->|doorbell| RuntimeOp
+
+    Builder --> Registry
+    Registry -. "platform component pull;\ncustom-node path incomplete" .-> Host
+    Host --> OTel
+    Runner --> OTel
+    Dispatcher --> OTel
+    OTel --> Stores
+    Stores --> Object
+    CTL --> Object
+```
+
+The concrete runtime boundary is more important than the box containing it:
+the API gateway and materializer are distinct component stores in the same
+three host processes, while the runner directly embeds `flowrunner.wasm` in a
+native image and the custom-node host is a separate Deployment using the
+general `wamn-host` binary (`deploy/infra/values-wamn.yaml:14-50`,
+`Dockerfile:57-66`, `deploy/platform/serve-node.yaml:79-138`).
+
+### C.2 Plane ownership and boundary matrix
+
+| Plane | Owner and authoritative state | Privileged identities | Runtime and deployment units | Scale / failure boundary | Cross-plane protocols |
+|---|---|---|---|---|---|
+| **Control** | Platform operator; T1 `wamn_system` is authoritative for the identity triple, placement, policies, CDC registrations, saga and dump metadata. It expressly excludes tenant data and request-path reads (`docs/system-cluster.md:16-57`, `docs/registry-model.md:1-48`). | T1 superuser or control role, Kubernetes/CNPG operator authority, and authority to render tenant roles and Secrets (`deploy/platform/wamn-sysdb.yaml:1-74`, `docs/provisioning.md:313-371`). | `wamn-ctl`, `wamn-registry`, `wamn-provision`, `wamn-migrate`; a three-instance T1 CNPG cluster. There is no current long-lived product control API (`crates/wamn-ctl/src/main.rs:32-98`). | T1 is a separate database cluster, but shares the Kubernetes environment and cluster-wide CNPG operator with tenant storage. Operations are CLI/render/apply driven. | T1 SQL; rendered Kubernetes CRs/Secrets; tenant SQL; object storage; readers select registrations from T1. |
+| **Tenant data** | Data/SRE operator; each project-env PostgreSQL database is authoritative for generated entity data, applied catalog/serving snapshot, flow definitions, runs, node history, and queue rows (`docs/platform-plan.md:41-50`, `docs/run-state.md:18-57`). | `wamn_app` is `NOBYPASSRLS` but is a cluster-global role reused across rendered databases; pooled environments can therefore share principal and cluster blast radius (`crates/wamn-provision/src/database.rs:27-78`, `crates/wamn-provision/src/sql.rs:25-41`). | API-gateway component plus `wamn:postgres`; project-env databases rendered into pooled, per-org, or dedicated CNPG placement. | T1/data separation is physical. Within a project-env, app, catalog, run, and materialization state share one database. Pooled orgs share a cluster; schema/RLS separation is logical. | Incoming HTTP to WIT Postgres; SQL from gateway, worker, dispatcher, materializer, and control operations; WAL exits to the event plane. |
+| **Flow execution** | Flow author plus runtime/data operator; Postgres `runs`, `node_runs`, `run_queue`, and persisted flow version are authoritative. External effects are at least once unless their sink honors the stable occurrence key (`docs/run-state.md:18-100`, `docs/run-state.md:115-126`). | Per-project DB and credential Secrets, optional invocation-signing key, and the shared broad runtime-NATS certificate (`deploy/platform/runner.yaml:40-44`, `deploy/platform/runner.yaml:89-106`, `deploy/platform/runner.yaml:118-186`). | Native `wamn-run-worker` with embedded `flowrunner.wasm`; two replicas per project. Custom nodes use separate `wamn-host serve-node` Deployments (`deploy/platform/runner.yaml:13-30`, `deploy/platform/serve-node.yaml:43-152`). | Queue leases and `SKIP LOCKED` bound a worker crash to leased work. Standard nodes share one component and a union capability set, so their separation is logical policy; custom-node execution is a separate workload (`docs/platform-plan.md:77-85`, `docs/node-library.md:111-123`). | Postgres queue, scheduler-NATS doorbells, WIT Postgres/HTTP/credential capabilities, signed in-cluster HTTP to custom nodes. |
+| **Event / trigger** | Data/SRE operator; WAL and confirmed LSN own capture, JetStream owns durable delivery/replay, and the deterministic run-plus-queue transaction owns execution handoff (`docs/event-plane-jetstream.md:67-79`, `docs/event-plane-jetstream.md:181-229`). | Per-env replication and T1-read credentials; a current unauthenticated single event-NATS account; materializer host plugins also carry DB and scheduler-NATS authority (`deploy/platform/event-reader.example.yaml:17-44`, `deploy/infra/nats-jetstream.yaml:15-19`). | Native reader, three-node event JetStream, materializer Service component, native cron dispatcher, and native waker. | Current reader shape is one `Recreate` Deployment and slot session per project-env; the D22 lease-sharded fleet is target state, not current code. Materializers are per project-env/tenant but share the default host group (`deploy/platform/event-reader.example.yaml:1-15`, `deploy/platform/materializer.example.yaml:26-78`). | WAL to reader to event JetStream to materializer to Postgres queue to separate scheduler-NATS doorbell. Cron starts at dispatcher and bypasses the event log. |
+| **Component build / supply chain** | Builder/artifact operator; intended authority is source, dependency/import policy, tested bytes, signed digest/SBOM, and OCI manifest. That chain does not yet reach the invoked custom-node bytes (`docs/builder.md:10-36`, `docs/builder.md:121-204`). | Builder signing key and registry write authority; the Job has no service-account token. Signing is optional if no key is supplied (`deploy/platform/builder-job.yaml:1-20`, `deploy/platform/builder-signing-key.yaml:1-25`). | One bounded `wamn-builder` Job, a separate component workspace, and a single plain-HTTP `registry:2` Deployment (`Cargo.toml:1-5`, `components/Cargo.toml:1-6`, `Dockerfile:136-168`). | Job resource/deadline boundaries exist, but its NetworkPolicy is explicitly inert in kind. Registry storage is `emptyDir`, so one pod restart loses the artifacts (`deploy/platform/builder-netpol.yaml:1-14`, `deploy/platform/registry.yaml:18-61`). | Source/toolchain to Wasm to signature/SBOM to OCI; current serve-node manifest instead permits ConfigMap-mounted bytes. |
+| **Observability** | Data/SRE operator; process telemetry is exported through OTel to shared Prometheus, Loki, and Tempo stores. Execution truth remains in the source databases/queues, not dashboards (`docs/metrics.md:11-26`, `docs/metrics.md:77-98`). | Grafana admin Secret and a shared MinIO root credential used by Loki and operational storage consumers (`deploy/infra/grafana.yaml:1-37`, `deploy/infra/minio.yaml:1-35`). | Singleton OTel collector, Prometheus, Loki, Tempo, Grafana, and MinIO deployments (`deploy/infra/otel-collector.yaml:81-124`, `deploy/infra/loki.yaml:97-145`, `deploy/infra/tempo.yaml:46-92`). | Sinks are a shared cross-tenant failure and disclosure domain. Prometheus and Tempo use `emptyDir`; Loki is single-replica and uses shared MinIO. Tenant labels are filters, not structural isolation (`docs/dashboards.md:88-106`, `docs/dashboards.md:162-172`). | All instrumented planes to OTel; collector to shared stores; Grafana queries those stores; Loki and recovery data converge on MinIO. |
+| **Operational** | Platform and data/SRE operators; Kubernetes desired/current objects, CNPG state, T1 saga records, and backup artifacts each own part of operations. Incident RACI and release authority are unresolved (`docs/findings.md:386-401`). | Human cluster-admin/Helm/kubectl authority, cluster-wide CNPG controller, T1 privilege, object-store credentials, and the waker's narrow namespace `deployments/scale` grant (`deploy/platform/waker.yaml:20-53`). | Runtime-operator chart, CNPG operator, `wamn-ctl`, waker, reconciliation Jobs/CronJobs, and backup/copy/restore runbooks. | Nearly every workload shares the cluster and `wamn-system`; CNPG's controller is in `cnpg-system` with cluster-wide authority. Operators intentionally bridge all other planes. | Kubernetes API/CRDs, Helm, SQL, NATS, OCI, object storage, and manual runbooks. |
+
+### C.3 Structural separation versus shared authority
+
+| Resource | What is actually separated | What remains shared and why it matters |
+|---|---|---|
+| **Processes** | Worker, dispatcher, reader, waker, builder, and node-host are separate OS processes. | Gateway and materializer stores share each host process and its Postgres, JetStream, logging, and node-control plugins (`crates/wamn-host/src/host.rs:102-164`). A host/plugin failure crosses the named API and event planes. |
+| **Databases** | T1 has its own CNPG cluster; dedicated placement can isolate tenant recovery. | A project-env's app/catalog/run state shares one database, and pooled tenants share a cluster. The global `wamn_app` role and replication visibility are already tracked by `wamn-286` and R28/`wamn-2jkm.46`. |
+| **Brokers** | Event JetStream is separate from runtime/scheduler NATS (`deploy/infra/nats-jetstream.yaml:1-19`). | Dispatcher, runner, waker, and host group reuse one allow-all runtime certificate; event NATS has one global account. Materializer bridges both inside a shared host. Existing seams are `wamn-ngb` and `wamn-4xw`. |
+| **Kubernetes** | CNPG's operator namespace is separate and the waker has a deliberately narrow ServiceAccount. | Platform and tenant workloads otherwise share `wamn-system`; runtime and CNPG operators and human admins cross planes. The plan's namespace-per-tenant wording is not current manifest reality (`docs/platform-plan.md:22-25`). |
+| **Images and forks** | Native services have distinct Docker targets. | `wamn-host:dev` is both shared runtime and custom-node host; the runtime fork is a common upgrade dependency across host, worker, builder conformance, and gates (`Cargo.toml:12-28`, `Dockerfile:34-168`). |
+| **Object storage** | Buckets distinguish logs, dumps, and backups. | One MinIO service and root credential join observability and recovery into one outage/credential domain (`deploy/infra/minio.yaml:1-35`, `deploy/infra/minio.yaml:98-134`). |
+
+### C.4 Current, target, and unknown must not be conflated
+
+- The current CDC reader accepts one `(org, project, env)` and the manifest is
+  one replica with no lease. D22's multi-tenant lease-sharded fleet remains a
+  target; `.33`/`.34` are not present as executable fleet behavior
+  (`crates/wamn-cdc-reader/src/lib.rs:86-157`,
+  `deploy/platform/event-reader.example.yaml:1-34`).
+- Run-worker is a native Deployment today. Its proposed wasmCloud `Service`
+  placement is future work (`deploy/platform/runner.yaml:45-68`,
+  `docs/findings.md:1011-1051`).
+- Per-org event-NATS accounts, builder source ingestion, an enforcing build
+  CNI, persistent registry storage, custom-node OCI fetch, and deploy-time
+  signature verification are filed seams, not current guarantees
+  (`deploy/infra/nats-jetstream.yaml:15-19`, `docs/builder.md:194-209`).
+- The runtime-operator chart is remote rather than rendered or vendored here.
+  Its exact ServiceAccounts, RBAC, NATS subject permissions, scheduling, and
+  telemetry injection are therefore unknown from repository evidence
+  (`deploy/infra/values-wamn.yaml:1-7`).
+- Named incident ownership, recovery authority, trust promises, upgrade
+  compatibility, supported scale, and SLOs remain the owner decisions in
+  `wamn-4tob.1.12`–`.16`; no plane label answers them.
+
+The external review's broad process map is therefore useful but incomplete.
+Its event sketch correctly identifies the WAL-to-run chain, but collapses the
+separate event and scheduler brokers and misses their materializer/host bridge
+(`docs/REVIEW-260723.md:334-369`). Its node-host observation is confirmed by
+deployment rather than accepted from package size
+(`docs/REVIEW-260723.md:179-215`, `deploy/platform/serve-node.yaml:43-138`).
+Its “per-project nearly free” challenge remains an unproven scale hypothesis,
+owned by `.12`/`.13`, rather than either a fact or a refutation
+(`docs/REVIEW-260723.md:373-399`).
+
+ARC2 adds no duplicate security or topology finding: the shared database,
+replication, broker, builder, and ownership gaps already have the Beads owners
+named above or the ARC1 decision beads. ARC4–ARC9 must use this matrix to judge
+whether each shared authority is compatible with the promised deployment
+class; STR1 supplies the physical repository/deployable ownership map.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
