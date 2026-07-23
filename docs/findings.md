@@ -25,6 +25,162 @@ or evidence citation.
 
 ---
 
+## A — First-principles audit baseline (2026-07-23)
+
+This section is the frozen input and decision rubric for
+`wamn-4tob.7` (`AUDIT-B0`). It is not an architecture verdict and it closes no
+finding. Later audit work may cite evidence pinned here, but a recommendation
+does not alter the decision table or represent an implementation fix.
+
+### A.1 Source and evidence snapshot
+
+Snapshot time: **2026-07-23 07:56 EDT**.
+
+| Evidence class | Frozen baseline | Qualification |
+|---|---|---|
+| Git source | local `HEAD`, local `origin/main`, and remote `refs/heads/main` all `1da2a10087ff3404f72983d139ddb5c8de07b6db`; tree `5fb399786ad2bbdee7df9871410fb7730e5e4fd0` | This commit is the tracked source baseline. |
+| Dirty worktree | modified `.beads/interactions.jsonl` and `AGENTS.md`; untracked `docs/REVIEW-260723.md` | These were present before B0. They are not silently folded into the source baseline. `AGENTS.md` and the interactions log remain user-owned working state. |
+| External review | `docs/REVIEW-260723.md`, SHA-256 `3fcb2d272dd2b5ea761da0aa2459a8627cd3da3405dc55b66a81652a8455dbc5` | Static review only: it says it inspected current `main`, did not compile or run the repository, and links mutable `/blob/main/` URLs rather than a commit. The exact revision seen by its author is therefore **not attestable** from the document. For this audit its claims are hypotheses against the frozen source above and receive credit only when re-checked there. |
+| Root Rust workspace | 38 packages from root `cargo metadata --no-deps` | `Cargo.toml` has 38 explicit members, excludes `components`, and has no `default-members`. |
+| Component workspace | 18 Rust component/fixture/sample packages from `components/Cargo.toml` | Built separately for `wasm32-wasip2`; non-Rust sample sources remain part of the repository surface even when absent from Cargo metadata. |
+| Contracts | 65 `.wit` files including vendored component copies; 3 checked-in `*.schema.json` contracts | Canonical ownership and copy drift are questions for STR5/STR6, not assumptions in this count. |
+| Deployment | 117 files: `platform` 22, `infra` 19, `gates` 56, `sql` 8, `poc` 9, `cred` 2, plus `deploy/README.md` | Files are inventory evidence, not proof that the same revision is deployed. |
+| Design and measurements | 91 files under `docs/`: 45 top-level Markdown files, 36 ceiling-data CSVs, 4 archived Markdown files, and 6 top-level WIT/JSON contracts | `docs/README.md` is the navigation index; `docs/platform-plan.md` contains D1–D24; this file remains the sole findings ledger. |
+| Beads | Dolt `main` commit `pjm30ol4ei704jlrsr4nbdgh5r5jfqs2`; 577 issues: 296 closed, 280 open, 1 in progress; 44 open audit records after B0 filed the three missing-requirement decisions | Canonicalized `bd list --all --json --limit 0` SHA-256: `440cb703eb692c3629ffb1b5c442a22cbdb2b0a570211ae198166994b6825c3b`. Beads are scope, ownership, and history evidence; a closed bead alone is not behavioral proof. |
+| Live environment | kind context `kind-wamn`, cluster `wamn`, three Ready Kubernetes 1.36.1 nodes; inspected running workloads use local wamn `:dev` images | The wamn images have no source-revision label and no registry digest; Kubernetes reports kind-import content IDs only. They cannot be tied to `1da2a100…`. Live behavior is therefore **unavailable as baseline-matched evidence**, and no live audit gate may run or receive credit until source-to-artifact provenance is established. |
+
+The reproducible inventory commands are:
+
+```text
+git rev-parse HEAD HEAD^{tree} origin/main
+git ls-remote origin refs/heads/main
+git status --porcelain=v1
+cargo metadata --no-deps --format-version 1
+cargo metadata --manifest-path components/Cargo.toml --no-deps --format-version 1
+find deploy -type f
+find docs -type f
+find . \( -path './.git' -o -path './target' \) -prune -o \
+  -type f \( -name '*.wit' -o -name '*.schema.json' \) -print
+bd list --all --json --limit 0
+bd vc status --json
+kind get clusters; kubectl config current-context
+kubectl get nodes; kubectl get pods -A
+kubectl get deploy,statefulset,daemonset,job,cronjob -A
+docker image inspect <wamn-image>:dev
+```
+
+### A.2 Scope and evidence rules
+
+The audit covers the product architecture, all architectural planes and
+canonical journeys, state authorities, trust and failure boundaries, service
+and component placement, both Cargo workspaces, deployment/configuration/SQL
+artifacts, public contracts, documentation, backlog, and the roadmap seams
+named by the audit program. UI and edge features that are explicitly parked
+are not current implementation debt; the architecture seams required to add
+them remain in scope.
+
+Implementation fixes, opportunistic refactors, canonical decision-table
+rewrites, and a second review report are out of scope. Recommendations go into
+this ledger and granular Beads records. Existing decisions are hypotheses to
+classify `keep`, `amend`, `replace`, or `defer`, not constraints or sunk-cost
+credit.
+
+Evidence is ranked as follows:
+
+1. Baseline-matched executable behavior with a named reproduction or gate and
+   captured inputs/results.
+2. Baseline-matched code, migrations, contracts, and generated-artifact drift
+   guards that directly establish the claim.
+3. Deployment manifests, runtime configuration, and operational records whose
+   revision and environment are proven.
+4. Canonical design/decision documents and measurement records, retaining
+   their stated environment and limitations.
+5. Beads history and external/static reviews as leads and rationale, never as
+   sole proof of behavior.
+6. Current official/primary platform sources for external capability claims;
+   secondary commentary may identify a question but cannot settle it.
+
+Every assertion is labeled **verified** (executable or direct source proof),
+**observed** (inventory/current state), **measured** (reproducible result with
+conditions), **claimed/hypothesis** (requires discrimination), or **unknown**
+(a bead is required). Critical/high behavioral claims require a named
+reproduction, discriminating test, or targeted gate. A live gate is admissible
+only when its source revision, build inputs, immutable artifact identity,
+deployment manifest, and observed workload identity form one provenance chain.
+
+### A.3 Controlling fitness gates
+
+An architecture option is eliminated, regardless of cost or delivery speed,
+if it cannot credibly satisfy all of these:
+
+| Gate | Minimum credible response |
+|---|---|
+| Tenant and secret isolation | Default-deny capabilities and credentials; tenant data, control-plane privilege, replication privilege, and artifact/build authority cannot cross tenant or plane boundaries through a shared role, process, broker identity, or operator convention. |
+| No acknowledged-write loss or silent corruption | Each acknowledged mutation has an authoritative durable boundary, unambiguous recovery semantics, and detectable refusal; partial publish/materialization cannot silently lose, duplicate as a new logical effect, or corrupt state. |
+| Deterministic, resumable flow execution | Persisted graph/version, occurrence, inputs, outcome, timers, and ordering information are sufficient to resume after interruption without depending on wall-clock timing, process memory, or a changed definition. |
+| Idempotent recovery | Every retry, replay, redelivery, failover, restore, and reconciliation path has stable identity and either produces the same logical result or makes non-idempotent external effects explicit and bounded. |
+| Bounded failure domains | A compromised credential/component or a failed tenant, database, broker partition, worker, migration, or operator action has an explicit containment boundary and cannot cause unbounded cross-tenant or cross-plane loss. |
+| Safe schema, runtime, and deployment upgrades | Compatibility, quiescence/cutover, rollback/forward-fix, state migration, artifact provenance, and mixed-version behavior are defined; partial upgrades fail detectably and recoverably. |
+
+Options surviving those gates are ranked, in order, by **operability,
+evolvability, performance, infrastructure cost, then delivery speed**. Lower
+criteria never compensate for failure of a higher criterion, and none can
+rescue a correctness-gate failure.
+
+### A.4 Scenario and journey evidence template
+
+Every quality-attribute scenario and canonical journey uses the same record:
+
+```text
+actor / tenant / privilege:
+stimulus:
+environment and deployment class:
+entry point and trust-boundary crossings:
+authoritative state:
+transaction, acknowledgement, and durability boundary:
+ordering and delivery semantics:
+partial-failure states and bounded blast radius:
+required response and recovery owner:
+measure (latency/throughput/RPO/RTO/error or isolation invariant):
+baseline-matched evidence and provenance:
+verdict / unknown bead:
+```
+
+Missing product targets are not guessed. Three granular owner decisions now
+block ARC11's final target verdict:
+
+- `wamn-4tob.1.12` — supported tenant and deployment cardinality envelopes.
+- `wamn-4tob.1.13` — end-to-end latency, throughput, backlog, and catch-up
+  service objectives.
+- `wamn-4tob.1.14` — availability, durability, degradation, RPO, and RTO by
+  plane and deployment class.
+
+ARC1 may document conditional scenarios while these are open, but ARC11 cannot
+present an unconditional target architecture without their resolution or an
+explicit owner deferral.
+
+### A.5 Authorization and external-review routing
+
+Authorization is wave-specific and does not carry across a bead boundary.
+Only the named issue is claimed; after it is closed, validated, committed, and
+pushed, work stops until the owner authorizes the next issue or parallel wave.
+Parallel evidence collection is capped by the audit plan and does not allow
+parallel edits to this ledger.
+
+The 2026-07-23 external review was routed as evidence, not accepted as a
+verdict: its plane/process observations are attached to ARC2/ARC3; state,
+runtime, topology, event, trust, operability, evolution, and synthesis claims
+to ARC4–ARC11; and its package, deployment, hotspot, contract, drift,
+build/test, and target-decomposition claims to STR1–STR7 and STR9. Corroborated
+facts such as the 38-member workspace, `wamn-builder → wamn-host`, production
+dependencies on `wamn-testkit`, the large `serve_node.rs` workload surface,
+fork pins, and broad gate dependencies remain observations. Proposed crate
+merges, package moves, process extraction, and infrastructure restraint remain
+hypotheses until the owning audit task supplies dependency, co-change,
+deployment, correctness, and operability evidence.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
