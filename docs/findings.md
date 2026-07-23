@@ -710,6 +710,148 @@ deployable has the provenance chain required by §A.
 
 ---
 
+## E — Runtime-to-repository alignment (2026-07-23)
+
+This section records `wamn-4tob.2.1` (`AUDIT-STR1`) at source baseline
+`ffdbd1e0b2ce6d1c7d1faca23d9efbfe48cebfee`. It maps responsibility to code,
+artifact, workload, state, and protocol. It does not infer a split or merge
+from file size: new structural findings require a concrete release, isolation,
+failure, provenance, or operational consequence.
+
+**STR1 verdict:** the SR9 extraction gave most long-lived native services
+coherent deployment artifacts, and pure domain/contract crates often support
+multiple deliberate compile targets. Four material misalignments remain:
+custom-node serving is independently deployed but hidden in the general host
+binary/image; the builder depends inward on that production composition root;
+Docker packages caller-built Wasm that its build graph did not produce; and the
+ctl image advertises recovery verbs whose required PostgreSQL tools are absent.
+The 38-package root workspace and 18-package component workspace are broad but
+not, by count alone, evidence for consolidation.
+
+### E.1 Responsibility-to-deployable matrix
+
+| Runtime responsibility | Physical code owner and role | Artifact / workload | State and boundary protocols | Scale and failure unit | Alignment verdict |
+|---|---|---|---|---|---|
+| **wasmCloud host and host plugins** | `wamn-host::{host,engine,plugins}`; runtime composition root over the pinned `wash-runtime`/Wasmtime fork (`crates/wamn-host/src/host.rs:102-193`, `crates/wamn-host/Cargo.toml:8-23`). | `wamn-host` binary, Docker `host`, runtime-operator default host group, three manifest replicas (`deploy/infra/values-wamn.yaml:14-50`). | Scheduler NATS, OCI pull, HTTP, WIT Postgres/JetStream/logging/node-control. Project DB and event broker are external authorities. | One host pod is the failure/rollout unit; all gateway/materializer stores placed on that host group share it. | **Mostly aligned as a runtime**, but its binary also owns custom-node serving (SR15). |
+| **Custom-node HTTP execution** | `wamn-host::serve_node`; security/effect adapter that loads one node, screens imports, verifies envelopes, installs grants, and serves `/run` (`crates/wamn-host/src/serve_node.rs:1-47`, `crates/wamn-host/src/serve_node.rs:109-172`). | The same `wamn-host:dev` image with `serve-node`; one Deployment/Service per node/project (`crates/wamn-host/src/main.rs:31-58`, `deploy/platform/serve-node.yaml:43-152`). | Signed HTTP/WIT node protocol, credential grants, permitted outbound HTTP; current component bytes may come from ConfigMap rather than OCI. | Independent workload, credential, scaling, and failure boundary; one warm server is currently sequential (`wamn-fqg.28`). | **Misaligned:** independent deployed responsibility shares binary, dependency closure, image, and release with the host group (SR15). |
+| **Generated tenant API** | `components/api-gateway` effect shell over `wamn-api`; service component (`components/api-gateway/Cargo.toml:6-15`, `components/api-gateway/src/lib.rs:1-13`). | One WorkloadDeployment/Service per project on the default host group (`deploy/platform/api-gateway-workload.yaml:37-77`). | `wasi:http/incoming-handler` and frozen `wamn:postgres`; project DB/catalog snapshot is authority (`components/api-gateway/wit/world.wit:1-27`). | Component/store per workload, but shared host-process/plugin rollout and failure. | **Physically legible; deployment isolation is weaker than the service label.** |
+| **Cron and parked-run dispatch** | Native `wamn-dispatcher` shell over `wamn-flow`, `wamn-run-queue`, and registry helpers (`crates/wamn-dispatcher/src/lib.rs:1-48`). | Docker `dispatcher`; shared two-replica Deployment/PDB (`deploy/platform/dispatcher.yaml:47-157`). | SQL to configured project DBs; optional scheduler-NATS doorbell. Postgres is authority. | One shared process/deployment spans its configured projects; deterministic run IDs make replica races safe. | **Artifact-aligned**, with a deliberate shared-fleet blast radius for ARC5/STR3 to judge. |
+| **Durable flow execution** | Native `wamn-run-worker` shell, embedded `flowrunner` guest, and `wamn-runner`/`wamn-run-store`/`wamn-run-queue`/`wamn-nodes` cores (`crates/wamn-run-worker/src/lib.rs:1-35`, `components/flowrunner/Cargo.toml:10-39`). | Docker `run-worker` copies `flowrunner.wasm`; one two-replica Deployment per project (`Dockerfile:57-66`, `deploy/platform/runner.yaml:13-30`). | Postgres run/queue state, optional NATS hint, WIT DB/HTTP/credentials, signed node HTTP. | Project Deployment plus queue lease is the current scale/failure unit. Proposed wasmCloud `Service` placement is not current. | **Coherent hybrid deployable**, but its Wasm provenance is outside the Docker build (SR17). |
+| **CDC capture** | Native `wamn-cdc-reader` adapter plus frozen `wamn-event-wire` and pinned `pg_walstream` fork (`crates/wamn-cdc-reader/src/lib.rs:1-48`). | Docker `cdc-reader`; current example is one `Recreate` Deployment per project-env (`deploy/platform/event-reader.example.yaml:1-15`, `deploy/platform/event-reader.example.yaml:45-88`). | PostgreSQL replication, T1 registration SQL, JetStream publish/ack. WAL/confirmed LSN is capture authority. | One replication session/slot per current deployment. Lease-sharded fleet is target, not implementation. | **Artifact-aligned native exception.** Placement and fleet shape remain architectural decisions. |
+| **Event materialization** | Pure `wamn-materializer` core plus `components/materializer` effect shell (`components/materializer/Cargo.toml:6-23`). | wasmCloud `Service` component, one project-env/tenant example, scheduled on the default host group (`deploy/platform/materializer.example.yaml:26-78`). | Frozen `wamn:jetstream` consumer/ack and `wamn:postgres`; deterministic run+queue transaction. | Component failure/redelivery is local, but host rollout/plugin/broker credentials are shared. | **Source/deployable role is clear; host failure boundary is shared.** |
+| **Scale-to-zero wake** | Native `wamn-waker` Kubernetes/NATS adapter (`crates/wamn-waker/src/lib.rs:1-24`). | Docker `waker`; one Deployment with the only namespace scale ServiceAccount (`deploy/platform/waker.yaml:20-75`). | Scheduler-NATS doorbell to Kubernetes `deployments/scale` get/patch. | Singleton idempotent actuator; dispatcher re-hints recover missed messages. | **Well aligned** to one narrow privileged responsibility. |
+| **Custom-node build and publish** | `wamn-builder`; one-shot build/test/lint/sign/SBOM/OCI adapter (`crates/wamn-builder/src/lib.rs:1-35`). | Cargo-full Docker `builder-svc`; bounded Job without SA token (`Dockerfile:136-168`, `deploy/platform/builder-job.yaml:22-82`). | Toolchains, dependency/import policy, signing key, registry v2, emitted deployment metadata. | Job is an independent supply-chain trust/failure unit. | **Deployment-aligned, dependency-inverted:** it imports `wamn-host` policy and production engine (SR16). |
+| **One-shot control operations** | `wamn-ctl`; operator composition root with 15 current commands (`crates/wamn-ctl/src/main.rs:32-98`). | Docker `ctl`; a subset of verbs has checked-in Job/CronJob examples. | Depending on verb: T1/tenant SQL, rendered Kubernetes YAML/JSON, object storage, `pg_dump`/`pg_restore`, or Grafana HTTP. | Per invocation; most lifecycle verbs remain runbook-owned rather than controller-owned. | **Source role is coherent; operational artifact is incomplete for dump/restore** (SR18). |
+| **System gates** | `wamn-gates` plus `wamn-gate-harness`; test composition root depending directly on service shells, domain cores, runtime fork, PG, and NATS (`crates/wamn-gates/Cargo.toml:8-95`, `crates/wamn-gates/src/main.rs:77-175`). | Docker `gates` is layered from `host`; Kubernetes Jobs and support fixtures (`Dockerfile:84-134`, `deploy/README.md:13-15`). | Direct library calls, in-process component instantiation, SQL/NATS, or deployed endpoint depending on gate. | One Job per gate; not a production service. | **Intentional broad test root**, but proof attribution must say whether it exercised a library, embedded Wasm, image, or deployed workload (STR7/SR10). |
+| **Control and tenant storage** | T1 SQL plus `wamn-registry`/`wamn-provision`; tenant SQL plus catalog/migration/run cores. | CNPG T1 cluster and pooled/dedicated tenant clusters; legacy `postgres.yaml` is a benchmark fixture (`deploy/platform/wamn-sysdb.yaml:1-74`, `deploy/platform/postgres.yaml:1-14`). | SQL schemas, CNPG CRDs, Secrets, WAL. | Cluster/database/schema/RLS boundaries differ by tier; CNPG operator spans them. | **Runtime placement is visible; physical schema ownership remains plural under existing SR13/STR6.** |
+| **Brokers, registry, observability, backup** | Third-party NATS, registry, OTel, Grafana stack, MinIO, CNPG/Barman; install-once infrastructure tier (`deploy/README.md:6-12`). | Separate StatefulSets/Deployments/operators rather than Rust packages. | NATS protocols, OCI registry v2, OTLP/Prometheus/LogQL/TraceQL, S3 and CNPG backup APIs. | Per infrastructure workload; several are singletons or share credentials/storage. | **Repository ownership is manifests/runbooks**, not a wamn crate. ARC7/ARC9 judge necessity and resilience. |
+
+### E.2 Complete workspace role inventory
+
+The root workspace has 38 explicit members, no `default-members`, and excludes
+the separate component workspace (`Cargo.toml:1-5`). The role map is:
+
+- **Service and operator adapters (7):** `wamn-host`, `wamn-ctl`,
+  `wamn-dispatcher`, `wamn-run-worker`, `wamn-cdc-reader`, `wamn-waker`,
+  `wamn-builder`.
+- **System test and test support (2):** `wamn-gates`,
+  `wamn-gate-harness`.
+- **Published/data contracts (5):** `wamn-catalog`, `wamn-flow`,
+  `wamn-node-sdk`, `wamn-node-guest`, `wamn-node-manifest`.
+- **Frozen/internal wire contracts (2):** `wamn-event-wire`,
+  `wamn-node-invoke`.
+- **Stored product contracts (2):** `wamn-event-reg`, `wamn-flow-tests`.
+  The latter's name is test-shaped, but its suites are tenant/catalog data.
+- **Domain and decision cores (16):** `wamn-ddl`, `wamn-schema`, `wamn-rls`,
+  `wamn-seed`, `wamn-migrate`, `wamn-api`, `wamn-runner`, `wamn-run-store`,
+  `wamn-run-queue`, `wamn-nodes`, `wamn-materializer`, `wamn-impact`,
+  `wamn-registry`, `wamn-provision`, `wamn-sysschema`, `wamn-sql`.
+- **Ambiguously named product contract (1):** `wamn-testkit` supplies stored
+  case/assertion and egress-observation types to production host/builder, not
+  only internal test helpers (`crates/wamn-host/Cargo.toml:53-57`,
+  `crates/wamn-builder/Cargo.toml:28-36`).
+- **POC domain/integration packages (3):** package names `wamn-f1`,
+  `wamn-dm1`, and `wamn-cdc1`, physically under `poc/`.
+
+This inventory explains why “merge all execution crates” or “merge all schema
+crates” is not yet a supported conclusion: guest compilation, published
+contracts, frozen wire compatibility, and independent state ownership can
+justify small packages. STR2 must add dependency direction and co-change/API
+evidence before any merge or split.
+
+The component workspace has 18 Rust packages plus the non-Cargo `node-ts`
+sample:
+
+- **Current product execution components (3):** `api-gateway`, `flowrunner`,
+  and `materializer`. Only the first and third are normal runtime-operator
+  workloads; `flowrunner` is embedded in the native worker image.
+- **POC ingress (1):** `poc-webhook-f1`.
+- **Benchmark driver at the root (1):** `flow-driver`; its WIT explicitly calls
+  it a nodebench measurement artifact
+  (`components/flow-driver/wit/world.wit:1-11`).
+- **Fixtures (8):** `busyloop`, `cred-probe`, `hello`, `logspewer`, `memhog`,
+  `pgprobe`, `sockprobe`, `trace-relay`. `trace-relay` has a platform-named
+  manifest but describes itself as cross-pod proof support
+  (`deploy/platform/trace-relay-workload.yaml:1-12`).
+- **Samples/reference nodes (5):** `disposition-node`, `js-sample`,
+  `node-cred`, `node-rs`, `sample-node`.
+
+Accordingly, the blanket component-workspace comment “root is production” is
+not true for `flow-driver`, and physical directory alone is not a deployability
+contract (`components/Cargo.toml:3-6`). STR2/STR3 should make role and allowed
+dependency metadata enforceable rather than infer it from path or crate name.
+
+### E.3 State, schema, and contract ownership
+
+| State or contract | Physical source of record | Code/effect owners and consumers | Structural qualification |
+|---|---|---|---|
+| T1 identity, placement, CDC registration, saga, dump metadata | `deploy/sql/system-schema.sql` (`registry.*`, `provisioning.*`) | `wamn-registry`, `wamn-provision`, `wamn-ctl`, CDC reader | Separate control database; shared operator authority. |
+| Catalog lifecycle and registrations | `deploy/sql/catalog-schema.sql` | `wamn-catalog`, `wamn-schema`, `wamn-migrate`, `wamn-event-reg`, ctl | Versioned model plus SQL; STR6 must assign generation/drift policy. |
+| Gateway serving snapshot | Inline `wamn_catalog` DDL/write in `publish_catalog.rs:170-190,263-301` | ctl writer, gateway reader/cache | Second catalog authority; R35 owns atomic/version coupling. |
+| Run state | `deploy/sql/run-state.sql` | `wamn-run-store` builders; dispatcher/flowrunner/ctl/gates | Existing SR2 covers remaining guest SQL ownership. |
+| Durable queue/dead letters | `deploy/sql/run-queue.sql` | `wamn-run-queue` + `wamn-sql`; dispatcher/materializer/flowrunner | Postgres authority; NATS is a hint. |
+| Flows and stored suites | `deploy/sql/flows.sql`, `deploy/sql/flow-tests.sql` | `wamn-flow`, `wamn-flow-tests`, ctl/dispatcher/runner/gates | Product data despite test-shaped package naming. |
+| App-system data | `deploy/sql/app-schema.sql` | `wamn-sysschema`, RLS/DDL cores, API/control paths | Shares the project-env DB with generated entities and run state. |
+| Generated tenant entities | catalog model compiled by `wamn-ddl`/`wamn-rls`/`wamn-seed` | ctl applies; API/nodes consume | No static table list; catalog/version is the design input. |
+| Event stream | JetStream `EVT_*` file/PVC state | frozen `wamn-event-wire`, reader publisher, materializer consumer | Broker delivery authority bridges WAL and Postgres queue. |
+| Component artifact | Intended OCI manifest/blob/signature/SBOM; current node path may use ConfigMap | builder writes; host/node-host loads | R43 owns reviewed-to-invoked identity; SR17 owns embedded-image build provenance. |
+| Secrets | Kubernetes Secrets; T1 stores references | provisioning/ctl render; reader/runner/node/builder consume | Secret name is not principal isolation; ARC8 owns trust analysis. |
+
+Canonical WIT lives in `docs/wamn-postgres.wit`, `docs/wamn-jetstream.wit`,
+and `docs/wamn-node.wit`; local bindgen copies are currently guarded by
+coherence tests (`crates/wamn-host/tests/postgres_wit_coherence.rs:1-64`,
+`crates/wamn-host/tests/jetstream_wit_coherence.rs:1-49`,
+`crates/wamn-node-sdk/tests/wit_coherence.rs:1-95`). Checked-in catalog, flow,
+and node-manifest JSON Schemas are likewise Rust-authoritative and drift-tested.
+That is current ownership evidence, not yet STR5's compatibility policy or
+STR6's complete duplication verdict.
+
+### E.4 Structural findings and downstream routing
+
+| ID | Sev | Finding and consequence | Bead / proof |
+|---|---:|---|---|
+| **SR15** | Med | `wamn-host` exposes both Host and ServeNode, while serve-node is independently deployed/scaled and handles a different untrusted-code/credential boundary (`crates/wamn-host/src/main.rs:31-58`, `deploy/platform/serve-node.yaml:43-152`). Shared binary/image/release is therefore real coupling, not a LOC preference. | `wamn-2jkm.78`; ARC5/STR3 decide target placement. |
+| **SR16** | Med | The isolated, toolchain-bearing builder imports the production host composition root for policy and engine behavior (`crates/wamn-builder/Cargo.toml:20-36`). This reverses the intended policy/runtime dependency and couples supply-chain and runtime dependency closure. | `wamn-2jkm.79`; STR2 owns allowed direction. |
+| **SR17** | High | Docker builds only root native packages, then copies `components/target/...` from the caller context into worker/gates; `.dockerignore` does not exclude it (`Dockerfile:19-32`, `Dockerfile:57-66`, `Dockerfile:84-134`, `.dockerignore:1-8`). An image can silently contain stale/substituted guest bytes not derived by its build. | `wamn-2jkm.80`; proof `wamn-4tob.6.8`; STR7 and `.16` own release provenance. |
+| **SR18** | Med | `wamn-ctl` advertises dump/restore but Docker `ctl` explicitly omits `pg_dump`/`pg_restore`, and no alternate production image owns those verbs (`crates/wamn-ctl/src/main.rs:42-49`, `Dockerfile:41-48`). Recovery fails mid-operation unless an undocumented environment supplies tools. | `wamn-2jkm.81`; exact-image round trip is its gate. |
+
+R43 is not duplicated as an SR finding: it covers the separate signed-OCI to
+invoked-bytes break and already maps to `wamn-fqg.23`, `wamn-0si.9`, and proof
+`wamn-4tob.6.7`. Existing SR13 remains the platform-schema drift owner, SR2
+owns residual flowrunner persistence duplication, and SR10/STR7 own gate
+classification and test-versus-shipped-artifact attribution.
+
+The external review's node-host boundary, builder-to-host dependency, and
+customer-facing nature of stored test/replay contracts are corroborated
+(`docs/REVIEW-260723.md:179-241`). Its proposed crate merges remain hypotheses:
+STR1 found role ambiguity and deployment coupling, but did not collect the
+co-change, dependency-direction, versioning, or build-cost evidence required
+to justify those merges. Stale README/package descriptions and the old
+dispatcher/outbox language route to STR8 and existing `wamn-cjv.25`; they do
+not justify another structural split.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -727,6 +869,10 @@ prerequisite that makes everything else findable.
 | R41 | In-place restore lacks quiescence and verified recovery | High | open | wamn-2jkm.76; proof wamn-4tob.6.5 |
 | R42 | DB-broken runner can become Ready and displace healthy capacity | High | open | wamn-2jkm.77; proof wamn-4tob.6.6 |
 | R43 | Reviewed custom-node OCI identity does not determine invoked bytes | High (latent) | open | wamn-fqg.23 + wamn-0si.9; proof wamn-4tob.6.7 |
+| SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78 |
+| SR16 | Builder depends on the production runtime composition root | Med | open | wamn-2jkm.79 |
+| SR17 | Docker images package caller-built component bytes | High | open | wamn-2jkm.80; proof wamn-4tob.6.8 |
+| SR18 | Control-plane image cannot execute advertised dump/restore verbs | Med | open | wamn-2jkm.81 |
 | **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
 | SR14 | D4/D19 contradiction unmarked in the decision table (§1.2) | High | **closed** | `b7fa9af` (wamn-2jkm.1; table sweep found no other same-shape row) |
 | §1.9a | Amendment-density audit (verdict per file) | Med | **closed** | `3a3bb34` (wamn-2jkm.10; 15 stamped — 13 additive, 2 contradict → rewrites wamn-2jkm.59/.60; platform-plan re-audit wamn-2jkm.63) |
