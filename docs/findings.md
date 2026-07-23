@@ -181,6 +181,231 @@ deployment, correctness, and operability evidence.
 
 ---
 
+## B — Product forces and architecture fitness criteria (2026-07-23)
+
+This section is the conditional requirements baseline for `wamn-4tob.1.1`
+(`AUDIT-ARC1`). It asks what job the product architecture must do before judging
+whether wasmCloud, native services, Postgres tiers, JetStream, or the current
+repository decomposition are the right means. It reviews the frozen source from
+§A; no live gate was run because §A found no source-to-running-artifact
+provenance chain.
+
+**ARC1 verdict:** the product job and its controlling correctness invariants are
+clear enough to discriminate alternatives, but its supported scale, service
+objectives, recovery contract, isolation/compliance contract, and upgrade
+contract are not owner-set. Architecture assessments may therefore give
+conditional verdicts against the scenarios below, but ARC11 must not present an
+unconditional target until `wamn-4tob.1.12`–`.16` are decided or explicitly
+deferred.
+
+### B.1 Product job, actors, and trust assumptions
+
+Wamn's documented product job is to let an organization define and promote a
+versioned application catalog, expose the resulting tenant data through a
+generated API, author and test flows, execute those flows synchronously or
+durably from scheduled/database triggers, run sandboxed custom nodes, and
+observe, copy, restore, and upgrade each project environment. The current
+product is SaaS-first and HTTP/DB/webhook/cron-first; MQTT, industrial
+connectors, edge execution, and on-prem/air-gapped distribution are roadmap
+seams rather than shipped requirements (`docs/platform-plan.md:22-26`,
+`docs/platform-plan.md:118-131`). The receiving POC is the concrete product
+journey, while the newer pivot explicitly prioritizes correct flow execution
+and API behavior and parks UI, auth, deep security, and IaC
+(`docs/poc-material-receiving.md:1-12`, `docs/core-pivot-plan.md:7-21`).
+
+| Actor | Authority and intended privilege boundary | Product action and current requirement status |
+|---|---|---|
+| Organization/project owner, platform builder, deployer, and viewer | Owns tenant definitions and deployments but not platform/T1 or another tenant. The `builder`/`admin`/`viewer`/`deployer` plane is specified, not yet a current authentication system. | Define catalogs and flows, manage credentials, run tests, and promote releases (`docs/platform-plan.md:133-141`, `docs/core-pivot-plan.md:167-173`). |
+| Application user | Has an application role and server-established claims within one project environment. It must not choose its tenant identity or bypass RLS. | The POC's inspector is site-scoped and its quality manager spans sites; the app schema is substrate, not current JWT/session behavior (`docs/poc-material-receiving.md:8-20`, `docs/app-schema.md:1-7`, `docs/app-schema.md:39-54`). |
+| External industrial/business system | Machine client with narrowly authorized API or callback access; v0 means ERP-like HTTP/DB integration, not native PLC protocols. | The POC ERP submits receipts and receives disposition callbacks with an API key (`docs/poc-material-receiving.md:8-9`, `docs/poc-material-receiving.md:44-50`). |
+| Flow author | Chooses graph, ordering, retry, trigger, credential names, and allowed hosts, but must not mint host claims or broaden runtime grants. | Publishes immutable flow versions and expects in-flight runs to remain pinned to their version (`docs/flow-schema.md:1-15`, `docs/run-state.md:115-126`). |
+| Custom-node author | Tenant code is untrusted by the intended boundary: build and execution must be credential-less and deny capabilities unless imports and policy grant them. | Author, test, sign, publish, and invoke a component. User-source ingestion, persistent registry state, and deploy-time signature verification remain incomplete (`docs/builder.md:1-36`, `docs/builder.md:194-204`). |
+| Standard-node/runtime maintainer | Trusted platform-code author. Standard nodes share the flowrunner's union of capabilities; per-node restriction is logical dispatch policy, not a hostile-code sandbox. | Curates compiled-in nodes and the policy that maps each node to allowed effects (`docs/platform-plan.md:77-85`, `docs/node-library.md:111-123`). |
+| Platform/control-plane operator | Privileged across T1, placement, schema/provisioning sagas, Kubernetes artifacts, and tenant database creation. T1 authority must not become a tenant request-path credential. | Provision, place, migrate, quiesce, copy, restore, cut over, and recover environments (`docs/system-cluster.md:18-29`, `docs/provisioning.md:359-371`). |
+| Data-plane/SRE operator | Operates project runners/gateways, Postgres, CDC slots, JetStream, backups, and runtime forks. Replication authority can see cluster-wide WAL and is materially more privileged than an application credential. | Detect stalls, contain failures, restore service/data, and upgrade dependencies (`docs/event-plane-jetstream.md:425-466`, `docs/wash-runtime-fork.md:61-129`). A cross-plane incident RACI is not yet named. |
+| Builder and artifact operator | Controls the source-to-component supply chain and registry/signing authority; this must be separate from tenant runtime credentials. | Compile, lint imports, test, attest, sign, publish, and deploy custom-node artifacts (`docs/builder.md:10-36`, `docs/builder.md:121-171`). |
+| Auditor | Needs immutable, tenant-scoped evidence of acknowledged requests, run/effect outcomes, administrative actions, and recovery. No explicit auditor grant model is specified. | The POC requires an auditor to prove zero silent losses; the app schema supplies audit storage but not the reader's authorization contract (`docs/poc-material-receiving.md:44-50`, `docs/app-schema.md:72-82`). |
+
+The labels `pooled`, `standard`, `dedicated`, and `regulated` do not themselves
+establish an adversary model, compliance regime, residency promise, acceptable
+operator access, secret boundary, or audit/retention policy. Those product
+requirements are now owned by `wamn-4tob.1.15`; ARC6 and ARC8 must not infer
+stronger isolation merely from a deployment-class name.
+
+### B.2 Lifecycle and deployment classes
+
+| Lifecycle stage | Required product invariant | Current authority or seam |
+|---|---|---|
+| Onboard and place | A stable `(org, project, env)` identity maps to exactly one intended policy and placement; retries cannot create a second authority. | T1 registry is the identity/placement source; provisioning creates the target database, role, rows, and Secret (`docs/registry-model.md:1-18`, `docs/provisioning.md:313-371`). |
+| Design catalog | Draft edits are isolated from the applied application and have a stable base version. | Versioned catalog is the model source; draft is the only mutable lifecycle state (`docs/catalog-model.md:3-24`, `docs/schema-lifecycle.md:41-67`). |
+| Stage, migrate, and promote | Stale-base and incompatible changes refuse; DDL and lifecycle movement are atomic; destructive promotion requires explicit evidence/authorization. | Applied catalog plus physical tenant schema; promotion remains within `(org, project)` (`docs/schema-lifecycle.md:94-126`, `docs/migration-engine.md:25-53`). |
+| Publish API and flow | A request or run resolves one compatible, immutable catalog/flow contract; activation is atomic and old in-flight work remains interpretable. | Applied schema and active flow-version pointer; REST exists, while GraphQL, auth, hot reload, SDK generation, masks, and rate/cost limits are still excluded from the current gateway (`docs/api-gateway.md:107-115`). |
+| Build and publish a custom node | Source is built without tenant/runtime credentials; disallowed imports or failing tests prevent publication; the invoked artifact is the reviewed artifact. | Builder pipeline, manifest, signature/SBOM, and OCI identity are the intended seams; the shipped deployment path is still partial (`docs/builder.md:10-36`, `docs/builder.md:173-204`). |
+| Execute and recover a flow | Synchronous acknowledgement and asynchronous enqueue boundaries are explicit; crash, retry, park, wake, and replay use stable identities and the persisted version. | Postgres run/queue state is authoritative; NATS is a lossy hint; node effects are at least once unless the sink honors idempotency (`docs/run-queue.md:24-30`, `docs/run-state.md:87-126`). |
+| Capture a database event | A committed write is not forgotten between WAL, broker, materializer, queue, and run creation; ordering and duplicate scope are explicit. | Confirmed LSN advances only after JetStream acknowledgement; deterministic run creation is narrower than exactly-once external effects (`docs/event-plane-jetstream.md:126-138`, `docs/event-plane-jetstream.md:191-229`). |
+| Test, observe, audit, and replay | Evidence identifies tenant, version, node occurrence, cause, and outcome without leaking secrets; replay never disguises repeated external effects. | Test/replay is a product surface in the plan, but per-node observability, tenant isolation of logs, immutable audit export, and replay permissions remain incomplete (`docs/platform-plan.md:175-187`, `docs/run-state.md:147-179`, `docs/dashboards.md:88-106`). |
+| Copy, back up, restore, and move | Quiesce, snapshot, restore, verify, and cutover are ordered and resumable; destructive restore is explicit; recovered point and audit rewind are reported. | Logical per-project dump and cluster PITR coexist; copy records durable steps, while the general compensating saga remains future work (`docs/postgres-topology.md:247-331`, `docs/provisioning.md:787-838`). |
+| Upgrade | Schema, host, guest, service, WIT, event-wire, and deployment changes preserve acknowledged and persisted work or fail detectably with a recoverable prior artifact. | Subsystem lifecycle and fork gates exist, but fleet-wide mixed-version support, maintenance allowance, rollout order, and deployed artifact identity are not specified; `wamn-4tob.1.16` owns that product contract. |
+
+The current deployment taxonomy is a design hypothesis:
+
+| Class | Documented shape | Requirement status |
+|---|---|---|
+| Platform environment | One T1 HA control-plane database cluster per platform dev/staging/prod; tenant request paths should continue during T1 loss. | Specified qualitative failure boundary; numeric availability/durability is open (`docs/system-cluster.md:16-31`, `docs/system-cluster.md:47-57`). |
+| Trials / T3 | Multiple organizations share the pool. | Pooled service is intended, but supported tenant count, noisy-neighbor envelope, acceptable shared privilege, and unit economics are open. |
+| Standard / T2 | Organization-scoped prod/dev recovery domains; prod HA and backup-enabled, dev cheaper/hibernatable; canary may share prod. | Current placement policy, not a customer-certified SLO or isolation contract (`docs/provisioning.md:143-173`, `docs/deployment-model.md:351-367`). |
+| Dedicated or regulated / T4 | Project environments, including canary, may receive their own recovery domain. | Product option is named, but regulatory controls, data residency, operator trust, RPO/RTO, and price/cardinality assumptions are not set (`docs/deployment-model.md:241-261`). |
+| Edge/on-prem/air-gapped | Later distribution profile with MQTT first and OPC UA/Modbus/local HTTP at the edge. | Architectural seam only; supported topology, fleet count, offline duration, upgrade ownership, and recovery expectations remain unknown (`docs/platform-plan.md:118-131`). |
+
+The topology note explicitly assumes organizations are few, paying, and able to
+absorb instance cost (`docs/postgres-topology.md:1-20`). That is a design input,
+not a product requirement. `wamn-4tob.1.12` must decide the supported
+cardinalities before ARC6 or ARC11 credits either per-project deployments or the
+four-tier topology for scale or cost.
+
+### B.3 Requirements, measurements, and unsupported extrapolations
+
+Historical gate and ceiling records are useful design evidence, but they are
+not current baseline-matched behavioral proof under §A. The table preserves
+workload, durability, and environment so development thresholds are not
+silently promoted to product SLOs.
+
+| Area | Recorded evidence | What it supports | What it does not support |
+|---|---|---|---|
+| Runtime/component substrate | S1 recorded 6.1/25.3 µs instantiate p50/p99, 46.7 MiB for 100 residents, an 80.5 ms workload start, and a trapped 256 MiB cap (`docs/p0-results.md:35-56`). | Feasibility at the measured local/in-cluster shape. | Project-fleet cardinality, cold end-to-end request latency, noisy-neighbor isolation, or production cost. |
+| Postgres host path | The final durable-commit S2 record reports 13,804 qps, p99 3.59 ms; multiproject reports 14,162 qps, p99 3.06 ms, and 10,000/10,000 addressability (`docs/p0-results.md:187-198`). Security probes reported zero leakage/mismatch in their workloads (`docs/p0-results.md:200-221`). | A specific query shape, pool, and containment gate passed with `fsync` and synchronous commit enabled. | A production database durability/HA claim: the fixture is still one replica on `emptyDir` (`deploy/platform/postgres.yaml:1-3`, `deploy/platform/postgres.yaml:44-61`). Addressability is not supported active-project cardinality. |
+| Reducer/resume and invocation | S3 recorded 0.83 µs dispatch p99, 428 µs worst reload, and 10/10 duplicate-absorbed resumes; S4 recorded 33/89 µs cross-pod p50/p99 (`docs/p0-results.md:291-321`, `docs/p0-results.md:378-402`). | Reducer and invocation overhead are small in the tested paths. | End-to-end durable-flow latency, failover RTO, arbitrary external-effect exactly-once, or a production workload mix. |
+| Proposed dispatch SLO | D15 proposes write-ahead p99 `<15 ms`, fast path p99 `<10 ms`, async warm p50/p99 `<25/100 ms`, and async cold p99 `<250 ms` (`docs/platform-plan.md:105`). Durable re-gates recorded 6.94/6.06 ms and doorbell 6.3/9.46 ms (`docs/ceilings.md:12-20`). | The current development gates meet the proposed thresholds in their fixture. | Product sign-off, percentile windows/error budgets, payload/concurrency classes, or customer-facing SLOs. Those belong to `wamn-4tob.1.13`. |
+| Queue capacity and recovery | The 60-second C7 ramp knee was about 2,000–2,500 transitions/s, but only 550/s was flat in the sustained run and 1,599/s oscillated; tenfold bursts recovered in 26–66 seconds (`docs/ceilings.md:70-127`). | A noisy, untuned saturation shape and concrete backpressure questions. | A 1–5k sustained production ceiling or SLO; C7 is explicitly measurement-only and production-grade remeasurement is deferred (`docs/ceilings.md:149-153`). |
+| CDC and event path | Release C-E2E records commit-to-first-enqueue p50 around 157–184 ms and N=1/5/20 commit-to-last-run p50 166/166/185 ms; C-CDC drained narrow rows around 60k/s and wide rows around 13.4k/s (`docs/ceilings.md:513-556`, `docs/ceilings.md:587-607`). A local reader restart delivered 222/222 with a 2.17 s publish gap (`docs/ceilings.md:658-679`). | Path feasibility, payload sensitivity, and a local recovery mechanism. | Accepted event latency/catch-up SLO, a materializer ceiling, live primary-failover RTO, or slot-loss recovery. |
+| Backup and restore | Policy examples use daily/six-hour/hourly logical dumps and 7/14/30-day PITR windows; an exact target-time restore was demonstrated (`docs/postgres-topology.md:253-267`, `docs/postgres-topology.md:292-314`). | Restore mechanisms and candidate tier knobs. | Contractual RPO/RTO, formal restore-drill cadence, immutable audit continuity, or named recovery ownership. |
+
+Earlier S2 and dispatch latency figures used non-durable fixture settings and
+are not comparable regressions to the durable-commit rows
+(`docs/p0-results.md:5-7`, `docs/p0-results.md:167-198`). C-MAT local debug data
+is a shape result rather than a ceiling, and the live CDC availability event was
+not recorded (`docs/ceilings.md:357-372`, `docs/ceilings.md:658-679`). ARC1 gives
+no architecture option credit for extrapolating any of these records beyond its
+captured workload.
+
+### B.4 Quality-attribute scenarios
+
+The response measures below are the acceptance interface for later
+architecture comparisons. **Required** marks a controlling invariant; cited
+decision beads supply missing numeric or product boundaries and do not lower
+the correctness gate while open.
+
+| # | Actor, stimulus, and environment | Authority, boundary, and delivery semantics | Required response, blast radius, and recovery owner | Measure and evidence status |
+|---|---|---|---|---|
+| QA1 | A hostile or defective API client for tenant A supplies forged claims, unknown identifiers, injection values, or tenant B identifiers in pooled T3. | Tenant database plus applied catalog are authoritative; the gateway/plugin establishes claims and uses bound values; RLS is the last database boundary. | Refuse before unauthorized SQL/effect, reveal no victim existence or data, record an attributable denial, and contain impact to the caller/project. Platform security owns recovery from a boundary failure. | **Required:** zero cross-tenant reads/writes and zero claim override. Historical S2 probes are supporting evidence only (`docs/api-gateway.md:54-75`, `docs/p0-results.md:200-221`). Trust and permitted sharing: `.15`. |
+| QA2 | A builder stages a destructive catalog change while another version is applied or a DDL statement fails in a live environment. | Applied catalog and tenant schema must advance in one migration transaction; staged base version controls ordering. | Refuse stale base, roll back all partial DDL/lifecycle/history, identify dependent API/flows/tests, and require destructive authorization plus backup evidence. Project operator owns correction. | **Required:** zero partial schema state and no history row for a failed migration (`docs/schema-lifecycle.md:94-126`, `docs/migration-engine.md:25-53`). Downtime/compatibility: `.16`; RPO/RTO: `.14`. |
+| QA3 | An ERP client submits a synchronous write-ahead flow and a runner dies after an external effect but before checkpoint. | Run/node history and sink data are authoritative at their respective transactions; the persisted flow version and occurrence-derived idempotency key survive process loss. | Do not acknowledge before the promised durable boundary; reclaim and reconstruct on another worker; collapse an idempotent sink effect, and explicitly surface a possibly repeated non-idempotent effect. Blast radius is one run/project. | **Required:** zero acknowledged run loss or silent duplicate logical effect. POC proposes 20 receipts/zero silent loss and D15 proposes p99 `<15 ms`; neither is completed product proof (`docs/poc-material-receiving.md:44-47`, `docs/run-state.md:87-100`). Latency: `.13`; recovery: `.14`. |
+| QA4 | An idle project's cron fires while its runner is at zero and the initial NATS doorbell is lost. | Postgres `runs` plus `run_queue` are atomic/authoritative; NATS is only a hint. | Reconciliation re-hints, the narrowly privileged waker scales 0→1, one worker leases and resumes the run, and unrelated projects continue. Dispatcher/data-plane operator owns a stalled backlog. | **Required:** zero lost enqueues; bounded wake/dispatch latency. Mechanism is documented (`docs/run-queue.md:47-98`, `docs/run-queue.md:582-615`); cold p99 target awaits `.13`, degraded RTO `.14`. |
+| QA5 | Two runner replicas process a strict/partitioned flow whose head retries, parks, crashes, or becomes business-terminal. | Numeric stream sequence, stable ordering key, and Postgres leases govern delivery; retries share occurrence and attempt advances. | No transient head is overtaken in blocking mode; a business-terminal head dead-letters and releases atomically; crash-exhaustion remains visibly blocked until an authorized redrive/purge. | **Required:** zero per-key reorder and no concurrent lease owner (`docs/run-queue.md:149-237`). Operator authority and response time remain open under `.14`. |
+| QA6 | A tenant transaction commits while JetStream is unavailable or the CDC reader restarts in standard dedicated prod. | WAL is the first committed event authority; confirmed LSN moves only after broker acknowledgement; deterministic materialization dedupes run creation. | Retain WAL, emit stall/headroom signals, retry without inventing a new logical run, and declare a capture-gap incident rather than silently recreating an invalid slot. Event/DB operator owns containment and backfill. | **Required:** zero silent committed-event gaps while the slot remains valid. Alert lead time, backlog/catch-up, failover, and gap RPO/RTO: `.13`/`.14` (`docs/event-plane-jetstream.md:126-138`, `docs/event-plane-jetstream.md:458-466`). |
+| QA7 | A custom-node author submits source importing sockets/Postgres or a deployed node requests a credential/host outside its manifest and policy. | Builder artifact/manifest/signature and host-injected project/grant context form the boundary; tenant code cannot mint claims. | Reject before publish or effect, disclose no secret/existence oracle, and contain failure to the artifact/invocation. Builder/runtime security owns quarantine and revocation. | **Required:** zero unauthorized import, secret byte, DB access, or egress. Current lint/credential gates support the mechanism, while ingestion and deploy-time verification are partial (`docs/builder.md:10-36`, `docs/credential-vault.md:77-133`). Trust/rotation requirements: `.15`. |
+| QA8 | A flow definition or dispatcher attempts to give standard node A a capability declared only for standard node B. | The current flowrunner owns the union of standard-node capabilities and applies logical dispatch checks. A malicious standard-node maintainer remains inside that trusted component boundary. | Under the present trust hypothesis, the double checks refuse the misdispatch; if standard-node authors/code are adversarial, the architecture must instead create a structural boundary. | **Required:** zero disallowed dispatch from untrusted flow input. Whether logical containment is acceptable by class is an owner decision in `.15` (`docs/platform-plan.md:81-85`, `docs/node-library.md:111-123`). |
+| QA9 | T1 loses its primary or becomes unavailable while existing tenant APIs and flows are active. | T1 is authoritative for control-plane identity/saga state but excluded from tenant request paths; tenant databases/run state remain authoritative for live work. | Existing data-plane requests continue; provisioning, placement, and promotion fail closed/pause; acknowledged T1 mutations are either present after failover or a durability violation is declared and reconciled. Platform control-plane operator owns recovery. | **Required:** no tenant request-path dependency and no silent acknowledged registry loss. The qualitative boundary is specified; async-replication durability, availability, RPO, and RTO are `.14` (`docs/system-cluster.md:47-85`). |
+| QA10 | An operator restores/copies a corrupted project environment in trials, standard, or dedicated service. | Backup artifact/PITR point, source registry identity, and durable copy saga steps govern restore and cutover. | Restore to scratch by default; require explicit in-place confirmation; quiesce→snapshot→restore→verify→cutover; report recovered point, missing interval, and audit rewind; never append stale rows. DB/control-plane operator owns the operation. | **Required:** verified data/identity integrity and no unannounced loss. Existing gates prove mechanisms; cadence, RPO/RTO, audit retention, and owner authority are `.14`/`.15` (`docs/provisioning.md:699-785`, `docs/postgres-topology.md:325-331`). |
+| QA11 | Offered API, queue, or CDC load exceeds the supported sustained/burst envelope or a tenant creates a runaway backlog. | Each authoritative store must expose accepted work, backlog, age, and progress; lossy hints cannot become the authority. | Apply bounded backpressure or fail explicitly, preserve acknowledged work, contain noisy-neighbor impact to the promised class, alert before WAL/lease/retention safety is exhausted, and catch up within the contract. | **Required:** zero silent loss plus owner-set backlog age, drain time, throughput, and blast radius. C7/C-CDC only supply candidate shapes; `.12`–`.14` own the product envelope. |
+| QA12 | Old and new host/guest/service/WIT/event-wire/SQL versions coexist or a rollout fails with active, parked, and scheduled runs. | Immutable artifact identity, persisted flow/catalog/event versions, and migration state must determine compatibility and rollback/forward-fix. | Detect incompatibility before destructive replacement, keep compatible old capacity or quiesce explicitly, preserve acknowledged/persisted work, and select a proven prior artifact or recover forward. Release/platform operator owns rollout. | **Required:** zero silent state reinterpretation or acknowledged-work loss. Subsystem pins/gates exist, but the mixed-version and maintenance contract is `.16`, with numeric outage/recovery in `.14` (`docs/wash-runtime-fork.md:61-129`, `docs/migration-engine.md:122-130`). |
+| QA13 | A component, operator credential, broker identity, replication role, observability store, or cluster is compromised in a regulated/dedicated environment. | Product-defined trust zones, credential scopes, encryption/residency controls, and audit authorities—not tier names—must bound access. | Prevent cross-tenant/plane escalation; revoke and rotate within a defined interval; preserve/produce tamper-evident evidence; notify affected tenants; contain recovery to the promised domain. | **Required:** zero access outside the declared domain and an explicit maximum blast radius. The baseline has no certified regulated contract; `.15` owns it and `.14` owns recovery time. |
+
+### B.5 How these criteria discriminate alternatives
+
+Later architecture work must apply these rules before considering sunk cost or
+delivery speed:
+
+| Question | Eliminate an alternative when... | Primary downstream comparison |
+|---|---|---|
+| State authority and acknowledgement | A request can be acknowledged before its authoritative state is durable, or two authorities can diverge without an atomic handoff, stable identity, reconciliation, and visible gap. | Current distributed state vs Postgres-centered vs log-centered vs durable-workflow ownership (ARC4/ARC7). |
+| Flow durability and determinism | Resume depends on process memory, current rather than persisted definitions, wall-clock coincidence, or unbounded duplicate external effects. | Custom runner vs a durable-workflow engine; native vs component execution (ARC4/ARC5). |
+| Tenant, secret, artifact, and operator isolation | Default deny depends only on naming/list conventions, a shared credential crosses the accepted threat boundary, or a compromised component exceeds the deployment class's promised blast radius. | Pooled/per-org/per-env topology, runtime sandbox role, builder supply chain, and broker/account layout (ARC5/ARC6/ARC8). |
+| Event/log necessity | A broker adds an acknowledged state authority without a required replay/ordering/fan-out property, or a queue-only alternative cannot meet a stated event-log requirement. | CDC→JetStream vs outbox/direct Postgres/log/workflow alternatives (ARC7). |
+| Failure containment and recovery | A single tenant, slot, broker, primary, rollout, or operator mistake can create unbounded cross-tenant loss, or recovery requires undocumented expert repair beyond `.14`. | Topology, event plane, service placement, backup, and day-two design (ARC6/ARC7/ARC9). |
+| Scale and operability | Per-project/per-environment objects, pools, subscriptions, metrics, cold starts, or upgrades cannot fit `.12` and `.13`, or the on-call burden violates `.14`. | Runtime deployment unit, Postgres tiering, and scale-to-zero claims (ARC5/ARC6/ARC9). |
+| Evolution and upgrades | There is no compatible path for the version combinations, in-flight work, maintenance posture, rollback provenance, and state migration required by `.16`. | Runtime/fork role, contracts, roadmap seams, and target migration order (ARC5/ARC9/ARC10/STR5). |
+
+These tests deliberately do not assume that wasmCloud is the platform, that
+JetStream is necessary, that four Postgres tiers are correct, or that durable
+orchestration should remain custom. They also prevent a cheaper/faster option
+from surviving a correctness-gate failure.
+
+### B.6 External review: accepted feedback, corrections, and routing
+
+`docs/REVIEW-260723.md` is a static review that did not build or run the system
+(`docs/REVIEW-260723.md:9-11`). ARC1 therefore used it as a hypothesis source:
+
+- **Corroborated and adopted as an ARC1 requirement question:** the current
+  event path can provide deterministic exactly-once *run-row creation* while
+  node execution and nontransactional external effects remain at least once
+  unless the sink honors idempotency. The review's narrower wording
+  (`docs/REVIEW-260723.md:334-369`) agrees with the canonical state/event
+  contracts (`docs/event-plane-jetstream.md:191-229`,
+  `docs/run-state.md:87-113`). Later work must not market or reason from a
+  broader end-to-end exactly-once claim.
+- **Corroborated as unproven, not accepted as a negative verdict:** per-project
+  workloads are not yet shown to be “nearly free” after CRDs, routes, secrets,
+  pools, subscriptions, telemetry, reconciliation, cold starts, and upgrade
+  fan-out. The proposed 100/1,000/10,000 campaign
+  (`docs/REVIEW-260723.md:373-399`) is a useful input to `.12`; it is not a
+  product scale requirement or completed measurement.
+- **Corroborated and made explicit in QA8:** standard-node isolation is logical
+  within a trusted component, unlike the custom-node sandbox
+  (`docs/REVIEW-260723.md:403-415`). This is not a newly proven exploit; `.15`
+  must decide whether that trust boundary is acceptable for each deployment
+  class.
+- **Correct direction, stale detail:** the two pinned forks are product
+  subsystems with upgrade/on-call cost, but D23 already accepts runtime-fork
+  maintainer status and the current wash-runtime ledger carries six rather than
+  the review's five commits (`docs/REVIEW-260723.md:314-330`,
+  `docs/wash-runtime-fork.md:120-140`). ARC5/ARC9 must compare that continuing
+  cost; ARC1 does not reopen it solely from patch count.
+- **Useful product-boundary observation:** the review argues that `testkit` and
+  `flow-tests` may implement a customer-facing test/replay product rather than
+  mere repository support (`docs/REVIEW-260723.md:216-241`). The platform plan
+  independently specifies stored suites, replay, assertions, publish gates, and
+  schema-impact analysis as product capabilities
+  (`docs/platform-plan.md:175-187`). ARC1 therefore includes that lifecycle,
+  while STR2/STR3/STR9 must decide its code and deployment ownership.
+- **Retained only as later hypotheses:** “over-designed,” freeze-infrastructure,
+  crate merges, process extraction, and broker/runtime replacement are
+  architecture/structure verdicts rather than product forces. They remain
+  routed to ARC4–ARC11 and STR1–STR9 and receive no ARC1 credit without the
+  relevant state, dependency, failure-domain, and operability comparison
+  (`docs/REVIEW-260723.md:5-11`, `docs/REVIEW-260723.md:516-518`).
+
+The review also helped expose current-document drift that later tasks must not
+mistake for product requirements: `platform-plan.md` still mentions dispatcher
+outbox polling although D19 retired it (`docs/platform-plan.md:87`,
+`docs/platform-plan.md:200-215`), and its REST+GraphQL target is wider than the
+current REST-only gateway (`docs/platform-plan.md:63-73`,
+`docs/api-gateway.md:107-115`). ARC2/ARC3 must model what runs now; ARC10/STR8
+must distinguish roadmap intent from stale wording.
+
+### B.7 Owner decisions and ARC1 hand-off
+
+| Bead | Missing owner requirement | Why it blocks an unconditional target |
+|---|---|---|
+| `wamn-4tob.1.12` | Supported organizations, projects, environments, active workloads, regional/edge installations, and other cardinality envelopes by deployment class. | Current 10,000-project addressability and small benchmark shapes do not establish supported production scale or unit economics. |
+| `wamn-4tob.1.13` | End-to-end latency, sustained/burst throughput, backlog, catch-up, backpressure, payload, percentile, and error-budget objectives. | Development gates and measurement knees cannot be ranked as customer SLOs. |
+| `wamn-4tob.1.14` | Availability, acknowledged-write durability, degraded modes, RPO, RTO, manual-repair allowance, and recovery owner by plane/class. | Existing HA labels, backup cadences, and local recovery drills do not define a product recovery contract. |
+| `wamn-4tob.1.15` | Adversary/trust model; permitted shared privilege and data boundaries; regulatory, residency, audit, retention, erasure, and operator-access promises. | `regulated` and `dedicated` are topology labels until the promised isolation outcome is stated. |
+| `wamn-4tob.1.16` | Maintenance/degradation allowance, mixed-version support, rollout/rollback/forward-fix semantics, and artifact provenance across schemas, runtimes, contracts, and services. | Subsystem upgrade mechanisms do not define how the product preserves active and persisted work during a platform release. |
+
+Technology choices already deferred in the roadmap—Timescale versus a separate
+TSDB, hosted versus customer MQTT, and payload-store backend—are not additional
+ARC1 requirement decisions. ARC7/ARC10 should evaluate them after `.12`–`.16`
+bound the use case. Incident RACI and CDC-gap recovery are part of `.14`;
+credential scope and rotation are part of `.15`; numeric upgrade outage is
+shared by `.14` while compatibility semantics belong to `.16`.
+
+ARC1 closes no implementation finding and ratifies no foundational decision.
+It supplies actors, lifecycle, evidence classes, discriminating scenarios, and
+explicit owner unknowns for the current-state and alternatives waves.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
