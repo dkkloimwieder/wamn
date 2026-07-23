@@ -1386,6 +1386,251 @@ and new SR19/SR20 are open; no proposed boundary is represented as fixed.
 
 ---
 
+## I — Assessment of `RESTRUCTURE-260723` (2026-07-23)
+
+This section is the result of `wamn-4tob.9`. The submitted proposal is frozen
+at SHA-256
+`4c3271711767378887685cf04c0f310e7a290ca579ecb170ee2b0f3cd73e90dd`.
+It identifies source baseline `1da2a10` and evidence snapshot `ffdbd1e`
+(`docs/RESTRUCTURE-260723.md:9-17`). Git history reconciles those claims:
+`1da2a10..ffdbd1e` changes only `docs/REVIEW-260723.md` and this ledger, and
+`ffdbd1e..1069a76` changes only this ledger. The source-bearing structural facts
+therefore still apply at issue baseline `1069a76`, although calling `ffdbd1e`
+current is stale. The proposal is explicitly static and did not compile, deploy,
+or exercise the repository (`docs/RESTRUCTURE-260723.md:916-918`); it receives
+source-evidence credit, not behavioral or live-artifact credit.
+
+**Executive verdict: amend; do not approve wholesale.** The proposal is a
+valuable synthesis of the external review and sections E–H. Keep its
+role-visible layering, narrow contract ownership, builder-policy inversion,
+node-host boundary, product-scenario classification, thin-ingress invariant,
+and executable architecture checks. Amend its diagnosis where a pure shared
+crate is described as a service dependency, replace its technology-preserving
+scope fence with the first-principles ARC5 comparison, and defer its exact
+packages, service topology, transport, authentication provider, state merges,
+scenario artifact split, and phase order until their existing ARC/STR owners
+decide them. A target diagram is not evidence that a finding is fixed.
+
+The proposal's local **D1–D9 labels are not canonical decision IDs**. Canonical
+D1–D9 already mean flow execution, generated API, run queue, DB events,
+pooling, Postgres hosting, custom-node invocation, raw SQL, and ordering
+(`docs/platform-plan.md:195-205`). Reusing those identifiers would recreate the
+decision-identity ambiguity class previously tracked by SR14. This section
+therefore calls them **RP-D1–RP-D9**. If any are accepted, ARC11/STR9 must assign
+non-colliding decision records; neither the proposal nor the canonical table is
+silently rewritten here.
+
+Risk order for consuming the proposal is:
+
+1. **Correctness blockers:** do not freeze the current runtime/event choices or
+   move durable state while authority, cross-store reconciliation, acknowledged
+   sync recovery, readiness, provenance, and mixed-version behavior remain open
+   (R36/R37/R42/SR17, `.1.14`, `.1.16`, `.1.17`).
+2. **Trust blockers:** do not expose ingress until route-derived tenancy,
+   external/internal credential separation, replay/key-version state, and
+   compromise radius are decided by ARC8/`.1.15`.
+3. **Structural defects:** remove or explicitly retain SR15/SR16/SR19/SR20
+   through their existing owners; package names do not close them.
+4. **Change-cost hypotheses:** directory grouping, default members, crate
+   consolidation, and gate movement follow measured STR evidence and are never
+   correctness substitutes.
+
+### I.1 Diagnosis and principles
+
+| Proposal claim | Evidence verdict | Audit consequence and owner |
+|---|---|---|
+| Flat peer workspaces obscure package roles and target classes (`docs/RESTRUCTURE-260723.md:66-83`). | **Keep, qualified.** The root has 38 packages and the component workspace 18, with all members in their default sets. That supports explicit roles and measured default-member/CI tiers, not a package-count or directory-depth verdict (`docs/findings.md:721-729,1330-1332`). | RP-D1/P2/P9/P10 reinforce H.2 and route to STR7/STR9. Preserve the separate component workspace and lockfile as a real target boundary. |
+| Builder and run-worker are equally wrong for depending on `wamn-host` (`docs/RESTRUCTURE-260723.md:69-70,305-328`). | **Amend.** Builder imports a peer composition root for policy, engine, credentials, and conformance behavior, confirming SR16. Run-worker embeds the current hybrid runtime library and is an explicit transition exception, not the same inversion (`docs/findings.md:1277-1284`). | SR16/`wamn-2jkm.79` owns builder remediation. ARC5/STR3/STR9 decide whether the worker's runtime adapter is retained, narrowed, or removed. |
+| Queue state and scheduler dependencies are mixed (`docs/RESTRUCTURE-260723.md:71`). | **Keep observation; defer split.** `wamn-run-queue` feature-gates dispatcher cadence/cron, while production guests currently resolve the intended no-default closure (`docs/findings.md:1254-1261`). | STR3/STR7/STR9 must show a correctness, scaling, or change-coupling benefit before creating a scheduler package. |
+| Standard nodes depend on a data-API context because the shared entity kernel is missing (`docs/RESTRUCTURE-260723.md:72,377-404`). | **Amend.** `wamn-api` is already a guest-safe pure crate, not the deployable API component or HTTP shell. It deliberately supplies the single audited catalog-derived SQL planner to `wamn-nodes`. The real seam is narrower: standard Postgres nodes manufacture API `Method`/route/plan vocabulary (`crates/wamn-api/Cargo.toml:8-20`, `crates/wamn-nodes/src/postgres.rs:18,157-181`). | Keep one semantic implementation. STR5/STR9 decide whether transport-neutral operations justify a module/crate and compatibility facade; no service-to-service defect or mandatory `entity-access` package is established. |
+| SQL primitives have incidental owners and duplicated quoting is a vulnerability surface (`docs/RESTRUCTURE-260723.md:73,359-375`). | **Amend.** Canonical quoting is in `wamn-ddl`; provisioning intentionally avoids its larger production closure and has byte/adversarial drift comparison under closed `wamn-7nd.1`. `wamn-sql` is already a zero-dependency guest-safe composition leaf. There is no known exploit or current divergence. | STR6/STR9 may select one smaller canonical primitive owner, generation, or continued structural comparison. Do not preselect `pg-core` or merge `wamn-sql` on naming alone. |
+| Stored suites, cases, replay vocabulary, deterministic capabilities, and captured egress are product scenario state (`docs/RESTRUCTURE-260723.md:74,661-675`). | **Keep category; amend packaging.** Checked-in suites/cases pin flow versions and are product data; SR19 proves the current contract points upward into persistence (`docs/findings.md:913-915,1294-1308`). | STR5 assigns the contract/status/capture vocabulary; SR19/`wamn-2jkm.83` owns the dependency correction; STR9 decides package names and count. |
+| The table/schema layout lacks enforceable state ownership (`docs/RESTRUCTURE-260723.md:75,420-473`). | **Keep need; amend model.** The proposal's table list matches the named non-fixture platform tables in `deploy/sql`, but its owners are target roles, not current evidence, and Postgres is only one authority class. | ARC4 decision `wamn-4tob.1.17`, STR6, and STR9 own the complete current/target authority model. |
+| `wamn-gates` is a white-box second composition root (`docs/RESTRUCTURE-260723.md:76,696-715`). | **Keep observation; amend remedy.** Its broad fan-in is intentional for several exact-path proofs and is not merge evidence (`docs/findings.md:1277-1280`). | STR4/STR7 must classify each proof as package, embedded-component, image, or deployed-system evidence before moving or deleting it. |
+| Production has no generic authenticated HTTP flow ingress or complete invocation contract (`docs/RESTRUCTURE-260723.md:77-79`). | **Keep capability gap.** The only concrete synchronous HTTP path is the F1 POC, which owns route handling, run SQL, graph drive, and F1 dispatch; the current flowrunner WIT is an execution interface, not this application/wire contract (`docs/findings.md:643-644`, `components/flowrunner/wit/world.wit:69-127`). | New P3 feature `wamn-fqg.39` owns a non-POC thin ingress plus canonical invocation boundary. ARC8/ARC10/ARC11 and STR5/STR9 decide trust, priority, transport, and placement. |
+
+Principles P2, P3, P5, P7–P10 and the package-boundary test are retained as
+structural heuristics (`docs/RESTRUCTURE-260723.md:92-118`). Three need explicit
+limits:
+
+1. **P1 deployable leaves:** forbid dependency on a *peer composition root* to
+   reuse policy. A Rust package may deliberately contain reusable library and
+   binary targets, and the current worker/runtime edge remains a named
+   transition exception until ARC5/STR3/STR9 decide it.
+2. **P4 durable ownership:** one semantic authority does not imply one crate.
+   Record current authority, proposed authority, physical migration owner,
+   authorized writers/readers, stable identity/version, retention, and
+   reconciliation. Splitting semantic and physical ownership—as the proposal
+   itself does for `app_system`—requires a versioned contract, not merely labels.
+3. **P6 shared kernels:** extract only when a single lower owner removes a
+   demonstrated correctness, isolation, dependency-closure, or change-coupling
+   problem. Reuse of a pure crate by two contexts is not itself an inversion.
+
+### I.2 RP-D1–RP-D9 decision crosswalk
+
+| Proposal decision | Verdict | Controlling evidence, amendment, and destination |
+|---|---|---|
+| **RP-D1 — explicit layered package architecture** | **Keep direction; amend encoding.** | H.2 already defines contract, pure-decision, persistence, adapter, deployable, gate, and POC direction (`docs/findings.md:1263-1275`). Role metadata, filesystem grouping, graph deltas, and explicit exceptions are useful enforcement. Exact paths, names, and `default-members` wait for measured STR7 and target STR9 evidence. |
+| **RP-D2 — split host into policy/runtime/node-runtime/host/node-host** | **Amend.** | Pure component policy and independently deployable node-host outcomes are supported by SR15/SR16 (`docs/findings.md:829-846`). The exact `runtime`, `node-runtime`, and executor adapter graph presupposes a surviving hybrid. ARC5 ranks native Rust plus narrow Wasmtime first and rejects the current hybrid unchanged (`docs/findings.md:1006-1022`). ARC11/STR3/STR9 choose the shape; do not authorize package creation yet. |
+| **RP-D3 — shared Postgres/entity-access seams** | **Amend.** | Keep one audited entity-operation implementation and one canonical SQL-safety policy. Correct the claim that standard nodes depend on a deployable data API; decide transport-neutral operation types under STR5. Existing quote drift protection and `wamn-sql` mean neither `pg-core` nor absorption is an urgent defect fix. STR5/STR6/STR9 own the shape. |
+| **RP-D4 — consolidate schema and execution contexts** | **Defer exact merges; keep ownership goal.** | Co-change supports grouping, not one release unit. Catalog/flow contracts, guest closures, and distinct state tables remain justified; H retains them pending target evidence (`docs/findings.md:1338-1368`). A Postgres-centered authority is the recommended hypothesis, not an accepted decision (`docs/findings.md:951-978`). `.1.16`, `.1.17`, STR5/STR6, ARC11, and STR9 precede state moves. |
+| **RP-D5 — explicit product scenario subsystem** | **Keep category; amend/defer topology.** | Product scenario contracts and the SR19 downward-direction correction are supported. A separate model/catalog/runtime/worker quartet is not yet supported by rollout, trust, or change evidence. More importantly, closed `wamn-t92` deliberately chose the same runner binary with `--test-doubles`, while production source exposes that switch (`crates/wamn-run-worker/src/lib.rs:62,174-188,729-739`). STR3/ARC8/STR9 must explicitly retain or overturn that choice; the proposal cannot represent separate images as decided. |
+| **RP-D6 — versioned flow-invocation boundary** | **Keep principle; amend transport and defer topology.** | A stable application contract plus versioned wire adapters is required if ingress and execution are separate workloads. The proposed signed cluster-local HTTP, fields, executor service, and signing domain are hypotheses. They depend on R36/R37 delivery semantics, `.1.15` isolation, `.1.16` mixed-version policy, STR5 ownership, ARC11 runtime choice, and route-authority design. A Rust trait alone is insufficient, but HTTP is not preselected. |
+| **RP-D7 — generic authenticated HTTP ingress in Phase 2** | **Keep capability; defer sequencing.** | `wamn-fqg.39` owns the missing production journey and forbids a second executor. Calling it Phase 2/product-blocking is unsupported by the current roadmap: the pivot parks user/API AuthN/AuthZ and IdP work, but does not decide machine-ingress authentication (`docs/core-pivot-plan.md:15-21,167-173`); API v1 separately excludes authentication (`docs/api-gateway.md:107-115`). ARC10/owner priority must decide it. The feature cannot close without delivery identity, orphan recovery, readiness, artifact provenance, and mixed-version evidence. |
+| **RP-D8 — replace the gate sink with test levels and CI enforcement** | **Amend.** | Keep role/edge, guest-closure, source-identity, compatibility, and architecture-delta checks. Do not dismantle gates or ban all private constructors by directory: first name what each proof exercises and retain equivalent evidence. System tests should be black-box by default; package/conformance/integration tests may intentionally use internals. STR4/STR7/STR9 own classification and migration. |
+| **RP-D9 — inbound identity/authentication** | **Keep trust invariant; defer provider and priority.** | Tenant/project/environment/flow binding must come from trusted route/deployment state, and external caller auth must not share a credential/signature domain with ingress-to-executor auth (`docs/RESTRUCTURE-260723.md:580-643`). Per-route HMAC, nonce storage, replay windows, and rotation overlap are unselected and the proposed state matrix names no nonce/key-version authority. ARC8, `.1.15`, existing `wamn-0xd`/`wamn-sbh`, and ARC10 own the choice; custom-node auth `wamn-fqg.22` is a different trust boundary. |
+
+### I.3 Target graph, state, and contract corrections
+
+The proposal's technology non-goal
+(`docs/RESTRUCTURE-260723.md:54-60`) is **replace as an audit constraint**.
+wasmCloud, Wasmtime, Postgres, NATS, Kubernetes, and the event model are
+migration inputs, not protected conclusions. This issue performs no technology
+replacement, but ARC11 must remain free to accept ARC5's native-service or
+single-authority workflow alternatives.
+
+The proposal's target tree is useful as **role vocabulary**, not a committed
+filesystem. Preserve the separate component target boundary and the contract,
+event, node, flow, SQL, and queue leaves identified in H; defer exact schema,
+runtime, and scenario grouping to STR9. Four target-model corrections are
+required before ARC11 can reuse its diagrams:
+
+1. The graph draws `flow-engine -> run-state`
+   (`docs/RESTRUCTURE-260723.md:162-180`), while the responsibility table calls
+   the engine pure and run-state persistent (`docs/RESTRUCTURE-260723.md:477-486`).
+   That edge is **replace**: the executor composes both, or both consume a
+   lower contract; pure graph decisions must not depend on persistence.
+2. `flow-http` is drawn with only an invocation-contract dependency, yet must
+   resolve an active trusted route (`docs/RESTRUCTURE-260723.md:625-634`).
+   Flow registry is assigned to run-state, while ingress-to-run-state is
+   forbidden (`docs/RESTRUCTURE-260723.md:432-435,779-781`). STR5 must add an
+   authoritative route-registry/query contract or adapter; ingress must not
+   gain private run-state SQL.
+3. The target tree defines caller/auth/project-state roles but the state matrix
+   assigns semantics to undefined authorization, project-config, and audit
+   services (`docs/RESTRUCTURE-260723.md:247-255,439-443`). ARC11/STR9 must
+   either define those owners or mark them roadmap placeholders.
+4. “No deployable depends on a deployable” must be checked against package
+   targets/composition roots, not path names. The supported invariant is no
+   peer service root imported merely for reuse; shared adapter libraries need
+   an explicit owner and bounded public surface.
+
+The populated Postgres matrix is a strong start and its table inventory is
+complete for the checked-in platform SQL it claims
+(`docs/RESTRUCTURE-260723.md:420-446`). It is not a current-state inventory:
+several “application service”
+writers and semantic owners do not exist. Mark every entry
+`current / target / unknown`, and do not equate a proposed owner name with an
+authority decision.
+
+More importantly, delaying non-Postgres resources until after the table
+manifest (`docs/RESTRUCTURE-260723.md:448-473`) is **replace** for correctness
+work. ARC4 found the main gaps at cross-store boundaries
+(`docs/findings.md:862-869,902-924`). Before any state-affecting move, the
+manifest or linked authority model must also cover:
+
+- JetStream stream/consumer configuration, acknowledgement floor, replay and
+  dedupe horizons;
+- WAL publication/slot identity, confirmed LSN, retention, and failover;
+- immutable OCI/object digests, completeness/signature identity, and the bytes
+  actually invoked;
+- Kubernetes desired/observed generations, readiness, workload identity, and
+  rollback image identity;
+- Secret reference/version/rotation and cached-value invalidation; and
+- backup/object bytes, completion markers, retention, and verified restore.
+
+That expanded model is evidence for `wamn-4tob.1.17`; it does not itself ratify
+the Postgres-centered recommendation or rewrite D6/D18/D19.
+
+The invocation proposal correctly separates application semantics from wire
+transport and prohibits ingress from walking graphs or writing run SQL
+(`docs/RESTRUCTURE-260723.md:520-563,572-659`). Its concrete contract still
+needs:
+
+- the authoritative route/binding version and lookup failure semantics;
+- a stable client delivery/idempotency identity and its retention horizon;
+- precise sync/async acknowledgement, deadline, cancellation, timeout, and
+  terminal-response rules;
+- flow-version **and execution-artifact** identity for active-run compatibility;
+- external versus internal authentication policy and replay/key-version state;
+  and
+- old/new wire compatibility and drain/resume behavior during rollout.
+
+Current resume pins the persisted flow version
+(`docs/run-state.md:115-126`), not the execution artifact. R36/R37,
+`wamn-4tob.6.3`, `.1.15`, `.1.16`, STR5, and SR17 therefore control the
+contract. `wamn-fqg.39` owns eventual product delivery without preselecting
+HTTP/HMAC/runtime internals.
+
+### I.4 Migration-program verdict
+
+| Proposed phase | Verdict and corrected exit order |
+|---|---|
+| **Phase 0 — baseline and guardrails** | **Amend.** Keep provenance reconciliation, role/target metadata, graph deltas, repeated source-pin centralization (SR20), explicit full-workspace CI, and state inventory. Do not move code/SQL, freeze all new peer packages, or select `default-members` before STR7 measures impact. Add SR17's hermetic source→Wasm→image proof, R42 readiness, current/target cross-store authority, and the `.1.12`–`.1.17` decisions before moving traffic or state. |
+| **Phase 1 — stable seams** | **Amend/defer exact packages.** Removing builder→host through a narrow component-policy/runtime boundary is evidence-backed and should not wait until Phase 3 if accepted. `pg-core`, `entity-access`, caller model, invoke package, and adapter APIs require STR5/STR6/ARC11/STR9 decisions; creation is not an exit criterion by name. Preserve compatibility fixtures and old/new differential behavior. |
+| **Phase 2 — generic HTTP slice** | **Defer sequence and transport.** Keep the thin-ingress journey in `wamn-fqg.39`, at the owner-set priority. Do not first add signed HTTP to today's queue-only worker and then move the execution endpoint in Phase 3. The target runtime, route authority, delivery/orphan semantics, readiness, provenance, authentication, and mixed-version contract must be selected/proven before production traffic. |
+| **Phase 3 — runtime/service decomposition** | **Keep node-host and builder outcomes; defer exact split.** SR15/SR16 justify independent node serving and removing builder's host-root dependency. ARC11/STR3/STR9 decide whether native services, component-first runtime, or a workflow authority survives and therefore what `runtime`, `node-runtime`, host, and executor mean. |
+| **Phase 4 — bounded-context consolidation** | **Defer.** Require accepted state authority, contract ownership, generated/schema drift policy, and additive/mixed-version migration fixtures first. Retain catalog/flow/event/node/SQL/run-store/run-queue leaves unless STR4/STR5/STR6/STR9 produce a concrete benefit and compatibility plan. “One owner” does not require one crate. |
+| **Phase 5 — scenario/test topology** | **Amend.** Begin proof classification and attribution in Phase 0 and migrate each proof with the boundary it validates. Never delete a gate before equivalent evidence exists. Product scenario ownership is retained; a separate scenario-worker artifact and removal of the accepted same-binary doubles seam remain explicit STR3/ARC8/STR9 choices. |
+
+The proposal's compatibility rules—temporary facades with owners/expiry,
+move-before-rewrite, explicit contract versioning, no ownership-hiding feature
+flags, and proof equivalence—are **keep** (`docs/RESTRUCTURE-260723.md:742-749`).
+They are incomplete without active-run quiesce/resume policy, additive and
+round-trip stored-state migrations, immutable artifact provenance, readiness
+before cutover, and a tested rollback/forward-fix path owned by `.1.16`.
+
+### I.5 Fitness functions, governance, and backlog routing
+
+| Fitness area | Verdict |
+|---|---|
+| Package classification, architecture deltas, guest closure, compatibility fixtures, and repeated runtime-source identity | **Keep.** Encode the H.2 layers and named exceptions through Cargo metadata/target builds; SR20 owns the load-bearing Wasmtime source guard. |
+| Service-leaf rule | **Amend.** Reject peer composition-root imports for reuse; inspect Cargo targets and declared exceptions rather than assuming every package containing a binary is unusable as a library. |
+| Entity/SQL ownership | **Amend.** Check one canonical semantic owner and differential/adversarial behavior, not the provisional names `entity-access`/`pg-core`. Source grep alone cannot see all generated/dynamic writer paths. |
+| State-owner check | **Amend.** Require current/target status, stable identity/version/retention, generated-schema authority, and all cross-store resource classes above. A complete table list is not a complete state model. |
+| Ingress/auth and scenario isolation | **Defer conditionally.** The thin-shell and trusted-binding invariants stand. Exact allowed edges, auth mode, and image separation activate only after ARC8/ARC11/STR9 accept those target units. |
+| Test boundary | **Amend.** Public-surface enforcement applies to tests classified as system tests. Package, conformance, and integration tests may deliberately use owners' internal APIs when that is the property under test. |
+
+Add three missing cross-cutting checks to the proposal's list:
+
+1. hermetic source→component→image→deployment provenance (SR17);
+2. readiness and preservation of old working capacity during rollout (R42); and
+3. active-run/stored-contract compatibility with pinned execution-artifact
+   identity (`wamn-4tob.1.16`).
+
+Governance clauses that keep the program interruptible, preserve behavior,
+require evidence-equivalent gate migration, and close findings only on fixing
+commits are retained (`docs/RESTRUCTURE-260723.md:810-816`). Replace the
+requested wholesale approval of RP-D1–RP-D9 and Phases 0–2
+(`docs/RESTRUCTURE-260723.md:836-848`) with input to ARC11/STR9. The proposal's
+E1–E24 sources are static repository evidence; E25's current official
+wasmCloud capabilities show what the platform can do, not that it is the best
+target. ARC5's first-principles ranking remains controlling
+(`docs/findings.md:1006-1022,1123-1151`).
+
+Deduplication leaves one new product backlog owner:
+`wamn-fqg.39` (P3), generic non-POC HTTP flow ingress over a canonical
+invocation boundary. It intentionally has no speculative implementation
+dependencies; its acceptance criteria consume the decisions/proofs that
+actually become hard blockers. Existing owners remain:
+
+- SR15–SR20: `wamn-2jkm.78`, `.79`, `.80`, `.81`, `.83`, `.84`;
+- sync identity/orphan/readiness/provenance: `wamn-2jkm.72`, `.73`, `.77`,
+  `.80` and proofs `wamn-4tob.6.3`, `wamn-4tob.6.6`,
+  `wamn-4tob.6.8`;
+- state, isolation, and upgrade decisions: `wamn-4tob.1.17`, `.1.15`, `.1.16`;
+- runtime/trust/roadmap/contract/build/target verdicts: ARC8, ARC10, ARC11,
+  STR3, STR5–STR9; and
+- user/API authentication and authorization: `wamn-0xd`, `wamn-sbh`,
+  `wamn-117`, subject to the active pivot.
+
+The entity-operation seam, scenario-serving artifact conflict, route-registry
+contract, proposed owner roles, and package names are routed unknowns within
+those open decision tasks, not duplicate implementation findings. No R/E/SR
+row is added or closed merely because the proposal describes a target.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
