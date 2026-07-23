@@ -2464,6 +2464,153 @@ named executable evidence rather than being represented as repaired.
 
 ---
 
+## O — Module cohesion and change topology (2026-07-23)
+
+This section is the STR4 result for `wamn-4tob.2.4` at baseline
+`fda533a1a36aee6c29b22205caa021185eff7ba1`. The Rust guidelines are used as
+structural heuristics, with repository WIT/error conventions taking priority.
+Classification is based on responsibility, dependency closure, fan-in/out,
+test ownership, runtime state, deploy/rollout ownership, and commit co-change.
+Line count is not a split criterion.
+
+The categories are:
+
+1. **large but cohesive** at the current unit;
+2. **internal module split** while retaining one crate/artifact;
+3. **independently reusable behavior** that belongs behind a lower crate or
+   separate deployable boundary;
+4. **duplication caused by a wrong architectural/contract boundary**; and
+5. **intentionally colocated gate/test composition**.
+
+**Executive verdict: retain most current boundaries.** The CDC reader, API
+router/gateway, ctl composition root, run worker, run queue, schema packages,
+execution packages, and gate composition root have coherent state, dependency,
+or deployment ownership. Flowrunner has one valid guest/release reason but
+needs internal responsibility boundaries if that executor survives ARC11.
+Only one new structural defect is minted: the stored-suite executor duplicates
+an incomplete production built-in dispatch contract. No scheduler crate,
+gate-package fleet, per-verb ctl crates, schema/execution megacrate,
+entity-access service, or scenario-worker image is justified.
+
+### O.1 Complete hotspot classification
+
+| Hotspot | Responsibility, dependency, and change topology | Test/build/runtime ownership | Classification and action |
+|---|---|---|---|
+| **Runner guest (`flowrunner`)** | One guest owns WIT conversion, catalog/run persistence (`components/flowrunner/src/lib.rs:213-528`), HTTP/custom-node transport/signing (`:559-864`), dispatch/grants/observability (`:881-1303`), execution (`:1305-1449`), and queue claim/settlement (`:1450-2088`). It depends on eight component-workspace crates and has no component consumer. | Pure policies are tested in their owner crates; deployed behavior is exercised by flow, failover, runner, F4, metric, testkit, and suite gates. The same Wasm deliberately ships with run-worker and gates (`Dockerfile:57-66,84-134`). | **2.** Keep one guest, WIT surface, image/release with run-worker, and pure-core ownership. Partition guest-private WIT/value conversion, durable repository, node transport, execution/observability, and queue adapter modules. Existing SR2/`wamn-cjv.11` owns this; discard its old LOC target and revalidate stale move-to-gates claims. |
+| **Built-in stored-suite drivability** | `testkitbench` repeats the built-in list and refuses types outside its union (`crates/wamn-gates/src/testkitbench.rs:574-622`); production dispatch arms live in flowrunner (`components/flowrunner/src/lib.rs:1005-1135`). The guard checks only that every existing test string appears somewhere in private source (`crates/wamn-gates/src/testkitbench.rs:1450-1473`). | An added production arm is invisible to the guard and can be rejected by stored-suite execution. The standard-node guard has an addition/length check; the built-in guard does not (`crates/wamn-gates/src/testkitbench.rs:1475-1495`). | **4, Medium:** new SR21. Give both consumers one exhaustive guest-safe descriptor contract; private-source scanning is not contract ownership. |
+| **CDC reader** | One logical-replication lifecycle owns session fate/reopen (`crates/wamn-cdc-reader/src/lib.rs:161-225`), registration/preflight (`:414-581`), transaction decode (`:749-1057`), publication/ACK, and slot health (`:1058-1467`). Its production dependencies are event wire and registry. | Unit tests begin at `:1478`; `tests/event_reader_live.rs` plus CDC/F4 gates exercise the same lifecycle. One Recreate Deployment/image owns one slot and credential (`deploy/platform/event-reader.example.yaml:45-88`, `Dockerfile:68-73`). | **1.** Large but cohesive. Keep the separate service/crate; STR5 still owns its external cancellation/contract types. |
+| **Gates and gate harness** | The gate binary deliberately composes 22 production crates and many proof entrypoints (`crates/wamn-gates/src/main.rs:1-60,193-241`, `crates/wamn-gates/Cargo.toml:8-95`). The harness is already the dependency-light shared measurement owner (`crates/wamn-gate-harness/src/lib.rs:1-8`). | One gates image packages the production host and product/fixture Wasm; 48 Jobs isolate execution (`Dockerfile:84-134`). | **5.** Keep one test composition root. SR10 may reorganize internals only with measured duplication/change benefit and proof equivalence; size does not justify package/image splits. |
+| **API router and gateway** | `wamn-api` is a modular pure facade (`crates/wamn-api/src/lib.rs:53-72`); the component is a thin WIT/Postgres effect shell (`components/api-gateway/src/lib.rs:1-13,65-183`). | API owns compiler/integration/live registration tests; gateway owns component and deployed API proofs. Request-serving remains an independent runtime reason. | **1.** Keep both roles and their dependency direction. |
+| **`wamn-ctl` commands** | One operator root exposes fifteen command modules and maps subcommands directly to them (`crates/wamn-ctl/src/lib.rs:1-28`, `crates/wamn-ctl/src/main.rs:82-98`). Shared source does not imply shared transaction or credential context. | One-shot Jobs use invocation-specific credentials. One image remains appropriate; SR18 separately fixes missing tools for advertised verbs (`Dockerfile:41-48`). | **1.** Keep one source binary/image; no per-verb crate fleet. |
+| **`serve_node`** | Untrusted component loading, invocation authentication/grants, egress, HTTP server, wire mapping, and node execution form one custom-code boundary (`crates/wamn-host/src/serve_node.rs:1-47,604-843`). | Unit tests begin at `:893`; nodebench exercises the real cross-pod path. A separate Service/Deployment exists but rolls the shared host artifact (`deploy/platform/serve-node.yaml:44-138`). | **3, existing SR15.** Keep the process boundary and extract its deployable artifact; decide shared lower runtime library after ARC11/STR9. |
+| **General host versus node host** | `wamn-host` exports general runtime/plugins plus `serve_node`; builder, gates, and worker import different portions (`crates/wamn-host/src/lib.rs:1-22`). | General and node hosts have different credentials, untrusted-code exposure, scale, CVE, failure, and rollback lifecycles. | **3, existing SR15.** Shared image is wrong; no second finding. |
+| **Run-worker adapter** | The worker owns project queue drain, DB/vault/logging/egress, and instantiation of the same flowrunner (`crates/wamn-run-worker/src/lib.rs:1-35,668-755`). | Worker unit tests and runner/F3/F4/ladder gates; an independent two-replica Deployment owns project leases (`deploy/platform/runner.yaml:45-192`). | **1.** Retain the independent worker and coupled flowrunner release. Narrow its host dependency only after target-runtime selection. |
+| **Builder policy** | Builder imports host engine, egress/grant, and node-host conformance policy rather than a lower reusable owner. | Independent supply-chain Job/image, toolchain, credentials, buildproof, and release lifecycle. | **3, existing SR16.** Invert policy ownership; ARC8 R49 separately owns signer isolation. |
+| **Run queue and proposed scheduler** | Queue owns pure claim/lease/janitor/reconciliation SQL; dispatcher-only cron/cadence dependencies are already feature-gated (`crates/wamn-run-queue/Cargo.toml:38-47`). | Queue, dispatcher, worker, and materializer have distinct tests/deployments, but no independent scheduler state, clock, broker authority, or rollout boundary exists. | **1.** Keep the queue crate; a separate scheduler crate is contradicted by current ownership. |
+| **Schema contexts** | Catalog, DDL, schema, RLS, seed, and migrate have distinct dependency closures and consumers; DDL is the shared lower policy owner (H.2/H.3). | Their tests and rollout callers differ across provision, migration, API, and gates. | **3 for the existing splits.** A schema megacrate is contradicted. STR9 may add filesystem grouping/facades without merging compatibility authorities. |
+| **Execution contexts** | Flow is the serialized model; runner is pure reduction; run-store persists/reconstructs; run-queue owns leases/tables. Direction remains `runner -> flow`, `store -> flow/runner/sql`, `queue -> store/sql` (H.3). | Each owns focused package tests; guest/native consumers deliberately take different closures/features. | **3 for the existing splits.** Keep them separate; do not consolidate from co-change alone. |
+| **Transport-neutral entity-operation seam** | Standard Postgres nodes construct `Method` plus REST-shaped paths before calling the same `Router`; gateway calls that planner directly (`crates/wamn-nodes/src/postgres.rs:133-200`, `components/api-gateway/src/lib.rs:85-104`). No duplicate SQL planner or service hop exists. | API tests own semantics; two consumers roll independently. | **3 as an inferred reuse hypothesis only.** STR5 may identify a stable operation vocabulary; an `entity-access` package/service is not yet proven. |
+| **`wamn-testkit` and flow suites** | The serialized product contract depends upward on run-store and node-invoke; flow-tests is a separate versioned suite envelope (`crates/wamn-testkit/Cargo.toml:1-19`, `crates/wamn-flow-tests/src/lib.rs:1-18`). | Pure evaluation plus suite/testkit/pin/impact proofs; builder, ctl, gates, host, and flow-tests consume it. | **3, existing SR19.** STR5 decides a lower contract owner; no duplicate finding. |
+| **Current scenario execution / proposed worker image** | Doubles are capability-boundary test machinery; the production worker exposes them default-off and the production manifest leaves them off (`crates/wamn-host/src/doubles/mod.rs:1-31`, `crates/wamn-run-worker/src/lib.rs:76-87,174-188`, `deploy/platform/runner.yaml:158-186`). | Stored-suite execution is gate-owned and drives the same worker/guest proof path. | **5 for current colocation.** A separate worker/image remains unknown until ARC8/STR9 identifies a less-trusted caller, different credentials/state, or independent scale. |
+
+### O.2 History and coupling evidence
+
+The repository history is young. Counts below are supporting evidence only,
+computed from unique commits touching a path at the pinned baseline; an
+intersection counts commits touching both paths.
+
+```text
+path commits
+  flowrunner 32       cdc-reader 7      gates 105       gate-harness 8
+  api 14              api-gateway 4     nodes 10        ctl 19
+  serve_node 11       host 94           run-worker 7    builder 8
+  run-queue 33        dispatcher 9      catalog 6       ddl 16
+  schema 4            rls 5             seed 5          migrate 14
+  flow 9              runner 10         run-store 14    testkit 3
+  flow-tests 3        host/doubles 2
+
+selected intersections
+  flowrunner+runner 7    flowrunner+store 8    flowrunner+queue 10
+  flowrunner+gates 23    cdc+gates 2           gates+harness 7
+  api+gateway 3          api+nodes 3           ctl+gates 10
+  serve+builder 0        serve+worker 0        host+worker 4
+  host+builder 1         queue+dispatcher 5    queue+worker 2
+  catalog+ddl 5          ddl+schema 1          ddl+rls 5
+  ddl+seed 4             ddl+migrate 2         flow+runner 0
+  runner+store 3         store+queue 8         testkit+flow-tests 1
+  testkit+gates 3        testkit+doubles 1
+```
+
+The 23/32 flowrunner–gates intersection corroborates its current proof/build
+coupling, not a deployment split. The zero serve-node intersections with
+builder/worker support independent lifecycle ownership. Store/queue and
+schema/DDL intersections support their deliberate dependency edges rather than
+mergers. No count overrides state, trust, contract, or rollout evidence.
+
+### O.3 Flowrunner internal target
+
+If ARC11 retains the current guest long enough to justify work, the minimum
+target is one component with unchanged WIT/export surface and guest-safe
+dependency closure:
+
+```text
+bindings/value translation
+    -> durable repository adapter
+    -> node + custom transport adapter
+    -> execution/observability coordinator
+    -> queue claim/settlement adapter
+         -> existing pure runner/store/queue/nodes crates
+```
+
+This is an internal module boundary, not a new crate, service, image, or runtime
+authority. Existing flow/resume/failover/queue/custom-node/observability gates
+must remain byte- or behavior-equivalent, and adapter-focused tests should be
+added where a live host is unnecessary. `wamn-cjv.11` is amended to this
+evidence-led scope; its former `<=400` line target and assumptions about moving
+exports to a gates-only component receive no architectural weight. If ARC11
+selects a native or workflow worker, apply the responsibility partition to that
+executor instead of refactoring a retiring guest.
+
+### O.4 Contract duplication finding
+
+**SR21 — stored-suite drivability duplicates an incomplete production dispatch
+contract (Medium).** `BUILTIN_NODE_TYPES` is a second product vocabulary inside
+the gate composition root. The guard's one-way “each known test string appears
+in private guest source” assertion cannot detect an added production dispatch
+arm. That arm can ship while the stored-suite executor rejects its flows as
+undrivable.
+
+The owner may be an existing guest-safe contract crate, generated descriptor,
+or non-runnable descriptor API; STR5 decides. The invariant is exhaustive
+two-consumer ownership: add/remove/rename must fail until production execution
+and scenario support are intentionally classified. Unknown types stay
+fail-closed, and production code must not depend on `wamn-gates`.
+`wamn-2jkm.93` owns remediation and the discriminating regression.
+
+### O.5 Retain, defer, and downstream routing
+
+- Retain SR15 node-host extraction, SR16 builder-policy inversion, SR18 ctl
+  runnable-image correction, SR19 test-contract direction, and SR20 source-pin
+  guard. STR4 adds no duplicate owners.
+- Keep the gate and ctl composition roots, run queue/store split,
+  schema/execution splits, CDC service, run worker, and current same-runner test
+  doubles.
+- Hold SR10's size-driven gate reorganization until concrete helper
+  duplication/change coupling and proof-equivalence evidence exists. Moving a
+  gate cannot reduce the evidence exercised.
+- Defer the entity-operation shape to STR5/STR9 and a scenario image to
+  ARC8/STR9. No scheduler, per-verb ctl, gate-package, schema megacrate, or
+  scenario-worker bead is created.
+- STR5 owns the built-in descriptor and public contract; STR6 owns duplicated
+  SQL/state artifacts; STR7 owns measured build/rebuild/provenance benefit;
+  ARC11/STR9 own the surviving executor and final package/deploy topology.
+
+No implementation change or live gate ran. The source contract defect is
+recorded as open, the flowrunner split remains open under its existing owner,
+and every “leave alone” verdict is an audit conclusion rather than a closure.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -2498,6 +2645,7 @@ prerequisite that makes everything else findable.
 | SR18 | Control-plane image cannot execute advertised dump/restore/copy paths | Med | open | wamn-2jkm.81 |
 | SR19 | Product test-case contract depends on run-state persistence | Med | open | wamn-2jkm.83; STR5/STR9 decide owner |
 | SR20 | Load-bearing Wasmtime source pin is duplicated across manifests | Low | open | wamn-2jkm.84; STR7/STR9 own guard/target |
+| SR21 | Stored-suite drivability duplicates an incomplete production dispatch contract | Med | open | wamn-2jkm.93; STR5/STR9 own contract/packaging |
 | **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
 | SR14 | D4/D19 contradiction unmarked in the decision table (§1.2) | High | **closed** | `b7fa9af` (wamn-2jkm.1; table sweep found no other same-shape row) |
 | §1.9a | Amendment-density audit (verdict per file) | Med | **closed** | `3a3bb34` (wamn-2jkm.10; 15 stamped — 13 additive, 2 contradict → rewrites wamn-2jkm.59/.60; platform-plan re-audit wamn-2jkm.63) |
