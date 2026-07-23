@@ -852,6 +852,149 @@ not justify another structural split.
 
 ---
 
+## F — State, consistency, and ownership model (2026-07-23)
+
+This section is the ARC4 result for `wamn-4tob.1.4`, evaluated against baseline
+`dddf80481bbe3a73ee2fc85094a1cd8b6dd5fc73`. It is a static source/schema
+assessment: no live recovery result receives credit because §A still cannot tie
+the running artifacts to that baseline.
+
+**Verdict:** do not ratify the current distributed state model as the target.
+Converge on a **Postgres-centered durable core with explicitly derived and
+reconciled external state**. The current design already has strong local
+transaction domains for catalog migration, run creation plus enqueue, queue
+leases, cron anchors, and node checkpoints. Its correctness gaps occur where
+those authorities are copied into serving snapshots, external effects,
+JetStream consumers, prunable identities, artifacts, Kubernetes objects, and
+best-effort telemetry without one generation/retention/recovery contract.
+
+### F.1 Current authority topology
+
+```text
+                              desired references / commands
+T1 registry + saga rows ------------------------------------------+
+      |                                                           |
+      | external effects are not co-transactional                 v
+      +--> Postgres/CNPG + K8s Secrets + workloads + object/OCI stores
+                         ^                         |
+                         | observed state is       | bytes/configuration
+                         | not reconciled into T1  | are separate authorities
+
+tenant Postgres: catalog + physical schema + flows/tests + runs/queue
+      | committed WAL                    ^               |
+      v                                  | run+enqueue    | best-effort hint
+replication slot --> CDC reader --> JetStream ----------> NATS doorbell
+                                  | durable consumers
+                                  v
+                              materializer
+
+logs / metrics / traces observe some transitions but are intentionally lossy
+```
+
+The named planes are therefore not independent state or failure domains. A
+Postgres transaction can be authoritative inside one database, but no
+transaction spans T1, a tenant database, Kubernetes, JetStream, OCI, Secrets,
+or object storage. `provisioning.sagas` even claims each step and its effect
+advance in one transaction, although its actual effects include those external
+systems (`deploy/sql/system-schema.sql:264-275`). R34/R40 already own that
+behavioral gap; the contradictory comment is not a second finding.
+
+### F.2 State-transition and authority matrix
+
+`Authority` below means the state that must win after disagreement. A
+`projection` or `cache` receives no independent correctness credit.
+
+| State and current role | Writers/readers and durability boundary | Identity, order, reconciliation, retention, and failure verdict |
+|---|---|---|
+| **T1 registry:** `registry.meta`, `orgs`, `env_policies`, `projects`, `project_envs`, and `event_readers` are the recorded identity, placement, policy, Secret-reference, and CDC-registration intent (`deploy/sql/system-schema.sql:82-261`). | `wamn-ctl`/`wamn-registry` write; control tools and the reader read. A T1 transaction protects these rows only. Provisioning creates external resources before recording T1 and records project/environment with separate statements (`crates/wamn-ctl/src/provision_project_env.rs:162-203,290-321`). | Stable keys are `(org, project, env)` plus registry schema version. There is no observed generation or active reconciler from T1 intent to DB/Kubernetes readiness. **Authoritative intent, not authoritative actuality; split after partial failure (R34).** |
+| **Provisioning/copy saga state:** `provisioning.sagas` has a saga ID, status, and step; `provisioning.dumps` records object keys and sizes (`deploy/sql/system-schema.sql:264-321`). | Registry SQL builders can advance the row, while ctl performs DB, Kubernetes, object-store, dump, restore, and cutover effects. Those effects cannot share the T1 transaction. | Saga ID/step is a resume hint, not an effect receipt or compensation ledger. Dump metadata is not the bytes and current jobs do not make it a complete catalog. Recovery is operator/runbook-owned; R34, R40, R41, `wamn-i862`, and `wamn-hq0r` retain ownership. |
+| **Catalog definitions:** `catalog.catalogs` stores versioned documents and lifecycle; normalized `entities`, `fields`, `relations`, `indexes`, and `constraints` encode the versioned model, while `rls_policies`, `seed_datasets`, and `event_registrations` attach to the live catalog (`deploy/sql/catalog-schema.sql:45-340`). | `wamn-catalog` defines document semantics; schema/migration/DDL/RLS/seed/event packages plan SQL; ctl writes. `migrate-catalog` locks the applied version and commits DDL, lifecycle/history, and the entity map together (`crates/wamn-ctl/src/migrate_catalog.rs:312-395`). | Catalog ID/version and stable entity/field IDs order model evolution. The migration transaction is a sound local boundary. Physical DDL plus hand-written deploy SQL and selective Rust reconstruction remain plural schema authorities (SR13); `wamn-sql` carries text plus placeholder arity only and explicitly cannot prove planning, isolation, locking, or RLS (`crates/wamn-sql/src/lib.rs:1-18,38-91`). |
+| **Applied schema, serving snapshot, entity/OID map, and API cache:** these are behavior-bearing projections of the catalog. | `publish-catalog` replaces the serving snapshot, then updates other representations in separate work; API gateway caches for component lifetime (`crates/wamn-ctl/src/publish_catalog.rs:269-299`, `components/api-gateway/src/lib.rs:50-62,85-90`). The migration path is stronger, but publish is not one atomic served-version boundary. | Catalog version, relation OID, and physical identifiers are distinct keys. No generation proves that source document, applied DDL, `wamn_catalog`, entity map, and process cache agree. **Dual serving authority and stale-cache recovery remain R35/SR13.** |
+| **Flows, suites, cases, and recordings:** `wamn_run.flows` owns versioned graph JSON; `test_suites`/`test_cases` pin a flow version and store case bodies as product data (`deploy/sql/flows.sql:24-52`, `deploy/sql/flow-tests.sql:28-58`). Pinned cases/recordings are derived from run history and capture policy. | Publish/copy/ctl and gates write or consume definitions; dispatcher, ingress, and runner read active/pinned flows. Foreign keys couple suites to a concrete flow version. | `(tenant, flow, version)` and suite/case IDs are stable. A recording is only replay-faithful while its required captured input/output exists; scrubbed data replays scrubbed values and preview/off is non-replayable (`docs/run-state.md:174-190`). These are product contracts, not disposable test state. |
+| **Run and node state:** `runs` owns lifecycle, trigger input, pinned flow version, lineage, result, and optional idempotency key; `node_runs` owns occurrence-keyed checkpoints and captures (`deploy/sql/run-state.sql:38-90,121-169`). | Materializer/dispatcher/ingress open runs; flowrunner updates checkpoints/status through `wamn-run-store`; history, pin, and replay paths read. A node checkpoint commits after the node effect, so a crash in between repeats that effect. | Run key is `(tenant, run_id)`; node key adds `(node_id, occurrence)` and `seq`. Resume deterministically reconstructs completed occurrences against the persisted flow version. External effects remain at least once. Replay/partial-rerun code only produces a plan; another owner must execute and persist it (`crates/wamn-run-store/src/rerun.rs:1-13,83-133`; R39). |
+| **Queue, timers, ordering, and failure ledgers:** `run_queue`, `partition_owner`, `run_dead_letters`, and `cron_anchor` are durable PostgreSQL coordination state (`deploy/sql/run-queue.sql:37-162`, `deploy/sql/run-state.sql:92-118`). | Dispatcher/materializer/ingress can create run plus queue/cron anchor in one tenant-DB transaction; workers claim/renew/park/dequeue; reconciliation re-hints rows. NATS is explicitly a latency hint, never queue authority. | Run ID, numeric `stream_seq`, partition key/policy, lease owner/expiry, attempts, and monotonic cron tick scope ordering. One valid lease owner is not one execution over the row's lifetime. Dead letters preserve one ordering-breach class. This is the strongest current durable-execution boundary, subject to R36/R37/R42 and sink idempotency. |
+| **Cross-run throttle/concurrency:** `ThrottleTable` and `Scheduler` are in-memory `HashMap`s (`crates/wamn-runner/src/throttle.rs:42-127`). | Only a process can mutate/read them; production flowrunner persists a throttle key but does not consume a shared gate. | Keys are node type/credential/host, but there is no durable deadline, multi-replica authority, or restart recovery. Existing `wamn-ynwf` already owns production wiring; no duplicate finding is minted. |
+| **WAL, publication, replication slot, and confirmed LSN:** committed Postgres WAL is the change authority; the slot is the reader's resume position. | Postgres writes WAL. The CDC reader buffers a whole transaction, waits for every JetStream server acknowledgement, and only then advances flushed/applied LSN (`crates/wamn-cdc-reader/src/lib.rs:739-939,1313-1475`). | Commit/row LSN establishes per-database commit order. JetStream loss holds the LSN and WAL rather than acknowledging loss, but WAL retention is bounded. Publication/slot existence is checked without full shape convergence and the replication role is cluster-wide (R28/R29). |
+| **JetStream stream, message dedupe, and durable consumers:** stream bytes and consumer ack floors are durable transport/replay state, not business state. | CDC reader publishes; materializer binds/fetches/ACKs/NAKs/TERMs. `Nats-Msg-Id` dedupe is bounded by the configured duplicate window; stream config drift is read back and refused. | Event ID uses project-env plus LSN; stream order is commit order per source DB. The plugin binds consumers with `get_or_create_consumer` (`crates/wamn-host/src/plugins/wamn_jetstream.rs:357-388`), whose pinned async-nats 0.47 implementation explicitly returns an existing consumer without validating configuration beyond push/pull type. An edited filter/ack policy can therefore remain silently stale (**E18**). |
+| **Materialization and refusals:** a deterministic decision either creates one run+queue transaction, skips, refuses, or retries. | The tenant DB transaction is committed before ACK; doorbell is post-commit/best-effort. Effect failure NAKs. Poison messages TERM and deterministic refusals ACK, while their reason exists only in counters/process output unless an optional report survives (`components/materializer/src/main.rs:427-550`). | Run ID `<flow>:evt:<stream_seq>` dedupes only while its row exists. R38 owns missing durable refusal evidence. No materializer state converts downstream node effects from at least once to exactly once. |
+| **Credentials and grants:** flows/manifests carry names/import-derived grants; Kubernetes Secret-backed files carry bytes; hosts cache resolved values. | Provisioning/ctl render references and Secrets; host plugins/node-host read them. T1 stores no password/URL bytes (`deploy/sql/system-schema.sql:187-205,230-260`). | Secret name/project/grant is identity, but rotation/version and live reload are not shipped (`docs/credential-vault.md:135-157`). Logical lookup policy is not equivalent to a pod/process/Secret isolation boundary; ARC8 and decision `.1.15` own the required trust contract. |
+| **Source, build, digest, signature, SBOM, OCI, and invoked bytes:** source and build inputs should derive an immutable artifact identity; builder can sign the exact Wasm digest and publish OCI metadata (`crates/wamn-builder/src/build.rs:343-405`, `crates/wamn-builder/src/sign.rs:70-91`). | Builder writes; registry stores; manifests annotate; node-host loads. Current deployment can invoke ConfigMap bytes rather than bytes fetched and verified from that OCI identity. | Digest is the only credible byte identity. R43 owns reviewed/published versus invoked identity; SR17 owns caller-built component bytes copied into images. An annotation or mutable tag is not reconciliation. |
+| **Kubernetes desired and observed state:** checked-in/rendered manifests are desired inputs; API objects and controller status are derived operational state. | Humans/ctl/operators write desired objects; Kubernetes controllers schedule and report; services read endpoints. | Resource UID/generation and immutable image/artifact digests should relate desired to observed. Today T1 has no observed generation/readiness and mutable `:dev` images lack source provenance. API acceptance can coexist with a broken-ready worker (R42). |
+| **Observability and audit evidence:** logs, metrics, and traces are derived signals, not a source of truth. | Services/plugins emit; OTel/Prometheus/Loki/Tempo ingest. Logging deliberately drops rather than trapping a workload, and checked-in stores include singleton/ephemeral development shapes (`crates/wamn-host/src/plugins/wamn_logging.rs:13-20,353-388`, `deploy/infra/prometheus.yaml:38-71`, `deploy/infra/tempo.yaml:37-81`). | Trace/run/tenant labels correlate evidence but do not make it durable. Correctness, refusal, security, and recovery receipts cannot exist only here. Retention/isolation/audit promises remain `.1.14`, `.1.15`, ARC8, and ARC9 inputs. |
+| **Backups and restores:** CNPG/PITR or logical object bytes are recovery authorities; T1 dump rows are metadata. | CNPG/object-store jobs write bytes; ctl lists/selects/restores; T1 may record an object key. | A backup needs immutable identity, completeness marker, checkpoint, catalog, retention, and verified restore. Existing `wamn-i862`/`wamn-hq0r` own missing completion/catalog wiring; R40/R41 own cutover/quiescence. Production RPO/RTO and storage durability are undecidable until `.1.14`. |
+
+The external review's two ARC4 hypotheses are therefore accepted with
+qualification. Physical schema ownership is still split between hand-written
+DDL and partial Rust models/builders; selective drift guards and `wamn-sql`
+reduce individual defects but do not establish one authority
+(`docs/REVIEW-260723.md:277-310`). And deterministic run creation is much
+narrower than exactly-once effects (`docs/REVIEW-260723.md:334-369`).
+
+### F.3 Delivery, ordering, and idempotency claims
+
+| Boundary | Defensible guarantee | Identity/order and expiry | Recovery consequence |
+|---|---|---|---|
+| Tenant transaction → WAL | Atomic commit in one Postgres database. | Transaction/LSN; commit order per database, not a platform-global order. | Primary/failover and retained WAL determine recovery. |
+| WAL → JetStream | **At least once**, with confirmed LSN held until every publish ack. | `Nats-Msg-Id` dedupe only within the stream duplicate window. | Broker loss delays and retains WAL until the bounded slot horizon; slot loss is a capture-gap incident. |
+| JetStream → run+queue row | One **retained** row per deterministic `(tenant, flow, stream_seq)` identity through `ON CONFLICT`. | Stream order reaches numeric `stream_seq`; independent consumers/flows/databases do not form a total order. | ACK after the DB commit makes redelivery safe only while the identity row or another tombstone survives. |
+| Run history retention → old event redelivery | **Not unbounded dedupe.** The prune statement deletes terminal `runs` and cascading history (`crates/wamn-run-store/src/sql.rs:215-239`) while retained stream bytes/consumer rewind can outlive it. | The primary key that absorbed redelivery expires with run retention. Existing matbench only proves collisions while rows remain (`docs/event-plane-jetstream.md:216-219`). | A recreated/rewound consumer can insert/enqueue the same event again: **R44**, proof `wamn-4tob.6.9`. |
+| Queue → worker/node | At least once under lease expiry/reclaim. | `(run,node,occurrence)` is the stable checkpoint/idempotency key. | Death after external effect and before checkpoint repeats the occurrence; sinks must dedupe or expose ambiguity. |
+| Explicit replay | Intentionally re-executes effects. | Replay-namespaced run ID and audit/authorization must distinguish it from accidental redelivery (`docs/event-plane-jetstream.md:227-229`). | Never market replay or a durable workflow engine as exactly-once external effects. |
+
+“Exactly once” is acceptable only with all three qualifiers: **which identity,
+which commit/effect boundary, and which retention horizon**. The current
+documentation's “unbounded guarantee” (`docs/event-plane-jetstream.md:126-138`)
+fails the third qualifier. A durable workflow engine would not change the last
+row: representative engines replay orchestration, while external activities
+can execute again until completion is recorded.
+
+### F.4 Alternative state models
+
+Correctness gates eliminate an option before secondary ranking.
+
+| Model | Correctness and recovery | Secondary tradeoffs | Verdict |
+|---|---|---|---|
+| **Current distributed model unchanged** | Fails ratification while external intent lacks convergence, catalog representations can tear, event identity expires before all replay horizons, consumer drift is silent, refusals lack durable evidence, and artifact/deployment identity is split. | Lowest migration cost, but worst ambiguity, manual repair, and proof burden. | **Replace as a target; tolerate only as transitional state.** |
+| **Postgres-centered durable core** | Preserves the strongest existing transactions. T1 owns desired external state plus observed generations; tenant Postgres owns catalog/flow/test/run/queue/idempotency; WAL is commit history; broker, Kubernetes, caches, and telemetry are derived. Requires durable event tombstones/retention coupling and explicit reconcilers. | Best operability and delivery speed; least state migration; good evolvability. Performance and cost remain topology questions for ARC6/ARC7. | **Recommended survivor and ARC11 default hypothesis.** |
+| **Platform-wide log-centered/event-sourced** | Could own ordered facts only by moving catalog/control/run mutations behind append-first commands and making every projection, dedupe tombstone, schema migration, and side effect replay-safe. It does not make external effects atomic. | Largest rewrite, more projections and retention/compaction machinery, harder erasure and schema evolution, another critical operational store. | **Reject as the general state model.** Keep logs where replay/fan-out is a real requirement. |
+| **Durable-workflow-owned orchestration** | Credible for timers, retries, history replay, and external sagas only if its journal is the single orchestration authority and Postgres run/queue state is a projection/domain record. A co-equal workflow log plus `runs`/`run_queue` fails through dual acknowledgement authority. | Better execution diagnostics and less custom orchestration machinery, but adds a stateful platform, deterministic-code/version constraints, migration of active runs, payload/privacy concerns, and new operations. | **Conditional adjunct/survivor, not a universal state authority.** Discriminate in ARC5; use one authority or reject. |
+
+Within the surviving Postgres-centered hypothesis:
+
+1. Registry Postgres owns desired external generation and durable operation
+   receipts; reconcilers write observed generation/status.
+2. Project/environment Postgres owns catalog lifecycle, applied-version intent,
+   flows/tests, run history, queue, timers, leases, and durable idempotency.
+3. Physical schema and serving snapshots are versioned projections that must
+   atomically attest to their catalog generation or refuse.
+4. WAL is authoritative committed change history; JetStream is a bounded,
+   replayable transport projection, never the business-state authority.
+5. OCI/object-store bytes are authoritative only by immutable digest plus a
+   completeness marker; Kubernetes reconciles that exact identity.
+6. Secret stores own credential bytes; business state carries scoped references
+   and versions. Logs/metrics/traces never serve as the sole durable receipt.
+
+This is a recommendation recorded for decision
+`wamn-4tob.1.17`; it does not rewrite D6/D18/D19 or any canonical D-row.
+
+### F.5 New findings, proof, and routed ownership
+
+| ID | Sev | Finding and consequence | Bead / proof |
+|---|---:|---|---|
+| **R44** | High | The event path calls the deterministic run-row conflict an unbounded dedupe guarantee, but normal run-history retention deletes that identity. A retained/redelivered event can then create a second queue row and external effect. | `wamn-2jkm.82`; proof `wamn-4tob.6.9`. |
+| **E18** | High | Materializer bind uses async-nats `get_or_create_consumer`, which explicitly does not validate an existing consumer's requested configuration. A stable durable name can silently retain an old entity filter, ack wait, or max-deliver policy, causing missed/wrong delivery. | `wamn-l5i9.69`; proof `wamn-4tob.6.10`. |
+
+Existing owners are deliberately retained: R34/R40 for external saga/cutover
+effects, R35/SR13 for catalog/schema plural authority, R36/R37/R42 for
+run-delivery/recovery, R38 for refusal evidence, R39 for replay execution,
+R41 for restore safety, R43/SR17 for artifact provenance, R28/R29 for
+replication scope/shape, `wamn-ynwf` for shared throttling,
+`wamn-i862`/`wamn-hq0r` for logical-backup completeness/catalog wiring, and
+`.1.14`/`.1.15` for owner-set recovery and isolation requirements. No finding is
+represented as fixed by the target model.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -869,6 +1012,8 @@ prerequisite that makes everything else findable.
 | R41 | In-place restore lacks quiescence and verified recovery | High | open | wamn-2jkm.76; proof wamn-4tob.6.5 |
 | R42 | DB-broken runner can become Ready and displace healthy capacity | High | open | wamn-2jkm.77; proof wamn-4tob.6.6 |
 | R43 | Reviewed custom-node OCI identity does not determine invoked bytes | High (latent) | open | wamn-fqg.23 + wamn-0si.9; proof wamn-4tob.6.7 |
+| R44 | Event dedupe expires when run-history retention removes the identity | High | open | wamn-2jkm.82; proof wamn-4tob.6.9 |
+| E18 | Materializer silently accepts stale durable-consumer configuration | High | open | wamn-l5i9.69; proof wamn-4tob.6.10 |
 | SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78 |
 | SR16 | Builder depends on the production runtime composition root | Med | open | wamn-2jkm.79 |
 | SR17 | Docker images package caller-built component bytes | High | open | wamn-2jkm.80; proof wamn-4tob.6.8 |
