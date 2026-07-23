@@ -2122,6 +2122,181 @@ ownership. No split or merge is represented as complete.
 
 ---
 
+## M — Security and trust architecture (2026-07-23)
+
+This section is the ARC8 result for `wamn-4tob.1.8` at baseline
+`fda533a1a36aee6c29b22205caa021185eff7ba1`. It tests the trust hypotheses in
+`docs/REVIEW-260723.md` and `docs/RESTRUCTURE-260723.md` against repository
+source and current official security contracts. `Proven` means the boundary is
+enforced by the checked source or an upstream guarantee; `contradicted` means
+an asserted boundary is disproved by the implementation; `inferred` still needs
+an adversarial reproduction; `unknown` has no represented contract.
+
+**Executive verdict: amend the trust architecture.** The custom-node Wasmtime
+import boundary is the strongest default-deny boundary in the system. Process
+separation, zero-token ServiceAccounts, transaction-scoped Postgres claims, and
+some Kubernetes RBAC also provide real containment. Tenant and plane names,
+however, do not form end-to-end trust zones: pooled database roles, event and
+runtime NATS identities, object-store credentials, runtime host groups, builder
+authority, cluster-wide operators, and human administration cross them.
+“Dedicated” currently means a separate PostgreSQL recovery domain, not a
+dedicated security domain.
+
+### M.1 Current trust zones and data flow
+
+```text
+external caller [no caller identity represented]
+  -> API gateway workload claims
+  -> shared host/plugin process
+  -> shared wamn_app login -> project PostgreSQL
+
+flow author/catalog
+  -> runner + trusted flowrunner guest/capability union
+     -> standard nodes in-process
+     -> shared runtime-NATS identity
+     -> custom-node HTTP
+        -> separate node-host process
+        -> minimal Wasm imports + invocation-scoped credential handles
+
+PostgreSQL WAL
+  -> per-env reader / cluster-wide REPLICATION login
+  -> unauthenticated global event JetStream
+  -> shared-host materializer / guest-selected stream and filter
+  -> project run + queue transaction
+
+tenant source [future; fixture only today]
+  -> build toolchain executing package code
+     -> signing key + registry publisher in the same container
+     -> unauthenticated, ephemeral OCI registry
+     -/-> ConfigMap-mounted bytes invoked by node-host
+
+cluster administrators + CNPG/Barman operators
+  -> cluster-wide Secrets and database resources
+  -> pooled and dedicated clusters in shared namespaces
+  -> one MinIO root spanning WAL, dumps, and Loki
+```
+
+The planes are architectural responsibilities, not independently protected
+zones. This confirms the earlier plane-sharing result in F.3/F.5: a boundary
+receives isolation credit only when identity, credential, state, runtime,
+network, operator, backup, and recovery authority are bounded together.
+
+### M.2 Principals, credentials, and artifacts
+
+| Principal or artifact | Identity, authority, and lifecycle evidence | Maximum credible compromise radius | Enforcement verdict |
+|---|---|---|---|
+| **External API caller** | No caller identity enters the gateway; the component uses static deployment claims (`deploy/platform/api-gateway-workload.yaml:18-21,37-77`, `components/api-gateway/src/lib.rs:41-100`). Authentication remains explicitly out of scope (`docs/api-gateway.md:107-115`). | Every caller reaching one deployment collapses into its platform workload identity. | **Unknown product boundary.** Existing owners are `wamn-0xd`, `wamn-sbh`, and `wamn-fqg.39`; external authentication must remain separate from internal invocation identity. |
+| **API gateway and default host group** | The host injects tenant/project/schema claims, one static database URL, and one host-wide event-NATS URL (`deploy/infra/values-wamn.yaml:14-50`). | A host/plugin compromise reaches every component and project authorized by those shared connections. | Plugin exposure is structural; tenant meaning still depends on configuration and shared authorities. |
+| **Project database login** | Per-project Secret names carry the same cluster-global `wamn_app` owner/login (`crates/wamn-provision/src/database.rs:27-78`, `crates/wamn-provision/src/sql.rs:25-41,88-105`). | Every project database in the same cluster. | **Contradicted:** R45/`wamn-2jkm.85`, proof `.6.12`. A Secret name is not a distinct principal. |
+| **Standard-node author/code** | Dispatch policy narrows honest SDK calls, but one flowrunner world imports the union used by all standard nodes (`crates/wamn-nodes/src/policy.rs:5-14,39-117`, `components/flowrunner/wit/world.wit:25-67`). | The runner component's complete imported capability set and project credentials. | **Logical defence in depth, not hostile-code isolation.** Standard nodes are trusted platform code. |
+| **Custom-node guest** | The guest world imports no capabilities; the node host rejects Postgres, raw sockets, runner/self-grant and supplies only the selected HTTP/credential/control adapters (`crates/wamn-node-guest/wit/world.wit:1-10`, `crates/wamn-host/src/serve_node.rs:326-353,402-413,535-548`). | Host-exposed imports, allowed destinations, and invocation-scoped credential handles. | **Proven structural sandbox.** Wasmtime confines a guest to explicit host imports ([Wasmtime security](https://docs.wasmtime.dev/security.html)). |
+| **Node host** | A separate pod/process owns compilation, invocation auth, grants, egress, and node execution, but uses the general `wamn-host:dev` artifact and mounts a whole project credential document (`deploy/platform/serve-node.yaml:43-83,127-131`). | One node-host project, its mounted credentials, and allowed egress; a shared image defect can affect general and node hosts. | Process split proven; independent artifact/operator domain absent. Existing SR15 owns extraction. |
+| **Runner-to-node caller** | Current/previous HMAC keys and freshness checks exist, but the production manifest leaves fail-closed authentication disabled (`deploy/platform/serve-node.yaml:104-111`, `crates/wamn-host/src/serve_node.rs:383-400,429-480`). | Any network-reachable unauthenticated caller when the key is absent. | **Contradicted default-deny posture.** Existing `wamn-fqg.22/.31/.32` own the optional mechanism and deployment decision. |
+| **Runner test doubles** | The production worker binary can switch clock/random/egress doubles, default off; the production manifest does not enable them (`crates/wamn-run-worker/src/lib.rs:62-87,174-188,723-760`, `deploy/platform/runner.yaml:158-186`). | Equal to an operator already able to mutate the runner pod and its mounted authorities. | Convention rather than artifact isolation; no separate-image finding without a distinct caller, credential, state, or scale boundary. |
+| **Build toolchain** | `cargo`/`jco` execute inside a zero-token pod, but tenant package code runs before artifact lint and tests (`deploy/platform/builder-job.yaml:3-14,35-77`, `crates/wamn-builder/src/build.rs:194-217,439-489`). | Everything mounted or reachable by the builder process. | Host process isolation is structural; package-code hostility is latent until `wamn-0si.7` ingests user source. Cargo build scripts can execute arbitrary build-time tasks ([Cargo build scripts](https://doc.rust-lang.org/stable/cargo/reference/build-scripts.html)). |
+| **Builder signer/publisher** | The same container that executes package code mounts `/etc/wamn/signing`, loads the private key, and receives the registry destination (`deploy/platform/builder-job.yaml:39-77`, `crates/wamn-builder/src/build.rs:474-489`). | Artifact signing, release publication, and any reusable private key material. | **Contradicted:** new R49. A dependency-name allowlist does not constrain the root package's own build script (`crates/wamn-builder/src/allowlist.rs:1-11,29-56`). |
+| **OCI artifact and registry** | One unauthenticated plain-HTTP `registry:2` replica uses `emptyDir`; mutable tags and local ConfigMap node bytes are not tied to the reviewed digest (`deploy/platform/registry.yaml:1-19,24-73`). | Every mutable/rebuilt custom-node artifact and all bytes lost on restart. | Existing R43, SR17, `wamn-0si.9/.10/.13`, `wamn-fqg.23`, and proof `.6.7`; no duplicate finding. |
+| **Dispatcher** | A zero-token native service holds all configured project URLs and the shared runtime TLS identity although it only publishes doorbells (`deploy/platform/dispatcher.yaml:41-46,69-71,94-126`). | All configured projects plus every subject allowed to the shared runtime identity. | Process/Kubernetes boundary proven; NATS least privilege contradicted and already owned by `wamn-ngb` and `wamn-286`. |
+| **Waker** | A namespace Role allows `get/patch` on Deployments and scale; the pod also reuses runtime TLS (`deploy/platform/waker.yaml:20-53,71-95`). | Scaling every Deployment in `wamn-system` plus the subjects allowed to the shared runtime identity. | Kubernetes scope structural; broker scope remains `wamn-fqg.37`. |
+| **Runtime/scheduler NATS identity** | Host group, runner, dispatcher, and waker reuse `wasmcloud-runtime-tls`; server ACLs live in a remote chart, not this repository. | At least the shared identity family; exact server privilege is unproven. | Shared credential is proven; precise ACL is **unknown**. Do not infer more than manifest comments until a live/config proof. |
+| **CDC reader/login** | Per-env names mask a `LOGIN REPLICATION` role whose PostgreSQL authority is cluster-wide; the CLI also carries a static default password (`crates/wamn-provision/src/sql.rs:115-143`, `crates/wamn-provision/src/secret.rs:93-127`, `crates/wamn-ctl/src/enable_cdc_project_env.rs:80-83,150-172`). | Every database/WAL stream reachable on the cluster; cross-cluster radius depends on actual default reuse. | **Contradicted registration isolation:** existing R28; proof `.6.21`. PostgreSQL describes `REPLICATION` as highly privileged ([role attributes](https://www.postgresql.org/docs/17/role-attributes.html)). |
+| **Event NATS identity** | The event cluster listens on all interfaces with JetStream in the unauthenticated default global account (`deploy/infra/nats-jetstream.yaml:15-19,32-57`). | Every reachable stream, subject, message, and consumer on that server. | **Contradicted tenant isolation:** existing `wamn-4xw`; NATS accounts and subject permissions are the structural isolation mechanisms ([NATS accounts](https://docs.nats.io/running-a-nats-service/configuration/securing_nats/accounts), [authorization](https://docs.nats.io/running-a-nats-service/configuration/securing_nats/authorization)). |
+| **Materializer broker client** | One host-wide unauthenticated connection is memoized; the guest supplies stream/filter values and the plugin performs no workload-claim authorization (`deploy/infra/values-wamn.yaml:34-38`, `deploy/platform/materializer.example.yaml:67-78`, `crates/wamn-host/src/plugins/wamn_jetstream.rs:357-387`). | Any stream/subject reachable by the shared host connection; persistent consumer state can cross registrations through E19. | **Contradicted per-workload authorization:** `wamn-4xw`, E19, and proof `.6.20`; account creation alone is insufficient while the plugin shares one connection. |
+| **CNPG manager and Barman plugin** | ClusterRoleBindings grant cluster-wide Secret access; CNPG can create/delete/list/update Secrets and ConfigMaps, while Barman can manage Secrets and RBAC objects (`deploy/infra/cnpg-operator.yaml:19226-19243,19559-19569`, `deploy/infra/barman-cloud-plugin.yaml:848-915,947-960`). | Every namespace and every database, CDC, HMAC, registry, application, and recovery Secret the cluster role permits. | **Proven super-principals.** A ClusterRoleBinding applies its role cluster-wide ([Kubernetes RBAC](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)). |
+| **Runtime operator and human cluster admin** | The runtime chart/RBAC is remote; cluster administrators necessarily cross namespaces, operators, Secrets, runtime, database, and storage. No break-glass or lifecycle contract is represented. | Platform-wide. | Trusted super-principal; product promise **unknown**, owned by `.1.15`. |
+| **Object store identity** | `wamn-object-store` is one MinIO root used by WAL archives, logical dumps, and Loki (`crates/wamn-provision/src/backup.rs:29-44,66-97`, `deploy/infra/minio.yaml:1-35,98-134`). | Recovery confidentiality/integrity and observability across every represented domain. | **Contradicted recovery isolation:** existing R47 and proof `.6.14`. |
+| **Dedicated org placement** | It creates separate database clusters but retains shared namespace, Secret-capable operators, broker/runtime identities, object-store root, runtime host group, and administrators (`crates/wamn-provision/src/org.rs:30-31,58-79,115-123,177-203`). | PostgreSQL pod/storage incidents are bounded; operator/credential/broker/backup/runtime incidents are not. | Dedicated database placement is proven; a dedicated trust zone is **contradicted unless the product contract explicitly permits all sharing**. `.1.15` must decide the promise before a separate finding is minted. |
+
+Kubernetes Secret volumes expose data as files to every container that mounts
+them, and ServiceAccount tokens are pod credentials that must be explicitly
+bounded or disabled
+([Secrets](https://kubernetes.io/docs/concepts/configuration/secret/),
+[ServiceAccounts](https://kubernetes.io/docs/concepts/security/service-accounts/)).
+Those mechanics make credential placement and controller RBAC part of the
+product trust boundary, not an infrastructure footnote.
+
+### M.3 Boundary tests
+
+- **Standard versus custom nodes:** standard nodes are trusted code sharing one
+  runner capability union. Custom nodes receive a genuinely narrower Wasm
+  world, host-selected link surface, per-invocation handles, and outbound-host
+  policy. The remaining custom boundary defects are caller authentication,
+  signer separation, artifact identity, and node-host credential/artifact
+  radius—not absence of a Wasm sandbox.
+- **Host versus node host:** separate pods and credentials justify SR15. A
+  shared binary, base image, runtime engine, operator, and release train mean
+  the split is not yet a distinct supply-chain or CVE boundary.
+- **Builder supply chain:** source→compiler is hostile execution;
+  compiler→signer is currently the same process (R49); signer→registry is
+  unauthenticated; registry/signature→invoked bytes is missing (R43). Passing
+  the current lint/test/sign steps therefore does not prove end-to-end supply
+  chain integrity.
+- **Test doubles:** an operator who can alter runner arguments already controls
+  its database, vault, NATS, and pod configuration. Keep the same-runner seam
+  until a less-trusted initiator or independently scoped state/credential is
+  selected; then reevaluate a separate scenario worker/image.
+- **External and internal identity:** caller authentication, route-derived
+  tenant/project/environment/flow identity, and ingress-to-executor
+  authentication are separate contracts. Do not collapse them into one HMAC or
+  accept deployment claims as caller identity.
+- **Dedicated placement:** database pods alone do not bound Secrets,
+  controllers, brokers, backups, telemetry, runtime hosts, registries, or human
+  operators. A regulated profile must name every intentionally shared
+  super-principal and prove every promised denial.
+
+### M.4 Target structural default-deny rules
+
+1. A supported deployment profile declares mutually hostile actors and the
+   maximum database, broker, backup, Secret, runtime, telemetry, registry,
+   operator, and regional radius. `.1.15` remains the owner; names such as
+   pooled, standard, dedicated, and regulated confer no unstated isolation.
+2. Trusted routing/deployment state—not caller-controlled payloads—binds org,
+   project, environment, flow, catalog generation, placement generation, and
+   workload identity. External user auth and internal service auth use separate
+   principals and rotation lifecycles.
+3. Each project runtime uses a non-owner database login that cannot connect to
+   another project database. Migration, dispatcher, CDC, restore, and
+   maintenance authority are separate.
+4. If JetStream survives ARC11, the broker enforces account/subject/consumer
+   permissions and the host uses workload-scoped credentials/connections.
+   Stream names and guest filters are never authorization.
+5. Compilation and testing receive no signing, registry-write, Kubernetes, or
+   deploy authority. A separate signer verifies policy/provenance and signs an
+   immutable digest; a separately authorized publisher/deployer accepts only
+   that digest.
+6. Custom-node invocation fails closed on caller identity/freshness and invokes
+   only bytes tied to the reviewed OCI digest and trusted signature. Guest
+   capabilities stay import- and host-policy-bound.
+7. Secret references are versioned. Rotation, revocation, cache convergence,
+   break-glass use, and audit are executable operations with bounded time and
+   no period of broader dual authority.
+8. Cluster-wide controllers and human administrators are explicit trusted
+   computing base. A profile promising protection from either needs a separate
+   cluster/operator/key/recovery domain, not only a namespace or database.
+
+### M.5 Findings and proof routing
+
+| ID | Sev | Finding and consequence | Bead / proof |
+|---|---:|---|---|
+| **R49** | High (latent) | The future tenant-controlled toolchain runs in the same container that mounts the artifact-signing key and publishes to the registry. A root package build script can steal signing authority or publish substituted bytes before lint/test completes. | `wamn-2jkm.89`; proof `wamn-4tob.6.19`; blocks user-source ingestion `wamn-0si.7`. |
+
+No duplicate finding is created for shared `wamn_app` (R45), shared object-store
+root (R47), cluster-wide CDC (R28), unsigned/unverified node bytes (R43), broker
+identity (`wamn-4xw`), consumer collisions (E19), runtime doorbell credentials
+(`wamn-ngb`/`wamn-fqg.37`), or dedicated-profile ambiguity (`.1.15`).
+`wamn-4tob.6.20` proves broker/materializer authorization, and `.6.21` proves
+CDC credential scope and rotation. The current dedicated-placement gap is
+recorded as a contract input, not R50: if `.1.15` promises operator or
+credential containment beyond a separate database cluster, ARC11 must turn that
+contradiction into a remediation finding and proof.
+
+No live probe was run: the repository does not prove that deployed artifacts
+match this baseline. Every High/Critical behavioral claim is routed to an
+existing or newly named proof bead instead of receiving credit from source
+inspection alone.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -2144,6 +2319,7 @@ prerequisite that makes everything else findable.
 | R46 | Automatic Postgres failover can lose acknowledged writes | Critical | open | wamn-2jkm.86; proof wamn-4tob.6.13 |
 | R47 | One object-store root credential spans recovery and observability domains | High | open | wamn-2jkm.87; proof wamn-4tob.6.14 |
 | R48 | Standing T1 and T3 clusters lack the promised PITR path | High | open | wamn-2jkm.88; proof wamn-4tob.6.15 |
+| R49 | Untrusted custom-node build shares artifact-signing authority | High (latent) | open | wamn-2jkm.89; proof wamn-4tob.6.19; blocks wamn-0si.7 |
 | E18 | Materializer silently accepts stale durable-consumer configuration | High | open | wamn-l5i9.69; proof wamn-4tob.6.10 |
 | E19 | Materializer durable-consumer identity collides across valid registrations | High | open | wamn-l5i9.70; proof wamn-4tob.6.16 |
 | SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78 |
