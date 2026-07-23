@@ -3041,6 +3041,148 @@ deletion, or live gate occurred in STR7.
 
 ---
 
+## T — Documentation and backlog information architecture (2026-07-23)
+
+This section is the STR8 result for `wamn-4tob.2.8` at source baseline
+`d3532b6dcef334de0befeeb124fa1e5c4376d328`, integrated after STR7 commit
+`c8dbf6a`. It tests whether an engineer can navigate:
+
+> product capability → accepted/pending decision → implementation owner →
+> contract → gate of record → deployed artifact → decision/remediation/proof
+> Bead.
+
+**Executive verdict: amend the information architecture, not the evidence
+corpus.** The information largely exists and the audit hierarchy is coherent,
+but it is not one consistently traversable graph. `docs/findings.md` sections
+A–S and several subsystem docs have strong end-to-end trails. Navigation
+breaks at root/index currency, current-versus-target status, deployment/package
+prose, and doc-to-Bead links. These are Low/Medium information-structure and
+currency gaps; no new Critical/High behavioral finding or verification issue
+is warranted.
+
+### T.1 Authority and coverage graph
+
+| Graph node | Current authority | Coverage and gap |
+|---|---|---|
+| **Product capability** | `docs/platform-plan.md` epics plus concrete POC/subsystem docs. | Strong coverage, but plan prose mixes current implementation, accepted target, and roadmap without uniform status labels. |
+| **Accepted/pending decision** | Canonical D1–D24 table in `docs/platform-plan.md:191-220`; Beads own pending owner choices. | Strong decision inventory, but rows lack a predictable decision/remediation/proof Bead link and D23 is stale. |
+| **Implementation owner** | Subsystem docs, Cargo package descriptions, manifests, and findings E/H/L/O/Q/R/S. | Partial: ownership can be reconstructed, while several Cargo/root descriptions still state retired topology or mix current and target. |
+| **Public/cross-unit contract** | WIT, checked JSON Schema, API/subsystem docs, and Q's ownership matrix. | Strong contract authority. The docs index omits `wamn-jetstream.wit` and the three checked JSON Schemas, so discoverability is weaker than ownership. |
+| **Gate of record** | `docs/build-and-test.md`. | Commands are extensive, but 3,220 lines and 91 level-three headings remain organized primarily by Bead. Proof class and exact artifact identity are absent; `wamn-2jkm.28` owns the re-key. |
+| **Deployed artifact** | `Dockerfile`, `deploy/README.md`, and tiered manifests under `deploy/{infra,platform,gates,poc,sql}`. | Source placement is clear, but no single inventory joins manifest → binary/component → contract → gate → Bead, and root README still shows the old flat/two-target shape. |
+| **Work and proof** | Findings status board plus Beads dependencies, labels, notes, and closure evidence. | Strong for the audit program. Docs generally expose plain IDs ad hoc rather than a predictable bidirectional link. |
+
+At Wave 7 completion the tracker contains 639 issues: 316 closed and 323 open.
+The 105 audit-labelled records comprise 20 closed and 85 open, with explicit
+parent, phase/wave labels, and blocker edges. Across the legacy tracker, 315
+records are unlabeled and 142 have no parent; many are valid standalone or
+historical records, so counts alone are not findings. Current runbooks must not
+infer live paths or ownership from closed notes.
+
+### T.2 Representative navigation journeys
+
+| Journey | Traversal result | Residue / owner |
+|---|---|---|
+| **Generated REST API** | Successful: platform capability/D2 → `wamn-api` plus `components/api-gateway` → REST and WIT translation in `docs/api-gateway.md` → `apibench` → registry WorkloadDeployment and `apiproof` → closed `wamn-759`. | The doc honestly marks authentication and OpenAPI outside current scope. No IA defect. |
+| **CDC event → flow run** | The D19 → event-plane owner → frozen event/WIT contracts → `streambench`/`matbench` → native reader/materializer artifacts → implementation/proof Beads trail is reconstructable. | Signposts are stale: the event-plane header still claims Phase 0 blocks all work, “zero custom WIT” contradicts shipped `wamn:jetstream`, and a retired cutover section names a deleted gate. `wamn-cjv.25` owns currency. |
+| **Custom-node build/invocation** | Successful to the known boundary: D7 → `docs/builder.md` → node/invocation contracts → builder refusal tests and deployed proof → builder/serve-node artifacts. | The trail correctly stops at SR22 mixed-version and R43/SR17/SR26 provenance gaps and their proofs; it does not falsely claim them solved. |
+| **MQTT/time-series** | Correctly stops at roadmap capability and open D11/D12 decisions (`wamn-41d`, `wamn-02q`). | No contract, gate, or artifact exists because the capability is deferred. This is good information architecture, not incompleteness. |
+| **Runtime fork governance** | D16/D23 → fork ledger/sync gates → host artifact is discoverable. | Current truth fails: D23 says five carried commits while the ledger/sync log records six (`docs/wash-runtime-fork.md:40-47,133-140`); stale three/five-commit summaries also remain elsewhere. `wamn-2jkm.63` and `wamn-cjv.25` own the two scopes. |
+
+### T.3 Gap classification
+
+**Structural navigation**
+
+- Root README points directly at a vaguely named “decision table,” bypasses
+  the actual docs index, says Docker has two targets, and shows a retired flat
+  deploy layout and nonexistent `deploy/<subsystem>-job.yaml` path
+  (`README.md:5-12,60-71,119-141`). `deploy/README.md` is the current lifecycle
+  authority.
+- `docs/README.md` has no broken listed local targets, but its subsystem map
+  omits `builder.md`, `dashboards.md`, `flow-tests.md`, `impact-analysis.md`,
+  `metrics.md`, and `testkit.md`; it also omits assessed inputs
+  `REVIEW-260723.md` and `RESTRUCTURE-260723.md`. The intentionally ignored
+  private `review-2026-07.md` is not to be exposed without owner intent.
+- `docs/build-and-test.md` is rich but Bead-keyed and has nearly doubled from
+  the 1,643-line snapshot that created `wamn-2jkm.28`.
+- The findings status board is authoritative, yet the closed historical
+  sections below it still read imperatively—for example, §1 says the index
+  does not exist. They need visible historical framing rather than factual
+  deletion.
+- `core-pivot-plan.md` mixes current ordering with a large completed-wave log,
+  making the present owner pick hard to distinguish from history.
+
+**Stale or contradictory content**
+
+- Root README and host/component Cargo prose describe pre-SR9, pre-SR8, or
+  mixed current/target topology (`crates/wamn-host/Cargo.toml:1-3`;
+  `crates/wamn-run-worker/Cargo.toml:1-12`; `components/Cargo.toml:3-6`).
+- The platform summary still assigns retired outbox polling to the dispatcher;
+  D19 and the implementation use CDC/JetStream.
+- Fork summaries disagree across D23, `docs/wash-runtime-fork.md`,
+  `docs/wasmcloud-utilization.md`, `docs/build-and-test.md`, and the root Cargo
+  comment.
+- `docs/README.md:39-41` says all measurements are `fsync=off`, while
+  `docs/ceilings.md:12-22` now distinguishes durable remeasurement.
+- `docs/postgres-topology.md` explicitly says its base is contradictory and
+  awaits the existing rewrite owner `wamn-2jkm.59`.
+
+**Missing ownership or cross-links**
+
+- Canonical D rows do not link owner decision, remediation, or proof Beads
+  consistently.
+- Subsystem docs have no minimum metadata contract covering status, D rows,
+  code owner, public contracts, gate, deployed artifact, and Beads.
+- Cargo descriptions are consumed as architectural prose without a rule that
+  they describe current package responsibility only.
+- Beads usually point back to evidence; the weaker direction is docs →
+  decision/remediation/proof owner.
+
+**Deliberate historical and proposal material**
+
+- `docs/archive/` is correctly bannered and indexed; closed Bead notes and old
+  findings remain evidence, not current commands.
+- `REVIEW-260723.md` remains a static no-build/no-run input.
+- `RESTRUCTURE-260723.md` remains a proposal assessed by findings section I.
+  Its local D1–D9 names collide with canonical platform decisions and must be
+  referenced as **RP-D1–RP-D9**. Its asserted review baseline does not replace
+  B0's unattested-revision verdict.
+- Neither external input is silently promoted into the decision table,
+  platform plan, or pivot.
+
+### T.4 Canonical cross-link rules and routing
+
+1. `platform-plan.md` owns capabilities and canonical D identifiers, not
+   implementation truth.
+2. `findings.md` owns audit verdicts, risk/status, and review/proposal
+   crosswalks; there is no second review report.
+3. `core-pivot-plan.md` owns current sequencing; completed wave narrative is
+   visibly historical.
+4. Every subsystem doc identifies one of **Current**, **Accepted target**,
+   **Roadmap/pending decision**, **Historical**, or **Assessed proposal**, plus
+   decisions, code owner, contracts, gate, artifact, and Beads.
+5. `docs/build-and-test.md` owns executable recipes under stable
+   subsystem/gate identifiers; Bead IDs are secondary cross-references and S's
+   proof class/artifact receipt is mandatory.
+6. `deploy/README.md` owns lifecycle placement, manifests own desired
+   instances, and Docker/release metadata owns composition and byte identity.
+7. Cargo descriptions state current package responsibility only.
+8. Beads own work status/dependencies; docs link exact
+   decision/remediation/proof IDs, while historical notes never become current
+   commands.
+9. `D*` is reserved for canonical platform decisions; proposal decisions are
+   `RP-D*`.
+
+The uncovered work deduplicates to existing owners:
+`wamn-cjv.25` (global docs currency/index/prose), `wamn-2jkm.63`
+(platform-plan amendment and D23), `wamn-2jkm.28` (runbook topology),
+`wamn-2jkm.59` (Postgres topology), ARC11 (accepted decisions), and STR9
+(target metadata/cross-link enforcement). No new finding, decision, or proof
+Bead is created by STR8. No canonical decision, implementation file, external
+input, or live system was changed.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
