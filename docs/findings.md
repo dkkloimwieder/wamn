@@ -1631,6 +1631,174 @@ row is added or closed merely because the proposal describes a target.
 
 ---
 
+## J — Postgres and tenancy topology alternatives (2026-07-23)
+
+This section is the ARC6 result for `wamn-4tob.1.6` at baseline
+`f10a008bd6dd466c8c98d5f45a10b2274876885d`. Repository claims are checked
+against source and current official PostgreSQL/CloudNativePG documentation.
+The repository has no fleet-scale or regional measurement, so the target below
+is a conditional architecture direction rather than a ratified capacity plan.
+
+**Executive verdict: replace the four-tier topology as the target; amend D6
+and D18.** Retain a separate control-plane store, PostgreSQL as the durable
+core, CNPG as one revisitable deployment adapter, and policy-driven placement.
+Treat `trials`, `standard`, and `dedicated` as product presets, not physical
+tiers. The preferred default is a bounded tenant-data **cell** containing
+per-project databases and credentials; per-org and per-environment clusters are
+explicit isolation, recovery, residency, or change-window exceptions. T1 is a
+control plane, not a tenant tier.
+
+This direction is not final until `.1.12`–`.1.16` set cardinality, SLO/backlog,
+recovery, isolation, and mixed-version requirements. ARC11—not this section—
+will issue the canonical decision reset. Existing D6/D18 rows are not rewritten.
+
+### J.1 Current topology and authority
+
+| Area | What the repository actually expresses | Correctness and operating consequence |
+|---|---|---|
+| **T1 control store** | `wamn-sysdb` is a distinct three-instance CNPG cluster and is deliberately absent from tenant request paths (`deploy/platform/wamn-sysdb.yaml:1-36`). It uses best-effort pod spreading, asynchronous replication, unsupervised updates, and has no ObjectStore, WAL archiver, or ScheduledBackup (`deploy/platform/wamn-sysdb.yaml:37-74`). | The control/data plane split is sound. “HA” does not yet mean zero acknowledged-write loss or recoverable PITR. |
+| **T3 pooled data** | One single-instance cluster holds a database per project-env. It omits connection limits and backup resources and uses one cluster-global `wamn_app` principal (`deploy/infra/cnpg-cluster.yaml:1-21,22-67`). | One pod, credential, upgrade, WAL, storage, and noisy-neighbor domain grows without an admission bound. |
+| **T2/T4 rendered data** | `standard` renders separate dev/prod recovery domains; `dedicated` adds a canary domain (`crates/wamn-registry/src/template.rs:8-22,63-80`). Multi-instance renderers configure asynchronous logical-slot synchronization, not synchronous commit or failover quorum (`crates/wamn-provision/src/org.rs:145-169,182-227`). | Per-org/per-env clusters reduce tenant blast radius but multiply cluster, replica, PVC, backup, upgrade, and reconciliation cardinality. They still permit acknowledged-write loss on automatic failover. |
+| **Placement authority** | Registry placement is only `Pooled { pool }` or `Dedicated`; physical cluster names are derived from org and environment policy (`crates/wamn-registry/src/types.rs:243-305`). Policy has replicas/storage/image/backup cadence, but no stable cell identity, region, durability mode, credential mode, placement generation, or observed readiness (`crates/wamn-registry/src/types.rs:123-161`). | A name-derived route is not a versioned placement receipt. R34 remains the owner for desired intent published without observed convergence. |
+| **Database credential** | Every database is owned by `wamn_app`; every per-env Secret names that same role, and `ensure_app_role_sql` preserves the password of the first-created cluster-global role (`crates/wamn-provision/src/database.rs:27-78`, `crates/wamn-provision/src/secret.rs:62-90`, `crates/wamn-provision/src/sql.rs:25-41`, `crates/wamn-ctl/src/provision_project_env.rs:86-89,149-166`). PostgreSQL roles are cluster-wide, not database-local ([PostgreSQL roles](https://www.postgresql.org/docs/current/database-roles.html)). | Distinct Secret names do not create distinct principals. A leaked project Secret can authenticate as the owner of every project database on that cluster: R45. RLS is defence in depth, not an authentication boundary. |
+| **Object-store authority** | Each rendered cluster ObjectStore, logical-dump job, MinIO server, bucket bootstrap, and Loki deployment consumes `wamn-object-store`; in the checked-in MinIO manifest it is the server root credential (`crates/wamn-provision/src/backup.rs:36-42,66-96`, `deploy/infra/minio.yaml:1-35,98-134`, `deploy/infra/loki.yaml:110-124`). | Per-cluster prefixes are names, not authorization boundaries. One credential spans WAL, dumps, observability, and every recovery domain: R47. |
+| **Recovery coverage** | The topology promises T1 always and T3 cluster-wide WAL/PITR, but the standing manifests contain no backup plugin or CRs; the documentation defers them to a later reprovision (`docs/postgres-topology.md:247-254,292-316`). CNPG PITR requires a valid WAL archive and bootstraps a new cluster rather than repairing in place ([CNPG recovery](https://cloudnative-pg.io/docs/1.29/recovery/)). | The source/deployed contract reports recovery capability that its standing resources do not express: R48. R40/R41 still own copy cutover and in-place restore safety. |
+
+The current pool path also has no enforced connection budget. A host creates a
+lazy pool per touched project with default maximum 16
+(`crates/wamn-host/src/plugins/wamn_postgres/pool.rs:13-42`,
+`crates/wamn-host/src/plugins/wamn_postgres/claims.rs:297-353`), while the
+Database CR omits `connectionLimit` unless supplied
+(`crates/wamn-provision/src/database.rs:27-62`). PostgreSQL documents a default
+`max_connections` of typically 100 and notes that increasing it consumes more
+resources, including shared memory
+([PostgreSQL connections](https://www.postgresql.org/docs/current/runtime-config-connection.html)).
+Pooling is an adapter, not a substitute for cell admission control.
+
+### J.2 Topology alternatives
+
+Correctness eliminates a topology before cost or delivery speed ranks it.
+
+| Alternative | Isolation, recovery, and blast radius | Operations, movement, and cost | Verdict |
+|---|---|---|---|
+| **Current unbounded shared T3** | Shared login, one instance, no standing PITR, one upgrade/storage/WAL domain, and no maximum tenant or connection count. | Lowest nominal footprint; failure and contention radius grows without a capacity invariant. | **Replace.** |
+| **Bounded shared cells with per-project credentials** | Bounds a database, credential, backup, upgrade, and noisy-neighbor incident to an admitted cell of at most `K` active project-envs. Requires explicit connection/storage/WAL/restore limits and a durability policy. | Best default for operability, evolvability, infrastructure cost, and movement. A cell can drain/canary independently without one cluster per customer. | **Preferred conditional default.** |
+| **Per-org clusters** | Bounds data, upgrades, credentials, and recovery to an org; useful for contractual noisy-neighbor and shared-org recovery windows. | Cluster/replica/backup/reconciliation fan-out grows with org count. Moving one env still requires a data and authority cutover. | **Retain as an explicit placement class.** |
+| **Per-environment clusters** | Smallest data/recovery/change boundary and clearest regulated separation when backup, network, keys, and operators are also isolated. | Highest fleet and infrastructure cardinality; universal use would multiply pods/PVCs and upgrade work by environment count. | **Retain only for requirement-driven dedicated placement.** |
+| **Separate control and tenant stores** | Prevents a T1 incident or credential from entering tenant request paths and keeps tenant bytes out of the registry. | Requires stable cross-store identity, desired/observed generations, and reconciled operations. It does not choose tenant cluster size. | **Keep.** |
+| **Managed PostgreSQL instead of CNPG** | Can supply stronger managed failure/backup operations, but does not itself solve role, cell, placement, or cross-store identity defects. | Trades Kubernetes/operator work for provider APIs, regional constraints, cost, and migration adapters. No repository evidence currently selects a provider. | **Keep as a revisitable adapter, not a target conclusion.** |
+
+CloudNativePG states that asynchronous failover expects some loss and that even
+synchronous replication can promote the wrong replica unless failover quorum
+prevents it
+([CNPG failover](https://cloudnative-pg.io/docs/1.29/failover/)).
+The current multi-instance manifests configure neither mechanism. Under this
+audit's zero-acknowledged-write-loss fitness criterion, that is R46; a
+requirement to prefer availability and accept non-zero RPO must be an explicit
+placement contract, never an implicit default.
+
+### J.3 Cardinality and connection sensitivity
+
+No 100/1,000/10,000-project workload has been measured. The current deployment
+shape yields this **configured upper bound**, not predicted steady state:
+
+- two dispatcher replicas pin one connection per configured project
+  (`deploy/platform/dispatcher.yaml:17-20,47-55`,
+  `crates/wamn-dispatcher/src/lib.rs:346-386`) → `2P`;
+- two per-project runner replicas can each fill the default 16-connection pool
+  (`deploy/platform/runner.yaml:13-24,45-53`,
+  `crates/wamn-host/src/plugins/wamn_postgres/pool.rs:26-42`) → `32P`; and
+- one reader per project-env adds one logical-replication connection → `E`.
+
+For one environment per project, the upper bound is therefore `34P` without
+CDC and `35P` with CDC:
+
+| Projects | Dispatcher + runner | Plus one CDC reader/project-env |
+|---:|---:|---:|
+| 100 | 3,400 | 3,500 |
+| 1,000 | 34,000 | 35,000 |
+| 10,000 | 340,000 | 350,000 |
+
+This excludes gateways, ctl Jobs, generic hosts, surge replicas, and operator
+connections; it also assumes every lazy pool is saturated. The only relevant
+checked-in measurement is one 16-connection host pool at 20,427 qps/p99
+1.98 ms (`docs/p0-results.md:169-174,250-251`), which does not prove fleet
+capacity.
+
+Physical cluster count is likewise a requirement function, not a project-count
+constant: bounded cells need `ceil(E/K)` clusters; per-org placement needs
+`O × R` recovery domains (current standard `R=2`, dedicated `R=3`); universal
+per-env placement needs `E`. `.1.12` must set `O`, `E`, and permissible `K`;
+`.1.13` must set connection, backlog, and throughput budgets. Until then, no
+tier receives a supported-scale claim.
+
+### J.4 Target placement and safe movement
+
+The target hypothesis has these load-bearing rules:
+
+1. T1 owns semantic `(org, project, env)` identity, placement intent, policy,
+   generation, and reconciliation receipts—not tenant bytes, tenant
+   credentials, or request-path reads.
+2. Physical `placement_id`, cell/cluster identity, region, durability mode,
+   credential mode, and desired/observed generation are stored values. They are
+   not reconstructed from mutable names.
+3. The default is one database and one runtime login per project-env in a
+   bounded cell. Migration/ownership, dispatcher, CDC, and maintenance roles
+   are separately scoped.
+4. Cell admission is limited by measured active connections, storage/WAL,
+   backup/restore duration, failover, and active-tenant load. Noisy tenants move
+   before a bound is breached.
+5. Per-org placement is selected for contractual isolation, recovery,
+   residency, performance, or change windows. Per-env placement additionally
+   requires independent recovery/key/network/operator boundaries.
+6. A dedicated/regulated promise covers object storage, broker identities,
+   Secrets, operators, and recovery—not only Postgres pods.
+7. Routing changes only after the target resource reports the expected applied
+   and observed generation; CNPG exposes this status for declaratively managed
+   databases
+   ([CNPG database management](https://cloudnative-pg.io/docs/1.29/declarative_database_management/)).
+
+Migration must preserve one write authority:
+
+1. Inventory and attest databases, roles, Secrets, backups, routes, catalog/run
+   versions, and observed CNPG generations.
+2. Add placement identity/generation fields and per-project credentials
+   additively; dual-read and compare while the old placement remains
+   authoritative.
+3. Create the destination cell with backup and failover policy active, then
+   apply expand-compatible schema.
+4. Seed by logical dump and, if required, use a proven one-way catch-up. The
+   destination remains shadow/read-only; never introduce bidirectional tenant
+   dual writes without a conflict model.
+5. Quiesce or fence the source, verify row/checksum, schema/catalog, run/queue,
+   CDC position, backup identity, and observed readiness, then atomically
+   advance placement generation and credentials.
+6. Keep the source read-only through the rollback window. Before destination
+   writes, rollback can repoint; after writes, use a fenced reverse migration
+   or forward fix.
+7. Upgrade cells through expand → dual-read/backfill → switch → drain →
+   contract. Restore into a new cluster, validate it, and cut over.
+
+R40/R41 prove that today's copy and in-place restore commands cannot yet own
+this cutover. R34 owns placement convergence. `.1.16` owns mixed-version
+application/schema behavior.
+
+### J.5 Findings and proof
+
+| ID | Sev | Finding and consequence | Bead / proof |
+|---|---:|---|---|
+| **R45** | Critical | Per-project-env Secrets all authenticate as the same cluster-global database owner. Compromise of one pooled-project Secret crosses the tenant authentication boundary. | `wamn-2jkm.85`; proof `wamn-4tob.6.12`. |
+| **R46** | Critical | Every rendered multi-instance cluster uses asynchronous failover. Automatic promotion can omit an acknowledged commit, violating the audit's durability gate. | `wamn-2jkm.86`; proof `wamn-4tob.6.13`; recovery contract `.1.14`. |
+| **R47** | High | One MinIO root credential is used by every WAL archive, logical dump, and Loki workload. A single compromise spans recovery and observability domains. | `wamn-2jkm.87`; proof `wamn-4tob.6.14`; isolation contract `.1.15`. |
+| **R48** | High | Standing T1/T3 manifests have no WAL/PITR resources despite documentation calling that recovery path shipped. | `wamn-2jkm.88`; proof `wamn-4tob.6.15`. |
+
+Existing R28 remains the cluster-wide CDC credential owner; R34, R40, and R41
+retain convergence, copy, and restore ownership. `wamn-q3n.12` is only the
+pool-pressure metric/escalation seam. None of these findings closes because a
+target topology is proposed.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -1649,6 +1817,10 @@ prerequisite that makes everything else findable.
 | R42 | DB-broken runner can become Ready and displace healthy capacity | High | open | wamn-2jkm.77; proof wamn-4tob.6.6 |
 | R43 | Reviewed custom-node OCI identity does not determine invoked bytes | High (latent) | open | wamn-fqg.23 + wamn-0si.9; proof wamn-4tob.6.7 |
 | R44 | Event dedupe expires when run-history retention removes the identity | High | open | wamn-2jkm.82; proof wamn-4tob.6.9 |
+| R45 | Shared project database login crosses tenant boundaries | Critical | open | wamn-2jkm.85; proof wamn-4tob.6.12 |
+| R46 | Automatic Postgres failover can lose acknowledged writes | Critical | open | wamn-2jkm.86; proof wamn-4tob.6.13 |
+| R47 | One object-store root credential spans recovery and observability domains | High | open | wamn-2jkm.87; proof wamn-4tob.6.14 |
+| R48 | Standing T1 and T3 clusters lack the promised PITR path | High | open | wamn-2jkm.88; proof wamn-4tob.6.15 |
 | E18 | Materializer silently accepts stale durable-consumer configuration | High | open | wamn-l5i9.69; proof wamn-4tob.6.10 |
 | SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78 |
 | SR16 | Builder depends on the production runtime composition root | Med | open | wamn-2jkm.79 |
