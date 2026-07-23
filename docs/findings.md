@@ -741,7 +741,7 @@ not, by count alone, evidence for consolidation.
 | **Event materialization** | Pure `wamn-materializer` core plus `components/materializer` effect shell (`components/materializer/Cargo.toml:6-23`). | wasmCloud `Service` component, one project-env/tenant example, scheduled on the default host group (`deploy/platform/materializer.example.yaml:26-78`). | Frozen `wamn:jetstream` consumer/ack and `wamn:postgres`; deterministic run+queue transaction. | Component failure/redelivery is local, but host rollout/plugin/broker credentials are shared. | **Source/deployable role is clear; host failure boundary is shared.** |
 | **Scale-to-zero wake** | Native `wamn-waker` Kubernetes/NATS adapter (`crates/wamn-waker/src/lib.rs:1-24`). | Docker `waker`; one Deployment with the only namespace scale ServiceAccount (`deploy/platform/waker.yaml:20-75`). | Scheduler-NATS doorbell to Kubernetes `deployments/scale` get/patch. | Singleton idempotent actuator; dispatcher re-hints recover missed messages. | **Well aligned** to one narrow privileged responsibility. |
 | **Custom-node build and publish** | `wamn-builder`; one-shot build/test/lint/sign/SBOM/OCI adapter (`crates/wamn-builder/src/lib.rs:1-35`). | Cargo-full Docker `builder-svc`; bounded Job without SA token (`Dockerfile:136-168`, `deploy/platform/builder-job.yaml:22-82`). | Toolchains, dependency/import policy, signing key, registry v2, emitted deployment metadata. | Job is an independent supply-chain trust/failure unit. | **Deployment-aligned, dependency-inverted:** it imports `wamn-host` policy and production engine (SR16). |
-| **One-shot control operations** | `wamn-ctl`; operator composition root with 15 current commands (`crates/wamn-ctl/src/main.rs:32-98`). | Docker `ctl`; a subset of verbs has checked-in Job/CronJob examples. | Depending on verb: T1/tenant SQL, rendered Kubernetes YAML/JSON, object storage, `pg_dump`/`pg_restore`, or Grafana HTTP. | Per invocation; most lifecycle verbs remain runbook-owned rather than controller-owned. | **Source role is coherent; operational artifact is incomplete for dump/restore** (SR18). |
+| **One-shot control operations** | `wamn-ctl`; operator composition root with 15 current commands (`crates/wamn-ctl/src/main.rs:32-98`). | Docker `ctl`; a subset of verbs has checked-in Job/CronJob examples. | Depending on verb: T1/tenant SQL, rendered Kubernetes YAML/JSON, object storage, `pg_dump`/`pg_restore`, or Grafana HTTP. | Per invocation; most lifecycle verbs remain runbook-owned rather than controller-owned. | **Source role is coherent; operational artifact is incomplete for direct dump/restore/copy paths** (SR18). |
 | **System gates** | `wamn-gates` plus `wamn-gate-harness`; test composition root depending directly on service shells, domain cores, runtime fork, PG, and NATS (`crates/wamn-gates/Cargo.toml:8-95`, `crates/wamn-gates/src/main.rs:77-175`). | Docker `gates` is layered from `host`; Kubernetes Jobs and support fixtures (`Dockerfile:84-134`, `deploy/README.md:13-15`). | Direct library calls, in-process component instantiation, SQL/NATS, or deployed endpoint depending on gate. | One Job per gate; not a production service. | **Intentional broad test root**, but proof attribution must say whether it exercised a library, embedded Wasm, image, or deployed workload (STR7/SR10). |
 | **Control and tenant storage** | T1 SQL plus `wamn-registry`/`wamn-provision`; tenant SQL plus catalog/migration/run cores. | CNPG T1 cluster and pooled/dedicated tenant clusters; legacy `postgres.yaml` is a benchmark fixture (`deploy/platform/wamn-sysdb.yaml:1-74`, `deploy/platform/postgres.yaml:1-14`). | SQL schemas, CNPG CRDs, Secrets, WAL. | Cluster/database/schema/RLS boundaries differ by tier; CNPG operator spans them. | **Runtime placement is visible; physical schema ownership remains plural under existing SR13/STR6.** |
 | **Brokers, registry, observability, backup** | Third-party NATS, registry, OTel, Grafana stack, MinIO, CNPG/Barman; install-once infrastructure tier (`deploy/README.md:6-12`). | Separate StatefulSets/Deployments/operators rather than Rust packages. | NATS protocols, OCI registry v2, OTLP/Prometheus/LogQL/TraceQL, S3 and CNPG backup APIs. | Per infrastructure workload; several are singletons or share credentials/storage. | **Repository ownership is manifests/runbooks**, not a wamn crate. ARC7/ARC9 judge necessity and resilience. |
@@ -833,7 +833,7 @@ STR6's complete duplication verdict.
 | **SR15** | Med | `wamn-host` exposes both Host and ServeNode, while serve-node is independently deployed/scaled and handles a different untrusted-code/credential boundary (`crates/wamn-host/src/main.rs:31-58`, `deploy/platform/serve-node.yaml:43-152`). Shared binary/image/release is therefore real coupling, not a LOC preference. | `wamn-2jkm.78`; ARC5/STR3 decide target placement. |
 | **SR16** | Med | The isolated, toolchain-bearing builder imports the production host composition root for policy and engine behavior (`crates/wamn-builder/Cargo.toml:20-36`). This reverses the intended policy/runtime dependency and couples supply-chain and runtime dependency closure. | `wamn-2jkm.79`; STR2 owns allowed direction. |
 | **SR17** | High | Docker builds only root native packages, then copies `components/target/...` from the caller context into worker/gates; `.dockerignore` does not exclude it (`Dockerfile:19-32`, `Dockerfile:57-66`, `Dockerfile:84-134`, `.dockerignore:1-8`). An image can silently contain stale/substituted guest bytes not derived by its build. | `wamn-2jkm.80`; proof `wamn-4tob.6.8`; STR7 and `.16` own release provenance. |
-| **SR18** | Med | `wamn-ctl` advertises dump/restore but Docker `ctl` explicitly omits `pg_dump`/`pg_restore`, and no alternate production image owns those verbs (`crates/wamn-ctl/src/main.rs:42-49`, `Dockerfile:41-48`). Recovery fails mid-operation unless an undocumented environment supplies tools. | `wamn-2jkm.81`; exact-image round trip is its gate. |
+| **SR18** | Med | `wamn-ctl` advertises direct dump/restore/copy paths but Docker `ctl` explicitly omits `pg_dump`/`pg_restore`, and no alternate production image owns those invocations (`crates/wamn-ctl/src/main.rs:42-49`, `crates/wamn-ctl/src/dump_project_env.rs:134-156`, `crates/wamn-ctl/src/restore_project_env.rs:316-323`, `crates/wamn-ctl/src/copy_project_env.rs:410-448,892-909`, `Dockerfile:41-48`). Recovery/copy fails mid-operation unless an undocumented environment supplies tools. | `wamn-2jkm.81`; exact-image round trip is its gate. |
 
 R43 is not duplicated as an SR finding: it covers the separate signed-OCI to
 invoked-bytes break and already maps to `wamn-fqg.23`, `wamn-0si.9`, and proof
@@ -1949,6 +1949,179 @@ discriminate. No finding is fixed by the queue-first target proposal.
 
 ---
 
+## L — Deployment-unit cohesion (2026-07-23)
+
+This section is the STR3 result for `wamn-4tob.2.3` at source baseline
+`f10a008bd6dd466c8c98d5f45a10b2274876885d`. It applies the Rust structural
+guidelines as heuristics beneath runtime responsibility, privilege, state,
+scaling, failure, rollout, and target-architecture evidence. LOC, package
+count, or a shared language do not establish a service or crate boundary.
+
+**Executive verdict:** most post-SR9 native deployment boundaries are
+cohesive. Retain dispatcher, run worker, CDC reader, waker, builder, ctl, state
+stores, and privileged one-shot workloads as separate units. Split custom-node
+serving into an independent binary/image/release; keep one ctl source binary but
+make every advertised verb runnable; remove builder's dependency on the host
+composition root; and treat the general wash host, trusted guests, runtime
+control NATS, and embedded trusted flowrunner as transition topology subject to
+ARC11. No new finding is required: SR15–SR18 already own every
+confirmed defect.
+
+### L.1 Runtime and infrastructure units
+
+| Unit | Authority, reason to change, and independent failure/scale | Rebuild/rollout consequence | STR3 verdict |
+|---|---|---|---|
+| **General `wamn-host host`** | Shared wash runtime/plugin/placement process for trusted components; not durable run authority (`crates/wamn-host/src/main.rs:31-58`, `crates/wamn-host/src/host.rs:102-202`, `deploy/infra/values-wamn.yaml:14-50`). | Host/runtime/plugin/guest-placement and shared credentials roll together; a process failure affects co-located workloads. | **Transition only.** Retain while required by the current hybrid. Preferred native target retires it for trusted API/materializer/executor work and keeps only a narrow tenant-Wasm sandbox. |
+| **Custom-node host** | Already has its own Deployment/Service, project identity, signing key, credential vault, egress policy, and untrusted-Wasm boundary (`crates/wamn-host/src/serve_node.rs:1-47,49-160`, `deploy/platform/serve-node.yaml:43-152`). | Sharing `wamn-host` binary/image couples unrelated host and node CVEs, rebuilds, rollback, and release timing. | **Split binary, image, and release (SR15).** Exact shared library shape waits for ARC11/STR9. |
+| **API gateway** | Project request ingress with Postgres capability; scales by request rate/project and should fail independently of materialization/node execution (`components/api-gateway/wit/world.wit:19-26`, `deploy/platform/api-gateway-workload.yaml:1-77`). | Independently published mutable component, but placed on the shared host and not proven byte-identical to its gates. | **Retain semantic service; amend placement/artifact path.** Native target converts it; component-first isolates its host group according to trust/cardinality. |
+| **Dispatcher** | Native cron/run-queue composition root with per-project SQL and optional NATS hinting; two replicas and no Kubernetes authority (`crates/wamn-dispatcher/src/lib.rs:1-49`, `deploy/platform/dispatcher.yaml:1-157`). | Scheduling/claim changes roll without executor/runtime. Failure delays new/woken work but does not corrupt execution. | **Retain.** If a workflow engine becomes sole authority, retire/demote its timer role rather than run dual schedulers. |
+| **Run worker** | Per-project DB, credentials, effects, queue leases, and embedded flowrunner; two replicas/project (`crates/wamn-run-worker/src/lib.rs:1-68,94-188`, `deploy/platform/runner.yaml:45-203`). | Scales with backlog and contains project failures. Flowrunner and worker intentionally release together; direct `wamn-host` imports expose a transition adapter. | **Retain independent worker; narrow the host dependency.** Do not merge with host/dispatcher. Native target makes trusted execution native; workflow target makes it an engine worker. |
+| **CDC reader** | Owns one logical replication session, slot, confirmed LSN, T1 registration, and event-NATS publishing (`crates/wamn-cdc-reader/src/lib.rs:68-157`, `deploy/platform/event-reader.example.yaml:1-88`). | Singleton/Recreate per slot today; capture failure is separate from projection/materialization serving. | **Retain native boundary.** Fleet cardinality waits for ARC11; never merge replication privilege into materializer. |
+| **Materializer** | Event consumer plus project DB write capability, without replication privilege (`components/materializer/wit/world.wit:22-27`, `deploy/platform/materializer.example.yaml:1-78`). | One tenant/project-env guest on the shared host; scale and failure differ from capture. | **Retain event-adapter responsibility.** Native target converts it; component-first may retain an isolated guest. |
+| **Waker** | Sole narrow Kubernetes `get/patch deployments/scale` actuator driven by backlog hints; no run-state authority (`crates/wamn-waker/src/lib.rs:1-24,44-220`, `deploy/platform/waker.yaml:1-123`). | Singleton and independently auditable. Merging would grant dispatcher/executor code Kubernetes mutation authority. | **Retain while backlog scale-to-zero exists.** May retire if the selected engine supplies equivalent worker scaling. |
+| **Builder Job** | Ephemeral source/build/network, signing-key, SBOM, and registry-push authority; no runtime state (`crates/wamn-builder/src/main.rs:1-46`, `deploy/platform/builder-job.yaml:1-82`, `deploy/platform/builder-netpol.yaml:1-43`). | Should roll with toolchain/policy, but imports the host composition root and inherits the monolithic root build context. | **Retain one-shot boundary; amend dependency/build closure (SR16).** |
+| **`wamn-ctl`** | One operator composition root for 15 related one-shot verbs with invocation-specific DB/T1/object/Grafana privilege (`crates/wamn-ctl/src/main.rs:32-98`). | Source split would add little. The current image omits PostgreSQL clients needed by recovery/copy paths. | **Retain one source binary; amend runnable image (SR18).** Split a recovery artifact only if credential/version/minimal-image policy proves a separate boundary. |
+| **Gates** | Intentional white-box/system-test composition root; 48 independent Jobs isolate runtime failures, while the image spans most platform crates and product/fixture guests (`crates/wamn-gates/src/main.rs:77-241`, `crates/wamn-gates/Cargo.toml:8-95`, `Dockerfile:84-134`). | One broad artifact rebuilds and rolls many proofs; exact test/deploy byte identity is incomplete. | **Retain root now; amend proof classification and provenance.** Split only where STR7 measures a useful build/runtime-closure benefit. |
+| **T1 and tenant Postgres** | Separate control authority and per-placement tenant data/run/queue authority (`deploy/platform/wamn-sysdb.yaml:1-74`, section J). | Independent backup, failover, migration, and blast-radius lifecycles. | **Retain state boundaries.** A schema/table or Rust-package grouping does not imply one deployable. |
+| **Runtime-control and event NATS** | Runtime-control bus serves wash placement; event NATS is a distinct retained transport. Neither is business-state authority. | Different protocols and outages. | **Keep event transport only where ARC7 requires it; retire runtime-control NATS if ARC11 removes the general wash plane.** |
+| **Registry, object store, and observability** | Separate artifact, backup, and telemetry authorities with third-party lifecycles. The checked-in registry is proof-ephemeral (`deploy/platform/registry.yaml:18-19`). | Independent availability, upgrade, and retention needs. | **Leave separate.** Production durability belongs to ARC9/STR7, not a source merge. |
+| **POC/fixture infrastructure** | Throwaway databases, echo/trace services, and POC components hold proof-specific credentials/state. | Failure should remain proof-local. | **Leave isolated.** Never infer a product service from a fixture path. |
+
+### L.2 Control operations and runnable surface
+
+All 15 ctl verbs have one coherent reason to share an operator composition
+root, but not one credential:
+
+| Verb group | Effects and deployment consequence |
+|---|---|
+| `publish-catalog`, `migrate-catalog`, `impact-report`, `pin-run` | Project schema/catalog/run/test reads or writes; remain one-shot operator actions. |
+| `provision-project`, `provision-org`, `provision-project-env`, `enable-cdc-project-env` | Cluster/T1 administration plus rendered Database, Cluster, Secret, ObjectStore, slot/publication, and role effects. They must not move into always-on request services. |
+| `reconcile-replica-identity`, `reconcile-run-plane`, `prune-run-history` | Checked Job/CronJob execution with distinct superuser/app-role schedules. Keep separate from dispatcher so scheduling code does not inherit repair privilege. |
+| `provision-dashboards` | T1 registry plus Grafana administration, or render-only output. |
+| `dump-project-env`, `restore-project-env`, `copy-project-env` | Recovery/export/copy authority plus external PostgreSQL clients and object bytes. Rendered dump workloads choose their own PostgreSQL/MinIO images, but direct ctl execution must also be honest. |
+
+The `ctl` image explicitly omits `pg_dump`/`pg_restore`
+(`Dockerfile:41-48`). `dump-project-env --run-now` shells the tools
+(`crates/wamn-ctl/src/dump_project_env.rs:134-156`), restore shells
+`pg_restore` (`crates/wamn-ctl/src/restore_project_env.rs:316-323`), and copy
+uses them on data/both/cutover paths
+(`crates/wamn-ctl/src/copy_project_env.rs:1-29,410-448,892-909`).
+STR3 therefore expands SR18 beyond its original wording: every direct dump,
+restore, and copy path must have a version-matched runnable artifact and
+exact-image round-trip. This is one existing defect, not three new findings.
+
+### L.3 Guest/component disposition
+
+The separate component workspace and lockfile are a real target/toolchain
+boundary and remain. Every member has an explicit role:
+
+| Component | Role | Disposition |
+|---|---|---|
+| `api-gateway` | Trusted production ingress | Retain service semantics; native target converts it, component-first isolates it. |
+| `flowrunner` | Trusted production execution guest embedded in worker and gates | Retain contract during transition; release with worker; native/workflow targets absorb it into their worker. |
+| `materializer` | Trusted production event adapter | Retain responsibility; native target converts it. |
+| `poc-webhook-f1` | POC ingress/executor | POC only. |
+| `flow-driver` | Composed gate driver | Gate fixture only. |
+| `hello` | Basic component fixture | Retain in gates. |
+| `busyloop` | CPU limiter fixture | Retain in gates. |
+| `memhog` | Memory limiter fixture | Retain in gates. |
+| `pgprobe` | Postgres capability fixture | Retain in gates. |
+| `sockprobe` | Socket/egress fixture | Retain in gates. |
+| `logspewer` | Logging-pressure fixture | Retain in gates. |
+| `cred-probe` | Credential capability fixture | Retain in gates. |
+| `trace-relay` | Trace proof support | Retain as proof support, not target product service. |
+| `node-rs` | Reference custom-node input | Retain contract/proof role. |
+| `node-cred` | Credential-node fixture | Retain contract/proof role. |
+| `sample-node` | Sample custom node | Retain sample role. |
+| `disposition-node` | Node-behavior fixture | Retain gate role. |
+| `js-sample` | JavaScript adopter template/input | Retain sample/gate role. |
+
+Flowrunner's release coupling to run-worker is deliberate; its provenance is
+not. Docker copies caller-built Wasm into both runner and gates, while
+API/materializer are separately pushed mutable OCI artifacts
+(`Dockerfile:57-66,84-134`). SR17 owns hermetic source→component→image identity
+and proof that tests exercise shipped bytes. Guest packaging is not a reason to
+merge the component and native workspaces.
+
+### L.4 Build and rollout topology
+
+The current Docker graph has one broad build root:
+
+```text
+root manifests + crates + POCs + deploy
+    -> one cargo build of eight native artifacts
+       -> host -> gates + product/fixture Wasm
+       -> ctl | dispatcher | run-worker + flowrunner | cdc-reader | waker
+       -> builder-svc + toolchains + component sources
+
+components workspace + separate lock/target
+    -> caller-built Wasm
+       -> runner/gates copies
+       -> manual mutable OCI publication for hosted guests
+```
+
+One builder invocation compiles all eight root artifacts
+(`Dockerfile:14-32`); final stages select host, ctl, dispatcher, worker, CDC,
+waker, gates, and builder (`Dockerfile:34-168`). Consequently:
+
+- host changes can roll both default host groups and node hosts despite
+  different trust/failure boundaries;
+- flowrunner changes require runner and gate rebuilds;
+- API/materializer publication and gate packaging follow separate paths;
+- builder-svc inherits the full root build stage and component source tree;
+- the gates image affects 48 Jobs plus support Deployments; and
+- a native leaf still makes the common Cargo step evaluate all eight binaries.
+
+These are STR7 measurement inputs, not automatic package/image findings. Build
+time, cache misses, shipped dependency closure, and artifact identity must show
+material correctness or delivery benefit before splitting the builder or gate
+images.
+
+### L.5 Structural choices and target alignment
+
+Confirmed choices:
+
+- **Builder versus worker:** `wamn-builder -> wamn-host` is a forbidden peer
+  composition-root import for reusable engine/capability/credential policy
+  (`crates/wamn-builder/Cargo.toml:20-36`), confirming SR16.
+  `wamn-run-worker -> wamn-host` is the explicit hybrid adapter exception
+  because the worker embeds the actual runtime/plugin implementation. Narrow
+  it after ARC11; do not call the two edges equivalent.
+- **Node host:** its separate credentials, untrusted code, scale, failure, CVE,
+  and rollback boundary justify an independent deployable now (SR15).
+- **Scheduler package:** do not split. `wamn-run-queue` already feature-gates
+  dispatcher-only cron dependencies (`crates/wamn-run-queue/Cargo.toml:38-47`);
+  no independent state/clock/broker authority or measured coupling requires
+  another package.
+- **Test doubles:** no new boundary. `TestDoubles` is off by default and the
+  production runner does not enable it
+  (`crates/wamn-run-worker/src/lib.rs:174-188,723-743`,
+  `deploy/platform/runner.yaml:90-186`). A deployment operator who can enable
+  it already controls the pod and its DB/vault/NATS credentials. Require a
+  separate scenario image only if ARC8 establishes different trust, state,
+  credentials, untrusted initiation, or independent scale.
+- **Gates and ctl:** retain one composition root for each; fix runnable/artifact
+  fidelity instead of splitting by file or verb count.
+
+Under the preferred Kubernetes-native ARC5 target, ingress/API, materializer,
+dispatcher, and executor become native services; the general wash host,
+runtime-control NATS, and trusted flowrunner guest retire, while node-host keeps
+upstream Wasmtime/WASI as the narrow tenant-code sandbox. Under a durable
+workflow target, the engine becomes the sole timer/retry/orchestration
+authority and dispatcher/queue/waker responsibilities are retired or demoted.
+Under component-first, host groups remain but their privilege and failure
+partition follows ARC8/ARC11 requirements, not component names. PostgreSQL or
+one workflow engine remains the single durability authority in every case.
+
+**Leave alone:** separate native/component workspaces and lockfiles; WIT-shaped
+errors; node/event/WIT contract leaves; run-store/run-queue semantics; separate
+CDC reader, builder, waker, ctl, stateful infrastructure, reconcilers,
+fixtures/samples/POCs, and current same-runner test doubles. SR15–SR20, R42,
+R43, ARC8/ARC11, STR4/STR7/STR9, and `.1.15`–`.1.17` retain their existing
+ownership. No split or merge is represented as complete.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -1976,7 +2149,7 @@ prerequisite that makes everything else findable.
 | SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78 |
 | SR16 | Builder depends on the production runtime composition root | Med | open | wamn-2jkm.79 |
 | SR17 | Docker images package caller-built component bytes | High | open | wamn-2jkm.80; proof wamn-4tob.6.8 |
-| SR18 | Control-plane image cannot execute advertised dump/restore verbs | Med | open | wamn-2jkm.81 |
+| SR18 | Control-plane image cannot execute advertised dump/restore/copy paths | Med | open | wamn-2jkm.81 |
 | SR19 | Product test-case contract depends on run-state persistence | Med | open | wamn-2jkm.83; STR5/STR9 decide owner |
 | SR20 | Load-bearing Wasmtime source pin is duplicated across manifests | Low | open | wamn-2jkm.84; STR7/STR9 own guard/target |
 | **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
