@@ -995,6 +995,163 @@ represented as fixed by the target model.
 
 ---
 
+## G — Compute and flow-runtime alternatives (2026-07-23)
+
+This section is the ARC5 result for `wamn-4tob.1.5` at baseline
+`dddf80481bbe3a73ee2fc85094a1cd8b6dd5fc73`. Repository behavior is verified
+from source; platform capability claims use current official documentation.
+The ranking remains conditional on the cardinality, SLO, recovery, isolation,
+and upgrade contracts in `.1.12`–`.1.16`.
+
+**Provisional ranking after correctness gates:**
+
+1. **Kubernetes-native Rust services, with upstream Wasmtime/WASI only for
+   untrusted tenant code.**
+2. **A durable workflow engine as the single orchestration authority, paired
+   with the same narrow tenant-code sandbox.**
+3. **Component-first wasmCloud while PostgreSQL remains the durable flow
+   authority.**
+4. **The current hybrid unchanged — rejected as a target.**
+
+Option 1 is the least-risk survivor because it preserves the strongest current
+PostgreSQL durability protocol while removing the broad runtime/operator/fork
+from trusted service execution. Option 2 has the greatest machinery-reduction
+and history/replay upside, but fails if its journal and `runs`/`run_queue`
+become co-equal authorities. Option 3 changes scheduling and density, not
+durable orchestration. The current option fails safe-upgrade/provenance gates
+through R42, R43, and SR17.
+
+### G.1 What the current runtime actually is
+
+The system is hybrid, not component-first:
+
+| Responsibility | Current compute/runtime | Consequence |
+|---|---|---|
+| Gateway and materializer | Components on the shared three-pod washlet host group, with Postgres, JetStream, logging, HTTP, and control-NATS facilities composed in the host (`deploy/infra/values-wamn.yaml:14-50`, `crates/wamn-host/src/host.rs:102-164`). | Component memory/import isolation exists inside a shared process and plugin/credential/failure boundary. |
+| Durable flow execution | Native `wamn-run-worker` embeds `flowrunner.wasm`, `wash-runtime`, Wasmtime, and host plugins (`crates/wamn-run-worker/src/lib.rs:1-35,47-68,500-656`). | PostgreSQL—not wasmCloud—owns resume/retry state. Native deployment and embedded guest have a coupled rollout. |
+| Custom nodes | Independently deployed/scaled node workload, but the same `wamn-host` binary/image serves it (`crates/wamn-host/src/main.rs:31-58`, `deploy/platform/serve-node.yaml:43-152`). | The real security/scale boundary is already separate; the artifact/release boundary is hidden (SR15). |
+| Dispatcher, CDC reader, waker, ctl, builder | Conventional native Rust processes/Jobs. | Runtime choice already varies by responsibility; no uniform platform semantics exist. |
+| Component artifact build | Native Docker build copies caller-produced component outputs instead of building them from the image source state (`Dockerfile:19-32,57-66,84-134`). | SR17 blocks safe rollout independent of runtime choice. |
+
+The root pins a `wash-runtime` fork plus Wasmtime, and the run worker, host, and
+gates consume it (`Cargo.toml:12-28`). D23 still says five carried commits
+(`docs/platform-plan.md:219`), while the maintained fork ledger now lists six
+(`docs/wash-runtime-fork.md:120-140`). That is stale decision metadata routed
+to STR8, not evidence that the sixth patch is itself defective.
+
+wasmCloud's current role is therefore **partial platform runtime and scheduling
+layer plus an embedded implementation library**. It is not the flow-state
+authority and not merely the custom-node sandbox.
+
+### G.2 Controlling correctness gates
+
+`Pass` means the architecture supplies a credible mechanism. `Conditional`
+names work the option must own. `Fail as-is` eliminates the exact current
+implementation, not every possible design in that family.
+
+| Gate | Current hybrid | Component-first wasmCloud | K8s Rust + narrow Wasmtime | Durable-workflow owner |
+|---|---|---|---|---|
+| **Tenant/secret isolation** | **Conditional.** WIT/import checks help, but shared host processes, plugins, broker identities, Secrets, and the fork cross named planes (§C). | **Conditional.** Wasmtime isolates component memory and implicit system access, while declared imports plus bound host interfaces control capabilities. Upstream defaults still require hardening: an omitted/empty HTTP `allowedHosts` permits all HTTP destinations ([workload security](https://wasmcloud.com/docs/kubernetes-operator/workload-security/)). Host-group, namespace, plugin, raw-socket, Secret, and broker sharing must match `.1.15`. | **Conditional, smallest trusted surface.** Native services use explicit Kubernetes/DB identities; a dedicated node host builds a deny-by-default WASI context and links only approved WIT imports. Wasmtime defaults to no env/args/preopens and denies socket addresses/name lookup until granted ([WasiCtxBuilder](https://docs.wasmtime.dev/api/wasmtime_wasi/struct.WasiCtxBuilder.html)). | **Conditional.** The engine is not a sandbox. Namespace/task-queue/history encryption and payload redaction must satisfy `.1.15`; hostile code still runs in the narrow node host and Secret bytes must not enter workflow history. |
+| **No acknowledged-write loss/corruption** | **Pass locally for async run+queue; conditional end to end.** Other journeys retain R34–R44. | **Same durable boundary.** Moving a worker into a Service does not change its transaction protocol. | **Can preserve the same PostgreSQL transaction exactly.** | **Pass only with one authority.** The engine append/history must own start, timer, retry, and completion acknowledgement; PostgreSQL orchestration rows must be projections/domain records, never peers. |
+| **Deterministic resumability** | **Pass for async resume.** Persisted flow version, occurrences, attempts, timers, leases, and queue policy reconstruct the run. Rerun remains planner-only. | **Same custom mechanism.** wasmCloud Services are long-running/stateful components, not a durable event history ([Services](https://wasmcloud.com/docs/overview/workloads/services/)). | **Same mechanism with fewer runtime layers.** | **Strong native fit.** Workflow replay and durable timers reconstruct execution, but workflow code must remain deterministic and version-compatible; external I/O belongs in retryable activities ([Temporal workflow determinism](https://docs.temporal.io/workflow-definition)). |
+| **Idempotent recovery** | **Conditional.** Stable occurrence keys exist; death after effect/before checkpoint repeats the effect. | **Same.** Component restart does not make external effects atomic. | **Same.** | **Conditional.** Even a durable engine retries an activity that performed an effect but did not report completion; the official guidance still requires idempotent activities ([Temporal activity idempotency](https://docs.temporal.io/activity-definition)). |
+| **Bounded failure/backpressure** | **Conditional.** Queue leases and project Deployments help, while shared runtime/plugin/broker scope and R42 weaken containment. | **Conditional.** The operator supplies workload reconciliation, `/scale`, EndpointSlices, and host pools ([operator overview](https://wasmcloud.com/docs/kubernetes-operator/operator-manual/overview/)); shared-host failure and per-tenant placement remain explicit choices. | **Best conventional containment.** Pod/service/node-host boundaries are visible; readiness removes unhealthy endpoints ([Kubernetes readiness](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes)). Backlog metrics/scaling still depend on `.1.12`/`.1.13`. | **Potentially strongest orchestration backpressure**, but adds another stateful service and tenant-partitioning/failure domain. Domain ordering still needs an explicit mapping. |
+| **Safe upgrades/state migration** | **Fail as-is.** A DB-broken worker stays Ready, reviewed bytes do not identify invoked bytes, and Docker can package stale guest output (R42/R43/SR17). | **Conditional/unproven.** CRD status and restart do not prove lease drain, parked work, mixed host/guest compatibility, or old-capacity preservation. The fork remains if custom runtime behavior remains. | **Conditional.** Kubernetes supplies readiness and rollout mechanics, while wamn still owns WIT/SQL/IR compatibility and artifact pinning. It can remove `wash-runtime` from trusted service execution. | **Conditional with stronger primitives.** History/version routing can retain old code, but long-lived deterministic code, active-run migration, payload schemas, and engine upgrades become explicit contracts rather than disappearing. |
+
+Component-first wasmCloud cannot receive durable-execution credit merely by
+moving the worker: the official runtime supplies Wasmtime, host/plugin/workload
+abstractions and NATS-based lifecycle control
+([runtime](https://wasmcloud.com/docs/runtime/)); the operator schedules and
+reconciles workloads. Neither source makes it a workflow history or
+transactional side-effect authority.
+
+### G.3 Secondary comparison of survivors
+
+| Criterion | Component-first | K8s Rust + Wasmtime | Durable-workflow owner |
+|---|---|---|---|
+| Capability enforcement | Strong structural imports and good component density; host-interface and placement defaults need explicit denial policy. | Direct linker/WASI policy with the fewest platform layers around hostile code; trusted services remain ordinary processes. | Orthogonal: reuse the same node sandbox; engine controls orchestration, not capabilities. |
+| Scheduling/cold start/scale | Host pools and standard `/scale` are the best stated density mechanism, but wamn has no baseline-matched cold-start/cardinality evidence. | Conventional pods/HPA; likely lower density per resident service, but clearer process readiness and failure ownership. | Task queues schedule work while Kubernetes schedules workers; can remove one-process-per-flow pressure, but adds engine capacity planning. |
+| Diagnostics | Operator status/events plus current DB history; host/guest/plugin layering complicates root cause. | Conventional logs/probes/DB/queue inspection with no operator indirection for trusted services. | Workflow history/UI is a major advantage if correlated to wamn IDs and safely redacted. |
+| Upgrade/evolution | Host/operator/guest/fork/WIT/DB compatibility remains coupled. | Explicit Kubernetes, WIT, SQL, and artifact contracts; upstream Wasmtime is the remaining sandbox subsystem. | Versioned histories improve in-flight routing; determinism and engine/state migrations impose a new long-lived contract. |
+| Infrastructure and delivery | Reuses current platform but retains runtime-operator and control NATS. | Smallest conventional deployment graph; preserves existing Postgres execution machinery. | Highest initial integration/migration and a new critical store; potentially lowest steady-state custom orchestration code. |
+| Custom distributed machinery | High: queue, leases, timers, re-hints, replay, and event handoffs remain wamn-owned. | High for workflow durability; lower for runtime hosting. | Lowest only after a safe single-authority cutover deletes or demotes the old machinery. |
+
+The log-first architecture of a representative engine such as Restate makes
+the quorum-committed log its durability layer
+([Restate architecture](https://docs.restate.dev/references/architecture));
+Temporal reconstructs commands from event history and requires version-safe
+determinism. Those are credible mechanisms, not a vendor selection. They also
+demonstrate the migration rule: adding an engine while retaining PostgreSQL as
+a second scheduler is worse than either model alone.
+
+### G.4 Representative failure journeys
+
+**Park/retry/resume.** Today the dispatcher writes run plus queue, a worker
+leases the row, flowrunner loads the recorded flow version and completed
+occurrences, a park advances `available_at` and releases the lease, and
+reconciliation re-hints lost doorbells. Death after an external effect but
+before its checkpoint repeats the same occurrence. Component-first placement
+keeps this algorithm unchanged. A native Rust runner can keep the SQL protocol
+unchanged while surfacing DB/schema health through readiness. A workflow-engine
+variant replaces the timer/retry history only if the engine owns the run
+transition and `(run,node,occurrence)` remains the external idempotency identity.
+
+**Custom-node failure.** Today builder review/sign/publish identity does not
+determine the ConfigMap bytes served (R43); node-host is independently deployed
+but shares the host artifact (SR15), and builder imports the host composition
+root (SR16). A component-first workload could use OCI identity and declarative
+interfaces, but must still verify the exact digest and isolate the host. The
+narrow native target is:
+
+```text
+node/WIT contracts + component policy
+          |                         |
+          v                         v
+builder conformance             node-host
+                                  |
+                          upstream Wasmtime/WASI
+```
+
+The policy owner classifies imports and derives grants; a runtime adapter exists
+only for engine behavior that genuinely must match; node-host owns fetch,
+signature/digest verification, Store/WASI construction, invocation auth,
+credentials, egress, limits, and telemetry. This supports the external review's
+decomposition as a hypothesis (`docs/REVIEW-260723.md:15-47,245-273`), but
+SR15/`wamn-2jkm.78` and SR16/`wamn-2jkm.79` already own the decision and
+implementation work.
+
+### G.5 Runtime role verdict and remaining proof
+
+**Target hypothesis:** wasmCloud should become an **implementation detail
+during transition**, not the defining platform architecture. WASI/Wasmtime is
+the tenant-code sandbox. If the native option wins, the runtime operator and
+washlet control plane are unnecessary for trusted platform services; if
+measured density or deployment requirements later select component-first,
+wasmCloud remains a placement/capability platform while PostgreSQL (or one
+workflow engine) still owns durability.
+
+No canonical D-row is changed here. ARC11 must issue the final
+keep/amend/replace verdict for D17/D21/D23 after `.1.12`–`.1.16`:
+
+- `wamn-4tob.6.11` is the only new spike: one representative durable engine
+  versus the PostgreSQL runner, including timer restart, effect/checkpoint
+  ambiguity, version coexistence, projection rebuild, Secret-history exclusion,
+  and forced dual-authority divergence.
+- Existing `wamn-l5i9.49`/`.50` own component-Service placement and
+  operator-restart proof; extend them with DB readiness, scheduler-NATS loss,
+  lease/park behavior, mixed versions, restart exhaustion, and preservation of
+  old working capacity.
+- Existing SR15/SR16, R42/R43, and SR17 owners remain prerequisites. The
+  wasmCloud default-sharing/HTTP posture routes to `.1.15`; D23 count drift and
+  current-versus-target labeling route to STR8.
+
+No new implementation finding is minted from an alternative's upstream default
+or an unmeasured cost. The architecture issue is the current combination of
+already-open correctness findings, not the mere use of components, native
+services, or a fork.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
