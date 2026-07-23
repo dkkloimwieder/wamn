@@ -2914,6 +2914,133 @@ artifacts match source.
 
 ---
 
+## S — Build, test, and deployment topology (2026-07-23)
+
+This section is the STR7 result for `wamn-4tob.2.7` at source baseline
+`d3532b6dcef334de0befeeb124fa1e5c4376d328`. It traces source through both
+Cargo workspaces, Docker, component publication, gate packaging, Kubernetes
+objects, and the gate runbook.
+
+**Executive verdict: fail artifact parity.** The repository has substantial
+package, contract, embedded-component, image, and deployed-system evidence,
+but those classes are not distinguished consistently and none currently binds
+a fresh gate execution to an immutable source-derived release. SR17 already
+owns the caller-built Wasm defect. New **SR26** owns the independent failure
+where mutable image identities and reusable completed Jobs can receive
+gate-of-record credit. No live gate was run: the standing baseline rule
+correctly excludes the current cluster because its artifacts cannot be tied to
+this source revision.
+
+### S.1 Measured build and artifact graph
+
+| Boundary | Current graph and evidence | Coupling / verdict |
+|---|---|---|
+| **Root Cargo workspace** | 38 packages, all 38 default members, 87 targets, and 543 resolved metadata nodes. There is no explicit `default-members` policy (`Cargo.toml:1-5`). | A bare build/test includes product libraries, deployable services, gates, builder, three POCs, and support packages. Explicit developer/full-CI tiers are warranted, but selecting defaults without timing and coverage evidence is deferred to STR9. |
+| **Component Cargo workspace** | 18 packages, all 18 default members and 112 resolved metadata nodes; production guests, flow driver, POC, fixtures, and samples share one default build (`components/Cargo.toml:1-7`). | The workspace boundary is legitimate. Product, proof, sample, and POC outputs need explicit release/test sets, not necessarily another workspace or filesystem move. |
+| **Common native Docker build** | One `rust:1.97-trixie` stage copies root manifests, all `crates/`, `poc/`, and `deploy/`, then builds eight release roots in one invocation: host, ctl, dispatcher, run-worker, CDC reader, waker, gates, and builder (`Dockerfile:14-32`). Only Cargo registry and git caches persist. | Any change under those copied trees invalidates the common compile step. The prior `wamn-m52` measurement still took 1,171 seconds after a crate-only change because compiled targets are not cached. This is delivery coupling routed to `wamn-68r3`, not evidence for crate splits. |
+| **Native final images** | Host, ctl, dispatcher, CDC reader, and waker copy one native binary from the common stage; run-worker also copies `flowrunner.wasm` from the caller context (`Dockerfile:34-82`). | Native artifact boundaries mostly match deployments. Run-worker-to-flowrunner is an intentional release unit; the problem is that its guest byte is not built by the attributable graph. |
+| **Gates image** | `FROM host`, adds the separately linked `wamn-gates` binary, 14 Wasm/component artifacts, and JSON fixtures from caller context (`Dockerfile:84-134`). Its entrypoint is `wamn-gates`, not the copied `wamn-host`. | A Job proves the gates image and code linked into `wamn-gates`; derivation from the host layer does not prove execution of the exact host binary. The broad composition root is retained pending a concrete independent rollout or rebuild benefit. |
+| **Builder service image** | `FROM builder` retains the full native source/release build, then adds the component workspace and Rust/JS component toolchains (`Dockerfile:136-168`). The observed local image was about 4.6 GiB. | This confirms the SR16 builder-to-host inversion and its rebuild/supply-chain blast radius. `wamn-2jkm.79` remains the single owner. |
+| **Registry-published components** | API gateway and materializer are built outside Docker and manually pushed from `components/target` to mutable `:dev` OCI references (`docs/build-and-test.md:2578-2605`). Their workloads explicitly use mutable tags with `Always` (`deploy/platform/api-gateway-workload.yaml:67-72`; `deploy/platform/materializer.example.yaml:58-62`). | Gate-embedded bytes and deployed registry bytes are independently published projections. A matching name or readiness state does not establish byte equality, source revision, or test/deploy parity. |
+| **Deployment/gate surface** | `deploy/` contains 17 Deployments, one StatefulSet, five WorkloadDeployments, 18 Services, seven ConfigMaps, two CronJobs, and 52 Job documents overall. Under `deploy/gates`, 48 Job objects comprise 45 `wamn-gates:dev` executions and three `wamn-builder:dev` executions; two additional gate-support Deployments also use the gates image. | The test topology is materially larger than “host plus gates.” Native workloads generally combine mutable `:dev` with `IfNotPresent`; registry components use mutable `:dev` with `Always`. Neither posture is an immutable release identity. |
+| **Automation and provenance** | The audited tree has no CI workflow, release script/xtask, OCI source/revision/version labels, digest-pinned project workload references, or native source-to-image attestation. Build, `wash push`, load, apply, wait, and log steps are manual README/runbook commands. `.git` is excluded from the Docker context (`.dockerignore:1-8`). | A source commit cannot be recovered from an image, and an observed pod `imageID` cannot be joined to reviewed source without an out-of-band assertion. `wamn-6s1` owns pipeline delivery; SR26 owns correctness of the receipt rather than mere automation. |
+
+The common build's eight artifacts do not imply eight services should share a
+rollout. The manifests already scale and fail most native units independently;
+the disproportionate cost is rebuild invalidation and provenance, not runtime
+placement. Likewise, flowrunner's high co-change with gates is expected for a
+guest exercised by that suite. Neither count justifies splitting a cohesive
+guest or gate composition root.
+
+### S.2 Source-to-live traces
+
+The current graph has three materially different paths:
+
+1. **Native services:** pinned root source and lockfile → common Cargo release
+   invocation → one final image → mutable local `:dev` tag → kind image import
+   or manifest → Pod. The build has no revision label or release receipt.
+2. **Embedded guests:** component source/lock/toolchain → a prior caller
+   workspace build → `components/target/.../*.wasm` → run-worker or gates image
+   → in-process instantiation. Docker neither produces nor attests those Wasm
+   bytes. This is SR17/`wamn-2jkm.80`, with discriminating clean/poisoned proof
+   `wamn-4tob.6.8`.
+3. **Registry guests:** component source → prior local component build →
+   manual `wash push ...:dev` → registry blob → WorkloadDeployment/Service
+   mutable tag → runtime pull. The gates image separately copies a local build
+   of the same nominal component. No checked receipt proves the two projections
+   equal.
+
+The gate run adds a fourth break. Thirty-nine documented recipes use
+`kubectl apply`, while only three documented Job deletions were found. Applying
+an unchanged already-completed Job does not create another execution; reading
+`logs job/<name>` can therefore credit an older run. Mutable `:dev` references
+and `IfNotPresent` add a second ambiguity even when a new Pod exists. A
+discriminating live reproduction is required because this is a High claim;
+`wamn-4tob.6.25` owns it and blocks AUDIT-X1.
+
+### S.3 Proof taxonomy
+
+| Proof class | What current evidence can establish | What it does **not** establish |
+|---|---|---|
+| **Package** | Unit/integration behavior of the compiled owner crate and its resolved dependency graph. | Image composition, deployment configuration, component bytes, or a running workload. |
+| **Contract / conformance** | WIT/schema/wire/golden/SQL agreement, parser behavior, or capability refusal at a named boundary. | That the agreeing artifact was packaged, published, or invoked. |
+| **Embedded component** | `wamn-gates` instantiates a particular `/bench/*.wasm` baked into its image against linked host/runtime code. | Equality with caller source, a separately published OCI component, the exact `wamn-host` binary, or a product deployment. |
+| **Image** | A fresh Job can execute the `wamn-gates` or builder image and inspect its packaged files/behavior. | Source revision or deployed-system parity without immutable digest and build receipts. `FROM host` is shared-layer evidence, not exact-host-binary execution. |
+| **Deployed system** | A gate reaches the actual Service, WorkloadDeployment, database, broker, and observable failure/recovery boundary. | Baseline credit unless the gate receipt names the exact immutable image/component digests and proves the execution is fresh. |
+
+`wamn-2jkm.28` now owns re-keying the runbook by stable subsystem/gate family
+and adding this proof class plus exact source/artifact/deployment and receipt
+columns. Passing a lower tier must never be promoted silently to a higher-tier
+claim.
+
+### S.4 Foundational adjudication
+
+- **SR17 stays High.** Docker accepts caller-built Wasm for run-worker and
+  gates; API/materializer use a parallel manual OCI path. Preserve the
+  component workspace and the intentional flowrunner release boundary, but
+  generate all release bytes inside one attributable graph.
+- **SR26 is new and High.** Gate-of-record receipts do not prove a fresh
+  immutable baseline artifact. `wamn-2jkm.98` owns remediation and targeted
+  proof `wamn-4tob.6.25` owns the completed-Job/mutable-image reproducer.
+- **SR20 stays Low and latent.** Host, worker, and gates copy the same direct
+  Wasmtime git revision today, and the locked graph resolves one source
+  identity. `wamn-2jkm.84` owns one workspace declaration plus a resolved-source
+  assertion; there is no present split-runtime finding.
+- **SR16 remains the builder owner.** Builder service inheritance of the full
+  runtime composition/build tree confirms the inversion; no duplicate finding
+  or speculative “builder megacrate” split is created.
+- **Guest feature resolution is presently sound.** Flowrunner and materializer
+  resolve `wamn-run-queue` without its default/`croner` edge. A future check
+  must assert that specific feature/source edge, not incorrectly ban all
+  transitive `chrono`.
+- **Default members are a measured design input, not a defect.** STR9 must
+  define fast developer, complete CI, component release, and live-system tiers
+  after timing them. It must also add Cargo-metadata layer assertions, including
+  builder-not-host and one Wasmtime source identity.
+
+### S.5 Target build/deploy constraints
+
+Without pre-empting STR9's package design, any acceptable target must:
+
+1. build every native binary and component from pinned source, locks,
+   toolchains, features, and declared inputs inside an attributable graph;
+2. publish a release manifest joining source revision, native binary, Wasm,
+   OCI/image, SBOM/signature, and deployment digests;
+3. use immutable identities for tested and deployed artifacts, while treating
+   mutable aliases as human convenience only;
+4. make every gate execution unique and emit a fail-closed receipt containing
+   source, artifact, observed `imageID`, embedded-component digests, proof
+   class, and timestamps;
+5. separate cache/rebuild boundaries where measurement shows material benefit,
+   without allowing cached or caller-provided bytes to bypass provenance;
+6. keep package/contract/embedded/image/system proof claims distinct; and
+7. prove architecture direction and release-set membership mechanically.
+
+No implementation fix, component rebuild, image build, registry push, Job
+deletion, or live gate occurred in STR7.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -2953,6 +3080,7 @@ prerequisite that makes everything else findable.
 | SR23 | `wamn:runner` WIT has no canonical source or coherence guard | Low | open | wamn-2jkm.95 |
 | SR24 | Mounted runtime configuration contracts are unversioned and inconsistent | Low | open | wamn-2jkm.96; coordinate wamn-4tob.1.16 |
 | SR25 | CDC reader public API leaks the `pg_walstream` cancellation type | Low | open | wamn-2jkm.97 |
+| SR26 | Gate-of-record receipts do not prove a fresh immutable baseline artifact | High | open | wamn-2jkm.98; proof wamn-4tob.6.25 |
 | **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
 | SR14 | D4/D19 contradiction unmarked in the decision table (§1.2) | High | **closed** | `b7fa9af` (wamn-2jkm.1; table sweep found no other same-shape row) |
 | §1.9a | Amendment-density audit (verdict per file) | Med | **closed** | `3a3bb34` (wamn-2jkm.10; 15 stamped — 13 additive, 2 contradict → rewrites wamn-2jkm.59/.60; platform-plan re-audit wamn-2jkm.63) |
