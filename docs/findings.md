@@ -1152,6 +1152,240 @@ services, or a fork.
 
 ---
 
+## H — Crate layering and dependency direction (2026-07-23)
+
+This section is the STR2 result for `wamn-4tob.2.2` at baseline
+`dddf80481bbe3a73ee2fc85094a1cd8b6dd5fc73`. It applies
+`M-SMALLER-CRATES`, `M-DONT-LEAK-TYPES`, `M-CARGO-WORKSPACE`, and
+`M-CRATES-IN-WORKSPACE` as structural heuristics, subordinate to the
+repository's deliberate WIT-shaped enums and guest/host boundaries. Evidence is
+source, locked Cargo metadata, and commit history; package count and LOC are not
+split/merge criteria.
+
+### H.1 Complete local dependency graph
+
+`cargo metadata --no-deps --format-version 1` reports:
+
+| Workspace | Packages/members/default members | Local edges | Kinds and qualifiers |
+|---|---:|---:|---|
+| Root | 38 / 38 / 38 | 99 | 90 normal, 9 dev; no local build, optional, or target-specific edges |
+| `components/` | 18 / 18 / 18 | 22 | all normal; no local dev, build, optional, or target-specific edges |
+
+Both workspaces therefore default to every member because neither declares
+`default-members` (`Cargo.toml:1-5`, `components/Cargo.toml:1-7`). In the graph
+below, root-workspace package names omit the common `wamn-` prefix, `[dev]`
+marks a development dependency, and `[no-default]` records an explicit
+`default-features = false`. Every local edge appears once.
+
+```text
+api            -> catalog, ddl, event-reg
+builder        -> host, node-invoke, node-manifest, testkit
+catalog        -> -
+cdc-reader     -> event-wire, registry | [dev] ctl, provision
+cdc1           -> -
+ctl            -> catalog, ddl, flow, impact, migrate, provision, registry,
+                  rls, run-store, seed, testkit
+ddl            -> catalog
+dispatcher     -> flow, registry, run-queue
+dm1            -> catalog, migrate, rls, seed | [dev] sysschema
+event-reg      -> catalog, event-wire
+event-wire     -> -
+f1             -> [dev] flow
+flow           -> -
+flow-tests     -> testkit
+gate-harness   -> -
+gates          -> builder, catalog, cdc-reader, ctl, ddl, dispatcher,
+                  event-reg, event-wire, flow, flow-tests, gate-harness, host,
+                  node-invoke, node-manifest, provision, registry, run-queue,
+                  run-store, run-worker, runner, testkit, waker | [dev] seed
+host           -> event-wire, node-invoke, registry, testkit
+impact         -> catalog, ddl, flow
+materializer   -> event-reg, event-wire, flow, run-queue[no-default]
+migrate        -> catalog, ddl, event-reg, schema
+node-guest     -> node-sdk
+node-invoke    -> -
+node-manifest  -> -
+node-sdk       -> -
+nodes          -> api, node-sdk
+provision      -> registry | [dev] ddl
+registry       -> -
+rls            -> catalog, ddl
+run-queue      -> run-store, sql
+run-store      -> flow, runner, sql
+run-worker     -> host, run-queue
+runner         -> flow, node-sdk
+schema         -> catalog, ddl, registry
+seed           -> catalog, ddl
+sql            -> -
+sysschema      -> [dev] catalog, ddl, rls
+testkit        -> node-invoke, run-store
+waker          -> -
+```
+
+```text
+components/api-gateway         -> wamn-api
+components/fixtures/busyloop   -> -
+components/fixtures/cred-probe -> -
+components/samples/disposition-node
+                               -> wamn-node-guest, wamn-node-sdk
+components/flow-driver         -> -
+components/flowrunner          -> wamn-flow, wamn-node-guest[caps],
+                                  wamn-node-invoke, wamn-node-sdk, wamn-nodes,
+                                  wamn-run-queue[no-default], wamn-run-store,
+                                  wamn-runner
+components/fixtures/hello      -> -
+components/samples/js-sample  -> -
+components/fixtures/logspewer  -> -
+components/materializer       -> wamn-event-reg, wamn-event-wire, wamn-flow,
+                                  wamn-materializer,
+                                  wamn-run-queue[no-default]
+components/fixtures/memhog     -> -
+components/samples/node-cred   -> -
+components/samples/node-rs     -> -
+components/fixtures/pgprobe    -> -
+components/poc-webhook-f1      -> wamn-f1, wamn-flow, wamn-run-store,
+                                  wamn-runner
+components/samples/sample-node -> wamn-node-guest, wamn-node-sdk
+components/fixtures/sockprobe  -> -
+components/fixtures/trace-relay
+                               -> -
+```
+
+The explicit no-default edges are sound: the two production guests receive
+the queue model and SQL builders without the dispatcher-only
+`serde_json`/`croner`/`chrono` feature (`crates/wamn-run-queue/Cargo.toml:15-43`,
+`components/flowrunner/Cargo.toml:17-23`,
+`components/materializer/Cargo.toml:16-20`). Metadata contains no local optional
+edge whose correctness currently depends on incidental feature unification.
+STR7 should nevertheless turn the resolved guest closures into an assertion;
+the manifest comments are not a build gate.
+
+### H.2 Allowed layers and direction
+
+The current and target designs need an enforceable dependency policy:
+
+| Layer | Responsibility | Allowed direction |
+|---|---|---|
+| 1. Boundary/domain contracts | Catalog and flow models; WIT-facing node SDK/invoke types; event envelope; manifest; stored suite/case contracts after STR5 assigns them | May depend only on smaller contract/value crates. Must not import persistence, effects, deployables, POCs, or test harnesses. |
+| 2. Pure decisions | DDL/schema/RLS/seed/impact; runner and standard-node decisions; registration/materialization/provision/migration decisions | May consume layer 1 and lower-level pure utilities. No database client, clock, runtime host, or deployable root. |
+| 3. Persistence/query decisions | `wamn-sql`, run store/queue, system-schema builders | May consume layers 1–2 and compose typed query builders. They do not become owners of product wire contracts merely because they persist them. |
+| 4. Effect/runtime adapters | Database/broker/runtime/WASI/Kubernetes adapters and deliberately narrow reusable host policy | May depend downward. They must not depend on deployable composition roots or export third-party control types without an explicit boundary reason. |
+| 5. Deployable roots | Native binaries/Jobs and component guests | Compose lower layers. A deployable must not import a peer deployable merely to reuse policy; shared behavior first gets a narrow owner. Component roots may use only guest-safe contracts/decisions. |
+| 6. Gates and fixtures | Gate binary, harness, doubles, fixtures | May consume broadly to test production paths, but production code must not depend upward on gate-only support. |
+| 7. POCs | `poc/` packages and POC components | May consume production contracts/cores; no production package may depend on a POC. |
+
+`wamn-gates` is an intentional broad fan-in, not evidence that its 22 normal
+local dependencies should merge. `wamn-run-worker -> wamn-host` is an explicit
+current-hybrid exception because the worker embeds the host runtime library;
+ARC5/STR3/STR9 decide whether that adapter is retained or narrowed.
+`wamn-builder -> wamn-host` is not the same exception: a supply-chain Job
+imports the production composition root to reuse import/grant policy and the
+engine (`crates/wamn-builder/Cargo.toml:20-36`). STR2 therefore confirms SR16
+and its existing owner `wamn-2jkm.79`.
+
+The component workspace obeys the guest-safe direction. In particular,
+flowrunner and materializer reach pure state/query builders rather than native
+service crates. The root has no production-to-POC edge. WIT-shaped error enums
+remain project-owned contract variants; this review does not convert them to
+generic errors merely to satisfy a heuristic.
+
+### H.3 Boundary and workspace findings
+
+**SR19 — product test contract points toward persistence (Med).**
+`wamn-testkit` is a versioned serialized case/assertion/evaluation contract
+used by stored suites, pin/replay, builder publication, and ctl—not merely test
+support. It depends on `wamn-run-store` and publicly re-exports
+`RunStatus`/`FailKind`/`NodeErrorKind`
+(`crates/wamn-testkit/Cargo.toml:1-19`,
+`crates/wamn-testkit/src/lib.rs:54-70`). Consequently the production host's one
+`EgressRecord` dependency and the builder's node-case evaluator both acquire
+the `run-store -> runner/flow/sql` closure
+(`crates/wamn-host/Cargo.toml:53-57`,
+`crates/wamn-builder/Cargo.toml:28-36`). Reusing one taxonomy prevents drift,
+but its current owner reverses the product-contract-to-persistence direction
+and ties case-schema evolution to storage/engine internals. STR5 must choose
+the canonical vocabulary and translation boundary before implementation;
+`wamn-2jkm.83` owns remediation after STR5/STR9.
+
+**SR20 — one type universe, three copied source pins (Low).** The host,
+run-worker, and gates each repeat the exact `wasmtime-wasi` and
+`wasmtime-wasi-http` git revision
+(`crates/wamn-host/Cargo.toml:42-47`,
+`crates/wamn-run-worker/Cargo.toml:13-18`,
+`crates/wamn-gates/Cargo.toml:21-26`), while only `wash-runtime` is
+workspace-owned (`Cargo.toml:12-22`). Locked metadata currently resolves one
+source/revision for each Wasmtime package, so there is no present split. The
+comments themselves explain that one type identity is load-bearing; a partial
+upgrade can introduce incompatible linker/store types. `wamn-2jkm.84` owns a
+single workspace declaration plus a resolved-source guard after STR7/STR9.
+
+Two lower-impact observations are routed without inflating the finding count:
+
+- `wamn-cdc-reader::run_with_token` exposes the fork's
+  `pg_walstream::CancellationToken`, so gates import the fork solely to drive
+  the service shutdown seam (`crates/wamn-cdc-reader/src/lib.rs:563-581`,
+  `crates/wamn-gates/src/f4proof.rs:47-60`). That is an external-type leak under
+  `M-DONT-LEAK-TYPES`, but only an internal test consumer is demonstrated.
+  STR5 must decide whether an opaque/local cancellation boundary is warranted.
+- Both workspaces default to gates, fixtures, samples, and POCs. This is not a
+  correctness defect by itself, and no compile-time measurement was taken.
+  STR7 owns the default-member, CI-tier, and rebuilt-artifact verdict.
+
+No blanket ban on re-exports follows. `wamn-api`'s facade, frozen wire types,
+and deliberate guest-facing exports are useful boundaries when their owner and
+compatibility policy are explicit.
+
+### H.4 Change topology and split/merge verdicts
+
+Repository history is young, so co-change is corroborating evidence rather than
+a forecast. Counts below are commits touching the path; pair counts are commits
+touching both paths:
+
+| Area | Path counts | Selected pair counts | STR2 verdict |
+|---|---|---|---|
+| Schema/catalog | catalog 6; ddl 16; schema 4; rls 5; seed 5; migrate 14 | catalog+ddl 5; ddl+rls 5; ddl+seed 4; ddl+migrate 2 | RLS/seed commonly change with DDL, but separate consumers and dependency closures remain. Do not merge on co-change alone; STR4/STR9 may consider filesystem grouping or a deliberate facade. |
+| Execution state | flow 9; runner 10; run-store 14; run-queue 33 | store+queue 8; store+runner 3; flow+queue 3 | Store/queue grouping is coherent, but distinct tables, guest feature closure, and the unresolved ARC4 target state argue against a pre-verdict merge. Retain. |
+| Runtime deployables | host 94; run-worker 7; builder 8 | host+worker 4; builder+host 1 | Host/worker co-change supports a narrow shared runtime adapter, not one deployable. Rare builder/host co-change reinforces SR16. |
+| Test product | testkit 3; flow-tests 3 | testkit+flow-tests 1 | Too little evidence for a merge. First assign contract ownership and compatibility under STR5/SR19. |
+
+The external review correctly highlighted the builder inversion and the
+customer-facing nature of test/replay (`docs/REVIEW-260723.md:179-241`).
+Its suggested broad execution/schema consolidation is not yet supported:
+catalog/flow/event/node leaves have real serialization, WIT, guest-target, or
+compatibility consumers, while the measured pairs do not show a single change
+unit. The target is not a package-count quota.
+
+Immediate structural verdicts are therefore:
+
+- **Retain:** catalog, flow, event-wire, node-sdk/node-guest/node-invoke,
+  node-manifest, SQL composition, run-store/run-queue, gates, and POC boundaries
+  until their owning target/contract reviews say otherwise.
+- **Amend:** extract builder-consumed policy from the host composition root
+  (SR16); give test/replay vocabulary a downward product-contract boundary
+  (SR19); centralize the load-bearing Wasmtime source identity (SR20).
+- **Defer exact split/merge shape:** node-host/runtime extraction (SR15/ARC5),
+  schema grouping, testkit versus flow-tests packaging, and host/worker adapter
+  placement require STR3–STR5 and ARC11/STR9 evidence.
+
+### H.5 Enforcement and downstream routing
+
+STR7/STR9 should encode, not merely document:
+
+1. a Cargo-metadata architecture assertion for the layer rules and named
+   exceptions;
+2. a guest-closure assertion proving flowrunner/materializer do not resolve
+   dispatcher-only queue features;
+3. one resolved Wasmtime source identity for every shipped runtime and its
+   gate artifact; and
+4. explicit workspace default members/CI tiers after measured build and
+   artifact-fidelity analysis.
+
+STR5 owns the case/status/error/capture contract and CDC cancellation-boundary
+decisions. STR3/STR9 own deployable-versus-library exceptions. Existing SR16
+and new SR19/SR20 are open; no proposed boundary is represented as fixed.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -1175,6 +1409,8 @@ prerequisite that makes everything else findable.
 | SR16 | Builder depends on the production runtime composition root | Med | open | wamn-2jkm.79 |
 | SR17 | Docker images package caller-built component bytes | High | open | wamn-2jkm.80; proof wamn-4tob.6.8 |
 | SR18 | Control-plane image cannot execute advertised dump/restore verbs | Med | open | wamn-2jkm.81 |
+| SR19 | Product test-case contract depends on run-state persistence | Med | open | wamn-2jkm.83; STR5/STR9 decide owner |
+| SR20 | Load-bearing Wasmtime source pin is duplicated across manifests | Low | open | wamn-2jkm.84; STR7/STR9 own guard/target |
 | **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
 | SR14 | D4/D19 contradiction unmarked in the decision table (§1.2) | High | **closed** | `b7fa9af` (wamn-2jkm.1; table sweep found no other same-shape row) |
 | §1.9a | Amendment-density audit (verdict per file) | Med | **closed** | `3a3bb34` (wamn-2jkm.10; 15 stamped — 13 additive, 2 contradict → rewrites wamn-2jkm.59/.60; platform-plan re-audit wamn-2jkm.63) |
