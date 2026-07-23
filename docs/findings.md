@@ -2297,6 +2297,173 @@ inspection alone.
 
 ---
 
+## N — Resilience, operability, and upgrade architecture (2026-07-23)
+
+This section is the ARC9 result for `wamn-4tob.1.9` at baseline
+`fda533a1a36aee6c29b22205caa021185eff7ba1`. `P` is source- or
+contract-proven, `C` is contradicted, `I` is a source-supported inference that
+still needs live reproduction, and `U` is unknown. Product RPO/RTO values are
+not invented: `.1.14` owns availability/recovery targets, `.1.16` owns
+mixed-version and rollback guarantees, and `.1.12/.1.13` own cardinality and
+capacity.
+
+**Executive verdict: amend; day-two architecture is incomplete.** PostgreSQL
+transactions, queue leases, idempotent dispatcher writes, reader refusal on a
+lost slot, and Kubernetes process restart provide useful local recovery.
+System-wide recovery still depends on undocumented expert reconciliation among
+Postgres, logical slots/WAL, JetStream, target receipts, OCI/component bytes,
+Kubernetes generations, Secrets, and object storage. Several manifests provide
+redundancy without a zero-loss contract, standing restore path, trustworthy
+readiness, or immutable release identity. A target is not operable until a
+non-expert can detect, contain, recover, and prove every supported failure
+within owner-selected bounds.
+
+### N.1 Failure and recovery matrix
+
+| Scenario | Detection and containment | Recovery owner and procedure | RPO / RTO, mode, and verdict |
+|---|---|---|---|
+| **T1 service outage** | CNPG/Kubernetes status detects loss. Tenant request and run paths exclude T1, so provisioning, placement, promotion, and audit freeze while existing tenant planes can continue (`docs/system-cluster.md:47-78`). | Platform database/operator; CNPG handles an eligible primary failure, otherwise an operator restores service and reconciles pending control operations. | RPO/RTO **U**; qualitative plane containment **P**. No outage-timing proof. |
+| **T1 primary failure** | CNPG instance/replica state. Three instances use asynchronous replication and best-effort spread (`deploy/platform/wamn-sysdb.yaml:35-45`). | CNPG automatically promotes; operator then reconciles registry/saga intent, for which no observed-generation reconciler exists (R34). | Acknowledged-write RPO is non-zero/**U** (R46, proof `.6.13`); RTO **U**. CNPG documents that asynchronous failover can lose writes and that failover quorum trades availability for safe promotion ([CNPG failover](https://cloudnative-pg.io/documentation/current/failover/)). |
+| **Total T1 loss** | Cluster/PVC absence and failed control verbs. | Database expert. The standing manifest has no ObjectStore/ScheduledBackup; the documented PITR path is deferred to reprovision (`docs/postgres-topology.md:292-316`). | RPO/RTO **U**, expert/manual, **C** to a credible standing restore path: R48/proof `.6.15`. |
+| **T2/T4 primary failure** | CNPG status plus reader disconnect/preflight. Separate org/env clusters bound the database incident, but every renderer uses asynchronous failover (`crates/wamn-provision/src/org.rs:144-169,182-227`). | Database operator; automatic promotion followed by explicit logical-slot readiness verification before CDC resumes. | Acknowledged-write RPO non-zero/**U** (R46); RTO **U**. |
+| **T3 primary, node, or PVC loss** | Pod/CNPG/connection failure. One instance and one PVC serve all admitted pooled trials (`deploy/infra/cnpg-cluster.yaml:22-48`). | Kubernetes can restart against a surviving PVC; node/PVC loss needs a restore/rebuild that is not standing. | No HA and no standing PITR: R48. RPO/RTO **U**, manual/expert. |
+| **Logical slot after promotion** | Reader preflight checks existence, active state, confirmed position, and `wal_status`; missing/lost refuses rather than silently recreating (`crates/wamn-cdc-reader/src/lib.rs:35-48,461-490,650-705`). | Database/event operator verifies the synchronized slot and standby position; otherwise re-enables capture and explicitly assesses the gap/backfill. | RPO can be zero only for a ready slot with retained WAL; otherwise gap **U**. RTO **U**. PostgreSQL says slot synchronization is asynchronous and readiness must be verified ([logical replication failover](https://www.postgresql.org/docs/current/logical-replication-failover.html)). Existing R29 owns reconciliation. |
+| **One JetStream node lost** | NATS health, leader/quorum advisories, and stream state. The R3 three-node cluster has preferred anti-affinity; the gate proves one node deletion only (`deploy/infra/nats-jetstream.yaml:21-22,105-196`). | RAFT elects with intact quorum; event operator replaces the peer if needed. | Product RPO/RTO **U**. A three-replica group needs two available replicas ([JetStream clustering](https://docs.nats.io/running-a-nats-service/configuration/clustering/jetstream_clustering)). |
+| **JetStream quorum unavailable** | Publish retries/stall records and quorum-lost advisory. The reader withholds source feedback, so source WAL grows; the blast crosses broker and source database. | Event operator restores quorum without dropping the logical slot. | Zero event RPO only while the slot remains valid; configured WAL buffer is 1 GiB (`deploy/infra/cnpg-cluster.yaml:54-63`). RPO/RTO **U**; `.6.18` compares fewer-authority alternatives. |
+| **JetStream storage full** | `CDC_PUBLISH_STALLED`, broker errors/advisories, filesystem/PVC metrics, and reader slot-headroom records. Each server advertises 3 GB file store on a 1 GiB PVC, while Limits streams omit `max_bytes` and `max_age` (`deploy/infra/nats-jetstream.yaml:39-45,189-196`, `crates/wamn-cdc-reader/src/lib.rs:603-612`). | Manual event/storage expansion or retention repair while preserving the slot. No compatible capacity invariant or runbook exists. | **I, High:** physical disk can fail before the declared broker limit; continued stall can invalidate the bounded source slot. RPO zero until invalidation, then gap **U**; RTO **U**. R50/proof `.6.22`. NATS exposes server/account resource limits and streams otherwise permit unbounded limits ([resource management](https://docs.nats.io/running-a-nats-service/configuration/resource_management), [streams](https://docs.nats.io/nats-concepts/jetstream/streams)). |
+| **All JetStream PVCs lost** | Stream/consumer absence. Repository search finds no stream/account snapshot, restore implementation, or runbook. The reader has already advanced source feedback after every publish ACK (`crates/wamn-cdc-reader/src/lib.rs:900-938`). | Event/recovery expert; proactive external snapshots could restore broker state, or the selected state model can remove the broker as authority. Neither is implemented. | **I, High:** broker-only acknowledged events may be beyond recyclable source WAL and unrecoverable. RPO can include all unmaterialized broker events; RTO unbounded/**U**. R51/proof `.6.23`. NATS DR requires proactive backups when storage/quorum cannot be recovered ([JetStream disaster recovery](https://docs.nats.io/running-a-nats-service/nats_admin/jetstream_admin/disaster_recovery)). |
+| **CDC transient sever or stall** | Structured `CDC_PUBLISH_STALLED`, preflight/reopen ladder, and slot-headroom logs; the important slot fields are not all exported metrics (`crates/wamn-cdc-reader/src/lib.rs:49-60,1134-1273`). | Reader automatically backs off/reopens while productive; Kubernetes restarts after a fatal cap; permanent broker/slot faults require event operator action. | RPO zero while the slot remains valid. Recorded 2.17 s local recovery is not a product RTO; `.1.14` owns the target and `wamn-2jkm.54/.55` own metrics/proof. |
+| **Slot WAL exhaustion/invalidation** | `CDC_SLOT_WAL_LOW/EXTENDED/UNRESERVED/INVALIDATED`, lag, and safe-byte records (`crates/wamn-cdc-reader/src/lib.rs:1200-1271`). | Fix downstream before invalidation; afterward an expert must re-enable and assess replay/backfill. Shared T3 WAL pressure affects co-tenants. | Explicit capture gap after invalidation; RPO/RTO **U**. Existing R29/`wamn-l5i9.35/.55`; no duplicate. |
+| **Materializer stale config or identity collision** | E18 accepts stale durable configuration silently; E19 collides valid registration names. Process health is not detection. | Event operator repairs deterministic identity/config, recreates the consumer, and assesses stolen/missed delivery. | RPO/RTO **U**; E18/proof `.6.10`, E19/proof `.6.16`. |
+| **Source republish or consumer rewind** | A duplicate may surface only as another run/effect; retention deletes the dedupe row. | Reconcile with stable source database/capture epoch/event/registration identity; no safe automatic inference exists. | Duplicate horizon **U**, R44/proofs `.6.9/.6.17`. |
+| **Dispatcher duplication** | Database conflicts and queue state. Write-ahead/enqueue use conflict-safe deterministic keys; cron tick identity is deterministic (`docs/run-queue.md:521-533`). | Automatic; duplicate dispatchers and doorbells collapse at the Postgres authority. | RPO zero at the run/queue transaction; **P**. No product RTO claim. |
+| **Dispatcher disappearance or NATS hint loss** | Pod status and queue depth; the dispatcher itself emits claimable-depth, so total disappearance lacks an independent freshness/progress signal (`docs/metrics.md:37-64`). | Two replicas/Kubernetes restart; workers poll every 250 ms–30 s, so doorbell loss is recoverable. Total dispatcher loss needs platform response. | Committed queue rows RPO zero; cron intentionally collapses intermediate missed ticks. RTO **U**; route observability to `wamn-0vz`/`wamn-coo`. |
+| **Runner duplication or death** | Lease owner/expiry, run records, queue depth, and logs. Two replicas claim distinct rows; an expired lease is reclaimed/reconstructed (`deploy/platform/runner.yaml:20-30`). | Automatic queue reclaim. External effects require sink idempotency or explicit ambiguous outcome because crash can occur before checkpoint. | Persisted run RPO zero; effects remain at least once. RTO is lease/poll delay but product value **U**. |
+| **Database-broken runner rollout** | **C:** the manifest has no readiness probe; the process continues backing off, so Kubernetes Ready is not database-serving readiness (`deploy/platform/runner.yaml:32-61`, `crates/wamn-run-worker/src/lib.rs:591-655`). | A bad rollout can displace working capacity; release operator must undo or forward-fix. | R42/proof `.6.6`; RTO **U**. This blocks safe rolling upgrade credit. |
+| **Catalog DDL fails in transaction** | Command failure/transaction abort. Current DDL, history, entity map, demote, and promote changes share one transaction (`docs/migration-engine.md:25-53,83-96`, `crates/wamn-ctl/src/migrate_catalog.rs:390-395`). | Automatic rollback; project operator corrects the plan and reapplies. | RPO zero; near-immediate transaction rollback, **P** for current transactional steps. |
+| **Post-commit replica-identity reconcile fails** | Command failure after migration commit; no automatic gap accounting (`crates/wamn-ctl/src/migrate_catalog.rs:247-256`). | Retry idempotent reconcile and assess old-image capture during the interval. | Old-image gap/RTO **U**; existing `wamn-l5i9.65`/RI owners. |
+| **Stale or torn serving schema** | No served-generation attestation; request errors or behavioral drift. Publish performs multiple catalog/OID/RI stages and gateway snapshot reload is unwired (`crates/wamn-ctl/src/publish_catalog.rs:263-299`, `components/api-gateway/src/lib.rs:50-62,198-204`). | Manual republish/restart; future atomic version/hot reload. | R35/proof `.6.2`; RTO **U**, `wamn-32n` owns reload. |
+| **Provisioning partial failure** | Command/resource failure; no reconciler compares T1 intent to observed generation. | External resources and T1 rows cannot share a transaction. Human cleanup/retry; durable effect receipts/compensation absent. | R34/proof `.6.1`; RPO/RTO **U**, `wamn-2ib` owns saga execution. |
+| **System/run-schema partial fleet upgrade** | Per-database reconcile output; no fleet generation/release attestation. | One project database can differ from the rest; retry manually with `wamn-6eb`. | Mixed-version semantics and RTO **U** under `.1.16`. |
+| **Runtime/component rolling upgrade** | Kubernetes rollout status, which R42 makes insufficient. Runs pin `flow_version`, not executor/component/image identity; flowrunner bytes sit in mutable `wamn-run-worker:dev` (`deploy/sql/run-state.sql:50-70`, `Dockerfile:57-66`, `deploy/platform/runner.yaml:107-110`). | Release operator must retain compatible old capacity, quiesce/drain, or route by execution artifact; current rollback is template/rebuild only. | Exact contract `.1.16`; SR17/R42 proofs `.6.8/.6.6`. Kubernetes RollingUpdate can co-run old and new versions ([Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)). |
+| **Runtime or WAL-reader fork upgrade** | Pin/build failure and selected gates. `wash-runtime` carries six patches; `pg_walstream` carries one (`docs/wash-runtime-fork.md:34-47`, `docs/pg-walstream-fork.md:23-32`). | Fork maintainer rebases/cherry-picks/drops patches and rebuilds; rollback repoints the prior revision, but does not identify live prior image bytes or active-run compatibility. | RPO/RTO/mixed-version proof **U**; `.1.16`, SR17/SR20. |
+| **OCI/component registry loss** | Registry readiness/image pulls. One replica uses `emptyDir`; mutable `:dev` artifacts can disappear/change (`deploy/platform/registry.yaml:18-19,24-61`). | Existing processes may continue; restart requires manual reproducible rebuild/re-push, which is not proven. | Artifact RPO/RTO **U**. R43/SR17/STR7 own provenance/recovery. |
+| **Backup store loss** | MinIO readiness and failed backup/archive jobs. The checked-in store is explicitly development-only, single-replica, Recreate, and `emptyDir` (`deploy/infra/minio.yaml:1-14,37-81,98-134`). | Development bytes are unrecoverable; production recovery domain is unspecified. | Product RPO/RTO **U**; R47/R48 and `.1.14`. Do not mislabel this dev manifest as production DR. |
+| **Regional/Kubernetes-cluster loss** | External cluster monitoring; no regional drill. Region is explicitly design-only (`docs/deployment-model.md:369-375`). | Expert rebuild; etcd/Secret, OCI, backup, placement, and cross-store recovery are unspecified. Kubernetes requires periodic etcd backup for total control-plane loss ([etcd backup](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)). | RPO/RTO **U**; `.1.14/.1.15/.1.17`. |
+| **Copy/move crash or operator error** | Saga log only; no per-effect durable receipt. R40 can report completion without serving cutover. | Expert inspects source/destination/T1/Secrets, compensates, or forward-fixes. Target move must fence source, attest destination, atomically advance placement generation/credentials, and keep a read-only rollback window. | R40/proof `.6.5`; RPO/RTO **U**, `wamn-2ib` owns orchestration. |
+| **In-place restore error** | CLI/`pg_restore` failure; no traffic fence or readiness attestation. | Restore to scratch, validate, then controlled cutover. Current confirmed `--clean` against a live DB remains unsafe. | R41/proof `.6.5`; chosen restore-point RPO and RTO **U**. |
+| **Destructive catalog migration with asserted backup** | The CLI converts `--confirm-with-backup` directly to a boolean confirmation and checks no backup ID, scope, completion, integrity, or restore health (`crates/wamn-ctl/src/migrate_catalog.rs:68-71,97-107,400-406`). | Project database operator restores from an actually valid checkpoint or forward-fixes; the command cannot currently name one. | **I, High:** irreversible drops/retypes can commit without usable recovery evidence. R52/proof `.6.24`; owner target `.1.14`. |
+| **Bounded-cell failure/movement** | Target cell admission, placement generation, and recovery metrics do not yet exist. | Placement/control and database operators follow the fenced movement protocol in J.4 after cell bounds are selected. | Entire RPO/RTO/admission envelope **U** under `.1.12`–`.1.17`; target design receives no shipped credit. |
+
+The direct CDC→Postgres alternative in K.4 reduces this matrix: a source-derived
+receipt, run, and queue commit in one project database transaction before source
+feedback removes broker/consumer recovery from the executable trigger path.
+It remains a hypothesis until `.6.18` drives identical writes, stalls, crashes,
+replay, and restore. A durable workflow engine would similarly make
+code-version routing explicit rather than eliminate it; workflow replay still
+requires deterministic/version-compatible code
+([Temporal workflow definitions](https://docs.temporal.io/workflow-definition),
+[Worker Versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning)).
+
+### N.2 Cross-store recovery ledger
+
+| Store or authority | Present identity and recovery fact | Required convergence |
+|---|---|---|
+| **T1 Postgres** | Owns org/project/env placement and saga intent; async acknowledgement loss R46, no standing PITR R48, no observed-resource generation R34. | Restore T1 without reassigning semantic/placement identity; reconcile every desired resource to observed generation before publishing readiness. |
+| **Tenant Postgres/run queue** | Strongest local atomic boundary: `(tenant, run_id)`, pinned flow version, queue lease, and target receipts. T3 has one instance/no standing PITR; T2/T4 failover is async. | Selected durability class, standing restore, placement identity, effect ambiguity, and compatible executor artifact. |
+| **WAL/publication/slot** | Source LSN/order; feedback waits for broker ACK; retention is bounded and failover synchronization asynchronous. | Capture epoch/timeline, verified slot readiness, explicit gap/backfill outcome, and safe feedback relation to the next authority. |
+| **JetStream** | Stream bytes/sequence, consumer ACK floor, bounded message-id window. R3 handles one node; E18/E19/R44 plus new capacity and DR gaps remain. | If retained: bounded capacity, external snapshots, restored consumer/epoch reconciliation, and target-receipt comparison. If removed: no correctness authority remains here. |
+| **OCI/component bytes** | Digest should be identity; proof registry is ephemeral, tags mutable, invoked ConfigMap bytes can diverge (R43), and images package caller-built Wasm (SR17). | Immutable source→component→image→deployment receipt and recoverable registry, including the exact executor for active/parked runs. |
+| **Kubernetes desired/observed state** | Resource UID/generation/status should relate T1 intent to reality; R34 lacks that receipt and R42 makes Ready false evidence. | Versioned desired/observed generation, workload-specific readiness, and external etcd/cluster recovery. |
+| **Secrets** | Names/references are stored; secret version, rotation convergence, live reload, and external recovery source are absent. | Versioned secret authority, recoverable external source, bounded rotation/revocation, and proof that stale holders lose authority. |
+| **Backup/object bytes** | Logical-dump and rendered CNPG mechanisms exist; standing T1/T3 coverage is absent. Metadata, completion, byte integrity, and restorability have separate owners. | Immutable checkpoint ID tying scope, catalog, bytes, completion, integrity, retention, restore proof, and migration/cutover history. |
+
+These stores cannot be restored independently. In particular, restoring a
+source database or broker without capture epoch and target-receipt
+reconciliation can reuse event identity; restoring T1 without observed
+Kubernetes state can publish stale placement; and restoring catalog/data
+without the compatible executor can strand active runs. `.1.17` remains the
+canonical state-authority decision rather than duplicating these requirements.
+
+### N.3 Upgrade and fork ownership
+
+- **Carried patches:** `wash-runtime` has six recorded patches and
+  `pg_walstream` one. The wash summary at `docs/wash-runtime-fork.md:10-13`
+  describes only a subset, while the authoritative ledger is at lines 34-47.
+  The oldest carried patch is eleven days old at this audit; that is an age
+  observation, not evidence of future upgrade safety.
+- **Upstream disposition:** every patch has an exit condition, but no upstream
+  issue/PR is recorded. D23 explicitly makes upstreaming opportunistic and
+  removed a hard patch-count ceiling (`docs/wash-runtime-fork.md:120-129`).
+  This contradicts the external review's preferred governance but is a known
+  decision, not an accidental unknown. ARC11 may amend it; ARC9 does not
+  silently rewrite D23.
+- **Conformance:** epoch/memory/trace and the WAL-reader patch have recorded
+  evidence; TCP/UDP negative runtime and the metrics patch still ride a later
+  deployed rebake (`docs/wash-runtime-fork.md:131-140`). Therefore not every
+  carried behavior has a baseline-matched deployed negative gate.
+- **Continuous upgrades:** the runbook names immediate security, quarterly
+  minor, and weekly advisory review until CI exists
+  (`docs/wash-runtime-fork.md:61-70`). Current entries are feature-driven pin
+  changes on one v2.5.2 base, not a continuous base-upgrade campaign.
+- **Provenance and rollback:** immutable Cargo revisions identify build input,
+  but mutable image tags, SR17 packaging, absent deployed receipts, R42
+  readiness, and missing execution-artifact identity prevent proof of what is
+  live or which old capacity can safely resume a run. Repointing a revision and
+  rebuilding is not a production rollback contract.
+- **Cardinality:** no 100/1,000/10,000-project measurement exists for
+  reconciliation time, Kubernetes/etcd objects, NATS consumers, rollout
+  duration, cold-start tail, or idle cost. Route those unknowns to
+  `.1.12/.1.13` and STR7; do not infer a fleet limit from local gates.
+
+Runtime forks are therefore owned product subsystems while they remain. Safe
+upgrade requires per-patch negative conformance, immutable deployed provenance,
+old/new WIT/HTTP/NATS/SQL compatibility, active-run artifact routing,
+quiesce/drain/resume, preserved old capacity, and tested rollback/forward-fix.
+`.1.16`, SR17, SR20, STR7, ARC11, and STR9 own the target; no duplicate finding
+is created here.
+
+### N.4 New findings and proof
+
+| ID | Sev | Finding and consequence | Bead / proof |
+|---|---:|---|---|
+| **R50** | High | JetStream advertises 3 GB file capacity per server on a 1 GiB PVC, while event streams have no byte/time growth bound. Physical fill can stall publication, exhaust source WAL, and invalidate capture before the declared broker limit. | `wamn-2jkm.90`; proof `wamn-4tob.6.22`; requirements `.1.12`–`.1.14`. |
+| **R51** | High | No event-plane snapshot/restore path exists after PostgreSQL feedback advances on broker ACK. Total broker-PVC loss can permanently lose acknowledged but unmaterialized events that source WAL no longer retains. | `wamn-2jkm.91`; proof `wamn-4tob.6.23`; authority `.1.17`; alternative `.6.18`. |
+| **R52** | High | Destructive migration authorizes drops/retypes from an unaudited boolean backup assertion. No checkpoint identity, scope, completion, integrity, health, or restore evidence is verified before commit. | `wamn-2jkm.92`; proof `wamn-4tob.6.24`; recovery contract `.1.14`. |
+
+No new finding is minted for active-run artifact identity (`.1.16`), regional
+DR/Secret/etcd authority (`.1.14/.1.15/.1.17`), dispatcher progress metrics
+(`wamn-0vz`/`wamn-coo`), slot invalidation/failover (R29 and reader owners),
+or existing R34/R40/R41/R42/R44/R46/R48/E18/E19/SR17. None is closed by this
+assessment.
+
+### N.5 Target recovery and operations invariants
+
+1. Every placement class has owner-set RPO/RTO, outage buffer, capacity margin,
+   maximum tenant radius, and automatic/manual recovery classification.
+2. Acknowledgement is released only when the next durable authority can
+   reconstruct all accepted work after its largest supported failure.
+3. Every store carries immutable generation/epoch/checkpoint identity and a
+   reconciler compares it with adjacent authorities after restore.
+4. Readiness proves the workload's real serving dependencies and compatibility;
+   rollout preserves old working capacity until new capacity passes it.
+5. Active and parked runs retain the exact executor/component/config contract
+   required to resume, with tested mixed-version and rollback behavior.
+6. Backup is an externally durable, integrity-checked, attributable recovery
+   checkpoint with a measured restore—not a resource name or operator boolean.
+7. Operator procedures refuse unsafe ambiguity, identify the recovery owner,
+   and report the exact recovered point, missing interval, duplicate interval,
+   and forward-fix/rollback choice.
+8. Architecture spikes use artifacts proven to match the pinned baseline.
+   Source inspection can establish contradictions but cannot claim live RPO,
+   RTO, failover, or restore success.
+
+No live failure campaign ran because deployed artifact provenance was not proven
+to match the baseline. R50–R52 and every inherited High/Critical claim retain
+named executable evidence rather than being represented as repaired.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -2320,6 +2487,9 @@ prerequisite that makes everything else findable.
 | R47 | One object-store root credential spans recovery and observability domains | High | open | wamn-2jkm.87; proof wamn-4tob.6.14 |
 | R48 | Standing T1 and T3 clusters lack the promised PITR path | High | open | wamn-2jkm.88; proof wamn-4tob.6.15 |
 | R49 | Untrusted custom-node build shares artifact-signing authority | High (latent) | open | wamn-2jkm.89; proof wamn-4tob.6.19; blocks wamn-0si.7 |
+| R50 | JetStream capacity is incompatible with physical storage and source-WAL safety | High | open | wamn-2jkm.90; proof wamn-4tob.6.22 |
+| R51 | Event-plane disaster recovery is absent after source feedback advances | High | open | wamn-2jkm.91; proof wamn-4tob.6.23 |
+| R52 | Destructive migration trusts an unverified backup assertion | High | open | wamn-2jkm.92; proof wamn-4tob.6.24 |
 | E18 | Materializer silently accepts stale durable-consumer configuration | High | open | wamn-l5i9.69; proof wamn-4tob.6.10 |
 | E19 | Materializer durable-consumer identity collides across valid registrations | High | open | wamn-l5i9.70; proof wamn-4tob.6.16 |
 | SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78 |
