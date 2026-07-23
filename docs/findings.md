@@ -2725,6 +2725,101 @@ correctness finding as fixed.
 
 ---
 
+## Q — Contract and interface ownership (2026-07-23)
+
+This section is the STR5 result for `wamn-4tob.2.5` at baseline
+`c433a31d6f21c0f4e2bcdf421712dabd358d5c9a`. The Rust API guidance is applied
+at translation boundaries, while the repository's WIT-shaped error enums and
+frozen wire literals remain the controlling project convention.
+
+**Executive verdict: retain the deliberate leaf contracts and amend four
+unowned boundaries.** Node SDK/guest/invocation/manifest, event wire, the
+native and component workspaces, and distinct deployables express real trust
+or compatibility boundaries. The API planner remains the single entity
+operation owner; no entity-access service or second SQL planner is warranted.
+The product scenario contract must stop depending upward on persistence, and
+the production/scenario built-in vocabulary needs one exhaustive descriptor.
+Four newly recorded structural findings cover the remaining unowned or leaked
+contracts: SR22–SR25.
+
+### Q.1 Contract owner and compatibility matrix
+
+| Contract | Canonical owner and crossing | Compatibility and translation policy | Executable evidence or gap |
+|---|---|---|---|
+| **`wamn:node@0.1.0`** (`types`, `handler`, `payloads`, `credentials`, `control`; three worlds) | `docs/wamn-node.wit`; custom guest ↔ host. `wamn-node-sdk` is the minimal authoring leaf, `wamn-node-guest` owns bindgen conversion, `wamn-node-invoke` owns host/guest HTTP representation, and node manifest owns discovery metadata (`docs/wamn-node.wit:1-23,90-235`). | Retain these four boundaries. Optional capabilities remain explicit WIT imports; the host owns sockets, credentials, limits, and grants. Additive/clarifying `0.1.x`; breaking `0.2`. WIT error/status variants and exact kebab-case literals remain canonical. Previous-major execution is only a policy claim until mixed-version proof exists. | `crates/wamn-node-sdk/tests/wit_coherence.rs:26-168` pins known subsets and Rust mirrors. STR6 identifies an incomplete inventory, routed to SR7/C3-6 rather than a second contract taxonomy. |
+| **`wamn:postgres@0.1.0`** | `docs/wamn-postgres.wit`; host plugin ↔ gateway, flowrunner, materializer, POCs, probes, and authorized node worlds (`docs/wamn-postgres.wit:1-102`). | Retain doc-of-record and explicit shell translations. Host owns claims, schema choice, sockets, and resource limits. Additive/clarifying `0.1.x`; breaking `0.2`; unknown enum variants are not guessed. | Discovery proves exactly seven copies plus semantic/code equality (`crates/wamn-host/tests/postgres_wit_coherence.rs:53-216`). |
+| **`wamn:jetstream@0.1.0`** | `docs/wamn-jetstream.wit`; host plugin ↔ materializer/sample guest. The host owns broker identity, stream provisioning, sockets, and tenant-derived doorbell (`docs/wamn-jetstream.wit:15-160`). | Retain as a narrow durable-event transport contract unless an upstream interface can express its headers, pull consumer, and acknowledgement semantics. Same `0.1.x`/`0.2` rule. | All three copies are byte-compared and MVP functions are pinned (`crates/wamn-host/tests/jetstream_wit_coherence.rs:15-66`). E18 separately owns live durable-consumer configuration drift. |
+| **`wamn:runner@0.1.0`** | Intended execution-contract owner; currently two peer vendored copies under host and flowrunner. This trusted host ↔ resident-runner ABI mutates credentials, egress grants, and causation state (`crates/wamn-host/wit/deps/wamn-runner/package.wit:1-53`). | Assign one canonical source. A same-release-only host/runner policy is acceptable if stated, discovered, byte-guarded, and rolled atomically; mixed versions otherwise require an explicit matrix. | The copies are currently byte-identical but have no canonical source or discovery guard: SR23/`wamn-2jkm.95`. |
+| **Deployable, fixture, and sample WIT worlds** | Each component shell owns its world: host, API gateway, flowrunner, materializer, POC, probe, gate fixture, and sample. `wamn:nodebench@0.1.0` is gate-fixture-owned; WASI package/version pins are upstream contracts. | A shell world has no separate customer compatibility promise beyond the public packages it imports. Do not promote operational flowrunner exports into an application invocation protocol. Upstream WASI copies may evolve deliberately per component, subject to build/link compatibility. | Component builds and product gates cover imports. STR6 routes uncovered node/nodebench sample-copy discovery to SR7/C3-6. |
+| **Generated REST API v1** | `wamn-api` owns route/entity semantics, parameterized SQL, response shape, and stable 4xx codes; `api-gateway` translates WASI HTTP and Postgres (`crates/wamn-api/src/lib.rs:1-72`; `crates/wamn-api/src/router.rs:21-78`; `crates/wamn-api/src/error.rs:14-68`). | Retain one planner. A transport-neutral `EntityOperation` vocabulary may live inside this existing owner so HTTP and standard Postgres nodes construct the same plan. It does not justify a new service/package or duplicate SQL planner. Auth and generated specs are distinct shells. | API compiler tests own semantics; gateway and deployed API gates own translation. OpenAPI remains with `wamn-tsn`. |
+| **Custom-node invocation HTTP v0** | `wamn-node-invoke`; flowrunner guest ↔ independently deployed `serve-node`. It mirrors WIT context, payload, emission, and node-error shapes and owns internal HMAC/timestamp headers (`crates/wamn-node-invoke/src/lib.rs:1-198`). | Retain the boundary, but add an explicit wire identity and old/new compatibility matrix. Public ingress authentication must never reuse its keys, signature domain, replay window, or rotation policy. | Current same-crate round-trips/signing do not exercise mixed deployments. Strict `deny_unknown_fields` makes an additive request field fail on an old receiver: SR22/`wamn-2jkm.94`. |
+| **Generic flow invocation and route binding** | Not yet implemented. Registry/control owns trusted host/path → org/project/environment/trigger/flow lookup; the selected execution owner defines invocation semantics. F1 is a POC, and flowrunner WIT is an operational control surface. | Versioned adapters carry stable delivery/run identity, route-derived tenancy, pinned flow/execution artifacts, sync/async acknowledgement, deadlines/timeouts/cancellation, and orphan recovery. Ingress remains a thin shell with no graph walker, dispatch policy, or private run-state SQL. External caller, ingress-to-executor, and executor-to-node authentication are three trust domains. | Existing owners are `wamn-fqg.39`, R36/R37, `.1.15`–`.1.17`, and proof `.6.3`; no duplicate finding. |
+| **Catalog and flow JSON Schemas** | Rust types in `wamn-catalog` and `wamn-flow`; checked schemas are generated published artifacts. Schema-format version and catalog/flow instance version are independent (`crates/wamn-catalog/src/lib.rs:1-47`; `crates/wamn-flow/src/lib.rs:1-40`). | Keep separate contracts, strict object validation, and explicit storage translations. Additive/clarifying schema `0.1.x`; breaking `0.2`; an applied instance remains pinned independently. | Fixture parse/validate/round-trip and exact generated-schema drift tests exist in each owner crate. |
+| **Node manifest and embedded schemas** | `wamn-node-manifest`; builder writes OCI annotation JSON, registry/editor reads discovery metadata, and runner/host consumes execution/config data (`crates/wamn-node-manifest/src/lib.rs:1-103,299-310`). | Keep artifact version, manifest schema version, and WIT contract version distinct. Unknown manifest fields fail closed. WIT owns execution ABI; JSON owns discovery/config metadata. | Round-trip, negative, schema, drift, and annotation-key tests exist. C3-7/`wamn-fqg.27` own the gap between generated structural schema and stronger procedural validation. |
+| **Event envelope** | `wamn-event-wire`; CDC reader produces, materializer consumes, gates import the same leaf (`crates/wamn-event-wire/src/lib.rs:1-13,39-111`). | Retain frozen `0.1.0` wire and exact subject/message identity rules. Because readers are strict, an “additive” field is deployable only if old readers explicitly accept it or a new envelope version is selected. | Golden JSON, omission, causation, unknown-field, and round-trip tests live in the owner; `.1.16` owns cross-release policy. |
+| **Registration expression context and persisted event-run input** | `wamn-event-reg` owns declaration/version/JMESPath grammar, but materializer currently owns the frozen `{"op","old","new"}` context and persisted trigger-input grammar (`crates/wamn-event-reg/src/model.rs:25-36`; `crates/wamn-materializer/src/context.rs:1-88`; `crates/wamn-materializer/src/input.rs:1-94`). | Target logical ownership of expression vocabulary is the registration/event contract; materializer translates envelope → context. Persisted run input remains a replayed execution-trigger contract. This is a STR9 placement decision, not a second taxonomy or present correctness finding. | Registration validation and exact context/input goldens already freeze behavior. |
+| **SQL schema and query contracts** | Table semantics are owned per file/crate: registry/system, app-system, catalog/migrate/event registration, flow registry, run store, run queue, and flow suites. `wamn-sql` owns only arity-carrying composition (`deploy/sql/*.sql`; `crates/wamn-sql/src/lib.rs:1-15`). | Preserve semantic owner per table. Storage translates from canonical product execution/event/scenario types; persistence does not own them merely because it stores them. Physical source/generation and stand-in policy are STR6/SR13. Ingress may not bypass an owner with private SQL. | Selective DDL/query/live guards exist; SR13 and `wamn-v1pp` own uncovered drift. |
+| **CLI and deployment configuration** | Each binary owns its Clap surface. Kubernetes built-ins and external CRD `apiVersion`s own schema; repository manifests own desired instances. Builder owns generated serve-node YAML (`crates/wamn-host/src/main.rs:20-49`; `crates/wamn-builder/src/main.rs:11-39`; `crates/wamn-ctl/src/main.rs:21-98`). | CLI compatibility follows artifact version. Do not claim runtime-operator compatibility without pinned/rendered external schema evidence. Generated manifests must be structurally compatible with the deployable they claim to emit. | Parser/unit tests and builder goldens exist; STR6 routes the serve-node divergence to `wamn-fqg.21/.23` and R43. |
+| **Mounted JSON configuration** | Dispatcher owns `projects.json`; Postgres plugin owns its project/pool map; credentials plugin owns its vault map (`crates/wamn-dispatcher/src/lib.rs:100-166`; `crates/wamn-host/src/plugins/wamn_postgres/pool.rs:111-170`; `crates/wamn-host/src/plugins/wamn_credentials.rs:128-183`). | Each independently mutable image/config pair needs a format version or an explicit atomic-rollout rule, plus one unknown/missing/wrong-type policy. Confidential values and structural config remain separate. | Current parsers differ and no old/new fixtures or schemas exist: SR24/`wamn-2jkm.96`. |
+| **Product scenarios, suites, capture, status, and error** | `wamn-testkit` owns serialized cases/assertions/captures/evaluation, but currently imports and re-exports persistence-owned run/failure/node status enums. `wamn-flow-tests` owns suite envelope/storage (`crates/wamn-testkit/src/lib.rs:1-181`; `crates/wamn-flow-tests/src/lib.rs:1-125`). | Put `RunStatus`, `FailKind`, `NodeRunStatus`, and node-error classification in one lower guest-safe execution vocabulary. Runner/store/queue/scenario consume it; run-store alone translates to SQL. Scenario owns `TestCase`, `Assertion`, normalization, captured facts, outcome, and egress observation. No parallel taxonomy. | SR19/`wamn-2jkm.83`; existing serde, suite, pin/replay, and gate evidence must remain compatible. |
+| **Service shutdown control** | `wamn-cdc-reader` should own a local shutdown boundary; it currently exports the fork's `pg_walstream::CancellationToken` to gates and live tests (`crates/wamn-cdc-reader/src/lib.rs:533-581`; `crates/wamn-gates/src/cdcbench.rs:63-77`). | Fork control types remain inside the adapter. A local opaque handle, owned receiver, or cancellation future must define cancellation ownership, completion, repeated stop, and cleanup without leaking the dependency. | No local boundary exists and gates declare the fork solely for this type: SR25/`wamn-2jkm.97`. |
+
+### Q.2 Structural adjudications
+
+- **SR19:** lifecycle/status vocabulary moves below persistence; product
+  scenario types consume it. Preserve WIT-shaped variants and serialized
+  literals. Persistence and host are not product-contract owners.
+- **SR21:** one exhaustive guest-safe descriptor classifies every flow node
+  type and scenario-support level. Standard descriptors may remain in
+  `wamn-nodes`; engine intrinsic/custom/legacy classes belong to the execution
+  contract; both are composed once for flowrunner and suite drivability.
+  Add/remove/rename fails until both execution and scenario support are
+  classified. Unknown types stay fail-closed.
+- The entity-operation proposal is accepted only as a vocabulary inside the
+  existing `wamn-api` planner. No `entity-access` service/package is authorized
+  without a second stable serialized consumer and independent deploy reason.
+- `node-sdk`, `node-guest`, `node-invoke`, node manifest, event wire, native
+  and component workspaces, and separate deployables are retained. Their small
+  boundaries encode trust, guest safety, wire ownership, or release lifecycle,
+  rather than stylistic crate splitting.
+
+### Q.3 New structural findings
+
+**SR22 — custom-node invocation wire lacks a version and mixed-version
+contract (Medium).** Flowrunner and `serve-node` roll independently, but their
+strict JSON envelope has no version identity. A newly added optional request
+field is rejected by an older receiver before any negotiated outcome, and no
+old/new response, error, key-rotation, drain, or rollback matrix exists.
+`wamn-2jkm.94` owns the concrete protocol and fixtures; `.1.16` owns the
+product-wide compatibility promise.
+
+**SR23 — `wamn:runner` WIT has no canonical source or coherence guard
+(Low).** Its host and flowrunner files are byte-identical today, but neither is
+authoritative and no discovery test prevents a one-sided edit to the trusted
+credentials/egress/causation control ABI. `wamn-2jkm.95` owns one canonical
+source, exhaustive copy discovery, mutation guard, and explicit same-release
+or mixed-version rule.
+
+**SR24 — mounted runtime configuration contracts are unversioned and
+inconsistent (Low).** Dispatcher, Postgres-plugin, and credential JSON are
+independently mutable deployment inputs but lack format versions or atomic
+image/config rules. Their parsers do not share an explicit unknown, missing,
+wrong-type, or invalid-optional-value policy. `wamn-2jkm.96` owns per-format
+owners and old/new fixtures; it must not merge confidential values with
+structural configuration merely to share a schema.
+
+**SR25 — CDC reader public API leaks the `pg_walstream` cancellation type
+(Low).** `run_with_token` exposes a fork control primitive, making gates depend
+on the fork solely to stop the production reader. This is not a behavior defect
+in the current demonstrated callers, but it reverses adapter ownership and
+makes a fork API part of the service contract. `wamn-2jkm.97` owns a local
+shutdown contract and deterministic cancellation/cleanup tests.
+
+No Critical/High behavioral finding is introduced, so STR5 creates no
+additional `AUDIT-VERIFY` issue. No implementation or live gate ran.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -2757,9 +2852,13 @@ prerequisite that makes everything else findable.
 | SR16 | Builder depends on the production runtime composition root | Med | open | wamn-2jkm.79 |
 | SR17 | Docker images package caller-built component bytes | High | open | wamn-2jkm.80; proof wamn-4tob.6.8 |
 | SR18 | Control-plane image cannot execute advertised dump/restore/copy paths | Med | open | wamn-2jkm.81 |
-| SR19 | Product test-case contract depends on run-state persistence | Med | open | wamn-2jkm.83; STR5/STR9 decide owner |
+| SR19 | Product test-case contract depends on run-state persistence | Med | open | wamn-2jkm.83; STR5 set vocabulary direction, STR9 packages it |
 | SR20 | Load-bearing Wasmtime source pin is duplicated across manifests | Low | open | wamn-2jkm.84; STR7/STR9 own guard/target |
-| SR21 | Stored-suite drivability duplicates an incomplete production dispatch contract | Med | open | wamn-2jkm.93; STR5/STR9 own contract/packaging |
+| SR21 | Stored-suite drivability duplicates an incomplete production dispatch contract | Med | open | wamn-2jkm.93; STR5 set composed descriptor, STR9 packages it |
+| SR22 | Custom-node invocation wire lacks a version and mixed-version contract | Med | open | wamn-2jkm.94; coordinate wamn-4tob.1.16 |
+| SR23 | `wamn:runner` WIT has no canonical source or coherence guard | Low | open | wamn-2jkm.95 |
+| SR24 | Mounted runtime configuration contracts are unversioned and inconsistent | Low | open | wamn-2jkm.96; coordinate wamn-4tob.1.16 |
+| SR25 | CDC reader public API leaks the `pg_walstream` cancellation type | Low | open | wamn-2jkm.97 |
 | **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
 | SR14 | D4/D19 contradiction unmarked in the decision table (§1.2) | High | **closed** | `b7fa9af` (wamn-2jkm.1; table sweep found no other same-shape row) |
 | §1.9a | Amendment-density audit (verdict per file) | Med | **closed** | `3a3bb34` (wamn-2jkm.10; 15 stamped — 13 additive, 2 contradict → rewrites wamn-2jkm.59/.60; platform-plan re-audit wamn-2jkm.63) |
