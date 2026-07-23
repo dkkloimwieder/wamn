@@ -1799,6 +1799,156 @@ target topology is proposed.
 
 ---
 
+## K — Event and trigger architecture alternatives (2026-07-23)
+
+This section is the ARC7 result for `wamn-4tob.1.7` at baseline
+`f10a008bd6dd466c8c98d5f45a10b2274876885d`. It rechecks D19 against source,
+the recorded event campaigns, and current official PostgreSQL, NATS, Kafka,
+Redpanda, and workflow-engine material.
+
+**Executive verdict: amend D19.** The durable Postgres run queue is the default
+trigger plane. A retained event log is an optional distribution capability for
+independent replay, late-bound fan-out, or ingestion capacity isolated from the
+tenant database—not a prerequisite for cron, timers, API starts, retry, wake,
+or every row trigger.
+
+The preferred hypothesis is direct materialization for executable row changes:
+decode a committed source transaction, commit a source-derived receipt plus run
+and queue rows in the project database, then advance the logical slot.
+Transactional outbox remains the best fit when the source application can name
+an intentional domain/integration event in its own transaction. A Postgres raw
+inbox or broker survives only where a product requirement needs raw history,
+historical re-evaluation, independent consumers, or a measured outage/burst
+buffer. ARC11—not this section—will amend the canonical D19 row.
+
+### K.1 Current chain and defensible guarantees
+
+| Boundary | Current transaction/durability fact | Defensible guarantee and recovery |
+|---|---|---|
+| **Tenant mutation → WAL** | PostgreSQL commits the application transaction before logical decoding. The reader buffers every row between Begin and Commit (`crates/wamn-cdc-reader/src/lib.rs:839-899`). | Atomic source commit and source-database commit order. |
+| **WAL → reader** | One durable logical slot streams one database. PostgreSQL warns that a crash can rewind the slot and resend changes, and the client must prevent ill effects ([logical-decoding slots](https://www.postgresql.org/docs/current/logicaldecoding-explanation.html)). | At least once while required WAL and catalog state survive. A missing/invalid slot is a capture-gap incident. |
+| **Reader → JetStream** | Every row is published with `Nats-Msg-Id=<project-env>:<row-lsn>`; every server ACK settles before the commit `end_lsn` becomes flushed/applied (`crates/wamn-cdc-reader/src/lib.rs:839-938`). | At least once. JetStream publication dedupe is bounded by the configured duplicate window, not the source-history lifetime ([JetStream model](https://docs.nats.io/using-nats/developer/develop_jetstream/model_deep_dive)). |
+| **Stream → materializer** | One explicit-ACK durable consumer per derived registration name; current bind does not prove existing configuration (E18) (`components/materializer/src/main.rs:390-425`, `crates/wamn-host/src/plugins/wamn_jetstream.rs:357-388`). | At least once under ACK loss, `AckWait`, or consumer recovery. Current name derivation can collapse distinct registrations (E19). |
+| **Delivery → run/queue** | Run write-ahead and queue insert share one Postgres transaction; only the run-insert winner enqueues (`components/materializer/src/main.rs:340-387`). | One retained run/queue result per current `(tenant, flow, stream_seq)` identity. It is not a source-event or unbounded guarantee. |
+| **Run commit → consumer ACK** | Materializer ACKs after the database transaction, but discards ACK/NACK/TERM results (`components/materializer/src/main.rs:427-543`). | Redelivery is harmless only while a durable source receipt survives and maps to the same identity. R38 owns durable refusal; R44 owns identity retention/source stability. |
+| **Queue → worker** | Claim, lease, checkpoint, park, reclaim, and completion are separate durable transitions (`docs/run-queue.md:47-98,239-430`). | At least once after worker loss. NATS doorbells are optional hints. |
+| **Worker → external effect** | An effect may complete before its node checkpoint; HTTP idempotency is opt-in and defaults off (`components/flowrunner/src/lib.rs:29-42,998-1004`, `crates/wamn-nodes/src/http.rs:1-28,63-68`). | Effects can repeat unless the sink durably enforces the occurrence key. No broker or workflow engine makes an uncooperative sink exactly once. |
+
+“Exactly once” is therefore limited to a named retained receipt and database
+transaction. WAL-to-transport, transport-to-materializer, queue-to-worker, and
+worker-to-external delivery remain at least once. Intentional replay must use a
+distinct auditable namespace and may re-execute effects.
+
+### K.2 Which work needs a retained log?
+
+| Capability | Default authority | Retained integration log? |
+|---|---|---|
+| Current CDC row change immediately invoking current registrations | Direct CDC → source-derived receipt + run queue | **No.** WAL supplies catch-up until feedback advances. |
+| Historical re-evaluation after registration/condition changes | Raw event inbox or retained broker log | **Yes.** Direct materialization forgets skipped/unsubscribed raw events. |
+| Independent subscribers, connector ecosystem, or tenant-DB-independent burst absorption | Retained broker/log | **Yes, once measured requirements exist.** |
+| Cron and timers | `cron_anchor`, run state, and queue | No. |
+| API async/manual/test start | Run state and queue | No. |
+| API sync | Stable write-ahead/direct execution contract | No. |
+| Retry, lease recovery, park, and wake | Run history, queue, and timer state | No. |
+| Operator retry of a known run | Checkpoints plus a new audit/replay namespace | No raw event log. |
+| Intentional application domain event | Transactional outbox, then queue or subscribers | Often yes for integration consumers; it is application-named, not generic table CDC. |
+| Long-lived orchestration/human wait/compensation | Existing durable run authority or one workflow engine | Requires workflow history, not necessarily an integration-event log. |
+
+The recorded campaign does not demonstrate a present broker requirement. On a
+release fixture with durability disabled for measurement, the CDC/JetStream
+path reached run start at roughly 157–184 ms p50 versus 25–27 ms for the old
+outbox; a 10× spike produced no sampled broker pending count, while the old
+Postgres backlog peaked at 12 and drained in 268 ms
+(`docs/ceilings.md:513-556`). The reader drained about 60k narrow events/s and
+showed no lag knee through roughly 3.2k writes/s
+(`docs/ceilings.md:566-626`). These results prove feasibility and relative
+shape, not required replay, fleet scale, or production durability.
+
+### K.3 Alternatives
+
+| Option | Commit coupling, ordering, and partial failure | Correctness/operations verdict |
+|---|---|---|
+| **Transactional outbox** | Source mutation and event intent share one transaction. Relay failure leaves a durable row; publish-after-commit is at least once. Identity and GC must survive every relay/replay horizon. | **Preferred for deliberate domain events.** Generic row triggers impose application-transaction/WAL/storage tax without adding semantic intent. |
+| **Direct CDC → Postgres receipt/run/queue** | Decode committed source data; commit receipt, run, and queue in one target transaction; advance `end_lsn` only afterward. Crash before commit replays; crash after commit/before feedback conflicts on the receipt. | **Preferred for current executable row triggers.** Fewest authorities and best operability. Queue/schema outage holds the slot and grows WAL, so the allowable outage buffer must be measured. |
+| **Postgres raw-event inbox** | Decoder stores an envelope and advances the slot; a poller materializes independently. It can make offsets/receipts/run state co-transactional in one database. | **Conditional.** Buys raw replay, late-bound fan-out, and decoupling from materializer health, but recreates retention/cursor/refusal/ordering machinery and adds DB WAL, backup, indexes, and storage. |
+| **Current CDC → JetStream → materializer** | Broker ACK lets WAL advance while queue/materializer is unavailable, but adds stream position, dedupe window, consumer configuration/ACK floor, database receipt, account security, backup, and cross-store reconciliation. | **Eliminated as built for production correctness.** It may survive after identity, isolation, drift, retention, recovery, and measured buffer requirements are fixed. |
+| **Kafka/Redpanda-class log** | Mature retained partition log and consumers, but source Postgres commit, log transaction, and sink Postgres transaction remain separate. Kafka EOS covers Kafka transactions, not an arbitrary external database/effect ([Kafka design](https://kafka.apache.org/41/design/design/)). | **Reject as the default today.** Reconsider only for measured scale, retention, ecosystem, or regional log requirements; otherwise it adds more operations without removing source/sink receipts. |
+| **Durable workflow engine** | Can own retries, timers, signals, and workflow history. Starting after an external DB commit still needs CDC/outbox or an idempotent start, and activities can repeat effects. | **Conditional orchestration replacement, not CDC capture.** Never add it as a co-equal scheduler beside authoritative Postgres run/queue state. |
+
+Secondary ranking for current evidence is direct materialization, transactional
+outbox for intentional events, Postgres inbox if raw replay is selected,
+amended JetStream for demonstrated fan-out/replay/isolation, then a Kafka-class
+log after a scale/ecosystem threshold. `wamn-4tob.6.18` must compare the first
+three/current paths with identical source writes before ARC11 makes D19 final.
+
+### K.4 Direct-Postgres protocol and identity
+
+The alternative is concrete enough to test:
+
+1. Decode one committed source transaction in commit order.
+2. Resolve current tenant-scoped registrations.
+3. On a separately authenticated normal SQL connection to the same project
+   database, begin one transaction.
+4. For each matching `(registration, source event)`, insert a compact durable
+   receipt, deterministic run, and queue row; only the receipt/run winner
+   enqueues.
+5. Commit, then advance flushed/applied feedback to source `end_lsn`.
+
+The receipt key must include a **source database/capture epoch**, source row LSN
+or event ordinal, and registration identity. Project-env plus JetStream
+`stream_seq` is insufficient across broker recreation, source restore/timeline
+change, or republish. The epoch changes when destructive restore creates a new
+source history; its authority belongs in `.1.17`.
+
+Failure ownership is explicit:
+
+- before target commit, feedback stays behind and the source transaction
+  replays;
+- after target commit but before feedback, the retained source receipt absorbs
+  replay;
+- worker outage does not block feedback because durable queue insertion still
+  succeeds;
+- target DB/schema contention holds feedback and consumes bounded source WAL;
+- no current registration or a false condition forgets raw history unless an
+  inbox/log is deliberately retained; and
+- the decoder must not reuse its cluster-wide replication credential for
+  normal writes. Separate, narrowly granted credentials prevent one compromise
+  from combining capture and mutation authority.
+
+A full raw-event inbox is not automatically part of this design. A compact
+receipt is required for dedupe; raw payload retention is justified only by an
+accepted replay/fan-out requirement.
+
+### K.5 Failure journeys and routed work
+
+| Failure | Current consequence | Owner / proof |
+|---|---|---|
+| Broker stores a publish but reader feedback is lost; retry occurs after the duplicate window | The same source LSN can receive a new stream sequence. Current run identity is transport-sequence-derived, so a second run/effect is plausible even while the first run remains. | R44/`wamn-2jkm.82`; proof `wamn-4tob.6.17`. |
+| Materializer commits, then dies before ACK | Same-sequence redelivery collapses while the run row survives; pruning then consumer rewind can recreate it. | R44; existing proof `.6.9`. |
+| Two valid registration identities sanitize to one durable name | Both loops share one cursor while applying different flow/condition state, permitting missed, stolen, or misrouted events. | E19/`wamn-l5i9.70`; proof `.6.16`. |
+| Existing consumer configuration differs from the requested filter/ACK policy | Bind can report success while the server retains stale behavior. | E18/`wamn-l5i9.69`; proof `.6.10`. |
+| JetStream unavailable/full | Reader holds feedback; WAL grows until the configured slot bound can invalidate capture. | Existing R29/slot-loss work plus ARC9; compare `.6.18`. |
+| Logical-slot state is not ready on the promoted primary | Logical replication cannot safely resume merely because a database replica was promoted. PostgreSQL says slot synchronization is asynchronous and readiness must be verified ([logical-replication failover](https://www.postgresql.org/docs/17/logical-replication-failover.html)). | R29 and ARC9; do not recreate a missing slot silently. |
+| Worker dies after an external effect | Queue reclaim repeats the occurrence. | Existing sink-idempotency/flow recovery owners; unaffected by broker choice. |
+
+The deployed event NATS uses the unauthenticated default global account
+(`deploy/infra/nats-jetstream.yaml:15-19,32-45`). Subject prefixes are not
+authorization. Existing `wamn-4xw` is therefore P1 while JetStream is a
+production path; removing that path is also a valid closure. R28/
+`wamn-2jkm.46` is likewise raised to P1 for shared-pool CDC because PostgreSQL
+`LOGIN REPLICATION` is cluster-wide. E18 remains unchanged; R44 expands rather
+than duplicating the source-identity defect.
+
+| ID | Sev | Finding and consequence | Bead / proof |
+|---|---:|---|---|
+| **E19** | High | `durable_name` maps every disallowed character to `_`, while valid catalog and registration IDs need only be non-empty. Distinct registrations such as `a.b` and `a_b` can share a consumer cursor and silently miss or misroute runs (`components/materializer/src/main.rs:228-249`, `crates/wamn-catalog/src/validate.rs:477-485`, `crates/wamn-event-reg/src/validate.rs:45-61`). | `wamn-l5i9.70`; proof `wamn-4tob.6.16`. |
+
+No Kafka or workflow-engine spike is added from technology interest alone.
+`.6.18` compares only the alternatives that current evidence cannot
+discriminate. No finding is fixed by the queue-first target proposal.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -1816,12 +1966,13 @@ prerequisite that makes everything else findable.
 | R41 | In-place restore lacks quiescence and verified recovery | High | open | wamn-2jkm.76; proof wamn-4tob.6.5 |
 | R42 | DB-broken runner can become Ready and displace healthy capacity | High | open | wamn-2jkm.77; proof wamn-4tob.6.6 |
 | R43 | Reviewed custom-node OCI identity does not determine invoked bytes | High (latent) | open | wamn-fqg.23 + wamn-0si.9; proof wamn-4tob.6.7 |
-| R44 | Event dedupe expires when run-history retention removes the identity | High | open | wamn-2jkm.82; proof wamn-4tob.6.9 |
+| R44 | Event dedupe identity expires or changes across pruning and source republish | High | open | wamn-2jkm.82; proofs wamn-4tob.6.9/.6.17 |
 | R45 | Shared project database login crosses tenant boundaries | Critical | open | wamn-2jkm.85; proof wamn-4tob.6.12 |
 | R46 | Automatic Postgres failover can lose acknowledged writes | Critical | open | wamn-2jkm.86; proof wamn-4tob.6.13 |
 | R47 | One object-store root credential spans recovery and observability domains | High | open | wamn-2jkm.87; proof wamn-4tob.6.14 |
 | R48 | Standing T1 and T3 clusters lack the promised PITR path | High | open | wamn-2jkm.88; proof wamn-4tob.6.15 |
 | E18 | Materializer silently accepts stale durable-consumer configuration | High | open | wamn-l5i9.69; proof wamn-4tob.6.10 |
+| E19 | Materializer durable-consumer identity collides across valid registrations | High | open | wamn-l5i9.70; proof wamn-4tob.6.16 |
 | SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78 |
 | SR16 | Builder depends on the production runtime composition root | Med | open | wamn-2jkm.79 |
 | SR17 | Docker images package caller-built component bytes | High | open | wamn-2jkm.80; proof wamn-4tob.6.8 |
@@ -1872,7 +2023,7 @@ prerequisite that makes everything else findable.
 | R25 | `idempotency_key` collides across visits | Low | **closed** | `6b525e7` (wamn-2jkm.43) — `run:node:occurrence`; retries keep their key, distinct visits differ, resumed visits reconstruct the same key |
 | R26 | `resume` folds error-routes as Success (`step_seq`/`result` drift) | Low | **closed** | `4918df7` (wamn-2jkm.44) — replay routes ERROR_PORT records via the helper shared with live `error_or_fail`: step_seq/result untouched, occurrence still advances |
 | R27 | Slug `--` separator not injective — cross-tenant name collision on the shared pool | High | **closed** | `0d560b6` (wamn-2jkm.45) — both validators + SQL CHECK reject `--` runs; injectivity test; live PG gate |
-| R28 | CDC replication credential blast radius is cluster-wide, not "one registration" | Med | open | wamn-2jkm.46, with the l5i9.32 knobs |
+| R28 | CDC replication credential blast radius is cluster-wide, not "one registration" | High (ARC7) | open | wamn-2jkm.46 P1, with the l5i9.32 knobs |
 | R29 | Replication-slot shape never reconciled (R12 class) | Low | open | wamn-2jkm.47 |
 | R30 | Vault secrets plaintext-resident, no zeroization | Low | open | wamn-2jkm.48 |
 | R31 | Plugin claim/grant registries never cleared on unbind | Low | **closed** | `f072590`+`fa96675` (wamn-2jkm.49) — `on_workload_unbind` reaps both plugins' per-component registries (fork builtin convention); serve-node per-invocation grant revoked by Drop-guard; nodeinvoke GRANT-REVOKED witness |
@@ -2272,7 +2423,7 @@ separators: `(a, x--p, dev)` and `(a--x, p, dev)` collide on the same database
 reader streams the other's WAL on a shared pool. `validate_project_env` also
 never slug-validates org/env. Reject `--`, validate all three components,
 injectivity test (wamn-2jkm.45). ·
-**R28 (Med)** The CDC credential's true blast radius is **cluster-wide WAL**
+**R28 (High; raised from Med by ARC7)** The CDC credential's true blast radius is **cluster-wide WAL**
 (REPLICATION has no per-database scope); the "one registration" comment
 self-contradicts (`sql.rs:125–131`). Fix the claim; decide shared-pool CDC
 posture (wamn-2jkm.46). ·
