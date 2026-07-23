@@ -2611,6 +2611,120 @@ and every “leave alone” verdict is an audit conclusion rather than a closure
 
 ---
 
+## P — Roadmap and evolution fitness (2026-07-23)
+
+This section is the ARC10 result for `wamn-4tob.1.10` at baseline
+`c433a31d6f21c0f4e2bcdf421712dabd358d5c9a`. It tests future capabilities
+against the current hybrid, component-first wasmCloud, conventional Kubernetes
+services with a narrow Wasmtime sandbox, and durable-workflow alternatives.
+Parked implementation is not counted as present debt; only a seam whose absence
+would make a safe future change materially harder is required now.
+
+**Executive verdict: amend, do not restart.** The catalog, flow, node, event,
+and placement models provide useful extension seams, but the current system
+cannot safely claim hot reload, production ingress, custom-node evolution, or
+mixed-version operation until authority and compatibility are explicit. UI,
+edge, regional, human-auth, and billing implementations remain legitimately
+deferred. No roadmap feature rescues a design that loses acknowledged work,
+crosses a tenant boundary, resumes against different bytes, or cannot bound its
+failure and object cardinality.
+
+### P.1 Controlling evolution invariants
+
+Every retained alternative must provide:
+
+1. trusted tenant and route binding, with external caller identity distinct
+   from internal workload identity;
+2. acknowledgement only after the next durable authority can reconstruct the
+   accepted operation;
+3. deterministic resume from pinned flow, executor, component, configuration,
+   and contract identities;
+4. stable idempotency identity across retry, replay, failover, and restore;
+5. separately bounded component, pod, route, resident-object, database, and
+   broker cardinalities; and
+6. readiness-gated mixed-version upgrades that retain old working capacity
+   through cutover and rollback.
+
+These are runtime-neutral product constraints. A component scheduler, native
+service, broker, or workflow engine can change their implementation, but none
+removes them.
+
+### P.2 Capability fitness matrix
+
+`H`, `C`, `K`, and `W` below mean the current hybrid, component-first
+wasmCloud, Kubernetes-native services plus narrow Wasmtime, and one durable
+workflow authority respectively.
+
+| Capability | Current owner, boundary, and state | Verdict and required seam | Failure that must be refused | Alternative and existing owner |
+|---|---|---|---|---|
+| **Hot catalog reload** | The versioned catalog and applied physical schema should be authoritative, but the gateway serves a separate cached snapshot. `replace_catalog` is an unwired local swap (`components/api-gateway/src/lib.rs:50-62,185-219`); publication rewrites that snapshot non-atomically (`crates/wamn-ctl/src/publish_catalog.rs:263-299`). | **Obstructed, active.** Publish one version-addressed serving generation atomically, pin each request to it, and use any notification only as a hint followed by authoritative reconciliation. | Snapshot delete commits and insert fails, or old/new replicas serve different columns while route/entity-map/replica-identity state is between generations. | Required by H/C/K/W. `wamn-32n`, R35/`wamn-2jkm.71`, proof `wamn-4tob.6.2`, authority `wamn-4tob.1.17`. |
+| **OpenAPI and GraphQL** | The catalog is a language-neutral schema and `wamn-api` is the existing pure REST planner. OpenAPI/SDL/SDK output does not exist and must remain derived rather than become another authority (`docs/api-gateway.md:93-115`; `crates/wamn-catalog/src/lib.rs:1-21`). | **Supported conditionally, active.** Bind generated specs and clients to the exact applied/served generation. Reuse one catalog-derived operation planner; GraphQL adds explicit depth, cost, and pagination limits. | A client generated from N reaches N+1, or a second GraphQL planner admits an operation the REST/SQL policy rejects. | Runtime-neutral. `wamn-tsn`, `wamn-2e3`, R35, `wamn-4tob.1.16`, STR5. |
+| **External authentication and authorization** | `app_system` user/role/permission/API-key tables are substrate, not an identity provider. The Postgres plugin injects trusted claims, while the gateway has no caller identity (`deploy/sql/app-schema.sql:1-46,57-139,185-213`; `docs/api-gateway.md:107-115`). | **Deferred implementation; seam required now.** Tenant/project/environment comes from trusted route/deployment state, caller identity from an authenticated provider, and RLS remains the final boundary. External and internal credentials, signatures, revocation, and rotation are separate contracts. | Caller-controlled headers select a victim tenant, or stale cached authorization survives revocation. | Required by H/C/K/W. `wamn-0xd`, `wamn-sbh`, `wamn-117`, isolation `wamn-4tob.1.15`, upgrade `.1.16`. Custom-node HMAC is not caller authentication. |
+| **Machine flow ingress** | There is no production owner for route-to-tenant/flow resolution or a versioned invocation contract. The F1 POC combines route lookup, run SQL, graph walking, and dispatch (`components/poc-webhook-f1/src/lib.rs:1-26,67-110`). | **Obstructed for production; owner priority undecided.** Keep ingress thin and one canonical executor. Define trusted route binding, stable delivery identity, sync/async acknowledgement, deadline/cancellation, independently authenticated ingress-to-executor traffic, and retention. | Host dies after effect or write-ahead; retry creates a second run while the first unqueued run has no recovery owner. | H/C may use component ingress, K native ingress, W its single workflow authority; transport is intentionally undecided. `wamn-fqg.39`, R36/R37, proof `.6.3`, `.1.15`–`.1.17`, STR5. |
+| **Saga control-plane API** | `provisioning.sagas` stores one saga status/step while ctl commands mutate Postgres, Kubernetes, Secrets, object storage, dumps, and cutover state (`deploy/sql/system-schema.sql:263-293`; `docs/provisioning.md:824-838`). | **Obstructed, active.** Add immutable effect identities, write-ahead receipts, desired/observed generations, idempotent apply, readiness observation, and explicit compensate/forward-fix semantics under one cutover authority. | A resource is created and the process dies before step advancement; retry conflicts, skips work, or records success before serving readiness. | H/C/K may retain Postgres saga authority. W may replace it only if the Postgres row becomes a projection, never a peer authority. `wamn-2ib`, R34/R40/R41, proofs `.6.1/.6.5`, `.1.14/.1.16/.1.17`. |
+| **Multi-region placement** | Registry policy has pooled/dedicated placement but no stable cell/region, placement generation, durability mode, or observed readiness (`crates/wamn-registry/src/types.rs:123-161,243-305`). | **Deferred implementation; incomplete seam.** Preserve a data-driven placement axis, then require one write authority, source fencing, desired/observed generations, readiness-gated route cutover, capture timeline/epoch, and rollback window. | Source and destination both accept writes, routes disagree, or restored CDC history reuses identity during a move/failover. | D17 can reopen component posture for a demonstrated regional/edge need; K uses conventional cells; W does not solve data placement. `.1.12`–`.1.17`, R34/R40/R41, ARC11. |
+| **Metering and billing** | OTel/Prometheus metrics are derived observability; there is no billing-event authority or durable usage ledger (`docs/metrics.md:28-48`; `docs/dashboards.md:88-120`). | **Deferred.** Preserve resource and tenant identity now. Billing later needs a durable append-only usage identity, idempotent aggregation, correction/reversal audit, and retention; metrics remain projections. | Restarts reset counters, scrape loss undercounts, replay double-counts, or tenant/project identifiers are mapped to the wrong billable org. | Runtime-neutral. `wamn-7r2`, `wamn-ax7`, `.1.12/.1.13/.1.15/.1.17`. Prometheus itself says it is unsuitable when per-request billing requires complete accuracy ([official overview](https://prometheus.io/docs/introduction/overview/#when-does-it-not-fit)). |
+| **Industrial connectors and edge execution** | Nothing is deployed. Useful existing seams are the frozen node WIT, bounded payload-reference direction, stable idempotency keys, and partition ordering (`docs/wamn-node.wit:1-23,39-87`; `docs/platform-plan.md:118-131`). | **Deferred; no current implementation debt.** Preserve bounded, watermark-resumable segment identity, one local/cloud owner for each cursor, conflict policy, credential rotation, storage limits, and offline upgrade/recovery contracts. | Offline backlog is unbounded, a mid-upload crash loses/repeats an interval, or cloud and edge independently advance one cursor. | Choose C/K/W only from future requirements. `wamn-4ry`, `wamn-dns`, `wamn-02q`, `wamn-6mg`, `wamn-hlf`, `wamn-zbt`, `.1.12`–`.1.16`. |
+| **UI, schema, and flow designers** | Versioned catalog, flow, test-suite, and manifest contracts already own the domain state; no UI deployable exists (`crates/wamn-catalog/src/lib.rs:1-21`; `docs/flow-schema.md:125-159`; `crates/wamn-node-manifest/src/lib.rs:60-103`). | **Deferred; directionally supported.** A UI is a replaceable client: server-side canonical validation/diff, immutable versions, optimistic base-version refusal, and an explicit unknown-field round-trip policy are the seam. | Two stale editors overwrite one applied version, or an older client silently drops additive fields. | Runtime-neutral. `wamn-ivi`, `wamn-8wg`, `wamn-ma5`, `wamn-srz`, `.1.16`, STR5. No UI debt is created. |
+| **Third-party and custom nodes** | Intended authority is an OCI digest/signature/SBOM plus `wamn.node.manifest`; execution currently mounts unrelated ConfigMap bytes into a native `serve-node` Deployment/Service. `wamn:node@0.1.0` is frozen (`deploy/platform/serve-node.yaml:1-27,43-152`; `docs/wamn-node.wit:1-23`). | **Obstructed for production-grade claims.** Pin digest and contract version in flow/run identity; verify signature at load; derive capabilities from imports; scope credentials and routes; validate config; bound pool/object cardinality. | A resumed run invokes replacement bytes or a different WIT, reviewed and invoked artifacts diverge, or node endpoints collide. | All alternatives retain a narrow untrusted-code sandbox. `wamn-fqg.21/.23/.27/.28`, R43, SR15–SR17, proofs `.6.7/.6.8`, `.1.12/.1.15/.1.16`. |
+| **Long-term contract versioning** | Catalog, flow, event, and WIT contracts have local rules and drift tests, but there is no system-wide producer/consumer or stored-state compatibility contract. Node manifest claims current-plus-previous-major support although runtime does not read its `contract`; runs do not pin executor/component identity (`docs/flow-schema.md:133-141`; `docs/event-plane-jetstream.md:67-79`; `crates/wamn-node-manifest/src/lib.rs:73-80`). | **Obstructed; foundational seam now.** Assign every contract an owner, compatibility matrix, stored-state migration, immutable artifact identity, old/new fixture, drain/resume rule, readiness cutover, preserved old capacity, and rollback/forward-fix policy. | An old worker consumes a new event/flow shape, or a parked run resumes on incompatible bytes after rollout or rollback. | Mandatory for H/C/K/W. `.1.16`, `.1.17`, STR5, SR17, R42, SR20, ARC11. |
+
+### P.3 Cardinality is six separate questions
+
+The external review correctly challenges the idea that a per-project component
+is free, but component count must not be substituted for every other resource
+count. Current [wasmCloud operator documentation](https://wasmcloud.com/docs/kubernetes-operator/)
+states that an HTTP workload uses a `WorkloadDeployment` and Kubernetes
+`Service`, with the operator managing an `EndpointSlice`; multiple workloads
+may still share host pods.
+
+Let `P` be project-environments, `T` tenant scopes per environment, `N`
+custom-node/project pairs, `R` event registrations, `F` public flow routes, and
+`Q` saga operations:
+
+| Shape | Component instances | Pods/hosts | Services/routes | Resident objects | Durable database/event objects |
+|---|---:|---:|---:|---:|---:|
+| API gateway | `P` configured replicas | shared three-host group today | `P` Services/routes today | `P` cached catalogs plus lazy pools | serving/catalog generations and future auth records |
+| Async executor | flowrunner per worker pod | current manifest is `2P` native pods | no executor Service | `2P` warm stores | runs, node-runs, queue leases, dead letters |
+| Machine ingress | zero production | undecided | routes trend toward `F`; Service count need not equal `F` or `P` | undecided | route bindings and delivery receipts |
+| Custom nodes | `N` Wasm instances | current shape `N` native pods | `N` Services/endpoints | `N` warm instances/config caches | OCI versions plus pinned flow/run references |
+| CDC/materialization | current materializer tends toward `P×T` | shared hosts; reader MVP `P` pods, target leased fleet | no per-registration Service | `P×T` loops in the current shape | `P` publications/slots, org×env streams, `R` consumers |
+| Saga/control | zero resident components | transient ctl/Job per operation | zero API routes today | none | `Q` saga rows plus cross-store effects |
+| Metering, region, edge, UI | zero new components | zero current feature pods | zero current feature routes | zero current feature state | requirement-dependent and not yet selected |
+
+Thus “one component per project” does not mean one pod, but today's design
+independently adds a workload object, Service/route, cached catalog/pool,
+runner Deployment, database, and event-plane objects. No 100/1,000/10,000
+fleet campaign establishes their ceilings. `wamn-4tob.1.12` must bound each
+axis independently.
+
+The proposed infrastructure freeze is retained only as an **admission rule**:
+each new durable authority, protocol, fork patch, or project-scoped
+Kubernetes/broker/database object must name its owner, cardinality, correctness
+proof, and removal or simplification path. A blanket freeze would pre-decide
+legitimate ingress, regional, billing, and edge requirements.
+
+### P.4 Routing and decision result
+
+- Hot reload remains with `wamn-32n` plus R35 and its proof; generic ingress
+  remains with `wamn-fqg.39` plus R36/R37 and their proof.
+- The owner decisions `wamn-4tob.1.12` through `.1.17` remain the requirement
+  boundary for cardinality, SLOs, recovery, trust, mixed-version compatibility,
+  and state authority. ARC10 does not silently decide them.
+- OpenAPI/GraphQL, saga control, metering/billing, and custom-node work retain
+  their existing owners. UI, edge, human-auth, and multi-region implementation
+  stay parked; no speculative delivery beads are created.
+- Candidate generated-spec skew, billing undercount, node-version mismatch,
+  regional split brain, offline-edge replay, and ingress duplicate/orphan
+  cases deduplicate to R34–R43, SR17, `.1.12`–`.1.17`, and existing proof
+  issues. ARC10 therefore mints no new finding.
+
+No implementation or live gate ran. This is a source and contract assessment;
+it neither proves deployed artifact provenance nor represents any open
+correctness finding as fixed.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
