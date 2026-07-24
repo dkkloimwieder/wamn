@@ -46,7 +46,7 @@
 //! the store), per-node ordering (5.11), the cancel operation (5.12), the durable
 //! queue + NATS doorbell + dispatcher (5.14), the payload store (5.10), the
 //! standard node contents (5.3), or the custom-node transport (5.6). The driver
-//! (`components/flowrunner`) wires those in.
+//! (`components/execution/flowrunner`) wires those in.
 
 mod engine;
 mod outcome;

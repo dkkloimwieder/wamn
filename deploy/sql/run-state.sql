@@ -4,7 +4,7 @@
 -- least-once execution, branch-aware replay, and partial re-run — the durable
 -- half of what the pure engine (crates/execution/flow-engine, 5.2) left as an in-memory
 -- seam. The reconstruction/partial-re-run LOGIC lives in crates/execution/run-state-store;
--- these tables are the shape it reads and the driver (components/flowrunner)
+-- these tables are the shape it reads and the driver (components/execution/flowrunner)
 -- writes.
 --
 -- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql, the

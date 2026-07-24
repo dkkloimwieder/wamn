@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 /// The POC data model — the wamn-catalog fixture verbatim (same file the
 /// wamn-catalog/wamn-ddl/wamn-f1 tests pin).
 pub const F1_CATALOG_JSON: &str =
-    include_str!("../../schema/model/tests/fixtures/poc-receiving.catalog.json");
+    include_str!("../../../crates/schema/model/tests/fixtures/poc-receiving.catalog.json");
 
 /// The production F1 flow graph (deploy/poc/f1-flow.json — drift-guarded against
 /// the wamn-f1 node set by that crate's tests).

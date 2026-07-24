@@ -7,7 +7,7 @@ runtime. **`docs/` is the design source of truth** — start with
 
 `services/host` is the production host (it embeds the `wash-runtime` washlet
 and is deployed by the wasmCloud runtime-operator Helm chart); the gate/bench
-suite is the separate `crates/wamn-gates` binary over the same lib. One
+suite is the separate `tests/orchestrator` binary over the same lib. One
 `Dockerfile` builds both via two `--target` stages (SR1). Our wash-runtime
 changes are carried commits on a fork — see `docs/wash-runtime-fork.md`.
 
@@ -27,9 +27,6 @@ services/               native deployable Rust services
   builder               sandboxed custom-node build service
 
 crates/                 shared Rust workspace packages
-  wamn-gates            gate/bench suite binary (SR1 split)
-  wamn-gate-harness     shared measurement helpers for gates
-
   # shared, non-deployable packages grouped by bounded context:
   platform/
     sql                 wamn-sql: parameterized SQL composition primitive
@@ -68,15 +65,20 @@ crates/                 shared Rust workspace packages
     catalog             wamn-flow-tests: persisted suite envelope
 
 components/             wasm32-wasip2 guests
-  flowrunner            production flow-runner guest (drives wamn-runner)
-  api-gateway           REST gateway guest (wasi:http + wamn:postgres)
-  poc-webhook-f1        POC-F1 sync-webhook ingress
-  flow-driver           node-composition driver
-  fixtures/             bench fixtures (hello, memhog, busyloop, pgprobe,
-                        logspewer, trace-relay)
+  ingress/              product ingress components (api-gateway)
+  execution/            product execution components (flowrunner, materializer)
+  fixtures/             non-product proof fixtures (flow-driver, hello, memhog,
+                        busyloop, pgprobe, logspewer, trace-relay)
+  poc/                  component POCs (webhook-f1)
   samples/              reference/sample nodes (node-rs, node-ts, sample-node)
 
-poc/                    POC integration crates (f1, dm1)
+poc/                    POC integration crates (f1, dm1, cdc1)
+
+test-support/
+  harness/              shared measurement helpers for gates
+
+tests/
+  orchestrator/         mixed-tier gate/bench suite binary (wamn-gates)
 
 deploy/                 Kubernetes manifests + standalone SQL schemas
   kind-config.yaml      local kind cluster definition
@@ -125,9 +127,10 @@ cargo clippy --all-targets && cargo fmt --check
 Many crates also have optional live-apply tests that run against a throwaway
 Postgres and skip when their `WAMN_*_PG_URL` env var is unset.
 
-**Gates** (the bench/fixture/proof triple, SR5) live in `wamn-gates` and assert
-against a real backend. The full per-bead command set — local iteration and the
-in-cluster gate of record for each subsystem — is in **`docs/build-and-test.md`**.
+**Gates** (the bench/fixture/proof triple, SR5) live in the `wamn-gates` package
+at `tests/orchestrator` and assert against a real backend. The full per-bead
+command set — local iteration and the in-cluster gate of record for each
+subsystem — is in **`docs/build-and-test.md`**.
 Example (S1, no backend):
 
 ```bash

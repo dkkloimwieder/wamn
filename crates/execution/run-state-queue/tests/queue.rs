@@ -853,7 +853,7 @@ fn plan_partition_claim_advances_in_order_and_limits_across_partitions() {
     assert_eq!(next.claimed[0].run_id, "a-1"); // in order
 }
 
-/// fqg.9: the GUEST loop (`components/flowrunner` `claim_partition_run`) modelled
+/// fqg.9: the GUEST loop (`components/execution/flowrunner` `claim_partition_run`) modelled
 /// purely — accumulate ownership with `plan_acquire(.., 1)`, claim ONE head with
 /// `plan_partition_claim(.., 1)`, "drive + dequeue" it, repeat — over partitions
 /// with MIXED `(enqueued_at, stream_seq)` so the per-key stream order differs from

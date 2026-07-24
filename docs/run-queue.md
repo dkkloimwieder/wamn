@@ -16,7 +16,7 @@ The split mirrors the rest of the platform: a **pure crate**
 and the trigger dispatcher's: cron due-tick evaluation,
 deterministic run-id minting, the adaptive poll cadence — plus the parameterized
 SQL builders — no DB, no NATS, no clock (`now` is a passed-in millis), unit-tested
-off-cluster — and the **driver** (`crates/wamn-gates` `queuebench`/`dispatchbench`,
+off-cluster — and the **driver** (`tests/orchestrator` `queuebench`/`dispatchbench`,
 and the production `dispatch` service) supplies the `wamn:postgres` effects
 against the schema in [`deploy/sql/run-queue.sql`](../deploy/sql/run-queue.sql), the
 NATS-core doorbell, the real clock, and the replica identity.

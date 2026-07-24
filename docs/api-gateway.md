@@ -8,7 +8,7 @@ the row-set is shaped back into JSON.
 
 - **Issue:** wamn-759 `[4.1]`; **Epic:** E4 Generated API.
 - **Crate:** `crates/data/entity-access` — the pure gateway logic (no host, no DB, no Wasm).
-- **Component:** `components/api-gateway` — the `wasi:http` ⇆ `wamn:postgres` shell.
+- **Component:** `components/ingress/api-gateway` — the `wasi:http` ⇆ `wamn:postgres` shell.
 - **Gate:** `wamn-gates apibench` — drives the component end to end against Postgres.
 - **Consumers:** POC-F1 (the hold queue / disposition / ERP receipt flows), the
   SPA (6.x), and every generated-API consumer. Blocks 4.4/4.5/4.6/4.7.
@@ -92,7 +92,7 @@ and emits by name — the one subtlety worth stating.
 
 ## Component
 
-`components/api-gateway` exports the standard `wasi:http/incoming-handler`
+`components/ingress/api-gateway` exports the standard `wasi:http/incoming-handler`
 (the `wasi:http/proxy` world), so wasmCloud routes HTTP straight to it, and
 imports only `wamn:postgres` for data. It has **no `wasi:sockets` and no outbound
 `wasi:http`** — the 2.6 DB-path egress boundary holds (the `wasi:cli`/`random`

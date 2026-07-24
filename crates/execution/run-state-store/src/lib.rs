@@ -12,7 +12,7 @@
 //! clock. It maps the engine's execution taxonomy to storage literals
 //! ([`status`]) and drives the engine's [`resume`](wamn_runner::Plan::resume) /
 //! [`seed_at`](wamn_runner::Plan::seed_at) primitives; the driver
-//! (`components/flowrunner`) supplies the `wamn:postgres` effects against the
+//! (`components/execution/flowrunner`) supplies the `wamn:postgres` effects against the
 //! schema in `deploy/sql/run-state.sql`.
 //!
 //! ```

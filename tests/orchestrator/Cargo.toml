@@ -17,7 +17,7 @@ wamn-run-worker = { path = "../../services/run-worker" }
 # wakeproof (fqg.12) drives the deployed waker's k8s scale client to park +
 # restore the runner Deployment around the scale-to-zero wake proof.
 wamn-waker = { path = "../../services/waker" }
-wamn-gate-harness = { path = "../wamn-gate-harness" }
+wamn-gate-harness = { path = "../../test-support/harness" }
 wash-runtime = { workspace = true }
 # Bench harnesses instantiate command components directly (CommandPre) and
 # drive wasi:http incoming handlers (ProxyPre). Pinned to the exact rev
@@ -39,46 +39,46 @@ hyper = "1"
 http-body-util = "0.1"
 # apibench/f1bench build catalog snapshots + tenant-floor DDL for their
 # ephemeral schemas.
-wamn-catalog = { path = "../schema/model" }
-wamn-ddl = { path = "../schema/ddl-compiler" }
+wamn-catalog = { path = "../../crates/schema/model" }
+wamn-ddl = { path = "../../crates/schema/ddl-compiler" }
 # provisionbench: the pure provisioning naming / SQL / Secret builders (2.3),
 # driven end-to-end through wamn_host::provision::provision_project. The org-pair
 # / T3 tier modes (wamn-q3n.8) also drive the registry model + saga SQL builders.
-wamn-provision = { path = "../control/provision" }
-wamn-registry = { path = "../control/registry" }
+wamn-provision = { path = "../../crates/control/provision" }
+wamn-registry = { path = "../../crates/control/registry" }
 # nodeinvoke crafts + signs raw invocation envelopes for the wamn-fqg.22 authn
 # negatives (the same pure wire crate both hop ends link).
-wamn-node-invoke = { path = "../node/invoke" }
+wamn-node-invoke = { path = "../../crates/node/invoke" }
 # testkitbench (11.4) loads Vec<TestCase>, drives node/flow cases, and folds each
 # AssertionResult into check — the pure assertion vocabulary. testhostbench's
 # schemacase/runworker retrofit routes its inline asserts through the same.
-wamn-testkit = { path = "../scenarios/model" }
+wamn-testkit = { path = "../../crates/scenarios/model" }
 # buildproof drives the 5.5 builder's OCI fetch (registry client) + verifies the
 # pushed artifact against the SAME NodeManifest model the builder wrote.
 wamn-builder = { path = "../../services/builder" }
-wamn-node-manifest = { path = "../node/manifest" }
+wamn-node-manifest = { path = "../../crates/node/manifest" }
 # queuebench/failoverbench/dispatchbench drive the pure queue/cron
 # builders over tokio_postgres.
-wamn-run-queue = { path = "../execution/run-state-queue" }
+wamn-run-queue = { path = "../../crates/execution/run-state-queue" }
 # queuebench ceiling mode drives the pre-fqg.18 SPLIT lifecycle (claim → read →
 # mark-running → complete → dequeue) as the comparison curve for the combined
 # statements.
-wamn-run-store = { path = "../execution/run-state-store" }
+wamn-run-store = { path = "../../crates/execution/run-state-store" }
 # capturebench (9.6) compiles a Plan to prove a capture-off run reconstructs to
 # CaptureOff — the pure engine's resume type.
-wamn-runner = { path = "../execution/flow-engine" }
+wamn-runner = { path = "../../crates/execution/flow-engine" }
 # readerbench consumes the REAL draft envelope type the reader publishes — the
 # stream-side assert deserializes with deny_unknown_fields (drift guard).
-wamn-event-wire = { path = "../events/wire" }
+wamn-event-wire = { path = "../../crates/events/wire" }
 # rie2ebench embeds the REAL reader service body (run_with_token) next to the
 # materializer guest for the RI-flip e2e; pg_walstream only for its CancellationToken.
 wamn-cdc-reader = { path = "../../services/cdc-reader" }
-wamn-event-reg = { path = "../events/registration" }
+wamn-event-reg = { path = "../../crates/events/registration" }
 pg_walstream = { workspace = true }
-wamn-flow = { path = "../execution/flow-model" }
+wamn-flow = { path = "../../crates/execution/flow-model" }
 # suiteproof: the 11.2 flow test-suite envelope — round-tripped against the
 # deploy/sql/flow-tests.sql rows it seeds.
-wamn-flow-tests = { path = "../scenarios/catalog" }
+wamn-flow-tests = { path = "../../crates/scenarios/catalog" }
 # queuebench/dispatchbench doorbell hints (same version req as wash-runtime's
 # so cargo unifies to one crate instance).
 async-nats = { version = "0.47", default-features = false }
@@ -96,4 +96,4 @@ wasm-encoder = "0.251"
 
 [dev-dependencies]
 # f1fixture coherence test compiles the committed seed dataset (3.6).
-wamn-seed = { path = "../schema/seed-compiler" }
+wamn-seed = { path = "../../crates/schema/seed-compiler" }

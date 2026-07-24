@@ -11,7 +11,7 @@ node execution and rebuilds the exact frontier from those rows.
 The split mirrors the rest of the platform: a **pure crate** (`crates/execution/run-state-store`)
 holds the record model and all reconstruction/re-run logic — no DB, no wasm, no
 clock, unit-tested off-cluster — and drives two additive **engine primitives**
-(`Plan::resume` / `Plan::seed_at`); the **driver** (`components/flowrunner`)
+(`Plan::resume` / `Plan::seed_at`); the **driver** (`components/execution/flowrunner`)
 supplies the `wamn:postgres` effects against the schema in
 [`deploy/sql/run-state.sql`](../deploy/sql/run-state.sql).
 
@@ -118,7 +118,7 @@ A resume reconstructs against the run's **persisted `flow_version`** — the
 version stamped on the `runs` row when the run first opened, which the dispatcher
 sets to the active version at write-ahead time — not whatever is active now
 (wamn-cox). So a flow edited or hot-reloaded mid-run can never make a resume fold
-its recorded `node_runs` against a divergent graph: the `components/flowrunner`
+its recorded `node_runs` against a divergent graph: the `components/execution/flowrunner`
 driver loads the exact version on every drive path (the direct `execute`, the
 unpartitioned claim, and the partitioned claim all pin it), and a hot-reload is
 still picked up because newly dispatched runs carry the new version. `Plan::resume`

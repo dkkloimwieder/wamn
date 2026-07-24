@@ -6,7 +6,7 @@ errors, and retries with backoff. It replaces the S3 spike's ad-hoc linear walk.
 
 The design follows the same split as the API gateway (4.1): a **pure engine
 crate** (`crates/execution/flow-engine`) holds all the decision logic and is unit-tested
-with no cluster, no DB, no wasm; a **thin component** (`components/flowrunner`)
+with no cluster, no DB, no wasm; a **thin component** (`components/execution/flowrunner`)
 supplies the effects — dispatching each node, the `wamn:postgres` checkpoints,
 the reload doorbell.
 
@@ -102,7 +102,7 @@ both pure (time is a `now_ms` argument):
 
 ## The component — driving the engine
 
-`components/flowrunner` loads the active flow (`SELECT graph_json FROM flows …`,
+`components/execution/flowrunner` loads the active flow (`SELECT graph_json FROM flows …`,
 now a `wamn-flow` document), compiles a `Plan`, and drives it. The native standard
 nodes are the `NodeOutcome` producers: `webhook-in` / `transform` / `conditional` /
 `respond` are pure same-binary calls; `pg-write` writes to the sink; `delay` reads

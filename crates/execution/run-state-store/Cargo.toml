@@ -1,6 +1,6 @@
 [package]
 name = "wamn-run-store"
-description = "wamn run-state persistence (5.7): the runs/node_runs model + branch-aware replay reconstruction and partial-re-run planning over the wamn-runner engine (5.2). PURE — no DB, no wasm, no clock; the driver (components/flowrunner) supplies the wamn:postgres effects. Reconstruction rebuilds the exact frontier from persisted node_runs; a replay/partial-re-run is a new run linked to its origin (immutable lineage)."
+description = "wamn run-state persistence (5.7): the runs/node_runs model + branch-aware replay reconstruction and partial-re-run planning over the wamn-runner engine (5.2). PURE — no DB, no wasm, no clock; the driver (components/execution/flowrunner) supplies the wamn:postgres effects. Reconstruction rebuilds the exact frontier from persisted node_runs; a replay/partial-re-run is a new run linked to its origin (immutable lineage)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

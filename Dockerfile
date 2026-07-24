@@ -19,12 +19,15 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY services ./services
+COPY test-support ./test-support
+COPY tests ./tests
 COPY poc ./poc
 # The canonical deploy DDL (sql/run-state.sql / sql/flows.sql) is include_str!'d by
 # publish-catalog's provisioning helpers — single source of truth, no clones.
 COPY deploy ./deploy
-# wamn-gates testgate include_str!'s the disposition-node seed cases (11.5);
-# only these two fixtures are needed, not the components workspace.
+# wamn-gates embeds the flowrunner dispatch source guard plus the
+# disposition-node seed cases; copy only those files, not the component target.
+COPY components/execution/flowrunner/src/lib.rs ./components/execution/flowrunner/src/lib.rs
 COPY components/samples/disposition-node/cases.json components/samples/disposition-node/cases-refusal-fixture.json ./components/samples/disposition-node/
 # wash-runtime resolves as a git dep from the fork pinned in Cargo.toml
 # (docs/wash-runtime-fork.md); cargo fetches it during the build.
@@ -149,18 +152,16 @@ RUN rustup target add wasm32-wasip2 \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @bytecodealliance/jco @bytecodealliance/componentize-js
 # The v0 sandbox Job builds the baked-in components-workspace fixtures. The
-# builder stage above copies only crates/services/poc/deploy, and its cargo caches are
-# BuildKit mounts that do not persist into image layers — so copy the
-# components source here (member dirs only, never the 3G components/target)
+# builder stage above copies only the root-workspace/deploy sources, and its
+# cargo caches are BuildKit mounts that do not persist into image layers — so
+# copy the components source here (member dirs only, never components/target)
 # and warm the crate cache into the image: the in-pod `cargo metadata
 # --offline` and `cargo build` must run without network.
 COPY components/Cargo.toml components/Cargo.lock ./components/
-COPY components/api-gateway ./components/api-gateway
+COPY components/ingress/api-gateway ./components/ingress/api-gateway
 COPY components/fixtures ./components/fixtures
-COPY components/flow-driver ./components/flow-driver
-COPY components/flowrunner ./components/flowrunner
-COPY components/materializer ./components/materializer
-COPY components/poc-webhook-f1 ./components/poc-webhook-f1
+COPY components/execution ./components/execution
+COPY components/poc ./components/poc
 COPY components/samples ./components/samples
 RUN cd components && cargo fetch
 # The compiled verb binary (built in the `builder` stage above) on PATH.

@@ -1,6 +1,6 @@
 [package]
 name = "wamn-materializer"
-description = "wamn CDC materializer decisions (EVT-MAT, D19 v3 §5, l5i9.17): the PURE per-event pipeline — registration match, tenant guard, causation budget, condition eval (REPLICA IDENTITY DEFAULT contract), partition key/policy resolution, deterministic run-id + run-input mint — as functions of (registration, flow declaration, envelope, stream_seq). PURE — no DB, no NATS, no clock; the Service guest (components/materializer) supplies the wamn:postgres + wamn:jetstream effects."
+description = "wamn CDC materializer decisions (EVT-MAT, D19 v3 §5, l5i9.17): the PURE per-event pipeline — registration match, tenant guard, causation budget, condition eval (REPLICA IDENTITY DEFAULT contract), partition key/policy resolution, deterministic run-id + run-input mint — as functions of (registration, flow declaration, envelope, stream_seq). PURE — no DB, no NATS, no clock; the Service guest (components/execution/materializer) supplies the wamn:postgres + wamn:jetstream effects."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -32,5 +32,5 @@ jmespath = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 # No DB / wasm / clock dependency: every decision is a pure function of the
-# delivered event + the declarations. The guest (components/materializer) owns
+# delivered event + the declarations. The guest (components/execution/materializer) owns
 # every effect; the matbench gate drives the same decisions live.

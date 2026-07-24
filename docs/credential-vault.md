@@ -86,7 +86,7 @@ nodes:                         mounted from a K8s Secret;                    │
 
 `not-granted` precedes any lookup, so an ungranted `get` never learns whether
 the secret exists. The direct-import bypass is proven closed by the
-`credprobe` gate (`crates/wamn-gates/src/credprobe.rs` +
+`credprobe` gate (`tests/orchestrator/src/credprobe.rs` +
 `components/fixtures/cred-probe`): a fixture that imports `wamn:node/credentials`
 directly — exactly as a custom node would — is granted a narrow set host-side,
 and an ungranted / unregistered-project `get` is refused over the real WIT
@@ -111,7 +111,7 @@ per-flow allowlists are the fqg.11 refinement.
 
 ## The gate (`credproof`)
 
-`crates/wamn-gates/src/credproof.rs` — the ladderproof shape: a pure DB
+`tests/orchestrator/src/credproof.rs` — the ladderproof shape: a pure DB
 client seeds ONE manual run of `deploy/cred/notify.flow.json`
 (`in → http-request{credential: notify-token} → transform{status} → respond`)
 and waits for the **separately-deployed** run-worker to drive it against

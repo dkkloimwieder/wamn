@@ -142,7 +142,7 @@ implements.
 
 ## Relationship to the S3 stand-in and downstream
 
-The S3 flow-runner PoC (`components/flowrunner`, wamn-lsf) used a minimal ad-hoc
+The S3 flow-runner PoC (`components/execution/flowrunner`, wamn-lsf) used a minimal ad-hoc
 JSON (`{version, nodes:[{id,type,config}], edges:[[from,to]]}`) as an explicit
 stand-in. This schema is the canonical replacement: triggers become a typed
 top-level field (not a `webhook-in` node), edges gain output ports (branch /
@@ -163,4 +163,4 @@ from the Rust types.
 - Plan: `docs/platform-plan.md` §Epic 5 (5.1–5.3, 5.14), D1 (flow-as-IR).
 - POC flows: `docs/poc-material-receiving.md` (F1–F4).
 - Node contract: `docs/wamn-node.wit` (payload/config/credential handles).
-- S3 stand-in: `components/flowrunner`, `docs/p0-results.md` S3.
+- S3 stand-in: `components/execution/flowrunner`, `docs/p0-results.md` S3.

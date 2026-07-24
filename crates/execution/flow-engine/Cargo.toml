@@ -19,5 +19,5 @@ wamn-node-sdk = { path = "../../node/sdk" }
 serde_json = "1"
 
 # No DB / host / wasm / clock dependency: the reducer is a pure function of
-# (state, node outcome, now_ms). The component (components/flowrunner) owns every
+# (state, node outcome, now_ms). The component (components/execution/flowrunner) owns every
 # effect — dispatching nodes, wamn:postgres checkpoints, sleeping, the doorbell.

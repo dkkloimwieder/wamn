@@ -36,7 +36,7 @@ fn component_copies_match_docs() {
     let docs = fs::read_to_string(root().join("../../docs/wamn-jetstream.wit"))
         .expect("docs/wamn-jetstream.wit reads");
     for copy in [
-        "../../components/materializer/wit/deps/wamn-jetstream/package.wit",
+        "../../components/execution/materializer/wit/deps/wamn-jetstream/package.wit",
         "../../components/samples/js-sample/wit/deps/wamn-jetstream/package.wit",
     ] {
         let vendored =

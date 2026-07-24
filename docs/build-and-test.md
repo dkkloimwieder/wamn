@@ -365,7 +365,7 @@ exercises it via the `wamn_app` pool. SQL read builders:
 Drivability refusal (cross-lane contract): before driving, the executor checks
 the graph's `nodes[].type` against the drivable set — the flowrunner built-in
 dispatch arms (`BUILTIN_NODE_TYPES`, drift-guarded against
-`components/flowrunner/src/lib.rs`) ∪ the standard node library
+`components/execution/flowrunner/src/lib.rs`) ∪ the standard node library
 (`STANDARD_NODE_TYPES`, drift-guarded against `crates/execution/standard-nodes/src/lib.rs`
 `NODE_TYPES` name+count). A flow with a guest-baked type (F1's
 `validate-receipt`/`upsert-receipt`/`evaluate-specs`/`create-holds`) → a typed
@@ -562,8 +562,8 @@ cargo test -p wamn-runner
 cargo clippy -p wamn-runner --all-targets && cargo fmt -p wamn-runner --check
 # locally. Rebuild the guest (part of the guest build above), then re-run those gates:
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)
-cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
-  && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
+cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/execution/flowrunner/Cargo.toml --check
 ```
 
 ### [5.3] standard node library v1 (crates/node/sdk + crates/execution/standard-nodes)
@@ -607,8 +607,8 @@ docker stop wamn-runstore-pg
 # (in-cluster gate of record + locally). Rebuild the guest, re-run those gates (the
 # additively (kubectl exec psql — shared-cluster guardrail, never recreate the pod).
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)
-cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
-  && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
+cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/execution/flowrunner/Cargo.toml --check
 ```
 
 ### [5.7-resume-pin / wamn-cox] resume pins the run's persisted flow_version
@@ -1410,7 +1410,7 @@ old-absent is cannot-evaluate, never condition-false) → deterministic
 write-ahead + `enqueue_evt[_with_policy]_sql` in ONE transaction (REAL
 `stream_seq` on the row — E4; key+policy stamp kq0z-coherently) → post-commit
 doorbell → ack. Decisions are the PURE `wamn-materializer` crate; the guest
-(`components/materializer`) is the effect shell.
+(`components/execution/materializer`) is the effect shell.
 
 ```bash
 cargo test -p wamn-materializer -p wamn-run-queue          # decide/condition/causation/mint + E4 model/SQL pins
@@ -1622,8 +1622,8 @@ cargo build -p wamn-run-queue --no-default-features   # the guest's pure claim-p
 cargo clippy -p wamn-dispatcher -p wamn-run-worker -p wamn-gates -p wamn-run-store -p wamn-run-queue --all-targets \
   && cargo fmt -p wamn-dispatcher -p wamn-run-worker -p wamn-gates -p wamn-run-store -p wamn-run-queue --check
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)   # guest CHANGED
-cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
-  && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
+cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/execution/flowrunner/Cargo.toml --check
 # Local iteration (throwaway postgres:18 + wamn_app; failoverbench --mode all now includes
 # claim/park/heartbeat — the guest CHANGED so rebuild the wasm above first):
 docker run -d --rm --name wamn-fqg4-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
@@ -1667,8 +1667,8 @@ cargo test -p wamn-run-queue --test queue guest_partition_loop_drives_each_key_i
 cargo clippy -p wamn-run-queue -p wamn-gates --all-targets \
   && cargo fmt -p wamn-run-queue -p wamn-gates --check
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)   # guest CHANGED
-cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
-  && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
+cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/execution/flowrunner/Cargo.toml --check
 # Local live gates (throwaway postgres:18 + wamn_app; guest CHANGED so rebuild wasm first):
 docker run -d --name wave3-pg-fqg9 -p 55434:5432 -e POSTGRES_PASSWORD=postgres postgres:18
 docker exec wave3-pg-fqg9 psql -U postgres -c \
@@ -2545,7 +2545,7 @@ WAMN_SEED_PG_URL=postgres://postgres:postgres@127.0.0.1:5454/wamn cargo test -p 
 docker stop wamn-seed-pg
 ```
 
-### [4.1] REST API gateway (crates/data/entity-access + components/api-gateway)
+### [4.1] REST API gateway (crates/data/entity-access + components/ingress/api-gateway)
 
 Docs: docs/api-gateway.md
 
@@ -2629,8 +2629,8 @@ Docs: docs/poc-f1.md
 cargo test -p wamn-f1        # decimal/payload/evaluate/shapes + catalog & flow drift-guards
 cargo clippy -p wamn-f1 --all-targets && cargo fmt -p wamn-f1 --check
 (cd components && cargo build --release --target wasm32-wasip2 -p poc-webhook-f1)
-cargo clippy --manifest-path components/poc-webhook-f1/Cargo.toml --release --target wasm32-wasip2 \
-  && cargo fmt --manifest-path components/poc-webhook-f1/Cargo.toml --check
+cargo clippy --manifest-path components/poc/webhook-f1/Cargo.toml --release --target wasm32-wasip2 \
+  && cargo fmt --manifest-path components/poc/webhook-f1/Cargo.toml --check
 cargo test -p wamn-gates    # f1fixture coherence (burst = 20 receipts / 3 out-of-spec /
 # cross-check incl expand=line). Local iteration (throwaway PG; superuser
 # provisions the ephemeral schema):
@@ -3076,8 +3076,8 @@ WAMN_RUN_QUEUE_PG_URL=... WAMN_RUN_STORE_PG_URL=... cargo test -p wamn-run-queue
 # guests + the gate of record (runnerbench merge-resume: a diamond whose merge is a
 # delay node parks between the merge's visits; every re-claim reconstructs — want
 # 7 node_runs rows, m/r visits (2,0,1)):
-(cd components/flowrunner && cargo build --release --target wasm32-wasip2)
-(cd components/poc-webhook-f1 && cargo build --release --target wasm32-wasip2)
+(cd components/execution/flowrunner && cargo build --release --target wasm32-wasip2)
+(cd components/poc/webhook-f1 && cargo build --release --target wasm32-wasip2)
 ./target/debug/wamn-gates runnerbench --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url ... --admin-database-url ...
 # regressions: failoverbench (all), flowbench (all), testhostbench (all), f1bench (all).

@@ -264,7 +264,7 @@ provisioning and both exec paths (migrate + copy) and is deferred to its own bea
   `wamn-2.2-postgres-production-facts`, `wamn-postgres-wit-0.1-frozen`.
 - In-band claim guard (cjv.2): `reject_claim_mutation` /
   `statement_mutates_session` in `wamn_postgres.rs`; gate
-  `crates/wamn-gates/src/pgbench.rs` (`--mode attack`) + pgprobe ops 7/8/9;
+  `tests/orchestrator/src/pgbench.rs` (`--mode attack`) + pgprobe ops 7/8/9;
   structural close deferred to `wamn-1nd`.
 - Expression-chaining guard (cjv.5): `wamn_catalog::unsafe_expression_reason`
   (`crates/schema/model/src/validate.rs`), wired into the `Check` validator

@@ -571,7 +571,7 @@ async fn admin_query_json(
 const DEMO_FLOW_ID: &str = "tk-demo-flow";
 const DEMO_SUITE_ID: &str = "demo";
 
-/// The flowrunner guest's BUILT-IN dispatch arms (`components/flowrunner`
+/// The flowrunner guest's BUILT-IN dispatch arms (`components/execution/flowrunner`
 /// `dispatch_node`) — the node types the doubles path drives directly, BEYOND
 /// the standard node library (which the guest delegates to
 /// `wamn_nodes::is_standard`). Curated here because the guest is a wasm crate
@@ -1453,7 +1453,7 @@ mod tests {
     /// drivability refusal it powers — back into agreement.
     #[test]
     fn builtin_node_types_pinned_against_the_guest() {
-        let guest = include_str!("../../../components/flowrunner/src/lib.rs");
+        let guest = include_str!("../../../components/execution/flowrunner/src/lib.rs");
         for t in BUILTIN_NODE_TYPES {
             assert!(
                 guest.contains(&format!("\"{t}\"")),

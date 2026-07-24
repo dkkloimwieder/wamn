@@ -54,11 +54,11 @@ fn code_lines(wit: &str) -> Vec<&str> {
 /// walk in [`all_vendored_copies_are_registered`] must discover exactly these;
 /// adding a new guest that vendors the contract requires adding its path here.
 const EXPECTED_COPIES: [&str; 7] = [
-    "components/api-gateway/wit/deps/wamn-postgres/package.wit",
+    "components/ingress/api-gateway/wit/deps/wamn-postgres/package.wit",
     "components/fixtures/pgprobe/wit/deps/wamn-postgres/package.wit",
-    "components/flowrunner/wit/deps/wamn-postgres/package.wit",
-    "components/materializer/wit/deps/wamn-postgres/package.wit",
-    "components/poc-webhook-f1/wit/deps/wamn-postgres/package.wit",
+    "components/execution/flowrunner/wit/deps/wamn-postgres/package.wit",
+    "components/execution/materializer/wit/deps/wamn-postgres/package.wit",
+    "components/poc/webhook-f1/wit/deps/wamn-postgres/package.wit",
     "services/host/wit/deps/wamn-postgres/package.wit",
     "crates/node/guest/wit-caps/deps/wamn-postgres/package.wit",
 ];
@@ -67,10 +67,10 @@ const EXPECTED_COPIES: [&str; 7] = [
 /// doc-comment revision). Byte-identity within the cluster is asserted so a
 /// comment edit to one member fails here.
 const CLUSTER_A: [&str; 5] = [
-    "components/api-gateway/wit/deps/wamn-postgres/package.wit",
+    "components/ingress/api-gateway/wit/deps/wamn-postgres/package.wit",
     "components/fixtures/pgprobe/wit/deps/wamn-postgres/package.wit",
-    "components/flowrunner/wit/deps/wamn-postgres/package.wit",
-    "components/poc-webhook-f1/wit/deps/wamn-postgres/package.wit",
+    "components/execution/flowrunner/wit/deps/wamn-postgres/package.wit",
+    "components/poc/webhook-f1/wit/deps/wamn-postgres/package.wit",
     "crates/node/guest/wit-caps/deps/wamn-postgres/package.wit",
 ];
 
@@ -79,7 +79,7 @@ const CLUSTER_A: [&str; 5] = [
 /// prepared-statement prose paragraphs the others carry). Same code, different
 /// comments — kept byte-identical to EACH OTHER.
 const CLUSTER_B: [&str; 2] = [
-    "components/materializer/wit/deps/wamn-postgres/package.wit",
+    "components/execution/materializer/wit/deps/wamn-postgres/package.wit",
     "services/host/wit/deps/wamn-postgres/package.wit",
 ];
 

@@ -9,7 +9,7 @@ Two crates deliver plan item 5.3 (wamn-3xa):
 | `crates/node/sdk` | The node **authoring contract** — the `Node` trait, the `RunContext` view of a dispatch, the `NodeCtx` capability facade every effect flows through, and the `wamn:node` error taxonomy (`NodeError`/`ErrorDetail`/`RateLimitDetail`, now DEFINED here and re-exported by `wamn-runner`). A Rust mirror of the drafted `docs/wamn-node.wit`; the 5.4 freeze layers the WIT + guest scaffolding on top. |
 | `crates/execution/standard-nodes` | The **standard library**: the production node vocabulary plus the dispatch-time capability policy table. Pure — no DB, no wasm, no host; a mock `NodeCtx` unit-tests every node, classification map, and policy negative. |
 
-`components/flowrunner` adopts the library: any node type `wamn-nodes` ships
+`components/execution/flowrunner` adopts the library: any node type `wamn-nodes` ships
 dispatches through `wamn_nodes::dispatch` over a `NodeCtx` implemented on the
 component's real imports (`wamn:postgres`, `wasi:http`). The S3/S6 fixture
 node shapes keep their legacy semantics byte-identical (a `transform` /
@@ -138,7 +138,7 @@ Nodes never string-match; the maps are fixed and unit-pinned:
   → `retryable`; other 4xx → `terminal`; transport failure → `retryable`; a
   host egress denial (`allowedHosts`) → `terminal`.
 
-## Driver notes (components/flowrunner)
+## Driver notes (components/execution/flowrunner)
 
 - **Error rows**: the driver records a `node_runs` error row ONLY when the
   engine will ROUTE the emission — an error edge exists AND the variant/

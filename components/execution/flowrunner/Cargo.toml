@@ -10,33 +10,33 @@ serde_json = "1"
 # The production runner (5.2) is the pure `wamn-runner` engine reducer over the
 # canonical `wamn-flow` (5.1) graph; this component is the thin shell that drives
 # it against wamn:postgres + the native standard nodes (the wamn-api pattern).
-wamn-flow = { path = "../../crates/execution/flow-model" }
-wamn-runner = { path = "../../crates/execution/flow-engine" }
+wamn-flow = { path = "../../../crates/execution/flow-model" }
+wamn-runner = { path = "../../../crates/execution/flow-engine" }
 # Durable run state (5.7): the runs/node_runs model + branch-aware reconstruction
 # this component persists into and resumes from (replacing the S3 step_seq).
-wamn-run-store = { path = "../../crates/execution/run-state-store" }
+wamn-run-store = { path = "../../../crates/execution/run-state-store" }
 # Durable run queue (5.14): the claim/lease/dequeue/park SQL builders the guest
 # calls to claim its OWN work from run_queue (fqg.4). `default-features = false`
 # keeps the dispatcher-only modules (cron/dispatch — croner + chrono) out
 # of the guest wasm; the runner needs only the pure claim-path builders (sql.rs).
-wamn-run-queue = { path = "../../crates/execution/run-state-queue", default-features = false }
+wamn-run-queue = { path = "../../../crates/execution/run-state-queue", default-features = false }
 # The standard node library (5.3) + the SDK capability facade this component
 # implements over its real imports (wamn:postgres, wasi:http). The library is
 # pure — node behavior, taxonomy classification, and the dispatch-time
 # capability policy all live (and are tested) in the crates; this shell only
 # mirrors WIT values and performs the effects.
-wamn-node-sdk = { path = "../../crates/node/sdk" }
-wamn-nodes = { path = "../../crates/execution/standard-nodes" }
+wamn-node-sdk = { path = "../../../crates/node/sdk" }
+wamn-nodes = { path = "../../../crates/execution/standard-nodes" }
 # The SHARED capability facade (SR2): CapsCtx + the WIT<->SDK mirrors over
 # wamn:postgres + outbound wasi:http live in the scaffolding crate's `caps`
 # feature — this shell links them instead of copying them.
-wamn-node-guest = { path = "../../crates/node/guest", features = ["caps"] }
+wamn-node-guest = { path = "../../../crates/node/guest", features = ["caps"] }
 # 5.6 / wamn-bd5: the v0 custom-node invocation protocol — the wire envelope the
 # runner POSTs to a `serve-node` host and the per-step grant derivation. The
 # SAME crate the serve-node HOST links, so the wire shape cannot drift between
 # the two ends. Pure serde; the guest links only the envelope + the grant helper
 # (never the host-side ConfigCache).
-wamn-node-invoke = { path = "../../crates/node/invoke" }
+wamn-node-invoke = { path = "../../../crates/node/invoke" }
 
 [lib]
 crate-type = ["cdylib"]

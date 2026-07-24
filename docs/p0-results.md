@@ -265,7 +265,7 @@ capability) holds. Closing S2 unblocks 2.2 (production plugin, wamn-ui3), D5
 
 ## S3 — Flow-runner PoC (5.2) — **PASS** (2026-07-10)
 
-**Deliverable shipped:** a guest flow-runner (`components/flowrunner`) that
+**Deliverable shipped:** a guest flow-runner (`components/execution/flowrunner`) that
 embeds the standard node library as **native Rust** and imports
 `wamn:postgres/client`, plus a `wamn-host flowbench` subcommand
 (`services/host/src/flowbench.rs`) that drives it. The runner *is* a
@@ -355,7 +355,7 @@ granularity. Both held. Closing S3 unblocks S4 (wamn-veg), S6 (wamn-jy9),
 the minimal `wamn:node` contract (docs/wamn-node.wit) — `components/node-rs`
 (Rust) and `components/node-ts` (TypeScript/JS via **JCO** / ComponentizeJS /
 StarlingMonkey) — plus a **`wac`-composed** frozen 3-node flow
-(`components/flow-driver` + node-rs → `flow-composed.wasm`), driven by a new
+(`components/fixtures/flow-driver` + node-rs → `flow-composed.wasm`), driven by a new
 `wamn-host nodebench` subcommand (`services/host/src/nodebench.rs`) and a
 `serve-node` HTTP node host. The node has three config-selected modes: `noop`
 (hop), `io` (a host `wait-ns` sleep modelling an outbound call), and `compute`
@@ -553,11 +553,11 @@ logging plugin 9.3 (wamn-yf3) and feeds [P0-EXIT] wamn-2rl.
 
 ## S6 — Test host plugin-swap (11.1) — **PASS** (2026-07-10)
 
-**Deliverable shipped:** the S3 flow-runner (`components/flowrunner`) extended
+**Deliverable shipped:** the S3 flow-runner (`components/execution/flowrunner`) extended
 with two nodes that touch *non-deterministic* host capabilities — a **`delay`**
 node (reads `wasi:clocks/wall-clock`, parks durably) and an **`http-call`** node
 (makes a `wasi:http/outgoing-handler` outbound request) — plus a `wamn-host
-testhostbench` subcommand (`crates/wamn-gates/src/testhostbench.rs`) that compiles
+testhostbench` subcommand (`tests/orchestrator/src/testhostbench.rs`) that compiles
 the extended runner **once** and instantiates the *identical bytes* into two
 stores that differ only in host-injected capabilities:
 

@@ -1,7 +1,7 @@
 //! The capability-bearing twin of the no-caps scaffolding (SR2): the
 //! `wamn_node_sdk::NodeCtx` facade a component SHELL implements over its real
 //! imports — `wamn:postgres` for data, outbound `wasi:http` for egress — plus
-//! the WIT↔SDK value mirrors both directions. `components/flowrunner` grew
+//! the WIT↔SDK value mirrors both directions. `components/execution/flowrunner` grew
 //! the first copy of this glue; this module is where it lives so the next
 //! capability-bearing component links it instead of copying it.
 //!

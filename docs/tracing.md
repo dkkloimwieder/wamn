@@ -99,7 +99,7 @@ one, **host-enforced**:
 
 The 9.1 in-proc `tracebench` cannot exercise this: `ProxyPre` bypasses
 wash-runtime's HTTP server, so the outbound send path where the fork stamps the
-context never runs. `traceproof` (`crates/wamn-gates/src/traceproof.rs`) runs
+context never runs. `traceproof` (`tests/orchestrator/src/traceproof.rs`) runs
 against **real deployed workloads**:
 
 ```text
@@ -132,7 +132,7 @@ a blind copy). In-cluster gate of record: `deploy/gates/serve-echo.yaml` +
 
 ## The gate — `tracebench` (the S5 `logbench`→Loki analog)
 
-`crates/wamn-gates/src/tracebench.rs` drives a real guest DB call (`pgprobe`
+`tests/orchestrator/src/tracebench.rs` drives a real guest DB call (`pgprobe`
 op 6, `SELECT pg_sleep(0)` — fixture-free) *under* the real `trigger_span`, so
 the plugin's DB span nests beneath it. It then queries Tempo's TraceQL API
 (`/api/search` by the intrinsic span name, `/api/traces/<id>` for the full

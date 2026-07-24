@@ -1,7 +1,7 @@
 //! # wamn-materializer (EVT-MAT, D19 v3 §5 / l5i9.17) — CDC event → run decisions
 //!
 //! The **pure per-event pipeline** the Service-first materializer guest
-//! (`components/materializer`) drives: given a subscribing flow's declaration
+//! (`components/execution/materializer`) drives: given a subscribing flow's declaration
 //! (an [`EventRegistration`] + the flow's [`Ordering`]/policy) and one
 //! delivered CDC envelope with its JetStream `stream_seq`, decide — fire a
 //! run, skip, or refuse — and, for a fire, mint everything the enqueue needs:
