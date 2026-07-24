@@ -42,7 +42,7 @@ use wamn_runtime::plugins::wamn_logging::{self, WamnLogging, WamnLoggingConfig};
 // runpath (wamn-yf3): the production run-path drives a real Postgres through the
 // run-worker instantiate path.
 use tokio_postgres::{Client, NoTls};
-use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_run_worker::{RunWorker, RunnerIdentity};
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 

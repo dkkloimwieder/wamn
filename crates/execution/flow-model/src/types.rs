@@ -64,7 +64,7 @@ pub struct Flow {
     /// (5.11 ordering decision, D20). Absent = [`PartitionPolicy::Blocking`]:
     /// choosing partitioned dispatch *is* opting into ordering. Inert for a
     /// flow whose runs carry no partition key; materialized onto each queue
-    /// row at enqueue (`wamn-run-queue`) so the claim SQL is self-contained.
+    /// row at enqueue (`wamn-run-state`) so the claim SQL is self-contained.
     #[serde(default, skip_serializing_if = "PartitionPolicy::is_default")]
     pub partition_policy: PartitionPolicy,
     /// The flow's record-stream ordering (5.11): which ordered stream its runs
@@ -82,7 +82,7 @@ pub struct Flow {
     /// any mode stores a preview only. Absent = [`Capture::default`] (full
     /// capture, 64 KiB threshold): the platform captures replayable payloads by
     /// default. Rides `graph_json`; the flowrunner guest applies it at every
-    /// `node_runs` write ([`wamn_run_store::capture`](../wamn_run_store)).
+    /// `node_runs` write ([`wamn_run_state::capture`](../wamn_run_state)).
     #[serde(default, skip_serializing_if = "Capture::is_default")]
     pub capture: Capture,
 }
@@ -95,7 +95,7 @@ pub const DEFAULT_CAPTURE_MAX_BYTES: u64 = 64 * 1024;
 /// payloads are persisted to `node_runs`, plus the size threshold that forces
 /// preview-only storage. The pure application logic — secret scrubbing, size
 /// truncation, and preview/size/hash derivation — lives in
-/// `wamn_run_store::capture`; this is the authored declaration that rides
+/// `wamn_run_state::capture`; this is the authored declaration that rides
 /// `graph_json` (the flow is in scope at every `node_runs` write site).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

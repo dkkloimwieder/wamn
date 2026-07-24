@@ -3,8 +3,8 @@
 //! A [`Sql`] is a parameterized statement fragment carried **with** its
 //! positional-parameter arity (the count of distinct `$n` placeholders it binds).
 //! The pure crates emit SQL as `String`; when a fragment produced in one crate is
-//! composed into a statement in another — `wamn-run-store` emits the per-node
-//! checkpoint and completion INSERT/UPDATEs, `wamn-run-queue` wraps them in a CTE
+//! composed into a statement in another — `wamn-run-state` emits the per-node
+//! checkpoint and completion INSERT/UPDATEs and wraps them in a CTE
 //! and appends a lease-renew tail — the consumer must number its own params AFTER
 //! the head's. Hardcoding that offset (`$7`/`$8` on the assumption the head uses
 //! `$1..$6`) is the SR11 bug: add one parameter upstream and the tail's TTL and
@@ -14,7 +14,7 @@
 //!
 //! This crate is the smallest sound home for that contract: a leaf with **no
 //! dependencies** (guest-compilable, no DB/clock/wasm), that both the producer
-//! (`wamn-run-store`) and the consumer (`wamn-run-queue`) depend on without a
+//! (`wamn-run-state`) can depend on without a
 //! cycle. Leaf builders that are never composed keep returning `String`.
 //!
 //! ```
@@ -40,7 +40,7 @@
 //! This crate's tests exercise the **decision** (which statement, what shape,
 //! which binds); they cannot exercise the **statement** — the pure model has no
 //! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: `wamn-run-queue`'s `claim_batch_sql`
+//! correctly here and still misbehave live: `wamn-run-state`'s `claim_batch_sql`
 //! passed every pure test while the real statement over-claimed on a
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):

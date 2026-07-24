@@ -5,7 +5,7 @@
 //! a dispatcher concern: the D19 v3 event plane (CDC reader → JetStream →
 //! materializer) delivers them — the outbox poller was torn down at l5i9.19.
 //!
-//! Every decision is the pure crate's ([`wamn_run_queue`]): cron due-tick
+//! Every decision is the pure crate's ([`wamn_run_state`]): cron due-tick
 //! evaluation over an injected `now` ([`due_tick`]), deterministic trigger run
 //! ids, the adaptive per-project cadence ([`Cadence::next_interval`]). This module is
 //! the DRIVER — tokio_postgres effects, the NATS-core doorbell, the real
@@ -59,11 +59,12 @@ use clap::Args;
 use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
 use wamn_flow::{Flow, Ordering, Trigger};
-use wamn_run_queue::{
-    Cadence, Firing, PartitionPolicy, active_flows_sql, cron_anchor_sql, cron_firing,
-    cron_last_run_sql, cron_tick_of, due_tick, enqueue_sql, enqueue_with_policy_sql, next_fire,
-    next_reconcile, parked_due_sql, reconcile_due, upsert_cron_anchor_sql,
-    write_ahead_triggered_run_sql,
+use wamn_run_state::queue::{
+    PartitionPolicy, active_flows_sql, cron_anchor_sql, cron_last_run_sql, enqueue_sql,
+    enqueue_with_policy_sql, parked_due_sql, upsert_cron_anchor_sql, write_ahead_triggered_run_sql,
+};
+use wamn_scheduler::{
+    Cadence, Firing, cron_firing, cron_tick_of, due_tick, next_fire, next_reconcile, reconcile_due,
 };
 
 // R16b (wamn-2jkm.20): the dispatcher's pinned session `SET`s interpolate the
@@ -72,8 +73,8 @@ use wamn_run_queue::{
 use wamn_control_registry::identifiers::{valid_schema, valid_tenant};
 
 /// [9.8] The claimable run-queue depth for the pinned session's tenant. Mirrors
-/// EXACTLY the claim predicate of `wamn_run_queue::claim_batch_sql`
-/// (`crates/execution/run-state-queue/src/sql.rs`: `available_at` reached, lease NULL-or-
+/// EXACTLY the claim predicate of `wamn_run_state::queue::claim_batch_sql`
+/// (`crates/execution/run-state/src/queue/sql.rs`: `available_at` reached, lease NULL-or-
 /// expired, budget-remaining), so the gauge counts precisely the rows a runner
 /// could claim right now. Inverting a clause (e.g. `available_at > now()`) makes
 /// a seeded queue read 0 — metricbench phase 2's mutant.
@@ -133,12 +134,12 @@ pub struct DispatchArgs {
     pub nats_tls_key: Option<PathBuf>,
 
     /// Tightest per-project sweep interval (a busy project's cadence).
-    #[arg(long, default_value_t = wamn_run_queue::DEFAULT_MIN_INTERVAL_MS)]
+    #[arg(long, default_value_t = wamn_scheduler::DEFAULT_MIN_INTERVAL_MS)]
     pub min_interval_ms: i64,
 
     /// Widest per-project sweep interval (an idle project's reconciliation
     /// cadence).
-    #[arg(long, default_value_t = wamn_run_queue::DEFAULT_MAX_INTERVAL_MS)]
+    #[arg(long, default_value_t = wamn_scheduler::DEFAULT_MAX_INTERVAL_MS)]
     pub max_interval_ms: i64,
 
     /// Max wake hints processed per project per sweep (the
@@ -253,8 +254,8 @@ impl Default for DispatcherConfig {
             // The default band is a compile-time-known valid range; an Err here
             // would be a broken constant, not user input (M-PANIC-ON-BUG).
             cadence: Cadence::new(
-                wamn_run_queue::DEFAULT_MIN_INTERVAL_MS,
-                wamn_run_queue::DEFAULT_MAX_INTERVAL_MS,
+                wamn_scheduler::DEFAULT_MIN_INTERVAL_MS,
+                wamn_scheduler::DEFAULT_MAX_INTERVAL_MS,
             )
             .expect("default cadence bounds are valid"),
             batch: 64,
@@ -688,7 +689,7 @@ fn partition_policy_for_firing(reg: &Registry, f: &Firing) -> &'static str {
         .as_sql()
 }
 
-/// Bridge the `wamn-flow` policy contract enum to the `wamn-run-queue` storage
+/// Bridge the `wamn-flow` policy contract enum to the `wamn-run-state` storage
 /// enum (whose [`PartitionPolicy::as_sql`] owns the single storage literal). The
 /// two are structurally mirrored; this is the one crossing point.
 fn rq_policy(p: wamn_flow::PartitionPolicy) -> PartitionPolicy {
@@ -850,7 +851,7 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
     // R13: validate the poll cadence once, at the boundary — an inverted band
     // (`--min-interval-ms` > `--max-interval-ms`) would otherwise panic in
     // `next_interval`'s `clamp` on the first idle sweep. Bail at startup instead.
-    let cadence = wamn_run_queue::Cadence::new(args.min_interval_ms, args.max_interval_ms)
+    let cadence = wamn_scheduler::Cadence::new(args.min_interval_ms, args.max_interval_ms)
         .context("invalid poll cadence (--min-interval-ms / --max-interval-ms)")?;
     let cfg = DispatcherConfig {
         cadence,
@@ -952,13 +953,13 @@ mod tests {
         DispatcherConfig, Ordering, PartitionPolicy, RUN_QUEUE_DEPTH_SQL, Registry,
         partition_key_for_firing, partition_policy_for_firing, valid_tenant,
     };
-    use wamn_run_queue::Firing;
+    use wamn_scheduler::Firing;
 
     // [9.8] the run_queue.depth count must reuse the CLAIMABLE predicate (rows a
     // runner could take now), not its inverse. A mutant that counts parked rows
     // (`available_at > now()`) or drops a clause diverges here and at metricbench
     // phase 2. The clauses are asserted verbatim against the same trio
-    // `wamn_run_queue::claim_batch_sql` fences the claim with.
+    // `wamn_run_state::queue::claim_batch_sql` fences the claim with.
     #[test]
     fn depth_sql_counts_claimable_not_parked() {
         let sql = RUN_QUEUE_DEPTH_SQL;
@@ -976,7 +977,7 @@ mod tests {
         assert!(!sql.contains("available_at > now()"));
         // The claim path fences with the SAME clauses (drift guard). It aliases
         // the queue table (`c.`), so match alias-surviving substrings.
-        let claim = wamn_run_queue::claim_batch_sql(1);
+        let claim = wamn_run_state::queue::claim_batch_sql(1);
         assert!(claim.contains("available_at <= now()"));
         assert!(claim.contains("lease_expires_at IS NULL"));
         assert!(claim.contains("attempts < "));
@@ -1079,8 +1080,8 @@ mod tests {
     // Cadence::new before it can reach the config. A valid band round-trips in.
     #[test]
     fn dispatcher_config_cadence_is_validated() {
-        assert!(wamn_run_queue::Cadence::new(5_000, 1_000).is_err());
-        let cadence = wamn_run_queue::Cadence::new(250, 30_000).expect("valid band");
+        assert!(wamn_scheduler::Cadence::new(5_000, 1_000).is_err());
+        let cadence = wamn_scheduler::Cadence::new(250, 30_000).expect("valid band");
         let cfg = DispatcherConfig { cadence, batch: 64 };
         assert_eq!((cfg.cadence.min(), cfg.cadence.max()), (250, 30_000));
     }

@@ -49,9 +49,9 @@ edges leaving that port.
 ### Dispatch budget (the runaway bound, cjv.4)
 
 `Plan::next` counts every node execution it hands out (retries included) for
-one `RunState`; once the budget is spent — `Plan::set_dispatch_budget`,
+one `ExecutionState`; once the budget is spent — `Plan::set_dispatch_budget`,
 default `DEFAULT_DISPATCH_BUDGET = 10_000` — the run fails with the terminal
-`FailKind::RunawayBudget`. The verdict is deliberately **not** routed to the
+`ExecutionFailureKind::RunawayBudget`. The verdict is deliberately **not** routed to the
 flow's `error` port (an error path can itself be part of the loop): it is
 unconditionally terminal, so the driver's ordinary `Done(Failed)` handling
 (mark failed + dequeue) frees the runner. Reconstruction (`Plan::resume`) is

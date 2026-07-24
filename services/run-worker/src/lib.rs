@@ -23,7 +23,7 @@
 //! Idle handling mirrors the dispatcher (NATS-optional): a doorbell hint on
 //! `wamn.doorbell.<tenant>` — the subject the dispatcher already publishes to —
 //! wakes an immediate drain, and a poll-with-backoff reconcile (reusing the
-//! dispatcher's [`wamn_run_queue::Cadence::next_interval`] cadence) guarantees pickup
+//! scheduler's [`wamn_scheduler::Cadence::next_interval`] cadence) guarantees pickup
 //! even when a hint is lost or NATS is absent. SIGTERM is handled explicitly
 //! (PID 1 in-container gets no default disposition), so a rollout exits in
 //! milliseconds instead of waiting out the grace period; abrupt death is safe
@@ -148,12 +148,12 @@ pub struct RunWorkerArgs {
 
     /// Tightest idle poll interval (ms): reset to this after a drain that found
     /// work, so a busy queue is drained promptly.
-    #[arg(long, default_value_t = wamn_run_queue::DEFAULT_MIN_INTERVAL_MS as u64)]
+    #[arg(long, default_value_t = wamn_scheduler::DEFAULT_MIN_INTERVAL_MS as u64)]
     pub min_idle_ms: u64,
 
     /// Widest idle poll interval (ms): the reconciliation backstop cadence while
     /// the queue stays empty (doubles up to here).
-    #[arg(long, default_value_t = wamn_run_queue::DEFAULT_MAX_INTERVAL_MS as u64)]
+    #[arg(long, default_value_t = wamn_scheduler::DEFAULT_MAX_INTERVAL_MS as u64)]
     pub max_idle_ms: u64,
 
     /// NATS URL for doorbell wakes. The runner runs without NATS (the
@@ -596,7 +596,7 @@ impl RunWorker {
     pub async fn serve(
         &mut self,
         nats: Option<async_nats::Client>,
-        cadence: wamn_run_queue::Cadence,
+        cadence: wamn_scheduler::Cadence,
         mut shutdown: watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
         use futures_util::StreamExt;
@@ -673,7 +673,7 @@ pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
     // R13: validate the idle poll cadence once, at startup — an inverted band
     // (`--min-idle-ms` > `--max-idle-ms`) would otherwise panic in
     // `next_interval`'s `clamp` on the first idle sweep. Bail here instead.
-    let cadence = wamn_run_queue::Cadence::new(args.min_idle_ms as i64, args.max_idle_ms as i64)
+    let cadence = wamn_scheduler::Cadence::new(args.min_idle_ms as i64, args.max_idle_ms as i64)
         .context("invalid idle poll cadence (--min-idle-ms / --max-idle-ms)")?;
 
     let url = args
@@ -896,7 +896,7 @@ mod tests {
     fn idle_backoff_resets_on_work_and_doubles_while_idle() {
         // The runner reuses the dispatcher cadence: work resets to min, idleness
         // doubles toward max.
-        let cadence = wamn_run_queue::Cadence::new(250, 30_000).unwrap();
+        let cadence = wamn_scheduler::Cadence::new(250, 30_000).unwrap();
         let (min, max) = (cadence.min(), cadence.max());
         assert_eq!(cadence.next_interval(min, true), min);
         let a = cadence.next_interval(min, false);

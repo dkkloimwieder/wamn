@@ -27,7 +27,7 @@
 //! system-DB tables that persist this model and their DB-enforced invariants are
 //! `deploy/sql/system-schema.sql` (`wamn-q3n.3`, tied here by a drift guard); the
 //! environment lifecycle threads into `wamn-schema-control` (3.4). This is a store model,
-//! not a published contract, so — like `wamn-run-store` — there is no generated
+//! not a published contract, so — like `wamn-run-state` — there is no generated
 //! JSON-Schema file.
 
 pub mod identifiers;

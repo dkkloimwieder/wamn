@@ -1,0 +1,11 @@
+[package]
+name = "wamn-scheduler"
+description = "Pure trigger scheduling decisions: cron ticks, deterministic firing identity, reconciliation deadlines, and adaptive polling cadence. It owns no durable state or clock."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json = { version = "1", features = ["raw_value"] }
+croner = "3"
+chrono = { version = "0.4", default-features = false, features = ["std"] }

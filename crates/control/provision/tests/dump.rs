@@ -8,7 +8,7 @@
 //!
 //! Set `WAMN_DUMP_PG_URL` to a **superuser** URL (it CREATEs/DROPs two throwaway
 //! databases); skipped cleanly when unset or when the `pg_dump`/`pg_restore`/`psql`
-//! client tools are absent (the wamn-schema-compiler / wamn-run-store live-gate pattern). The
+//! client tools are absent (the wamn-schema-compiler / wamn-run-state live-gate pattern). The
 //! object-store transport is deferred (wamn-e1g); this gate validates the artifact
 //! itself, which is substrate-independent.
 

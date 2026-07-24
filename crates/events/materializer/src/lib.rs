@@ -5,11 +5,11 @@
 //! (an [`EventRegistration`] + the flow's [`Ordering`]/policy) and one
 //! delivered CDC envelope with its JetStream `stream_seq`, decide — fire a
 //! run, skip, or refuse — and, for a fire, mint everything the enqueue needs:
-//! the deterministic zero-padded run id ([`wamn_run_queue::mint_evt_run_id`]),
+//! the deterministic zero-padded run id ([`wamn_run_state::queue::mint_evt_run_id`]),
 //! the run-input envelope (causation embedded, the event-chain thread), the
 //! partition key + policy (kq0z-coherent), and the numeric stream position.
 //!
-//! Like `wamn-run-queue` / `wamn-runner`, this crate is **pure**: no DB, no
+//! Like `wamn-run-state` / `wamn-runner`, this crate is **pure**: no DB, no
 //! NATS, no clock. The guest supplies the `wamn:postgres` transaction
 //! (write-ahead + enqueue, `ON CONFLICT DO NOTHING` — the exactly-once
 //! guarantee), the `wamn:jetstream` fetch/ack, and the post-commit doorbell.

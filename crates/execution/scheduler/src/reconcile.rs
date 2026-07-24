@@ -4,7 +4,7 @@
 //! A periodic reconciliation claim (every 30 s–5 min) guarantees eventual pickup
 //! with zero continuous polling. These are the pure timing decisions.
 
-use crate::model::Millis;
+use crate::Millis;
 
 /// Whether a reconciliation sweep is due at `now` (at least `interval` has elapsed
 /// since `last_sweep`).

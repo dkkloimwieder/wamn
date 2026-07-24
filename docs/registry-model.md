@@ -19,8 +19,8 @@ This doc describes the model as shipped; the design rationale is
   (3.4 lifecycle amendment), and the provisioning rework (`.6`/`.7`).
 - **Crate:** `crates/control/registry` — a **pure model** (SR6 rule 1: no DB, clock,
   or wasm; deps `serde` + `serde_json`), following the `wamn-schema-model` /
-  `wamn-flow` / `wamn-run-store` house pattern.
-- **This is a model, not a contract.** Like `wamn-run-store`, it ships
+  `wamn-flow` / `wamn-run-state` house pattern.
+- **This is a model, not a contract.** Like `wamn-run-state`, it ships
   `validate()` + serde import/export but **no** published JSON-Schema file (the
   registry is the shape of the system-DB tables `.3` builds, not a
   cross-language document).

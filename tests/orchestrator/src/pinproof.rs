@@ -32,7 +32,7 @@ use wamn_ctl::pin_run::{self, PinResult};
 use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
 use wamn_flow::{Capture, CaptureMode};
 use wamn_gate_harness::{check, scope_session, seed_flow_version};
-use wamn_run_store::capture;
+use wamn_run_state::capture;
 use wamn_testkit::{Assertion, Captured, PinError, RunFacts, RunStatus, TestCase, evaluate};
 
 const FLOW_ID: &str = "pinned-flow";
@@ -385,7 +385,7 @@ async fn write_success(
     let in_j = to_jsonb(&c.input_json);
     let occ: i32 = 0;
     app.execute(
-        &wamn_run_store::sql::insert_node_run_success_sql(),
+        &wamn_run_state::sql::insert_node_run_success_sql(),
         &[
             &run_id,
             &node_id,

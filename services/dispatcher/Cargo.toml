@@ -30,8 +30,9 @@ rustls = { version = "0.23", default-features = false, features = ["std", "tls12
 # The trigger registry is the flows table's graph_json — the dispatcher parses
 # each active flow and registers its cron / row-event trigger.
 wamn-flow = { path = "../../crates/execution/flow-model" }
-# The pure SKIP LOCKED claim / lease / janitor SQL builders + Cadence.
-wamn-run-queue = { path = "../../crates/execution/run-state-queue" }
+# Durable state transitions and injected-clock scheduling decisions.
+wamn-run-state = { path = "../../crates/execution/run-state" }
+wamn-scheduler = { path = "../../crates/execution/scheduler" }
 # R16b identity-format validators — the ONE owner shared with the
 # wamn:postgres plugin (wamn-host).
 wamn-control-registry = { path = "../../crates/control/registry" }

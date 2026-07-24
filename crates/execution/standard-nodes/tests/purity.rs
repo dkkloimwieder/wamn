@@ -18,6 +18,10 @@ const FORBIDDEN: &[&str] = &[
     "wamn-run-store",
     "wamn-run-queue",
     "wamn-host",
+    "wamn-run-state",
+    "wamn-scheduler",
+    "wamn-runtime",
+    "wamn-node-runtime",
     "wamn-flow",
     "wamn-f1",
 ];

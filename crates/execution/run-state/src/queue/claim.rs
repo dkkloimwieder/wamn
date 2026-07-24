@@ -1,9 +1,10 @@
 //! Claim eligibility — the pure decision behind the `FOR UPDATE SKIP LOCKED`
 //! claim. [`claim_state`] classifies one row; [`plan_claim`] models which rows a
-//! batch claim would take, in the same order the SQL uses ([`crate::claim_batch_sql`]),
+//! batch claim would take, in the same order the SQL uses
+//! ([`crate::queue::claim_batch_sql`]),
 //! so the SQL's behaviour is unit-testable without a database.
 
-use crate::model::{Millis, PartitionPolicy, QueueEntry};
+use super::model::{Millis, PartitionPolicy, QueueEntry};
 
 /// A queue row's claimability at a given instant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,13 +65,13 @@ pub fn is_claimable(entry: &QueueEntry, now: Millis) -> bool {
 /// Whether a GUEST-OBSERVED terminal failure of this row's run must land a
 /// `run_dead_letters` marker alongside its dequeue (wamn-v8cv, the D20
 /// dead-letter + continue decision) — the pure twin of
-/// [`crate::dead_letter_dequeue_sql`]'s insert predicate. True only for the
+/// [`crate::queue::dead_letter_dequeue_sql`]'s insert predicate. True only for the
 /// head of a **`blocking`-policy partition**: that row's key promised strict
 /// ordering, so proceeding past its failure needs the alertable marker. An
 /// unpartitioned row made no ordering promise, and a `leapfrog` row opted out
 /// of it — both dequeue with no ledger row. (The janitor's crash-exhaustion
 /// verdict is the OTHER terminal path and still WEDGES a blocking key —
-/// [`crate::janitor_sweep_sql`]'s exemption is untouched by this.)
+/// [`crate::queue::janitor_sweep_sql`]'s exemption is untouched by this.)
 pub fn dead_letters_on_terminal(entry: &QueueEntry) -> bool {
     entry.partition_key.is_some() && entry.partition_policy == PartitionPolicy::Blocking
 }
@@ -100,7 +101,7 @@ pub struct ClaimPlan {
 /// with a fresh lease deadline `now + lease_ttl` and its attempt bumped.
 /// Partitioned rows (`partition_key` set) are skipped — the global claim's
 /// `partition_key IS NULL` guard leaves them to the per-partition ownership path
-/// ([`crate::plan_partition_claim`]). The real SQL additionally `SKIP LOCKED`s rows
+/// ([`crate::queue::plan_partition_claim`]). The real SQL additionally `SKIP LOCKED`s rows
 /// another transaction already holds — a concurrency property only the live queue
 /// (queuebench) exercises; this models the eligibility + ordering + limit a single
 /// claimer sees.

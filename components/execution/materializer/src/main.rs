@@ -48,7 +48,9 @@ use wamn_materializer::{
     decide, serviceable,
     sql::{select_active_flow_sql, select_registrations_sql},
 };
-use wamn_run_queue::{enqueue_evt_sql, enqueue_evt_with_policy_sql, write_ahead_triggered_run_sql};
+use wamn_run_state::queue::{
+    enqueue_evt_sql, enqueue_evt_with_policy_sql, write_ahead_triggered_run_sql,
+};
 
 use wamn::jetstream::consumer::{self, ConsumerConfig};
 use wamn::jetstream::doorbell;

@@ -34,7 +34,7 @@ wamn-control-registry = { path = "../../crates/control/registry" }
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
 # 11.3 pin-run also reuses its run/node-run read builders + `capture::scrub`.
-wamn-run-store = { path = "../../crates/execution/run-state-store" }
+wamn-run-state = { path = "../../crates/execution/run-state" }
 # 11.3 pin-run: the pure `pin_run` transform (RunRecord + node_runs -> TestCase)
 # and the canonical case vocabulary the pinned case is serialized as.
 wamn-testkit = { path = "../../crates/scenarios/model" }

@@ -166,8 +166,7 @@ dependencies = [
  "wamn-node-guest",
  "wamn-node-invoke",
  "wamn-node-sdk",
- "wamn-run-queue",
- "wamn-run-store",
+ "wamn-run-state",
  "wamn-runner",
  "wamn-standard-nodes",
  "wit-bindgen",
@@ -399,7 +398,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-flow",
  "wamn-materializer",
- "wamn-run-queue",
+ "wamn-run-state",
  "wit-bindgen",
 ]
 
@@ -465,7 +464,7 @@ dependencies = [
  "serde_json",
  "wamn-f1",
  "wamn-flow",
- "wamn-run-store",
+ "wamn-run-state",
  "wamn-runner",
  "wit-bindgen",
 ]
@@ -732,7 +731,7 @@ dependencies = [
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-flow",
- "wamn-run-queue",
+ "wamn-run-state",
 ]
 
 [[package]]
@@ -770,16 +769,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-run-queue"
-version = "0.1.0"
-dependencies = [
- "serde",
- "wamn-pg-core",
- "wamn-run-store",
-]
-
-[[package]]
-name = "wamn-run-store"
+name = "wamn-run-state"
 version = "0.1.0"
 dependencies = [
  "serde",

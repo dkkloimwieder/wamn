@@ -71,7 +71,7 @@ use wamn_gate_harness::{
     check, scope_session, seed_flow_version, seed_flow_version_if_absent, seed_test_case,
     seed_test_suite,
 };
-use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_run_worker::{RunWorker, RunnerIdentity};
 use wamn_runtime::doubles::{DoubleSet, EgressRecorder, EphemeralSchemaProvisioner};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};

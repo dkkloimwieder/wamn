@@ -1,21 +1,24 @@
 //! Node-level I/O capture policy application (9.6): the pure logic that fills a
-//! `node_runs` row's capture columns from a flow's [`Capture`] policy before the
+//! `node_runs` row's capture columns from a flow's [`wamn_flow::Capture`] policy before the
 //! `wamn:postgres` write. No DB, no wasm, no clock — the flowrunner guest links
 //! it so the decision is unit-tested off-cluster, exactly as the SQL builders are.
 //!
 //! For each node execution the driver hands us the node's OUTPUT emission (the
 //! reconstruction-relevant payload) and its INPUT (the partial-re-run seed).
-//! [`derive`] folds the policy into the exact column values:
+//! [`crate::capture::derive()`] folds the policy into the exact column values:
 //!
-//! - `output_json` / `input_json` — the STORED payloads: faithful ([`CaptureMode::Full`]),
-//!   secret-scrubbed ([`CaptureMode::Scrubbed`]), or NULL ([`CaptureMode::Preview`] /
-//!   [`CaptureMode::Off`], and any payload over the size threshold).
-//! - `preview_head` — the first [`PREVIEW_CHARS`] chars of the SCRUBBED output
+//! - `output_json` / `input_json` — the STORED payloads: faithful
+//!   ([`wamn_flow::CaptureMode::Full`]), secret-scrubbed
+//!   ([`wamn_flow::CaptureMode::Scrubbed`]), or NULL
+//!   ([`wamn_flow::CaptureMode::Preview`] / [`wamn_flow::CaptureMode::Off`],
+//!   and any payload over the size threshold).
+//! - `preview_head` — the first [`crate::capture::PREVIEW_CHARS`] chars of the SCRUBBED output
 //!   serialization (always scrubbed, so the inspector never surfaces a raw secret,
 //!   even in `full` mode).
 //! - `payload_size` — the full serialized byte length of the output.
-//! - `payload_hash` — [`fnv1a64`] over the output serialization (a content id).
-//! - `capture_mode` — the EFFECTIVE mode literal ([`CaptureMode::as_str`]), which
+//! - `payload_hash` — [`crate::capture::fnv1a64()`] over the output
+//!   serialization (a content id).
+//! - `capture_mode` — the EFFECTIVE mode literal (`CaptureMode::as_str`), which
 //!   is `preview` whenever the size threshold forced preview-only storage.
 //! - `redacted` — true iff the STORED payloads were scrubbed (`scrubbed` mode).
 //!
@@ -113,7 +116,7 @@ fn head(s: &str) -> String {
     s.chars().take(PREVIEW_CHARS).collect()
 }
 
-/// The capture columns [`derive`] fills for one `node_runs` row. A `None` payload
+/// The capture columns [`derive()`] fills for one `node_runs` row. A `None` payload
 /// field is a SQL NULL (capture off / preview / oversized); the `*_json` strings
 /// are already serialized, ready for a `text`→`jsonb` bind.
 #[derive(Debug, Clone, PartialEq)]
@@ -149,7 +152,7 @@ impl Captured {
     }
 }
 
-/// Fold a flow's [`Capture`] policy over one node execution's `(output, input)`
+/// Fold a flow's [`wamn_flow::Capture`] policy over one node execution's `(output, input)`
 /// into the `node_runs` capture columns. See the module docs for the per-mode
 /// semantics; `preview_head`/`payload_size`/`payload_hash` always describe the
 /// OUTPUT emission (the reconstruction-relevant payload).

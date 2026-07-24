@@ -10,7 +10,7 @@
 # talks to the Kubernetes API (deploy/platform/dispatcher.yaml sets
 # automountServiceAccountToken: false), KEDA is not installed (a third-party
 # infra install is an owner decision), and the dispatcher already re-hints every
-# currently-due unleased queue row on every sweep (wamn_run_queue::parked_due_sql)
+# currently-due unleased queue row on every sweep (wamn_run_state::queue::parked_due_sql)
 # — so a doorbell lost while the runner is at 0 self-heals on the next sweep, and
 # THAT re-hint is the waker's retry path. The waker has no polling loop of its own.
 #

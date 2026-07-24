@@ -8,10 +8,11 @@
 //! replica reacquires the whole key and continues in order (crash-safe failover).
 //!
 //! This is the pure decision layer behind the SQL builders
-//! ([`crate::acquire_partitions_sql`], [`crate::claim_partition_head_sql`]): the
+//! ([`crate::queue::acquire_partitions_sql`],
+//! [`crate::queue::claim_partition_head_sql`]): the
 //! run-level claim only ever takes the *head* of a partition the caller owns, and
 //! `partitioned` runs are claimed **only** through this path — the global
-//! [`crate::claim_batch_sql`] skips them (`partition_key IS NULL`), so a partitioned
+//! [`crate::queue::claim_batch_sql`] skips them (`partition_key IS NULL`), so a partitioned
 //! run can never be dispatched out of order by the global claim. Like the rest of
 //! the crate these are functions of `(rows, now)`; the concurrent arbitration of a
 //! contested partition (the `INSERT … ON CONFLICT` in the acquire SQL, the
@@ -20,9 +21,9 @@
 
 use std::collections::HashSet;
 
-use crate::claim::{ClaimPlan, Claimed, is_claimable};
-use crate::lease::lease_live;
-use crate::model::{Millis, PartitionOwner, PartitionPolicy, QueueEntry};
+use super::claim::{ClaimPlan, Claimed, is_claimable};
+use super::lease::lease_live;
+use super::model::{Millis, PartitionOwner, PartitionPolicy, QueueEntry};
 
 /// Whether a partition lease is still held at `now` (its deadline is in the future).
 pub fn partition_lease_live(owner: &PartitionOwner, now: Millis) -> bool {
@@ -32,7 +33,7 @@ pub fn partition_lease_live(owner: &PartitionOwner, now: Millis) -> bool {
 /// Which partitions a replica would acquire: the distinct keys that have at least
 /// one claimable run right now **and** are not currently held by a live partition
 /// lease (unowned, or the owner's lease expired = failover), in key order, up to
-/// `limit`. Models the candidate selection of [`crate::acquire_partitions_sql`];
+/// `limit`. Models the candidate selection of [`crate::queue::acquire_partitions_sql`];
 /// which replica *wins* a partition two of them race for is decided by the
 /// `INSERT … ON CONFLICT … WHERE lease_expires_at <= now()` arbitration, a live-queue
 /// property (`queuebench`).
@@ -64,7 +65,7 @@ pub fn plan_acquire(
 /// owned key with no run currently in flight, the ready run no sibling blocks
 /// under the row's policy (its head) — then the globally-earliest such heads
 /// across owned partitions, up to `limit`, each with a fresh run lease. Models
-/// [`crate::claim_partition_head_sql`]. `owned` is the set of partition keys the
+/// [`crate::queue::claim_partition_head_sql`]. `owned` is the set of partition keys the
 /// replica holds a live lease on.
 ///
 /// The guarantees this encodes — **one in flight per partition** (a partition

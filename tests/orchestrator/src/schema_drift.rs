@@ -17,7 +17,7 @@
 //! Test-only: this module compiles only under `cfg(test)`, so nothing here rides
 //! the shipped `wamn-gates` binary.
 
-use wamn_run_queue::PartitionPolicy;
+use wamn_run_state::queue::PartitionPolicy;
 
 /// The schema of record, compiled in — the guard reads the SHIPPED column set out
 /// of it so a stand-in cannot silently drift from what we assert against.

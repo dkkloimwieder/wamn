@@ -79,8 +79,8 @@ impl<'f> Plan<'f> {
     /// Override the per-invocation node-execution budget (cjv.4). Cycles are a
     /// flow feature, so termination is bounded at runtime instead: once `next`
     /// has handed out this many dispatches (retries included) for one
-    /// [`RunState`], the run fails with the terminal
-    /// [`FailKind::RunawayBudget`](crate::FailKind::RunawayBudget) — never
+    /// [`crate::ExecutionState`], the run fails with the terminal
+    /// [`ExecutionFailureKind::RunawayBudget`](crate::ExecutionFailureKind::RunawayBudget) — never
     /// routed to an error path, which could itself be part of the loop.
     /// Reconstruction ([`Plan::resume`]) is exempt, so a parked-and-resumed
     /// long run never trips the budget on its recorded history.

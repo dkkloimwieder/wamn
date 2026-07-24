@@ -39,7 +39,7 @@ use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_case,
 use wamn_node_invoke::{
     NodeInvokeRequest, NodeInvokeResponse, WireNodeError, WirePayload, WireRunContext,
 };
-use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_run_worker::{RunWorker, RunnerIdentity};
 use wamn_runtime::doubles::{DoubleSet, EgressRecorder, EphemeralSchemaProvisioner, case_pool};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};

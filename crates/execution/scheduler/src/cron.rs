@@ -1,4 +1,4 @@
-//! Cron next-fire evaluation — the trigger dispatcher's cron half (5.14). Pure
+//! Cron next-fire evaluation for the trigger scheduler (5.14). Pure
 //! over an injected `now` like everything else in this crate: the schedule math
 //! reads no clock, so the 11.1 "fast-forwardable cron" discipline holds — a
 //! virtual-time driver (the dispatchbench gate, the test host) passes any
@@ -13,7 +13,7 @@
 //! (zero-padded, so lexical order == chronological order within one flow's cron
 //! ids); the write-ahead `ON CONFLICT` then absorbs a re-fired tick from a
 //! restarted or concurrently racing dispatcher. The `runs` table itself is the
-//! dispatcher's cron state — [`crate::cron_last_run_sql`] recovers the last
+//! dispatcher's cron state — `wamn_run_state::queue::cron_last_run_sql` recovers the last
 //! fired tick from the flow's OWN cron runs (a flow-exclusive predicate, never
 //! a lexical id range — flow ids are unconstrained user text and text ordering
 //! is collation-dependent), so there is no dispatcher-local storage to desync.
@@ -23,8 +23,7 @@ use std::str::FromStr as _;
 use chrono::{DateTime, Utc};
 use croner::Cron;
 
-use crate::dispatch::Firing;
-use crate::model::Millis;
+use crate::{Firing, Millis};
 
 /// A cron schedule failed to parse or evaluate. A structured enum (SR5, house
 /// rule 2) — never a stringly-typed error: one variant per failure mode. All
@@ -123,8 +122,8 @@ pub fn due_tick(schedule: &str, anchor: Millis, now: Millis) -> Result<Option<Mi
 /// Deterministic run id for a cron firing: one run per (flow, tick instant),
 /// `{flow_id}:cron:{tick:013}`. Zero-padding makes lexical order chronological
 /// WITHIN one flow's cron ids (equal-length digit suffixes order the same under
-/// any collation), which is what lets [`crate::cron_last_run_sql`] recover the
-/// last fired tick as `max(run_id)` over the flow's own cron runs — and two
+/// any collation), which lets the durable-state adapter recover the last fired
+/// tick as `max(run_id)` over the flow's own cron runs — and two
 /// replicas racing the same tick collide on the same id (the write-ahead
 /// `ON CONFLICT` absorbs the loser).
 pub fn mint_cron_run_id(flow_id: &str, tick: Millis) -> String {

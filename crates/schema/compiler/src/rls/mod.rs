@@ -43,7 +43,7 @@
 //! This crate's tests exercise the **decision** (which statement, what shape,
 //! which binds); they cannot exercise the **statement** — the pure model has no
 //! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: `wamn-run-queue`'s `claim_batch_sql`
+//! correctly here and still misbehave live: `wamn-run-state`'s `claim_batch_sql`
 //! passed every pure test while the real statement over-claimed on a
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):

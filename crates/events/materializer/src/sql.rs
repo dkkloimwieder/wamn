@@ -1,5 +1,5 @@
 //! The materializer guest's read statements — pure `String` builders in the
-//! `wamn-run-queue`/`wamn-api` discipline: identifiers are static literals,
+//! `wamn-run-state`/`wamn-api` discipline: identifiers are static literals,
 //! every runtime value is a `$n` bind, and each carries the explicit
 //! `tenant_id = current_setting('app.tenant', true)` predicate (R8b-b —
 //! behaviorally inert under RLS, defense-in-depth on top of it).

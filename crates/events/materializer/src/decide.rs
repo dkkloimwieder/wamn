@@ -12,7 +12,7 @@ use serde_json::Value;
 use wamn_event_reg::EventRegistration;
 use wamn_event_wire::{Causation, Envelope};
 use wamn_flow::Ordering;
-use wamn_run_queue::mint_evt_run_id;
+use wamn_run_state::queue::{PartitionPolicy, mint_evt_run_id};
 
 use crate::condition::{CompiledCondition, ConditionOutcome, compile_condition};
 use crate::context::{event_context, tenant_of};
@@ -45,10 +45,12 @@ pub struct FirePlan {
     pub input_json: String,
     /// The stamped key (`None` = unordered → the global claim).
     pub partition_key: Option<String>,
-    /// The policy literal for a KEYED row ([`enqueue_evt_with_policy_sql`]'s
-    /// `$6`; unused when `partition_key` is `None` — kq0z coherence).
-    pub policy: wamn_run_queue::PartitionPolicy,
-    /// The numeric stream position ([`enqueue_evt_sql`]'s `$5`, E4).
+    /// The policy literal for a KEYED row
+    /// ([`wamn_run_state::queue::enqueue_evt_with_policy_sql`]'s `$6`; unused
+    /// when `partition_key` is `None` — kq0z coherence).
+    pub policy: PartitionPolicy,
+    /// The numeric stream position
+    /// ([`wamn_run_state::queue::enqueue_evt_sql`]'s `$5`, E4).
     pub stream_seq: i64,
     /// The child causation (also embedded in `input_json`) — for logging.
     pub causation: Causation,
@@ -162,13 +164,13 @@ pub fn child_causation(
     }
 }
 
-/// Bridge the `wamn-flow` policy contract enum to the `wamn-run-queue` storage
+/// Bridge the `wamn-flow` policy contract enum to the `wamn-run-state` storage
 /// enum (whose `as_sql` owns the single storage literal) — the same one
 /// crossing point the dispatcher keeps (kq0z).
-pub fn rq_policy(p: wamn_flow::PartitionPolicy) -> wamn_run_queue::PartitionPolicy {
+pub fn rq_policy(p: wamn_flow::PartitionPolicy) -> PartitionPolicy {
     match p {
-        wamn_flow::PartitionPolicy::Blocking => wamn_run_queue::PartitionPolicy::Blocking,
-        wamn_flow::PartitionPolicy::Leapfrog => wamn_run_queue::PartitionPolicy::Leapfrog,
+        wamn_flow::PartitionPolicy::Blocking => PartitionPolicy::Blocking,
+        wamn_flow::PartitionPolicy::Leapfrog => PartitionPolicy::Leapfrog,
     }
 }
 
@@ -563,7 +565,7 @@ mod tests {
         let strict = flow(Ordering::Strict, wamn_flow::PartitionPolicy::Leapfrog);
         let plan = fire(decide(&reg, &strict, None, &env, 1, "t1", 16));
         assert_eq!(plan.partition_key.as_deref(), Some("f1"));
-        assert_eq!(plan.policy, wamn_run_queue::PartitionPolicy::Leapfrog);
+        assert_eq!(plan.policy, PartitionPolicy::Leapfrog);
 
         // Partitioned + registration extractor: over the EVENT context.
         let reg_extract = registration(None, Some("new.site"));

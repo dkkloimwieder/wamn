@@ -55,13 +55,9 @@ wamn-node-invoke = { path = "../../crates/node/invoke" }
 # schemacase/runworker retrofit routes its inline asserts through the same.
 wamn-testkit = { path = "../../crates/scenarios/model" }
 wamn-node-manifest = { path = "../../crates/node/manifest" }
-# queuebench/failoverbench/dispatchbench drive the pure queue/cron
-# builders over tokio_postgres.
-wamn-run-queue = { path = "../../crates/execution/run-state-queue" }
-# queuebench ceiling mode drives the pre-fqg.18 SPLIT lifecycle (claim → read →
-# mark-running → complete → dequeue) as the comparison curve for the combined
-# statements.
-wamn-run-store = { path = "../../crates/execution/run-state-store" }
+# Durable execution state and pure trigger scheduling are separate owners.
+wamn-run-state = { path = "../../crates/execution/run-state" }
+wamn-scheduler = { path = "../../crates/execution/scheduler" }
 # capturebench (9.6) compiles a Plan to prove a capture-off run reconstructs to
 # CaptureOff — the pure engine's resume type.
 wamn-runner = { path = "../../crates/execution/flow-engine" }

@@ -9,7 +9,7 @@ bundle into pass/fail. The gate is the effect shell that *fills* the
 reads); the library only *decides*.
 
 No DB / clock / wasm / host dependency. The status/kind taxonomy is REUSED
-verbatim from `wamn-run-store` (`RunStatus` / `FailKind` / `NodeErrorKind`) and
+verbatim from `wamn-run-state` (`RunStatus` / `FailKind` / `NodeErrorKind`) and
 the run-context mirrors `wamn-node-invoke`'s `WireRunContext`, so an assertion is
 stated in the same enums the runner records and the node contract freezes.
 
@@ -131,12 +131,12 @@ vocabulary directly.
 ## Record-and-replay: pin a run (11.3)
 
 A recorded run is a fixture for free. `pin_run(run, node_runs, opts)` (module
-`pin`) is the PURE transform from a stored run (a `wamn_run_store` `RunRecord` +
+`pin`) is the PURE transform from a stored run (a `wamn_run_state` `RunRecord` +
 its `node_runs`) to a canonical `TestCase`; the `wamn-ctl pin-run` verb is the
 effect shell that reads the rows and writes the case into the flow's
 `test_suites`/`test_cases` (11.2 storage). Dependency direction: this reads STORE
 records and writes a testkit case, so it lives in testkit (which already depends
-on `wamn-run-store`) — not in run-store, which would be a cycle.
+on `wamn-run-state`) — not in run-state, which would be a cycle.
 
 The pinned case (minimal-correct v0 shape):
 - **flow-level** — `flow-ref` = the run's `(flow_id, flow_version)`; `input` = the
@@ -153,7 +153,7 @@ The pinned case (minimal-correct v0 shape):
 
 **Secret redaction at pin time.** Every payload that becomes part of the case (the
 trigger input, the pinned node output) is passed through
-`wamn_run_store::capture::scrub` first, so a pinned case NEVER contains a secret
+`wamn_run_state::capture::scrub` first, so a pinned case NEVER contains a secret
 even from a `full`-capture run (where the stored `node_runs` payloads are
 faithful). Scrub is idempotent — a `scrubbed` row is safe to re-scrub.
 

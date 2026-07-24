@@ -10,7 +10,7 @@
 //! polling. Intervals are per-project state in the driver (no cross-project
 //! herd: projects tighten and decay independently).
 
-use crate::model::Millis;
+use crate::Millis;
 
 /// Default tightest per-project sweep interval (a busy project's poll cadence).
 pub const DEFAULT_MIN_INTERVAL_MS: Millis = 250;
@@ -24,7 +24,7 @@ const MIN_INTERVAL_FLOOR_MS: Millis = 10;
 
 /// A validated adaptive-cadence band: the tightest (`min`) and widest (`max`)
 /// per-project sweep intervals, with `min <= max` guaranteed and both floored at
-/// [`MIN_INTERVAL_FLOOR_MS`]. Built once, at the config boundary, from
+/// `MIN_INTERVAL_FLOOR_MS`. Built once, at the config boundary, from
 /// unvalidated CLI/env millis — so [`Cadence::next_interval`]'s `clamp` (which
 /// would panic on an inverted range) can never see `min > max`: the band is the
 /// method's own receiver, so an inverted range is unrepresentable
@@ -38,7 +38,7 @@ pub struct Cadence {
 
 impl Cadence {
     /// Validate a cadence band from raw (CLI/env) millis: reject an inverted
-    /// range, then floor both bounds at [`MIN_INTERVAL_FLOOR_MS`].
+    /// range, then floor both bounds at `MIN_INTERVAL_FLOOR_MS`.
     pub fn new(min: Millis, max: Millis) -> Result<Cadence, CadenceError> {
         if min > max {
             return Err(CadenceError::MinExceedsMax { min, max });
@@ -97,8 +97,8 @@ impl std::error::Error for CadenceError {}
 /// exactly-once handle — a redelivered/re-fired/replica-raced firing collides on
 /// it and the write-ahead `ON CONFLICT` absorbs the duplicate), the flow to run,
 /// the trigger input the run is replayed from (5.7), and the audit
-/// `trigger_source`. Fired via [`crate::write_ahead_triggered_run_sql`] +
-/// [`crate::enqueue_sql`] in one transaction, then a doorbell hint.
+/// `trigger_source`. Fired via `wamn_run_state::queue::write_ahead_triggered_run_sql`
+/// + `wamn_run_state::queue::enqueue_sql` in one transaction, then a doorbell hint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Firing {
     pub run_id: String,

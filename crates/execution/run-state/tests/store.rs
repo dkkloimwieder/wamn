@@ -1,4 +1,4 @@
-//! wamn-run-store tests — the run-state model, branch-aware replay
+//! wamn-run-state history tests — the model, branch-aware replay
 //! reconstruction, and partial-re-run planning, all pure (no cluster, no DB).
 //! The live-apply test at the end applies `deploy/sql/run-state.sql` to a throwaway
 //! Postgres and asserts RLS + the idempotency keys; it is gated on
@@ -6,7 +6,7 @@
 
 use serde_json::{Value, json};
 use wamn_flow::Flow;
-use wamn_run_store::{
+use wamn_run_state::{
     FailKind, NodeErrorKind, NodeRunRecord, NodeRunStatus, ReconstructError, RerunError, RunRecord,
     RunStatus, plan_partial_rerun, plan_replay, reconstruct,
 };
@@ -44,7 +44,7 @@ fn branchy() -> Flow {
 
 /// Drive a reconstructed/seeded state to completion, collecting the ids of the
 /// nodes actually dispatched (echo semantics: each emits `{"at": node}`).
-fn drive_collect(plan: &Plan, st: &mut wamn_runner::RunState) -> Vec<String> {
+fn drive_collect(plan: &Plan, st: &mut wamn_runner::ExecutionState) -> Vec<String> {
     let mut seen = Vec::new();
     plan.drive(
         st,
@@ -420,19 +420,19 @@ fn status_sql_literals_round_trip() {
 #[test]
 fn status_maps_from_the_engine_taxonomy() {
     assert_eq!(
-        RunStatus::from(wamn_runner::RunStatus::Completed),
+        RunStatus::from(wamn_runner::ExecutionStatus::Completed),
         RunStatus::Completed
     );
     assert_eq!(
-        RunStatus::from(wamn_runner::RunStatus::Cancelled),
+        RunStatus::from(wamn_runner::ExecutionStatus::Cancelled),
         RunStatus::Cancelled
     );
     assert_eq!(
-        FailKind::from(wamn_runner::FailKind::InvalidInput),
+        FailKind::from(wamn_runner::ExecutionFailureKind::InvalidInput),
         FailKind::InvalidInput
     );
     assert_eq!(
-        FailKind::from(wamn_runner::FailKind::RunawayBudget),
+        FailKind::from(wamn_runner::ExecutionFailureKind::RunawayBudget),
         FailKind::RunawayBudget
     );
     let detail = wamn_runner::ErrorDetail::msg("x");

@@ -1,23 +1,20 @@
-//! # wamn-run-store (5.7) — durable run state
+//! # wamn-run-state — the durable execution lifecycle
 //!
-//! The persistence half of the flow runner: the `runs` / `node_runs` record model
-//! plus **branch-aware replay reconstruction** and **partial re-run** planning
-//! over the pure engine ([`wamn_runner`], 5.2). Where 5.2 left an in-memory
-//! [`RunState`](wamn_runner::RunState) with a single `step_seq` seam, 5.7 persists
-//! one row per node execution and rebuilds the exact frontier from those rows —
-//! so a rescheduled runner resumes precisely where it was killed, down the branch
-//! it took, and a fixed transient error re-runs from just the failed node.
+//! This crate owns the transactionally coupled `runs`, `node_runs`, `run_queue`,
+//! lease, partition, timer, and dead-letter lifecycle. It contains only models,
+//! decisions, reconstruction, and parameterized SQL; Postgres, clocks, and
+//! doorbells remain adapter effects.
 //!
-//! Like [`wamn_runner`] / `wamn-api`, this crate is **pure**: no DB, no wasm, no
+//! Like [`wamn_runner`], this crate is **pure**: no DB, no wasm, no
 //! clock. It maps the engine's execution taxonomy to storage literals
-//! ([`status`]) and drives the engine's [`resume`](wamn_runner::Plan::resume) /
+//! ([`RunStatus`]) and drives the engine's [`resume`](wamn_runner::Plan::resume) /
 //! [`seed_at`](wamn_runner::Plan::seed_at) primitives; the driver
 //! (`components/execution/flowrunner`) supplies the `wamn:postgres` effects against the
 //! schema in `deploy/sql/run-state.sql`.
 //!
 //! ```
-//! use wamn_run_store::{reconstruct, RunRecord, NodeRunRecord};
-//! use wamn_runner::{Plan, RunStatus};
+//! use wamn_run_state::{reconstruct, NodeRunRecord, RunRecord};
+//! use wamn_runner::{ExecutionStatus, Plan};
 //! use wamn_flow::Flow;
 //! use serde_json::json;
 //!
@@ -33,26 +30,19 @@
 //! let run = RunRecord::new("run-1", "f", 1, json!({"n": 1}));
 //! let node_runs = [NodeRunRecord::success("run-1", "a", 0, "main", json!({"at": "a"}))];
 //! let st = reconstruct(&plan, &run, &node_runs).unwrap();
-//! assert_eq!(st.status(), RunStatus::Running);
+//! assert_eq!(st.status(), ExecutionStatus::Running);
 //! assert_eq!(st.step_seq(), 1); // `a` folded; `b` is the outstanding frontier
 //! ```
 //!
-//! ## Scope (5.7) vs siblings
-//! Owns: the `runs`/`node_runs` model + DDL (`deploy/sql/run-state.sql`), at-least-once
-//! idempotency keying, the run-history read model, branch-aware replay
-//! reconstruction, and partial-re-run planning. Does **not** own: the durable run
-//! QUEUE + leases + NATS doorbell + dispatcher (5.14 — co-transacts with these
-//! INSERTs but owns its own table); the node-level I/O CAPTURE policy (9.6 — fills
-//! the `input`/`output`/`preview`/`redacted` slots); the content-addressed payload
-//! BYTE store (5.10 — pointed at by the reserved `*_ref`/preview columns); per-node
-//! ordering (5.11); the cancel operation (5.12).
+//! Trigger schedule evaluation and polling cadence live in `wamn-scheduler`;
+//! this crate owns the durable anchor and enqueue operations they invoke.
 //!
 //! ## SR12 — what the pure tests cover, and what they cannot
 //!
 //! This crate's tests exercise the **decision** (which statement, what shape,
 //! which binds); they cannot exercise the **statement** — the pure model has no
 //! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: `wamn-run-queue`'s `claim_batch_sql`
+//! correctly here and still misbehave live: `queue::claim_batch_sql`
 //! passed every pure test while the real statement over-claimed on a
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
@@ -65,6 +55,8 @@
 /// capture columns before the write.
 pub mod capture;
 mod model;
+/// Durable queue, lease, partition, timer, and dead-letter decisions and SQL.
+pub mod queue;
 mod reconstruct;
 mod rerun;
 /// Run-state SQL text builders (SR2): the single source both guests and

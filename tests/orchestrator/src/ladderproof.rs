@@ -45,7 +45,7 @@ use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 
 use wamn_gate_harness::{check, scope_session, seed_flow_version};
-use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 /// The committed rung fixtures (single source of truth; the drift-guard tests
 /// pin that each file parses to the flow the proof asserts against).

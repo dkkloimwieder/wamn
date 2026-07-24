@@ -1,0 +1,23 @@
+[package]
+name = "wamn-run-state"
+description = "The complete durable execution-state contract: runs, node runs, queue entries, leases, partitions, timers, replay, and their transactional SQL. Pure and guest-safe; adapters own Postgres, clocks, and messaging."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The reconstruction/partial-re-run planners drive the pure engine's resume/
+# seed_at primitives; the model persists its RunStatus/FailKind/NodeError taxonomy.
+wamn-runner = { path = "../../execution/flow-engine" }
+# 9.6 capture: the per-flow `Flow.capture` policy the pure `capture` module
+# applies at each node_runs write. Already in the closure via wamn-runner
+# (Plan::compile takes a Flow); this is the direct edge for the policy type, and
+# it is guest-compilable (the flowrunner guest already links wamn-flow).
+wamn-flow = { path = "../../execution/flow-model" }
+# Composed run and queue statements carry their positional-parameter arity.
+wamn-pg-core = { path = "../../platform/pg-core" }
+# The run/node-run records import/export as JSON (run-history read model);
+# payloads are opaque JSON. No schemars — this is a store model, not a published
+# contract (like wamn-schema-compiler / wamn-api / wamn-runner).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

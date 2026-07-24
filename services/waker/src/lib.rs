@@ -13,7 +13,7 @@
 //! (`deploy/platform/waker.yaml`). It has **no polling loop of its own**: a doorbell
 //! published while the runner is parked at 0 is lost, but the dispatcher
 //! re-hints every currently-due, unleased queue row on every sweep
-//! (`wamn_run_queue::parked_due_sql`) — so a lost first hint self-heals on the
+//! (`wamn_run_state::queue::parked_due_sql`) — so a lost first hint self-heals on the
 //! next sweep, and that dispatcher re-hint IS the waker's retry path. The waker
 //! only ever reacts to a hint; async-nats reconnects the subscription itself.
 //!

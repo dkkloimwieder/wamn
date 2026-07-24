@@ -8,7 +8,7 @@
 //!
 //! PURE — serde only, no DB / clock / wasm / host dep — so the vocabulary is the
 //! shared contract three lanes reconcile to. The status/kind taxonomy is REUSED
-//! verbatim from `wamn-run-store` and the run-context mirrors
+//! verbatim from `wamn-run-state` and the run-context mirrors
 //! `wamn-node-invoke`'s [`WireRunContext`], so an assertion is stated in the same
 //! enums the runner records and the node contract freezes — no parallel types.
 //!
@@ -60,7 +60,7 @@ pub use pin::{PinError, PinOptions, pin_run};
 pub use wamn_node_invoke::WireRunContext;
 // The status/kind taxonomy is reused verbatim from the store — an assertion
 // about a run/node uses the SAME enums the runner persists.
-pub use wamn_run_store::{FailKind, NodeErrorKind, NodeRunStatus, RunStatus};
+pub use wamn_run_state::{FailKind, NodeErrorKind, NodeRunStatus, RunStatus};
 
 /// The case-format version this crate implements. Mirrors the
 /// `wamn_schema_model::SCHEMA_VERSION` precedent: `0.1.x` is additive/clarifying only;

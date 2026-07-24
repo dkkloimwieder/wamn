@@ -3,7 +3,7 @@
 //! Unlike flowbench/testhostbench, this is **pure host-side** — the queue is a
 //! Postgres mechanism (`FOR UPDATE SKIP LOCKED`) plus a NATS-core doorbell, so the
 //! gate drives raw `tokio_postgres` claimers (no wasm guest) using the pure SQL
-//! builders from [`wamn_run_queue`]. It provisions a fresh ephemeral schema
+//! builders from [`wamn_run_state`]. It provisions a fresh ephemeral schema
 //! (clone of the 5.7 `runs` + the 5.14 `run_queue`) through the Postgres superuser
 //! (`WAMN_PG_ADMIN_URL`; `wamn_app` is NOSUPERUSER and cannot create schemas,
 //! exactly as in production), then measures the D15 dispatch SLOs and proves the
@@ -51,7 +51,7 @@ use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 use wamn_gate_harness::{ceiling, emit_csv, percentile};
-use wamn_run_queue::{
+use wamn_run_state::queue::{
     acquire_partitions_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql,
     complete_dequeue_sql, dequeue_sql, enqueue_sql, janitor_sweep_sql, mark_running_sql, park_sql,
     write_ahead_run_sql,
@@ -1422,11 +1422,11 @@ fn spawn_claimers(
                 LifecyclePath::Split { batch } => {
                     let claim = client.prepare(&claim_batch_sql(batch)).await?;
                     let read = client
-                        .prepare(&wamn_run_store::sql::select_run_dispatch_sql())
+                        .prepare(&wamn_run_state::sql::select_run_dispatch_sql())
                         .await?;
                     let mark = client.prepare(&mark_running_sql()).await?;
                     let complete = client
-                        .prepare(&wamn_run_store::sql::update_run_completed_sql())
+                        .prepare(&wamn_run_state::sql::update_run_completed_sql())
                         .await?;
                     let deq = client.prepare(&dequeue_sql()).await?;
                     loop {

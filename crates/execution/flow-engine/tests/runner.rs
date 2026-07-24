@@ -1,15 +1,15 @@
 //! Engine tests — the whole execution model exercised with NO cluster, NO DB, NO
 //! wasm: build a `wamn_flow::Flow`, compile a `Plan`, and drive it with a
 //! programmable node dispatcher, asserting the walk / branch / merge / error /
-//! retry / throttle behavior purely from returned `Step`s and final `RunState`.
+//! retry / throttle behavior purely from returned `Step`s and final `ExecutionState`.
 
 use std::cell::Cell;
 
 use serde_json::{Value, json};
 use wamn_flow::Flow;
 use wamn_runner::{
-    Dispatch, EngineError, FailKind, NodeError, NodeOutcome, Plan, RateLimitDetail, RetryPolicy,
-    RunState, RunStatus, Scheduler, Step, ThrottleKey, ThrottleTable,
+    ConcurrencyGate, Dispatch, EngineError, ExecutionFailureKind, ExecutionState, ExecutionStatus,
+    NodeError, NodeOutcome, Plan, RateLimitDetail, RetryPolicy, Step, ThrottleKey, ThrottleTable,
 };
 
 /// A recorded drive of one run to a terminal status.
@@ -18,8 +18,8 @@ struct Trace {
     visited: Vec<Dispatch>,
     /// Every `Wait` as `(node, until_ms, throttle)`, in order.
     waits: Vec<(String, u64, Option<ThrottleKey>)>,
-    status: RunStatus,
-    state: RunState,
+    status: ExecutionStatus,
+    state: ExecutionState,
 }
 
 impl Trace {
@@ -87,7 +87,7 @@ fn linear_walk_completes_in_order() {
     let t = run(&plan, "r1", json!({ "seen": [] }), |d| {
         NodeOutcome::ok(json!({ "at": d.node }))
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     assert_eq!(t.nodes(), ["a", "b", "c"]);
     assert_eq!(t.state.step_seq(), 3);
     assert_eq!(t.state.result(), &json!({ "at": "c" }));
@@ -111,7 +111,7 @@ fn branch_follows_only_the_selected_port() {
         "cond" => NodeOutcome::ok_on(json!({ "picked": true }), "true"),
         _ => NodeOutcome::ok(json!({ "at": d.node })),
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     assert_eq!(t.nodes(), ["cond", "yes"]); // "no" never runs
 }
 
@@ -130,7 +130,7 @@ fn fan_out_and_merge_without_a_join_barrier() {
     let t = run(&plan, "r1", json!({}), |d| {
         NodeOutcome::ok(json!({ "at": d.node }))
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     // BFS order: s, then a, b, then m (from a), m (from b).
     assert_eq!(t.nodes(), ["s", "a", "b", "m", "m"]);
     assert_eq!(t.state.step_seq(), 5);
@@ -153,7 +153,7 @@ fn merge_visits_carry_distinct_occurrences() {
     let t = run(&plan, "r1", json!({}), |d| {
         NodeOutcome::ok(json!({ "at": d.node }))
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     let visits: Vec<(&str, u32)> = t
         .visited
         .iter()
@@ -190,7 +190,7 @@ fn occurrence_is_stable_across_retries_of_one_visit() {
             NodeOutcome::ok(json!({}))
         }
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     assert_eq!(t.visited.len(), 3);
     assert!(t.visited.iter().all(|d| d.occurrence == 0));
     assert_eq!(t.visited[2].attempt, 2);
@@ -219,7 +219,7 @@ fn an_error_routed_visit_advances_the_occurrence() {
         }
         _ => NodeOutcome::ok(json!({ "at": d.node })),
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     let visits: Vec<(&str, u32)> = t
         .visited
         .iter()
@@ -239,7 +239,7 @@ fn a_leaf_with_no_successors_just_ends() {
     let t = run(&plan, "r1", json!({ "x": 1 }), |_| {
         NodeOutcome::ok(json!({ "done": true }))
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     assert_eq!(t.nodes(), ["a"]);
     assert_eq!(t.state.result(), &json!({ "done": true }));
 }
@@ -266,7 +266,7 @@ fn terminal_error_routes_to_error_port_and_continues() {
         })),
         _ => NodeOutcome::ok(json!({ "at": d.node })),
     });
-    assert_eq!(t.status, RunStatus::Completed); // error was handled
+    assert_eq!(t.status, ExecutionStatus::Completed); // error was handled
     assert_eq!(t.nodes(), ["a", "b", "h"]); // c skipped
     // The handler received the error payload.
     assert_eq!(
@@ -290,10 +290,10 @@ fn terminal_error_with_no_error_path_fails_the_run() {
         "b" => NodeOutcome::Error(NodeError::Terminal(wamn_runner::ErrorDetail::msg("boom"))),
         _ => NodeOutcome::ok(json!({})),
     });
-    assert_eq!(t.status, RunStatus::Failed);
+    assert_eq!(t.status, ExecutionStatus::Failed);
     let fail = t.state.failure().expect("failure recorded");
     assert_eq!(fail.node, "b");
-    assert_eq!(fail.kind, FailKind::Terminal);
+    assert_eq!(fail.kind, ExecutionFailureKind::Terminal);
     assert_eq!(fail.detail.message, "boom");
 }
 
@@ -319,7 +319,7 @@ fn retryable_retries_then_succeeds_with_stable_idempotency_key() {
             NodeOutcome::ok(json!({ "ok": true }))
         }
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     // 3 dispatches (attempt 0,1,2), 2 waits at the default backoff (100, then 300).
     assert_eq!(t.nodes(), ["b", "b", "b"]);
     assert_eq!(t.visited[0].attempt, 0);
@@ -348,9 +348,12 @@ fn retry_budget_exhausts_to_failure() {
     let t = run(&plan, "r1", json!({}), |_| {
         NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("nope")))
     });
-    assert_eq!(t.status, RunStatus::Failed);
+    assert_eq!(t.status, ExecutionStatus::Failed);
     assert_eq!(t.nodes().len(), 3); // default max_attempts = 3
-    assert_eq!(t.state.failure().unwrap().kind, FailKind::RetryExhausted);
+    assert_eq!(
+        t.state.failure().unwrap().kind,
+        ExecutionFailureKind::RetryExhausted
+    );
 }
 
 #[test]
@@ -368,7 +371,7 @@ fn retry_config_overrides_budget_and_routes_to_error_path_when_exhausted() {
         "b" => NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("x"))),
         _ => NodeOutcome::ok(json!({ "handled": true })),
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     assert_eq!(t.nodes(), ["b", "b", "h"]); // 2 attempts then error branch
     assert_eq!(t.waits[0].1, 10); // base-ms override
 }
@@ -394,7 +397,7 @@ fn rate_limited_honors_retry_after_and_emits_the_shared_throttle_key() {
             NodeOutcome::ok(json!({ "ok": true }))
         }
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     assert_eq!(t.waits.len(), 1);
     let (node, until, throttle) = &t.waits[0];
     assert_eq!(node, "call");
@@ -421,9 +424,12 @@ fn invalid_input_is_never_retried() {
             "bad shape",
         )))
     });
-    assert_eq!(t.status, RunStatus::Failed);
+    assert_eq!(t.status, ExecutionStatus::Failed);
     assert_eq!(t.nodes().len(), 1); // exactly one dispatch, no retry
-    assert_eq!(t.state.failure().unwrap().kind, FailKind::InvalidInput);
+    assert_eq!(
+        t.state.failure().unwrap().kind,
+        ExecutionFailureKind::InvalidInput
+    );
 }
 
 #[test]
@@ -439,7 +445,7 @@ fn cancelled_stops_the_run_and_does_not_fire_error_branches() {
         "b" => NodeOutcome::Error(NodeError::Cancelled),
         _ => NodeOutcome::ok(json!({})),
     });
-    assert_eq!(t.status, RunStatus::Cancelled);
+    assert_eq!(t.status, ExecutionStatus::Cancelled);
     assert_eq!(t.nodes(), ["b"]); // error branch h did NOT fire
 }
 
@@ -506,7 +512,7 @@ fn retry_policy_reads_config_and_computes_backoff() {
     assert_eq!(RetryPolicy::from_config(&Value::Null), RetryPolicy::DEFAULT);
 }
 
-// ---- throttle table + scheduler (unit) ------------------------------------
+// ---- throttle table + concurrency gate (unit) ------------------------------
 
 #[test]
 fn throttle_table_gates_and_opens() {
@@ -529,8 +535,8 @@ fn throttle_table_gates_and_opens() {
 }
 
 #[test]
-fn scheduler_enforces_per_flow_concurrency() {
-    let mut s = Scheduler::new(2);
+fn concurrency_gate_enforces_per_flow_concurrency() {
+    let mut s = ConcurrencyGate::new(2);
     assert!(s.try_admit("f"));
     assert!(s.try_admit("f"));
     assert!(!s.try_admit("f")); // at cap -> backpressure
@@ -540,7 +546,7 @@ fn scheduler_enforces_per_flow_concurrency() {
     s.finish("f");
     assert!(s.try_admit("f")); // slot freed
     // limit 0 = unlimited.
-    let mut u = Scheduler::new(0);
+    let mut u = ConcurrencyGate::new(0);
     for _ in 0..100 {
         assert!(u.try_admit("x"));
     }
@@ -589,7 +595,7 @@ fn resume_reconstructs_a_linear_frontier_and_continues() {
     let mut st = plan
         .resume("r1", json!({ "trigger": 1 }), &completed)
         .unwrap();
-    assert_eq!(st.status(), RunStatus::Running);
+    assert_eq!(st.status(), ExecutionStatus::Running);
     assert_eq!(st.step_seq(), 2); // two steps folded
 
     // The driver continues: the very next dispatch is c (not a re-run of a/b),
@@ -604,7 +610,7 @@ fn resume_reconstructs_a_linear_frontier_and_continues() {
             NodeOutcome::ok(json!({ "at": d.node }))
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(resumed, ["c", "d"]); // a and b are NOT re-dispatched
 }
 
@@ -630,7 +636,7 @@ fn resume_is_branch_aware_only_the_taken_branch_is_outstanding() {
             NodeOutcome::ok(json!({ "at": d.node }))
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(resumed, ["y2"]); // only the taken branch's remainder; n1/n2 never run
 }
 
@@ -680,7 +686,7 @@ fn resume_kill_mid_branch_then_resume_completes_the_correct_branch() {
             NodeOutcome::ok(json!({ "at": d.node }))
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(resumed, ["n2"]); // the false branch completes; y1/y2 never run
 }
 
@@ -736,7 +742,7 @@ fn resume_diamond_killed_mid_merge_reconstructs_and_completes() {
             NodeOutcome::ok(json!({ "at": d.node }))
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(
         resumed,
         [("d".to_string(), 1)],
@@ -773,7 +779,7 @@ fn resume_of_a_fully_recorded_diamond_is_idempotent() {
             NodeOutcome::ok(d.payload.clone())
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert!(resumed.is_empty());
     assert_eq!(st.result(), &json!({ "d": 2 })); // the LAST visit's emission
 }
@@ -810,7 +816,7 @@ fn resume_mid_loop_continues_at_the_right_visit() {
             }
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(
         resumed,
         [("x".to_string(), 2), ("out".to_string(), 0)],
@@ -847,7 +853,7 @@ fn resume_reconstructs_an_error_routed_branch() {
             NodeOutcome::ok(d.payload.clone())
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(resumed, ["h"]); // the error branch, not the success node "ok"
 }
 
@@ -881,7 +887,7 @@ fn resumed_error_routed_run_matches_live_step_seq_and_result() {
         ))),
         _ => NodeOutcome::ok(json!({ "handled": true })),
     });
-    assert_eq!(live.status, RunStatus::Completed);
+    assert_eq!(live.status, ExecutionStatus::Completed);
     assert_eq!(live.nodes(), ["a", "h"]); // ok skipped
     assert_eq!(live.state.step_seq(), 1); // only h's success counts
     // The error payload a actually emitted (h's live input) — reuse it verbatim
@@ -922,7 +928,7 @@ fn resumed_error_routed_run_matches_live_step_seq_and_result() {
             NodeOutcome::ok(d.payload.clone())
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert!(resumed.is_empty());
 }
 
@@ -950,7 +956,7 @@ fn resume_partial_after_error_route_leaves_step_seq_zero_and_null_result() {
             NodeOutcome::ok(json!({ "handled": true }))
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(seen, [("h".to_string(), error_payload)]);
 }
 
@@ -1038,7 +1044,7 @@ fn resume_of_a_fully_recorded_run_is_complete_and_idempotent() {
             NodeOutcome::ok(d.payload.clone())
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert!(resumed.is_empty());
 }
 
@@ -1052,7 +1058,7 @@ fn seed_at_runs_only_the_downstream_subtree() {
     let mut st = plan
         .seed_at("rerun-1", "c", json!({ "captured": "c-input" }))
         .unwrap();
-    assert_eq!(st.status(), RunStatus::Running);
+    assert_eq!(st.status(), ExecutionStatus::Running);
     let mut seen = Vec::new();
     let status = plan.drive(
         &mut st,
@@ -1063,7 +1069,7 @@ fn seed_at_runs_only_the_downstream_subtree() {
             NodeOutcome::ok(json!({ "at": d.node }))
         },
     );
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(
         seen,
         [
@@ -1100,7 +1106,11 @@ fn runaway_cycle() -> Flow {
 /// Drive with a hard iteration ceiling so a budget-removed mutant FAILS the
 /// assert instead of hanging the test binary (the plain `run` helper loops
 /// until terminal, which a runaway mutant never reaches).
-fn run_bounded(plan: &Plan, st: &mut RunState, max_iters: usize) -> (Vec<String>, RunStatus) {
+fn run_bounded(
+    plan: &Plan,
+    st: &mut ExecutionState,
+    max_iters: usize,
+) -> (Vec<String>, ExecutionStatus) {
     let mut dispatched = Vec::new();
     for _ in 0..max_iters {
         match plan.next(st, 0) {
@@ -1125,9 +1135,9 @@ fn a_runaway_cycle_fails_at_exactly_the_budget() {
     // Exactly 5 node executions were allowed, then the run failed terminally.
     assert_eq!(dispatched.len(), 5);
     assert_eq!(st.dispatched(), 5);
-    assert_eq!(status, RunStatus::Failed);
+    assert_eq!(status, ExecutionStatus::Failed);
     let failure = st.failure().expect("failure recorded");
-    assert_eq!(failure.kind, FailKind::RunawayBudget);
+    assert_eq!(failure.kind, ExecutionFailureKind::RunawayBudget);
     // The failure names the node that would have run next (the 6th execution).
     assert_eq!(failure.node, "a");
     assert_eq!(failure.detail.code.as_deref(), Some("runaway-budget"));
@@ -1142,7 +1152,7 @@ fn a_flow_that_uses_exactly_the_budget_completes() {
     plan.set_dispatch_budget(4);
     let mut st = plan.start("r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 20);
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(dispatched.len(), 4);
     assert!(st.failure().is_none());
 }
@@ -1185,8 +1195,11 @@ fn retries_count_against_the_budget() {
         }
     };
     assert_eq!(executions, 3);
-    assert_eq!(status, RunStatus::Failed);
-    assert_eq!(st.failure().unwrap().kind, FailKind::RunawayBudget);
+    assert_eq!(status, ExecutionStatus::Failed);
+    assert_eq!(
+        st.failure().unwrap().kind,
+        ExecutionFailureKind::RunawayBudget
+    );
 }
 
 #[test]
@@ -1203,7 +1216,7 @@ fn reconstruction_is_exempt_from_the_budget() {
     let mut st = plan.resume("r1", json!("go"), &completed).unwrap();
     assert_eq!(st.dispatched(), 0, "folded history must not count");
     let (dispatched, status) = run_bounded(&plan, &mut st, 10);
-    assert_eq!(status, RunStatus::Completed);
+    assert_eq!(status, ExecutionStatus::Completed);
     assert!(dispatched.is_empty());
 
     // A partially-recorded resume still gets the FULL budget for live work:
@@ -1212,7 +1225,7 @@ fn reconstruction_is_exempt_from_the_budget() {
     plan2.set_dispatch_budget(1);
     let mut st2 = plan2.resume("r2", json!("go"), &completed[..3]).unwrap();
     let (live, status2) = run_bounded(&plan2, &mut st2, 10);
-    assert_eq!(status2, RunStatus::Completed);
+    assert_eq!(status2, ExecutionStatus::Completed);
     assert_eq!(live, ["d"]);
 }
 
@@ -1233,8 +1246,11 @@ fn the_budget_verdict_is_terminal_even_with_an_error_path() {
     plan.set_dispatch_budget(5);
     let mut st = plan.start("r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 20);
-    assert_eq!(status, RunStatus::Failed);
-    assert_eq!(st.failure().unwrap().kind, FailKind::RunawayBudget);
+    assert_eq!(status, ExecutionStatus::Failed);
+    assert_eq!(
+        st.failure().unwrap().kind,
+        ExecutionFailureKind::RunawayBudget
+    );
     // The rescue node never ran: the verdict bypassed the error path.
     assert!(!dispatched.iter().any(|n| n == "rescue"));
 }
@@ -1247,9 +1263,12 @@ fn the_default_budget_is_generous_but_finite() {
     assert_eq!(wamn_runner::DEFAULT_DISPATCH_BUDGET, 10_000);
     let mut st = plan.start("r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 10_100);
-    assert_eq!(status, RunStatus::Failed);
+    assert_eq!(status, ExecutionStatus::Failed);
     assert_eq!(dispatched.len(), 10_000);
-    assert_eq!(st.failure().unwrap().kind, FailKind::RunawayBudget);
+    assert_eq!(
+        st.failure().unwrap().kind,
+        ExecutionFailureKind::RunawayBudget
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1273,8 +1292,8 @@ struct ParkTrace {
     dispatches: Vec<(String, u32)>,
     parks: usize,
     claims: usize,
-    status: RunStatus,
-    failure: Option<FailKind>,
+    status: ExecutionStatus,
+    failure: Option<ExecutionFailureKind>,
 }
 
 impl ParkTrace {
@@ -1484,8 +1503,8 @@ fn retry_budget_survives_parks_to_exhaustion() {
             "always",
         )))
     });
-    assert_eq!(t.status, RunStatus::Failed);
-    assert_eq!(t.failure, Some(FailKind::RetryExhausted));
+    assert_eq!(t.status, ExecutionStatus::Failed);
+    assert_eq!(t.failure, Some(ExecutionFailureKind::RetryExhausted));
     // Attempts 0,1,2 — one per claim — with a park between each.
     assert_eq!(t.steps(), vec![("b", 0), ("b", 1), ("b", 2)]);
     assert_eq!(t.parks, 2);
@@ -1509,7 +1528,7 @@ fn retry_budget_survives_parks_then_error_routes_when_exhausted() {
         "b" => NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("x"))),
         _ => NodeOutcome::ok(json!({ "handled": true })),
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     assert_eq!(t.parks, 1); // attempt 0 parks; attempt 1 exhausts and routes
     assert_eq!(t.steps(), vec![("b", 0), ("b", 1), ("h", 0)]);
 }
@@ -1538,7 +1557,7 @@ fn a_completed_predecessor_is_not_re_run_across_a_retry_park() {
             }
         }
     });
-    assert_eq!(t.status, RunStatus::Completed);
+    assert_eq!(t.status, ExecutionStatus::Completed);
     // a dispatched exactly once; b dispatched at attempts 0,1,2 across 2 parks.
     assert_eq!(t.steps(), vec![("a", 0), ("b", 0), ("b", 1), ("b", 2)]);
     assert_eq!(t.parks, 2);

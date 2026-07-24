@@ -10,7 +10,7 @@
 //! the same split `wamn-api` uses for the gateway.
 //!
 //! ```
-//! use wamn_runner::{Plan, NodeOutcome, RunStatus};
+//! use wamn_runner::{Plan, NodeOutcome, ExecutionStatus};
 //! use wamn_flow::Flow;
 //! use serde_json::json;
 //!
@@ -30,19 +30,19 @@
 //!     |until, _key| clock.set(until),        // "sleep": jump the clock
 //!     |d| NodeOutcome::ok(d.config.clone()), // trivial echo node
 //! );
-//! assert_eq!(status, RunStatus::Completed);
+//! assert_eq!(status, ExecutionStatus::Completed);
 //! ```
 //!
 //! ## Scope (5.2) vs siblings
 //! Owns: the ported-edge walk, branch/merge, error-path routing, the
 //! retry/backoff loop, the shared per-target throttle key + per-flow concurrency
-//! accounting ([`throttle`]), the hot-reload *consumer* seam (recompile a
+//! accounting ([`ThrottleTable`]), the hot-reload *consumer* seam (recompile a
 //! [`Plan`] on a new flow version), and the pure **reconstruction primitives**
 //! [`resume`](Plan::resume) (rebuild a run's frontier from its recorded steps —
 //! branch-aware) and [`seed_at`](Plan::seed_at) (partial re-run from one node).
 //! Does **not** own: the `wamn:node` taxonomy (5.4 — mirrored here as
 //! [`NodeError`]), the durable `runs`/`node_runs` **schema, persistence, and
-//! run-history read model** (5.7 — `wamn-run-store` drives these primitives over
+//! run-history read model** (5.7 — `wamn-run-state` drives these primitives over
 //! the store), per-node ordering (5.11), the cancel operation (5.12), the durable
 //! queue + NATS doorbell + dispatcher (5.14), the payload store (5.10), the
 //! standard node contents (5.3), or the custom-node transport (5.6). The driver
@@ -55,9 +55,10 @@ mod retry;
 mod throttle;
 
 pub use engine::{
-    Dispatch, FailKind, Failure, Recorded, ResumeError, RunState, RunStatus, Step, UnknownNode,
+    Dispatch, ExecutionFailureKind, ExecutionState, ExecutionStatus, Failure, Recorded,
+    ResumeError, Step, UnknownNode,
 };
 pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
 pub use plan::{DEFAULT_DISPATCH_BUDGET, EngineError, Plan};
 pub use retry::RetryPolicy;
-pub use throttle::{Scheduler, ThrottleKey, ThrottleTable};
+pub use throttle::{ConcurrencyGate, ThrottleKey, ThrottleTable};

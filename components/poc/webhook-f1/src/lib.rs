@@ -44,9 +44,10 @@ use bindings::wasi::io::streams::StreamError;
 use serde_json::{Value, json};
 use wamn_f1 as f1;
 use wamn_flow::{Flow, Trigger};
-use wamn_run_store::sql as run_sql;
+use wamn_run_state::sql as run_sql;
 use wamn_runner::{
-    Dispatch, ERROR_PORT, ErrorDetail, NodeError, NodeOutcome, Plan, RunStatus, Step,
+    Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionStatus, NodeError,
+    NodeOutcome, Plan, Step,
 };
 
 struct Component;
@@ -124,7 +125,7 @@ fn drive(plan: &Plan<'_>, run_id: &str, input: Value) -> (u16, Value) {
 
     loop {
         match plan.next(&mut st, 0) {
-            Step::Done(RunStatus::Completed) => {
+            Step::Done(ExecutionStatus::Completed) => {
                 if let Err(e) = mark_completed(run_id, st.result()) {
                     return (503, error_body("unavailable", &e));
                 }
@@ -461,7 +462,7 @@ fn capture_binds(
     output: &Value,
     input: &Value,
 ) -> ([SqlValue; 7], bool) {
-    let c = wamn_run_store::derive_capture(capture, output, input);
+    let c = wamn_run_state::derive_capture(capture, output, input);
     (
         [
             opt_text(c.output_json),
@@ -534,7 +535,7 @@ fn write_ahead(flow_id: &str, version: u32, input: &Value) -> Result<String, Str
         &[
             text(flow_id),
             SqlValue::Int32(version as i32),
-            text(wamn_run_store::RunStatus::Dispatched.as_sql()),
+            text(wamn_run_state::RunStatus::Dispatched.as_sql()),
             text("webhook"),
             jsonb(input),
         ],
@@ -633,7 +634,7 @@ fn record_error(
     // Scrub the taxonomy detail alongside the payload when the mode scrubs — it
     // can echo the payload, so leaving it raw would leak past the scrub.
     if redacted {
-        wamn_run_store::capture::scrub(&mut detail_json);
+        wamn_run_state::capture::scrub(&mut detail_json);
     }
     let [out_j, in_j, preview, size, hash, mode, red] = binds;
     client::execute(
@@ -733,13 +734,8 @@ fn detail_json(detail: Option<&ErrorDetail>) -> Value {
     }
 }
 
-fn fail_kind_sql(kind: &wamn_runner::FailKind) -> &'static str {
-    match kind {
-        wamn_runner::FailKind::Terminal => "terminal",
-        wamn_runner::FailKind::RetryExhausted => "retry-exhausted",
-        wamn_runner::FailKind::InvalidInput => "invalid-input",
-        wamn_runner::FailKind::RunawayBudget => "runaway-budget",
-    }
+fn fail_kind_sql(kind: &ExecutionFailureKind) -> &'static str {
+    wamn_run_state::FailKind::from(*kind).as_sql()
 }
 
 fn error_body(code: &str, message: &str) -> Value {

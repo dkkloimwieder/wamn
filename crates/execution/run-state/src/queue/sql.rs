@@ -12,9 +12,9 @@
 //! `infrastructure-failure`. Milliseconds are converted to an `interval` inline
 //! (`$n::bigint * interval '1 millisecond'`).
 
-use crate::model::PartitionPolicy;
+use super::model::PartitionPolicy;
+use crate::{RunStatus, sql as run_sql};
 use wamn_pg_core::Sql;
-use wamn_run_store::RunStatus;
 
 /// The D15 write-ahead run row: a `dispatched` run persisted *before* the runner
 /// picks it up (the janitor later reconciles one that never reports back).
@@ -65,7 +65,7 @@ pub fn enqueue_with_policy_sql() -> String {
 /// stays byte-identical. An UNKEYED evt row: like [`enqueue_sql`], it writes no
 /// `partition_policy` (the column default — D20; the kq0z coherence rule). The
 /// keyed variant is [`enqueue_evt_with_policy_sql`]. Params: `$1` run_id
-/// (minted by [`crate::mint_evt_run_id`] — zero-padded, the belt to this
+/// (minted by [`crate::queue::mint_evt_run_id`] — zero-padded, the belt to this
 /// column's suspenders), `$2` partition_key (NULL here), `$3` priority,
 /// `$4` delay_ms, `$5` stream_seq.
 pub fn enqueue_evt_sql() -> String {
@@ -241,7 +241,7 @@ pub fn claim_dispatch_sql() -> String {
 }
 
 /// Completion + dequeue as ONE statement (fqg.18): composes the 5.7
-/// [`wamn_run_store::sql::update_run_completed`] (deliberately UNCONDITIONAL —
+/// [`run_sql::update_run_completed`] (deliberately UNCONDITIONAL —
 /// the fqg.2 reverse-race override) with [`dequeue_sql`], sharing `$1` run_id
 /// (`$2` result_json). Also strictly better than the split pair: completion and
 /// queue removal are now atomic, so no crash window leaves a completed run
@@ -255,26 +255,26 @@ pub fn claim_dispatch_sql() -> String {
 pub fn complete_dequeue_sql() -> String {
     format!(
         "WITH done AS ({completed}) {dequeue}",
-        completed = wamn_run_store::sql::update_run_completed().text(),
+        completed = run_sql::update_run_completed().text(),
         dequeue = dequeue_sql(),
     )
 }
 
 /// Per-node checkpoint + heartbeat as ONE statement (fqg.18): composes the 5.7
-/// [`wamn_run_store::sql::insert_node_run_success`] (`$1`..`$7`, idempotent by
+/// [`run_sql::insert_node_run_success`] (`$1`..`$7`, idempotent by
 /// `(run_id, node_id, occurrence)`) with the [`renew_lease_sql`] write (ttl_ms,
 /// owner — owner-guarded, sharing `$1` run_id). The renew fires even when the
 /// record is a conflict no-op (a replay of an already-recorded visit), so a
 /// long cyclic walk's lease stays live exactly as the split pair kept it.
 pub fn record_success_and_renew_sql() -> String {
-    checkpoint_then_renew(wamn_run_store::sql::insert_node_run_success())
+    checkpoint_then_renew(run_sql::insert_node_run_success())
 }
 
 /// The error-routed twin of [`record_success_and_renew_sql`]: composes
-/// [`wamn_run_store::sql::insert_node_run_error`] (`$1`..`$8`) with the
+/// [`run_sql::insert_node_run_error`] (`$1`..`$8`) with the
 /// owner-guarded lease renew.
 pub fn record_error_and_renew_sql() -> String {
-    checkpoint_then_renew(wamn_run_store::sql::insert_node_run_error())
+    checkpoint_then_renew(run_sql::insert_node_run_error())
 }
 
 /// Compose a per-node checkpoint `head` with the owner-guarded lease-renew tail
@@ -340,7 +340,7 @@ pub fn dequeue_sql() -> String {
 /// proceeds past a failed head silently, and the dequeue can never commit
 /// without its ledger row. For an unpartitioned or `leapfrog` row the insert's
 /// predicate matches nothing and the statement degenerates to [`dequeue_sql`]
-/// (no ordering promise was made — see [`crate::dead_letters_on_terminal`],
+/// (no ordering promise was made — see [`crate::queue::dead_letters_on_terminal`],
 /// the pure twin of the predicate). `flow_id` rides from the run's own `runs`
 /// row (the FK guarantees it); `failed_at` is server-side `now()`. Idempotent
 /// on redelivery: `ON CONFLICT DO NOTHING` on the ledger PK, and a re-run
@@ -435,7 +435,7 @@ pub fn janitor_sweep_sql() -> String {
 // write-ahead + enqueue co-transaction as above, with the trigger payload
 // persisted (`write_ahead_triggered_run_sql`). Row events are the D19 v3 event
 // plane's (CDC reader → JetStream → materializer — the outbox path was torn
-// down at l5i9.19). See `crate::cron` / `crate::dispatch`.
+// down at l5i9.19). Trigger timing decisions live in `wamn-scheduler`.
 // ---------------------------------------------------------------------------
 
 /// The dispatcher's write-ahead run row: [`write_ahead_run_sql`] plus the trigger
@@ -474,7 +474,7 @@ pub fn active_flows_sql() -> String {
 /// unconstrained user text and `text` ordering is collation-dependent, so a
 /// range scan can leak a *foreign* flow's ids into the max (a wrong anchor =
 /// silently lost ticks). Within one flow's cron ids the minted ticks are
-/// equal-length zero-padded digits ([`crate::mint_cron_run_id`]), so
+/// equal-length zero-padded digits (`wamn_scheduler::mint_cron_run_id`), so
 /// `max(run_id)` IS the latest tick under any collation. The `runs` table is
 /// the dispatcher's only cron state: restarted or concurrently racing
 /// dispatchers recover the same anchor by construction.
@@ -529,7 +529,7 @@ pub fn upsert_cron_anchor_sql() -> String {
 /// `tenant_id = current_setting('app.tenant', true)` predicate (R8b-b) — inert
 /// (RLS injects the identical filter) but defense-in-depth, like the claim.
 ///
-/// The `partition_key IS NULL` guard mirrors [`global_claim_cte`]'s (wamn-2jkm.29):
+/// The `partition_key IS NULL` guard mirrors `global_claim_cte`'s (wamn-2jkm.29):
 /// the wake scan surfaces exactly the rows the GLOBAL claim would take, so
 /// `found_work` reflects **actionable** work. Without it, a partitioned FOLLOWER
 /// behind a D20 `blocking` head is surfaced every sweep (it is due, unleased,
@@ -762,19 +762,19 @@ mod tests {
     /// error 8 -> 13) and the renew tail renumbered here automatically.
     #[test]
     fn composed_arity_flows_from_the_producing_crate() {
-        assert_eq!(wamn_run_store::sql::insert_node_run_success().arity(), 12);
+        assert_eq!(run_sql::insert_node_run_success().arity(), 12);
         let s = record_success_and_renew_sql();
         assert!(s.contains("AND run_id = $1 AND lease_owner = $14"));
         assert!(!s.contains("$15"));
 
-        assert_eq!(wamn_run_store::sql::insert_node_run_error().arity(), 13);
+        assert_eq!(run_sql::insert_node_run_error().arity(), 13);
         let e = record_error_and_renew_sql();
         assert!(e.contains("AND run_id = $1 AND lease_owner = $15"));
         assert!(!e.contains("$16"));
 
-        assert_eq!(wamn_run_store::sql::update_run_completed().arity(), 2);
+        assert_eq!(run_sql::update_run_completed().arity(), 2);
         let c = complete_dequeue_sql();
-        assert!(c.contains(wamn_run_store::sql::update_run_completed().text()));
+        assert!(c.contains(run_sql::update_run_completed().text()));
         assert!(c.contains(&dequeue_sql()));
     }
 }

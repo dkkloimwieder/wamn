@@ -64,7 +64,7 @@ use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
 use wamn_gate_harness::check;
-use wamn_run_queue::mint_evt_run_id;
+use wamn_run_state::queue::mint_evt_run_id;
 use wamn_run_worker::{RunWorker, RunnerIdentity};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;

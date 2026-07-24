@@ -35,7 +35,7 @@ use wamn_node_invoke::{
     SignatureError, WirePayload, WireRunContext, granted_credentials, sign_envelope,
     sign_envelope_with_timestamp,
 };
-use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_gate_harness::check;

@@ -57,7 +57,7 @@ added (histograms keep their structural `_count`/`_sum`/`_bucket`).
   `node_id` on the 9.1 spans — **deferred** (see below), derivable by query.
 - **Run-queue depth.** The dispatcher republishes each project's *claimable*
   depth every sweep (no new loop) — the count uses the EXACT claim predicate of
-  `wamn_run_queue::claim_batch_sql` (available_at reached, lease NULL-or-expired,
+  `wamn_run_state::queue::claim_batch_sql` (available_at reached, lease NULL-or-expired,
   budget-remaining), so the gauge counts precisely what a runner could claim now.
 - **Postgres pool + query latency.** Pool gauges read deadpool `Pool::status()`
   per project; the latency histogram wraps the awaited call at the four `db_span`

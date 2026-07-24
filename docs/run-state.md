@@ -5,15 +5,17 @@ exit criterion): the `runs` / `node_runs` tables, at-least-once execution keyed 
 idempotency, a queryable run history, **branch-aware replay** from captured
 inputs, and **partial re-run** from a failed node. It is the durable half of what
 the pure engine ([`wamn-runner`](flow-runner.md), 5.2) left as an in-memory seam —
-5.2 holds a [`RunState`] with a single `step_seq` counter; 5.7 persists one row per
+5.2 holds an `ExecutionState` with a single `step_seq` counter; 5.7 persists one row per
 node execution and rebuilds the exact frontier from those rows.
 
-The split mirrors the rest of the platform: a **pure crate** (`crates/execution/run-state-store`)
-holds the record model and all reconstruction/re-run logic — no DB, no wasm, no
-clock, unit-tested off-cluster — and drives two additive **engine primitives**
-(`Plan::resume` / `Plan::seed_at`); the **driver** (`components/execution/flowrunner`)
-supplies the `wamn:postgres` effects against the schema in
-[`deploy/sql/run-state.sql`](../deploy/sql/run-state.sql).
+One guest-safe owner, `crates/execution/run-state`, holds the complete durable
+execution lifecycle: run and node-run records, reconstruction/re-run decisions,
+queue/lease/timer state, and their parameterized SQL. It contains no DB driver,
+wasm runtime, broker, or clock. The flowrunner adapter supplies `wamn:postgres`
+effects against [`deploy/sql/run-state.sql`](../deploy/sql/run-state.sql) and
+[`deploy/sql/run-queue.sql`](../deploy/sql/run-queue.sql). Cron parsing, due-tick
+evaluation, and adaptive cadence are separate pure decisions in
+`crates/execution/scheduler`; only their durable anchor belongs to run-state.
 
 ## The tables
 
@@ -23,7 +25,7 @@ supplies the `wamn:postgres` effects against the schema in
 `result_json`, a transient `state_json` (e.g. a `delay` node's parked-wake), the
 `idempotency_key` (at-least-once redelivery dedupe), the lineage links
 (`replay_of` / `root_run_id`), and the `fail_kind`/`fail_node`/`fail_reason`
-mirrored from the engine `FailKind`.
+mirrored from the engine `ExecutionFailureKind`.
 
 `node_runs` — one row per node execution, the **reconstruction source**. Its key
 `(tenant_id, run_id, node_id, occurrence)` is loop-safe: `occurrence` disambiguates
@@ -40,7 +42,7 @@ so a missing claim sees zero rows. `node_runs` foreign-keys `runs`
 
 ## SQL builders (single source, SR2)
 
-The `runs`/`node_runs` SQL is written **once**, in `wamn_run_store::sql` — pure
+The `runs`/`node_runs` SQL is written **once**, in `wamn_run_state::sql` — pure
 `String` text builders in the house shape: values are always `$n` parameters,
 identifiers are pinned, table names are **unqualified** (the host injects the
 schema via `search_path`, the S6 schema-as-fixture pattern), the tenant comes from
@@ -59,7 +61,7 @@ reconstruction filter) are pinned by shape unit tests in that module; the runtim
 ## Branch-aware replay (reconstruction)
 
 On every invocation the driver reconstructs the run rather than loading a linear
-checkpoint. `wamn_run_store::reconstruct` reads the completed `node_runs` in `seq`
+checkpoint. `wamn_run_state::reconstruct` reads the completed `node_runs` in `seq`
 order and folds each — as a `Success { payload, port }` on its recorded port —
 through the engine's `Plan::resume`. Because the fold uses the same
 `apply`/`enqueue_successors` the original walk used, the rebuilt frontier is
@@ -137,7 +139,7 @@ The policy is a per-flow field, [`Flow.capture`](flow-schema.md), that rides
 `graph_json` (no new plumbing — the flow is in scope at every `node_runs` write).
 It has a **mode** and a **`max-bytes`** size threshold (default 64 KiB). The pure
 application logic — secret scrubbing, size truncation, preview/size/hash
-derivation — lives in `wamn_run_store::capture` (`capture::derive`), unit-tested
+derivation — lives in `wamn_run_state::capture` (`capture::derive`), unit-tested
 off-cluster and linked by the flowrunner guest, which calls it at each
 `record_node_run*` / `record_error*` write *before* the `jsonb()` choke point.
 The 9.6 seam columns already reserved on `node_runs` (`preview_head`,
@@ -218,7 +220,7 @@ above; the cold-path byte-store pointers (`input_ref`/`output_ref`) remain 5.10'
 
 ## Gates
 
-- **`cargo test -p wamn-run-store`** — the model + reconstruction + re-run, pure:
+- **`cargo test -p wamn-run-state`** — the model + reconstruction + re-run, pure:
   linear resume, the **branch-aware kill-mid-branch → resume** proof, error-routed
   reconstruction, capture-off non-replayability, drift detection, `seq`-ordering,
   replay/partial-re-run lineage, and the status/DDL drift guards — all off-cluster.

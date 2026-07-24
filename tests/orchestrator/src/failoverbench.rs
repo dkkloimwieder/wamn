@@ -6,7 +6,7 @@
 //!   * the run-queue lease + `claim_batch_sql` **reclaim** (a dead runner's lease
 //!     expires and another replica re-claims the row, bumping `attempts`) — host
 //!     side, proven by `queuebench`'s reclaim gate;
-//!   * 5.7 branch-aware **reconstruction** (`wamn_run_store::reconstruct` +
+//!   * 5.7 branch-aware **reconstruction** (`wamn_run_state::reconstruct` +
 //!     `Plan::resume` rebuild the exact outstanding frontier from `node_runs`, so a
 //!     killed-then-resumed run leaves exactly one side effect) — guest side, proven
 //!     by `flowbench`'s resume gate.
@@ -25,7 +25,7 @@
 //! (`attempts == max_attempts`) whose fresh lease then lapses past grace could be
 //! relabeled `infrastructure-failure` by the janitor in the window between the
 //! completion write and the host's dequeue. The fix is host-side + in the pure
-//! `wamn_run_queue` builder (the guest stays byte-identical): `janitor_sweep_sql`
+//! `wamn_run_state` builder (the guest stays byte-identical): `janitor_sweep_sql`
 //! only relabels a still-in-flight run (`status IN ('dispatched','running')`), and
 //! the host dequeues strictly after completion. Both orderings of the race are
 //! gated, each mutation-tested: the guard direction (completion, then the janitor)
@@ -56,7 +56,7 @@ use std::time::Duration;
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
-use wamn_run_queue::{
+use wamn_run_state::queue::{
     claim_batch_sql, dequeue_sql, enqueue_sql, janitor_sweep_sql, mark_running_sql,
     write_ahead_run_sql, write_ahead_triggered_run_sql,
 };

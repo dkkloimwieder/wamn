@@ -2,8 +2,9 @@
 //! engine's execution taxonomy. Each maps 1:1 to a `text` column value via
 //! `as_sql`/`from_sql` (the SQL literals are exactly the serde kebab-case names,
 //! tied to `deploy/sql/run-state.sql` by a drift-guard test). `From<…>` conversions
-//! adapt the pure-engine enums (`wamn_runner::{RunStatus, FailKind, NodeError}`)
-//! into their persisted form, the way `wamn_api::SqlValue` mirrors the WIT.
+//! adapt the pure-engine enums
+//! (`wamn_runner::{ExecutionStatus, ExecutionFailureKind, NodeError}`)
+//! into their persisted form, the way `wamn_pg_core::SqlValue` mirrors the WIT.
 
 use serde::{Deserialize, Serialize};
 
@@ -58,18 +59,18 @@ impl RunStatus {
     }
 }
 
-impl From<wamn_runner::RunStatus> for RunStatus {
-    fn from(s: wamn_runner::RunStatus) -> RunStatus {
+impl From<wamn_runner::ExecutionStatus> for RunStatus {
+    fn from(s: wamn_runner::ExecutionStatus) -> RunStatus {
         match s {
-            wamn_runner::RunStatus::Running => RunStatus::Running,
-            wamn_runner::RunStatus::Completed => RunStatus::Completed,
-            wamn_runner::RunStatus::Failed => RunStatus::Failed,
-            wamn_runner::RunStatus::Cancelled => RunStatus::Cancelled,
+            wamn_runner::ExecutionStatus::Running => RunStatus::Running,
+            wamn_runner::ExecutionStatus::Completed => RunStatus::Completed,
+            wamn_runner::ExecutionStatus::Failed => RunStatus::Failed,
+            wamn_runner::ExecutionStatus::Cancelled => RunStatus::Cancelled,
         }
     }
 }
 
-/// Why a run failed — the persisted form of `wamn_runner::FailKind`.
+/// Why a run failed — the persisted form of `wamn_runner::ExecutionFailureKind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FailKind {
@@ -103,13 +104,13 @@ impl FailKind {
     }
 }
 
-impl From<wamn_runner::FailKind> for FailKind {
-    fn from(k: wamn_runner::FailKind) -> FailKind {
+impl From<wamn_runner::ExecutionFailureKind> for FailKind {
+    fn from(k: wamn_runner::ExecutionFailureKind) -> FailKind {
         match k {
-            wamn_runner::FailKind::Terminal => FailKind::Terminal,
-            wamn_runner::FailKind::RetryExhausted => FailKind::RetryExhausted,
-            wamn_runner::FailKind::InvalidInput => FailKind::InvalidInput,
-            wamn_runner::FailKind::RunawayBudget => FailKind::RunawayBudget,
+            wamn_runner::ExecutionFailureKind::Terminal => FailKind::Terminal,
+            wamn_runner::ExecutionFailureKind::RetryExhausted => FailKind::RetryExhausted,
+            wamn_runner::ExecutionFailureKind::InvalidInput => FailKind::InvalidInput,
+            wamn_runner::ExecutionFailureKind::RunawayBudget => FailKind::RunawayBudget,
         }
     }
 }

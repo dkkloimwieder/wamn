@@ -1,6 +1,6 @@
 //! CDC event-run identity (D19 v3 §5 / E4) — the deterministic run id the
 //! materializer (l5i9.17) mints per delivered stream event. Grammar parity with
-//! the trigger dispatcher's ids ([`crate::mint_cron_run_id`]): the id embeds
+//! the trigger dispatcher's cron ids: the id embeds
 //! the flow and the firing's
 //! stream position, so a redelivered event re-mints the SAME id and the
 //! write-ahead `ON CONFLICT` absorbs the duplicate — the exactly-once guarantee
@@ -26,7 +26,7 @@
 /// sorts before `f1:evt:9` — the R6/D20 corruption class arriving through a
 /// string comparison. The suspenders are the `stream_seq` BIGINT the enqueue
 /// carries ahead of `run_id` in every claim key
-/// ([`crate::enqueue_evt_sql`] / [`crate::enqueue_evt_with_policy_sql`]).
+/// ([`crate::queue::enqueue_evt_sql`] / [`crate::queue::enqueue_evt_with_policy_sql`]).
 pub fn mint_evt_run_id(flow_id: &str, stream_seq: u64) -> String {
     format!("{flow_id}:evt:{stream_seq:020}")
 }

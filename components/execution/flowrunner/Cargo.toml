@@ -12,14 +12,8 @@ serde_json = "1"
 # it against wamn:postgres + the native standard nodes (the wamn-api pattern).
 wamn-flow = { path = "../../../crates/execution/flow-model" }
 wamn-runner = { path = "../../../crates/execution/flow-engine" }
-# Durable run state (5.7): the runs/node_runs model + branch-aware reconstruction
-# this component persists into and resumes from (replacing the S3 step_seq).
-wamn-run-store = { path = "../../../crates/execution/run-state-store" }
-# Durable run queue (5.14): the claim/lease/dequeue/park SQL builders the guest
-# calls to claim its OWN work from run_queue (fqg.4). `default-features = false`
-# keeps the dispatcher-only modules (cron/dispatch — croner + chrono) out
-# of the guest wasm; the runner needs only the pure claim-path builders (sql.rs).
-wamn-run-queue = { path = "../../../crates/execution/run-state-queue", default-features = false }
+# One guest-safe owner for run history, queue, lease, timer, and replay state.
+wamn-run-state = { path = "../../../crates/execution/run-state" }
 # The standard node library (5.3) + the SDK capability facade this component
 # implements over its real imports (wamn:postgres, wasi:http). The library is
 # pure — node behavior, taxonomy classification, and the dispatch-time

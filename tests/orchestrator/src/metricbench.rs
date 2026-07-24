@@ -36,7 +36,7 @@ use clap::Args;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_postgres::{Client, NoTls};
-use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use wamn_dispatcher::{Dispatcher, DispatcherConfig, ProjectSpec, register_queue_depth_gauge};
 use wamn_run_worker::RunWorker;

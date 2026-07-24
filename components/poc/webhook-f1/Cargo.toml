@@ -11,7 +11,7 @@ wamn-flow = { path = "../../../crates/execution/flow-model" }
 wamn-runner = { path = "../../../crates/execution/flow-engine" }
 # Run-state SQL single source (SR2): the runs/node_runs builders this ingress
 # executes through wamn:postgres.
-wamn-run-store = { path = "../../../crates/execution/run-state-store" }
+wamn-run-state = { path = "../../../crates/execution/run-state" }
 
 [lib]
 crate-type = ["cdylib"]

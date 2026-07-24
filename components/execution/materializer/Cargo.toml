@@ -15,9 +15,8 @@ wamn-event-reg = { path = "../../../crates/events/registration" }
 wamn-event-wire = { path = "../../../crates/events/wire" }
 wamn-flow = { path = "../../../crates/execution/flow-model" }
 # The write-ahead + evt-enqueue SQL builders. `default-features = false` keeps
-# the dispatcher-only modules (croner/chrono) out of the wasm (the fqg.4
-# flowrunner posture).
-wamn-run-queue = { path = "../../../crates/execution/run-state-queue", default-features = false }
+# Guest-safe durable enqueue and ordering SQL; schedule evaluation is separate.
+wamn-run-state = { path = "../../../crates/execution/run-state" }
 
 # A COMMAND component (wasi:cli/run via `main`), not a cdylib: the Service
 # workload shape (E12) runs it in the host's restart loop.

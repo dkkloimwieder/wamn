@@ -2,7 +2,7 @@
 //!
 //! Pure host-side like dispatchbench (no wasm guest): it applies the REAL
 //! `deploy/sql/run-state.sql` into a throwaway ephemeral schema, then exercises
-//! the SAME pure capture logic (`wamn_run_store::capture`) and the SAME `node_runs`
+//! the SAME pure capture logic (`wamn_run_state::capture`) and the SAME `node_runs`
 //! insert builders the flowrunner guest binds — so the columns a capture policy
 //! produces, the reconstruction verdict, the secret-containment property, and the
 //! retention verb all run against real Postgres over the real prepared statements
@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 
 use wamn_flow::{Capture, CaptureMode, Flow};
-use wamn_run_store::{NodeRunRecord, ReconstructError, RunRecord, capture, reconstruct};
+use wamn_run_state::{NodeRunRecord, ReconstructError, RunRecord, capture, reconstruct};
 use wamn_runner::Plan;
 
 const SCHEMA: &str = "wamn_capture";
@@ -174,7 +174,7 @@ async fn write_success(
     let occ: i32 = 0;
     client
         .execute(
-            &wamn_run_store::sql::insert_node_run_success_sql(),
+            &wamn_run_state::sql::insert_node_run_success_sql(),
             &[
                 &run_id,
                 &node_id,
@@ -215,7 +215,7 @@ async fn write_error(
     let occ: i32 = 0;
     client
         .execute(
-            &wamn_run_store::sql::insert_node_run_error_sql(),
+            &wamn_run_state::sql::insert_node_run_error_sql(),
             &[
                 &run_id,
                 &node_id,
@@ -286,7 +286,7 @@ async fn reconstruct_verdict(
 ) -> anyhow::Result<Result<(), ReconstructError>> {
     let rows = client
         .query(
-            &wamn_run_store::sql::select_completed_node_runs_sql(),
+            &wamn_run_state::sql::select_completed_node_runs_sql(),
             &[&run_id],
         )
         .await

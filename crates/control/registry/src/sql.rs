@@ -1,7 +1,7 @@
 //! Pure SQL text builders for the T1 control-plane registry (wamn-q3n.6).
 //!
 //! Registry SQL lives with the registry model (SR2: the single source, like
-//! `wamn-run-store` owns the `runs` SQL), drift-guarded against the storage DDL
+//! `wamn-run-state` owns the `runs` SQL), drift-guarded against the storage DDL
 //! in `deploy/sql/system-schema.sql`. Values travel as `$n` params; the driver (the
 //! `provision-org` subcommand) holds the `wamn_system` connection and executes
 //! the statement as the registry owner.

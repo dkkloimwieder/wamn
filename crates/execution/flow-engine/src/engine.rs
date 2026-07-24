@@ -1,7 +1,7 @@
 //! The reducer: a pure, synchronous state machine that walks one run through the
 //! [`Plan`]. Every effect — dispatching a node, sleeping for a backoff,
 //! checkpointing to Postgres — belongs to the driver; the engine only decides the
-//! next [`Step`] and folds a [`NodeOutcome`] into [`RunState`].
+//! next [`Step`] and folds a [`NodeOutcome`] into [`ExecutionState`].
 //!
 //! ## Driver loop
 //! ```ignore
@@ -36,24 +36,24 @@ use crate::throttle::ThrottleKey;
 
 /// Terminal + in-progress run status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunStatus {
+pub enum ExecutionStatus {
     Running,
     Completed,
     Failed,
     Cancelled,
 }
 
-impl RunStatus {
+impl ExecutionStatus {
     pub fn is_terminal(self) -> bool {
-        !matches!(self, RunStatus::Running)
+        !matches!(self, ExecutionStatus::Running)
     }
 }
 
-/// Why a run ended in [`RunStatus::Failed`] — kept distinct so run history (5.7)
+/// Why a run ended in [`ExecutionStatus::Failed`] — kept distinct so run history (5.7)
 /// can flag an upstream bug (`InvalidInput`) apart from a genuine terminal error
 /// or an exhausted retry budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FailKind {
+pub enum ExecutionFailureKind {
     /// A node returned `terminal` and no error path caught it.
     Terminal,
     /// A node kept returning `retryable`/`rate-limited` past its budget.
@@ -71,7 +71,7 @@ pub enum FailKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Failure {
     pub node: String,
-    pub kind: FailKind,
+    pub kind: ExecutionFailureKind,
     pub detail: ErrorDetail,
 }
 
@@ -99,9 +99,9 @@ struct Active {
 
 /// One run's mutable state. Opaque; inspect via the accessors.
 #[derive(Debug, Clone, PartialEq)]
-pub struct RunState {
+pub struct ExecutionState {
     run_id: String,
-    status: RunStatus,
+    status: ExecutionStatus,
     frontier: VecDeque<Token>,
     current: Option<Active>,
     step_seq: u64,
@@ -118,11 +118,11 @@ pub struct RunState {
     failure: Option<Failure>,
 }
 
-impl RunState {
+impl ExecutionState {
     pub fn run_id(&self) -> &str {
         &self.run_id
     }
-    pub fn status(&self) -> RunStatus {
+    pub fn status(&self) -> ExecutionStatus {
         self.status
     }
     /// Count of successfully-completed node steps — the checkpoint key the driver
@@ -173,7 +173,7 @@ pub enum Step {
         throttle: Option<ThrottleKey>,
     },
     /// The run reached a terminal status.
-    Done(RunStatus),
+    Done(ExecutionStatus),
 }
 
 /// A single node execution the driver must perform. Mirrors the runner-owned
@@ -293,15 +293,15 @@ impl std::error::Error for UnknownNode {}
 
 impl<'f> Plan<'f> {
     /// Start a run: the entry node holds the trigger payload.
-    pub fn start(&self, run_id: impl Into<String>, input: Value) -> RunState {
+    pub fn start(&self, run_id: impl Into<String>, input: Value) -> ExecutionState {
         let mut frontier = VecDeque::new();
         frontier.push_back(Token {
             node: self.entry().id.clone(),
             payload: input,
         });
-        RunState {
+        ExecutionState {
             run_id: run_id.into(),
-            status: RunStatus::Running,
+            status: ExecutionStatus::Running,
             frontier,
             current: None,
             step_seq: 0,
@@ -317,16 +317,16 @@ impl<'f> Plan<'f> {
     /// not-yet-due retry waits, an empty frontier completes the run. Each
     /// dispatch handed out counts against the per-invocation budget
     /// ([`Plan::set_dispatch_budget`]); once spent, the run fails
-    /// [`FailKind::RunawayBudget`] — the runtime bound that keeps a permitted
+    /// [`ExecutionFailureKind::RunawayBudget`] — the runtime bound that keeps a permitted
     /// cycle from running forever (cjv.4).
-    pub fn next(&self, state: &mut RunState, now_ms: u64) -> Step {
+    pub fn next(&self, state: &mut ExecutionState, now_ms: u64) -> Step {
         self.next_counted(state, now_ms, true)
     }
 
     /// `next`, with the dispatch budget optionally exempted — the private
     /// reconstruction path ([`Plan::resume`]) replays recorded steps without
     /// counting them, so a resumed run's live walk gets the full budget.
-    fn next_counted(&self, state: &mut RunState, now_ms: u64, count_budget: bool) -> Step {
+    fn next_counted(&self, state: &mut ExecutionState, now_ms: u64, count_budget: bool) -> Step {
         if state.status.is_terminal() {
             return Step::Done(state.status);
         }
@@ -342,8 +342,8 @@ impl<'f> Plan<'f> {
                     });
                 }
                 None => {
-                    state.status = RunStatus::Completed;
-                    return Step::Done(RunStatus::Completed);
+                    state.status = ExecutionStatus::Completed;
+                    return Step::Done(ExecutionStatus::Completed);
                 }
             }
         }
@@ -364,10 +364,10 @@ impl<'f> Plan<'f> {
                 // part of the loop, so the budget verdict is unconditionally
                 // terminal.
                 let node = state.current.take().expect("current set above").node;
-                state.status = RunStatus::Failed;
+                state.status = ExecutionStatus::Failed;
                 state.failure = Some(Failure {
                     node,
-                    kind: FailKind::RunawayBudget,
+                    kind: ExecutionFailureKind::RunawayBudget,
                     detail: ErrorDetail::coded(
                         "runaway-budget",
                         format!(
@@ -376,7 +376,7 @@ impl<'f> Plan<'f> {
                         ),
                     ),
                 });
-                return Step::Done(RunStatus::Failed);
+                return Step::Done(ExecutionStatus::Failed);
             }
             state.dispatched += 1;
         }
@@ -384,7 +384,7 @@ impl<'f> Plan<'f> {
         Step::Dispatch(self.build_dispatch(state, a))
     }
 
-    fn build_dispatch(&self, state: &RunState, a: &Active) -> Dispatch {
+    fn build_dispatch(&self, state: &ExecutionState, a: &Active) -> Dispatch {
         // The node is guaranteed present: the entry token and every enqueued
         // edge target resolve against the validated flow.
         let node = self.node(&a.node).expect("active node in flow");
@@ -409,7 +409,7 @@ impl<'f> Plan<'f> {
     /// outcome variant. `dispatch` is the [`Dispatch`] whose node just ran.
     pub fn apply(
         &self,
-        state: &mut RunState,
+        state: &mut ExecutionState,
         dispatch: &Dispatch,
         outcome: NodeOutcome,
         now_ms: u64,
@@ -438,7 +438,12 @@ impl<'f> Plan<'f> {
                 if policy.may_retry(attempt) {
                     self.schedule_retry(state, now_ms + policy.backoff_ms(attempt), None);
                 } else {
-                    self.error_or_fail(state, &dispatch.node, detail, FailKind::RetryExhausted);
+                    self.error_or_fail(
+                        state,
+                        &dispatch.node,
+                        detail,
+                        ExecutionFailureKind::RetryExhausted,
+                    );
                 }
             }
             NodeOutcome::Error(NodeError::RateLimited(rl)) => {
@@ -454,25 +459,46 @@ impl<'f> Plan<'f> {
                     );
                     self.schedule_retry(state, now_ms + delay, Some(key));
                 } else {
-                    self.error_or_fail(state, &dispatch.node, rl.detail, FailKind::RetryExhausted);
+                    self.error_or_fail(
+                        state,
+                        &dispatch.node,
+                        rl.detail,
+                        ExecutionFailureKind::RetryExhausted,
+                    );
                 }
             }
             NodeOutcome::Error(NodeError::Terminal(detail)) => {
-                self.error_or_fail(state, &dispatch.node, detail, FailKind::Terminal);
+                self.error_or_fail(
+                    state,
+                    &dispatch.node,
+                    detail,
+                    ExecutionFailureKind::Terminal,
+                );
             }
             NodeOutcome::Error(NodeError::InvalidInput(detail)) => {
                 // Never retried, regardless of budget.
-                self.error_or_fail(state, &dispatch.node, detail, FailKind::InvalidInput);
+                self.error_or_fail(
+                    state,
+                    &dispatch.node,
+                    detail,
+                    ExecutionFailureKind::InvalidInput,
+                );
             }
             NodeOutcome::Error(NodeError::Cancelled) => {
                 state.current = None;
-                state.status = RunStatus::Cancelled;
+                state.status = ExecutionStatus::Cancelled;
             }
         }
     }
 
     /// Enqueue the edges leaving `node` on `port`, each carrying `payload`.
-    fn enqueue_successors(&self, state: &mut RunState, node: &str, port: &str, payload: Value) {
+    fn enqueue_successors(
+        &self,
+        state: &mut ExecutionState,
+        node: &str,
+        port: &str,
+        payload: Value,
+    ) {
         let edges = self.successors(node, port);
         for edge in edges {
             state.frontier.push_back(Token {
@@ -489,7 +515,7 @@ impl<'f> Plan<'f> {
     /// and enqueue the [`ERROR_PORT`](crate::outcome::ERROR_PORT) successors carrying
     /// `payload`. Deliberately leaves `step_seq` and `result` untouched: an error
     /// route is not a success completion (R26).
-    fn route_error(&self, state: &mut RunState, node: &str, payload: Value) {
+    fn route_error(&self, state: &mut ExecutionState, node: &str, payload: Value) {
         state.current = None;
         *state.visits.entry(node.to_string()).or_default() += 1;
         self.enqueue_successors(state, node, crate::outcome::ERROR_PORT, payload);
@@ -497,7 +523,12 @@ impl<'f> Plan<'f> {
 
     /// Mark the active node for a retry at `until_ms` (keeping the same input
     /// payload), coordinating on `throttle` if set.
-    fn schedule_retry(&self, state: &mut RunState, until_ms: u64, throttle: Option<ThrottleKey>) {
+    fn schedule_retry(
+        &self,
+        state: &mut ExecutionState,
+        until_ms: u64,
+        throttle: Option<ThrottleKey>,
+    ) {
         if let Some(a) = state.current.as_mut() {
             a.attempt += 1;
             a.retry_until_ms = until_ms;
@@ -507,11 +538,17 @@ impl<'f> Plan<'f> {
 
     /// Route the failed node to its error path if one exists; otherwise end the
     /// run as failed with the given `kind`.
-    fn error_or_fail(&self, state: &mut RunState, node: &str, detail: ErrorDetail, kind: FailKind) {
+    fn error_or_fail(
+        &self,
+        state: &mut ExecutionState,
+        node: &str,
+        detail: ErrorDetail,
+        kind: ExecutionFailureKind,
+    ) {
         state.current = None;
         let error_edges = self.successors(node, crate::outcome::ERROR_PORT);
         if error_edges.is_empty() {
-            state.status = RunStatus::Failed;
+            state.status = ExecutionStatus::Failed;
             state.failure = Some(Failure {
                 node: node.to_string(),
                 kind,
@@ -533,11 +570,11 @@ impl<'f> Plan<'f> {
     /// one node and returns its outcome.
     pub fn drive(
         &self,
-        state: &mut RunState,
+        state: &mut ExecutionState,
         mut now: impl FnMut() -> u64,
         mut sleep_until: impl FnMut(u64, Option<&ThrottleKey>),
         mut dispatch: impl FnMut(&Dispatch) -> NodeOutcome,
-    ) -> RunStatus {
+    ) -> ExecutionStatus {
         loop {
             match self.next(state, now()) {
                 Step::Done(status) => return status,
@@ -561,7 +598,7 @@ impl<'f> Plan<'f> {
     /// R26), so the rebuilt frontier is exactly what the original walk left
     /// outstanding: the same branch was taken, the same merges arrived,
     /// error-routed nodes re-entered their error branch. The returned
-    /// [`RunState`] is positioned to continue — the driver calls
+    /// [`ExecutionState`] is positioned to continue — the driver calls
     /// [`next`](Self::next)/[`apply`](Self::apply) from there, re-dispatching only
     /// nodes that have no record (so their effects run at-least-once, deduped by
     /// the node's own idempotency).
@@ -575,7 +612,7 @@ impl<'f> Plan<'f> {
         run_id: impl Into<String>,
         input: Value,
         completed: &[Recorded],
-    ) -> Result<RunState, ResumeError> {
+    ) -> Result<ExecutionState, ResumeError> {
         let mut state = self.start(run_id, input);
         for rec in completed {
             // Reconstruction is exempt from the dispatch budget: recorded steps
@@ -633,7 +670,7 @@ impl<'f> Plan<'f> {
         run_id: impl Into<String>,
         node: &str,
         payload: Value,
-    ) -> Result<RunState, UnknownNode> {
+    ) -> Result<ExecutionState, UnknownNode> {
         if self.node(node).is_none() {
             return Err(UnknownNode(node.to_string()));
         }
@@ -642,9 +679,9 @@ impl<'f> Plan<'f> {
             node: node.to_string(),
             payload,
         });
-        Ok(RunState {
+        Ok(ExecutionState {
             run_id: run_id.into(),
-            status: RunStatus::Running,
+            status: ExecutionStatus::Running,
             frontier,
             current: None,
             step_seq: 0,
@@ -679,7 +716,7 @@ impl<'f> Plan<'f> {
     /// faithful. Nothing consumes the key across runs yet; this is restore fidelity.
     pub fn restore_retry(
         &self,
-        state: &mut RunState,
+        state: &mut ExecutionState,
         node: &str,
         attempt: u32,
         throttle: Option<ThrottleKey>,

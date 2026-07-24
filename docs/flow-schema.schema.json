@@ -4,7 +4,7 @@
   "definitions": {
     "Capture": {
       "additionalProperties": false,
-      "description": "Node-level I/O capture policy (9.6): how a flow's per-node input/output payloads are persisted to `node_runs`, plus the size threshold that forces preview-only storage. The pure application logic — secret scrubbing, size truncation, and preview/size/hash derivation — lives in `wamn_run_store::capture`; this is the authored declaration that rides `graph_json` (the flow is in scope at every `node_runs` write site).",
+      "description": "Node-level I/O capture policy (9.6): how a flow's per-node input/output payloads are persisted to `node_runs`, plus the size threshold that forces preview-only storage. The pure application logic — secret scrubbing, size truncation, and preview/size/hash derivation — lives in `wamn_run_state::capture`; this is the authored declaration that rides `graph_json` (the flow is in scope at every `node_runs` write site).",
       "properties": {
         "max-bytes": {
           "default": 65536,
@@ -343,7 +343,7 @@
           "$ref": "#/definitions/Capture"
         }
       ],
-      "description": "The flow's node-level I/O capture policy (9.6): how each node's input / output payloads are persisted to `node_runs` — faithfully, scrubbed of secrets, preview-only, or not at all — plus the byte threshold above which any mode stores a preview only. Absent = [`Capture::default`] (full capture, 64 KiB threshold): the platform captures replayable payloads by default. Rides `graph_json`; the flowrunner guest applies it at every `node_runs` write ([`wamn_run_store::capture`](../wamn_run_store))."
+      "description": "The flow's node-level I/O capture policy (9.6): how each node's input / output payloads are persisted to `node_runs` — faithfully, scrubbed of secrets, preview-only, or not at all — plus the byte threshold above which any mode stores a preview only. Absent = [`Capture::default`] (full capture, 64 KiB threshold): the platform captures replayable payloads by default. Rides `graph_json`; the flowrunner guest applies it at every `node_runs` write ([`wamn_run_state::capture`](../wamn_run_state))."
     },
     "credentials": {
       "description": "Credentials the flow needs, declared by logical name and resolved by the vault (5.9) at run time. Nodes reference these by [`Node::credential`]; secrets never appear in flow data.",
@@ -395,7 +395,7 @@
           "$ref": "#/definitions/PartitionPolicy"
         }
       ],
-      "description": "How this flow's `partitioned(key)` runs dispatch when the key's earliest (head) run is unavailable — backed off, parked, or budget-exhausted (5.11 ordering decision, D20). Absent = [`PartitionPolicy::Blocking`]: choosing partitioned dispatch *is* opting into ordering. Inert for a flow whose runs carry no partition key; materialized onto each queue row at enqueue (`wamn-run-queue`) so the claim SQL is self-contained."
+      "description": "How this flow's `partitioned(key)` runs dispatch when the key's earliest (head) run is unavailable — backed off, parked, or budget-exhausted (5.11 ordering decision, D20). Absent = [`PartitionPolicy::Blocking`]: choosing partitioned dispatch *is* opting into ordering. Inert for a flow whose runs carry no partition key; materialized onto each queue row at enqueue (`wamn-run-state`) so the claim SQL is self-contained."
     },
     "schema-version": {
       "description": "The flow-schema format version (e.g. `\"0.1\"`). See [`SCHEMA_VERSION`].",

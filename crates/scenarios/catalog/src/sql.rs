@@ -4,7 +4,7 @@
 //! `$n` SELECT builders the stored-suite EXECUTOR (`wamn-gates testkitbench
 //! --suite/--impact-report`) reads with. Pure `format!`/string builders — the
 //! effect shell holds the connection — so the table-owning crate owns its SQL
-//! (mirrors `wamn_run_store::sql` / `wamn_schema_control::sql`), and `wamn-gates`
+//! (mirrors `wamn_run_state::sql` / `wamn_schema_control::sql`), and `wamn-gates`
 //! already depends on `wamn-flow-tests` so no new gate dependency is incurred.
 //!
 //! **Read posture.** Tables are UNQUALIFIED so a `search_path` selects the
@@ -45,7 +45,7 @@ mod tests {
 
     /// Every column/table the builders name exists in the canonical DDL — the
     /// deploy file and the builders cannot drift apart silently (mirrors
-    /// `wamn_run_store::sql`'s `builder_columns_exist_in_the_canonical_ddl`).
+    /// `wamn_run_state::sql`'s `builder_columns_exist_in_the_canonical_ddl`).
     #[test]
     fn builder_columns_exist_in_the_canonical_ddl() {
         let ddl = include_str!("../../../../deploy/sql/flow-tests.sql");

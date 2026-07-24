@@ -9,8 +9,8 @@
 //! executes**: the wasm guests (`flowrunner`, `poc-webhook-f1`) bind these
 //! through `wamn:postgres`, host drivers through `tokio_postgres` — one SQL
 //! text, never two authors of the schema's statements. Status literals
-//! interpolate from [`status`](crate::status) so the builders cannot drift
-//! from the model (the same discipline `wamn-run-queue` uses).
+//! interpolate from [`crate::RunStatus`] so the builders cannot drift
+//! from the model (the same discipline this crate's `queue` module uses).
 //!
 //! This module is guest-compilable by construction: `String` builders only,
 //! no DB driver, no clock, no tokio in the dependency closure.
@@ -19,7 +19,7 @@ use wamn_pg_core::Sql;
 
 use crate::status::{NodeRunStatus, RunStatus};
 
-// SR11: the THREE builders wamn-run-queue COMPOSES are also exposed as [`Sql`]
+// SR11: the THREE builders `queue` COMPOSES are also exposed as [`Sql`]
 // (text + param arity) so the consumer renumbers its lease-renew tail against the
 // arity instead of hardcoding `$7`/`$8` on an assumption about this crate. The
 // arity is declared here, beside the text, and asserted against the text by
@@ -269,7 +269,7 @@ mod tests {
 
     /// SR11: each composed builder's declared arity equals the highest placeholder
     /// in its own text, so a param added to the SQL without bumping the arity is
-    /// caught HERE — before wamn-run-queue mis-numbers its tail against a stale
+    /// caught HERE — before `queue` mis-numbers its tail against a stale
     /// arity.
     #[test]
     fn composed_builder_arities_match_their_placeholders() {
@@ -285,10 +285,10 @@ mod tests {
                 stmt.text()
             );
         }
-        // The exact contract wamn-run-queue composes against, pinned. The node-run
+        // The exact contract `queue` composes against, pinned. The node-run
         // arities grew by the five 9.6 capture columns (wamn-srb): success 7 -> 12,
         // error 8 -> 13 — the composed renew tail renumbers against these
-        // automatically (wamn-run-queue's `checkpoint_then_renew`).
+        // automatically (`queue::checkpoint_then_renew`).
         assert_eq!(update_run_completed().arity(), 2);
         assert_eq!(insert_node_run_success().arity(), 12);
         assert_eq!(insert_node_run_error().arity(), 13);

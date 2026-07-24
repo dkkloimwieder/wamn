@@ -1,11 +1,11 @@
-//! Branch-aware replay: rebuild a run's in-memory [`RunState`] from its persisted
+//! Branch-aware replay: rebuild a run's in-memory [`ExecutionState`] from its persisted
 //! `node_runs`. This is the durable resume path (5.7) that supersedes the S3
 //! linear `step_seq` — it replays the run's completed emissions through the pure
 //! engine ([`Plan::resume`]) so the reconstructed frontier is exactly what the
 //! original walk left outstanding: the same branch, the same merges, error-routed
 //! nodes back on their error branch.
 
-use wamn_runner::{MAIN_PORT, Plan, Recorded, ResumeError, RunState};
+use wamn_runner::{ExecutionState, MAIN_PORT, Plan, Recorded, ResumeError};
 
 use crate::model::{NodeRunRecord, RunRecord};
 
@@ -40,7 +40,7 @@ impl From<ResumeError> for ReconstructError {
     }
 }
 
-/// Rebuild the [`RunState`] for `run` from its persisted `node_runs`, branch-aware.
+/// Rebuild the [`ExecutionState`] for `run` from its persisted `node_runs`, branch-aware.
 ///
 /// Only COMPLETED node-runs (`success`/`error`) are replayed, in `seq` order;
 /// a `running`/`parked` row is an outstanding node the driver re-dispatches
@@ -51,7 +51,7 @@ pub fn reconstruct(
     plan: &Plan,
     run: &RunRecord,
     node_runs: &[NodeRunRecord],
-) -> Result<RunState, ReconstructError> {
+) -> Result<ExecutionState, ReconstructError> {
     let mut completed: Vec<&NodeRunRecord> = node_runs
         .iter()
         .filter(|nr| nr.status.is_completed())

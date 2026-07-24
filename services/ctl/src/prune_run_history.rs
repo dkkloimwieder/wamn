@@ -1,5 +1,5 @@
 //! The `prune-run-history` subcommand (9.6 retention, wamn-srb): the effect shell
-//! for the pure `wamn_run_store::sql::prune_terminal_runs_sql` builder.
+//! for the pure `wamn_run_state::sql::prune_terminal_runs_sql` builder.
 //!
 //! Deletes a project-env's TERMINAL run history older than a retention window so
 //! the `runs`/`node_runs` HOT store stays bounded (node I/O snapshots are the
@@ -125,7 +125,7 @@ pub async fn prune(
         .context("set app.tenant claim")?;
 
     let days = i64::from(retention_days);
-    let sql = wamn_run_store::sql::prune_terminal_runs_sql();
+    let sql = wamn_run_state::sql::prune_terminal_runs_sql();
     if apply {
         client
             .execute(&sql, &[&days])

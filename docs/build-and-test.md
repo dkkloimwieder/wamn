@@ -430,7 +430,7 @@ kubectl -n wamn-system logs job/suiteexec
 ### [11.3 / wamn-htn] record-and-replay fixtures (pin-run + pinproof)
 
 Docs: docs/testkit.md → "Record-and-replay: pin a run". The pure `pin_run`
-transform (a `wamn_run_store` run + its `node_runs` → a `wamn_testkit::TestCase`)
+transform (a `wamn_run_state` run + its `node_runs` → a `wamn_testkit::TestCase`)
 lives in `crates/scenarios/model` (module `pin`), alongside the additive `normalize`
 vocabulary (`ignore-paths` + `canonicalize`, no regex). The `wamn-ctl pin-run`
 verb is the effect shell (app-role read + pure pin + INSERT into
@@ -440,7 +440,7 @@ refused (`PinError::NotCaptured`).
 
 ```bash
 # Unit tests (pure pin/normalize logic + the run-store pin read builders):
-cargo test -p wamn-testkit -p wamn-run-store -p wamn-ctl
+cargo test -p wamn-testkit -p wamn-run-state -p wamn-ctl
 
 # pinproof (host-side, provisions an ephemeral schema via the SAME ensure_* path
 # production uses; seeds a full-capture run carrying a secret + volatile fields,
@@ -590,19 +590,19 @@ cargo clippy -p wamn-node-guest -p wamn-node-manifest --all-targets \
 cargo run -p wamn-node-manifest --example print-schema > docs/wamn-node-manifest.schema.json
 ```
 
-### [5.7] run-state persistence (crates/execution/run-state-store)
+### [5.7] run-state persistence (crates/execution/run-state)
 
 Docs: docs/run-state.md
 
 ```bash
-cargo test -p wamn-run-store
+cargo test -p wamn-run-state
 cargo test -p wamn-runner   # the resume/seed_at primitives (regression)
-cargo clippy -p wamn-run-store --all-targets && cargo fmt -p wamn-run-store --check
+cargo clippy -p wamn-run-state --all-targets && cargo fmt -p wamn-run-state --check
 # optional live-apply gate (deploy/sql/run-state.sql on a throwaway PG; superuser URL
 # node_runs FK cascade; skips cleanly when unset):
 docker run -d --rm --name wamn-runstore-pg -p 5458:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
-WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn cargo test -p wamn-run-store
+WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn cargo test -p wamn-run-state
 docker stop wamn-runstore-pg
 # (in-cluster gate of record + locally). Rebuild the guest, re-run those gates (the
 # additively (kubectl exec psql — shared-cluster guardrail, never recreate the pod).
@@ -622,7 +622,7 @@ Docs: docs/run-state.md § *Resume pins the run's persisted version*
 # it: the direct execute (reads flow_version, load_flow_at), the unpartitioned
 # claim (claim_dispatch_sql projects r.flow_version, the guest flow_at pins it),
 # and the partitioned claim (select_run_dispatch_sql projects flow_version).
-cargo test -p wamn-run-store -p wamn-run-queue   # pure text pins + queue.rs live
+cargo test -p wamn-run-state   # pure text pins + queue.rs live
 #   discriminating fixture (cd-0 PERSISTED=3 vs ACTIVE=4 -> claim returns 3)
 # Gate of record: runnerbench MERGE-RESUME phase (phase 9). mr-0 (v1) parks at its
 # delay-merge; a structurally-different v2 (linear in->r) is registered+activated
@@ -705,20 +705,21 @@ kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=180
 kubectl -n wamn-system logs job/credproof   # overall PASS: true
 ```
 
-### [5.14] durable run queue & runner scaling (crates/execution/run-state-queue)
+### [5.14] durable run queue & runner scaling (crates/execution/run-state)
 
 Docs: docs/run-queue.md
 
 ```bash
-cargo test -p wamn-run-queue
-cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --check
+cargo test -p wamn-run-state -p wamn-scheduler
+cargo clippy -p wamn-run-state -p wamn-scheduler --all-targets \
+  && cargo fmt -p wamn-run-state -p wamn-scheduler --check
 # optional live-apply gate (deploy/sql/run-state.sql + run-queue.sql on a throwaway PG;
 # skips cleanly when unset):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
 docker exec wamn-rq-pg psql -U postgres -c \
   "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
-WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-queue
+WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-state
 # throwaway PG above (the live-apply gate created wamn_app) + a throwaway NATS:
 docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
@@ -1413,7 +1414,7 @@ doorbell → ack. Decisions are the PURE `wamn-materializer` crate; the guest
 (`components/execution/materializer`) is the effect shell.
 
 ```bash
-cargo test -p wamn-materializer -p wamn-run-queue          # decide/condition/causation/mint + E4 model/SQL pins
+cargo test -p wamn-materializer -p wamn-run-state          # decide/condition/causation/mint + E4 model/SQL pins
 cargo test -p wamn-host --lib plugins::wamn_jetstream      # doorbell subject/tenant map (+ live round-trip w/ WAMN_EVT_NATS_URL)
 cargo test -p wamn-host --test jetstream_wit_coherence     # docs WIT == built WIT (doorbell included)
 (cd components && cargo build -p materializer --target wasm32-wasip2 --release)
@@ -1598,8 +1599,8 @@ restore with sha256, DEBUG builds; rebuild wamn-gates after restoring a dep.
 Docs: docs/run-queue.md
 
 ```bash
-cargo test -p wamn-run-queue   # incl the janitor completion-race guard (shape + live-apply)
-cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --check
+cargo test -p wamn-run-state   # incl the janitor completion-race guard (shape + live-apply)
+cargo clippy -p wamn-run-state --all-targets && cargo fmt -p wamn-run-state --check
 # Local iteration (reuse the throwaway PG above [wamn-rq-pg on 5459, wamn_app created by
 # so NO wasm rebuild — reuse the built flowrunner.wasm):
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
@@ -1617,10 +1618,10 @@ kubectl -n wamn-system logs -f job/failoverbench
 Docs: docs/run-queue.md
 
 ```bash
-cargo test -p wamn-run-store   # incl select_run_dispatch shape (fl3's traceparent seam)
-cargo build -p wamn-run-queue --no-default-features   # the guest's pure claim-path core builds alone
-cargo clippy -p wamn-dispatcher -p wamn-run-worker -p wamn-gates -p wamn-run-store -p wamn-run-queue --all-targets \
-  && cargo fmt -p wamn-dispatcher -p wamn-run-worker -p wamn-gates -p wamn-run-store -p wamn-run-queue --check
+cargo test -p wamn-run-state   # incl select_run_dispatch shape (fl3's traceparent seam)
+cargo build -p wamn-run-state   # the guest-safe durable-state core builds alone
+cargo clippy -p wamn-dispatcher -p wamn-run-worker -p wamn-gates -p wamn-run-state --all-targets \
+  && cargo fmt -p wamn-dispatcher -p wamn-run-worker -p wamn-gates -p wamn-run-state --check
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)   # guest CHANGED
 cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
   && cargo fmt --manifest-path components/execution/flowrunner/Cargo.toml --check
@@ -1663,9 +1664,9 @@ the `dispatcher` feature, so `default-features = false` already exposes them —
 nothing moved.
 
 ```bash
-cargo test -p wamn-run-queue --test queue guest_partition_loop_drives_each_key_in_stream_order  # pure: the guest limit-1 loop drives each key in (enqueued_at, stream_seq, run_id) order
-cargo clippy -p wamn-run-queue -p wamn-gates --all-targets \
-  && cargo fmt -p wamn-run-queue -p wamn-gates --check
+cargo test -p wamn-run-state --test queue guest_partition_loop_drives_each_key_in_stream_order  # pure: the guest limit-1 loop drives each key in (enqueued_at, stream_seq, run_id) order
+cargo clippy -p wamn-run-state -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-run-state -p wamn-gates --check
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)   # guest CHANGED
 cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
   && cargo fmt --manifest-path components/execution/flowrunner/Cargo.toml --check
@@ -1746,12 +1747,12 @@ docker exec wamn-fqg8-pg psql -U postgres -c \
 # phase-4 UNPARTITIONED runaway failure wrote no marker. The composed builder's
 # conditionality matrix [blocking -> marker, leapfrog/unpartitioned -> none,
 # redelivery idempotent, RLS isolation, key-advances] is the run-queue live
-# suite: cargo test -p wamn-run-queue + WAMN_RUN_QUEUE_PG_URL).
+# suite: cargo test -p wamn-run-state + WAMN_RUN_QUEUE_PG_URL).
 # Engine units: cargo test -p wamn-runner
-# (budget section) + cargo test -p wamn-run-store (fail_kind literal + DDL
+# (budget section) + cargo test -p wamn-run-state (fail_kind literal + DDL
 # drift guard). Combined-builder shape + live-apply (PREPARE/EXECUTE the real
 # claim_dispatch/record+renew/complete+dequeue against deploy DDL incl
-# flows.sql): cargo test -p wamn-run-queue (+ WAMN_RUN_QUEUE_PG_URL).
+# flows.sql): cargo test -p wamn-run-state (+ WAMN_RUN_QUEUE_PG_URL).
 # Mutation harnesses: scratchpad mutate_cjv4.py (6 killed) + mutate_fqg18.py
 # (5 killed — cache-never-invalidates, MATERIALIZED fence, renew tail,
 # dequeue arm, mark-running arm); NOTE the engine AND the claim path are
@@ -1890,15 +1891,16 @@ kubectl -n wamn-system get deploy/runner   # READY should return to its pre-gate
 Docs: docs/run-queue.md
 
 ```bash
-cargo test -p wamn-run-queue   # incl cron calendar edges + adaptive-cadence decisions
-cargo clippy -p wamn-run-queue --all-targets && cargo fmt -p wamn-run-queue --check
+cargo test -p wamn-run-state -p wamn-scheduler   # durable anchors + pure cron/cadence decisions
+cargo clippy -p wamn-run-state -p wamn-scheduler --all-targets \
+  && cargo fmt -p wamn-run-state -p wamn-scheduler --check
 # optional live-apply gate (run-state.sql + run-queue.sql; claim/janitor/partition
 # paths + cron last-tick recovery + wake scan; skips when unset):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
 docker exec wamn-rq-pg psql -U postgres -c \
   "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
-WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-queue
+WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-state
 # the live-apply gate] + a throwaway NATS for the wake/live doorbell hints):
 docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
@@ -1925,8 +1927,8 @@ Docs: docs/run-state.md § *Node-level I/O capture (9.6)*
 ```bash
 # Pure decision + SQL builders (scrub / truncate / preview derivation, the
 # per-flow Flow.capture parse, the prune builder, the model + arity guards):
-cargo test -p wamn-flow -p wamn-run-store -p wamn-run-queue
-cargo clippy -p wamn-flow -p wamn-run-store -p wamn-ctl -p wamn-gates --all-targets
+cargo test -p wamn-flow -p wamn-run-state
+cargo clippy -p wamn-flow -p wamn-run-state -p wamn-ctl -p wamn-gates --all-targets
 # If Flow.capture changed, regenerate the published schema (drift-guarded):
 cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
 # Rebuild the flowrunner guest (9.6 enforcement site; release-wasm exception):
@@ -3072,10 +3074,10 @@ persist N rows and reconstruction replays visit-by-visit.
 
 ```bash
 cargo test -p wamn-runner    # occurrence semantics + diamond/loop resume (R24 VERIFY)
-cargo test -p wamn-run-store # per-visit reconstruction + legacy collapsed-history Mismatch
-cargo test -p wamn-run-queue # composed-statement arity renumbering ($8/$9, $9/$10)
+cargo test -p wamn-run-state # per-visit reconstruction + legacy collapsed-history Mismatch
+cargo test -p wamn-run-state # composed-statement arity renumbering ($8/$9, $9/$10)
 # live builders (throwaway PG; the queue live script pins replay-no-op vs distinct-visit row):
-WAMN_RUN_QUEUE_PG_URL=... WAMN_RUN_STORE_PG_URL=... cargo test -p wamn-run-queue -p wamn-run-store
+WAMN_RUN_QUEUE_PG_URL=... WAMN_RUN_STORE_PG_URL=... cargo test -p wamn-run-state
 # guests + the gate of record (runnerbench merge-resume: a diamond whose merge is a
 # delay node parks between the merge's visits; every re-claim reconstructs — want
 # 7 node_runs rows, m/r visits (2,0,1)):

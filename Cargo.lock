@@ -4244,7 +4244,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-flow",
- "wamn-run-store",
+ "wamn-run-state",
  "wamn-schema-compiler",
  "wamn-schema-control",
  "wamn-schema-model",
@@ -4270,7 +4270,8 @@ dependencies = [
  "tracing-subscriber",
  "wamn-control-registry",
  "wamn-flow",
- "wamn-run-queue",
+ "wamn-run-state",
+ "wamn-scheduler",
 ]
 
 [[package]]
@@ -4388,11 +4389,11 @@ dependencies = [
  "wamn-node-invoke",
  "wamn-node-manifest",
  "wamn-node-runtime",
- "wamn-run-queue",
- "wamn-run-store",
+ "wamn-run-state",
  "wamn-run-worker",
  "wamn-runner",
  "wamn-runtime",
+ "wamn-scheduler",
  "wamn-schema-compiler",
  "wamn-schema-model",
  "wamn-testkit",
@@ -4427,7 +4428,7 @@ dependencies = [
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-flow",
- "wamn-run-queue",
+ "wamn-run-state",
 ]
 
 [[package]]
@@ -4516,19 +4517,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-run-queue"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "croner",
- "serde",
- "serde_json",
- "wamn-pg-core",
- "wamn-run-store",
-]
-
-[[package]]
-name = "wamn-run-store"
+name = "wamn-run-state"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -4551,8 +4540,9 @@ dependencies = [
  "opentelemetry",
  "tokio",
  "tracing",
- "wamn-run-queue",
+ "wamn-run-state",
  "wamn-runtime",
+ "wamn-scheduler",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
@@ -4595,6 +4585,15 @@ dependencies = [
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "wamn-scheduler"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "croner",
+ "serde_json",
 ]
 
 [[package]]
@@ -4649,7 +4648,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-node-invoke",
- "wamn-run-store",
+ "wamn-run-state",
 ]
 
 [[package]]

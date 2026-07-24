@@ -31,5 +31,6 @@ hyper = "1"
 # Doorbell wake subscriber type. Same version req as the runtime's so cargo
 # unifies to one crate instance.
 async-nats = { version = "0.47", default-features = false }
-# The pure claim/lease decision logic the worker drives.
-wamn-run-queue = { path = "../../crates/execution/run-state-queue" }
+# Durable claim state and independent idle scheduling decisions.
+wamn-run-state = { path = "../../crates/execution/run-state" }
+wamn-scheduler = { path = "../../crates/execution/scheduler" }

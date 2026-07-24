@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use wamn_run_store::{FailKind, NodeErrorKind, RunStatus};
+use wamn_run_state::{FailKind, NodeErrorKind, RunStatus};
 
 /// One recorded outbound request.
 ///

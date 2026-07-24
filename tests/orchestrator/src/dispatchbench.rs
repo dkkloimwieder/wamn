@@ -66,7 +66,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
-use wamn_run_queue::{enqueue_sql, mint_cron_run_id, write_ahead_run_sql};
+use wamn_run_state::queue::{enqueue_sql, write_ahead_run_sql};
+use wamn_scheduler::mint_cron_run_id;
 
 use wamn_dispatcher::{Dispatcher, DispatcherConfig, ProjectSpec};
 
@@ -910,7 +911,7 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         spec("a", app_url, SCHEMA_A, TENANT_A),
         spec("b", app_url, SCHEMA_B, TENANT_B),
     ];
-    let min = wamn_run_queue::DEFAULT_MIN_INTERVAL_MS;
+    let min = wamn_scheduler::DEFAULT_MIN_INTERVAL_MS;
     let mut d = Dispatcher::connect(
         &specs,
         None,
@@ -1200,7 +1201,7 @@ async fn live_phase(
         &specs,
         nats,
         DispatcherConfig {
-            cadence: wamn_run_queue::Cadence::new(50, 1_000).unwrap(),
+            cadence: wamn_scheduler::Cadence::new(50, 1_000).unwrap(),
             batch: 64,
         },
     )
@@ -1276,7 +1277,7 @@ async fn live_phase(
         &[spec("a", app_url, SCHEMA_A, TENANT_A)],
         None,
         DispatcherConfig {
-            cadence: wamn_run_queue::Cadence::new(5_000, 5_000).unwrap(),
+            cadence: wamn_scheduler::Cadence::new(5_000, 5_000).unwrap(),
             batch: 64,
         },
     )

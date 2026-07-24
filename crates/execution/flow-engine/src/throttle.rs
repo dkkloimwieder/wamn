@@ -10,7 +10,7 @@
 //!   credential, target host) — back off **together**, while unrelated flows
 //!   proceed. Deliberately **not** global queue backpressure (that is 5.14): one
 //!   throttled upstream must not stall the platform.
-//! - [`Scheduler`]: the per-flow in-flight cap + claim-side backpressure — the
+//! - [`ConcurrencyGate`]: the per-flow in-flight cap + claim-side backpressure — the
 //!   runner stops admitting a flow's runs past its concurrency limit.
 
 use std::collections::HashMap;
@@ -85,16 +85,16 @@ impl ThrottleTable {
 /// backpressure. `try_admit` refuses a flow's run once it is at its concurrency
 /// limit (the driver then leaves it on the queue — the queue itself is 5.14).
 #[derive(Debug, Clone)]
-pub struct Scheduler {
+pub struct ConcurrencyGate {
     per_flow_limit: usize,
     in_flight: HashMap<String, usize>,
     pub throttle: ThrottleTable,
 }
 
-impl Scheduler {
-    /// A scheduler with a per-flow concurrency cap (`0` = unlimited).
-    pub fn new(per_flow_limit: usize) -> Scheduler {
-        Scheduler {
+impl ConcurrencyGate {
+    /// A concurrency gate with a per-flow cap (`0` = unlimited).
+    pub fn new(per_flow_limit: usize) -> ConcurrencyGate {
+        ConcurrencyGate {
             per_flow_limit,
             in_flight: HashMap::new(),
             throttle: ThrottleTable::new(),

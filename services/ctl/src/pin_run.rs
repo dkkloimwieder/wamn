@@ -28,8 +28,8 @@ use clap::Args;
 use serde_json::Value;
 use tokio_postgres::{Client, NoTls};
 
-use wamn_run_store::sql::{select_node_runs_for_pin_sql, select_run_for_pin_sql};
-use wamn_run_store::{FailKind, NodeRunRecord, NodeRunStatus, RunRecord, RunStatus};
+use wamn_run_state::sql::{select_node_runs_for_pin_sql, select_run_for_pin_sql};
+use wamn_run_state::{FailKind, NodeRunRecord, NodeRunStatus, RunRecord, RunStatus};
 use wamn_testkit::{PinError, PinOptions, TestCase, pin_run};
 
 #[derive(Debug, Args)]

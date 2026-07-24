@@ -45,8 +45,8 @@ crates/                 shared Rust workspace packages
   execution/
     flow-model          wamn-flow: flow-graph JSON model + JSON Schema
     flow-engine         wamn-runner: pure flow reducer
-    run-state-store     wamn-run-store: durable run/node-run decisions
-    run-state-queue     wamn-run-queue: queue, lease, and cron decisions
+    run-state           wamn-run-state: run history, queue, lease, and timer state
+    scheduler           wamn-scheduler: pure cron, due-tick, and cadence decisions
     standard-nodes      wamn-standard-nodes: standard node library
   events/
     wire                wamn-event-wire: event envelope contract

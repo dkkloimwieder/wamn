@@ -7,19 +7,18 @@ of decision D3. Postgres owns durability (a `FOR UPDATE SKIP LOCKED` queue that
 co-transacts with the run row), NATS-core carries fire-and-forget *doorbells* (a
 hint per enqueue, backstopped by a slow reconciliation sweep for lost hints — zero
 continuous polling), and a *run-claim lease* lets a second replica reclaim a dead
-runner's work. It is the dispatch half of what the run store
-([`wamn-run-store`](run-state.md), 5.7) made durable: where 5.7 persists *what
+runner's work. It is the dispatch half of the run-state owner
+([`wamn-run-state`](run-state.md), 5.7): where run history persists *what
 happened*, 5.14 governs *what runs next and who runs it*.
 
-The split mirrors the rest of the platform: a **pure crate**
-(`crates/execution/run-state-queue`) holds the claim/lease/janitor/reconciliation decisions —
-and the trigger dispatcher's: cron due-tick evaluation,
-deterministic run-id minting, the adaptive poll cadence — plus the parameterized
-SQL builders — no DB, no NATS, no clock (`now` is a passed-in millis), unit-tested
-off-cluster — and the **driver** (`tests/orchestrator` `queuebench`/`dispatchbench`,
-and the production `dispatch` service) supplies the `wamn:postgres` effects
-against the schema in [`deploy/sql/run-queue.sql`](../deploy/sql/run-queue.sql), the
-NATS-core doorbell, the real clock, and the replica identity.
+The guest-safe `crates/execution/run-state` package owns claim, lease, partition,
+janitor, dead-letter, and timer persistence decisions together with the run
+history they co-transactionally update. `crates/execution/scheduler` separately
+owns cron parsing, due-tick and deterministic firing decisions, reconciliation
+deadlines, and adaptive cadence; it owns no durable state and has no clock
+effect. The production `services/dispatcher` adapter supplies `wamn:postgres`,
+NATS-core doorbells, the real clock, and replica identity. The `queuebench` and
+`dispatchbench` proofs exercise the same APIs.
 
 ## The table
 
@@ -244,7 +243,7 @@ counting one unit of crash evidence on `attempts`) and 5.7 **branch-aware
 reconstruction**. When a runner dies
 mid-run, a second replica reclaims the run and drives the *same* flowrunner guest,
 which rebuilds the outstanding frontier from `node_runs`
-(`wamn_run_store::reconstruct` + `Plan::resume`) and completes. Because an effectful
+(`wamn_run_state::reconstruct` + `Plan::resume`) and completes. Because an effectful
 node re-runs only while it is *outstanding* and its effect is idempotent
 (`pg-write`'s `sink ON CONFLICT`, the `runs`/`node_runs` `ON CONFLICT`), the
 killed-and-reclaimed run leaves **exactly one side effect** — the kill-mid-run
@@ -261,7 +260,7 @@ completion** (a completed run's queue row is gone, out of the janitor's reach), 
 `completed`) is never overwritten with `infrastructure-failure` in the window
 between the completion write and the dequeue. The stale queue row is still cleaned
 up; only the *status* of a terminal run is left alone. The guard lives in the pure
-`wamn_run_queue` builder, so the guest stays byte-identical.
+`wamn_run_state::queue` builder, so the guest stays byte-identical.
 
 The race has a **reverse ordering** the guard cannot cover: the janitor fires while
 the reclaimed run is still `running` (a slow resume whose lease lapsed past grace at
@@ -351,9 +350,8 @@ The lease **owner** is *host-injected*: the `wamn:postgres` plugin sets an
 `app.runner` GUC (from the workload's `wamn.runner` config, per replica) alongside
 the tenant claim, and the guest reads `current_setting('app.runner', true)` — a
 non-spoofable per-replica identity to lease/renew under. The guest links
-`wamn-run-queue` with `default-features = false`, so only the pure claim-path
-builders enter its wasm (the cron/dispatch pair — croner/chrono — stays
-host-side behind the default `dispatcher` feature).
+`wamn-run-state`; scheduling is a separate package, so cron/calendar dependencies
+never enter its wasm dependency closure.
 
 The `failoverbench` `claim`/`park`/`heartbeat` gates *seed* `run_queue` directly
 (the write-ahead + enqueue a dispatcher would do) and drive `run-next` — proving
@@ -641,19 +639,20 @@ unchanged; `run-next` is the additive claim path.
 
 ## Gates
 
-- **`cargo test -p wamn-run-queue`** — the pure decisions + SQL shape: claim
+- **`cargo test -p wamn-run-state`** — the durable-lifecycle decisions + SQL shape: claim
   eligibility (Ready/Leased/Parked/Exhausted — incl. the wamn-fqg.7 rule that a
   budget-spent row wakes iff its lease was released, not merely expired),
   `plan_claim` ordering + limit (and
   that it skips partitioned rows), lease liveness + renewal, janitor orphan-detection,
-  reconciliation cadence, **per-partition ownership** (`plan_acquire`,
-  `plan_partition_claim` head-first + one-in-flight), the **dispatcher decisions**
-  (cron `next_fire`/`due_tick` incl. leap-day/short-month calendar edges,
+  **per-partition ownership** (`plan_acquire`,
+  `plan_partition_claim` head-first + one-in-flight), queue SQL builders'
+  `SKIP LOCKED`/tenant-scoping/`RunStatus` literals/`::text::jsonb` binding,
+  record JSON round-trip, and the `deploy/sql/run-queue.sql` drift guards.
+- **`cargo test -p wamn-scheduler`** — the dispatcher decisions: reconciliation
+  deadlines, cron `next_fire`/`due_tick` incl. leap-day/short-month calendar edges,
   sub-second tick canonicalization, misfire collapse; deterministic
-  run-id minting + ordering; the adaptive interval), the
-  SQL builders' `SKIP LOCKED`/tenant-scoping/`RunStatus` literals/`::text::jsonb`
-  binding, record JSON round-trip, and the `deploy/sql/run-queue.sql` drift guards
-  (queue + partition) — all off-cluster.
+  run-id minting + ordering; and adaptive polling cadence — all off-cluster and
+  without durable state or a clock dependency.
 - **live-apply** (`WAMN_RUN_QUEUE_PG_URL`) — applies `run-state.sql` +
   `run-queue.sql` to a throwaway Postgres and asserts the SKIP LOCKED claim
   predicate (Ready claimed, Parked/Leased skipped, expired reclaimed), the

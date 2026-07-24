@@ -1,11 +1,11 @@
 //! Pin a recorded run as a test case (11.3): the PURE transform from a stored
-//! run (`wamn_run_store` `RunRecord` + its `node_runs`) to a canonical
+//! run (`wamn_run_state` `RunRecord` + its `node_runs`) to a canonical
 //! [`TestCase`]. No DB, no clock — the effect shell (`wamn-ctl pin-run`) READS
 //! the rows and WRITES the produced case; this decides what the case is.
 //!
 //! The dependency direction is deliberate: this reads STORE records and writes a
 //! testkit [`TestCase`], so it lives in testkit (which already depends on
-//! `wamn-run-store`). Putting it in `wamn-run-store` would force
+//! `wamn-run-state`). Putting it in `wamn-run-state` would force
 //! run-store → testkit, a cycle.
 //!
 //! ## What a pinned case is (the minimal-correct v0 shape)
@@ -29,15 +29,15 @@
 //! ## Secret redaction at pin time
 //!
 //! Every payload that becomes part of the case — the trigger input and the pinned
-//! node output — is passed through [`wamn_run_store::capture::scrub`] first, so a
+//! node output — is passed through [`wamn_run_state::capture::scrub`] first, so a
 //! pinned case NEVER contains a secret even from a `full`-capture run (where the
 //! stored `node_runs` payloads are faithful). Scrub is idempotent, so an
 //! already-`scrubbed` row is safe to re-scrub.
 
 use serde_json::Value;
 
-use wamn_run_store::capture::scrub;
-use wamn_run_store::{NodeRunRecord, RunRecord};
+use wamn_run_state::capture::scrub;
+use wamn_run_state::{NodeRunRecord, RunRecord};
 
 use crate::normalize::Normalize;
 use crate::{Assertion, FlowRef, SCHEMA_VERSION, TestCase};
@@ -49,7 +49,7 @@ pub enum PinError {
     /// The run's terminal node has no captured output — capture was `off` /
     /// `preview` for this run, so it is not replayable and cannot be pinned.
     /// Carries the node id. Mirrors
-    /// [`ReconstructError::CaptureOff`](wamn_run_store::ReconstructError::CaptureOff).
+    /// [`ReconstructError::CaptureOff`](wamn_run_state::ReconstructError::CaptureOff).
     NotCaptured { node: String },
 }
 
@@ -145,7 +145,7 @@ mod tests {
     use super::*;
     use crate::{Captured, RunFacts, evaluate};
     use serde_json::json;
-    use wamn_run_store::{FailKind, NodeRunRecord, RunRecord, RunStatus};
+    use wamn_run_state::{FailKind, NodeRunRecord, RunRecord, RunStatus};
 
     /// A completed run of `flow` v1 with the given trigger input.
     fn completed_run(input: Value) -> RunRecord {

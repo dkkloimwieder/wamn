@@ -42,7 +42,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::{Client, NoTls};
-use wamn_run_queue::{
+use wamn_run_state::queue::{
     PartitionPolicy, enqueue_sql, enqueue_with_policy_sql, write_ahead_triggered_run_sql,
 };
 

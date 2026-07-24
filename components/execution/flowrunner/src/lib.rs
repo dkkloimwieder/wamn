@@ -29,8 +29,8 @@
 //! ## Checkpoint / resume (5.7)
 //! Durable run state is the `runs` / `node_runs` tables (`deploy/sql/run-state.sql`):
 //! a `runs` row per execution and a `node_runs` row per completed node. On every
-//! invocation the runner **reconstructs** the in-memory `RunState` by replaying
-//! the persisted `node_runs` through the pure engine (`wamn-run-store`) — the
+//! invocation the runner **reconstructs** the in-memory `ExecutionState` by replaying
+//! the persisted `node_runs` through the pure engine (`wamn-run-state`) — the
 //! branch-aware durable resume that supersedes the S3 linear `step_seq`. A node
 //! with a persisted record is never re-dispatched (its effect does not repeat);
 //! a node with none is outstanding and re-runs, so an effect that committed in
@@ -55,20 +55,19 @@ use std::time::Instant;
 use serde_json::{Value, json};
 use wamn_flow::Flow;
 use wamn_node_sdk as sdk;
-use wamn_run_store::{NodeRunRecord, RunRecord, sql as run_sql};
-// The durable-queue claim-path builders (5.14). The guest deps wamn-run-queue
-// with default-features off, so only these pure `sql.rs` builders link — the
-// cron/dispatch pair (croner/chrono) never enters the wasm (fqg.4).
+use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
+// The durable-queue claim-path builders (5.14). Scheduling is a separate crate,
+// so the cron/calendar dependency closure never enters this guest (fqg.4).
 // The combined claim/checkpoint/complete statements are the fqg.18 record-stream
 // amortization: one statement where the split path spent two or three.
-use wamn_run_queue::{
+use wamn_run_state::queue::{
     acquire_partitions_sql, claim_dispatch_sql, claim_partition_head_sql, complete_dequeue_sql,
     dead_letter_dequeue_sql, mark_running_sql, park_sql, record_error_and_renew_sql,
     record_success_and_renew_sql, release_partition_sql, renew_partition_sql,
 };
 use wamn_runner::{
-    Dispatch, ERROR_PORT, ErrorDetail, NodeError, NodeOutcome, Plan, RateLimitDetail, RetryPolicy,
-    RunStatus, Step, ThrottleKey,
+    Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState, ExecutionStatus,
+    NodeError, NodeOutcome, Plan, RateLimitDetail, RetryPolicy, Step, ThrottleKey,
 };
 
 use wamn_node_invoke::{
@@ -152,7 +151,7 @@ fn capture_binds(
     output: &Value,
     input: &Value,
 ) -> ([SqlValue; 7], bool) {
-    let c = wamn_run_store::derive_capture(capture, output, input);
+    let c = wamn_run_state::derive_capture(capture, output, input);
     (
         [
             opt_text(c.output_json),
@@ -276,7 +275,7 @@ fn open_run(run_id: &str, flow_id: &str, flow_version: u32, input: &Value) -> Re
             text(run_id),
             text(flow_id),
             int32(flow_version as i32),
-            text(wamn_run_store::RunStatus::Running.as_sql()),
+            text(wamn_run_state::RunStatus::Running.as_sql()),
             SqlValue::Null, // trigger_source: a direct driver, not a dispatcher
             jsonb(input),
         ],
@@ -912,7 +911,7 @@ fn record_error(
     // can echo the payload (message/data), so leaving it raw would leak past the
     // scrub. Preview/off keep the small taxonomy blob (metadata, not the payload).
     if redacted {
-        wamn_run_store::capture::scrub(&mut detail_json);
+        wamn_run_state::capture::scrub(&mut detail_json);
     }
     let [out_j, in_j, preview, size, hash, mode, red] = binds;
     client::execute(
@@ -968,13 +967,8 @@ fn mark_failed(run_id: &str, kind: &str, node: &str, reason: &str) -> Result<(),
     Ok(())
 }
 
-fn fail_kind_sql(kind: &wamn_runner::FailKind) -> &'static str {
-    match kind {
-        wamn_runner::FailKind::Terminal => "terminal",
-        wamn_runner::FailKind::RetryExhausted => "retry-exhausted",
-        wamn_runner::FailKind::InvalidInput => "invalid-input",
-        wamn_runner::FailKind::RunawayBudget => "runaway-budget",
-    }
+fn fail_kind_sql(kind: &ExecutionFailureKind) -> &'static str {
+    wamn_run_state::FailKind::from(*kind).as_sql()
 }
 
 // ---------------------------------------------------------------------------
@@ -1028,7 +1022,7 @@ fn dispatch_node(
             Ok(NodeAction::Emit(NodeOutcome::ok(Value::String(out))))
         }
         // Records a branch decision but keeps the fixture's linear main path;
-        // true branching is exercised in the wamn-runner / wamn-run-store tests.
+        // true branching is exercised in the wamn-runner / wamn-run-state tests.
         "conditional" if d.config.get("expression").is_none() => {
             Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
         }
@@ -1341,7 +1335,7 @@ fn execute(
     let mut next_seq = completed.len() as i32;
     let run_rec = RunRecord::new(run_id, flow_id, version, input);
     let mut st =
-        wamn_run_store::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
+        wamn_run_state::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
     // R32: restore an in-flight retry parked on a prior invocation — the
     // outstanding node re-enters carrying its persisted attempt (the queue served
     // the backoff) so the retry budget advances instead of resetting to 0.
@@ -1355,7 +1349,7 @@ fn execute(
         // scheduled retry re-enters DUE after its park; `delay` parks via
         // NodeAction::Park.
         match plan.next(&mut st, 0) {
-            Step::Done(RunStatus::Completed) => {
+            Step::Done(ExecutionStatus::Completed) => {
                 mark_completed(run_id, st.result())?;
                 return Ok(RunOutcome {
                     version,
@@ -1450,7 +1444,7 @@ fn execute(
 // Guest-side queue claim (fqg.4): claim -> drive (heartbeat) -> dequeue/park.
 // The production dispatch path, guest-side. The runner reads its OWN work from
 // run_queue instead of being handed a run_id — the same builders the host-side
-// dispatcher/claimers use (wamn-run-queue), called through wamn:postgres.
+// dispatcher/claimers use (wamn-run-state::queue), called through wamn:postgres.
 // ---------------------------------------------------------------------------
 
 /// The claim-path result: `outcome` (0 = completed, 1 = parked, 2 = failed) plus
@@ -1645,7 +1639,7 @@ fn record_error_and_renew(
     let (kind, payload, mut detail_json) = error_row_values(err);
     let (binds, redacted) = capture_binds(capture, &payload, input);
     if redacted {
-        wamn_run_store::capture::scrub(&mut detail_json);
+        wamn_run_state::capture::scrub(&mut detail_json);
     }
     let [out_j, in_j, preview, size, hash, mode, red] = binds;
     client::execute(
@@ -1713,7 +1707,7 @@ fn park(run_id: &str, park_ms: u64) -> Result<(), String> {
 // partition drains — so a key's runs never dispatch out of order or two at once
 // across replicas. The pure decisions (`plan_acquire` / `plan_partition_claim`)
 // and the SQL (`acquire_partitions_sql` / `claim_partition_head_sql`) live in
-// wamn-run-queue and are host-gated by queuebench; fqg.9 is their first GUEST
+// wamn-run-state::queue and are host-gated by queuebench; fqg.9 is their first GUEST
 // caller, mirroring how fqg.4 was the first guest caller of `claim_batch_sql`.
 // ---------------------------------------------------------------------------
 
@@ -1906,7 +1900,7 @@ fn execute_claimed(
     let mut next_seq = completed.len() as i32;
     let run_rec = RunRecord::new(run_id, &flow.flow_id, version, input);
     let mut st =
-        wamn_run_store::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
+        wamn_run_state::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
     // R32: restore an in-flight retry parked on a prior claim — the outstanding
     // node re-enters carrying its persisted attempt (the queue served the
     // backoff) so the retry budget advances instead of resetting to 0.
@@ -1917,7 +1911,7 @@ fn execute_claimed(
 
     loop {
         match plan.next(&mut st, 0) {
-            Step::Done(RunStatus::Completed) => {
+            Step::Done(ExecutionStatus::Completed) => {
                 complete_and_dequeue(run_id, st.result())?;
                 emit_run_end(&flow.flow_id, run_id, next_seq, &tp, "completed");
                 return Ok(ClaimOutcome {
@@ -2118,10 +2112,7 @@ fn bench_node(d: &Dispatch) -> NodeOutcome {
 
 /// Drive one bench walk through the engine with the pure dispatcher, invoking
 /// `on_step` for each node dispatch so the caller can time it.
-fn bench_walk(
-    plan: &Plan,
-    mut on_step: impl FnMut(&Dispatch, NodeOutcome, &mut wamn_runner::RunState),
-) {
+fn bench_walk(plan: &Plan, mut on_step: impl FnMut(&Dispatch, NodeOutcome, &mut ExecutionState)) {
     let mut st = plan.start("bench", Value::String("dispatch-probe-payload".into()));
     while let Step::Dispatch(d) = plan.next(&mut st, 0) {
         let outcome = bench_node(&d);

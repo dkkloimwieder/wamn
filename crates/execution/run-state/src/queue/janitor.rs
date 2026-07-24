@@ -4,7 +4,7 @@
 //! redelivery budget is spent and a grace period has elapsed, the janitor gives
 //! up and the run becomes `infrastructure-failure` (its queue row removed).
 
-use crate::model::{Millis, PartitionPolicy, QueueEntry};
+use super::model::{Millis, PartitionPolicy, QueueEntry};
 
 /// What the janitor should do with a queue row at `now`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

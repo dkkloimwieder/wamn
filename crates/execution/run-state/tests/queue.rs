@@ -1,25 +1,24 @@
-//! wamn-run-queue (5.14) tests: the pure claim/lease/janitor/reconcile decisions,
+//! wamn-run-state queue (5.14) tests: the pure claim/lease/janitor decisions,
 //! the SQL builders' shape, the `deploy/sql/run-queue.sql` drift guard, and an
 //! optional live-apply gate (the SKIP-LOCKED claim predicate, lease-expiry
 //! reclaim, janitor sweep, RLS isolation, and FK cascade on a real Postgres).
 
 use std::collections::HashSet;
 
-use wamn_run_queue::{
-    Cadence, ClaimState, CronError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS,
-    JanitorVerdict, PartitionOwner, PartitionPolicy, QueueEntry, RunStatus, acquire_partitions_sql,
-    active_flows_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql, claim_state,
-    complete_dequeue_sql, cron_anchor_sql, cron_firing, cron_last_run_sql, cron_tick_of,
-    dead_letter_dequeue_sql, dead_letters_on_terminal, dequeue_sql, due_tick, enqueue_evt_sql,
-    enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql, gc_orphan_partitions_sql,
-    is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live, mark_running_sql,
-    mint_cron_run_id, mint_evt_run_id, next_fire, next_reconcile, orphans, park_sql,
-    parked_due_sql, partition_lease_live, plan_acquire, plan_claim, plan_partition_claim,
-    reconcile_due, record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
+use wamn_run_state::RunStatus;
+use wamn_run_state::queue::{
+    ClaimState, JanitorVerdict, PartitionOwner, PartitionPolicy, QueueEntry,
+    acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_dispatch_sql,
+    claim_partition_head_sql, claim_state, complete_dequeue_sql, cron_anchor_sql,
+    cron_last_run_sql, dead_letter_dequeue_sql, dead_letters_on_terminal, dequeue_sql,
+    enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql,
+    gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline,
+    lease_live, mark_running_sql, mint_evt_run_id, orphans, park_sql, parked_due_sql,
+    partition_lease_live, plan_acquire, plan_claim, plan_partition_claim,
+    record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
     renew_lease_sql, renew_partition_sql, should_renew, upsert_cron_anchor_sql,
     write_ahead_run_sql, write_ahead_triggered_run_sql,
 };
-
 // ---- claim eligibility -----------------------------------------------------
 
 #[test]
@@ -238,15 +237,6 @@ fn blocking_partition_orphan_wedges_instead_of_being_reaped() {
     assert_eq!(swept, ["lp", "u"]);
 }
 
-// ---- reconciliation --------------------------------------------------------
-
-#[test]
-fn reconcile_cadence() {
-    assert!(!reconcile_due(1_000, 900, 200)); // 100 < 200
-    assert!(reconcile_due(1_100, 900, 200)); // 200 >= 200
-    assert_eq!(next_reconcile(900, 200), 1_100);
-}
-
 // ---- SQL builders ----------------------------------------------------------
 
 #[test]
@@ -352,7 +342,7 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
     // + dequeue_sql, sharing $1 — one atomic statement.
     let cq = complete_dequeue_sql();
     assert!(
-        cq.contains(&wamn_run_store::sql::update_run_completed_sql()),
+        cq.contains(&wamn_run_state::sql::update_run_completed_sql()),
         "complete_dequeue_sql no longer composes update_run_completed_sql verbatim"
     );
     assert!(
@@ -365,7 +355,7 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
     // $14/$15 error since the 9.6 capture columns grew the heads — wamn-srb).
     let rs = record_success_and_renew_sql();
     assert!(
-        rs.contains(&wamn_run_store::sql::insert_node_run_success_sql()),
+        rs.contains(&wamn_run_state::sql::insert_node_run_success_sql()),
         "record_success_and_renew_sql no longer composes insert_node_run_success_sql verbatim"
     );
     assert!(rs.contains("$13::bigint * interval '1 millisecond'"));
@@ -373,7 +363,7 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
     assert!(!rs.contains("$15"));
     let re = record_error_and_renew_sql();
     assert!(
-        re.contains(&wamn_run_store::sql::insert_node_run_error_sql()),
+        re.contains(&wamn_run_state::sql::insert_node_run_error_sql()),
         "record_error_and_renew_sql no longer composes insert_node_run_error_sql verbatim"
     );
     assert!(re.contains("$14::bigint * interval '1 millisecond'"));
@@ -1127,164 +1117,6 @@ fn evt_enqueue_builders_carry_stream_seq_and_stay_kq0z_coherent() {
     assert!(mint_evt_run_id("f1", 9) < mint_evt_run_id("f1", 10));
 }
 
-// ---- trigger dispatcher: cron ------------------------------------------------
-
-/// 2026-01-01 00:00:00 UTC.
-const JAN1_2026: i64 = 1_767_225_600_000;
-const HOUR: i64 = 3_600_000;
-const DAY: i64 = 86_400_000;
-
-#[test]
-fn cron_next_fire_is_strictly_after() {
-    // F3's canonical nightly schedule (0 2 * * *).
-    let two_am = JAN1_2026 + 2 * HOUR;
-    assert_eq!(next_fire("0 2 * * *", JAN1_2026).unwrap(), two_am);
-    // From exactly the tick, strictly-after means the NEXT day's tick.
-    assert_eq!(next_fire("0 2 * * *", two_am).unwrap(), two_am + DAY);
-    assert!(next_fire("not a cron", 0).is_err());
-}
-
-#[test]
-fn cron_calendar_edges() {
-    // Leap day: the next Feb 29 after 2026-01-01 is in 2028.
-    let feb29_2028: i64 = 1_835_395_200_000;
-    assert_eq!(next_fire("0 0 29 2 *", JAN1_2026).unwrap(), feb29_2028);
-    // Day-of-month 31 skips 30-day months: from 2026-04-01 the next 31st is May 31.
-    let apr1_2026 = JAN1_2026 + 90 * DAY;
-    assert_eq!(
-        next_fire("0 0 31 * *", apr1_2026).unwrap(),
-        apr1_2026 + 60 * DAY
-    );
-}
-
-#[test]
-fn due_tick_fires_latest_and_collapses_misfires() {
-    let schedule = "0 2 * * *";
-    let first_tick = JAN1_2026 + 2 * HOUR;
-    // Nothing due before the first tick after the anchor.
-    assert_eq!(
-        due_tick(schedule, JAN1_2026, JAN1_2026 + HOUR).unwrap(),
-        None
-    );
-    // Exactly at the tick — and anywhere within its second — the same canonical
-    // tick is due: replicas observing at different sub-second offsets agree.
-    assert_eq!(
-        due_tick(schedule, JAN1_2026, first_tick).unwrap(),
-        Some(first_tick)
-    );
-    assert_eq!(
-        due_tick(schedule, JAN1_2026, first_tick + 500).unwrap(),
-        Some(first_tick)
-    );
-    // Misfire collapse: three nightly ticks missed (dispatcher down) -> only the
-    // LATEST fires, one run per tick instant, no burst replay.
-    let now = JAN1_2026 + 3 * DAY + 12 * HOUR;
-    let latest = JAN1_2026 + 3 * DAY + 2 * HOUR;
-    assert_eq!(due_tick(schedule, first_tick, now).unwrap(), Some(latest));
-    // Re-anchored on the fired tick, nothing more is due until tomorrow.
-    assert_eq!(due_tick(schedule, latest, now).unwrap(), None);
-    assert!(due_tick("* * bogus", 0, 1).is_err());
-    // A parseable but UNSATISFIABLE schedule (Feb 30 never exists) is an ERROR,
-    // never a silent Ok(None): the driver quarantines it with a warning instead
-    // of leaving a flow that never fires with zero diagnostics.
-    assert!(due_tick("0 0 30 2 *", JAN1_2026, JAN1_2026 + DAY).is_err());
-    assert!(next_fire("0 0 30 2 *", JAN1_2026).is_err());
-}
-
-#[test]
-fn cron_error_variants_pin_the_failure_mode() {
-    // SR5: CronError is a structured enum, one variant per failure mode, folded
-    // mechanically from the exact construction site — not a stringly-typed error.
-    // An unparseable schedule is INVALID-EXPRESSION (the parse() site).
-    assert!(matches!(
-        next_fire("not a cron", 0),
-        Err(CronError::InvalidExpression { .. })
-    ));
-    // A parseable-but-unsatisfiable calendar is NO-OCCURRENCE (croner's search
-    // fails), on BOTH the next_fire and due_tick paths.
-    assert!(matches!(
-        next_fire("0 0 30 2 *", JAN1_2026),
-        Err(CronError::NoOccurrence { .. })
-    ));
-    assert!(matches!(
-        due_tick("0 0 30 2 *", JAN1_2026, JAN1_2026 + DAY),
-        Err(CronError::NoOccurrence { .. })
-    ));
-    // An instant past the representable DateTime<Utc> horizon is OUT-OF-RANGE
-    // (the private to_dt() site, reached here via next_fire(after)).
-    assert!(matches!(
-        next_fire("* * * * *", i64::MAX),
-        Err(CronError::OutOfRangeInstant { ms }) if ms == i64::MAX
-    ));
-    // Display preserves the `cron: …` log shape the dispatcher quarantine records.
-    for e in [
-        CronError::InvalidExpression {
-            schedule: "x".into(),
-            detail: "bad".into(),
-        },
-        CronError::OutOfRangeInstant { ms: i64::MAX },
-        CronError::NoOccurrence {
-            schedule: "0 0 30 2 *".into(),
-            detail: "none".into(),
-        },
-    ] {
-        assert!(e.to_string().starts_with("cron: "), "{e}");
-    }
-}
-
-#[test]
-fn cron_run_ids_are_deterministic_and_ordered() {
-    let a = mint_cron_run_id("escalate-stale-holds", JAN1_2026);
-    let b = mint_cron_run_id("escalate-stale-holds", JAN1_2026 + DAY);
-    assert_eq!(a, "escalate-stale-holds:cron:1767225600000");
-    assert!(a < b); // zero-padded ticks: lexical order == chronological order
-    assert_eq!(cron_tick_of("escalate-stale-holds", &a), Some(JAN1_2026));
-    // Pre-1e12 ticks pad so the within-flow ordering property holds everywhere.
-    let small = mint_cron_run_id("f", 42);
-    assert_eq!(small, "f:cron:0000000000042");
-    assert_eq!(cron_tick_of("f", &small), Some(42));
-    // Non-cron ids don't parse back to a tick.
-    assert_eq!(cron_tick_of("f", "f:outbox:42"), None);
-    assert_eq!(cron_tick_of("f", "plain-run"), None);
-    // The parse is EXACT-prefix, never suffix-based: a FOREIGN flow's id — even
-    // one nesting ':cron:' inside its own flow id — must not read as this
-    // flow's anchor (a wrong anchor silently skips a due tick).
-    assert_eq!(cron_tick_of("a", "acron5:cron:0000000000042"), None);
-    assert_eq!(cron_tick_of("a", "a:cron:5x:cron:0000000000042"), None);
-    assert_eq!(
-        cron_tick_of("a:cron:5x", "a:cron:5x:cron:0000000000042"),
-        Some(42)
-    );
-
-    let f = cron_firing("escalate-stale-holds", 3, "0 2 * * *", JAN1_2026);
-    assert_eq!(f.run_id, a);
-    assert_eq!(f.flow_id, "escalate-stale-holds");
-    assert_eq!(f.flow_version, 3);
-    assert_eq!(f.trigger_source, "cron");
-    let v: serde_json::Value = serde_json::from_str(&f.input_json).unwrap();
-    assert_eq!(v["trigger"], "cron");
-    assert_eq!(v["schedule"], "0 2 * * *");
-    assert_eq!(v["fire-at-ms"], JAN1_2026);
-}
-
-// ---- trigger dispatcher: adaptive cadence ---------------------------------------
-
-#[test]
-fn adaptive_interval_tightens_on_work_and_decays_to_max() {
-    let cadence = Cadence::new(DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS).unwrap();
-    let (min, max) = (cadence.min(), cadence.max());
-    // Work snaps the cadence to the tight bound, from anywhere.
-    assert_eq!(cadence.next_interval(max, true), min);
-    assert_eq!(cadence.next_interval(min, true), min);
-    // Idleness decays exponentially and caps at max (the reconciliation band).
-    assert_eq!(cadence.next_interval(min, false), 2 * min);
-    assert_eq!(cadence.next_interval(2 * min, false), 4 * min);
-    assert_eq!(cadence.next_interval(20_000, false), max); // 40k clamps to 30k
-    assert_eq!(cadence.next_interval(max, false), max);
-    // A degenerate current clamps up into the band.
-    assert_eq!(cadence.next_interval(0, false), min);
-}
-
 // ---- trigger dispatcher: SQL builders --------------------------------------------
 
 #[test]
@@ -1481,7 +1313,7 @@ fn run_queue_sql_matches_the_model() {
 /// FK cascade from `runs`, and the trigger dispatcher's cron path (triggered
 /// write-ahead, cron last-tick recovery, the wake scan). Gated on
 /// `WAMN_RUN_QUEUE_PG_URL` (a superuser URL — the harness provisions `wamn_app`);
-/// skips cleanly when unset. Mirrors the wamn-run-store / wamn-schema-compiler / wamn-schema-compiler
+/// skips cleanly when unset. Mirrors the wamn-run-state / wamn-schema-compiler
 /// gates. (True concurrent contention is the queuebench/dispatchbench gates; this
 /// asserts the schema + predicates on one session.)
 ///

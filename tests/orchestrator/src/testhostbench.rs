@@ -56,10 +56,10 @@ use wash_runtime::wasmtime::component::{
 use wash_runtime::wasmtime::{Engine as RawEngine, Store};
 
 use wamn_gate_harness::scope_session;
-// wamn-t92: the S6 doubles now live in the production host library as reusable
-// test-host machinery; this bench drives them (the regression proof that the
-// extraction changed nothing).
-use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+// wamn-t92: the S6 doubles live in the shared runtime as reusable test-host
+// machinery; this bench drives them (the regression proof that extraction
+// changed nothing).
+use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_run_worker::{RunWorker, RunnerIdentity};
 use wamn_runtime::doubles::{
     DoubleSet, EgressRecorder, EphemeralSchemaProvisioner, RUN_S6_WAKE_DEADLINES_SQL,

@@ -2,7 +2,7 @@
 //! claim. A lease is a visibility timeout: the claimer must renew (heartbeat) it
 //! before it expires, or another replica reclaims the run (crash-safe failover).
 
-use crate::model::Millis;
+use super::model::Millis;
 
 /// Whether a lease is still held at `now` (its deadline is in the future). An
 /// absent deadline is not live (the row is unclaimed / reclaimable).

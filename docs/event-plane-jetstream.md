@@ -73,7 +73,7 @@ mechanical row changes ride one pipeline, distinguished by subject.
 <flow>:evt:<stream_seq padded 20>`, the registration declaration (JMESPath
 condition/partition-key over the event context `{op, old, new}`), and the
 run-input envelope are frozen into code (`wamn-event-wire`, `wamn-event-reg`,
-`wamn-materializer`, `wamn-run-queue`); each is pinned by a golden test — a field
+`wamn-materializer`, `wamn-run-state`); each is pinned by a golden test — a field
 removal/rename breaks a named test. Compatibility rule (the WIT-freeze
 discipline): 0.1.x admits only additive or clarifying changes; any breaking
 change waits for 0.2.

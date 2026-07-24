@@ -308,7 +308,7 @@ mod tests {
     use crate::assertion::{DbExpect, EgressAssertion, EgressMatcher};
     use crate::captured::{DbCapture, EgressRecord, RunFacts};
     use serde_json::json;
-    use wamn_run_store::{FailKind, NodeErrorKind, RunStatus};
+    use wamn_run_state::{FailKind, NodeErrorKind, RunStatus};
 
     fn node_case(name: &str, expect: Vec<Assertion>) -> TestCase {
         TestCase {

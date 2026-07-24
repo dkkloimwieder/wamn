@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use wamn_run_store::{FailKind, NodeErrorKind, RunStatus};
+use wamn_run_state::{FailKind, NodeErrorKind, RunStatus};
 
 /// One assertion against a [`Captured`](crate::Captured) fact bundle. The
 /// evaluator folds each variant to an [`AssertionResult`](crate::AssertionResult).

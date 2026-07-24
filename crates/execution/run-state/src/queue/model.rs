@@ -68,7 +68,7 @@ pub struct QueueEntry {
     /// Per-partition ownership key (`partitioned(key)`, 5.11 semantics / 5.14
     /// ownership). Null = unpartitioned (claimed by the global claim). A non-null
     /// key is dispatched only through the per-partition ownership path
-    /// ([`crate::plan_partition_claim`]) so the key's runs stay in order.
+    /// ([`crate::queue::plan_partition_claim`]) so the key's runs stay in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition_key: Option<String>,
     /// The head-unavailability policy for this row's key (D20), stamped at
