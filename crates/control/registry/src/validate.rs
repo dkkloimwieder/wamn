@@ -59,7 +59,7 @@ impl std::fmt::Display for Issue {
 const RESERVED_PREFIX: &str = "wamn";
 
 /// Max id length. Keeps a derived `wamn-db-<id>` Secret/database name within
-/// Postgres's 63-byte identifier limit with margin (mirrors `wamn-provision`).
+/// Postgres's 63-byte identifier limit with margin (mirrors `wamn-control-provision`).
 const MAX_ID_LEN: usize = 40;
 
 /// Max K8s resource-name length (a DNS-1123 label).
@@ -70,7 +70,7 @@ fn is_alnum(b: u8) -> bool {
 }
 
 /// A lowercase slug: `[a-z0-9-]`, starting and ending alphanumeric, non-empty.
-/// The shared platform id discipline (`wamn-provision::validate_project_id`,
+/// The shared platform id discipline (`wamn-control-provision::validate_project_id`,
 /// wi4 flow ids, 66x) — inlined to keep this foundational crate's dep closure
 /// `{serde, serde_json}` and avoid a registry → provisioning coupling.
 fn is_slug(id: &str) -> bool {
@@ -83,7 +83,7 @@ fn is_slug(id: &str) -> bool {
 
 /// An **identity-component** slug: a [`is_slug`] that additionally forbids a run
 /// of consecutive hyphens. The org/project id and the env slug separate on `--`
-/// (`wamn-provision::project_env_database_name`) and, mapped to `__`, in the CDC
+/// (`wamn-control-provision::project_env_database_name`) and, mapped to `__`, in the CDC
 /// object name, so a `--` run inside a component would let two distinct
 /// `(org, project, env)` triples derive one database / CDC role name (wamn-R27).
 /// A DERIVED name ([`check_name`]) may legitimately carry the `--` separator, so

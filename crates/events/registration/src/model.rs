@@ -38,8 +38,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use wamn_catalog::EntityId;
 use wamn_event_wire::Op;
+use wamn_schema_model::EntityId;
 
 /// The registration-model **format** version. Compatibility rule mirrors the
 /// catalog / flow / RLS / WIT freezes: `0.1.x` is additive/clarifying only; a

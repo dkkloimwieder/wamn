@@ -2,7 +2,7 @@
 //! reconstruction, and partial-re-run planning, all pure (no cluster, no DB).
 //! The live-apply test at the end applies `deploy/sql/run-state.sql` to a throwaway
 //! Postgres and asserts RLS + the idempotency keys; it is gated on
-//! `WAMN_RUN_STORE_PG_URL` and skips cleanly when unset (mirrors wamn-ddl/rls/seed).
+//! `WAMN_RUN_STORE_PG_URL` and skips cleanly when unset (mirrors wamn-schema-compiler/rls/seed).
 
 use serde_json::{Value, json};
 use wamn_flow::Flow;
@@ -563,7 +563,7 @@ fn run_state_sql_matches_the_model() {
 /// Apply `deploy/sql/run-state.sql` to a throwaway Postgres and assert the tenant RLS
 /// isolates rows, the idempotency index dedupes, and the FK cascades. Gated on
 /// `WAMN_RUN_STORE_PG_URL` (a superuser URL — the harness provisions `wamn_app`);
-/// skips cleanly when unset. Mirrors the wamn-ddl / wamn-rls / wamn-seed gates.
+/// skips cleanly when unset. Mirrors the wamn-schema-compiler / wamn-schema-compiler / wamn-schema-compiler gates.
 #[test]
 fn run_state_schema_applies_and_isolates_on_postgres() {
     let Ok(url) = std::env::var("WAMN_RUN_STORE_PG_URL") else {

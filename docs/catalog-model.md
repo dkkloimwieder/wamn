@@ -198,7 +198,7 @@ depend on it *before* any DDL applies).
 `constraints`), same security shape as the rest of the platform (one `wamn_app`
 role, FORCE RLS on the `app.tenant` claim). Field `type` is stored as the
 `FieldType` JSON — the crate stays the single source of truth for type
-semantics, and 3.2 interprets that `jsonb` via the `wamn-catalog` types rather
+semantics, and 3.2 interprets that `jsonb` via the `wamn-schema-model` types rather
 than the SQL schema enumerating every variant. These are the *definitions*; the
 DDL compiler (3.2) reads them and emits the actual project tables. The file is a
 standalone artifact (not included by `deploy/sql/postgres-init.sql`).
@@ -214,7 +214,7 @@ rejects a `schema-version` with a newer major or minor than it implements.
 ## Regenerating the contract
 
 ```sh
-cargo run -p wamn-catalog --example print-schema > docs/catalog-model.schema.json
+cargo run -p wamn-schema-model --example print-schema > docs/catalog-model.schema.json
 ```
 
 `catalog.rs::committed_schema_matches_types` fails if the committed file drifts

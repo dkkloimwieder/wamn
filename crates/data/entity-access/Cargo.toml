@@ -1,26 +1,11 @@
 [package]
-name = "wamn-api"
-description = "wamn generated REST API gateway logic (4.1): compiles a catalog (3.1) to injection-safe parameterized SQL over the 3.2 tenant floor, and shapes row-sets to JSON."
+name = "wamn-entity-access"
+description = "Guest-safe catalog-derived entity planning and row shaping."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# The gateway routes/columns/types come from the canonical catalog (3.1); the
-# generated SQL targets the 3.2-emitted tenant floor, reusing wamn-ddl's shared
-# identifier quoting (the single source of truth for quoting — do not duplicate).
-wamn-catalog = { path = "../../schema/model" }
-wamn-ddl = { path = "../../schema/ddl-compiler" }
-# EVT-RI-ORCH (wamn-l5i9.66): the registration model + the SINGLE
-# requires_replica_identity_full predicate the pending-reconcile warning keys on
-# (the same detector wamn-migrate's reconciler and the materializer's guard
-# fold), so the warning can never diverge. Pure — builds for wasm32-wasip2 (the
-# guest links it), so the whole migration engine (wamn-schema → wamn-registry)
-# stays out of the component.
-wamn-event-reg = { path = "../../events/registration" }
 serde_json = "1"
-
-[dev-dependencies]
-# Live-apply gate only (registration_live.rs): a throwaway Postgres.
-tokio = { workspace = true }
-tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
+wamn-pg-core = { path = "../../platform/pg-core" }
+wamn-schema-model = { path = "../../schema/model" }

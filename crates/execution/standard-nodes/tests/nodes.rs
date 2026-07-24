@@ -1,12 +1,12 @@
 //! Standard node library gates (5.3): every node against a mock capability
 //! facade — behavior, config validation, the MECHANICAL taxonomy maps, the
 //! dispatch-time policy table, and the injection-safety of both Postgres
-//! nodes. No DB, no network, no cluster (the wamn-api split).
+//! nodes. No DB, no network, no cluster (the wamn-entity-access split).
 
 use std::collections::VecDeque;
 
 use serde_json::{Value, json};
-use wamn_nodes::{
+use wamn_standard_nodes::{
     Capability, CredentialCapError, HttpCapError, HttpRequest, HttpResponse, NodeCtx, NodeError,
     PgCapError, PgRows, PgValue, RunContext, dispatch, granted_for, required_capabilities, respond,
 };
@@ -81,7 +81,7 @@ fn go(
     mock: &mut Mock,
     config: &Value,
     input: &Value,
-) -> Result<wamn_nodes::Emission, NodeError> {
+) -> Result<wamn_standard_nodes::Emission, NodeError> {
     dispatch(
         node_type,
         granted_for(mock.raw_sql),
@@ -880,6 +880,22 @@ fn postgres_list_filter_values_bind_never_splice() {
 }
 
 #[test]
+fn postgres_list_rejects_an_oversized_limit_before_querying() {
+    let mut mock = Mock {
+        catalog: Some(catalog_json()),
+        ..Mock::default()
+    };
+    let config = json!({
+        "entity": "suppliers",
+        "op": "list",
+        "limit": u64::from(u32::MAX) + 1,
+    });
+    let error = go("postgres", &mut mock, &config, &json!({})).unwrap_err();
+    assert_eq!(terminal_code(&error), "invalid-config");
+    assert!(mock.pg_calls.is_empty(), "nothing reached the database");
+}
+
+#[test]
 fn postgres_delete_reports_the_deleted_row() {
     let mut mock = Mock {
         catalog: Some(catalog_json()),
@@ -1029,7 +1045,7 @@ fn unknown_node_type_is_terminal() {
 /// path out of the crate stays `dispatch`, which is gate-tested below.
 #[test]
 fn public_resolution_surface_is_descriptor_only() {
-    use wamn_nodes::{NodeDescriptor, describe, is_standard};
+    use wamn_standard_nodes::{NodeDescriptor, describe, is_standard};
 
     // Pin the descriptor-returning signature (compile-time API-surface guard).
     let resolve: fn(&str) -> Option<NodeDescriptor> = describe;
@@ -1042,7 +1058,7 @@ fn public_resolution_surface_is_descriptor_only() {
 
     // The existence check the flow-runner uses (the non-running replacement for
     // the old `node(t).is_some()` leak) covers exactly the shipped types.
-    for t in wamn_nodes::NODE_TYPES {
+    for t in wamn_standard_nodes::NODE_TYPES {
         assert!(is_standard(t), "{t} is a standard node");
     }
     assert!(
@@ -1104,7 +1120,7 @@ fn dispatch_refuses_ungranted_capability_rows() {
 /// (the wit_coherence precedent), keeping the two crates decoupled.
 #[test]
 fn f3_fixture_node_types_are_all_standard() {
-    use wamn_nodes::is_standard;
+    use wamn_standard_nodes::is_standard;
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../flow-model/tests/fixtures/f3-escalate-stale-holds.flow.json");
     let raw = std::fs::read_to_string(&path).expect("read F3 fixture");

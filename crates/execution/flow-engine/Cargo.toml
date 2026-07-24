@@ -15,7 +15,7 @@ wamn-flow = { path = "../../execution/flow-model" }
 # crates never depend on the runner; the 5.13 purity rule).
 wamn-node-sdk = { path = "../../node/sdk" }
 # Payloads and opaque node config are JSON; no schema of its own (this is an
-# engine, not a contract — like wamn-ddl / wamn-api, no schemars).
+# engine, not a contract — like wamn-schema-compiler / wamn-api, no schemars).
 serde_json = "1"
 
 # No DB / host / wasm / clock dependency: the reducer is a pure function of

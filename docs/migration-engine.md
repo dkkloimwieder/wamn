@@ -2,7 +2,7 @@
 
 The **live executor** that applies a catalog to a project database:
 versioned, forward-only, with a dry-run and a generated rollback plan. Shipped as
-the pure crate `crates/schema/migration` (the engine) + the `wamn-ctl
+the pure crate `crates/schema/control` (the engine) + the `wamn-ctl
 migrate-catalog` subcommand (the effect shell), bead wamn-d8u,
 `docs/platform-plan.md` §2.5.
 
@@ -11,15 +11,15 @@ migrate-catalog` subcommand (the effect shell), bead wamn-d8u,
 2.5 does not re-derive migration logic. It **composes** the crates that already
 emit and classify DDL and own the lifecycle:
 
-- **3.2 `wamn-ddl`** — `Migration::create` / `migrate` compute the ordered,
+- **3.2 `wamn-schema-compiler`** — `Migration::create` / `migrate` compute the ordered,
   name-reuse-safe DDL plan, and the `Confirmation` gate refuses a destructive
   plan without a confirmed backup (prefixing a `-- BACKUP CHECKPOINT REQUIRED`
   marker). The engine reuses both **verbatim**.
-- **3.4 `wamn-schema`** — the `draft → staged → applied → superseded` lifecycle
+- **3.4 `wamn-schema-control`** — the `draft → staged → applied → superseded` lifecycle
   with the *single-applied* and *stale-base* guards. The engine constructs an
   in-memory `Environment` mirroring the DB state and calls `apply()` as the
   **validation oracle**, so it can never diverge from the 3.4 semantics.
-- **3.1 `wamn-catalog`** — the canonical model and its JSON, which the engine
+- **3.1 `wamn-schema-model`** — the canonical model and its JSON, which the engine
   stores as the applied catalog **document** and diffs a target against.
 
 Given the current applied catalog (read from the DB by the driver) and a target,
@@ -49,7 +49,7 @@ for a first materialization), the plan runs inside one transaction:
 
 The engine emits `$n`-parameterized SQL (SR3); the driver holds the connection
 and binds. Identifiers are pinned to the fixed `catalog` metadata schema; the
-lifecycle-state literals come from `wamn_schema::State`, single-sourced with the
+lifecycle-state literals come from `wamn_schema_control::lifecycle::State`, single-sourced with the
 `catalog.catalogs` `CHECK`.
 
 ## Guards
@@ -82,7 +82,7 @@ Two additive changes to the standalone `deploy/sql/catalog-schema.sql` (not
 
 ## The one-transaction invariant (R9c)
 
-The **whole** apply plan runs in one transaction. This is what makes the wamn-ddl
+The **whole** apply plan runs in one transaction. This is what makes the wamn-schema-compiler
 name-freeing preamble's **zero-residue** guarantee hold: a mid-plan failure rolls
 the aside-renames (`wamn_mig_drop_*`) back, so nothing survives — no compensation
 path is needed.
@@ -131,7 +131,7 @@ analysis) is a follow-up too; v1 stores the applied catalog as the `document`.
 
 ## Verification
 
-- **Unit** (`cargo test -p wamn-migrate`): the guards, the 3.2 destructive gate,
+- **Unit** (`cargo test -p wamn-schema-control`): the guards, the 3.2 destructive gate,
   dry-run vs apply, the generated rollback, and a metadata-only version bump.
 - **Drift guard**: `deploy/sql/catalog-schema.sql` must mirror the engine — the
   `document` column, the `schema_migrations` table + columns, and the
@@ -145,5 +145,5 @@ analysis) is a follow-up too; v1 stores the applied catalog as the `document`.
   statement) each fail a named test.
 
 Nothing in-cluster — an engine + schema is proven by a throwaway Postgres (the
-`catalog-schema.sql` / wamn-ddl / wamn-schema precedent); applying it in-cluster
+`catalog-schema.sql` / wamn-schema-compiler / wamn-schema-control precedent); applying it in-cluster
 would mutate a shared DB (the shared-cluster guardrail).

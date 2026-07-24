@@ -34,4 +34,4 @@ wamn-flow = { path = "../../crates/execution/flow-model" }
 wamn-run-queue = { path = "../../crates/execution/run-state-queue" }
 # R16b identity-format validators — the ONE owner shared with the
 # wamn:postgres plugin (wamn-host).
-wamn-registry = { path = "../../crates/control/registry" }
+wamn-control-registry = { path = "../../crates/control/registry" }

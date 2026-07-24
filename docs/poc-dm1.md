@@ -17,12 +17,12 @@ DM1 adds no engine code. It **composes the shipped tools** over three promoted
 
 | Tool | Role | Artifact |
 | --- | --- | --- |
-| **2.5** `wamn-migrate` | migrate the catalog live (DDL + lifecycle advance + history, one txn) | `deploy/poc/poc-material-receiving.catalog.json` |
-| **3.5** `wamn-rls` | per-role RLS (site-scoping + ERP gate) | `deploy/poc/poc-material-receiving.rls.json` |
-| **3.6** `wamn-seed` | reference/seed data | `deploy/poc/poc-material-receiving.seed.dataset.json` |
+| **2.5** `wamn-schema-control` | migrate the catalog live (DDL + lifecycle advance + history, one txn) | `deploy/poc/poc-material-receiving.catalog.json` |
+| **3.5** `wamn-schema-compiler` | per-role RLS (site-scoping + ERP gate) | `deploy/poc/poc-material-receiving.rls.json` |
+| **3.6** `wamn-schema-compiler` | reference/seed data | `deploy/poc/poc-material-receiving.seed.dataset.json` |
 | **2.4** `app_system` | the personas' roles + the ERP api-key | `deploy/sql/app-schema.sql` |
 
-The catalog artifact is a **promotion of the wamn-catalog fixture**
+The catalog artifact is a **promotion of the wamn-schema-model fixture**
 (`crates/schema/model/tests/fixtures/poc-receiving.catalog.json`), kept identical
 by a drift guard — the same 8-entity model the crate tests validate is the one
 DM1 migrates. `wamn_dm1::provisioning_sql(tenant)` composes migrate → RLS → seed
@@ -53,7 +53,7 @@ tenant, never widen):
 
 ## Two carried limitations
 
-- **System-entity extension lands as a data-schema table.** wamn-ddl (3.2) emits
+- **System-entity extension lands as a data-schema table.** wamn-schema-compiler (3.2) emits
   a plain `CREATE TABLE` for every catalog entity, so the `is-system` `users`
   entity migrates to a data-schema `users` table carrying `cert_level` — a
   parallel table to the 2.4 `app_system.users`, not an `ALTER` of it. The
@@ -98,10 +98,10 @@ docker stop wamn-dm1-pg
   predicate, the ERP gate roles, an exact-decimal spec, the promoted-catalog
   drift) each fail a named test.
 
-Nothing in-cluster — like the wamn-migrate / wamn-rls / wamn-seed gates, DM1 is a
+Nothing in-cluster — like the wamn-schema-control / wamn-schema-compiler / wamn-schema-compiler gates, DM1 is a
 catalog + schema deliverable proven by a throwaway Postgres; applying it
 in-cluster would mutate a shared DB (the shared-cluster guardrail). The composite
-unique / exact-decimal / tenant-floor DDL is wamn-ddl's, already mutation-tested
+unique / exact-decimal / tenant-floor DDL is wamn-schema-compiler's, already mutation-tested
 there; DM1's gate asserts they hold end to end.
 
 ## References

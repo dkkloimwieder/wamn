@@ -133,7 +133,7 @@ exactly on `step_seq`.
 | The `cancel(run, reason)` operation + its two enforcement layers | 5.12 |
 | The durable run queue (`FOR UPDATE SKIP LOCKED`) + NATS doorbell + dispatcher | 5.14 |
 | Payload store & byte quotas | 5.10 |
-| The standard node *contents* (incl. the Postgres/raw-SQL node, D8) | 5.3 — SHIPPED: `wamn-nodes` (docs/node-library.md) |
+| The standard node *contents* (incl. the Postgres/raw-SQL node, D8) | 5.3 — SHIPPED: `wamn-standard-nodes` (docs/node-library.md) |
 | The custom-node HTTP transport | 5.6 |
 
 The doorbell here is the consumer side only (recompile the `Plan` on a new active

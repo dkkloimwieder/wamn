@@ -200,7 +200,7 @@ RLS onto an identity the guest cannot rewrite — a per-tenant DB role reached v
 `SET ROLE` (or connection-per-tenant), with RLS keyed on `current_user` instead
 of the settable GUC — so a guest `SET app.tenant` is inert. That work
 (per-tenant-role **provisioning** + the RLS re-key across the 3.2 floor emitter,
-3.5 `wamn-rls`, the a45 hardening, and the hand-written schemas) lands with
+3.5 `wamn-schema-compiler`, the a45 hardening, and the hand-written schemas) lands with
 `wamn-1nd`, and **raw-SQL / custom-node enablement is gated behind it**. Until
 then the tenant claim is trusted only on the parameterized standard-node path.
 
@@ -211,7 +211,7 @@ expression fields are spliced verbatim into DDL that the migration/copy drivers
 apply through `batch_execute` (the simple protocol, which honours multiple
 `;`-separated statements) — a catalog `Constraint::Check`
 (`ADD CONSTRAINT … CHECK (<expr>)`, 3.2 `emit.rs`) and an RLS `RolePredicate`
-(`… OR (<expr>)`, 3.5 `wamn-rls/compile.rs`). Validation previously checked only
+(`… OR (<expr>)`, 3.5 `wamn-schema-compiler/compile.rs`). Validation previously checked only
 non-emptiness, so a `Check` expression such as
 `1=1); DROP TABLE app_system.users; --` closed the wrapping paren early and
 chained arbitrary statements at **migration-role** privilege (blast radius = the
@@ -222,13 +222,13 @@ self-serve schema editor lets an untrusted author supply a `Check` or
 `RolePredicate` expression.
 
 **Shipped guard (cjv.5).** The authored expression **fragment** is validated at
-design time, before emission, by `wamn_catalog::unsafe_expression_reason` — a
+design time, before emission, by `wamn_schema_model::unsafe_expression_reason` — a
 literal-aware lexical scan that rejects a top-level statement terminator,
 unbalanced parentheses, or a comment-open (`--` / `/*`), plus dollar-quoting and
 stray backslashes. A single boolean expression never legitimately contains any of
 these, and a `;` inside a string/identifier literal (`note <> 'a;b'`) stays legal.
-The guard fires from the two pure validators (`wamn-catalog` for `Check`,
-`wamn-rls` for `RolePredicate`), and `compile()`/`migrate()` validate first — so
+The guard fires from the two pure validators (`wamn-schema-model` for `Check`,
+`wamn-schema-compiler` for `RolePredicate`), and `compile()`/`migrate()` validate first — so
 every consumer (migrate, copy, publish, dm1, poc) is covered and a rejected
 expression never reaches Postgres. Critically the guard targets the *fragment*,
 not the assembled `Operation.sql`: the 3.2/3.5 emitters deliberately pack several
@@ -266,13 +266,13 @@ provisioning and both exec paths (migrate + copy) and is deferred to its own bea
   `statement_mutates_session` in `wamn_postgres.rs`; gate
   `tests/orchestrator/src/pgbench.rs` (`--mode attack`) + pgprobe ops 7/8/9;
   structural close deferred to `wamn-1nd`.
-- Expression-chaining guard (cjv.5): `wamn_catalog::unsafe_expression_reason`
+- Expression-chaining guard (cjv.5): `wamn_schema_model::unsafe_expression_reason`
   (`crates/schema/model/src/validate.rs`), wired into the `Check` validator
-  (`wamn-catalog`) and the `RolePredicate` validator (`wamn-rls`); splice sites
-  `crates/schema/ddl-compiler/src/emit.rs` +
-  `crates/schema/rls-compiler/src/compile.rs`; exec paths
+  (`wamn-schema-model`) and the `RolePredicate` validator (`wamn-schema-compiler`); splice sites
+  `crates/schema/compiler/src/emit.rs` +
+  `crates/schema/compiler/src/rls/src/compile.rs`; exec paths
   `migrate_catalog.rs` + `copy_project_env.rs`; live proof
-  `crates/schema/ddl-compiler/tests/ddl.rs::chaining_check_expression_never_reaches_postgres`;
+  `crates/schema/compiler/tests/ddl.rs::chaining_check_expression_never_reaches_postgres`;
   least-privileged migrate role deferred to its own bead.
 - HTTP egress chokepoint: memory `wamn-s6-testhost-facts` (egress spy).
 - Gate: `services/host/src/egressbench.rs`.

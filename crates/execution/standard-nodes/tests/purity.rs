@@ -2,7 +2,7 @@
 //! crates depend on the SDK crate ONLY — never the runner crate — so no node
 //! can circumvent the `wamn:node` interface and silently break the
 //! frozen-flow composition path (5.13). Enforced over `cargo metadata`: the
-//! test walks `wamn-nodes`' resolved NORMAL dependency edges and fails the
+//! test walks `wamn-standard-nodes`' resolved NORMAL dependency edges and fails the
 //! build the moment a forbidden crate enters the closure or an undeclared
 //! direct dependency appears.
 
@@ -22,9 +22,16 @@ const FORBIDDEN: &[&str] = &[
     "wamn-f1",
 ];
 
-/// The EXACT direct (normal) dependencies wamn-nodes may have. Growing this
+/// The EXACT direct (normal) dependencies wamn-standard-nodes may have. Growing this
 /// list is a conscious, test-updating act.
-const ALLOWED_DIRECT: &[&str] = &["wamn-node-sdk", "wamn-api", "serde_json", "jmespath"];
+const ALLOWED_DIRECT: &[&str] = &[
+    "wamn-node-sdk",
+    "wamn-entity-access",
+    "wamn-pg-core",
+    "wamn-schema-model",
+    "serde_json",
+    "jmespath",
+];
 
 fn metadata() -> Value {
     let out = Command::new(env!("CARGO"))
@@ -80,7 +87,7 @@ fn package<'a>(meta: &'a Value, name: &str) -> &'a Value {
 fn node_crates_depend_on_the_sdk_only_never_the_runner() {
     let meta = metadata();
 
-    for crate_name in ["wamn-nodes", "wamn-node-sdk"] {
+    for crate_name in ["wamn-standard-nodes", "wamn-node-sdk"] {
         let root = package(&meta, crate_name)["id"].as_str().unwrap();
         let closure = normal_closure(&meta, root);
         let names: HashSet<&str> = meta["packages"]
@@ -104,7 +111,7 @@ fn node_crates_depend_on_the_sdk_only_never_the_runner() {
 fn direct_dependencies_are_exactly_the_declared_allowlist() {
     let meta = metadata();
 
-    let direct: HashSet<String> = package(&meta, "wamn-nodes")["dependencies"]
+    let direct: HashSet<String> = package(&meta, "wamn-standard-nodes")["dependencies"]
         .as_array()
         .expect("dependencies")
         .iter()
@@ -114,7 +121,7 @@ fn direct_dependencies_are_exactly_the_declared_allowlist() {
     let allowed: HashSet<String> = ALLOWED_DIRECT.iter().map(|s| s.to_string()).collect();
     assert_eq!(
         direct, allowed,
-        "wamn-nodes' direct dependencies changed — adding one is a conscious, \
+        "wamn-standard-nodes' direct dependencies changed — adding one is a conscious, \
          test-updating act (and never the runner)"
     );
 

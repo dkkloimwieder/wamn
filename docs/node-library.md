@@ -9,8 +9,9 @@ Two crates deliver plan item 5.3 (wamn-3xa):
 | `crates/node/sdk` | The node **authoring contract** — the `Node` trait, the `RunContext` view of a dispatch, the `NodeCtx` capability facade every effect flows through, and the `wamn:node` error taxonomy (`NodeError`/`ErrorDetail`/`RateLimitDetail`, now DEFINED here and re-exported by `wamn-runner`). A Rust mirror of the drafted `docs/wamn-node.wit`; the 5.4 freeze layers the WIT + guest scaffolding on top. |
 | `crates/execution/standard-nodes` | The **standard library**: the production node vocabulary plus the dispatch-time capability policy table. Pure — no DB, no wasm, no host; a mock `NodeCtx` unit-tests every node, classification map, and policy negative. |
 
-`components/execution/flowrunner` adopts the library: any node type `wamn-nodes` ships
-dispatches through `wamn_nodes::dispatch` over a `NodeCtx` implemented on the
+`components/execution/flowrunner` adopts the library: any node type the
+`wamn-standard-nodes` package ships dispatches through `wamn_nodes::dispatch`
+over a `NodeCtx` implemented on the
 component's real imports (`wamn:postgres`, `wasi:http`). The S3/S6 fixture
 node shapes keep their legacy semantics byte-identical (a `transform` /
 `conditional` with an `expression` config routes to the library; the fixture
@@ -27,9 +28,10 @@ taxonomy definition, dependency pointing SDK-ward), never the reverse.
 Enforcement is `crates/execution/standard-nodes/tests/purity.rs`: it walks `cargo metadata`'s
 resolved NORMAL dependency edges and fails if `wamn-runner` (or any
 host/store-side crate) enters the closure, or if the direct-dependency set
-drifts from the declared allowlist (`wamn-node-sdk`, `wamn-api`, `serde_json`,
+drifts from the declared allowlist (`wamn-node-sdk`, `wamn-entity-access`,
+`wamn-pg-core`, `wamn-schema-model`, `serde_json`,
 `jmespath`). Adding a dependency is a conscious, test-updating act.
-Mutation-verified: adding `wamn-runner` to `wamn-nodes` fails both tests.
+Mutation-verified: adding `wamn-runner` to `wamn-standard-nodes` fails both tests.
 
 ## Expressions: JMESPath, off the shelf
 
@@ -92,12 +94,13 @@ from the trigger).
 ## The Postgres nodes (D8, wamn-r13)
 
 **`postgres`** (entity ops) is the UNFLAGGED default: ops compile through the
-SAME audited surface the generated REST gateway uses — `wamn_api::Router`
+SAME audited surface the generated REST gateway uses —
+`wamn_entity_access::Planner`
 (4.1): identifiers catalog-allowlisted + quoted, values ALWAYS `$n` params,
 `tenant_id` on create injected server-side, RLS floor underneath. The catalog
 comes from the project's published `wamn_catalog` snapshot (`NodeCtx::
 catalog_json`, the same document the api-gateway reads). Row shaping is
-`wamn_api::shape_rows` — numerics come back as exact-decimal STRINGS.
+`wamn_entity_access::shape_rows` — numerics come back as exact-decimal STRINGS.
 
 **`postgres-query`** (raw SQL) declares `RawSql`, which the runner grants only
 when the project's D8 flag is ON — **default OFF**: the dispatch check refuses
@@ -130,7 +133,7 @@ Nodes never string-match; the maps are fixed and unit-pinned:
   serialization-failure / connection-unavailable / statement-timeout →
   `retryable`; constraint violations (carrying the constraint name in
   `data`), permission-denied, row-limit, query-error → `terminal`.
-  `wamn_api` compile refusals split by fault: `invalid-value` /
+  `wamn_entity_access` compile refusals split by fault: `invalid-value` /
   `payload-required` → `invalid-input` (the caller's data, never retried);
   everything else → `terminal` (a flow/config bug).
 - **HTTP**: 429 → `rate-limited` (integer `Retry-After` honored as the source
@@ -161,7 +164,7 @@ Nodes never string-match; the maps are fixed and unit-pinned:
 
 ## Gates
 
-- `cargo test -p wamn-nodes` — every node against a mock facade (behavior,
+- `cargo test -p wamn-standard-nodes` — every node against a mock facade (behavior,
   config negatives, both taxonomy maps, policy negatives, injection witnesses
   for both Postgres nodes, JMESPath number pinning) + the purity lint.
 - `cargo test -p wamn-runner` — engine regression + the SDK port-constant
@@ -170,5 +173,5 @@ Nodes never string-match; the maps are fixed and unit-pinned:
   the fixture flows unchanged (in-cluster gates of record re-run PASS).
 - Mutants killed (apply/test/restore): neutered grant check, allow-all gated
   facade, pg taxonomy swap (connection-unavailable → terminal), http taxonomy
-  swap (5xx → terminal), runner dep added to wamn-nodes — each fails named
+  swap (5xx → terminal), runner dep added to wamn-standard-nodes — each fails named
   tests.

@@ -1,5 +1,5 @@
 //! The `reconcile-replica-identity` subcommand (EVT-REPLICA-IDENT, wamn-l5i9.31):
-//! the **effect shell** for the pure `wamn_migrate` REPLICA IDENTITY reconciler.
+//! the **effect shell** for the pure `wamn_schema_control` REPLICA IDENTITY reconciler.
 //!
 //! `REPLICA IDENTITY FULL` is a per-entity knob the platform manages (l5i9.1
 //! decision d): an entity runs FULL only when a registered row-event needs the
@@ -33,9 +33,9 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use wamn_migrate::{
-    EventRegistration, ReplicaIdentity, ReplicaIdentityPlan, reconcile_replica_identity, sql,
-    select_replica_identity_sql,
+use wamn_schema_control::{
+    EventRegistration, ReplicaIdentity, ReplicaIdentityPlan, reconcile_replica_identity,
+    select_replica_identity_sql, sql,
 };
 
 #[derive(Debug, Args)]
@@ -69,7 +69,7 @@ pub async fn run(args: ReconcileReplicaIdentityArgs) -> anyhow::Result<()> {
     }
     let catalog_src = std::fs::read_to_string(&args.catalog)
         .with_context(|| format!("read catalog {}", args.catalog.display()))?;
-    let catalog = wamn_catalog::Catalog::from_json(&catalog_src)
+    let catalog = wamn_schema_model::Catalog::from_json(&catalog_src)
         .map_err(|e| anyhow::anyhow!("catalog parse/validate: {e}"))?;
 
     let (client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)
@@ -102,7 +102,7 @@ pub async fn run(args: ReconcileReplicaIdentityArgs) -> anyhow::Result<()> {
 /// standalone verb separately.
 pub async fn reconcile_after_apply(
     client: &tokio_postgres::Client,
-    catalog: &wamn_catalog::Catalog,
+    catalog: &wamn_schema_model::Catalog,
     schema: &str,
 ) -> anyhow::Result<()> {
     let plan = reconcile(client, catalog, schema, true).await?;
@@ -145,7 +145,7 @@ fn print_apply_summary(plan: &ReplicaIdentityPlan) {
 /// Shared by the CLI verb and the live gate so both exercise one code path.
 pub async fn reconcile(
     client: &tokio_postgres::Client,
-    catalog: &wamn_catalog::Catalog,
+    catalog: &wamn_schema_model::Catalog,
     schema: &str,
     apply: bool,
 ) -> anyhow::Result<ReplicaIdentityPlan> {
@@ -183,7 +183,10 @@ async fn read_registrations(
         return Ok(Vec::new());
     }
     let rows = client
-        .query(&sql::select_registration_docs_for_catalog_sql(), &[&catalog_id])
+        .query(
+            &sql::select_registration_docs_for_catalog_sql(),
+            &[&catalog_id],
+        )
         .await
         .context("read event registrations for the RI reconcile")?;
     let mut regs = Vec::with_capacity(rows.len());
@@ -230,7 +233,10 @@ fn ident_kw(i: ReplicaIdentity) -> &'static str {
 fn print_plan(plan: &ReplicaIdentityPlan, dry_run: bool) {
     let verb = if dry_run { "would flip" } else { "flipped" };
     if plan.flips.is_empty() {
-        println!("replica identity already reconciled — no flips ({} entities already at target)", plan.unchanged.len());
+        println!(
+            "replica identity already reconciled — no flips ({} entities already at target)",
+            plan.unchanged.len()
+        );
     } else {
         for f in &plan.flips {
             println!(
@@ -243,6 +249,8 @@ fn print_plan(plan: &ReplicaIdentityPlan, dry_run: bool) {
         }
     }
     for t in &plan.skipped_absent {
-        println!("  [skip] table {t} does not exist yet (floor not applied) — reconcile after publish-catalog --provision");
+        println!(
+            "  [skip] table {t} does not exist yet (floor not applied) — reconcile after publish-catalog --provision"
+        );
     }
 }

@@ -8,8 +8,9 @@ license.workspace = true
 [dependencies]
 wash-runtime = { workspace = true }
 wamn-component-policy = { path = "../component-policy" }
-wamn-registry = { path = "../../control/registry" }
+wamn-control-registry = { path = "../../control/registry" }
 wamn-event-wire = { path = "../../events/wire" }
+wamn-pg-core = { path = "../pg-core" }
 wamn-testkit = { path = "../../scenarios/model" }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "rt-multi-thread", "macros", "signal", "sync"] }

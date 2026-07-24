@@ -23,7 +23,7 @@
 //! tables (`deploy/sql/flow-tests.sql`: test_suites/test_cases) into the project
 //! schema — the canonical deploy files, embedded at compile time and rewritten
 //! from `wamn_run` to the target schema — when their tables are absent;
-//! `--seed-dataset` compiles a wamn-seed (3.6) dataset against the catalog and
+//! `--seed-dataset` compiles a wamn-schema-compiler (3.6) dataset against the catalog and
 //! applies it (deterministic ids, `ON CONFLICT DO NOTHING` — idempotent); and
 //! `--flow` validates a wamn-flow (5.1) graph and registers it ACTIVE in the
 //! registry (deactivating prior versions of the same flow). The flows-table
@@ -39,7 +39,7 @@ use tokio_postgres::NoTls;
 // The canonical `wamn_run` → project-schema deploy-DDL rewrite: the single
 // owner is the reconcile-run-plane planner's crate (dot-anchored; `schema` has
 // already passed [`valid_ident`], so bare interpolation is safe).
-use wamn_migrate::rewrite_schema;
+use wamn_schema_control::rewrite_schema;
 
 #[derive(Debug, Args)]
 pub struct PublishCatalogArgs {
@@ -73,7 +73,7 @@ pub struct PublishCatalogArgs {
     #[arg(long)]
     pub runstate: bool,
 
-    /// Seed dataset JSON (wamn-seed, 3.6) compiled against the catalog and
+    /// Seed dataset JSON (wamn-schema-compiler, 3.6) compiled against the catalog and
     /// applied under `--tenant` (deterministic ids; idempotent re-apply).
     #[arg(long)]
     pub seed_dataset: Option<PathBuf>,
@@ -106,7 +106,7 @@ pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
     // Parse (and thereby validate) the catalog; this is the snapshot document.
     let catalog_src = std::fs::read_to_string(&args.catalog)
         .with_context(|| format!("read catalog {}", args.catalog.display()))?;
-    let cat = wamn_catalog::Catalog::from_json(&catalog_src)
+    let cat = wamn_schema_model::Catalog::from_json(&catalog_src)
         .map_err(|e| anyhow::anyhow!("catalog parse/validate: {e}"))?;
     let document = cat.to_json();
 
@@ -140,7 +140,7 @@ pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
 
 async fn publish(
     client: &tokio_postgres::Client,
-    cat: &wamn_catalog::Catalog,
+    cat: &wamn_schema_model::Catalog,
     args: &PublishCatalogArgs,
     document: &str,
 ) -> anyhow::Result<()> {
@@ -211,9 +211,9 @@ async fn publish(
         if exists {
             println!("floor already present in schema {schema}; skipping provision");
         } else {
-            let floor = wamn_ddl::Migration::create(cat)
+            let floor = wamn_schema_compiler::Migration::create(cat)
                 .map_err(|e| anyhow::anyhow!("floor compile: {e}"))?
-                .sql(wamn_ddl::Confirmation::None)
+                .sql(wamn_schema_compiler::Confirmation::None)
                 .map_err(|e| anyhow::anyhow!("floor sql: {e}"))?;
             client.batch_execute(&floor).await.context("apply floor")?;
             println!("provisioned tenant floor in schema {schema}");
@@ -240,7 +240,7 @@ async fn publish(
         }
     }
 
-    // Optionally compile + apply a wamn-seed dataset against this catalog.
+    // Optionally compile + apply a wamn-schema-compiler dataset against this catalog.
     if let Some(path) = &args.seed_dataset {
         let src = std::fs::read_to_string(path)
             .with_context(|| format!("read seed dataset {}", path.display()))?;
@@ -307,14 +307,14 @@ async fn publish(
 /// it INSIDE its apply transaction (atomic with the rename DDL).
 pub async fn upsert_entity_map(
     client: &impl tokio_postgres::GenericClient,
-    cat: &wamn_catalog::Catalog,
+    cat: &wamn_schema_model::Catalog,
     schema: &str,
 ) -> anyhow::Result<()> {
     client
-        .batch_execute(&wamn_provision::sql::ensure_entity_map_sql(schema))
+        .batch_execute(&wamn_control_provision::sql::ensure_entity_map_sql(schema))
         .await
         .context("ensure entity map")?;
-    let upsert = wamn_provision::sql::upsert_entity_map_sql(schema);
+    let upsert = wamn_control_provision::sql::upsert_entity_map_sql(schema);
     for e in &cat.entities {
         client
             .execute(upsert.as_str(), &[&e.id.as_str(), &e.name])
@@ -328,13 +328,13 @@ pub async fn upsert_entity_map(
 /// publish-catalog and migrate-catalog. Reads every event registration for
 /// `cat`'s catalog id across ALL tenants (the caller connects as a superuser, so
 /// RLS is bypassed) and refuses when any references an entity `cat` does not
-/// keep, naming every orphan (the pure decision `wamn_migrate::check_registration_orphans`).
+/// keep, naming every orphan (the pure decision `wamn_schema_control::check_registration_orphans`).
 /// A DB with no `catalog.event_registrations` table (a project not yet
 /// registration-provisioned) has nothing to orphan, so the probe returns a clean
 /// pass. Read-only: a refusal mutates nothing.
 pub(crate) async fn guard_registration_orphans(
     client: &impl tokio_postgres::GenericClient,
-    cat: &wamn_catalog::Catalog,
+    cat: &wamn_schema_model::Catalog,
 ) -> anyhow::Result<()> {
     let table_present: bool = client
         .query_one(
@@ -349,14 +349,14 @@ pub(crate) async fn guard_registration_orphans(
     }
     let rows = client
         .query(
-            &wamn_migrate::sql::select_registrations_for_catalog_sql(),
+            &wamn_schema_control::sql::select_registrations_for_catalog_sql(),
             &[&cat.catalog_id],
         )
         .await
         .context("read event registrations for the D24 orphan guard")?;
-    let referenced: Vec<wamn_migrate::RegistrationRef> = rows
+    let referenced: Vec<wamn_schema_control::RegistrationRef> = rows
         .iter()
-        .map(|row| wamn_migrate::RegistrationRef {
+        .map(|row| wamn_schema_control::RegistrationRef {
             registration_id: row.get(0),
             tenant: row.get(1),
             entity_id: row.get(2),
@@ -364,7 +364,7 @@ pub(crate) async fn guard_registration_orphans(
         .collect();
     let present: std::collections::BTreeSet<&str> =
         cat.entities.iter().map(|e| e.id.as_str()).collect();
-    wamn_migrate::check_registration_orphans(&present, &referenced)
+    wamn_schema_control::check_registration_orphans(&present, &referenced)
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
@@ -459,16 +459,17 @@ async fn table_exists(
         .get(0))
 }
 
-/// Compile a wamn-seed dataset against the catalog into idempotent INSERTs.
+/// Compile a wamn-schema-compiler dataset against the catalog into idempotent INSERTs.
 pub fn seed_dataset_sql(
     dataset_json: &str,
-    cat: &wamn_catalog::Catalog,
+    cat: &wamn_schema_model::Catalog,
     tenant: &str,
 ) -> anyhow::Result<String> {
-    let dataset = wamn_seed::Dataset::from_json(dataset_json).context("parse seed dataset")?;
-    let plan = wamn_seed::compile(&dataset, cat, tenant)
+    let dataset = wamn_schema_compiler::seed::Dataset::from_json(dataset_json)
+        .context("parse seed dataset")?;
+    let plan = wamn_schema_compiler::seed::compile(&dataset, cat, tenant)
         .map_err(|e| anyhow::anyhow!("seed compile: {e}"))?;
-    plan.sql(wamn_ddl::Confirmation::None)
+    plan.sql(wamn_schema_compiler::Confirmation::None)
         .map_err(|e| anyhow::anyhow!("seed sql: {e}"))
 }
 
@@ -566,7 +567,7 @@ mod tests {
     use super::valid_ident;
 
     // The dot-anchored `rewrite_schema` pins live with their owner
-    // (`wamn_migrate::run_plane`, `schema_rewrite_is_dot_anchored`).
+    // (`wamn_schema_control::run_plane`, `schema_rewrite_is_dot_anchored`).
 
     #[test]
     fn identifier_validation() {

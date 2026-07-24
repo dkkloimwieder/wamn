@@ -1,6 +1,6 @@
 //! Contract tests for the `wamn.node.manifest` annotation: fixture round-trip,
 //! structural validation negatives, JSON-Schema conformance (boon), and the
-//! committed-schema drift guard (the wamn-flow/wamn-catalog pattern).
+//! committed-schema drift guard (the wamn-flow/wamn-schema-model pattern).
 
 use boon::{Compiler, Schemas};
 use wamn_node_manifest::{ANNOTATION_KEY, NodeManifest, OrderingPolicy};

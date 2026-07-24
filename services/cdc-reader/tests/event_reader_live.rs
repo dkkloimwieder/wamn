@@ -7,7 +7,7 @@
 //! [EVT-READER]).
 //!
 //! Stands up the REAL substrate (system schema + registration rows via the
-//! wamn-registry builders; role/publication/slot/grants via the wamn-provision
+//! wamn-control-registry builders; role/publication/slot/grants via the wamn-control-provision
 //! builders) and drives `event_reader::run_with_token` — the service body the
 //! subcommand runs — through the load-bearing drills:
 //!
@@ -38,14 +38,14 @@ use futures_util::StreamExt as _;
 use pg_walstream::CancellationToken;
 use tokio_postgres::NoTls;
 
-use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
 use wamn_cdc_reader::{EventReaderArgs, run_with_token};
-use wamn_ctl::migrate_catalog::MigrateCatalogArgs;
-use wamn_ctl::publish_catalog::PublishCatalogArgs;
-use wamn_provision::{cdc_object_name, event_stream_name, sql};
-use wamn_registry::sql::{
+use wamn_control_provision::{cdc_object_name, event_stream_name, sql};
+use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
+use wamn_ctl::migrate_catalog::MigrateCatalogArgs;
+use wamn_ctl::publish_catalog::PublishCatalogArgs;
+use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
 
 const SYSTEM_SCHEMA: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
@@ -387,7 +387,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .await
         .expect("project row");
     sys.execute(
-        wamn_registry::sql::stamp_env_policy_sql(),
+        wamn_control_registry::sql::stamp_env_policy_sql(),
         &[
             &ORG,
             &ENV,

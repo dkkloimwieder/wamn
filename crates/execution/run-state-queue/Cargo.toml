@@ -13,10 +13,10 @@ wamn-run-store = { path = "../../execution/run-state-store" }
 # SR11: the checkpoint/complete statements COMPOSE wamn-run-store's builders as
 # `Sql` (text + arity) and renumber their lease-renew tail against the head's
 # arity — never a hardcoded `$7`/`$8` that a new upstream param would misbind.
-wamn-sql = { path = "../../platform/sql" }
+wamn-pg-core = { path = "../../platform/pg-core" }
 # The queue records import/export as JSON (the read model / the pure decision
 # fixtures). No schemars — a store model, not a published contract (like
-# wamn-run-store / wamn-ddl / wamn-runner). Always present: `model` (QueueEntry)
+# wamn-run-store / wamn-schema-compiler / wamn-runner). Always present: `model` (QueueEntry)
 # derives it and is part of the pure claim-path core the guest links.
 serde = { version = "1", features = ["derive"] }
 # The trigger dispatcher's firing envelope (the cron tick input_json)
@@ -53,4 +53,4 @@ dispatcher = ["dep:serde_json", "dep:croner", "dep:chrono"]
 # (rows, now, config) — `now` is a passed-in millis, never read from a clock. The
 # host/dispatcher owns every effect (Postgres, NATS, the real clock). The optional
 # live-apply gate (tests/queue.rs) shells out to `psql`, so there is no database
-# dependency even in dev — the same pattern as wamn-run-store / wamn-ddl / wamn-rls.
+# dependency even in dev — the same pattern as wamn-run-store / wamn-schema-compiler / wamn-schema-compiler.

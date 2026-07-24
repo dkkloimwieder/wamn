@@ -13,7 +13,7 @@
 //!   lookup key 5x0.1 reads. `stringData.url` is the app-role connection URL.
 
 use serde_json::{Value, json};
-use wamn_registry::Triple;
+use wamn_control_registry::Triple;
 
 use crate::name::{
     APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_secret_name, secret_name,

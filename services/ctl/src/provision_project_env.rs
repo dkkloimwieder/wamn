@@ -4,7 +4,7 @@
 //!
 //! The four-tier counterpart of `provision-project`: identity is the `(org,
 //! project, env)` [`Triple`], and the database lives on the cluster **derived** by
-//! [`cluster_of`](wamn_registry::cluster_of) (D18) from the org's placement + the
+//! [`cluster_of`](wamn_control_registry::cluster_of) (D18) from the org's placement + the
 //! env's policy — a dedicated org's `<org>-<owner(env)>` (so `canary` sharing prod
 //! lands on `<org>-prod`, `canary` own on `<org>-canary`), or the shared pool for a
 //! pooled org. One derivation path serves every placement.
@@ -39,11 +39,11 @@ use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use wamn_provision::{
+use wamn_control_provision::{
     APP_ROLE, compose_url, project_env_database_name, project_env_secret_name,
     render_project_env_database, render_project_env_secret_manifest, sql, validate_project_env,
 };
-use wamn_registry::{Org, Placement, Triple, cluster_of};
+use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 
 use crate::env_policies::read_env_policy;
 
@@ -235,7 +235,10 @@ async fn do_resolve_cluster(
         .await
         .context("SET ROLE wamn_system")?;
     let row = client
-        .query_opt(wamn_registry::sql::select_org_placement_sql(), &[&org])
+        .query_opt(
+            wamn_control_registry::sql::select_org_placement_sql(),
+            &[&org],
+        )
         .await
         .context("read org placement")?
         .with_context(|| {
@@ -270,7 +273,7 @@ async fn do_resolve_cluster(
 
 /// Record the project and the provisioned project-env in the registry (idempotent).
 /// Connects as superuser and `SET ROLE wamn_system` (the registry owner — the
-/// wamn-q3n.3 apply pattern), then runs the pure `wamn-registry` builders.
+/// wamn-q3n.3 apply pattern), then runs the pure `wamn-control-registry` builders.
 async fn record_project_env(
     system_url: &str,
     triple: &Triple,
@@ -299,7 +302,7 @@ async fn do_record_project_env(
         .context("SET ROLE wamn_system")?;
     client
         .execute(
-            wamn_registry::sql::upsert_project_sql(),
+            wamn_control_registry::sql::upsert_project_sql(),
             &[&triple.org, &triple.project],
         )
         .await
@@ -307,7 +310,7 @@ async fn do_record_project_env(
     let env = triple.env.as_str();
     client
         .execute(
-            wamn_registry::sql::upsert_project_env_sql(),
+            wamn_control_registry::sql::upsert_project_env_sql(),
             &[
                 &triple.org,
                 &triple.project,
@@ -358,7 +361,7 @@ mod tests {
     /// subcommand calls.)
     #[test]
     fn cluster_is_derived_by_placement_and_policy() {
-        use wamn_registry::EnvPolicy;
+        use wamn_control_registry::EnvPolicy;
         let ded = Org::dedicated("acme");
         assert_eq!(cluster_of(&ded, &EnvPolicy::dev()).name, "acme-dev");
         assert_eq!(cluster_of(&ded, &EnvPolicy::prod()).name, "acme-prod");

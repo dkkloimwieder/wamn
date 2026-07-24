@@ -5,24 +5,24 @@
 //! acceptance test of the 2.5 migration engine. It **composes the shipped tools**
 //! rather than adding logic:
 //!
-//! - **2.5 [`wamn_migrate`]** — migrate the catalog live into a project database
+//! - **2.5 [`wamn_schema_control`]** — migrate the catalog live into a project database
 //!   (the DDL, the lifecycle advance, the history row, in one transaction);
-//! - **3.5 [`wamn_rls`]** — the per-role RLS: inspector hold site-scoping + the
+//! - **3.5 [`wamn_schema_compiler::rls`]** — the per-role RLS: inspector hold site-scoping + the
 //!   ERP receipts-insert gate;
-//! - **3.6 [`wamn_seed`]** — the reference/seed data (sites, suppliers, materials,
+//! - **3.6 [`wamn_schema_compiler::seed`]** — the reference/seed data (sites, suppliers, materials,
 //!   inspector users carrying the `cert_level` extension);
 //! - **2.4 `app_system`** (`deploy/sql/app-schema.sql`) — the auth substrate the
 //!   personas' roles + the ERP api-key live in (seeded/asserted by the gate).
 //!
 //! The three inputs are promoted `deploy/` artifacts:
-//! `poc-material-receiving.catalog.json` (drift-guarded == the wamn-catalog
-//! fixture), `.rls.json` (the [`wamn_rls::AccessPolicy`]), and
-//! `.seed.dataset.json` (the [`wamn_seed::Dataset`]).
+//! `poc-material-receiving.catalog.json` (drift-guarded == the wamn-schema-model
+//! fixture), `.rls.json` (the [`wamn_schema_compiler::rls::AccessPolicy`]), and
+//! `.seed.dataset.json` (the [`wamn_schema_compiler::seed::Dataset`]).
 //!
 //! ## Two known limitations, carried as caveats
 //!
 //! - **The `is-system` `users` entity migrates to a data-schema `users` table**
-//!   carrying `cert_level`, not an `ALTER app_system.users` — wamn-ddl (3.2)
+//!   carrying `cert_level`, not an `ALTER app_system.users` — wamn-schema-compiler (3.2)
 //!   emits a plain `CREATE TABLE` for every entity. So the extension is exercised
 //!   at the catalog + DDL level, but as a parallel table to the 2.4
 //!   `app_system.users`. Wiring system-entity extension onto `app_system.users`
@@ -33,16 +33,17 @@
 //!   (the documented 3.5 deploy-order hazard). The live gate proves them by
 //!   setting the claims by hand.
 
-use wamn_catalog::Catalog;
-use wamn_migrate::{
+use wamn_schema_compiler::rls::AccessPolicy;
+use wamn_schema_compiler::seed::Dataset;
+use wamn_schema_control::{
     ApplyPlan, Confirmation, Env, MigrationRequest, SqlStatement, Value, plan_migration,
 };
-use wamn_rls::AccessPolicy;
-use wamn_seed::Dataset;
+use wamn_schema_model::Catalog;
 
 /// The promoted POC catalog (`deploy/poc/poc-material-receiving.catalog.json`) — the
-/// 8-entity data model, drift-guarded against the wamn-catalog fixture.
-pub const CATALOG_JSON: &str = include_str!("../../../deploy/poc/poc-material-receiving.catalog.json");
+/// 8-entity data model, drift-guarded against the wamn-schema-model fixture.
+pub const CATALOG_JSON: &str =
+    include_str!("../../../deploy/poc/poc-material-receiving.catalog.json");
 /// The POC RLS policy: inspector hold site-scoping + the ERP receipts-insert gate.
 pub const POLICY_JSON: &str = include_str!("../../../deploy/poc/poc-material-receiving.rls.json");
 /// The POC reference/seed data (sites, suppliers, materials, inspector users).
@@ -93,12 +94,14 @@ pub fn provisioning_sql(tenant: &str) -> Result<String, Box<dyn std::error::Erro
 
     // 3.5 — the per-role RLS (additive; gate-free).
     out.push_str("\n-- RLS policies (3.5)\n");
-    out.push_str(&wamn_rls::compile(&policy(), &cat)?.sql(Confirmation::None)?);
+    out.push_str(&wamn_schema_compiler::rls::compile(&policy(), &cat)?.sql(Confirmation::None)?);
     out.push('\n');
 
     // 3.6 — the reference/seed data (additive; idempotent ON CONFLICT (id) DO NOTHING).
     out.push_str("\n-- seed data (3.6)\n");
-    out.push_str(&wamn_seed::compile(&seed(), &cat, tenant)?.sql(Confirmation::None)?);
+    out.push_str(
+        &wamn_schema_compiler::seed::compile(&seed(), &cat, tenant)?.sql(Confirmation::None)?,
+    );
     out.push('\n');
 
     Ok(out)

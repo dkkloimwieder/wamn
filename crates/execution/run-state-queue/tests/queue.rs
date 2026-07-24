@@ -1481,7 +1481,7 @@ fn run_queue_sql_matches_the_model() {
 /// FK cascade from `runs`, and the trigger dispatcher's cron path (triggered
 /// write-ahead, cron last-tick recovery, the wake scan). Gated on
 /// `WAMN_RUN_QUEUE_PG_URL` (a superuser URL — the harness provisions `wamn_app`);
-/// skips cleanly when unset. Mirrors the wamn-run-store / wamn-ddl / wamn-rls
+/// skips cleanly when unset. Mirrors the wamn-run-store / wamn-schema-compiler / wamn-schema-compiler
 /// gates. (True concurrent contention is the queuebench/dispatchbench gates; this
 /// asserts the schema + predicates on one session.)
 ///

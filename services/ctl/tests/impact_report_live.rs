@@ -11,7 +11,7 @@
 //!      registration (id-keyed) + an active graph whose postgres node names the
 //!      entity BY NAME (config-keyed) + a version-bound test suite;
 //!   3. stage v2 = destructive on `E_touched` (drop a column) + additive on
-//!      `E_untouched` (add a column), and assert `wamn_impact::analyze` (through
+//!      `E_untouched` (add a column), and assert `wamn_schema_control::impact::analyze` (through
 //!      the shell's [`gather_impact`]) names EXACTLY `E_touched`'s flow/suite/api
 //!      resource on the destructive entity — never `E_untouched`'s (the untouched
 //!      partition) — and requires acknowledgement;
@@ -227,8 +227,8 @@ async fn impact_report_names_the_affected_and_gates_the_destructive_apply() {
     insert_suite(&su, "flow-u", "decoy").await;
 
     // --- the typed analysis, through the shell's live reads -----------------
-    let v1 = wamn_catalog::Catalog::from_json(&v1_json()).unwrap();
-    let v2 = wamn_catalog::Catalog::from_json(&v2_json()).unwrap();
+    let v1 = wamn_schema_model::Catalog::from_json(&v1_json()).unwrap();
+    let v2 = wamn_schema_model::Catalog::from_json(&v2_json()).unwrap();
     let plan = compile_plan(Some(&v1), &v2).expect("compile plan");
     let report = gather_impact(&su, &plan, Some(&v1), &v2, DATA_SCHEMA)
         .await

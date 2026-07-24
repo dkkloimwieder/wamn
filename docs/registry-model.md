@@ -18,7 +18,7 @@ This doc describes the model as shipped; the design rationale is
   `wamn-q3n.3` (system-DB schema + invariants), `.4` (plan amendment), `.5`
   (3.4 lifecycle amendment), and the provisioning rework (`.6`/`.7`).
 - **Crate:** `crates/control/registry` — a **pure model** (SR6 rule 1: no DB, clock,
-  or wasm; deps `serde` + `serde_json`), following the `wamn-catalog` /
+  or wasm; deps `serde` + `serde_json`), following the `wamn-schema-model` /
   `wamn-flow` / `wamn-run-store` house pattern.
 - **This is a model, not a contract.** Like `wamn-run-store`, it ships
   `validate()` + serde import/export but **no** published JSON-Schema file (the
@@ -42,9 +42,9 @@ point: tooling keys off it and never parses a provisioned name. Routing is
 `org` and `project` are **lowercase slugs** (`[a-z0-9-]`, start/end alphanumeric,
 ≤ 40 bytes, not under the reserved `wamn` prefix — wamn-66x), because they embed
 into cluster / Secret / subdomain names. This is the same discipline as
-`wamn-provision::validate_project_id` and wi4 flow ids; it is *inlined* here (a
+`wamn-control-provision::validate_project_id` and wi4 flow ids; it is *inlined* here (a
 few lines) to keep this foundational crate's dependency closure tiny and to avoid
-a registry → provisioning coupling (the `wamn-provision`-inlines-`quote_ident`
+a registry → provisioning coupling (the `wamn-control-provision`-inlines-`quote_ident`
 precedent, SR7).
 
 ## Environments
@@ -127,7 +127,7 @@ Registry   { schema_version, env_policies: Vec<OrgEnvPolicy>, orgs, projects, pr
   `cluster_name` / `canary_cluster_name` / `Env::side` / `Org::for_pair` /
   `Org::for_pool` / `Org::cluster_for_env`: a pooled org places every env on its
   pool; a dedicated org's env lives on `<org>-<owner(policy)>`. Both the cluster
-  renderer (`wamn-provision`) and `resolve()` derive names from it, so a
+  renderer (`wamn-control-provision`) and `resolve()` derive names from it, so a
   provisioned cluster and a resolved triple always agree.
 - **`ClusterRef`** — a reference (a name) to a CNPG `Cluster`. Derived, no longer
   stored per-org (the retired `prod_cluster`/`dev_cluster`/`canary_cluster`
@@ -209,7 +209,7 @@ Result<(), Issue>` exposes the org-id discipline standalone, for a caller
 
 `deploy/sql/system-schema.sql` persists the model as tables in the **T1 system DB**
 (`wamn_system`, on the cluster `wamn-q3n.2` bootstraps) — the way
-`deploy/sql/catalog-schema.sql` follows `wamn-catalog`. It is a **standalone
+`deploy/sql/catalog-schema.sql` follows `wamn-schema-model`. It is a **standalone
 artifact**, deliberately *not* wired into `deploy/sql/postgres-init.sql` (which builds
 the S2–S6 *tenant-data* fixtures — a different plane entirely).
 
@@ -246,7 +246,7 @@ table set (invariant 3) is exactly what they hold:
   replication-credential Secret **reference**
   (`replication_secret_name`/`_namespace` — invariant 2; the replication
   credential is its own tier above `wamn_app`). The reader service (l5i9.10)
-  deserializes its row (`EventReader` in `wamn-registry`).
+  deserializes its row (`EventReader` in `wamn-control-registry`).
 - **`provisioning`** — `sagas`: a **minimal** exactly-once / resumable saga-state
   table (consumed by `.6` provision-org / `.7`, and by the unified copy's
   `copy` kind — wamn-8df.5's `Quiesce → … → Cutover` pipeline records each step
@@ -283,9 +283,9 @@ column — each killed).
 
 - **`.3`** — the live system-DB tables on the T1 cluster and the four testable
   invariants (DDL + storage), the way `deploy/sql/catalog-schema.sql` followed
-  `wamn-catalog`. **Shipped** — see §Storage schema above (`.3` also folds in a
+  `wamn-schema-model`. **Shipped** — see §Storage schema above (`.3` also folds in a
   minimal provisioning-saga table, its one deliberate step past this model).
-- **`.5`** — amend `wamn-schema` (3.4) `Environment` for the full triple + the
+- **`.5`** — amend `wamn-schema-control` (3.4) `Environment` for the full triple + the
   `canary` env; `.1` defines the triple so `.5` is a clean extension.
 - **`.2`** — the T1 system cluster infrastructure (Helm/IaC).
 - **`.4`** — the fuller platform-plan amendment (routing / 3.4 / 10.x).
@@ -296,7 +296,7 @@ column — each killed).
 ## Build & test
 
 See the `[D6/wamn-q3n.1]` / `[D6/wamn-q3n.3]` blocks in `docs/build-and-test.md`
-for the exact commands (`cargo test -p wamn-registry` + clippy/fmt + the
+for the exact commands (`cargo test -p wamn-control-registry` + clippy/fmt + the
 live-apply gates).
 
 ## References

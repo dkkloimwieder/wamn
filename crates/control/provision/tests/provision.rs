@@ -2,7 +2,7 @@
 //! throwaway Postgres when `WAMN_PROVISION_PG_URL` is set (a **superuser** URL —
 //! `CREATE DATABASE` / `CREATE ROLE` need it, exactly as the CNPG cluster
 //! superuser does in production). Skips cleanly when unset. Shells out to `psql`
-//! (no DB dependency in the crate), the wamn-ddl / wamn-rls / wamn-seed pattern.
+//! (no DB dependency in the crate), the wamn-schema-compiler / wamn-schema-compiler / wamn-schema-compiler pattern.
 //!
 //! It drives the **real** builders and asserts their effects on the live
 //! cluster: the least-privilege role exists, the project database is created,
@@ -14,7 +14,7 @@
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
-use wamn_provision::sql;
+use wamn_control_provision::sql;
 
 #[test]
 fn provisioning_builders_apply_on_postgres() {
@@ -26,7 +26,7 @@ fn provisioning_builders_apply_on_postgres() {
     };
 
     let project = "provtest-a";
-    let db = wamn_provision::database_name(project); // wamn-db-provtest-a
+    let db = wamn_control_provision::database_name(project); // wamn-db-provtest-a
 
     let mut script = String::new();
     // Clean slate (a prior failed run may have left the database).

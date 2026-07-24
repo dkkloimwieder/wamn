@@ -160,7 +160,7 @@ change waits for 0.2.
   ("changed-to") or subscribes to `delete` (delete tenant-scoping needs the old
   image) — WAL cost is paid per table, not universally. Materializer tolerates
   TOAST unchanged-column markers. *Shipped 2026-07-20 (wamn-l5i9.31): the pure
-  reconciler (`wamn_migrate::reconcile_replica_identity`) derives the FULL set
+  reconciler (`wamn_schema_control::reconcile_replica_identity`) derives the FULL set
   from the union of a catalog's registrations across ALL tenants (RI is
   per-TABLE, tables are shared) and emits idempotent `ALTER TABLE … REPLICA
   IDENTITY FULL|DEFAULT`; the `wamn-ctl reconcile-replica-identity` verb executes
@@ -364,7 +364,7 @@ a sync webhook; F4 is born ON the CDC path per its bead note), so the
 platform cutover ships with an empty migrating set and cutbench + the POC-F4
 regression gate (wamn-lxk, now unblocked) carry the evidence. Teardown (§3)
 EXECUTED (wamn-l5i9.19, 2026-07-20): the outbox poller, trigger emission
-(`Migration::outbox_triggers` + the wamn-ddl outbox module), outbox table +
+(`Migration::outbox_triggers` + the wamn-schema-compiler outbox module), outbox table +
 GC, the dispatchbench outbox/prune modes, outboxbench, AND the shadow
 scaffolding (`evt_shadow`, `state: shadow` — removed entirely per owner
 decision, `cdc_live_flows` yield, cutbench, e2ebench) are deleted; row events

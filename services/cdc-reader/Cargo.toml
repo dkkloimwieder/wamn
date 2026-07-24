@@ -22,11 +22,13 @@ futures-util = "0.3"
 pg_walstream = { workspace = true }
 # The draft envelope/subject/Nats-Msg-Id wire contract.
 wamn-event-wire = { path = "../../crates/events/wire" }
+# Canonical PostgreSQL identifier quoting shared with the guest-safe planners.
+wamn-pg-core = { path = "../../crates/platform/pg-core" }
 # registry.event_readers registration lookup.
-wamn-registry = { path = "../../crates/control/registry" }
+wamn-control-registry = { path = "../../crates/control/registry" }
 
 [dev-dependencies]
 # The event_reader_live gate provisions its fixture env (publication, slot,
 # catalog) through the SR9 verb crate + the pure provisioning builders.
 wamn-ctl = { path = "../ctl" }
-wamn-provision = { path = "../../crates/control/provision" }
+wamn-control-provision = { path = "../../crates/control/provision" }

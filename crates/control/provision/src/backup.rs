@@ -24,7 +24,7 @@
 //! after the cluster exists.
 
 use serde_json::{Value, json};
-use wamn_registry::EnvPolicy;
+use wamn_control_registry::EnvPolicy;
 
 /// The Barman Cloud plugin name a Cluster references (`.spec.plugins[].name`) and
 /// a `Backup`/`ScheduledBackup` targets (`spec.pluginConfiguration.name`).

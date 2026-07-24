@@ -15,7 +15,7 @@ use tokio_postgres::types::ToSql;
 
 use wamn_event_wire::Causation;
 
-use wamn_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
+use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
 
 use super::pool::{
     CheckoutProbe, CredentialProvider, ProjectConfig, ProjectPool, StaticCredentialProvider,
@@ -129,8 +129,8 @@ fn statement_forges_causation(sql: &str) -> bool {
 /// onto every row event regardless of frame order.
 fn causation_emit_sql(c: &Causation) -> String {
     let json = serde_json::to_string(c).expect("Causation serializes to JSON");
-    let escaped = json.replace('\'', "''");
-    format!(" SELECT pg_logical_emit_message(true, 'wamn.causation', '{escaped}');")
+    let literal = wamn_pg_core::quote_literal(&json);
+    format!(" SELECT pg_logical_emit_message(true, 'wamn.causation', {literal});")
 }
 
 /// The fully-bound claim statement run inside the plugin-managed transaction

@@ -59,12 +59,11 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_cdc_reader::{EventReaderArgs, run_with_token};
-use wamn_ddl::{Confirmation, Migration};
-use wamn_gate_harness::check;
-use wamn_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
-use wamn_registry::sql::{
+use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
+use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
+use wamn_gate_harness::check;
 use wamn_run_queue::mint_evt_run_id;
 use wamn_run_worker::{RunWorker, RunnerIdentity};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
@@ -76,6 +75,7 @@ use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };
+use wamn_schema_compiler::{Confirmation, Migration};
 
 use crate::erp_sim::ErpAudit;
 
@@ -164,8 +164,8 @@ const CATALOG_JSON: &str = r#"{
 // Fixtures
 // ---------------------------------------------------------------------------
 
-fn catalog() -> anyhow::Result<wamn_catalog::Catalog> {
-    wamn_catalog::Catalog::from_json(CATALOG_JSON)
+fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
+    wamn_schema_model::Catalog::from_json(CATALOG_JSON)
         .map_err(|e| anyhow::anyhow!("f4proof catalog parse: {e}"))
 }
 
@@ -473,7 +473,7 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
         .await
         .context("project row")?;
     db.execute(
-        wamn_registry::sql::stamp_env_policy_sql(),
+        wamn_control_registry::sql::stamp_env_policy_sql(),
         &[
             &ORG,
             &ENV,

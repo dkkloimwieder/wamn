@@ -21,7 +21,7 @@ use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::copy_project_env::{self, CopyProjectEnvArgs, IncludeArg};
 
-use wamn_provision::project_env_database_name;
+use wamn_control_provision::project_env_database_name;
 
 const RUN_STATE: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS: &str = include_str!("../../../deploy/sql/flows.sql");

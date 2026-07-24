@@ -28,7 +28,7 @@
 //! topology.
 
 use serde_json::{Value, json};
-use wamn_registry::Triple;
+use wamn_control_registry::Triple;
 
 use crate::backup::{MINIO_ENDPOINT, OBJECT_STORE_SECRET};
 use crate::name::project_env_secret_name;
@@ -52,12 +52,12 @@ pub const DUMP_FORMAT: &str = "directory";
 /// Max length (bytes) of a dump CronJob / Job resource name. A CronJob appends a
 /// `-<timestamp>` (≈11 chars) to the Jobs it creates, which must stay within the
 /// 63-byte Job-name limit — so the CronJob name is bounded tighter than a plain
-/// resource (the pattern behind [`crate::name::validate_project_env`]).
+/// resource (the pattern behind [`crate::validate_project_env`]).
 pub const MAX_DUMP_RESOURCE_NAME_LEN: usize = 52;
 
 /// The dump CronJob / Job resource name for a project-env: `wamn-dump-<org>--
 /// <project>--<env>`. Under the platform-reserved `wamn` prefix (wamn-66x); the
-/// `--` separator matches the db/Secret naming ([`crate::name`]). Validate its
+/// `--` separator matches the db/Secret naming convention. Validate its
 /// length with [`validate_dump_resource_name`] before rendering a CronJob.
 pub fn dump_resource_name(triple: &Triple) -> String {
     format!(
@@ -256,7 +256,7 @@ fn dump_pod_spec(triple: &Triple, bucket: &str) -> Value {
 }
 
 /// Render the scheduled-dump **CronJob** for a project-env. `schedule` is the
-/// tier cadence ([`dump_schedule`]); `bucket` is the object-store bucket. The
+/// configured cadence ([`DEFAULT_DUMP_SCHEDULE`]); `bucket` is the object-store bucket. The
 /// dump connects via the project-env credential Secret, so the target cluster is
 /// not named here (it is embedded in the Secret's URL host). `concurrencyPolicy:
 /// Forbid` — dumps never overlap.

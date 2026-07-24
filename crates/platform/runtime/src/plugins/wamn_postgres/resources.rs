@@ -241,7 +241,7 @@ fn record_query_ms(op: &'static str, project: &str, elapsed: std::time::Duration
 /// global `tracing` subscriber, which the fork's `initialize_observability`
 /// bridges to OTel and exports over OTLP when `OTEL_*` is set — so the span
 /// nests under whatever span is current (a request handler, or a
-/// [`crate::dispatch::trigger_span`]) and threads into that trace. Enriching a
+/// `wamn-dispatcher::trigger_span`) and threads into that trace. Enriching a
 /// host-created span keeps 9.1 wamn-side (no fork patch); `run_id`/`node_id`
 /// enrichment on this span awaits the 9.2 guest→host run-context contract.
 fn db_span(plugin: &WamnPostgres, component_id: &str, op: &'static str) -> tracing::Span {

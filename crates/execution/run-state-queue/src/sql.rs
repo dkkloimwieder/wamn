@@ -1,5 +1,5 @@
 //! The parameterized SQL the driver executes — pure `String` builders, the same
-//! discipline as `wamn-ddl`/`wamn-api`: table/column identifiers are static
+//! discipline as `wamn-schema-compiler`/`wamn-api`: table/column identifiers are static
 //! literals (no user input, nothing to quote), every runtime value is a `$n`
 //! placeholder the driver binds, and every instant is server-side `now()` (the
 //! crate reads no clock). Table names are UNQUALIFIED — resolved via the session
@@ -13,8 +13,8 @@
 //! (`$n::bigint * interval '1 millisecond'`).
 
 use crate::model::PartitionPolicy;
+use wamn_pg_core::Sql;
 use wamn_run_store::RunStatus;
-use wamn_sql::Sql;
 
 /// The D15 write-ahead run row: a `dispatched` run persisted *before* the runner
 /// picks it up (the janitor later reconciles one that never reports back).
@@ -246,7 +246,7 @@ pub fn claim_dispatch_sql() -> String {
 /// (`$2` result_json). Also strictly better than the split pair: completion and
 /// queue removal are now atomic, so no crash window leaves a completed run
 /// enqueued. The dequeue tail shares `$1` and appends NO new param, so the
-/// composed arity is exactly the head's ([`wamn_sql::Sql`], SR11).
+/// composed arity is exactly the head's ([`wamn_pg_core::Sql`], SR11).
 ///
 /// SR12 (composed statement): the pure tests pin the text and the shared-bind
 /// arithmetic; they cannot observe the single-statement CTE data-modification

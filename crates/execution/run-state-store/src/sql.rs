@@ -15,7 +15,7 @@
 //! This module is guest-compilable by construction: `String` builders only,
 //! no DB driver, no clock, no tokio in the dependency closure.
 
-use wamn_sql::Sql;
+use wamn_pg_core::Sql;
 
 use crate::status::{NodeRunStatus, RunStatus};
 

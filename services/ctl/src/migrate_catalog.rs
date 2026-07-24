@@ -1,10 +1,10 @@
 //! The `migrate-catalog` subcommand (2.5): the **effect shell** for the
-//! `wamn-migrate` engine — it reads the current applied catalog from a project
+//! `wamn-schema-control` engine — it reads the current applied catalog from a project
 //! database, calls the pure planner, and executes the resulting one-transaction
 //! [`ApplyPlan`] (DDL + the lifecycle advance + the history row).
 //!
-//! The engine ([`wamn_migrate`]) is pure (guards, DDL via wamn-ddl, the
-//! lifecycle via wamn-schema, `$n`-parameterized SQL); this shell holds the
+//! The engine ([`wamn_schema_control`]) is pure (guards, DDL via wamn-schema-compiler, the
+//! lifecycle via wamn-schema-control, `$n`-parameterized SQL); this shell holds the
 //! connection. Two modes:
 //!
 //! * `--dry-run` — read + plan + print the report (DDL + rollback) and run the
@@ -25,7 +25,7 @@ use clap::Args;
 use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
 
-use wamn_migrate::{
+use wamn_schema_control::{
     Catalog, Confirmation, Env, MigrationError, MigrationRequest, Value, dry_run, plan_migration,
     sql,
 };
@@ -285,7 +285,7 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
 /// Outcome of applying a target catalog against a live database.
 pub(crate) enum ApplyOutcome {
     /// The migration ran (the executed plan, with its versions/warnings).
-    Applied(wamn_migrate::ApplyPlan),
+    Applied(wamn_schema_control::ApplyPlan),
     /// The target version is already the applied version — nothing to do. The
     /// caller decides whether that is an error (`migrate-catalog`) or an
     /// idempotent skip (the copy driver's re-copy).

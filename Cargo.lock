@@ -1088,7 +1088,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2072,7 +2072,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2718,7 +2718,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3008,7 +3008,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3077,7 +3077,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3524,10 +3524,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4142,9 +4142,10 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-postgres",
- "wamn-catalog",
- "wamn-ddl",
+ "wamn-entity-access",
  "wamn-event-reg",
+ "wamn-pg-core",
+ "wamn-schema-model",
 ]
 
 [[package]]
@@ -4176,16 +4177,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-catalog"
-version = "0.1.0"
-dependencies = [
- "boon",
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "wamn-cdc-reader"
 version = "0.1.0"
 dependencies = [
@@ -4201,10 +4192,11 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "tracing-subscriber",
+ "wamn-control-provision",
+ "wamn-control-registry",
  "wamn-ctl",
  "wamn-event-wire",
- "wamn-provision",
- "wamn-registry",
+ "wamn-pg-core",
 ]
 
 [[package]]
@@ -4222,6 +4214,23 @@ name = "wamn-component-policy"
 version = "0.1.0"
 
 [[package]]
+name = "wamn-control-provision"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wamn-control-registry",
+ "wamn-pg-core",
+]
+
+[[package]]
+name = "wamn-control-registry"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "wamn-ctl"
 version = "0.1.0"
 dependencies = [
@@ -4232,25 +4241,14 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "tracing-subscriber",
- "wamn-catalog",
- "wamn-ddl",
+ "wamn-control-provision",
+ "wamn-control-registry",
  "wamn-flow",
- "wamn-impact",
- "wamn-migrate",
- "wamn-provision",
- "wamn-registry",
- "wamn-rls",
  "wamn-run-store",
- "wamn-seed",
+ "wamn-schema-compiler",
+ "wamn-schema-control",
+ "wamn-schema-model",
  "wamn-testkit",
-]
-
-[[package]]
-name = "wamn-ddl"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-catalog",
 ]
 
 [[package]]
@@ -4270,8 +4268,8 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "tracing-subscriber",
+ "wamn-control-registry",
  "wamn-flow",
- "wamn-registry",
  "wamn-run-queue",
 ]
 
@@ -4280,11 +4278,19 @@ name = "wamn-dm1"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wamn-catalog",
- "wamn-migrate",
- "wamn-rls",
- "wamn-seed",
- "wamn-sysschema",
+ "wamn-project-state",
+ "wamn-schema-compiler",
+ "wamn-schema-control",
+ "wamn-schema-model",
+]
+
+[[package]]
+name = "wamn-entity-access"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wamn-pg-core",
+ "wamn-schema-model",
 ]
 
 [[package]]
@@ -4294,8 +4300,8 @@ dependencies = [
  "jmespath",
  "serde",
  "serde_json",
- "wamn-catalog",
  "wamn-event-wire",
+ "wamn-schema-model",
 ]
 
 [[package]]
@@ -4368,11 +4374,11 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
- "wamn-catalog",
  "wamn-cdc-reader",
  "wamn-component-policy",
+ "wamn-control-provision",
+ "wamn-control-registry",
  "wamn-ctl",
- "wamn-ddl",
  "wamn-dispatcher",
  "wamn-event-reg",
  "wamn-event-wire",
@@ -4382,14 +4388,13 @@ dependencies = [
  "wamn-node-invoke",
  "wamn-node-manifest",
  "wamn-node-runtime",
- "wamn-provision",
- "wamn-registry",
  "wamn-run-queue",
  "wamn-run-store",
  "wamn-run-worker",
  "wamn-runner",
  "wamn-runtime",
- "wamn-seed",
+ "wamn-schema-compiler",
+ "wamn-schema-model",
  "wamn-testkit",
  "wamn-waker",
  "wash-runtime",
@@ -4412,16 +4417,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-impact"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-catalog",
- "wamn-ddl",
- "wamn-flow",
-]
-
-[[package]]
 name = "wamn-materializer"
 version = "0.1.0"
 dependencies = [
@@ -4433,16 +4428,6 @@ dependencies = [
  "wamn-event-wire",
  "wamn-flow",
  "wamn-run-queue",
-]
-
-[[package]]
-name = "wamn-migrate"
-version = "0.1.0"
-dependencies = [
- "wamn-catalog",
- "wamn-ddl",
- "wamn-event-reg",
- "wamn-schema",
 ]
 
 [[package]]
@@ -4516,40 +4501,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-nodes"
+name = "wamn-pg-core"
 version = "0.1.0"
 dependencies = [
- "jmespath",
- "serde_json",
- "wamn-api",
- "wamn-node-sdk",
-]
-
-[[package]]
-name = "wamn-provision"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-ddl",
- "wamn-registry",
-]
-
-[[package]]
-name = "wamn-registry"
-version = "0.1.0"
-dependencies = [
- "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "wamn-rls"
+name = "wamn-project-state"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
- "wamn-catalog",
- "wamn-ddl",
+ "wamn-schema-compiler",
+ "wamn-schema-model",
 ]
 
 [[package]]
@@ -4560,8 +4523,8 @@ dependencies = [
  "croner",
  "serde",
  "serde_json",
+ "wamn-pg-core",
  "wamn-run-store",
- "wamn-sql",
 ]
 
 [[package]]
@@ -4571,8 +4534,8 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-flow",
+ "wamn-pg-core",
  "wamn-runner",
- "wamn-sql",
 ]
 
 [[package]]
@@ -4588,8 +4551,8 @@ dependencies = [
  "opentelemetry",
  "tokio",
  "tracing",
- "wamn-host",
  "wamn-run-queue",
+ "wamn-runtime",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
@@ -4625,8 +4588,9 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "wamn-component-policy",
+ "wamn-control-registry",
  "wamn-event-wire",
- "wamn-registry",
+ "wamn-pg-core",
  "wamn-testkit",
  "wash-runtime",
  "wasmtime-wasi",
@@ -4634,36 +4598,48 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-schema"
-version = "0.1.0"
-dependencies = [
- "wamn-catalog",
- "wamn-ddl",
- "wamn-registry",
-]
-
-[[package]]
-name = "wamn-seed"
+name = "wamn-schema-compiler"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
  "uuid",
- "wamn-catalog",
- "wamn-ddl",
+ "wamn-pg-core",
+ "wamn-schema-model",
 ]
 
 [[package]]
-name = "wamn-sql"
-version = "0.1.0"
-
-[[package]]
-name = "wamn-sysschema"
+name = "wamn-schema-control"
 version = "0.1.0"
 dependencies = [
- "wamn-catalog",
- "wamn-ddl",
- "wamn-rls",
+ "serde_json",
+ "wamn-control-registry",
+ "wamn-event-reg",
+ "wamn-flow",
+ "wamn-schema-compiler",
+ "wamn-schema-model",
+]
+
+[[package]]
+name = "wamn-schema-model"
+version = "0.1.0"
+dependencies = [
+ "boon",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "wamn-standard-nodes"
+version = "0.1.0"
+dependencies = [
+ "jmespath",
+ "serde_json",
+ "wamn-entity-access",
+ "wamn-node-sdk",
+ "wamn-pg-core",
+ "wamn-schema-model",
 ]
 
 [[package]]
@@ -5354,7 +5330,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

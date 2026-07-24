@@ -132,7 +132,7 @@ fn registration_json(
         registration_id: registration_id.to_string(),
         catalog_id: "matcat".to_string(),
         flow_id: flow_id.to_string(),
-        entity: wamn_catalog::EntityId::from(ENTITY),
+        entity: wamn_schema_model::EntityId::from(ENTITY),
         ops,
         condition: condition.map(str::to_string),
         partition_key: partition_key.map(str::to_string),

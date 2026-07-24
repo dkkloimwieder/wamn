@@ -5,7 +5,7 @@
 //! palette with no instantiation. This crate is the annotation's canonical
 //! model: types, structural validation, import/export, and the generated
 //! language-neutral JSON Schema (`docs/wamn-node-manifest.schema.json`, the
-//! wamn-flow/wamn-catalog pattern).
+//! wamn-flow/wamn-schema-model pattern).
 //!
 //! Consumers: the builder (5.5) writes the annotation at push; the designer /
 //! flow editor (3.3/5.8) scans it for the palette; the runner validates node

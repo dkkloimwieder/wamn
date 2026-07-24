@@ -5,7 +5,7 @@
 //! `wal_level=logical` Postgres (recipe: docs/build-and-test.md
 //! [EVT-REPLICA-IDENT]); skipped cleanly when unset. Drives the REAL reconcile
 //! path (`reconcile_replica_identity::reconcile`) against the REAL floor DDL
-//! (`wamn_ddl::Migration::create`) + the REAL registration storage
+//! (`wamn_schema_compiler::Migration::create`) + the REAL registration storage
 //! (deploy/sql/catalog-schema.sql), proving:
 //!
 //! 1. **relreplident transitions** — an entity with an old-image / delete
@@ -26,8 +26,8 @@
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::reconcile_replica_identity::reconcile;
-use wamn_ddl::{Confirmation, Migration};
-use wamn_migrate::ReplicaIdentity;
+use wamn_schema_compiler::{Confirmation, Migration};
+use wamn_schema_control::ReplicaIdentity;
 
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const DATA_SCHEMA: &str = "ri_data";
@@ -48,8 +48,8 @@ const CATALOG_JSON: &str = r#"{
   ]
 }"#;
 
-fn catalog() -> wamn_catalog::Catalog {
-    wamn_catalog::Catalog::from_json(CATALOG_JSON).expect("catalog parses")
+fn catalog() -> wamn_schema_model::Catalog {
+    wamn_schema_model::Catalog::from_json(CATALOG_JSON).expect("catalog parses")
 }
 
 async fn connect(url: &str) -> Client {

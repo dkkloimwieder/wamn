@@ -6,7 +6,7 @@
 //!
 //! Provisions an EPHEMERAL schema (`wamn_f1_bench`) through the SUPERUSER url
 //! using the SAME code path production provisioning uses (`publish-catalog`:
-//! floor + run-state + flow registry + snapshot + wamn-seed dataset + flow
+//! floor + run-state + flow registry + snapshot + wamn-schema-compiler dataset + flow
 //! registration), so the provisioning flags are gated here too.
 //!
 //! Modes:
@@ -300,7 +300,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .await
             .context("write snapshot")?;
 
-        // Business seed (wamn-seed) + the registered/active F1 flow.
+        // Business seed (wamn-schema-compiler) + the registered/active F1 flow.
         let seed = publish_catalog::seed_dataset_sql(F1_SEED_JSON, &f1fixture::catalog()?, F1_TENANT)?;
         client.batch_execute(&seed).await.context("apply seed")?;
         // Register TWICE: the second call exercises the deactivate-prior +

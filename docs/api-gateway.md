@@ -7,7 +7,9 @@ surface over the tables the **DDL compiler** (3.2) generates. A request becomes
 the row-set is shaped back into JSON.
 
 - **Issue:** wamn-759 `[4.1]`; **Epic:** E4 Generated API.
-- **Crate:** `crates/data/entity-access` — the pure gateway logic (no host, no DB, no Wasm).
+- **Crates:** `crates/data/entity-access` — the transport-neutral planner and
+  row shaping; `crates/data/api` — the HTTP/event-registration adapter. Both
+  are pure (no host, no DB, no Wasm).
 - **Component:** `components/ingress/api-gateway` — the `wasi:http` ⇆ `wamn:postgres` shell.
 - **Gate:** `wamn-gates apibench` — drives the component end to end against Postgres.
 - **Consumers:** POC-F1 (the hold queue / disposition / ERP receipt flows), the
@@ -61,7 +63,7 @@ decimal, enum not a variant), is rejected `4xx` **before any SQL is built**.
   returns `(sql_template, params)`; a `ParamBuilder` keeps placeholder numbers in
   lockstep with the parameter vector.
 - **Identifiers are always catalog-allowlisted.** Every table/column/relation
-  name comes from the catalog and is quoted with `wamn_ddl::sql::quote_ident`
+  name comes from the catalog and is quoted with `wamn_pg_core::quote_ident`
   (the single quoting source of truth). A request string that does not resolve to
   a catalog field/relation never becomes an identifier.
 - **Tenant isolation is the database's job.** Every query runs under the injected
@@ -117,8 +119,9 @@ caps page size); the in-process invocation path (4.7).
 ## Verification
 
 ```sh
-cargo test -p wamn-api
-cargo clippy -p wamn-api --all-targets && cargo fmt -p wamn-api --check
+cargo test -p wamn-entity-access -p wamn-api
+cargo clippy -p wamn-entity-access -p wamn-api --all-targets \
+  && cargo fmt -p wamn-entity-access -p wamn-api --check
 ```
 
 The crate tests assert the emitted SQL + params over the POC catalog (CRUD
@@ -237,5 +240,5 @@ a single default project (per-project provisioning is 2.3/10.x).
 
 - Plan: `docs/platform-plan.md` §Epic 4 (4.1), §POC (POC-F1).
 - Catalog model (routes/columns/types): `docs/catalog-model.md`, `crates/schema/model`.
-- Tenant floor (the target tables): `docs/ddl-compiler.md`, `crates/schema/ddl-compiler`.
+- Tenant floor (the target tables): `docs/ddl-compiler.md`, `crates/schema/compiler`.
 - Data path: `docs/wamn-postgres.wit`, the S2/2.2 plugin.

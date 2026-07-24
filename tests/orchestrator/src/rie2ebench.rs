@@ -17,7 +17,7 @@
 //! carries.
 //!
 //! ONE FULL-flipped entity (`dispositions`), ONE delete-subscribed flow
-//! (`disp-del`). Floor-entity PKs are a bare `id uuid` (wamn-ddl `emit.rs`), so a
+//! (`disp-del`). Floor-entity PKs are a bare `id uuid` (wamn-schema-compiler `emit.rs`), so a
 //! DELETE under REPLICA IDENTITY DEFAULT carries a key-only old image WITHOUT
 //! `tenant_id`:
 //!   1. pre-flip DELETE (RI DEFAULT) → the reader decodes a key-only old image →
@@ -36,7 +36,7 @@
 //! Recipe facts honored (mined from the archived cutbench, git `f0cebca^`):
 //!   * OWN throwaway Postgres WITH `wal_level=logical` + a throwaway JetStream —
 //!     the shared fixture recipe does not apply; this gate owns its DB and slot.
-//!   * provisioning order: the `wamn-provision` SQL builders + `wamn-registry`
+//!   * provisioning order: the `wamn-control-provision` SQL builders + `wamn-control-registry`
 //!     upserts FIRST, the replication slot LAST, so provisioning + seed writes
 //!     stay UNCAPTURED and the stream holds ONLY the two deletes.
 //!   * an idle `pg_walstream` flushes feedback only on the ~30s keepalive — the
@@ -69,9 +69,8 @@ use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use wamn_cdc_reader::{EventReaderArgs, run_with_token};
-use wamn_ddl::{Confirmation, Migration};
-use wamn_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
-use wamn_registry::sql::{
+use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
+use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
 use wamn_run_queue::mint_evt_run_id;
@@ -82,6 +81,7 @@ use wamn_runtime::plugins::wamn_jetstream::{
 use wamn_runtime::plugins::wamn_postgres::{
     self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };
+use wamn_schema_compiler::{Confirmation, Migration};
 
 #[derive(Debug, Args)]
 pub struct Rie2eBenchArgs {
@@ -123,7 +123,7 @@ const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 /// The fixture catalog: one entity (`evt_disp` → `dispositions`) with a single
-/// text column. The floor's PK is the managed bare `id uuid` (wamn-ddl), so a
+/// text column. The floor's PK is the managed bare `id uuid` (wamn-schema-compiler), so a
 /// DELETE under RI DEFAULT carries a key-only old image (no `tenant_id`).
 const CATALOG_JSON: &str = r#"{
   "schema-version": "0.1",
@@ -140,8 +140,8 @@ const CATALOG_JSON: &str = r#"{
 // Fixtures
 // ---------------------------------------------------------------------------
 
-fn catalog() -> anyhow::Result<wamn_catalog::Catalog> {
-    wamn_catalog::Catalog::from_json(CATALOG_JSON)
+fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
+    wamn_schema_model::Catalog::from_json(CATALOG_JSON)
         .map_err(|e| anyhow::anyhow!("rie2ebench catalog parse: {e}"))
 }
 
@@ -409,7 +409,7 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
         .await
         .context("project row")?;
     db.execute(
-        wamn_registry::sql::stamp_env_policy_sql(),
+        wamn_control_registry::sql::stamp_env_policy_sql(),
         &[
             &ORG,
             &ENV,

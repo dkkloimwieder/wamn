@@ -15,7 +15,7 @@
 //! waits ready. This crate is pure — no K8s client.
 
 use serde_json::{Value, json};
-use wamn_registry::Triple;
+use wamn_control_registry::Triple;
 
 use crate::name::{APP_ROLE, project_env_database_name};
 
@@ -29,7 +29,7 @@ const NAMESPACE: &str = "wamn-system";
 /// * `triple` — the `(org, project, env)` identity. The database and K8s resource
 ///   name is `wamn-db-<org>--<project>--<env>` ([`project_env_database_name`]).
 /// * `cluster` — the target CNPG `Cluster` name, chosen by the caller from the
-///   org's placement via [`cluster_of`](wamn_registry::cluster_of) (D18): a
+///   org's placement via [`cluster_of`](wamn_control_registry::cluster_of) (D18): a
 ///   dedicated org's `<org>-<owner(env)>`, or the shared pool for a pooled org.
 /// * `connection_limit` — the per-project-env `CONNECTION LIMIT`
 ///   (noisy-neighbour governance *within* a cluster); `None` ⇒ no limit (`-1`).

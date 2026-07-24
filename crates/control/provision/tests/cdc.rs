@@ -14,7 +14,7 @@
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
-use wamn_provision::{cdc_object_name, project_env_database_name, sql};
+use wamn_control_provision::{cdc_object_name, project_env_database_name, sql};
 
 /// Swap the database path segment of a libpq URL (the test controls the URL —
 /// no query string).

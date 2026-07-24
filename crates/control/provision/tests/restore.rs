@@ -1,8 +1,8 @@
 //! Live round-trip gate for the per-project-env RESTORE path (wamn-q3n.11).
 //!
 //! The restore counterpart of `tests/dump.rs`. Two proofs, both driving the REAL
-//! [`wamn_provision::pg_restore_argv`] builder against a `pg_dump -Fd` artifact
-//! produced by the REAL [`wamn_provision::pg_dump_argv`]:
+//! [`wamn_control_provision::pg_restore_argv`] builder against a `pg_dump -Fd` artifact
+//! produced by the REAL [`wamn_control_provision::pg_dump_argv`]:
 //!
 //! 1. **scratch restore** (`clean = false`): seed a database, dump it, restore into
 //!    a fresh scratch database, assert the rows survive — the non-destructive
@@ -13,12 +13,12 @@
 //!
 //! Set `WAMN_RESTORE_PG_URL` to a **superuser** URL (it CREATEs/DROPs throwaway
 //! databases); skipped cleanly when unset or when the client tools are absent
-//! (the wamn-ddl / dump-gate pattern). The object-store transport is deferred
+//! (the wamn-schema-compiler / dump-gate pattern). The object-store transport is deferred
 //! (wamn-e1g); this validates the restore of the artifact, substrate-independent.
 
 use std::process::Command as Proc;
 
-use wamn_provision::{pg_dump_argv, pg_restore_argv};
+use wamn_control_provision::{pg_dump_argv, pg_restore_argv};
 
 const SRC_DB: &str = "wamn_restore_src_test";
 const SCRATCH_DB: &str = "wamn_restore_scratch_test";

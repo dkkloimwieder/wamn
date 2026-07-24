@@ -3,7 +3,7 @@
 //! reference), including the D18 recovery-domain cluster derivation and the
 //! wamn-8df.4 org-scoped policies (templates; T2/T4 coexistence).
 
-use wamn_registry::{
+use wamn_control_registry::{
     ClusterRef, EventReader, Org, Project, ProjectEnv, RecoveryDomain, Registry, RegistryError,
     SecretRef, Template, Triple,
 };

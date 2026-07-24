@@ -58,6 +58,7 @@ pub mod org;
 pub mod restore;
 pub mod secret;
 pub mod sql;
+pub mod state;
 
 pub use backup::{
     BACKUP_PLUGIN_NAME, MINIO_ENDPOINT, OBJECT_STORE_SECRET, WAL_BUCKET, cluster_backup_plugin,

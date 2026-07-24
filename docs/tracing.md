@@ -87,7 +87,7 @@ one, **host-enforced**:
 - **SDK propagation helper.** `RunContext::trace_headers()` /
   `apply_trace_context()` (`wamn-node-sdk`) return the active `traceparent` /
   `tracestate` as header pairs, and the standard `http-request` node
-  (`wamn-nodes`) forwards them onto the outbound request it builds (a config
+  (`wamn-standard-nodes`) forwards them onto the outbound request it builds (a config
   header of the same name still wins). The host inject makes this
   belt-and-braces for continuity; it keeps `traceparent` present on the node's
   own request and lets a node correlate on it.

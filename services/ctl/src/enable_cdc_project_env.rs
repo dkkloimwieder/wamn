@@ -39,12 +39,12 @@ use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use wamn_provision::{
+use wamn_control_provision::{
     cdc_object_name, compose_url, event_stream_name, project_env_cdc_secret_name,
     project_env_database_name, render_project_env_cdc_secret_manifest, sql,
     validate_project_env_cdc,
 };
-use wamn_registry::Triple;
+use wamn_control_registry::Triple;
 
 #[derive(Debug, Args)]
 pub struct EnableCdcProjectEnvArgs {
@@ -238,7 +238,7 @@ fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
 
 /// Record the CDC reader registration in the registry (idempotent + refreshing).
 /// Connects as superuser and `SET ROLE wamn_system` (the registry owner), then
-/// runs the pure `wamn-registry` builder. The publication and slot share
+/// runs the pure `wamn-control-registry` builder. The publication and slot share
 /// `cdc_name`.
 async fn record_event_reader(
     system_url: &str,
@@ -260,7 +260,7 @@ async fn record_event_reader(
         let env = triple.env.as_str();
         client
             .execute(
-                wamn_registry::sql::upsert_event_reader_sql(),
+                wamn_control_registry::sql::upsert_event_reader_sql(),
                 &[
                     &triple.org,
                     &triple.project,

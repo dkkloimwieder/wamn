@@ -20,7 +20,7 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     // Before the tokio runtime exists — the fork's per-store limiter reads it.
-    wamn_host::advertise_memory_ceiling();
+    wamn_runtime::advertise_memory_ceiling();
     async_main()
 }
 

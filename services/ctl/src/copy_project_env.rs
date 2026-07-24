@@ -2,7 +2,7 @@
 //! **copy** between two `(org, project, env)` triples — deploy / promote /
 //! clone / move in one operation (`docs/deployment-model.md` §4).
 //!
-//! The plan comes from the pure [`wamn_provision::plan_copy`]; this driver holds
+//! The plan comes from the pure [`wamn_control_provision::plan_copy`]; this driver holds
 //! the connections and executes each [`CopyStep`] by composing the shipped
 //! machinery:
 //!
@@ -47,13 +47,13 @@ use clap::{Args, ValueEnum};
 use tokio_postgres::NoTls;
 use tokio_postgres::error::SqlState;
 
-use wamn_provision::{
+use wamn_control_provision::{
     COPY_SAGA_KIND, CopyInclude, CopyMode, CopyRequest, CopyScope, CopyStep, count_rows_sql,
     dump_object_key, list_schema_tables_sql, pg_dump_argv, pg_restore_data_only_argv, plan_copy,
     project_env_database_name, quiesce_database_sql, sql as provision_sql,
     terminate_database_backends_sql, unquiesce_database_sql, validate_project_env,
 };
-use wamn_registry::Triple;
+use wamn_control_registry::Triple;
 
 use crate::migrate_catalog::{ApplyOutcome, apply_catalog_target, is_bare_ident};
 use crate::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
@@ -432,13 +432,13 @@ async fn exec_snapshot(
         let env = src.env.as_str();
         r.client
             .execute(
-                wamn_registry::sql::record_dump_sql(),
+                wamn_control_provision::state::record_dump_sql(),
                 &[
                     &src.org,
                     &src.project,
                     &env,
                     &object_key,
-                    &wamn_provision::dump::DUMP_FORMAT,
+                    &wamn_control_provision::dump::DUMP_FORMAT,
                     &byte_size,
                 ],
             )
@@ -496,7 +496,7 @@ async fn exec_copy_definition(
     let dst_env = ctx.args.dst_env.as_str();
     let rows = src_client
         .query(
-            &wamn_migrate::sql::select_applied_catalogs_sql(),
+            &wamn_schema_control::sql::select_applied_catalogs_sql(),
             &[&tenant, &src_env],
         )
         .await
@@ -508,7 +508,7 @@ async fn exec_copy_definition(
         let doc = doc.with_context(|| {
             format!("applied catalog {catalog_id:?} has no stored document (a pre-2.5 row?)")
         })?;
-        let cat = wamn_migrate::Catalog::from_json(&doc)
+        let cat = wamn_schema_control::Catalog::from_json(&doc)
             .with_context(|| format!("parse applied catalog {catalog_id:?}"))?;
         catalogs.push(cat);
     }
@@ -516,9 +516,9 @@ async fn exec_copy_definition(
         println!("  no applied catalogs for tenant {tenant:?} in the src env");
     }
     let confirm = if ctx.args.confirm_with_backup {
-        wamn_migrate::Confirmation::ConfirmedWithBackup
+        wamn_schema_control::Confirmation::ConfirmedWithBackup
     } else {
-        wamn_migrate::Confirmation::None
+        wamn_schema_control::Confirmation::None
     };
     for cat in &catalogs {
         match apply_catalog_target(
@@ -779,7 +779,7 @@ async fn exec_copy_definition(
 /// src's suites (scoped to `tenant`) and the `(flow_id, version)` pairs the copy
 /// will make present — the UNION of the src flow registry (block 2 installs it)
 /// and the dst's existing flows — then runs the pure
-/// [`wamn_migrate::check_suite_orphans`]. A src without the `test_suites` table
+/// [`wamn_schema_control::check_suite_orphans`]. A src without the `test_suites` table
 /// (never provisioned for suites) has nothing to orphan: a clean pass. Read-only.
 async fn guard_suite_orphans(
     src: &tokio_postgres::Client,
@@ -797,13 +797,13 @@ async fn guard_suite_orphans(
     if src_has_suites.is_none() {
         return Ok(());
     }
-    let suites_sql = wamn_migrate::sql::select_suites_for_tenant_sql(flow_schema);
-    let referenced: Vec<wamn_migrate::SuiteRef> = src
+    let suites_sql = wamn_schema_control::sql::select_suites_for_tenant_sql(flow_schema);
+    let referenced: Vec<wamn_schema_control::SuiteRef> = src
         .query(&suites_sql, &[&tenant])
         .await
         .context("read src test suites for the suite-orphan guard")?
         .iter()
-        .map(|row| wamn_migrate::SuiteRef {
+        .map(|row| wamn_schema_control::SuiteRef {
             suite_id: row.get(0),
             tenant: row.get(1),
             flow_id: row.get(2),
@@ -815,7 +815,7 @@ async fn guard_suite_orphans(
     }
     // The versions the destination WILL hold: src flows (block 2 copies them) ∪
     // dst's current flows. A flows table absent on the dst reads as empty.
-    let versions_sql = wamn_migrate::sql::select_flow_versions_for_tenant_sql(flow_schema);
+    let versions_sql = wamn_schema_control::sql::select_flow_versions_for_tenant_sql(flow_schema);
     let mut present: std::collections::BTreeSet<(String, i32)> = std::collections::BTreeSet::new();
     for client in [src, dst] {
         let has_flows: Option<String> = client
@@ -836,7 +836,8 @@ async fn guard_suite_orphans(
             present.insert((row.get(0), row.get(1)));
         }
     }
-    wamn_migrate::check_suite_orphans(&present, &referenced).map_err(|e| anyhow::anyhow!("{e}"))
+    wamn_schema_control::check_suite_orphans(&present, &referenced)
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// Re-compile the copied RLS policy rows per catalog and apply the compiled
@@ -846,7 +847,7 @@ async fn guard_suite_orphans(
 async fn apply_rls_policies(
     dst: &tokio_postgres::Client,
     data_schema: &str,
-    catalogs: &[wamn_migrate::Catalog],
+    catalogs: &[wamn_schema_control::Catalog],
     rows: &[tokio_postgres::Row],
 ) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
@@ -869,13 +870,13 @@ async fn apply_rls_policies(
                 format!("RLS policies reference catalog {catalog_id:?}, which is not applied")
             })?;
         let policy_json = serde_json::json!({
-            "schema-version": wamn_rls::SCHEMA_VERSION,
+            "schema-version": wamn_schema_compiler::rls::SCHEMA_VERSION,
             "catalog-id": catalog_id,
             "rules": rules,
         });
-        let policy = wamn_rls::AccessPolicy::from_json(&policy_json.to_string())
+        let policy = wamn_schema_compiler::rls::AccessPolicy::from_json(&policy_json.to_string())
             .with_context(|| format!("assemble the RLS policy set for {catalog_id:?}"))?;
-        let plan = wamn_rls::compile(&policy, cat)
+        let plan = wamn_schema_compiler::rls::compile(&policy, cat)
             .map_err(|e| anyhow::anyhow!("compile RLS policies for {catalog_id:?}: {e}"))?;
         for op in &plan.operations {
             match dst.batch_execute(&op.sql).await {
@@ -965,7 +966,7 @@ async fn exec_verify(
         let tenant = ctx.args.tenant.as_deref().expect("checked upfront");
         let src_env = ctx.args.src_env.as_str();
         let dst_env = ctx.args.dst_env.as_str();
-        let applied = wamn_migrate::sql::select_applied_catalogs_sql();
+        let applied = wamn_schema_control::sql::select_applied_catalogs_sql();
         let src_rows = src_client.query(&applied, &[&tenant, &src_env]).await?;
         let dst_rows = dst_client.query(&applied, &[&tenant, &dst_env]).await?;
         anyhow::ensure!(
@@ -1104,7 +1105,7 @@ impl SagaRecorder {
     async fn create(&self, target: &str, total_steps: i32) -> anyhow::Result<()> {
         self.client
             .execute(
-                wamn_registry::sql::create_saga_sql(),
+                wamn_control_provision::state::create_saga_sql(),
                 &[&self.saga_id, &COPY_SAGA_KIND, &target, &Some(total_steps)],
             )
             .await
@@ -1115,7 +1116,7 @@ impl SagaRecorder {
     async fn advance(&self) -> anyhow::Result<()> {
         self.client
             .execute(
-                wamn_registry::sql::advance_saga_step_sql(),
+                wamn_control_provision::state::advance_saga_step_sql(),
                 &[&self.saga_id],
             )
             .await
@@ -1127,7 +1128,10 @@ impl SagaRecorder {
     async fn state(&self) -> anyhow::Result<(String, i32, Option<i32>)> {
         let row = self
             .client
-            .query_one(wamn_registry::sql::select_saga_sql(), &[&self.saga_id])
+            .query_one(
+                wamn_control_provision::state::select_saga_sql(),
+                &[&self.saga_id],
+            )
             .await
             .context("read the saga state")?;
         Ok((row.get(0), row.get(1), row.get(2)))
@@ -1135,7 +1139,10 @@ impl SagaRecorder {
 
     async fn fail(&self, err: &str) -> anyhow::Result<()> {
         self.client
-            .execute(wamn_registry::sql::fail_saga_sql(), &[&self.saga_id, &err])
+            .execute(
+                wamn_control_provision::state::fail_saga_sql(),
+                &[&self.saga_id, &err],
+            )
             .await
             .context("record the saga failure")?;
         Ok(())
@@ -1143,7 +1150,10 @@ impl SagaRecorder {
 
     async fn complete(&self) -> anyhow::Result<()> {
         self.client
-            .execute(wamn_registry::sql::complete_saga_sql(), &[&self.saga_id])
+            .execute(
+                wamn_control_provision::state::complete_saga_sql(),
+                &[&self.saga_id],
+            )
             .await
             .context("complete the saga")?;
         Ok(())

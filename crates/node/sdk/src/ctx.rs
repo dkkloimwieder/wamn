@@ -155,7 +155,7 @@ pub struct PgRows {
 
 /// Why a Postgres capability call failed. Mirrors the `wamn:postgres`
 /// `pg-error` taxonomy plus `NotGranted`; the node maps these into the node
-/// error taxonomy mechanically (see `wamn-nodes`' classification).
+/// error taxonomy mechanically (see `wamn-standard-nodes`' classification).
 #[derive(Debug, Clone, PartialEq)]
 pub enum PgCapError {
     /// The policy table / grant set does not allow this node the call.

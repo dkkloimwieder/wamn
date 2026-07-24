@@ -59,13 +59,13 @@ use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
-use wamn_host::doubles::{DoubleSet, EgressRecorder};
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::memory_metrics::{self, MemoryMeter};
-use wamn_host::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
-use wamn_host::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
-use wamn_host::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
-use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::doubles::{DoubleSet, EgressRecorder};
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::memory_metrics::{self, MemoryMeter};
+use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
+use wamn_runtime::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
+use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
+use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 /// The fixed unix-epoch second the `--test-doubles virtual` clock starts at, and
 /// the seed for its deterministic `wasi:random`. Constants (not args) so a test
@@ -505,7 +505,7 @@ impl RunWorker {
         // wamn-t92: `Some(doubles)` selects the TEST HOST — the virtual-clock +
         // seeded-random `WasiCtx` and the `EgressRecorder` swapped in for the
         // prod egress handler. This is the ONLY production seam that can inject a
-        // per-workload `WasiCtx` (the washlet host cannot); see `wamn_host::doubles`.
+        // per-workload `WasiCtx` (the washlet host cannot); see `wamn_runtime::doubles`.
         // `None` is the production host, byte-unchanged.
         let ctx = match doubles {
             Some(ds) => builder
@@ -827,7 +827,7 @@ mod tests {
     #[tokio::test]
     async fn register_logging_claim_uses_host_injected_identity() {
         let logging =
-            WamnLogging::new(wamn_host::plugins::wamn_logging::WamnLoggingConfig::default())
+            WamnLogging::new(wamn_runtime::plugins::wamn_logging::WamnLoggingConfig::default())
                 .expect("logging plugin");
         let identity = RunnerIdentity {
             owner: "runner-replica-7",

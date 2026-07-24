@@ -149,7 +149,7 @@ impl WamnJetstream {
     /// from workload bind (`wamn.tenant`); a harness calls it directly.
     pub fn set_tenant(&self, component_id: &str, tenant: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
-            wamn_registry::identifiers::valid_tenant(tenant),
+            wamn_control_registry::identifiers::valid_tenant(tenant),
             "invalid tenant {tenant:?}: 1-64 chars of [A-Za-z0-9_-] required"
         );
         self.tenants

@@ -6,7 +6,7 @@
 //! the CDC event. Two consumers key on the SAME detection so they can never
 //! diverge:
 //!
-//! - the **reconciler** (`wamn_migrate::reconcile_replica_identity`) derives
+//! - the **reconciler** (`wamn_schema_control::reconcile_replica_identity`) derives
 //!   which entities need FULL from the union of their registrations' old-image
 //!   usage (+ delete-op subscription);
 //! - the **materializer** (`wamn_materializer`) guards per event: a condition

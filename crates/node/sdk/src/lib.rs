@@ -11,7 +11,7 @@
 //!
 //! **This crate is the purity boundary** (docs/platform-plan.md 5.3/5.13):
 //! node crates depend on the SDK ONLY — never on `wamn-runner` — enforced by a
-//! dependency lint in `wamn-nodes`, so no node can circumvent the `wamn:node`
+//! dependency lint in `wamn-standard-nodes`, so no node can circumvent the `wamn:node`
 //! interface and silently break the frozen-flow composition path. `wamn-runner`
 //! depends on this crate and re-exports the taxonomy, keeping one definition.
 //!

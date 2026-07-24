@@ -63,7 +63,7 @@ pub use wamn_node_invoke::WireRunContext;
 pub use wamn_run_store::{FailKind, NodeErrorKind, NodeRunStatus, RunStatus};
 
 /// The case-format version this crate implements. Mirrors the
-/// `wamn_catalog::SCHEMA_VERSION` precedent: `0.1.x` is additive/clarifying only;
+/// `wamn_schema_model::SCHEMA_VERSION` precedent: `0.1.x` is additive/clarifying only;
 /// a breaking wire change waits for `0.2`. Carried on every [`TestCase`] so a
 /// stored case (JSON file or catalog jsonb) declares the shape it was written
 /// against.

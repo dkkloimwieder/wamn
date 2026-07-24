@@ -46,7 +46,7 @@
 //! Substrate = the rie2ebench pattern: a gate-owned throwaway DATABASE
 //! (`wamn_ccdc`) on a `wal_level=logical` Postgres — created and dropped WITH
 //! (FORCE), the REAL deploy/sql DDL via `include_str!`, the REAL
-//! wamn-provision/wamn-registry builders, the slot created LAST (provisioning
+//! wamn-control-provision/wamn-control-registry builders, the slot created LAST (provisioning
 //! and seed writes stay uncaptured), and zero residue: teardown ALWAYS runs on
 //! FRESH connections (a switchover kills the provisioning-time connections),
 //! drops the slot, the database (which takes any idle slot with it), the
@@ -68,12 +68,12 @@ use pg_walstream::CancellationToken;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_cdc_reader::{EventReaderArgs, run_with_token};
-use wamn_ddl::{Confirmation, Migration};
-use wamn_gate_harness::{check, emit_csv, percentile};
-use wamn_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
-use wamn_registry::sql::{
+use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
+use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
+use wamn_gate_harness::{check, emit_csv, percentile};
+use wamn_schema_compiler::{Confirmation, Migration};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
@@ -165,8 +165,8 @@ const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const CATALOG_JSON: &str = include_str!("../../../deploy/poc/poc-material-receiving.catalog.json");
 
-fn catalog() -> anyhow::Result<wamn_catalog::Catalog> {
-    wamn_catalog::Catalog::from_json(CATALOG_JSON)
+fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
+    wamn_schema_model::Catalog::from_json(CATALOG_JSON)
         .map_err(|e| anyhow::anyhow!("poc-receiving catalog parse: {e}"))
 }
 
@@ -434,7 +434,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
         .await
         .context("project row")?;
     db.execute(
-        wamn_registry::sql::stamp_env_policy_sql(),
+        wamn_control_registry::sql::stamp_env_policy_sql(),
         &[
             &ORG,
             &ENV,
@@ -487,7 +487,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     db.batch_execute(&provision_sql::ensure_schema_sql("app"))
         .await
         .context("app schema")?;
-    // The floor grants table privileges to wamn_app (wamn-ddl emit); schema
+    // The floor grants table privileges to wamn_app (wamn-schema-compiler emit); schema
     // USAGE comes from the project-provisioning verb in production — grant it
     // here explicitly (the walbench ephemeral-schema precedent).
     db.batch_execute("GRANT USAGE ON SCHEMA app TO wamn_app")

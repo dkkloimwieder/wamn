@@ -1,6 +1,6 @@
 //! Production flow-runner (5.2), grown from the S3 spike and the S6 test-host
 //! spike. The runner is a long-lived component that embeds the standard node
-//! library as NATIVE Rust — since 5.3 the `wamn-nodes` vocabulary, dispatched
+//! library as NATIVE Rust — since 5.3 the `wamn-standard-nodes` vocabulary, dispatched
 //! through the SDK capability facade under the policy table
 //! (docs/node-library.md), beside the S3/S6 fixture node shapes — and walks
 //! the flow graph with the pure `wamn-runner` engine (5.2): the ported-edge
@@ -865,7 +865,7 @@ fn read_response_body(resp: IncomingResponse) -> Result<String, NodeError> {
 }
 
 // ---------------------------------------------------------------------------
-// Standard node library glue (5.3): the wamn-nodes vocabulary dispatches
+// Standard node library glue (5.3): the wamn-standard-nodes vocabulary dispatches
 // through the SHARED capability facade `wamn_node_guest::caps::CapsCtx`
 // (SR2) over this component's real imports — the WIT<->SDK mirrors and the
 // full outbound-HTTP path live there, not here. Egress still leaves the flow

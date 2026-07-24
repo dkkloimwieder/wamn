@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use boon::{Compiler, Schemas};
-use wamn_catalog::Catalog;
+use wamn_schema_model::Catalog;
 
 const FIXTURES: &[&str] = &["poc-receiving.catalog.json", "genealogy.catalog.json"];
 
@@ -52,7 +52,7 @@ fn fixtures_conform_to_published_schema() {
     // The language-neutral contract must accept every example catalog — this
     // ties docs/catalog-model.schema.json to the real models the API/designer
     // will send.
-    let schema = wamn_catalog::json_schema();
+    let schema = wamn_schema_model::json_schema();
     let mut compiler = Compiler::new();
     compiler
         .add_resource("mem://catalog-model.json", schema)
@@ -74,14 +74,14 @@ fn fixtures_conform_to_published_schema() {
 #[test]
 fn committed_schema_matches_types() {
     // Drift guard: regenerate with
-    //   cargo run -p wamn-catalog --example print-schema > docs/catalog-model.schema.json
+    //   cargo run -p wamn-schema-model --example print-schema > docs/catalog-model.schema.json
     let committed = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/catalog-model.schema.json"),
     )
     .expect("read committed schema");
     assert_eq!(
         committed,
-        wamn_catalog::json_schema_string(),
+        wamn_schema_model::json_schema_string(),
         "docs/catalog-model.schema.json is stale — regenerate it (see print-schema example)"
     );
 }
@@ -119,23 +119,23 @@ fn diff_detects_changes() {
             .iter_mut()
             .find(|f| f.id == "quantity")
             .unwrap()
-            .field_type = wamn_catalog::FieldType::Numeric {
+            .field_type = wamn_schema_model::FieldType::Numeric {
             precision: 14,
             scale: 3,
             unit: Some("kg".into()),
         };
     }
     // 3) add a new entity + relation
-    v2.entities.push(wamn_catalog::Entity {
+    v2.entities.push(wamn_schema_model::Entity {
         id: "audit_log".into(),
         name: "audit_log".into(),
         is_system: false,
         label: None,
         description: None,
-        fields: vec![wamn_catalog::Field {
+        fields: vec![wamn_schema_model::Field {
             id: "message".into(),
             name: "message".into(),
-            field_type: wamn_catalog::FieldType::Text { max_len: None },
+            field_type: wamn_schema_model::FieldType::Text { max_len: None },
             nullable: false,
             default: None,
             sensitive: false,
@@ -147,7 +147,7 @@ fn diff_detects_changes() {
         constraints: vec![],
     });
 
-    let d = wamn_catalog::diff(&v1, &v2);
+    let d = wamn_schema_model::diff(&v1, &v2);
     assert!(!d.is_empty());
     assert!(d.entities_added.iter().any(|e| e == "audit_log"));
     assert!(d.entities_removed.is_empty());
@@ -180,5 +180,5 @@ fn diff_detects_changes() {
     );
 
     // A catalog diffed against itself is empty.
-    assert!(wamn_catalog::diff(&v1, &v1).is_empty());
+    assert!(wamn_schema_model::diff(&v1, &v1).is_empty());
 }

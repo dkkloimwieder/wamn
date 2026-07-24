@@ -35,12 +35,13 @@ use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 
-use wamn_provision::{
+use wamn_control_provision::state as provision_state;
+use wamn_control_provision::{
     APP_ROLE, compose_url, database_name, project_env_database_name,
     render_project_env_secret_manifest, secret, sql,
 };
-use wamn_registry::sql as reg_sql;
-use wamn_registry::{Org, OrgEnvPolicy, Template, Triple};
+use wamn_control_registry::sql as reg_sql;
+use wamn_control_registry::{Org, OrgEnvPolicy, Template, Triple};
 use wamn_runtime::plugins::wamn_postgres::{
     CredentialProvider, StaticCredentialProvider, WamnPostgresConfig,
 };
@@ -341,7 +342,7 @@ async fn tier_scenario(
     //    JSON the plugin resolves.
     let mut entries = serde_json::Map::new();
     for spec in envs {
-        wamn_provision::validate_project_env(&org.id, project, spec.env)
+        wamn_control_provision::validate_project_env(&org.id, project, spec.env)
             .map_err(|e| anyhow::anyhow!("project-env name: {e}"))?;
         let db = project_env_database_name(&org.id, project, spec.env);
         provision_env_scaffold(admin_url, &db).await?;
@@ -523,7 +524,7 @@ async fn tier_scenario(
     let total_opt = Some(total);
     admin
         .execute(
-            reg_sql::create_saga_sql(),
+            provision_state::create_saga_sql(),
             &[&saga_id, &saga_kind, &org_id, &total_opt],
         )
         .await
@@ -531,18 +532,18 @@ async fn tier_scenario(
     // A redelivered create is a no-op (exactly-once via the saga_id PK).
     admin
         .execute(
-            reg_sql::create_saga_sql(),
+            provision_state::create_saga_sql(),
             &[&saga_id, &saga_kind, &org_id, &total_opt],
         )
         .await?;
     for _ in envs {
         admin
-            .execute(reg_sql::advance_saga_step_sql(), &[&saga_id])
+            .execute(provision_state::advance_saga_step_sql(), &[&saga_id])
             .await
             .context("advance saga")?;
     }
     admin
-        .execute(reg_sql::complete_saga_sql(), &[&saga_id])
+        .execute(provision_state::complete_saga_sql(), &[&saga_id])
         .await
         .context("complete saga")?;
     let saga_count: i64 = admin
@@ -687,10 +688,16 @@ async fn saga_mode(admin_url: &str) -> anyhow::Result<()> {
     let target = "gate-org";
     let total = Some(2i32);
     client
-        .execute(reg_sql::create_saga_sql(), &[&sid, &kind, &target, &total])
+        .execute(
+            provision_state::create_saga_sql(),
+            &[&sid, &kind, &target, &total],
+        )
         .await?;
     client
-        .execute(reg_sql::create_saga_sql(), &[&sid, &kind, &target, &total])
+        .execute(
+            provision_state::create_saga_sql(),
+            &[&sid, &kind, &target, &total],
+        )
         .await?;
     let n: i64 = client
         .query_one(
@@ -705,10 +712,10 @@ async fn saga_mode(admin_url: &str) -> anyhow::Result<()> {
 
     // Durable step checkpoint: two advances → 2.
     client
-        .execute(reg_sql::advance_saga_step_sql(), &[&sid])
+        .execute(provision_state::advance_saga_step_sql(), &[&sid])
         .await?;
     client
-        .execute(reg_sql::advance_saga_step_sql(), &[&sid])
+        .execute(provision_state::advance_saga_step_sql(), &[&sid])
         .await?;
     let step: i32 = client
         .query_one(
@@ -723,7 +730,7 @@ async fn saga_mode(admin_url: &str) -> anyhow::Result<()> {
 
     // Terminal complete.
     client
-        .execute(reg_sql::complete_saga_sql(), &[&sid])
+        .execute(provision_state::complete_saga_sql(), &[&sid])
         .await?;
     let status: String = client
         .query_one(
@@ -741,12 +748,12 @@ async fn saga_mode(admin_url: &str) -> anyhow::Result<()> {
     let none: Option<i32> = None;
     client
         .execute(
-            reg_sql::create_saga_sql(),
+            provision_state::create_saga_sql(),
             &[&sid2, &"provision-project-env", &"gate-org/app/dev", &none],
         )
         .await?;
     client
-        .execute(reg_sql::fail_saga_sql(), &[&sid2, &"boom"])
+        .execute(provision_state::fail_saga_sql(), &[&sid2, &"boom"])
         .await?;
     let (fstatus, ferr): (String, Option<String>) = {
         let r = client

@@ -11,7 +11,7 @@ checkpoint** — the "additive by default; destructive requires explicit
 confirmation + backup checkpoint" rule (3.2).
 
 - **Issue:** wamn-vbd `[3.2]`; **Epic:** E3 Schema Designer.
-- **Crate:** `crates/schema/ddl-compiler` — consumes `wamn-catalog::{Catalog, diff}`.
+- **Crate:** `crates/schema/compiler` — consumes `wamn-schema-model::{Catalog, diff}`.
 - **Consumers:** POC-DM1 (materialize the model), 3.4 (draft→staged→applied
   lifecycle), 11.8 (schema-impact analysis reads the plan's per-op entity/field
   attribution), the migration engine (2.5) wraps it for live apply.
@@ -28,7 +28,7 @@ the first `CREATE`.
 ## API
 
 ```rust
-use wamn_ddl::{Migration, Confirmation};
+use wamn_schema_compiler::{Migration, Confirmation};
 
 let plan = Migration::create(&catalog)?;          // whole catalog -> CREATE (all additive)
 let plan = Migration::migrate(&old, &new)?;       // diff -> ALTERs (may be destructive)
@@ -128,7 +128,7 @@ which honours multiple `;`-separated statements). Catalog authorship is therefor
 principle, influence the DDL that runs at migration privilege. As a
 defense-in-depth guard against statement *chaining* (e.g. an expression like
 `1=1); DROP TABLE app_system.users; --` that closes the wrapping paren early),
-validation (3.1 `wamn_catalog::unsafe_expression_reason`) rejects at design time
+validation (3.1 `wamn_schema_model::unsafe_expression_reason`) rejects at design time
 any expression fragment containing a top-level statement terminator, unbalanced
 parentheses, or a comment-open — none of which a single boolean expression ever
 legitimately contains (string / quoted-identifier literals are skipped, so a `;`
@@ -264,7 +264,7 @@ a forward note on the migration engine (wamn-d8u, 2.5).
 
 ## Verification
 
-`cargo test -p wamn-ddl` checks emitted SQL for the POC catalog (tenant floor,
+`cargo test -p wamn-schema-compiler` checks emitted SQL for the POC catalog (tenant floor,
 composite unique, enum checks, unit comments, FKs), the safety gate, the
 migration ordering (name reuse via rename and via drop-and-re-add — reclaimed
 by a create *and* by a rename — three-hop rename chains, swap and
@@ -291,9 +291,9 @@ lifecycle (a `Reference` retyped to `uuid` while its target table is removed —
 is proven to enforce):
 
 ```sh
-docker run -d --rm --name wamn-ddl-pg -p 5451:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
-WAMN_DDL_PG_URL=postgres://postgres:postgres@127.0.0.1:5451/wamn cargo test -p wamn-ddl
-docker stop wamn-ddl-pg
+docker run -d --rm --name wamn-schema-compiler-pg -p 5451:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+WAMN_DDL_PG_URL=postgres://postgres:postgres@127.0.0.1:5451/wamn cargo test -p wamn-schema-compiler
+docker stop wamn-schema-compiler-pg
 ```
 
 ## References

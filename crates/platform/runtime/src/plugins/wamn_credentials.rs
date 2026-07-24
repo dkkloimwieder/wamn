@@ -196,7 +196,7 @@ impl WamnCredentials {
     }
 
     /// Revoke a component's granted-credentials entry (cjv.3 / R31): the inverse
-    /// of [`set_granted_credentials`]. The serve-node calls this after each
+    /// of [`Self::set_granted_credentials`]. The serve-node calls this after each
     /// invocation so a per-invocation grant never outlives its invocation (a
     /// later `get` — or a rebound node id — is `not-granted` again). Removing an
     /// absent entry is a no-op.
@@ -258,7 +258,7 @@ impl WamnCredentials {
     /// per-component grant/identity gate — for a host that needs the material
     /// itself, not on a guest's behalf. The serve-node reads its per-project-env
     /// HMAC signing key (wamn-fqg.22) this way at startup; a guest NEVER reaches
-    /// this (a guest `get` always goes through [`authorize`]). `None` if the
+    /// this (a guest `get` always goes through `authorize`). `None` if the
     /// name is absent or no source is configured.
     pub fn lookup(&self, project: &str, name: &str) -> Option<String> {
         self.resolve(project, name).ok()

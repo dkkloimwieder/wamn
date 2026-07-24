@@ -23,7 +23,7 @@
 //! [`ProvisionError::OrgIsPooled`].
 
 use serde_json::{Value, json};
-use wamn_registry::{Env, EnvPolicy, Org, Placement};
+use wamn_control_registry::{Env, EnvPolicy, Org, Placement};
 
 use crate::error::ProvisionError;
 
@@ -239,7 +239,7 @@ fn render_cluster(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_registry::RecoveryDomain;
+    use wamn_control_registry::RecoveryDomain;
 
     /// The default policy set + a `canary` sharing prod's recovery domain.
     fn policies_with_shared_canary() -> Vec<EnvPolicy> {

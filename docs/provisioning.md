@@ -133,7 +133,7 @@ dispatchbench shape). It provisions **two** projects through the real
 
 Load-bearing asserts are mutation-tested (apply/test/restore, debug builds):
 dropping the per-DB `GRANT CONNECT` fails the resolve→connect step here; dropping
-the `REVOKE … FROM PUBLIC` fails the `wamn-provision` live-apply gate; neutering
+the `REVOKE … FROM PUBLIC` fails the `wamn-control-provision` live-apply gate; neutering
 the project-id reserved-prefix check fails a unit test.
 
 The gate is **substrate-agnostic** — it needs only a superuser URL — so it runs
@@ -145,7 +145,7 @@ the CNPG cluster (the gate of record).
 The topology (`docs/postgres-topology.md`) splits `provision-project` into
 `provision-org` + `provision-project-env`. **`provision-org`** stamps an org from
 a named **template** (`--template trials|standard|dedicated` — the `Tier`
-successor, `wamn_registry::Template`): its placement **and** its own env-policy
+successor, `wamn_control_registry::Template`): its placement **and** its own env-policy
 set in one step. Policies are **org-scoped** (`registry.env_policies` keyed
 `(org, name)`, no platform-global seed); stamping is **insert-if-absent**, so
 re-provisioning keeps the org's per-env customizations and a richer template only
@@ -174,7 +174,7 @@ hibernation on `hibernation: eligible` — both policy knobs.
 
 All clusters carry `enableSuperuserAccess` (the per-project-env path connects as
 superuser), a non-TLS `pg_hba`, and **no cpu limit** (the S2 CFS lesson). Cluster
-**names** derive from `wamn_registry::cluster_of(org, policy)` — the one rule the
+**names** derive from `wamn_control_registry::cluster_of(org, policy)` — the one rule the
 renderer and `Registry::resolve` share, so a provisioned cluster and a resolved
 triple always agree. The policies come from the org's `registry.env_policies`
 rows when a system-DB URL is given (recorded + stamped first, then read back —
@@ -227,7 +227,7 @@ Secret pattern) and does NOT create per-project-env databases. The org row is an
 policy stamps are **insert-if-absent** (`ON CONFLICT (org, name) DO NOTHING` —
 never clobbering a customization), written in one transaction as the
 `wamn_system` owner; the builders live with the registry model
-(`wamn_registry::sql::{upsert_org_sql, stamp_env_policy_sql}`, SR2 single-source).
+(`wamn_control_registry::sql::{upsert_org_sql, stamp_env_policy_sql}`, SR2 single-source).
 
 **Scope: the cluster SHAPE + the registry row only.** Per-project-env
 database/role creation is `provision-project-env` (wamn-q3n.7). The rework
@@ -315,7 +315,7 @@ clusters are never touched.
 The per-env counterpart of `provision-project`: **`provision-project-env`**
 stands up one per-project-env Postgres database, keyed by the `(org, project,
 env)` `Triple`. Identity everywhere; the database lives on the cluster
-**derived** by `wamn_registry::cluster_of` (D18) from the org's placement + the
+**derived** by `wamn_control_registry::cluster_of` (D18) from the org's placement + the
 env's policy — a dedicated org's `<org>-<owner(env)>` (so `canary` shared-with
 `prod` lands on `<org>-prod`, `canary` own on `<org>-canary`), or the shared pool
 for a pooled org. **One derivation path serves every placement** — it does
@@ -475,7 +475,7 @@ it cannot even be tenant-scoped). The root-`old` detection is the SINGLE
 `wamn_event_reg` detector the materializer's per-event guard also keys on (one
 parser, never divergent).
 
-The pure decision (`wamn_migrate::reconcile_replica_identity`) reads the catalog
+The pure decision (`wamn_schema_control::reconcile_replica_identity`) reads the catalog
 (entity id → table), the registrations, and each table's CURRENT
 `pg_class.relreplident`, and emits the idempotent flips: an entity that needs
 FULL and is not FULL flips `d -> f`; an entity that no longer needs it flips back
@@ -530,7 +530,7 @@ run plane previously lacked: the deploy files evolve (E4 `stream_seq`, D20
 nothing migrated schemas instantiated from older revisions — and the demo
 fixture pod is EPHEMERAL, so a restart wipes every provisioned schema.
 
-The pure decision (`wamn_migrate::plan_run_plane`) diffs what the shell observed
+The pure decision (`wamn_schema_control::plan_run_plane`) diffs what the shell observed
 live against the record and emits the idempotent, **additive** plan, executed in
 order:
 
@@ -602,7 +602,7 @@ The tier / saga modes need the T1 registry, so the gate applies
 pair on the same PG (dropped at teardown). It is still **substrate-agnostic** — a
 superuser URL — so `--mode all` runs locally against a throwaway `postgres:18`.
 
-**Saga builders (SR2, wamn-q3n.8):** `wamn_registry::sql::{create,advance,
+**Saga builders (SR2, wamn-q3n.8):** `wamn_control_provision::state::{create,advance,
 complete,fail}_saga_sql` — the exactly-once / resumable state the orchestrator
 (10.1) drives; `.8` ships the builders and proves a saga **lands in the system
 DB** per provisioned tier, but does **not** wire sagas into the real `provision-org`
@@ -678,7 +678,7 @@ FK'd to the project-env it dumps (a de-provisioned env, or a deleted org cascadi
 through `project_envs`, drops its dump records). It is control-plane **metadata**,
 not tenant data (invariant 3) and holds no credentials (invariant 2); the dump
 **bytes** live in object storage and the dump **catalog for restore** is
-wamn-q3n.11's. `wamn_registry::sql::record_dump_sql` is the SR2 builder (drift-
+wamn-q3n.11's. `wamn_control_provision::state::record_dump_sql` is the SR2 builder (drift-
 guarded against the DDL; a live idempotent + `byte_size`-refresh proof rides the
 wamn-q3n.3 storage gate).
 
@@ -740,7 +740,7 @@ Two **targets**, the safe one the default:
 
 **Which dump (the catalog, Q3 of .10 realized here):** an explicit `--dump-dir`
 wins; otherwise the dump **catalog** (`provisioning.dumps`) is read via
-`wamn_registry::sql::select_latest_dump_sql` (SR2 builder) for the latest recorded
+`wamn_control_provision::state::select_latest_dump_sql` (SR2 builder) for the latest recorded
 dump (or `--object-key`), so **restore-to-last-dump needs no manual key**. The dump
 directory is then `--dump-root/<timestamp>` (the object key's last segment — the
 `dump-project-env --run-now --out-dir` layout). The dump **bytes** are staged
@@ -758,7 +758,7 @@ recorded" at recovery even though scheduled dumps exist. So when the catalog has
 row for a project-env — or when a staged dump is *newer* than the latest recorded
 one — restore lists the deterministic dump key **prefix**
 (`dumps/<org>/<project>/<env>`) staged under `--dump-root` and picks the newest
-complete dump (`wamn_provision::dump::select_latest_dump_key`, a pure
+complete dump (`wamn_control_provision::dump::select_latest_dump_key`, a pure
 listing→key selector: numeric-timestamp ordering, foreign/malformed keys ignored;
 the local mirror gates completeness on `toc.dat`). This needs no new credential
 surface — restore already reads the dump bytes from `--dump-root` — and the output
@@ -789,7 +789,7 @@ neutered each fail a named test.
 One operation over **arbitrary** `(org, project, env)` triples — same-org or
 cross-org — subsuming deploy / promote / clone / move
 (`docs/deployment-model.md` §4). The step plan is the pure
-`wamn_provision::plan_copy` (`CopyRequest`/`CopyStep`); the driver composes the
+`wamn_control_provision::plan_copy` (`CopyRequest`/`CopyStep`); the driver composes the
 shipped machinery: the 2.5 migrate engine (catalog), `pg_dump -Fd`/`pg_restore`
 (rows, the q3n.10/.11 artifact), and the q3n.8 saga builders (the durable
 record).
@@ -852,7 +852,7 @@ in-cluster cross-cluster move standup; see `docs/build-and-test.md`
 
 ## `wamn-host move-org-tier` (wamn-q3n.13) — **retired** (wamn-8df.3)
 
-`move-org-tier` (and its pure core `wamn_provision::tier_move`) shipped with the
+`move-org-tier` (and its pure core `wamn_control_provision::tier_move`) shipped with the
 closed `Tier` lattice: promote an org T3 → T2 → T4 by dump / provision-on-new /
 restore / registry-flip, planned as an ordered runbook with the flip last. With
 `Tier` dropped (D18), the subcommand and module are **removed** — a placement

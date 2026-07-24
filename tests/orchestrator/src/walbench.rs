@@ -43,8 +43,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
-use wamn_ddl::{Confirmation, Migration};
 use wamn_gate_harness::{check, emit_csv, percentile};
+use wamn_schema_compiler::{Confirmation, Migration};
 
 const SCHEMA: &str = "wamn_walbench";
 const TENANT: &str = "walbench-tenant";
@@ -143,8 +143,8 @@ pub(crate) fn wide_blob(seed: usize, size: usize) -> String {
     s
 }
 
-fn catalog() -> anyhow::Result<wamn_catalog::Catalog> {
-    wamn_catalog::Catalog::from_json(CATALOG_JSON)
+fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
+    wamn_schema_model::Catalog::from_json(CATALOG_JSON)
         .map_err(|e| anyhow::anyhow!("poc-receiving catalog parse: {e}"))
 }
 

@@ -80,8 +80,9 @@ use pg_walstream::{
 };
 use tokio_postgres::NoTls;
 
+use wamn_control_registry::sql::select_event_reader_sql;
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, stream_subjects, subject};
-use wamn_registry::sql::select_event_reader_sql;
+use wamn_pg_core::quote_ident;
 
 #[derive(Debug, Args)]
 pub struct EventReaderArgs {
@@ -311,8 +312,8 @@ fn preflight_url(plain: &str, sslmode: &str) -> anyhow::Result<String> {
 /// session decoding pre-rename backlog resolves identically).
 fn entity_lookup_sql(schema: &str) -> String {
     format!(
-        "SELECT entity_id FROM \"{}\".wamn_entities WHERE relation_oid = $1",
-        schema.replace('"', "\"\"")
+        "SELECT entity_id FROM {}.wamn_entities WHERE relation_oid = $1",
+        quote_ident(schema)
     )
 }
 

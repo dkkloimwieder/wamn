@@ -177,7 +177,7 @@ async fn snapshot_entity_ids(su: &Client) -> Vec<String> {
         .await
         .expect("read published snapshot")
         .get(0);
-    let cat = wamn_catalog::Catalog::from_json(&doc).expect("snapshot parses");
+    let cat = wamn_schema_model::Catalog::from_json(&doc).expect("snapshot parses");
     cat.entities
         .iter()
         .map(|e| e.id.as_str().to_string())

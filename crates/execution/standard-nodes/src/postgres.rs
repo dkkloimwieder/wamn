@@ -2,7 +2,7 @@
 //!
 //! - **`postgres`** — catalog-derived entity operations, the UNFLAGGED default.
 //!   Ops compile through the SAME audited surface the generated REST gateway
-//!   uses (`wamn_api::Router`, 4.1): identifiers are catalog-allowlisted +
+//!   uses (`wamn_entity_access::Planner`, 4.1): identifiers are catalog-allowlisted +
 //!   quoted, values are ALWAYS `$n` params, `tenant_id` on create is injected
 //!   server-side, and the RLS floor does isolation underneath.
 //! - **`postgres-query`** — author-written SQL, values still bound as `$n`
@@ -15,10 +15,15 @@
 //! connection-unavailable / statement-timeout → retryable; the rest terminal.
 
 use serde_json::{Map, Value, json};
-use wamn_api::{ApiError, Catalog, Method, PlanKind, Router, SqlValue, shape_rows};
+use wamn_entity_access::{
+    CompareOp, EntityAccessError, EntityOperation, EntityRequest, Filter, ListOptions, PlanKind,
+    Planner, Sort, SortDirection, UpdateMode, shape_rows,
+};
 use wamn_node_sdk::{
     Capability, Emission, ErrorDetail, Node, NodeCtx, NodeError, PgCapError, PgValue, RunContext,
 };
+use wamn_pg_core::SqlValue;
+use wamn_schema_model::Catalog;
 
 use crate::expr::{config_str, eval_to_value};
 use crate::template::expand;
@@ -73,7 +78,7 @@ fn constraint_err(code: &str, constraint: String) -> NodeError {
     })
 }
 
-/// `wamn_api::SqlValue` → SDK `PgValue` (1:1 WIT mirrors on both sides).
+/// `wamn_pg_core::SqlValue` → SDK `PgValue` (1:1 WIT mirrors on both sides).
 pub(crate) fn api_to_pg(v: &SqlValue) -> PgValue {
     match v {
         SqlValue::Null => PgValue::Null,
@@ -90,7 +95,7 @@ pub(crate) fn api_to_pg(v: &SqlValue) -> PgValue {
     }
 }
 
-/// SDK `PgValue` → `wamn_api::SqlValue` (for response shaping).
+/// SDK `PgValue` → `wamn_pg_core::SqlValue` (for response shaping).
 pub(crate) fn pg_to_api(v: &PgValue) -> SqlValue {
     match v {
         PgValue::Null => SqlValue::Null,
@@ -154,50 +159,47 @@ impl Node for PostgresEntity {
                 format!("the project catalog snapshot did not parse: {e}"),
             ))
         })?;
-        let router = Router::new(&catalog);
-
-        let base = format!("/api/rest/{entity}");
-        let plan = match op {
-            "create" => {
-                let body = body_from(config, input)?;
-                router.compile(Method::Post, &base, &[], Some(&body))
-            }
-            "get" => {
-                let id = id_from(config, input)?;
-                router.compile(Method::Get, &format!("{base}/{id}"), &[], None)
-            }
-            "update" => {
-                let id = id_from(config, input)?;
-                let body = body_from(config, input)?;
-                router.compile(Method::Patch, &format!("{base}/{id}"), &[], Some(&body))
-            }
-            "delete" => {
-                let id = id_from(config, input)?;
-                router.compile(Method::Delete, &format!("{base}/{id}"), &[], None)
-            }
-            "list" => {
-                let query = list_query(config, input)?;
-                router.compile(Method::Get, &base, &query, None)
-            }
+        let operation = match op {
+            "create" => EntityOperation::Create {
+                fields: body_from(config, input)?,
+            },
+            "get" => EntityOperation::Get {
+                id: id_from(config, input)?,
+                expand: Vec::new(),
+            },
+            "update" => EntityOperation::Update {
+                id: id_from(config, input)?,
+                fields: body_from(config, input)?,
+                mode: UpdateMode::Merge,
+            },
+            "delete" => EntityOperation::Delete {
+                id: id_from(config, input)?,
+            },
+            "list" => EntityOperation::List(list_options(config, input)?),
             other => {
                 return Err(NodeError::Terminal(ErrorDetail::coded(
                     "invalid-config",
                     format!("unknown postgres op {other:?}"),
                 )));
             }
-        }
-        .map_err(classify_api)?;
+        };
+        let plan = Planner::new(&catalog)
+            .plan(&EntityRequest {
+                entity: entity.to_string(),
+                operation,
+            })
+            .map_err(classify_entity_access)?;
 
-        let params: Vec<PgValue> = plan.query().params().iter().map(api_to_pg).collect();
+        let params: Vec<PgValue> = plan.statement().params().iter().map(api_to_pg).collect();
         let rows = ctx
-            .pg_query(plan.query().sql(), &params)
+            .pg_query(plan.statement().sql(), &params)
             .map_err(classify_pg)?;
         let api_rows: Vec<Vec<SqlValue>> = rows
             .rows
             .iter()
             .map(|r| r.iter().map(pg_to_api).collect())
             .collect();
-        let shaped = shape_rows(plan.query().columns(), &api_rows);
+        let shaped = shape_rows(plan.statement().columns(), &api_rows);
 
         let payload = match plan.kind() {
             PlanKind::List => Value::Array(shaped),
@@ -229,19 +231,17 @@ fn not_found() -> NodeError {
     NodeError::Terminal(ErrorDetail::coded("not-found", "no such row"))
 }
 
-/// `wamn_api` compile refusal → taxonomy: value/payload faults are the INPUT's
+/// `wamn_entity_access` compile refusal → taxonomy: value/payload faults are the INPUT's
 /// (`invalid-input`, never retried, distinct in run history); everything else
 /// names a config/flow bug (`terminal`).
-pub(crate) fn classify_api(e: ApiError) -> NodeError {
+pub(crate) fn classify_entity_access(e: EntityAccessError) -> NodeError {
     let detail = ErrorDetail {
-        message: e.message().into_owned(),
+        message: e.message(),
         code: Some(e.code().to_string()),
         data: None,
     };
     match e {
-        ApiError::InvalidValue { .. } | ApiError::PayloadRequired => {
-            NodeError::InvalidInput(detail)
-        }
+        EntityAccessError::InvalidValue { .. } => NodeError::InvalidInput(detail),
         _ => NodeError::Terminal(detail),
     }
 }
@@ -278,8 +278,8 @@ fn body_from(config: &Value, input: &Value) -> Result<Value, NodeError> {
 }
 
 /// The list op's query pairs: templated filters + sort/limit/offset.
-fn list_query(config: &Value, input: &Value) -> Result<Vec<(String, String)>, NodeError> {
-    let mut query: Vec<(String, String)> = Vec::new();
+fn list_options(config: &Value, input: &Value) -> Result<ListOptions, NodeError> {
+    let mut options = ListOptions::default();
     if let Some(filters) = config.get("filters") {
         let obj = filters.as_object().ok_or_else(|| {
             NodeError::Terminal(ErrorDetail::coded(
@@ -299,18 +299,71 @@ fn list_query(config: &Value, input: &Value) -> Result<Vec<(String, String)>, No
                     )));
                 }
             };
-            query.push((field.clone(), raw));
+            let (op, value) = raw
+                .split_once('.')
+                .filter(|(op, _)| {
+                    matches!(
+                        *op,
+                        "eq" | "neq" | "lt" | "lte" | "gt" | "gte" | "like" | "in"
+                    )
+                })
+                .unwrap_or(("eq", raw.as_str()));
+            options.filters.push(match op {
+                "like" => Filter::Like {
+                    field: field.clone(),
+                    pattern: value.to_string(),
+                },
+                "in" => Filter::In {
+                    field: field.clone(),
+                    values: value
+                        .split(',')
+                        .map(|part| part.trim().to_string())
+                        .collect(),
+                },
+                _ => Filter::Compare {
+                    field: field.clone(),
+                    op: match op {
+                        "neq" => CompareOp::NotEq,
+                        "lt" => CompareOp::Lt,
+                        "lte" => CompareOp::Lte,
+                        "gt" => CompareOp::Gt,
+                        "gte" => CompareOp::Gte,
+                        _ => CompareOp::Eq,
+                    },
+                    value: value.to_string(),
+                },
+            });
         }
     }
     if let Some(sort) = config.get("sort").and_then(Value::as_str) {
-        query.push(("sort".into(), sort.to_string()));
+        options.sort.extend(sort.split(',').filter_map(|part| {
+            let part = part.trim();
+            if part.is_empty() {
+                return None;
+            }
+            let (field, direction) = part.strip_prefix('-').map_or(
+                (part.trim_start_matches('+'), SortDirection::Asc),
+                |field| (field, SortDirection::Desc),
+            );
+            Some(Sort {
+                field: field.to_string(),
+                direction,
+            })
+        }));
     }
-    for key in ["limit", "offset"] {
-        if let Some(n) = config.get(key).and_then(Value::as_u64) {
-            query.push((key.into(), n.to_string()));
-        }
+    if let Some(limit) = config.get("limit").and_then(Value::as_u64) {
+        options.limit = Some(u32::try_from(limit).map_err(|_| {
+            NodeError::Terminal(ErrorDetail::coded(
+                "invalid-config",
+                "postgres list \"limit\" exceeds the supported range",
+            ))
+        })?);
     }
-    Ok(query)
+    options.offset = config
+        .get("offset")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    Ok(options)
 }
 
 // ---------------------------------------------------------------------------
@@ -463,34 +516,33 @@ mod tests {
         assert_eq!(d.data.unwrap()["constraint"], "receipts_nk");
     }
 
-    /// `wamn_api` refusals split by fault: value/payload → invalid-input (the
+    /// Entity-access refusals split by fault: values → invalid-input (the
     /// caller's data), everything else → terminal (a flow/config bug).
     #[test]
     fn api_errors_split_input_faults_from_config_bugs() {
-        let input_faults = [
-            ApiError::InvalidValue {
-                field: "quantity".into(),
-                message: "not an exact decimal".into(),
-            },
-            ApiError::PayloadRequired,
-        ];
+        let input_faults = [EntityAccessError::InvalidValue {
+            field: "quantity".into(),
+            message: "not an exact decimal".into(),
+        }];
         for e in input_faults {
             assert!(
-                matches!(classify_api(e.clone()), NodeError::InvalidInput(_)),
+                matches!(
+                    classify_entity_access(e.clone()),
+                    NodeError::InvalidInput(_)
+                ),
                 "{e:?} must be invalid-input"
             );
         }
         let config_bugs = [
-            ApiError::UnknownEntity("nope".into()),
-            ApiError::UnknownField {
+            EntityAccessError::UnknownEntity("nope".into()),
+            EntityAccessError::UnknownField {
                 entity: "receipts".into(),
                 field: "bogus".into(),
             },
-            ApiError::MethodNotAllowed,
         ];
         for e in config_bugs {
             assert!(
-                matches!(classify_api(e.clone()), NodeError::Terminal(_)),
+                matches!(classify_entity_access(e.clone()), NodeError::Terminal(_)),
                 "{e:?} must be terminal"
             );
         }

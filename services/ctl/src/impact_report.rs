@@ -1,15 +1,15 @@
 //! The `impact-report` subcommand (11.8): the read-only **effect shell** for
-//! `wamn-impact` — it reads the current applied catalog + a `--target`, compiles
-//! the migration plan (the same wamn-ddl compiler `migrate-catalog` uses), reads
+//! `wamn-schema-control` — it reads the current applied catalog + a `--target`, compiles
+//! the migration plan (the same wamn-schema-compiler compiler `migrate-catalog` uses), reads
 //! the dependency edges (event registrations, active flow graphs, test suites)
 //! across ALL tenants on a superuser connection, and prints the typed
-//! [`wamn_impact::ImpactReport`]. It **mutates nothing** — the schema-designer
+//! [`wamn_schema_control::impact::ImpactReport`]. It **mutates nothing** — the schema-designer
 //! surface for "what breaks if I apply this".
 //!
 //! The heavy lifting ([`gather_impact`]) is shared with `migrate-catalog`, which
 //! renders the same report on every dry-run and apply and gates a destructive
 //! plan with dependents behind `--acknowledge-impact`. The pure decision is
-//! `wamn_impact::analyze`; this shell only holds the connection (SR6).
+//! `wamn_schema_control::impact::analyze`; this shell only holds the connection (SR6).
 //!
 //! **Tenant scoping.** The registration/flow/suite reads are CROSS-TENANT (the
 //! superuser bypasses RLS): a shared entity's change hits every tenant's flows and
@@ -24,10 +24,12 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use wamn_catalog::Catalog;
-use wamn_ddl::{Migration, MigrationPlan};
-use wamn_impact::{FlowGraph, ImpactInput, ImpactReport, RegistrationEdge, SuiteEdge, analyze};
-use wamn_migrate::Env;
+use wamn_schema_compiler::{Migration, MigrationPlan};
+use wamn_schema_control::Env;
+use wamn_schema_control::impact::{
+    FlowGraph, ImpactInput, ImpactReport, RegistrationEdge, SuiteEdge, analyze,
+};
+use wamn_schema_model::Catalog;
 
 use crate::migrate_catalog::{is_bare_ident, read_current_applied};
 
@@ -104,7 +106,7 @@ pub async fn run(args: ImpactReportArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Compile the migration plan for impact analysis with the SAME wamn-ddl compiler
+/// Compile the migration plan for impact analysis with the SAME wamn-schema-compiler compiler
 /// `migrate-catalog` applies — `migrate` from the current applied version, or a
 /// whole-catalog `create` for a first materialization. The per-op entity +
 /// additive/destructive classification is the authoritative "affected entities"
@@ -118,7 +120,7 @@ pub fn compile_plan(current: Option<&Catalog>, target: &Catalog) -> anyhow::Resu
 }
 
 /// Read the dependency edges for `plan` and fold them through
-/// `wamn_impact::analyze`. Shared by `impact-report` and `migrate-catalog`.
+/// `wamn_schema_control::impact::analyze`. Shared by `impact-report` and `migrate-catalog`.
 ///
 /// Cross-tenant, superuser (RLS bypassed). Each read is `to_regclass`-probed so a
 /// project that is not registration- or run-state-provisioned yet simply
@@ -136,7 +138,7 @@ pub async fn gather_impact(
     if table_present(client, "catalog.event_registrations").await? {
         let rows = client
             .query(
-                &wamn_migrate::sql::select_registration_flow_refs_for_catalog_sql(),
+                &wamn_schema_control::sql::select_registration_flow_refs_for_catalog_sql(),
                 &[&target.catalog_id],
             )
             .await
@@ -155,7 +157,10 @@ pub async fn gather_impact(
     let mut flows = Vec::new();
     if table_present(client, &format!("{schema}.flows")).await? {
         let rows = client
-            .query(&wamn_migrate::sql::select_active_flows_sql(schema), &[])
+            .query(
+                &wamn_schema_control::sql::select_active_flows_sql(schema),
+                &[],
+            )
             .await
             .context("read active flows for impact analysis")?;
         for row in &rows {
@@ -175,7 +180,10 @@ pub async fn gather_impact(
     let mut suites = Vec::new();
     if table_present(client, &format!("{schema}.test_suites")).await? {
         let rows = client
-            .query(&wamn_migrate::sql::select_all_suites_sql(schema), &[])
+            .query(
+                &wamn_schema_control::sql::select_all_suites_sql(schema),
+                &[],
+            )
             .await
             .context("read test suites for impact analysis")?;
         for row in &rows {

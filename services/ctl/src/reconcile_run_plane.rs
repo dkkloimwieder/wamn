@@ -1,5 +1,5 @@
 //! The `reconcile-run-plane` subcommand (E4/R14-migration, wamn-1wdq): the
-//! **effect shell** for the pure `wamn_migrate` run-plane schema reconciler —
+//! **effect shell** for the pure `wamn_schema_control` run-plane schema reconciler —
 //! THE durable migration path for provisioned run-plane schemas.
 //!
 //! `deploy/sql/run-state.sql` / `flows.sql` / `run-queue.sql` evolve, but
@@ -9,7 +9,7 @@
 //! everything including the `catalog` metadata schema. This verb reads what ONE
 //! project-env schema actually has (tables, columns, index definitions, legacy
 //! outbox-era objects, the per-database `catalog` schema), asks the pure
-//! planner (`wamn_migrate::plan_run_plane`) for the idempotent ADDITIVE plan,
+//! planner (`wamn_schema_control::plan_run_plane`) for the idempotent ADDITIVE plan,
 //! and — unless `--dry-run` — executes it, in order:
 //!
 //! - missing tables from their record sections (from-zero restore included),
@@ -46,7 +46,7 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use wamn_migrate::{
+use wamn_schema_control::{
     RunPlaneObservation, RunPlanePlan, catalog_schema_present_sql,
     count_stale_registration_state_sql, plan_run_plane, select_outbox_function_present_sql,
     select_outbox_trigger_tables_sql, select_runs_fail_kind_check_sql, select_schema_columns_sql,

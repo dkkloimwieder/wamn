@@ -6,7 +6,7 @@
 //! Project CRD + controller, which is the 10.1 control plane). It connects as
 //! the cluster **superuser** (only the operator/superuser can create databases
 //! and roles — the runtime `wamn_app` role is `NOSUPERUSER NOCREATEDB`), runs
-//! the pure [`wamn_provision`] builders, and produces:
+//! the pure [`wamn_control_provision`] builders, and produces:
 //!
 //! * a per-project database `wamn-db-<project>`, empty and RLS-ready — the input
 //!   2.4 (system schema) consumes;
@@ -28,7 +28,9 @@ use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::{Config as PgConfig, NoTls};
 
-use wamn_provision::{APP_ROLE, compose_url, database_name, secret, sql, validate_project_id};
+use wamn_control_provision::{
+    APP_ROLE, compose_url, database_name, secret, sql, validate_project_id,
+};
 
 #[derive(Debug, Args)]
 pub struct ProvisionProjectArgs {

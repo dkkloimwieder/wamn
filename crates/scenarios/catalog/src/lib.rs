@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The suite-envelope **format** version this crate implements (mirrors
-/// `wamn_catalog::SCHEMA_VERSION` / the flow-schema freeze): `0.1.x` is
+/// `wamn_schema_model::SCHEMA_VERSION` / the flow-schema freeze): `0.1.x` is
 /// additive/clarifying only; a breaking change waits for `0.2`.
 pub const SCHEMA_VERSION: &str = "0.1";
 

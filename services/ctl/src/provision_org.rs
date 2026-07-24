@@ -8,10 +8,10 @@
 //! runbook. It:
 //!
 //! 1. looks up the `--template` preset (`trials` / `standard` / `dedicated` —
-//!    the `Tier` successor) and builds the org's [`Placement`](wamn_registry::Placement)
+//!    the `Tier` successor) and builds the org's [`Placement`](wamn_control_registry::Placement)
 //!    (`trials` places on the shared `--pool`); validates the org id, placement,
 //!    and stamped policy set by running the one-org registry through
-//!    `wamn-registry`'s validator;
+//!    `wamn-control-registry`'s validator;
 //! 2. records the org in the T1 `wamn_system` DB (when a system-DB URL is
 //!    given): the placement row (idempotent upsert) plus the template's policy
 //!    rows — **insert-if-absent**, so re-provisioning keeps the org's per-env
@@ -19,7 +19,7 @@
 //!    transaction, as the `wamn_system` owner;
 //! 3. for a dedicated org, renders one CNPG `Cluster` CR per distinct
 //!    recovery-domain owner across the org's (post-stamp) policies
-//!    ([`wamn_provision::org`]), sized by each owner env's policy, and emits
+//!    ([`wamn_control_provision::org`]), sized by each owner env's policy, and emits
 //!    them (+ the WAL/PITR `ObjectStore` / `ScheduledBackup` CRs) as JSON
 //!    `List`s — the runbook/Job `kubectl apply -f`s them and waits ready.
 //!
@@ -38,7 +38,7 @@
 //! (`deploy/infra/cnpg-cluster.yaml` `wamn-pg`), so it owns no clusters — there is
 //! nothing to render; only its registry rows are recorded. `.7`
 //! `provision-project-env` then reads that placement and derives the pool
-//! cluster via [`cluster_of`](wamn_registry::cluster_of).
+//! cluster via [`cluster_of`](wamn_control_registry::cluster_of).
 
 use std::path::PathBuf;
 
@@ -46,12 +46,12 @@ use anyhow::Context as _;
 use clap::{Args, ValueEnum};
 use tokio_postgres::NoTls;
 
-use wamn_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
+use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
 
 use crate::env_policies::read_env_policies;
 
 /// The named org preset `provision-org` stamps (the `Tier` successor —
-/// [`wamn_registry::Template`]).
+/// [`wamn_control_registry::Template`]).
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TemplateArg {
     /// Pre-contract: placed on the shared `--pool` cluster (owns no clusters;
@@ -168,7 +168,7 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
 
     match &org.placement {
         // Pooled: no cluster set — the org shares the pool.
-        wamn_registry::Placement::Pooled { pool } => {
+        wamn_control_registry::Placement::Pooled { pool } => {
             println!(
                 "org {id:?} (template {tpl:?}, pooled): placed on the shared pool {pool:?} \
                  (owns no clusters)",
@@ -178,8 +178,8 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         }
         // Dedicated: render one cluster per recovery-domain owner, sized by the
         // org's policy for the owner env, and emit the CRs to apply.
-        wamn_registry::Placement::Dedicated => {
-            let set = wamn_provision::org::render_org_cluster_set(&org, &policies)
+        wamn_control_registry::Placement::Dedicated => {
+            let set = wamn_control_provision::org::render_org_cluster_set(&org, &policies)
                 .map_err(|e| anyhow::anyhow!("render org clusters: {e}"))?;
             let names: Vec<String> = set
                 .clusters
@@ -255,7 +255,7 @@ async fn record_org_rows(
     let pool = org.placement.pool();
     client
         .execute(
-            wamn_registry::sql::upsert_org_sql(),
+            wamn_control_registry::sql::upsert_org_sql(),
             &[&org.id, &placement_kind, &pool],
         )
         .await
@@ -266,7 +266,7 @@ async fn record_org_rows(
         let recovery = serde_json::to_string(&p.recovery_domain).context("recovery json")?;
         client
             .execute(
-                wamn_registry::sql::stamp_env_policy_sql(),
+                wamn_control_registry::sql::stamp_env_policy_sql(),
                 &[
                     &row.org,
                     &name,
@@ -288,7 +288,7 @@ async fn record_org_rows(
     Ok(())
 }
 
-fn fmt_issues(issues: &[wamn_registry::Issue]) -> String {
+fn fmt_issues(issues: &[wamn_control_registry::Issue]) -> String {
     issues
         .iter()
         .map(|i| i.to_string())
@@ -349,21 +349,28 @@ mod tests {
         );
         // A pooled org owns no clusters (the render path errors — record-only).
         assert!(
-            wamn_provision::org::render_org_cluster_set(&pooled, &Template::trials().policies)
-                .is_err()
+            wamn_control_provision::org::render_org_cluster_set(
+                &pooled,
+                &Template::trials().policies
+            )
+            .is_err()
         );
 
         let (std_org, _) = Template::standard().stamp("acme", "wamn-pg");
         assert_eq!(std_org.placement.kind_str(), "dedicated");
-        let set =
-            wamn_provision::org::render_org_cluster_set(&std_org, &Template::standard().policies)
-                .unwrap();
+        let set = wamn_control_provision::org::render_org_cluster_set(
+            &std_org,
+            &Template::standard().policies,
+        )
+        .unwrap();
         assert_eq!(set.clusters.len(), 2, "standard: canary shares prod (T2)");
 
         let (ded_org, _) = Template::dedicated().stamp("bigco", "wamn-pg");
-        let set =
-            wamn_provision::org::render_org_cluster_set(&ded_org, &Template::dedicated().policies)
-                .unwrap();
+        let set = wamn_control_provision::org::render_org_cluster_set(
+            &ded_org,
+            &Template::dedicated().policies,
+        )
+        .unwrap();
         assert_eq!(
             set.clusters.len(),
             3,
@@ -396,8 +403,11 @@ mod tests {
     #[test]
     fn render_path_emits_lists() {
         let (org, _) = Template::standard().stamp("acme", "wamn-pg");
-        let set = wamn_provision::org::render_org_cluster_set(&org, &Template::standard().policies)
-            .unwrap();
+        let set = wamn_control_provision::org::render_org_cluster_set(
+            &org,
+            &Template::standard().policies,
+        )
+        .unwrap();
         let clusters = k8s_list(&set.clusters);
         assert_eq!(clusters["kind"], "List");
         assert_eq!(clusters["items"][0]["kind"], "Cluster");

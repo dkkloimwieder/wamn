@@ -8,12 +8,12 @@ versions) — and is **promoted** between **environments** (`dev`, `prod`, …) 
 the same application. This crate owns that lifecycle and promotion
 policy. It **composes** the shipped model crates rather than duplicating them:
 
-- [`wamn-catalog`](catalog-model.md) (3.1) — the canonical model, its version
+- [`wamn-schema-model`](catalog-model.md) (3.1) — the canonical model, its version
   `diff`, and the JSON import/export that *is* the promotion format;
-- [`wamn-ddl`](ddl-compiler.md) (3.2) — the DDL compiler and its
+- [`wamn-schema-compiler`](ddl-compiler.md) (3.2) — the DDL compiler and its
   additive/destructive confirmation gate, reused verbatim to compile a
   promotion's migration;
-- [`wamn-registry`](registry-model.md) (`wamn-q3n.1`) — the control-plane
+- [`wamn-control-registry`](registry-model.md) (`wamn-q3n.1`) — the control-plane
   `(org, project, env)` `Triple` and the validated `Env` slug (the D18 generic
   env model: env is **data, not a closed type** — the default policy set is
   `dev` / `prod`, with `canary` and others addable as `EnvPolicy` rows), so an
@@ -22,8 +22,8 @@ policy. It **composes** the shipped model crates rather than duplicating them:
 
 - **Issue:** wamn-d6d `[3.4]` + `wamn-q3n.5` (`(org, project, env)` triple +
   `canary`); **Epic:** E3 Schema Designer / D6.
-- **Crate:** `crates/schema/lifecycle` — depends on `wamn-catalog` + `wamn-ddl` +
-  `wamn-registry`.
+- **Crate:** `crates/schema/control/src/lifecycle` — depends on `wamn-schema-model` + `wamn-schema-compiler` +
+  `wamn-control-registry`.
 - **Consumers:** the designer UI (3.3, drives the lifecycle), the migration
   engine (2.5, applies a promotion's plan), 11.8 (impact-analyzes a staged
   version before apply), the control plane (records versions per environment).
@@ -78,7 +78,7 @@ the target environment), so `environment` is an *attribute* of each version
 rather than part of its identity.
 
 ```rust
-use wamn_schema::{Environment, Triple, promote, Confirmation};
+use wamn_schema_control::lifecycle::{Environment, Triple, promote, Confirmation};
 
 let app = |env: &str| Triple::new("acme", "receiving", env);
 let mut dev = Environment::new(app("dev"), &catalog.catalog_id);
@@ -123,7 +123,7 @@ plan.sql(Confirmation::ConfirmedWithBackup)?;  // prefixes a backup-checkpoint m
 between environments, or a source version that is not newer than the target's
 applied version). Applying the plan and recording the new version in the target
 environment is the caller's step — this crate stays pure and emits no DDL of its
-own beyond what `wamn-ddl` produces.
+own beyond what `wamn-schema-compiler` produces.
 
 ## Storage
 
@@ -131,7 +131,7 @@ own beyond what `wamn-ddl` produces.
 
 - `state text` — the lifecycle state (`draft` / `staged` / `applied` /
   `superseded`), generalizing the earlier `active` boolean. Its values are
-  exactly `wamn_schema::State::as_sql`, tied to the crate by a test.
+  exactly `wamn_schema_control::lifecycle::State::as_sql`, tied to the crate by a test.
 - `environment text` — the deployment target (first-class), defaulting to
   `dev`. A **validated slug** (D18, wamn-8df.3) — there is deliberately no
   closed `CHECK`; the env vocabulary is policy data (`registry.env_policies`),
@@ -146,8 +146,8 @@ The rest of the tenant-scoped RLS shape is unchanged from 3.1.
 ## Verification
 
 ```sh
-cargo test -p wamn-schema
-cargo clippy -p wamn-schema --all-targets && cargo fmt -p wamn-schema --check
+cargo test -p wamn-schema-control
+cargo clippy -p wamn-schema-control --all-targets && cargo fmt -p wamn-schema-control --check
 ```
 
 Tests cover the transition table, the single-applied and stale-base guards,
@@ -163,5 +163,5 @@ with 3.1 / 3.2).
 
 - Plan: `docs/platform-plan.md` §Epic 3 (3.4).
 - Catalog model (the promotion format): `docs/catalog-model.md`, `crates/schema/model`.
-- DDL compiler (reused for the migration): `docs/ddl-compiler.md`, `crates/schema/ddl-compiler`.
+- DDL compiler (reused for the migration): `docs/ddl-compiler.md`, `crates/schema/compiler`.
 - Storage: `deploy/sql/catalog-schema.sql`.

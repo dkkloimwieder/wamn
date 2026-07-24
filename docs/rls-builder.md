@@ -3,11 +3,11 @@
 Turns per-entity access rules tied to roles — **row ownership**, **role command
 gates**, and **custom per-role predicates** — into Postgres Row-Level Security
 policies. It **composes** the two shipped Epic 3 crates: the rules resolve
-against the catalog model (3.1) and compile to a `wamn-ddl` migration plan (3.2),
+against the catalog model (3.1) and compile to a `wamn-schema-compiler` migration plan (3.2),
 layering on top of that crate's **tenant floor**.
 
 - **Issue:** wamn-idu `[3.5]`; **Epic:** E3 Schema Designer.
-- **Crate:** `crates/schema/rls-compiler` — consumes `wamn-catalog` + `wamn-ddl`.
+- **Crate:** `crates/schema/compiler/src/rls` — consumes `wamn-schema-model` + `wamn-schema-compiler`.
 - **Consumers:** the designer UI (3.3, authors the rules), the migration engine
   (2.5, applies them), 11.8 (impact-analyzes a rule change).
 
@@ -66,9 +66,9 @@ absent claims still allow tenant-scoped reads while denying gated writes.
 ## API
 
 ```rust
-use wamn_rls::{AccessPolicy, compile, Confirmation};
+use wamn_schema_compiler::rls::{AccessPolicy, compile, Confirmation};
 
-let plan = compile(&policy, &catalog)?;   // -> a wamn-ddl MigrationPlan
+let plan = compile(&policy, &catalog)?;   // -> a wamn-schema-compiler MigrationPlan
 plan.is_additive();                        // policy creation loses no data (always true in v1)
 plan.report();                             // per-op review + the claim-dependency note
 plan.sql(Confirmation::None)?;             // the CREATE POLICY script
@@ -86,7 +86,7 @@ protocol, so a fragment like `true); DROP TABLE app_system.users; --` would chai
 statements at migration-role privilege. Validation therefore rejects
 (code `unsafe-expression`) any expression that carries a top-level `;`, unbalanced
 parentheses, or a comment-open — the statement-chaining vectors — via the shared
-`wamn_catalog::unsafe_expression_reason` scanner (literal-aware, so a `;` inside a
+`wamn_schema_model::unsafe_expression_reason` scanner (literal-aware, so a `;` inside a
 string stays legal). The author owns the predicate's *logic*, not the right to
 append statements; the mirror guard on catalog `Check` expressions lives in 3.2
 (`docs/ddl-compiler.md`).
@@ -109,8 +109,8 @@ per-role / ownership layer.
 ## Verification
 
 ```sh
-cargo test -p wamn-rls
-cargo clippy -p wamn-rls --all-targets && cargo fmt -p wamn-rls --check
+cargo test -p wamn-schema-compiler
+cargo clippy -p wamn-schema-compiler --all-targets && cargo fmt -p wamn-schema-compiler --check
 ```
 
 Deterministic tests assert the emitted SQL shape (restrictive, per-command
@@ -121,14 +121,14 @@ only their own rows, an exempt role sees all, an absent user claim denies all),
 gated on `WAMN_RLS_PG_URL` (a superuser URL):
 
 ```sh
-docker run -d --rm --name wamn-rls-pg -p 5453:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
-WAMN_RLS_PG_URL=postgres://postgres:postgres@127.0.0.1:5453/wamn cargo test -p wamn-rls
-docker stop wamn-rls-pg
+docker run -d --rm --name wamn-schema-compiler-pg -p 5453:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+WAMN_RLS_PG_URL=postgres://postgres:postgres@127.0.0.1:5453/wamn cargo test -p wamn-schema-compiler
+docker stop wamn-schema-compiler-pg
 ```
 
 ## References
 
 - Plan: `docs/platform-plan.md` §Epic 3 (3.5), §Epic 8 (8.2 tenant isolation).
 - Catalog model (the input): `docs/catalog-model.md`, `crates/schema/model`.
-- Tenant floor (what these compose on): `docs/ddl-compiler.md`, `crates/schema/ddl-compiler`.
+- Tenant floor (what these compose on): `docs/ddl-compiler.md`, `crates/schema/compiler`.
 - Claim injection: `docs/wamn-postgres.wit`, the wamn:postgres plugin (2.2 / 4.2).

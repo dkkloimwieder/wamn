@@ -8,19 +8,15 @@
 //! database name, a role password) travel as `$n` params or quoted literals.
 
 use crate::name::{APP_ROLE, database_name};
+pub(crate) use wamn_pg_core::quote_ident;
+use wamn_pg_core::quote_literal;
 
 /// Quote a SQL identifier (double-quoted, embedded `"` doubled). Mirrors the
-/// canonical `wamn_ddl::sql::quote_ident` (inlined to keep this crate's
+/// canonical `wamn_schema_compiler::sql::quote_ident` (inlined to keep this crate's
 /// dependency closure to `serde_json`).
-pub(crate) fn quote_ident(ident: &str) -> String {
-    format!("\"{}\"", ident.replace('"', "\"\""))
-}
 
 /// Quote a SQL string literal (single-quoted, embedded `'` doubled). Mirrors the
-/// canonical `wamn_ddl::sql::quote_literal`.
-fn quote_literal(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
+/// canonical `wamn_schema_compiler::sql::quote_literal`.
 
 /// Idempotently bootstrap the shared, cluster-global [`APP_ROLE`]. Runs in a
 /// `DO` block so re-running against a cluster that already has the role is a
@@ -80,7 +76,7 @@ pub fn drop_database_sql(project: &str) -> String {
 
 /// Probe whether a database exists. The database **name** is the `$1`
 /// parameter (a value, not an interpolated identifier); pass
-/// [`database_name`](crate::database_name)`(project)`.
+/// [`database_name`]`(project)`.
 pub fn database_exists_sql() -> &'static str {
     "SELECT EXISTS (SELECT FROM pg_database WHERE datname = $1)"
 }
@@ -463,14 +459,14 @@ mod tests {
     }
 
     /// The escapers are inlined to keep the prod dep closure at `serde_json`, but
-    /// they MUST stay byte-identical to the canonical `wamn_ddl::sql::*` that back
+    /// they MUST stay byte-identical to the canonical `wamn_schema_compiler::sql::*` that back
     /// the injection-safety argument (a slug cannot contain a `"`, so the derived
     /// database/role DDL is safe). Assert over adversarial inputs plus an
     /// exhaustive single-ASCII-char sweep so any future divergence in either copy
-    /// fails here. (`wamn-ddl` is a dev-dependency, so this costs the prod build
+    /// fails here. (`wamn-schema-compiler` is a dev-dependency, so this costs the prod build
     /// nothing.)
     #[test]
-    fn inlined_escapers_match_canonical_wamn_ddl() {
+    fn inlined_escapers_match_canonical_wamn_schema_compiler() {
         let mut cases: Vec<String> = vec![
             "".into(),
             "a".into(),
@@ -494,12 +490,12 @@ mod tests {
         for s in &cases {
             assert_eq!(
                 quote_ident(s),
-                wamn_ddl::sql::quote_ident(s),
+                wamn_pg_core::quote_ident(s),
                 "quote_ident drift on {s:?}"
             );
             assert_eq!(
                 quote_literal(s),
-                wamn_ddl::sql::quote_literal(s),
+                wamn_pg_core::quote_literal(s),
                 "quote_literal drift on {s:?}"
             );
         }

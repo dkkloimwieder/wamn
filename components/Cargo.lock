@@ -166,10 +166,10 @@ dependencies = [
  "wamn-node-guest",
  "wamn-node-invoke",
  "wamn-node-sdk",
- "wamn-nodes",
  "wamn-run-queue",
  "wamn-run-store",
  "wamn-runner",
+ "wamn-standard-nodes",
  "wit-bindgen",
 ]
 
@@ -669,26 +669,19 @@ name = "wamn-api"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wamn-catalog",
- "wamn-ddl",
+ "wamn-entity-access",
  "wamn-event-reg",
+ "wamn-pg-core",
+ "wamn-schema-model",
 ]
 
 [[package]]
-name = "wamn-catalog"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "wamn-ddl"
+name = "wamn-entity-access"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wamn-catalog",
+ "wamn-pg-core",
+ "wamn-schema-model",
 ]
 
 [[package]]
@@ -698,8 +691,8 @@ dependencies = [
  "jmespath",
  "serde",
  "serde_json",
- "wamn-catalog",
  "wamn-event-wire",
+ "wamn-schema-model",
 ]
 
 [[package]]
@@ -770,13 +763,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-nodes"
+name = "wamn-pg-core"
 version = "0.1.0"
 dependencies = [
- "jmespath",
  "serde_json",
- "wamn-api",
- "wamn-node-sdk",
 ]
 
 [[package]]
@@ -784,8 +774,8 @@ name = "wamn-run-queue"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "wamn-pg-core",
  "wamn-run-store",
- "wamn-sql",
 ]
 
 [[package]]
@@ -795,8 +785,8 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-flow",
+ "wamn-pg-core",
  "wamn-runner",
- "wamn-sql",
 ]
 
 [[package]]
@@ -809,8 +799,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-sql"
+name = "wamn-schema-model"
 version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "wamn-standard-nodes"
+version = "0.1.0"
+dependencies = [
+ "jmespath",
+ "serde_json",
+ "wamn-entity-access",
+ "wamn-node-sdk",
+ "wamn-pg-core",
+ "wamn-schema-model",
+]
 
 [[package]]
 name = "wasm-bindgen"

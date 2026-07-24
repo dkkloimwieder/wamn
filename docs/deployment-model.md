@@ -41,7 +41,7 @@ itself is unchanged — see §"The four tiers survive as configurations".
 `env_policies` + `project_envs.env` FK + placement columns + seed `dev`/`prod`);
 `deploy/sql/catalog-schema.sql` env CHECKs relaxed to an open slug; all consumers
 reworked (`provision-org` renders per-recovery-domain clusters sized by policy —
-**fixes cjv.21**; `provision-project-env` derives via `cluster_of`; `wamn-schema`
+**fixes cjv.21**; `provision-project-env` derives via `cluster_of`; `wamn-schema-control`
 `promote` is order-agnostic; dump/restore/migrate take an env slug); `move-org-tier`
 / `tier_move.rs` **retired** (the `.5` unified `copy` reintroduces move/cutover).
 Fixes **cjv.20** (`validate()` enforces env-resolves-to-policy, org-id charset,
@@ -51,7 +51,7 @@ live-apply gate; `provisionbench --mode all` on real Postgres; 5 mutants killed
 (model / validate / renderer / seed-drift / env-FK); clippy + fmt clean.
 
 **Landed — `wamn-8df.4` (templates + org-scoped policies, 2026-07-16):** the
-`Tier` successor. `wamn_registry::Template` — three **code presets** (`trials` =
+`Tier` successor. `wamn_control_registry::Template` — three **code presets** (`trials` =
 pooled dev/prod; `standard` = dedicated, canary shared-with prod (T2);
 `dedicated` = canary own (T4)) — stamps an org's placement **and** its env-policy
 set in one step (`provision-org --template <name>`, replacing `--placement`).
@@ -67,7 +67,7 @@ retired (templates carry the defaults); `provision-org` records-then-reads-back,
 so a customized org re-renders with its customizations. **Completes cjv.21.**
 
 **Landed — `wamn-8df.5` (unified copy, 2026-07-17):** `copy(src → dst)` shipped
-as the pure `wamn_provision::plan_copy` step plan + the `wamn-ctl
+as the pure `wamn_control_provision::plan_copy` step plan + the `wamn-ctl
 copy-project-env` driver. `include ∈ {definition, data, both}`, `scope: whole`,
 `mode: snapshot` (subset / live-cutover stay first-class in the API shape,
 rejected with a named `UnbuiltCopyAxis` error). The definition pass promotes
@@ -141,7 +141,7 @@ loses every write in the dump→flip window).
 
 `Env` stops being an enum. A project-env's `env` is a **validated lowercase slug**
 (the schema-transparent-newtype pattern already used for `OrgId`/`ProjectId`, and
-the slug discipline of `wamn-provision` / wi4 / 66x). The `Triple` is unchanged in
+the slug discipline of `wamn-control-provision` / wi4 / 66x). The `Triple` is unchanged in
 shape — `(org, project, env)` — only `env`'s type widens from `Env` to a slug
 newtype. `host_label()` (`<project>--<env>.<org>`) is unaffected (a slug is
 DNS-safe).
@@ -191,7 +191,7 @@ not two code paths.
 
 Policies are **standalone** (no inheritance). The **template** layer that stamps
 them (a named preset an org instantiates and customizes per-env) shipped with
-`wamn-8df.4` — the real successor to `Tier` (`wamn_registry::Template`; see the
+`wamn-8df.4` — the real successor to `Tier` (`wamn_control_registry::Template`; see the
 Status block).
 
 Scope note (revised by `.4`): policies are **org-scoped** — each org owns its
@@ -275,7 +275,7 @@ copy(src: Triple, dst: Triple, {
 
 - **`include: definition`** = the app's structure — catalog (3.1), flows (5.1),
   RLS policies (3.5), config. This *is* the existing promotion machinery
-  (`wamn-schema` `promote_catalog`), generalized from same-org dev→prod to any
+  (`wamn-schema-control` `promote_catalog`), generalized from same-org dev→prod to any
   src→dst. **"Deploy an app" is `copy(definition)` into a fresh `dst`** — including
   a system-maintained app → a customer (`src.org` ≠ `dst.org`). "Promote dev→prod"
   is `copy(definition)` within one org.
@@ -391,7 +391,7 @@ migration**:
      `env_policies` + the `project_envs.env` FK + the `orgs` placement columns;
      seed the `dev`/`prod` policies.
    - Consumers: `provision-org` (render clusters from `owner(env)` + policy sizing),
-     `provision-project-env` (resolve via `cluster_of`), `wamn-schema` promote
+     `provision-project-env` (resolve via `cluster_of`), `wamn-schema-control` promote
      (env order via `promotion_rank`, not `Env::ALL`), `move-org-tier`, the
      dispatcher, and every drift-guard.
    - Fixes `cjv.20`; largely fixes `cjv.21` (policy-driven cluster sizing).

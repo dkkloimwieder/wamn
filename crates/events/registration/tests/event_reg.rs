@@ -4,8 +4,8 @@
 //! Mutation-style discipline: each load-bearing validation rule fails a NAMED
 //! test (flip the rule and exactly one test goes red).
 
-use wamn_catalog::Catalog;
 use wamn_event_reg::{EventRegistration, Op, SCHEMA_VERSION, validate};
+use wamn_schema_model::Catalog;
 
 /// A two-entity catalog. The entity **id** `sales_orders` deliberately differs
 /// from its table **name** `orders`, so a registration proven to resolve is

@@ -63,7 +63,7 @@ impl std::fmt::Display for Issue {
 /// migration asides (`wamn_mig_drop_*`), the CDC entity map (`wamn_entities`),
 /// and run-schema objects all live under it — so a
 /// user-authored name must never collide. Rejecting it at *design* time makes the
-/// rule clear up front and demotes wamn-ddl's `TempNameCollision` (which only
+/// rule clear up front and demotes wamn-schema-compiler's `TempNameCollision` (which only
 /// fires at migration-compile time, and only on a colliding aside-rename) to
 /// defense-in-depth. (SR6 house rule; external review R9a.)
 const RESERVED_PREFIX: &str = "wamn_";
@@ -98,7 +98,7 @@ fn check_reserved(issues: &mut Vec<Issue>, path: String, kind: &str, name: &str)
 /// DDL, or `None` if it is safe.
 ///
 /// A `Check` constraint expression (3.2 `emit.rs`) and an RLS `RolePredicate`
-/// expression (3.5 `wamn-rls`) are spliced **verbatim** into
+/// expression (3.5 `wamn-schema-compiler`) are spliced **verbatim** into
 /// `ADD CONSTRAINT … CHECK (<expr>)` / `… OR (<expr>)` and applied through
 /// `batch_execute` — the simple protocol, which honours multiple `;`-separated
 /// statements. So an author-controlled fragment like
@@ -219,9 +219,9 @@ struct Derived {
 
 /// Every SQL identifier the DDL compiler (3.2) synthesizes for a catalog, grouped
 /// by the Postgres namespace it occupies. This is the single derivation the
-/// schema-wide uniqueness guard reads AND that wamn-ddl's drift-guard test
-/// cross-checks against the actually-emitted DDL — wamn-catalog cannot depend on
-/// wamn-ddl, so the two crates' name synthesis must not drift.
+/// schema-wide uniqueness guard reads AND that wamn-schema-compiler's drift-guard test
+/// cross-checks against the actually-emitted DDL — wamn-schema-model cannot depend on
+/// wamn-schema-compiler, so the two crates' name synthesis must not drift.
 struct DerivedIdentifiers {
     /// The schema-wide relation namespace (`pg_class`), grouped per entity (in
     /// `catalog.entities` order): table names, the implicit `<table>_pkey`
@@ -239,7 +239,7 @@ struct DerivedIdentifiers {
 }
 
 /// Reproduce, from the catalog alone, exactly the identifiers `emit.rs` will
-/// synthesize. Kept in lockstep with the emit path by the wamn-ddl drift-guard
+/// synthesize. Kept in lockstep with the emit path by the wamn-schema-compiler drift-guard
 /// test `synthesized_identifiers_cover_every_emitted_relation_and_constraint`.
 fn derive_identifiers(catalog: &Catalog) -> DerivedIdentifiers {
     let mut relations = Vec::with_capacity(catalog.entities.len());
@@ -299,7 +299,7 @@ fn derive_identifiers(catalog: &Catalog) -> DerivedIdentifiers {
 }
 
 /// The relation- and constraint-namespace identifiers the DDL compiler (3.2)
-/// will synthesize for `catalog`. Public so wamn-ddl's drift-guard test can prove
+/// will synthesize for `catalog`. Public so wamn-schema-compiler's drift-guard test can prove
 /// its emitted DDL never produces an identifier this crate's schema-wide guard
 /// did not account for (the two crates derive `<table>_pkey` /
 /// `<table>_<field>_fkey` independently — this keeps them honest).

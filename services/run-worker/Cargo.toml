@@ -1,6 +1,6 @@
 [package]
 name = "wamn-run-worker"
-description = "wamn production flow runner service (fqg.8, SR9): claim from run_queue + drive the flowrunner component, looping — its own deployment artifact; embeds the runtime via the wamn-host library (E12 later moves this to a Service workload)"
+description = "wamn production flow runner service (fqg.8, SR9): claim from run_queue + drive the flowrunner component, looping — its own deployment artifact; embeds the shared runtime (E12 later moves this to a Service workload)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 # The runtime: shared engine config + the wamn:postgres / credentials /
 # runner-egress plugins this worker links into the flowrunner instance.
-wamn-host = { path = "../host" }
+wamn-runtime = { path = "../../crates/platform/runtime" }
 wash-runtime = { workspace = true }
 # Instantiates the flowrunner command component directly (CommandPre). Pinned
 # to the exact rev wash-runtime's workspace uses so the graph keeps a single

@@ -1,5 +1,5 @@
 [package]
-name = "wamn-registry"
+name = "wamn-control-registry"
 description = "Canonical wamn control-plane registry model (wamn-q3n.1): the (org, project, env) identity triple, org tier/cluster placement, and credential Secret references. A pure model — types, validation, import/export."
 version.workspace = true
 edition.workspace = true

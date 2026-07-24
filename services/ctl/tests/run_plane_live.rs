@@ -34,7 +34,7 @@
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
-use wamn_migrate::{RunPlaneActionKind, rewrite_schema};
+use wamn_schema_control::{RunPlaneActionKind, rewrite_schema};
 
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
@@ -464,7 +464,11 @@ async fn current_noop_leg(su: &Client) {
         "current schema dry-run is a no-op: {:#?}",
         dry.actions
     );
-    assert_eq!(dry.at_target.len(), 9, "all nine run-plane tables at target");
+    assert_eq!(
+        dry.at_target.len(),
+        9,
+        "all nine run-plane tables at target"
+    );
 
     let apply = reconcile_run_plane::reconcile(su, SCHEMA, true)
         .await

@@ -55,8 +55,8 @@ pub const L1: &str = "d0000000-0000-0000-0000-000000000001";
 pub const L2: &str = "d0000000-0000-0000-0000-000000000002";
 
 /// Parse the demo catalog.
-pub fn catalog() -> anyhow::Result<wamn_catalog::Catalog> {
-    wamn_catalog::Catalog::from_json(CATALOG_JSON)
+pub fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
+    wamn_schema_model::Catalog::from_json(CATALOG_JSON)
         .map_err(|e| anyhow::anyhow!("demo catalog parse: {e}"))
 }
 
@@ -64,9 +64,9 @@ pub fn catalog() -> anyhow::Result<wamn_catalog::Catalog> {
 /// + `app.tenant` policy + grants), tenant-scoped uniqueness/indexes and all.
 pub fn floor_ddl() -> anyhow::Result<String> {
     let cat = catalog()?;
-    wamn_ddl::Migration::create(&cat)
+    wamn_schema_compiler::Migration::create(&cat)
         .map_err(|e| anyhow::anyhow!("floor compile: {e}"))?
-        .sql(wamn_ddl::Confirmation::None)
+        .sql(wamn_schema_compiler::Confirmation::None)
         .map_err(|e| anyhow::anyhow!("floor sql: {e}"))
 }
 
@@ -108,8 +108,9 @@ mod tests {
             "/../../deploy/poc/proof-catalog.json"
         );
         let file = std::fs::read_to_string(path).expect("read deploy/poc/proof-catalog.json");
-        let from_file = wamn_catalog::Catalog::from_json(&file).expect("parse proof-catalog.json");
-        let from_const = wamn_catalog::Catalog::from_json(CATALOG_JSON).expect("parse const");
+        let from_file =
+            wamn_schema_model::Catalog::from_json(&file).expect("parse proof-catalog.json");
+        let from_const = wamn_schema_model::Catalog::from_json(CATALOG_JSON).expect("parse const");
         // Canonical JSON equality is robust to incidental whitespace differences.
         assert_eq!(from_file.to_json(), from_const.to_json());
     }

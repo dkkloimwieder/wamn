@@ -20,19 +20,19 @@
 //! **Object store (Q2, the .10 stance):** the dump bytes live in object storage
 //! once the shared store lands (wamn-e1g); until then a dump is staged locally (the
 //! `dump-project-env --run-now --out-dir` output). The dump **catalog**
-//! (`provisioning.dumps`, [`crate::sql`] via `wamn_registry`) records *which* dump
+//! (`provisioning.dumps`, [`crate::sql`] via `wamn_control_registry`) records *which* dump
 //! is latest so restore-to-last-dump needs no manual key; the physical bytes come
 //! from the local dump directory. The whole-cluster **PITR** carve-out (restore an
 //! org cluster to an arbitrary instant, then carve one DB out) needs WAL/PITR and
 //! is wamn-e1g — this module restores from a *logical dump*, not a base backup.
 
-use wamn_registry::Triple;
+use wamn_control_registry::Triple;
 
 use crate::name::MAX_DB_NAME_LEN;
 
 /// Prefix for a **restore-into-scratch** database name: `wamn-restore-<org>--
 /// <project>--<env>`. Under the platform-reserved `wamn` prefix (wamn-66x); the
-/// `--` separator matches the db/Secret naming ([`crate::name`]). Distinct from the
+/// `--` separator matches the db/Secret naming convention. Distinct from the
 /// live `wamn-db-…` database so a scratch restore never shadows the real one.
 pub const RESTORE_SCRATCH_PREFIX: &str = "wamn-restore-";
 

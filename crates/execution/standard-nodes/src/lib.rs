@@ -1,4 +1,4 @@
-//! # wamn-nodes — the standard node library v1 (5.3)
+//! # wamn-standard-nodes — the standard node library v1 (5.3)
 //!
 //! The production node vocabulary, authored against the `wamn-node-sdk`
 //! contract ONLY — **never the runner crate** (the 5.13 purity rule, enforced

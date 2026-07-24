@@ -42,7 +42,7 @@ pub enum ProvisionError {
         /// The shared pool the org is placed on.
         pool: String,
     },
-    /// A recovery-domain owner env names no [`EnvPolicy`](wamn_registry::EnvPolicy)
+    /// A recovery-domain owner env names no [`EnvPolicy`](wamn_control_registry::EnvPolicy)
     /// in the policy set — the cluster cannot be sized. A malformed registry
     /// (validate() flags it as `unknown-env`/`unknown-shared-with-target`).
     UnknownEnvPolicy {

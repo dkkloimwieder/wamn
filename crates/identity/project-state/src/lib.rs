@@ -4,7 +4,7 @@
 //! This crate is the pure MODEL: the schema name, the table/column manifest, and
 //! the CHECK literals, kept as a single source and tied to the hand-written DDL
 //! [`deploy/sql/app-schema.sql`](../../../../deploy/sql/app-schema.sql) by a drift guard
-//! (`tests/schema.rs`) — the `wamn-registry` → `deploy/sql/system-schema.sql`
+//! (`tests/schema.rs`) — the `wamn-control-registry` → `deploy/sql/system-schema.sql`
 //! precedent. It emits no DDL of its own and holds no connection (the pure /
 //! effect-shell house rule); the DDL is the authoritative artifact, this model
 //! is what downstream (4.2 AuthN, 4.3 AuthZ, 2.5 migrations) references so they
@@ -19,7 +19,7 @@
 //! `deploy/sql/catalog-schema.sql` (3.1) and the flow registry in `deploy/sql/flows.sql`
 //! (POC-F1) — and is referenced, not redefined here.
 //!
-//! It is DISTINCT from the T1 control-plane registry (`wamn-registry` /
+//! It is DISTINCT from the T1 control-plane registry (`wamn-control-registry` /
 //! `deploy/sql/system-schema.sql`): that is the platform-global system DB (orgs /
 //! projects / envs), owned by `wamn_system`, not tenant-scoped. This schema is
 //! PER-PROJECT TENANT DATA under the same RLS floor as the catalog.
@@ -94,7 +94,7 @@ impl std::fmt::Display for UserStatus {
 /// A table in the system schema and the load-bearing columns the DDL drift guard
 /// pins. `columns` is a curated set (PK / FK / claim-target / enum columns), not
 /// the exhaustive DDL — pinning every column would make the guard brittle
-/// (the `wamn-registry` distinctive-column precedent).
+/// (the `wamn-control-registry` distinctive-column precedent).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Table {
     /// The bare table name (unqualified; prepend [`SCHEMA_NAME`] to qualify).

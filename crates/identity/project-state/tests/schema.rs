@@ -1,7 +1,7 @@
 //! Storage-schema tests for the per-project system schema v1 (wamn-as5).
 //!
-//! Two layers (the `wamn-registry` / `deploy/sql/system-schema.sql` precedent):
-//! - a **drift guard** tying `deploy/sql/app-schema.sql` to the `wamn-sysschema`
+//! Two layers (the `wamn-control-registry` / `deploy/sql/system-schema.sql` precedent):
+//! - a **drift guard** tying `deploy/sql/app-schema.sql` to the `wamn-project-state`
 //!   model (the schema name, each table + its pinned columns, the RLS floor +
 //!   a45 empty-claim hardening, the `users.status` CHECK literals from
 //!   `UserStatus::as_str`, and the FK cascades);
@@ -10,11 +10,11 @@
 //!   status CHECKs, and that `users.id` (uuid) + `roles.name` (text) are the
 //!   right targets for a REAL compiled 3.5 RLS policy — gated on
 //!   `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness provisions `wamn_app`)
-//!   and skipped cleanly when unset (mirrors wamn-ddl / wamn-rls / wamn-registry).
+//!   and skipped cleanly when unset (mirrors wamn-schema-compiler / wamn-schema-compiler / wamn-control-registry).
 
 use std::path::Path;
 
-use wamn_sysschema::{SCHEMA_NAME, TABLES, UserStatus};
+use wamn_project_state::{SCHEMA_NAME, TABLES, UserStatus};
 
 fn deploy_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy")
@@ -39,7 +39,7 @@ fn code_only(sql: &str) -> String {
 
 // --- drift guard: DDL ↔ model ----------------------------------------------
 
-/// `deploy/sql/app-schema.sql` must mirror the `wamn-sysschema` model: the schema
+/// `deploy/sql/app-schema.sql` must mirror the `wamn-project-state` model: the schema
 /// name, every table + its pinned columns, and the tenant RLS floor on each.
 #[test]
 fn app_schema_sql_mirrors_the_model() {
@@ -163,18 +163,18 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
     // cleanly). Its owner uuids ARE app_system.users ids, so the compiled 3.5
     // policy proves users.id / roles.name are the right claim targets.
     let catalog = notes_catalog();
-    let floor = wamn_ddl::Migration::create(&catalog).unwrap();
-    let policy = wamn_rls::AccessPolicy {
+    let floor = wamn_schema_compiler::Migration::create(&catalog).unwrap();
+    let policy = wamn_schema_compiler::rls::AccessPolicy {
         schema_version: "0.1".into(),
         catalog_id: "docs".into(),
-        rules: vec![wamn_rls::Rule::RowOwnership {
+        rules: vec![wamn_schema_compiler::rls::Rule::RowOwnership {
             entity: "docs".into(),
             owner_field: "owner_id".into(),
             exempt_roles: vec!["admin".into()],
             name: None,
         }],
     };
-    let policies = wamn_rls::compile(&policy, &catalog).unwrap();
+    let policies = wamn_schema_compiler::rls::compile(&policy, &catalog).unwrap();
 
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
@@ -199,8 +199,12 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
          GRANT USAGE ON SCHEMA wamn_sysschema_test TO wamn_app;\n\
          SET search_path TO wamn_sysschema_test;\n",
     );
-    script.push_str(&floor.sql(wamn_ddl::Confirmation::None).unwrap());
-    script.push_str(&policies.sql(wamn_ddl::Confirmation::None).unwrap());
+    script.push_str(&floor.sql(wamn_schema_compiler::Confirmation::None).unwrap());
+    script.push_str(
+        &policies
+            .sql(wamn_schema_compiler::Confirmation::None)
+            .unwrap(),
+    );
     script.push_str("\nRESET search_path;\n");
 
     // Seed as the superuser (bypasses RLS): two tenants for the isolation proof,
@@ -334,9 +338,9 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
 }
 
 /// A minimal single-entity catalog with a uuid owner column and no foreign keys
-/// (the wamn-rls live-apply precedent) — owner uuids are `app_system.users` ids.
-fn notes_catalog() -> wamn_catalog::Catalog {
-    use wamn_catalog::{Catalog, Entity, Field, FieldType};
+/// (the wamn-schema-compiler live-apply precedent) — owner uuids are `app_system.users` ids.
+fn notes_catalog() -> wamn_schema_model::Catalog {
+    use wamn_schema_model::{Catalog, Entity, Field, FieldType};
     let f = |id: &str, ty: FieldType, nullable: bool| Field {
         id: id.into(),
         name: id.into(),

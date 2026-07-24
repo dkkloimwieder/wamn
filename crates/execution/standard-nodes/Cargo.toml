@@ -1,5 +1,5 @@
 [package]
-name = "wamn-nodes"
+name = "wamn-standard-nodes"
 description = "wamn standard node library v1 (5.3): transform/conditional (JMESPath), http-request, catalog-derived Postgres entity ops, the flag-gated raw-SQL node (D8, default OFF), respond — plus the dispatch-time capability policy table. Pure: every effect flows through the wamn-node-sdk NodeCtx facade; depends on the SDK, never the runner (the 5.13 purity rule, lint-enforced)."
 version.workspace = true
 edition.workspace = true
@@ -13,8 +13,10 @@ wamn-node-sdk = { path = "../../node/sdk" }
 # The `postgres` entity-op node compiles ops through the SAME audited,
 # injection-safe surface the generated REST gateway uses (4.1) — catalog
 # allowlisting, $n params, server-side tenant injection. D8: entity ops are the
-# unflagged default; wamn-api is pure and already proven on wasm32-wasip2.
-wamn-api = { path = "../../data/entity-access" }
+# unflagged default; wamn-entity-access is pure and guest-safe.
+wamn-entity-access = { path = "../../data/entity-access" }
+wamn-pg-core = { path = "../../platform/pg-core" }
+wamn-schema-model = { path = "../../schema/model" }
 serde_json = "1"
 # Off-the-shelf expression engine for transform/conditional: JMESPath is a
 # frozen public SPEC (we maintain no language), JSON -> JSON, side-effect free,

@@ -2,8 +2,8 @@
 //!
 //! Every bench/fixture/proof subcommand that used to ride the wamn-host
 //! binary, with an identical subcommand surface (`wamn-gates pgbench …`), so
-//! the deploy Jobs swap only their image. Depends on the `wamn-host` library:
-//! gates exercise the identical host code the prod artifact runs.
+//! the deploy Jobs swap only their image. Depends on the shared runtime
+//! libraries so gates exercise the identical code the production artifacts run.
 
 mod apibench;
 mod apifixture;
@@ -166,7 +166,7 @@ enum Command {
     ErpSim(erp_sim::ErpSimArgs),
     /// Run the 11.3 record-and-replay gate (pin a full-capture run via the real ctl core: secret scrubbed + volatile normalized + replay round-trip + preview-run refusal, ephemeral schema)
     Pinproof(pinproof::PinProofArgs),
-    /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert wamn_impact names the affected flow/suite/api resource and gates a destructive change with dependents behind acknowledgement
+    /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert wamn_schema_control::impact names the affected flow/suite/api resource and gates a destructive change with dependents behind acknowledgement
     Impactproof(impactproof::ImpactProofArgs),
     /// Run the 9.8 metric-set gate (run executions/success-ratio / queue depth / drive duration / memory denial+high-water / pool+query latency; api RPS in-cluster-only)
     Metricbench(metricbench::MetricBenchArgs),

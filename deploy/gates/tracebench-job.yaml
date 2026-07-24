@@ -4,7 +4,7 @@
 # Local docker runs (docs/tracing.md) are for iteration.
 #
 # The gate drives pgprobe op 6 (SELECT pg_sleep(0)) under the real
-# wamn_host::dispatch::trigger_span; the wamn:postgres plugin's DB span nests
+# wamn_dispatcher::trigger_span; the wamn:postgres plugin's DB span nests
 # under it; both export via OTLP/gRPC → the collector's traces pipeline → Tempo,
 # then tracebench queries Tempo's TraceQL API and asserts the enriched single
 # trace (trigger → wamn:postgres). No fixture / no DDL — pg_sleep is

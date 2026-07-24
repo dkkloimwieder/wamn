@@ -57,8 +57,8 @@ its `(flow_id, flow_version)` present on the destination. Before any of this, a
 orphaned suites, mutating nothing — if a carried suite pins a flow version the
 destination will hold in NEITHER the src flow registry (what block 2 installs)
 NOR the dst's existing flows. The pure decision is
-`wamn_migrate::check_suite_orphans`; the driver read builders are
-`wamn_migrate::sql::select_suites_for_tenant_sql` /
+`wamn_schema_control::check_suite_orphans`; the driver read builders are
+`wamn_schema_control::sql::select_suites_for_tenant_sql` /
 `select_flow_versions_for_tenant_sql`. `verify` compares suite/case row counts
 between src and dst.
 
@@ -84,7 +84,7 @@ mid-copy FK error into a clean, named refusal before any mutation.
 
 `TestSuite::from_json` validates the schema-version discriminator, non-empty ids,
 unique case ids, and coherent (unique) ordinals; `to_json` round-trips.
-`SCHEMA_VERSION` is `0.1` (mirrors `wamn_catalog::SCHEMA_VERSION` / the flow-schema
+`SCHEMA_VERSION` is `0.1` (mirrors `wamn_schema_model::SCHEMA_VERSION` / the flow-schema
 freeze: `0.1.x` is additive-only).
 
 ## The gyt vocabulary seam (v0 opaque case body)

@@ -3,7 +3,7 @@
 //! the whole data model on a throwaway Postgres — migrate the catalog, attach the
 //! RLS, seed the reference data, seat the `app_system` personas — and asserts the
 //! database enforces site-scoped RLS, the ERP receipts gate, the composite unique,
-//! and exact-decimal specs. Mirrors the wamn-migrate / wamn-rls live-apply gates.
+//! and exact-decimal specs. Mirrors the wamn-schema-control / wamn-schema-compiler live-apply gates.
 
 use std::path::{Path, PathBuf};
 
@@ -15,21 +15,21 @@ fn repo(rel: &str) -> PathBuf {
         .join(rel)
 }
 
-// --- drift guard: the promoted catalog stays == the wamn-catalog fixture -------
+// --- drift guard: the promoted catalog stays == the wamn-schema-model fixture -------
 
 #[test]
 fn promoted_catalog_matches_the_wamn_catalog_fixture() {
     let fixture = std::fs::read_to_string(repo(
         "crates/schema/model/tests/fixtures/poc-receiving.catalog.json",
     ))
-    .expect("read the wamn-catalog POC fixture");
-    let fixture = wamn_catalog::Catalog::from_json(&fixture).expect("fixture parses");
+    .expect("read the wamn-schema-model POC fixture");
+    let fixture = wamn_schema_model::Catalog::from_json(&fixture).expect("fixture parses");
     // The deploy/ artifact is a promotion of the fixture; keep them identical so
     // the same catalog the crate tests validate is the one DM1 migrates live.
     assert_eq!(
         catalog(),
         fixture,
-        "deploy/poc/poc-material-receiving.catalog.json drifted from the wamn-catalog fixture"
+        "deploy/poc/poc-material-receiving.catalog.json drifted from the wamn-schema-model fixture"
     );
     assert_eq!(catalog().catalog_id, CATALOG_ID);
 }
@@ -38,9 +38,10 @@ fn promoted_catalog_matches_the_wamn_catalog_fixture() {
 
 #[test]
 fn poc_policy_compiles_to_site_scoping_and_the_erp_gate() {
-    let plan = wamn_rls::compile(&policy(), &catalog()).expect("RLS policy compiles");
+    let plan =
+        wamn_schema_compiler::rls::compile(&policy(), &catalog()).expect("RLS policy compiles");
     let sql = plan
-        .sql(wamn_rls::Confirmation::None)
+        .sql(wamn_schema_compiler::rls::Confirmation::None)
         .expect("additive, gate-free");
     // Inspector hold site-scoping: only the inspector role is constrained, keyed
     // on the (4.2-injected) app.site claim, with the safe NULLIF/uuid coercion.
@@ -62,10 +63,10 @@ fn poc_policy_compiles_to_site_scoping_and_the_erp_gate() {
 fn poc_seed_compiles_over_the_catalog() {
     let ds = seed();
     // Validates against the catalog (types, references, required, exact decimals).
-    wamn_seed::validate(&ds, &catalog()).expect("seed validates");
-    let plan = wamn_seed::compile(&ds, &catalog(), "t1").expect("seed compiles");
+    wamn_schema_compiler::seed::validate(&ds, &catalog()).expect("seed validates");
+    let plan = wamn_schema_compiler::seed::compile(&ds, &catalog(), "t1").expect("seed compiles");
     let sql = plan
-        .sql(wamn_seed::Confirmation::None)
+        .sql(wamn_schema_compiler::seed::Confirmation::None)
         .expect("seed is additive");
     // Reference data + the inspector users (the extended system entity).
     for tbl in ["sites", "suppliers", "materials", "users"] {
@@ -84,15 +85,15 @@ fn poc_seed_compiles_over_the_catalog() {
 fn poc_catalog_migrates_to_the_full_data_model() {
     // A first materialization plans a fresh CREATE for the whole catalog.
     let cat = catalog();
-    let req = wamn_migrate::MigrationRequest {
+    let req = wamn_schema_control::MigrationRequest {
         tenant: "t1",
-        environment: wamn_migrate::Env::new("dev"),
+        environment: wamn_schema_control::Env::new("dev"),
         current: None,
         target: &cat,
         expected_base: None,
-        confirm: wamn_migrate::Confirmation::None,
+        confirm: wamn_schema_control::Confirmation::None,
     };
-    let plan = wamn_migrate::plan_migration(&req).expect("first materialization plans");
+    let plan = wamn_schema_control::plan_migration(&req).expect("first materialization plans");
     assert!(!plan.destructive);
     assert_eq!(plan.from_version, None);
     assert_eq!(plan.to_version, 1);
@@ -159,7 +160,7 @@ INSERT INTO app_system.api_keys (tenant_id, id, user_id, name, key_hash, prefix)
 ";
 
 /// The transactional fixtures — receipts / lines / holds — the RLS assertions read.
-/// Seeded as the superuser (RLS bypassed), referencing the wamn-seed reference rows
+/// Seeded as the superuser (RLS bypassed), referencing the wamn-schema-compiler reference rows
 /// by natural key: two holds at `hq`, one at `west`.
 const FIXTURES: &str = "\
 INSERT INTO poc_dm1.receipts (tenant_id, id, receipt_no, supplier_id, site_id, received_at)

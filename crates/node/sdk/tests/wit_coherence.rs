@@ -1,6 +1,6 @@
 //! Drift-guards tying the FROZEN `wamn:node` 0.1 contract file
 //! (`docs/wamn-node.wit`) to (a) every vendored copy of it and (b) the exact
-//! WIT lines this SDK mirrors natively. The wamn-catalog/wamn-flow
+//! WIT lines this SDK mirrors natively. The wamn-schema-model/wamn-flow
 //! committed-contract pattern: editing the contract without updating the
 //! mirrors (or vice versa) fails a named test instead of shipping skew.
 

@@ -25,7 +25,7 @@
 //! here with a named error rather than omitted from the API):
 //! `scope: subset(...)` and `mode: live-cutover`.
 
-use wamn_registry::Triple;
+use wamn_control_registry::Triple;
 
 use crate::ProvisionError;
 use crate::sql::quote_ident;

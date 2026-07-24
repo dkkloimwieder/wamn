@@ -1,0 +1,29 @@
+[package]
+name = "wamn-schema-control"
+description = "Schema lifecycle, migration, and impact control: a pure forward-only executor that emits one-transaction plans for an effect-shell driver."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 2.5 COMPOSES the shipped model crates rather than re-deriving them: the
+# canonical catalog model + its JSON import/export + diff (3.1); the DDL compiler
+# + its additive/destructive confirmation gate (3.2, reused VERBATIM to compile a
+# migration and to honor the backup-checkpoint marker); and the lifecycle model
+# (3.4) — the single-applied + stale-base guards, reused as the validation oracle
+# so the live engine never diverges from them. This crate stays PURE (no DB,
+# clock, or wasm — the schema compiler/control SR6 pure/effect precedent): it emits
+# `$n`-parameterized SQL text, and the driver holds the connection.
+wamn-schema-model = { path = "../../schema/model" }
+wamn-schema-compiler = { path = "../compiler" }
+wamn-control-registry = { path = "../../control/registry" }
+wamn-flow = { path = "../../execution/flow-model" }
+# EVT-REPLICA-IDENT (wamn-l5i9.31): the registration model + the SINGLE root-`old`
+# detector, so the RI-FULL derivation and the materializer's per-event old-absent
+# guard can never diverge (one parser). Light closure (catalog/event-wire/jmespath).
+wamn-event-reg = { path = "../../events/registration" }
+
+[dev-dependencies]
+# The live-apply gate builds catalogs as structs and renders the apply plan into
+# a psql script; no JSON needed for the fixtures.
+serde_json = "1"

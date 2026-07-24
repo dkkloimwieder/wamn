@@ -25,7 +25,7 @@ Three new pieces, each in the house shape:
 (3.2 floor) + `--runstate` (the **canonical** `deploy/sql/run-state.sql` +
 `deploy/sql/flows.sql`, `include_str!`'d and dot-anchored-rewritten from `wamn_run`
 to the project schema; `.dockerignore` now ships `deploy/` into the image
-build) + `--seed-dataset` (a wamn-seed dataset compiled against the catalog) +
+build) + `--seed-dataset` (a wamn-schema-compiler dataset compiled against the catalog) +
 `--flow` (validate, register, ACTIVATE — deactivating prior versions; the
 `flow_id` column is written from the graph's embedded id, so the dispatcher's
 column==graph guard holds by construction). Registration REJECTS a webhook

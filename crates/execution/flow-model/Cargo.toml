@@ -13,7 +13,7 @@ serde_json = "1"
 schemars = "0.8"
 # The `partitioned(key)` ordering key (5.11) is a JMESPath over the run input —
 # the SAME expression surface (crate + version) the node library evaluates
-# (wamn-nodes), so validation and the dispatcher/materializer key stamping share
+# (wamn-standard-nodes), so validation and the dispatcher/materializer key stamping share
 # one grammar.
 jmespath = "0.3"
 

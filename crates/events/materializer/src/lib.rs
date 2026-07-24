@@ -31,7 +31,7 @@
 //!   guarded: when the delivered event carries NO old image (REPLICA IDENTITY
 //!   DEFAULT, or an op with no prior row) the predicate is refused
 //!   ([`RefuseReason::OldImageAbsent`], alertable) rather than evaluated against
-//!   an absent `old`. The reconciler (`wamn_migrate::reconcile_replica_identity`)
+//!   an absent `old`. The reconciler (`wamn_schema_control::reconcile_replica_identity`)
 //!   flips the entity to FULL so the old image is present going forward — the
 //!   flip is NON-RETROACTIVE (only WAL written after it carries the old image).
 //! - **Causation budget** (depth 16, l5i9.1): a child run's depth is
@@ -56,13 +56,13 @@ pub mod sql;
 pub use condition::{CompiledCondition, ConditionOutcome, compile_condition};
 // The single root-`old` detector lives in wamn-event-reg (the reconciler that
 // derives the REPLICA IDENTITY FULL set and this crate share it, never diverge).
-pub use wamn_event_reg::{condition_references_old, references_old};
 pub use context::{event_context, tenant_of};
 pub use decide::{
     DecideError, FirePlan, FlowDeclaration, RefuseReason, SkipReason, Verdict, child_causation,
     decide, rq_policy, serviceable,
 };
 pub use input::evt_input_json;
+pub use wamn_event_reg::{condition_references_old, references_old};
 
 pub use wamn_event_reg::EventRegistration;
 pub use wamn_event_wire::{Causation, Envelope, Op};

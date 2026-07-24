@@ -162,5 +162,5 @@ reorder mutant.
 
 No guest or host change — `ladderproof` is gates-only (the flowrunner already
 dispatches `webhook-in`/`transform`/`respond`/`conditional{expression}` via the
-wamn-nodes catch-all), so the runner reuses the fqg.8 `wamn-host` image and only
+wamn-standard-nodes catch-all), so the runner reuses the fqg.8 `wamn-host` image and only
 the `wamn-gates` image is rebuilt.

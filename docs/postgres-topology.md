@@ -201,7 +201,7 @@ control-plane model, and the registry schema):
    noisy-neighbour governance *within* an org cluster.
 
    *Shipped (`wamn-q3n.6`):* the org **cluster-pair renderer**
-   (`wamn_provision::org` — `<org>-prod` HA-per-tier + `<org>-dev`
+   (`wamn_control_provision::org` — `<org>-prod` HA-per-tier + `<org>-dev`
    hibernation-managed, as `serde_json` CNPG `Cluster` CRs), the `provision-org`
    subcommand (render + emit CRs + idempotent `registry.orgs` upsert as the
    `wamn_system` owner), and a live one-org-pair standup as the gate of record.
@@ -214,7 +214,7 @@ control-plane model, and the registry schema):
    cluster — or the trials pool for T3 tenants.
 
    *Shipped (`wamn-q3n.7`):* the `provision-project-env` subcommand + the pure
-   `wamn_provision::database` renderer (the CNPG `Database` CR:
+   `wamn_control_provision::database` renderer (the CNPG `Database` CR:
    `wamn-db-<org>--<project>--<env>` owned by `wamn_app`, `ensure: present`,
    `databaseReclaimPolicy: retain`, optional `connectionLimit`). The target
    cluster is chosen by `registry.org(org).cluster(env.side())` — the one path
@@ -238,7 +238,7 @@ control-plane model, and the registry schema):
    provisioning saga (substrate-agnostic: the per-project-env DBs are created via
    the real `.7` builders as a plain-SQL stand-in for the `Database` CRD, and the
    registry / saga live in an ephemeral `wamn_system`-shaped schema). The saga
-   builders (`wamn_registry::sql::{create,advance,complete,fail}_saga_sql`, SR2)
+   builders (`wamn_control_provision::state::{create,advance,complete,fail}_saga_sql`, SR2)
    ship here; the orchestrator that drives them through the real subcommands stays
    `10.1`. The physical cross-**cluster** isolation of a real T2 pair (`Database`
    CRs on `<org>-prod` vs `<org>-dev`, which needs the operator) is the live
@@ -373,7 +373,7 @@ contract, and gates are substrate-agnostic. Tier moves are re-pointing:
 
 *Shipped (wamn-q3n.13):* the **tier-move mechanism** — `wamn-host
 move-org-tier --org <id> --target-tier <standard|dedicated>`. The pure core
-([`wamn_provision::tier_move`]) validates the move is a strict **upgrade** (the
+([`wamn_control_provision::tier_move`]) validates the move is a strict **upgrade** (the
 lattice `trials < standard < dedicated`; a same-tier move is a no-op, a
 downgrade is rejected — data never moves *down*) and computes the ordered step
 plan. The subcommand reads the org's current placement + project-envs from the

@@ -33,11 +33,11 @@ use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use wamn_provision::{
+use wamn_control_provision::{
     pg_restore_argv, project_env_database_name, restore_scratch_db_name, sql, validate_project_env,
     validate_restore_scratch_name,
 };
-use wamn_registry::Triple;
+use wamn_control_registry::Triple;
 
 #[derive(Debug, Args)]
 pub struct RestoreProjectEnvArgs {
@@ -176,13 +176,13 @@ async fn latest_dump_key(
 ) -> anyhow::Result<String> {
     let recorded = recorded_latest_dump_key(system_url, triple).await?;
 
-    let prefix = wamn_provision::dump::dump_key_prefix(triple);
+    let prefix = wamn_control_provision::dump::dump_key_prefix(triple);
     let mut candidates = staged_dump_keys(dump_root, &prefix);
     if let Some(key) = &recorded {
         candidates.push(key.clone());
     }
-    let key =
-        wamn_provision::dump::select_latest_dump_key(&prefix, &candidates).with_context(|| {
+    let key = wamn_control_provision::dump::select_latest_dump_key(&prefix, &candidates)
+        .with_context(|| {
             format!(
                 "no dump recorded for {triple} in provisioning.dumps, and none staged under {} — \
                  run dump-project-env --run-now first, or stage a scheduled dump under --dump-root",
@@ -230,7 +230,7 @@ async fn do_recorded_latest_dump_key(
     let env = triple.env.as_str();
     let row = client
         .query_opt(
-            wamn_registry::sql::select_latest_dump_sql(),
+            wamn_control_provision::state::select_latest_dump_sql(),
             &[&triple.org, &triple.project, &env],
         )
         .await
@@ -239,7 +239,7 @@ async fn do_recorded_latest_dump_key(
 }
 
 /// The dump keys currently STAGED under `--dump-root` for a project-env, in the
-/// object-key form [`select_latest_dump_key`](wamn_provision::dump::select_latest_dump_key)
+/// object-key form [`select_latest_dump_key`](wamn_control_provision::dump::select_latest_dump_key)
 /// ranks over. Until the shared object store lands (wamn-e1g), `--dump-root` is the local
 /// mirror restore reads dump bytes from, so each timestamp subdirectory holding a
 /// complete `-Fd` dump (a `toc.dat`) IS a listed dump. The `toc.dat` gate is the local
@@ -325,7 +325,7 @@ fn run_pg_restore(conninfo: &str, dump_dir: &str, clean: bool) -> anyhow::Result
 }
 
 /// Drop + create a database via the admin URL (autocommit — `CREATE DATABASE`
-/// cannot run in a transaction block). Reuses the pure `wamn-provision` builders.
+/// cannot run in a transaction block). Reuses the pure `wamn-control-provision` builders.
 async fn recreate_database(admin_url: &str, database: &str) -> anyhow::Result<()> {
     let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
         .await
@@ -409,7 +409,7 @@ mod tests {
         std::fs::write(root.join("readme"), b"not a dump").unwrap(); // a stray non-dir
 
         let triple = Triple::new("acme", "billing", "dev");
-        let prefix = wamn_provision::dump::dump_key_prefix(&triple);
+        let prefix = wamn_control_provision::dump::dump_key_prefix(&triple);
         let mut keys = staged_dump_keys(&root, &prefix);
         keys.sort();
         // Only the complete (toc.dat) timestamp dirs, in <prefix>/<ts> object-key form;
@@ -417,7 +417,7 @@ mod tests {
         assert_eq!(keys, vec![format!("{prefix}/100"), format!("{prefix}/300")]);
         // The fallback picks the newest COMPLETE staged dump (300), not the torn 400.
         assert_eq!(
-            wamn_provision::dump::select_latest_dump_key(&prefix, &keys),
+            wamn_control_provision::dump::select_latest_dump_key(&prefix, &keys),
             Some(format!("{prefix}/300"))
         );
 

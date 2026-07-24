@@ -87,14 +87,14 @@ replication for registry/saga durability — a platform-env knob, not part of
 ## Scope — what `.2` is *not*
 
 - **`.3`** (**shipped**) — the system-DB registry **tables/DDL**
-  (`deploy/sql/system-schema.sql`, from the `wamn-q3n.1` `wamn-registry` model) applied
+  (`deploy/sql/system-schema.sql`, from the `wamn-q3n.1` `wamn-control-registry` model) applied
   into this DB as the `wamn_system` owner, plus the four testable invariants
   (references-only / no tenant data / request-path-free / dev ≠ prod recovery
   domain) and a minimal provisioning-saga table. `.2` shipped an *empty* system
-  DB, the way `deploy/sql/catalog-schema.sql` followed `wamn-catalog`;
+  DB, the way `deploy/sql/catalog-schema.sql` followed `wamn-schema-model`;
   `docs/registry-model.md` §Storage schema documents what `.3` fills it with.
 - **`.4`** — the fuller platform-plan amendment.
-- **`.5`** — amend `wamn-schema` (3.4) `Environment` for the triple + `canary`.
+- **`.5`** — amend `wamn-schema-control` (3.4) `Environment` for the triple + `canary`.
 - Multi-platform-env templating (each platform env its own T1) is a future note;
   `.2` ships one manifest (the kind/dev instance).
 

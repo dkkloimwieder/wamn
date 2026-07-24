@@ -2,19 +2,19 @@
 //!
 //! The essential proof (Q2, substrate-agnostic): the `pg_dump -Fd` artifact the
 //! renderer schedules is **valid and restorable** — seed a database, dump it with
-//! the REAL [`wamn_provision::pg_dump_argv`] builder, `pg_restore` into a scratch
+//! the REAL [`wamn_control_provision::pg_dump_argv`] builder, `pg_restore` into a scratch
 //! database, and assert the seeded rows survive the round-trip. One artifact
 //! serves restore-to-last-dump AND the 10.3 export; this proves it restores.
 //!
 //! Set `WAMN_DUMP_PG_URL` to a **superuser** URL (it CREATEs/DROPs two throwaway
 //! databases); skipped cleanly when unset or when the `pg_dump`/`pg_restore`/`psql`
-//! client tools are absent (the wamn-ddl / wamn-run-store live-gate pattern). The
+//! client tools are absent (the wamn-schema-compiler / wamn-run-store live-gate pattern). The
 //! object-store transport is deferred (wamn-e1g); this gate validates the artifact
 //! itself, which is substrate-independent.
 
 use std::process::Command as Proc;
 
-use wamn_provision::pg_dump_argv;
+use wamn_control_provision::pg_dump_argv;
 
 const SRC_DB: &str = "wamn_dump_src_test";
 const SCRATCH_DB: &str = "wamn_dump_scratch_test";

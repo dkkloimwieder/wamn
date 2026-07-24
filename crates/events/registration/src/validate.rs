@@ -12,9 +12,9 @@
 //! only guarantees a stored expression will parse.
 //!
 //! Reuses the catalog's [`Issue`] / [`Severity`] shape (3.1), like
-//! [`wamn_rls::validate`].
+//! [`wamn_schema_compiler::rls::validate`].
 
-use wamn_catalog::{Catalog, Issue, Severity};
+use wamn_schema_model::{Catalog, Issue, Severity};
 
 use crate::model::{EventRegistration, SCHEMA_VERSION};
 

@@ -1,0 +1,11 @@
+[package]
+name = "wamn-pg-core"
+description = "Guest-safe PostgreSQL identifiers, values, statements, and positional-parameter composition."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json = "1"
+
+[dev-dependencies]

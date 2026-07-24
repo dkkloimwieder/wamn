@@ -34,7 +34,7 @@ pub const DEFAULT_PG_IMAGE: &str = "ghcr.io/cloudnative-pg/postgresql:18";
 
 /// An organization id — a lowercase slug. It embeds into cluster / Secret /
 /// subdomain names, so it follows the platform slug discipline (see
-/// [`crate::validate`], mirroring `wamn-provision` / wi4 / 66x).
+/// [`crate::validate`], mirroring `wamn-control-provision` / wi4 / 66x).
 pub type OrgId = String;
 
 /// A project id — a lowercase slug, unique within its org.
@@ -295,7 +295,7 @@ impl ClusterRef {
 ///   `<org>-dev`, `canary` shared-with `prod` → `<org>-prod` (the T2 collapse),
 ///   `canary`(own) → `<org>-canary` (the T4 third recovery domain).
 ///
-/// This is the single source both the cluster-CR renderer (`wamn-provision`) and
+/// This is the single source both the cluster-CR renderer (`wamn-control-provision`) and
 /// [`Registry::resolve`](crate::Registry::resolve) derive cluster names from, so
 /// a provisioned cluster and a resolved triple always agree.
 pub fn cluster_of(org: &Org, policy: &EnvPolicy) -> ClusterRef {

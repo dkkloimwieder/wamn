@@ -13,7 +13,7 @@ Item 2.4 lists two halves. The **platform-metadata** half — `entities`,
 not redefined**:
 
 - `catalog.entities` / `catalog.fields` / `catalog.relations` —
-  `deploy/sql/catalog-schema.sql` (the 3.1 `wamn-catalog` model's storage).
+  `deploy/sql/catalog-schema.sql` (the 3.1 `wamn-schema-model` model's storage).
 - `wamn_run.flows` — `deploy/sql/flows.sql` (the POC-F1 flow registry).
 
 A `deployments` table is **deferred**: a live workload is a Kubernetes
@@ -56,7 +56,7 @@ plugin from a resolved session; this schema is what those claims key on.
 ## Claim integration (3.5 / 4.2)
 
 The columns are shaped to be the exact targets the 3.5 RLS builder
-(`crates/schema/rls-compiler`) reads:
+(`crates/schema/compiler/src/rls`) reads:
 
 - **`users.id`** is a `uuid` — the ownership target the builder reads as
   `NULLIF(current_setting('app.user_id', true), '')::uuid`. A data table's owner
@@ -81,7 +81,7 @@ filters rows under `app.user_id` / `app.role` claims.
 | `audit_log`      | append-only trail (`actor_id`, `action`, jsonb `detail`)      | `actor_id` is a bare uuid, **not FK'd** — immutable history survives user deletion; indexed by `(tenant_id, occurred_at)` |
 | `api_keys`       | api-key substrate — `key_hash` (one-way digest) + `prefix`    | raw key never stored (hashing is 4.2); FK users `ON DELETE CASCADE` |
 
-## The model crate (`wamn-sysschema`)
+## The model crate (`wamn-project-state`)
 
 A pure crate (no dependencies) holding the single source for the schema name
 (`SCHEMA_NAME = "app_system"`), the table/column manifest (`TABLES`), the
@@ -92,7 +92,7 @@ the authoritative artifact and the model is tied to it by a drift guard.
 
 ## Verification
 
-- **Unit** (`cargo test -p wamn-sysschema`): the `UserStatus` literals and the
+- **Unit** (`cargo test -p wamn-project-state`): the `UserStatus` literals and the
   table manifest.
 - **Drift guard** (`tests/schema.rs`): `deploy/sql/app-schema.sql` must mirror the
   model — the schema name, every table + its pinned columns, the RLS floor + a45
@@ -116,6 +116,6 @@ mutate a shared DB (the shared-cluster guardrail).
 ## Downstream
 
 Closing 2.4 unblocks **2.5** (`wamn-d8u`, the migration engine — the live
-transactional apply of the DDL `wamn-ddl` emits) and **POC-DM1** (`wamn-521`).
+transactional apply of the DDL `wamn-schema-compiler` emits) and **POC-DM1** (`wamn-521`).
 4.2 (AuthN) populates `users` / `user_roles` / `api_keys` and injects the claims;
 4.3 (AuthZ) reads `roles` / `permissions`.

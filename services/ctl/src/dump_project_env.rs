@@ -5,7 +5,7 @@
 //! `pg_dump -Fd` of one project-env database → object storage. **One artifact**
 //! serves tenant-scoped restore-to-last-dump *and* the 10.3 project export; the
 //! RPO is the dump interval (`--schedule`, default
-//! [`wamn_provision::DEFAULT_DUMP_SCHEDULE`] — under D18 the cadence is no longer a
+//! [`wamn_control_provision::DEFAULT_DUMP_SCHEDULE`] — under D18 the cadence is no longer a
 //! closed-tier knob). Two surfaces:
 //!
 //! * a scheduled **CronJob** (`--emit-cronjob`) at the `--schedule` cadence, and a
@@ -33,12 +33,12 @@ use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use wamn_provision::{
+use wamn_control_provision::{
     DEFAULT_BUCKET, DEFAULT_DUMP_SCHEDULE, dump_object_key, pg_dump_argv,
     render_project_env_dump_cronjob, render_project_env_dump_job, validate_dump_resource_name,
     validate_project_env,
 };
-use wamn_registry::Triple;
+use wamn_control_registry::Triple;
 
 #[derive(Debug, Args)]
 pub struct DumpProjectEnvArgs {
@@ -201,10 +201,10 @@ async fn do_record_dump(
         .await
         .context("SET ROLE wamn_system")?;
     let env = triple.env.as_str();
-    let format = wamn_provision::dump::DUMP_FORMAT;
+    let format = wamn_control_provision::dump::DUMP_FORMAT;
     client
         .execute(
-            wamn_registry::sql::record_dump_sql(),
+            wamn_control_provision::state::record_dump_sql(),
             &[
                 &triple.org,
                 &triple.project,

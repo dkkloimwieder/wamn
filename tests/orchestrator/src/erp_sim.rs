@@ -7,7 +7,7 @@
 //!
 //!   * for the first `--fail-first-n` requests carrying a given `Idempotency-Key`
 //!     it answers `429` with `Retry-After: <--retry-after-secs>` (integer
-//!     seconds — the only shape `wamn-nodes` http parses), forcing the runner to
+//!     seconds — the only shape `wamn-standard-nodes` http parses), forcing the runner to
 //!     PARK the run for the backoff;
 //!   * the NEXT request under that key is the FIRST effective delivery → `202`;
 //!   * any FURTHER request under the SAME key (a duplicate the platform must not

@@ -25,10 +25,10 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::{Client, NoTls};
 
-use wamn_catalog::Catalog;
 use wamn_ctl::impact_report::{compile_plan, gather_impact};
 use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
 use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_suite};
+use wamn_schema_model::Catalog;
 
 const FLOW_ID: &str = "impactproof-flow";
 const SUITE_ID: &str = "smoke";
@@ -45,7 +45,7 @@ pub struct ImpactProofArgs {
     pub admin_database_url: Option<String>,
 
     /// The ephemeral schema this gate owns (dropped at the end).
-    #[arg(long, default_value = "wamn_impactproof")]
+    #[arg(long, default_value = "wamn-impactproof")]
     pub schema: String,
 
     /// The owning tenant the flow + suite are seeded under.
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn bare_ident_rejects_injection() {
-        assert!(is_bare_ident("wamn_impactproof"));
+        assert!(is_bare_ident("wamn-impactproof"));
         assert!(!is_bare_ident("a; DROP"));
         assert!(!is_bare_ident("Cap"));
     }

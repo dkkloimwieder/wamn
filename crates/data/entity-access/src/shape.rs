@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value};
 
-use crate::router::{Expand, ExpandDir};
-use crate::value::SqlValue;
+use crate::planner::{Expansion, ExpansionDirection};
+use wamn_pg_core::SqlValue;
 
 /// Shape a whole row-set into a JSON array of objects keyed by column name.
 pub fn shape_rows(columns: &[String], rows: &[Vec<SqlValue>]) -> Vec<Value> {
@@ -36,15 +36,15 @@ fn value_key(v: &Value) -> String {
 /// Attach an expansion's related rows onto the already-shaped primary rows.
 ///
 /// `expanded_columns` / `expanded_rows` are the related row-set (as returned by
-/// [`crate::Router::build_expand`]). Each related row is grouped by its
+/// [`crate::Planner::build_expansion`]). Each related row is grouped by its
 /// `ex.match_column` value; each primary row then looks up the group by its own
 /// `ex.key_column` value and embeds the result under `ex.name`:
 ///
-/// - [`ExpandDir::ToOne`] → the first match (or `null`);
-/// - [`ExpandDir::ToMany`] → the full array (or `[]`).
+/// - [`ExpansionDirection::ToOne`] → the first match (or `null`);
+/// - [`ExpansionDirection::ToMany`] → the full array (or `[]`).
 pub fn attach_expansion(
     primary: &mut [Value],
-    ex: &Expand,
+    ex: &Expansion,
     expanded_columns: &[String],
     expanded_rows: &[Vec<SqlValue>],
 ) {
@@ -68,7 +68,7 @@ pub fn attach_expansion(
         let Value::Object(m) = row else { continue };
         let key = m.get(&ex.key_column).map(value_key);
         match ex.dir {
-            ExpandDir::ToOne => {
+            ExpansionDirection::ToOne => {
                 let embedded = key
                     .and_then(|k| groups.get(&k))
                     .and_then(|g| g.first())
@@ -76,7 +76,7 @@ pub fn attach_expansion(
                     .unwrap_or(Value::Null);
                 m.insert(ex.name.clone(), embedded);
             }
-            ExpandDir::ToMany => {
+            ExpansionDirection::ToMany => {
                 let embedded = key
                     .and_then(|k| groups.get(&k))
                     .cloned()

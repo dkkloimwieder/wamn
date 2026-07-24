@@ -36,7 +36,7 @@ stated in the same enums the runner records and the node contract freezes.
   test-double set (virtual clock + seeded random + egress recorder) and captures
   the run outcome, egress log, and admin-pool DB reads.
 
-`SCHEMA_VERSION` is `0.1` and mirrors the `wamn-catalog` precedent: `0.1.x` is
+`SCHEMA_VERSION` is `0.1` and mirrors the `wamn-schema-model` precedent: `0.1.x` is
 additive/clarifying only; a breaking wire change waits for `0.2`.
 
 ## Matcher semantics

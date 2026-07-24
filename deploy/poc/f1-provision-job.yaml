@@ -1,6 +1,6 @@
 # POC-F1 provisioning: publish-catalog stands up the poc_f1 project schema —
 # 3.2 floor for the POC catalog + wamn_catalog snapshot + run-state storage
-# (runs/node_runs) + flow registry + wamn-seed business rows + the registered,
+# (runs/node_runs) + flow registry + wamn-schema-compiler business rows + the registered,
 # ACTIVE receipt-received flow. Everything additive (shared-cluster guardrail).
 # Fixtures come from the f1-fixtures ConfigMap:
 #   kubectl -n wamn-system create configmap f1-fixtures \

@@ -108,7 +108,7 @@ pub struct TestKitBenchArgs {
 
     /// The alternative stored-suite selection: a JSON array of `SuiteSelector`
     /// `{tenant, flow_id, flow_version, suite_id}` — the flattened
-    /// `wamn_impact::ImpactReport` suite tuples (the 12g auto-run input
+    /// `wamn_schema_control::impact::ImpactReport` suite tuples (the 12g auto-run input
     /// contract). Mutually exclusive with `--cases` / `--suite`.
     #[arg(long)]
     pub impact_report: Option<PathBuf>,
@@ -139,10 +139,10 @@ pub struct TestKitBenchArgs {
 }
 
 /// The stored-suite executor's `--impact-report` input row — a field-for-field
-/// mirror of `wamn_impact::SuiteEdge` (`{tenant, flow_id, flow_version: i32,
+/// mirror of `wamn_schema_control::impact::SuiteEdge` (`{tenant, flow_id, flow_version: i32,
 /// suite_id}`). This is the well-defined SUBSET of an `ImpactReport` (its
 /// flattened `entities[].suites[]` tuples) the 12g migrate-catalog auto-run seam
-/// will emit. Kept a LOCAL deserialize type (wamn-impact has no serde derives
+/// will emit. Kept a LOCAL deserialize type (wamn-schema-control has no serde derives
 /// today and is out of this bead's scope) whose field names/types are pinned to
 /// the `SuiteEdge` shape by `suite_selector_matches_the_suite_edge_shape`.
 /// `flow_version` is `i32` (the SQL `int` column / `SuiteEdge`); the executor
@@ -588,7 +588,7 @@ const BUILTIN_NODE_TYPES: &[&str] = &[
     "custom",
 ];
 
-/// The standard node library (`wamn-nodes`) types the guest delegates to via
+/// The standard node library (`wamn-standard-nodes`) types the guest delegates to via
 /// `wamn_nodes::is_standard`. Drift-guarded against `crates/execution/standard-nodes/src/lib.rs`
 /// `NODE_TYPES` (name + count) by `standard_node_types_pinned_against_wamn_nodes`.
 const STANDARD_NODE_TYPES: &[&str] = &[
@@ -1246,7 +1246,7 @@ mod tests {
     use serde_json::json;
     use wamn_testkit::AssertionResult;
 
-    /// The `--impact-report` input row is the `wamn_impact::SuiteEdge` shape
+    /// The `--impact-report` input row is the `wamn_schema_control::impact::SuiteEdge` shape
     /// field-for-field: names `tenant / flow_id / flow_version / suite_id`, types
     /// `String / String / i32 / String`. A wrong field name or an extra field is
     /// REFUSED (the 12g input contract stays locked). (Mutant: impact-tuple
@@ -1472,7 +1472,7 @@ mod tests {
         );
     }
 
-    /// Drift guard: the curated standard set is pinned against `wamn-nodes`
+    /// Drift guard: the curated standard set is pinned against `wamn-standard-nodes`
     /// `NODE_TYPES` — both the names AND the array LENGTH, so a NEW standard type
     /// (a bumped `[&str; N]`) breaks this until `STANDARD_NODE_TYPES` catches up.
     #[test]
@@ -1483,13 +1483,13 @@ mod tests {
                 "NODE_TYPES: [&str; {}]",
                 STANDARD_NODE_TYPES.len()
             )),
-            "wamn-nodes NODE_TYPES length drifted from STANDARD_NODE_TYPES ({})",
+            "wamn-standard-nodes NODE_TYPES length drifted from STANDARD_NODE_TYPES ({})",
             STANDARD_NODE_TYPES.len()
         );
         for t in STANDARD_NODE_TYPES {
             assert!(
                 nodes.contains(&format!("\"{t}\"")),
-                "wamn-nodes NODE_TYPES no longer lists {t:?}"
+                "wamn-standard-nodes NODE_TYPES no longer lists {t:?}"
             );
         }
     }

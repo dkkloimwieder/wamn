@@ -34,23 +34,20 @@ crates/                 shared Rust workspace packages
     component-policy    pure component-import and grant policy
     runtime             shared engine, plugins, WIT, metrics, and test doubles
     node-runtime        transport-free warm custom-node runtime
-    sql                 wamn-sql: parameterized SQL composition primitive
+    pg-core             wamn-pg-core: guest-safe PostgreSQL primitives
   data/
-    entity-access       wamn-api: catalog-derived REST/SQL planning logic
+    entity-access       wamn-entity-access: transport-neutral entity planner
+    api                 wamn-api: HTTP/event-registration adapter
   schema/
-    model               wamn-catalog: metadata model + JSON Schema
-    ddl-compiler        wamn-ddl: catalog -> Postgres DDL compiler
-    lifecycle           wamn-schema: draft/staged/applied lifecycle + promotion
-    rls-compiler        wamn-rls: per-role RLS policy builder
-    seed-compiler       wamn-seed: typed datasets -> deterministic INSERTs
-    migration           wamn-migrate: forward-only migration planner
-    impact-analysis     wamn-impact: schema-change dependency analysis
+    model               wamn-schema-model: metadata model + JSON Schema
+    compiler            wamn-schema-compiler: DDL, RLS, and seed compilation
+    control             wamn-schema-control: lifecycle, migration, and impact
   execution/
     flow-model          wamn-flow: flow-graph JSON model + JSON Schema
     flow-engine         wamn-runner: pure flow reducer
     run-state-store     wamn-run-store: durable run/node-run decisions
     run-state-queue     wamn-run-queue: queue, lease, and cron decisions
-    standard-nodes      wamn-nodes: standard node library
+    standard-nodes      wamn-standard-nodes: standard node library
   events/
     wire                wamn-event-wire: event envelope contract
     registration        wamn-event-reg: event registration model
@@ -61,10 +58,10 @@ crates/                 shared Rust workspace packages
     invoke              wamn-node-invoke: node invocation wire contract
     manifest            wamn-node-manifest: OCI annotation model
   control/
-    registry            wamn-registry: org/project/environment model
-    provision           wamn-provision: Postgres provisioning builders
+    registry            wamn-control-registry: org/project/environment model
+    provision           wamn-control-provision: Postgres provisioning builders
   identity/
-    project-state       wamn-sysschema: per-project app_system model
+    project-state       wamn-project-state: per-project app_system model
   scenarios/
     model               wamn-testkit: scenario case/assertion vocabulary
     catalog             wamn-flow-tests: persisted suite envelope

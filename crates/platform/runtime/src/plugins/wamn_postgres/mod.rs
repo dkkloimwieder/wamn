@@ -14,7 +14,7 @@
 //!   role in-band (`SET` / `RESET` / `set_config`, e.g. a later
 //!   `SET app.tenant = 'other'` that would override the BEGIN-time claim) is
 //!   rejected on the query/execute/cursor surface (see
-//!   [`reject_claim_mutation`], wamn-cjv.2), closing the reachable
+//!   `reject_claim_mutation`, wamn-cjv.2), closing the reachable
 //!   transaction-API override. This is a defense-in-depth blocklist, **not** a
 //!   structural close: raw dynamic SQL (`DO` / `EXECUTE`) can still construct a
 //!   claim mutation, so re-keying RLS onto a non-settable identity (a per-tenant
@@ -205,7 +205,7 @@ impl HostPlugin for WamnPostgres {
     }
 
     /// R31: on workload teardown, reap the per-component claim registries
-    /// ([`WamnPostgres::clear_component_claims`]) so a stale tenant / project /
+    /// (`WamnPostgres::clear_component_claims`) so a stale tenant / project /
     /// schema / runner / causation claim cannot survive unbind or be inherited by
     /// a rebound component id. The project pools stay — they are project-keyed
     /// (shared, memoized), not per component.

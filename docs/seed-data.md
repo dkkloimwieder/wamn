@@ -6,7 +6,7 @@ other rows by key — compiled to tenant-scoped, **idempotent** `INSERT`s agains
 the tables the DDL compiler (3.2) generates.
 
 - **Issue:** wamn-x71 `[3.6]`; **Epic:** E3 Schema Designer.
-- **Crate:** `crates/schema/seed-compiler` — consumes `wamn-catalog` + `wamn-ddl`.
+- **Crate:** `crates/schema/compiler/src/seed` — consumes `wamn-schema-model` + `wamn-schema-compiler`.
 - **Consumers:** POC-DM1 (load the reference data), the test host (11.1, which
   clones a schema "with system schema + seed data"), preview environments (11.9,
   masked seed data), the control plane.
@@ -45,9 +45,9 @@ Each row's managed `id` is `uuidv5(namespace, "tenant:entity:key")`. This makes:
 ## Compilation
 
 ```rust
-use wamn_seed::{Dataset, compile, Confirmation};
+use wamn_schema_compiler::seed::{Dataset, compile, Confirmation};
 
-let plan = compile(&dataset, &catalog, "tenant-a")?; // -> a wamn-ddl MigrationPlan
+let plan = compile(&dataset, &catalog, "tenant-a")?; // -> a wamn-schema-compiler MigrationPlan
 let sql  = plan.sql(Confirmation::None)?;            // a seed load is all-additive
 ```
 
@@ -85,8 +85,8 @@ can. The generated tables are 3.2's; this crate only populates them.
 ## Verification
 
 ```sh
-cargo test -p wamn-seed
-cargo clippy -p wamn-seed --all-targets && cargo fmt -p wamn-seed --check
+cargo test -p wamn-schema-compiler
+cargo clippy -p wamn-schema-compiler --all-targets && cargo fmt -p wamn-schema-compiler --check
 ```
 
 Deterministic tests assert the emitted SQL (FK-safe order, deterministic ids,
@@ -96,13 +96,13 @@ seed into a throwaway Postgres, re-applies it, and asserts the foreign key
 resolves and the second load is a no-op — gated on `WAMN_SEED_PG_URL`:
 
 ```sh
-docker run -d --rm --name wamn-seed-pg -p 5454:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
-WAMN_SEED_PG_URL=postgres://postgres:postgres@127.0.0.1:5454/wamn cargo test -p wamn-seed
-docker stop wamn-seed-pg
+docker run -d --rm --name wamn-schema-compiler-pg -p 5454:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+WAMN_SEED_PG_URL=postgres://postgres:postgres@127.0.0.1:5454/wamn cargo test -p wamn-schema-compiler
+docker stop wamn-schema-compiler-pg
 ```
 
 ## References
 
 - Plan: `docs/platform-plan.md` §Epic 3 (3.6), §Epic 11 (11.1 test host, 11.9 previews).
 - Catalog model (the input): `docs/catalog-model.md`, `crates/schema/model`.
-- Tenant floor (the target tables): `docs/ddl-compiler.md`, `crates/schema/ddl-compiler`.
+- Tenant floor (the target tables): `docs/ddl-compiler.md`, `crates/schema/compiler`.

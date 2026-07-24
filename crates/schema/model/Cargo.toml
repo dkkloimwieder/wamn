@@ -1,5 +1,5 @@
 [package]
-name = "wamn-catalog"
+name = "wamn-schema-model"
 description = "Canonical wamn metadata catalog schema (3.1): entity/field/relation/index/constraint model, validation, import/export, version diff. Neutral primitives; opinionated models live in modules (D14)."
 version.workspace = true
 edition.workspace = true

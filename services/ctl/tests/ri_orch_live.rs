@@ -284,7 +284,7 @@ async fn publish_scenario(su: &Client, url: &str) {
 async fn registration_change_scenario(su: &Client, url: &str) {
     reset(su).await;
     let v1 = write_tmp("riorch_reg.json", &cat_json(1));
-    let catalog = wamn_catalog::Catalog::from_json(&cat_json(1)).expect("catalog parses");
+    let catalog = wamn_schema_model::Catalog::from_json(&cat_json(1)).expect("catalog parses");
 
     // Apply the catalog with only a benign insert-only registration: publish
     // --provision creates both floors and reconciles RI, leaving BOTH entities

@@ -11,8 +11,8 @@
 
 use serde_json::{Value, json};
 
-/// The POC data model — the wamn-catalog fixture verbatim (same file the
-/// wamn-catalog/wamn-ddl/wamn-f1 tests pin).
+/// The POC data model — the wamn-schema-model fixture verbatim (same file the
+/// wamn-schema-model/wamn-schema-compiler/wamn-f1 tests pin).
 pub const F1_CATALOG_JSON: &str =
     include_str!("../../../crates/schema/model/tests/fixtures/poc-receiving.catalog.json");
 
@@ -20,7 +20,7 @@ pub const F1_CATALOG_JSON: &str =
 /// the wamn-f1 node set by that crate's tests).
 pub const F1_FLOW_JSON: &str = include_str!("../../../deploy/poc/f1-flow.json");
 
-/// The F1 business seed (deploy/poc/f1-seed.dataset.json, a wamn-seed dataset).
+/// The F1 business seed (deploy/poc/f1-seed.dataset.json, a wamn-schema-compiler dataset).
 pub const F1_SEED_JSON: &str = include_str!("../../../deploy/poc/f1-seed.dataset.json");
 
 /// The tenant every F1 gate runs under.
@@ -30,17 +30,17 @@ pub const F1_TENANT: &str = "f1-tenant";
 /// them with two offending lines).
 pub const BURST_HOLDS: usize = 4;
 
-pub fn catalog() -> anyhow::Result<wamn_catalog::Catalog> {
-    wamn_catalog::Catalog::from_json(F1_CATALOG_JSON)
+pub fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
+    wamn_schema_model::Catalog::from_json(F1_CATALOG_JSON)
         .map_err(|e| anyhow::anyhow!("f1 catalog fixture: {e}"))
 }
 
 /// The 3.2 tenant floor for the POC catalog.
 pub fn floor_ddl() -> anyhow::Result<String> {
     let cat = catalog()?;
-    wamn_ddl::Migration::create(&cat)
+    wamn_schema_compiler::Migration::create(&cat)
         .map_err(|e| anyhow::anyhow!("floor compile: {e}"))?
-        .sql(wamn_ddl::Confirmation::None)
+        .sql(wamn_schema_compiler::Confirmation::None)
         .map_err(|e| anyhow::anyhow!("floor sql: {e}"))
 }
 
@@ -155,9 +155,13 @@ mod tests {
         assert!(flow.issues().is_empty(), "{:?}", flow.issues());
         assert_eq!(flow.flow_id, "receipt-received");
 
-        let dataset = wamn_seed::Dataset::from_json(F1_SEED_JSON).expect("seed dataset");
-        let plan = wamn_seed::compile(&dataset, &cat, F1_TENANT).expect("seed compiles");
-        let sql = plan.sql(wamn_ddl::Confirmation::None).expect("additive");
+        let dataset =
+            wamn_schema_compiler::seed::Dataset::from_json(F1_SEED_JSON).expect("seed dataset");
+        let plan =
+            wamn_schema_compiler::seed::compile(&dataset, &cat, F1_TENANT).expect("seed compiles");
+        let sql = plan
+            .sql(wamn_schema_compiler::Confirmation::None)
+            .expect("additive");
         for name in [
             "'resin-a'",
             "'solvent-b'",

@@ -31,7 +31,7 @@ use bindings::wasi::http::types::{
     ErrorCode, Fields, IncomingResponse, Method, OutgoingBody, OutgoingRequest, Scheme,
 };
 
-/// The component-shell capability facade: dispatch `wamn-nodes` (or any
+/// The component-shell capability facade: dispatch `wamn-standard-nodes` (or any
 /// SDK-authored node) over the component's real imports. The D8 raw-SQL flag
 /// defaults OFF — per-project enablement wiring lands with the user-SQL role
 /// split (wamn-1nd).
