@@ -1,0 +1,23 @@
+[package]
+name = "wamn-executor"
+description = "Production serving executor for queued flow runs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "wamn_executor"
+
+[[bin]]
+name = "wamn-run-worker"
+path = "src/main.rs"
+
+[dependencies]
+wamn-execution-host = { path = "../../crates/execution/host" }
+wamn-runtime = { path = "../../crates/platform/runtime" }
+wash-runtime = { workspace = true }
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros", "signal", "sync"] }
+tracing = { workspace = true }
+wamn-scheduler = { path = "../../crates/execution/scheduler" }

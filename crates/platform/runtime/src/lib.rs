@@ -1,6 +1,5 @@
 //! Shared native runtime configuration and wasmCloud host capability adapters.
 
-pub mod doubles;
 pub mod engine;
 pub mod memory_metrics;
 pub mod plugins;

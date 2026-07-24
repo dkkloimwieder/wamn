@@ -1,4 +1,4 @@
-//! wamn-run-worker: the production flow-runner service binary (SR9).
+//! wamn-run-worker: the production serving executor binary.
 //!
 //! Pre-split this ran as `wamn-host run-worker`; the flags are unchanged, the
 //! `run-worker` subcommand literal is gone (single-purpose binary).
@@ -15,7 +15,7 @@ struct Cli {
     log_level: String,
 
     #[command(flatten)]
-    args: wamn_run_worker::RunWorkerArgs,
+    args: wamn_executor::ExecutorArgs,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -33,7 +33,7 @@ async fn async_main() -> anyhow::Result<()> {
     let shutdown_observability =
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
-    let result = wamn_run_worker::run(cli.args).await;
+    let result = wamn_executor::run(cli.args).await;
 
     shutdown_observability();
     result

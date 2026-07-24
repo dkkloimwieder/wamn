@@ -1,7 +1,7 @@
-//! The virtual wall clock the test host swaps in for `wasi:clocks/wall-clock`
+//! The virtual wall clock a scenario swaps in for `wasi:clocks/wall-clock`
 //! (production delta 2, design-note 9).
 //!
-//! A [`VirtualClock`] is an `Arc`-shared atomic nanosecond counter a test
+//! A [`VirtualClock`] is an `Arc`-shared atomic nanosecond counter a scenario
 //! scheduler drives; [`VirtualWallClock`] adapts it to the fork's
 //! [`HostWallClock`] so it can be injected into a store's `WasiCtx` via
 //! `WasiCtxBuilder::wall_clock`. Guest code that reads the wall clock (a `delay`
@@ -9,9 +9,7 @@
 //! chooses — so a 24h delay collapses to milliseconds of real wall time once the
 //! scheduler advances the clock past the deadline.
 //!
-//! Extracted verbatim from the S6 `testhostbench` (the bench kept a private copy
-//! before this crate owned the doubles); the bench now drives THIS type, so the
-//! extraction is regression-proved by the unchanged bench modes.
+//! Extracted from the S6 proof before becoming a product scenario adapter.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,7 +17,7 @@ use std::time::Duration;
 
 use wasmtime_wasi::HostWallClock;
 
-/// A wall clock a test scheduler drives. Cheap to [`Clone`] (an `Arc` to the
+/// A wall clock a scenario scheduler drives. Cheap to [`Clone`] (an `Arc` to the
 /// shared instant), so the scheduler can advance the very instant a store's
 /// `WasiCtx` reads.
 #[derive(Clone, Debug)]

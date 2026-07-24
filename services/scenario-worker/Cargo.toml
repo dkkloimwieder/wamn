@@ -1,0 +1,23 @@
+[package]
+name = "wamn-scenario-worker"
+description = "Product worker for deterministic flow scenario execution."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wamn-execution-host = { path = "../../crates/execution/host" }
+wamn-runtime = { path = "../../crates/platform/runtime" }
+wamn-scenario-runtime = { path = "../../crates/scenarios/runtime" }
+wamn-scenario-model = { path = "../../crates/scenarios/model" }
+wamn-scenario-catalog = { path = "../../crates/scenarios/catalog" }
+wamn-run-state = { path = "../../crates/execution/run-state" }
+wash-runtime = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
+tracing = { workspace = true }

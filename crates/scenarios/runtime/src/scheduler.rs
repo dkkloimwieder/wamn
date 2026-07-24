@@ -1,4 +1,4 @@
-//! The test scheduler (production delta 2): drive a [`VirtualClock`] to the next
+//! The scenario scheduler: drive a [`VirtualClock`] to the next
 //! parked-wake deadline and re-drive, until nothing is parked.
 //!
 //! A real flow with a 24h `delay` node parks: it records a wake deadline and
@@ -8,7 +8,7 @@
 //! EARLIEST one, and re-drives — collapsing arbitrary delays to milliseconds
 //! with no test-side knowledge of how long each delay was.
 //!
-//! Two backends plug into the same [`TestScheduler`] via [`SchedulerBackend`]:
+//! Two backends plug into the same [`ScenarioScheduler`] via [`SchedulerBackend`]:
 //!
 //! - **run-s6** (the guest's single-run `run-s6` export): the wake deadline
 //!   lives in `runs.state_json->'wake'->'<node>'` as epoch seconds, read from
@@ -28,7 +28,8 @@ use super::clock::VirtualClock;
 
 /// The earliest-first pick, and the loop that applies it, live here so the
 /// "advance to the EARLIEST deadline" rule is one testable line.
-pub struct TestScheduler {
+#[derive(Debug)]
+pub struct ScenarioScheduler {
     clock: VirtualClock,
     max_steps: usize,
 }
@@ -48,7 +49,7 @@ pub trait SchedulerBackend {
     async fn redrive(&mut self) -> anyhow::Result<()>;
 }
 
-impl TestScheduler {
+impl ScenarioScheduler {
     /// A scheduler driving `clock`, capped at a generous default step count so a
     /// run that never makes progress fails loudly instead of looping forever.
     pub fn new(clock: VirtualClock) -> Self {
@@ -88,7 +89,7 @@ impl TestScheduler {
             steps += 1;
             anyhow::ensure!(
                 steps <= self.max_steps,
-                "test scheduler exceeded {} steps — a parked run never made progress",
+                "scenario scheduler exceeded {} steps — a parked run never made progress",
                 self.max_steps
             );
         }
@@ -184,7 +185,7 @@ mod tests {
             runs: runs.clone(),
         };
 
-        let sched = TestScheduler::new(clock.clone());
+        let sched = ScenarioScheduler::new(clock.clone());
         let steps = sched.drive_to_quiescence(&mut backend).await.unwrap();
         assert_eq!(
             steps, 2,
@@ -205,7 +206,7 @@ mod tests {
             clock: clock.clone(),
             runs: Arc::new(Mutex::new(Vec::new())),
         };
-        let steps = TestScheduler::new(clock)
+        let steps = ScenarioScheduler::new(clock)
             .drive_to_quiescence(&mut backend)
             .await
             .unwrap();
@@ -221,7 +222,7 @@ mod tests {
             clock: clock.clone(),
             runs: Arc::new(Mutex::new(vec![(far, false)])),
         };
-        let steps = TestScheduler::new(clock.clone())
+        let steps = ScenarioScheduler::new(clock.clone())
             .drive_to_quiescence(&mut backend)
             .await
             .unwrap();

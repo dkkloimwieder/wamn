@@ -1,9 +1,8 @@
-//! The `wasi:random` seed double (production delta 5, design-note 9) and the
-//! test-host `WasiCtx` builder.
+//! Deterministic `wasi:random` and `WasiCtx` construction for scenarios.
 //!
 //! No shipped guest imports `wasi:random` today (only a server-side
 //! `gen_random_uuid` comment reference exists), so [`SeededRng`] is a FORWARD
-//! HOOK: it makes the test host's randomness reproducible the moment a guest
+//! HOOK: it makes scenario randomness reproducible the moment a guest
 //! does read it, with zero cost until then.
 //!
 //! The honest seam: the pinned `wasmtime_wasi::WasiCtxBuilder` exposes
@@ -22,7 +21,7 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder};
 use super::clock::{VirtualClock, VirtualWallClock};
 
 /// A deterministic splitmix64 generator seeded from a `u64`. The same seed
-/// always yields the same stream — the property the test host relies on for a
+/// always yields the same stream — the property scenario replay relies on for a
 /// reproducible `wasi:random`.
 #[derive(Clone, Debug)]
 pub struct SeededRng {
@@ -77,11 +76,10 @@ impl TryRng for SeededRng {
 /// `secure_random` stream while staying deterministic.
 const INSECURE_SEED_FOLD: u64 = 0x5DEE_CE66_D9E3_779B;
 
-/// Build the test host's `WasiCtx`: a virtual wall clock a scheduler drives
+/// Build the scenario-worker `WasiCtx`: a virtual wall clock a scheduler drives
 /// ([`VirtualClock`]) plus a deterministic RNG on every `wasi:random` surface
 /// (secure, insecure, and the insecure seed). `epoch_secs` bases the clock;
-/// `seed` seeds the randomness. This is the exact `WasiCtx` the run-worker's
-/// `--test-doubles` selector injects.
+/// `seed` seeds the randomness.
 pub fn build_virtual_wasi(clock: &VirtualClock, seed: u64) -> WasiCtx {
     WasiCtxBuilder::new()
         .args(&["main.wasm"])

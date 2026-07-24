@@ -1,15 +1,15 @@
-//! Ephemeral schema lifecycle owned by the test runner (production delta 4).
+//! Ephemeral schema lifecycle for isolated scenario execution.
 //!
 //! [`EphemeralSchemaProvisioner`] owns a persistent superuser (admin) connection
-//! and creates a FRESH schema per test CASE from a caller-supplied template DDL,
+//! and creates a fresh schema per scenario from a caller-supplied template DDL,
 //! then drops it. The runner's `wamn_app` role is NOSUPERUSER/NOCREATEDB and
 //! cannot create schemas — exactly as in production — so all provisioning goes
 //! through this admin path, never the guest's pool. Host-side flow seeding runs
 //! on the same superuser session ([`admin`](EphemeralSchemaProvisioner::admin),
 //! RLS-bypassing; the caller re-scopes `search_path` per case).
 //!
-//! Per-case isolation has a second half: [`case_pool`] builds a FRESH `wamn_app`
-//! pool bound to the case's schema. A new plugin per case means the pool's
+//! Per-scenario isolation has a second half: [`case_pool`] builds a fresh
+//! `wamn_app` pool bound to the scenario schema. A new plugin per case means the pool's
 //! cached prepared-statement plans never alias a prior case's schema (a plan
 //! pins its `search_path`), so N sequential `create schema_case_i → run → drop`
 //! cases stay isolated.
@@ -20,14 +20,22 @@ use anyhow::Context as _;
 use tokio::task::JoinHandle;
 use tokio_postgres::{Client, NoTls};
 
-use crate::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 
-/// Owns the superuser connection lifecycle for the test runner's ephemeral
+/// Owns the superuser connection lifecycle for a scenario sandbox's ephemeral
 /// schemas.
 pub struct EphemeralSchemaProvisioner {
     admin: Client,
     _conn: JoinHandle<()>,
     template: Arc<dyn Fn(&str) -> String + Send + Sync>,
+}
+
+impl std::fmt::Debug for EphemeralSchemaProvisioner {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EphemeralSchemaProvisioner")
+            .finish_non_exhaustive()
+    }
 }
 
 impl EphemeralSchemaProvisioner {
@@ -85,7 +93,7 @@ impl EphemeralSchemaProvisioner {
     }
 }
 
-/// Build a FRESH `wamn_app` pool bound to `schema` for one test case, keyed to
+/// Build a fresh `wamn_app` pool bound to `schema` for one scenario, keyed to
 /// `component_id` with the `tenant` claim. A new plugin per case keeps the
 /// pool's cached prepared statements from aliasing a prior case's schema, so
 /// per-case isolation holds. `cfg` carries the app-role connection URL + pool

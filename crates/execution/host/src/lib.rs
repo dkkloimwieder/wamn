@@ -1,4 +1,4 @@
-//! The `run-worker` subcommand: the production flow runner (wamn-fqg.8 [5.14]).
+//! Shared native host for the compiled flowrunner component.
 //!
 //! fqg.4 shipped the guest-side claim path — the flowrunner component's
 //! `run-next` export claims one currently-claimable run from the durable
@@ -30,17 +30,14 @@
 //! anyway — an in-flight run's lease simply ages out and another replica
 //! reclaims it (fqg.2).
 //!
-//! The loop core ([`RunWorker`]) lives here in the library so the runnerbench
-//! gate (wamn-gates) drives the identical code it verifies (SR1); the binary's
-//! [`run`] wraps it in the doorbell + SIGTERM loop.
+//! The loop core ([`ExecutionHost`]) is shared by serving and scenario
+//! compositions. Artifact-specific CLI, credentials, and capability selection
+//! remain in their service leaves.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context as _;
-use clap::Args;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram};
 use tokio::sync::watch;
@@ -59,133 +56,61 @@ use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
-use wamn_runtime::doubles::{DoubleSet, EgressRecorder};
-use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
 use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
 use wamn_runtime::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
-use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres};
 
-/// The fixed unix-epoch second the `--test-doubles virtual` clock starts at, and
-/// the seed for its deterministic `wasi:random`. Constants (not args) so a test
-/// run-worker is byte-reproducible.
-const TEST_DOUBLES_EPOCH_SECS: u64 = 1_700_000_000;
-const TEST_DOUBLES_SEED: u64 = 0x7492_5EED_5EED_7492;
-
-/// The test-host double-set selector (wamn-t92). `Off` (default) is the
-/// production host; `Virtual` selects the test host (virtual clock + seeded
-/// random `WasiCtx` + an `EgressRecorder` swapped in for the prod egress
-/// handler). A build/config selection, never a runtime mode toggled on a live
-/// production service — the precedent is a second host build, not a test flag on
-/// the prod path (docs/archive/structure-review.md).
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
-pub enum TestDoubles {
-    #[default]
-    Off,
-    Virtual,
-}
-
-/// Default in-image path of the flowrunner component (baked into the prod host
-/// image — the runner IS the production flowrunner service, so the component
-/// travels with the binary, unlike the gate fixtures).
+/// Stable in-image location of the compiled flowrunner component.
 pub const DEFAULT_FLOWRUNNER_PATH: &str = "/components/flowrunner.wasm";
 
-#[derive(Debug, Args)]
-pub struct RunWorkerArgs {
-    /// Path to the flowrunner component (baked into the prod image).
-    #[arg(long, default_value = DEFAULT_FLOWRUNNER_PATH)]
-    pub flowrunner: PathBuf,
+/// Capability composition for a single execution store.
+pub struct ExecutionCapabilities {
+    mode: CapabilityMode,
+}
 
-    /// App (runner) database URL — the NOSUPERUSER wamn_app role. Overrides
-    /// WAMN_PG_URL / DATABASE_URL.
-    #[arg(long)]
-    pub database_url: Option<String>,
+impl std::fmt::Debug for ExecutionCapabilities {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mode = match &self.mode {
+            CapabilityMode::Production { .. } => "production",
+            CapabilityMode::Injected { .. } => "injected",
+        };
+        formatter
+            .debug_struct("ExecutionCapabilities")
+            .field("mode", &mode)
+            .finish()
+    }
+}
 
-    /// Tenant claim (the RLS floor the queue SQL is scoped by).
-    #[arg(long, default_value = "default")]
-    pub tenant: String,
+enum CapabilityMode {
+    Production {
+        allowed_hosts: Arc<[AllowedHost]>,
+    },
+    Injected {
+        wasi: wasmtime_wasi::WasiCtx,
+        http: Arc<dyn HostHandler>,
+    },
+}
 
-    /// search_path for the runner's session (e.g. wamn_run). The runner uses
-    /// unqualified table names, resolved through the host-injected search_path.
-    #[arg(long)]
-    pub schema: Option<String>,
+/// Compose production HTTP and WASI capabilities.
+pub fn production_capabilities(allowed_hosts: Arc<[AllowedHost]>) -> ExecutionCapabilities {
+    ExecutionCapabilities {
+        mode: CapabilityMode::Production { allowed_hosts },
+    }
+}
 
-    /// The durable-queue lease owner (`app.runner`) — must be STABLE per replica
-    /// and DISTINCT across replicas so leases are attributable and a reclaim
-    /// after a replica dies is owner-scoped. Defaults to $WAMN_RUNNER, then
-    /// $HOSTNAME (the pod name in Kubernetes), then a fixed fallback.
-    #[arg(long, env = "WAMN_RUNNER")]
-    pub runner: Option<String>,
-
-    /// The credential-vault source (5.9): a JSON file `{project: {name:
-    /// secret}}` mounted from a K8s Secret — the WAMN_PG_PROJECTS_FILE
-    /// pattern. A missing file leaves the vault EMPTY (every resolution is
-    /// `unavailable`); a malformed file is a hard error.
-    #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
-    pub credentials_file: Option<PathBuf>,
-
-    /// The project whose credentials this runner's flows may read (the key
-    /// into the credentials file) — single-project, like --tenant/--schema.
-    #[arg(long, env = "WAMN_PROJECT", default_value = wamn_postgres::DEFAULT_PROJECT)]
-    pub project: String,
-
-    /// Hosts the runner's flows may reach over outbound wasi:http (repeatable;
-    /// `host[:port]`, `scheme://host`, `*.domain`, or `*`). EMPTY = DENY-ALL —
-    /// the production fail-closed posture; an http-request to an unlisted host
-    /// fails `egress-denied`. Per-flow governance is the fqg.11 refinement.
-    #[arg(
-        long = "allowed-hosts",
-        env = "WAMN_ALLOWED_HOSTS",
-        value_delimiter = ','
-    )]
-    pub allowed_hosts: Vec<String>,
-
-    /// Lease TTL for a claimed run (ms). The guest renews it per node, so this
-    /// need only exceed the longest single-node execution, not the whole walk.
-    #[arg(long, default_value_t = 30_000)]
-    pub lease_ttl_ms: u64,
-
-    /// Tightest idle poll interval (ms): reset to this after a drain that found
-    /// work, so a busy queue is drained promptly.
-    #[arg(long, default_value_t = wamn_scheduler::DEFAULT_MIN_INTERVAL_MS as u64)]
-    pub min_idle_ms: u64,
-
-    /// Widest idle poll interval (ms): the reconciliation backstop cadence while
-    /// the queue stays empty (doubles up to here).
-    #[arg(long, default_value_t = wamn_scheduler::DEFAULT_MAX_INTERVAL_MS as u64)]
-    pub max_idle_ms: u64,
-
-    /// NATS URL for doorbell wakes. The runner runs without NATS (the
-    /// poll-backoff reconcile still guarantees pickup), just with higher wake
-    /// latency.
-    #[arg(long, default_value = "nats://localhost:4222")]
-    pub nats_url: String,
-
-    /// mTLS material for the doorbell NATS connection (mount the
-    /// wasmcloud-runtime-tls secret in-cluster). Omit for plain NATS.
-    #[arg(long)]
-    pub nats_tls_ca: Option<PathBuf>,
-    #[arg(long)]
-    pub nats_tls_cert: Option<PathBuf>,
-    #[arg(long)]
-    pub nats_tls_key: Option<PathBuf>,
-
-    /// Test-host double-set selector (wamn-t92): `off` (default) = production
-    /// host; `virtual` = test host (virtual clock + seeded random + egress
-    /// recorder). NOT a production configuration — for a throwaway test runner.
-    #[arg(long, env = "WAMN_TEST_DOUBLES", default_value_t = TestDoubles::Off, value_enum)]
-    pub test_doubles: TestDoubles,
-
-    /// Under `--test-doubles virtual`, an authority this runner's flows may reach
-    /// (repeatable / comma-separated). The `EgressRecorder` records and DENIES
-    /// any outbound authority not listed. Ignored when `--test-doubles off`.
-    #[arg(
-        long = "test-egress-expect",
-        env = "WAMN_TEST_EGRESS_EXPECT",
-        value_delimiter = ','
-    )]
-    pub test_egress_expect: Vec<String>,
+/// Compose externally provided capabilities for a non-serving execution artifact.
+///
+/// The scenario-worker is the product owner of the deterministic adapters
+/// passed through this seam.
+pub fn injected_capabilities(
+    wasi: wasmtime_wasi::WasiCtx,
+    http: Arc<dyn HostHandler>,
+) -> ExecutionCapabilities {
+    ExecutionCapabilities {
+        mode: CapabilityMode::Injected { wasi, http },
+    }
 }
 
 /// The `run-next` export's typed signature: `(lease-ttl-ms) -> (claimed, run-id,
@@ -292,7 +217,7 @@ impl HostHandler for RunnerEgress {
 /// search_path, and — 5.9 — the project whose vault credentials its flows may
 /// read. The guest reads these from its session; it never chooses them.
 #[derive(Debug, Clone, Copy)]
-pub struct RunnerIdentity<'a> {
+pub struct ExecutionIdentity<'a> {
     pub owner: &'a str,
     pub tenant: &'a str,
     pub schema: Option<&'a str>,
@@ -306,7 +231,7 @@ pub struct RunnerIdentity<'a> {
 /// can NOT set its tenant; it only supplies flow/run/node in the log context.
 /// Factored out so the run-worker wiring test can assert the identity landed
 /// without a full instantiate.
-fn register_logging_claim(logging: &WamnLogging, identity: &RunnerIdentity<'_>) {
+fn register_logging_claim(logging: &WamnLogging, identity: &ExecutionIdentity<'_>) {
     logging.set_claim(identity.owner, identity.tenant, identity.project);
 }
 
@@ -395,7 +320,7 @@ fn attach_memory_limiter(store: &mut Store<SharedCtx>, component_id: &str) -> Op
 /// plugin session carries the host-injected lease owner + tenant + schema.
 /// [`drain`] pulls every currently-claimable run to a terminal (or parked)
 /// state; [`serve`] wraps that in the doorbell + backoff + shutdown loop.
-pub struct RunWorker {
+pub struct ExecutionHost {
     store: Store<SharedCtx>,
     run_next: RunNextFunc,
     ttl_ms: u64,
@@ -408,7 +333,17 @@ pub struct RunWorker {
     mem: Option<MemoryMeter>,
 }
 
-impl RunWorker {
+impl std::fmt::Debug for ExecutionHost {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExecutionHost")
+            .field("ttl_ms", &self.ttl_ms)
+            .field("subject", &self.subject)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ExecutionHost {
     /// Instantiate the flowrunner component and inject this replica's identity.
     /// `identity.owner` is BOTH the component id and the `app.runner` lease
     /// owner (one process = one project = one owner, the single-project shape).
@@ -416,7 +351,7 @@ impl RunWorker {
     /// same code).
     #[expect(
         clippy::too_many_arguments,
-        reason = "the engine + guest + the three session plugins (postgres/credentials/logging) + identity + egress + ttl + the wamn-t92 test-double selector are each a distinct host-injected input; grouping them into a struct would only move the list"
+        reason = "the engine, guest, session plugins, identity, capabilities, and lease TTL are distinct host-injected inputs"
     )]
     pub async fn instantiate(
         engine: &Engine,
@@ -424,12 +359,11 @@ impl RunWorker {
         plugin: Arc<WamnPostgres>,
         vault: Arc<WamnCredentials>,
         logging: Arc<WamnLogging>,
-        identity: RunnerIdentity<'_>,
-        allowed_hosts: Arc<[AllowedHost]>,
+        identity: ExecutionIdentity<'_>,
+        capabilities: ExecutionCapabilities,
         ttl_ms: u64,
-        doubles: Option<DoubleSet>,
     ) -> anyhow::Result<Self> {
-        let RunnerIdentity {
+        let ExecutionIdentity {
             owner,
             tenant,
             schema,
@@ -498,21 +432,12 @@ impl RunWorker {
             WAMN_LOGGING_ID,
             logging as Arc<dyn HostPlugin + Send + Sync>,
         );
-        // The egress handler is unconditional (an outbound call without one
-        // TRAPS); the allowlists gate it — the host-level list here plus the
-        // per-flow declaration (fqg.11), both empty-deny-all, fail-closed.
         let builder = Ctx::builder(owner.to_string(), owner.to_string()).with_plugins(plugins);
-        // wamn-t92: `Some(doubles)` selects the TEST HOST — the virtual-clock +
-        // seeded-random `WasiCtx` and the `EgressRecorder` swapped in for the
-        // prod egress handler. This is the ONLY production seam that can inject a
-        // per-workload `WasiCtx` (the washlet host cannot); see `wamn_runtime::doubles`.
-        // `None` is the production host, byte-unchanged.
-        let ctx = match doubles {
-            Some(ds) => builder
-                .with_http_handler(ds.egress)
-                .with_wasi_ctx(ds.wasi)
-                .build(),
-            None => builder
+        let ctx = match capabilities.mode {
+            CapabilityMode::Injected { wasi, http } => {
+                builder.with_http_handler(http).with_wasi_ctx(wasi).build()
+            }
+            CapabilityMode::Production { allowed_hosts } => builder
                 .with_http_handler(Arc::new(RunnerEgress {
                     inner: DefaultOutgoingHandler,
                     policy: egress_policy,
@@ -656,166 +581,6 @@ impl RunWorker {
     }
 }
 
-/// Resolve the lease owner: `--runner` / $WAMN_RUNNER, then $HOSTNAME (the pod
-/// name in Kubernetes), then a fixed fallback. Every replica must be distinct;
-/// the fallback is only for a bare local run.
-fn resolve_owner(arg: Option<String>) -> String {
-    arg.filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("HOSTNAME").ok().filter(|s| !s.is_empty()))
-        .unwrap_or_else(|| "wamn-runner".to_string())
-}
-
-pub async fn run(args: RunWorkerArgs) -> anyhow::Result<()> {
-    use wash_runtime::washlet::{NatsConnectionOptions, connect_nats};
-
-    wash_runtime::init_crypto();
-
-    // R13: validate the idle poll cadence once, at startup — an inverted band
-    // (`--min-idle-ms` > `--max-idle-ms`) would otherwise panic in
-    // `next_interval`'s `clamp` on the first idle sweep. Bail here instead.
-    let cadence = wamn_scheduler::Cadence::new(args.min_idle_ms as i64, args.max_idle_ms as i64)
-        .context("invalid idle poll cadence (--min-idle-ms / --max-idle-ms)")?;
-
-    let url = args
-        .database_url
-        .clone()
-        .or_else(|| std::env::var("WAMN_PG_URL").ok())
-        .or_else(|| std::env::var("DATABASE_URL").ok())
-        .context("no database url: pass --database-url or set WAMN_PG_URL / DATABASE_URL")?;
-    let owner = resolve_owner(args.runner.clone());
-
-    let guest = std::fs::read(&args.flowrunner)
-        .with_context(|| format!("read flowrunner component {}", args.flowrunner.display()))?;
-
-    // The plugin owns the per-project pool (single URL = the default project)
-    // and the component→claim maps the runner identity is injected through.
-    let mut cfg = WamnPostgresConfig::from_env();
-    cfg.database_url = Some(url);
-    let plugin = Arc::new(WamnPostgres::new(cfg)?);
-    // [9.8] pool-saturation gauges over this worker's own project pool(s) — once
-    // per process (a no-op without OTEL_*).
-    plugin.register_pool_metrics();
-
-    // 5.9: the credential vault, sourced from the mounted file when present
-    // (a missing file = an empty vault, warned inside from_file).
-    let vault = Arc::new(match &args.credentials_file {
-        Some(path) => WamnCredentials::from_file(path)?,
-        None => WamnCredentials::empty(),
-    });
-
-    // wamn-yf3: THE guest-log pipeline (its own OTLP LoggerProvider). Config from
-    // WAMN_LOG_* env (from_env); with OTEL unset it links + drops to a no-op
-    // provider, so a collector-less runner still instantiates cleanly.
-    let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
-
-    // The outbound egress allowlist (empty = deny-all, fail-closed).
-    let allowed_hosts: Arc<[AllowedHost]> = args
-        .allowed_hosts
-        .iter()
-        .map(|s| s.parse::<AllowedHost>())
-        .collect::<Result<Vec<_>, _>>()
-        .context("parse --allowed-hosts")?
-        .into();
-
-    let engine = build_engine(&[])?;
-    let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
-
-    // wamn-t92: assemble the test-host double set when selected. A live serve
-    // loop has no scheduler to advance the virtual clock, so a delayed run would
-    // park indefinitely — this path is for a throwaway/manual test runner; the
-    // gate drives `instantiate` + `drain` directly. WARN so an accidental prod
-    // enablement is visible.
-    let doubles = match args.test_doubles {
-        TestDoubles::Off => None,
-        TestDoubles::Virtual => {
-            let recorder = Arc::new(EgressRecorder::spying());
-            recorder.expect(&owner, args.test_egress_expect.iter().cloned());
-            let (ds, _clock) = DoubleSet::virtual_host(
-                TEST_DOUBLES_EPOCH_SECS,
-                TEST_DOUBLES_SEED,
-                recorder as Arc<dyn HostHandler>,
-            );
-            tracing::warn!(
-                "run-worker: --test-doubles=virtual — TEST HOST (virtual clock + seeded \
-                 random + egress recorder), NOT a production configuration"
-            );
-            Some(ds)
-        }
-    };
-
-    let mut worker = RunWorker::instantiate(
-        &engine,
-        &guest,
-        plugin,
-        vault,
-        logging,
-        RunnerIdentity {
-            owner: &owner,
-            tenant: &args.tenant,
-            schema: args.schema.as_deref(),
-            project: &args.project,
-        },
-        allowed_hosts,
-        args.lease_ttl_ms,
-        doubles,
-    )
-    .await?;
-
-    // NATS is best-effort: no doorbell just raises wake latency (the poll-backoff
-    // reconcile still guarantees pickup) — the dispatcher's exact posture.
-    let nats_opts = NatsConnectionOptions {
-        request_timeout: None,
-        tls_ca: args.nats_tls_ca.clone(),
-        tls_first: false,
-        tls_cert: args.nats_tls_cert.clone(),
-        tls_key: args.nats_tls_key.clone(),
-    };
-    let nats = match connect_nats(args.nats_url.clone(), nats_opts).await {
-        Ok(c) => Some(c),
-        Err(e) => {
-            tracing::warn!(url = %args.nats_url, error = %e,
-                "run-worker: no NATS — doorbell wakes disabled, poll-backoff still guarantees pickup");
-            None
-        }
-    };
-
-    // SIGTERM handled explicitly: in-container the runner is PID 1, which gets no
-    // default signal disposition, so an unhandled SIGTERM would be ignored and a
-    // rollout would wait out the full grace period before SIGKILL. (Abrupt death
-    // is safe — the lease ages out and another replica reclaims — but a clean
-    // exit makes rollouts fast.)
-    let (tx, rx) = watch::channel(false);
-    tokio::spawn(async move {
-        let mut sigterm =
-            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!(error = %e, "run-worker: no SIGTERM handler; Ctrl-C only");
-                    let _ = tokio::signal::ctrl_c().await;
-                    let _ = tx.send(true);
-                    return;
-                }
-            };
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = sigterm.recv() => {}
-        }
-        let _ = tx.send(true);
-    });
-
-    tracing::info!(
-        runner = %owner,
-        tenant = %args.tenant,
-        schema = args.schema.as_deref().unwrap_or("<default>"),
-        lease_ttl_ms = args.lease_ttl_ms,
-        "run-worker up (single-project claim loop; doorbell + poll-backoff)"
-    );
-
-    let result = worker.serve(nats, cadence, rx).await;
-    ticker.abort();
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -829,7 +594,7 @@ mod tests {
         let logging =
             WamnLogging::new(wamn_runtime::plugins::wamn_logging::WamnLoggingConfig::default())
                 .expect("logging plugin");
-        let identity = RunnerIdentity {
+        let identity = ExecutionIdentity {
             owner: "runner-replica-7",
             tenant: "acme",
             schema: Some("wamn_run"),
@@ -843,15 +608,6 @@ mod tests {
         );
         // Nothing registered under any other id (no accidental broad claim).
         assert_eq!(logging.claim_snapshot("some-other-id"), None);
-    }
-
-    #[test]
-    fn owner_falls_back_from_arg_to_hostname_to_fixed() {
-        // An explicit non-empty arg always wins.
-        assert_eq!(resolve_owner(Some("replica-7".into())), "replica-7");
-        // An empty arg is ignored (falls through to HOSTNAME/fallback).
-        let via_env = resolve_owner(Some(String::new()));
-        assert!(!via_env.is_empty());
     }
 
     // [9.8] the executions counter's `outcome` attribute maps 0/1/other to
@@ -893,9 +649,9 @@ mod tests {
     }
 
     #[test]
-    fn idle_backoff_resets_on_work_and_doubles_while_idle() {
+    fn idle_backoff_resets_on_work_and_expands_while_idle() {
         // The runner reuses the dispatcher cadence: work resets to min, idleness
-        // doubles toward max.
+        // expands toward max.
         let cadence = wamn_scheduler::Cadence::new(250, 30_000).unwrap();
         let (min, max) = (cadence.min(), cadence.max());
         assert_eq!(cadence.next_interval(min, true), min);

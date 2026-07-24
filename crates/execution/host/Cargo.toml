@@ -1,0 +1,21 @@
+[package]
+name = "wamn-execution-host"
+description = "Shared native composition core for flowrunner execution artifacts."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wamn-runtime = { path = "../../platform/runtime" }
+wamn-scheduler = { path = "../scheduler" }
+wash-runtime = { workspace = true }
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+opentelemetry = { version = "0.31", default-features = false, features = ["metrics"] }
+tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread", "macros", "signal", "sync"] }
+tracing = { workspace = true }
+futures-util = "0.3"
+hyper = "1"
+async-nats = { version = "0.47", default-features = false }

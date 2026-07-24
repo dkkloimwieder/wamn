@@ -1,15 +1,16 @@
-//! The egress recorder (production delta 3): the S6 egress *spy* generalized to
+//! The scenario egress recorder: the S6 egress *spy* generalized to
 //! a recorder + per-flow allowlist + assertion surface.
 //!
-//! A [`EgressRecorder`] is a [`HostHandler`] the test host swaps in for the
-//! production egress handler. It RECORDS every outbound request
+//! A [`RecordingEgress`] is a [`HostHandler`] the scenario worker uses instead
+//! of production egress. It records every outbound request
 //! (`{workload, method, authority, path}`) and, in *spy* mode, DENIES any whose
 //! authority is not on its flow's expectation list — recorded, never sent, a
 //! clean `HttpRequestDenied` the guest classifies `egress-denied`. In *forward*
 //! mode it forwards everything (still recording) — the prod-parity audit stance.
-//! The audit read API ([`records`](EgressRecorder::records) /
-//! [`denied`](EgressRecorder::denied) / [`saw_authority`](EgressRecorder::saw_authority))
-//! lets a gate or test assert exactly what egress a flow attempted.
+//! The audit read API ([`records`](RecordingEgress::records) /
+//! [`denied`](RecordingEgress::denied) /
+//! [`saw_authority`](RecordingEgress::saw_authority)) lets a scenario assert
+//! exactly what egress a flow attempted.
 //!
 //! Expectation lists are keyed by the store's *workload id* (the declaring
 //! component/flow), so one recorder can hold per-flow policy across many flows —
@@ -26,18 +27,13 @@ use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
-// One recorded outbound request. LIFTED into `wamn-testkit` (11.4) so a captured
-// fact bundle is serde-serializable and the pure assertion evaluator can read it
-// without a host dependency. Re-exported here so this recorder's API
-// (`records()` / `denied()` returning `Vec<EgressRecord>`) is UNCHANGED for its
-// callers — it produces the identical struct, now with serde derives.
-pub use wamn_testkit::EgressRecord;
+pub use wamn_scenario_model::EgressObservation;
 
 /// Records every outbound request; optionally denies any not on its flow's
 /// per-flow expectation list.
-pub struct EgressRecorder {
+pub struct RecordingEgress {
     inner: DefaultOutgoingHandler,
-    records: Mutex<Vec<EgressRecord>>,
+    records: Mutex<Vec<EgressObservation>>,
     /// flow (workload id) → the authorities it may reach.
     expectations: RwLock<HashMap<String, HashSet<String>>>,
     /// When `true`, an authority not on its flow's expectation list is denied
@@ -46,7 +42,16 @@ pub struct EgressRecorder {
     deny_unexpected: bool,
 }
 
-impl EgressRecorder {
+impl std::fmt::Debug for RecordingEgress {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RecordingEgress")
+            .field("deny_unexpected", &self.deny_unexpected)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RecordingEgress {
     /// A forward-all recorder (audit only; nothing denied) — the prod egress
     /// analog that still records for the sameness/regression comparison.
     pub fn forwarding() -> Self {
@@ -82,12 +87,12 @@ impl EgressRecorder {
     }
 
     /// The full audit log, in order.
-    pub fn records(&self) -> Vec<EgressRecord> {
+    pub fn records(&self) -> Vec<EgressObservation> {
         self.records.lock().expect("records lock poisoned").clone()
     }
 
     /// The recorded requests that were denied (unexpected authorities).
-    pub fn denied(&self) -> Vec<EgressRecord> {
+    pub fn denied(&self) -> Vec<EgressObservation> {
         self.records().into_iter().filter(|r| !r.allowed).collect()
     }
 
@@ -98,7 +103,7 @@ impl EgressRecorder {
         self.records().iter().any(|r| r.authority.contains(needle))
     }
 
-    /// Clear the audit log (between test cases / phases).
+    /// Clear the audit log between scenario phases.
     pub fn clear(&self) {
         self.records.lock().expect("records lock poisoned").clear();
     }
@@ -120,7 +125,7 @@ impl EgressRecorder {
 }
 
 #[async_trait::async_trait]
-impl HostHandler for EgressRecorder {
+impl HostHandler for RecordingEgress {
     async fn start(&self) -> anyhow::Result<()> {
         Ok(())
     }
@@ -155,7 +160,7 @@ impl HostHandler for EgressRecorder {
         self.records
             .lock()
             .expect("records lock poisoned")
-            .push(EgressRecord {
+            .push(EgressObservation {
                 workload_id: workload_id.to_string(),
                 method: request.method().to_string(),
                 authority,
@@ -182,7 +187,7 @@ mod tests {
     // this NAMED test.
     #[test]
     fn spy_allows_expected_and_denies_unexpected() {
-        let rec = EgressRecorder::spying();
+        let rec = RecordingEgress::spying();
         rec.expect("flow-a", ["echo.local:8080"]);
         assert!(
             rec.is_allowed("flow-a", "echo.local:8080"),
@@ -198,14 +203,14 @@ mod tests {
 
     #[test]
     fn forwarding_allows_everything() {
-        let rec = EgressRecorder::forwarding();
+        let rec = RecordingEgress::forwarding();
         assert!(rec.is_allowed("any-flow", "anywhere.example"));
         assert!(rec.is_allowed("any-flow", "169.254.169.254"));
     }
 
     #[test]
     fn expectations_are_per_flow_and_replace() {
-        let rec = EgressRecorder::spying();
+        let rec = RecordingEgress::spying();
         rec.expect("flow-a", ["a.example"]);
         rec.expect("flow-b", ["b.example"]);
         assert!(rec.is_allowed("flow-a", "a.example"));

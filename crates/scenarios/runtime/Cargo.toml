@@ -1,0 +1,19 @@
+[package]
+name = "wamn-scenario-runtime"
+description = "Deterministic capability adapters for product scenario execution."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wamn-runtime = { path = "../../platform/runtime" }
+wamn-scenario-model = { path = "../model" }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }
+wash-runtime = { workspace = true }
+hyper = "1"
+rand_core = "0.10"
+tokio-postgres = "0.7"
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
