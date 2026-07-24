@@ -1092,29 +1092,30 @@ from source; platform capability claims use current official documentation.
 The ranking remains conditional on the cardinality, SLO, recovery, isolation,
 and upgrade contracts in `.1.12`–`.1.16`.
 
-**ARC5 evidence-stage ranking after correctness gates:**
+**Owner-corrected target ranking (`wamn-4tob.1.39`, 2026-07-24):**
 
-1. **Kubernetes-native Rust services, with upstream Wasmtime/WASI only for
-   untrusted tenant code.**
-2. **A durable workflow engine as the single orchestration authority, paired
-   with the same narrow tenant-code sandbox.**
-3. **Component-first wasmCloud while PostgreSQL remains the durable flow
+1. **Component-first wasmCloud while PostgreSQL remains the durable flow
    authority.**
-4. **The current hybrid unchanged — rejected as a target.**
+2. **The current hybrid amended toward that component-first target, retaining
+   native services only where a concrete required protocol, toolchain, or
+   capability cannot credibly run as a WASI component.**
+3. **Kubernetes-native trusted services plus a narrow Wasmtime sandbox —
+   rejected as the platform default; retained only as the exception shape for
+   a responsibility that proves it cannot use the component platform.**
+4. **A durable workflow engine as orchestration authority — eliminated by
+   F.6.**
 
-Option 1 is the least-risk survivor because it preserves the strongest current
-PostgreSQL durability protocol while removing the broad runtime/operator/fork
-from trusted service execution. Option 2 has the greatest machinery-reduction
-and history/replay upside, but fails if its journal and `runs`/`run_queue`
-become co-equal authorities. Option 3 changes scheduling and density, not
-durable orchestration. The current option fails safe-upgrade/provenance gates
-through R42, R43, and SR17.
+The original ARC5 evidence-stage ordering treated compute technology as a
+neutral variable and therefore ranked Kubernetes-native trusted services
+first. That was a product-goal error, not an owner decision. Wamn is
+WASI/Wasm/wasmCloud-first: component interfaces, host-provided capabilities,
+workload density, and wasmCloud placement are the intended platform. Native is
+an exception requiring evidence, not the fallback default.
 
-The later owner decision in F.6 removes option 2 from the selected target:
-PostgreSQL run/queue/checkpoint state remains the sole flow-orchestration
-authority. ARC11 may still choose among compute packaging and sandbox options,
-but must not introduce a workflow journal as a peer or replacement authority
-without a new owner decision.
+F.6 remains controlling for state: PostgreSQL run/queue/checkpoint state is
+the sole flow-orchestration authority. wasmCloud schedules and hosts
+components; it does not become a second durable workflow history. Conversely,
+PostgreSQL durability does not make the component runtime incidental.
 
 ### G.1 What the current runtime actually is
 
@@ -1194,9 +1195,9 @@ transition and `(run,node,occurrence)` remains the external idempotency identity
 **Custom-node failure.** Today builder review/sign/publish identity does not
 determine the ConfigMap bytes served (R43); node-host is independently deployed
 but shares the host artifact (SR15), and builder imports the host composition
-root (SR16). A component-first workload could use OCI identity and declarative
+root (SR16). A component-first workload uses OCI identity and declarative
 interfaces, but must still verify the exact digest and isolate the host. The
-narrow native target is:
+independent node-host boundary is:
 
 ```text
 node/WIT contracts + component policy
@@ -1204,7 +1205,7 @@ node/WIT contracts + component policy
           v                         v
 builder conformance             node-host
                                   |
-                          upstream Wasmtime/WASI
+                          wasmCloud/Wasmtime/WASI
 ```
 
 The policy owner classifies imports and derives grants; a runtime adapter exists
@@ -1217,16 +1218,22 @@ implementation work.
 
 ### G.5 Runtime role verdict and remaining proof
 
-**Target hypothesis:** wasmCloud should become an **implementation detail
-during transition**, not the defining platform architecture. WASI/Wasmtime is
-the tenant-code sandbox. If the native option wins, the runtime operator and
-washlet control plane are unnecessary for trusted platform services; if
-measured density or deployment requirements later select component-first,
-wasmCloud remains a placement/capability platform while PostgreSQL continues
-to own flow durability under F.6.
+**Owner decision (`wamn-4tob.1.39`): wasmCloud is the platform runtime, not a
+transition implementation detail.** Trusted platform behavior is
+WASI/component-first as well as tenant code. The runtime operator, washlet
+hosts, WIT capability model, and component workload abstractions remain target
+architecture. PostgreSQL continues to own flow durability under F.6.
 
-No canonical D-row is changed here. ARC11 must issue the final
-keep/amend/replace verdict for D17/D21/D23 after `.1.12`–`.1.16`:
+Native services require a recorded, responsibility-specific exception: a
+required protocol or toolchain must be unavailable or not credibly
+implementable through the component model, and the exception must name its exit
+condition. The current CDC replication client is the clearest example.
+Existing native processes are evidence to reassess, not precedent for a native
+default.
+
+No canonical D-row is changed here. D17/D21/D23 remain in force pending their
+separate canonical-document currency owner; this section records the audit
+decision:
 
 - `wamn-4tob.6.11` is the only new spike: one representative durable engine
   versus the PostgreSQL runner, including timer restart, effect/checkpoint
@@ -1566,7 +1573,7 @@ limits:
 | Proposal decision | Verdict | Controlling evidence, amendment, and destination |
 |---|---|---|
 | **RP-D1 — explicit layered package architecture** | **Keep direction; amend encoding.** | H.2 already defines contract, pure-decision, persistence, adapter, deployable, gate, and POC direction (`docs/findings.md:1263-1275`). Role metadata, filesystem grouping, graph deltas, and explicit exceptions are useful enforcement. Exact paths, names, and `default-members` wait for measured STR7 and target STR9 evidence. |
-| **RP-D2 — split host into policy/runtime/node-runtime/host/node-host** | **Amend.** | Pure component policy and independently deployable node-host outcomes are supported by SR15/SR16 (`docs/findings.md:829-846`). The exact `runtime`, `node-runtime`, and executor adapter graph presupposes a surviving hybrid. ARC5 ranks native Rust plus narrow Wasmtime first and rejects the current hybrid unchanged (`docs/findings.md:1006-1022`). ARC11/STR3/STR9 choose the shape; do not authorize package creation yet. |
+| **RP-D2 — split host into policy/runtime/node-runtime/host/node-host** | **Amend.** | Pure component policy and independently deployable node-host outcomes are supported by SR15/SR16 (`docs/findings.md:829-846`). `wamn-4tob.1.39` selects wasmCloud/WASI/component-first, so the split must preserve the washlet/runtime/operator platform and remove composition-root inversions without turning trusted services native by default. Exact package names still wait for STR9; do not authorize package creation from the proposal alone. |
 | **RP-D3 — shared Postgres/entity-access seams** | **Amend.** | Keep one audited entity-operation implementation and one canonical SQL-safety policy. Correct the claim that standard nodes depend on a deployable data API; decide transport-neutral operation types under STR5. Existing quote drift protection and `wamn-sql` mean neither `pg-core` nor absorption is an urgent defect fix. STR5/STR6/STR9 own the shape. |
 | **RP-D4 — consolidate schema and execution contexts** | **Defer exact merges; keep ownership goal.** | Co-change supports grouping, not one release unit. Catalog/flow contracts, guest closures, and distinct state tables remain justified; H retains them pending target evidence (`docs/findings.md:1338-1368`). F.6 accepts PostgreSQL authority only for Wamn application/execution state; it does not justify moving Kubernetes, OCI, Secret, broker, or backup state into PostgreSQL. N.7, STR5/STR6, ARC11, and STR9 govern physical state moves. |
 | **RP-D5 — explicit product scenario subsystem** | **Keep category; amend/defer topology.** | Product scenario contracts and the SR19 downward-direction correction are supported. A separate model/catalog/runtime/worker quartet is not yet supported by rollout, trust, or change evidence. More importantly, closed `wamn-t92` deliberately chose the same runner binary with `--test-doubles`, while production source exposes that switch (`crates/wamn-run-worker/src/lib.rs:62,174-188,729-739`). STR3/ARC8/STR9 must explicitly retain or overturn that choice; the proposal cannot represent separate images as decided. |
@@ -1578,12 +1585,13 @@ limits:
 ### I.3 Target graph, state, and contract corrections
 
 The proposal's technology non-goal
-(`docs/RESTRUCTURE-260723.md:54-60`) is **replace as an audit constraint**.
-wasmCloud, Wasmtime, Postgres, NATS, Kubernetes, and the event model are
-migration inputs, not protected conclusions. This issue performs no technology
-replacement. F.6 later removes the single-authority workflow alternative;
-ARC11 remains free to choose the compute/runtime shape while preserving
-PostgreSQL orchestration authority.
+(`docs/RESTRUCTURE-260723.md:54-60`) is **keep for compute/runtime**.
+`wamn-4tob.1.39` confirms that Wamn is WASI/Wasm/wasmCloud-first and native
+services are evidence-bearing exceptions. Wasmtime, Postgres, NATS,
+Kubernetes, and the event model remain independently reviewable rather than
+receiving sunk-cost immunity. F.6 removes the single-authority workflow
+alternative while preserving PostgreSQL orchestration authority beneath the
+component runtime.
 
 The proposal's target tree is useful as **role vocabulary**, not a committed
 filesystem. Preserve the separate component target boundary and the contract,
@@ -1667,7 +1675,7 @@ preselecting HTTP/HMAC/runtime internals.
 | **Phase 0 — baseline and guardrails** | **Amend.** Keep provenance reconciliation, role/target metadata, graph deltas, repeated source-pin centralization (SR20), explicit full-workspace CI, and state inventory. Do not move code/SQL, freeze all new peer packages, or select `default-members` before STR7 measures impact. Add SR17's hermetic source→Wasm→image proof, R42 readiness, current/target cross-store authority, and the `.1.12`–`.1.17` decisions before moving traffic or state. |
 | **Phase 1 — stable seams** | **Amend/defer exact packages.** Removing builder→host through a narrow component-policy/runtime boundary is evidence-backed and should not wait until Phase 3 if accepted. `pg-core`, `entity-access`, caller model, invoke package, and adapter APIs require STR5/STR6/ARC11/STR9 decisions; creation is not an exit criterion by name. Preserve compatibility fixtures and old/new differential behavior. |
 | **Phase 2 — generic HTTP slice** | **Defer sequence and transport.** Keep the thin-ingress journey in `wamn-fqg.39`, at the owner-set priority. Do not first add signed HTTP to today's queue-only worker and then move the execution endpoint in Phase 3. The target runtime, route authority, delivery/orphan semantics, readiness, provenance, authentication, and applicable N.7 or `.1.31/.32` compatibility contract must be proven before production traffic. |
-| **Phase 3 — runtime/service decomposition** | **Keep node-host and builder outcomes; defer exact split.** SR15/SR16 justify independent node serving and removing builder's host-root dependency. ARC11/STR3/STR9 decide between native services and component-first runtime while preserving PostgreSQL orchestration authority under F.6; a workflow-engine target no longer survives. |
+| **Phase 3 — runtime/service decomposition** | **Keep node-host and builder outcomes; amend exact split.** SR15/SR16 justify independent node serving and removing builder's host-root dependency. `wamn-4tob.1.39` selects component-first wasmCloud; STR9 must preserve that platform, require an explicit constraint for every native exception, and preserve PostgreSQL orchestration authority under F.6. |
 | **Phase 4 — bounded-context consolidation** | **Defer.** Require accepted state authority, contract ownership, generated/schema drift policy, and additive/mixed-version migration fixtures first. Retain catalog/flow/event/node/SQL/run-store/run-queue leaves unless STR4/STR5/STR6/STR9 produce a concrete benefit and compatibility plan. “One owner” does not require one crate. |
 | **Phase 5 — scenario/test topology** | **Amend.** Begin proof classification and attribution in Phase 0 and migrate each proof with the boundary it validates. Never delete a gate before equivalent evidence exists. Product scenario ownership is retained; a separate scenario-worker artifact and removal of the accepted same-binary doubles seam remain explicit STR3/ARC8/STR9 choices. |
 
@@ -2076,33 +2084,35 @@ guidelines as heuristics beneath runtime responsibility, privilege, state,
 scaling, failure, rollout, and target-architecture evidence. LOC, package
 count, or a shared language do not establish a service or crate boundary.
 
-**Executive verdict:** most post-SR9 native deployment boundaries are
-cohesive. Retain dispatcher, run worker, CDC reader, waker, builder, ctl, state
-stores, and privileged one-shot workloads as separate units. Split custom-node
-serving into an independent binary/image/release; keep one ctl source binary but
-make every advertised verb runnable; remove builder's dependency on the host
-composition root; and treat the general wash host, trusted guests, runtime
-control NATS, and embedded trusted flowrunner as transition topology subject to
-ARC11. No new finding is required: SR15–SR18 already own every
-confirmed defect.
+**Owner-corrected executive verdict:** the post-SR9 deployment responsibilities
+are mostly cohesive, but current native placement does not make native the
+target. Retain their independent responsibilities while STR9 applies the
+WASI/Wasm/wasmCloud-first rule from `wamn-4tob.1.39`: each native process must
+name the concrete protocol, toolchain, or unavailable capability that requires
+the exception and its exit condition. Split custom-node serving into an
+independent binary/image/release; keep one ctl source binary but make every
+advertised verb runnable; remove builder's dependency on the host composition
+root; and retain the general wash platform while correcting its privilege,
+failure, provenance, and release boundaries. No new finding is required:
+SR15–SR18 already own every confirmed defect.
 
 ### L.1 Runtime and infrastructure units
 
 | Unit | Authority, reason to change, and independent failure/scale | Rebuild/rollout consequence | STR3 verdict |
 |---|---|---|---|
-| **General `wamn-host host`** | Shared wash runtime/plugin/placement process for trusted components; not durable run authority (`crates/wamn-host/src/main.rs:31-58`, `crates/wamn-host/src/host.rs:102-202`, `deploy/infra/values-wamn.yaml:14-50`). | Host/runtime/plugin/guest-placement and shared credentials roll together; a process failure affects co-located workloads. | **Transition only.** Retain while required by the current hybrid. Preferred native target retires it for trusted API/materializer/executor work and keeps only a narrow tenant-Wasm sandbox. |
+| **General `wamn-host host`** | Shared wash runtime/plugin/placement process for trusted components; not durable run authority (`crates/wamn-host/src/main.rs:31-58`, `crates/wamn-host/src/host.rs:102-202`, `deploy/infra/values-wamn.yaml:14-50`). | Host/runtime/plugin/guest-placement and shared credentials roll together; a process failure affects co-located workloads. | **Retain as platform runtime; amend composition.** Partition host groups, credentials, plugins, and rollout by real trust/failure needs; do not retire it merely because Kubernetes can run native pods. |
 | **Custom-node host** | Already has its own Deployment/Service, project identity, signing key, credential vault, egress policy, and untrusted-Wasm boundary (`crates/wamn-host/src/serve_node.rs:1-47,49-160`, `deploy/platform/serve-node.yaml:43-152`). | Sharing `wamn-host` binary/image couples unrelated host and node CVEs, rebuilds, rollback, and release timing. | **Split binary, image, and release (SR15).** Exact shared library shape waits for ARC11/STR9. |
-| **API gateway** | Project request ingress with Postgres capability; scales by request rate/project and should fail independently of materialization/node execution (`components/api-gateway/wit/world.wit:19-26`, `deploy/platform/api-gateway-workload.yaml:1-77`). | Independently published mutable component, but placed on the shared host and not proven byte-identical to its gates. | **Retain semantic service; amend placement/artifact path.** Native target converts it; component-first isolates its host group according to trust/cardinality. |
+| **API gateway** | Project request ingress with Postgres capability; scales by request rate/project and should fail independently of materialization/node execution (`components/api-gateway/wit/world.wit:19-26`, `deploy/platform/api-gateway-workload.yaml:1-77`). | Independently published mutable component, but placed on the shared host and not proven byte-identical to its gates. | **Retain as component; amend placement/artifact path.** Isolate its host group only where measured trust/cardinality requires it and bind the deployed bytes to their gates. |
 | **Dispatcher** | Native cron/run-queue composition root with per-project SQL and optional NATS hinting; two replicas and no Kubernetes authority (`crates/wamn-dispatcher/src/lib.rs:1-49`, `deploy/platform/dispatcher.yaml:1-157`). | Scheduling/claim changes roll without executor/runtime. Failure delays new/woken work but does not corrupt execution. | **Retain.** PostgreSQL remains the timer/run-queue authority under F.6; do not introduce a dual scheduler. |
-| **Run worker** | Per-project DB, credentials, effects, queue leases, and embedded flowrunner; two replicas/project (`crates/wamn-run-worker/src/lib.rs:1-68,94-188`, `deploy/platform/runner.yaml:45-203`). | Scales with backlog and contains project failures. Flowrunner and worker intentionally release together; direct `wamn-host` imports expose a transition adapter. | **Retain independent worker; narrow the host dependency.** Do not merge with host/dispatcher. A native target may make trusted execution native while preserving the PostgreSQL protocol. |
+| **Run worker** | Per-project DB, credentials, effects, queue leases, and embedded flowrunner; two replicas/project (`crates/wamn-run-worker/src/lib.rs:1-68,94-188`, `deploy/platform/runner.yaml:45-203`). | Scales with backlog and contains project failures. Flowrunner and worker intentionally release together; direct `wamn-host` imports expose a transition adapter. | **Retain responsibility; target component-first.** Preserve the PostgreSQL protocol and flowrunner component. The native shell remains only if its queue/client or hosting responsibility earns a recorded exception. |
 | **CDC reader** | Owns one logical replication session, slot, confirmed LSN, T1 registration, and event-NATS publishing (`crates/wamn-cdc-reader/src/lib.rs:68-157`, `deploy/platform/event-reader.example.yaml:1-88`). | Singleton/Recreate per slot today; capture failure is separate from projection/materialization serving. | **Retain native boundary.** Fleet cardinality waits for ARC11; never merge replication privilege into materializer. |
-| **Materializer** | Event consumer plus project DB write capability, without replication privilege (`components/materializer/wit/world.wit:22-27`, `deploy/platform/materializer.example.yaml:1-78`). | One tenant/project-env guest on the shared host; scale and failure differ from capture. | **Retain event-adapter responsibility.** Native target converts it; component-first may retain an isolated guest. |
+| **Materializer** | Event consumer plus project DB write capability, without replication privilege (`components/materializer/wit/world.wit:22-27`, `deploy/platform/materializer.example.yaml:1-78`). | One tenant/project-env guest on the shared host; scale and failure differ from capture. | **Retain as component event adapter.** Correct consumer identity, acknowledgement, provenance, and host-group isolation without converting it to native by default. |
 | **Waker** | Sole narrow Kubernetes `get/patch deployments/scale` actuator driven by backlog hints; no run-state authority (`crates/wamn-waker/src/lib.rs:1-24,44-220`, `deploy/platform/waker.yaml:1-123`). | Singleton and independently auditable. Merging would grant dispatcher/executor code Kubernetes mutation authority. | **Retain while backlog scale-to-zero exists.** Kubernetes owns the deployment/scale operation; PostgreSQL owns only the backlog signal. |
 | **Builder Job** | Ephemeral source/build/network, signing-key, SBOM, and registry-push authority; no runtime state (`crates/wamn-builder/src/main.rs:1-46`, `deploy/platform/builder-job.yaml:1-82`, `deploy/platform/builder-netpol.yaml:1-43`). | Should roll with toolchain/policy, but imports the host composition root and inherits the monolithic root build context. | **Retain one-shot boundary; amend dependency/build closure (SR16).** |
 | **`wamn-ctl`** | One operator composition root for 15 related one-shot verbs with invocation-specific DB/T1/object/Grafana privilege (`crates/wamn-ctl/src/main.rs:32-98`). | Source split would add little. The current image omits PostgreSQL clients needed by recovery/copy paths. | **Retain one source binary; amend runnable image (SR18).** Split a recovery artifact only if credential/version/minimal-image policy proves a separate boundary. |
 | **Gates** | Intentional white-box/system-test composition root; 48 independent Jobs isolate runtime failures, while the image spans most platform crates and product/fixture guests (`crates/wamn-gates/src/main.rs:77-241`, `crates/wamn-gates/Cargo.toml:8-95`, `Dockerfile:84-134`). | One broad artifact rebuilds and rolls many proofs; exact test/deploy byte identity is incomplete. | **Retain root now; amend proof classification and provenance.** Split only where STR7 measures a useful build/runtime-closure benefit. |
 | **T1 and tenant Postgres** | Separate control authority and per-placement tenant data/run/queue authority (`deploy/platform/wamn-sysdb.yaml:1-74`, section J). | Independent backup, failover, migration, and blast-radius lifecycles. | **Retain state boundaries.** A schema/table or Rust-package grouping does not imply one deployable. |
-| **Runtime-control and event NATS** | Runtime-control bus serves wash placement; event NATS is a distinct retained transport. Neither is business-state authority. | Different protocols and outages. | **Keep the event transport selected in F.6; retire runtime-control NATS if ARC11 removes the general wash plane.** |
+| **Runtime-control and event NATS** | Runtime-control bus serves wash placement; event NATS is a distinct retained transport. Neither is business-state authority. | Different protocols and outages. | **Keep both for their scoped roles.** Runtime-control NATS remains wasmCloud infrastructure; event NATS remains the D19 transport. Neither receives business-state authority. |
 | **Registry, object store, and observability** | Separate artifact, backup, and telemetry authorities with third-party lifecycles. The checked-in registry is proof-ephemeral (`deploy/platform/registry.yaml:18-19`). | Independent availability, upgrade, and retention needs. | **Leave separate.** Production durability belongs to ARC9/STR7, not a source merge. |
 | **POC/fixture infrastructure** | Throwaway databases, echo/trace services, and POC components hold proof-specific credentials/state. | Failure should remain proof-local. | **Leave isolated.** Never infer a product service from a fixture path. |
 
@@ -2136,9 +2146,9 @@ boundary and remain. Every member has an explicit role:
 
 | Component | Role | Disposition |
 |---|---|---|
-| `api-gateway` | Trusted production ingress | Retain service semantics; native target converts it, component-first isolates it. |
-| `flowrunner` | Trusted production execution guest embedded in worker and gates | Retain contract during transition; release with worker; a native target may absorb it into the worker while preserving PostgreSQL orchestration. |
-| `materializer` | Trusted production event adapter | Retain responsibility; native target converts it. |
+| `api-gateway` | Trusted production ingress | Retain as the component shell over the canonical API planner; amend provenance and placement. |
+| `flowrunner` | Trusted production execution guest embedded in worker and gates | Retain as the canonical execution component; change the native shell only through an explicit exception or component-Service migration. |
+| `materializer` | Trusted production event adapter | Retain as a component; amend consumer identity, refusal evidence, provenance, and isolation. |
 | `poc-webhook-f1` | POC ingress/executor | POC only. |
 | `flow-driver` | Composed gate driver | Gate fixture only. |
 | `hello` | Basic component fixture | Retain in gates. |
@@ -2222,14 +2232,16 @@ Confirmed choices:
 - **Gates and ctl:** retain one composition root for each; fix runnable/artifact
   fidelity instead of splitting by file or verb count.
 
-Under the preferred Kubernetes-native ARC5 target, ingress/API, materializer,
-dispatcher, and executor become native services; the general wash host,
-runtime-control NATS, and trusted flowrunner guest retire, while node-host keeps
-upstream Wasmtime/WASI as the narrow tenant-code sandbox. Under
-component-first, host groups remain but their privilege and failure partition
-follows ARC8/ARC11 requirements, not component names. In either surviving
-compute shape, PostgreSQL remains the single flow-durability authority and
-JetStream remains the selected CDC handoff under F.6.
+Under the owner-selected component-first target, ingress/API, materializer,
+flowrunner/execution, and other eligible trusted responsibilities remain or
+become WASI components on wasmCloud. Host groups, plugins, and credentials are
+partitioned by real privilege and failure requirements, not merely component
+names. CDC capture remains the clearest native exception because the required
+PostgreSQL replication protocol lacks a credible WASI client path; builder,
+ctl, dispatcher, waker, and the current worker shell each require the same
+explicit exception test in STR9. PostgreSQL remains the single
+flow-durability authority and JetStream remains the selected CDC handoff under
+F.6.
 
 **Leave alone:** separate native/component workspaces and lockfiles; WIT-shaped
 errors; node/event/WIT contract leaves; run-store/run-queue semantics; separate
@@ -3454,13 +3466,21 @@ The following labels are controlling throughout this section:
 - **Current fact** is demonstrated by the pinned repository or cited behavior.
 - **Accepted development constraint** is an owner answer carried by
   `.1.12`–`.1.17`; it is not a production promise.
-- **Recommended development target** is ARC11's evidence-led recommendation.
-  Where it changes a canonical decision and has not received owner acceptance,
-  `wamn-4tob.1.39` owns the choice.
+- **Accepted development target** includes the owner answer in
+  `wamn-4tob.1.39`: Wamn is WASI/Wasm/wasmCloud-first, including trusted
+  platform behavior; a native service is an exception that must prove a
+  required protocol, toolchain, or capability cannot credibly run as a
+  component.
 - **Production deferral** is deliberately unanswered and routed to
   `.1.18`–`.1.38`.
 - **Unproven claim** receives no architectural credit until its named
   remediation and discriminating proof close.
+
+The runtime conclusions below supersede ARC11's original native-first
+recommendation. That recommendation misunderstood the product goal and was
+never an owner decision. `RESTRUCTURE-260723.md` is the highest-priority
+structural input to STR9, while remaining an assessed proposal rather than a
+silently adopted filesystem plan.
 
 ### U.1 Executive verdict
 
@@ -3476,25 +3496,29 @@ The durable product core is directionally right:
    the database-change event architecture.
 4. Kubernetes remains the sole deployment authority; OCI/build, Secret,
    object/backup, broker, and telemetry systems retain their native authority.
-5. Flow JSON, catalog and flow schemas, the node and event contracts, explicit
+5. wasmCloud is the platform runtime for eligible trusted and untrusted
+   component workloads. WASI interfaces and host-provided capabilities are
+   architectural boundaries, not only a custom-node sandbox.
+6. Flow JSON, catalog and flow schemas, the node and event contracts, explicit
    ordering, and narrow WASI capabilities remain useful product seams.
 
-The compute and deployment layer is overextended. ARC11 recommends
-Kubernetes-native Rust services for trusted API, dispatch, execution, and
-materialization responsibilities, with Wasmtime/WASI retained only as the
-default-deny sandbox for untrusted custom nodes. On that target, wasmCloud is a
-transition implementation detail rather than the platform architecture.
-Canonical D17, D21, and D23 currently say otherwise, so this recommendation is
-**not silently accepted**: decision Bead `wamn-4tob.1.39` must select the
-trusted-service compute target before STR9 fixes the exact package and
-deployment graph.
+The compute and deployment layer needs structural correction, not replacement
+with native-by-default services. `wamn-4tob.1.39` selects component-first
+wasmCloud for trusted API, dispatch, execution, materialization, and control
+responsibilities. A native process survives only where its responsibility has
+a concrete required protocol, toolchain, or capability that cannot credibly
+run as a WASI component, with the constraint and exit condition recorded.
+PostgreSQL logical replication is the clearest present exception candidate.
+Kubernetes deploys the runtime and workloads; that deployment authority does
+not make wasmCloud incidental.
 
 This is an amendment rather than a restart because the target preserves the
-existing authoritative state and public contracts while changing where
-trusted effects execute. It rejects both a platform-wide durable-workflow
-engine and a broad PostgreSQL infrastructure journal: the owner has limited
-PostgreSQL authority to Wamn application/execution state and has left
-deployment to Kubernetes (F.6, `docs/findings.md:1044-1076`).
+existing authoritative state, component platform, and public contracts while
+correcting composition, privilege, artifact, and failure boundaries. It
+rejects both a platform-wide durable-workflow engine and a broad PostgreSQL
+infrastructure journal: the owner has limited PostgreSQL authority to Wamn
+application/execution state and has left deployment to Kubernetes (F.6,
+`docs/findings.md:1044-1076`).
 
 Correctness controls every trade-off. Availability, latency, throughput,
 cost, density, and delivery speed do not justify cross-client authority,
@@ -3528,24 +3552,28 @@ flowchart LR
     CPlatform <--> CNative
   end
 
-  subgraph T["Recommended development target; compute choice pending wamn-4tob.1.39"]
+  subgraph T["Accepted development target: WASI / Wasm / wasmCloud first"]
     TCallers["tenant API callers"]
     TAuthors["flow / custom-node authors"]
     TOps["development operator"]
     TIndustrial["external industrial systems"]
-    TTrusted["Kubernetes-native trusted Wamn services"]
-    TSandbox["dedicated custom-node host<br/>Wasmtime / WASI"]
+    TRuntime["wasmCloud runtime/operator<br/>trusted WASI components"]
+    TSandbox["dedicated custom-node boundary<br/>wasmCloud / Wasmtime / WASI"]
+    TException["native exception services<br/>required protocol/toolchain only"]
     TPG["T1 + tenant CNPG/PostgreSQL<br/>application/execution authority"]
     TJS["JetStream<br/>event transport only"]
     TNative["Kubernetes + OCI/build + Secrets<br/>object/backup + telemetry authorities"]
-    TCallers --> TTrusted
-    TAuthors --> TTrusted
-    TOps --> TTrusted
-    TIndustrial <--> TTrusted
-    TTrusted --> TSandbox
-    TTrusted <--> TPG
-    TTrusted <--> TJS
-    TTrusted <--> TNative
+    TCallers --> TRuntime
+    TAuthors --> TRuntime
+    TOps --> TRuntime
+    TIndustrial <--> TRuntime
+    TRuntime --> TSandbox
+    TRuntime <--> TPG
+    TRuntime <--> TJS
+    TException <--> TPG
+    TException <--> TJS
+    TNative --> TRuntime
+    TNative --> TException
   end
 ```
 
@@ -3575,18 +3603,25 @@ flowchart TB
     BUILD0 --> HOST0
   end
 
-  subgraph TC["Recommended containers / deployables"]
-    CTL1["ctl / control effects"]
-    API1["native API service<br/>one catalog-derived planner"]
-    EXEC1["native executor / run worker"]
-    DISP1["native dispatcher"]
-    WAKE1["native waker"]
-    CDC1["native CDC reader"]
-    MAT1["native materializer"]
-    NODE1["independent node-host<br/>Wasmtime / WASI"]
-    BUILD1["isolated builder / conformance"]
+  subgraph TC["Accepted target responsibilities / deployables"]
+    WASH1["wasmCloud runtime/operator<br/>placement + capabilities"]
+    CTL1["control effects<br/>component-first or proved exception"]
+    API1["API component<br/>one catalog-derived planner"]
+    EXEC1["flowrunner / execution component"]
+    DISP1["dispatcher responsibility<br/>component-first"]
+    WAKE1["waker responsibility<br/>component-first"]
+    CDC1["native CDC reader exception<br/>logical replication protocol"]
+    MAT1["materializer component"]
+    NODE1["independent custom-node boundary<br/>wasmCloud / Wasmtime / WASI"]
+    BUILD1["isolated builder / conformance<br/>toolchain exception only if proved"]
     SIGN1["separate signer / publisher authority"]
     POLICY1["shared policy and contract libraries"]
+    API1 --> WASH1
+    EXEC1 --> WASH1
+    DISP1 --> WASH1
+    WAKE1 --> WASH1
+    MAT1 --> WASH1
+    NODE1 --> WASH1
     BUILD1 --> POLICY1
     NODE1 --> POLICY1
     BUILD1 -. "reviewed digest / non-secret handoff" .-> SIGN1
@@ -3594,11 +3629,12 @@ flowchart TB
 ```
 
 Dispatcher, executor/run worker, CDC reader, materializer, waker, builder,
-ctl, node host, databases, JetStream, and native infrastructure remain
-independently operable responsibilities. SR15 and SR16 own the node-host and
-builder inversions. The exact shared-library and filesystem decomposition is
-STR9 work after `.1.39`; this diagram does not authorize a package-per-box
-rewrite.
+ctl, node host, databases, JetStream, and infrastructure remain independently
+operable responsibilities. Their current native packaging is not presumed to
+be their target packaging. SR15 and SR16 own the node-host and builder
+inversions. STR9 determines the exact component, exception, shared-library,
+and filesystem decomposition from `RESTRUCTURE-260723.md` and the accumulated
+evidence; this diagram does not authorize a package-per-box rewrite.
 
 ### U.4 Current and target state-authority model
 
@@ -3626,7 +3662,7 @@ flowchart LR
     TSEC["Secret authority"]
     TBACK["object/backup authority"]
     TTELEM["telemetry<br/>derived evidence only"]
-    TT1 -. "input, never deployment receipt" .-> TK8S
+    TT1 -. "input, never proof of deployment completion" .-> TK8S
     TTPG --> TWAL --> TJS2 --> TTPG
     TK8S --> TOCI
     TK8S --> TSEC
@@ -3660,10 +3696,10 @@ flowchart LR
   subgraph TZ["Accepted constraint + recommended target"]
     Caller1["client"]
     Route1["trusted route/deployment binding"]
-    Service1["client-scoped native service authority"]
+    Service1["client-scoped component authority"]
     PG1["non-spoofable PostgreSQL claims / roles"]
     Node3["untrusted custom node"]
-    Host1["dedicated node-host process"]
+    Host1["dedicated wasmCloud / node-host boundary"]
     Wasi1["explicit WIT capabilities<br/>credential handles + egress policy"]
     Caller1 --> Route1 --> Service1 --> PG1
     Node3 --> Host1 --> Wasi1
@@ -3697,10 +3733,10 @@ flowchart TB
   end
 
   subgraph TF["Target containment"]
-    TA["API service failure"]
-    TE["executor failure"]
-    TM["materializer failure"]
-    TN["one node-host failure"]
+    TA["API component / host-group failure"]
+    TE["executor component / host-group failure"]
+    TM["materializer component / host-group failure"]
+    TN["one custom-node boundary failure"]
     TP["affected tenant PostgreSQL recovery domain"]
     TJ["JetStream transport failure"]
     TB["builder sandbox"]
@@ -3727,13 +3763,13 @@ Secrets, and never promote stale or dual state.
 
 | Plane | Current authority/boundary | Target verdict | Open correctness boundary |
 |---|---|---|---|
-| Control | T1 product identity plus ctl effects across Kubernetes, CNPG, Secrets, OCI, and backups. | **Amend:** T1 owns only Wamn identity/placement configuration; native systems own their operation and status. | R34; provisioning must not equate intent with readiness. |
+| Control | T1 product identity plus ctl effects across Kubernetes, CNPG, Secrets, OCI, and backups. | **Amend:** T1 owns only Wamn identity/placement configuration; Kubernetes owns deployment, wasmCloud owns component execution/placement, and other authoritative systems own their state. | R34; provisioning must not equate intent with readiness. |
 | Tenant data | Tenant PostgreSQL owns data/catalog; a cached serving snapshot can diverge. | **Keep authority, amend serving:** one applied/served generation, pinned per request. | R35. |
-| Flow execution | Native worker embeds a trusted flowrunner component; PostgreSQL owns runs/queue. | **Keep protocol, recommend native executor:** no new workflow journal or peer authority. | R36, R37, R42, R53. |
+| Flow execution | Native worker embeds a trusted flowrunner component; PostgreSQL owns runs/queue. | **Keep protocol and component execution:** target a wasmCloud/WASI execution responsibility; retain a native shell only through a specific exception. No new workflow journal or peer authority. | R36, R37, R42, R53. |
 | Event/trigger | WAL → native reader → JetStream → shared-host materializer → run queue. | **Keep topology, amend semantics:** source-derived identity, verified consumer config, durable refusal, bounded failure. | R38, R44, E18, E19, R50, R51. |
 | Build/supply chain | Builder depends on host; source/test/package/invoked bytes are not one identity; signing is reachable from untrusted build. | **Amend:** isolated build/conformance, separate signing, immutable digest through invocation. | R43, R49, SR15–SR17, SR26. |
 | Observability | Shared lossy stores and some shared recovery credentials. | **Keep as derived evidence only:** never a correctness authority. | R47; production retention/isolation deferred. |
-| Operations | Kubernetes, CNPG, ctl, saga rows, and runbooks overlap; manual recovery dominates. | **Amend:** Kubernetes deploys; one development owner may reconcile native systems manually and visibly. | R40, R41, R46, R48, R52. |
+| Operations | Kubernetes, wasmCloud, CNPG, ctl, saga rows, and runbooks overlap; manual recovery dominates. | **Amend:** Kubernetes deploys, wasmCloud executes/manages component workloads, and one development owner may reconcile systems manually and visibly. | R40, R41, R46, R48, R52. |
 
 #### State-authority matrix
 
@@ -3782,7 +3818,7 @@ Secrets, and never promote stale or dual state.
 
 | Journey | Target invariant | Existing remediation/proof owner |
 |---|---|---|
-| Provision org/project/environment | Intent is not readiness; every native side effect converges or fails visibly. | R34 / `wamn-2jkm.70`; proof `.6.1`. |
+| Provision org/project/environment | Intent is not readiness; every external side effect converges or fails visibly. | R34 / `wamn-2jkm.70`; proof `.6.1`. |
 | Define/migrate/publish catalog and serve API | Transactional applied schema and one pinned served generation; refuse drift. | R35 / `.71`; proof `.6.2`; reload `wamn-32n`. |
 | Start/complete synchronous flow | Stable delivery identity, write-ahead run, explicit orphan recovery and retry result. | R36/R37 / `.72/.73`; proof `.6.3`; ingress `wamn-fqg.39`. |
 | Schedule/park/wake/resume/retry/replay | PostgreSQL alone owns timer, queue, lease, checkpoint, dead-letter, lineage, and idempotency state. | F.6; executable rerun remains R39 / `.69`. |
@@ -3796,8 +3832,8 @@ Secrets, and never promote stale or dual state.
 | Contract family | Target verdict | Compatibility/owner boundary |
 |---|---|---|
 | `wamn:node`, node SDK/guest/invoke/manifest | **Keep leaf boundaries.** | Custom-node cross-version choice remains `.1.33`; SR22 owns the current missing negotiation. |
-| `wamn:postgres` | **Keep canonical WIT; amend adapter placement if `.1.39` selects native services.** | One host/service translation owns claims, decimal fidelity, error taxonomy, and capability scope. |
-| `wamn:jetstream` | **Keep while D19 remains.** | Native or host adapter must preserve the frozen envelope and scoped broker authority. |
+| `wamn:postgres` | **Keep canonical WIT and host capability.** | One wasmCloud host-plugin translation owns claims, decimal fidelity, error taxonomy, and capability scope; any native exception requires equivalent explicit translation. |
+| `wamn:jetstream` | **Keep WIT capability while D19 remains.** | The wasmCloud host plugin, or an explicitly justified native exception, must preserve the frozen envelope and scoped broker authority. |
 | `wamn:runner` | **Keep as a same-release development ABI.** | Canonical-source and compatibility guards remain SR23; no production mixed-version promise. |
 | Generated REST API | **Keep one `wamn-api` planner; amend runtime packaging.** | HTTP shell translates only; R35 pins served generation. OpenAPI/GraphQL remain roadmap. |
 | Generic flow invocation | **Keep required seam; delivery deferred.** | `wamn-fqg.39` must define route authority, request/result, acknowledgement, deadline, and identity without embedding a second executor. |
@@ -3829,8 +3865,8 @@ table** at `docs/platform-plan.md:191-220`.
 
 | Canonical decision | Verdict | Target rationale and claim boundary |
 |---|---|---|
-| D1 — flow execution | **Amend** | Keep flow JSON and interpreter semantics; move trusted executor packaging only if `.1.39` accepts the native target. Whole-flow compilation remains optional/post-GA. |
-| D2 — generated API | **Amend** | Keep one catalog-derived planner and service responsibility; do not preselect per-project Wasm, pod, route, or resident topology. |
+| D1 — flow execution | **Keep semantics; amend composition** | Keep flow JSON, interpreter semantics, and the flowrunner component. Target component-first execution on wasmCloud while PostgreSQL remains durable authority; any native queue/effect shell requires a specific exception. Whole-flow compilation remains optional/post-GA. |
+| D2 — generated API | **Keep component; amend topology later** | Keep the custom catalog-derived planner and generated API component. Project/host cardinality, route, and resident topology remain deferred; they do not negate the wasmCloud-first target. |
 | D3 — run queue | **Amend** | Keep PostgreSQL durability and optional lossy NATS hints. Remove the `~1k/sec` revisit value from product-contract reasoning; use measured admission instead. |
 | D4 — old DB-event outbox | **Replace** | Retain only as superseded history; D19 is the sole row-event path. |
 | D5 — PostgreSQL pooling | **Amend** | Keep bounded, fail-closed connection pools. pgBouncer is a measured optional adapter, not an automatic scale stage. |
@@ -3844,14 +3880,14 @@ table** at `docs/platform-plan.md:191-220`.
 | D13 — observability store | **Keep** | Loki/Tempo/Prometheus remain development mechanisms and derived evidence, never correctness authority. |
 | D14 — industrial ontology | **Keep** | Neutral catalog core plus optional modules preserves future industrial seams without forcing one ontology. |
 | D15 — synchronous webhook | **Amend** | Keep write-ahead state; require stable delivery/orphan recovery under R36/R37. Give no SLO or broad exactly-once credit, and no reduced-audit path may weaken correctness. |
-| D16 — component memory | **Amend** | Retain a hard per-component memory budget in the untrusted Wasmtime sandbox; do not use it to justify the general wash runtime or product tier sizes. |
-| D17 — wasmCloud posture | **Replace (recommended; owner choice open)** | Prefer Kubernetes-native trusted services plus a narrow Wasmtime/WASI tenant-code sandbox. `.1.39` decides; the current hybrid remains operational until then. |
+| D16 — component memory | **Keep mechanism; amend sizing claims** | Retain hard per-component memory enforcement for platform and custom components. Do not infer product tier sizes before measurement. |
+| D17 — wasmCloud posture | **Keep; amend composition and proof** | Retain Posture B and wasmCloud as the platform runtime. Correct privilege, provenance, readiness, failure, and release boundaries; PostgreSQL remains sole durable orchestration authority. |
 | D18 — deployment model | **Amend** | Keep data-driven identity, policies, and copy vocabulary. Kubernetes owns deployment; no concrete placement topology or copy correctness is inferred. |
 | D19 — event plane | **Amend** | Keep WAL → JetStream → materializer → PostgreSQL. Correct identity, retention, exactly-once, refusal, capacity, and recovery claims. |
 | D20 — partition-head policy | **Keep** | Blocking default, explicit leapfrog, business-terminal dead-letter-and-continue, and crash-exhaustion wedge remain explicit semantics. |
-| D21 — component-by-default services | **Replace (recommended; owner choice open)** | Select runtime by trust/protocol/deployment reason, not component style. Trusted services are native by default on ARC11's recommendation; `.1.39` decides. |
+| D21 — component-by-default services | **Keep; enforce exceptions** | Eligible trusted platform services are components by default. A native service requires recorded evidence that a required protocol, toolchain, or capability cannot credibly run as a WASI component, plus an exit condition. |
 | D22 — CDC reader fleet | **Defer placement; keep invariant** | Exactly one visible slot-owning session per project-environment is required. Fleet/per-env/per-org placement is exploratory until cardinality/topology evidence. |
-| D23 — wash-runtime fork governance | **Amend (conditional)** | Keep owned fork discipline while any dependency remains; under the recommended target, retire trusted-service dependence and retain provenance/negative conformance for the sandbox. `.1.39` decides. |
+| D23 — wash-runtime fork governance | **Keep; amend evidence and minimization** | Treat the fork as an owned platform subsystem while it remains. Minimize fork-local business logic, pin immutable provenance, maintain negative conformance and upstream-delta evidence, and do not use fork cost to silently replace the component platform. |
 | D24 — orphaning catalog publish | **Keep** | Fail closed rather than prune tenant-authored event registrations or leave silent dangling state. |
 
 The material `RESTRUCTURE-260723.md` proposal decisions remain **RP-D1–RP-D9**
@@ -3860,7 +3896,7 @@ to avoid collision with canonical D rows:
 | Proposal decision | Verdict | Reason / routing |
 |---|---|---|
 | RP-D1 — layered package architecture | **Amend** | Keep role/target metadata and dependency rules; exact paths and package count belong to STR9. |
-| RP-D2 — host split | **Amend** | Keep component-policy and independent node-host outcomes; the exact runtime hierarchy depends on `.1.39`. |
+| RP-D2 — host split | **Amend** | Keep component-policy and independent node-host outcomes; the exact runtime hierarchy must preserve the accepted wasmCloud-first platform and is STR9 work. |
 | RP-D3 — PostgreSQL/entity seams | **Amend** | Require one audited entity planner and SQL-safety owner; do not preselect `pg-core` package names or a deployable entity service. |
 | RP-D4 — schema/execution consolidation | **Defer exact merges** | One semantic state owner does not imply one crate; target, ABI, security, and co-change evidence decide. |
 | RP-D5 — scenario subsystem | **Amend** | Retain product-scenario vocabulary; no independent worker/image is justified yet. SR19/SR21 and STR9 own the boundary. |
@@ -3880,7 +3916,7 @@ to avoid collision with canonical D rows:
 | Split `wamn-gates` by test level | **Amend** | Classify package/conformance/integration/system evidence and move only with equivalent proof; do not destroy the gate composition root. |
 | Reclassify `testkit` and flow tests | **Amend** | Separate product scenario vocabulary from repository-only adapters; exact packages remain STR9 work. |
 | Make database/SQL ownership singular | **Keep** | One semantic/migration/write owner and generate/compare drift policy are correctness requirements; SR13. |
-| Treat runtime fork as product subsystem | **Amend** | Own provenance and negative gates while present; no arbitrary patch quota; recommended target minimizes/retires its trusted-service role. |
+| Treat runtime fork as product subsystem | **Keep with amendment** | Own provenance, upstream delta, and negative gates while present; no arbitrary patch quota. Minimize fork-local policy without demoting wasmCloud from its platform role. |
 | Narrow event exactly-once claims | **Keep** | Exactly-once run creation is retention-qualified; external effects remain at least once absent sink dedupe. |
 | Treat “per-project nearly free” as unproven | **Keep** | No invented 100/1,000/10,000 target. Measure real hardware and fail closed through R54/`.6.27`. |
 | State standard-node trust honestly | **Keep** | Trusted union-capability code, not an adversarial sandbox; third-party/risky code uses custom-node isolation. |
@@ -3892,9 +3928,9 @@ to avoid collision with canonical D rows:
 
 | Alternative | Verdict | Discriminating reason |
 |---|---|---|
-| Retain current hybrid unchanged | **Rejected** | Shared runtime/fork/operator, mutable artifact, readiness, and mixed-authority burdens remain without a demonstrated correctness advantage. |
-| Component-first wasmCloud platform | **Rejected as ARC11 recommendation; pending `.1.39` owner choice** | Adds custom WIT/runtime/operator/control-NATS machinery to trusted services whose durable semantics already live in PostgreSQL. |
-| Kubernetes-native trusted Rust services + narrow Wasmtime sandbox | **Recommended** | Removes custom distributed-runtime machinery while preserving untrusted-code isolation and existing state/contracts. |
+| Retain current hybrid unchanged | **Rejected as unchanged** | The component-first direction is retained, but shared privileges, composition-root inversions, mutable artifacts, readiness, and release proof still require amendment. |
+| Component-first wasmCloud platform | **Selected owner target** | WASI interfaces, host capabilities, component composition, density, and wasmCloud placement are product architecture for trusted and untrusted workloads; PostgreSQL remains the durable state authority. |
+| Kubernetes-native trusted Rust services + narrow Wasmtime sandbox | **Rejected as the default; exception shape only** | It contradicts the platform goal and discards component/runtime capabilities merely because Kubernetes can deploy native pods. A responsibility may use this shape only after proving a concrete WASI constraint and recording an exit condition. |
 | Durable workflow engine owns orchestration | **Rejected** | Creates a peer/replacement authority contrary to the accepted PostgreSQL state model and requires state migration/replay compatibility. |
 | Platform-wide event sourcing/log authority | **Rejected** | Most triggers need durable run-queue state, not an additional authoritative log; increases dual-write/rebuild surface. |
 | Direct PostgreSQL event dispatch replacing JetStream | **Rejected for the current target** | Owner retained the WAL→JetStream handoff; changing it would not remove the materialization/source-position proof burden. |
@@ -3944,22 +3980,27 @@ ARC11 fixes responsibilities, not exact crate names:
 3. **Deployables are composition leaves.** A service may import shared
    contracts/cores/adapters, but one peer composition root must not import
    another merely to reuse policy or engine configuration.
-4. **The tenant-code boundary is separate.** Node policy, conformance, and
+4. **Component shells stay thin and explicit.** Trusted API, execution,
+   dispatch, wake, and materialization components translate their WIT
+   contracts into shared pure decisions and host capabilities; a native
+   exception does not become a competing semantic owner.
+5. **The tenant-code boundary is separate.** Node policy, conformance, and
    execution may share narrow libraries; builder, signer, node-host, and
    trusted executor remain different authorities.
-5. **One durable lifecycle has one semantic owner.** Physical tables may
+6. **One durable lifecycle has one semantic owner.** Physical tables may
    remain separate and guest-safe packages may remain leaves, but writers,
    migrations, query contracts, and drift policy are explicit.
-6. **Build and proof identity follow the release.** Source revision, native
-   binary, component, config, schema, manifest, and deployed digest form one
-   immutable receipt; the gate exercises those exact bytes.
-7. **Size alone changes nothing.** Flowrunner, reader, gates, API router, and
+7. **Build and proof identity follow the release.** Source revision, native
+   exception binary, component, config, schema, manifest, and deployed digest
+   form one immutable release identity; the gate exercises those exact bytes.
+8. **Size alone changes nothing.** Flowrunner, reader, gates, API router, and
    ctl split only where responsibility, target, privilege, failure, or measured
    change coupling warrants it.
 
-STR9 will choose retain/split/merge/retire actions and enforcement after
-`wamn-4tob.1.39`. It must preserve the contract ownership and drift policies
-from Q/R and the artifact identity rules from S.
+STR9 will choose retain/split/merge/retire actions and enforcement using
+`RESTRUCTURE-260723.md` as its highest-priority structural input. It must
+preserve the accepted wasmCloud-first platform, the contract ownership and
+drift policies from Q/R, and the artifact identity rules from S.
 
 ### U.13 Reversible migration order
 
@@ -3967,9 +4008,9 @@ Hard blockers apply to enabling or moving the affected traffic/state, not to
 safe documentation, tests, or behavior-preserving extraction.
 
 1. **Record the decision and fence claims.** Keep the current runtime
-   operational. Close `.1.39` before making the trusted-service target
-   structural or canonical. Publish no production, topology, SLO, security,
-   or regional claim.
+   operational. `.1.39` records the wasmCloud-first target; STR9 may now make
+   its structural consequences explicit. Publish no production, topology,
+   SLO, security, or regional claim.
 2. **Establish release and admission proof first.** Resolve SR17/SR26, R42,
    R53, and R54 before a target cutover: immutable native/component/config/
    deployment identities, real dependency readiness, exact prior bundle, and
@@ -3981,9 +4022,11 @@ safe documentation, tests, or behavior-preserving extraction.
    narrow policy/conformance ownership and split node-host binary/image/release
    with behavior-equivalent negative and parity gates. Keep current traffic on
    the old path.
-5. **Migrate one trusted responsibility at a time if `.1.39` accepts the
-   recommendation.** API waits for R35 generation safety; materializer waits
-   for E18/E19/R38/R44/R50; executor waits for R42/R53 and release provenance.
+5. **Move eligible trusted responsibilities toward components one at a time.**
+   API waits for R35 generation safety; materializer waits for
+   E18/E19/R38/R44/R50; executor waits for R42/R53 and release provenance.
+   Existing native services remain until STR9 either defines a
+   behavior-preserving component move or records the concrete exception.
    Dark comparison may inspect decisions but must not ACK, enqueue, claim, or
    perform effects.
 6. **Use the accepted N.7 release protocol for every cutover.** Quiesce new
@@ -3991,10 +4034,11 @@ safe documentation, tests, or behavior-preserving extraction.
    JetStream record; deploy one immutable bundle; validate real dependencies;
    commit traffic once. On failure restore the exact prior bundle, or remain
    visibly unavailable. Never run dual durable authorities.
-7. **Retire transition infrastructure last.** Remove the general wash
-   host/operator only after code, deployment, state, contract, and proof
-   reachability are zero. Retain Wasmtime node-host isolation and any scoped
-   D3 scheduler hint still in use.
+7. **Retire only superseded native exceptions or obsolete shared-host
+   topology.** Retain the wasmCloud runtime/operator and scoped runtime-control
+   plane. Remove an old native shell, duplicated adapter, or over-broad host
+   group only after code, deployment, state, contract, and proof reachability
+   are zero.
 8. **Perform optional structural cleanup afterward.** Filesystem grouping,
    `default-members`, package consolidation, scenario topology, gate movement,
    names, and documentation cleanup require STR9 evidence but are not
@@ -4014,11 +4058,13 @@ class, roadmap seam, and open Critical/High finding has an explicit verdict in
 sections U.2–U.13. Existing Beads cover the current defects and discriminating
 proofs; ARC11 found no new R/E/SR defect.
 
-One genuinely unresolved foundational owner choice was not represented:
-`wamn-4tob.1.39` now decides the trusted-service compute target and wasmCloud
-role, and blocks STR9. Its closure may authorize later canonical D17/D21/D23
-updates and implementation slices; it does not itself fix SR15, SR16, SR17,
-SR20, SR26, R42, or R53.
+The formerly unresolved compute choice is now answered:
+`wamn-4tob.1.39` records WASI/Wasm/wasmCloud-first for trusted and untrusted
+eligible workloads, with native services limited to evidenced exceptions.
+Its closure unblocks STR9, whose highest-priority structural input is
+`RESTRUCTURE-260723.md`. Later canonical D17/D21/D23 updates and implementation
+slices require their own work; this decision does not itself fix SR15, SR16,
+SR17, SR20, SR26, R42, or R53.
 
 The remaining production and post-POC decisions `.1.18`–`.1.38` are explicit
 deferrals and do not block expressing this development recommendation.
