@@ -6,8 +6,8 @@ Two crates deliver plan item 5.3 (wamn-3xa):
 
 | Crate | What it is |
 |---|---|
-| `crates/wamn-node-sdk` | The node **authoring contract** — the `Node` trait, the `RunContext` view of a dispatch, the `NodeCtx` capability facade every effect flows through, and the `wamn:node` error taxonomy (`NodeError`/`ErrorDetail`/`RateLimitDetail`, now DEFINED here and re-exported by `wamn-runner`). A Rust mirror of the drafted `docs/wamn-node.wit`; the 5.4 freeze layers the WIT + guest scaffolding on top. |
-| `crates/wamn-nodes` | The **standard library**: the production node vocabulary plus the dispatch-time capability policy table. Pure — no DB, no wasm, no host; a mock `NodeCtx` unit-tests every node, classification map, and policy negative. |
+| `crates/node/sdk` | The node **authoring contract** — the `Node` trait, the `RunContext` view of a dispatch, the `NodeCtx` capability facade every effect flows through, and the `wamn:node` error taxonomy (`NodeError`/`ErrorDetail`/`RateLimitDetail`, now DEFINED here and re-exported by `wamn-runner`). A Rust mirror of the drafted `docs/wamn-node.wit`; the 5.4 freeze layers the WIT + guest scaffolding on top. |
+| `crates/execution/standard-nodes` | The **standard library**: the production node vocabulary plus the dispatch-time capability policy table. Pure — no DB, no wasm, no host; a mock `NodeCtx` unit-tests every node, classification map, and policy negative. |
 
 `components/flowrunner` adopts the library: any node type `wamn-nodes` ships
 dispatches through `wamn_nodes::dispatch` over a `NodeCtx` implemented on the
@@ -24,7 +24,7 @@ node can circumvent the `wamn:node` interface and silently break the
 frozen-flow composition path. `wamn-runner` depends on `wamn-node-sdk` (one
 taxonomy definition, dependency pointing SDK-ward), never the reverse.
 
-Enforcement is `crates/wamn-nodes/tests/purity.rs`: it walks `cargo metadata`'s
+Enforcement is `crates/execution/standard-nodes/tests/purity.rs`: it walks `cargo metadata`'s
 resolved NORMAL dependency edges and fails if `wamn-runner` (or any
 host/store-side crate) enters the closure, or if the direct-dependency set
 drifts from the declared allowlist (`wamn-node-sdk`, `wamn-api`, `serde_json`,
@@ -155,7 +155,7 @@ Nodes never string-match; the maps are fixed and unit-pinned:
 - The SDK `Emission` port is now IN the frozen contract: the 5.4 freeze
   amended `run` to return an emission record `{payload, port: option<string>}`
   (absent = `main`) before freezing 0.1 — WIT and SDK coincide, drift-guarded
-  by `crates/wamn-node-sdk/tests/wit_coherence.rs`. Remaining SDK-side
+  by `crates/node/sdk/tests/wit_coherence.rs`. Remaining SDK-side
   deferral: `streamed` payloads (5.10) — the credentials facade (5.9) shipped
   with the vault (wamn-17o).
 

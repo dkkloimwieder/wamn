@@ -306,7 +306,7 @@ kubectl -n wamn-system logs -f job/testhostbench
 
 ### [11.4] assertion library (testkitbench)
 
-Docs: docs/testkit.md · Crate: crates/wamn-testkit · Fixture: deploy/gates/testkit-cases.json
+Docs: docs/testkit.md · Crate: crates/scenarios/model · Fixture: deploy/gates/testkit-cases.json
 
 ```bash
 # Unit tests (the pure vocabulary: serde drift-guards, subset semantics, the
@@ -366,7 +366,7 @@ Drivability refusal (cross-lane contract): before driving, the executor checks
 the graph's `nodes[].type` against the drivable set — the flowrunner built-in
 dispatch arms (`BUILTIN_NODE_TYPES`, drift-guarded against
 `components/flowrunner/src/lib.rs`) ∪ the standard node library
-(`STANDARD_NODE_TYPES`, drift-guarded against `crates/wamn-nodes/src/lib.rs`
+(`STANDARD_NODE_TYPES`, drift-guarded against `crates/execution/standard-nodes/src/lib.rs`
 `NODE_TYPES` name+count). A flow with a guest-baked type (F1's
 `validate-receipt`/`upsert-receipt`/`evaluate-specs`/`create-holds`) → a typed
 per-suite SKIP naming the undrivable types (NOT a crash, NOT a silent pass), so
@@ -431,7 +431,7 @@ kubectl -n wamn-system logs job/suiteexec
 
 Docs: docs/testkit.md → "Record-and-replay: pin a run". The pure `pin_run`
 transform (a `wamn_run_store` run + its `node_runs` → a `wamn_testkit::TestCase`)
-lives in `crates/wamn-testkit` (module `pin`), alongside the additive `normalize`
+lives in `crates/scenarios/model` (module `pin`), alongside the additive `normalize`
 vocabulary (`ignore-paths` + `canonicalize`, no regex). The `wamn-ctl pin-run`
 verb is the effect shell (app-role read + pure pin + INSERT into
 `test_suites`/`test_cases`); secrets are scrubbed at pin time (even from a `full`
@@ -542,7 +542,7 @@ kubectl -n wamn-system wait --for=condition=failed   job/f2-testgate-refusal --t
 kubectl -n wamn-system logs job/f2-testgate-refusal   # a TestGateError naming the wrong case; no "pushed" line
 ```
 
-### [5.1] flow-graph schema crate (crates/wamn-flow)
+### [5.1] flow-graph schema crate (crates/execution/flow-model)
 
 Docs: docs/flow-schema.md
 
@@ -553,7 +553,7 @@ cargo clippy -p wamn-flow --all-targets && cargo fmt -p wamn-flow --check
 cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
 ```
 
-### [5.2] production flow-runner engine (crates/wamn-runner)
+### [5.2] production flow-runner engine (crates/execution/flow-engine)
 
 Docs: docs/flow-runner.md
 
@@ -566,7 +566,7 @@ cargo clippy --manifest-path components/flowrunner/Cargo.toml --release --target
   && cargo fmt --manifest-path components/flowrunner/Cargo.toml --check
 ```
 
-### [5.3] standard node library v1 (crates/wamn-node-sdk + crates/wamn-nodes)
+### [5.3] standard node library v1 (crates/node/sdk + crates/execution/standard-nodes)
 
 Docs: docs/node-library.md
 
@@ -590,7 +590,7 @@ cargo clippy -p wamn-node-guest -p wamn-node-manifest --all-targets \
 cargo run -p wamn-node-manifest --example print-schema > docs/wamn-node-manifest.schema.json
 ```
 
-### [5.7] run-state persistence (crates/wamn-run-store)
+### [5.7] run-state persistence (crates/execution/run-state-store)
 
 Docs: docs/run-state.md
 
@@ -705,7 +705,7 @@ kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=180
 kubectl -n wamn-system logs job/credproof   # overall PASS: true
 ```
 
-### [5.14] durable run queue & runner scaling (crates/wamn-run-queue)
+### [5.14] durable run queue & runner scaling (crates/execution/run-state-queue)
 
 Docs: docs/run-queue.md
 
@@ -1232,7 +1232,7 @@ both FORCE-RLS + `wamn_app` grants), versioned WITH the flow via the FK to
 `copy-project-env --include definition` (block 5, after flows in block 2);
 `wamn-migrate::check_suite_orphans` refuses FIRST (D24 shape) a copy carrying a
 suite pinned to a version the destination will not hold. Envelope +
-round-trip/validation: `crates/wamn-flow-tests` (the case BODY is opaque jsonb in
+round-trip/validation: `crates/scenarios/catalog` (the case BODY is opaque jsonb in
 v0 — the gyt `wamn-testkit` vocabulary validates on write at integration).
 reconcile-run-plane manages the new tables (they are in `RUN_PLANE_FILES`).
 
@@ -1306,7 +1306,7 @@ hard-wired per-POC-flow so it can drive F1, whose node types are baked into
 # Unit / drift / coherence tests (pure — no DB): the 3 embedded suites parse +
 # validate-on-write, the F1 flow-ref binding, the F3/F4 graph copies mirror the
 # committed source fixtures (deploy/poc/f3-flow.json,
-# crates/wamn-flow/tests/fixtures/f4-disposition-recorded.flow.json), the F3
+# crates/execution/flow-model/tests/fixtures/f4-disposition-recorded.flow.json), the F3
 # epoch-anchor straddles the cutoff, the F4 egress-spy names exactly {/run,/dispositions}:
 cargo test -p wamn-gates pocsuiteproof
 cargo test -p wamn-flow-tests            # the envelope + validate-on-write
@@ -1358,8 +1358,8 @@ dependency graph a change touches: affected entities (additive/destructive, from
 the plan's per-op attribution) → flows via event registration (id-keyed,
 rename-proof) + node config (NAME-keyed `config["entity"]`, NOT rename-proof) →
 those flows' test suites (all versions) → the generated-API resources. The pure
-decision is `crates/wamn-impact` (`analyze` → `ImpactReport`); the `$n` reads live
-next to their D24/suite siblings in `crates/wamn-migrate/src/sql.rs`. `wamn-ctl
+decision is `crates/schema/impact-analysis` (`analyze` → `ImpactReport`); the `$n` reads live
+next to their D24/suite siblings in `crates/schema/migration/src/sql.rs`. `wamn-ctl
 impact-report` is the read-only surface; `migrate-catalog` ALWAYS renders the
 report and `--acknowledge-impact` REFUSES a destructive plan with dependent
 flows/suites (typed error, non-zero exit, before the apply tx — nothing mutated),
@@ -2445,7 +2445,7 @@ WAMN_SYSSCHEMA_PG_URL=postgres://postgres:postgres@127.0.0.1:5466/wamn cargo tes
 docker stop wamn-as5-pg
 ```
 
-### [2.5] migration engine (crates/wamn-migrate + wamn-ctl migrate-catalog)
+### [2.5] migration engine (crates/schema/migration + wamn-ctl migrate-catalog)
 
 Docs: docs/migration-engine.md
 
@@ -2463,7 +2463,7 @@ docker stop wamn-migrate-pg
 # The production tool is `wamn-ctl migrate-catalog --admin-database-url <superuser>
 ```
 
-### [3.1] metadata catalog schema crate (crates/wamn-catalog)
+### [3.1] metadata catalog schema crate (crates/schema/model)
 
 Docs: docs/catalog-model.md
 
@@ -2478,7 +2478,7 @@ cargo run -p wamn-catalog --example print-schema > docs/catalog-model.schema.jso
 # wamn-catalog/wamn-rls): scratchpad/mutate_cjv5.py.
 ```
 
-### [3.2] DDL compiler crate (crates/wamn-ddl)
+### [3.2] DDL compiler crate (crates/schema/ddl-compiler)
 
 Docs: docs/run-queue.md, docs/ddl-compiler.md
 
@@ -2497,7 +2497,7 @@ docker stop wamn-ddl-pg
 # and fail).
 ```
 
-### [3.4] schema versioning & environments crate (crates/wamn-schema)
+### [3.4] schema versioning & environments crate (crates/schema/lifecycle)
 
 Docs: docs/schema-lifecycle.md
 
@@ -2515,7 +2515,7 @@ docker exec -i wamn-cat-pg psql -v ON_ERROR_STOP=1 -U postgres -d wamn \
 docker stop wamn-cat-pg
 ```
 
-### [3.5] RLS policy builder crate (crates/wamn-rls)
+### [3.5] RLS policy builder crate (crates/schema/rls-compiler)
 
 Docs: docs/rls-builder.md
 
@@ -2530,7 +2530,7 @@ WAMN_RLS_PG_URL=postgres://postgres:postgres@127.0.0.1:5453/wamn cargo test -p w
 docker stop wamn-rls-pg
 ```
 
-### [3.6] seed-data & fixtures crate (crates/wamn-seed)
+### [3.6] seed-data & fixtures crate (crates/schema/seed-compiler)
 
 Docs: docs/seed-data.md
 
@@ -2545,7 +2545,7 @@ WAMN_SEED_PG_URL=postgres://postgres:postgres@127.0.0.1:5454/wamn cargo test -p 
 docker stop wamn-seed-pg
 ```
 
-### [4.1] REST API gateway (crates/wamn-api + components/api-gateway)
+### [4.1] REST API gateway (crates/data/entity-access + components/api-gateway)
 
 Docs: docs/api-gateway.md
 
@@ -2649,7 +2649,7 @@ kubectl -n wamn-system logs -f job/f1bench
 wash push localhost:5000/wamn/poc-webhook-f1:dev \
   components/target/wasm32-wasip2/release/poc_webhook_f1.wasm --insecure
 kubectl -n wamn-system create configmap f1-fixtures \
-  --from-file=poc-receiving.catalog.json=crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json \
+  --from-file=poc-receiving.catalog.json=crates/schema/model/tests/fixtures/poc-receiving.catalog.json \
   --from-file=f1-flow.json=deploy/poc/f1-flow.json \
   --from-file=f1-seed.dataset.json=deploy/poc/f1-seed.dataset.json
 kubectl -n wamn-system apply -f deploy/poc/f1-provision-job.yaml
@@ -2844,7 +2844,7 @@ wamn-9mg8 stand-in drift guard pins) and applies the idempotent ADDITIVE plan:
 create-missing tables from record sections, `ADD COLUMN` for record columns a
 present table lacks, index create/recreate (the pre-E4 claimable index), the
 pre-l5i9.19 outbox-era teardown, and catalog-schema from-zero. Pure planner
-`wamn_migrate::plan_run_plane` (crates/wamn-migrate/src/run_plane.rs); thin
+`wamn_migrate::plan_run_plane` (crates/schema/migration/src/run_plane.rs); thin
 shell `wamn_ctl::reconcile_run_plane` (shared `reconcile()` drives the CLI and
 the gate). `--dry-run` is strictly read-only. One-shot Job template:
 `deploy/platform/run-plane-reconcile.example.yaml`.

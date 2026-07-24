@@ -1,7 +1,7 @@
 -- Flow registry storage (5.14 registry / POC-F1). One row per (flow, version)
 -- of a project's flow graphs: `graph_json` is the canonical wamn-flow (5.1)
 -- document, `active` marks the version the runtime serves. Consumers: the
--- trigger dispatcher's registry sweep (`active_flows_sql`, crates/wamn-run-queue
+-- trigger dispatcher's registry sweep (`active_flows_sql`, crates/execution/run-state-queue
 -- — cron + row-event flows), the poc-webhook-f1 ingress (sync webhook route
 -- matching), and the flowrunner guest (`load_active_flow`). Registration is the
 -- deploy tooling's job (`wamn-ctl publish-catalog --flow`, which also enforces

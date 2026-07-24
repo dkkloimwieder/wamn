@@ -2,9 +2,9 @@
 # holding BOTH backup mechanisms' artifacts (docs/postgres-topology.md §Backup
 # architecture):
 #   * WAL + base backups (the Barman Cloud plugin) under bucket `wamn-backups`
-#     (per-cluster prefix `wal/<cluster>`) — crates/wamn-provision/src/backup.rs;
+#     (per-cluster prefix `wal/<cluster>`) — crates/control/provision/src/backup.rs;
 #   * per-project-env logical dumps under bucket `wamn-dumps` (per-triple prefix)
-#     — crates/wamn-provision/src/dump.rs (the .10 upload, made live by e1g).
+#     — crates/control/provision/src/dump.rs (the .10 upload, made live by e1g).
 #
 # Stands up ALONGSIDE the guardrailed clusters (the T3 pool, the T1 system
 # cluster, the legacy postgres.yaml pod), all ADDITIVE — this file never touches

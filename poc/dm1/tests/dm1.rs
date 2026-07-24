@@ -20,7 +20,7 @@ fn repo(rel: &str) -> PathBuf {
 #[test]
 fn promoted_catalog_matches_the_wamn_catalog_fixture() {
     let fixture = std::fs::read_to_string(repo(
-        "crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json",
+        "crates/schema/model/tests/fixtures/poc-receiving.catalog.json",
     ))
     .expect("read the wamn-catalog POC fixture");
     let fixture = wamn_catalog::Catalog::from_json(&fixture).expect("fixture parses");

@@ -1386,7 +1386,7 @@ mod tests {
     fn f4_graph_copy_mirrors_the_design_fixture() {
         use wamn_flow::{RowEvent, Trigger};
         const SRC: &str = include_str!(
-            "../../../crates/wamn-flow/tests/fixtures/f4-disposition-recorded.flow.json"
+            "../../../crates/execution/flow-model/tests/fixtures/f4-disposition-recorded.flow.json"
         );
         let src = wamn_flow::Flow::from_json(SRC).expect("design F4 fixture parses");
         let mine = wamn_flow::Flow::from_json(&f4_gate_flow_json(18191, 18192))

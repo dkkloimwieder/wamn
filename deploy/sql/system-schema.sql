@@ -1,11 +1,11 @@
 -- The T1 control-plane REGISTRY storage schema (wamn-q3n.3). The tables that
--- PERSIST the identity/placement model defined by crates/wamn-registry — orgs,
+-- PERSIST the identity/placement model defined by crates/control/registry — orgs,
 -- projects, and the provisioned (org, project, env) databases — plus a minimal
 -- provisioning-saga state table (exactly-once / resumable).
 --
 -- This is the schema that fills the EMPTY wamn_system DB the T1 cluster
 -- (deploy/platform/wamn-sysdb.yaml, wamn-q3n.2) bootstraps: registry-model → registry
--- tables, the way deploy/sql/catalog-schema.sql followed crates/wamn-catalog.
+-- tables, the way deploy/sql/catalog-schema.sql followed crates/schema/model.
 --
 -- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql
 -- (which builds the S2–S6 *tenant-data* fixtures). This is applied into the T1
@@ -29,9 +29,9 @@
 -- `registry.env_policies` row IN ITS ORG's set (referential integrity — the
 -- composite FK below — replaces the old `env IN ('dev','canary','prod')`
 -- CHECK), and an org carries a minimal placement (`pooled` | `dedicated`) from
--- which clusters derive (crates/wamn-registry cluster_of). Policies are
+-- which clusters derive (crates/control/registry cluster_of). Policies are
 -- PER-ORG rows stamped from a named Template preset (`trials` / `standard` /
--- `dedicated` — the Tier successor, crates/wamn-registry Template) at
+-- `dedicated` — the Tier successor, crates/control/registry Template) at
 -- provision-org time; there is NO platform-global policy seed — an org
 -- instantiates a template and then customizes its own rows per-env.
 --
@@ -40,7 +40,7 @@
 --   (1) request-path-free  — an ARCHITECTURAL property, not a DB constraint. No
 --       data-plane workload (gateway/runner/dispatcher/webhook) may reference
 --       this cluster or DB; only control-plane tooling connects here. A static
---       manifest grep (crates/wamn-registry/tests/storage.rs) guards it.
+--       manifest grep (crates/control/registry/tests/storage.rs) guards it.
 --   (2) no credentials (R8b) — `project_envs` stores a Secret *reference*
 --       (secret_name + optional secret_namespace) and NO credential column
 --       (no url/password/dsn). Asserted by the drift-guard + the live-apply gate.
@@ -48,13 +48,13 @@
 --       (registry + provisioning). No catalogs, run state, payloads, or
 --       application users. The live-apply gate asserts the exact table set.
 --   (4) dev ≠ prod recovery domain — under D18 this is enforced by the DERIVATION
---       plus crates/wamn-registry validate(), not a per-org DB CHECK: two
+--       plus crates/control/registry validate(), not a per-org DB CHECK: two
 --       own-domain envs (dev, prod) derive distinct clusters (<org>-dev vs
 --       <org>-prod) by construction, so they never collapse; `canary` collapsing
 --       onto prod is an INTENTIONAL `recovery-domain: {shared-with: prod}` policy,
 --       and `canary` isolated (T4) is `recovery-domain: own` (→ <org>-canary).
 --
--- id/name WELL-FORMEDNESS: crates/wamn-registry validate() (check_id/check_env/
+-- id/name WELL-FORMEDNESS: crates/control/registry validate() (check_id/check_env/
 -- check_name) is the PRIMARY guard, and it runs on the in-memory `from_json`
 -- import path a direct control-plane writer (e.g. wamn-2ib) uses. But a writer
 -- that skips BOTH provision-org AND Registry::validate() would land a malformed
@@ -81,7 +81,7 @@ CREATE SCHEMA provisioning AUTHORIZATION wamn_system;
 
 -- ---------------------------------------------------------------------------
 -- Registry format version (singleton). Records the storage-format version,
--- aligned with crates/wamn-registry SCHEMA_VERSION; additive-within-major per the
+-- aligned with crates/control/registry SCHEMA_VERSION; additive-within-major per the
 -- 0.1.x freeze. A single-row table (the `id` boolean PK + CHECK forbids a second
 -- row) — the registry is not a versioned per-row document like the catalog.
 -- ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ INSERT INTO registry.meta (schema_version) VALUES ('0.1');
 
 -- ---------------------------------------------------------------------------
 -- Orgs — the unit of isolation and billing. Carries only the id and a minimal
--- D18 PLACEMENT (crates/wamn-registry Placement): `placement_kind` is `pooled`
+-- D18 PLACEMENT (crates/control/registry Placement): `placement_kind` is `pooled`
 -- (every env shares `pool_cluster`, the T3-style pool) or `dedicated` (the org
 -- owns one cluster per recovery domain, `<org>-<owner(env)>`, DERIVED by
 -- cluster_of — not stored). The retired `tier` / `prod_cluster` / `canary_cluster`
@@ -102,7 +102,7 @@ INSERT INTO registry.meta (schema_version) VALUES ('0.1');
 -- Structural CHECKs: `pooled ⟺ pool_cluster present` (a pooled org names its
 -- shared pool; a dedicated org's clusters are derived, so pool is NULL) plus a
 -- defensive charset/length backstop (cjv.20) on `id` and `pool_cluster` mirroring
--- crates/wamn-registry validate() (check_id / check_name) — `id` must be a
+-- crates/control/registry validate() (check_id / check_name) — `id` must be a
 -- lowercase slug `[a-z0-9-]` (start/end alnum, NO consecutive hyphens — wamn-R27,
 -- since `--` is the `wamn-db-<org>--<project>--<env>` component separator, so a
 -- `--` run would let two triples collide onto one name), ≤ 40 bytes, and not under
@@ -131,7 +131,7 @@ CREATE TABLE registry.orgs (
 
 -- ---------------------------------------------------------------------------
 -- Env policies (D18, wamn-8df.3; ORG-SCOPED by wamn-8df.4) — each org's own
--- environment configurations (crates/wamn-registry EnvPolicy, keyed per org as
+-- environment configurations (crates/control/registry EnvPolicy, keyed per org as
 -- OrgEnvPolicy). The `name` IS the env slug: a project-env's `env` both
 -- identifies it in the triple and (via the composite FK below) resolves its
 -- policy in ITS ORG's set. `recovery_domain` is `jsonb` (`"own"` |

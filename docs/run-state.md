@@ -8,7 +8,7 @@ the pure engine ([`wamn-runner`](flow-runner.md), 5.2) left as an in-memory seam
 5.2 holds a [`RunState`] with a single `step_seq` counter; 5.7 persists one row per
 node execution and rebuilds the exact frontier from those rows.
 
-The split mirrors the rest of the platform: a **pure crate** (`crates/wamn-run-store`)
+The split mirrors the rest of the platform: a **pure crate** (`crates/execution/run-state-store`)
 holds the record model and all reconstruction/re-run logic — no DB, no wasm, no
 clock, unit-tested off-cluster — and drives two additive **engine primitives**
 (`Plan::resume` / `Plan::seed_at`); the **driver** (`components/flowrunner`)

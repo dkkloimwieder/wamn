@@ -110,7 +110,7 @@ The shipped model hard-codes two closed dimensions and special-cases the third
 environment onto them:
 
 - `Env` = closed enum `{Dev, Canary, Prod}` and `Tier` = closed enum
-  `{Trials, Standard, Dedicated}` (`crates/wamn-registry/src/types.rs`), each
+  `{Trials, Standard, Dedicated}` (`crates/control/registry/src/types.rs`), each
   `as_str()` **drift-guarded** against the `CHECK IN (…)` literals in
   `deploy/sql/system-schema.sql`. Adding one env or tier = a new enum variant + a
   schema migration + a `CHECK` edit + drift-guard edits + every `match` arm.
@@ -382,7 +382,7 @@ live-standups all deprovision). So this is a **schema + code rework, not a data
 migration**:
 
 1. **`wamn-8df.3`** — the model change:
-   - `crates/wamn-registry`: `Env` enum → validated slug newtype; `Tier` enum
+   - `crates/control/registry`: `Env` enum → validated slug newtype; `Tier` enum
      removed; `Org` loses `tier`/`*_cluster` fields, gains `placement_kind` /
      `pool_cluster`; new `EnvPolicy` type + `env_policies` in the registry;
      `cluster_of` replaces `Env::side`/`cluster_name`/`canary_cluster_name`/

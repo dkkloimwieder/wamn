@@ -1,0 +1,56 @@
+[package]
+name = "wamn-run-queue"
+description = "wamn durable run queue + runner scaling (5.14, the D3 hybrid): the FOR UPDATE SKIP LOCKED claim/lease/janitor/reconciliation LOGIC + parameterized SQL builders as PURE functions over (queue rows, now, config). PURE — no DB, no wasm, no clock (now is always a passed-in millis); the drivers (wamn-gates queuebench + the wamn-dispatcher service) supply the wamn:postgres effects + NATS-core doorbell. Postgres owns durability (co-transacts with the 5.7 runs row); NATS carries fire-and-forget doorbells; a run-claim lease reclaims a dead replica's work. Owns its own run_queue table (deploy/sql/run-queue.sql); reuses wamn-run-store's RunStatus for the write-ahead/janitor lifecycle."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The queue drives the 5.7 run lifecycle: the write-ahead pre-state
+# (RunStatus::Dispatched) and the janitor verdict (RunStatus::InfrastructureFailure)
+# are RunStatus values, not a redefined vocabulary — reuse them.
+wamn-run-store = { path = "../../execution/run-state-store" }
+# SR11: the checkpoint/complete statements COMPOSE wamn-run-store's builders as
+# `Sql` (text + arity) and renumber their lease-renew tail against the head's
+# arity — never a hardcoded `$7`/`$8` that a new upstream param would misbind.
+wamn-sql = { path = "../../platform/sql" }
+# The queue records import/export as JSON (the read model / the pure decision
+# fixtures). No schemars — a store model, not a published contract (like
+# wamn-run-store / wamn-ddl / wamn-runner). Always present: `model` (QueueEntry)
+# derives it and is part of the pure claim-path core the guest links.
+serde = { version = "1", features = ["derive"] }
+# The trigger dispatcher's firing envelope (the cron tick input_json)
+# is built here so the drivers share one shape. raw_value: the payload is
+# spliced into the envelope VERBATIM (never decoded through a float-lossy Value),
+# so exact-decimal / >2^53 numbers survive — the platform's no-float rule.
+# `dispatcher`-only (cron); optional so the guest wasm omits it.
+serde_json = { version = "1", features = ["raw_value"], optional = true }
+# Cron next-fire evaluation (5-field classic cron). Calendar math (DOM/DOW
+# intersection, month lengths, leap years) is a correctness trap — a vetted
+# evaluator over an INJECTED instant keeps the no-clock discipline: next_fire /
+# due_tick take `now: Millis`, never read a clock (the 11.1 fast-forwardable-cron
+# requirement). chrono is croner's time vocabulary; default-features off keeps
+# the clock feature out (we only convert epoch ms <-> DateTime<Utc>).
+# `dispatcher`-only (cron); optional so the guest wasm omits croner/chrono.
+croner = { version = "3", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
+
+[features]
+# The always-on core is the pure claim/lease/janitor/partition decisions + the
+# `sql.rs` builders (deps: wamn-run-store + serde). The `dispatcher` feature adds
+# the always-on control-plane pair — cron due-tick evaluation
+# and the adaptive poll cadence (`cron`/`dispatch` modules, needing
+# croner + chrono + serde_json). The host + gates build with it (default); the
+# flowrunner guest deps `default-features = false` so it claims from the queue
+# (the pure builders) WITHOUT pulling croner/chrono into its wasm (fqg.4).
+default = ["dispatcher"]
+dispatcher = ["dep:serde_json", "dep:croner", "dep:chrono"]
+
+[dev-dependencies]
+
+# No DB / wasm / clock dependency: every decision (claim eligibility, lease
+# expiry, janitor orphan-detection, reconciliation cadence) is a pure function of
+# (rows, now, config) — `now` is a passed-in millis, never read from a clock. The
+# host/dispatcher owns every effect (Postgres, NATS, the real clock). The optional
+# live-apply gate (tests/queue.rs) shells out to `psql`, so there is no database
+# dependency even in dev — the same pattern as wamn-run-store / wamn-ddl / wamn-rls.

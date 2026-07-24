@@ -9,15 +9,15 @@ serde_json = "1"
 # The PURE per-event pipeline (decide/skip/refuse, condition eval under the
 # REPLICA IDENTITY DEFAULT contract, causation budget, key/policy resolution,
 # run-id + input mint) — this shell only performs the effects.
-wamn-materializer = { path = "../../crates/wamn-materializer" }
+wamn-materializer = { path = "../../crates/events/materializer" }
 # The declaration surfaces the sweep reads: registrations + the flow graph.
-wamn-event-reg = { path = "../../crates/wamn-event-reg" }
-wamn-event-wire = { path = "../../crates/wamn-event-wire" }
-wamn-flow = { path = "../../crates/wamn-flow" }
+wamn-event-reg = { path = "../../crates/events/registration" }
+wamn-event-wire = { path = "../../crates/events/wire" }
+wamn-flow = { path = "../../crates/execution/flow-model" }
 # The write-ahead + evt-enqueue SQL builders. `default-features = false` keeps
 # the dispatcher-only modules (croner/chrono) out of the wasm (the fqg.4
 # flowrunner posture).
-wamn-run-queue = { path = "../../crates/wamn-run-queue", default-features = false }
+wamn-run-queue = { path = "../../crates/execution/run-state-queue", default-features = false }
 
 # A COMMAND component (wasi:cli/run via `main`), not a cdylib: the Service
 # workload shape (E12) runs it in the host's restart loop.

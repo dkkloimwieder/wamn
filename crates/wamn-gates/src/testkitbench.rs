@@ -589,7 +589,7 @@ const BUILTIN_NODE_TYPES: &[&str] = &[
 ];
 
 /// The standard node library (`wamn-nodes`) types the guest delegates to via
-/// `wamn_nodes::is_standard`. Drift-guarded against `crates/wamn-nodes/src/lib.rs`
+/// `wamn_nodes::is_standard`. Drift-guarded against `crates/execution/standard-nodes/src/lib.rs`
 /// `NODE_TYPES` (name + count) by `standard_node_types_pinned_against_wamn_nodes`.
 const STANDARD_NODE_TYPES: &[&str] = &[
     "transform",
@@ -1477,7 +1477,7 @@ mod tests {
     /// (a bumped `[&str; N]`) breaks this until `STANDARD_NODE_TYPES` catches up.
     #[test]
     fn standard_node_types_pinned_against_wamn_nodes() {
-        let nodes = include_str!("../../../crates/wamn-nodes/src/lib.rs");
+        let nodes = include_str!("../../../crates/execution/standard-nodes/src/lib.rs");
         assert!(
             nodes.contains(&format!(
                 "NODE_TYPES: [&str; {}]",

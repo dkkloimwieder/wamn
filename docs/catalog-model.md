@@ -16,7 +16,7 @@ module, not the platform.
 - **Contract file:** [`catalog-model.schema.json`](catalog-model.schema.json) —
   the language-neutral JSON Schema, **generated** from the Rust types (single
   source of truth) and drift-guarded by a test.
-- **Crate:** `crates/wamn-catalog` — types, import/export, validation, diff.
+- **Crate:** `crates/schema/model` — types, import/export, validation, diff.
 - **Storage:** [`deploy/sql/catalog-schema.sql`](../deploy/sql/catalog-schema.sql) — the
   tenant-scoped catalog tables that persist the model (a standalone artifact 3.2
   / POC-DM1 wire into a project DB; not part of the S2–S6 fixtures).
@@ -140,10 +140,10 @@ contradictory and rejected by validation.
 The full POC data model (`users` extension, exact-decimal specs, the sensitive
 pricing field, the `(receipt-no, supplier-id)` composite unique, and the
 receipt→line→material→hold→disposition relations) is the fixture
-`crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json`; a
+`crates/schema/model/tests/fixtures/poc-receiving.catalog.json`; a
 hierarchical / closure model is `genealogy.catalog.json`. Each is round-tripped,
 validated, and checked against the published schema in
-`crates/wamn-catalog/tests/catalog.rs`.
+`crates/schema/model/tests/catalog.rs`.
 
 ## Import / export
 

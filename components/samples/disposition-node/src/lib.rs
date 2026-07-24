@@ -49,7 +49,7 @@ use serde_json::{Map, Value, json};
 use wamn_node_sdk::{Emission, ErrorDetail, Node, NodeCtx, NodeError, RunContext};
 
 /// The recommendable dispositions — the catalog `dispositions.decision` enum
-/// (`crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json`), pinned by
+/// (`crates/schema/model/tests/fixtures/poc-receiving.catalog.json`), pinned by
 /// the drift-guard test against that fixture. Order matches the fixture.
 const DECISIONS: [&str; 3] = ["accept", "reject", "use-as-is"];
 
@@ -662,7 +662,7 @@ mod tests {
     #[test]
     fn recommendation_enum_tracks_the_catalog_fixture() {
         let catalog: Value = serde_json::from_str(include_str!(
-            "../../../../crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json"
+            "../../../../crates/schema/model/tests/fixtures/poc-receiving.catalog.json"
         ))
         .expect("catalog fixture parses");
         let variants: Vec<&str> = catalog["entities"]

@@ -8,7 +8,7 @@
 --
 -- The case BODY is opaque jsonb in v0 (`case_body`): the canonical
 -- case/assertion vocabulary is a sibling crate (wamn-testkit); at integration
--- the suite envelope (crates/wamn-flow-tests) gains a validate-on-write pass
+-- the suite envelope (crates/scenarios/catalog) gains a validate-on-write pass
 -- against those serde types. `flow_version` is DENORMALIZED onto `test_cases`
 -- (not reachable only through `test_suites`) — the event_registrations
 -- precedent (deploy/sql/catalog-schema.sql): it is part of the composite FK to

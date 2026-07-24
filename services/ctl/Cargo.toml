@@ -17,30 +17,30 @@ tracing = { workspace = true }
 # no-OTEL behavior of wash_runtime::observability::initialize_observability.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # 4.1b publish-catalog: catalog snapshot model + the 3.2 tenant-floor DDL.
-wamn-catalog = { path = "../../crates/wamn-catalog" }
-wamn-ddl = { path = "../../crates/wamn-ddl" }
+wamn-catalog = { path = "../../crates/schema/model" }
+wamn-ddl = { path = "../../crates/schema/ddl-compiler" }
 # publish-catalog --flow: parse/validate the flow graph before the flows row.
-wamn-flow = { path = "../../crates/wamn-flow" }
+wamn-flow = { path = "../../crates/execution/flow-model" }
 # 2.5 migrate-catalog: the pure migration engine — reads the current applied
 # catalog, plans the one-transaction apply (DDL + lifecycle + history).
-wamn-migrate = { path = "../../crates/wamn-migrate" }
+wamn-migrate = { path = "../../crates/schema/migration" }
 # 2.3 provision-project: the pure CREATE DATABASE / role / GRANT CONNECT
 # builders + project-id naming + credential Secret rendering.
-wamn-provision = { path = "../../crates/wamn-provision" }
+wamn-provision = { path = "../../crates/control/provision" }
 # wamn-q3n.6 provision-org: the control-plane registry model + registry SQL.
-wamn-registry = { path = "../../crates/wamn-registry" }
+wamn-registry = { path = "../../crates/control/registry" }
 # wamn-8df.5 copy-project-env: the definition pass re-compiles the copied RLS
 # policy rows and applies them on the dst.
-wamn-rls = { path = "../../crates/wamn-rls" }
-wamn-seed = { path = "../../crates/wamn-seed" }
+wamn-rls = { path = "../../crates/schema/rls-compiler" }
+wamn-seed = { path = "../../crates/schema/seed-compiler" }
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
 # 11.3 pin-run also reuses its run/node-run read builders + `capture::scrub`.
-wamn-run-store = { path = "../../crates/wamn-run-store" }
+wamn-run-store = { path = "../../crates/execution/run-state-store" }
 # 11.3 pin-run: the pure `pin_run` transform (RunRecord + node_runs -> TestCase)
 # and the canonical case vocabulary the pinned case is serialized as.
-wamn-testkit = { path = "../../crates/wamn-testkit" }
+wamn-testkit = { path = "../../crates/scenarios/model" }
 # 11.8 impact-report / migrate-catalog acknowledge gate: the PURE schema-change
 # impact analysis (entities → flows via registration + node config → suites →
 # generated-API). This shell reads the dependency rows and calls wamn_impact::analyze.
-wamn-impact = { path = "../../crates/wamn-impact" }
+wamn-impact = { path = "../../crates/schema/impact-analysis" }

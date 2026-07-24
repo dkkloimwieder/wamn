@@ -51,7 +51,7 @@ pub struct MigrateCatalogArgs {
     #[arg(long, default_value = "public")]
     pub schema: String,
 
-    /// Path to the target catalog JSON (crates/wamn-catalog `Catalog`).
+    /// Path to the target catalog JSON (crates/schema/model `Catalog`).
     #[arg(long)]
     pub target: PathBuf,
 

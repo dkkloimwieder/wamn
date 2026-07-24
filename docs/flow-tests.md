@@ -65,7 +65,7 @@ between src and dst.
 The FK is the structural backstop; the guard converts what would be a bare
 mid-copy FK error into a clean, named refusal before any mutation.
 
-## The envelope (`crates/wamn-flow-tests`)
+## The envelope (`crates/scenarios/catalog`)
 
 `TestSuite` / `CaseEntry` are the pure import/export shape over the rows:
 

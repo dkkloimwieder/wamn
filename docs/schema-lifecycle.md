@@ -22,7 +22,7 @@ policy. It **composes** the shipped model crates rather than duplicating them:
 
 - **Issue:** wamn-d6d `[3.4]` + `wamn-q3n.5` (`(org, project, env)` triple +
   `canary`); **Epic:** E3 Schema Designer / D6.
-- **Crate:** `crates/wamn-schema` — depends on `wamn-catalog` + `wamn-ddl` +
+- **Crate:** `crates/schema/lifecycle` — depends on `wamn-catalog` + `wamn-ddl` +
   `wamn-registry`.
 - **Consumers:** the designer UI (3.3, drives the lifecycle), the migration
   engine (2.5, applies a promotion's plan), 11.8 (impact-analyzes a staged
@@ -162,6 +162,6 @@ with 3.1 / 3.2).
 ## References
 
 - Plan: `docs/platform-plan.md` §Epic 3 (3.4).
-- Catalog model (the promotion format): `docs/catalog-model.md`, `crates/wamn-catalog`.
-- DDL compiler (reused for the migration): `docs/ddl-compiler.md`, `crates/wamn-ddl`.
+- Catalog model (the promotion format): `docs/catalog-model.md`, `crates/schema/model`.
+- DDL compiler (reused for the migration): `docs/ddl-compiler.md`, `crates/schema/ddl-compiler`.
 - Storage: `deploy/sql/catalog-schema.sql`.

@@ -102,6 +102,6 @@ replication for registry/saga durability — a platform-env knob, not part of
 
 - Design: `docs/postgres-topology.md` (§T1, §"The four tiers").
 - The registry model this cluster will hold: `docs/registry-model.md`
-  (`crates/wamn-registry`, `wamn-q3n.1`).
+  (`crates/control/registry`, `wamn-q3n.1`).
 - The T3 pool it stands beside: `deploy/infra/cnpg-cluster.yaml`,
   `docs/provisioning.md`.

@@ -24,16 +24,16 @@ wamn-host = { path = "../host" }
 # 5.5e: the canonical wamn.node.manifest model (ANNOTATION_KEY, NodeManifest,
 # from_json/to_json, is_valid) — the builder writes the annotation, never a
 # second copy of the schema.
-wamn-node-manifest = { path = "../../crates/wamn-node-manifest" }
+wamn-node-manifest = { path = "../../crates/node/manifest" }
 # 11.5: the pure invocation wire types (NodeInvokeRequest / NodeInvokeResponse /
 # WireNodeError) the test gate builds + asserts against — the SAME wire model the
 # serve-node host uses (already transitive via wamn-host; a direct dep here).
-wamn-node-invoke = { path = "../../crates/wamn-node-invoke" }
+wamn-node-invoke = { path = "../../crates/node/invoke" }
 # 11.5 reconcile (gyt): the canonical case/assertion vocabulary. The test gate
 # parses cases.json into wamn_testkit::NodeCaseFile, lowers each NodeCase to a
 # TestCase (into_test_case), and decides via wamn_testkit::evaluate — no local
 # case types.
-wamn-testkit = { path = "../../crates/wamn-testkit" }
+wamn-testkit = { path = "../../crates/scenarios/model" }
 # 5.5e: the hand-rolled OCI registry-v2 writer (the repo's first Rust OCI push)
 # rides the hyper 1 stack already in the graph — a plain-HTTP client for the
 # in-cluster registry:2, full control of the manifest media types + annotations.

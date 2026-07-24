@@ -6,7 +6,7 @@ Companion to `wamn-node.wit`. Load-bearing for runner dispatch (5.2/5.6), trace 
 
 **FROZEN 0.1.0 (2026-07-12, plan 5.4).** Three deltas the 5.3 standard library
 surfaced were folded in before the freeze, so the WIT and its Rust-native
-mirror (`crates/wamn-node-sdk`) coincide from day one:
+mirror (`crates/node/sdk`) coincide from day one:
 
 1. **`run` returns an `emission` record `{payload, port: option<string>}`**
    (absent = `main`) — the engine routes ported edges (branch nodes emit
@@ -28,7 +28,7 @@ bound as an S1 stub (cooperative cancellation, never cancelled);
 `payloads` (5.10) has no host implementation yet — linking it fails
 instantiation until its host side lands. Vendored copies of the WIT (three S4 guests, the
 `wamn-node-guest` scaffolding, the host bindgen copy) are drift-guarded by
-`crates/wamn-node-sdk/tests/wit_coherence.rs`, which also pins the exact WIT
+`crates/node/sdk/tests/wit_coherence.rs`, which also pins the exact WIT
 lines the SDK mirrors. The `nodebench` gate proves the ABI cross-language
 (Rust + JS/JCO + wac-composed) and drives the scaffolding-built sample node
 through every taxonomy variant, port selection, and the streamed refusal.
@@ -70,7 +70,7 @@ Control-plane API: `cancel(run-id, reason, [node-scope])` — invoked identicall
 The builder reads the component's actual WIT imports and emits `hostInterfaces` (prompting for `allowedHosts` when `wasi:http/outgoing-handler` appears). World `node` imports nothing → empty grants → physically incapable of I/O. `payloads` and `control` are grants like any other.
 
 **8. Node metadata lives in OCI annotations, not a WIT export.**
-Display name, config JSON Schema, input/output schemas, declared ordering-policy support → `wamn.node.manifest` annotation. Registry-scannable node palette; no instantiation to browse. **SHIPPED (5.4):** `crates/wamn-node-manifest` is the annotation's canonical model (types, validation, `ANNOTATION_KEY`), with the language-neutral contract generated from it at `docs/wamn-node-manifest.schema.json` (the wamn-flow pattern: fixture round-trip + boon conformance + drift guard). Declared output ports ride along (edge affordances for the editor; `error` is reserved and rejected). Capability grants are deliberately NOT in the manifest — note 7: derived from actual imports, never declared twice. The builder (5.5) writes the annotation at push.
+Display name, config JSON Schema, input/output schemas, declared ordering-policy support → `wamn.node.manifest` annotation. Registry-scannable node palette; no instantiation to browse. **SHIPPED (5.4):** `crates/node/manifest` is the annotation's canonical model (types, validation, `ANNOTATION_KEY`), with the language-neutral contract generated from it at `docs/wamn-node-manifest.schema.json` (the wamn-flow pattern: fixture round-trip + boon conformance + drift guard). Declared output ports ride along (edge affordances for the editor; `error` is reserved and rejected). Capability grants are deliberately NOT in the manifest — note 7: derived from actual imports, never declared twice. The builder (5.5) writes the annotation at push.
 
 **9a. Trace propagation is host-enforced, not convention.**
 Nodes SHOULD propagate `traceparent` (SDKs do it invisibly in their HTTP/DB helpers), but the guarantee doesn't depend on it: every outbound call already traverses a host plugin (`wasi:http/outgoing-handler`, `wamn:postgres`), and the host stamps trace context onto any outgoing request that lacks it, using the executing node's span. A user bypassing the SDK cannot break trace continuity — the capability boundary doubles as the telemetry boundary. SDK-set context is preferred (more precise parent spans); host injection is the floor.
@@ -123,7 +123,7 @@ fn run(ctx: RunContext, input: Payload) -> Result<Payload, NodeError> {
 
 SDKs own: binding generation, payload inline/stream duality (same iterator API either way), JSON codec, error variants, traceparent propagation, deadline plumbing, cancellation polling inside iterators and HTTP clients.
 
-**Shipped at 5.4 (Rust):** `crates/wamn-node-guest` — a custom node implements
+**Shipped at 5.4 (Rust):** `crates/node/guest` — a custom node implements
 the SAME `wamn_node_sdk::Node` trait the standard library uses, and
 `wamn_node_guest::export_node!(MyNode)` is the entire componentization
 (binding generation, JSON codec, taxonomy + port + run-context conversion,

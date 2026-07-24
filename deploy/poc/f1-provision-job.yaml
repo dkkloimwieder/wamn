@@ -4,7 +4,7 @@
 # ACTIVE receipt-received flow. Everything additive (shared-cluster guardrail).
 # Fixtures come from the f1-fixtures ConfigMap:
 #   kubectl -n wamn-system create configmap f1-fixtures \
-#     --from-file=poc-receiving.catalog.json=crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json \
+#     --from-file=poc-receiving.catalog.json=crates/schema/model/tests/fixtures/poc-receiving.catalog.json \
 #     --from-file=f1-flow.json=deploy/poc/f1-flow.json \
 #     --from-file=f1-seed.dataset.json=deploy/poc/f1-seed.dataset.json
 apiVersion: batch/v1

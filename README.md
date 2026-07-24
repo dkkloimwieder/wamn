@@ -30,25 +30,42 @@ crates/                 shared Rust workspace packages
   wamn-gates            gate/bench suite binary (SR1 split)
   wamn-gate-harness     shared measurement helpers for gates
 
-  # pure decision crates (no DB/clock/wasm — pure core / effect shell, SR6):
-  wamn-catalog          metadata catalog model + JSON Schema
-  wamn-ddl              catalog -> Postgres DDL compiler (tenant RLS floor)
-  wamn-schema           schema draft/staged/applied lifecycle + promotion
-  wamn-rls              per-role RLS policy builder
-  wamn-seed             typed seed datasets -> deterministic INSERTs
-  wamn-migrate          live forward-only migration engine
-  wamn-flow             flow-graph JSON model + JSON Schema
-  wamn-runner           pure flow reducer (walk, branch, retry, resume)
-  wamn-run-store        durable runs/node_runs + branch-aware replay
-  wamn-run-queue        durable run queue (SKIP LOCKED) + cron dispatch
-  wamn-node-sdk         node authoring contract (Node trait, error taxonomy)
-  wamn-node-guest       custom-node componentization scaffolding
-  wamn-nodes            standard node library (transform, http, postgres, ...)
-  wamn-node-manifest    wamn.node.manifest OCI annotation model
-  wamn-api              REST API gateway logic (catalog -> routes/SQL)
-  wamn-registry         control-plane registry model (org/project/env)
-  wamn-provision        Postgres provisioning builders (clusters, DBs, backups)
-  wamn-sysschema        per-project app_system (users/roles/...) model
+  # shared, non-deployable packages grouped by bounded context:
+  platform/
+    sql                 wamn-sql: parameterized SQL composition primitive
+  data/
+    entity-access       wamn-api: catalog-derived REST/SQL planning logic
+  schema/
+    model               wamn-catalog: metadata model + JSON Schema
+    ddl-compiler        wamn-ddl: catalog -> Postgres DDL compiler
+    lifecycle           wamn-schema: draft/staged/applied lifecycle + promotion
+    rls-compiler        wamn-rls: per-role RLS policy builder
+    seed-compiler       wamn-seed: typed datasets -> deterministic INSERTs
+    migration           wamn-migrate: forward-only migration planner
+    impact-analysis     wamn-impact: schema-change dependency analysis
+  execution/
+    flow-model          wamn-flow: flow-graph JSON model + JSON Schema
+    flow-engine         wamn-runner: pure flow reducer
+    run-state-store     wamn-run-store: durable run/node-run decisions
+    run-state-queue     wamn-run-queue: queue, lease, and cron decisions
+    standard-nodes      wamn-nodes: standard node library
+  events/
+    wire                wamn-event-wire: event envelope contract
+    registration        wamn-event-reg: event registration model
+    materializer        wamn-materializer: CDC materialization decisions
+  node/
+    sdk                 wamn-node-sdk: node authoring contract
+    guest               wamn-node-guest: componentization scaffolding
+    invoke              wamn-node-invoke: node invocation wire contract
+    manifest            wamn-node-manifest: OCI annotation model
+  control/
+    registry            wamn-registry: org/project/environment model
+    provision           wamn-provision: Postgres provisioning builders
+  identity/
+    project-state       wamn-sysschema: per-project app_system model
+  scenarios/
+    model               wamn-testkit: scenario case/assertion vocabulary
+    catalog             wamn-flow-tests: persisted suite envelope
 
 components/             wasm32-wasip2 guests
   flowrunner            production flow-runner guest (drives wamn-runner)

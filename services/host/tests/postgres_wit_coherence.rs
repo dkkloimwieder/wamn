@@ -1,6 +1,6 @@
 //! Drift guard tying the FROZEN `wamn:postgres@0.1.0` doc-of-record
 //! (`docs/wamn-postgres.wit`) to every vendored copy of it. The `wamn:node`
-//! (`wamn-node-sdk/tests/wit_coherence.rs`) and `wamn:jetstream`
+//! (`crates/node/sdk/tests/wit_coherence.rs`) and `wamn:jetstream`
 //! (`jetstream_wit_coherence.rs`) precedents: editing the contract without
 //! re-vendoring every copy (or drifting one copy on its own) fails a NAMED test
 //! here instead of shipping skew that only surfaces as a cryptic linker error
@@ -60,7 +60,7 @@ const EXPECTED_COPIES: [&str; 7] = [
     "components/materializer/wit/deps/wamn-postgres/package.wit",
     "components/poc-webhook-f1/wit/deps/wamn-postgres/package.wit",
     "services/host/wit/deps/wamn-postgres/package.wit",
-    "crates/wamn-node-guest/wit-caps/deps/wamn-postgres/package.wit",
+    "crates/node/guest/wit-caps/deps/wamn-postgres/package.wit",
 ];
 
 /// The five copies that are byte-identical to one another today (the fuller
@@ -71,7 +71,7 @@ const CLUSTER_A: [&str; 5] = [
     "components/fixtures/pgprobe/wit/deps/wamn-postgres/package.wit",
     "components/flowrunner/wit/deps/wamn-postgres/package.wit",
     "components/poc-webhook-f1/wit/deps/wamn-postgres/package.wit",
-    "crates/wamn-node-guest/wit-caps/deps/wamn-postgres/package.wit",
+    "crates/node/guest/wit-caps/deps/wamn-postgres/package.wit",
 ];
 
 /// The two copies that are byte-identical to one another today (a shorter

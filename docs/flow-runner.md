@@ -5,7 +5,7 @@ walks the nodes from `entry` following ported edges, branches and merges, routes
 errors, and retries with backoff. It replaces the S3 spike's ad-hoc linear walk.
 
 The design follows the same split as the API gateway (4.1): a **pure engine
-crate** (`crates/wamn-runner`) holds all the decision logic and is unit-tested
+crate** (`crates/execution/flow-engine`) holds all the decision logic and is unit-tested
 with no cluster, no DB, no wasm; a **thin component** (`components/flowrunner`)
 supplies the effects — dispatching each node, the `wamn:postgres` checkpoints,
 the reload doorbell.

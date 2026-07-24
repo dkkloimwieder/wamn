@@ -23,7 +23,7 @@ DM1 adds no engine code. It **composes the shipped tools** over three promoted
 | **2.4** `app_system` | the personas' roles + the ERP api-key | `deploy/sql/app-schema.sql` |
 
 The catalog artifact is a **promotion of the wamn-catalog fixture**
-(`crates/wamn-catalog/tests/fixtures/poc-receiving.catalog.json`), kept identical
+(`crates/schema/model/tests/fixtures/poc-receiving.catalog.json`), kept identical
 by a drift guard — the same 8-entity model the crate tests validate is the one
 DM1 migrates. `wamn_dm1::provisioning_sql(tenant)` composes migrate → RLS → seed
 into one runnable script.

@@ -10,7 +10,7 @@ is *a provisioned, credentialed, `wamn_app`-roled, empty project database*.
 - **Issue:** wamn-jxm `[2.3]`; **Epic:** E2 Data layer. Unblocks wamn-as5 `[2.4]`
   → { wamn-d8u `[2.5]`, wamn-521 `[POC-DM1]` }.
 - **Decision:** D6 — **CloudNativePG** (CNPG), in-cluster, chosen-revisitable.
-- **Crate:** `crates/wamn-provision` — the pure core (naming, SQL builders,
+- **Crate:** `crates/control/provision` — the pure core (naming, SQL builders,
   Secret rendering).
 - **Subcommand:** `wamn-ctl provision-project` — the imperative driver.
 - **Gate:** `wamn-gates provisionbench` + `deploy/gates/provisionbench-job.yaml`.
@@ -261,7 +261,7 @@ into `cnpg-system`) and **requires cert-manager** (plugin↔operator mTLS); the 
 object store is `deploy/infra/minio.yaml` (MinIO — buckets `wamn-backups` for WAL,
 `wamn-dumps` for logical dumps).
 
-The pure renderers live in `crates/wamn-provision/src/backup.rs`. Per
+The pure renderers live in `crates/control/provision/src/backup.rs`. Per
 **backup-enabled** cluster (D18: the owner env's policy has a non-empty
 `backup_cadence` — the default `prod` policy is backed, `dev` is not; its restore
 path is the logical dump), the org's cluster set carries:
@@ -442,7 +442,7 @@ Re-pointing an existing publication at a different schema is a manual
 
 Cluster-level **preconditions** are provision-org / env-policy concerns, not
 this overlay, and are now RENDERED by `provision-org` (wamn-l5i9.32,
-crates/wamn-provision `render_org_cluster_set`): `wal_level=logical` is the CNPG
+crates/control/provision `render_org_cluster_set`): `wal_level=logical` is the CNPG
 default; every rendered cluster carries the `max_slot_wal_keep_size` WAL bound
 (the §11 sharp edge — a forgotten slot pins WAL until dropped, so the bound is
 **always-on**: no cluster is renderable without it); and multi-instance clusters
@@ -640,7 +640,7 @@ backup/restore gates are wamn-q3n.11; the cross-cluster move that consumes a dum
 is the unified `copy` (wamn-8df.5); whole-cluster WAL/PITR is the *other*
 mechanism, wamn-e1g.
 
-The pure renderer + builders live in `crates/wamn-provision/src/dump.rs` (the
+The pure renderer + builders live in `crates/control/provision/src/dump.rs` (the
 `render_project_env_database` precedent — no clock, no DB, no K8s client):
 
 - `render_project_env_dump_cronjob(triple, schedule, bucket)` — a `batch/v1`
@@ -683,7 +683,7 @@ guarded against the DDL; a live idempotent + `byte_size`-refresh proof rides the
 wamn-q3n.3 storage gate).
 
 **Verification.** The artifact is validated **substrate-agnostically** (Q2): a
-`WAMN_DUMP_PG_URL` round-trip gate (`crates/wamn-provision/tests/dump.rs`) seeds a
+`WAMN_DUMP_PG_URL` round-trip gate (`crates/control/provision/tests/dump.rs`) seeds a
 database, dumps it with the real `pg_dump_argv`, `pg_restore`s into a scratch DB,
 and asserts the seed (incl an exact-decimal column) survives. The **in-cluster
 gate of record** (the .6/.7/.9 precedent — debug binary + `kubectl`, no image
@@ -705,7 +705,7 @@ dump, not from a base backup. Whole-cluster **PITR** (rewind an org cluster to a
 arbitrary instant, then carve one DB out) needs WAL/PITR and is wamn-e1g; this
 subcommand is cross-referenced from that runbook, not a substitute for it.
 
-The pure builder lives in `crates/wamn-provision/src/restore.rs` (the `dump.rs`
+The pure builder lives in `crates/control/provision/src/restore.rs` (the `dump.rs`
 precedent — no clock, no DB, no `pg_restore` invocation):
 
 - `pg_restore_argv(conninfo, dump_dir, clean)` — `--no-owner --no-privileges`
@@ -767,7 +767,7 @@ recursive store listing (post-wamn-e1g) wants a real dump-completion marker to r
 out a torn `mc mirror`; that is a follow-up, not part of this fix.
 
 **Verification.** The restore is validated **substrate-agnostically**: a
-`WAMN_RESTORE_PG_URL` round-trip gate (`crates/wamn-provision/tests/restore.rs`)
+`WAMN_RESTORE_PG_URL` round-trip gate (`crates/control/provision/tests/restore.rs`)
 seeds a database, dumps it with the real `pg_dump_argv`, restores with the real
 `pg_restore_argv` into a scratch DB, and asserts the seed (incl an exact-decimal
 column) survives — then restores **in place** (`clean = true`) over a database

@@ -110,7 +110,7 @@ on-dashboard note pointing at the **wamn SRE** folder.
 The verb enumerates **orgs**, but a metric/trace/log tenant is NOT an org. The
 verification (the brief's Q4):
 
-- The registry (`crates/wamn-registry`, `deploy/sql/system-schema.sql`) models
+- The registry (`crates/control/registry`, `deploy/sql/system-schema.sql`) models
   `Triple{org, project, env}` and has **NO tenant table**. The only per-customer
   unit it enumerates is the **org** — "the unit of isolation is the customer/org"
   (`docs/postgres-topology.md`).

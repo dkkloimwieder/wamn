@@ -4,7 +4,7 @@ The application-facing **auth / RBAC / config** tables that live in a project
 database: `users`, `roles` (+ the `user_roles` linkage), `permissions`,
 `configurations`, `audit_log`, `api_keys`. Shipped as the standalone DDL
 `deploy/sql/app-schema.sql`, modeled and drift-guarded by the pure crate
-`crates/wamn-sysschema` (bead wamn-as5, `docs/platform-plan.md` §2.4).
+`crates/identity/project-state` (bead wamn-as5, `docs/platform-plan.md` §2.4).
 
 ## Scope — the auth/RBAC half
 
@@ -56,7 +56,7 @@ plugin from a resolved session; this schema is what those claims key on.
 ## Claim integration (3.5 / 4.2)
 
 The columns are shaped to be the exact targets the 3.5 RLS builder
-(`crates/wamn-rls`) reads:
+(`crates/schema/rls-compiler`) reads:
 
 - **`users.id`** is a `uuid` — the ownership target the builder reads as
   `NULLIF(current_setting('app.user_id', true), '')::uuid`. A data table's owner

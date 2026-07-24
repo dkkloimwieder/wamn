@@ -296,7 +296,7 @@ backups to the shared object store (MinIO, `deploy/infra/minio.yaml`; buckets
 its own operator Deployment in `cnpg-system` **and cert-manager** for
 plugin↔operator mTLS, both additive installs). `provision-org` renders, per
 **backup-enabled** cluster (`prod` always, a dedicated `canary` always, `dev` off —
-"T2-dev optional"), three CRs from `crates/wamn-provision/src/backup.rs`: an
+"T2-dev optional"), three CRs from `crates/control/provision/src/backup.rs`: an
 `ObjectStore` (per-cluster WAL prefix `s3://wamn-backups/wal/<cluster>`, and the tier
 **retention window** as `spec.retentionPolicy` — the PITR-SLA knob: **trials 7d /
 standard 14d / dedicated 30d**), a `.spec.plugins` WAL-archiver ref on the `Cluster`

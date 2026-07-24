@@ -11,7 +11,7 @@ checkpoint** — the "additive by default; destructive requires explicit
 confirmation + backup checkpoint" rule (3.2).
 
 - **Issue:** wamn-vbd `[3.2]`; **Epic:** E3 Schema Designer.
-- **Crate:** `crates/wamn-ddl` — consumes `wamn-catalog::{Catalog, diff}`.
+- **Crate:** `crates/schema/ddl-compiler` — consumes `wamn-catalog::{Catalog, diff}`.
 - **Consumers:** POC-DM1 (materialize the model), 3.4 (draft→staged→applied
   lifecycle), 11.8 (schema-impact analysis reads the plan's per-op entity/field
   attribution), the migration engine (2.5) wraps it for live apply.
@@ -299,5 +299,5 @@ docker stop wamn-ddl-pg
 ## References
 
 - Plan: `docs/platform-plan.md` §Epic 3 (3.2), 2.5 (migration engine), D14.
-- Catalog model (the input): `docs/catalog-model.md`, `crates/wamn-catalog`.
+- Catalog model (the input): `docs/catalog-model.md`, `crates/schema/model`.
 - Tenant shape: `deploy/sql/postgres-init.sql`, `docs/security-db-path.md`.

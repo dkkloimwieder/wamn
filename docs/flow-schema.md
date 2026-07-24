@@ -10,7 +10,7 @@ build artifact (the frozen-flow backend, 5.13, is a separate opt-in path — D1)
 - **Contract file:** [`flow-schema.schema.json`](flow-schema.schema.json) — the
   language-neutral JSON Schema, **generated** from the Rust types (single source
   of truth) and drift-guarded by a test.
-- **Crate:** `crates/wamn-flow` — types, import/export, validation, version diff.
+- **Crate:** `crates/execution/flow-model` — types, import/export, validation, version diff.
 - **Consumers:** the production runner (5.2), node library (5.3), editor (5.8),
   credential vault (5.9), dispatcher (5.14).
 
@@ -87,11 +87,11 @@ material ever appears in flow data.**
 ```
 
 Worked examples for the POC flows live in
-`crates/wamn-flow/tests/fixtures/`: F1 `receipt-received` (sync webhook, error
+`crates/execution/flow-model/tests/fixtures/`: F1 `receipt-received` (sync webhook, error
 path, branch/merge), F3 `escalate-stale-holds` (cron + credential + egress),
 F4 `disposition-recorded` (row-event + custom node + idempotent callback). Each
 is round-tripped, validated, and checked against the published schema in
-`crates/wamn-flow/tests/flows.rs`.
+`crates/execution/flow-model/tests/flows.rs`.
 
 ## Import / export
 

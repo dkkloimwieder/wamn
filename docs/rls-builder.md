@@ -7,7 +7,7 @@ against the catalog model (3.1) and compile to a `wamn-ddl` migration plan (3.2)
 layering on top of that crate's **tenant floor**.
 
 - **Issue:** wamn-idu `[3.5]`; **Epic:** E3 Schema Designer.
-- **Crate:** `crates/wamn-rls` — consumes `wamn-catalog` + `wamn-ddl`.
+- **Crate:** `crates/schema/rls-compiler` — consumes `wamn-catalog` + `wamn-ddl`.
 - **Consumers:** the designer UI (3.3, authors the rules), the migration engine
   (2.5, applies them), 11.8 (impact-analyzes a rule change).
 
@@ -129,6 +129,6 @@ docker stop wamn-rls-pg
 ## References
 
 - Plan: `docs/platform-plan.md` §Epic 3 (3.5), §Epic 8 (8.2 tenant isolation).
-- Catalog model (the input): `docs/catalog-model.md`, `crates/wamn-catalog`.
-- Tenant floor (what these compose on): `docs/ddl-compiler.md`, `crates/wamn-ddl`.
+- Catalog model (the input): `docs/catalog-model.md`, `crates/schema/model`.
+- Tenant floor (what these compose on): `docs/ddl-compiler.md`, `crates/schema/ddl-compiler`.
 - Claim injection: `docs/wamn-postgres.wit`, the wamn:postgres plugin (2.2 / 4.2).

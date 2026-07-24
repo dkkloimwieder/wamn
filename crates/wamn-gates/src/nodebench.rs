@@ -50,7 +50,7 @@ mod bindings {
         world: "node-bench",
         // The gate binds the same vendored WIT the host plugins bind
         // (services/host/wit); no second copy (SR7).
-        path: "../wamn-host/wit",
+        path: "../../services/host/wit",
         imports: { default: async },
         exports: { default: async },
         wasmtime_crate: wash_runtime::wasmtime,

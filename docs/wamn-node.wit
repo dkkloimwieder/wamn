@@ -4,7 +4,7 @@ package wamn:node@0.1.0;
 ///
 /// STATUS: FROZEN 0.1.0 (2026-07-12, plan 5.4). The handler ABI cleared the S4
 /// spike cross-language (Rust + JS/JCO + wac-composed; nodebench is the gate of
-/// record) and the Rust-native mirror (`crates/wamn-node-sdk`) shipped the 5.3
+/// record) and the Rust-native mirror (`crates/node/sdk`) shipped the 5.3
 /// standard library against it; three deltas the library surfaced were folded
 /// in BEFORE this freeze (the `emission` output port, `traceparent` as
 /// optional, `rate-limit-detail.target-host`).

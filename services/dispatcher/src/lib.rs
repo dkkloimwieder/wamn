@@ -73,7 +73,7 @@ use wamn_registry::identifiers::{valid_schema, valid_tenant};
 
 /// [9.8] The claimable run-queue depth for the pinned session's tenant. Mirrors
 /// EXACTLY the claim predicate of `wamn_run_queue::claim_batch_sql`
-/// (`crates/wamn-run-queue/src/sql.rs`: `available_at` reached, lease NULL-or-
+/// (`crates/execution/run-state-queue/src/sql.rs`: `available_at` reached, lease NULL-or-
 /// expired, budget-remaining), so the gauge counts precisely the rows a runner
 /// could claim right now. Inverting a clause (e.g. `available_at > now()`) makes
 /// a seeded queue read 0 — metricbench phase 2's mutant.

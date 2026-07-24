@@ -267,11 +267,12 @@ provisioning and both exec paths (migrate + copy) and is deferred to its own bea
   `crates/wamn-gates/src/pgbench.rs` (`--mode attack`) + pgprobe ops 7/8/9;
   structural close deferred to `wamn-1nd`.
 - Expression-chaining guard (cjv.5): `wamn_catalog::unsafe_expression_reason`
-  (`crates/wamn-catalog/src/validate.rs`), wired into the `Check` validator
+  (`crates/schema/model/src/validate.rs`), wired into the `Check` validator
   (`wamn-catalog`) and the `RolePredicate` validator (`wamn-rls`); splice sites
-  `wamn-ddl/src/emit.rs` + `wamn-rls/src/compile.rs`; exec paths
+  `crates/schema/ddl-compiler/src/emit.rs` +
+  `crates/schema/rls-compiler/src/compile.rs`; exec paths
   `migrate_catalog.rs` + `copy_project_env.rs`; live proof
-  `crates/wamn-ddl/tests/ddl.rs::chaining_check_expression_never_reaches_postgres`;
+  `crates/schema/ddl-compiler/tests/ddl.rs::chaining_check_expression_never_reaches_postgres`;
   least-privileged migrate role deferred to its own bead.
 - HTTP egress chokepoint: memory `wamn-s6-testhost-facts` (egress spy).
 - Gate: `services/host/src/egressbench.rs`.

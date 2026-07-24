@@ -6,7 +6,7 @@ The analysis is a **JOIN** over data the platform already stores — it holds no
 connection, clock, or wasm.
 
 - **Issue:** wamn-wvb `[11.8]`; **Epic:** E11 Integrated Testing.
-- **Pure crate:** `crates/wamn-impact` — the decision (`analyze` → `ImpactReport`).
+- **Pure crate:** `crates/schema/impact-analysis` — the decision (`analyze` → `ImpactReport`).
 - **Effect shell:** `services/ctl` — `impact-report` (read-only verb) and the
   `migrate-catalog` render + `--acknowledge-impact` gate read the rows and call it.
 - **Consumers of the report's suite tuples:** wamn-0lfu (parked, "execution from
@@ -108,12 +108,12 @@ executes stored `test_cases` today.
 
 ## Verification
 
-- Pure unit tests (`crates/wamn-impact`) carry the bulk: the touched/untouched
+- Pure unit tests (`crates/schema/impact-analysis`) carry the bulk: the touched/untouched
   partition, destructive classification, the name-keyed node-config edge (id≠name
   fixture), the rename-surfaces-old-name case, the API-resource enumeration, and
   the acknowledge decision — each of the three mutants killed by a named test.
 - The `$n` read builders are pinned against the schema of record by drift-guard
-  tests in `crates/wamn-migrate/src/sql.rs` (the `include_str!` mirror of the gates
+  tests in `crates/schema/migration/src/sql.rs` (the `include_str!` mirror of the gates
   `schema_drift` discipline).
 - Live gate: `wamn-ctl tests/impact_report_live.rs` (throwaway PG). In-cluster
   gate: `wamn-gates impactproof` + `deploy/gates/impactproof-job.yaml`. Commands:
@@ -122,6 +122,6 @@ executes stored `test_cases` today.
 ## References
 
 - Plan: `docs/platform-plan.md` §Epic 11 (11.8).
-- The plan model (the input): `docs/ddl-compiler.md`, `crates/wamn-ddl`.
-- The registration edge: `crates/wamn-event-reg`, `docs/build-and-test.md` [EVT-REG/D24].
+- The plan model (the input): `docs/ddl-compiler.md`, `crates/schema/ddl-compiler`.
+- The registration edge: `crates/events/registration`, `docs/build-and-test.md` [EVT-REG/D24].
 - The suite storage: `docs/flow-tests.md`, `deploy/sql/flow-tests.sql`.

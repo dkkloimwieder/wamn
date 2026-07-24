@@ -3,7 +3,7 @@
 // `payloads`/`credentials`/`control` interfaces (and the stream-node/http-node
 // worlds) pull in wasi:io / wasi:http and have no host implementation yet
 // (5.10/5.9/5.12). The kept blocks are verbatim the contract (drift-guarded by
-// crates/wamn-node-sdk/tests/wit_coherence.rs) so the canonical-ABI layout
+// crates/node/sdk/tests/wit_coherence.rs) so the canonical-ABI layout
 // matches the host-side bindgen of the full copy in services/host/wit.
 package wamn:node@0.1.0;
 

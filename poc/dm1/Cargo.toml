@@ -4,11 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-wamn-catalog = { path = "../../crates/wamn-catalog" }
-wamn-migrate = { path = "../../crates/wamn-migrate" }
-wamn-rls = { path = "../../crates/wamn-rls" }
-wamn-seed = { path = "../../crates/wamn-seed" }
+wamn-catalog = { path = "../../crates/schema/model" }
+wamn-migrate = { path = "../../crates/schema/migration" }
+wamn-rls = { path = "../../crates/schema/rls-compiler" }
+wamn-seed = { path = "../../crates/schema/seed-compiler" }
 
 [dev-dependencies]
-wamn-sysschema = { path = "../../crates/wamn-sysschema" }
+wamn-sysschema = { path = "../../crates/identity/project-state" }
 serde_json = "1"

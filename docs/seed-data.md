@@ -6,7 +6,7 @@ other rows by key — compiled to tenant-scoped, **idempotent** `INSERT`s agains
 the tables the DDL compiler (3.2) generates.
 
 - **Issue:** wamn-x71 `[3.6]`; **Epic:** E3 Schema Designer.
-- **Crate:** `crates/wamn-seed` — consumes `wamn-catalog` + `wamn-ddl`.
+- **Crate:** `crates/schema/seed-compiler` — consumes `wamn-catalog` + `wamn-ddl`.
 - **Consumers:** POC-DM1 (load the reference data), the test host (11.1, which
   clones a schema "with system schema + seed data"), preview environments (11.9,
   masked seed data), the control plane.
@@ -104,5 +104,5 @@ docker stop wamn-seed-pg
 ## References
 
 - Plan: `docs/platform-plan.md` §Epic 3 (3.6), §Epic 11 (11.1 test host, 11.9 previews).
-- Catalog model (the input): `docs/catalog-model.md`, `crates/wamn-catalog`.
-- Tenant floor (the target tables): `docs/ddl-compiler.md`, `crates/wamn-ddl`.
+- Catalog model (the input): `docs/catalog-model.md`, `crates/schema/model`.
+- Tenant floor (the target tables): `docs/ddl-compiler.md`, `crates/schema/ddl-compiler`.

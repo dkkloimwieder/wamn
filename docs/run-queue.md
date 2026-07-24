@@ -12,7 +12,7 @@ runner's work. It is the dispatch half of what the run store
 happened*, 5.14 governs *what runs next and who runs it*.
 
 The split mirrors the rest of the platform: a **pure crate**
-(`crates/wamn-run-queue`) holds the claim/lease/janitor/reconciliation decisions —
+(`crates/execution/run-state-queue`) holds the claim/lease/janitor/reconciliation decisions —
 and the trigger dispatcher's: cron due-tick evaluation,
 deterministic run-id minting, the adaptive poll cadence — plus the parameterized
 SQL builders — no DB, no NATS, no clock (`now` is a passed-in millis), unit-tested

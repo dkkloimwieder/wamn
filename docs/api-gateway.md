@@ -7,7 +7,7 @@ surface over the tables the **DDL compiler** (3.2) generates. A request becomes
 the row-set is shaped back into JSON.
 
 - **Issue:** wamn-759 `[4.1]`; **Epic:** E4 Generated API.
-- **Crate:** `crates/wamn-api` — the pure gateway logic (no host, no DB, no Wasm).
+- **Crate:** `crates/data/entity-access` — the pure gateway logic (no host, no DB, no Wasm).
 - **Component:** `components/api-gateway` — the `wasi:http` ⇆ `wamn:postgres` shell.
 - **Gate:** `wamn-gates apibench` — drives the component end to end against Postgres.
 - **Consumers:** POC-F1 (the hold queue / disposition / ERP receipt flows), the
@@ -236,6 +236,6 @@ a single default project (per-project provisioning is 2.3/10.x).
 ## References
 
 - Plan: `docs/platform-plan.md` §Epic 4 (4.1), §POC (POC-F1).
-- Catalog model (routes/columns/types): `docs/catalog-model.md`, `crates/wamn-catalog`.
-- Tenant floor (the target tables): `docs/ddl-compiler.md`, `crates/wamn-ddl`.
+- Catalog model (routes/columns/types): `docs/catalog-model.md`, `crates/schema/model`.
+- Tenant floor (the target tables): `docs/ddl-compiler.md`, `crates/schema/ddl-compiler`.
 - Data path: `docs/wamn-postgres.wit`, the S2/2.2 plugin.

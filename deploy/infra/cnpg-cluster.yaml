@@ -58,7 +58,7 @@ spec:
       # forgotten/invalidated logical slot pins WAL until the volume fills.
       # SINGLE-instance pool: only the WAL bound is needed (no standby to sync a
       # slot to, so none of the failover-slot-sync GUCs apply). Matches what
-      # crates/wamn-provision render_org_cluster_set emits for a 1-instance
+      # crates/control/provision render_org_cluster_set emits for a 1-instance
       # cluster; wal_level=logical is already the CNPG default.
       max_slot_wal_keep_size: "1GB"
   bootstrap:

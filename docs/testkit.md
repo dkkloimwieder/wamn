@@ -1,6 +1,6 @@
 # wamn-testkit — the flow/node test-case + assertion vocabulary (11.4)
 
-`crates/wamn-testkit` is the **pure** vocabulary a flow or node test case is
+`crates/scenarios/model` is the **pure** vocabulary a flow or node test case is
 written in. A case is *data* — a `TestCase` loads from a JSON file (the
 `testkitbench` gate's `--cases` fixture) or a catalog `jsonb` column identically
 — and `evaluate(case, captured) -> Outcome` is a pure fold of a captured fact
