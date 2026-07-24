@@ -257,7 +257,7 @@ merely from a deployment-class name.
 | Capture a database event | A committed write is not forgotten between WAL, broker, materializer, queue, and run creation; ordering and duplicate scope are explicit. | Confirmed LSN advances only after JetStream acknowledgement; deterministic run creation is narrower than exactly-once external effects (`docs/event-plane-jetstream.md:126-138`, `docs/event-plane-jetstream.md:191-229`). |
 | Test, observe, audit, and replay | Evidence identifies tenant, version, node occurrence, cause, and outcome without leaking secrets; replay never disguises repeated external effects. | Test/replay is a product surface in the plan, but per-node observability, tenant isolation of logs, immutable audit export, and replay permissions remain incomplete (`docs/platform-plan.md:175-187`, `docs/run-state.md:147-179`, `docs/dashboards.md:88-106`). |
 | Copy, back up, restore, and move | Quiesce, snapshot, restore, verify, and cutover are ordered and resumable; destructive restore is explicit; recovered point and audit rewind are reported. | Logical per-project dump and cluster PITR coexist; copy records durable steps, while the general compensating saga remains future work (`docs/postgres-topology.md:247-331`, `docs/provisioning.md:787-838`). |
-| Upgrade | Schema, host, guest, service, WIT, event-wire, and deployment changes preserve acknowledged and persisted work or fail detectably with a recoverable prior artifact. | Subsystem lifecycle and fork gates exist, but fleet-wide mixed-version support, maintenance allowance, rollout order, and deployed artifact identity are not specified; `wamn-4tob.1.16` owns that product contract. |
+| Upgrade | Schema, host, guest, service, WIT, event-wire, and deployment changes preserve acknowledged and persisted work or fail detectably with a recoverable prior artifact. | N.7 selects a quiesced, atomic, reversible single-version development cutover. Every retained Postgres/JetStream record must be drained, read compatibly, or migrated; Kubernetes may reopen admission only after the complete immutable release bundle is ready. Mixed-version production, external-client, and custom-node policies remain `.1.31`–`.33`; R42/R53/SR17/SR26 show the current mechanism does not yet prove the contract. |
 
 The current deployment taxonomy is a design hypothesis:
 
@@ -320,7 +320,7 @@ the correctness gate while open.
 | QA9 | T1 loses its primary or becomes unavailable while existing tenant APIs and flows are active. | T1 is authoritative for control-plane identity/saga state but excluded from tenant request paths; tenant databases/run state remain authoritative for live work. | Existing data-plane requests continue; provisioning, placement, and promotion fail closed/pause; acknowledged T1 mutations are either present after failover or a durability violation is declared and reconciled. Platform control-plane operator owns recovery. | **Required:** no tenant request-path dependency and no silent acknowledged registry loss. `.14` fixes the qualitative development boundary; production durability, availability, and RTO are `.24/.23/.22` (`docs/system-cluster.md:47-85`). |
 | QA10 | An operator restores/copies a corrupted project environment in trials, standard, or dedicated service. | Backup artifact/PITR point, source registry identity, and durable copy saga steps govern restore and cutover. | Restore to scratch by default; require explicit in-place confirmation; quiesce→snapshot→restore→verify→cutover; report recovered point, missing interval, and audit rewind; never append stale rows. DB/control-plane operator owns the operation. | **Required:** verified data/identity integrity and no unannounced loss. Existing gates prove mechanisms; production manual policy, ownership, RTO, durability, and isolation are `.20/.21/.22/.24/.15` (`docs/provisioning.md:699-785`, `docs/postgres-topology.md:325-331`). |
 | QA11 | Offered API, queue, or CDC load exceeds the supported sustained/burst envelope or a tenant creates a runaway backlog. | Each authoritative store must expose accepted work, backlog, age, and progress; lossy hints cannot become the authority. | Apply bounded backpressure or fail explicitly, preserve acknowledged work, contain noisy-neighbor impact to the promised class, alert before WAL/lease/retention safety is exhausted, and catch up within the contract. | **Required:** zero silent loss plus owner-set backlog age, drain time, throughput, and blast radius. C7/C-CDC only supply candidate shapes; `.12/.13/.19/.23/.24` own the production envelope. |
-| QA12 | Old and new host/guest/service/WIT/event-wire/SQL versions coexist or a rollout fails with active, parked, and scheduled runs. | Immutable artifact identity, persisted flow/catalog/event versions, and migration state must determine compatibility and rollback/forward-fix. | Detect incompatibility before destructive replacement, keep compatible old capacity or quiesce explicitly, preserve acknowledged/persisted work, and select a proven prior artifact or recover forward. Release/platform operator owns rollout. | **Required:** zero silent state reinterpretation or acknowledged-work loss. Subsystem pins/gates exist, but the mixed-version and maintenance contract is `.16`, with production availability/RTO in `.23/.22` (`docs/wash-runtime-fork.md:61-129`, `docs/migration-engine.md:122-130`). |
+| QA12 | A quiesced development release changes host/guest/service/WIT/event-wire/SQL contracts, or its rollout fails with active, parked, and scheduled runs. | One immutable release bundle plus persisted flow/catalog/event/executor identities and migration state determine compatibility and rollback/forward-fix. No concurrent old/new processing is promised. | Fence new admission, durably checkpoint or lease-recover active work, and require every retained record to be drained, read compatibly, or migrated. Commit only when the whole bundle is ready; otherwise reverse completely or remain quiesced and recover forward. | **Required:** zero silent state reinterpretation or acknowledged-work loss. N.7 is the development contract. R42/R53/SR17/SR26 and proofs `.6.6/.6.8/.6.25/.6.26` show it is not yet proven; production rollout, external clients, and custom nodes are `.1.31`–`.33`. |
 | QA13 | A component, operator credential, broker identity, replication role, observability store, or cluster is compromised in a regulated/dedicated environment. | Product-defined trust zones, credential scopes, encryption/residency controls, and audit authorities—not tier names—must bound access. | Prevent cross-tenant/plane escalation; revoke and rotate within a defined interval; preserve/produce tamper-evident evidence; notify affected tenants; contain recovery to the promised domain. | **Required:** zero access outside the declared domain and an explicit maximum blast radius. The baseline has no certified regulated contract; `.15` owns it and `.22` owns production recovery time. |
 
 ### B.5 How these criteria discriminate alternatives
@@ -403,7 +403,7 @@ must distinguish roadmap intent from stale wording.
 | `wamn-4tob.1.13` | End-to-end latency, sustained/burst throughput, backlog, catch-up, backpressure, payload, percentile, and error-budget objectives. | Development gates and measurement knees cannot be ranked as customer SLOs. |
 | `wamn-4tob.1.14` | **Decided for development:** correctness first; no numeric availability/RTO; T3 is development-only; CloudNativePG remains the database choice; no cross-region promise or event-outage threshold; documented manual recovery and one general owner are acceptable. | Supplies the current audit criterion without pretending that development manifests or guessed numbers are production promises. Granular production decisions are `wamn-4tob.1.18`–`.24`. |
 | `wamn-4tob.1.15` | **Decided for development:** clients are isolated at platform API boundaries; the effective boundary is the authority available through narrowly exposed platform/WASI interfaces; trust and security are deferred. | Supplies the current correctness invariant without inventing a threat model or treating topology labels as security guarantees. Granular production decisions are `.1.25`–`.30`. |
-| `wamn-4tob.1.16` | Maintenance/degradation allowance, mixed-version support, rollout/rollback/forward-fix semantics, and artifact provenance across schemas, runtimes, contracts, and services. | Subsystem upgrade mechanisms do not define how the product preserves active and persisted work during a platform release. |
+| `wamn-4tob.1.16` | **Decided for development:** quiesced single-version cutover; one atomic and reversible immutable release bundle; fenced admission; preservation of acknowledged work; drain/read/migrate treatment for every durable record; transactional migration or CNPG new-cluster recovery; fail-closed partial rollout; explicit breaking client changes. | Supplies the current correctness criterion without claiming concurrent mixed versions, zero downtime, or a production support window. Production rollout is `.1.31`, external-client compatibility is `.1.32`, and custom-node versioning is explicitly deferred to `.1.33`. |
 
 Technology choices already deferred in the roadmap—Timescale versus a separate
 TSDB, hosted versus customer MQTT, and payload-store backend—are not additional
@@ -411,7 +411,8 @@ ARC1 requirement decisions. ARC7/ARC10 should evaluate them after the owner
 decisions bound the use case. Production recovery ownership is `.1.21`,
 CDC-outage policy is `.1.19`, quantitative RTO/availability is `.1.22/.23`,
 acknowledged-write durability is `.1.24`, credential scope and rotation are
-`.1.27`, and compatibility semantics belong to `.1.16`.
+`.1.27`, and the development compatibility semantics are in N.7. Production
+rollout, external-client, and custom-node policies are `.1.31`–`.33`.
 
 ARC1 closes no implementation finding and ratifies no foundational decision.
 It supplies actors, lifecycle, evidence classes, discriminating scenarios, and
@@ -1499,8 +1500,8 @@ Risk order for consuming the proposal is:
 
 1. **Correctness blockers:** do not freeze the current runtime/event choices or
    move durable state while authority, cross-store reconciliation, acknowledged
-   sync recovery, readiness, provenance, and mixed-version behavior remain open
-   (R36/R37/R42/SR17, `.1.14`, `.1.16`, `.1.17`).
+   sync recovery, readiness, provenance, and implementation of the owner-set
+   upgrade contract remain open (R36/R37/R42/R53/SR17/SR26, F.6, N.6/N.7).
 2. **Trust blockers:** do not expose ingress until route-derived tenancy,
    external/internal credential separation, replay/key-version state, and
    compromise radius are decided by ARC8 and the future contracts `.1.25`–`.27`.
@@ -1548,9 +1549,9 @@ limits:
 | **RP-D1 — explicit layered package architecture** | **Keep direction; amend encoding.** | H.2 already defines contract, pure-decision, persistence, adapter, deployable, gate, and POC direction (`docs/findings.md:1263-1275`). Role metadata, filesystem grouping, graph deltas, and explicit exceptions are useful enforcement. Exact paths, names, and `default-members` wait for measured STR7 and target STR9 evidence. |
 | **RP-D2 — split host into policy/runtime/node-runtime/host/node-host** | **Amend.** | Pure component policy and independently deployable node-host outcomes are supported by SR15/SR16 (`docs/findings.md:829-846`). The exact `runtime`, `node-runtime`, and executor adapter graph presupposes a surviving hybrid. ARC5 ranks native Rust plus narrow Wasmtime first and rejects the current hybrid unchanged (`docs/findings.md:1006-1022`). ARC11/STR3/STR9 choose the shape; do not authorize package creation yet. |
 | **RP-D3 — shared Postgres/entity-access seams** | **Amend.** | Keep one audited entity-operation implementation and one canonical SQL-safety policy. Correct the claim that standard nodes depend on a deployable data API; decide transport-neutral operation types under STR5. Existing quote drift protection and `wamn-sql` mean neither `pg-core` nor absorption is an urgent defect fix. STR5/STR6/STR9 own the shape. |
-| **RP-D4 — consolidate schema and execution contexts** | **Defer exact merges; keep ownership goal.** | Co-change supports grouping, not one release unit. Catalog/flow contracts, guest closures, and distinct state tables remain justified; H retains them pending target evidence (`docs/findings.md:1338-1368`). F.6 accepts PostgreSQL authority only for Wamn application/execution state; it does not justify moving Kubernetes, OCI, Secret, broker, or backup state into PostgreSQL. `.1.16`, STR5/STR6, ARC11, and STR9 precede physical state moves. |
+| **RP-D4 — consolidate schema and execution contexts** | **Defer exact merges; keep ownership goal.** | Co-change supports grouping, not one release unit. Catalog/flow contracts, guest closures, and distinct state tables remain justified; H retains them pending target evidence (`docs/findings.md:1338-1368`). F.6 accepts PostgreSQL authority only for Wamn application/execution state; it does not justify moving Kubernetes, OCI, Secret, broker, or backup state into PostgreSQL. N.7, STR5/STR6, ARC11, and STR9 govern physical state moves. |
 | **RP-D5 — explicit product scenario subsystem** | **Keep category; amend/defer topology.** | Product scenario contracts and the SR19 downward-direction correction are supported. A separate model/catalog/runtime/worker quartet is not yet supported by rollout, trust, or change evidence. More importantly, closed `wamn-t92` deliberately chose the same runner binary with `--test-doubles`, while production source exposes that switch (`crates/wamn-run-worker/src/lib.rs:62,174-188,729-739`). STR3/ARC8/STR9 must explicitly retain or overturn that choice; the proposal cannot represent separate images as decided. |
-| **RP-D6 — versioned flow-invocation boundary** | **Keep principle; amend transport and defer topology.** | A stable application contract plus versioned wire adapters is required if ingress and execution are separate workloads. The proposed signed cluster-local HTTP, fields, executor service, and signing domain are hypotheses. They depend on R36/R37 delivery semantics, the M.6 client boundary, future trust/profile decisions `.1.25/.26`, `.1.16` mixed-version policy, STR5 ownership, ARC11 runtime choice, and route-authority design. A Rust trait alone is insufficient, but HTTP is not preselected. |
+| **RP-D6 — versioned flow-invocation boundary** | **Keep principle; amend transport and defer topology.** | A stable application contract plus versioned wire adapters is required if ingress and execution are separate workloads. The proposed signed cluster-local HTTP, fields, executor service, and signing domain are hypotheses. They depend on R36/R37 delivery semantics, the M.6 client boundary, future trust/profile decisions `.1.25/.26`, the N.7 same-release development rule and `.1.31/.32` production compatibility decisions, STR5 ownership, ARC11 runtime choice, and route-authority design. A Rust trait alone is insufficient, but HTTP is not preselected. |
 | **RP-D7 — generic authenticated HTTP ingress in Phase 2** | **Keep capability; defer sequencing.** | `wamn-fqg.39` owns the missing production journey and forbids a second executor. Calling it Phase 2/product-blocking is unsupported by the current roadmap: the pivot parks user/API AuthN/AuthZ and IdP work, but does not decide machine-ingress authentication (`docs/core-pivot-plan.md:15-21,167-173`); API v1 separately excludes authentication (`docs/api-gateway.md:107-115`). ARC10/owner priority must decide it. The feature cannot close without delivery identity, orphan recovery, readiness, artifact provenance, and mixed-version evidence. |
 | **RP-D8 — replace the gate sink with test levels and CI enforcement** | **Amend.** | Keep role/edge, guest-closure, source-identity, compatibility, and architecture-delta checks. Do not dismantle gates or ban all private constructors by directory: first name what each proof exercises and retain equivalent evidence. System tests should be black-box by default; package/conformance/integration tests may intentionally use internals. STR4/STR7/STR9 own classification and migration. |
 | **RP-D9 — inbound identity/authentication** | **Keep trust invariant; defer provider and priority.** | Tenant/project/environment/flow binding must come from trusted route/deployment state, and external caller auth must not share a credential/signature domain with ingress-to-executor auth (`docs/RESTRUCTURE-260723.md:580-643`). Per-route HMAC, nonce storage, replay windows, and rotation overlap are unselected and the proposed state matrix names no nonce/key-version authority. ARC8, `.1.25`, `.1.27`, existing `wamn-0xd`/`wamn-sbh`, and ARC10 own the future choice; custom-node auth `wamn-fqg.22` is a different trust boundary. |
@@ -1636,8 +1637,8 @@ needs:
 
 Current resume pins the persisted flow version
 (`docs/run-state.md:115-126`), not the execution artifact. R36/R37,
-`wamn-4tob.6.3`, M.6, `.1.16`, `.1.25`, `.1.27`, STR5, and SR17 therefore
-control the contract. `wamn-fqg.39` owns eventual product delivery without
+`wamn-4tob.6.3`, M.6, N.7, `.1.25`, `.1.27`, `.1.31/.32`, STR5, R53, and
+SR17 therefore control the contract. `wamn-fqg.39` owns eventual product delivery without
 preselecting HTTP/HMAC/runtime internals.
 
 ### I.4 Migration-program verdict
@@ -1646,7 +1647,7 @@ preselecting HTTP/HMAC/runtime internals.
 |---|---|
 | **Phase 0 — baseline and guardrails** | **Amend.** Keep provenance reconciliation, role/target metadata, graph deltas, repeated source-pin centralization (SR20), explicit full-workspace CI, and state inventory. Do not move code/SQL, freeze all new peer packages, or select `default-members` before STR7 measures impact. Add SR17's hermetic source→Wasm→image proof, R42 readiness, current/target cross-store authority, and the `.1.12`–`.1.17` decisions before moving traffic or state. |
 | **Phase 1 — stable seams** | **Amend/defer exact packages.** Removing builder→host through a narrow component-policy/runtime boundary is evidence-backed and should not wait until Phase 3 if accepted. `pg-core`, `entity-access`, caller model, invoke package, and adapter APIs require STR5/STR6/ARC11/STR9 decisions; creation is not an exit criterion by name. Preserve compatibility fixtures and old/new differential behavior. |
-| **Phase 2 — generic HTTP slice** | **Defer sequence and transport.** Keep the thin-ingress journey in `wamn-fqg.39`, at the owner-set priority. Do not first add signed HTTP to today's queue-only worker and then move the execution endpoint in Phase 3. The target runtime, route authority, delivery/orphan semantics, readiness, provenance, authentication, and mixed-version contract must be selected/proven before production traffic. |
+| **Phase 2 — generic HTTP slice** | **Defer sequence and transport.** Keep the thin-ingress journey in `wamn-fqg.39`, at the owner-set priority. Do not first add signed HTTP to today's queue-only worker and then move the execution endpoint in Phase 3. The target runtime, route authority, delivery/orphan semantics, readiness, provenance, authentication, and applicable N.7 or `.1.31/.32` compatibility contract must be proven before production traffic. |
 | **Phase 3 — runtime/service decomposition** | **Keep node-host and builder outcomes; defer exact split.** SR15/SR16 justify independent node serving and removing builder's host-root dependency. ARC11/STR3/STR9 decide between native services and component-first runtime while preserving PostgreSQL orchestration authority under F.6; a workflow-engine target no longer survives. |
 | **Phase 4 — bounded-context consolidation** | **Defer.** Require accepted state authority, contract ownership, generated/schema drift policy, and additive/mixed-version migration fixtures first. Retain catalog/flow/event/node/SQL/run-store/run-queue leaves unless STR4/STR5/STR6/STR9 produce a concrete benefit and compatibility plan. “One owner” does not require one crate. |
 | **Phase 5 — scenario/test topology** | **Amend.** Begin proof classification and attribution in Phase 0 and migrate each proof with the boundary it validates. Never delete a gate before equivalent evidence exists. Product scenario ownership is retained; a separate scenario-worker artifact and removal of the accepted same-binary doubles seam remain explicit STR3/ARC8/STR9 choices. |
@@ -1656,7 +1657,7 @@ move-before-rewrite, explicit contract versioning, no ownership-hiding feature
 flags, and proof equivalence—are **keep** (`docs/RESTRUCTURE-260723.md:742-749`).
 They are incomplete without active-run quiesce/resume policy, additive and
 round-trip stored-state migrations, immutable artifact provenance, readiness
-before cutover, and a tested rollback/forward-fix path owned by `.1.16`.
+before cutover, and the tested rollback/forward-fix path required by N.7.
 
 ### I.5 Fitness functions, governance, and backlog routing
 
@@ -1674,7 +1675,7 @@ Add three missing cross-cutting checks to the proposal's list:
 1. hermetic source→component→image→deployment provenance (SR17);
 2. readiness and preservation of old working capacity during rollout (R42); and
 3. active-run/stored-contract compatibility with pinned execution-artifact
-   identity (`wamn-4tob.1.16`).
+   identity (N.7, R53/`wamn-2jkm.99`).
 
 Governance clauses that keep the program interruptible, preserve behavior,
 require evidence-equivalent gate migration, and close findings only on fixing
@@ -1696,8 +1697,8 @@ actually become hard blockers. Existing owners remain:
 - sync identity/orphan/readiness/provenance: `wamn-2jkm.72`, `.73`, `.77`,
   `.80` and proofs `wamn-4tob.6.3`, `wamn-4tob.6.6`,
   `wamn-4tob.6.8`;
-- state, isolation, and upgrade decisions: `wamn-4tob.1.17`, M.6,
-  `.1.25`–`.27`, and `.1.16`;
+- state, isolation, and upgrade decisions: F.6, M.6, N.7,
+  `.1.25`–`.27`, and `.1.31`–`.33`;
 - runtime/trust/roadmap/contract/build/target verdicts: ARC8, ARC10, ARC11,
   STR3, STR5–STR9; and
 - user/API authentication and authorization: `wamn-0xd`, `wamn-sbh`,
@@ -1727,9 +1728,10 @@ per-project databases and credentials; per-org and per-environment clusters are
 explicit isolation, recovery, residency, or change-window exceptions. T1 is a
 control plane, not a tenant tier.
 
-This direction is not final until `.1.12`–`.1.16` set cardinality, SLO/backlog,
-recovery, isolation, and mixed-version requirements. ARC11—not this section—
-will issue the canonical decision reset. Existing D6/D18 rows are not rewritten.
+This direction is not final until `.1.12/.13` set cardinality and SLO/backlog
+requirements and ARC11 applies the accepted recovery, isolation, state, and
+upgrade contracts in N.6, M.6, F.6, and N.7. ARC11—not this section—will issue
+the canonical decision reset. Existing D6/D18 rows are not rewritten.
 
 ### J.1 Current topology and authority
 
@@ -1859,8 +1861,8 @@ Migration must preserve one write authority:
    contract. Restore into a new cluster, validate it, and cut over.
 
 R40/R41 prove that today's copy and in-place restore commands cannot yet own
-this cutover. R34 owns placement convergence. `.1.16` owns mixed-version
-application/schema behavior.
+this cutover. R34 owns placement convergence. N.7 owns quiesced development
+application/schema behavior; `.1.31` owns any production mixed-version promise.
 
 ### J.5 Findings and proof
 
@@ -2203,8 +2205,8 @@ JetStream remains the selected CDC handoff under F.6.
 errors; node/event/WIT contract leaves; run-store/run-queue semantics; separate
 CDC reader, builder, waker, ctl, stateful infrastructure, reconcilers,
 fixtures/samples/POCs, and current same-runner test doubles. SR15–SR20, R42,
-R43, ARC8/ARC11, STR4/STR7/STR9, M.6, `.1.16/.1.17`, and future decisions
-`.1.25`–`.30` retain ownership. No split or merge is represented as complete.
+R43/R53, ARC8/ARC11, STR4/STR7/STR9, M.6, F.6, N.7, and future decisions
+`.1.25`–`.33` retain ownership. No split or merge is represented as complete.
 
 ---
 
@@ -2418,11 +2420,12 @@ This section is the ARC9 result for `wamn-4tob.1.9` at baseline
 contract-proven, `C` is contradicted, `I` is a source-supported inference that
 still needs live reproduction, and `U` is unknown. A `U` in the current-state
 matrix remains an implementation-evidence gap; it is not a demand to invent a
-development SLO. The owner-set development contract is in N.6. Production
+development SLO. The owner-set development recovery and upgrade contracts are
+in N.6 and N.7. Production
 availability, RTO, regional recovery, event-outage policy, manual-recovery
 boundaries, recovery ownership, and acknowledged-write durability are
-explicitly deferred to `.1.18`–`.24`; `.1.16` owns mixed-version and rollback
-guarantees, while `.1.12/.1.13` own cardinality and capacity.
+explicitly deferred to `.1.18`–`.24`; `.1.12/.1.13` own cardinality and
+capacity.
 
 **Executive verdict: amend; day-two architecture is incomplete.** PostgreSQL
 transactions, queue leases, idempotent dispatcher writes, reader refusal on a
@@ -2461,9 +2464,9 @@ within owner-selected bounds.
 | **Post-commit replica-identity reconcile fails** | Command failure after migration commit; no automatic gap accounting (`crates/wamn-ctl/src/migrate_catalog.rs:247-256`). | Retry idempotent reconcile and assess old-image capture during the interval. | Old-image gap/RTO **U**; existing `wamn-l5i9.65`/RI owners. |
 | **Stale or torn serving schema** | No served-generation attestation; request errors or behavioral drift. Publish performs multiple catalog/OID/RI stages and gateway snapshot reload is unwired (`crates/wamn-ctl/src/publish_catalog.rs:263-299`, `components/api-gateway/src/lib.rs:50-62,198-204`). | Manual republish/restart; future atomic version/hot reload. | R35/proof `.6.2`; RTO **U**, `wamn-32n` owns reload. |
 | **Provisioning partial failure** | A ctl command can fail between a Wamn product-state mutation and a native Kubernetes, Secret, or object-store operation. | Kubernetes owns deployment retry/status/reconciliation; each other native system owns its operation. Human cleanup/retry remains necessary where the current command crosses systems. Do not add a PostgreSQL Kubernetes deployment journal. | R34/proof `.6.1`; RPO/RTO **U**. ARC11 decides whether `wamn-2ib` retains any application-only saga role. |
-| **System/run-schema partial fleet upgrade** | Per-database reconcile output; no fleet generation/release attestation. | One project database can differ from the rest; retry manually with `wamn-6eb`. | Mixed-version semantics and RTO **U** under `.1.16`. |
-| **Runtime/component rolling upgrade** | Kubernetes rollout status, which R42 makes insufficient. Runs pin `flow_version`, not executor/component/image identity; flowrunner bytes sit in mutable `wamn-run-worker:dev` (`deploy/sql/run-state.sql:50-70`, `Dockerfile:57-66`, `deploy/platform/runner.yaml:107-110`). | Release operator must retain compatible old capacity, quiesce/drain, or route by execution artifact; current rollback is template/rebuild only. | Exact contract `.1.16`; SR17/R42 proofs `.6.8/.6.6`. Kubernetes RollingUpdate can co-run old and new versions ([Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)). |
-| **Runtime or WAL-reader fork upgrade** | Pin/build failure and selected gates. `wash-runtime` carries six patches; `pg_walstream` carries one (`docs/wash-runtime-fork.md:34-47`, `docs/pg-walstream-fork.md:23-32`). | Fork maintainer rebases/cherry-picks/drops patches and rebuilds; rollback repoints the prior revision, but does not identify live prior image bytes or active-run compatibility. | RPO/RTO/mixed-version proof **U**; `.1.16`, SR17/SR20. |
+| **System/run-schema partial fleet upgrade** | Per-database reconcile output; no fleet generation/release attestation. | One project database can differ from the rest; N.7 forbids reopening state-changing admission until the complete intended scope and its durable records pass compatibility or migration checks. | Development semantics are set, but enforcement/proof is **C/U**: no atomic fleet generation or release attestation. SR24/SR26. |
+| **Runtime/component rolling upgrade** | Kubernetes rollout status, which R42 makes insufficient. Runs pin `flow_version`, not executor/component/image identity; flowrunner bytes sit in mutable `wamn-run-worker:dev` (`deploy/sql/run-state.sql:50-70`, `Dockerfile:57-66`, `deploy/platform/runner.yaml:107-110`). | N.7 requires a quiesced single-version cutover, one whole-release commit point, and complete reversal or visible unavailability. Kubernetes may transiently co-run pods, but Wamn may not serve a compatibility-unknown mixture. | Contract **P**; implementation/proof **C** under R42/R53/SR17/SR26 and `.6.6/.6.8/.6.25/.6.26`. Kubernetes rollout capability does not itself satisfy the Wamn contract ([Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)). |
+| **Runtime or WAL-reader fork upgrade** | Pin/build failure and selected gates. `wash-runtime` carries six patches; `pg_walstream` carries one (`docs/wash-runtime-fork.md:34-47`, `docs/pg-walstream-fork.md:23-32`). | Fork maintainer rebases/cherry-picks/drops patches and rebuilds; N.7 requires the resulting bytes, configuration, contracts, and prior bundle to be immutably identified and admitted atomically. | Development contract **P**; deployed provenance and rollback proof **U/C** under SR17/SR20/SR26. |
 | **OCI/component registry loss** | Registry readiness/image pulls. One replica uses `emptyDir`; mutable `:dev` artifacts can disappear/change (`deploy/platform/registry.yaml:18-19,24-61`). | Existing processes may continue; restart requires manual reproducible rebuild/re-push, which is not proven. | Artifact RPO/RTO **U**. R43/SR17/STR7 own provenance/recovery. |
 | **Backup store loss** | MinIO readiness and failed backup/archive jobs. The checked-in store is explicitly development-only, single-replica, Recreate, and `emptyDir` (`deploy/infra/minio.yaml:1-14,37-81,98-134`). | Development bytes are unrecoverable; production recovery domain is unspecified. | No production RPO/RTO claim; R47/R48 and `.1.20/.22/.24`. Do not mislabel this dev manifest as production DR. |
 | **Regional/Kubernetes-cluster loss** | External cluster monitoring; no regional drill. Region is explicitly design-only (`docs/deployment-model.md:369-375`). | Expert rebuild; etcd/Secret, OCI, backup, placement, and cross-store recovery are unspecified. Kubernetes requires periodic etcd backup for total control-plane loss ([etcd backup](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)). | No cross-region promise during development. Remain unavailable rather than promote unverified authority; `.1.18` owns any production regional contract. |
@@ -2531,11 +2534,12 @@ canonical state-authority decision rather than duplicating these requirements.
   `.1.12/.1.13` and STR7; do not infer a fleet limit from local gates.
 
 Runtime forks are therefore owned product subsystems while they remain. Safe
-upgrade requires per-patch negative conformance, immutable deployed provenance,
-old/new WIT/HTTP/NATS/SQL compatibility, active-run artifact routing,
-quiesce/drain/resume, preserved old capacity, and tested rollback/forward-fix.
-`.1.16`, SR17, SR20, STR7, ARC11, and STR9 own the target; no duplicate finding
-is created here.
+upgrade requires per-patch negative conformance, immutable deployed
+provenance, compatibility for every retained WIT/HTTP/NATS/SQL record,
+active-run artifact identity, quiesce/drain/resume, and tested complete
+rollback/forward-fix. N.7 supplies the development contract; R53, SR17, SR20,
+SR26, STR7, ARC11, and STR9 own the remaining evidence and target. Concurrent
+mixed-version production is a separate decision in `.1.31`.
 
 ### N.4 New findings and proof
 
@@ -2544,9 +2548,15 @@ is created here.
 | **R50** | High | JetStream advertises 3 GB file capacity per server on a 1 GiB PVC, while event streams have no byte/time growth bound. Physical fill can stall publication, exhaust source WAL, and invalidate capture before the declared broker limit. | `wamn-2jkm.90`; proof `wamn-4tob.6.22`; production requirements `.1.12/.13/.19/.24`. |
 | **R51** | High | No event-plane snapshot/restore path exists after PostgreSQL feedback advances on broker ACK. Total broker-PVC loss can permanently lose acknowledged but unmaterialized events that source WAL no longer retains. | `wamn-2jkm.91`; proof `wamn-4tob.6.23`; authority `.1.17`; alternative `.6.18`. |
 | **R52** | High | Destructive migration authorizes drops/retypes from an unaudited boolean backup assertion. No checkpoint identity, scope, completion, integrity, health, or restore evidence is verified before commit. | `wamn-2jkm.92`; proof `wamn-4tob.6.24`; recovery contract `.1.14`. |
+| **R53** | High | A run pins its flow version but not the trusted executor/component/config contract required to interpret and resume persisted state. A queued, parked, or expired-lease run can therefore resume after an atomic release on incompatible bytes without a deterministic pre-effect refusal. | `wamn-2jkm.99`; proof `wamn-4tob.6.26`; development contract `.1.16`. |
 
-No new finding is minted for active-run artifact identity (`.1.16`), regional
-DR/Secret/etcd authority (`.1.18/.1.27/.1.17`), dispatcher progress metrics
+R53 is distinct from custom-node artifact provenance and versioning: it covers
+the trusted run worker/embedded flowrunner and the stored execution contract.
+Custom-node policy remains deferred to `.1.33`, while R43 and its existing
+owners retain reviewed-to-invoked byte identity.
+
+No new finding is minted for regional DR/Secret/etcd authority
+(`.1.18/.1.27/.1.17`), dispatcher progress metrics
 (`wamn-0vz`/`wamn-coo`), slot invalidation/failover (R29 and reader owners),
 or existing R34/R40/R41/R42/R44/R46/R48/E18/E19/SR17. None is closed by this
 assessment.
@@ -2561,10 +2571,13 @@ assessment.
    reconstruct all accepted work after its largest supported failure.
 3. Every store carries immutable generation/epoch/checkpoint identity and a
    reconciler compares it with adjacent authorities after restore.
-4. Readiness proves the workload's real serving dependencies and compatibility;
-   rollout preserves old working capacity until new capacity passes it.
+4. Readiness proves the workload's real serving dependencies and compatibility.
+   A production rollout may preserve old working capacity; the development
+   contract instead permits a quiesced cutover but retains the exact reversible
+   prior bundle until the whole new release passes.
 5. Active and parked runs retain the exact executor/component/config contract
-   required to resume, with tested mixed-version and rollback behavior.
+   required to resume, with tested same-release, migration, refusal, and
+   rollback behavior. Mixed-version behavior is required only if later promised.
 6. Backup is an externally durable, integrity-checked, attributable recovery
    checkpoint with a measured restore—not a resource name or operator boolean.
 7. Operator procedures refuse unsafe ambiguity, identify the recovery owner,
@@ -2602,9 +2615,9 @@ The deployment/plane overlay is:
 | **T2/T4 standard, dedicated, or regulated shapes** | These are production topology candidates, not current service promises. Dedicated placement does not itself create a stronger recovery contract. | No stale promotion or hidden loss receives availability credit. | Durability `.1.24`; isolation profiles `.1.26`; availability/RTO `.1.22/.23`; manual/owners `.1.20/.21`. |
 | **CDC and JetStream event plane** | No time-based outage buffer, WAL-capacity safety threshold, or admission policy is selected during development. | A slot invalidation or capture gap must be explicit and must not be represented as lossless delivery. Documented manual repair/backfill assessment is allowed. | `wamn-4tob.1.19`. |
 | **Flow execution and external effects** | Durable run/queue recovery remains required where promised; a non-idempotent effect with an unobserved outcome remains explicitly ambiguous. | Never infer success or exactly-once effect delivery. Manual reconciliation with the external system is acceptable during development. | Automation boundary `.1.20`; ownership `.1.21`; durability `.1.24`. |
-| **Backup, restore, copy, and migration** | Existing mechanisms are evidence, not cadence/RPO/RTO promises. Manual scratch restore, validation, and explicit reconciliation are acceptable. | Refuse or visibly fail when checkpoint identity, integrity, compatibility, or recovered point cannot be proven; do not silently treat an operator boolean as recovery evidence. | `.1.20/.1.22/.1.24`, with compatibility in `.1.16`. |
+| **Backup, restore, copy, and migration** | Existing mechanisms are evidence, not cadence/RPO/RTO promises. Manual scratch restore, validation, and explicit reconciliation are acceptable. | Refuse or visibly fail when checkpoint identity, integrity, compatibility, or recovered point cannot be proven; do not silently treat an operator boolean as recovery evidence. | `.1.20/.1.22/.1.24`, with development migration compatibility in N.7. |
 | **Whole region** | No cross-region availability, durability, or recovery promise. | Stay unavailable rather than promote an unverified or stale regional authority. | `wamn-4tob.1.18`. |
-| **Edge/on-prem** | No recovery profile is offered at this stage. | Offline authority, backup, upgrade, and operator behavior remain unsupported rather than guessed. | Cardinality/deployment `.1.12`, isolation `.1.26`, residency/regulation `.1.28`, compatibility `.1.16`, and recovery `.1.18`–`.24` as applicable. |
+| **Edge/on-prem** | No recovery profile is offered at this stage. | Offline authority, backup, upgrade, and operator behavior remain unsupported rather than guessed. | Cardinality/deployment `.1.12`, isolation `.1.26`, residency/regulation `.1.28`, development compatibility N.7, production/custom-node compatibility `.1.31/.33`, and recovery `.1.18`–`.24` as applicable. |
 
 The seven production deferrals are granular and unclaimed:
 `wamn-4tob.1.18` regional recovery, `.1.19` CDC/broker outage policy, `.1.20`
@@ -2613,6 +2626,42 @@ manual-versus-automatic recovery, `.1.21` ownership/separation of duties,
 acknowledged-write failure envelope/RPO. They are not blockers to expressing
 the development architecture; they are blockers to claiming those production
 properties as shipped or proven.
+
+### N.7 Owner-set development upgrade and maintenance contract
+
+`wamn-4tob.1.16` resolves the current upgrade requirement without inventing a
+production availability or support promise. The contract is a target against
+which the current implementation is judged; it does not mark any rollout,
+provenance, migration, or resume finding as fixed.
+
+| Dimension | Development contract | Consequence for architecture and implementation |
+|---|---|---|
+| **Release mode** | Quiesced, single-version cutover. Wamn makes no promise that old and new hosts, guests, services, WIT packages, event readers, SQL clients, or persisted-run interpreters process the same authorities concurrently. | Kubernetes may transiently create mixed Pods, but Wamn keeps state-changing admission closed and treats that state as non-serving. Production mixed-version and zero-downtime behavior is `.1.31`. |
+| **Atomic release bundle** | Native images, embedded component bytes, mounted configuration, deployment inputs, internal contract identities, and the compatible database-schema range form one immutable bundle with one release commit point. Kubernetes owns deploying, observing, reversing, and repointing that bundle. | Mutable tags, caller-built Wasm, unversioned config, and a healthy process without dependency readiness cannot prove an atomic release. SR17/SR24/SR26 and R42 retain those gaps. |
+| **Admission and acknowledged work** | Quiesce new API work, triggers, queue claims, catalog publication, and other state-changing control operations before replacement. New work is refused as retryable-unavailable before acknowledgement. Active work reaches a durable checkpoint when practical or stops for lease recovery; queued, parked, scheduled, replay, and acknowledged state is preserved. | Deployment completion never implies run success. Death after an external effect but before checkpoint remains visibly ambiguous and may retry with the same occurrence identity. |
+| **Durable-record compatibility** | Every retained PostgreSQL or JetStream record must be drained before cutover, read by the new release under named and tested compatibility, or transactionally migrated. This includes event envelopes, run/queue state, catalog/flow/schema snapshots, and node metadata. Otherwise cutover is refused. | No arbitrary N-release window is required, but acknowledged durable state may not be abandoned. R53 is High because runs do not currently identify the trusted executor contract needed for this preflight. |
+| **Application-state migration** | A failed transactional migration rolls back. An incompatible or destructive migration may start only after base-backup plus WAL recoverability is proven and an explicit pre-migration recovery target exists; writes stay quiesced through migration and validation. | CloudNativePG recovery bootstraps a **new** cluster rather than rewinding the existing cluster in place; Kubernetes then repoints Wamn. The current boolean backup assertion remains insufficient under R52. See [CNPG recovery](https://cloudnative-pg.io/docs/1.30/recovery/). |
+| **PostgreSQL engine upgrade** | Keep database-engine lifecycle separate from Wamn application-state migration. Minor releases use the CNPG rolling path; major releases use a tested CNPG-supported dump/restore, logical-replication, or offline `pg_upgrade` path with its backup and archive-lineage rules. | A failed CNPG operation follows its operator procedure; a successful major upgrade starts a new backup lineage because PITR does not cross major-version boundaries. See [CNPG rolling updates](https://cloudnative-pg.io/docs/1.30/rolling_update/) and [PostgreSQL upgrades](https://cloudnative-pg.io/docs/1.30/postgres_upgrades/). |
+| **Reversal and forward fix** | Retain the exact last-known-good bundle. Before incompatible state or work is accepted, Kubernetes reverses the entire bundle. After incompatible state commits, reversal additionally requires proven backward compatibility, an explicit compatible reverse migration, or CNPG new-cluster recovery. | Redeploying an old image is not a database rollback. If complete reversal or a compatible forward fix cannot be proven, Wamn remains quiesced and visibly unavailable. |
+| **Client and extension contracts** | A development API/CLI break is allowed only when its version and break are explicit, incompatible clients fail before effects, and repository clients, generated SDKs, fixtures, and tests change with the release. Custom-node artifact/WIT/invocation versioning is not selected. | Production external-client support/deprecation is `.1.32`. Custom-node versioning and per-flow versus platform-wide containment are `.1.33`, which blocks SR22; no cross-release custom-node promise may be inferred meanwhile. |
+| **Maintenance promise** | A development operator may initiate the quiesced window without advance tenant notification, numeric availability, or recovery-time commitment. | Correctness still requires deterministic refusal, attributable recovery, and proof before reopening. Production maintenance, notification, and degradation behavior is `.1.31` together with the recovery decisions `.1.20`–`.24`. |
+
+The minimum targeted evidence is therefore:
+
+1. SR26/`wamn-2jkm.98` plus proof `.6.25` joins source revision, native and
+   component digests, configuration, deployed image identity, and a fresh
+   release gate.
+2. R53/`wamn-2jkm.99` plus proof `.6.26` demonstrates queued, parked, and
+   expired-lease refusal on an incompatible trusted executor before effects.
+3. R42/SR17/SR23/SR24 prove dependency-aware readiness, attributable component
+   bytes, one canonical same-release runner ABI, and atomic image/config
+   compatibility.
+4. R52 and proof `.6.24` replace an asserted backup with an identified,
+   completed, integrity-checked, restorable recovery point before a destructive
+   migration.
+
+No implementation or live gate ran while setting this contract. None of these
+findings is represented as fixed.
 
 ---
 
@@ -2820,8 +2869,8 @@ surviving target after F.6.
 | **Metering and billing** | OTel/Prometheus metrics are derived observability; there is no billing-event authority or durable usage ledger (`docs/metrics.md:28-48`; `docs/dashboards.md:88-120`). | **Deferred.** Preserve resource and tenant identity now. Billing later needs a durable append-only usage identity, idempotent aggregation, correction/reversal audit, and retention; metrics remain projections. | Restarts reset counters, scrape loss undercounts, replay double-counts, or tenant/project identifiers are mapped to the wrong billable org. | Runtime-neutral. `wamn-7r2`, `wamn-ax7`, M.6, `.1.12/.1.13/.1.17/.1.30`. Prometheus itself says it is unsuitable when per-request billing requires complete accuracy ([official overview](https://prometheus.io/docs/introduction/overview/#when-does-it-not-fit)). |
 | **Industrial connectors and edge execution** | Nothing is deployed. Useful existing seams are the frozen node WIT, bounded payload-reference direction, stable idempotency keys, and partition ordering (`docs/wamn-node.wit:1-23,39-87`; `docs/platform-plan.md:118-131`). | **Deferred; no current implementation debt.** Preserve bounded, watermark-resumable segment identity, one local/cloud owner for each cursor, conflict policy, credential rotation, storage limits, and offline upgrade/recovery contracts. | Offline backlog is unbounded, a mid-upload crash loses/repeats an interval, or cloud and edge independently advance one cursor. | Choose C/K/W only from future requirements. `wamn-4ry`, `wamn-dns`, `wamn-02q`, `wamn-6mg`, `wamn-hlf`, `wamn-zbt`, `.1.12`–`.1.16`. |
 | **UI, schema, and flow designers** | Versioned catalog, flow, test-suite, and manifest contracts already own the domain state; no UI deployable exists (`crates/wamn-catalog/src/lib.rs:1-21`; `docs/flow-schema.md:125-159`; `crates/wamn-node-manifest/src/lib.rs:60-103`). | **Deferred; directionally supported.** A UI is a replaceable client: server-side canonical validation/diff, immutable versions, optimistic base-version refusal, and an explicit unknown-field round-trip policy are the seam. | Two stale editors overwrite one applied version, or an older client silently drops additive fields. | Runtime-neutral. `wamn-ivi`, `wamn-8wg`, `wamn-ma5`, `wamn-srz`, `.1.16`, STR5. No UI debt is created. |
-| **Third-party and custom nodes** | Intended authority is an OCI digest/signature/SBOM plus `wamn.node.manifest`; execution currently mounts unrelated ConfigMap bytes into a native `serve-node` Deployment/Service. `wamn:node@0.1.0` is frozen (`deploy/platform/serve-node.yaml:1-27,43-152`; `docs/wamn-node.wit:1-23`). | **Obstructed for production-grade claims.** Pin digest and contract version in flow/run identity; verify signature at load; derive capabilities from imports; scope credentials and routes; validate config; bound pool/object cardinality. | A resumed run invokes replacement bytes or a different WIT, reviewed and invoked artifacts diverge, or node endpoints collide. | All alternatives retain a narrow untrusted-code sandbox. `wamn-fqg.21/.23/.27/.28`, R43, SR15–SR17, proofs `.6.7/.6.8`, M.6, `.1.12/.1.16/.1.25`–`.27`. |
-| **Long-term contract versioning** | Catalog, flow, event, and WIT contracts have local rules and drift tests, but there is no system-wide producer/consumer or stored-state compatibility contract. Node manifest claims current-plus-previous-major support although runtime does not read its `contract`; runs do not pin executor/component identity (`docs/flow-schema.md:133-141`; `docs/event-plane-jetstream.md:67-79`; `crates/wamn-node-manifest/src/lib.rs:73-80`). | **Obstructed; foundational seam now.** Assign every contract an owner, compatibility matrix, stored-state migration, immutable artifact identity, old/new fixture, drain/resume rule, readiness cutover, preserved old capacity, and rollback/forward-fix policy. | An old worker consumes a new event/flow shape, or a parked run resumes on incompatible bytes after rollout or rollback. | Mandatory for H/C/K/W. `.1.16`, `.1.17`, STR5, SR17, R42, SR20, ARC11. |
+| **Third-party and custom nodes** | Intended authority is an OCI digest/signature/SBOM plus `wamn.node.manifest`; execution currently mounts unrelated ConfigMap bytes into a native `serve-node` Deployment/Service. `wamn:node@0.1.0` is frozen (`deploy/platform/serve-node.yaml:1-27,43-152`; `docs/wamn-node.wit:1-23`). | **Obstructed for production-grade claims; versioning deferred.** Pin and verify the exact artifact before load, derive capabilities from imports, scope credentials/routes, and fail an unproven resume before effects. `.1.33` must choose artifact/WIT/invocation versioning and per-flow versus platform-wide containment rather than this audit inventing it. | A resumed run invokes replacement bytes or a different WIT, reviewed and invoked artifacts diverge, or node endpoints collide. | All alternatives retain a narrow untrusted-code sandbox. `wamn-fqg.21/.23/.27/.28`, R43, SR15–SR17/SR22, proofs `.6.7/.6.8`, M.6, `.1.12/.1.25`–`.27`, and `.1.33`. |
+| **Long-term contract versioning** | Catalog, flow, event, and WIT contracts have local rules and drift tests. N.7 now supplies a system-wide development cutover rule, but the implementation does not pin executor/component identity or prove every persisted producer/consumer pair; custom-node policy is deferred (`docs/flow-schema.md:133-141`; `docs/event-plane-jetstream.md:67-79`; `crates/wamn-node-manifest/src/lib.rs:73-80`). | **Owner direction set; implementation obstructed.** Use one atomic same-release bundle for internal development contracts and require every retained record to drain, read compatibly, or migrate. Add immutable artifact identity, refusal fixtures, readiness cutover, and rollback/forward-fix proof. | A new worker consumes an incompatible event/flow shape, or a parked run resumes on incompatible bytes after rollout or rollback. | Mandatory for H/C/K/W. N.7, `.1.17/.31`–`.33`, STR5, R42/R53, SR17/SR20/SR26, ARC11. |
 
 ### P.3 Cardinality is six separate questions
 
@@ -2900,21 +2949,21 @@ contracts: SR22–SR25.
 
 | Contract | Canonical owner and crossing | Compatibility and translation policy | Executable evidence or gap |
 |---|---|---|---|
-| **`wamn:node@0.1.0`** (`types`, `handler`, `payloads`, `credentials`, `control`; three worlds) | `docs/wamn-node.wit`; custom guest ↔ host. `wamn-node-sdk` is the minimal authoring leaf, `wamn-node-guest` owns bindgen conversion, `wamn-node-invoke` owns host/guest HTTP representation, and node manifest owns discovery metadata (`docs/wamn-node.wit:1-23,90-235`). | Retain these four boundaries. Optional capabilities remain explicit WIT imports; the host owns sockets, credentials, limits, and grants. Additive/clarifying `0.1.x`; breaking `0.2`. WIT error/status variants and exact kebab-case literals remain canonical. Previous-major execution is only a policy claim until mixed-version proof exists. | `crates/wamn-node-sdk/tests/wit_coherence.rs:26-168` pins known subsets and Rust mirrors. STR6 identifies an incomplete inventory, routed to SR7/C3-6 rather than a second contract taxonomy. |
+| **`wamn:node@0.1.0`** (`types`, `handler`, `payloads`, `credentials`, `control`; three worlds) | `docs/wamn-node.wit`; custom guest ↔ host. `wamn-node-sdk` is the minimal authoring leaf, `wamn-node-guest` owns bindgen conversion, `wamn-node-invoke` owns host/guest HTTP representation, and node manifest owns discovery metadata (`docs/wamn-node.wit:1-23,90-235`). | Retain these four boundaries. Optional capabilities remain explicit WIT imports; the host owns sockets, credentials, limits, and grants. Existing package-version and literal rules remain source facts, but cross-release artifact/WIT/invocation compatibility and previous-major execution are not owner promises. `.1.33` must select that model. | `crates/wamn-node-sdk/tests/wit_coherence.rs:26-168` pins known subsets and Rust mirrors. STR6 identifies an incomplete inventory, routed to SR7/C3-6 rather than a second contract taxonomy. |
 | **`wamn:postgres@0.1.0`** | `docs/wamn-postgres.wit`; host plugin ↔ gateway, flowrunner, materializer, POCs, probes, and authorized node worlds (`docs/wamn-postgres.wit:1-102`). | Retain doc-of-record and explicit shell translations. Host owns claims, schema choice, sockets, and resource limits. Additive/clarifying `0.1.x`; breaking `0.2`; unknown enum variants are not guessed. | Discovery proves exactly seven copies plus semantic/code equality (`crates/wamn-host/tests/postgres_wit_coherence.rs:53-216`). |
 | **`wamn:jetstream@0.1.0`** | `docs/wamn-jetstream.wit`; host plugin ↔ materializer/sample guest. The host owns broker identity, stream provisioning, sockets, and tenant-derived doorbell (`docs/wamn-jetstream.wit:15-160`). | Retain as a narrow durable-event transport contract unless an upstream interface can express its headers, pull consumer, and acknowledgement semantics. Same `0.1.x`/`0.2` rule. | All three copies are byte-compared and MVP functions are pinned (`crates/wamn-host/tests/jetstream_wit_coherence.rs:15-66`). E18 separately owns live durable-consumer configuration drift. |
-| **`wamn:runner@0.1.0`** | Intended execution-contract owner; currently two peer vendored copies under host and flowrunner. This trusted host ↔ resident-runner ABI mutates credentials, egress grants, and causation state (`crates/wamn-host/wit/deps/wamn-runner/package.wit:1-53`). | Assign one canonical source. A same-release-only host/runner policy is acceptable if stated, discovered, byte-guarded, and rolled atomically; mixed versions otherwise require an explicit matrix. | The copies are currently byte-identical but have no canonical source or discovery guard: SR23/`wamn-2jkm.95`. |
+| **`wamn:runner@0.1.0`** | Intended execution-contract owner; currently two peer vendored copies under host and flowrunner. This trusted host ↔ resident-runner ABI mutates credentials, egress grants, and causation state (`crates/wamn-host/wit/deps/wamn-runner/package.wit:1-53`). | Assign one canonical source. N.7 selects a same-release-only atomic host/runner bundle for development; no mixed-version ABI is promised. Discovery and byte guards must fail a one-sided edit before release. | The copies are currently byte-identical but have no canonical source or discovery guard: SR23/`wamn-2jkm.95`. |
 | **Deployable, fixture, and sample WIT worlds** | Each component shell owns its world: host, API gateway, flowrunner, materializer, POC, probe, gate fixture, and sample. `wamn:nodebench@0.1.0` is gate-fixture-owned; WASI package/version pins are upstream contracts. | A shell world has no separate customer compatibility promise beyond the public packages it imports. Do not promote operational flowrunner exports into an application invocation protocol. Upstream WASI copies may evolve deliberately per component, subject to build/link compatibility. | Component builds and product gates cover imports. STR6 routes uncovered node/nodebench sample-copy discovery to SR7/C3-6. |
 | **Generated REST API v1** | `wamn-api` owns route/entity semantics, parameterized SQL, response shape, and stable 4xx codes; `api-gateway` translates WASI HTTP and Postgres (`crates/wamn-api/src/lib.rs:1-72`; `crates/wamn-api/src/router.rs:21-78`; `crates/wamn-api/src/error.rs:14-68`). | Retain one planner. A transport-neutral `EntityOperation` vocabulary may live inside this existing owner so HTTP and standard Postgres nodes construct the same plan. It does not justify a new service/package or duplicate SQL planner. Auth and generated specs are distinct shells. | API compiler tests own semantics; gateway and deployed API gates own translation. OpenAPI remains with `wamn-tsn`. |
-| **Custom-node invocation HTTP v0** | `wamn-node-invoke`; flowrunner guest ↔ independently deployed `serve-node`. It mirrors WIT context, payload, emission, and node-error shapes and owns internal HMAC/timestamp headers (`crates/wamn-node-invoke/src/lib.rs:1-198`). | Retain the boundary, but add an explicit wire identity and old/new compatibility matrix. Public ingress authentication must never reuse its keys, signature domain, replay window, or rotation policy. | Current same-crate round-trips/signing do not exercise mixed deployments. Strict `deny_unknown_fields` makes an additive request field fail on an old receiver: SR22/`wamn-2jkm.94`. |
+| **Custom-node invocation HTTP v0** | `wamn-node-invoke`; flowrunner guest ↔ independently deployed `serve-node`. It mirrors WIT context, payload, emission, and node-error shapes and owns internal HMAC/timestamp headers (`crates/wamn-node-invoke/src/lib.rs:1-198`). | Retain the boundary, but do not invent its versioning scheme. `.1.33` must choose wire/artifact/WIT identity, compatibility, and containment. Until then no cross-release compatibility is claimed and an unproven combination must refuse before effects. Public ingress authentication must never reuse this internal key domain. | Current same-crate round-trips/signing do not exercise mixed deployments. Strict `deny_unknown_fields` makes an additive request field fail on an old receiver: SR22/`wamn-2jkm.94`, blocked by `.1.33`. |
 | **Generic flow invocation and route binding** | Not yet implemented. Registry/control owns trusted host/path → org/project/environment/trigger/flow lookup; the selected execution owner defines invocation semantics. F1 is a POC, and flowrunner WIT is an operational control surface. | Versioned adapters carry stable delivery/run identity, route-derived tenancy, pinned flow/execution artifacts, sync/async acknowledgement, deadlines/timeouts/cancellation, and orphan recovery. Ingress remains a thin shell with no graph walker, dispatch policy, or private run-state SQL. External caller, ingress-to-executor, and executor-to-node authentication are three trust domains. | Existing owners are `wamn-fqg.39`, R36/R37, M.6, `.1.16/.1.17`, `.1.25/.1.27`, and proof `.6.3`; no duplicate finding. |
 | **Catalog and flow JSON Schemas** | Rust types in `wamn-catalog` and `wamn-flow`; checked schemas are generated published artifacts. Schema-format version and catalog/flow instance version are independent (`crates/wamn-catalog/src/lib.rs:1-47`; `crates/wamn-flow/src/lib.rs:1-40`). | Keep separate contracts, strict object validation, and explicit storage translations. Additive/clarifying schema `0.1.x`; breaking `0.2`; an applied instance remains pinned independently. | Fixture parse/validate/round-trip and exact generated-schema drift tests exist in each owner crate. |
 | **Node manifest and embedded schemas** | `wamn-node-manifest`; builder writes OCI annotation JSON, registry/editor reads discovery metadata, and runner/host consumes execution/config data (`crates/wamn-node-manifest/src/lib.rs:1-103,299-310`). | Keep artifact version, manifest schema version, and WIT contract version distinct. Unknown manifest fields fail closed. WIT owns execution ABI; JSON owns discovery/config metadata. | Round-trip, negative, schema, drift, and annotation-key tests exist. C3-7/`wamn-fqg.27` own the gap between generated structural schema and stronger procedural validation. |
-| **Event envelope** | `wamn-event-wire`; CDC reader produces, materializer consumes, gates import the same leaf (`crates/wamn-event-wire/src/lib.rs:1-13,39-111`). | Retain frozen `0.1.0` wire and exact subject/message identity rules. Because readers are strict, an “additive” field is deployable only if old readers explicitly accept it or a new envelope version is selected. | Golden JSON, omission, causation, unknown-field, and round-trip tests live in the owner; `.1.16` owns cross-release policy. |
+| **Event envelope** | `wamn-event-wire`; CDC reader produces, materializer consumes, gates import the same leaf (`crates/wamn-event-wire/src/lib.rs:1-13,39-111`). | Retain frozen `0.1.0` wire and exact subject/message identity rules. N.7 does not require concurrent old/new readers, but every retained JetStream message must be drained, read compatibly, or migrated before the release commits. | Golden JSON, omission, causation, unknown-field, and round-trip tests live in the owner; N.7 owns the development cutover policy. |
 | **Registration expression context and persisted event-run input** | `wamn-event-reg` owns declaration/version/JMESPath grammar, but materializer currently owns the frozen `{"op","old","new"}` context and persisted trigger-input grammar (`crates/wamn-event-reg/src/model.rs:25-36`; `crates/wamn-materializer/src/context.rs:1-88`; `crates/wamn-materializer/src/input.rs:1-94`). | Target logical ownership of expression vocabulary is the registration/event contract; materializer translates envelope → context. Persisted run input remains a replayed execution-trigger contract. This is a STR9 placement decision, not a second taxonomy or present correctness finding. | Registration validation and exact context/input goldens already freeze behavior. |
 | **SQL schema and query contracts** | Table semantics are owned per file/crate: registry/system, app-system, catalog/migrate/event registration, flow registry, run store, run queue, and flow suites. `wamn-sql` owns only arity-carrying composition (`deploy/sql/*.sql`; `crates/wamn-sql/src/lib.rs:1-15`). | Preserve semantic owner per table. Storage translates from canonical product execution/event/scenario types; persistence does not own them merely because it stores them. Physical source/generation and stand-in policy are STR6/SR13. Ingress may not bypass an owner with private SQL. | Selective DDL/query/live guards exist; SR13 and `wamn-v1pp` own uncovered drift. |
-| **CLI and deployment configuration** | Each binary owns its Clap surface. Kubernetes built-ins and external CRD `apiVersion`s own schema; repository manifests own desired instances. Builder owns generated serve-node YAML (`crates/wamn-host/src/main.rs:20-49`; `crates/wamn-builder/src/main.rs:11-39`; `crates/wamn-ctl/src/main.rs:21-98`). | CLI compatibility follows artifact version. Do not claim runtime-operator compatibility without pinned/rendered external schema evidence. Generated manifests must be structurally compatible with the deployable they claim to emit. | Parser/unit tests and builder goldens exist; STR6 routes the serve-node divergence to `wamn-fqg.21/.23` and R43. |
-| **Mounted JSON configuration** | Dispatcher owns `projects.json`; Postgres plugin owns its project/pool map; credentials plugin owns its vault map (`crates/wamn-dispatcher/src/lib.rs:100-166`; `crates/wamn-host/src/plugins/wamn_postgres/pool.rs:111-170`; `crates/wamn-host/src/plugins/wamn_credentials.rs:128-183`). | Each independently mutable image/config pair needs a format version or an explicit atomic-rollout rule, plus one unknown/missing/wrong-type policy. Confidential values and structural config remain separate. | Current parsers differ and no old/new fixtures or schemas exist: SR24/`wamn-2jkm.96`. |
+| **CLI and deployment configuration** | Each binary owns its Clap surface. Kubernetes built-ins and external CRD `apiVersion`s own schema; repository manifests own desired instances. Builder owns generated serve-node YAML (`crates/wamn-host/src/main.rs:20-49`; `crates/wamn-builder/src/main.rs:11-39`; `crates/wamn-ctl/src/main.rs:21-98`). | A development CLI break is explicit and ships with repository callers; no old-client window is promised. Deployment inputs belong to the atomic N.7 bundle. Do not claim runtime-operator compatibility without pinned/rendered external schema evidence. | Parser/unit tests and builder goldens exist; production client support is `.1.32`, while STR6 routes serve-node divergence to `wamn-fqg.21/.23` and R43. |
+| **Mounted JSON configuration** | Dispatcher owns `projects.json`; Postgres plugin owns its project/pool map; credentials plugin owns its vault map (`crates/wamn-dispatcher/src/lib.rs:100-166`; `crates/wamn-host/src/plugins/wamn_postgres/pool.rs:111-170`; `crates/wamn-host/src/plugins/wamn_credentials.rs:128-183`). | N.7 selects atomic image/config rollout for development. Each format still needs immutable release identity and one explicit unknown/missing/wrong-type policy; confidential values and structural config remain separate. | Current parsers differ and no release-bundle or negative old/new fixtures exist: SR24/`wamn-2jkm.96`. |
 | **Product scenarios, suites, capture, status, and error** | `wamn-testkit` owns serialized cases/assertions/captures/evaluation, but currently imports and re-exports persistence-owned run/failure/node status enums. `wamn-flow-tests` owns suite envelope/storage (`crates/wamn-testkit/src/lib.rs:1-181`; `crates/wamn-flow-tests/src/lib.rs:1-125`). | Put `RunStatus`, `FailKind`, `NodeRunStatus`, and node-error classification in one lower guest-safe execution vocabulary. Runner/store/queue/scenario consume it; run-store alone translates to SQL. Scenario owns `TestCase`, `Assertion`, normalization, captured facts, outcome, and egress observation. No parallel taxonomy. | SR19/`wamn-2jkm.83`; existing serde, suite, pin/replay, and gate evidence must remain compatible. |
 | **Service shutdown control** | `wamn-cdc-reader` should own a local shutdown boundary; it currently exports the fork's `pg_walstream::CancellationToken` to gates and live tests (`crates/wamn-cdc-reader/src/lib.rs:533-581`; `crates/wamn-gates/src/cdcbench.rs:63-77`). | Fork control types remain inside the adapter. A local opaque handle, owned receiver, or cancellation future must define cancellation ownership, completion, repeated stop, and cleanup without leaking the dependency. | No local boundary exists and gates declare the fork solely for this type: SR25/`wamn-2jkm.97`. |
 
@@ -2944,23 +2993,24 @@ contract (Medium).** Flowrunner and `serve-node` roll independently, but their
 strict JSON envelope has no version identity. A newly added optional request
 field is rejected by an older receiver before any negotiated outcome, and no
 old/new response, error, key-rotation, drain, or rollback matrix exists.
-`wamn-2jkm.94` owns the concrete protocol and fixtures; `.1.16` owns the
-product-wide compatibility promise.
+`wamn-2jkm.94` owns the concrete protocol and fixtures but is blocked by
+`.1.33`, which owns the deferred custom-node versioning and containment policy.
 
 **SR23 — `wamn:runner` WIT has no canonical source or coherence guard
 (Low).** Its host and flowrunner files are byte-identical today, but neither is
 authoritative and no discovery test prevents a one-sided edit to the trusted
 credentials/egress/causation control ABI. `wamn-2jkm.95` owns one canonical
-source, exhaustive copy discovery, mutation guard, and explicit same-release
-or mixed-version rule.
+source, exhaustive copy discovery, and mutation guard. N.7 has selected the
+same-release atomic rule for development; no mixed-version ABI is promised.
 
 **SR24 — mounted runtime configuration contracts are unversioned and
 inconsistent (Low).** Dispatcher, Postgres-plugin, and credential JSON are
 independently mutable deployment inputs but lack format versions or atomic
 image/config rules. Their parsers do not share an explicit unknown, missing,
 wrong-type, or invalid-optional-value policy. `wamn-2jkm.96` owns per-format
-owners and old/new fixtures; it must not merge confidential values with
-structural configuration merely to share a schema.
+owners, atomic release identity, and negative fixtures under N.7; it must not
+merge confidential values with structural configuration merely to share a
+schema.
 
 **SR25 — CDC reader public API leaks the `pg_walstream` cancellation type
 (Low).** `run_with_token` exposes a fork control primitive, making gates depend
@@ -3363,6 +3413,7 @@ prerequisite that makes everything else findable.
 | R50 | JetStream capacity is incompatible with physical storage and source-WAL safety | High | open | wamn-2jkm.90; proof wamn-4tob.6.22 |
 | R51 | Event-plane disaster recovery is absent after source feedback advances | High | open | wamn-2jkm.91; proof wamn-4tob.6.23 |
 | R52 | Destructive migration trusts an unverified backup assertion | High | open | wamn-2jkm.92; proof wamn-4tob.6.24 |
+| R53 | Persisted runs do not pin compatible trusted-executor identity | High | open | wamn-2jkm.99; proof wamn-4tob.6.26 |
 | E18 | Materializer silently accepts stale durable-consumer configuration | High | open | wamn-l5i9.69; proof wamn-4tob.6.10 |
 | E19 | Materializer durable-consumer identity collides across valid registrations | High | open | wamn-l5i9.70; proof wamn-4tob.6.16 |
 | SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78 |
@@ -3372,9 +3423,9 @@ prerequisite that makes everything else findable.
 | SR19 | Product test-case contract depends on run-state persistence | Med | open | wamn-2jkm.83; STR5 set vocabulary direction, STR9 packages it |
 | SR20 | Load-bearing Wasmtime source pin is duplicated across manifests | Low | open | wamn-2jkm.84; STR7/STR9 own guard/target |
 | SR21 | Stored-suite drivability duplicates an incomplete production dispatch contract | Med | open | wamn-2jkm.93; STR5 set composed descriptor, STR9 packages it |
-| SR22 | Custom-node invocation wire lacks a version and mixed-version contract | Med | open | wamn-2jkm.94; coordinate wamn-4tob.1.16 |
-| SR23 | `wamn:runner` WIT has no canonical source or coherence guard | Low | open | wamn-2jkm.95 |
-| SR24 | Mounted runtime configuration contracts are unversioned and inconsistent | Low | open | wamn-2jkm.96; coordinate wamn-4tob.1.16 |
+| SR22 | Custom-node invocation wire lacks a version and mixed-version contract | Med | open | wamn-2jkm.94; blocked by custom-node decision wamn-4tob.1.33 |
+| SR23 | `wamn:runner` WIT has no canonical source or coherence guard | Low | open | wamn-2jkm.95; N.7 selects same-release atomic development policy |
+| SR24 | Mounted runtime configuration contracts are unversioned and inconsistent | Low | open | wamn-2jkm.96; N.7 selects atomic image/config development policy |
 | SR25 | CDC reader public API leaks the `pg_walstream` cancellation type | Low | open | wamn-2jkm.97 |
 | SR26 | Gate-of-record receipts do not prove a fresh immutable baseline artifact | High | open | wamn-2jkm.98; proof wamn-4tob.6.25 |
 | **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
