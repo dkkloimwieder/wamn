@@ -6,9 +6,11 @@ const FORBIDDEN_CRATES: &[&str] = &[
     "wamn_cdc_reader",
     "wamn_ctl",
     "wamn_dispatcher",
+    "wamn_executor",
     "wamn_host",
     "wamn_node_host",
     "wamn_run_worker",
+    "wamn_scenario_worker",
     "wamn_waker",
 ];
 

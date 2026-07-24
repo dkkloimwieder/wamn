@@ -1,9 +1,9 @@
 # 11.2-exec in-cluster gate of record (wamn-0lfu): suiteexec drives the STORED
 # test-suite EXECUTOR — load test_suites/test_cases rows from a schema, re-validate
-# each case against the wamn-testkit vocabulary, and execute each as its OWN run
+# each case against the wamn-scenario-model vocabulary, and execute each as its OWN run
 # through the t92 doubles seam (fresh ephemeral schema per case, graph from
-# {source}.flows, DoubleSet::virtual_host + EgressRecorder + RunWorker + drain,
-# then wamn_testkit::evaluate).
+# {source}.flows, ScenarioCapabilities::virtualized + RecordingEgress + ExecutionHost + drain,
+# then wamn_scenario_model::evaluate).
 #
 # HERMETIC: `--seed-demo` is the "SQL preamble" — the executor self-seeds its own
 # THROWAWAY source schema (wamn_suiteexec, NOT poc_f1) via the SAME

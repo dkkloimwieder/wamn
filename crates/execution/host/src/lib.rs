@@ -88,7 +88,7 @@ enum CapabilityMode {
         allowed_hosts: Arc<[AllowedHost]>,
     },
     Injected {
-        wasi: wasmtime_wasi::WasiCtx,
+        wasi: Box<wasmtime_wasi::WasiCtx>,
         http: Arc<dyn HostHandler>,
     },
 }
@@ -109,7 +109,10 @@ pub fn injected_capabilities(
     http: Arc<dyn HostHandler>,
 ) -> ExecutionCapabilities {
     ExecutionCapabilities {
-        mode: CapabilityMode::Injected { wasi, http },
+        mode: CapabilityMode::Injected {
+            wasi: Box::new(wasi),
+            http,
+        },
     }
 }
 
@@ -318,8 +321,9 @@ fn attach_memory_limiter(store: &mut Store<SharedCtx>, component_id: &str) -> Op
 
 /// The production flow runner: a single long-lived flowrunner instance whose
 /// plugin session carries the host-injected lease owner + tenant + schema.
-/// [`drain`] pulls every currently-claimable run to a terminal (or parked)
-/// state; [`serve`] wraps that in the doorbell + backoff + shutdown loop.
+/// [`ExecutionHost::drain`] pulls every currently-claimable run to a terminal
+/// (or parked) state; [`ExecutionHost::serve`] wraps that in the doorbell +
+/// backoff + shutdown loop.
 pub struct ExecutionHost {
     store: Store<SharedCtx>,
     run_next: RunNextFunc,
@@ -435,7 +439,7 @@ impl ExecutionHost {
         let builder = Ctx::builder(owner.to_string(), owner.to_string()).with_plugins(plugins);
         let ctx = match capabilities.mode {
             CapabilityMode::Injected { wasi, http } => {
-                builder.with_http_handler(http).with_wasi_ctx(wasi).build()
+                builder.with_http_handler(http).with_wasi_ctx(*wasi).build()
             }
             CapabilityMode::Production { allowed_hosts } => builder
                 .with_http_handler(Arc::new(RunnerEgress {

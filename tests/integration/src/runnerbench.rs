@@ -3,7 +3,7 @@
 //!
 //! fqg.4's `failoverbench` drives the guest `run-next` export DIRECTLY (a
 //! gate-local `Worker`), proving the claim/park/heartbeat path. fqg.8 adds the
-//! long-lived SERVICE around it — [`wamn_run_worker::RunWorker`]: one
+//! long-lived SERVICE around it — [`wamn_execution_host::ExecutionHost`]: one
 //! flowrunner instance, a `drain` that pulls every currently-claimable run, and
 //! the doorbell + backoff serve loop. This gate drives THAT production struct
 //! (SR1: the gate exercises the identical host code the binary runs) against an
@@ -26,7 +26,7 @@
 //!   * PARTITION-ORDER (fqg.9, wamn-7hja): PARTITIONED(key) runs seeded via
 //!     `enqueue_with_policy_sql` across two keys with interleaved insertion
 //!     dispatch per-key IN STREAM ORDER, one in flight per key, through the
-//!     production `RunWorker::drain` — the keyed claim path failoverbench drives
+//!     production `ExecutionHost::drain` — the keyed claim path failoverbench drives
 //!     via the gate-local `Worker`, proven here through the long-lived runner.
 //!     Dispatch order is read from a gate-local `sink.dispatch_seq` IDENTITY
 //!     witness (execution order, not seed order).
@@ -46,7 +46,7 @@ use wamn_run_state::queue::{
     PartitionPolicy, enqueue_sql, enqueue_with_policy_sql, write_ahead_triggered_run_sql,
 };
 
-use wamn_run_worker::RunWorker;
+use wamn_execution_host::{ExecutionHost, production_capabilities};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 
@@ -173,7 +173,7 @@ pub struct RunnerBenchArgs {
 /// schema-qualified with the house tenant floor. Kept aligned with
 /// `deploy/sql/run-queue.sql` by the drift guard in this module's tests.
 // `pub(crate)` so the wamn-t92 testhostbench `runworker` mode drives the SAME
-// drift-guarded union schema when it exercises the run-worker `--test-doubles` path.
+// drift-guarded union schema when it exercises the scenario composition.
 pub(crate) fn runner_ddl(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.flows (\
@@ -402,7 +402,7 @@ async fn count(client: &Client, sql: &str) -> anyhow::Result<i64> {
 /// the gate-local `sink.dispatch_seq` witness (a `GENERATED ALWAYS AS IDENTITY`
 /// column the guest's explicit-column sink INSERT auto-populates). The sink row
 /// is written DURING run execution (the `pg-write` node) and the production
-/// `RunWorker::drain` claims one run at a time, so `dispatch_seq` order IS the
+/// `ExecutionHost::drain` claims one run at a time, so `dispatch_seq` order IS the
 /// true per-key dispatch order — independent of seed order, which is what makes
 /// this a real ordering witness rather than a tautology.
 async fn dispatch_order(client: &Client, prefix: &str) -> anyhow::Result<Vec<String>> {
@@ -464,21 +464,20 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         // vault path) but must be present — the guest imports it unconditionally.
         let vault = Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty());
         let logging = Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?);
-        let mut worker = RunWorker::instantiate(
+        let mut worker = ExecutionHost::instantiate(
             &engine,
             &guest,
             plugin.clone(),
             vault,
             logging,
-            wamn_run_worker::RunnerIdentity {
+            wamn_execution_host::ExecutionIdentity {
                 owner: OWNER,
                 tenant: TENANT,
                 schema: Some(SCHEMA),
                 project: "default",
             },
-            std::sync::Arc::from([]), // no egress fixtures: deny-all
+            production_capabilities(std::sync::Arc::from([])),
             30_000,
-            None, // wamn-t92: production host (no test doubles)
         )
         .await?;
 
@@ -679,12 +678,12 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             r6.completed
         );
 
-        // --- (7) PARTITION-ORDER (fqg.9): the production RunWorker drains
+        // --- (7) PARTITION-ORDER (fqg.9): the production ExecutionHost drains
         // PARTITIONED(key) runs seeded via enqueue_with_policy_sql. runnerbench
         // otherwise only seeds UNpartitioned runs, so the fqg.9 guest-side keyed
         // claim path never rides its production drain (failoverbench drives it
         // via the gate-local Worker; this is the independent proof through the
-        // long-lived RunWorker). Two keys are seeded with INTERLEAVED insertion
+        // long-lived ExecutionHost). Two keys are seeded with INTERLEAVED insertion
         // (ka0,kb0,ka1,kb1,ka2,kb2) so a runner that dropped per-key ordering
         // would interleave the sink witness; the assert is per-key IN-ORDER
         // dispatch (blocking policy = one in flight per key, head-first).
@@ -732,7 +731,7 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             && leases >= 2
             && q7 == 0;
         println!(
-            "## partition-order — 2 keys x 3 (interleaved) + 2 NULL-key via RunWorker::drain: \
+            "## partition-order — 2 keys x 3 (interleaved) + 2 NULL-key via ExecutionHost::drain: \
              claimed {}/8 completed {}, key pk-a order {order_a:?} (want ka0,ka1,ka2) -> {a_ok}, \
              key pk-b order {order_b:?} (want kb0,kb1,kb2) -> {b_ok}, one-in-flight max sink/key={max_sink_keyed} (<=1), \
              partition leases taken={leases} (>=2), queue drained={} -> {partition_ok}",
@@ -817,7 +816,7 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             && followers_done == 2
             && q8 == 0;
         println!(
-            "## partition-terminal — blocking head kt0 fails terminally via RunWorker::drain: \
+            "## partition-terminal — blocking head kt0 fails terminally via ExecutionHost::drain: \
              claimed {}/3 failed {} completed {}, head = {}/{} (want failed/terminal), \
              dead-letter rows = {dl_total} (want exactly 1 -> unpartitioned rw-loop wrote none), \
              marker {dl_marker:?} -> {marker_ok}, followers order {order_t:?} (want kt1,kt2), \
@@ -934,7 +933,7 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             && mr_claims >= 3
             && q9 == 0;
         println!(
-            "## merge-resume — diamond with delay-merge via RunWorker::drain: completed after \
+            "## merge-resume — diamond with delay-merge via ExecutionHost::drain: completed after \
              {mr_claims} claims (>=3 -> parked mid-merge and resumed), node_runs rows = {mr_rows} \
              (want 7 — one PER VISIT), m visits = {mr_m:?} (want (2,0,1)), r visits = {mr_r:?} \
              (want (2,0,1)), queue drained = {} — and a structurally-different v2 (linear in->r) \

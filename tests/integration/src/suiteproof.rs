@@ -8,7 +8,7 @@
 //!   1. provision the run-plane + the `deploy/sql/flow-tests.sql` tables through
 //!      the SAME `ensure_*` code path production provisioning uses
 //!      (`publish-catalog --runstate`);
-//!   2. register a flow v1 and seed a suite + cases FROM the `wamn-flow-tests`
+//!   2. register a flow v1 and seed a suite + cases FROM the `wamn-scenario-catalog`
 //!      envelope — proving the envelope round-trips (`to_json`/`from_json`) and
 //!      that the opaque case body reaches the `test_cases.case_body` jsonb intact;
 //!   3. assert VERSION BINDING (every suite/case row pins `flow_version = 1`),
@@ -23,8 +23,8 @@ use serde_json::json;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
-use wamn_flow_tests::TestSuite;
 use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_case, seed_test_suite};
+use wamn_scenario_model::TestSuite;
 
 const FLOW_ID: &str = "escalate-holds";
 
@@ -55,7 +55,7 @@ pub struct SuiteProofArgs {
     pub keep: bool,
 }
 
-/// The suite envelope the gate seeds from — the canonical `wamn-flow-tests`
+/// The suite envelope the gate seeds from — the canonical `wamn-scenario-catalog`
 /// shape, flow-version-bound to the flow it tests.
 fn suite_envelope() -> TestSuite {
     let json = json!({
@@ -189,7 +189,7 @@ pub async fn run(args: SuiteProofArgs) -> anyhow::Result<()> {
         bound == 2,
     );
     // The opaque case body reached jsonb intact (round-trips to the seeded body)
-    // AND parses as a canonical wamn-testkit TestCase (11.4 validate-on-write).
+    // AND parses as a canonical wamn-scenario-model TestCase (11.4 validate-on-write).
     let stored: serde_json::Value = app
         .query_one(
             "SELECT case_body FROM test_cases WHERE case_id = 'escalates-stale'",
@@ -206,8 +206,8 @@ pub async fn run(args: SuiteProofArgs) -> anyhow::Result<()> {
     );
     check(
         &mut ok,
-        "STORE: stored case body parses as a wamn-testkit TestCase",
-        serde_json::from_value::<wamn_testkit::TestCase>(stored.clone()).is_ok(),
+        "STORE: stored case body parses as a wamn-scenario-model TestCase",
+        serde_json::from_value::<wamn_scenario_model::TestCase>(stored.clone()).is_ok(),
     );
 
     // --- RLS: a second tenant's claim sees ZERO suites ---

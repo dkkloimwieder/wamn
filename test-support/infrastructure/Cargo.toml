@@ -1,0 +1,24 @@
+[package]
+name = "wamn-test-infrastructure"
+description = "Repository-only temporary infrastructure and proof adapters."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+hyper = "1"
+serde_json = "1"
+tokio = { workspace = true, features = ["io-util", "net", "sync"] }
+tokio-postgres = "0.7"
+tracing = { workspace = true }
+wamn-ctl = { path = "../../services/ctl" }
+wamn-node-invoke = { path = "../../crates/node/invoke" }
+wamn-node-runtime = { path = "../../crates/platform/node-runtime" }
+wamn-runtime = { path = "../../crates/platform/runtime" }
+wamn-test-fixtures = { path = "../fixtures" }
+wash-runtime = { workspace = true }

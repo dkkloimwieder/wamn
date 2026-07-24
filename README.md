@@ -6,10 +6,10 @@ runtime. **`docs/` is the design source of truth** — start with
 `docs/platform-plan.md` and the decision table.
 
 `services/host` is the production washlet host, while `services/node-host`
-serves custom nodes. Both are thin deployable leaves over the reusable
-`crates/platform/{runtime,node-runtime,component-policy}` packages. The
-gate/bench suite is the separate `tests/orchestrator` binary over those reusable
-packages. Our wash-runtime changes are carried commits on a fork — see
+serves custom nodes. Both are thin deployable leaves over reusable platform
+packages. Production queue execution and deterministic scenario execution are
+separate artifacts which share `crates/execution/host` and the same flowrunner
+component. Our wash-runtime changes are carried commits on a fork — see
 `docs/wash-runtime-fork.md`.
 
 ## Repository layout
@@ -23,7 +23,9 @@ services/               native deployable Rust services
                         migrate-catalog, dump/restore/copy-project-env,
                         enable-cdc-project-env) — SR9 split
   dispatcher            shared trigger dispatcher service (SR9 split)
-  run-worker            production flow-runner service (SR9 split)
+  executor              production flow-runner service; emits the stable
+                        wamn-run-worker binary
+  scenario-worker       stored deterministic scenario/replay executor
   cdc-reader            CDC event-reader service (SR9 split)
   waker                 scale-to-zero wake actuator
   builder               sandboxed custom-node build service
@@ -32,7 +34,7 @@ crates/                 shared Rust workspace packages
   # shared, non-deployable packages grouped by bounded context:
   platform/
     component-policy    pure component-import and grant policy
-    runtime             shared engine, plugins, WIT, metrics, and test doubles
+    runtime             shared engine, plugins, WIT, and metrics
     node-runtime        transport-free warm custom-node runtime
     pg-core             wamn-pg-core: guest-safe PostgreSQL primitives
   data/
@@ -45,6 +47,7 @@ crates/                 shared Rust workspace packages
   execution/
     flow-model          wamn-flow: flow-graph JSON model + JSON Schema
     flow-engine         wamn-runner: pure flow reducer
+    host                shared native host for the flowrunner component
     run-state           wamn-run-state: run history, queue, lease, and timer state
     scheduler           wamn-scheduler: pure cron, due-tick, and cadence decisions
     standard-nodes      wamn-standard-nodes: standard node library
@@ -63,8 +66,9 @@ crates/                 shared Rust workspace packages
   identity/
     project-state       wamn-project-state: per-project app_system model
   scenarios/
-    model               wamn-testkit: scenario case/assertion vocabulary
-    catalog             wamn-flow-tests: persisted suite envelope
+    model               wamn-scenario-model: case/suite/assertion vocabulary
+    catalog             wamn-scenario-catalog: persistence and pin-from-run
+    runtime             deterministic clocks/random/egress/credentials
 
 components/             wasm32-wasip2 guests
   ingress/              product ingress components (api-gateway)
@@ -78,9 +82,14 @@ poc/                    POC integration crates (f1, dm1, cdc1)
 
 test-support/
   harness/              shared measurement helpers for gates
+  fixtures/             repository-only fixture implementations
+  infrastructure/       temporary proof infrastructure helpers
 
 tests/
-  orchestrator/         mixed-tier gate/bench suite binary (wamn-gates)
+  conformance/          narrow contract and compatibility proofs
+  integration/          real-adapter compositions and failure injection
+  system/               deployed public-surface journeys
+  orchestrator/         compatibility CLI for the existing wamn-gates commands
 
 deploy/                 Kubernetes manifests + standalone SQL schemas
   kind-config.yaml      local kind cluster definition
@@ -93,7 +102,7 @@ docs/                   design source of truth (platform-plan.md, decision
                         table, WIT contracts, per-subsystem specs)
 
 Cargo.toml              root workspace; pins the wash-runtime fork rev
-Dockerfile              two-stage image (--target host, --target gates)
+Dockerfile              shared build plus one final stage per deployable artifact
 ```
 
 ## Prerequisites
@@ -110,7 +119,8 @@ Dockerfile              two-stage image (--target host, --target gates)
 
 ```bash
 # host + gate suite (debug by default)
-cargo build -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-gates
+cargo build -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher \
+  -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-gates
 
 # wasm guests
 (cd components && cargo build --release --target wasm32-wasip2)
@@ -129,8 +139,8 @@ cargo clippy --all-targets && cargo fmt --check
 Many crates also have optional live-apply tests that run against a throwaway
 Postgres and skip when their `WAMN_*_PG_URL` env var is unset.
 
-**Gates** (the bench/fixture/proof triple, SR5) live in the `wamn-gates` package
-at `tests/orchestrator` and assert against a real backend. The full per-bead
+**Proofs** live in `tests/{conformance,integration,system}`. The `wamn-gates`
+package at `tests/orchestrator` is the stable deploy-facing command router. The full per-bead
 command set — local iteration and the in-cluster gate of record for each
 subsystem — is in **`docs/build-and-test.md`**.
 Example (S1, no backend):

@@ -98,8 +98,8 @@ mod tests {
 
     #[test]
     fn same_seed_is_deterministic_and_reproducible() {
-        let mut a = SeededRng::from_seed(0xC0FF_EE);
-        let mut b = SeededRng::from_seed(0xC0FF_EE);
+        let mut a = SeededRng::from_seed(0x00C0_FFEE);
+        let mut b = SeededRng::from_seed(0x00C0_FFEE);
         let sa: Vec<u64> = (0..16).map(|_| a.next_u64()).collect();
         let sb: Vec<u64> = (0..16).map(|_| b.next_u64()).collect();
         assert_eq!(sa, sb, "the same seed must reproduce the same stream");

@@ -14,7 +14,7 @@
 //!   lives in `runs.state_json->'wake'->'<node>'` as epoch seconds, read from
 //!   the guest's (virtualized) wall clock — so advancing the virtual clock
 //!   alone collapses it. Query it with [`RUN_S6_WAKE_DEADLINES_SQL`].
-//! - **run-next** (the production `RunWorker` claim loop): the wake lives in
+//! - **run-next** (the production `ExecutionHost` claim loop): the wake lives in
 //!   `run_queue.available_at`, anchored to Postgres `now()` at park time — so a
 //!   virtual GUEST clock cannot make it claimable. A run-next backend's
 //!   `redrive` must ALSO nudge the DB (`UPDATE run_queue SET available_at =

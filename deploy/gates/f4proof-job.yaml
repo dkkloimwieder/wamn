@@ -1,7 +1,7 @@
 # wamn-lxk in-cluster [POC-F4] gate: the CDC row-event flow + 429-throttle
 # end-to-end proof, and the EVT-CUTOVER regression by construction. Embeds the
 # REAL wamn-cdc-reader (`run_with_token`) + the image's /bench/materializer.wasm
-# + the production RunWorker driving /bench/flowrunner.wasm + a serve-node
+# + the production ExecutionHost driving /bench/flowrunner.wasm + a serve-node
 # hosting /bench/disposition-node.wasm + the ERP callback simulator — ALL
 # in-process on loopback (no external Service), over a gate-owned throwaway
 # database on the fixture Postgres + the DATA-PLANE JetStream (Service

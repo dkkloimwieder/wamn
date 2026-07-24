@@ -14,8 +14,9 @@
 //! `run-queue.sql` forces an explicit per-gate Required/AbsentByDesign decision
 //! instead of silent rot.
 //!
-//! Test-only: this module compiles only under `cfg(test)`, so nothing here rides
-//! the shipped `wamn-gates` binary.
+//! Proof-only: this module is public so integration and system test targets use
+//! one implementation. It is reachable only through repository proof packages,
+//! never through a product artifact.
 
 use wamn_run_state::queue::PartitionPolicy;
 
@@ -24,7 +25,7 @@ use wamn_run_state::queue::PartitionPolicy;
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 
 /// What a gate's stand-in does with one schema-of-record table.
-pub(crate) enum Need {
+pub enum Need {
     /// The table is present with FULL column parity (every shipped column).
     Required,
     /// The table is absent BY DESIGN (the gate has no code path that touches it).
@@ -118,7 +119,7 @@ fn stand_in_table_body<'a>(standin: &'a str, table: &str) -> Option<&'a str> {
 ///   enqueue writers materialize); when `partition_owner` is Required, the
 ///   `run_queue_partition` index the claim path scans must be present.
 /// - `AbsentByDesign`: the stand-in must NOT create the table.
-pub(crate) fn assert_stand_in(gate: &str, standin: &str, spec: &[(&str, Need)]) {
+pub fn assert_stand_in(gate: &str, standin: &str, spec: &[(&str, Need)]) {
     // The spec classifies exactly the schema-of-record tables — no gaps, no rot.
     let record = schema_of_record_tables();
     for table in &record {

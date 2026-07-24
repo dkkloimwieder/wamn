@@ -12,7 +12,7 @@
 //! Nothing here is taped: ONE `INSERT INTO dispositions` under the tenant claim
 //! is the SOLE stimulus, and it drives the REAL reader (`run_with_token`), the
 //! REAL materializer guest (`materializer.wasm`), the REAL production runner
-//! (`RunWorker` driving `flowrunner.wasm`), a REAL serve-node hosting the REAL
+//! (`ExecutionHost` driving `flowrunner.wasm`), a REAL serve-node hosting the REAL
 //! `disposition-node.wasm`, and the ERP simulator — over a throwaway
 //! `wal_level=logical` Postgres + a throwaway JetStream. Because the whole
 //! reader→materializer→queue→runner arc runs from a real WAL event, this gate IS
@@ -63,9 +63,9 @@ use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provisio
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
+use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_gate_harness::check;
 use wamn_run_state::queue::mint_evt_run_id;
-use wamn_run_worker::{RunWorker, RunnerIdentity};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::{
@@ -758,22 +758,21 @@ async fn gate_body(
 ) -> anyhow::Result<bool> {
     let mut pass = true;
 
-    // The production runner (RunWorker driving flowrunner.wasm).
-    let mut worker = RunWorker::instantiate(
+    // The production runner (ExecutionHost driving flowrunner.wasm).
+    let mut worker = ExecutionHost::instantiate(
         engine,
         flowrunner,
         runner_pg,
         Arc::new(WamnCredentials::empty()),
         Arc::new(WamnLogging::from_env()?),
-        RunnerIdentity {
+        ExecutionIdentity {
             owner: BENCH_ID,
             tenant: TENANT,
             schema: Some("wamn_run"),
             project: "default",
         },
-        allowed,
+        production_capabilities(allowed),
         30_000,
-        None,
     )
     .await?;
 

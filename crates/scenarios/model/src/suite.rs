@@ -77,9 +77,9 @@ pub enum TestSuiteError {
     DuplicateCaseId { case_id: String },
     /// Two cases share an `ordinal`.
     DuplicateOrdinal { ordinal: u32 },
-    /// A case body did not parse against the canonical case/assertion vocabulary
-    /// ([`crate::TestCase`]) — the validate-on-write pass. Names the
-    /// offending `case-id` and the serde detail.
+    /// A case body did not parse or validate against the canonical
+    /// case/assertion vocabulary ([`crate::TestCase`]) — the validate-on-write
+    /// pass. Names the offending `case-id` and the detail.
     CaseBody { case_id: String, error: String },
 }
 
@@ -160,12 +160,19 @@ impl TestSuite {
         // canonical case/assertion vocabulary. A SEPARATE pass so an envelope
         // defect above is reported before a body defect here.
         for case in &self.cases {
-            if let Err(e) = serde_json::from_value::<crate::TestCase>(case.case.clone()) {
-                return Err(TestSuiteError::CaseBody {
+            let parsed =
+                serde_json::from_value::<crate::TestCase>(case.case.clone()).map_err(|error| {
+                    TestSuiteError::CaseBody {
+                        case_id: case.case_id.clone(),
+                        error: error.to_string(),
+                    }
+                })?;
+            parsed
+                .validate()
+                .map_err(|error| TestSuiteError::CaseBody {
                     case_id: case.case_id.clone(),
-                    error: e.to_string(),
-                });
-            }
+                    error: error.to_string(),
+                })?;
         }
         Ok(())
     }
@@ -237,6 +244,21 @@ mod tests {
                         "expect": [ { "error-class": { "node-error": "invalid-input" } } ] } },
         ]));
         assert!(TestSuite::from_json(&src).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_case_body_without_exactly_one_target() {
+        let src = suite_json(json!([
+            { "case-id": "ambiguous", "ordinal": 0,
+              "case": { "name": "ambiguous", "node-ref": {},
+                        "flow-ref": { "flow-id": "flow", "version": 1 },
+                        "input": {}, "expect": [] } },
+        ]));
+        assert!(matches!(
+            TestSuite::from_json(&src),
+            Err(TestSuiteError::CaseBody { case_id, error })
+                if case_id == "ambiguous" && error.contains("exactly one target")
+        ));
     }
 
     #[test]

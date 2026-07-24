@@ -3,7 +3,8 @@
 #   docker build --target node-host  -t wamn-node-host:dev  .  # custom-node HTTP host
 #   docker build --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
 #   docker build --target dispatcher -t wamn-dispatcher:dev .  # trigger dispatcher
-#   docker build --target run-worker -t wamn-run-worker:dev .  # flow runner (+flowrunner.wasm)
+#   docker build --target run-worker -t wamn-run-worker:dev .  # production executor (+flowrunner.wasm)
+#   docker build --target scenario-worker -t wamn-scenario-worker:dev . # deterministic scenarios
 #   docker build --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
 #   docker build --target waker      -t wamn-waker:dev      .  # scale-to-zero wake actuator
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
@@ -34,7 +35,7 @@ COPY components/samples/disposition-node/cases.json components/samples/dispositi
 # (docs/wash-runtime-fork.md); cargo fetches it during the build.
 # rust-toolchain.toml would force a rustup download inside the container;
 # the base image already ships the right version.
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-waker -p wamn-gates -p wamn-builder
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-waker -p wamn-gates -p wamn-builder
 
 # ---- washlet image: the host binary only ------------------------------------
 FROM debian:trixie-slim AS host
@@ -65,7 +66,9 @@ COPY --from=builder /build/target/release/wamn-dispatcher /usr/local/bin/wamn-di
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-dispatcher"]
 
-# ---- run-worker image: the flow runner service + its component (SR9) --------
+# ---- executor image: the production flow runner + its component (SR9) -------
+# The deployment/image/binary identity remains wamn-run-worker; the owning
+# source package is wamn-executor.
 FROM debian:trixie-slim AS run-worker
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/wamn-run-worker /usr/local/bin/wamn-run-worker
@@ -75,6 +78,16 @@ COPY --from=builder /build/target/release/wamn-run-worker /usr/local/bin/wamn-ru
 COPY components/target/wasm32-wasip2/release/flowrunner.wasm /components/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-run-worker"]
+
+# ---- scenario-worker image: deterministic product scenarios ----------------
+FROM debian:trixie-slim AS scenario-worker
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /build/target/release/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
+# Deliberately the same compiled guest as the production executor. Capability
+# composition differs in the native service artifact, not in flow semantics.
+COPY components/target/wasm32-wasip2/release/flowrunner.wasm /components/flowrunner.wasm
+ENV HOME=/tmp
+ENTRYPOINT ["/usr/local/bin/wamn-scenario-worker"]
 
 # ---- cdc-reader image: the CDC event reader service (SR9) -------------------
 FROM debian:trixie-slim AS cdc-reader

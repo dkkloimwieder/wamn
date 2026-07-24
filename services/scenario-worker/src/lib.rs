@@ -1,5 +1,6 @@
 //! Product composition for executing stored deterministic flow scenarios.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,6 +13,8 @@ use wamn_execution_host::{
     DEFAULT_FLOWRUNNER_PATH, ExecutionHost, ExecutionIdentity, injected_capabilities,
 };
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_state::sql::select_completed_node_runs_sql;
+use wamn_run_state::{FailKind as StoredFailKind, RunStatus as StoredRunStatus};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig;
@@ -46,9 +49,9 @@ pub struct ScenarioWorkerArgs {
     #[arg(long, default_value = "wamn_run")]
     pub source_schema: String,
 
-    /// Dedicated, pre-provisioned schema in which scenario runs execute.
+    /// Template for caller-provisioned case schemas; must contain `{ordinal}` once.
     #[arg(long)]
-    pub execution_schema: String,
+    pub execution_schema_template: String,
 
     /// Stable caller-provided execution id used to make case run ids unique.
     #[arg(long)]
@@ -127,6 +130,22 @@ fn is_bare_identifier(value: &str) -> bool {
         && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
+fn execution_schema_for_case(template: &str, ordinal: i32) -> anyhow::Result<String> {
+    if ordinal < 0 {
+        bail!("scenario case ordinal must not be negative: {ordinal}");
+    }
+    if template.matches("{ordinal}").count() != 1 {
+        bail!("execution-schema-template must contain `{{ordinal}}` exactly once");
+    }
+    let schema = template.replace("{ordinal}", &ordinal.to_string());
+    if !is_bare_identifier(&schema) {
+        bail!(
+            "execution-schema-template must produce a bare lowercase SQL identifier, got {schema:?}"
+        );
+    }
+    Ok(schema)
+}
+
 async fn scope_session(
     client: &tokio_postgres::Client,
     tenant: &str,
@@ -196,16 +215,43 @@ async fn capture_db_assertions(
     Ok(captures)
 }
 
+async fn capture_terminal_node(
+    client: &tokio_postgres::Client,
+    run_id: &str,
+) -> anyhow::Result<(Option<serde_json::Value>, Option<String>)> {
+    let rows = client
+        .query(&select_completed_node_runs_sql(), &[&run_id])
+        .await
+        .context("read terminal scenario node")?;
+    let Some(row) = rows.last() else {
+        return Ok((None, None));
+    };
+    let output_text: Option<String> = row.get(4);
+    let output = output_text
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .context("parse terminal scenario node output")?;
+    let port = row
+        .get::<usize, Option<String>>(3)
+        .or_else(|| output.as_ref().map(|_| "main".to_string()));
+    Ok((output, port))
+}
+
 fn parse_fail_kind(value: Option<&str>) -> anyhow::Result<Option<FailKind>> {
     value
-        .map(|value| serde_json::from_value(serde_json::Value::String(value.to_string())))
+        .map(|value| {
+            StoredFailKind::from_sql(value)
+                .map(wamn_scenario_catalog::compat::fail_kind_from_store)
+                .with_context(|| format!("unknown persisted fail_kind {value:?}"))
+        })
         .transpose()
-        .context("unknown persisted fail_kind")
 }
 
 fn parse_run_status(value: &str) -> anyhow::Result<RunStatus> {
-    serde_json::from_value(serde_json::Value::String(value.to_string()))
-        .context("unknown persisted run status")
+    StoredRunStatus::from_sql(value)
+        .map(wamn_scenario_catalog::compat::run_status_from_store)
+        .with_context(|| format!("unknown persisted run status {value:?}"))
 }
 
 struct QueueScenarioBackend<'a> {
@@ -237,12 +283,10 @@ impl SchedulerBackend for QueueScenarioBackend<'_> {
 
 /// Execute one stored suite through the compiled flowrunner and evaluate it.
 pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport> {
-    if !is_bare_identifier(&args.source_schema) || !is_bare_identifier(&args.execution_schema) {
-        bail!("source and execution schemas must be bare lowercase SQL identifiers");
+    if !is_bare_identifier(&args.source_schema) {
+        bail!("source schema must be a bare lowercase SQL identifier");
     }
-    if args.source_schema == args.execution_schema {
-        bail!("scenario execution requires a schema distinct from the source catalog");
-    }
+    execution_schema_for_case(&args.execution_schema_template, 0)?;
     if args.execution_id.is_empty() {
         bail!("execution-id must not be empty");
     }
@@ -305,13 +349,26 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
     let engine = build_engine(&[])?;
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
     let mut reports = Vec::with_capacity(case_rows.len());
+    let mut seen_ordinals = BTreeSet::new();
 
     for row in case_rows {
         let case_id: String = row.get(0);
         let ordinal: i32 = row.get(1);
         let case_body: String = row.get(2);
+        if !seen_ordinals.insert(ordinal) {
+            bail!(
+                "suite {:?} has duplicate case ordinal {ordinal}",
+                args.suite_id
+            );
+        }
+        let execution_schema = execution_schema_for_case(&args.execution_schema_template, ordinal)?;
+        if execution_schema == args.source_schema {
+            bail!("scenario case {case_id:?} execution schema must differ from the source catalog");
+        }
         let case: TestCase = serde_json::from_str(&case_body)
             .with_context(|| format!("parse stored case {}/{}", args.suite_id, case_id))?;
+        case.validate()
+            .with_context(|| format!("validate stored case {}/{}", args.suite_id, case_id))?;
         let flow_ref = case
             .flow_ref
             .as_ref()
@@ -327,7 +384,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
             );
         }
 
-        scope_session(&client, &args.tenant, &args.execution_schema).await?;
+        scope_session(&client, &args.tenant, &execution_schema).await?;
         client
             .execute(
                 "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
@@ -371,7 +428,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         let postgres = case_pool(
             &postgres_config,
             &args.tenant,
-            &args.execution_schema,
+            &execution_schema,
             &args.flow_id,
         )?;
         let mut host = ExecutionHost::instantiate(
@@ -383,7 +440,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
             ExecutionIdentity {
                 owner: &args.flow_id,
                 tenant: &args.tenant,
-                schema: Some(&args.execution_schema),
+                schema: Some(&execution_schema),
                 project: &args.project,
             },
             injected_capabilities(scenario.wasi, scenario.egress),
@@ -401,7 +458,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
             .context("resume delayed scenario work")?;
         drop(host);
 
-        scope_session(&client, &args.tenant, &args.execution_schema).await?;
+        scope_session(&client, &args.tenant, &execution_schema).await?;
         let result_row = client
             .query_one(
                 "SELECT status, fail_kind, fail_node FROM runs \
@@ -411,10 +468,12 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
             .await
             .context("read durable scenario result")?;
         let status_text: String = result_row.get(0);
-        let status = parse_run_status(&status_text)
-            .with_context(|| format!("persisted value {status_text:?}"))?;
+        let status = parse_run_status(&status_text)?;
         let fail_kind_text: Option<String> = result_row.get(1);
+        let (node_output, node_port) = capture_terminal_node(&client, &run_id).await?;
         let captured = Captured {
+            node_output,
+            node_port,
             run: Some(RunFacts {
                 status,
                 fail_kind: parse_fail_kind(fail_kind_text.as_deref())?,
@@ -476,5 +535,17 @@ mod tests {
         assert!(is_bare_identifier("scenario_exec_1"));
         assert!(!is_bare_identifier("scenario; DROP SCHEMA public"));
         assert!(!is_bare_identifier("Upper"));
+    }
+
+    #[test]
+    fn execution_schema_template_is_explicit_and_case_isolated() {
+        assert_eq!(
+            execution_schema_for_case("scenario_exec_{ordinal}", 7).unwrap(),
+            "scenario_exec_7"
+        );
+        assert!(execution_schema_for_case("scenario_exec", 0).is_err());
+        assert!(execution_schema_for_case("{ordinal}_{ordinal}", 0).is_err());
+        assert!(execution_schema_for_case("scenario-exec-{ordinal}", 0).is_err());
+        assert!(execution_schema_for_case("scenario_exec_{ordinal}", -1).is_err());
     }
 }

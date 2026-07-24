@@ -45,7 +45,7 @@ pub struct ImpactProofArgs {
     pub admin_database_url: Option<String>,
 
     /// The ephemeral schema this gate owns (dropped at the end).
-    #[arg(long, default_value = "wamn-impactproof")]
+    #[arg(long, default_value = "wamn_impactproof")]
     pub schema: String,
 
     /// The owning tenant the flow + suite are seeded under.
@@ -276,7 +276,8 @@ mod tests {
 
     #[test]
     fn bare_ident_rejects_injection() {
-        assert!(is_bare_ident("wamn-impactproof"));
+        assert!(is_bare_ident("wamn_impactproof"));
+        assert!(!is_bare_ident("wamn-impactproof"));
         assert!(!is_bare_ident("a; DROP"));
         assert!(!is_bare_ident("Cap"));
     }

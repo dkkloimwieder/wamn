@@ -42,8 +42,8 @@ use wamn_runtime::plugins::wamn_logging::{self, WamnLogging, WamnLoggingConfig};
 // runpath (wamn-yf3): the production run-path drives a real Postgres through the
 // run-worker instantiate path.
 use tokio_postgres::{Client, NoTls};
+use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
-use wamn_run_worker::{RunWorker, RunnerIdentity};
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 
 // ---------------------------------------------------------------------------
@@ -878,21 +878,20 @@ async fn runpath_phase(args: &LogBenchArgs) -> anyhow::Result<()> {
 
         // The EXACT production instantiate path (SR1): same struct the run-worker
         // binary runs — the wasi:logging claim is host-injected inside it.
-        let mut worker = RunWorker::instantiate(
+        let mut worker = ExecutionHost::instantiate(
             &engine,
             &guest,
             pg,
             vault,
             logging.clone(),
-            RunnerIdentity {
+            ExecutionIdentity {
                 owner: RUNPATH_OWNER,
                 tenant: RUNPATH_TENANT,
                 schema: Some(RUNPATH_SCHEMA),
                 project: RUNPATH_PROJECT,
             },
-            std::sync::Arc::from([]), // deny-all egress: no http node in this flow
+            production_capabilities(std::sync::Arc::from([])),
             30_000,
-            None, // no test doubles: the runpath gate pins the real store build
         )
         .await?;
 

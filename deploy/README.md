@@ -7,7 +7,7 @@ the top level. When in doubt, ask which lifecycle owns the file's create/delete.
   standup and rarely touched: operators (CNPG, barman plugin), the data-plane
   NATS, observability backends (Loki/Tempo/otel/MinIO), kind config, Helm values.
 - **`platform/`** — long-lived production/platform manifests the control plane
-  or an operator owns: dispatcher, runner, registry, wamn-sysdb,
+  or an operator owns: dispatcher, production executor (`runner`), registry, wamn-sysdb,
   api-gateway/trace-relay workloads, credential `*.example` Secrets, the shared
   postgres fixture, `event-reader.example.yaml`, `hello-workload.yaml`.
 - **`gates/`** — gate/bench Job manifests (`*-job.yaml`) and their support

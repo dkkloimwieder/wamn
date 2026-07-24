@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use crate::apifixture;
+use wamn_test_fixtures::apifixture;
 
 #[derive(Debug, Args)]
 pub struct PublishCatalogDemoArgs {

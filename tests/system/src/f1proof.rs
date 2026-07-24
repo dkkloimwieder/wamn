@@ -21,7 +21,7 @@ use wamn_gate_harness::{as_array, check};
 #[derive(Debug, Args)]
 pub struct F1ProofArgs {
     /// The deployed poc-webhook-f1 Service, e.g.
-    /// http://poc-webhook-f1.wamn-system.svc.cluster.local:80
+    /// <http://poc-webhook-f1.wamn-system.svc.cluster.local:80>
     #[arg(long)]
     pub url: String,
 

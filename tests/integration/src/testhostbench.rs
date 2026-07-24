@@ -1,4 +1,5 @@
-//! The `testhostbench` subcommand: the S6 test-host plugin-swap gates
+//! The `testhostbench` compatibility subcommand: the S6 scenario-runtime
+//! capability-substitution gates.
 //! (docs/archive/p0-exit-criteria.md S6).
 //!
 //! S6 validates the mock-at-capability-boundary thesis (design-note 9): the
@@ -56,28 +57,27 @@ use wash_runtime::wasmtime::component::{
 use wash_runtime::wasmtime::{Engine as RawEngine, Store};
 
 use wamn_gate_harness::scope_session;
-// wamn-t92: the S6 doubles live in the shared runtime as reusable test-host
-// machinery; this bench drives them (the regression proof that extraction
-// changed nothing).
+// wamn-t92: the S6 deterministic adapters live in the scenario runtime; this
+// bench drives them as the regression proof that extraction changed nothing.
+use wamn_execution_host::{ExecutionHost, ExecutionIdentity, injected_capabilities};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
-use wamn_run_worker::{RunWorker, RunnerIdentity};
-use wamn_runtime::doubles::{
-    DoubleSet, EgressRecorder, EphemeralSchemaProvisioner, RUN_S6_WAKE_DEADLINES_SQL,
-    SchedulerBackend, TestScheduler, VirtualClock, build_virtual_wasi, case_pool,
-};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_scenario_runtime::{
+    EphemeralSchemaProvisioner, RUN_S6_WAKE_DEADLINES_SQL, RecordingEgress, ScenarioCapabilities,
+    ScenarioScheduler, SchedulerBackend, VirtualClock, build_virtual_wasi, case_pool,
+};
 // 11.4: the schemacase + runworker inline asserts now route through the pure
 // assertion vocabulary (the extraction-regression proof that the vocabulary
 // expresses the existing cases — behaviour identical to the old booleans).
-use wamn_testkit::{
+use wamn_scenario_model::{
     Assertion, Captured, DbCapture, DbExpect, EgressAssertion, EgressMatcher, FlowRef, RunFacts,
     RunStatus, TestCase, evaluate,
 };
 
 /// The virtual-clock epoch + `wasi:random` seed the test host uses (fixed for
-/// reproducibility, matching the run-worker `--test-doubles` constants).
+/// reproducibility, matching the scenario-runtime defaults).
 const TEST_EPOCH_SECS: u64 = 1_700_000_000;
 const TEST_SEED: u64 = 0x7492_5EED_5EED_7492;
 
@@ -95,7 +95,7 @@ pub enum Mode {
     /// N sequential ephemeral schema CASES (create → run → drop) prove per-case
     /// isolation via the test-runner-owned provisioner.
     Schemacase,
-    /// The production `RunWorker` under the `--test-doubles` set: it claims from
+    /// `ExecutionHost` under the scenario capability set: it claims from
     /// a real `run_queue` and drives a flow with the virtual clock + seeded
     /// random + egress recorder swapped in (the test host is the run-worker build).
     Runworker,
@@ -150,9 +150,9 @@ const EPH_SCHEMA: &str = "s6_test";
 const PLANTED_URL: &str = "http://169.254.169.254/latest/meta-data/";
 
 // The virtual clock (`VirtualClock`/`VirtualWallClock`) and the egress spy
-// (`EgressRecorder`) that used to live here are now reusable test-host machinery
-// in `wamn_runtime::doubles` (wamn-t92). This bench drives that library — the
-// regression proof the extraction changed nothing.
+// (`RecordingEgress`) that used to live here are now reusable scenario-runtime
+// machinery in `wamn_scenario_runtime` (wamn-t92). This bench drives that
+// library — the regression proof the extraction changed nothing.
 
 // ---------------------------------------------------------------------------
 // Worker: an instantiated flowrunner with the S6 exports resolved
@@ -385,7 +385,7 @@ fn template_ddl(schema: &str) -> String {
     )
 }
 
-// Schema create/drop is now owned by `wamn_runtime::doubles::EphemeralSchemaProvisioner`
+// Schema create/drop is now owned by `wamn_scenario_runtime::EphemeralSchemaProvisioner`
 // (`template_ddl` above is the case template it renders). The bench passes
 // `template_ddl` to the provisioner (delta 4).
 
@@ -560,8 +560,8 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
     // Prod egress: forward everything (audit only). Test egress: a spy that
     // denies any authority not on the flow's expectation list — the S6 spy
     // generalized (delta 3). The bench flow key is the store's workload id.
-    let prod_egress: Arc<dyn HostHandler> = Arc::new(EgressRecorder::forwarding());
-    let spy = Arc::new(EgressRecorder::spying());
+    let prod_egress: Arc<dyn HostHandler> = Arc::new(RecordingEgress::forwarding());
+    let spy = Arc::new(RecordingEgress::spying());
     spy.expect(BENCH_ID, [echo_authority.clone()]);
     let spy_egress: Arc<dyn HostHandler> = spy.clone();
 
@@ -782,7 +782,7 @@ async fn egress_phase(
     admin: &tokio_postgres::Client,
     echo_url: &str,
     echo_authority: &str,
-    spy: &EgressRecorder,
+    spy: &RecordingEgress,
 ) -> anyhow::Result<bool> {
     println!("\n## egress — the spy catches an intentionally-added unexpected outbound call");
 
@@ -924,7 +924,7 @@ async fn scheduler_phase(
             schema: EPH_SCHEMA,
             runs: vec![(run_id.to_string(), "receipt".to_string())],
         };
-        TestScheduler::new(vclock.clone())
+        ScenarioScheduler::new(vclock.clone())
             .drive_to_quiescence(&mut backend)
             .await?
     };
@@ -959,7 +959,7 @@ async fn scheduler_phase(
                 (rb.to_string(), "receipt".to_string()),
             ],
         };
-        TestScheduler::new(vclock.clone())
+        ScenarioScheduler::new(vclock.clone())
             .drive_to_quiescence(&mut backend)
             .await?
     };
@@ -1035,7 +1035,7 @@ async fn schemacase_phase(
                     &VirtualClock::at_secs(TEST_EPOCH_SECS),
                     TEST_SEED,
                 )),
-                Arc::new(EgressRecorder::forwarding()),
+                Arc::new(RecordingEgress::forwarding()),
             )
             .await
             .with_context(|| format!("build case worker {schema}"))?;
@@ -1075,7 +1075,7 @@ async fn schemacase_phase(
             ..Default::default()
         };
         let case = TestCase {
-            schema_version: wamn_testkit::SCHEMA_VERSION.to_string(),
+            schema_version: wamn_scenario_model::SCHEMA_VERSION.to_string(),
             name: format!("schemacase-{schema}"),
             flow_ref: s6_flow_ref(),
             node_ref: None,
@@ -1127,7 +1127,7 @@ async fn schemacase_phase(
 }
 
 // ---------------------------------------------------------------------------
-// runworker (delta 1): the production RunWorker under the --test-doubles set
+// scenario execution (delta 1): ExecutionHost under scenario capabilities
 // ---------------------------------------------------------------------------
 
 /// The tenant + owner the run-worker path runs under (kept distinct from the
@@ -1145,7 +1145,7 @@ async fn runworker_phase(
     echo_authority: &str,
 ) -> anyhow::Result<bool> {
     println!(
-        "\n## runworker — the production RunWorker claims from run_queue under the --test-doubles set (virtual clock + seeded random + egress recorder)"
+        "\n## scenario — ExecutionHost claims from run_queue with virtual clock, seeded random, and recording egress"
     );
 
     // Provision the union schema (flow tables + run_queue) via the SAME
@@ -1183,36 +1183,35 @@ async fn runworker_phase(
         .context("enqueue run_queue row")?;
 
     // Build the production runner store under the test double set: virtual clock
-    // + seeded random `WasiCtx` and an EgressRecorder swapped in for the prod
+    // + seeded random `WasiCtx` and an RecordingEgress swapped in for the prod
     // egress handler. The flow key is the runner owner (the store's workload id).
     let plugin = Arc::new(WamnPostgres::new(cfg.clone())?);
     let vault = Arc::new(WamnCredentials::empty());
-    let recorder = Arc::new(EgressRecorder::spying());
+    let recorder = Arc::new(RecordingEgress::spying());
     recorder.expect(RW_OWNER, [echo_authority.to_string()]);
-    let (doubles, _clock) = DoubleSet::virtual_host(
+    let (scenario, _clock) = ScenarioCapabilities::virtualized(
         TEST_EPOCH_SECS,
         TEST_SEED,
         recorder.clone() as Arc<dyn HostHandler>,
     );
 
-    let mut worker = RunWorker::instantiate(
+    let mut worker = ExecutionHost::instantiate(
         &harness.engine,
         guest,
         plugin.clone(),
         vault,
         Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?),
-        RunnerIdentity {
+        ExecutionIdentity {
             owner: RW_OWNER,
             tenant: RW_TENANT,
             schema: Some(RW_SCHEMA),
             project: "default",
         },
-        Arc::from([]),
+        injected_capabilities(scenario.wasi, scenario.egress),
         30_000,
-        Some(doubles),
     )
     .await
-    .context("instantiate RunWorker with the test double set")?;
+    .context("instantiate ExecutionHost with the test double set")?;
 
     let report = worker.drain().await.context("drain run_queue")?;
     // 11.4 retrofit: the drain + egress asserts routed through the assertion
@@ -1230,7 +1229,7 @@ async fn runworker_phase(
         ..Default::default()
     };
     let case = TestCase {
-        schema_version: wamn_testkit::SCHEMA_VERSION.to_string(),
+        schema_version: wamn_scenario_model::SCHEMA_VERSION.to_string(),
         name: "runworker-drain".to_string(),
         flow_ref: s6_flow_ref(),
         node_ref: None,
@@ -1272,7 +1271,9 @@ async fn runworker_phase(
         recorder.saw_authority(echo_authority),
         recorder.denied()
     );
-    println!("PASS(RunWorker --test-doubles claims + drives a flow; egress recorded): {pass}");
+    println!(
+        "PASS(ExecutionHost scenario capabilities claim + drive a flow; egress recorded): {pass}"
+    );
 
     drop(worker);
     drop(plugin);

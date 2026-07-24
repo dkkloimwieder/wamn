@@ -11,13 +11,14 @@
 //! `NodeInvokeResponse`. Empty vault / no signing key / deny-all egress — a case
 //! that reaches for a credential or egress is refused at the real WIT boundary.
 //!
-//! ## Case vocabulary — RECONCILED to wamn-testkit (wamn-gyt)
+//! ## Case vocabulary — owned by wamn-scenario-model
 //!
-//! The case/assertion vocabulary is the canonical `wamn-testkit` crate's: the
-//! file envelope [`CaseFile`] (`wamn_testkit::NodeCaseFile`) parses `cases.json`,
-//! each [`NodeCase`] lowers to a `wamn_testkit::TestCase`
+//! The case/assertion vocabulary is the canonical `wamn-scenario-model` crate's:
+//! the file envelope [`CaseFile`] (`wamn_scenario_model::NodeCaseFile`) parses
+//! `cases.json`, each [`NodeCase`] lowers to a
+//! `wamn_scenario_model::TestCase`
 //! ([`NodeCase::into_test_case`]), and the outcome is decided by
-//! [`wamn_testkit::evaluate`] over a [`Captured`] bundle built from the
+//! [`wamn_scenario_model::evaluate`] over a [`Captured`] bundle built from the
 //! `NodeInvokeResponse`. Only the EXECUTION glue ([`run_cases`] — `ServeNode`
 //! instantiation, wire mapping, and the typed [`TestGateError`] refusal) stays in
 //! the builder; the vocabulary is shared with the 828 catalog-jsonb store and the
@@ -31,13 +32,13 @@ use wamn_node_invoke::{
 };
 use wamn_node_runtime::{DEFAULT_NODE_ID, NodeRuntime, NodeRuntimeConfig};
 use wamn_runtime::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_testkit::{Captured, NodeCase, NodeErrorKind, evaluate};
+use wamn_scenario_model::{Captured, NodeCase, NodeErrorKind, evaluate};
 
-// The reconciled case vocabulary is wamn-testkit's; re-exported under the
+// The scenario vocabulary is re-exported under the
 // builder's historical `CaseFile` name so `build.rs` and the hermetic
 // `wamn-gates testgate` import surface (`CaseFile::from_json`, `run_cases`) are
 // unchanged.
-pub use wamn_testkit::NodeCaseFile as CaseFile;
+pub use wamn_scenario_model::NodeCaseFile as CaseFile;
 
 // ---------------------------------------------------------------------------
 // Refusal: a typed error naming every failing case (mirrors AllowlistError)
@@ -233,7 +234,7 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
     use wamn_node_invoke::{WireEmission, WireErrorDetail};
-    use wamn_testkit::{MatchMode, NodeExpect, NodeOk};
+    use wamn_scenario_model::{MatchMode, NodeExpect, NodeOk};
 
     fn node_case(grant: Option<Vec<String>>, config: Option<Value>) -> NodeCase {
         NodeCase {

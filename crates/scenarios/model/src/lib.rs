@@ -13,12 +13,14 @@
 //! ## Two case shapes
 //!
 //! A case targets EITHER a node or a flow:
-//! - `node_ref` present ⇒ a **node-level** case: the gate drives the pure
-//!   `run(ctx, input)` handler in a warm `ServeNode` and captures the emission /
-//!   port / error.
-//! - `flow_ref` present ⇒ a **flow-level** case: the gate drives the flow under
-//!   the test-double set (virtual clock + seeded random + egress recorder) and
-//!   captures the run outcome, egress log, and admin-pool DB reads.
+//! - `node_ref` present ⇒ a **node-level** case: a node scenario executor drives
+//!   `run(ctx, input)` and captures the emission, port, or error.
+//! - `flow_ref` present ⇒ a **flow-level** case: `wamn-scenario-worker` drives
+//!   the flow with deterministic capabilities and captures the run outcome,
+//!   terminal emission, egress log, and requested DB reads.
+//!
+//! Repository proofs may supply alternate executors, but they produce this same
+//! contract rather than defining a second test-only vocabulary.
 //!
 //! ## The node-level case shape (consumed by the 7se and 828 lanes)
 //!
@@ -120,6 +122,85 @@ pub struct TestCase {
     /// a no-op for run-outcome / egress / db-state assertions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normalize: Option<Normalize>,
+}
+
+/// Why a scenario case is not a coherent product contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TestCaseError {
+    /// The JSON did not parse into the case shape.
+    Parse(String),
+    /// `schema-version` was not [`SCHEMA_VERSION`].
+    SchemaVersion { found: String },
+    /// A required identifier was empty.
+    EmptyId { field: &'static str },
+    /// Exactly one of `flow-ref` and `node-ref` must be present.
+    Target {
+        has_flow_ref: bool,
+        has_node_ref: bool,
+    },
+}
+
+impl std::fmt::Display for TestCaseError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TestCaseError::Parse(error) => write!(formatter, "scenario case parse: {error}"),
+            TestCaseError::SchemaVersion { found } => write!(
+                formatter,
+                "unsupported scenario schema-version {found:?} (this build implements {SCHEMA_VERSION:?})"
+            ),
+            TestCaseError::EmptyId { field } => write!(formatter, "empty {field}"),
+            TestCaseError::Target {
+                has_flow_ref,
+                has_node_ref,
+            } => write!(
+                formatter,
+                "scenario case must have exactly one target (flow-ref present: {has_flow_ref}, node-ref present: {has_node_ref})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TestCaseError {}
+
+impl TestCase {
+    /// Parse and validate a scenario case.
+    pub fn from_json(json: &str) -> Result<Self, TestCaseError> {
+        let case: Self =
+            serde_json::from_str(json).map_err(|error| TestCaseError::Parse(error.to_string()))?;
+        case.validate()?;
+        Ok(case)
+    }
+
+    /// Validate the version, identifiers, and exclusive target.
+    pub fn validate(&self) -> Result<(), TestCaseError> {
+        if self.schema_version != SCHEMA_VERSION {
+            return Err(TestCaseError::SchemaVersion {
+                found: self.schema_version.clone(),
+            });
+        }
+        if self.name.is_empty() {
+            return Err(TestCaseError::EmptyId { field: "name" });
+        }
+        match (&self.flow_ref, &self.node_ref) {
+            (Some(flow), None) => {
+                if flow.flow_id.is_empty() {
+                    return Err(TestCaseError::EmptyId { field: "flow-id" });
+                }
+            }
+            (None, Some(node)) => {
+                if node.node_id.as_deref() == Some("") {
+                    return Err(TestCaseError::EmptyId { field: "node-id" });
+                }
+            }
+            (flow, node) => {
+                return Err(TestCaseError::Target {
+                    has_flow_ref: flow.is_some(),
+                    has_node_ref: node.is_some(),
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Exact vs deep-subset matching for an `ok` node-case emission.
@@ -271,6 +352,51 @@ mod tests {
         .unwrap();
         assert_eq!(minimal.schema_version, SCHEMA_VERSION);
         assert!(minimal.node_ref.is_some());
+        assert!(minimal.validate().is_ok());
+    }
+
+    #[test]
+    fn test_case_validation_rejects_ambiguous_or_unsupported_contracts() {
+        let parse = |value| serde_json::from_value::<TestCase>(value).unwrap();
+        let neither = parse(json!({
+            "name": "none",
+            "input": {},
+            "expect": []
+        }));
+        assert!(matches!(
+            neither.validate(),
+            Err(TestCaseError::Target {
+                has_flow_ref: false,
+                has_node_ref: false
+            })
+        ));
+
+        let both = parse(json!({
+            "name": "both",
+            "node-ref": {},
+            "flow-ref": {"flow-id": "flow", "version": 1},
+            "input": {},
+            "expect": []
+        }));
+        assert!(matches!(
+            both.validate(),
+            Err(TestCaseError::Target {
+                has_flow_ref: true,
+                has_node_ref: true
+            })
+        ));
+
+        let wrong_version = parse(json!({
+            "schema-version": "0.2",
+            "name": "future",
+            "node-ref": {},
+            "input": {},
+            "expect": []
+        }));
+        assert!(matches!(
+            wrong_version.validate(),
+            Err(TestCaseError::SchemaVersion { .. })
+        ));
     }
 
     /// The 7se node-case shape round-trips through JSON and lowers to the

@@ -1,7 +1,7 @@
 //! The fact bundle a harness fills, then hands to [`evaluate`](crate::evaluate).
 //!
 //! [`Captured`] is the seam between the effect shell (the gate: a warm
-//! `ServeNode` invocation, a `RunWorker` drain, admin-pool DB reads) and the
+//! node invocation, an execution-host drain, or scenario DB reads) and the
 //! pure decision ([`evaluate`](crate::evaluate)). The harness runs the effects
 //! and records their observable facts here; the evaluator never touches a wasm
 //! instance, a clock, or a database — it only reads this struct.
@@ -15,7 +15,7 @@ use crate::{FailKind, NodeErrorKind, RunStatus};
 ///
 /// LIFTED here from the runtime egress doubles (11.4) so a captured fact bundle
 /// is serde-serializable and the pure evaluator can assert over egress WITHOUT a
-/// runtime dependency. `wamn_runtime::doubles::egress` re-exports THIS type, so the
+/// runtime dependency. `wamn_scenario_runtime::RecordingEgress` records THIS type, so the
 /// recorder API (`records()` / `denied()`) is unchanged for its callers — the
 /// recorder produces the identical struct it always did, now with serde derives.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-# Flow test suites (11.2) — test cases as catalog data
+# Scenario catalog — persisted suites and cases
 
 A flow's test cases live as **catalog data**, stored in Postgres and versioned
 WITH the flow they test. A flow version and its test suite promote together
@@ -65,7 +65,7 @@ between src and dst.
 The FK is the structural backstop; the guard converts what would be a bare
 mid-copy FK error into a clean, named refusal before any mutation.
 
-## The envelope (`crates/scenarios/catalog`)
+## The envelope (`crates/scenarios/model`)
 
 `TestSuite` / `CaseEntry` are the pure import/export shape over the rows:
 
@@ -77,32 +77,45 @@ mid-copy FK error into a clean, named refusal before any mutation.
   "suite-id": "smoke",
   "name": "escalate-holds smoke suite",
   "cases": [
-    { "case-id": "escalates-stale", "ordinal": 0, "case": { "input": {…}, "expect": {…} } }
+    {
+      "case-id": "escalates-stale",
+      "ordinal": 0,
+      "case": {
+        "name": "escalates-stale",
+        "flow-ref": { "flow-id": "escalate-holds", "version": 1 },
+        "input": { "hold-id": "h-1" },
+        "expect": [
+          { "run-outcome": { "status": "completed" } }
+        ]
+      }
+    }
   ]
 }
 ```
 
 `TestSuite::from_json` validates the schema-version discriminator, non-empty ids,
 unique case ids, and coherent (unique) ordinals; `to_json` round-trips.
-`SCHEMA_VERSION` is `0.1` (mirrors `wamn_schema_model::SCHEMA_VERSION` / the flow-schema
+`SUITE_SCHEMA_VERSION` is `0.1` (mirrors `wamn_schema_model::SCHEMA_VERSION` / the flow-schema
 freeze: `0.1.x` is additive-only).
 
-## The gyt vocabulary seam (v0 opaque case body)
+## Model and persistence ownership
 
-In v0 the case **body** (`CaseEntry::case`, stored in `test_cases.case_body`
-jsonb) is an opaque `serde_json::Value`: this crate validates the ENVELOPE, not
-the body. The canonical case/assertion vocabulary is a sibling crate,
-`wamn-testkit` (lane gyt). At integration, `wamn-flow-tests` gains a
-validate-on-write pass that parses each `case` against those serde types — the
-one seam this crate is designed to grow into. Until then any well-formed JSON is
-accepted as a body.
+`wamn-scenario-model` owns `TestSuite`, `CaseEntry`, and `TestCase`; it validates
+the envelope and each case's version, identifiers, exclusive target, and
+assertion shape before write. `wamn-scenario-catalog` owns the SQL read/upsert
+contracts, ordering, durable/run compatibility translations, and pin-from-run
+transform. The database still stores each validated case body verbatim as
+`jsonb`.
 
 ## What v0 does NOT include
 
-- an "active suite" pointer (suites pin a version);
-- suite **execution** from catalog data — running a stored suite against a live
-  flow composes gyt's testkit runner (`testkitbench`) later, the natural
-  follow-up (likely already covered by the 3rj capstone).
+- an "active suite" pointer (suites pin a version).
+
+Stored suite execution is provided by the separate `wamn-scenario-worker`
+artifact using `wamn-scenario-runtime` adapters and the production flowrunner
+component. Its `--execution-schema-template` maps each case ordinal to a
+distinct caller-provisioned schema, preserving case isolation without granting
+the worker schema-creation privileges.
 
 ## Gates
 

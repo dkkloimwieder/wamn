@@ -40,9 +40,9 @@ use tokio_postgres::Client;
 use wamn_gate_harness::{check, seed_flow_version};
 use wamn_waker::{KubeScale, Scale};
 
-// Reuse ladderproof's app-connection + identifier guard (the same demo schema +
+// Reuse the shared app-connection + identifier guard (the same demo schema +
 // RLS floor the deployed runner claims under).
-use crate::ladderproof::{connect_app, valid_ident};
+use wamn_test_fixtures::runner::{connect_app, valid_ident};
 
 #[derive(Debug, Args)]
 pub struct WakeProofArgs {

@@ -7,7 +7,7 @@
 -- (services/ctl copy_project_env: flows in block 2, suites in block 5).
 --
 -- The case BODY is opaque jsonb in v0 (`case_body`): the canonical
--- case/assertion vocabulary is a sibling crate (wamn-testkit); at integration
+-- case/assertion vocabulary is a sibling crate (wamn-scenario-model); at integration
 -- the suite envelope (crates/scenarios/catalog) gains a validate-on-write pass
 -- against those serde types. `flow_version` is DENORMALIZED onto `test_cases`
 -- (not reachable only through `test_suites`) — the event_registrations

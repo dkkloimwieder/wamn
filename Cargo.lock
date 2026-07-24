@@ -4172,7 +4172,7 @@ dependencies = [
  "wamn-node-manifest",
  "wamn-node-runtime",
  "wamn-runtime",
- "wamn-testkit",
+ "wamn-scenario-model",
  "wasm-encoder 0.251.0",
 ]
 
@@ -4245,10 +4245,11 @@ dependencies = [
  "wamn-control-registry",
  "wamn-flow",
  "wamn-run-state",
+ "wamn-scenario-catalog",
+ "wamn-scenario-model",
  "wamn-schema-compiler",
  "wamn-schema-control",
  "wamn-schema-model",
- "wamn-testkit",
 ]
 
 [[package]]
@@ -4315,6 +4316,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-execution-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "futures-util",
+ "hyper",
+ "opentelemetry",
+ "tokio",
+ "tracing",
+ "wamn-runtime",
+ "wamn-scheduler",
+ "wash-runtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "wamn-executor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "tokio",
+ "tracing",
+ "wamn-execution-host",
+ "wamn-runtime",
+ "wamn-scheduler",
+ "wash-runtime",
+]
+
+[[package]]
 name = "wamn-f1"
 version = "0.1.0"
 dependencies = [
@@ -4335,21 +4369,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-flow-tests"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "wamn-testkit",
-]
-
-[[package]]
 name = "wamn-gate-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde_json",
  "tokio-postgres",
+ "wamn-scenario-catalog",
+ "wamn-scenario-model",
 ]
 
 [[package]]
@@ -4357,51 +4384,15 @@ name = "wamn-gates"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
- "async-trait",
- "bytes",
- "chrono",
  "clap",
- "futures-util",
- "hex",
- "http-body-util",
- "hyper",
- "hyper-util",
- "pg_walstream",
- "ring",
- "serde",
- "serde_json",
- "sha2 0.11.0",
  "tokio",
- "tokio-postgres",
  "tracing",
- "wamn-cdc-reader",
- "wamn-component-policy",
- "wamn-control-provision",
- "wamn-control-registry",
- "wamn-ctl",
- "wamn-dispatcher",
- "wamn-event-reg",
- "wamn-event-wire",
- "wamn-flow",
- "wamn-flow-tests",
- "wamn-gate-harness",
- "wamn-node-invoke",
- "wamn-node-manifest",
- "wamn-node-runtime",
- "wamn-run-state",
- "wamn-run-worker",
- "wamn-runner",
+ "wamn-proof-conformance",
+ "wamn-proof-integration",
+ "wamn-proof-system",
  "wamn-runtime",
- "wamn-scheduler",
- "wamn-schema-compiler",
- "wamn-schema-model",
- "wamn-testkit",
- "wamn-waker",
+ "wamn-test-infrastructure",
  "wash-runtime",
- "wasm-encoder 0.251.0",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -4517,6 +4508,103 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-proof-conformance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "wamn-component-policy",
+ "wamn-gate-harness",
+ "wamn-node-invoke",
+ "wamn-node-manifest",
+ "wamn-node-runtime",
+ "wamn-run-state",
+ "wamn-runtime",
+ "wamn-scenario-model",
+ "wash-runtime",
+ "wasm-encoder 0.251.0",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "wamn-proof-integration"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "clap",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "pg_walstream",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "wamn-cdc-reader",
+ "wamn-control-provision",
+ "wamn-control-registry",
+ "wamn-ctl",
+ "wamn-dispatcher",
+ "wamn-event-reg",
+ "wamn-event-wire",
+ "wamn-execution-host",
+ "wamn-flow",
+ "wamn-gate-harness",
+ "wamn-node-invoke",
+ "wamn-node-runtime",
+ "wamn-proof-conformance",
+ "wamn-run-state",
+ "wamn-runner",
+ "wamn-runtime",
+ "wamn-scenario-catalog",
+ "wamn-scenario-model",
+ "wamn-scenario-runtime",
+ "wamn-scheduler",
+ "wamn-schema-compiler",
+ "wamn-schema-model",
+ "wamn-test-fixtures",
+ "wamn-test-infrastructure",
+ "wamn-waker",
+ "wash-runtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "wamn-proof-system"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "wamn-flow",
+ "wamn-gate-harness",
+ "wamn-proof-conformance",
+ "wamn-run-state",
+ "wamn-schema-compiler",
+ "wamn-schema-model",
+ "wamn-test-fixtures",
+]
+
+[[package]]
 name = "wamn-run-state"
 version = "0.1.0"
 dependencies = [
@@ -4525,27 +4613,6 @@ dependencies = [
  "wamn-flow",
  "wamn-pg-core",
  "wamn-runner",
-]
-
-[[package]]
-name = "wamn-run-worker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "async-trait",
- "clap",
- "futures-util",
- "hyper",
- "opentelemetry",
- "tokio",
- "tracing",
- "wamn-run-state",
- "wamn-runtime",
- "wamn-scheduler",
- "wash-runtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -4581,10 +4648,65 @@ dependencies = [
  "wamn-control-registry",
  "wamn-event-wire",
  "wamn-pg-core",
- "wamn-testkit",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "wamn-scenario-catalog"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wamn-node-invoke",
+ "wamn-run-state",
+ "wamn-scenario-model",
+]
+
+[[package]]
+name = "wamn-scenario-model"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "wamn-scenario-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "hyper",
+ "rand_core 0.10.1",
+ "tokio",
+ "tokio-postgres",
+ "wamn-runtime",
+ "wamn-scenario-model",
+ "wash-runtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "wamn-scenario-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "wamn-execution-host",
+ "wamn-run-state",
+ "wamn-runtime",
+ "wamn-scenario-catalog",
+ "wamn-scenario-model",
+ "wamn-scenario-runtime",
+ "wash-runtime",
 ]
 
 [[package]]
@@ -4642,13 +4764,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-testkit"
+name = "wamn-test-fixtures"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "anyhow",
  "serde_json",
- "wamn-node-invoke",
+ "tokio",
+ "tokio-postgres",
+ "wamn-flow",
+ "wamn-gate-harness",
  "wamn-run-state",
+ "wamn-schema-compiler",
+ "wamn-schema-model",
+]
+
+[[package]]
+name = "wamn-test-infrastructure"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hyper",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "wamn-ctl",
+ "wamn-node-invoke",
+ "wamn-node-runtime",
+ "wamn-runtime",
+ "wamn-test-fixtures",
+ "wash-runtime",
 ]
 
 [[package]]

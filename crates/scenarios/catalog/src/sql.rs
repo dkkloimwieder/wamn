@@ -9,12 +9,10 @@
 //! **Read posture.** Tables are UNQUALIFIED so a `search_path` selects the
 //! source schema (the house S6 schema-as-fixture pattern); every builder ALSO
 //! carries the explicit `(tenant_id, flow_id, flow_version[, suite_id])`
-//! predicate, so a read is correct under BOTH a superuser (RLS-bypassing, the
-//! executor's cross-tenant admin session) AND an app-role RLS session (the
-//! predicate agrees with the `app.tenant` claim). The executor reads via the
-//! ADMIN session it already needs for provisioning; the explicit tenant
-//! predicate — not the RLS floor — is what scopes the read (documented in the
-//! executor).
+//! predicate, so a read is correct under BOTH a deliberately scoped superuser
+//! session and an app-role RLS session (where the predicate agrees with the
+//! `app.tenant` claim). The product scenario worker uses the latter; integration
+//! proof setup may use the former.
 //!
 //! Kept aligned with `deploy/sql/flow-tests.sql` by the drift guard below.
 
@@ -35,6 +33,27 @@ pub fn select_cases_for_suite_sql() -> String {
     "SELECT case_id, ordinal, case_body::text FROM test_cases \
      WHERE tenant_id = $1 AND flow_id = $2 AND flow_version = $3 AND suite_id = $4 \
      ORDER BY ordinal"
+        .to_string()
+}
+
+/// Upsert one version-bound scenario suite. Parameters are tenant, flow id,
+/// flow version, suite id, and display name.
+pub fn upsert_suite_sql() -> String {
+    "INSERT INTO test_suites (tenant_id, flow_id, flow_version, suite_id, name) \
+     VALUES ($1, $2, $3, $4, $5) \
+     ON CONFLICT (tenant_id, flow_id, flow_version, suite_id) \
+       DO UPDATE SET name = excluded.name, updated_at = now()"
+        .to_string()
+}
+
+/// Upsert one scenario case. Parameters are tenant, flow id, flow version,
+/// suite id, case id, ordinal, and the validated case JSON text.
+pub fn upsert_case_sql() -> String {
+    "INSERT INTO test_cases \
+       (tenant_id, flow_id, flow_version, suite_id, case_id, ordinal, case_body) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb) \
+     ON CONFLICT (tenant_id, flow_id, flow_version, suite_id, case_id) \
+       DO UPDATE SET ordinal = excluded.ordinal, case_body = excluded.case_body"
         .to_string()
 }
 
@@ -79,6 +98,12 @@ mod tests {
         let suites = select_suites_for_flow_sql();
         assert!(suites.contains("FROM test_suites"));
         assert!(suites.contains("ORDER BY suite_id"));
+        let suite_write = upsert_suite_sql();
+        assert!(suite_write.contains("INSERT INTO test_suites"));
+        assert!(suite_write.contains("flow_version"));
+        let case_write = upsert_case_sql();
+        assert!(case_write.contains("INSERT INTO test_cases"));
+        assert!(case_write.contains("$7::text::jsonb"));
     }
 
     /// Mutation guard (suite-selection WHERE predicate): the cases read is

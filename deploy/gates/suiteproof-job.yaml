@@ -3,7 +3,7 @@
 # (wamn_suiteproof) through the superuser url — no shared-schema mutation, dropped
 # at the end. It applies the deploy/sql/flow-tests.sql tables via the SAME
 # publish-catalog --runstate ensure_* path production uses, seeds a suite + cases
-# from the wamn-flow-tests envelope, and asserts version binding + RLS (a foreign
+# from the wamn-scenario-catalog envelope, and asserts version binding + RLS (a foreign
 # tenant sees zero suites) + the test_suites/test_cases → flows FK cascade.
 # Co-located with postgres, NO cpu limit (the S2 CFS lesson). Run bench/proof Jobs
 # SEQUENTIALLY on the shared postgres.

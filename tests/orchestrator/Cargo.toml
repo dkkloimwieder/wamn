@@ -6,90 +6,13 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-wamn-component-policy = { path = "../../crates/platform/component-policy" }
 wamn-runtime = { path = "../../crates/platform/runtime" }
-wamn-node-runtime = { path = "../../crates/platform/node-runtime" }
-# SR9: the one-shot control-plane verbs the provisioning/publish gates drive.
-wamn-ctl = { path = "../../services/ctl" }
-# SR9: the per-service crates whose engines the bench gates drive directly.
-wamn-dispatcher = { path = "../../services/dispatcher" }
-wamn-run-worker = { path = "../../services/run-worker" }
-# wakeproof (fqg.12) drives the deployed waker's k8s scale client to park +
-# restore the runner Deployment around the scale-to-zero wake proof.
-wamn-waker = { path = "../../services/waker" }
-wamn-gate-harness = { path = "../../test-support/harness" }
+wamn-test-infrastructure = { path = "../../test-support/infrastructure" }
+wamn-proof-conformance = { path = "../conformance" }
+wamn-proof-integration = { path = "../integration" }
+wamn-proof-system = { path = "../system" }
 wash-runtime = { workspace = true }
-# Bench harnesses instantiate command components directly (CommandPre) and
-# drive wasi:http incoming handlers (ProxyPre). Pinned to the exact rev
-# wash-runtime's workspace uses so the graph keeps a single wasmtime.
-wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
-wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
 anyhow = { workspace = true }
-tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "sync"] }
-serde_json = "1"
-serde = { version = "1", features = ["derive"] }
+tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
-async-trait = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
-bytes = "1"
-# S6 egress spy / prod handler comparisons: HostHandler::outgoing_request is in
-# terms of hyper::Request.
-hyper = "1"
-hyper-util = { version = "0.1", features = ["tokio"] }
-# apibench/f1bench request bodies + response collection.
-http-body-util = "0.1"
-# apibench/f1bench build catalog snapshots + tenant-floor DDL for their
-# ephemeral schemas.
-wamn-schema-model = { path = "../../crates/schema/model" }
-wamn-schema-compiler = { path = "../../crates/schema/compiler" }
-# provisionbench: the pure provisioning naming / SQL / Secret builders (2.3),
-# driven end-to-end through wamn-provision. The org-pair
-# / T3 tier modes (wamn-q3n.8) also drive the registry model + saga SQL builders.
-wamn-control-provision = { path = "../../crates/control/provision" }
-wamn-control-registry = { path = "../../crates/control/registry" }
-# nodeinvoke crafts + signs raw invocation envelopes for the wamn-fqg.22 authn
-# negatives (the same pure wire crate both hop ends link).
-wamn-node-invoke = { path = "../../crates/node/invoke" }
-# testkitbench (11.4) loads Vec<TestCase>, drives node/flow cases, and folds each
-# AssertionResult into check — the pure assertion vocabulary. testhostbench's
-# schemacase/runworker retrofit routes its inline asserts through the same.
-wamn-testkit = { path = "../../crates/scenarios/model" }
-wamn-node-manifest = { path = "../../crates/node/manifest" }
-# Durable execution state and pure trigger scheduling are separate owners.
-wamn-run-state = { path = "../../crates/execution/run-state" }
-wamn-scheduler = { path = "../../crates/execution/scheduler" }
-# capturebench (9.6) compiles a Plan to prove a capture-off run reconstructs to
-# CaptureOff — the pure engine's resume type.
-wamn-runner = { path = "../../crates/execution/flow-engine" }
-# readerbench consumes the REAL draft envelope type the reader publishes — the
-# stream-side assert deserializes with deny_unknown_fields (drift guard).
-wamn-event-wire = { path = "../../crates/events/wire" }
-# rie2ebench embeds the REAL reader service body (run_with_token) next to the
-# materializer guest for the RI-flip e2e; pg_walstream only for its CancellationToken.
-wamn-cdc-reader = { path = "../../services/cdc-reader" }
-wamn-event-reg = { path = "../../crates/events/registration" }
-pg_walstream = { workspace = true }
-wamn-flow = { path = "../../crates/execution/flow-model" }
-# suiteproof: the 11.2 flow test-suite envelope — round-tripped against the
-# deploy/sql/flow-tests.sql rows it seeds.
-wamn-flow-tests = { path = "../../crates/scenarios/catalog" }
-# queuebench/dispatchbench doorbell hints (same version req as wash-runtime's
-# so cargo unifies to one crate instance).
-async-nats = { version = "0.47", default-features = false }
-# with-serde_json-1: the ceiling mode binds result_json (jsonb) params on the
-# raw client — the production path sends text wire format via the plugin, but
-# tokio_postgres binary binds need the typed Value.
-tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"] }
-chrono = { version = "0.4", default-features = false, features = ["std"] }
-futures-util = "0.3"
-# socketguard synthesizes minimal adversarial + control components in-process
-# (a socket-importing world vs a standard one) to drive the E13a publish-time
-# egress guard hermetically — no external fixture build, no registry. Pinned to
-# the wasm-encoder already in the graph via the wasmtime rev.
-wasm-encoder = "0.251"
-sha2 = "0.11"
-hex = "0.4"
-ring = "0.17"
-
-[dev-dependencies]
-# f1fixture coherence test compiles the committed seed dataset (3.6).

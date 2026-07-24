@@ -1,0 +1,22 @@
+[package]
+name = "wamn-test-fixtures"
+description = "Repository-only catalog, flow, and payload fixtures."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+serde_json = "1"
+tokio = { workspace = true, features = ["time"] }
+tokio-postgres = "0.7"
+wamn-gate-harness = { path = "../harness" }
+wamn-run-state = { path = "../../crates/execution/run-state" }
+wamn-schema-compiler = { path = "../../crates/schema/compiler" }
+wamn-schema-model = { path = "../../crates/schema/model" }
+
+[dev-dependencies]
+wamn-flow = { path = "../../crates/execution/flow-model" }

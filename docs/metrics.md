@@ -36,7 +36,7 @@ added (histograms keep their structural `_count`/`_sum`/`_bucket`).
 
 | Metric | Kind | Attributes | Emitted by (file) |
 |---|---|---|---|
-| `wamn.run.executions` | counter | `outcome` (completed/parked/failed), `wamn.tenant`, `wamn.project` | run-worker `drain` (`services/run-worker/src/lib.rs`) |
+| `wamn.run.executions` | counter | `outcome` (completed/parked/failed), `wamn.tenant`, `wamn.project` | execution-host `drain` (`crates/execution/host/src/lib.rs`) |
 | `wamn.run.drive.duration_ms` | histogram | `wamn.tenant`, `wamn.project` | run-worker `drain` (timed around `call_run_next`) |
 | `wamn.run_queue.depth` | observable gauge (i64) | `wamn.tenant`, `wamn.project` | dispatcher `tick_project` (`services/dispatcher/src/lib.rs`, `RUN_QUEUE_DEPTH_SQL`) |
 | `wamn.postgres.pool.{size,available,waiting}` | observable gauge (u64) | `wamn.project` | `WamnPostgres::register_pool_metrics` (deadpool `Pool::status()`) |

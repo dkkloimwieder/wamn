@@ -1,22 +1,24 @@
-[workspace]
-
 [package]
 name = "wamn-proof-system"
 description = "Black-box repository system proofs over deployed and public surfaces"
-version = "0.1.0"
-edition = "2024"
-license = "Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 build = "build.rs"
 
 [dependencies]
-anyhow = "1"
+anyhow = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "net", "io-util", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["net", "io-util", "time"] }
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 tracing = "0.1"
 wamn-flow = { path = "../../crates/execution/flow-model" }
 wamn-gate-harness = { path = "../../test-support/harness" }
+wamn-test-fixtures = { path = "../../test-support/fixtures" }
 wamn-run-state = { path = "../../crates/execution/run-state" }
 wamn-schema-compiler = { path = "../../crates/schema/compiler" }
 wamn-schema-model = { path = "../../crates/schema/model" }
+
+[dev-dependencies]
+wamn-proof-conformance = { path = "../conformance" }

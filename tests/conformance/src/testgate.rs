@@ -10,7 +10,7 @@
 //!   `#[cfg(test)]` matrix) all PASS against the compiled artifact; and
 //! - a NEGATIVE arm — a deliberately-wrong `cases-refusal-fixture.json` (a severe
 //!   moisture exceedance WRONGLY expected to `accept`) is REFUSED with the typed
-//!   [`TestGateError`], naming the failing case.
+//!   `TestGateError`, naming the failing case.
 //!
 //! `run_cases` takes only wasm bytes + cases and does NO registry I/O — so a
 //! typed refusal returned from it (as the negative arm shows) is proof the
@@ -33,9 +33,9 @@ use wamn_node_invoke::{
     NodeInvokeRequest, NodeInvokeResponse, WireNodeError, WirePayload, WireRunContext,
 };
 use wamn_node_runtime::{DEFAULT_NODE_ID, NodeRuntime, NodeRuntimeConfig};
-use wamn_testkit::{Captured, NodeCase, NodeErrorKind, evaluate};
+use wamn_scenario_model::{Captured, NodeCase, NodeErrorKind, evaluate};
 
-type CaseFile = wamn_testkit::NodeCaseFile;
+type CaseFile = wamn_scenario_model::NodeCaseFile;
 
 #[derive(Debug)]
 struct TestGateError {

@@ -8,7 +8,7 @@
 #
 # The gate loads a checked-in Vec<TestCase> fixture (/bench/testkit-cases.json,
 # baked into the image), drives the node-level cases through a warm ServeNode
-# over /bench/disposition-node.wasm and the flow-level cases through the RunWorker
+# over /bench/disposition-node.wasm and the flow-level cases through the ExecutionHost
 # test-double set, and folds each evaluate() AssertionResult into a PASS/FAIL line.
 #
 # The flow-level path provisions a fresh ephemeral schema through the Postgres

@@ -35,9 +35,10 @@ wamn-control-registry = { path = "../../crates/control/registry" }
 # (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
 # 11.3 pin-run also reuses its run/node-run read builders + `capture::scrub`.
 wamn-run-state = { path = "../../crates/execution/run-state" }
-# 11.3 pin-run: the pure `pin_run` transform (RunRecord + node_runs -> TestCase)
-# and the canonical case vocabulary the pinned case is serialized as.
-wamn-testkit = { path = "../../crates/scenarios/model" }
+# 11.3 pin-run: the scenario-catalog transform (RunRecord + node_runs ->
+# TestCase) and the canonical scenario-model vocabulary it serializes.
+wamn-scenario-model = { path = "../../crates/scenarios/model" }
+wamn-scenario-catalog = { path = "../../crates/scenarios/catalog" }
 # 11.8 impact-report / migrate-catalog acknowledge gate: the PURE schema-change
 # impact analysis (entities → flows via registration + node config → suites →
 # generated-API). This shell reads the dependency rows and calls wamn_schema_control::impact::analyze.

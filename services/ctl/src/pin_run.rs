@@ -1,9 +1,9 @@
 //! The `pin-run` subcommand (11.3 record-and-replay fixtures): pin a recorded
 //! run (its 9.6-captured `runs` + `node_runs` rows) as a stored test case.
 //!
-//! The effect shell for the PURE `wamn_testkit::pin_run` transform: this READS
+//! The effect shell for the `wamn_scenario_catalog::pin_run` transform: this READS
 //! the run + its completed node executions (through the single-source run-state
-//! read builders), folds them into a canonical `wamn_testkit::TestCase`, and
+//! read builders), folds them into a canonical `wamn_scenario_model::TestCase`, and
 //! WRITES the case into the flow's `test_suites`/`test_cases` (11.2 storage) — so
 //! a real run becomes a regression fixture, versioned WITH the flow it exercised.
 //!
@@ -30,7 +30,8 @@ use tokio_postgres::{Client, NoTls};
 
 use wamn_run_state::sql::{select_node_runs_for_pin_sql, select_run_for_pin_sql};
 use wamn_run_state::{FailKind, NodeRunRecord, NodeRunStatus, RunRecord, RunStatus};
-use wamn_testkit::{PinError, PinOptions, TestCase, pin_run};
+use wamn_scenario_catalog::{PinError, PinOptions, pin_run};
+use wamn_scenario_model::TestCase;
 
 #[derive(Debug, Args)]
 pub struct PinRunArgs {
@@ -304,6 +305,7 @@ async fn insert_suite_and_case(
     case_id: &str,
     ordinal: i32,
 ) -> anyhow::Result<(String, i32)> {
+    case.validate().context("validate pinned scenario case")?;
     let flow_ref = case
         .flow_ref
         .as_ref()
@@ -313,10 +315,7 @@ async fn insert_suite_and_case(
 
     client
         .execute(
-            "INSERT INTO test_suites (tenant_id, flow_id, flow_version, suite_id, name) \
-             VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (tenant_id, flow_id, flow_version, suite_id) \
-               DO UPDATE SET name = excluded.name, updated_at = now()",
+            &wamn_scenario_catalog::sql::upsert_suite_sql(),
             &[&tenant, &flow_id, &flow_version, &suite_id, &suite_id],
         )
         .await
@@ -325,11 +324,7 @@ async fn insert_suite_and_case(
     let case_body = serde_json::to_string(case).context("serialize pinned case")?;
     client
         .execute(
-            "INSERT INTO test_cases \
-               (tenant_id, flow_id, flow_version, suite_id, case_id, ordinal, case_body) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb) \
-             ON CONFLICT (tenant_id, flow_id, flow_version, suite_id, case_id) \
-               DO UPDATE SET ordinal = excluded.ordinal, case_body = excluded.case_body",
+            &wamn_scenario_catalog::sql::upsert_case_sql(),
             &[
                 &tenant,
                 &flow_id,

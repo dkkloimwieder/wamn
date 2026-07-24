@@ -1,9 +1,8 @@
 //! Contract proofs for component policy, WIT behavior, schemas, and artifacts.
 
-mod buildproof;
-mod credprobe;
-mod egressbench;
-#[cfg(test)]
-mod schema_drift;
-mod socketguard;
-mod testgate;
+pub mod buildproof;
+pub mod credprobe;
+pub mod egressbench;
+pub mod schema_drift;
+pub mod socketguard;
+pub mod testgate;

@@ -184,7 +184,7 @@ pub fn select_completed_node_runs_sql() -> String {
 
 /// Read a run's pinnable facts — the flow it ran, its terminal outcome, and its
 /// trigger input — for the 11.3 `pin-run` verb (which folds them into a
-/// `wamn_testkit::TestCase`). Unlike [`select_run_dispatch_sql`] (which reads only
+/// `wamn_scenario_model::TestCase`). Unlike [`select_run_dispatch_sql`] (which reads only
 /// the flow + input to DISPATCH a claimed run) this also projects the terminal
 /// `status`/`fail_kind`/`fail_node` a pinned `RunOutcome` assertion needs. `$1`
 /// run_id; RLS scopes the tenant.

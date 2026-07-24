@@ -39,7 +39,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use wamn_dispatcher::{Dispatcher, DispatcherConfig, ProjectSpec, register_queue_depth_gauge};
-use wamn_run_worker::RunWorker;
+use wamn_execution_host::{ExecutionHost, production_capabilities};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::memory_metrics::global_memory_meter;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
@@ -263,21 +263,20 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
         // The production runner (registers wamn.run.* on instantiate).
         let vault = Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty());
         let logging = Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?);
-        let mut worker = RunWorker::instantiate(
+        let mut worker = ExecutionHost::instantiate(
             &engine,
             &guest,
             plugin.clone(),
             vault,
             logging,
-            wamn_run_worker::RunnerIdentity {
+            wamn_execution_host::ExecutionIdentity {
                 owner: OWNER,
                 tenant: TENANT,
                 schema: Some(SCHEMA),
                 project: "default",
             },
-            Arc::from([]),
+            production_capabilities(Arc::from([])),
             30_000,
-            None,
         )
         .await?;
 

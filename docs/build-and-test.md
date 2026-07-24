@@ -21,8 +21,21 @@ rev-bump procedure. The rev is pinned in one place:
 ### Workspace build
 
 ```bash
-cargo build --release -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-gates   # all artifacts (SR1/SR9 split)
+cargo build --release -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-gates   # all artifacts (SR1/SR9 split)
 (cd components && cargo build --release --target wasm32-wasip2)  # guest fixtures
+```
+
+### Proof tiers
+
+```bash
+# Compile and run each proof tier through its owning package.
+cargo test -p wamn-proof-conformance -p wamn-proof-integration -p wamn-proof-system
+
+# Repository-only fixture and temporary-infrastructure support.
+cargo test -p wamn-test-fixtures -p wamn-test-infrastructure
+
+# Compatibility command router used by the existing Jobs.
+cargo test -p wamn-gates
 ```
 
 ### S1/4p3/bp4.1 gates
@@ -225,7 +238,7 @@ kubectl -n wamn-system logs job/tracebench
 Docs: docs/metrics.md
 
 ```bash
-cargo test -p wamn-host -p wamn-run-worker -p wamn-dispatcher -p wamn-gates --no-fail-fast
+cargo test -p wamn-host -p wamn-executor -p wamn-dispatcher -p wamn-gates --no-fail-fast
 # Local iteration: a throwaway Postgres (+ the NOSUPERUSER wamn_app role) and the
 # local collector with the new :8889 metrics pipeline. metricbench drives the
 # real run/queue/pool/memory seams, then scrapes :8889 for the wamn_* families.
@@ -306,15 +319,15 @@ kubectl -n wamn-system logs -f job/testhostbench
 
 ### [11.4] assertion library (testkitbench)
 
-Docs: docs/testkit.md · Crate: crates/scenarios/model · Fixture: deploy/gates/testkit-cases.json
+Docs: docs/scenario-model.md · Crate: crates/scenarios/model · Fixture: deploy/gates/testkit-cases.json
 
 ```bash
 # Unit tests (the pure vocabulary: serde drift-guards, subset semantics, the
 # evaluate() truth table, ExactlyThese set-equality):
-cargo test -p wamn-testkit
+cargo test -p wamn-scenario-model
 
 # The gate loads a checked-in Vec<TestCase>, drives node-level cases through a
-# warm ServeNode and flow-level cases through the RunWorker test-double set, and
+# warm ServeNode and flow-level cases through the scenario capability set, and
 # folds each evaluate() AssertionResult into a PASS/FAIL line.
 # Local iteration (throwaway container + the same fixture SQL):
 docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
@@ -331,15 +344,35 @@ kubectl -n wamn-system apply -f deploy/gates/testkitbench-job.yaml
 kubectl -n wamn-system logs -f job/testkitbench
 ```
 
-#### [11.2-exec / wamn-0lfu] stored-suite executor (testkitbench --suite / --impact-report)
+#### [11.2-exec / wamn-0lfu] stored scenarios
+
+`wamn-scenario-worker` is the product artifact. It reads one stored suite and
+executes each case in a distinct caller-provisioned run schema through the same
+flowrunner component used by the production executor. The required
+`--execution-schema-template` contains `{ordinal}` exactly once (for example,
+`scenario_run_{ordinal}`), so case isolation is structural without giving the
+worker schema-creation credentials. It resumes parked work with virtual time,
+evaluates the scenario-model assertions, and emits a JSON report.
+Its deterministic clock, random, credentials, and recording/deny egress
+adapters come from `wamn-scenario-runtime`; none are linked into
+`wamn-executor`.
+
+```bash
+cargo test -p wamn-scenario-model -p wamn-scenario-catalog \
+  -p wamn-scenario-runtime -p wamn-scenario-worker
+cargo run -p wamn-scenario-worker -- --help
+```
+
+The retained `testkitbench --suite / --impact-report` path is the compatibility
+and integration proof for previously shipped gates:
 
 The 11.4 `testkitbench` subcommand doubles as the STORED-suite EXECUTOR: it loads
 `test_suites` / `test_cases` rows from a schema, re-validates each `case_body`
-against the `wamn-testkit` vocabulary on READ, and executes each case as its OWN
-run through the t92 doubles seam — a FRESH ephemeral schema per case (the source
+against the `wamn-scenario-model` vocabulary on READ, and executes each case as its OWN
+run through scenario-runtime — a FRESH ephemeral schema per case (the source
 schema is read-only), the graph read from `{source_schema}.flows`,
-`DoubleSet::virtual_host` + `EgressRecorder` (allowlist derived from the case's
-own egress asserts) + `RunWorker` + drain, then `wamn_testkit::evaluate` per
+`ScenarioCapabilities::virtualized` + `RecordingEgress` (allowlist derived from the case's
+own egress asserts) + `ExecutionHost` + drain, then `wamn_scenario_model::evaluate` per
 case. One `check` line per assertion + a per-suite/summary line; nonzero exit on
 any failure. This is the future callee of the 12g migrate-catalog auto-run seam.
 
@@ -359,7 +392,7 @@ RLS-bypassing) session with an EXPLICIT `(tenant, flow_id, flow_version
 [, suite_id])` WHERE predicate — matching the impact/cross-tenant model; the
 `flow-tests.sql` FORCE-RLS floor is UNTOUCHED, and the running FLOW still
 exercises it via the `wamn_app` pool. SQL read builders:
-`wamn_flow_tests::sql::{select_suites_for_flow_sql, select_cases_for_suite_sql}`
+`wamn_scenario_catalog::sql::{select_suites_for_flow_sql, select_cases_for_suite_sql}`
 (drift-guarded against `deploy/sql/flow-tests.sql`).
 
 Drivability refusal (cross-lane contract): before driving, the executor checks
@@ -376,7 +409,7 @@ F1 refuses cleanly while F3/F4 (std nodes) drive.
 # Unit tests (SuiteSelector = SuiteEdge shape, i32→u32 version boundary,
 # selection exclusivity, drivability, coherence, egress-allowlist derivation,
 # node-set drift guards) + the flow-tests sql drift/predicate guards:
-cargo test -p wamn-gates testkitbench:: -p wamn-flow-tests
+cargo test -p wamn-gates testkitbench:: -p wamn-scenario-catalog
 
 # Local FULL gate (throwaway PG). The flowrunner release wasm is reused (no
 # rebuild). --seed-demo is the simplest hermetic proof of the arc:
@@ -417,7 +450,7 @@ kubectl -n wamn-system logs job/suiteexec
 # is sub-second/case locally. Fall back to per-suite schema + unique run ids only
 # if a large suite makes provisioning dominate.
 # 4 mutants killed (python sha256 apply/test/restore, debug builds):
-# M1 suite-selection WHERE predicate (drop suite_id=$4) → wamn-flow-tests
+# M1 suite-selection WHERE predicate (drop suite_id=$4) → wamn-scenario-catalog
 #    sql::tests::cases_predicate_is_scoped_by_all_four_keys;
 # M2 per-case fail aggregation fold (OR/last-only) → testkitbench
 #    fold_outcome_flips_ok_on_any_failing_assertion;
@@ -429,10 +462,10 @@ kubectl -n wamn-system logs job/suiteexec
 
 ### [11.3 / wamn-htn] record-and-replay fixtures (pin-run + pinproof)
 
-Docs: docs/testkit.md → "Record-and-replay: pin a run". The pure `pin_run`
-transform (a `wamn_run_state` run + its `node_runs` → a `wamn_testkit::TestCase`)
-lives in `crates/scenarios/model` (module `pin`), alongside the additive `normalize`
-vocabulary (`ignore-paths` + `canonicalize`, no regex). The `wamn-ctl pin-run`
+Docs: docs/scenario-model.md → "Record-and-replay: pin a run". The `pin_run`
+transform (a `wamn_run_state` run + its `node_runs` → a `wamn_scenario_model::TestCase`)
+lives in `wamn-scenario-catalog`, while the additive `normalize` vocabulary
+(`ignore-paths` + `canonicalize`, no regex) stays in the pure model. The `wamn-ctl pin-run`
 verb is the effect shell (app-role read + pure pin + INSERT into
 `test_suites`/`test_cases`); secrets are scrubbed at pin time (even from a `full`
 run), volatile ids/timestamps are normalized, and an `off`/`preview` run is
@@ -440,7 +473,7 @@ refused (`PinError::NotCaptured`).
 
 ```bash
 # Unit tests (pure pin/normalize logic + the run-store pin read builders):
-cargo test -p wamn-testkit -p wamn-run-state -p wamn-ctl
+cargo test -p wamn-scenario-model -p wamn-scenario-catalog -p wamn-run-state -p wamn-ctl
 
 # pinproof (host-side, provisions an ephemeral schema via the SAME ensure_* path
 # production uses; seeds a full-capture run carrying a secret + volatile fields,
@@ -481,8 +514,8 @@ REL=components/target/wasm32-wasip2/release
   # node-rs / flow-composed are nodebench fixtures (import the bench-only
   # wamn:nodebench) — exercised by the nodebench gate, not this DB-path review.
 
-cargo clippy -p wamn-host -p wamn-run-worker -p wamn-gates -p wamn-gate-harness --all-targets \
-  && cargo fmt -p wamn-host -p wamn-run-worker -p wamn-gates -p wamn-gate-harness --check
+cargo clippy -p wamn-host -p wamn-executor -p wamn-gates -p wamn-gate-harness --all-targets \
+  && cargo fmt -p wamn-host -p wamn-executor -p wamn-gates -p wamn-gate-harness --check
 
 # E13/E15 runtime raw-socket deny + E17 rejection (wamn-o3u6), the in-cluster
 # gate of record. sockprobe attempts raw TCP/UDP egress through the production
@@ -1226,21 +1259,21 @@ docker rm -f wave3-pg-rmxa
 
 ### [11.2 / wamn-828] test cases as catalog data — flow-tests schema, promote-with-flow
 
-Docs: docs/flow-tests.md. A flow's test suites/cases live as catalog data
+Docs: docs/scenario-catalog.md. A flow's test suites/cases live as catalog data
 (`deploy/sql/flow-tests.sql`: `wamn_run.test_suites` + `wamn_run.test_cases`,
 both FORCE-RLS + `wamn_app` grants), versioned WITH the flow via the FK to
 `wamn_run.flows` ON DELETE CASCADE. They promote together through
 `copy-project-env --include definition` (block 5, after flows in block 2);
 `wamn-schema-control::check_suite_orphans` refuses FIRST (D24 shape) a copy carrying a
-suite pinned to a version the destination will not hold. Envelope +
-round-trip/validation: `crates/scenarios/catalog` (the case BODY is opaque jsonb in
-v0 — the gyt `wamn-testkit` vocabulary validates on write at integration).
+suite pinned to a version the destination will not hold. The suite/case envelope
+and validation live in `wamn-scenario-model`; `wamn-scenario-catalog` owns the
+SQL queries, ordering, compatibility translations, and pin-from-run transform.
 reconcile-run-plane manages the new tables (they are in `RUN_PLANE_FILES`).
 
 ```bash
-cargo test -p wamn-flow-tests -p wamn-schema-control            # envelope + suite-orphan decision + run_plane pins (test_suites/test_cases)
+cargo test -p wamn-scenario-model -p wamn-scenario-catalog -p wamn-schema-control
 cargo test -p wamn-ctl                                    # driver units
-cargo clippy -p wamn-flow-tests -p wamn-schema-control -p wamn-ctl -p wamn-gates --all-targets
+cargo clippy -p wamn-scenario-catalog -p wamn-schema-control -p wamn-ctl -p wamn-gates --all-targets
 # Live promote gate (throwaway PG): drives the REAL copy-project-env verb across
 # two project-env databases — flow v1 + its suite/cases promote version-bound
 # (matching counts), a foreign tenant sees ZERO suites (RLS), dropping flow v1
@@ -1267,11 +1300,12 @@ docker rm -f lane-828-pg
 ### [POC-TESTS / wamn-3rj] F1/F3/F4 stored suites + drive-and-fold (pocsuiteproof)
 
 Docs: docs/poc-material-receiving.md ("Tests", L37–39). The F1/F3/F4 POC test
-suites as STORED DATA — `wamn-flow-tests` envelopes
-(`deploy/gates/poc-f{1,3,4}-suite.json`, case bodies = `wamn_testkit::TestCase`)
+suites as STORED DATA — `wamn-scenario-model` envelopes persisted by
+`wamn-scenario-catalog`
+(`deploy/gates/poc-f{1,3,4}-suite.json`, case bodies = `wamn_scenario_model::TestCase`)
 seeded into `wamn_run.test_suites`/`test_cases` (the 11.2 tables) and then PROVEN
 REAL: the `pocsuiteproof` gate seeds them and drives each flow ONCE through its
-own harness path, folding every stored assertion through `wamn_testkit::evaluate`.
+own harness path, folding every stored assertion through `wamn_scenario_model::evaluate`.
 
 What the stored suites cover (the expressible core) vs what stays in the sibling
 proof gates:
@@ -1281,8 +1315,8 @@ proof gates:
   0lfu executor); the final DB state (holds created) rides `DbState` row-count on
   `quality_holds`; the outcome rides `RunOutcome`. `f1bench` retains the imperative
   node-trace / RLS / burst asserts.
-- **F3** (`poc-f3-suite`): `escalate-stale-holds` v1 under the RunWorker
-  test-double set at a fixed virtual epoch. The **48h cutoff** is proven by
+- **F3** (`poc-f3-suite`): `escalate-stale-holds` v1 under the ExecutionHost
+  scenario capability set at a fixed virtual epoch. The **48h cutoff** is proven by
   time-offset arithmetic (`fire-at-ms − 48h`) against **epoch-anchored** seed rows
   (2 stale opened 49h before the epoch, 1 fresh AT it, 1 stale-disposed) — 48h
   evaluated in wall-clock milliseconds. Asserts escalated=2 / open=1 / disposed=1
@@ -1310,7 +1344,7 @@ hard-wired per-POC-flow so it can drive F1, whose node types are baked into
 # crates/execution/flow-model/tests/fixtures/f4-disposition-recorded.flow.json), the F3
 # epoch-anchor straddles the cutoff, the F4 egress-spy names exactly {/run,/dispositions}:
 cargo test -p wamn-gates pocsuiteproof
-cargo test -p wamn-flow-tests            # the envelope + validate-on-write
+cargo test -p wamn-scenario-model -p wamn-scenario-catalog
 
 # Build the gate + the three guests this drive needs (all release wasm):
 cargo build -p wamn-gates
@@ -1620,8 +1654,8 @@ Docs: docs/run-queue.md
 ```bash
 cargo test -p wamn-run-state   # incl select_run_dispatch shape (fl3's traceparent seam)
 cargo build -p wamn-run-state   # the guest-safe durable-state core builds alone
-cargo clippy -p wamn-dispatcher -p wamn-run-worker -p wamn-gates -p wamn-run-state --all-targets \
-  && cargo fmt -p wamn-dispatcher -p wamn-run-worker -p wamn-gates -p wamn-run-state --check
+cargo clippy -p wamn-dispatcher -p wamn-executor -p wamn-gates -p wamn-run-state --all-targets \
+  && cargo fmt -p wamn-dispatcher -p wamn-executor -p wamn-gates -p wamn-run-state --check
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)   # guest CHANGED
 cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
   && cargo fmt --manifest-path components/execution/flowrunner/Cargo.toml --check
@@ -1656,7 +1690,7 @@ owns in stream order (`claim_partition_head_sql(1)` — one in flight per key, D
 policy on the row), drives it via the SHARED `execute_claimed` path (renewing the
 partition lease per node alongside the run lease), and STEPS DOWN
 (`release_partition_sql`) from a just-acquired partition that yields no head. The
-WIT is unchanged (`run-next` signature identical) and `RunWorker.drain` loops it
+WIT is unchanged (`run-next` signature identical) and `ExecutionHost.drain` loops it
 unchanged. The partition SQL/pure builders already existed (host-gated by
 queuebench); fqg.9 is their first GUEST caller — the same shape as fqg.4 for
 `claim_batch_sql`. All partition builders live in `sql.rs`/`partition.rs` OUTSIDE
@@ -1708,9 +1742,9 @@ stream_seq from `partition::stream_key`) fails the pure test; M2 SQL builder
 Docs: docs/run-queue.md · Manifests: deploy/platform/runner.yaml + deploy/platform/runner-db.example.yaml
 
 ```bash
-cargo test -p wamn-run-worker   # owner fallback + drain tally + idle backoff
-cargo clippy -p wamn-run-worker -p wamn-gates --all-targets \
-  && cargo fmt -p wamn-run-worker -p wamn-gates --check
+cargo test -p wamn-executor   # owner fallback + drain tally + idle backoff
+cargo clippy -p wamn-executor -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-executor -p wamn-gates --check
 # Local runnerbench (throwaway postgres:18 + wamn_app; guest UNCHANGED — no wasm rebuild):
 docker run -d --name wamn-fqg8-pg -p 5490:5432 -e POSTGRES_PASSWORD=postgres postgres:18
 docker exec wamn-fqg8-pg psql -U postgres -c \
@@ -1732,7 +1766,7 @@ docker exec wamn-fqg8-pg psql -U postgres -c \
 # then a mid-stream version flip must take effect for the following records =
 # the plan-cache invalidation guard) + PARTITION-ORDER (fqg.9, wamn-7hja:
 # PARTITIONED(key) runs seeded via enqueue_with_policy_sql across 2 keys with
-# INTERLEAVED insertion, drained through the production RunWorker::drain, assert
+# INTERLEAVED insertion, drained through the production ExecutionHost::drain, assert
 # per-key IN-ORDER dispatch + one-in-flight — the independent proof of the keyed
 # claim path through the long-lived runner [failoverbench drives it via the
 # gate-local Worker]. Dispatch order is read from a gate-local sink.dispatch_seq
@@ -2672,7 +2706,7 @@ docker build --target host -t wamn-host:dev . \
 Docs: docs/poc-material-receiving.md §F4. The `f4proof` gate is the F4
 end-to-end proof AND the **EVT-CUTOVER regression by construction**: it is the
 first gate to drive the WHOLE event-plane arc — REAL reader (`run_with_token`)
-→ REAL materializer guest → run queue → REAL production runner (`RunWorker` +
+→ REAL materializer guest → run queue → REAL production runner (`ExecutionHost` +
 `flowrunner.wasm`) → serve-node hosting the SHIPPED `disposition-node.wasm` →
 ERP callback — from a single real WAL insert, over a throwaway
 `wal_level=logical` Postgres + throwaway JetStream (rie2ebench substrate). ONE
@@ -2926,7 +2960,7 @@ cargo build -p wamn-node-host
 # custom node under the real wamn:node world):
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner -p node-cred)
 
-# Local live gate — the WHOLE path on ONE task (real RunWorker -> wasi:http hop ->
+# Local live gate — the WHOLE path on ONE task (real ExecutionHost -> wasi:http hop ->
 # real serve-node -> node-cred): payload round-trip, the declared credential
 # readable, an UNDECLARED credential not-granted, config parsed once across N runs.
 # Throwaway PG (wamn-bd5-pg on 5463) with a wamn_app role; NATS is optional.

@@ -1,26 +1,26 @@
 //! pocsuiteproof — the POC suite gate (wamn-3rj): the F1/F3/F4 test suites AS
 //! STORED DATA, seeded into `wamn_run.test_suites`/`test_cases` and then PROVEN
 //! REAL by driving each flow once through its own harness path and folding the
-//! stored assertions through `wamn_testkit::evaluate`.
+//! stored assertions through `wamn_scenario_model::evaluate`.
 //!
 //! It is `suiteproof` generalized to the three real POC flows, plus a fixture-
 //! realism pass. It is NOT the generic PG-loading executor (sibling lane 0lfu):
 //! this gate is hard-wired per-POC-flow so it can drive F1 (which the generic
-//! RunWorker-doubles executor cannot — F1's node types are baked into
+//! ExecutionHost-doubles executor cannot — F1's node types are baked into
 //! `poc-webhook-f1`, not the flowrunner).
 //!
 //! Phases:
-//!   A. data validity — seed the three embedded `wamn-flow-tests` envelopes into
+//!   A. data validity — seed the three embedded `wamn-scenario-catalog` envelopes into
 //!      an ephemeral DATA schema through the SAME `ensure_*` path production
 //!      provisioning uses; assert envelope round-trip, suite/case counts, version
-//!      binding, the jsonb round-trip + "parses as a `wamn_testkit::TestCase`",
+//!      binding, the jsonb round-trip + "parses as a `wamn_scenario_model::TestCase`",
 //!      and RLS (a foreign tenant sees zero suites).
 //!   B. fixture realism (drive-and-fold) — load each suite's cases back FROM the
 //!      seeded `test_cases` (round-trip through PG), drive the flow ONCE, build a
 //!      `Captured` fact bundle, and fold every stored assertion:
 //!        F1 — `poc-webhook-f1.wasm` over `wasi:http/incoming-handler` (ProxyPre),
 //!             sync response body + final DB captured via admin queries.
-//!        F3 — `flowrunner.wasm` under the RunWorker test-double set at a fixed
+//!        F3 — `flowrunner.wasm` under the ExecutionHost test-double set at a fixed
 //!             virtual epoch; the 48h cutoff is proven by time-offset arithmetic
 //!             against epoch-anchored seed rows (48h in wall-clock milliseconds).
 //!        F4 — `flowrunner.wasm` under the test-double set + a real serve-node
@@ -66,21 +66,20 @@ use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_ctl::publish_catalog::{
     ensure_flow_registry, ensure_flow_tests, ensure_runstate, register_flow, seed_dataset_sql,
 };
-use wamn_flow_tests::TestSuite;
+use wamn_execution_host::{ExecutionHost, ExecutionIdentity, injected_capabilities};
 use wamn_gate_harness::{
     check, scope_session, seed_flow_version, seed_flow_version_if_absent, seed_test_case,
     seed_test_suite,
 };
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
-use wamn_run_worker::{RunWorker, RunnerIdentity};
-use wamn_runtime::doubles::{DoubleSet, EgressRecorder, EphemeralSchemaProvisioner};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
-use wamn_testkit::{
-    Assertion, Captured, DbCapture, Outcome, RunFacts, RunStatus, TestCase, evaluate,
+use wamn_scenario_model::{
+    Assertion, Captured, DbCapture, Outcome, RunFacts, RunStatus, TestCase, TestSuite, evaluate,
 };
+use wamn_scenario_runtime::{EphemeralSchemaProvisioner, RecordingEgress, ScenarioCapabilities};
 
 use crate::erp_sim::ErpAudit;
 use crate::f1fixture::{self, F1_FLOW_JSON, F1_SEED_JSON, F1_TENANT};
@@ -96,7 +95,7 @@ const F3_FLOW_ID: &str = "escalate-stale-holds";
 const F4_FLOW_ID: &str = "disposition-recorded";
 
 /// The virtual-clock epoch + seed the flow-level drives run under (matching the
-/// run-worker `--test-doubles` constants / testkitbench).
+/// scenario-runtime defaults / testkitbench).
 const EPOCH_SECS: u64 = 1_700_000_000;
 const SEED: u64 = 0x7492_5EED_5EED_7492;
 
@@ -433,7 +432,7 @@ pub async fn run(args: PocSuiteProofArgs) -> anyhow::Result<()> {
         bound == want_cases,
     );
     // The opaque case body reached jsonb intact AND parses as a canonical
-    // wamn-testkit TestCase (validate-on-write).
+    // wamn-scenario-model TestCase (validate-on-write).
     let stored: Value = app
         .query_one(
             "SELECT case_body FROM test_cases WHERE flow_id = $1 AND case_id = $2",
@@ -449,7 +448,7 @@ pub async fn run(args: PocSuiteProofArgs) -> anyhow::Result<()> {
     );
     check(
         &mut ok,
-        "STORE: stored case body parses as a wamn-testkit TestCase",
+        "STORE: stored case body parses as a wamn-scenario-model TestCase",
         serde_json::from_value::<TestCase>(stored).is_ok(),
     );
     // RLS: a second tenant's claim sees ZERO suites.
@@ -880,12 +879,15 @@ async fn drive_f3(
     let mut cfg = WamnPostgresConfig::from_env();
     cfg.database_url = Some(app_url.to_string());
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
-    let recorder = Arc::new(EgressRecorder::spying());
+    let recorder = Arc::new(RecordingEgress::spying());
     recorder.expect(F3_FLOW_ID, [echo_authority.clone()]);
-    let (doubles, _clock) =
-        DoubleSet::virtual_host(EPOCH_SECS, SEED, recorder.clone() as Arc<dyn HostHandler>);
+    let (scenario, _clock) = ScenarioCapabilities::virtualized(
+        EPOCH_SECS,
+        SEED,
+        recorder.clone() as Arc<dyn HostHandler>,
+    );
     // The notify node declares `credential: notify-webhook`; give the vault a
-    // project-"default" entry so it resolves (the RunWorker sets owner→project
+    // project-"default" entry so it resolves (the ExecutionHost sets owner→project
     // "default"). The stored suite asserts only that the notify EGRESS happens
     // (count 2) — the credential-delivery DIGEST proof stays in f3proof.
     let vault = Arc::new(WamnCredentials::from_projects(
@@ -897,24 +899,23 @@ async fn drive_f3(
             )]),
         )]),
     ));
-    let mut worker = RunWorker::instantiate(
+    let mut worker = ExecutionHost::instantiate(
         engine,
         &flowrunner,
         plugin.clone(),
         vault,
         Arc::new(WamnLogging::from_env()?),
-        RunnerIdentity {
+        ExecutionIdentity {
             owner: F3_FLOW_ID,
             tenant,
             schema: Some(schema.as_str()),
             project: "default",
         },
-        Arc::from([]),
+        injected_capabilities(scenario.wasi, scenario.egress),
         30_000,
-        Some(doubles),
     )
     .await
-    .context("instantiate F3 RunWorker")?;
+    .context("instantiate F3 ExecutionHost")?;
     drain_to_terminal(&mut worker, admin, run_id).await?;
     println!("  F3 drained, egress={:?}", recorder.records());
 
@@ -1018,7 +1019,7 @@ async fn drive_f4(
     let mut cfg = WamnPostgresConfig::from_env();
     cfg.database_url = Some(app_url.to_string());
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
-    let recorder = Arc::new(EgressRecorder::spying());
+    let recorder = Arc::new(RecordingEgress::spying());
     recorder.expect(
         F4_FLOW_ID,
         [
@@ -1026,26 +1027,28 @@ async fn drive_f4(
             format!("127.0.0.1:{}", args.erp_port),
         ],
     );
-    let (doubles, _clock) =
-        DoubleSet::virtual_host(EPOCH_SECS, SEED, recorder.clone() as Arc<dyn HostHandler>);
-    let worker = RunWorker::instantiate(
+    let (scenario, _clock) = ScenarioCapabilities::virtualized(
+        EPOCH_SECS,
+        SEED,
+        recorder.clone() as Arc<dyn HostHandler>,
+    );
+    let worker = ExecutionHost::instantiate(
         engine,
         &flowrunner,
         plugin.clone(),
         Arc::new(WamnCredentials::empty()),
         Arc::new(WamnLogging::from_env()?),
-        RunnerIdentity {
+        ExecutionIdentity {
             owner: F4_FLOW_ID,
             tenant,
             schema: Some(schema.as_str()),
             project: "default",
         },
-        Arc::from([]),
+        injected_capabilities(scenario.wasi, scenario.egress),
         30_000,
-        Some(doubles),
     )
     .await
-    .context("instantiate F4 RunWorker")?;
+    .context("instantiate F4 ExecutionHost")?;
 
     // The serve-node accept loop's wasmtime store is !Send (cannot be spawned);
     // drive the gate and the accept loop on the SAME task via select! (the
@@ -1070,8 +1073,8 @@ async fn drive_f4(
 /// facts. The ERP sink answers 202 on the first request, so this completes in one
 /// drain — but drain-to-terminal keeps it uniform with F3's cyclic drain.
 async fn drive_f4_gate(
-    mut worker: RunWorker,
-    recorder: &Arc<EgressRecorder>,
+    mut worker: ExecutionHost,
+    recorder: &Arc<RecordingEgress>,
     admin: &Client,
     run_id: &str,
     case: &TestCase,
@@ -1104,7 +1107,7 @@ fn is_terminal(status: &str) -> bool {
 /// under the virtual clock) that is already past the DB clock, so each re-drain
 /// re-claims immediately. Capped so a non-terminating flow fails loudly.
 async fn drain_to_terminal(
-    worker: &mut RunWorker,
+    worker: &mut ExecutionHost,
     admin: &Client,
     run_id: &str,
 ) -> anyhow::Result<()> {
@@ -1126,11 +1129,11 @@ async fn drain_to_terminal(
     Ok(())
 }
 
-/// Build the captured fact bundle a flow-level (RunWorker doubles) case reads:
+/// Build the captured fact bundle a flow-level (ExecutionHost doubles) case reads:
 /// the run outcome (the PERSISTED `runs.status`), the egress audit log, and each
 /// DbState query's rows (via the admin pool, tenant+schema-scoped).
 async fn build_flow_captured(
-    recorder: &Arc<EgressRecorder>,
+    recorder: &Arc<RecordingEgress>,
     admin: &Client,
     run_id: &str,
     case: &TestCase,
@@ -1184,8 +1187,11 @@ async fn load_cases(app: &Client, flow_id: &str) -> anyhow::Result<Vec<TestCase>
         .with_context(|| format!("load cases for {flow_id}"))?;
     rows.iter()
         .map(|r| {
-            serde_json::from_value::<TestCase>(r.get(0))
-                .with_context(|| format!("stored {flow_id} case parses as a TestCase"))
+            let case = serde_json::from_value::<TestCase>(r.get(0))
+                .with_context(|| format!("stored {flow_id} case parses as a TestCase"))?;
+            case.validate()
+                .with_context(|| format!("stored {flow_id} case is coherent"))?;
+            Ok(case)
         })
         .collect()
 }
@@ -1303,8 +1309,8 @@ fn is_bare_ident(s: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// Every embedded suite is a valid, version-bound `wamn-flow-tests` envelope
-    /// whose case bodies pass validate-on-write (parse as `wamn_testkit::TestCase`)
+    /// Every embedded suite is a valid, version-bound `wamn-scenario-catalog` envelope
+    /// whose case bodies pass validate-on-write (parse as `wamn_scenario_model::TestCase`)
     /// — a broken fixture fails HERE, at `cargo test`, not only against Postgres.
     #[test]
     fn embedded_suites_are_valid_and_bound() {
@@ -1446,7 +1452,7 @@ mod tests {
     /// this set breaks the stored proof.
     #[test]
     fn f4_egress_spy_names_exactly_the_hop_and_callback() {
-        use wamn_testkit::{EgressAssertion, EgressMatcher};
+        use wamn_scenario_model::{EgressAssertion, EgressMatcher};
         let suite = TestSuite::from_json(F4_SUITE_JSON).unwrap();
         let tc: TestCase = serde_json::from_value(suite.cases[0].case.clone()).unwrap();
         let exactly = tc

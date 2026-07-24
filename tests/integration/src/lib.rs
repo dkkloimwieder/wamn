@@ -1,55 +1,42 @@
 //! Integration and measurement proofs that compose real repository adapters.
 
-#[path = "../../../test-support/fixtures/apifixture.rs"]
-mod apifixture;
-#[path = "../../../test-support/infrastructure/erp_sim.rs"]
-mod erp_sim;
-#[path = "../../../test-support/fixtures/f1fixture.rs"]
-mod f1fixture;
-#[path = "../../../test-support/infrastructure/node_host_support.rs"]
-mod node_host_support;
-#[path = "../../../test-support/infrastructure/publish_catalog_demo.rs"]
-mod publish_catalog_demo;
+pub use wamn_test_fixtures::{apifixture, f1fixture};
+pub use wamn_test_infrastructure::{erp_sim, node_host_support, publish_catalog_demo};
 
-#[path = "../../system/src/ladderproof.rs"]
-mod ladderproof;
 #[cfg(test)]
-#[path = "../../conformance/src/schema_drift.rs"]
-mod schema_drift;
-#[path = "../../system/src/traceproof.rs"]
-mod traceproof;
+use wamn_proof_conformance::schema_drift;
 
-mod apibench;
-mod bench;
-mod capturebench;
-mod cdcbench;
-mod dashproof;
-mod dispatchbench;
-mod f1bench;
-mod f2invoke;
-mod f3proof;
-mod f4proof;
-mod failoverbench;
-mod flowbench;
-mod impactproof;
-mod logbench;
-mod matbench;
-mod metricbench;
-mod nodebench;
-mod nodeinvoke;
-mod pgbench;
-mod pinproof;
-mod pocsuiteproof;
-mod provisionbench;
-mod queuebench;
-mod readerbench;
-mod rie2ebench;
-mod runnerbench;
-mod samplebench;
-mod streambench;
-mod suiteproof;
-mod testhostbench;
-mod testkitbench;
-mod tracebench;
-mod wakeproof;
-mod walbench;
+pub mod apibench;
+pub mod bench;
+pub mod capturebench;
+pub mod cdcbench;
+pub mod dashproof;
+pub mod dispatchbench;
+pub mod f1bench;
+pub mod f2invoke;
+pub mod f3proof;
+pub mod f4proof;
+pub mod failoverbench;
+pub mod flowbench;
+pub mod impactproof;
+pub mod logbench;
+pub mod matbench;
+pub mod metricbench;
+pub mod nodebench;
+pub mod nodeinvoke;
+pub mod pgbench;
+pub mod pinproof;
+pub mod pocsuiteproof;
+pub mod provisionbench;
+pub mod queuebench;
+pub mod readerbench;
+pub mod rie2ebench;
+pub mod runnerbench;
+pub mod samplebench;
+pub mod streambench;
+pub mod suiteproof;
+pub mod testhostbench;
+pub mod testkitbench;
+pub mod tracebench;
+pub mod wakeproof;
+pub mod walbench;

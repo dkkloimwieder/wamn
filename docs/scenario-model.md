@@ -1,17 +1,18 @@
-# wamn-testkit — the flow/node test-case + assertion vocabulary (11.4)
+# Scenario model — flow/node scenarios and assertion vocabulary
 
 `crates/scenarios/model` is the **pure** vocabulary a flow or node test case is
 written in. A case is *data* — a `TestCase` loads from a JSON file (the
 `testkitbench` gate's `--cases` fixture) or a catalog `jsonb` column identically
 — and `evaluate(case, captured) -> Outcome` is a pure fold of a captured fact
-bundle into pass/fail. The gate is the effect shell that *fills* the
-`Captured` bundle (a warm `ServeNode` invoke, a `RunWorker` drain, admin-pool DB
-reads); the library only *decides*.
+bundle into pass/fail. Product scenario executors fill the `Captured` bundle;
+`wamn-scenario-worker` is the flow composition, while repository gates exercise
+the same contract through their appropriate proof tier. The library only
+*decides*.
 
-No DB / clock / wasm / host dependency. The status/kind taxonomy is REUSED
-verbatim from `wamn-run-state` (`RunStatus` / `FailKind` / `NodeErrorKind`) and
-the run-context mirrors `wamn-node-invoke`'s `WireRunContext`, so an assertion is
-stated in the same enums the runner records and the node contract freezes.
+No DB / clock / wasm / host dependency: the crate is serde-only. The
+status/kind and run-context shapes are product contracts; exhaustive
+translations to durable run-state and node-invoke types live in
+`wamn-scenario-catalog::compat`.
 
 ## Case format
 
@@ -23,7 +24,7 @@ stated in the same enums the runner records and the node contract freezes.
   // "flow-ref": { "flow-id": "poc-s6", "version": 1 }, // OR flow-level
   "input": { "hold": { "moisture_pct": "12.00" } },     // node input / flow trigger
   "config": null,                       // optional node config document
-  // "ctx": { … WireRunContext … },     // optional explicit run-context
+  // "ctx": { … RunContext … },         // optional explicit scenario context
   "expect": [ /* assertions */ ],
   // "normalize": { "canonicalize": true, "ignore-paths": ["/meta/run-id"] } // 11.3, optional
 }
@@ -32,9 +33,10 @@ stated in the same enums the runner records and the node contract freezes.
 - `node_ref` present ⇒ **node-level** case: the gate drives the pure
   `run(ctx, input)` handler in a warm `ServeNode` and captures the emission,
   port, or error.
-- `flow_ref` present ⇒ **flow-level** case: the gate drives the flow under the
-  test-double set (virtual clock + seeded random + egress recorder) and captures
-  the run outcome, egress log, and admin-pool DB reads.
+- `flow_ref` present ⇒ **flow-level** case: the scenario worker drives the flow
+  in its own caller-provisioned execution schema with virtual clock, seeded
+  random, and recording/deny egress adapters and captures the run outcome,
+  egress log, and database reads.
 
 `SCHEMA_VERSION` is `0.1` and mirrors the `wamn-schema-model` precedent: `0.1.x` is
 additive/clarifying only; a breaking wire change waits for `0.2`.
@@ -74,10 +76,11 @@ capture by `(query, params)`.
 | `FirstRow{row,subset}` | `{"first-row": {"row": {…}, "subset": true}}` | the first row equals `row` (or subset-matches it when `subset`) |
 | `Empty` | `"empty"` | the query returned no rows |
 
-**RLS distinction:** DB-state reads go through the provisioner's **superuser**
-session (RLS-bypassing), scoped to the runner's tenant + schema — NOT the
-runner's own `wamn_app` (NOSUPERUSER, RLS-forced) pool. A DB-state assert
-observes the row a superuser sees.
+The model does not prescribe a database role: it compares the rows supplied by
+the executor. `wamn-scenario-worker` uses its tenant-scoped application session,
+so DB-state observations retain the same RLS boundary as execution. Repository
+integration gates may use an admin session while provisioning isolated schemas;
+those gates document that stronger observation explicitly.
 
 ### Egress
 
@@ -130,13 +133,13 @@ vocabulary directly.
 
 ## Record-and-replay: pin a run (11.3)
 
-A recorded run is a fixture for free. `pin_run(run, node_runs, opts)` (module
-`pin`) is the PURE transform from a stored run (a `wamn_run_state` `RunRecord` +
-its `node_runs`) to a canonical `TestCase`; the `wamn-ctl pin-run` verb is the
-effect shell that reads the rows and writes the case into the flow's
+A recorded run can become a replay scenario. `wamn_scenario_catalog::pin_run`
+translates a stored run (`wamn_run_state::RunRecord` plus `node_runs`) into a
+canonical `TestCase`; the `wamn-ctl pin-run` verb is the effect shell that reads
+the rows and writes the case into the flow's
 `test_suites`/`test_cases` (11.2 storage). Dependency direction: this reads STORE
-records and writes a testkit case, so it lives in testkit (which already depends
-on `wamn-run-state`) — not in run-state, which would be a cycle.
+records and writes a pure scenario-model value, so it lives in scenario-catalog,
+not in the serde-only model or run-state.
 
 The pinned case (minimal-correct v0 shape):
 - **flow-level** — `flow-ref` = the run's `(flow_id, flow_version)`; `input` = the

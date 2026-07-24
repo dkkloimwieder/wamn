@@ -28,6 +28,7 @@ use anyhow::{Context, bail};
 use clap::Args;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+use wamn_test_fixtures::runner::fnv1a_64;
 
 // ---------------------------------------------------------------------------
 // serve-echo: the reflecting upstream (plain HTTP, not wash-served)
@@ -113,18 +114,6 @@ async fn read_request_head(
         }
         lines.push(trimmed);
     }
-}
-
-/// FNV-1a 64 (the house inline digest): the one-way witness serve-echo
-/// reflects for a received `authorization` header — proves the exact value
-/// arrived without echoing the secret back into recorded payloads.
-pub(crate) fn fnv1a_64(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in bytes {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
 }
 
 /// Case-insensitive header lookup over `Name: value` lines.

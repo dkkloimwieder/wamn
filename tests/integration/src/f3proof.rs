@@ -41,8 +41,9 @@ use tokio_postgres::{Client, NoTls};
 use wamn_gate_harness::{check, seed_flow_version};
 use wamn_waker::KubeScale;
 
-use crate::ladderproof::{connect_app, ladder_ddl, poll_to_terminal, seed_run, valid_ident};
-use crate::traceproof::fnv1a_64;
+use wamn_test_fixtures::runner::{
+    connect_app, fnv1a_64, ladder_ddl, poll_to_terminal, seed_run, valid_ident,
+};
 
 const FLOW_ID: &str = "escalate-stale-holds";
 const TENANT_DEFAULT: &str = "demo-tenant";

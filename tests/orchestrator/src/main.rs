@@ -5,114 +5,20 @@
 //! test-support homes. Proofs that import service clients remain integration
 //! evidence even when they also exercise a deployed endpoint.
 
-// Contract conformance: frozen wire/WIT/policy/schema/artifact boundaries.
-#[path = "../../conformance/src/buildproof.rs"]
-mod buildproof;
-#[path = "../../conformance/src/credprobe.rs"]
-mod credprobe;
-#[path = "../../conformance/src/egressbench.rs"]
-mod egressbench;
-#[cfg(test)]
-#[path = "../../conformance/src/schema_drift.rs"]
-mod schema_drift;
-#[path = "../../conformance/src/socketguard.rs"]
-mod socketguard;
-#[path = "../../conformance/src/testgate.rs"]
-mod testgate;
+// Each proof implementation is owned and compiled by its tier package. This
+// binary is only the stable deploy-facing command router.
+use wamn_proof_conformance::{buildproof, credprobe, egressbench, socketguard, testgate};
+use wamn_proof_integration::{
+    apibench, bench, capturebench, cdcbench, dashproof, dispatchbench, f1bench, f2invoke, f3proof,
+    f4proof, failoverbench, flowbench, impactproof, logbench, matbench, metricbench, nodebench,
+    nodeinvoke, pgbench, pinproof, pocsuiteproof, provisionbench, queuebench, readerbench,
+    rie2ebench, runnerbench, samplebench, streambench, suiteproof, testhostbench, testkitbench,
+    tracebench, wakeproof, walbench,
+};
+use wamn_proof_system::{apiproof, credproof, f1proof, ladderproof, traceproof};
 
-// Real-adapter integration and benchmark/measurement campaigns.
-#[path = "../../integration/src/apibench.rs"]
-mod apibench;
-#[path = "../../integration/src/bench.rs"]
-mod bench;
-#[path = "../../integration/src/capturebench.rs"]
-mod capturebench;
-#[path = "../../integration/src/cdcbench.rs"]
-mod cdcbench;
-#[path = "../../integration/src/dashproof.rs"]
-mod dashproof;
-#[path = "../../integration/src/dispatchbench.rs"]
-mod dispatchbench;
-#[path = "../../integration/src/f1bench.rs"]
-mod f1bench;
-#[path = "../../integration/src/f2invoke.rs"]
-mod f2invoke;
-#[path = "../../integration/src/f3proof.rs"]
-mod f3proof;
-#[path = "../../integration/src/f4proof.rs"]
-mod f4proof;
-#[path = "../../integration/src/failoverbench.rs"]
-mod failoverbench;
-#[path = "../../integration/src/flowbench.rs"]
-mod flowbench;
-#[path = "../../integration/src/impactproof.rs"]
-mod impactproof;
-#[path = "../../integration/src/logbench.rs"]
-mod logbench;
-#[path = "../../integration/src/matbench.rs"]
-mod matbench;
-#[path = "../../integration/src/metricbench.rs"]
-mod metricbench;
-#[path = "../../integration/src/nodebench.rs"]
-mod nodebench;
-#[path = "../../integration/src/nodeinvoke.rs"]
-mod nodeinvoke;
-#[path = "../../integration/src/pgbench.rs"]
-mod pgbench;
-#[path = "../../integration/src/pinproof.rs"]
-mod pinproof;
-#[path = "../../integration/src/pocsuiteproof.rs"]
-mod pocsuiteproof;
-#[path = "../../integration/src/provisionbench.rs"]
-mod provisionbench;
-#[path = "../../integration/src/queuebench.rs"]
-mod queuebench;
-#[path = "../../integration/src/readerbench.rs"]
-mod readerbench;
-#[path = "../../integration/src/rie2ebench.rs"]
-mod rie2ebench;
-#[path = "../../integration/src/runnerbench.rs"]
-mod runnerbench;
-#[path = "../../integration/src/samplebench.rs"]
-mod samplebench;
-#[path = "../../integration/src/streambench.rs"]
-mod streambench;
-#[path = "../../integration/src/suiteproof.rs"]
-mod suiteproof;
-#[path = "../../integration/src/testhostbench.rs"]
-mod testhostbench;
-#[path = "../../integration/src/testkitbench.rs"]
-mod testkitbench;
-#[path = "../../integration/src/tracebench.rs"]
-mod tracebench;
-#[path = "../../integration/src/wakeproof.rs"]
-mod wakeproof;
-#[path = "../../integration/src/walbench.rs"]
-mod walbench;
-
-// Deployed/public-boundary system journeys with no direct service-library use.
-#[path = "../../system/src/apiproof.rs"]
-mod apiproof;
-#[path = "../../system/src/credproof.rs"]
-mod credproof;
-#[path = "../../system/src/f1proof.rs"]
-mod f1proof;
-#[path = "../../system/src/ladderproof.rs"]
-mod ladderproof;
-#[path = "../../system/src/traceproof.rs"]
-mod traceproof;
-
-// Repository-only fixtures and infrastructure adapters.
-#[path = "../../../test-support/fixtures/apifixture.rs"]
-mod apifixture;
-#[path = "../../../test-support/infrastructure/erp_sim.rs"]
-mod erp_sim;
-#[path = "../../../test-support/fixtures/f1fixture.rs"]
-mod f1fixture;
-#[path = "../../../test-support/infrastructure/node_host_support.rs"]
-mod node_host_support;
-#[path = "../../../test-support/infrastructure/publish_catalog_demo.rs"]
-mod publish_catalog_demo;
+// Repository-only fixture and temporary-service commands.
+use wamn_test_infrastructure::{erp_sim, publish_catalog_demo};
 
 use std::str::FromStr as _;
 
@@ -143,7 +49,7 @@ enum Command {
     Queuebench(queuebench::QueueBenchArgs),
     /// Run the 5.14 failover gates (checkpoint/resume on replica loss / janitor completion-race guard)
     Failoverbench(failoverbench::FailoverBenchArgs),
-    /// Run the fqg.8 production runner gate (RunWorker drains run_queue to completion; drive+reuse+empty)
+    /// Run the fqg.8 production runner gate (ExecutionHost drains run_queue to completion; drive+reuse+empty)
     Runnerbench(runnerbench::RunnerBenchArgs),
     /// Run the 5.14 dispatcher gates (cron / ordering / race / fairness / wake / live)
     Dispatchbench(dispatchbench::DispatchBenchArgs),
@@ -174,9 +80,9 @@ enum Command {
     Traceproof(traceproof::TraceproofArgs),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
     ServeEcho(traceproof::ServeEchoArgs),
-    /// Run the S6 test-host plugin-swap gates (sameness / delay / egress / regression)
+    /// Run the S6 scenario-runtime capability-substitution gates (compatibility name)
     Testhostbench(testhostbench::TestHostBenchArgs),
-    /// Run the 11.4 assertion-library gate (cases-as-data → node-level ServeNode invokes + flow-level doubles harness, folded through wamn_testkit::evaluate) AND the 11.2-exec stored-suite executor (--suite/--impact-report: load test_suites/test_cases from a schema, drive each case through the t92 doubles)
+    /// Run the 11.4 assertion-library gate (cases-as-data → node-level ServeNode invokes + flow-level doubles harness, folded through wamn_scenario_model::evaluate) AND the 11.2-exec stored-suite executor (--suite/--impact-report: load test_suites/test_cases from a schema, drive each case through the t92 doubles)
     Testkitbench(testkitbench::TestKitBenchArgs),
     /// Run the 2.6 DB-path egress review gate (no shipped workload imports wasi:sockets)
     Egressbench(egressbench::EgressBenchArgs),

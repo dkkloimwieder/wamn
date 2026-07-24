@@ -13,7 +13,7 @@
 //! (below), and this optional phase proves it: the sockprobe fixture attempts raw
 //! TCP + UDP egress through the production host store path, and the gate asserts
 //! the fork denies it by default and permits it only under the
-//! `wamn.allow-raw-sockets` opt-in (see [`assert_runtime_sockets`]).
+//! `wamn.allow-raw-sockets` opt-in (see `assert_runtime_sockets`).
 //!
 //! WHAT IT PROVES. The "plugin is the only DB path" guarantee (docs 2.6) rests
 //! on WIT-world composition: the runtime registers `wasi:sockets` on every

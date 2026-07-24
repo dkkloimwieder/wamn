@@ -12,7 +12,7 @@
 //!      (a UUID + an RFC-3339 timestamp) — the exact shape 9.6 stores;
 //!   3. pin it via the REAL `wamn_ctl::pin_run::pin(...)` core, then assert the
 //!      stored `test_cases.case_body`: (a) contains NO secret substring (scrubbed
-//!      on pin even from a FULL run), (b) parses as a `wamn_testkit::TestCase`,
+//!      on pin even from a FULL run), (b) parses as a `wamn_scenario_model::TestCase`,
 //!      (c) carries `normalize` with `canonicalize` on;
 //!   4. REPLAY round-trip: rebuild a `Captured` from the recorded facts →
 //!      `evaluate` PASSES;
@@ -33,7 +33,8 @@ use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_
 use wamn_flow::{Capture, CaptureMode};
 use wamn_gate_harness::{check, scope_session, seed_flow_version};
 use wamn_run_state::capture;
-use wamn_testkit::{Assertion, Captured, PinError, RunFacts, RunStatus, TestCase, evaluate};
+use wamn_scenario_catalog::PinError;
+use wamn_scenario_model::{Assertion, Captured, RunFacts, RunStatus, TestCase, evaluate};
 
 const FLOW_ID: &str = "pinned-flow";
 /// The raw secret seeded through the FULL-capture run — asserted absent from the
@@ -187,7 +188,7 @@ pub async fn run(args: PinProofArgs) -> anyhow::Result<()> {
     let case: Result<TestCase, _> = serde_json::from_value(stored.clone());
     check(
         &mut ok,
-        "STORE: the pinned case body parses as a wamn-testkit TestCase",
+        "STORE: the pinned case body parses as a wamn-scenario-model TestCase",
         case.is_ok(),
     );
     let case = case.context("pinned case must parse")?;

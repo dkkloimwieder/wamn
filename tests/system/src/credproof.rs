@@ -48,8 +48,9 @@ use tokio_postgres::Client;
 
 use wamn_gate_harness::{check, seed_flow_version};
 
-use crate::ladderproof::{connect_app, ladder_ddl, poll_to_terminal, seed_run, valid_ident};
-use crate::traceproof::fnv1a_64;
+use wamn_test_fixtures::runner::{
+    connect_app, fnv1a_64, ladder_ddl, poll_to_terminal, seed_run, valid_ident,
+};
 
 /// The committed fixture (single source of truth; the drift-guard tests pin
 /// the shape the proof asserts against).

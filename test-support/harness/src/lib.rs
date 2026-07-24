@@ -144,10 +144,7 @@ pub async fn seed_test_suite(
 ) -> anyhow::Result<()> {
     client
         .execute(
-            "INSERT INTO test_suites (tenant_id, flow_id, flow_version, suite_id, name) \
-             VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (tenant_id, flow_id, flow_version, suite_id) \
-               DO UPDATE SET name = excluded.name, updated_at = now()",
+            &wamn_scenario_catalog::sql::upsert_suite_sql(),
             &[&tenant, &flow_id, &flow_version, &suite_id, &name],
         )
         .await?;
@@ -168,13 +165,10 @@ pub async fn seed_test_case(
     ordinal: i32,
     case_json: &str,
 ) -> anyhow::Result<()> {
+    wamn_scenario_model::TestCase::from_json(case_json)?;
     client
         .execute(
-            "INSERT INTO test_cases \
-               (tenant_id, flow_id, flow_version, suite_id, case_id, ordinal, case_body) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb) \
-             ON CONFLICT (tenant_id, flow_id, flow_version, suite_id, case_id) \
-               DO UPDATE SET ordinal = excluded.ordinal, case_body = excluded.case_body",
+            &wamn_scenario_catalog::sql::upsert_case_sql(),
             &[
                 &tenant,
                 &flow_id,

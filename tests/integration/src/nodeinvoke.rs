@@ -1,7 +1,7 @@
 //! `nodeinvoke` — the production custom-node invocation gate (5.6 / wamn-bd5).
 //!
 //! Proves the WHOLE v0 path end-to-end, locally and repeatably: the REAL runner
-//! (the production [`RunWorker`] driving `flowrunner.wasm`) executes a flow whose
+//! (the production [`ExecutionHost`] driving `flowrunner.wasm`) executes a flow whose
 //! step is a CUSTOM node, which dispatches as an in-cluster HTTP hop to a REAL
 //! [`ServeNode`] host serving `node-cred.wasm` under the real `wamn:node` world.
 //! Both wasmtime stores run concurrently on ONE task via `select!` (no cross-
@@ -38,8 +38,8 @@ use wamn_node_invoke::{
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
+use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_gate_harness::check;
-use wamn_run_worker::{RunWorker, RunnerIdentity};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
@@ -422,21 +422,20 @@ async fn gate_body(
     let allowed: Arc<[AllowedHost]> =
         vec![format!("127.0.0.1:{port}").parse::<AllowedHost>()?].into();
 
-    let mut worker = RunWorker::instantiate(
+    let mut worker = ExecutionHost::instantiate(
         engine,
         flowrunner,
         plugin,
         runner_vault,
         Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?),
-        RunnerIdentity {
+        ExecutionIdentity {
             owner: OWNER,
             tenant: TENANT,
             schema: Some(SCHEMA),
             project: PROJECT,
         },
-        allowed.clone(),
+        production_capabilities(allowed.clone()),
         30_000,
-        None, // wamn-t92: production host (no test doubles)
     )
     .await?;
 
@@ -845,21 +844,20 @@ async fn gate_body(
     let mut mismatch_cfg = WamnPostgresConfig::from_env();
     mismatch_cfg.database_url = Some(app_url.to_string());
     let mismatch_plugin = Arc::new(WamnPostgres::new(mismatch_cfg)?);
-    let mut mismatch_worker = RunWorker::instantiate(
+    let mut mismatch_worker = ExecutionHost::instantiate(
         engine,
         flowrunner,
         mismatch_plugin,
         mismatch_vault,
         Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?),
-        RunnerIdentity {
+        ExecutionIdentity {
             owner: "nodeinvoke-mismatch",
             tenant: TENANT,
             schema: Some(SCHEMA),
             project: PROJECT,
         },
-        allowed.clone(),
+        production_capabilities(allowed.clone()),
         30_000,
-        None, // wamn-t92: production host (no test doubles)
     )
     .await?;
     let mreport = mismatch_worker.drain().await?;

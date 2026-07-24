@@ -360,12 +360,12 @@ a **running service** is the production runner below.
 
 ## Production runner (`run-worker`, fqg.8)
 
-The `wamn-run-worker` binary (its own SR9 artifact) is the always-on service
+The `wamn-run-worker` binary emitted by `wamn-executor` is the always-on service
 that **closes the live dispatcher → `run_queue` → runner chain**: a long-lived
 process that instantiates the flowrunner component once (baked into its image at
 `/components/flowrunner.wasm`) and loops the guest's `run-next` export, so the runs
 the dispatcher write-ahead + enqueued are actually claimed and driven to
-completion. The loop core is `wamn_run_worker::RunWorker` — `instantiate`
+completion. The loop core is `wamn_execution_host::ExecutionHost` — `instantiate`
 (inject the host-side `app.runner` owner + tenant + `search_path`), `drain` (pull
 every currently-claimable run — each `run-next` claims one and drives it terminal
 or parks it, so the claimable set strictly shrinks and the drain terminates), and
@@ -415,7 +415,7 @@ fork's `check_allowed_hosts` over `DefaultOutgoingHandler`, gated by
 refinement). Without a handler an outbound call would trap and poison the
 instance. See [credential-vault.md](credential-vault.md).
 
-The `runnerbench` gate drives the *production* `RunWorker` (not a gate-local
+The `runnerbench` gate drives the production `ExecutionHost` (not a gate-local
 worker) against an ephemeral schema seeded the dispatcher way, asserting it drains
 the queue to completion, reuses one instance across drains, and reports an empty
 drain — the local, repeatable, mutation-tested counterpart of the in-cluster

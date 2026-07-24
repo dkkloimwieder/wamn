@@ -97,7 +97,7 @@ and BEFORE any OCI push.
   criterion is Job FAILURE + no new registry digest).
 
 **Vocabulary reconciliation (wamn-gyt):** the `Case`/`CaseFile`/`Expectation`
-types are a minimal, serde-driven LOCAL vocabulary. The sibling `wamn-testkit`
+types are a minimal, serde-driven LOCAL vocabulary. The sibling `wamn-scenario-model`
 crate (lane gyt) carries the canonical isomorphic shape; at integration these
 reconcile to imports of gyt's — a re-import, not a rewrite. The execution glue
 (`ServeNode` instantiation + wire mapping) stays in the builder regardless.

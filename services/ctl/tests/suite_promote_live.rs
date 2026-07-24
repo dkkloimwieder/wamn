@@ -120,7 +120,7 @@ async fn provision_src(url: &str) {
     )
     .await
     .expect("seed suite");
-    // Case bodies are valid wamn-testkit TestCases (11.4 vocabulary) so they
+    // Case bodies are valid scenario-model TestCases (11.4 vocabulary) so they
     // satisfy the 828 validate-on-write reconcile; still opaque jsonb to the copy.
     c.execute(
         "INSERT INTO wamn_run.test_cases \

@@ -2,7 +2,7 @@
 //!
 //! Prove flows execute CORRECTLY on the LIVE runner, OUTSIDE a bench harness.
 //! Unlike `runnerbench` (which instantiates the flowrunner IN-PROC via
-//! [`wamn_run_worker::RunWorker`] and drives the claim loop itself),
+//! `wamn_execution_host::ExecutionHost` and drives the claim loop itself),
 //! `ladderproof` is a pure DB CLIENT — the f1proof/apiproof shape: it seeds ONE
 //! run the dispatcher way (write-ahead `dispatched` row + queue row) and then
 //! WAITS for a SEPARATELY-DEPLOYED `run-worker` service (deploy/platform/runner.yaml) to
@@ -44,8 +44,12 @@ use clap::Args;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 
-use wamn_gate_harness::{check, scope_session, seed_flow_version};
-use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_gate_harness::{check, seed_flow_version};
+#[cfg(test)]
+use wamn_test_fixtures::runner::is_terminal;
+use wamn_test_fixtures::runner::{
+    connect_app, ladder_ddl, poll_to_terminal, seed_run, valid_ident,
+};
 
 /// The committed rung fixtures (single source of truth; the drift-guard tests
 /// pin that each file parses to the flow the proof asserts against).
@@ -204,115 +208,6 @@ fn rung_cases(rung: u8) -> anyhow::Result<Vec<RungCase>> {
     }
 }
 
-pub(crate) fn valid_ident(s: &str) -> bool {
-    let mut chars = s.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// The flow tables the runner walks + the 5.14 `run_queue` it claims from (plus
-/// the `partition_owner` lease table the fqg.9 partition fallthrough probes), in
-/// the house tenant floor (the runnerbench shape, minus the pg-write `sink` — the
-/// ladder flows have no pg-write node). The ladder seeds only unpartitioned runs,
-/// but the deployed `run-next` walks the partition path whenever the global claim
-/// drains (`acquire_partitions_sql` names `partition_owner`, `claim_partition_head_sql`
-/// reads `partition_policy`), so the stand-in must DEFINE both for that probe to be
-/// a no-op rather than an undefined-relation failure.
-pub(crate) fn ladder_ddl(schema: &str) -> String {
-    format!(
-        "CREATE TABLE {schema}.flows (\
-            tenant_id text NOT NULL, flow_id text NOT NULL, version int NOT NULL, \
-            active boolean NOT NULL DEFAULT false, graph_json jsonb NOT NULL, \
-            PRIMARY KEY (tenant_id, flow_id, version));\
-         ALTER TABLE {schema}.flows ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.flows FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY flows_tenant ON {schema}.flows \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.flows TO wamn_app;\
-         CREATE TABLE {schema}.runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-            flow_version int NOT NULL, \
-            status text NOT NULL DEFAULT 'running' \
-              CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
-            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
-            updated_at timestamptz NOT NULL DEFAULT now(), \
-            idempotency_key text, replay_of text, root_run_id text, \
-            fail_kind text, fail_node text, fail_reason text, \
-            PRIMARY KEY (tenant_id, run_id));\
-         ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY runs_tenant ON {schema}.runs \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
-         CREATE TABLE {schema}.node_runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
-            occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
-            status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
-            error_kind text, error_detail jsonb, resume_at timestamptz, \
-            preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
-            redacted boolean NOT NULL DEFAULT false, \
-            PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.node_runs FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY node_runs_tenant ON {schema}.node_runs \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.node_runs TO wamn_app;\
-         CREATE TABLE {schema}.run_queue (\
-            tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
-            partition_policy text NOT NULL DEFAULT 'blocking' CHECK (partition_policy IN ('blocking', 'leapfrog')), \
-            priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
-            lease_owner text, lease_expires_at timestamptz, \
-            attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
-            enqueued_at timestamptz NOT NULL DEFAULT now(), \
-            stream_seq bigint NOT NULL DEFAULT 0, \
-            PRIMARY KEY (tenant_id, run_id), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
-         CREATE INDEX run_queue_partition ON {schema}.run_queue (tenant_id, partition_key) WHERE partition_key IS NOT NULL;\
-         ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY run_queue_tenant ON {schema}.run_queue \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;\
-         CREATE TABLE {schema}.partition_owner (\
-            tenant_id text NOT NULL, partition_key text NOT NULL, \
-            lease_owner text NOT NULL, lease_expires_at timestamptz NOT NULL, \
-            acquired_at timestamptz NOT NULL DEFAULT now(), \
-            PRIMARY KEY (tenant_id, partition_key));\
-         ALTER TABLE {schema}.partition_owner ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.partition_owner FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;"
-    )
-}
-
-/// A wamn_app connection pinned to the demo schema + tenant claim — the same RLS
-/// floor + search_path the deployed runner's plugin session runs under, so the
-/// seeder and the runner see each other's rows.
-pub(crate) async fn connect_app(
-    app_url: &str,
-    schema: &str,
-    tenant: &str,
-) -> anyhow::Result<Client> {
-    let (client, conn) = tokio_postgres::connect(app_url, NoTls)
-        .await
-        .context("app (wamn_app) connect")?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    scope_session(&client, tenant, schema)
-        .await
-        .context("set search_path + tenant claim")?;
-    Ok(client)
-}
-
 /// Provision a fresh ephemeral schema + the flow tables (superuser), then
 /// register EVERY rung's flow active (app, under the tenant claim). The LOCAL
 /// self-contained bring-up; in-cluster the deploy pipeline provisions instead.
@@ -377,64 +272,6 @@ async fn teardown(admin_url: &str, schema: &str) -> anyhow::Result<()> {
     drop(admin);
     let _ = conn_task.await;
     r.map(|_| ())
-}
-
-/// Seed ONE run the way the dispatcher does — the write-ahead `dispatched` row +
-/// the queue row, co-transacted (the exact producer state the runner claims).
-pub(crate) async fn seed_run(
-    client: &mut Client,
-    flow_id: &str,
-    run_id: &str,
-    input_text: &str,
-) -> anyhow::Result<()> {
-    let tx = client.transaction().await?;
-    tx.execute(
-        &write_ahead_triggered_run_sql(),
-        &[&run_id, &flow_id, &1i32, &"manual", &input_text],
-    )
-    .await
-    .context("write-ahead run")?;
-    tx.execute(
-        &enqueue_sql(),
-        &[&run_id, &Option::<&str>::None, &0i32, &0i64],
-    )
-    .await
-    .context("enqueue run")?;
-    tx.commit().await?;
-    Ok(())
-}
-
-pub(crate) fn is_terminal(status: &str) -> bool {
-    matches!(
-        status,
-        "completed" | "failed" | "cancelled" | "infrastructure-failure"
-    )
-}
-
-/// Poll a seeded run to a terminal status (or the deadline). A directly-seeded
-/// run gets no doorbell, so this covers the runner's idle poll interval.
-pub(crate) async fn poll_to_terminal(
-    client: &Client,
-    run_id: &str,
-    deadline: Instant,
-) -> anyhow::Result<String> {
-    let mut status = "dispatched".to_string();
-    loop {
-        let row = client
-            .query_opt("SELECT status FROM runs WHERE run_id = $1", &[&run_id])
-            .await?;
-        if let Some(row) = row {
-            status = row.get(0);
-            if is_terminal(&status) {
-                break;
-            }
-        }
-        if Instant::now() >= deadline {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    Ok(status)
 }
 
 pub async fn run(args: LadderProofArgs) -> anyhow::Result<()> {

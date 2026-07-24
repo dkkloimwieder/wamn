@@ -1,6 +1,6 @@
 # POC-TESTS in-cluster gate of record (wamn-3rj): pocsuiteproof seeds the F1/F3/F4
 # stored suites as catalog data and drives each flow ONCE through its real path,
-# folding the stored assertions through wamn_testkit::evaluate (F1 sync-webhook
+# folding the stored assertions through wamn_scenario_model::evaluate (F1 sync-webhook
 # body + final DB; F3 virtual-time 48h cutoff; F4 egress spy). It provisions its
 # OWN ephemeral schemas (wamn_pocsuiteproof + _f1/_f3/_f4) through the superuser
 # url — no shared-schema mutation, all dropped at the end.

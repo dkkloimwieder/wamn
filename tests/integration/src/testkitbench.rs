@@ -1,5 +1,5 @@
 //! `testkitbench` — the 11.4 assertion-library gate: cases-as-data driven
-//! through the pure `wamn-testkit` vocabulary.
+//! through the pure `wamn-scenario-model` vocabulary.
 //!
 //! A checked-in JSON fixture (`--cases`, a `Vec<TestCase>`) proves the
 //! cases-as-data path (the 828 lane's catalog-jsonb store reads the identical
@@ -9,13 +9,14 @@
 //!     [`ServeNode`] (the f2invoke template) and `.invoke()`s it with the case
 //!     input/config, capturing the emission / port / error.
 //!   flow-level (`flow_ref`) — the gate drives the flow under the test-double
-//!     set (`DoubleSet::virtual_host` + a spying `EgressRecorder` + the 9-arg
-//!     [`RunWorker::instantiate`]) exactly as `testhostbench`'s runworker phase
-//!     does, then captures the run outcome (from the [`DrainReport`]), the egress
+//!     set (`ScenarioCapabilities::virtualized` + a spying `RecordingEgress` + the 9-arg
+//!     [`ExecutionHost::instantiate`]) exactly as `testhostbench`'s runworker phase
+//!     does, then captures the run outcome (from the
+//!     [`DrainReport`](wamn_execution_host::DrainReport)), the egress
 //!     log, and admin-pool DB reads.
 //!
-//! Every captured fact bundle is folded through [`wamn_testkit::evaluate`] and
-//! each [`AssertionResult`](wamn_testkit::AssertionResult) becomes a
+//! Every captured fact bundle is folded through [`wamn_scenario_model::evaluate`] and
+//! each [`AssertionResult`](wamn_scenario_model::AssertionResult) becomes a
 //! [`wamn_gate_harness::check`] line — the library decides, the gate only drives.
 //!
 //! DB-state note: the flow-level DB reads go through the provisioner's SUPERUSER
@@ -35,24 +36,26 @@ use wash_runtime::host::http::HostHandler;
 
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
+use wamn_execution_host::{ExecutionHost, ExecutionIdentity, injected_capabilities};
 use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_case, seed_test_suite};
 use wamn_node_invoke::{
     NodeInvokeRequest, NodeInvokeResponse, WireNodeError, WirePayload, WireRunContext,
 };
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
-use wamn_run_worker::{RunWorker, RunnerIdentity};
-use wamn_runtime::doubles::{DoubleSet, EgressRecorder, EphemeralSchemaProvisioner, case_pool};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
-use wamn_testkit::{
+use wamn_scenario_model::{
     Assertion, Captured, DbCapture, EgressAssertion, NodeErrorKind, Outcome, RunFacts, RunStatus,
     TestCase, evaluate,
 };
+use wamn_scenario_runtime::{
+    EphemeralSchemaProvisioner, RecordingEgress, ScenarioCapabilities, case_pool,
+};
 
 /// The virtual-clock epoch + seed the flow-level test host uses (matching the
-/// run-worker `--test-doubles` constants).
+/// scenario-runtime defaults).
 const TEST_EPOCH_SECS: u64 = 1_700_000_000;
 const TEST_SEED: u64 = 0x7492_5EED_5EED_7492;
 
@@ -146,7 +149,7 @@ pub struct TestKitBenchArgs {
 /// today and is out of this bead's scope) whose field names/types are pinned to
 /// the `SuiteEdge` shape by `suite_selector_matches_the_suite_edge_shape`.
 /// `flow_version` is `i32` (the SQL `int` column / `SuiteEdge`); the executor
-/// casts it to the `u32` the `wamn-testkit` `FlowRef` uses at the boundary.
+/// casts it to the `u32` the `wamn-scenario-model` `FlowRef` uses at the boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SuiteSelector {
@@ -216,6 +219,10 @@ async fn run_file_cases(
         .with_context(|| format!("read cases fixture {}", path.display()))?;
     let cases: Vec<TestCase> = serde_json::from_str(&raw)
         .with_context(|| format!("parse Vec<TestCase> from {}", path.display()))?;
+    for case in &cases {
+        case.validate()
+            .with_context(|| format!("validate case {:?} from {}", case.name, path.display()))?;
+    }
     println!(
         "loaded {} case(s) from {} (cases-as-data path)",
         cases.len(),
@@ -294,7 +301,11 @@ async fn node_phase(
 /// with `config` overridden by the case config and the input carried inline. No
 /// credential grant (the vocabulary v0 targets world/zero-import nodes).
 fn build_node_request(case: &TestCase) -> NodeInvokeRequest {
-    let mut ctx = case.ctx.clone().unwrap_or_else(|| default_ctx(case));
+    let mut ctx = case
+        .ctx
+        .clone()
+        .map(wamn_scenario_catalog::compat::run_context_to_wire)
+        .unwrap_or_else(|| default_ctx(case));
     if let Some(cfg) = &case.config {
         ctx.config = cfg.to_string();
     }
@@ -361,7 +372,7 @@ fn wire_error_kind(e: &WireNodeError) -> NodeErrorKind {
 }
 
 // ---------------------------------------------------------------------------
-// flow-level: RunWorker under the test-double set (the runworker template)
+// flow-level: ExecutionHost under the test-double set (the runworker template)
 // ---------------------------------------------------------------------------
 
 async fn flow_phase(
@@ -370,7 +381,7 @@ async fn flow_phase(
     cases: &[&TestCase],
 ) -> anyhow::Result<bool> {
     println!(
-        "\n## flow — {} case(s) drive poc-s6 under the test-double set (RunWorker + EgressRecorder)",
+        "\n## flow — {} case(s) drive poc-s6 under the test-double set (ExecutionHost + RecordingEgress)",
         cases.len()
     );
 
@@ -431,31 +442,30 @@ async fn flow_phase(
     // seeded random + a spying egress recorder that expects only the echo).
     let plugin = Arc::new(WamnPostgres::new(cfg.clone())?);
     let vault = Arc::new(WamnCredentials::empty());
-    let recorder = Arc::new(EgressRecorder::spying());
+    let recorder = Arc::new(RecordingEgress::spying());
     recorder.expect(RW_OWNER, [echo_authority.clone()]);
-    let (doubles, _clock) = DoubleSet::virtual_host(
+    let (scenario, _clock) = ScenarioCapabilities::virtualized(
         TEST_EPOCH_SECS,
         TEST_SEED,
         recorder.clone() as Arc<dyn HostHandler>,
     );
-    let mut worker = RunWorker::instantiate(
+    let mut worker = ExecutionHost::instantiate(
         engine,
         &guest,
         plugin.clone(),
         vault,
         Arc::new(WamnLogging::from_env()?),
-        RunnerIdentity {
+        ExecutionIdentity {
             owner: RW_OWNER,
             tenant: RW_TENANT,
             schema: Some(RW_SCHEMA),
             project: "default",
         },
-        Arc::from([]),
+        injected_capabilities(scenario.wasi, scenario.egress),
         30_000,
-        Some(doubles),
     )
     .await
-    .context("instantiate RunWorker with the test double set")?;
+    .context("instantiate ExecutionHost with the test double set")?;
     let report = worker.drain().await.context("drain run_queue")?;
     println!("flow drain: {report:?}, egress={:?}", recorder.records());
 
@@ -540,11 +550,11 @@ async fn admin_query_json(
 // 11.2-exec (wamn-0lfu): the stored-suite EXECUTOR
 //
 // Loads `test_suites` / `test_cases` rows from Postgres (validated against the
-// `wamn-testkit` vocabulary on READ) and executes each stored case as its OWN
+// `wamn-scenario-model` vocabulary on READ) and executes each stored case as its OWN
 // run through the t92 doubles seam — a FRESH ephemeral schema per case (the
 // source schema is read-only), the graph read from `{source_schema}.flows`,
-// `DoubleSet::virtual_host` + `EgressRecorder` + `RunWorker` + drain, then
-// `wamn_testkit::evaluate` per case. Selection is `--suite <flow@version>`
+// `ScenarioCapabilities::virtualized` + `RecordingEgress` + `ExecutionHost` + drain, then
+// `wamn_scenario_model::evaluate` per case. Selection is `--suite <flow@version>`
 // (single-tenant, all suites of the version) OR `--impact-report` (a JSON array
 // of `SuiteSelector`, the flattened `ImpactReport` tuples the 12g auto-run seam
 // will emit).
@@ -661,7 +671,7 @@ fn is_bare_ident(s: &str) -> bool {
 }
 
 /// The `SuiteEdge` `flow_version` boundary: `i32` (the SQL `int` column) → the
-/// `u32` `wamn-testkit` `FlowRef` uses. A negative version is invalid.
+/// `u32` `wamn-scenario-model` `FlowRef` uses. A negative version is invalid.
 fn u32_from_version(v: i32) -> anyhow::Result<u32> {
     u32::try_from(v).map_err(|_| anyhow::anyhow!("flow_version must be non-negative, got {v}"))
 }
@@ -806,7 +816,7 @@ async fn run_stored_suites(
                 scope_session(admin, &tenant, &args.source_schema).await?;
                 let rows = admin
                     .query(
-                        &wamn_flow_tests::sql::select_suites_for_flow_sql(),
+                        &wamn_scenario_catalog::sql::select_suites_for_flow_sql(),
                         &[&tenant, &flow_id, &flow_version],
                     )
                     .await
@@ -889,7 +899,7 @@ async fn run_stored_suites(
         // --- read the suite's cases (validated on read, below) ---
         let case_rows = admin
             .query(
-                &wamn_flow_tests::sql::select_cases_for_suite_sql(),
+                &wamn_scenario_catalog::sql::select_cases_for_suite_sql(),
                 &[tenant, flow_id, flow_version, suite_id],
             )
             .await
@@ -910,7 +920,7 @@ async fn run_stored_suites(
                     check(
                         &mut ok,
                         &format!(
-                            "{suite_id}/{case_id} :: case_body is not a valid wamn-testkit TestCase — {e}"
+                            "{suite_id}/{case_id} :: case_body is not a valid wamn-scenario-model TestCase — {e}"
                         ),
                         false,
                     );
@@ -992,8 +1002,8 @@ async fn run_stored_suites(
 }
 
 /// Drive ONE stored case as its own run: fresh exec schema (runner_ddl) ← the
-/// real graph + a run carrying the case's trigger input; `DoubleSet` +
-/// `EgressRecorder` (allowlist from the case's own egress asserts) + `RunWorker`
+/// real graph + a run carrying the case's trigger input; `ScenarioCapabilities` +
+/// `RecordingEgress` (allowlist from the case's own egress asserts) + `ExecutionHost`
 /// + drain; then `evaluate` the case against the captured run/egress/db facts.
 #[allow(clippy::too_many_arguments)]
 async fn drive_stored_case(
@@ -1043,9 +1053,9 @@ async fn drive_stored_case(
     // The egress double: the case's OWN egress asserts name the allowlist; owner
     // == flow_id (the suite-authoring convention). Spy: everything else is
     // recorded + denied.
-    let recorder = Arc::new(EgressRecorder::spying());
+    let recorder = Arc::new(RecordingEgress::spying());
     recorder.expect(flow_id, expected_authorities(case));
-    let (doubles, _clock) = DoubleSet::virtual_host(
+    let (scenario, _clock) = ScenarioCapabilities::virtualized(
         TEST_EPOCH_SECS,
         TEST_SEED,
         recorder.clone() as Arc<dyn HostHandler>,
@@ -1054,24 +1064,23 @@ async fn drive_stored_case(
     // A FRESH app pool per case (prepared-plan isolation across exec schemas).
     let plugin = case_pool(cfg, tenant, exec_schema, flow_id).context("build case pool")?;
     let vault = Arc::new(WamnCredentials::empty());
-    let mut worker = RunWorker::instantiate(
+    let mut worker = ExecutionHost::instantiate(
         engine,
         guest,
         plugin.clone(),
         vault,
         Arc::new(WamnLogging::from_env()?),
-        RunnerIdentity {
+        ExecutionIdentity {
             owner: flow_id,
             tenant,
             schema: Some(exec_schema),
             project: "default",
         },
-        Arc::from([]),
+        injected_capabilities(scenario.wasi, scenario.egress),
         30_000,
-        Some(doubles),
     )
     .await
-    .context("instantiate RunWorker with the test double set")?;
+    .context("instantiate ExecutionHost with the test double set")?;
     let report = worker.drain().await.context("drain run_queue")?;
 
     // The run outcome (from the drain report, as flow_phase derives it) + egress
@@ -1211,7 +1220,7 @@ fn demo_graph_json() -> String {
     )
 }
 
-/// The demo suite's cases (validated `wamn-testkit` TestCase bodies, mirroring
+/// The demo suite's cases (validated `wamn-scenario-model` TestCase bodies, mirroring
 /// what pin-run writes): a plain completion, and a completion + a db-state assert
 /// that the run's `pg-write` reached `sink` (fresh exec schema ⇒ exactly 1 row).
 fn demo_cases() -> Vec<(String, i32, String)> {
@@ -1244,7 +1253,7 @@ fn demo_cases() -> Vec<(String, i32, String)> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use wamn_testkit::AssertionResult;
+    use wamn_scenario_model::AssertionResult;
 
     /// The `--impact-report` input row is the `wamn_schema_control::impact::SuiteEdge` shape
     /// field-for-field: names `tenant / flow_id / flow_version / suite_id`, types
@@ -1496,7 +1505,7 @@ mod tests {
 
     /// The demo suite the `--seed-demo` gate seeds is drivable + valid: its graph
     /// has no undrivable node type, and each case body is a valid, coherent
-    /// wamn-testkit TestCase (a broken demo fails here, not only against PG).
+    /// wamn-scenario-model TestCase (a broken demo fails here, not only against PG).
     #[test]
     fn seed_demo_graph_and_cases_are_drivable_and_valid() {
         let graph: serde_json::Value = serde_json::from_str(&demo_graph_json()).unwrap();
