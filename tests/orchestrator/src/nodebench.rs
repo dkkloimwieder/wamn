@@ -43,14 +43,14 @@ use wash_runtime::wasmtime::component::{
     Component as WasmtimeComponent, InstancePre, Linker, TypedFunc,
 };
 
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         world: "node-bench",
         // The gate binds the same vendored WIT the host plugins bind
-        // (services/host/wit); no second copy (SR7).
-        path: "../../services/host/wit",
+        // (crates/platform/runtime/wit); no second copy (SR7).
+        path: "../../crates/platform/runtime/wit",
         imports: { default: async },
         exports: { default: async },
         wasmtime_crate: wash_runtime::wasmtime,

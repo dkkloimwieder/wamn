@@ -1,69 +1,15 @@
 [package]
 name = "wamn-host"
-description = "wamn production host: wash-runtime washlet + dispatcher + wamn:postgres / wamn:logging / wamn:node plugins (lib + thin binary; gates live in wamn-gates)"
+description = "General wasmCloud washlet host service."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-runtime = { path = "../../crates/platform/runtime" }
 wash-runtime = { workspace = true }
 anyhow = { workspace = true }
-tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "rt-multi-thread", "macros", "signal", "sync"] }
-serde_json = "1"
-tracing = { workspace = true }
-# S5 wamn:logging plugin owns its OWN OTel LoggerProvider (generous batch queue
-# -> OTLP gRPC -> collector -> Loki), independent of the vendored
-# observability.rs pipeline (whose 2048 batch queue + log-level-tied filter
-# bottleneck a 10k/s bench). Pinned to the exact 0.31 line wash-runtime uses so
-# cargo unifies to a single crate instance (shared global meter provider).
-opentelemetry = { version = "0.31", default-features = false, features = ["logs", "metrics"] }
-opentelemetry_sdk = { version = "0.31", default-features = false, features = ["logs"] }
-opentelemetry-otlp = { version = "0.31", default-features = false, features = ["grpc-tonic", "logs"] }
-async-trait = { workspace = true }
-clap = { version = "4", features = ["derive", "env"] }
-bytes = "1"
-# wamn-q3n.6 provision-org: the control-plane registry model — Org / Tier / the
-# cluster-name derivation the org-pair renderer shares with the registry row, and
-# the registry.orgs upsert SQL (SR2 single-source) the subcommand writes.
-wamn-registry = { path = "../../crates/control/registry" }
-# 5.14 dispatcher: holds the doorbell client (wash_runtime::washlet::connect_nats
-# returns async_nats::Client). Same version req as wash-runtime's so cargo
-# unifies to ONE crate instance (type identity) — the S5 OTel-crates pattern.
 async-nats = { version = "0.47", default-features = false }
-# The causation frame (Causation) the wamn:postgres plugin stamps on
-# run-owned txns (l5i9.12.2); the wire contract crate.
-wamn-event-wire = { path = "../../crates/events/wire" }
-# wamn:postgres plugin (S2): thin driver + pool with explicit connection
-# lifecycle (deadpool Object::take = destroy-never-repool on abnormal death).
-tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
-deadpool-postgres = "0.14"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
-futures-util = "0.3"
-# 5.6 / wamn-bd5: the production `serve-node` custom-node host links the REAL
-# wamn:node world (credentials get-only + control + outbound wasi:http — the
-# E17 tenant-node profile) into a warm node instance and calls its handler
-# export. Same wasmtime rev as run-worker so cargo unifies to one wasmtime.
-wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
-wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
-hyper = "1"
-# The pure invocation protocol (wire envelope + config-parse memoization +
-# grant derivation) shared verbatim with the flowrunner guest — one source of
-# truth for the wire shape, so the two ends cannot drift.
-wamn-node-invoke = { path = "../../crates/node/invoke" }
-# 11.4: the test-case + assertion vocabulary. The doubles' `EgressRecord` LIVES
-# here (a serde-serializable fact the pure evaluator asserts over); this crate's
-# egress recorder re-exports it, so the recorder API is unchanged. Pure crate,
-# no cycle (wamn-testkit does not depend on wamn-host).
-wamn-testkit = { path = "../../crates/scenarios/model" }
-# wamn-t92 test-host doubles: the deterministic `wasi:random` seed double
-# (delta 5) implements the fallible `TryRng`; rand_core blanket-impls the `Rng`
-# the pinned wasmtime_wasi `secure_random`/`insecure_random` overrides want.
-# Pinned to the 0.10 line wasmtime_wasi uses so the `Rng` trait unifies.
-rand_core = "0.10"
-
-[dev-dependencies]
-# The 5.5a interface-level lint tests synthesize minimal adversarial + standard
-# custom-node components in-process (the socketguard pattern) and screen the REAL
-# compiled bytes through the builder lint — no external fixture build. Pinned to
-# the wasm-encoder already in the graph via the wasmtime rev.
-wasm-encoder = "0.251"
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+tracing = { workspace = true }

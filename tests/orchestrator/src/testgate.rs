@@ -3,9 +3,8 @@
 //! The 11.5 builder stage runs a node's user-supplied `cases.json` against the
 //! JUST-BUILT artifact (under the frozen `wamn:node` world) as a PUBLISH gate: a
 //! failing case REFUSES the publish, so nothing reaches the registry. This gate
-//! proves that enforcement HERMETICALLY, driving the builder's ONE test-gate
-//! runner (`wamn_builder::test_gate::run_cases`) — the exact fn `build.rs::run`
-//! calls after the import lint and BEFORE any OCI push — in-process:
+//! proves the node-level contract HERMETICALLY through the shared node runtime,
+//! independently of the deployable builder:
 //!
 //! - a POSITIVE arm — the disposition node's real `cases.json` (the transcribed
 //!   `#[cfg(test)]` matrix) all PASS against the compiled artifact; and
@@ -30,7 +29,122 @@ use std::path::PathBuf;
 use anyhow::{Context as _, bail};
 use clap::Args;
 
-use wamn_builder::test_gate::{CaseFile, TestGateError, run_cases};
+use wamn_node_invoke::{
+    NodeInvokeRequest, NodeInvokeResponse, WireNodeError, WirePayload, WireRunContext,
+};
+use wamn_node_runtime::{DEFAULT_NODE_ID, NodeRuntime, NodeRuntimeConfig};
+use wamn_testkit::{Captured, NodeCase, NodeErrorKind, evaluate};
+
+type CaseFile = wamn_testkit::NodeCaseFile;
+
+#[derive(Debug)]
+struct TestGateError {
+    failures: Vec<(String, String)>,
+}
+
+impl TestGateError {
+    fn failed_case_names(&self) -> Vec<&str> {
+        self.failures
+            .iter()
+            .map(|(name, _detail)| name.as_str())
+            .collect()
+    }
+}
+
+impl std::fmt::Display for TestGateError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "custom-node test gate: {} case(s) failed",
+            self.failures.len()
+        )?;
+        for (name, detail) in &self.failures {
+            write!(formatter, "\n  - {name}: {detail}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for TestGateError {}
+
+fn request(case: &NodeCase) -> NodeInvokeRequest {
+    NodeInvokeRequest {
+        ctx: WireRunContext {
+            run_id: "test-gate".to_string(),
+            flow_id: "test-gate".to_string(),
+            flow_version: 1,
+            node_id: "case".to_string(),
+            attempt: 0,
+            idempotency_key: "test-gate:case".to_string(),
+            deadline_ms: None,
+            traceparent: None,
+            tracestate: None,
+            config: case
+                .config
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "{}".to_string()),
+        },
+        input: WirePayload::Inline(case.input.to_string()),
+        grant: case.grant.clone().unwrap_or_default(),
+    }
+}
+
+fn captured(response: &NodeInvokeResponse) -> Captured {
+    match response {
+        NodeInvokeResponse::Ok(emission) => Captured {
+            node_output: emission
+                .payload
+                .inline()
+                .and_then(|value| serde_json::from_str(value).ok()),
+            node_port: Some(emission.port.clone().unwrap_or_else(|| "main".to_string())),
+            ..Default::default()
+        },
+        NodeInvokeResponse::Err(error) => Captured {
+            node_error: Some(match error {
+                WireNodeError::Retryable(_) => NodeErrorKind::Retryable,
+                WireNodeError::RateLimited(_) => NodeErrorKind::RateLimited,
+                WireNodeError::Terminal(_) => NodeErrorKind::Terminal,
+                WireNodeError::InvalidInput(_) => NodeErrorKind::InvalidInput,
+                WireNodeError::Cancelled => NodeErrorKind::Cancelled,
+            }),
+            ..Default::default()
+        },
+    }
+}
+
+async fn run_cases(wasm: &[u8], cases: &CaseFile) -> anyhow::Result<()> {
+    let engine = wamn_runtime::build_engine(&[])?;
+    let ticker = wamn_runtime::spawn_epoch_ticker(&engine, wamn_runtime::DEFAULT_EPOCH_TICK);
+    let runtime = NodeRuntime::instantiate(
+        &engine,
+        wasm,
+        NodeRuntimeConfig::deny_all(DEFAULT_NODE_ID, "default"),
+    )
+    .await
+    .context("warm-instantiate node under test")?;
+
+    let mut failures = Vec::new();
+    for case in &cases.cases {
+        let response = runtime.invoke(request(case)).await;
+        let outcome = evaluate(&case.clone().into_test_case(), &captured(&response));
+        if !outcome.passed() {
+            let detail = outcome
+                .failures()
+                .filter_map(|result| result.detail.clone())
+                .collect::<Vec<_>>()
+                .join("; ");
+            failures.push((case.name.clone(), detail));
+        }
+    }
+    ticker.abort();
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(TestGateError { failures }.into())
+    }
+}
 
 /// The disposition node's real cases and the deliberately-wrong refusal fixture,
 /// baked from the crate so the gate tracks them exactly.
@@ -77,8 +191,8 @@ pub async fn run(args: TestGateArgs) -> anyhow::Result<()> {
     }
 
     // NEGATIVE — a deliberately-wrong expectation refuses with the typed error,
-    // naming the case. run_cases does no registry I/O, so this Err IS the
-    // before-any-push proof (build.rs::run `?`-propagates it before the push).
+    // naming the case. The deployed builder Job separately proves that this
+    // refusal prevents the registry push.
     println!("\n## negative — a deliberately-wrong expectation REFUSES the publish");
     match run_cases(&wasm, &bad).await {
         Ok(()) => {
@@ -89,7 +203,7 @@ pub async fn run(args: TestGateArgs) -> anyhow::Result<()> {
             Some(tge) if tge.failed_case_names().contains(&REFUSAL_CASE_NAME) => {
                 println!(
                     "    PASS: refused with the typed TestGateError, naming {REFUSAL_CASE_NAME:?} — \
-                     no push reached (run_cases does no registry I/O)"
+                    the node-level contract rejects the case"
                 );
             }
             Some(tge) => {

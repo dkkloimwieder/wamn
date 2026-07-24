@@ -1,14 +1,14 @@
 [package]
 name = "wamn-gates"
-description = "The wamn gate suite: bench/pgbench/…/f1proof over the wamn-host library (SR1)"
+description = "The wamn gate suite over reusable platform and domain libraries"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# The production host library — gates construct the identical engines, hosts,
-# and plugins the prod binary runs.
-wamn-host = { path = "../../services/host" }
+wamn-component-policy = { path = "../../crates/platform/component-policy" }
+wamn-runtime = { path = "../../crates/platform/runtime" }
+wamn-node-runtime = { path = "../../crates/platform/node-runtime" }
 # SR9: the one-shot control-plane verbs the provisioning/publish gates drive.
 wamn-ctl = { path = "../../services/ctl" }
 # SR9: the per-service crates whose engines the bench gates drive directly.
@@ -35,6 +35,7 @@ bytes = "1"
 # S6 egress spy / prod handler comparisons: HostHandler::outgoing_request is in
 # terms of hyper::Request.
 hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
 # apibench/f1bench request bodies + response collection.
 http-body-util = "0.1"
 # apibench/f1bench build catalog snapshots + tenant-floor DDL for their
@@ -42,7 +43,7 @@ http-body-util = "0.1"
 wamn-catalog = { path = "../../crates/schema/model" }
 wamn-ddl = { path = "../../crates/schema/ddl-compiler" }
 # provisionbench: the pure provisioning naming / SQL / Secret builders (2.3),
-# driven end-to-end through wamn_host::provision::provision_project. The org-pair
+# driven end-to-end through wamn-provision. The org-pair
 # / T3 tier modes (wamn-q3n.8) also drive the registry model + saga SQL builders.
 wamn-provision = { path = "../../crates/control/provision" }
 wamn-registry = { path = "../../crates/control/registry" }
@@ -53,9 +54,6 @@ wamn-node-invoke = { path = "../../crates/node/invoke" }
 # AssertionResult into check — the pure assertion vocabulary. testhostbench's
 # schemacase/runworker retrofit routes its inline asserts through the same.
 wamn-testkit = { path = "../../crates/scenarios/model" }
-# buildproof drives the 5.5 builder's OCI fetch (registry client) + verifies the
-# pushed artifact against the SAME NodeManifest model the builder wrote.
-wamn-builder = { path = "../../services/builder" }
 wamn-node-manifest = { path = "../../crates/node/manifest" }
 # queuebench/failoverbench/dispatchbench drive the pure queue/cron
 # builders over tokio_postgres.
@@ -93,6 +91,9 @@ futures-util = "0.3"
 # egress guard hermetically — no external fixture build, no registry. Pinned to
 # the wasm-encoder already in the graph via the wasmtime rev.
 wasm-encoder = "0.251"
+sha2 = "0.11"
+hex = "0.4"
+ring = "0.17"
 
 [dev-dependencies]
 # f1fixture coherence test compiles the committed seed dataset (3.6).

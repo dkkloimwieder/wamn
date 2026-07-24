@@ -1,0 +1,31 @@
+[package]
+name = "wamn-runtime"
+description = "Shared native wasmCloud runtime configuration and host capability adapters."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wash-runtime = { workspace = true }
+wamn-component-policy = { path = "../component-policy" }
+wamn-registry = { path = "../../control/registry" }
+wamn-event-wire = { path = "../../events/wire" }
+wamn-testkit = { path = "../../scenarios/model" }
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "rt-multi-thread", "macros", "signal", "sync"] }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+async-nats = { version = "0.47", default-features = false }
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+deadpool-postgres = "0.14"
+futures-util = "0.3"
+hyper = "1"
+opentelemetry = { version = "0.31", default-features = false, features = ["logs", "metrics"] }
+opentelemetry_sdk = { version = "0.31", default-features = false, features = ["logs"] }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["grpc-tonic", "logs"] }
+rand_core = "0.10"
+serde_json = "1"
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }

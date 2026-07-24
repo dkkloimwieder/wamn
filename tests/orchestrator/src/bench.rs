@@ -40,7 +40,9 @@ use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use wamn_gate_harness::percentile;
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, MEMORY_CAP_BYTES, build_engine, spawn_epoch_ticker};
+use wamn_runtime::engine::{
+    DEFAULT_EPOCH_TICK, MEMORY_CAP_BYTES, build_engine, spawn_epoch_ticker,
+};
 
 #[derive(Debug, Args)]
 pub struct BenchArgs {

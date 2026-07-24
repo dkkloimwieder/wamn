@@ -1,6 +1,6 @@
 //! Drift guard tying the `wamn:jetstream@0.1.0` doc-of-record
 //! (`docs/wamn-jetstream.wit`) to the built copy the host bindgen compiles
-//! (`services/host/wit/deps/wamn-jetstream/package.wit`). The
+//! (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit`). The
 //! `wamn:postgres` / `wamn:node` committed-contract precedent: editing one copy
 //! without the other fails a named test instead of shipping skew. The two are
 //! kept BYTE-IDENTICAL (like `docs/wamn-postgres.wit` and its vendored copy).
@@ -14,7 +14,7 @@ fn root() -> &'static Path {
 
 #[test]
 fn docs_wit_matches_built_copy() {
-    let docs = fs::read_to_string(root().join("../../docs/wamn-jetstream.wit"))
+    let docs = fs::read_to_string(root().join("../../../docs/wamn-jetstream.wit"))
         .expect("docs/wamn-jetstream.wit reads");
     let built = fs::read_to_string(root().join("wit/deps/wamn-jetstream/package.wit"))
         .expect("wit/deps/wamn-jetstream/package.wit reads");
@@ -33,11 +33,11 @@ fn component_copies_match_docs() {
     // (l5i9.57, consumer + producer — the first producer importer) each carry
     // one; editing docs without re-vendoring both fails HERE rather than
     // shipping a guest built against a stale contract.
-    let docs = fs::read_to_string(root().join("../../docs/wamn-jetstream.wit"))
+    let docs = fs::read_to_string(root().join("../../../docs/wamn-jetstream.wit"))
         .expect("docs/wamn-jetstream.wit reads");
     for copy in [
-        "../../components/execution/materializer/wit/deps/wamn-jetstream/package.wit",
-        "../../components/samples/js-sample/wit/deps/wamn-jetstream/package.wit",
+        "../../../components/execution/materializer/wit/deps/wamn-jetstream/package.wit",
+        "../../../components/samples/js-sample/wit/deps/wamn-jetstream/package.wit",
     ] {
         let vendored =
             fs::read_to_string(root().join(copy)).unwrap_or_else(|e| panic!("{copy} reads: {e}"));
@@ -53,7 +53,7 @@ fn component_copies_match_docs() {
 fn contract_declares_the_mvp_surface() {
     // The materializer (l5i9.17) binds exactly these; a rename/removal of any
     // load-bearing line is a breaking change that must move the plugin too.
-    let docs = fs::read_to_string(root().join("../../docs/wamn-jetstream.wit"))
+    let docs = fs::read_to_string(root().join("../../../docs/wamn-jetstream.wit"))
         .expect("docs/wamn-jetstream.wit reads");
     for needle in [
         "package wamn:jetstream@0.1.0;",

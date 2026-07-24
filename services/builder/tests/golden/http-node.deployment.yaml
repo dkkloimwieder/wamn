@@ -21,13 +21,12 @@ spec:
     spec:
       automountServiceAccountToken: false
       containers:
-        - name: serve-node
-          image: wamn-host:dev
+        - name: node-host
+          image: wamn-node-host:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"
             - "info"
-            - "serve-node"
             - "--node"
             - "/components/node.wasm"
             - "--port"

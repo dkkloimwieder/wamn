@@ -46,9 +46,9 @@ use wamn_run_queue::{
     PartitionPolicy, enqueue_sql, enqueue_with_policy_sql, write_ahead_triggered_run_sql,
 };
 
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wamn_run_worker::RunWorker;
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 
 /// The ephemeral schema unioning the flowrunner's flow tables with the 5.14
 /// `run_queue`, provisioned via superuser (mirrors failoverbench).
@@ -462,8 +462,8 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         // exact instantiate + claim loop the `run-worker` binary runs. The vault
         // is EMPTY (no fixture here declares a credential; credproof gates the
         // vault path) but must be present — the guest imports it unconditionally.
-        let vault = Arc::new(wamn_host::plugins::wamn_credentials::WamnCredentials::empty());
-        let logging = Arc::new(wamn_host::plugins::wamn_logging::WamnLogging::from_env()?);
+        let vault = Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty());
+        let logging = Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?);
         let mut worker = RunWorker::instantiate(
             &engine,
             &guest,

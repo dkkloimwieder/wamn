@@ -4166,9 +4166,11 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "wamn-host",
+ "wamn-component-policy",
  "wamn-node-invoke",
  "wamn-node-manifest",
+ "wamn-node-runtime",
+ "wamn-runtime",
  "wamn-testkit",
  "wasm-encoder 0.251.0",
 ]
@@ -4214,6 +4216,10 @@ dependencies = [
  "tokio",
  "tokio-postgres",
 ]
+
+[[package]]
+name = "wamn-component-policy"
+version = "0.1.0"
 
 [[package]]
 name = "wamn-ctl"
@@ -4350,17 +4356,21 @@ dependencies = [
  "chrono",
  "clap",
  "futures-util",
+ "hex",
  "http-body-util",
  "hyper",
+ "hyper-util",
  "pg_walstream",
+ "ring",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
  "tracing",
- "wamn-builder",
  "wamn-catalog",
  "wamn-cdc-reader",
+ "wamn-component-policy",
  "wamn-ctl",
  "wamn-ddl",
  "wamn-dispatcher",
@@ -4369,15 +4379,16 @@ dependencies = [
  "wamn-flow",
  "wamn-flow-tests",
  "wamn-gate-harness",
- "wamn-host",
  "wamn-node-invoke",
  "wamn-node-manifest",
+ "wamn-node-runtime",
  "wamn-provision",
  "wamn-registry",
  "wamn-run-queue",
  "wamn-run-store",
  "wamn-run-worker",
  "wamn-runner",
+ "wamn-runtime",
  "wamn-seed",
  "wamn-testkit",
  "wamn-waker",
@@ -4393,29 +4404,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
- "async-trait",
- "bytes",
- "chrono",
  "clap",
- "deadpool-postgres",
- "futures-util",
- "hyper",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "rand_core 0.10.1",
- "serde_json",
  "tokio",
- "tokio-postgres",
  "tracing",
- "wamn-event-wire",
- "wamn-node-invoke",
- "wamn-registry",
- "wamn-testkit",
+ "wamn-runtime",
  "wash-runtime",
- "wasm-encoder 0.251.0",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -4462,6 +4455,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-node-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wamn-node-invoke",
+ "wamn-node-runtime",
+ "wamn-runtime",
+ "wash-runtime",
+]
+
+[[package]]
 name = "wamn-node-invoke"
 version = "0.1.0"
 dependencies = [
@@ -4480,6 +4488,24 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "wamn-node-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "hyper",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wamn-component-policy",
+ "wamn-node-invoke",
+ "wamn-runtime",
+ "wash-runtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -4576,6 +4602,35 @@ dependencies = [
  "serde_json",
  "wamn-flow",
  "wamn-node-sdk",
+]
+
+[[package]]
+name = "wamn-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "deadpool-postgres",
+ "futures-util",
+ "hyper",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "rand_core 0.10.1",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "wamn-component-policy",
+ "wamn-event-wire",
+ "wamn-registry",
+ "wamn-testkit",
+ "wash-runtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]

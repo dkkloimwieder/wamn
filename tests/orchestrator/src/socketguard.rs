@@ -5,7 +5,7 @@
 //! which governs `wasi:http` ONLY), so a component that *imports* `wasi:sockets`
 //! opens arbitrary outbound TCP with DNS, bypassing the `wamn:postgres`
 //! tenant-claim / RLS path (docs/findings.md §3 E13, docs/security-db-path.md).
-//! `wamn_host::egress_guard` is the build/publish-side enforcement: one
+//! `wamn_component_policy` is the build/publish-side enforcement: one
 //! structural rule that refuses any component importing the `wasi:sockets`
 //! package.
 //!
@@ -22,11 +22,8 @@
 
 use anyhow::bail;
 use clap::Args;
-use wash_runtime::wasmtime::Engine as RawEngine;
-use wash_runtime::wasmtime::component::Component as WasmtimeComponent;
-
-use wamn_host::egress_guard::{EgressGuardError, screen_compiled};
-use wamn_host::engine::build_engine;
+use wamn_component_policy::{EgressGuardError, PolicyProfile, analyze};
+use wamn_runtime::engine::build_engine;
 
 #[derive(Args)]
 pub struct SocketGuardArgs {}
@@ -74,14 +71,13 @@ fn synth_component(import_names: &[&str]) -> Vec<u8> {
 /// A compile failure is a hard gate error (bad synthesis), NOT a refusal — so
 /// the negative assertion below tests the guard, never a malformed fixture.
 fn screen(
-    engine: &RawEngine,
+    engine: &wash_runtime::engine::Engine,
     imports: &[&str],
     label: &str,
 ) -> anyhow::Result<Result<(), EgressGuardError>> {
     let bytes = synth_component(imports);
-    let component = WasmtimeComponent::new(engine, &bytes)
-        .map_err(|e| anyhow::anyhow!("compile synthesized component {label}: {e}"))?;
-    Ok(screen_compiled(&component, label))
+    let imports = wamn_runtime::component_imports(engine, &bytes, label)?;
+    Ok(analyze(&imports, PolicyProfile::FirstParty, label).map(|_| ()))
 }
 
 pub async fn run(_args: SocketGuardArgs) -> anyhow::Result<()> {
@@ -92,13 +88,12 @@ pub async fn run(_args: SocketGuardArgs) -> anyhow::Result<()> {
     println!("#        standard component still publishes. Fixtures synthesized in-process.");
 
     let engine = build_engine(&[])?;
-    let raw: &RawEngine = engine.inner();
 
     let mut pass = true;
 
     // NEGATIVE — the socket-importing world must be refused, naming the offense.
     println!("\n## negative — a wasi:sockets importer is refused at publish");
-    match screen(raw, ATTACKER_IMPORTS, "socket-importer.wasm")? {
+    match screen(&engine, ATTACKER_IMPORTS, "socket-importer.wasm")? {
         Err(e) => println!("    PASS: refused — {e}"),
         Ok(()) => {
             println!("    FAIL: a wasi:sockets importer was ADMITTED — the DB-path bypass is open");
@@ -108,7 +103,7 @@ pub async fn run(_args: SocketGuardArgs) -> anyhow::Result<()> {
 
     // POSITIVE control — a standard world must still publish.
     println!("\n## positive control — a standard workload still publishes");
-    match screen(raw, STANDARD_IMPORTS, "standard.wasm")? {
+    match screen(&engine, STANDARD_IMPORTS, "standard.wasm")? {
         Ok(()) => println!("    PASS: admitted — no raw-socket surface"),
         Err(e) => {
             println!("    FAIL: a standard workload was REFUSED — {e}");
@@ -127,8 +122,8 @@ pub async fn run(_args: SocketGuardArgs) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    fn engine() -> RawEngine {
-        build_engine(&[]).expect("engine").inner().clone()
+    fn engine() -> wash_runtime::engine::Engine {
+        build_engine(&[]).expect("engine")
     }
 
     /// End-to-end over a REAL compiled component: the guard walks the synthesized

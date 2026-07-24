@@ -2897,8 +2897,8 @@ the trusted flow-runner (a custom-node step) POSTs an invocation envelope over
 `wasi:http` to a `serve-node` host that runs the node under the REAL frozen
 `wamn:node` world. The wire shape (envelope + per-step grant derivation + the
 config-parse memoization, note 9b) is the pure `wamn-node-invoke` crate, linked
-by BOTH ends so it cannot drift. HOST-changed (the `wamn-host serve-node`
-subcommand + the `serve_node` library core) AND GUEST-changed (the flowrunner's
+by BOTH ends so it cannot drift. NODE-HOST-changed (the `wamn-node-host`
+transport leaf + the `wamn-node-runtime` core) AND GUEST-changed (the flowrunner's
 `custom` dispatch arm) — the in-cluster gate rebakes the host image + rebuilds
 the flowrunner wasm.
 
@@ -2914,8 +2914,9 @@ scope (a named deferral). The E17 tenant import allowlist is screened at load
 # Pure unit tests (envelope encode/decode, grant derivation, config memoization,
 # the descriptor-returning wamn_nodes surface):
 cargo test -p wamn-node-invoke
+cargo test -p wamn-node-runtime
 cargo test -p wamn-nodes public_resolution_surface_is_descriptor_only
-cargo build -p wamn-host   # the serve_node core + `serve-node` subcommand
+cargo build -p wamn-node-host
 
 # Guest + node builds (release wasm32-wasip2; node-cred is the credential-reading
 # custom node under the real wamn:node world):
@@ -2941,10 +2942,10 @@ docker rm -f wamn-bd5-pg
 #   (c) the pub runnable wamn_nodes::node leak restored.
 
 # In-cluster (the main loop runs this — image rebake riders):
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev . \
-  && kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
+docker build --target node-host -t wamn-node-host:dev . && docker build --target gates -t wamn-gates:dev . \
+  && kind load docker-image wamn-node-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
 # The custom node ships as a ConfigMap (v0; the OCI image-fetch sidecar is a
-# deferral). serve-node runs from the wamn-host image (`serve-node` subcommand):
+# deferral). serve-node runs from the dedicated wamn-node-host image:
 kubectl -n wamn-system create configmap wamn-custom-node \
   --from-file=node.wasm=components/target/wasm32-wasip2/release/node_cred.wasm
 kubectl -n wamn-system apply -f deploy/platform/serve-node.yaml
@@ -3118,7 +3119,7 @@ and `buildproof` verifies the pushed artifact FROM the registry.
 # buildproof manifest/signature/SBOM checks).
 cargo test -p wamn-builder
 cargo test -p wamn-gates --bin wamn-gates -- buildproof   # verify_* units
-cargo test -p wamn-host egress_guard                      # 5.5a lint + derived grants
+cargo test -p wamn-component-policy                      # 5.5a lint + derived grants
 # regen the emission golden files after an intentional shape change:
 BLESS=1 cargo test -p wamn-builder --test golden_deploy
 

@@ -27,7 +27,7 @@
 //! and (with `--sockprobe`) that the runtime deny actually fires. See
 //! docs/security-db-path.md.
 //!
-//! TWO PROFILES (E17). The verdict comes from `wamn_host::egress_guard` — the
+//! TWO PROFILES (E17). The verdict comes from `wamn_component_policy` — the
 //! same classifier the host publish-gate uses — not a forked local rule:
 //! - **first-party flow-runner** legitimately imports `wamn:postgres` (the DB
 //!   path); it is screened by the socket denylist (`egress_guard::denied_imports`,
@@ -54,8 +54,8 @@ use wash_runtime::types::{
 use wash_runtime::wasmtime::Engine as RawEngine;
 use wash_runtime::wasmtime::component::Component as WasmtimeComponent;
 
-use wamn_host::egress_guard::{denied_imports, disallowed_tenant_imports};
-use wamn_host::engine::build_engine;
+use wamn_component_policy::{denied_imports, disallowed_tenant_imports};
+use wamn_runtime::engine::build_engine;
 
 #[derive(Args)]
 pub struct EgressBenchArgs {

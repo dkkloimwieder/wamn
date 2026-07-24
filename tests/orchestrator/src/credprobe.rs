@@ -34,8 +34,8 @@ use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, InstancePre, Linker};
 
 use wamn_gate_harness::check;
-use wamn_host::engine::build_engine;
-use wamn_host::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
+use wamn_runtime::engine::build_engine;
+use wamn_runtime::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
 
 /// The project the fixture components are routed to.
 const PROJECT: &str = "cred-probe-project";

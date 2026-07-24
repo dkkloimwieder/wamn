@@ -35,15 +35,15 @@ use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 
-use wamn_host::plugins::wamn_postgres::{
-    CredentialProvider, StaticCredentialProvider, WamnPostgresConfig,
-};
 use wamn_provision::{
     APP_ROLE, compose_url, database_name, project_env_database_name,
     render_project_env_secret_manifest, secret, sql,
 };
 use wamn_registry::sql as reg_sql;
 use wamn_registry::{Org, OrgEnvPolicy, Template, Triple};
+use wamn_runtime::plugins::wamn_postgres::{
+    CredentialProvider, StaticCredentialProvider, WamnPostgresConfig,
+};
 
 /// The canonical T1 registry DDL (registry + provisioning schemas). Applied into
 /// an ephemeral schema on the throwaway/pool PG for the tier modes' registry +

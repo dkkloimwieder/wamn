@@ -20,7 +20,7 @@ cargo-ful image (`--target builder-svc`), distinct from the slim cargo-less
    `export_node!`), or `jco componentize` (a single JS/TS ES module). Guest
    artifacts are ALWAYS `--release`.
 3. **Import lint (5.5a)** — the built bytes are screened through
-   `wamn_host::egress_guard::screen_builder_component`: the tenant PACKAGE
+   `wamn-component-policy`: the tenant PACKAGE
    allowlist (`wasi:sockets` / `wamn:postgres` refused) AND the INTERFACE
    tightening (within `wamn:node` only `payloads`/`credentials`/`control`, within
    `wasi:http` only `outgoing-handler`).
@@ -37,8 +37,8 @@ cargo-ful image (`--target builder-svc`), distinct from the slim cargo-less
 
 ## 5.5a — interface lint + derived grants
 
-Lives in `services/host/src/egress_guard.rs` (reused verbatim by the builder;
-the egress_guard's own E13a doc deferred the interface-level lint to 5.5). Two
+Lives in the non-deployable `wamn-component-policy` package (shared by the
+builder and runtime). Two
 additions over the package-level classifiers the publish gate already enforces:
 
 - **Interface tightening** — `disallowed_node_interfaces` flags a `wamn:node`
@@ -79,13 +79,13 @@ and BEFORE any OCI push.
   each expected element subset-matches some actual element); `exact` is full JSON
   equality. An expected `port` (present) must equal the emission's port.
 - **Executor** — `test_gate::run_cases(wasm, cases)` instantiates the just-built
-  bytes under the frozen `wamn:node` world via `wamn_host::serve_node::ServeNode`
-  (the production host), synthesizes a fixed `ctx` per case (the `f2invoke`
+  bytes under the frozen `wamn:node` world via `wamn-node-runtime`,
+  synthesizes a fixed `ctx` per case (the `f2invoke`
   template — empty vault, no signing key, deny-all egress), builds a
   `NodeInvokeRequest` (case config + grant ride it, everything else fixed),
   `.invoke()`s, and asserts the case's expectation against the
-  `NodeInvokeResponse`. The ONE runner both the builder stage and the hermetic
-  `wamn-gates testgate` gate call.
+  `NodeInvokeResponse`. The hermetic `wamn-gates testgate` gate exercises the
+  same runtime independently of the deployable builder.
 - **Seed** — `components/samples/disposition-node/cases.json` transcribes the
   disposition node's `#[cfg(test)]` matrix (each disposition outcome + confidence
   pins via subset, the malformed matrix as `invalid-input`). The Rust tests stay
@@ -175,7 +175,7 @@ pullability. The registry is plain-HTTP `registry:2`
 `--emit-deployment <path>` renders the node's runtime manifest. **The plan's
 `WorkloadDeployment` form (the operator OCI-fetches the artifact) is UNSHIPPED —
 OCI-fetch is wamn-fqg.21's open scope — so v0 emits the SHIPPED `serve-node`
-Deployment shape** (`deploy/platform/serve-node.yaml`): `wamn-host serve-node`, a
+Deployment shape** (`deploy/platform/serve-node.yaml`): `wamn-node-host`, a
 ConfigMap-mounted node (`--node`), `WAMN_PROJECT` + the credential vault, and the
 `--allowed-hosts` arg present iff `wasi:http` is imported (derived, refused
 otherwise). The emitted metadata annotations carry the OCI ref + signed digest +
@@ -185,7 +185,8 @@ signature so fqg.21's future operator can adopt it. Golden files:
 ## buildproof gate
 
 `wamn-gates buildproof` verifies a pushed artifact FROM THE REGISTRY over plain
-HTTP (reusing the registry client): the `wamn.node.manifest` annotation parses via
+HTTP (with a gate-owned reader independent of the builder): the
+`wamn.node.manifest` annotation parses via
 `NodeManifest::from_json` + `is_valid`; `layers[0]` is the pullable
 `application/wasm` layer with digest integrity; the signature verifies against
 `--public-key` (env `WAMN_BUILDER_PUBLIC_KEY`); the SBOM lists each

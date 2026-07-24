@@ -9,7 +9,7 @@
 //!    node crate's resolved package set vs a pinned policy, BEFORE the build;
 //! 2. **build** ([`build`], 5.5b) — `cargo build --release --target wasm32-wasip2`
 //!    (a cdylib on the node SDK) or `jco componentize` (a JS/TS ES module);
-//! 3. **import lint** (5.5a, [`wamn_host::egress_guard::screen_builder_component`])
+//! 3. **import lint** (5.5a, [`wamn_component_policy`])
 //!    — the package allowlist + the interface tightening, over the built bytes;
 //! 4. **test gate** ([`test_gate`], 11.5) — the crate's `cases.json` (if present)
 //!    run against the built artifact under the frozen `wamn:node` world; a

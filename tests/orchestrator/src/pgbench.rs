@@ -38,8 +38,8 @@ use wash_runtime::wasmtime::component::{
 use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 
 use wamn_gate_harness::percentile;
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_postgres::{
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_postgres::{
     self, CredentialProvider, ProjectConfig, StaticCredentialProvider, WamnPostgres,
     WamnPostgresConfig,
 };

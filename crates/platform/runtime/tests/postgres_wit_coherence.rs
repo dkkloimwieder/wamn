@@ -35,8 +35,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn repo_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR is services/host; the repo root is two up.
-    fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+    // CARGO_MANIFEST_DIR is crates/platform/runtime; the repo root is three up.
+    fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."))
         .expect("canonicalize repo root")
 }
 
@@ -59,7 +59,7 @@ const EXPECTED_COPIES: [&str; 7] = [
     "components/execution/flowrunner/wit/deps/wamn-postgres/package.wit",
     "components/execution/materializer/wit/deps/wamn-postgres/package.wit",
     "components/poc/webhook-f1/wit/deps/wamn-postgres/package.wit",
-    "services/host/wit/deps/wamn-postgres/package.wit",
+    "crates/platform/runtime/wit/deps/wamn-postgres/package.wit",
     "crates/node/guest/wit-caps/deps/wamn-postgres/package.wit",
 ];
 
@@ -80,7 +80,7 @@ const CLUSTER_A: [&str; 5] = [
 /// comments — kept byte-identical to EACH OTHER.
 const CLUSTER_B: [&str; 2] = [
     "components/execution/materializer/wit/deps/wamn-postgres/package.wit",
-    "services/host/wit/deps/wamn-postgres/package.wit",
+    "crates/platform/runtime/wit/deps/wamn-postgres/package.wit",
 ];
 
 /// Recursively collect every `deps/wamn-postgres/package.wit` under `dir`,

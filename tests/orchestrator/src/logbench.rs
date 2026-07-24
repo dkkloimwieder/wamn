@@ -36,15 +36,15 @@ use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component, InstancePre, Linker, TypedFunc};
 
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_logging::{self, WamnLogging, WamnLoggingConfig};
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_logging::{self, WamnLogging, WamnLoggingConfig};
 
 // runpath (wamn-yf3): the production run-path drives a real Postgres through the
 // run-worker instantiate path.
 use tokio_postgres::{Client, NoTls};
-use wamn_host::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_run_worker::{RunWorker, RunnerIdentity};
+use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -872,7 +872,7 @@ async fn runpath_phase(args: &LogBenchArgs) -> anyhow::Result<()> {
         let mut cfg = WamnPostgresConfig::from_env();
         cfg.database_url = Some(app_url.clone());
         let pg = Arc::new(WamnPostgres::new(cfg)?);
-        let vault = Arc::new(wamn_host::plugins::wamn_credentials::WamnCredentials::empty());
+        let vault = Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty());
         let (logging, capture) = WamnLogging::new_with_capture(WamnLoggingConfig::from_env())?;
         let logging = Arc::new(logging);
 

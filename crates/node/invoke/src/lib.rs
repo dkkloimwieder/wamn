@@ -13,10 +13,6 @@
 //! - the **grant derivation** ([`granted_credentials`]) — the runner declares
 //!   EXACTLY the credentials the flow's node step declared, never the project's
 //!   whole set (the cjv.3 grant the serve-node host installs before dispatch);
-//! - the **config-parse memoization** ([`ConfigCache`], design-note 9b) — the
-//!   `json` config crosses the WIT boundary only for dynamic custom nodes, so
-//!   the warm serve-node instance parses/validates a given config ONCE per
-//!   `(node, flow-version, config-identity)` and reuses it across invocations.
 //!
 //! PURE — serde + the HMAC signing primitives, no DB / clock / wasm / network —
 //! so BOTH the flowrunner GUEST (wasm32-wasip2) and the serve-node HOST link the
@@ -25,14 +21,9 @@
 //! so signer and verifier cannot drift; mTLS remains the later infra upgrade.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::Sha256;
 
 // ---------------------------------------------------------------------------
@@ -375,106 +366,6 @@ pub fn granted_credentials(node_credential: Option<&str>) -> Vec<String> {
     node_credential.into_iter().map(str::to_string).collect()
 }
 
-// ---------------------------------------------------------------------------
-// Config-parse memoization (design-note 9b)
-// ---------------------------------------------------------------------------
-
-/// The identity a parsed config is memoized under. Config is immutable per
-/// `(flow-version, node-id)` (both already on `run-context`), so those pin it;
-/// the content hash makes the cache robust to any drift within a version and
-/// gives a version flip / edit a distinct key (never a stale hit).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ConfigKey {
-    node_id: String,
-    flow_version: u32,
-    config_hash: u64,
-}
-
-/// A rejected config: only reason in v0 is malformed JSON (schema validation is
-/// a follow-up). Kept out of the hot path — validated once, then cached.
-#[derive(Debug)]
-pub struct ConfigError {
-    pub message: String,
-}
-
-impl std::fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "config is not valid JSON: {}", self.message)
-    }
-}
-
-impl std::error::Error for ConfigError {}
-
-fn hash_config(config: &str) -> u64 {
-    let mut h = DefaultHasher::new();
-    config.hash(&mut h);
-    h.finish()
-}
-
-/// The warm serve-node instance's config-parse cache (design-note 9b): the
-/// `json` config crosses the WIT boundary only for dynamic custom nodes, so a
-/// given `(node, flow-version, config-identity)` is parsed + validated ONCE and
-/// reused across every invocation of that step. `parse_count` is the observable
-/// witness — N invocations of one config parse it once.
-///
-/// Not thread-safe by itself (a `&mut self` cache); the serve-node host holds it
-/// behind the same mutex as its single warm node instance (requests are served
-/// sequentially, one instance).
-#[derive(Debug, Default)]
-pub struct ConfigCache {
-    entries: HashMap<ConfigKey, Arc<Value>>,
-    parses: u64,
-}
-
-impl ConfigCache {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The prepared (parsed + validated) config for this step, parsing on the
-    /// first sight of a `(node, flow-version, config-identity)` and returning a
-    /// cached clone thereafter. A malformed config is [`ConfigError`] and is NOT
-    /// cached (so a fixed redeploy re-validates).
-    pub fn prepared(
-        &mut self,
-        node_id: &str,
-        flow_version: u32,
-        config: &str,
-    ) -> Result<Arc<Value>, ConfigError> {
-        let key = ConfigKey {
-            node_id: node_id.to_string(),
-            flow_version,
-            config_hash: hash_config(config),
-        };
-        if let Some(v) = self.entries.get(&key) {
-            return Ok(v.clone());
-        }
-        // Miss: pay the parse exactly once for this identity.
-        let value: Value = serde_json::from_str(config).map_err(|e| ConfigError {
-            message: e.to_string(),
-        })?;
-        self.parses += 1;
-        let arc = Arc::new(value);
-        self.entries.insert(key, arc.clone());
-        Ok(arc)
-    }
-
-    /// How many real `serde_json` parses this cache has performed — one per
-    /// distinct config identity, regardless of invocation count.
-    pub fn parse_count(&self) -> u64 {
-        self.parses
-    }
-
-    /// How many distinct config identities are memoized.
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,9 +523,15 @@ mod tests {
         assert_eq!(SignatureError::Malformed.reason(), "malformed-signature");
         assert_eq!(SignatureError::Mismatch.reason(), "bad-signature");
         // wamn-fqg.31: the fail-closed refusal reason.
-        assert_eq!(SignatureError::Unconfigured.reason(), "signing-key-required");
+        assert_eq!(
+            SignatureError::Unconfigured.reason(),
+            "signing-key-required"
+        );
         // wamn-fqg.32: the freshness refusal reasons.
-        assert_eq!(SignatureError::MissingTimestamp.reason(), "missing-timestamp");
+        assert_eq!(
+            SignatureError::MissingTimestamp.reason(),
+            "missing-timestamp"
+        );
         assert_eq!(
             SignatureError::MalformedTimestamp.reason(),
             "malformed-timestamp"
@@ -714,62 +611,5 @@ mod tests {
         );
         // A node that declared none grants NOTHING — never a broad default.
         assert!(granted_credentials(None).is_empty());
-    }
-
-    #[test]
-    fn config_cache_parses_once_per_identity() {
-        let mut cache = ConfigCache::new();
-        let cfg = r#"{"mode":"io","wait_ns":25}"#;
-        // First sighting parses; the next four are pure cache hits.
-        let first = cache.prepared("n0", 1, cfg).unwrap();
-        for _ in 0..4 {
-            let hit = cache.prepared("n0", 1, cfg).unwrap();
-            assert_eq!(*hit, *first);
-        }
-        assert_eq!(cache.parse_count(), 1, "5 invocations, one parse (9b)");
-        assert_eq!(cache.len(), 1);
-        assert_eq!(*first, serde_json::json!({"mode":"io","wait_ns":25}));
-    }
-
-    /// Mutation (b) killer: a changed config for the SAME (node, version) must
-    /// re-parse to the NEW value and never return the stale one. A cache that
-    /// drops `config_hash` from the key (keys on node+version only) returns the
-    /// stale value here and fails.
-    #[test]
-    fn config_cache_does_not_return_a_stale_value_when_config_changes() {
-        let mut cache = ConfigCache::new();
-        let a = cache.prepared("n0", 1, r#"{"v":1}"#).unwrap();
-        assert_eq!(*a, serde_json::json!({"v":1}));
-        let b = cache.prepared("n0", 1, r#"{"v":2}"#).unwrap();
-        assert_eq!(
-            *b,
-            serde_json::json!({"v":2}),
-            "changed config must not be stale"
-        );
-        assert_eq!(cache.parse_count(), 2, "two distinct configs = two parses");
-    }
-
-    /// Distinct nodes / versions never share a memoized config (a cache that
-    /// drops `node_id` or `flow_version` from the key collides here).
-    #[test]
-    fn config_cache_keys_on_node_and_version() {
-        let mut cache = ConfigCache::new();
-        let cfg = r#"{"same":true}"#;
-        cache.prepared("n0", 1, cfg).unwrap();
-        cache.prepared("n1", 1, cfg).unwrap(); // different node
-        cache.prepared("n0", 2, cfg).unwrap(); // different version
-        assert_eq!(cache.parse_count(), 3);
-        assert_eq!(cache.len(), 3);
-    }
-
-    #[test]
-    fn a_malformed_config_is_rejected_and_not_cached() {
-        let mut cache = ConfigCache::new();
-        assert!(cache.prepared("n0", 1, "{not json").is_err());
-        assert_eq!(cache.parse_count(), 0);
-        assert!(cache.is_empty());
-        // A fixed redeploy of the same identity re-validates and succeeds.
-        assert!(cache.prepared("n0", 1, "{}").is_ok());
-        assert_eq!(cache.parse_count(), 1);
     }
 }

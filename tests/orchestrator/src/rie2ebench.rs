@@ -70,16 +70,18 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use wamn_cdc_reader::{EventReaderArgs, run_with_token};
 use wamn_ddl::{Confirmation, Migration};
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_jetstream::{
-    self, WAMN_JETSTREAM_ID, WamnJetstream, WamnJetstreamConfig,
-};
-use wamn_host::plugins::wamn_postgres::{self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig};
 use wamn_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
 use wamn_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
 use wamn_run_queue::mint_evt_run_id;
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_jetstream::{
+    self, WAMN_JETSTREAM_ID, WamnJetstream, WamnJetstreamConfig,
+};
+use wamn_runtime::plugins::wamn_postgres::{
+    self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
+};
 
 #[derive(Debug, Args)]
 pub struct Rie2eBenchArgs {

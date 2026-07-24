@@ -15,7 +15,8 @@
 use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
-use wamn_host::{host, serve_node};
+
+mod host;
 
 #[derive(Parser)]
 #[command(name = "wamn-host", version, about)]
@@ -30,16 +31,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the wamn host (operator-managed via NATS)
+    /// Run the operator-managed wasmCloud host.
     Host(Box<host::HostArgs>),
-    /// Serve one custom-node component over HTTP (5.6 / wamn-bd5): the v0
-    /// runner->node invocation endpoint (POST /run), running the node under the
-    /// real wamn:node world with a per-invocation credential grant.
-    ServeNode(Box<serve_node::ServeNodeArgs>),
 }
 
 fn main() -> anyhow::Result<()> {
-    wamn_host::advertise_memory_ceiling();
+    wamn_runtime::advertise_memory_ceiling();
     async_main()
 }
 
@@ -54,7 +51,6 @@ async fn async_main() -> anyhow::Result<()> {
 
     let result = match cli.command {
         Command::Host(args) => host::run(*args).await,
-        Command::ServeNode(args) => serve_node::run(*args).await,
     };
 
     shutdown_observability();

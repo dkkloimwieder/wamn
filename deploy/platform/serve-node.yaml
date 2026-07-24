@@ -1,6 +1,6 @@
 # 5.6 / wamn-bd5 — PRODUCTION custom-node host (v0 in-cluster HTTP invocation).
 #
-# The node end of the runner->custom-node path: `wamn-host serve-node` warm-
+# The node end of the runner->custom-node path: `wamn-node-host` warm-
 # instantiates ONE published custom-node component under the REAL frozen
 # wamn:node world and serves POST /run. The trusted flow-runner
 # (deploy/platform/runner.yaml) reaches it by the operator-managed Service below,
@@ -77,10 +77,9 @@ spec:
             optional: true
             defaultMode: 420
       containers:
-        - name: serve-node
-          # serve-node is a `wamn-host` subcommand (the washlet image), not a
-          # separate binary — no long-lived NATS/DB path, just the HTTP server.
-          image: wamn-host:dev
+        - name: node-host
+          # Dedicated node transport/runtime leaf; no washlet/NATS/DB service shell.
+          image: wamn-node-host:dev
           imagePullPolicy: IfNotPresent
           env:
             # The project whose vault credentials this node's invocations may
@@ -119,7 +118,6 @@ spec:
           args:
             - "--log-level"
             - "info"
-            - "serve-node"
             - "--node"
             - "/components/node.wasm"
             - "--port"

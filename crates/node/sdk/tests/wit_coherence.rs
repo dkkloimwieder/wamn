@@ -70,8 +70,8 @@ fn vendored_wit_copies_match_the_frozen_contract() {
     }
 
     let mut copies: Vec<(&str, String)> = vec![(
-        "services/host/wit/deps/wamn-node/package.wit",
-        fs::read_to_string(root().join("../../../services/host/wit/deps/wamn-node/package.wit"))
+        "crates/platform/runtime/wit/deps/wamn-node/package.wit",
+        fs::read_to_string(root().join("../../platform/runtime/wit/deps/wamn-node/package.wit"))
             .expect("host copy reads"),
     )];
     copies.push((trimmed_paths[0], first));

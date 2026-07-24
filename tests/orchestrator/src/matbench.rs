@@ -49,12 +49,14 @@ use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use wamn_event_wire::Op;
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_jetstream::{
+use wamn_run_queue::mint_evt_run_id;
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_jetstream::{
     self, WAMN_JETSTREAM_ID, WamnJetstream, WamnJetstreamConfig,
 };
-use wamn_host::plugins::wamn_postgres::{self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig};
-use wamn_run_queue::mint_evt_run_id;
+use wamn_runtime::plugins::wamn_postgres::{
+    self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
+};
 
 #[derive(Debug, Args)]
 pub struct MatBenchArgs {

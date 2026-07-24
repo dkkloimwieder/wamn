@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 
 use wamn_builder::deploy_emit::{EmitInputs, render_serve_node_deployment};
-use wamn_host::egress_guard::derive_grants_from_component;
-use wamn_host::engine::build_engine;
+use wamn_component_policy::{PolicyProfile, analyze};
+use wamn_runtime::build_engine;
 
 /// Synthesize a minimal, valid component importing exactly `import_names`.
 fn synth_component(import_names: &[&str]) -> Vec<u8> {
@@ -54,8 +54,11 @@ fn check_golden(name: &str, rendered: &str) {
 fn render_for(import_names: &[&str], inputs: EmitInputs) -> String {
     let engine = build_engine(&[]).expect("engine");
     let wasm = synth_component(import_names);
-    let grants =
-        derive_grants_from_component(engine.inner(), &wasm, &inputs.node_type).expect("grants");
+    let imports =
+        wamn_runtime::component_imports(&engine, &wasm, &inputs.node_type).expect("imports");
+    let grants = analyze(&imports, PolicyProfile::Builder, &inputs.node_type)
+        .expect("policy")
+        .grants;
     render_serve_node_deployment(&inputs, &grants).expect("render")
 }
 
@@ -131,8 +134,15 @@ fn disposition_node_real_artifact_lints_and_derives_empty_grants() {
         .expect("the real disposition-node passes the builder import lint");
 
     let engine = build_engine(&[]).expect("engine");
-    let grants = derive_grants_from_component(engine.inner(), &wasm, "disposition-recommendation")
-        .expect("derive grants");
+    let imports = wamn_runtime::component_imports(&engine, &wasm, "disposition-recommendation")
+        .expect("imports");
+    let grants = analyze(
+        &imports,
+        PolicyProfile::Builder,
+        "disposition-recommendation",
+    )
+    .expect("policy")
+    .grants;
     assert!(
         grants.host_interfaces.is_empty(),
         "a world node grants no host interfaces, got {:?}",

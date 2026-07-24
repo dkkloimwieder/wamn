@@ -382,7 +382,9 @@ async fn txn_distinctness_phase(
     args: &StreamBenchArgs,
 ) -> anyhow::Result<bool> {
     let n = args.messages;
-    println!("\n## E14 txn-distinctness — {n}-row txn-shaped batch: published == distinct Nats-Msg-Id");
+    println!(
+        "\n## E14 txn-distinctness — {n}-row txn-shaped batch: published == distinct Nats-Msg-Id"
+    );
     let name = args.stream_name();
     let (before, _l, _p, _r) = stream_state(js, &name).await?;
 
@@ -716,6 +718,10 @@ mod tests {
             ids.insert(msg_id);
         }
         assert_eq!(lsns.len(), n, "every txn row must carry a distinct LSN");
-        assert_eq!(ids.len(), n, "every txn row must carry a distinct Nats-Msg-Id");
+        assert_eq!(
+            ids.len(),
+            n,
+            "every txn row must carry a distinct Nats-Msg-Id"
+        );
     }
 }

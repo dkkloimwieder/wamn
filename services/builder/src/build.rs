@@ -1,6 +1,6 @@
 //! 5.5b — the build executor: a cargo (Rust cdylib) or jco (JS/TS ES module)
 //! toolchain run that produces a wasm32-wasip2 component, then screens it
-//! through the 5.5a builder lint (`wamn_host::egress_guard`). Guest artifacts
+//! through the 5.5a builder lint (`wamn_component_policy`). Guest artifacts
 //! are ALWAYS built `--release` — the executor itself, like every other guest
 //! build in the tree.
 //!
@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio::process::Command;
-use wamn_host::egress_guard::screen_builder_component;
-use wamn_host::engine::build_engine;
+use wamn_component_policy::{PolicyProfile, analyze};
+use wamn_runtime::build_engine;
 
 /// Which toolchain builds the node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -249,7 +249,9 @@ pub async fn build_artifact(args: &BuildArgs) -> anyhow::Result<BuiltArtifact> {
 /// through the identical path.
 pub fn lint_artifact(wasm: &[u8], label: &str) -> anyhow::Result<()> {
     let engine = build_engine(&[])?;
-    screen_builder_component(engine.inner(), wasm, label)
+    let imports = wamn_runtime::component_imports(&engine, wasm, label)?;
+    analyze(&imports, PolicyProfile::Builder, label)
+        .map(|_| ())
         .context("built artifact failed the 5.5 builder import lint")
 }
 
@@ -421,8 +423,10 @@ async fn emit_deployment_if_requested(
         return Ok(());
     };
     let engine = build_engine(&[])?;
-    let grants =
-        wamn_host::egress_guard::derive_grants_from_component(engine.inner(), wasm, node_type)?;
+    let imports = wamn_runtime::component_imports(&engine, wasm, node_type)?;
+    let grants = analyze(&imports, PolicyProfile::Builder, node_type)
+        .map_err(|error| anyhow::anyhow!("{error}"))?
+        .grants;
     let inputs = crate::deploy_emit::EmitInputs {
         node_type: node_type.to_string(),
         image: pushed.image.clone(),

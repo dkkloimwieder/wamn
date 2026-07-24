@@ -29,6 +29,7 @@ mod ladderproof;
 mod logbench;
 mod matbench;
 mod metricbench;
+mod node_host_support;
 mod nodebench;
 mod nodeinvoke;
 mod pgbench;
@@ -125,12 +126,13 @@ enum Command {
     Testkitbench(testkitbench::TestKitBenchArgs),
     /// Run the 2.6 DB-path egress review gate (no shipped workload imports wasi:sockets)
     Egressbench(egressbench::EgressBenchArgs),
-    /// Run the 5.5 buildproof gate (verify a builder-pushed node artifact from the registry: wamn.node.manifest + signature + SBOM + layer media type)
-    Buildproof(buildproof::BuildproofArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
     Socketguard(socketguard::SocketGuardArgs),
-    /// Run the 11.5 custom-node test-gate publish proof (the disposition node's cases.json passes; a deliberately-wrong expectation refuses with the typed error before any push)
+    /// Verify a builder-pushed custom-node artifact independently.
+    Buildproof(buildproof::BuildproofArgs),
+    /// Run the 11.5 custom-node test-gate proof.
     Testgate(testgate::TestGateArgs),
+    /// Run the 11.5 custom-node test-gate publish proof (the disposition node's cases.json passes; a deliberately-wrong expectation refuses with the typed error before any push)
     /// Run the l5i9.17 materializer gate (decide/refuse/enqueue/doorbell + C-MAT numbers)
     Matbench(matbench::MatBenchArgs),
     /// Run the wamn-3glr reader-inclusive RI-flip e2e gate (real reader → materializer: pre-flip refusal, live flip, post-flip scoped delete run, non-retroactive)
@@ -177,7 +179,7 @@ enum Command {
 fn main() -> anyhow::Result<()> {
     // The bench harnesses create stores through the same fork limiter the prod
     // host does; advertise the ceiling exactly like the prod binary.
-    wamn_host::advertise_memory_ceiling();
+    wamn_runtime::advertise_memory_ceiling();
     async_main()
 }
 
@@ -216,8 +218,8 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Testhostbench(args) => testhostbench::run(args).await,
         Command::Testkitbench(args) => testkitbench::run(args).await,
         Command::Egressbench(args) => egressbench::run(args).await,
-        Command::Buildproof(args) => buildproof::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
+        Command::Buildproof(args) => buildproof::run(args).await,
         Command::Testgate(args) => testgate::run(args).await,
         Command::Matbench(args) => matbench::run(args).await,
         Command::Rie2ebench(args) => rie2ebench::run(args).await,

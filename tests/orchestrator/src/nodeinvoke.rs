@@ -37,12 +37,12 @@ use wamn_node_invoke::{
 };
 use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
+use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_gate_harness::check;
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_credentials::WamnCredentials;
-use wamn_host::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
-use wamn_host::serve_node::{self, ServeNode, ServeNodeAuthn};
 use wamn_run_worker::{RunWorker, RunnerIdentity};
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
+use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 const SCHEMA: &str = "wamn_nodeinvoke_bench";
@@ -427,7 +427,7 @@ async fn gate_body(
         flowrunner,
         plugin,
         runner_vault,
-        Arc::new(wamn_host::plugins::wamn_logging::WamnLogging::from_env()?),
+        Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?),
         RunnerIdentity {
             owner: OWNER,
             tenant: TENANT,
@@ -850,7 +850,7 @@ async fn gate_body(
         flowrunner,
         mismatch_plugin,
         mismatch_vault,
-        Arc::new(wamn_host::plugins::wamn_logging::WamnLogging::from_env()?),
+        Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?),
         RunnerIdentity {
             owner: "nodeinvoke-mismatch",
             tenant: TENANT,

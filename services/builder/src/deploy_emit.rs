@@ -5,18 +5,18 @@
 //! `WorkloadDeployment` (the operator OCI-fetches the artifact). That fork is
 //! UNSHIPPED — OCI-fetch is wamn-fqg.21's open scope — so v0 emits the SHIPPED
 //! `serve-node` Deployment shape (`deploy/platform/serve-node.yaml`): a ConfigMap-
-//! mounted node, `wamn-host serve-node`, the `--allowed-hosts` arg, `WAMN_PROJECT`
+//! mounted node, `wamn-node-host`, the `--allowed-hosts` arg, `WAMN_PROJECT`
 //! + the credential vault (which holds the runner→node signing key). The emitted
 //! YAML carries the OCI ref + digest + signature as metadata ANNOTATIONS so
 //! fqg.21's future operator can adopt it.
 //!
 //! The one derived grant that surfaces as a runtime ARG is `--allowed-hosts`:
 //! present iff the node imports `wasi:http/outgoing-handler`, REFUSED otherwise
-//! ([`wamn_host::egress_guard::check_allowed_hosts_grant`]) — grants derived from
+//! ([`wamn_component_policy::check_allowed_hosts_grant`]) — grants derived from
 //! imports, never declared twice.
 
 use anyhow::Context as _;
-use wamn_host::egress_guard::{DerivedGrants, check_allowed_hosts_grant};
+use wamn_component_policy::{DerivedGrants, check_allowed_hosts_grant};
 
 /// The inputs to a serve-node deployment render (everything not derived from the
 /// component's imports).
@@ -79,13 +79,12 @@ pub fn render_serve_node_deployment(
          \x20\x20\x20 spec:\n\
          \x20\x20\x20\x20\x20 automountServiceAccountToken: false\n\
          \x20\x20\x20\x20\x20 containers:\n\
-         \x20\x20\x20\x20\x20\x20\x20 - name: serve-node\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20\x20 image: wamn-host:dev\n\
+         \x20\x20\x20\x20\x20\x20\x20 - name: node-host\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20 image: wamn-node-host:dev\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20 imagePullPolicy: IfNotPresent\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20 args:\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20 - \"--log-level\"\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20 - \"info\"\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20 - \"serve-node\"\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20 - \"--node\"\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20 - \"/components/node.wasm\"\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20 - \"--port\"\n\
@@ -142,7 +141,7 @@ pub async fn write_deployment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_host::egress_guard::derive_grants;
+    use wamn_component_policy::derive_grants;
 
     #[test]
     fn http_node_requires_allowed_hosts() {

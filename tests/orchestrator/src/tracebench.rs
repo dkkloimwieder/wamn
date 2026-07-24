@@ -41,9 +41,9 @@ use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::TypedFunc;
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, InstancePre, Linker};
 
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 use wamn_run_queue::Firing;
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 type RawEngine = wash_runtime::wasmtime::Engine;
 

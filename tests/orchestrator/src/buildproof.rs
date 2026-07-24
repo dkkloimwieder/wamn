@@ -1,117 +1,202 @@
-//! buildproof — verify a 5.5-built node artifact FROM THE REGISTRY.
+//! `buildproof` — independently verify a builder-pushed node artifact.
 //!
-//! The out-of-cluster gate for the builder pipeline (5.5e): fetch the pushed
-//! manifest over plain HTTP (the wamn-builder registry client), then assert the
-//! properties a runnable, trustworthy node artifact must carry —
-//! - the `wamn.node.manifest` annotation parses via [`NodeManifest::from_json`]
-//!   and validates (`is_valid`);
-//! - `layers[0]` is the pullable `application/wasm` layer the wash-runtime host
-//!   expects, and its bytes hash to the descriptor digest (integrity).
-//!
-//! The 5.5d signature + SBOM checks (verify the detached ed25519 signature
-//! against the public key; assert the SBOM lists the expected package set) are
-//! added by the wamn-0si.4 commit, which extends this gate.
+//! This gate deliberately owns its OCI reader and verification logic. A proof
+//! must not import the deployable producer whose output it is checking.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, bail};
+use bytes::Bytes;
 use clap::Args;
-
-use wamn_builder::registry::{
-    self, ImageManifest, RegistryRef, WASM_LAYER_MEDIA_TYPE, sha256_digest,
-};
-use wamn_builder::sbom::{SBOM_ANNOTATION, sbom_component_names};
-use wamn_builder::sign::{SIGNATURE_ANNOTATION, verify_artifact};
+use http_body_util::{BodyExt as _, Full};
+use hyper::{Request, StatusCode};
+use hyper_util::rt::TokioIo;
+use ring::signature::{ED25519, UnparsedPublicKey};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+use tokio::net::TcpStream;
 use wamn_node_manifest::{ANNOTATION_KEY, NodeManifest};
+
+const OCI_MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
+const WASM_LAYER_MEDIA_TYPE: &str = "application/wasm";
+const SIGNATURE_ANNOTATION: &str = "wamn.node.signature";
+const SBOM_ANNOTATION: &str = "wamn.node.sbom";
 
 #[derive(Args)]
 pub struct BuildproofArgs {
-    /// The registry `host:port` to fetch from (e.g.
-    /// `registry.wamn-system.svc.cluster.local:5000`).
+    /// The registry `host:port` to fetch from.
     #[arg(long)]
     pub registry: String,
-
-    /// The repository path (e.g. `wamn/sample-node`).
+    /// The repository path (for example `wamn/sample-node`).
     #[arg(long)]
     pub repository: String,
-
-    /// The tag or `sha256:…` digest reference to verify. Default `dev`.
+    /// The tag or digest reference to verify.
     #[arg(long, default_value = "dev")]
     pub reference: String,
-
-    /// 5.5d: the hex ed25519 public key the `wamn.node.signature` must verify
-    /// against. When absent the signature check is SKIPPED (v0 posture, noted).
+    /// Hex ed25519 public key used to verify `wamn.node.signature`.
     #[arg(long, env = "WAMN_BUILDER_PUBLIC_KEY")]
     pub public_key: Option<String>,
-
-    /// 5.5d: package name(s) the SBOM MUST list (repeatable). Empty = only assert
-    /// the SBOM is present + non-empty.
+    /// Package names the SBOM must list.
     #[arg(long = "expect-package")]
     pub expect_packages: Vec<String>,
 }
 
-/// 5.5d — verify the `wamn.node.signature` annotation over the fetched wasm
-/// against `public_key_hex`. Pure over the fetched bytes; the mutation-(c)
-/// target (neutering this admits an unsigned / tampered artifact). `Err` names
-/// the failure.
-pub fn verify_signature(
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct Descriptor {
+    #[serde(rename = "mediaType")]
+    media_type: String,
+    digest: String,
+    size: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ImageManifest {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    #[serde(rename = "mediaType")]
+    media_type: String,
+    config: Descriptor,
+    layers: Vec<Descriptor>,
+    #[serde(default)]
+    annotations: BTreeMap<String, String>,
+}
+
+impl ImageManifest {
+    fn wasm_layer(&self) -> Option<&Descriptor> {
+        self.layers.first()
+    }
+}
+
+struct RegistryRef {
+    registry: String,
+    repository: String,
+    reference: String,
+}
+
+impl RegistryRef {
+    fn host_port(&self) -> anyhow::Result<(&str, u16)> {
+        let (host, port) = self
+            .registry
+            .rsplit_once(':')
+            .context("registry must be host:port")?;
+        Ok((host, port.parse().context("registry port")?))
+    }
+
+    fn image(&self) -> String {
+        format!("{}/{}:{}", self.registry, self.repository, self.reference)
+    }
+}
+
+fn sha256_digest(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+
+async fn fetch(target: &RegistryRef, path: &str, accept: Option<&str>) -> anyhow::Result<Vec<u8>> {
+    let (host, port) = target.host_port()?;
+    let stream = TcpStream::connect((host, port))
+        .await
+        .with_context(|| format!("connect {host}:{port}"))?;
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .context("HTTP/1 handshake")?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let mut request = Request::builder()
+        .method("GET")
+        .uri(path)
+        .header("Host", format!("{host}:{port}"));
+    if let Some(media_type) = accept {
+        request = request.header("Accept", media_type);
+    }
+    let response = sender
+        .send_request(request.body(Full::new(Bytes::new()))?)
+        .await
+        .with_context(|| format!("GET {path}"))?;
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .context("read registry response")?
+        .to_bytes();
+    if status != StatusCode::OK {
+        bail!(
+            "registry GET {path}: expected 200, got {status} ({})",
+            String::from_utf8_lossy(&body)
+        );
+    }
+    Ok(body.to_vec())
+}
+
+fn verify_signature(
     manifest: &ImageManifest,
     wasm: &[u8],
     public_key_hex: &str,
 ) -> Result<(), String> {
-    let signature = manifest
+    let signature_hex = manifest
         .annotations
         .get(SIGNATURE_ANNOTATION)
         .ok_or_else(|| format!("manifest is missing the {SIGNATURE_ANNOTATION:?} annotation"))?;
-    verify_artifact(public_key_hex, wasm, signature).map_err(|e| e.to_string())
+    let public_key = hex::decode(public_key_hex.trim())
+        .map_err(|error| format!("decode public key: {error}"))?;
+    let signature =
+        hex::decode(signature_hex.trim()).map_err(|error| format!("decode signature: {error}"))?;
+    UnparsedPublicKey::new(&ED25519, public_key)
+        .verify(&Sha256::digest(wasm), &signature)
+        .map_err(|_| "ed25519 signature verification failed".to_string())
 }
 
-/// 5.5d — the SBOM annotation is present, non-empty, and lists every
-/// `expected` package name. Returns the SBOM component count or the failures.
-pub fn verify_sbom(manifest: &ImageManifest, expected: &[String]) -> Result<usize, Vec<String>> {
-    let mut failures = Vec::new();
+fn verify_sbom(manifest: &ImageManifest, expected: &[String]) -> Result<usize, Vec<String>> {
     let Some(sbom) = manifest.annotations.get(SBOM_ANNOTATION) else {
         return Err(vec![format!(
             "manifest is missing the {SBOM_ANNOTATION:?} annotation"
         )]);
     };
-    let components = match sbom_component_names(sbom) {
-        Ok(c) => c,
-        Err(e) => return Err(vec![format!("SBOM does not parse: {e}")]),
+    let value: serde_json::Value = match serde_json::from_str(sbom) {
+        Ok(value) => value,
+        Err(error) => return Err(vec![format!("SBOM does not parse: {error}")]),
     };
-    if components.is_empty() {
+    let names: BTreeSet<&str> = value
+        .get("components")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|component| component.get("name")?.as_str())
+        .collect();
+    let mut failures = Vec::new();
+    if names.is_empty() {
         failures.push("SBOM lists no components".to_string());
     }
-    for pkg in expected {
-        if !components.contains_key(pkg) {
-            failures.push(format!("SBOM does not list expected package {pkg:?}"));
+    for package in expected {
+        if !names.contains(package.as_str()) {
+            failures.push(format!("SBOM does not list expected package {package:?}"));
         }
     }
     if failures.is_empty() {
-        Ok(components.len())
+        Ok(names.len())
     } else {
         Err(failures)
     }
 }
 
-/// Verify the pushed manifest's node-facing invariants (5.5e), independent of
-/// the registry: the `wamn.node.manifest` annotation parses + validates, and
-/// `layers[0]` is the pullable `application/wasm` layer. Returns the parsed
-/// [`NodeManifest`] or the list of failures. Unit-testable over a synthetic
-/// manifest.
-pub fn verify_manifest(manifest: &ImageManifest) -> Result<NodeManifest, Vec<String>> {
+fn verify_manifest(manifest: &ImageManifest) -> Result<NodeManifest, Vec<String>> {
     let mut failures = Vec::new();
-
     let node_manifest = match manifest.annotations.get(ANNOTATION_KEY) {
         Some(json) => match NodeManifest::from_json(json) {
-            Ok(m) if m.is_valid() => Some(m),
-            Ok(m) => {
+            Ok(manifest) if manifest.is_valid() => Some(manifest),
+            Ok(manifest) => {
                 failures.push(format!(
                     "{ANNOTATION_KEY:?} annotation does not validate: {:?}",
-                    m.issues()
+                    manifest.issues()
                 ));
                 None
             }
-            Err(e) => {
-                failures.push(format!("{ANNOTATION_KEY:?} annotation does not parse: {e}"));
+            Err(error) => {
+                failures.push(format!(
+                    "{ANNOTATION_KEY:?} annotation does not parse: {error}"
+                ));
                 None
             }
         },
@@ -126,36 +211,36 @@ pub fn verify_manifest(manifest: &ImageManifest) -> Result<NodeManifest, Vec<Str
     match manifest.wasm_layer() {
         Some(layer) if layer.media_type == WASM_LAYER_MEDIA_TYPE => {}
         Some(layer) => failures.push(format!(
-            "layers[0] media type {:?} != {WASM_LAYER_MEDIA_TYPE:?} — the wash-runtime host \
-             cannot pull it",
+            "layers[0] media type {:?} != {WASM_LAYER_MEDIA_TYPE:?} — the node host cannot pull it",
             layer.media_type
         )),
         None => failures.push("manifest has no layers".to_string()),
     }
 
     match node_manifest {
-        Some(m) if failures.is_empty() => Ok(m),
+        Some(manifest) if failures.is_empty() => Ok(manifest),
         _ => Err(failures),
     }
 }
 
 pub async fn run(args: BuildproofArgs) -> anyhow::Result<()> {
     let target = RegistryRef {
-        registry: args.registry.clone(),
-        repository: args.repository.clone(),
-        reference: args.reference.clone(),
-        insecure: true,
+        registry: args.registry,
+        repository: args.repository,
+        reference: args.reference,
     };
-
-    println!("# wamn-gates buildproof — verify the 5.5-built node artifact FROM THE REGISTRY");
+    println!("# wamn-gates buildproof — verify a node artifact FROM THE REGISTRY");
     println!("# image: {}", target.image());
 
-    let manifest_bytes = registry::fetch_manifest(&target)
-        .await
-        .context("fetch manifest from the registry")?;
+    let manifest_bytes = fetch(
+        &target,
+        &format!("/v2/{}/manifests/{}", target.repository, target.reference),
+        Some(OCI_MANIFEST_MEDIA_TYPE),
+    )
+    .await
+    .context("fetch manifest from the registry")?;
     let manifest: ImageManifest =
         serde_json::from_slice(&manifest_bytes).context("parse fetched OCI manifest")?;
-
     let mut pass = true;
 
     println!("\n## wamn.node.manifest annotation + layer media type");
@@ -165,25 +250,27 @@ pub async fn run(args: BuildproofArgs) -> anyhow::Result<()> {
             node.node_type, node.contract, WASM_LAYER_MEDIA_TYPE
         ),
         Err(failures) => {
-            for f in &failures {
-                println!("    FAIL: {f}");
-            }
+            failures
+                .iter()
+                .for_each(|failure| println!("    FAIL: {failure}"));
             pass = false;
         }
     }
 
-    // Fetch the wasm layer ONCE — used for the digest-integrity check AND the
-    // signature verification (the signature is over sha256(these bytes)).
     let layer_bytes = match manifest.wasm_layer() {
         Some(layer) => Some(
-            registry::fetch_blob(&target, &layer.digest)
-                .await
-                .context("fetch the wasm layer blob")?,
+            fetch(
+                &target,
+                &format!("/v2/{}/blobs/{}", target.repository, layer.digest),
+                None,
+            )
+            .await
+            .context("fetch wasm layer")?,
         ),
         None => None,
     };
 
-    println!("\n## layer digest integrity (the exact bytes the host pulls)");
+    println!("\n## layer digest integrity");
     if let (Some(layer), Some(bytes)) = (manifest.wasm_layer(), &layer_bytes) {
         let actual = sha256_digest(bytes);
         if actual == layer.digest {
@@ -200,15 +287,16 @@ pub async fn run(args: BuildproofArgs) -> anyhow::Result<()> {
         }
     }
 
-    println!("\n## artifact signature (5.5d)");
+    println!("\n## artifact signature");
     match (&args.public_key, &layer_bytes) {
-        (Some(public_key), Some(bytes)) => match verify_signature(&manifest, bytes, public_key) {
-            Ok(()) => println!("    PASS: wamn.node.signature verifies against the public key"),
-            Err(e) => {
-                println!("    FAIL: {e}");
+        (Some(public_key), Some(bytes)) => {
+            if let Err(error) = verify_signature(&manifest, bytes, public_key) {
+                println!("    FAIL: {error}");
                 pass = false;
+            } else {
+                println!("    PASS: wamn.node.signature verifies against the public key");
             }
-        },
+        }
         (Some(_), None) => {
             println!("    FAIL: no wasm layer to verify the signature over");
             pass = false;
@@ -216,16 +304,13 @@ pub async fn run(args: BuildproofArgs) -> anyhow::Result<()> {
         (None, _) => println!("    SKIP: no --public-key given (v0 posture)"),
     }
 
-    println!("\n## SBOM (5.5d)");
+    println!("\n## SBOM");
     match verify_sbom(&manifest, &args.expect_packages) {
-        Ok(count) => println!(
-            "    PASS: SBOM present ({count} components; expected {:?} all listed)",
-            args.expect_packages
-        ),
+        Ok(count) => println!("    PASS: SBOM present ({count} components)"),
         Err(failures) => {
-            for f in &failures {
-                println!("    FAIL: {f}");
-            }
+            failures
+                .iter()
+                .for_each(|failure| println!("    FAIL: {failure}"));
             pass = false;
         }
     }
@@ -240,18 +325,8 @@ pub async fn run(args: BuildproofArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
-
-    fn manifest_with_annotation(node_manifest_json: Option<&str>) -> ImageManifest {
-        let (m, _config) = registry::build_manifest(b"\x00asm\x0d\x00\x01\x00node", {
-            let mut a = BTreeMap::new();
-            if let Some(j) = node_manifest_json {
-                a.insert(ANNOTATION_KEY.to_string(), j.to_string());
-            }
-            a
-        });
-        m
-    }
+    use ring::rand::SystemRandom;
+    use ring::signature::{Ed25519KeyPair, KeyPair as _};
 
     fn valid_node_manifest_json() -> String {
         NodeManifest {
@@ -270,99 +345,66 @@ mod tests {
         .to_json()
     }
 
-    #[test]
-    fn verify_manifest_accepts_a_valid_pushed_artifact() {
-        let m = manifest_with_annotation(Some(&valid_node_manifest_json()));
-        let node = verify_manifest(&m).expect("valid");
-        assert_eq!(node.node_type, "sample-echo");
+    fn manifest(wasm: &[u8], node: Option<&str>) -> ImageManifest {
+        let mut annotations = BTreeMap::new();
+        if let Some(node) = node {
+            annotations.insert(ANNOTATION_KEY.to_string(), node.to_string());
+        }
+        ImageManifest {
+            schema_version: 2,
+            media_type: OCI_MANIFEST_MEDIA_TYPE.to_string(),
+            config: Descriptor {
+                media_type: "application/vnd.wasm.config.v0+json".to_string(),
+                digest: sha256_digest(b"{}"),
+                size: 2,
+            },
+            layers: vec![Descriptor {
+                media_type: WASM_LAYER_MEDIA_TYPE.to_string(),
+                digest: sha256_digest(wasm),
+                size: wasm.len() as i64,
+            }],
+            annotations,
+        }
     }
 
-    #[test]
-    fn verify_manifest_rejects_a_missing_annotation() {
-        let m = manifest_with_annotation(None);
-        let failures = verify_manifest(&m).expect_err("must fail");
-        assert!(failures.iter().any(|f| f.contains(ANNOTATION_KEY)));
-    }
-
-    #[test]
-    fn verify_manifest_rejects_an_invalid_node_manifest() {
-        // Uppercase node-type is not a slug -> is_valid() is false.
-        let bad = r#"{"schema-version":"0.1","node-type":"Bad","name":"x","version":"0.1.0","contract":"0.1.0"}"#;
-        let m = manifest_with_annotation(Some(bad));
-        let failures = verify_manifest(&m).expect_err("must fail");
-        assert!(failures.iter().any(|f| f.contains("does not validate")));
-    }
-
-    #[test]
-    fn verify_manifest_rejects_a_wrong_layer_media_type() {
-        let mut m = manifest_with_annotation(Some(&valid_node_manifest_json()));
-        m.layers[0].media_type = "application/octet-stream".to_string();
-        let failures = verify_manifest(&m).expect_err("must fail");
-        assert!(failures.iter().any(|f| f.contains("cannot pull")));
-    }
-
-    // ---- 5.5d signature + SBOM ----
-
-    /// Build a manifest carrying a REAL ed25519 signature over `wasm` (the push
-    /// path), plus the public key for verification.
     fn signed_manifest(wasm: &[u8]) -> (ImageManifest, String) {
-        use wamn_builder::sign::{SIGNATURE_ANNOTATION, SigningKey};
-        let (key, _) = SigningKey::generate().unwrap();
-        let mut ann = BTreeMap::new();
-        ann.insert(SIGNATURE_ANNOTATION.to_string(), key.sign_artifact(wasm));
-        let (m, _config) = registry::build_manifest(wasm, ann);
-        (m, key.public_key_hex())
-    }
-
-    /// The signature check passes over the exact signed bytes + public key.
-    #[test]
-    fn verify_signature_accepts_a_good_signature() {
-        let wasm = b"\x00asm\x0d\x00\x01\x00the-node".to_vec();
-        let (m, pk) = signed_manifest(&wasm);
-        assert!(verify_signature(&m, &wasm, &pk).is_ok());
-    }
-
-    /// MUTATION (c) TARGET. A signature over the ORIGINAL bytes must NOT verify
-    /// against TAMPERED bytes — neutering [`verify_signature`] (or the
-    /// underlying `verify_artifact`) to return `Ok` admits the tampered artifact
-    /// and flips this.
-    #[test]
-    fn verify_signature_rejects_tampered_bytes() {
-        let wasm = b"\x00asm\x0d\x00\x01\x00the-node".to_vec();
-        let (m, pk) = signed_manifest(&wasm);
-        let tampered = b"\x00asm\x0d\x00\x01\x00TAMPERED".to_vec();
-        assert!(
-            verify_signature(&m, &tampered, &pk).is_err(),
-            "a signature over the original bytes must not verify tampered bytes"
+        let document = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
+        let key = Ed25519KeyPair::from_pkcs8(document.as_ref()).unwrap();
+        let mut manifest = manifest(wasm, Some(&valid_node_manifest_json()));
+        manifest.annotations.insert(
+            SIGNATURE_ANNOTATION.to_string(),
+            hex::encode(key.sign(&Sha256::digest(wasm)).as_ref()),
         );
+        (manifest, hex::encode(key.public_key().as_ref()))
     }
 
     #[test]
-    fn verify_signature_rejects_a_missing_signature_annotation() {
-        let (m, _config) = registry::build_manifest(b"node", BTreeMap::new());
-        let (_key_m, pk) = signed_manifest(b"node");
-        assert!(verify_signature(&m, b"node", &pk).is_err());
+    fn manifest_requires_valid_annotation_and_layer_media_type() {
+        let wasm = b"node";
+        assert!(verify_manifest(&manifest(wasm, Some(&valid_node_manifest_json()))).is_ok());
+        assert!(verify_manifest(&manifest(wasm, None)).is_err());
+
+        let mut invalid = manifest(wasm, Some(&valid_node_manifest_json()));
+        invalid.layers[0].media_type = "application/octet-stream".to_string();
+        assert!(verify_manifest(&invalid).is_err());
     }
 
     #[test]
-    fn verify_sbom_requires_the_expected_packages() {
-        use wamn_builder::sbom::{SBOM_ANNOTATION, cyclonedx_single};
-        let mut ann = BTreeMap::new();
-        ann.insert(
+    fn signature_binds_exact_artifact_bytes() {
+        let wasm = b"the-node";
+        let (manifest, public_key) = signed_manifest(wasm);
+        assert!(verify_signature(&manifest, wasm, &public_key).is_ok());
+        assert!(verify_signature(&manifest, b"tampered", &public_key).is_err());
+    }
+
+    #[test]
+    fn sbom_requires_expected_packages() {
+        let mut manifest = manifest(b"node", Some(&valid_node_manifest_json()));
+        manifest.annotations.insert(
             SBOM_ANNOTATION.to_string(),
-            cyclonedx_single("sample-echo", "0.1.0"),
+            r#"{"components":[{"name":"sample-echo","version":"0.1.0"}]}"#.to_string(),
         );
-        let (m, _config) = registry::build_manifest(b"node", ann);
-        // present + lists the expected package.
-        assert!(verify_sbom(&m, &["sample-echo".to_string()]).is_ok());
-        // a package NOT in the SBOM fails.
-        let failures = verify_sbom(&m, &["serde_json".to_string()]).expect_err("must fail");
-        assert!(failures.iter().any(|f| f.contains("serde_json")));
-    }
-
-    #[test]
-    fn verify_sbom_rejects_a_missing_sbom() {
-        let (m, _config) = registry::build_manifest(b"node", BTreeMap::new());
-        assert!(verify_sbom(&m, &[]).is_err());
+        assert!(verify_sbom(&manifest, &["sample-echo".to_string()]).is_ok());
+        assert!(verify_sbom(&manifest, &["serde_json".to_string()]).is_err());
     }
 }

@@ -69,7 +69,8 @@ world jetstream-plugin {
 /// get-only — never the trusted `set-granted` channel), the control stub, and
 /// outbound `wasi:http` — the E17 tenant-node profile. Distinct from `node-bench`
 /// below (which links the S4 `wait-ns` stand-in for I/O); this world is the
-/// production invocation path. See services/host/src/serve_node.rs.
+/// production invocation path. See crates/platform/node-runtime and
+/// services/node-host.
 world serve-node {
   export wamn:node/handler@0.1.0;
 }

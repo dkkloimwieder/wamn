@@ -31,14 +31,61 @@
 //! `wasi:sockets`, neither of which is on the list. A denylist alone could not
 //! stop `wamn:postgres`, since that IS the intended DB path for first-party
 //! workloads. So the two populations are screened differently:
-//! [`screen_component`] (socket denylist) for the first-party flow-runner, which
-//! legitimately imports `wamn:postgres`; [`screen_tenant_component`] (positive
+//! [`screen_imports`] (socket denylist) for the first-party flow-runner, which
+//! legitimately imports `wamn:postgres`; [`screen_tenant_imports`] (positive
 //! allowlist) for tenant artifacts. Both classifiers share [`import_pkg`], and
 //! both the `egressbench` publish-gate backstop (tests/orchestrator) and any host
 //! publish path go through these same functions — one classifier, not a fork.
 
-use wash_runtime::wasmtime::Engine as RawEngine;
-use wash_runtime::wasmtime::component::Component as WasmtimeComponent;
+/// Ordered top-level imports declared by a component world.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentImports {
+    names: Box<[String]>,
+}
+
+impl ComponentImports {
+    /// Build an import inventory without reordering or normalizing wire names.
+    pub fn new(names: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            names: names.into_iter().collect(),
+        }
+    }
+
+    /// Iterate over full import names in declaration order.
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.names.iter().map(String::as_str)
+    }
+}
+
+/// The policy applied to one component population.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyProfile {
+    FirstParty,
+    Tenant,
+    Builder,
+}
+
+/// A successful policy analysis and its derived runtime grants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyReport {
+    pub grants: DerivedGrants,
+}
+
+/// Analyze one component import inventory under the selected policy profile.
+pub fn analyze(
+    imports: &ComponentImports,
+    profile: PolicyProfile,
+    label: &str,
+) -> Result<PolicyReport, EgressGuardError> {
+    match profile {
+        PolicyProfile::FirstParty => screen_imports(imports, label)?,
+        PolicyProfile::Tenant => screen_tenant_imports(imports, label)?,
+        PolicyProfile::Builder => screen_builder_imports(imports, label)?,
+    }
+    Ok(PolicyReport {
+        grants: derive_grants(imports.iter()),
+    })
+}
 
 /// The denied WIT `namespace:package`. A component importing ANY interface of
 /// this package can open a raw TCP/UDP socket and reach Postgres directly,
@@ -69,7 +116,7 @@ pub enum EgressGuardError {
     /// A tenant node imports an interface OUTSIDE the 5.5 interface-level
     /// tightening within an otherwise-allowlisted package — a `wamn:node`
     /// interface beyond [`NODE_ALLOWED_INTERFACES`], or a `wasi:http` interface
-    /// beyond [`HTTP_ALLOWED_INTERFACES`]. The builder lint ([`screen_builder_compiled`])
+    /// beyond [`HTTP_ALLOWED_INTERFACES`]. The builder lint ([`screen_builder_imports`])
     /// refuses it; the package-level classifiers cannot express this.
     DisallowedNodeInterface {
         /// Caller-supplied label for the offending component (path / name).
@@ -119,7 +166,7 @@ fn import_pkg(import_name: &str) -> &str {
 }
 
 /// The subset of `import_names` that import the denied egress package, in the
-/// order given. This is the one structural rule; [`screen_component`] and the
+/// order given. This is the one structural rule; [`screen_imports`] and the
 /// gate both go through it. Empty result == the component clears the guard.
 pub fn denied_imports<'a>(import_names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     import_names
@@ -131,14 +178,8 @@ pub fn denied_imports<'a>(import_names: impl IntoIterator<Item = &'a str>) -> Ve
 
 /// Screen a compiled component: `Err` iff its world imports the denied egress
 /// package. `label` names the component in the refusal.
-pub fn screen_compiled(component: &WasmtimeComponent, label: &str) -> Result<(), EgressGuardError> {
-    let engine = component.engine();
-    let ty = component.component_type();
-    let imports: Vec<String> = ty
-        .imports(engine)
-        .map(|(name, _)| name.to_string())
-        .collect();
-    let denied = denied_imports(imports.iter().map(String::as_str));
+pub fn screen_imports(imports: &ComponentImports, label: &str) -> Result<(), EgressGuardError> {
+    let denied = denied_imports(imports.iter());
     if denied.is_empty() {
         Ok(())
     } else {
@@ -147,16 +188,6 @@ pub fn screen_compiled(component: &WasmtimeComponent, label: &str) -> Result<(),
             imports: denied,
         })
     }
-}
-
-/// Compile `wasm` on `engine` and screen it (the publish-path entry point):
-/// `Err` if the bytes do not compile, or if the component's world imports the
-/// denied egress package.
-pub fn screen_component(engine: &RawEngine, wasm: &[u8], label: &str) -> anyhow::Result<()> {
-    let component = WasmtimeComponent::new(engine, wasm)
-        .map_err(|e| anyhow::anyhow!("compile {label}: {e}"))?;
-    screen_compiled(&component, label)?;
-    Ok(())
 }
 
 /// Tenant / custom-node import allowlist v1 — the WIT `namespace:package`s a
@@ -180,7 +211,7 @@ pub const TENANT_ALLOWED_PKGS: &[&str] = &[
 
 /// The subset of `import_names` a TENANT artifact may NOT import — every import
 /// whose package is not on [`TENANT_ALLOWED_PKGS`] — in the order given. This is
-/// the positive-allowlist classifier; [`screen_tenant_compiled`] and the
+/// the positive-allowlist classifier; [`screen_tenant_imports`] and the
 /// `egressbench` custom-node profile both go through it (one classifier, not a
 /// fork). Empty result == the tenant component clears the guard.
 pub fn disallowed_tenant_imports<'a>(
@@ -196,17 +227,11 @@ pub fn disallowed_tenant_imports<'a>(
 /// Screen a compiled TENANT / custom-node component against the allowlist v1:
 /// `Err` iff its world imports any package outside [`TENANT_ALLOWED_PKGS`].
 /// `label` names the component in the refusal.
-pub fn screen_tenant_compiled(
-    component: &WasmtimeComponent,
+pub fn screen_tenant_imports(
+    imports: &ComponentImports,
     label: &str,
 ) -> Result<(), EgressGuardError> {
-    let engine = component.engine();
-    let ty = component.component_type();
-    let imports: Vec<String> = ty
-        .imports(engine)
-        .map(|(name, _)| name.to_string())
-        .collect();
-    let disallowed = disallowed_tenant_imports(imports.iter().map(String::as_str));
+    let disallowed = disallowed_tenant_imports(imports.iter());
     if disallowed.is_empty() {
         Ok(())
     } else {
@@ -217,24 +242,13 @@ pub fn screen_tenant_compiled(
     }
 }
 
-/// Compile `wasm` on `engine` and screen it as a TENANT artifact (the tenant
-/// publish-path entry point): `Err` if the bytes do not compile, or if the
-/// component imports any package outside [`TENANT_ALLOWED_PKGS`].
-pub fn screen_tenant_component(engine: &RawEngine, wasm: &[u8], label: &str) -> anyhow::Result<()> {
-    let component = WasmtimeComponent::new(engine, wasm)
-        .map_err(|e| anyhow::anyhow!("compile {label}: {e}"))?;
-    screen_tenant_compiled(&component, label)?;
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // 5.5a — the builder's INTERFACE-level import lint + derived grants
 // ---------------------------------------------------------------------------
 //
 // The package-level classifiers above are what the publish gate can enforce
 // TODAY; the 5.5 builder tightens WITHIN the allowlisted packages, the lint the
-// egress_guard's own doc (services/host/src/egress_guard.rs, the E13a socket
-// note) defers to 5.5. Two additions, both pure:
+// egress-guard design defers to 5.5. Two additions, both pure:
 //   1. an interface-level lint — within `wamn:node` only payloads/credentials/
 //      control, within `wasi:http` only outgoing-handler, `wasi:sockets`
 //      forbidden outright (already off the package allowlist); and
@@ -318,19 +332,13 @@ pub fn disallowed_node_interfaces<'a>(
 /// violation (`wasi:sockets` / `wamn:postgres` / …) is reported first, then an
 /// interface violation. `label` names the component. This is the strictest
 /// screen: a node the builder will push must clear it.
-pub fn screen_builder_compiled(
-    component: &WasmtimeComponent,
+pub fn screen_builder_imports(
+    imports: &ComponentImports,
     label: &str,
 ) -> Result<(), EgressGuardError> {
-    let engine = component.engine();
-    let ty = component.component_type();
-    let imports: Vec<String> = ty
-        .imports(engine)
-        .map(|(name, _)| name.to_string())
-        .collect();
     // Arm 1 — the package allowlist (wasi:sockets / wamn:postgres / …). Removing
     // this arm lets a wasi:sockets importer slip through (the mutation-(a) target).
-    let pkg_bad = disallowed_tenant_imports(imports.iter().map(String::as_str));
+    let pkg_bad = disallowed_tenant_imports(imports.iter());
     if !pkg_bad.is_empty() {
         return Err(EgressGuardError::DisallowedTenantImport {
             component: label.to_string(),
@@ -338,27 +346,13 @@ pub fn screen_builder_compiled(
         });
     }
     // Arm 2 — the interface tightening within wamn:node / wasi:http.
-    let iface_bad = disallowed_node_interfaces(imports.iter().map(String::as_str));
+    let iface_bad = disallowed_node_interfaces(imports.iter());
     if !iface_bad.is_empty() {
         return Err(EgressGuardError::DisallowedNodeInterface {
             component: label.to_string(),
             imports: iface_bad,
         });
     }
-    Ok(())
-}
-
-/// Compile `wasm` on `engine` and screen it through the builder lint (the
-/// builder's entry point): `Err` if the bytes do not compile, or if the
-/// component fails the package allowlist or the interface tightening.
-pub fn screen_builder_component(
-    engine: &RawEngine,
-    wasm: &[u8],
-    label: &str,
-) -> anyhow::Result<()> {
-    let component = WasmtimeComponent::new(engine, wasm)
-        .map_err(|e| anyhow::anyhow!("compile {label}: {e}"))?;
-    screen_builder_compiled(&component, label)?;
     Ok(())
 }
 
@@ -380,7 +374,7 @@ pub struct DerivedGrants {
 /// the [`GRANTABLE_HOST_INTERFACES`] the node imports become its host-interface
 /// grants, and importing `wasi:http/outgoing-handler` sets
 /// [`DerivedGrants::requires_allowed_hosts`]. Pure over the import-name list —
-/// the same list [`screen_builder_compiled`] walks.
+/// the same list [`screen_builder_imports`] walks.
 pub fn derive_grants<'a>(import_names: impl IntoIterator<Item = &'a str>) -> DerivedGrants {
     let mut host_interfaces = Vec::new();
     let mut requires_allowed_hosts = false;
@@ -397,22 +391,6 @@ pub fn derive_grants<'a>(import_names: impl IntoIterator<Item = &'a str>) -> Der
         host_interfaces,
         requires_allowed_hosts,
     }
-}
-
-/// Compile `wasm` and [`derive_grants`] from its imports (the builder's
-/// deployment-emission path, 5.5f). `Err` only if the bytes do not compile —
-/// grant derivation itself is total.
-pub fn derive_grants_from_component(
-    engine: &RawEngine,
-    wasm: &[u8],
-    label: &str,
-) -> anyhow::Result<DerivedGrants> {
-    let component = WasmtimeComponent::new(engine, wasm)
-        .map_err(|e| anyhow::anyhow!("compile {label}: {e}"))?;
-    let eng = component.engine();
-    let ty = component.component_type();
-    let imports: Vec<String> = ty.imports(eng).map(|(name, _)| name.to_string()).collect();
-    Ok(derive_grants(imports.iter().map(String::as_str)))
 }
 
 /// A mismatch between a component's DERIVED grants and a declared `allowedHosts`
@@ -614,34 +592,10 @@ mod tests {
     // 5.5a — interface-level lint + derived grants
     // -----------------------------------------------------------------------
 
-    /// Synthesize a minimal, valid component whose world imports exactly
-    /// `import_names` (each as an empty instance) — the socketguard pattern,
-    /// enough for the guard to walk the import NAMES.
-    fn synth_component(import_names: &[&str]) -> Vec<u8> {
-        use wasm_encoder::{
-            Component, ComponentImportSection, ComponentTypeRef, ComponentTypeSection, InstanceType,
-        };
-        let mut types = ComponentTypeSection::new();
-        for _ in import_names {
-            types.instance(&InstanceType::new());
-        }
-        let mut imports = ComponentImportSection::new();
-        for (i, name) in import_names.iter().enumerate() {
-            imports.import(*name, ComponentTypeRef::Instance(i as u32));
-        }
-        let mut component = Component::new();
-        component.section(&types);
-        component.section(&imports);
-        component.finish()
-    }
-
-    /// Screen synthesized bytes through the builder lint on the production engine.
+    /// Screen an ordered import inventory through the builder policy.
     fn screen_builder(import_names: &[&str], label: &str) -> Result<(), EgressGuardError> {
-        let engine = crate::engine::build_engine(&[]).expect("engine");
-        let bytes = synth_component(import_names);
-        let component =
-            WasmtimeComponent::new(engine.inner(), &bytes).expect("compile synthesized");
-        screen_builder_compiled(&component, label)
+        let imports = ComponentImports::new(import_names.iter().map(|name| (*name).to_string()));
+        screen_builder_imports(&imports, label)
     }
 
     #[test]
@@ -736,7 +690,7 @@ mod tests {
 
     /// MUTATION (a) TARGET. A `wasi:sockets` importer is REFUSED by the builder
     /// lint's package arm (arm 1). Removing that arm from
-    /// [`screen_builder_compiled`] lets the socket import slip through (arm 2
+    /// [`screen_builder_imports`] lets the socket import slip through (arm 2
     /// only screens wamn:node / wasi:http interfaces), flipping this to `Ok`.
     #[test]
     fn builder_lint_refuses_wasi_sockets() {

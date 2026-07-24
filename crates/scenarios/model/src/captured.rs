@@ -13,9 +13,9 @@ use wamn_run_store::{FailKind, NodeErrorKind, RunStatus};
 
 /// One recorded outbound request.
 ///
-/// LIFTED here from `wamn_host::doubles::egress` (11.4) so a captured fact bundle
+/// LIFTED here from the runtime egress doubles (11.4) so a captured fact bundle
 /// is serde-serializable and the pure evaluator can assert over egress WITHOUT a
-/// host dependency. `wamn_host::doubles::egress` re-exports THIS type, so the
+/// runtime dependency. `wamn_runtime::doubles::egress` re-exports THIS type, so the
 /// recorder API (`records()` / `denied()`) is unchanged for its callers — the
 /// recorder produces the identical struct it always did, now with serde derives.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

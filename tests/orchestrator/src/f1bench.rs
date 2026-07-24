@@ -48,8 +48,8 @@ use crate::f1fixture::{
 };
 use wamn_ctl::publish_catalog;
 use wamn_gate_harness::{as_array, check};
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 #[derive(Debug, Args)]
 pub struct F1BenchArgs {

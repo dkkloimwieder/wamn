@@ -113,9 +113,7 @@ impl HostPlugin for RunnerEgressPolicy {
     }
 }
 
-fn plugin_of(
-    ctx: &ActiveCtx<'_>,
-) -> wash_runtime::wasmtime::Result<Arc<RunnerEgressPolicy>> {
+fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<RunnerEgressPolicy>> {
     ctx.try_get_plugin::<RunnerEgressPolicy>(RUNNER_EGRESS_ID)
 }
 
@@ -153,10 +151,7 @@ mod tests {
     #[test]
     fn declaration_replaces_and_unparseable_entries_drop() {
         let policy = RunnerEgressPolicy::default();
-        policy.set_declared(
-            "runner",
-            &["notify.example".into(), "*bad-wildcard".into()],
-        );
+        policy.set_declared("runner", &["notify.example".into(), "*bad-wildcard".into()]);
         let set = policy.declared("runner").expect("declared");
         // The bad wildcard dropped fail-closed; the valid entry survived.
         assert_eq!(set.len(), 1);
@@ -164,6 +159,9 @@ mod tests {
         // A later declaration REPLACES (the next run's flow may declare less).
         policy.set_declared("runner", &[]);
         let set = policy.declared("runner").expect("declared");
-        assert!(set.is_empty(), "declared-empty is stored, and means deny-all");
+        assert!(
+            set.is_empty(),
+            "declared-empty is stored, and means deny-all"
+        );
     }
 }

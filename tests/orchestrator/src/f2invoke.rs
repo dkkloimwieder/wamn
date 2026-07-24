@@ -21,13 +21,13 @@ use std::sync::Arc;
 use anyhow::{Context as _, bail};
 use clap::Args;
 
+use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_gate_harness::check;
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_credentials::WamnCredentials;
-use wamn_host::serve_node::{self, ServeNode, ServeNodeAuthn};
 use wamn_node_invoke::{
     NodeInvokeRequest, NodeInvokeResponse, WireNodeError, WirePayload, WireRunContext,
 };
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 
 #[derive(Debug, Args)]
 pub struct F2InvokeArgs {

@@ -15,8 +15,8 @@ use wash_runtime::host::http::{DynamicRouter, HttpServer};
 use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
-use crate::engine::build_engine;
-use crate::plugins::{WamnJetstream, WamnLogging, WamnNodeControl, WamnPostgres};
+use wamn_runtime::build_engine;
+use wamn_runtime::plugins::{WamnJetstream, WamnLogging, WamnNodeControl, WamnPostgres};
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -121,7 +121,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let engine = build_engine(&args.wasm_proposals)?;
     if args.epoch_tick_ms > 0 {
-        crate::engine::spawn_epoch_ticker(&engine, Duration::from_millis(args.epoch_tick_ms));
+        wamn_runtime::spawn_epoch_ticker(&engine, Duration::from_millis(args.epoch_tick_ms));
     }
 
     let host_config = HostConfig {

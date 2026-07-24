@@ -24,16 +24,13 @@
 //! `wamn-gates testkitbench` gate. The 7se `grant` rides the [`NodeCase`] and is
 //! read off it here when building the request (a `TestCase` carries no grant).
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_credentials::WamnCredentials;
-use wamn_host::serve_node::{self, ServeNode, ServeNodeAuthn};
 use wamn_node_invoke::{
     NodeInvokeRequest, NodeInvokeResponse, WireNodeError, WirePayload, WireRunContext,
 };
+use wamn_node_runtime::{DEFAULT_NODE_ID, NodeRuntime, NodeRuntimeConfig};
+use wamn_runtime::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_testkit::{Captured, NodeCase, NodeErrorKind, evaluate};
 
 // The reconciled case vocabulary is wamn-testkit's; re-exported under the
@@ -185,20 +182,13 @@ pub async fn run_cases(wasm: &[u8], cases: &CaseFile) -> anyhow::Result<()> {
     // signing key (the direct in-process `.invoke()` is admitted), deny-all
     // egress. A case that reaches for a credential or a host is refused at the
     // real WIT boundary and surfaces as its case outcome.
-    let serve = ServeNode::new(
+    let runtime = NodeRuntime::instantiate(
         &engine,
         wasm,
-        Arc::new(WamnCredentials::empty()),
-        serve_node::DEFAULT_NODE_ID,
-        "default",
-        Arc::from([]),
-        ServeNodeAuthn {
-            require_signing_key: false,
-            max_signature_age_secs: None,
-        },
+        NodeRuntimeConfig::deny_all(DEFAULT_NODE_ID, "default"),
     )
     .await;
-    let serve = match serve {
+    let runtime = match runtime {
         Ok(s) => s,
         Err(e) => {
             ticker.abort();
@@ -212,7 +202,7 @@ pub async fn run_cases(wasm: &[u8], cases: &CaseFile) -> anyhow::Result<()> {
     );
     let mut failures = Vec::new();
     for case in &cases.cases {
-        let resp = serve.invoke(build_request(case)).await;
+        let resp = runtime.invoke(build_request(case)).await;
         let captured = capture(&resp);
         // Lower the compact node case to the canonical vocabulary and let the
         // pure evaluator decide (grant is not surfaced — it rode the request).

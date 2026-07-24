@@ -1,5 +1,6 @@
 # wamn images (SR1 pattern: one build, one final stage per artifact; SR9 split).
 #   docker build --target host       -t wamn-host:dev       .  # washlet ONLY
+#   docker build --target node-host  -t wamn-node-host:dev  .  # custom-node HTTP host
 #   docker build --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
 #   docker build --target dispatcher -t wamn-dispatcher:dev .  # trigger dispatcher
 #   docker build --target run-worker -t wamn-run-worker:dev .  # flow runner (+flowrunner.wasm)
@@ -33,7 +34,7 @@ COPY components/samples/disposition-node/cases.json components/samples/dispositi
 # (docs/wash-runtime-fork.md); cargo fetches it during the build.
 # rust-toolchain.toml would force a rustup download inside the container;
 # the base image already ships the right version.
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-waker -p wamn-gates -p wamn-builder
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-waker -p wamn-gates -p wamn-builder
 
 # ---- washlet image: the host binary only ------------------------------------
 FROM debian:trixie-slim AS host
@@ -41,6 +42,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=builder /build/target/release/wamn-host /usr/local/bin/wamn-host
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
+
+FROM debian:trixie-slim AS node-host
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /build/target/release/wamn-node-host /usr/local/bin/wamn-node-host
+ENV HOME=/tmp
+ENTRYPOINT ["/usr/local/bin/wamn-node-host"]
 
 # ---- ctl image: the one-shot control-plane verbs (SR9) ----------------------
 # NOTE pg_dump/pg_restore are NOT installed (parity with the pre-split image);

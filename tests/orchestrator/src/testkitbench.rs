@@ -33,19 +33,19 @@ use clap::Args;
 use serde::Deserialize;
 use wash_runtime::host::http::HostHandler;
 
+use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
 use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_case, seed_test_suite};
-use wamn_host::doubles::{DoubleSet, EgressRecorder, EphemeralSchemaProvisioner, case_pool};
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_credentials::WamnCredentials;
-use wamn_host::plugins::wamn_logging::WamnLogging;
-use wamn_host::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
-use wamn_host::serve_node::{self, ServeNode, ServeNodeAuthn};
 use wamn_node_invoke::{
     NodeInvokeRequest, NodeInvokeResponse, WireNodeError, WirePayload, WireRunContext,
 };
 use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_run_worker::{RunWorker, RunnerIdentity};
+use wamn_runtime::doubles::{DoubleSet, EgressRecorder, EphemeralSchemaProvisioner, case_pool};
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
+use wamn_runtime::plugins::wamn_logging::WamnLogging;
+use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wamn_testkit::{
     Assertion, Captured, DbCapture, EgressAssertion, NodeErrorKind, Outcome, RunFacts, RunStatus,
     TestCase, evaluate,

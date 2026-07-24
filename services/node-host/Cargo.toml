@@ -1,0 +1,17 @@
+[package]
+name = "wamn-node-host"
+description = "Production HTTP service for one warm custom node component."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wamn-node-runtime = { path = "../../crates/platform/node-runtime" }
+wamn-node-invoke = { path = "../../crates/node/invoke" }
+wamn-runtime = { path = "../../crates/platform/runtime" }
+wash-runtime = { workspace = true }
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+serde_json = "1"
+tokio = { workspace = true, features = ["fs", "io-util", "net", "rt-multi-thread", "macros"] }
+tracing = { workspace = true }

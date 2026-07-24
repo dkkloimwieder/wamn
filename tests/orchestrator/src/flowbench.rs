@@ -39,8 +39,8 @@ use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 
 use tokio_postgres::NoTls;
 use wamn_gate_harness::{percentile, scope_session, seed_flow_version, set_active_flow_version};
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
@@ -283,19 +283,19 @@ impl Harness {
         wamn_postgres::add_to_linker(&mut linker)?;
         // 5.9: the runner imports wamn:node/credentials unconditionally; no
         // S3 fixture declares one, so the linked vault stays unbacked.
-        wamn_host::plugins::wamn_credentials::add_to_linker(&mut linker)?;
+        wamn_runtime::plugins::wamn_credentials::add_to_linker(&mut linker)?;
         // cjv.3: the flowrunner declares its per-run grant via this trusted
         // channel; the harness must link it or instantiation fails.
-        wamn_host::plugins::wamn_credentials::add_runner_to_linker(&mut linker)?;
+        wamn_runtime::plugins::wamn_credentials::add_runner_to_linker(&mut linker)?;
         // fqg.11: the flowrunner declares its per-run egress the same way.
-        wamn_host::plugins::runner_egress::add_runner_to_linker(&mut linker)?;
+        wamn_runtime::plugins::runner_egress::add_runner_to_linker(&mut linker)?;
         // l5i9.12.2: the trusted per-run causation channel (the flowrunner world
         // now imports it; instantiation traps without it).
         wamn_postgres::add_runner_causation_to_linker(&mut linker)?;
         // wamn-yf3: the flowrunner world now imports wasi:logging (run-path
         // emission). This harness registers no wamn:logging plugin, so log() is a
         // best-effort no-op — but the import must be linked or instantiation traps.
-        wamn_host::plugins::wamn_logging::add_to_linker(&mut linker)?;
+        wamn_runtime::plugins::wamn_logging::add_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self {
             engine,
@@ -316,8 +316,8 @@ impl Harness {
         // credentials plugin must back the linked interface. No S3 fixture
         // declares a credential, so an empty unbacked vault suffices.
         m.insert(
-            wamn_host::plugins::wamn_credentials::WAMN_CREDENTIALS_ID,
-            Arc::new(wamn_host::plugins::wamn_credentials::WamnCredentials::empty())
+            wamn_runtime::plugins::wamn_credentials::WAMN_CREDENTIALS_ID,
+            Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty())
                 as Arc<dyn HostPlugin + Send + Sync>,
         );
         // fqg.11: the flowrunner declares its per-run egress on every walk, so
@@ -325,8 +325,8 @@ impl Harness {
         // the harness's own http handler, so the declaration is inert — the
         // plugin exists to keep the trusted channel satisfied.
         m.insert(
-            wamn_host::plugins::runner_egress::RUNNER_EGRESS_ID,
-            Arc::new(wamn_host::plugins::runner_egress::RunnerEgressPolicy::default())
+            wamn_runtime::plugins::runner_egress::RUNNER_EGRESS_ID,
+            Arc::new(wamn_runtime::plugins::runner_egress::RunnerEgressPolicy::default())
                 as Arc<dyn HostPlugin + Send + Sync>,
         );
         m

@@ -5,11 +5,12 @@ and a four-tier Postgres control plane, all hosted on a customized wasmCloud
 runtime. **`docs/` is the design source of truth** — start with
 `docs/platform-plan.md` and the decision table.
 
-`services/host` is the production host (it embeds the `wash-runtime` washlet
-and is deployed by the wasmCloud runtime-operator Helm chart); the gate/bench
-suite is the separate `tests/orchestrator` binary over the same lib. One
-`Dockerfile` builds both via two `--target` stages (SR1). Our wash-runtime
-changes are carried commits on a fork — see `docs/wash-runtime-fork.md`.
+`services/host` is the production washlet host, while `services/node-host`
+serves custom nodes. Both are thin deployable leaves over the reusable
+`crates/platform/{runtime,node-runtime,component-policy}` packages. The
+gate/bench suite is the separate `tests/orchestrator` binary over those reusable
+packages. Our wash-runtime changes are carried commits on a fork — see
+`docs/wash-runtime-fork.md`.
 
 ## Repository layout
 
@@ -17,6 +18,7 @@ changes are carried commits on a fork — see `docs/wash-runtime-fork.md`.
 services/               native deployable Rust services
   host                  production host: washlet embedding + host plugins
                         (wamn:postgres, logging, jetstream) — washlet only (SR9)
+  node-host             custom-node HTTP/auth transport leaf
   ctl                   one-shot control-plane verbs (provision-*, publish/
                         migrate-catalog, dump/restore/copy-project-env,
                         enable-cdc-project-env) — SR9 split
@@ -29,6 +31,9 @@ services/               native deployable Rust services
 crates/                 shared Rust workspace packages
   # shared, non-deployable packages grouped by bounded context:
   platform/
+    component-policy    pure component-import and grant policy
+    runtime             shared engine, plugins, WIT, metrics, and test doubles
+    node-runtime        transport-free warm custom-node runtime
     sql                 wamn-sql: parameterized SQL composition primitive
   data/
     entity-access       wamn-api: catalog-derived REST/SQL planning logic
@@ -108,7 +113,7 @@ Dockerfile              two-stage image (--target host, --target gates)
 
 ```bash
 # host + gate suite (debug by default)
-cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-gates
+cargo build -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher -p wamn-run-worker -p wamn-cdc-reader -p wamn-gates
 
 # wasm guests
 (cd components && cargo build --release --target wasm32-wasip2)
@@ -152,10 +157,12 @@ helm upgrade --install -n wamn-system wamn \
   oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
   -f deploy/infra/values-wamn.yaml
 
-# 2. build both images and load them into kind
+# 2. build the host, node-host, and gate images and load them into kind
 docker build --target host  -t wamn-host:dev  .
+docker build --target node-host -t wamn-node-host:dev .
 docker build --target gates -t wamn-gates:dev .
 kind load docker-image wamn-host:dev  --name wamn
+kind load docker-image wamn-node-host:dev --name wamn
 kind load docker-image wamn-gates:dev --name wamn
 kubectl -n wamn-system rollout status deploy/hostgroup-default
 

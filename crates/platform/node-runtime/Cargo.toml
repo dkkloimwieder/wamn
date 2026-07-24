@@ -1,0 +1,20 @@
+[package]
+name = "wamn-node-runtime"
+description = "Transport-free runtime for one warm wamn:node component."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wamn-component-policy = { path = "../component-policy" }
+wamn-runtime = { path = "../runtime" }
+wamn-node-invoke = { path = "../../node/invoke" }
+wash-runtime = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+hyper = "1"
+serde_json = "1"
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true }
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }

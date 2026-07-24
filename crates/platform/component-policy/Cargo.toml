@@ -1,0 +1,8 @@
+[package]
+name = "wamn-component-policy"
+description = "Pure component import policy and capability-grant derivation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

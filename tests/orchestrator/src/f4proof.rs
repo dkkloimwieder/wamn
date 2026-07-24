@@ -57,23 +57,25 @@ use wash_runtime::wasmtime::{Engine as RawEngine, Store};
 use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
+use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_cdc_reader::{EventReaderArgs, run_with_token};
 use wamn_ddl::{Confirmation, Migration};
 use wamn_gate_harness::check;
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_credentials::WamnCredentials;
-use wamn_host::plugins::wamn_jetstream::{
-    self, WAMN_JETSTREAM_ID, WamnJetstream, WamnJetstreamConfig,
-};
-use wamn_host::plugins::wamn_logging::WamnLogging;
-use wamn_host::plugins::wamn_postgres::{self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig};
-use wamn_host::serve_node::{self, ServeNode, ServeNodeAuthn};
 use wamn_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
 use wamn_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
 use wamn_run_queue::mint_evt_run_id;
 use wamn_run_worker::{RunWorker, RunnerIdentity};
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
+use wamn_runtime::plugins::wamn_jetstream::{
+    self, WAMN_JETSTREAM_ID, WamnJetstream, WamnJetstreamConfig,
+};
+use wamn_runtime::plugins::wamn_logging::WamnLogging;
+use wamn_runtime::plugins::wamn_postgres::{
+    self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
+};
 
 use crate::erp_sim::ErpAudit;
 

@@ -44,8 +44,8 @@ use wash_runtime::wasmtime::{Engine as RawEngine, Store};
 use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_jetstream::{
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_jetstream::{
     self, WAMN_JETSTREAM_ID, WamnJetstream, WamnJetstreamConfig,
 };
 

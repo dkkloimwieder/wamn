@@ -21,6 +21,20 @@ const POOL_SLOTS: u32 = 512;
 /// deadline of N ticks caps guest execution at roughly N × 10 ms.
 pub const DEFAULT_EPOCH_TICK: Duration = Duration::from_millis(10);
 
+/// Advertise the platform memory ceiling to the fork's per-store limiter.
+///
+/// Call this before the Tokio runtime starts, while no other thread can read
+/// the process environment.
+pub fn advertise_memory_ceiling() {
+    // SAFETY: callers uphold the documented single-threaded startup contract.
+    unsafe {
+        std::env::set_var(
+            "WAMN_MEMORY_CEILING_MB",
+            (MEMORY_CAP_BYTES >> 20).to_string(),
+        );
+    }
+}
+
 /// Build the engine every wamn-host mode uses: pooling allocator with the
 /// 256 MiB memory ceiling, epoch interruption enabled. Memory enforcement is
 /// two-tier: this pooling cap is the platform ceiling, and the fork's

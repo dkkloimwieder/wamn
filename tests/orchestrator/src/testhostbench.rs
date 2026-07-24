@@ -59,15 +59,15 @@ use wamn_gate_harness::scope_session;
 // wamn-t92: the S6 doubles now live in the production host library as reusable
 // test-host machinery; this bench drives them (the regression proof that the
 // extraction changed nothing).
-use wamn_host::doubles::{
+use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_worker::{RunWorker, RunnerIdentity};
+use wamn_runtime::doubles::{
     DoubleSet, EgressRecorder, EphemeralSchemaProvisioner, RUN_S6_WAKE_DEADLINES_SQL,
     SchedulerBackend, TestScheduler, VirtualClock, build_virtual_wasi, case_pool,
 };
-use wamn_host::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_host::plugins::wamn_credentials::WamnCredentials;
-use wamn_host::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
-use wamn_run_queue::{enqueue_sql, write_ahead_triggered_run_sql};
-use wamn_run_worker::{RunWorker, RunnerIdentity};
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
+use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 // 11.4: the schemacase + runworker inline asserts now route through the pure
 // assertion vocabulary (the extraction-regression proof that the vocabulary
 // expresses the existing cases — behaviour identical to the old booleans).
@@ -151,7 +151,7 @@ const PLANTED_URL: &str = "http://169.254.169.254/latest/meta-data/";
 
 // The virtual clock (`VirtualClock`/`VirtualWallClock`) and the egress spy
 // (`EgressRecorder`) that used to live here are now reusable test-host machinery
-// in `wamn_host::doubles` (wamn-t92). This bench drives that library — the
+// in `wamn_runtime::doubles` (wamn-t92). This bench drives that library — the
 // regression proof the extraction changed nothing.
 
 // ---------------------------------------------------------------------------
@@ -213,19 +213,19 @@ impl Harness {
         wamn_postgres::add_to_linker(&mut linker)?;
         // 5.9: the runner imports wamn:node/credentials unconditionally; no
         // S6 fixture declares one, so the linked vault stays unbacked.
-        wamn_host::plugins::wamn_credentials::add_to_linker(&mut linker)?;
+        wamn_runtime::plugins::wamn_credentials::add_to_linker(&mut linker)?;
         // cjv.3: the flowrunner declares its per-run grant via this trusted
         // channel; the harness must link it or instantiation fails.
-        wamn_host::plugins::wamn_credentials::add_runner_to_linker(&mut linker)?;
+        wamn_runtime::plugins::wamn_credentials::add_runner_to_linker(&mut linker)?;
         // fqg.11: the flowrunner declares its per-run egress the same way.
-        wamn_host::plugins::runner_egress::add_runner_to_linker(&mut linker)?;
+        wamn_runtime::plugins::runner_egress::add_runner_to_linker(&mut linker)?;
         // l5i9.12.2: the trusted per-run causation channel (the flowrunner world
         // now imports it; instantiation traps without it).
         wamn_postgres::add_runner_causation_to_linker(&mut linker)?;
         // wamn-yf3: the flowrunner world now imports wasi:logging (run-path
         // emission). This harness registers no wamn:logging plugin, so log() is a
         // best-effort no-op — but the import must be linked or instantiation traps.
-        wamn_host::plugins::wamn_logging::add_to_linker(&mut linker)?;
+        wamn_runtime::plugins::wamn_logging::add_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self {
             engine,
@@ -247,8 +247,8 @@ impl Harness {
         // credentials plugin must back the linked interface. No S3/S6 fixture
         // declares a credential, so an empty unbacked vault suffices.
         m.insert(
-            wamn_host::plugins::wamn_credentials::WAMN_CREDENTIALS_ID,
-            Arc::new(wamn_host::plugins::wamn_credentials::WamnCredentials::empty())
+            wamn_runtime::plugins::wamn_credentials::WAMN_CREDENTIALS_ID,
+            Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty())
                 as Arc<dyn HostPlugin + Send + Sync>,
         );
         // fqg.11: the flowrunner declares its per-run egress on every walk, so
@@ -256,8 +256,8 @@ impl Harness {
         // the harness's own http handler, so the declaration is inert — the
         // plugin exists to keep the trusted channel satisfied.
         m.insert(
-            wamn_host::plugins::runner_egress::RUNNER_EGRESS_ID,
-            Arc::new(wamn_host::plugins::runner_egress::RunnerEgressPolicy::default())
+            wamn_runtime::plugins::runner_egress::RUNNER_EGRESS_ID,
+            Arc::new(wamn_runtime::plugins::runner_egress::RunnerEgressPolicy::default())
                 as Arc<dyn HostPlugin + Send + Sync>,
         );
         m
@@ -385,7 +385,7 @@ fn template_ddl(schema: &str) -> String {
     )
 }
 
-// Schema create/drop is now owned by `wamn_host::doubles::EphemeralSchemaProvisioner`
+// Schema create/drop is now owned by `wamn_runtime::doubles::EphemeralSchemaProvisioner`
 // (`template_ddl` above is the case template it renders). The bench passes
 // `template_ddl` to the provisioner (delta 4).
 
@@ -1200,7 +1200,7 @@ async fn runworker_phase(
         guest,
         plugin.clone(),
         vault,
-        Arc::new(wamn_host::plugins::wamn_logging::WamnLogging::from_env()?),
+        Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?),
         RunnerIdentity {
             owner: RW_OWNER,
             tenant: RW_TENANT,
