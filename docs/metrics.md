@@ -20,7 +20,7 @@ The **meter provider is not new.** wash-runtime's `initialize_observability`
 separate *logs* provider does not apply to metrics; there is no queue/filter
 bottleneck). The one exception is the **dispatcher**, the sole service artifact
 that links no runtime (SR9): it builds its own minimal, `OTEL_*`-gated
-`SdkMeterProvider` (`crates/wamn-dispatcher/src/main.rs`, `init_metrics`).
+`SdkMeterProvider` (`services/dispatcher/src/main.rs`, `init_metrics`).
 
 The fork already emitted `fuel.consumption`; 9.8's `wamn.api.requests` counter
 rides beside it in the fork (see below).
@@ -36,12 +36,12 @@ added (histograms keep their structural `_count`/`_sum`/`_bucket`).
 
 | Metric | Kind | Attributes | Emitted by (file) |
 |---|---|---|---|
-| `wamn.run.executions` | counter | `outcome` (completed/parked/failed), `wamn.tenant`, `wamn.project` | run-worker `drain` (`crates/wamn-run-worker/src/lib.rs`) |
+| `wamn.run.executions` | counter | `outcome` (completed/parked/failed), `wamn.tenant`, `wamn.project` | run-worker `drain` (`services/run-worker/src/lib.rs`) |
 | `wamn.run.drive.duration_ms` | histogram | `wamn.tenant`, `wamn.project` | run-worker `drain` (timed around `call_run_next`) |
-| `wamn.run_queue.depth` | observable gauge (i64) | `wamn.tenant`, `wamn.project` | dispatcher `tick_project` (`crates/wamn-dispatcher/src/lib.rs`, `RUN_QUEUE_DEPTH_SQL`) |
+| `wamn.run_queue.depth` | observable gauge (i64) | `wamn.tenant`, `wamn.project` | dispatcher `tick_project` (`services/dispatcher/src/lib.rs`, `RUN_QUEUE_DEPTH_SQL`) |
 | `wamn.postgres.pool.{size,available,waiting}` | observable gauge (u64) | `wamn.project` | `WamnPostgres::register_pool_metrics` (deadpool `Pool::status()`) |
-| `wamn.postgres.query.duration_ms` | histogram | `db.operation` (query/execute/txn.query/txn.execute), `wamn.project` | the `db_span` sites (`crates/wamn-host/src/plugins/wamn_postgres/resources.rs`) |
-| `wamn.memory.denied` | observable counter (u64) | `component` | `MemoryMeter` (`crates/wamn-host/src/memory_metrics.rs`) |
+| `wamn.postgres.query.duration_ms` | histogram | `db.operation` (query/execute/txn.query/txn.execute), `wamn.project` | the `db_span` sites (`services/host/src/plugins/wamn_postgres/resources.rs`) |
+| `wamn.memory.denied` | observable counter (u64) | `component` | `MemoryMeter` (`services/host/src/memory_metrics.rs`) |
 | `wamn.memory.high_water_bytes` | observable gauge (u64) | `component` | `MemoryMeter` |
 | `wamn.memory.budget_bytes` | observable gauge (u64) | `component` | `MemoryMeter` (budgeted stores only) |
 | `wamn.api.requests` | counter (u64) | `status_class` (2xx/4xx/5xx/…) | **fork** `record_response_status` (`host/http.rs`) |

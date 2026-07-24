@@ -7,7 +7,7 @@
 //! the expected insert ids, in commit order, one message each (`Nats-Msg-Id`
 //! dedupe held across restarts/redelivery), every envelope well-formed per
 //! the wamn-event-wire draft. The local drills live in
-//! `crates/wamn-host/tests/event_reader_live.rs`; this mode only asserts the
+//! `services/host/tests/event_reader_live.rs`; this mode only asserts the
 //! stream, so it stays reusable for the C-CDC (l5i9.14) and materializer
 //! (l5i9.17) gates.
 

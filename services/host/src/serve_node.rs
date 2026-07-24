@@ -85,7 +85,7 @@ mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         world: "serve-node",
         // The gate binds the same vendored WIT the host plugins bind
-        // (crates/wamn-host/wit); no second copy (SR7).
+        // (services/host/wit); no second copy (SR7).
         path: "wit",
         imports: { default: async },
         exports: { default: async },

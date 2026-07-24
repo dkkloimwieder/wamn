@@ -4,7 +4,7 @@
 -- version)` ON DELETE CASCADE makes that binding structural — dropping a flow
 -- version takes its suites (and their cases) with it, and a flow version and
 -- its suite promote together through the copy-project-env definition path
--- (crates/wamn-ctl copy_project_env: flows in block 2, suites in block 5).
+-- (services/ctl copy_project_env: flows in block 2, suites in block 5).
 --
 -- The case BODY is opaque jsonb in v0 (`case_body`): the canonical
 -- case/assertion vocabulary is a sibling crate (wamn-testkit); at integration

@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compil
 WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+COPY services ./services
 COPY poc ./poc
 # The canonical deploy DDL (sql/run-state.sql / sql/flows.sql) is include_str!'d by
 # publish-catalog's provisioning helpers — single source of truth, no clones.
@@ -148,7 +149,7 @@ RUN rustup target add wasm32-wasip2 \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @bytecodealliance/jco @bytecodealliance/componentize-js
 # The v0 sandbox Job builds the baked-in components-workspace fixtures. The
-# builder stage above copies only crates/poc/deploy, and its cargo caches are
+# builder stage above copies only crates/services/poc/deploy, and its cargo caches are
 # BuildKit mounts that do not persist into image layers — so copy the
 # components source here (member dirs only, never the 3G components/target)
 # and warm the crate cache into the image: the in-pod `cargo metadata

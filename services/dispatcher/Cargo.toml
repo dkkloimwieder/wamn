@@ -29,9 +29,9 @@ async-nats = { version = "0.47", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws-lc-rs"] }
 # The trigger registry is the flows table's graph_json — the dispatcher parses
 # each active flow and registers its cron / row-event trigger.
-wamn-flow = { path = "../wamn-flow" }
+wamn-flow = { path = "../../crates/wamn-flow" }
 # The pure SKIP LOCKED claim / lease / janitor SQL builders + Cadence.
-wamn-run-queue = { path = "../wamn-run-queue" }
+wamn-run-queue = { path = "../../crates/wamn-run-queue" }
 # R16b identity-format validators — the ONE owner shared with the
 # wamn:postgres plugin (wamn-host).
-wamn-registry = { path = "../wamn-registry" }
+wamn-registry = { path = "../../crates/wamn-registry" }

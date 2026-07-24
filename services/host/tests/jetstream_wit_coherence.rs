@@ -1,6 +1,6 @@
 //! Drift guard tying the `wamn:jetstream@0.1.0` doc-of-record
 //! (`docs/wamn-jetstream.wit`) to the built copy the host bindgen compiles
-//! (`crates/wamn-host/wit/deps/wamn-jetstream/package.wit`). The
+//! (`services/host/wit/deps/wamn-jetstream/package.wit`). The
 //! `wamn:postgres` / `wamn:node` committed-contract precedent: editing one copy
 //! without the other fails a named test instead of shipping skew. The two are
 //! kept BYTE-IDENTICAL (like `docs/wamn-postgres.wit` and its vendored copy).

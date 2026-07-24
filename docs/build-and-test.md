@@ -1835,7 +1835,7 @@ kubectl -n wamn-system logs job/ladderproof   # -> overall PASS: true
 
 ### [POC-F3] scale-to-zero / parked-project wake (wamn-fqg.12)
 
-Docs: docs/run-queue.md (Scale-to-zero wake) · Actuator: crates/wamn-waker +
+Docs: docs/run-queue.md (Scale-to-zero wake) · Actuator: services/waker +
 deploy/platform/waker.yaml · Manifest: deploy/gates/wakeproof-job.yaml
 
 `wakeproof` parks the runner Deployment at 0 replicas, seeds an every-second
@@ -1852,7 +1852,7 @@ wake failure.
 cargo test -p wamn-waker -p wamn-gates   # decision units (parse/decide/scale-parse) + cron-flow drift guard
 cargo clippy -p wamn-waker -p wamn-gates --all-targets
 # Mutation (decision is a load-bearing assert): flip `current_replicas == 0` in
-# crates/wamn-waker/src/lib.rs decide() -> `!= 0`; then
+# services/waker/src/lib.rs decide() -> `!= 0`; then
 #   cargo test -p wamn-waker decide_skips_an_already_awake_deployment   # MUST fail
 # restore the file and re-run (green). sha256 the file before/after to confirm.
 # In-cluster gate of record (NEW image: wamn-waker; gates rebuilt for the subcommand):

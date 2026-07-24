@@ -14,7 +14,7 @@ to consume it; the fork is where our carried commits live.
 - **The pin:** `workspace.dependencies.wash-runtime.rev` in the root
   `Cargo.toml` — the **single source of truth**. Pin a **rev** (immutable),
   never a branch name (branches move); the branch's existence on the fork is
-  what keeps the SHA fetchable. `crates/wamn-host/Cargo.toml` consumes it via
+  what keeps the SHA fetchable. `services/host/Cargo.toml` consumes it via
   `workspace = true`.
 - **Features:** `default-features = false, features = ["washlet",
   "wasi-config", "wasi-logging", "wasi-otel"]`. Default features pull
@@ -49,7 +49,7 @@ condition**: the upstream change that makes it deletable.
 Everything else epoch-related lives **unforked** in wamn-host:
 `Config::epoch_interruption(true)` layers in via `EngineBuilder::with_config`,
 and `spawn_epoch_ticker` drives the public `Engine::increment_epoch()`
-(`crates/wamn-host/src/engine.rs`; `host --epoch-tick-ms`, 0 = off).
+(`services/host/src/engine.rs`; `host --epoch-tick-ms`, 0 = off).
 
 Retired with the vendoring mechanism: patch `0002-workspace-lints-warn-not-deny`
 existed because a `[patch]` *path* dep got the monorepo's full `-D warnings`

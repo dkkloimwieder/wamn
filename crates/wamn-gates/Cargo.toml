@@ -8,15 +8,15 @@ license.workspace = true
 [dependencies]
 # The production host library — gates construct the identical engines, hosts,
 # and plugins the prod binary runs.
-wamn-host = { path = "../wamn-host" }
+wamn-host = { path = "../../services/host" }
 # SR9: the one-shot control-plane verbs the provisioning/publish gates drive.
-wamn-ctl = { path = "../wamn-ctl" }
+wamn-ctl = { path = "../../services/ctl" }
 # SR9: the per-service crates whose engines the bench gates drive directly.
-wamn-dispatcher = { path = "../wamn-dispatcher" }
-wamn-run-worker = { path = "../wamn-run-worker" }
+wamn-dispatcher = { path = "../../services/dispatcher" }
+wamn-run-worker = { path = "../../services/run-worker" }
 # wakeproof (fqg.12) drives the deployed waker's k8s scale client to park +
 # restore the runner Deployment around the scale-to-zero wake proof.
-wamn-waker = { path = "../wamn-waker" }
+wamn-waker = { path = "../../services/waker" }
 wamn-gate-harness = { path = "../wamn-gate-harness" }
 wash-runtime = { workspace = true }
 # Bench harnesses instantiate command components directly (CommandPre) and
@@ -55,7 +55,7 @@ wamn-node-invoke = { path = "../wamn-node-invoke" }
 wamn-testkit = { path = "../wamn-testkit" }
 # buildproof drives the 5.5 builder's OCI fetch (registry client) + verifies the
 # pushed artifact against the SAME NodeManifest model the builder wrote.
-wamn-builder = { path = "../wamn-builder" }
+wamn-builder = { path = "../../services/builder" }
 wamn-node-manifest = { path = "../wamn-node-manifest" }
 # queuebench/failoverbench/dispatchbench drive the pure queue/cron
 # builders over tokio_postgres.
@@ -72,7 +72,7 @@ wamn-runner = { path = "../wamn-runner" }
 wamn-event-wire = { path = "../wamn-event-wire" }
 # rie2ebench embeds the REAL reader service body (run_with_token) next to the
 # materializer guest for the RI-flip e2e; pg_walstream only for its CancellationToken.
-wamn-cdc-reader = { path = "../wamn-cdc-reader" }
+wamn-cdc-reader = { path = "../../services/cdc-reader" }
 wamn-event-reg = { path = "../wamn-event-reg" }
 pg_walstream = { workspace = true }
 wamn-flow = { path = "../wamn-flow" }

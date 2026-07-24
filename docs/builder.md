@@ -1,6 +1,6 @@
 # The custom-node builder (5.5 / wamn-0si)
 
-`crates/wamn-builder` turns a tenant's node SOURCE into a signed, SBOM-carrying
+`services/builder` turns a tenant's node SOURCE into a signed, SBOM-carrying
 OCI artifact the platform will run, inside one isolated, credential-less build
 sandbox (the 6.2 threat class: no cluster creds, egress-restricted,
 resource/time-limited). It is a one-shot ctl-style verb binary — but its OWN
@@ -37,7 +37,7 @@ cargo-ful image (`--target builder-svc`), distinct from the slim cargo-less
 
 ## 5.5a — interface lint + derived grants
 
-Lives in `crates/wamn-host/src/egress_guard.rs` (reused verbatim by the builder;
+Lives in `services/host/src/egress_guard.rs` (reused verbatim by the builder;
 the egress_guard's own E13a doc deferred the interface-level lint to 5.5). Two
 additions over the package-level classifiers the publish gate already enforces:
 
@@ -56,7 +56,7 @@ additions over the package-level classifiers the publish gate already enforces:
 
 ## 11.5 — custom-node test gate
 
-`crates/wamn-builder/src/test_gate.rs` — the node's OWN unit tests, run against
+`services/builder/src/test_gate.rs` — the node's OWN unit tests, run against
 the built artifact as a publish gate. User-supplied cases exercise the pure
 `wamn:node` `run(ctx, input)` contract; ANY failing case REFUSES the publish (a
 typed `TestGateError` → non-zero exit → nothing is pushed), exactly like the
@@ -109,7 +109,7 @@ matching (beyond exact/subset) is a later match mode.
 
 ## Dependency allowlist policy
 
-`crates/wamn-builder/policy/default-allowlist.toml` — a crate-NAME surface list
+`services/builder/policy/default-allowlist.toml` — a crate-NAME surface list
 (version-agnostic: which crates may appear, not which versions). Pinned to the
 ACTUAL transitive closure of `components/samples/sample-node` (48 names:
 `serde_json` + the `wamn-node-{sdk,guest}` path + the `wit-bindgen` /
@@ -146,7 +146,7 @@ blob fetch. A large SBOM → an additional layer blob is a deferral.
 
 ## OCI media types (the pullable wire shape)
 
-The push is HAND-ROLLED over hyper 1 (`crates/wamn-builder/src/registry.rs`), the
+The push is HAND-ROLLED over hyper 1 (`services/builder/src/registry.rs`), the
 repo's first Rust OCI writer — not `oci-client` — for full control of the
 annotations + media types and a wire shape the stub test pins byte-for-byte. The
 artifact MUST stay pullable by the wash-runtime host, whose fork pull path
@@ -180,7 +180,7 @@ ConfigMap-mounted node (`--node`), `WAMN_PROJECT` + the credential vault, and th
 `--allowed-hosts` arg present iff `wasi:http` is imported (derived, refused
 otherwise). The emitted metadata annotations carry the OCI ref + signed digest +
 signature so fqg.21's future operator can adopt it. Golden files:
-`crates/wamn-builder/tests/golden/{world-node,http-node}.deployment.yaml`.
+`services/builder/tests/golden/{world-node,http-node}.deployment.yaml`.
 
 ## buildproof gate
 

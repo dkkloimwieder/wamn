@@ -7,10 +7,10 @@
 //! when a guest fails to INSTANTIATE.
 //!
 //! Six... seven copies of `wamn:postgres/package.wit` are vendored under
-//! `components/` and `crates/` (wit-bindgen resolves each guest/host's imports
+//! `components/`, `crates/`, and `services/` (wit-bindgen resolves each guest/host's imports
 //! from its OWN `wit/deps` tree, never from `docs/`). This guard:
 //!
-//!   1. WALKS `components/` and `crates/` for every `deps/wamn-postgres/
+//!   1. WALKS `components/`, `crates/`, and `services/` for every `deps/wamn-postgres/
 //!      package.wit`, and cross-checks the discovered set against the explicit
 //!      [`EXPECTED_COPIES`] list BOTH ways — a removed/missing copy fails, and a
 //!      NEW (eighth) copy fails with a message telling the author to register it
@@ -35,7 +35,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn repo_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR is crates/wamn-host; the repo root is two up.
+    // CARGO_MANIFEST_DIR is services/host; the repo root is two up.
     fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
         .expect("canonicalize repo root")
 }
@@ -59,7 +59,7 @@ const EXPECTED_COPIES: [&str; 7] = [
     "components/flowrunner/wit/deps/wamn-postgres/package.wit",
     "components/materializer/wit/deps/wamn-postgres/package.wit",
     "components/poc-webhook-f1/wit/deps/wamn-postgres/package.wit",
-    "crates/wamn-host/wit/deps/wamn-postgres/package.wit",
+    "services/host/wit/deps/wamn-postgres/package.wit",
     "crates/wamn-node-guest/wit-caps/deps/wamn-postgres/package.wit",
 ];
 
@@ -80,7 +80,7 @@ const CLUSTER_A: [&str; 5] = [
 /// comments — kept byte-identical to EACH OTHER.
 const CLUSTER_B: [&str; 2] = [
     "components/materializer/wit/deps/wamn-postgres/package.wit",
-    "crates/wamn-host/wit/deps/wamn-postgres/package.wit",
+    "services/host/wit/deps/wamn-postgres/package.wit",
 ];
 
 /// Recursively collect every `deps/wamn-postgres/package.wit` under `dir`,
@@ -123,7 +123,7 @@ fn collect_copies(dir: &Path, root: &Path, out: &mut Vec<String>) {
 
 fn discover_copies(root: &Path) -> Vec<String> {
     let mut out = Vec::new();
-    for top in ["components", "crates"] {
+    for top in ["components", "crates", "services"] {
         collect_copies(&root.join(top), root, &mut out);
     }
     out.sort();
@@ -146,7 +146,7 @@ fn all_vendored_copies_are_registered() {
             expected.contains(found),
             "found an UNREGISTERED wamn:postgres WIT copy: {found}\n\
              add it to EXPECTED_COPIES (and the appropriate cluster) in \
-             crates/wamn-host/tests/postgres_wit_coherence.rs so the drift guard covers it"
+             services/host/tests/postgres_wit_coherence.rs so the drift guard covers it"
         );
     }
     for want in &expected {

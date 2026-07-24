@@ -5,7 +5,7 @@ and a four-tier Postgres control plane, all hosted on a customized wasmCloud
 runtime. **`docs/` is the design source of truth** — start with
 `docs/platform-plan.md` and the decision table.
 
-`crates/wamn-host` is the production host (it embeds the `wash-runtime` washlet
+`services/host` is the production host (it embeds the `wash-runtime` washlet
 and is deployed by the wasmCloud runtime-operator Helm chart); the gate/bench
 suite is the separate `crates/wamn-gates` binary over the same lib. One
 `Dockerfile` builds both via two `--target` stages (SR1). Our wash-runtime
@@ -14,15 +14,19 @@ changes are carried commits on a fork — see `docs/wash-runtime-fork.md`.
 ## Repository layout
 
 ```
-crates/                 Rust workspace
-  wamn-host             production host: washlet embedding + host plugins
+services/               native deployable Rust services
+  host                  production host: washlet embedding + host plugins
                         (wamn:postgres, logging, jetstream) — washlet only (SR9)
-  wamn-ctl              one-shot control-plane verbs (provision-*, publish/
+  ctl                   one-shot control-plane verbs (provision-*, publish/
                         migrate-catalog, dump/restore/copy-project-env,
                         enable-cdc-project-env) — SR9 split
-  wamn-dispatcher       shared trigger dispatcher service (SR9 split)
-  wamn-run-worker       production flow-runner service (SR9 split)
-  wamn-cdc-reader       CDC event-reader service (SR9 split)
+  dispatcher            shared trigger dispatcher service (SR9 split)
+  run-worker            production flow-runner service (SR9 split)
+  cdc-reader            CDC event-reader service (SR9 split)
+  waker                 scale-to-zero wake actuator
+  builder               sandboxed custom-node build service
+
+crates/                 shared Rust workspace packages
   wamn-gates            gate/bench suite binary (SR1 split)
   wamn-gate-harness     shared measurement helpers for gates
 

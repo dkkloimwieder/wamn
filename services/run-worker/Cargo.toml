@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 # The runtime: shared engine config + the wamn:postgres / credentials /
 # runner-egress plugins this worker links into the flowrunner instance.
-wamn-host = { path = "../wamn-host" }
+wamn-host = { path = "../host" }
 wash-runtime = { workspace = true }
 # Instantiates the flowrunner command component directly (CommandPre). Pinned
 # to the exact rev wash-runtime's workspace uses so the graph keeps a single
@@ -32,4 +32,4 @@ hyper = "1"
 # unifies to one crate instance.
 async-nats = { version = "0.47", default-features = false }
 # The pure claim/lease decision logic the worker drives.
-wamn-run-queue = { path = "../wamn-run-queue" }
+wamn-run-queue = { path = "../../crates/wamn-run-queue" }

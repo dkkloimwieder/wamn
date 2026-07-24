@@ -33,7 +33,7 @@ wash-runtime's HTTP path (`host/http.rs`) already emits:
 the plan names and wires the sink:
 
 1. **`wamn.postgres` DB span** — the `wamn:postgres` plugin
-   (`crates/wamn-host/src/plugins/wamn_postgres.rs`, `db_span`) wraps every
+   (`services/host/src/plugins/wamn_postgres.rs`, `db_span`) wraps every
    guest DB call (one-shot `query`/`execute`, transaction `query`/`execute`) in
    a span carrying `db.system=postgresql`, `db.operation`, and — enriched
    host-side from the same claim maps that inject `app.tenant`, so the guest
@@ -42,7 +42,7 @@ the plan names and wires the sink:
    request handler, or a trigger span) and threads into that trace.
 
 2. **`wamn.trigger` span** — the dispatcher
-   (`crates/wamn-host/src/dispatch.rs`, `trigger_span`) roots a fired run's
+   (`services/host/src/dispatch.rs`, `trigger_span`) roots a fired run's
    trace with `wamn.flow` / `wamn.run_id` / `wamn.flow_version` /
    `wamn.trigger_source` / `wamn.tenant`. The dispatcher is the **host-known
    path**: it mints `flow`/`run_id` here, so this is their enrichment home. Both

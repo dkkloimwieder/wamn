@@ -41,7 +41,7 @@ them with the local docker-network names (Tempo/Loki optional locally).
 
 ## Dashboards-as-code
 
-Both dashboard sets render from `crates/wamn-ctl/src/provision_dashboards.rs` over
+Both dashboard sets render from `services/ctl/src/provision_dashboards.rs` over
 **metric-name CONSTANTS** that a drift guard (`metric_names_match_docs`) pins to
 `docs/metrics.md` — a renamed or corrupted metric fails the build, not the
 dashboard silently. Prometheus name mangling is dots→underscores with

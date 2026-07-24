@@ -25,14 +25,14 @@ bytes = "1"
 # wamn-q3n.6 provision-org: the control-plane registry model — Org / Tier / the
 # cluster-name derivation the org-pair renderer shares with the registry row, and
 # the registry.orgs upsert SQL (SR2 single-source) the subcommand writes.
-wamn-registry = { path = "../wamn-registry" }
+wamn-registry = { path = "../../crates/wamn-registry" }
 # 5.14 dispatcher: holds the doorbell client (wash_runtime::washlet::connect_nats
 # returns async_nats::Client). Same version req as wash-runtime's so cargo
 # unifies to ONE crate instance (type identity) — the S5 OTel-crates pattern.
 async-nats = { version = "0.47", default-features = false }
 # The causation frame (Causation) the wamn:postgres plugin stamps on
 # run-owned txns (l5i9.12.2); the wire contract crate.
-wamn-event-wire = { path = "../wamn-event-wire" }
+wamn-event-wire = { path = "../../crates/wamn-event-wire" }
 # wamn:postgres plugin (S2): thin driver + pool with explicit connection
 # lifecycle (deadpool Object::take = destroy-never-repool on abnormal death).
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
@@ -49,12 +49,12 @@ hyper = "1"
 # The pure invocation protocol (wire envelope + config-parse memoization +
 # grant derivation) shared verbatim with the flowrunner guest — one source of
 # truth for the wire shape, so the two ends cannot drift.
-wamn-node-invoke = { path = "../wamn-node-invoke" }
+wamn-node-invoke = { path = "../../crates/wamn-node-invoke" }
 # 11.4: the test-case + assertion vocabulary. The doubles' `EgressRecord` LIVES
 # here (a serde-serializable fact the pure evaluator asserts over); this crate's
 # egress recorder re-exports it, so the recorder API is unchanged. Pure crate,
 # no cycle (wamn-testkit does not depend on wamn-host).
-wamn-testkit = { path = "../wamn-testkit" }
+wamn-testkit = { path = "../../crates/wamn-testkit" }
 # wamn-t92 test-host doubles: the deterministic `wasi:random` seed double
 # (delta 5) implements the fallible `TryRng`; rand_core blanket-impls the `Rng`
 # the pinned wasmtime_wasi `secure_random`/`insecure_random` overrides want.

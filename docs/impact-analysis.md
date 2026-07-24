@@ -7,7 +7,7 @@ connection, clock, or wasm.
 
 - **Issue:** wamn-wvb `[11.8]`; **Epic:** E11 Integrated Testing.
 - **Pure crate:** `crates/wamn-impact` — the decision (`analyze` → `ImpactReport`).
-- **Effect shell:** `crates/wamn-ctl` — `impact-report` (read-only verb) and the
+- **Effect shell:** `services/ctl` — `impact-report` (read-only verb) and the
   `migrate-catalog` render + `--acknowledge-impact` gate read the rows and call it.
 - **Consumers of the report's suite tuples:** wamn-0lfu (parked, "execution from
   stored suites") — this bead *enumerates* the suites that would run; it does not

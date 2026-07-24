@@ -41,7 +41,7 @@ suiteproof`).
 
 ## Promote semantics (`copy-project-env --include definition`)
 
-The definition copy (`crates/wamn-ctl/src/copy_project_env.rs`,
+The definition copy (`services/ctl/src/copy_project_env.rs`,
 `exec_copy_definition`) enumerates its artifacts explicitly. Order is
 FK-significant:
 

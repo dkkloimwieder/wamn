@@ -260,7 +260,7 @@ provisioning and both exec paths (migrate + copy) and is deferred to its own bea
   `engine/linked_call.rs:176-191` (allow-all `socket_addr_check`),
   `sockets/mod.rs:68,90` (`AllowedNetworkUses` default + coarse `check_allowed_tcp`),
   `engine/workload.rs:1418` (`host_interfaces` gates plugins only).
-- Plugin: `crates/wamn-host/src/plugins/wamn_postgres.rs`; memory
+- Plugin: `services/host/src/plugins/wamn_postgres.rs`; memory
   `wamn-2.2-postgres-production-facts`, `wamn-postgres-wit-0.1-frozen`.
 - In-band claim guard (cjv.2): `reject_claim_mutation` /
   `statement_mutates_session` in `wamn_postgres.rs`; gate
@@ -274,4 +274,4 @@ provisioning and both exec paths (migrate + copy) and is deferred to its own bea
   `crates/wamn-ddl/tests/ddl.rs::chaining_check_expression_never_reaches_postgres`;
   least-privileged migrate role deferred to its own bead.
 - HTTP egress chokepoint: memory `wamn-s6-testhost-facts` (egress spy).
-- Gate: `crates/wamn-host/src/egressbench.rs`.
+- Gate: `services/host/src/egressbench.rs`.

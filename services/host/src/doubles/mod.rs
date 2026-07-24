@@ -23,7 +23,7 @@
 //!
 //! Injecting a virtual clock (and the seeded random) requires control over the
 //! per-workload `WasiCtx`. The washlet `ClusterHost` path
-//! (`crates/wamn-host/src/host.rs`) does NOT expose per-workload `WasiCtx` to
+//! (`services/host/src/host.rs`) does NOT expose per-workload `WasiCtx` to
 //! `wamn-host`, so a virtual clock CANNOT be injected there. The only production
 //! path that hand-builds the store — and can therefore call
 //! `CtxBuilder::with_wasi_ctx` — is `wamn_run_worker::RunWorker::instantiate`.

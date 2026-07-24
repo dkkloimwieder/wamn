@@ -31,7 +31,7 @@ nodes:                         mounted from a K8s Secret;                    │
    kind?, description?}` + `node.credential`. `validate()` rejects an
    undeclared reference. No secret material ever enters the graph.
 2. **Host resolution** — the `wamn_credentials` plugin
-   (`crates/wamn-host/src/plugins/wamn_credentials.rs`) implements the frozen
+   (`services/host/src/plugins/wamn_credentials.rs`) implements the frozen
    `wamn:node/credentials` `get(handle) -> result<string, credential-error>`.
    Resolution is **project-scoped**: the executing component's project is a
    host-injected claim (`set_project` / the `wamn.project` workload config —

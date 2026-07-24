@@ -233,7 +233,7 @@ pub fn screen_tenant_component(engine: &RawEngine, wasm: &[u8], label: &str) -> 
 //
 // The package-level classifiers above are what the publish gate can enforce
 // TODAY; the 5.5 builder tightens WITHIN the allowlisted packages, the lint the
-// egress_guard's own doc (crates/wamn-host/src/egress_guard.rs, the E13a socket
+// egress_guard's own doc (services/host/src/egress_guard.rs, the E13a socket
 // note) defers to 5.5. Two additions, both pure:
 //   1. an interface-level lint — within `wamn:node` only payloads/credentials/
 //      control, within `wasi:http` only outgoing-handler, `wasi:sockets`

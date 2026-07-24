@@ -20,7 +20,7 @@ dispatch-SLO sanity-check) is the final section below.
 
 ## S1 — Custom host image (1.3) — **PASS** (2026-07-09)
 
-**Deliverable shipped:** `wamn-host` binary (crates/wamn-host) embedding
+**Deliverable shipped:** `wamn-host` binary (services/host) embedding
 `wash_runtime::washlet::ClusterHostBuilder` with plugins registered:
 `wasi:http` (DynamicRouter server), `wasi:config` (DynamicConfig),
 `wasi:logging` (TracingLogger), `wasi:otel`, `wamn:postgres` (stub, canned
@@ -92,7 +92,7 @@ required pieces touches upstream code:
 
 1. *No patch* — `Config::epoch_interruption(true)` layers onto the engine via
    `EngineBuilder::with_config` (base config; pooling/proposals stack on top) —
-   `crates/wamn-host/src/engine.rs`.
+   `services/host/src/engine.rs`.
 2. *No patch* — a tokio task drives the public `Engine::increment_epoch()`
    every 10 ms (`spawn_epoch_ticker`; `host` flag `--epoch-tick-ms`, 0 = off).
 3. *Patch* — `patches/0001-wash-runtime-store-epoch-deadline.patch` adds one
@@ -137,7 +137,7 @@ by tracking live stores — that needs no further upstream changes.
 ## S2 — wamn:postgres plugin (2.1–2.2) — **PASS** (2026-07-10)
 
 **Deliverable shipped:** the real `wamn:postgres` host plugin
-(`crates/wamn-host/src/plugins/wamn_postgres.rs`) implementing the full
+(`services/host/src/plugins/wamn_postgres.rs`) implementing the full
 `wamn-postgres.wit` surface — `query`/`execute` (single statement in an
 implicit, claim-injected, auto-committed transaction), explicit `transaction`
 (query/execute/open-cursor/commit/rollback), and server-side `cursor` (bounded
@@ -268,7 +268,7 @@ capability) holds. Closing S2 unblocks 2.2 (production plugin, wamn-ui3), D5
 **Deliverable shipped:** a guest flow-runner (`components/flowrunner`) that
 embeds the standard node library as **native Rust** and imports
 `wamn:postgres/client`, plus a `wamn-host flowbench` subcommand
-(`crates/wamn-host/src/flowbench.rs`) that drives it. The runner *is* a
+(`services/host/src/flowbench.rs`) that drives it. The runner *is* a
 long-lived component; the standard nodes are compiled in, so dispatching one is
 an ordinary same-binary function call (`std_node`) — that is the `< 50 µs`
 overhead the dispatch gate measures. Everything durable — the flow IR, the
@@ -356,7 +356,7 @@ the minimal `wamn:node` contract (docs/wamn-node.wit) — `components/node-rs`
 (Rust) and `components/node-ts` (TypeScript/JS via **JCO** / ComponentizeJS /
 StarlingMonkey) — plus a **`wac`-composed** frozen 3-node flow
 (`components/flow-driver` + node-rs → `flow-composed.wasm`), driven by a new
-`wamn-host nodebench` subcommand (`crates/wamn-host/src/nodebench.rs`) and a
+`wamn-host nodebench` subcommand (`services/host/src/nodebench.rs`) and a
 `serve-node` HTTP node host. The node has three config-selected modes: `noop`
 (hop), `io` (a host `wait-ns` sleep modelling an outbound call), and `compute`
 (a bounded FNV-1a loop). Both guests call the **same** host `wait-ns` import, so
@@ -454,10 +454,10 @@ data).
 ## S5 — Logging capture (9.3) — **PASS** (2026-07-10)
 
 **Deliverable shipped:** a custom **`wamn:logging` host plugin**
-(`crates/wamn-host/src/plugins/wamn_logging.rs`) implementing `wasi:logging/logging`
+(`services/host/src/plugins/wamn_logging.rs`) implementing `wasi:logging/logging`
 as the platform's log-capture path, plus a guest fixture
 (`components/logspewer`) and a `wamn-host logbench` subcommand
-(`crates/wamn-host/src/logbench.rs`) that drives it against a real **OTel
+(`services/host/src/logbench.rs`) that drives it against a real **OTel
 Collector → Loki** pipeline (`deploy/infra/otel-collector.yaml`, `deploy/infra/loki.yaml`).
 The plugin replaces the vendored `TracingLogger`: it **enriches** every record
 with host-trusted `tenant`/`project` (from a component→claim map — a guest can

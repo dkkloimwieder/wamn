@@ -302,7 +302,7 @@ live-apply gates).
 ## References
 
 - Topology: `docs/postgres-topology.md` (§T1, §Environments, §Reversibility).
-- The reversibility seam: `crates/wamn-host/src/plugins/wamn_postgres.rs`
+- The reversibility seam: `services/host/src/plugins/wamn_postgres.rs`
   (`CredentialProvider` / `ProjectConfig`).
 - Slug discipline: `crates/wamn-provision` (`validate_project_id`), wamn-66x,
   wi4.

@@ -888,6 +888,6 @@ gate of record, and the CNPG standups).
 ## References
 
 - Plan: `docs/platform-plan.md` §2.3, D6.
-- Credential seam: `crates/wamn-host/src/plugins/wamn_postgres.rs`
+- Credential seam: `services/host/src/plugins/wamn_postgres.rs`
   (`CredentialProvider` / `StaticCredentialProvider` / `ProjectConfig`).
 - D6 decision: `docs/platform-plan.md` decision table.
