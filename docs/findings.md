@@ -4073,6 +4073,429 @@ content remain unchanged by ARC11.
 
 ---
 
+## V — Target structural design (2026-07-24)
+
+This section is the STR9 result for `wamn-4tob.2.9` at source baseline
+`4a5a63cfb92c5b049a08c33632bdeebfef24ec92`. It consumes ARC11 as corrected
+by `wamn-4tob.1.39`, STR1–STR8, `REVIEW-260723.md`, and the frozen
+`RESTRUCTURE-260723.md` input at SHA-256
+`4c3271711767378887685cf04c0f310e7a290ca579ecb170ee2b0f3cd73e90dd`.
+The proposal remains the highest-priority structural input, but its role names
+are adopted only where repository, target, contract, state, privilege,
+failure, or build evidence supports them.
+
+**Executive verdict: amend the repository around a component-first platform;
+do not reorganize it around today's native transition shells.** Preserve the
+small contract, guest, state, and event packages that carry real target or
+compatibility boundaries. Remove node serving and builder-facing policy from
+the `wamn-host` composition root, deploy eligible long-running
+responsibilities as wasmCloud Services, and retain native code only in the
+explicit exception register below.
+
+The target authorizes two new shared Rust packages:
+
+1. `wamn-component-policy`, a pure owner for import classification, grant
+   derivation, and allowed-host policy shared by publication and execution; and
+2. `wamn-execution-model`, a guest-safe owner for persisted run/status/failure
+   vocabulary now pointing upward from `wamn-testkit` into `wamn-run-store`.
+
+It does **not** authorize a generic runtime umbrella, `pg-core`,
+`entity-access`, a scheduler crate, schema or execution megacrates, a
+scenario-worker deployable, or a package-count target. Existing evidence
+supports none of those as a correctness, isolation, operability, or
+change-coupling improvement.
+
+Current wasmCloud documentation supports the selected structural direction:
+a workload may contain components and one long-running Service; Services export
+`wasi:cli/run` or one custom interface, may import host-plugin interfaces, and
+may invoke interfaces exported by components in their workload
+([workloads](https://wasmcloud.com/docs/overview/workloads/),
+[services](https://wasmcloud.com/docs/overview/workloads/services/)).
+The runtime exposes WASI and custom host plugins with per-workload
+`hostInterfaces`
+([runtime](https://wasmcloud.com/docs/runtime/)), while the Kubernetes operator
+owns WorkloadDeployment placement, EndpointSlices, and the standard scale
+subresource
+([operator](https://wasmcloud.com/docs/kubernetes-operator/operator-manual/overview/)).
+Those are capability facts, not proof that a particular Wamn migration works;
+the target proofs remain explicit below.
+
+### V.1 Target responsibility and deployment model
+
+```mermaid
+flowchart TB
+  K["Kubernetes deployment authority"]
+  O["wasmCloud operator"]
+  H["native washlet / wamn-host<br/>component runtime + scoped host plugins"]
+
+  subgraph W["wasmCloud workloads"]
+    API["API component"]
+    DIS["dispatcher Service"]
+    EXE["flowrunner execution Service"]
+    MAT["materializer component / Service"]
+    NH["trusted node-host wrapper Service"]
+    NODE["tenant wamn:node component"]
+    NH -->|"wamn:node interface"| NODE
+  end
+
+  subgraph N["Recorded native exceptions"]
+    CDC["CDC reader<br/>PostgreSQL logical replication"]
+    BLD["builder Job<br/>language toolchains + subprocesses"]
+    CTL["ctl / recovery tool<br/>operator CLI + pg tools"]
+    WAK["waker<br/>Kubernetes scale capability"]
+  end
+
+  PG["tenant PostgreSQL<br/>application + execution authority"]
+  JS["JetStream<br/>event transport"]
+  OCI["OCI / signing authority"]
+
+  K --> O --> H
+  H --> W
+  K --> N
+  API --> PG
+  DIS --> PG
+  EXE --> PG
+  MAT --> PG
+  CDC --> PG
+  CDC --> JS --> MAT
+  BLD --> OCI
+  OCI -. "immutable artifact" .-> NODE
+```
+
+The diagram fixes deployment responsibility, not cardinality. Shared,
+per-org, per-project, per-environment, and bounded-cell placement remain
+measurement-dependent. A box does not create a new state authority:
+PostgreSQL still owns flows, runs, queue, leases, timers, checkpoints, and
+replay; JetStream transports committed row events; Kubernetes deploys; and
+wasmCloud places and executes components.
+
+| Responsibility | Target unit | Retain / split / retire verdict | Concrete benefit and owner |
+|---|---|---|---|
+| General component runtime | Native `wamn-host` washlet plus deliberately scoped host plugins | **Retain and narrow.** Remove node serving and builder-facing policy; retain runtime/operator integration. It is runtime infrastructure, not a native-service exception. | Preserves the product's component platform while reducing unrelated credential, CVE, rollout, and dependency closure. SR15/SR16. |
+| Generated API | `api-gateway` component over the existing `wamn-api` planner | **Retain.** Correct artifact identity, applied/served generation, and placement without adding a second planner. | Existing guest target and independent request scale are objective boundaries. R35/SR17/SR26. |
+| Trigger dispatch | New `components/dispatcher` wasmCloud Service over `wamn-run-queue`, `wamn-flow`, and narrow capabilities | **Replace the native deployable after parity.** Do not add a scheduler crate or state store. | Removes a native-by-default exception while preserving independent scheduling failure/scale and PostgreSQL timer authority. Placement `wamn-l5i9.51`; implementation `.71`. |
+| Durable execution | Existing `flowrunner` promoted from embedded guest to wasmCloud Service workload | **Replace and retire `wamn-run-worker` after parity.** Keep the flowrunner guest and lower flow/runner/store/queue/node packages. | Eliminates the worker → host composition-root edge and restores component artifact/placement control without changing durable authority. `wamn-l5i9.49`. |
+| Event materialization | Existing materializer component/Service | **Retain.** Keep separate from capture and from the execution Service. | Distinct broker credential, acknowledgement, failure, and scaling boundary. E18/E19/R38/R44/R50. |
+| Custom-node serving | Trusted node-host wrapper Service plus the tenant `wamn:node` component in one dedicated workload/host boundary | **Replace `wamn-host serve-node` if the real-workload proof passes.** A native node-host is only a documented fallback exception. | Separates untrusted code, credentials, egress, artifact, rollback, and failure from the general host without abandoning the component platform. SR15 and `wamn-4tob.6.28`. |
+| CDC capture | Native `wamn-cdc-reader` | **Retain native exception.** | The pinned PostgreSQL logical-replication/walsender protocol has no credible current WASI client path. Keep the fork and replication credential inside this adapter; exit when a component-safe client/capability provides equivalent feedback and failover semantics. SR25 and CDC owners. |
+| Scale-to-zero wake | Native `wamn-waker` using the standard Kubernetes scale subresource | **Retain native exception; retarget to WorkloadDeployment.** | Kubernetes mutation is deliberately absent from guest capabilities, and moving its ServiceAccount into general host plugins would broaden privilege. Exit when the operator/HPA/KEDA or an equally narrow capability can wake from the PostgreSQL-authoritative backlog. `wamn-fqg.40`. |
+| Custom-node build | Native one-shot `wamn-builder` Job plus separate signer/publisher authority | **Retain native toolchain exception; split policy dependency.** | Rust/JS toolchains, subprocesses, filesystem, and OCI production are the concrete exception. Builder must not import `wamn-host` or observe the signer. SR16/R49. |
+| One-shot control and recovery | Native `wamn-ctl` composition root and, if required, a version-matched recovery image | **Retain native operator-tool exception.** | A human CLI, Kubernetes/object effects, and `pg_dump`/`pg_restore` are not a long-running platform service. Keeping one root avoids per-verb fragmentation; SR18 makes every advertised path runnable. |
+| Gates | Native `wamn-gates` plus `wamn-gate-harness` and deployed Jobs | **Retain as proof infrastructure.** | Its broad fan-in composes exact production paths; proof classification and immutable receipts matter more than source/package splitting. SR26 and `wamn-cjv.11`. |
+| Signer/publisher | Separate privileged authority selected by R49 | **Split authority, packaging not preselected.** | Untrusted build input must not exercise signing. A component/native choice is subordinate to key non-observability and immutable digest handoff. R49/`.6.19`. |
+
+The native exception rule is structural:
+
+```text
+native responsibility =
+  required runtime host, protocol, toolchain, operator tool, or unavailable
+  capability
+  + smallest credential/failure scope
+  + named owner
+  + tested boundary
+  + explicit exit condition
+```
+
+Current native packaging, lower implementation cost, or lack of a component
+prototype is not sufficient.
+
+### V.2 Root-workspace package disposition
+
+Every one of the 38 root members has an explicit target. A **retain** verdict
+retains the package boundary, not necessarily its current path or every public
+item. An **amend** verdict names the owner of the required change. A
+transition-only package receives no new product behavior.
+
+| Current package(s) | Target action | Structural reason / owner |
+|---|---|---|
+| `wamn-host` | **Split and retain** the washlet/runtime composition root; remove `serve_node`, scenario-container ownership, and builder-consumed policy. | Runtime/plugin integration is one native infrastructure boundary. Node trust/release and builder supply-chain boundaries are different. SR15/SR16. |
+| `wamn-ctl` | **Retain** one native operator composition root. | One-shot source cohesion is sound; invocation-specific credentials and a runnable recovery artifact address operability without per-verb crates. SR18. |
+| `wamn-dispatcher` | **Transition-only; retire** after `components/dispatcher` reaches exact behavior/artifact/rollback parity. | Its durable semantics already live in lower crates; the native shell exists for effects now expressible by a Service. Placement `wamn-l5i9.51`; migration `.71`. |
+| `wamn-run-worker` | **Transition-only; retire** after the existing flowrunner becomes the production Service workload. | The direct host/runtime edge disappears; PostgreSQL lease and runner semantics stay below the shell. `wamn-l5i9.49`. |
+| `wamn-builder` | **Retain native Job; amend dependencies.** Consume `wamn-component-policy`, node/manifest/invoke/scenario contracts, and a local conformance adapter—not `wamn-host`. | Toolchain isolation and supply-chain lifecycle justify the deployable; peer composition-root reuse does not. SR16. |
+| `wamn-cdc-reader` | **Retain native exception; narrow public API.** | One logical-replication lifecycle and slot/feedback authority are cohesive. Hide `pg_walstream` control types. SR25. |
+| `wamn-waker` | **Retain native exception; amend scale target.** | The narrow Kubernetes mutation credential must remain outside dispatcher, executor, and general hosts. `wamn-fqg.40`. |
+| `wamn-gates`, `wamn-gate-harness` | **Retain.** Internally classify package/conformance/embedded/image/system proofs; do not create a gate-crate fleet. | Broad test composition and small shared measurement support are deliberate. SR26/STR7. |
+| `wamn-catalog`, `wamn-flow` | **Retain** as canonical published/data contracts. | Independent serialized compatibility and guest/native consumers. |
+| `wamn-event-wire`, `wamn-event-reg` | **Retain** frozen wire and registration/condition owners. | Producer/consumer and persisted registration compatibility are objective boundaries. |
+| `wamn-node-sdk`, `wamn-node-guest`, `wamn-node-invoke`, `wamn-node-manifest` | **Retain all four.** | Minimal author SDK, bindgen/capability scaffolding, cross-workload invocation wire, and OCI discovery metadata have distinct target and compatibility closures. |
+| `wamn-ddl`, `wamn-schema`, `wamn-rls`, `wamn-seed`, `wamn-migrate`, `wamn-impact` | **Retain; group logically, do not merge.** | Their consumers, target closures, contract horizons, and effect ownership differ. Co-change supports navigation and shared schema ownership, not a megacrate. SR13 governs generated/physical drift. |
+| `wamn-api` | **Retain** as the sole catalog-derived entity-operation/SQL planner; add a transport-neutral internal operation vocabulary only when a second caller needs it. | `wamn-nodes -> wamn-api` is pure-core reuse, not service-to-service coupling. A new `entity-access` service/package would add translation without removing duplicate semantics. |
+| `wamn-runner`, `wamn-run-store`, `wamn-run-queue`, `wamn-sql` | **Retain all four.** Add `wamn-execution-model` below them; keep store/queue/SQL separate. | Pure engine, reconstruction/state SQL, lease/queue SQL plus dispatcher-only feature closure, and zero-dependency arity composition have distinct guest and state responsibilities. No scheduler package. |
+| `wamn-nodes` | **Retain** the standard-node guest-safe core. Consume the existing API planner and one exhaustive node descriptor contract. | Independent node vocabulary/capability policy is useful; SR21 removes the duplicated scenario drivability list. |
+| `wamn-materializer` | **Retain** the pure/event decision core below the existing component. | Native and guest tests consume a narrow event-to-run transaction policy; it is not another deployable. |
+| `wamn-registry`, `wamn-provision`, `wamn-sysschema` | **Retain; group logically, do not merge.** | T1 model/query, provisioning decisions, and per-project `app_system` schema have different authorities and consumers. One control context does not imply one release unit. |
+| `wamn-testkit`, `wamn-flow-tests` | **Amend, retain during migration.** Move lifecycle/error vocabulary to `wamn-execution-model`; `wamn-testkit` remains the product scenario contract/evaluator and `wamn-flow-tests` remains suite/storage ownership. | Corrects SR19 without inventing parallel taxonomies or a scenario service. Compatibility facades expire only after every stored suite, builder case, pin/replay, and gate consumer moves. |
+| `wamn-f1`, `wamn-dm1`, `wamn-cdc1` under `poc/` | **Retain isolated POCs; never release by default.** | They prove journeys and may consume product cores, but are neither package-layout precedent nor production dependencies. |
+
+The exact new lower packages and component shells are:
+
+| New unit | Authorized contents | Forbidden contents | Owner |
+|---|---|---|---|
+| `wamn-component-policy` | Pure import classification, normalized interface set, grant derivation, allowed-host validation, typed reports. | Wasmtime stores/linkers, HTTP servers, concrete credentials, signing keys, CLI, or deployment routing. | SR16/`wamn-2jkm.79`. |
+| `wamn-execution-model` | Serialized run/node status, failure and node-error classification, and the minimum value types shared by runner, persistence, and scenario contracts. | SQL, clocks, queues, effect adapters, test harnesses, or a second WIT taxonomy. | SR19/`wamn-2jkm.83`. |
+| `components/dispatcher` | Thin `wasi:cli/run` Service shell over existing flow/queue/registry decisions and scoped host capabilities. | A second timer/queue authority, private schema, or Kubernetes mutation. | Placement `wamn-l5i9.51`; implementation `.71`. |
+| `components/node-host` | Trusted invocation/auth/config wrapper that imports the tenant node interface and host-granted capabilities. | Embedded Wasmtime, signing, tenant-controlled trust binding, or general host composition. | SR15 plus proof `wamn-4tob.6.28`. |
+
+No general `wamn-runtime` or `wamn-node-runtime` package is selected. The
+washlet-specific runtime remains in `wamn-host`; builder conformance remains a
+local adapter. SR15/SR16 may extract an additional lower adapter only if their
+call inventory proves the same independently reusable behavior and a smaller
+dependency/privilege closure. That is deliberately stricter than copying the
+proposal's package boxes into Cargo.
+
+### V.3 Component-workspace disposition
+
+The separate `components/` workspace, `wasm32-wasip2` target, and lockfile are
+retained. Product, proof, POC, and sample membership must become machine
+classified, but another workspace split is not justified.
+
+| Current member | Target role and verdict |
+|---|---|
+| `api-gateway` | **Product component; retain.** Thin HTTP/Postgres shell over `wamn-api`. |
+| `flowrunner` | **Product Service; retain and promote.** It becomes the durable execution workload while remaining one component with internal modules, not new deployables. |
+| `materializer` | **Product component/Service; retain.** Keep capture/materialization separation. |
+| `poc-webhook-f1` | **POC; retain isolated.** Never treat its embedded executor as generic ingress. |
+| `flow-driver` | **Proof driver; retain.** Classify out of product release sets. |
+| `busyloop`, `cred-probe`, `hello`, `logspewer`, `memhog`, `pgprobe`, `sockprobe`, `trace-relay` | **Fixtures/proof support; retain.** They exercise runtime limits, capabilities, or telemetry and do not become product services. |
+| `disposition-node`, `js-sample`, `node-cred`, `node-rs`, `sample-node` | **Sample/reference/gate inputs; retain.** Their contract and supply-chain proof roles remain explicit. |
+| non-Cargo `node-ts` | **Sample/toolchain input; retain outside Cargo membership.** Builder/release classification must still discover it. |
+
+Add `dispatcher` and, after `wamn-4tob.6.28`, `node-host` as product component
+members. Do not add a scenario-worker component now. The current default-off
+same-runner deterministic adapters remain accepted development composition;
+an independent scenario workload requires a future demonstrated trust, state,
+credential, or scaling boundary rather than a naming preference.
+
+### V.4 Contract, state, and translation ownership
+
+```mermaid
+flowchart TB
+  C["contracts<br/>catalog · flow · execution-model<br/>node · event · manifest"]
+  D["pure decisions<br/>schema · API planner · runner<br/>nodes · registration · materialization"]
+  P["persistence/query decisions<br/>run-store · run-queue · SQL<br/>registry · suite storage"]
+  A["effect adapters<br/>WIT Postgres/JetStream/HTTP<br/>logical replication · Kubernetes · OCI"]
+  W["component/native composition leaves"]
+  T["proof composition"]
+
+  C --> D --> P --> A --> W
+  C --> P
+  C --> A
+  W --> T
+  A --> T
+```
+
+Arrows show lower owners feeding higher-level consumers and composition roots.
+The controlling ownership rules are:
+
+| Boundary | Canonical target owner | Translation rule |
+|---|---|---|
+| Catalog and flow documents | `wamn-catalog`, `wamn-flow` | JSON Schema is generated and drift-tested; storage and components translate without redefining fields. |
+| Execution lifecycle/status/error | new `wamn-execution-model` | Runner, store, queue, scenario, and WIT shells consume one serialized vocabulary; run-store alone maps it to SQL. |
+| Generated entity operations | `wamn-api` | HTTP gateway and standard Postgres nodes construct one planner input. No second SQL planner or deployable entity service. |
+| Node authoring, binding, invocation, discovery | canonical `docs/wamn-node.wit` plus node SDK/guest/invoke/manifest leaves | Every shell translates at its boundary; internal HTTP and public flow ingress never share authentication domains. |
+| Host ↔ flowrunner ABI | one canonical `wamn:runner` WIT source | Same-release development bundle; copies are generated or exhaustively compared. SR23. |
+| Event registration and envelope | `wamn-event-reg`, `wamn-event-wire` | CDC/materializer translate around the frozen envelope; JetStream sequence is not domain identity. |
+| Scenario cases/suites/capture | corrected `wamn-testkit` plus `wamn-flow-tests` | Product scenario contracts remain below persistence/effects; repository fixtures and orchestration stay in gates/harness. |
+| Platform SQL | per-table semantic owner under SR13 | Checked DDL is generated from owning descriptions and queries/stand-ins are structurally compared. One owner does not require one crate. |
+| External operational state | Kubernetes, JetStream, OCI/signing, Secret, backup, and telemetry native authorities | PostgreSQL may store Wamn identity or immutable references, never a duplicate Kubernetes operating model or secret/artifact bytes. |
+
+Adopt the proposal's `architecture/state-owners.toml` as **repository-only CI
+metadata for PostgreSQL ownership**, not runtime metadata and not a PostgreSQL
+model of Kubernetes. It records each table/family's semantic owner, migration
+owner, schema source, authorized writers/readers, compatibility horizon, and
+drift gate. New SR28/`wamn-2jkm.102` owns that manifest and writer enforcement;
+SR13 remains the physical DDL/query/stand-in generation and comparison owner.
+Kubernetes, JetStream, OCI/signing, Secrets, backups, and telemetry stay
+governed and reconciled through their native APIs and existing R/E proof
+owners.
+
+### V.5 Allowed dependencies and structural enforcement
+
+The target applies these rules to Cargo targets, not directory names:
+
+```text
+contract -> deployable/effect/persistence                         forbidden
+pure decision -> deployable/concrete effect                       forbidden
+persistence/query -> contract/pure decision                       allowed
+effect adapter -> contract/decision/persistence owner             allowed
+deployable composition root -> peer deployable root for reuse     forbidden
+component -> native-only crate or repository test support         forbidden
+production -> POC or repository-only test support                 forbidden
+builder -> wamn-host                                              forbidden
+standard nodes -> wamn-api pure planner                           allowed
+flowrunner/materializer -> run-queue without dispatcher features  required
+native platform responsibility without constraint + exit          forbidden
+```
+
+`wamn-2jkm.101` (SR27) owns package metadata and the Cargo-metadata checker.
+Every package must declare or receive a deterministic classification for:
+
+```toml
+role = "contract | core | persistence | adapter | component | native | test | poc"
+target_class = "guest | shared | native"
+bounded_context = "..."
+deployable = true | false
+native_reason = "runtime-host | protocol | toolchain | operator-tool | capability"
+native_exit = "bead-id or explicit condition"
+```
+
+Only native deployables require the final two fields. Negative graph fixtures
+must prove each forbidden edge fails. Named exceptions are temporary,
+owner-bound, and visible in graph deltas.
+
+Other enforcement remains with its granular owner:
+
+- SR20 centralizes the load-bearing Wasmtime source identity;
+- SR17 builds components inside the attributable release graph;
+- SR23 and existing WIT guards own canonical source/copy coherence;
+- SR13 owns physical DDL, runtime query, and gate-stand-in drift;
+- SR21 owns the exhaustive production/scenario node descriptor;
+- SR24 owns mounted-config identity and parse/refusal rules; and
+- SR28 owns executable PostgreSQL object/writer accountability without
+  duplicating external-system state; and
+- SR26 owns fresh immutable gate receipts and proof class.
+
+No lint closes those findings until its implementation commit and
+discriminating evidence land.
+
+### V.6 Build, test, and release topology
+
+```mermaid
+flowchart LR
+  SRC["source + both locks<br/>pinned toolchains + config"]
+  UNIT["package / contract proofs"]
+  WASM["product component builds"]
+  NAT["native runtime + exception builds"]
+  OCI["immutable component/image digests<br/>SBOM + attestations"]
+  REL["one release manifest"]
+  K8S["Kubernetes / wasmCloud deployment"]
+  GATE["unique gate execution<br/>proof-class receipt"]
+
+  SRC --> UNIT
+  SRC --> WASM --> OCI
+  SRC --> NAT --> OCI
+  UNIT --> REL
+  OCI --> REL --> K8S --> GATE
+  REL --> GATE
+```
+
+The root and component workspaces remain separate, but they participate in one
+release identity. The target build sets are:
+
+1. fast native/shared package development;
+2. product component build;
+3. contract/conformance;
+4. complete native and component CI;
+5. deployed-system proof; and
+6. immutable release.
+
+Exact membership and whether Cargo `default-members` or named commands express
+the first sets require measured cold/warm cost and coverage on the current
+consumer hardware. `wamn-4tob.6.29` owns that experiment. Until it closes,
+do not silently change bare Cargo semantics.
+
+Every product component is built from source, lock, target, and toolchain
+inside an attributable stage. Native runtime/exception images and component
+OCI artifacts have independently cacheable outputs, but the release manifest
+joins them with configuration, schema range, deployment digest, and last-known
+good bundle. Tests preserve the five STR7 proof classes; a package or embedded
+component pass is never reported as deployed-system evidence.
+
+### V.7 Internal module and test topology
+
+Only two internal reorganizations are presently justified:
+
+1. `flowrunner` remains one Service component but gains guest-private modules
+   for bindings/value translation, durable repository access, node/custom
+   transport, execution/observability, and queue claim/settlement.
+   `wamn-cjv.11` owns this without a LOC target or new deployable.
+2. `wamn-host` retains washlet/runtime/plugin modules while node serving,
+   component policy, and scenario-only adapters leave the composition root
+   under SR15/SR16/SR19.
+
+`wamn-gates` remains one system composition root. White-box assertions may move
+to owning packages only when their proof class is package/conformance and the
+old evidence is preserved. Real-Postgres, embedded-component, image, and
+deployed-system gates stay where their composition requires them. No gate is
+deleted or credited at a different proof tier merely because its source moved.
+
+### V.8 Reversible migration and explicit leave-alone areas
+
+Each wave requires separate owner authorization. A structural extraction may
+run before a traffic blocker closes only when it changes no authority, ACK,
+claim, effect, or deployment path.
+
+| Wave | Work and hard boundary | Reversal / exit |
+|---|---|---|
+| **S0 — classify and prove releases** | Implement SR27 package metadata/checker and SR28 PostgreSQL ownership metadata; measure workspace tiers; close SR17/SR20/SR26 and the exact-artifact proofs before any runtime cutover. Do not mass-move directories. | Revert metadata/checkers independently; no runtime state or traffic changed. |
+| **S1 — repair retained correctness** | Address cross-client authority R45, acknowledged-write safety R46, readiness R42, compatible resume R53, and the applicable event-path blockers before moving affected traffic. | Existing topology remains active; failure is visible unavailability, never a shadow authority. |
+| **S2 — lower contracts without state movement** | Land `wamn-execution-model`, exhaustive node descriptors, canonical runner WIT, config rules, and CDC-local shutdown. Preserve serialized literals and differential fixtures. | Temporary facades retain old imports; rollback restores the old package graph over unchanged stored bytes. |
+| **S3 — remove host inversions** | Extract `wamn-component-policy`; remove builder → host. Prove the component node-host workload, then move `serve-node` behind its independent artifact/host boundary. | Old builder/node path remains available until parity. If the node proof fails, record the native exception and exit condition before creating that fallback. |
+| **S4 — migrate eligible services one at a time** | Move dispatcher, then execution, using their existing Beads and applicable readiness/provenance/state gates. API/materializer remain components and receive their own correctness repairs. No dark copy may ACK, enqueue, claim, or perform effects. | Quiesce, drain/read every retained record, deploy one immutable bundle, validate dependencies, commit traffic once; restore the exact prior bundle or remain unavailable. |
+| **S5 — retire and clean up** | Remove native dispatcher/worker and obsolete host/node paths only after code, manifest, artifact, config, contract, and proof reachability are zero. Revisit optional path grouping/default members/gate moves after measurement. | Deletions occur last and are independently reviewable; no compatibility facade survives without an owner and removal bead. |
+
+The explicit leave-alone set is:
+
+- PostgreSQL as the only durable flow-orchestration authority;
+- WAL → native CDC reader → JetStream → materializer → PostgreSQL;
+- Kubernetes as deployment authority and the native authority of its
+  desired/observed state;
+- the wasmCloud runtime/operator and runtime-control plane;
+- separate root/component workspaces and lockfiles;
+- catalog, flow, node, event, manifest, and WIT contract leaves;
+- distinct `wamn-runner`, `wamn-run-store`, `wamn-run-queue`, and `wamn-sql`;
+- distinct schema/RLS/seed/migration packages pending actual merge evidence;
+- distinct capture and materialization privileges;
+- one ctl root, one gate root, and current same-runner default-off scenario
+  adapters;
+- fixtures, samples, and POCs as isolated proof/reference inputs; and
+- native CDC, builder, ctl, and waker exception responsibilities with the
+  constraints above.
+
+Filesystem depth and package count are not migration exits. In particular, a
+top-level `services/` directory would encode the wrong target if it made
+transition-native dispatcher and worker look permanent. Role metadata and the
+generated dependency/ownership view become authoritative first. Existing
+packages move only alongside an accepted ownership/target change or a later
+measured navigation benefit; STR9 creates no mass-move issue.
+
+### V.9 Backlog routing and closure boundary
+
+Every accepted change, experiment, or later canonical update has a Bead:
+
+| Target obligation | Owner |
+|---|---|
+| Component/native role metadata and dependency enforcement | new SR27 `wamn-2jkm.101` |
+| PostgreSQL table/family and writer ownership enforcement | new SR28 `wamn-2jkm.102`; physical drift remains SR13 |
+| Custom-node component-workload discriminating proof | new `wamn-4tob.6.28`, related to SR15 `wamn-2jkm.78` |
+| Measured workspace/default/release sets | new `wamn-4tob.6.29` |
+| Execution Service migration | existing `wamn-l5i9.49` |
+| Dispatcher Service placement | amended decision `wamn-l5i9.51` |
+| Dispatcher Service migration | new `wamn-l5i9.71`, blocked by `.51` |
+| Waker WorkloadDeployment scale transition and native-exit condition | new `wamn-fqg.40`, blocked by `.49` |
+| Builder policy extraction | SR16 `wamn-2jkm.79` |
+| Execution/scenario contract direction | SR19 `wamn-2jkm.83` |
+| Flowrunner internal module boundaries | `wamn-cjv.11` |
+| DDL/query/stand-in ownership | SR13 `wamn-2jkm.24` |
+| Runtime source, artifact, config, proof, and contract guards | SR17–SR26 and their existing proofs |
+| Generic non-POC flow ingress and invocation contract | `wamn-fqg.39`; still deferred and forbidden from embedding a second executor |
+| Canonical D17/D21/D23 adoption after final audit acceptance | new `wamn-4tob.1.40`, waiting on AUDIT-X1 |
+
+STR9 introduces only SR27 and SR28. It does not close SR13, SR15–SR26, any R/E
+correctness row, or either component migration. A target path is not evidence
+that the current implementation, image, deployment, or live behavior already
+matches it.
+
+Every root package, component-workspace member, current deployable
+responsibility, public/cross-unit contract family, state-authority class,
+proof/build tier, and accepted runtime transition now has an explicit
+retain/amend/replace/retire verdict. The only experimental unknowns introduced
+by this target—the node workload and workspace tiers—have dedicated
+`AUDIT-VERIFY` owners.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
@@ -4103,11 +4526,11 @@ prerequisite that makes everything else findable.
 | R54 | Development admission lacks a measured fail-closed capacity invariant | High | open | wamn-2jkm.100; proof wamn-4tob.6.27 |
 | E18 | Materializer silently accepts stale durable-consumer configuration | High | open | wamn-l5i9.69; proof wamn-4tob.6.10 |
 | E19 | Materializer durable-consumer identity collides across valid registrations | High | open | wamn-l5i9.70; proof wamn-4tob.6.16 |
-| SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78 |
+| SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78; component-workload proof wamn-4tob.6.28 |
 | SR16 | Builder depends on the production runtime composition root | Med | open | wamn-2jkm.79 |
 | SR17 | Docker images package caller-built component bytes | High | open | wamn-2jkm.80; proof wamn-4tob.6.8 |
 | SR18 | Control-plane image cannot execute advertised dump/restore/copy paths | Med | open | wamn-2jkm.81 |
-| SR19 | Product test-case contract depends on run-state persistence | Med | open | wamn-2jkm.83; STR5 set vocabulary direction, STR9 packages it |
+| SR19 | Product test-case contract depends on run-state persistence | Med | open | wamn-2jkm.83; `wamn-execution-model` target in V |
 | SR20 | Load-bearing Wasmtime source pin is duplicated across manifests | Low | open | wamn-2jkm.84; STR7/STR9 own guard/target |
 | SR21 | Stored-suite drivability duplicates an incomplete production dispatch contract | Med | open | wamn-2jkm.93; STR5 set composed descriptor, STR9 packages it |
 | SR22 | Custom-node invocation wire lacks a version and mixed-version contract | Med | open | wamn-2jkm.94; blocked by custom-node decision wamn-4tob.1.33 |
@@ -4115,6 +4538,8 @@ prerequisite that makes everything else findable.
 | SR24 | Mounted runtime configuration contracts are unversioned and inconsistent | Low | open | wamn-2jkm.96; N.7 selects atomic image/config development policy |
 | SR25 | CDC reader public API leaks the `pg_walstream` cancellation type | Low | open | wamn-2jkm.97 |
 | SR26 | Gate-of-record receipts do not prove a fresh immutable baseline artifact | High | open | wamn-2jkm.98; proof wamn-4tob.6.25 |
+| SR27 | Package roles and component/native dependency rules are not machine-enforced | Med | open | wamn-2jkm.101; STR9 target in section V |
+| SR28 | Durable PostgreSQL objects and writers lack an executable ownership manifest | Med | open | wamn-2jkm.102; complements SR13 |
 | **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
 | SR14 | D4/D19 contradiction unmarked in the decision table (§1.2) | High | **closed** | `b7fa9af` (wamn-2jkm.1; table sweep found no other same-shape row) |
 | §1.9a | Amendment-density audit (verdict per file) | Med | **closed** | `3a3bb34` (wamn-2jkm.10; 15 stamped — 13 additive, 2 contradict → rewrites wamn-2jkm.59/.60; platform-plan re-audit wamn-2jkm.63) |
