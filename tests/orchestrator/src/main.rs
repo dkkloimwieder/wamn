@@ -1,64 +1,118 @@
-//! wamn-gates: the gate suite binary (docs/archive/structure-review.md SR1).
+//! Compatibility orchestration facade for the repository proof tiers.
 //!
-//! Every bench/fixture/proof subcommand that used to ride the wamn-host
-//! binary, with an identical subcommand surface (`wamn-gates pgbench …`), so
-//! the deploy Jobs swap only their image. Depends on the shared runtime
-//! libraries so gates exercise the identical code the production artifacts run.
+//! `wamn-gates` retains its deploy-facing binary and subcommand surface while
+//! the implementations live in explicit conformance, integration, system, and
+//! test-support homes. Proofs that import service clients remain integration
+//! evidence even when they also exercise a deployed endpoint.
 
-mod apibench;
-mod apifixture;
-mod apiproof;
-mod bench;
+// Contract conformance: frozen wire/WIT/policy/schema/artifact boundaries.
+#[path = "../../conformance/src/buildproof.rs"]
 mod buildproof;
-mod capturebench;
-mod cdcbench;
+#[path = "../../conformance/src/credprobe.rs"]
 mod credprobe;
-mod credproof;
-mod dispatchbench;
+#[path = "../../conformance/src/egressbench.rs"]
 mod egressbench;
-mod erp_sim;
-mod f1bench;
-mod f1fixture;
-mod f1proof;
-mod f2invoke;
-mod f3proof;
-mod f4proof;
-mod failoverbench;
-mod flowbench;
-mod ladderproof;
-mod logbench;
-mod matbench;
-mod metricbench;
-mod node_host_support;
-mod nodebench;
-mod nodeinvoke;
-mod pgbench;
-mod pinproof;
-mod provisionbench;
-mod publish_catalog_demo;
-mod queuebench;
-mod readerbench;
-mod rie2ebench;
-mod runnerbench;
-mod samplebench;
 #[cfg(test)]
+#[path = "../../conformance/src/schema_drift.rs"]
 mod schema_drift;
+#[path = "../../conformance/src/socketguard.rs"]
 mod socketguard;
-mod streambench;
-mod suiteproof;
+#[path = "../../conformance/src/testgate.rs"]
 mod testgate;
-mod testhostbench;
-mod testkitbench;
-mod tracebench;
-mod traceproof;
-mod wakeproof;
-mod walbench;
-// [11.8] wamn-wvb: appended so cherry-picks compose (sibling lanes touch this file too).
-mod impactproof;
-// [9.9] wamn-b4e: appended so cherry-picks compose (sibling lanes touch this file too).
+
+// Real-adapter integration and benchmark/measurement campaigns.
+#[path = "../../integration/src/apibench.rs"]
+mod apibench;
+#[path = "../../integration/src/bench.rs"]
+mod bench;
+#[path = "../../integration/src/capturebench.rs"]
+mod capturebench;
+#[path = "../../integration/src/cdcbench.rs"]
+mod cdcbench;
+#[path = "../../integration/src/dashproof.rs"]
 mod dashproof;
-// [POC-TESTS] wamn-3rj: appended at END so cherry-picks compose (sibling lanes touch this file too).
+#[path = "../../integration/src/dispatchbench.rs"]
+mod dispatchbench;
+#[path = "../../integration/src/f1bench.rs"]
+mod f1bench;
+#[path = "../../integration/src/f2invoke.rs"]
+mod f2invoke;
+#[path = "../../integration/src/f3proof.rs"]
+mod f3proof;
+#[path = "../../integration/src/f4proof.rs"]
+mod f4proof;
+#[path = "../../integration/src/failoverbench.rs"]
+mod failoverbench;
+#[path = "../../integration/src/flowbench.rs"]
+mod flowbench;
+#[path = "../../integration/src/impactproof.rs"]
+mod impactproof;
+#[path = "../../integration/src/logbench.rs"]
+mod logbench;
+#[path = "../../integration/src/matbench.rs"]
+mod matbench;
+#[path = "../../integration/src/metricbench.rs"]
+mod metricbench;
+#[path = "../../integration/src/nodebench.rs"]
+mod nodebench;
+#[path = "../../integration/src/nodeinvoke.rs"]
+mod nodeinvoke;
+#[path = "../../integration/src/pgbench.rs"]
+mod pgbench;
+#[path = "../../integration/src/pinproof.rs"]
+mod pinproof;
+#[path = "../../integration/src/pocsuiteproof.rs"]
 mod pocsuiteproof;
+#[path = "../../integration/src/provisionbench.rs"]
+mod provisionbench;
+#[path = "../../integration/src/queuebench.rs"]
+mod queuebench;
+#[path = "../../integration/src/readerbench.rs"]
+mod readerbench;
+#[path = "../../integration/src/rie2ebench.rs"]
+mod rie2ebench;
+#[path = "../../integration/src/runnerbench.rs"]
+mod runnerbench;
+#[path = "../../integration/src/samplebench.rs"]
+mod samplebench;
+#[path = "../../integration/src/streambench.rs"]
+mod streambench;
+#[path = "../../integration/src/suiteproof.rs"]
+mod suiteproof;
+#[path = "../../integration/src/testhostbench.rs"]
+mod testhostbench;
+#[path = "../../integration/src/testkitbench.rs"]
+mod testkitbench;
+#[path = "../../integration/src/tracebench.rs"]
+mod tracebench;
+#[path = "../../integration/src/wakeproof.rs"]
+mod wakeproof;
+#[path = "../../integration/src/walbench.rs"]
+mod walbench;
+
+// Deployed/public-boundary system journeys with no direct service-library use.
+#[path = "../../system/src/apiproof.rs"]
+mod apiproof;
+#[path = "../../system/src/credproof.rs"]
+mod credproof;
+#[path = "../../system/src/f1proof.rs"]
+mod f1proof;
+#[path = "../../system/src/ladderproof.rs"]
+mod ladderproof;
+#[path = "../../system/src/traceproof.rs"]
+mod traceproof;
+
+// Repository-only fixtures and infrastructure adapters.
+#[path = "../../../test-support/fixtures/apifixture.rs"]
+mod apifixture;
+#[path = "../../../test-support/infrastructure/erp_sim.rs"]
+mod erp_sim;
+#[path = "../../../test-support/fixtures/f1fixture.rs"]
+mod f1fixture;
+#[path = "../../../test-support/infrastructure/node_host_support.rs"]
+mod node_host_support;
+#[path = "../../../test-support/infrastructure/publish_catalog_demo.rs"]
+mod publish_catalog_demo;
 
 use std::str::FromStr as _;
 

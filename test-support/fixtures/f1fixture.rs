@@ -14,14 +14,14 @@ use serde_json::{Value, json};
 /// The POC data model — the wamn-schema-model fixture verbatim (same file the
 /// wamn-schema-model/wamn-schema-compiler/wamn-f1 tests pin).
 pub const F1_CATALOG_JSON: &str =
-    include_str!("../../../crates/schema/model/tests/fixtures/poc-receiving.catalog.json");
+    include_str!("../../crates/schema/model/tests/fixtures/poc-receiving.catalog.json");
 
 /// The production F1 flow graph (deploy/poc/f1-flow.json — drift-guarded against
 /// the wamn-f1 node set by that crate's tests).
-pub const F1_FLOW_JSON: &str = include_str!("../../../deploy/poc/f1-flow.json");
+pub const F1_FLOW_JSON: &str = include_str!("../../deploy/poc/f1-flow.json");
 
 /// The F1 business seed (deploy/poc/f1-seed.dataset.json, a wamn-schema-compiler dataset).
-pub const F1_SEED_JSON: &str = include_str!("../../../deploy/poc/f1-seed.dataset.json");
+pub const F1_SEED_JSON: &str = include_str!("../../deploy/poc/f1-seed.dataset.json");
 
 /// The tenant every F1 gate runs under.
 pub const F1_TENANT: &str = "f1-tenant";

@@ -1,0 +1,33 @@
+[workspace]
+
+[package]
+name = "wamn-proof-conformance"
+description = "Repository conformance proofs for component, wire, schema, and artifact contracts"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+clap = { version = "4", features = ["derive", "env"] }
+http-body-util = "0.1"
+hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
+hex = "0.4"
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+wamn-component-policy = { path = "../../crates/platform/component-policy" }
+wamn-gate-harness = { path = "../../test-support/harness" }
+wamn-node-invoke = { path = "../../crates/node/invoke" }
+wamn-node-manifest = { path = "../../crates/node/manifest" }
+wamn-node-runtime = { path = "../../crates/platform/node-runtime" }
+wamn-run-state = { path = "../../crates/execution/run-state" }
+wamn-runtime = { path = "../../crates/platform/runtime" }
+wamn-testkit = { path = "../../crates/scenarios/model" }
+wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "981fdc56ebc1840f08161aef5edec592538e5d4c", default-features = false, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel"] }
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+wasm-encoder = "0.251"
