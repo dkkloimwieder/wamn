@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use wamn_run_state::{FailKind, NodeErrorKind, RunStatus};
+use crate::{FailKind, NodeErrorKind, RunStatus};
 
 /// One recorded outbound request.
 ///
@@ -20,7 +20,7 @@ use wamn_run_state::{FailKind, NodeErrorKind, RunStatus};
 /// recorder produces the identical struct it always did, now with serde derives.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub struct EgressRecord {
+pub struct EgressObservation {
     /// The declaring flow/component (the store's workload id) — the egress
     /// assertion's `flow` key filters on this.
     pub workload_id: String,
@@ -88,8 +88,37 @@ pub struct Captured {
     pub run: Option<RunFacts>,
     /// Every outbound request the flow attempted (the recorder's audit log).
     #[serde(default)]
-    pub egress: Vec<EgressRecord>,
+    pub egress: Vec<EgressObservation>,
     /// The captured DB query results a `DbState` assertion reads.
     #[serde(default)]
     pub db: Vec<DbCapture>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn egress_observation_preserves_every_wire_field() {
+        let observation = EgressObservation {
+            workload_id: "flow".into(),
+            method: "POST".into(),
+            authority: "example.test:443".into(),
+            path: "/notify".into(),
+            allowed: false,
+        };
+        let wire = json!({
+            "workload-id": "flow",
+            "method": "POST",
+            "authority": "example.test:443",
+            "path": "/notify",
+            "allowed": false
+        });
+        assert_eq!(serde_json::to_value(&observation).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<EgressObservation>(wire).unwrap(),
+            observation
+        );
+    }
 }

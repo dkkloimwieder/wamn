@@ -1,11 +1,10 @@
 //! SQL READ builders for the stored test-suite tables (11.2 execution, wamn-0lfu).
 //!
-//! The suite ENVELOPE ([`crate::TestSuite`]) is pure serde; this module adds the
-//! `$n` SELECT builders the stored-suite EXECUTOR (`wamn-gates testkitbench
-//! --suite/--impact-report`) reads with. Pure `format!`/string builders — the
+//! The suite envelope ([`wamn_scenario_model::TestSuite`]) is pure serde; this
+//! module adds the `$n` SELECT builders the scenario worker reads with. Pure
+//! string builders — the
 //! effect shell holds the connection — so the table-owning crate owns its SQL
-//! (mirrors `wamn_run_state::sql` / `wamn_schema_control::sql`), and `wamn-gates`
-//! already depends on `wamn-flow-tests` so no new gate dependency is incurred.
+//! (mirrors `wamn_run_state::sql` / `wamn_schema_control::sql`).
 //!
 //! **Read posture.** Tables are UNQUALIFIED so a `search_path` selects the
 //! source schema (the house S6 schema-as-fixture pattern); every builder ALSO
@@ -30,7 +29,7 @@ pub fn select_suites_for_flow_sql() -> String {
 }
 
 /// One suite's cases, in `ordinal` order. `case_body` is emitted as text so the
-/// executor re-parses each body against the `wamn-testkit` vocabulary on READ
+/// worker re-parses each body against the scenario-model vocabulary on READ
 /// (the same validate pass `TestSuite::validate` runs on WRITE).
 pub fn select_cases_for_suite_sql() -> String {
     "SELECT case_id, ordinal, case_body::text FROM test_cases \

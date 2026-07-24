@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::TestCase;
 use crate::assertion::{Assertion, DbExpect, EgressAssertion, EgressMatcher};
-use crate::captured::{Captured, DbCapture, EgressRecord};
+use crate::captured::{Captured, DbCapture, EgressObservation};
 use crate::normalize::{Normalize, normalize};
 
 /// One assertion's verdict, carrying the assertion itself (so a report is
@@ -84,14 +84,14 @@ pub fn evaluate(case: &TestCase, captured: &Captured) -> Outcome {
 
 /// A present matcher field must equal the record's; an absent field is a
 /// wildcard.
-fn matcher_matches(m: &EgressMatcher, r: &EgressRecord) -> bool {
+fn matcher_matches(m: &EgressMatcher, r: &EgressObservation) -> bool {
     m.method.as_deref().is_none_or(|x| x == r.method)
         && m.authority.as_deref().is_none_or(|x| x == r.authority)
         && m.path.as_deref().is_none_or(|x| x == r.path)
 }
 
 fn eval_egress(flow: &str, calls: &EgressAssertion, captured: &Captured) -> (bool, Option<String>) {
-    let recs: Vec<&EgressRecord> = captured
+    let recs: Vec<&EgressObservation> = captured
         .egress
         .iter()
         .filter(|r| r.workload_id == flow)
@@ -306,9 +306,9 @@ fn eval_one(
 mod tests {
     use super::*;
     use crate::assertion::{DbExpect, EgressAssertion, EgressMatcher};
-    use crate::captured::{DbCapture, EgressRecord, RunFacts};
+    use crate::captured::{DbCapture, EgressObservation, RunFacts};
+    use crate::{FailKind, NodeErrorKind, RunStatus};
     use serde_json::json;
-    use wamn_run_state::{FailKind, NodeErrorKind, RunStatus};
 
     fn node_case(name: &str, expect: Vec<Assertion>) -> TestCase {
         TestCase {
@@ -324,8 +324,14 @@ mod tests {
         }
     }
 
-    fn rec(flow: &str, method: &str, authority: &str, path: &str, allowed: bool) -> EgressRecord {
-        EgressRecord {
+    fn rec(
+        flow: &str,
+        method: &str,
+        authority: &str,
+        path: &str,
+        allowed: bool,
+    ) -> EgressObservation {
+        EgressObservation {
             workload_id: flow.into(),
             method: method.into(),
             authority: authority.into(),

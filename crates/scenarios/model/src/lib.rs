@@ -1,16 +1,14 @@
-//! # wamn-testkit — the flow/node test-case + assertion vocabulary (11.4)
+//! # Product scenario contracts
 //!
-//! A test case is **data, not code**: a [`TestCase`] loads from a JSON file
-//! (the gate's `--cases` fixture) or a catalog jsonb column identically, and
+//! A scenario is **data, not code**: a [`TestCase`] loads from a JSON file
+//! or a catalog jsonb column identically, and
 //! [`evaluate`] is a PURE fold of a [`Captured`] fact bundle into an
-//! [`Outcome`]. The effect shell (the `wamn-gates testkitbench` gate) drives the
-//! node or flow and FILLS the [`Captured`] bundle; this crate only decides.
+//! [`Outcome`]. A scenario worker drives the node or flow and fills the
+//! [`Captured`] bundle; this crate only decides.
 //!
-//! PURE — serde only, no DB / clock / wasm / host dep — so the vocabulary is the
-//! shared contract three lanes reconcile to. The status/kind taxonomy is REUSED
-//! verbatim from `wamn-run-state` and the run-context mirrors
-//! `wamn-node-invoke`'s [`WireRunContext`], so an assertion is stated in the same
-//! enums the runner records and the node contract freezes — no parallel types.
+//! PURE — serde only, with no DB, clock, wasm, host, storage-record, or
+//! invocation-protocol dependency. Effect adapters translate their boundary
+//! types at this package's edge.
 //!
 //! ## Two case shapes
 //!
@@ -44,23 +42,22 @@
 
 mod assertion;
 mod captured;
+mod context;
 mod evaluate;
 mod normalize;
-mod pin;
+mod status;
+mod suite;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use assertion::{Assertion, DbExpect, EgressAssertion, EgressMatcher};
-pub use captured::{Captured, DbCapture, EgressRecord, RunFacts};
+pub use captured::{Captured, DbCapture, EgressObservation, RunFacts};
+pub use context::RunContext;
 pub use evaluate::{AssertionResult, Outcome, evaluate, subset_match};
 pub use normalize::{Normalize, normalize};
-pub use pin::{PinError, PinOptions, pin_run};
-// The run-context is reused verbatim from the frozen wamn:node wire type.
-pub use wamn_node_invoke::WireRunContext;
-// The status/kind taxonomy is reused verbatim from the store — an assertion
-// about a run/node uses the SAME enums the runner persists.
-pub use wamn_run_state::{FailKind, NodeErrorKind, NodeRunStatus, RunStatus};
+pub use status::{FailKind, NodeErrorKind, RunStatus};
+pub use suite::{CaseEntry, SUITE_SCHEMA_VERSION, TestSuite, TestSuiteError};
 
 /// The case-format version this crate implements. Mirrors the
 /// `wamn_schema_model::SCHEMA_VERSION` precedent: `0.1.x` is additive/clarifying only;
@@ -113,7 +110,7 @@ pub struct TestCase {
     pub config: Option<Value>,
     /// An explicit run-context; when absent the gate builds a default one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ctx: Option<WireRunContext>,
+    pub ctx: Option<RunContext>,
     /// The assertions this case's output/run must satisfy.
     pub expect: Vec<Assertion>,
     /// Optional normalization applied SYMMETRICALLY to the expected value and the

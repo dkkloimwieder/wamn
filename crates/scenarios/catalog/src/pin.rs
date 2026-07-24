@@ -1,27 +1,23 @@
-//! Pin a recorded run as a test case (11.3): the PURE transform from a stored
-//! run (`wamn_run_state` `RunRecord` + its `node_runs`) to a canonical
-//! [`TestCase`]. No DB, no clock — the effect shell (`wamn-ctl pin-run`) READS
-//! the rows and WRITES the produced case; this decides what the case is.
+//! Pin a durable run as a scenario case.
 //!
-//! The dependency direction is deliberate: this reads STORE records and writes a
-//! testkit [`TestCase`], so it lives in testkit (which already depends on
-//! `wamn-run-state`). Putting it in `wamn-run-state` would force
-//! run-store → testkit, a cycle.
+//! This application transform reads run-store records and writes the pure
+//! scenario-model contract. Keeping it here prevents storage records and
+//! capture policy from leaking into `wamn-scenario-model`.
 //!
 //! ## What a pinned case is (the minimal-correct v0 shape)
 //!
 //! A flow-level case:
 //! - `flow-ref` = the run's `(flow_id, flow_version)`;
 //! - `input` = the run's trigger input (SCRUBBED — see below);
-//! - `expect` = a [`RunOutcome`](crate::Assertion::RunOutcome) (the run's terminal
+//! - `expect` = a [`RunOutcome`](wamn_scenario_model::Assertion::RunOutcome) (the run's terminal
 //!   status/fail-kind/fail-node) PLUS, when the run recorded a replayable terminal
-//!   node, an [`Equals`](crate::Assertion::Equals) over that node's emission
+//!   node, an [`Equals`](wamn_scenario_model::Assertion::Equals) over that node's emission
 //!   (the reconstruction-relevant payload — where volatile ids live);
 //! - `normalize` = `canonicalize` on + any caller `ignore-paths`, so replay
 //!   tolerates a minted id/timestamp in the pinned node output.
 //!
 //! 9.6 capture persists NODE I/O only; egress and DB state are filled by the LIVE
-//! testkitbench harness, not `node_runs`, so an `Egress`/`DbState` assertion
+//! scenario harness, not `node_runs`, so an `Egress`/`DbState` assertion
 //! cannot be pinned from stored history in v0. `Captured::node_output` is a single
 //! value (no whole-run node map), so a multi-node run pins the FLOW outcome plus
 //! its TERMINAL node output — not a per-node map. Both are deliberate v0 scoping.
@@ -39,8 +35,9 @@ use serde_json::Value;
 use wamn_run_state::capture::scrub;
 use wamn_run_state::{NodeRunRecord, RunRecord};
 
-use crate::normalize::Normalize;
-use crate::{Assertion, FlowRef, SCHEMA_VERSION, TestCase};
+use wamn_scenario_model::{Assertion, FlowRef, Normalize, SCHEMA_VERSION, TestCase};
+
+use crate::compat::{fail_kind_from_store, run_status_from_store};
 
 /// Why a run cannot be pinned. Enum (the repo's WIT-mirroring house style) so the
 /// verb can name the exact defect.
@@ -88,8 +85,8 @@ pub fn pin_run(
 ) -> Result<TestCase, PinError> {
     // The flow-level outcome assertion — always present.
     let mut expect = vec![Assertion::RunOutcome {
-        status: run.status,
-        fail_kind: run.fail_kind,
+        status: run_status_from_store(run.status),
+        fail_kind: run.fail_kind.map(fail_kind_from_store),
         fail_node: run.fail_node.clone(),
     }];
 
@@ -143,14 +140,16 @@ pub fn pin_run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Captured, RunFacts, evaluate};
     use serde_json::json;
-    use wamn_run_state::{FailKind, NodeRunRecord, RunRecord, RunStatus};
+    use wamn_run_state::{
+        FailKind as StoredFailKind, NodeRunRecord, RunRecord, RunStatus as StoredRunStatus,
+    };
+    use wamn_scenario_model::{Captured, RunFacts, RunStatus, evaluate};
 
     /// A completed run of `flow` v1 with the given trigger input.
     fn completed_run(input: Value) -> RunRecord {
         let mut run = RunRecord::new("run-1", "flow", 1, input);
-        run.status = RunStatus::Completed;
+        run.status = StoredRunStatus::Completed;
         run
     }
 
@@ -222,8 +221,8 @@ mod tests {
     #[test]
     fn pinned_case_shape_is_flow_outcome_plus_terminal_output() {
         let mut run = completed_run(json!({"trigger": "go"}));
-        run.status = RunStatus::Failed;
-        run.fail_kind = Some(FailKind::Terminal);
+        run.status = StoredRunStatus::Failed;
+        run.fail_kind = Some(StoredFailKind::Terminal);
         run.fail_node = Some("final".into());
         let nodes = [node(Some(json!({"error": {"code": "x"}})))];
         let case = pin_run(&run, &nodes, &opts()).expect("pins");
