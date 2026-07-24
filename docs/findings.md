@@ -3437,6 +3437,596 @@ input, or live system was changed.
 
 ---
 
+## U — Target architecture and foundational decision reset (2026-07-24)
+
+This section is the ARC11 result for `wamn-4tob.1.11` at source baseline
+`36fcf70b472f76f537a52a20e7cf679650343f85`. It synthesizes ARC1–ARC10,
+STR1–STR8, the canonical D1–D24 table, the owner decisions
+`wamn-4tob.1.12`–`.1.17`, and the unchanged assessed inputs
+`REVIEW-260723.md` (SHA-256
+`3fcb2d272dd2b5ea761da0aa2459a8627cd3da3405dc55b66a81652a8455dbc5`)
+and `RESTRUCTURE-260723.md` (SHA-256
+`4c3271711767378887685cf04c0f310e7a290ca579ecb170ee2b0f3cd73e90dd`).
+The external documents remain evidence and proposals, not canonical decisions.
+
+The following labels are controlling throughout this section:
+
+- **Current fact** is demonstrated by the pinned repository or cited behavior.
+- **Accepted development constraint** is an owner answer carried by
+  `.1.12`–`.1.17`; it is not a production promise.
+- **Recommended development target** is ARC11's evidence-led recommendation.
+  Where it changes a canonical decision and has not received owner acceptance,
+  `wamn-4tob.1.39` owns the choice.
+- **Production deferral** is deliberately unanswered and routed to
+  `.1.18`–`.1.38`.
+- **Unproven claim** receives no architectural credit until its named
+  remediation and discriminating proof close.
+
+### U.1 Executive verdict
+
+**Amend the architecture. Do not retain the current hybrid unchanged, and do
+not replace the product with a new orchestration or event-sourcing platform.**
+
+The durable product core is directionally right:
+
+1. PostgreSQL remains the sole durable authority for Wamn application state
+   and flow orchestration.
+2. CloudNativePG remains the development database foundation.
+3. The WAL → CDC reader → JetStream → materializer → PostgreSQL path remains
+   the database-change event architecture.
+4. Kubernetes remains the sole deployment authority; OCI/build, Secret,
+   object/backup, broker, and telemetry systems retain their native authority.
+5. Flow JSON, catalog and flow schemas, the node and event contracts, explicit
+   ordering, and narrow WASI capabilities remain useful product seams.
+
+The compute and deployment layer is overextended. ARC11 recommends
+Kubernetes-native Rust services for trusted API, dispatch, execution, and
+materialization responsibilities, with Wasmtime/WASI retained only as the
+default-deny sandbox for untrusted custom nodes. On that target, wasmCloud is a
+transition implementation detail rather than the platform architecture.
+Canonical D17, D21, and D23 currently say otherwise, so this recommendation is
+**not silently accepted**: decision Bead `wamn-4tob.1.39` must select the
+trusted-service compute target before STR9 fixes the exact package and
+deployment graph.
+
+This is an amendment rather than a restart because the target preserves the
+existing authoritative state and public contracts while changing where
+trusted effects execute. It rejects both a platform-wide durable-workflow
+engine and a broad PostgreSQL infrastructure journal: the owner has limited
+PostgreSQL authority to Wamn application/execution state and has left
+deployment to Kubernetes (F.6, `docs/findings.md:1044-1076`).
+
+Correctness controls every trade-off. Availability, latency, throughput,
+cost, density, and delivery speed do not justify cross-client authority,
+acknowledged-write loss, unowned durable state, dual execution authorities, or
+an unprovable rollback. There is no current product SLO, cardinality,
+placement, regional, regulatory, or unit-economics commitment. Correctness is
+required only for admitted finite development load, and exhaustion must fail
+closed visibly; R54 remains open pending `wamn-4tob.6.27`.
+
+### U.2 Current and target system context
+
+```mermaid
+flowchart LR
+  subgraph C["Current fact"]
+    CCallers["tenant API callers"]
+    CAuthors["flow / custom-node authors"]
+    COps["platform operator"]
+    CIndustrial["external industrial systems"]
+    CPlatform["Wamn on Kubernetes<br/>shared wash host + native services"]
+    CPG["T1 + tenant PostgreSQL"]
+    CJS["NATS / JetStream"]
+    COCI["builder / OCI"]
+    CNative["Kubernetes / Secrets / object store / telemetry"]
+    CCallers --> CPlatform
+    CAuthors --> CPlatform
+    COps --> CPlatform
+    CIndustrial <--> CPlatform
+    CPlatform <--> CPG
+    CPlatform <--> CJS
+    CPlatform <--> COCI
+    CPlatform <--> CNative
+  end
+
+  subgraph T["Recommended development target; compute choice pending wamn-4tob.1.39"]
+    TCallers["tenant API callers"]
+    TAuthors["flow / custom-node authors"]
+    TOps["development operator"]
+    TIndustrial["external industrial systems"]
+    TTrusted["Kubernetes-native trusted Wamn services"]
+    TSandbox["dedicated custom-node host<br/>Wasmtime / WASI"]
+    TPG["T1 + tenant CNPG/PostgreSQL<br/>application/execution authority"]
+    TJS["JetStream<br/>event transport only"]
+    TNative["Kubernetes + OCI/build + Secrets<br/>object/backup + telemetry authorities"]
+    TCallers --> TTrusted
+    TAuthors --> TTrusted
+    TOps --> TTrusted
+    TIndustrial <--> TTrusted
+    TTrusted --> TSandbox
+    TTrusted <--> TPG
+    TTrusted <--> TJS
+    TTrusted <--> TNative
+  end
+```
+
+The current context is evidenced in C and E (`docs/findings.md:458-573`).
+The target does not assert public authentication, edge, multi-region, or
+production isolation; those remain explicit roadmap or production decisions.
+
+### U.3 Current and target container model
+
+```mermaid
+flowchart TB
+  subgraph CC["Current containers / deployables"]
+    CTL0["wamn-ctl"]
+    HOST0["general wamn-host / washlet"]
+    API0["generated API component"]
+    MAT0["materializer component"]
+    WORK0["run-worker<br/>embedded flowrunner"]
+    DISP0["dispatcher"]
+    WAKE0["waker"]
+    CDC0["CDC reader"]
+    NODE0["node serving inside host artifact"]
+    BUILD0["builder<br/>depends on host library"]
+    API0 --> HOST0
+    MAT0 --> HOST0
+    WORK0 --> HOST0
+    NODE0 --> HOST0
+    BUILD0 --> HOST0
+  end
+
+  subgraph TC["Recommended containers / deployables"]
+    CTL1["ctl / control effects"]
+    API1["native API service<br/>one catalog-derived planner"]
+    EXEC1["native executor / run worker"]
+    DISP1["native dispatcher"]
+    WAKE1["native waker"]
+    CDC1["native CDC reader"]
+    MAT1["native materializer"]
+    NODE1["independent node-host<br/>Wasmtime / WASI"]
+    BUILD1["isolated builder / conformance"]
+    SIGN1["separate signer / publisher authority"]
+    POLICY1["shared policy and contract libraries"]
+    BUILD1 --> POLICY1
+    NODE1 --> POLICY1
+    BUILD1 -. "reviewed digest / non-secret handoff" .-> SIGN1
+  end
+```
+
+Dispatcher, executor/run worker, CDC reader, materializer, waker, builder,
+ctl, node host, databases, JetStream, and native infrastructure remain
+independently operable responsibilities. SR15 and SR16 own the node-host and
+builder inversions. The exact shared-library and filesystem decomposition is
+STR9 work after `.1.39`; this diagram does not authorize a package-per-box
+rewrite.
+
+### U.4 Current and target state-authority model
+
+```mermaid
+flowchart LR
+  subgraph CS["Current fact: correct cores plus overlapping claims"]
+    CT1["T1 registry + sagas"]
+    CK8S["Kubernetes objects/status"]
+    CTPG["tenant PostgreSQL<br/>catalog/data/run/queue"]
+    CWAL["committed WAL / slot"]
+    CJS2["JetStream stream/consumer"]
+    COBJ["OCI / Secrets / backups"]
+    CT1 -. "intent sometimes mistaken for readiness" .-> CK8S
+    CTPG --> CWAL --> CJS2 --> CTPG
+    CK8S <--> COBJ
+  end
+
+  subgraph TS2["Accepted authority target"]
+    TT1["T1 PostgreSQL<br/>Wamn identity + placement configuration only"]
+    TK8S["Kubernetes<br/>deployment desired/observed state"]
+    TTPG["tenant PostgreSQL<br/>catalog/data/flows/runs/queue/timers/checkpoints"]
+    TWAL["source DB + capture epoch<br/>WAL position / ordinal"]
+    TJS2["JetStream<br/>durable in-flight transport"]
+    TOCI["OCI/build<br/>artifact bytes + attestations"]
+    TSEC["Secret authority"]
+    TBACK["object/backup authority"]
+    TTELEM["telemetry<br/>derived evidence only"]
+    TT1 -. "input, never deployment receipt" .-> TK8S
+    TTPG --> TWAL --> TJS2 --> TTPG
+    TK8S --> TOCI
+    TK8S --> TSEC
+    TTPG --> TBACK
+    TTPG -. "observed" .-> TTELEM
+    TJS2 -. "observed" .-> TTELEM
+  end
+```
+
+JetStream sequence is transport order, not semantic event identity. Retained
+event identity must derive from source database/capture epoch, WAL
+position/ordinal, and registration identity. NATS scheduler messages may be
+lossy hints; they never replace the PostgreSQL queue. Kubernetes deployment
+state is not copied into PostgreSQL as a second model of operation.
+
+### U.5 Current and target trust-zone model
+
+```mermaid
+flowchart LR
+  subgraph CZ["Current fact"]
+    Caller0["client"]
+    API2["supported API / component"]
+    Shared0["shared host + plugins"]
+    PG0["project database login<br/>currently over-broad: R45"]
+    Node2["untrusted custom node"]
+    Wasi0["narrow WIT + Wasmtime policy"]
+    Caller0 --> API2 --> Shared0 --> PG0
+    Node2 --> Wasi0 --> Shared0
+  end
+
+  subgraph TZ["Accepted constraint + recommended target"]
+    Caller1["client"]
+    Route1["trusted route/deployment binding"]
+    Service1["client-scoped native service authority"]
+    PG1["non-spoofable PostgreSQL claims / roles"]
+    Node3["untrusted custom node"]
+    Host1["dedicated node-host process"]
+    Wasi1["explicit WIT capabilities<br/>credential handles + egress policy"]
+    Caller1 --> Route1 --> Service1 --> PG1
+    Node3 --> Host1 --> Wasi1
+  end
+```
+
+The current development security contract is deliberately narrow: clients are
+isolated across every supported platform API, and the audit must count the
+complete host-side authority reachable behind each exposed WASI/WIT interface.
+Standard nodes are trusted platform code with union capabilities; dispatch
+policy is defense against mistakes, not a hostile-code boundary. Custom nodes
+are untrusted and retain the harder sandbox. Compromised-host, operator,
+credential-lifecycle, infrastructure-profile, regulatory, residency, audit,
+and erasure promises remain deferred to `.1.25`–`.1.30`.
+
+### U.6 Current and target failure-domain model
+
+```mermaid
+flowchart TB
+  subgraph CF["Current fact: several named planes share failure domains"]
+    CH["general host failure<br/>API + materializer + node-host impact"]
+    CP["tenant PostgreSQL primary / shared login"]
+    CJ["JetStream quorum/storage"]
+    CB["mutable/unattributed build and release bytes"]
+    CO["shared operator / object credentials"]
+    CH --> CP
+    CP --> CJ
+    CB --> CH
+    CO --> CP
+    CO --> CJ
+  end
+
+  subgraph TF["Target containment"]
+    TA["API service failure"]
+    TE["executor failure"]
+    TM["materializer failure"]
+    TN["one node-host failure"]
+    TP["affected tenant PostgreSQL recovery domain"]
+    TJ["JetStream transport failure"]
+    TB["builder sandbox"]
+    TSIGN["signer/publisher authority"]
+    TB -. "reviewed digest / non-secret handoff" .-> TSIGN
+    TA -. "separate process fate" .-> TE
+    TE -. "separate process fate" .-> TM
+    TN -. "bounded workload" .-> TE
+    TP --> TJ
+    TJ --> TM
+  end
+```
+
+Process separation is not automatically a security boundary, and no concrete
+per-org/per-environment/cell topology is selected. The development response to
+uncertain authority is visible unavailability: pause control mutations on T1
+uncertainty, stop affected tenant work on PostgreSQL uncertainty, hold CDC
+feedback while the bounded WAL window permits, refuse missing artifacts or
+Secrets, and never promote stale or dual state.
+
+### U.7 Plane, authority, trust, failure, journey, and contract matrices
+
+#### Plane matrix
+
+| Plane | Current authority/boundary | Target verdict | Open correctness boundary |
+|---|---|---|---|
+| Control | T1 product identity plus ctl effects across Kubernetes, CNPG, Secrets, OCI, and backups. | **Amend:** T1 owns only Wamn identity/placement configuration; native systems own their operation and status. | R34; provisioning must not equate intent with readiness. |
+| Tenant data | Tenant PostgreSQL owns data/catalog; a cached serving snapshot can diverge. | **Keep authority, amend serving:** one applied/served generation, pinned per request. | R35. |
+| Flow execution | Native worker embeds a trusted flowrunner component; PostgreSQL owns runs/queue. | **Keep protocol, recommend native executor:** no new workflow journal or peer authority. | R36, R37, R42, R53. |
+| Event/trigger | WAL → native reader → JetStream → shared-host materializer → run queue. | **Keep topology, amend semantics:** source-derived identity, verified consumer config, durable refusal, bounded failure. | R38, R44, E18, E19, R50, R51. |
+| Build/supply chain | Builder depends on host; source/test/package/invoked bytes are not one identity; signing is reachable from untrusted build. | **Amend:** isolated build/conformance, separate signing, immutable digest through invocation. | R43, R49, SR15–SR17, SR26. |
+| Observability | Shared lossy stores and some shared recovery credentials. | **Keep as derived evidence only:** never a correctness authority. | R47; production retention/isolation deferred. |
+| Operations | Kubernetes, CNPG, ctl, saga rows, and runbooks overlap; manual recovery dominates. | **Amend:** Kubernetes deploys; one development owner may reconcile native systems manually and visibly. | R40, R41, R46, R48, R52. |
+
+#### State-authority matrix
+
+| Durable state/resource | Sole target authority | Other systems may do | They must not do |
+|---|---|---|---|
+| Org/project/environment identity and placement policy | T1 PostgreSQL | Render inputs and report observations. | Claim Kubernetes work completed. |
+| Kubernetes workload/configuration state | Kubernetes API/controllers | T1 refers to stable Wamn identity. | Treat a saga/registry row as deployment readiness. |
+| Catalog and applied tenant schema | Tenant PostgreSQL transaction plus one served generation identity | Cache a pinned verified generation. | Serve a catalog/schema disagreement. |
+| Tenant application data | Tenant PostgreSQL | CDC reads committed WAL. | Reconstruct writes from telemetry or broker order. |
+| Flow definitions, runs, queue, timers, leases, checkpoints, dead letters, replay lineage | Tenant PostgreSQL | NATS may wake; workers may lease through the owning API. | Add a workflow-engine or JetStream peer authority. |
+| CDC source position and semantic identity | Source PostgreSQL/capture epoch + WAL position/ordinal | JetStream transports the immutable envelope. | Use stream sequence alone as domain identity. |
+| Event in-flight state | JetStream | Materializer consumes and records outcome in PostgreSQL. | Claim end-to-end exactly once or become run authority. |
+| Artifact bytes and attestations | OCI/build/signing systems | Kubernetes pins immutable digests. | Infer invoked bytes from a mutable tag. |
+| Credential bytes | Kubernetes Secret or approved secret authority | T1 stores references/scopes only. | Copy secret material into PostgreSQL as orchestration state. |
+| Backup bytes/checkpoints | Native object/backup authority | PostgreSQL metadata may bind immutable identity/checksum. | Treat a boolean “backup exists” assertion as proof. |
+| Telemetry | Native telemetry stores | Support diagnosis and gates. | Decide correctness or recover missing authority. |
+| Scenario/test definitions | Tenant PostgreSQL under one semantic contract owner | Scenario adapters execute pinned definitions. | Leak test-only effects into serving by naming convention alone. |
+
+#### Trust-zone matrix
+
+| Principal/zone | Current/target trust | Required boundary | Deferred claim |
+|---|---|---|---|
+| Tenant API client | Mutually untrusted client. | Trusted route/deployment identity; non-spoofable client claims; no shared project login. | Provider, session, RBAC, and public threat model. |
+| Trusted platform service | Trusted code, least authority needed for one responsibility. | Explicit adapter/credential scope and client-isolation negative proof. | Compromised-host containment. |
+| Standard node | Trusted platform code. | Logical dispatch policy and audited union capabilities. | Hostile standard-node isolation/capability-class runners. |
+| Custom node | Untrusted tenant code. | Dedicated process, narrow WIT, Wasmtime limits, explicit egress/credential handles. | Cross-release compatibility until `.1.33`. |
+| Builder input | Untrusted source/artifact. | Sandboxed build and deny-all conformance; cannot observe signing authority. | Production supply-chain policy beyond R49 proof. |
+| Signer/publisher | Privileged release authority. | Separate from untrusted build; binds reviewed/tested digest. | Organizational separation of duties. |
+| Operator/infrastructure | One general development owner is permitted. | Every manual action is attributable and fails visibly. | Multi-owner, regulatory, residency, and credential-lifecycle profiles. |
+
+#### Failure-domain matrix
+
+| Failure/uncertainty | Containment target | Recovery/visibility owner | Claim status |
+|---|---|---|---|
+| T1 unavailable or uncertain | Existing tenant paths may continue; control mutations pause. | Development operator; R34 evidence. | No availability/RTO number. |
+| Tenant PostgreSQL primary uncertain | Stop the affected admitted scope; never promote stale acknowledged state. | CNPG plus operator; R46. | No numeric RPO/RTO; no acknowledged-write-loss credit today. |
+| JetStream unavailable/full | Hold source feedback while possible; expose WAL headroom and an explicit gap on exhaustion. | Reader/materializer/operator; R38/R50/R51. | Backup/DR deliberately deferred, architecture retained. |
+| Worker/executor death | Lease recovery with stable run/node/occurrence identity. | PostgreSQL run owner; R37/R53. | External effects remain at least once unless their sink deduplicates. |
+| Node-host death | Bound failure to that node workload; retry preserves occurrence identity. | Executor/node-host owner. | Custom-node versioning deferred. |
+| Partial catalog/copy/restore | Refuse served/cutover state until one authority is proven; reverse or remain unavailable. | Control/schema owner; R35/R40/R41/R52. | No expert-only repair counted as complete architecture. |
+| Partial release | Admission closed; reverse the whole exact bundle or remain unavailable. | Release owner; R42/R53/SR17/SR26. | Accepted dev contract is quiesced single-version, not rolling mixed-version. |
+| Artifact/Secret/backup missing | Fail closed; never reconstruct authority from tag, name, or boolean. | Native authority owner. | Production durability/profile deferred. |
+| Regional loss | No cross-region promise. | Future production decision `.1.18`. | Deferred. |
+
+#### Canonical journey matrix
+
+| Journey | Target invariant | Existing remediation/proof owner |
+|---|---|---|
+| Provision org/project/environment | Intent is not readiness; every native side effect converges or fails visibly. | R34 / `wamn-2jkm.70`; proof `.6.1`. |
+| Define/migrate/publish catalog and serve API | Transactional applied schema and one pinned served generation; refuse drift. | R35 / `.71`; proof `.6.2`; reload `wamn-32n`. |
+| Start/complete synchronous flow | Stable delivery identity, write-ahead run, explicit orphan recovery and retry result. | R36/R37 / `.72/.73`; proof `.6.3`; ingress `wamn-fqg.39`. |
+| Schedule/park/wake/resume/retry/replay | PostgreSQL alone owns timer, queue, lease, checkpoint, dead-letter, lineage, and idempotency state. | F.6; executable rerun remains R39 / `.69`. |
+| Database commit → event → flow run | Source-derived identity, checked consumer identity/config, durable refusal evidence, bounded capture failure. | R38/R44/E18/E19/R50/R51 and their existing proofs. |
+| Build/sign/publish/invoke custom node | Reviewed digest determines invoked bytes; untrusted build cannot exercise signing; narrow sandbox at runtime. | R43/R49/SR15–SR17 and `.6.7/.6.8/.6.19`. |
+| Copy/back up/restore/move environment | Quiesce, immutable verified checkpoint, one write authority, validated target, reversible cutover. | R40/R41/R48/R52 and `.6.5/.6.15/.6.24`. |
+| Upgrade runtime/schema/deployment | One exact compatible bundle; drain/read/migrate every retained record; one reversible commit point. | N.7; R42/R53/SR17/SR26 and `.6.6/.6.25/.6.26`. |
+
+#### Public and cross-unit contract matrix
+
+| Contract family | Target verdict | Compatibility/owner boundary |
+|---|---|---|
+| `wamn:node`, node SDK/guest/invoke/manifest | **Keep leaf boundaries.** | Custom-node cross-version choice remains `.1.33`; SR22 owns the current missing negotiation. |
+| `wamn:postgres` | **Keep canonical WIT; amend adapter placement if `.1.39` selects native services.** | One host/service translation owns claims, decimal fidelity, error taxonomy, and capability scope. |
+| `wamn:jetstream` | **Keep while D19 remains.** | Native or host adapter must preserve the frozen envelope and scoped broker authority. |
+| `wamn:runner` | **Keep as a same-release development ABI.** | Canonical-source and compatibility guards remain SR23; no production mixed-version promise. |
+| Generated REST API | **Keep one `wamn-api` planner; amend runtime packaging.** | HTTP shell translates only; R35 pins served generation. OpenAPI/GraphQL remain roadmap. |
+| Generic flow invocation | **Keep required seam; delivery deferred.** | `wamn-fqg.39` must define route authority, request/result, acknowledgement, deadline, and identity without embedding a second executor. |
+| Catalog and flow JSON Schemas | **Keep Rust/model authority and generated fixtures.** | Owner-crate exact generated-schema tests and R's generate policy govern the published artifacts and compatibility. |
+| Event envelope | **Keep frozen transport contract; amend semantic claims.** | Source identity and retention qualify dedupe/replay; every retained record drains, reads, or migrates during release. |
+| SQL schemas/query contracts | **Amend ownership, not necessarily packaging.** | One semantic/migration/write owner and generate or structural-compare guard; SR13. |
+| Mounted deployment/config JSON | **Amend.** | It participates in the atomic release identity and needs one parse/default/version policy; SR24. |
+| Scenario/test contracts | **Amend.** | Product status/error/observation vocabulary must not depend on persistence or repository-only adapters; SR19/SR21. |
+
+#### Roadmap seam matrix
+
+| Roadmap capability | Architectural seam now | Verdict |
+|---|---|---|
+| Hot catalog reload | One applied/served generation and runtime-neutral planner boundary. | **Keep seam; defer delivery** to `wamn-32n` after R35. |
+| OpenAPI/GraphQL/SDK | Catalog-derived schema and one entity-operation planner. | **Keep seam; defer surfaces** to `wamn-tsn`. |
+| Authentication/authorization | Trusted route/deployment identity and non-spoofable client claims. | **Keep client-isolation invariant; defer provider/policy** to existing auth and `.1.25`–`.1.30` owners. |
+| Saga-style control API | T1 product intent plus native-system observation, without a PostgreSQL deployment journal. | **Amend** through R34 and existing control-plane feature owners. |
+| Multi-region placement/recovery | Region remains an additive placement dimension; authority and recovery stay explicit. | **Defer** to `.1.18` and production topology decisions. |
+| Usage metering/billing | Derived, attributable events may feed a separate ledger without becoming execution authority. | **Defer** until product/accounting requirements exist. |
+| Industrial connectors/edge | Versioned connector contracts, explicit cursor/backlog authority, and bounded offline state. | **Keep seam; defer deployment**; MQTT remains D12. |
+| UI and schema/flow designers | Versioned APIs and checked catalog/flow schemas. | **Defer UI**, without coupling the backend target to a client implementation. |
+| Third-party/custom nodes | Node manifest/invoke contracts, immutable digest, and dedicated Wasmtime/WASI sandbox. | **Keep**; provenance and `.1.33` compatibility remain open. |
+| Long-term contract versioning | Quiesced same-version development bundle today; explicit compatibility fixtures at every cross-unit contract. | **Defer production policy** to `.1.31`–`.1.33`. |
+
+### U.8 Foundational decision reset
+
+This table is the audit verdict, **not an edit to the canonical decision
+table** at `docs/platform-plan.md:191-220`.
+
+| Canonical decision | Verdict | Target rationale and claim boundary |
+|---|---|---|
+| D1 — flow execution | **Amend** | Keep flow JSON and interpreter semantics; move trusted executor packaging only if `.1.39` accepts the native target. Whole-flow compilation remains optional/post-GA. |
+| D2 — generated API | **Amend** | Keep one catalog-derived planner and service responsibility; do not preselect per-project Wasm, pod, route, or resident topology. |
+| D3 — run queue | **Amend** | Keep PostgreSQL durability and optional lossy NATS hints. Remove the `~1k/sec` revisit value from product-contract reasoning; use measured admission instead. |
+| D4 — old DB-event outbox | **Replace** | Retain only as superseded history; D19 is the sole row-event path. |
+| D5 — PostgreSQL pooling | **Amend** | Keep bounded, fail-closed connection pools. pgBouncer is a measured optional adapter, not an automatic scale stage. |
+| D6 — PostgreSQL hosting/topology | **Amend** | Keep CNPG and separate T1. T2/T3/T4, bounded cells, per-org, and per-environment shapes are exploratory until `.1.35`. |
+| D7 — custom-node invocation | **Amend** | Keep in-cluster HTTP for development; require independent node-host, immutable provenance, explicit authentication, and later compatibility decision `.1.33`. |
+| D8 — raw SQL | **Keep** | Default off, bound values, RLS floor, and dedicated user-SQL role before enablement; R45 still blocks isolation credit. |
+| D9 — ordering | **Keep** | Explicit strict/partitioned/unordered policy remains part of the flow contract. |
+| D10 — frontend | **Defer** | Preserve BYO-client/versioned API seams; no current UI runtime target. |
+| D11 — time series | **Defer** | No workload yet discriminates Timescale from a separate TSDB; `wamn-41d` owns the choice. |
+| D12 — MQTT broker | **Defer** | Hosted versus customer-owned broker depends on future connectivity/trust requirements; `wamn-02q` owns it. |
+| D13 — observability store | **Keep** | Loki/Tempo/Prometheus remain development mechanisms and derived evidence, never correctness authority. |
+| D14 — industrial ontology | **Keep** | Neutral catalog core plus optional modules preserves future industrial seams without forcing one ontology. |
+| D15 — synchronous webhook | **Amend** | Keep write-ahead state; require stable delivery/orphan recovery under R36/R37. Give no SLO or broad exactly-once credit, and no reduced-audit path may weaken correctness. |
+| D16 — component memory | **Amend** | Retain a hard per-component memory budget in the untrusted Wasmtime sandbox; do not use it to justify the general wash runtime or product tier sizes. |
+| D17 — wasmCloud posture | **Replace (recommended; owner choice open)** | Prefer Kubernetes-native trusted services plus a narrow Wasmtime/WASI tenant-code sandbox. `.1.39` decides; the current hybrid remains operational until then. |
+| D18 — deployment model | **Amend** | Keep data-driven identity, policies, and copy vocabulary. Kubernetes owns deployment; no concrete placement topology or copy correctness is inferred. |
+| D19 — event plane | **Amend** | Keep WAL → JetStream → materializer → PostgreSQL. Correct identity, retention, exactly-once, refusal, capacity, and recovery claims. |
+| D20 — partition-head policy | **Keep** | Blocking default, explicit leapfrog, business-terminal dead-letter-and-continue, and crash-exhaustion wedge remain explicit semantics. |
+| D21 — component-by-default services | **Replace (recommended; owner choice open)** | Select runtime by trust/protocol/deployment reason, not component style. Trusted services are native by default on ARC11's recommendation; `.1.39` decides. |
+| D22 — CDC reader fleet | **Defer placement; keep invariant** | Exactly one visible slot-owning session per project-environment is required. Fleet/per-env/per-org placement is exploratory until cardinality/topology evidence. |
+| D23 — wash-runtime fork governance | **Amend (conditional)** | Keep owned fork discipline while any dependency remains; under the recommended target, retire trusted-service dependence and retain provenance/negative conformance for the sandbox. `.1.39` decides. |
+| D24 — orphaning catalog publish | **Keep** | Fail closed rather than prune tenant-authored event registrations or leave silent dangling state. |
+
+The material `RESTRUCTURE-260723.md` proposal decisions remain **RP-D1–RP-D9**
+to avoid collision with canonical D rows:
+
+| Proposal decision | Verdict | Reason / routing |
+|---|---|---|
+| RP-D1 — layered package architecture | **Amend** | Keep role/target metadata and dependency rules; exact paths and package count belong to STR9. |
+| RP-D2 — host split | **Amend** | Keep component-policy and independent node-host outcomes; the exact runtime hierarchy depends on `.1.39`. |
+| RP-D3 — PostgreSQL/entity seams | **Amend** | Require one audited entity planner and SQL-safety owner; do not preselect `pg-core` package names or a deployable entity service. |
+| RP-D4 — schema/execution consolidation | **Defer exact merges** | One semantic state owner does not imply one crate; target, ABI, security, and co-change evidence decide. |
+| RP-D5 — scenario subsystem | **Amend** | Retain product-scenario vocabulary; no independent worker/image is justified yet. SR19/SR21 and STR9 own the boundary. |
+| RP-D6 — flow invocation boundary | **Amend** | Keep a transport-neutral invocation contract; signed HTTP, versioning, topology, and auth mechanism remain hypotheses. |
+| RP-D7 — generic authenticated ingress | **Defer delivery** | Preserve `wamn-fqg.39`; when built it must be a thin shell over canonical execution and cannot precede its authority/delivery contract. |
+| RP-D8 — gate replacement | **Amend** | Classify proof levels and move white-box tests only with evidence equivalence; retain a broad black-box composition root. |
+| RP-D9 — inbound identity/authentication | **Defer mechanism; keep isolation invariant** | Trusted route binding and rejection of caller-supplied tenancy are required; HMAC/JWT/provider/rotation policy awaits future trust decisions. |
+
+### U.9 External-review and restructure-proposal disposition
+
+| Material recommendation | Verdict | Why / owner |
+|---|---|---|
+| Remove builder → host dependency | **Keep outcome; amend extraction** | Peer composition roots must not import one another. Extract only policy/conformance/runtime seams shared by evidence; SR16. |
+| Extract node-host | **Keep** | It is a distinct trust, scaling, lifecycle, binary, image, and release boundary; SR15. |
+| Introduce role-visible filesystem tiers | **Amend** | Useful navigation/enforcement vocabulary; exact paths wait for STR9 and must not force package churn. |
+| Reduce crate count / merge schema and execution families | **Reject as a goal; defer individual merges** | Purity and size do not justify a split or merge. Preserve target/ABI/contract/security boundaries and use co-change evidence. |
+| Split `wamn-gates` by test level | **Amend** | Classify package/conformance/integration/system evidence and move only with equivalent proof; do not destroy the gate composition root. |
+| Reclassify `testkit` and flow tests | **Amend** | Separate product scenario vocabulary from repository-only adapters; exact packages remain STR9 work. |
+| Make database/SQL ownership singular | **Keep** | One semantic/migration/write owner and generate/compare drift policy are correctness requirements; SR13. |
+| Treat runtime fork as product subsystem | **Amend** | Own provenance and negative gates while present; no arbitrary patch quota; recommended target minimizes/retires its trusted-service role. |
+| Narrow event exactly-once claims | **Keep** | Exactly-once run creation is retention-qualified; external effects remain at least once absent sink dedupe. |
+| Treat “per-project nearly free” as unproven | **Keep** | No invented 100/1,000/10,000 target. Measure real hardware and fail closed through R54/`.6.27`. |
+| State standard-node trust honestly | **Keep** | Trusted union-capability code, not an adversarial sandbox; third-party/risky code uses custom-node isolation. |
+| Preserve node/event/WIT leaves and separate workspaces/deployables | **Keep** | They have objective contract, target, privilege, or lifecycle reasons. |
+| Deliver generic ingress before broad restructuring | **Amend** | It is a valid product slice, but provenance, authority, delivery identity, and isolation blockers precede new traffic. |
+| Freeze all new infrastructure mechanisms | **Replace** | Require an explicit correctness invariant, removal/ownership plan, measured admission, and failure behavior; a blanket freeze is not an architecture. |
+
+### U.10 Rejected architecture alternatives
+
+| Alternative | Verdict | Discriminating reason |
+|---|---|---|
+| Retain current hybrid unchanged | **Rejected** | Shared runtime/fork/operator, mutable artifact, readiness, and mixed-authority burdens remain without a demonstrated correctness advantage. |
+| Component-first wasmCloud platform | **Rejected as ARC11 recommendation; pending `.1.39` owner choice** | Adds custom WIT/runtime/operator/control-NATS machinery to trusted services whose durable semantics already live in PostgreSQL. |
+| Kubernetes-native trusted Rust services + narrow Wasmtime sandbox | **Recommended** | Removes custom distributed-runtime machinery while preserving untrusted-code isolation and existing state/contracts. |
+| Durable workflow engine owns orchestration | **Rejected** | Creates a peer/replacement authority contrary to the accepted PostgreSQL state model and requires state migration/replay compatibility. |
+| Platform-wide event sourcing/log authority | **Rejected** | Most triggers need durable run-queue state, not an additional authoritative log; increases dual-write/rebuild surface. |
+| Direct PostgreSQL event dispatch replacing JetStream | **Rejected for the current target** | Owner retained the WAL→JetStream handoff; changing it would not remove the materialization/source-position proof burden. |
+| Kafka/Redpanda replacement | **Rejected now** | Adds operational weight without a selected scale/replay requirement that JetStream cannot meet. |
+| Broad PostgreSQL infrastructure journal | **Rejected** | Duplicates Kubernetes/OCI/Secret/backup state and invites split authority; PostgreSQL remains application-limited. |
+| Canonical four-tier or bounded-cell topology now | **Deferred, not selected** | No current cardinality, isolation-profile, or unit-economics contract discriminates among them. |
+| Repository megacrate or package-per-concept model | **Rejected** | Both erase objective target/contract boundaries or invent accidental ones. STR9 must use dependency/change evidence. |
+
+### U.11 Correctness-ranked architectural risks
+
+The status board remains authoritative and every Critical/High item already has
+a remediation and proof owner. A target recommendation does not close any row.
+
+1. **Cross-client and acknowledged-write authority:** R45 and R46 are
+   Critical. No traffic or state migration receives correctness credit while
+   it can cross client authority or automatically discard an acknowledged
+   commit.
+2. **Attributable release, readiness, resume, and admission:** SR17, SR26,
+   R42, R53, and R54 prevent proof that the tested bytes are the running bytes,
+   that the service is ready, that persisted runs resume compatibly, or that
+   finite load is admitted atomically.
+3. **Retained event-path correctness:** R38, R44, E18, E19, and R50 cover
+   durable refusal, semantic identity/retention, consumer drift/collision, and
+   storage/WAL exhaustion. R51 remains the explicit deferred DR gap; no
+   lossless disaster-recovery claim is made.
+4. **Incomplete cross-boundary journeys:** R34–R37, R40, R41, and R52 cover
+   provisioning convergence, served schema, sync identity/orphan recovery,
+   copy/restore, and verified migration checkpoints.
+5. **Artifact, signer, credential, backup, and privileged-reader scope:** R43,
+   R47–R49, and R28 remain open. They gate the affected supply-chain,
+   recovery, or isolation claim, even where broader production security is
+   deferred.
+
+Optimization follows only after these. Current benchmark numbers are
+provenance-bound observations, not promises or architecture vetoes.
+
+### U.12 Target seams and dependency rules
+
+ARC11 fixes responsibilities, not exact crate names:
+
+1. **Contracts and pure decisions point inward.** Catalog, flow, node, event,
+   manifest, schema, ordering, and execution-decision types do not depend on
+   deployable services or concrete effects.
+2. **Effects translate at explicit adapters.** PostgreSQL, HTTP, JetStream,
+   Kubernetes, OCI, Secret, clock, and runtime APIs implement narrow owning
+   contracts; external types do not leak through public domain APIs.
+3. **Deployables are composition leaves.** A service may import shared
+   contracts/cores/adapters, but one peer composition root must not import
+   another merely to reuse policy or engine configuration.
+4. **The tenant-code boundary is separate.** Node policy, conformance, and
+   execution may share narrow libraries; builder, signer, node-host, and
+   trusted executor remain different authorities.
+5. **One durable lifecycle has one semantic owner.** Physical tables may
+   remain separate and guest-safe packages may remain leaves, but writers,
+   migrations, query contracts, and drift policy are explicit.
+6. **Build and proof identity follow the release.** Source revision, native
+   binary, component, config, schema, manifest, and deployed digest form one
+   immutable receipt; the gate exercises those exact bytes.
+7. **Size alone changes nothing.** Flowrunner, reader, gates, API router, and
+   ctl split only where responsibility, target, privilege, failure, or measured
+   change coupling warrants it.
+
+STR9 will choose retain/split/merge/retire actions and enforcement after
+`wamn-4tob.1.39`. It must preserve the contract ownership and drift policies
+from Q/R and the artifact identity rules from S.
+
+### U.13 Reversible migration order
+
+Hard blockers apply to enabling or moving the affected traffic/state, not to
+safe documentation, tests, or behavior-preserving extraction.
+
+1. **Record the decision and fence claims.** Keep the current runtime
+   operational. Close `.1.39` before making the trusted-service target
+   structural or canonical. Publish no production, topology, SLO, security,
+   or regional claim.
+2. **Establish release and admission proof first.** Resolve SR17/SR26, R42,
+   R53, and R54 before a target cutover: immutable native/component/config/
+   deployment identities, real dependency readiness, exact prior bundle, and
+   one measured fail-closed admission decision.
+3. **Repair retained authorities in place.** Prioritize R45/R46 and the event
+   path's E18/E19/R38/R44/R50 obligations. Do not migrate a service to conceal
+   a defect in the PostgreSQL/JetStream protocol it will retain.
+4. **Extract seams without moving authority.** Remove builder → host through
+   narrow policy/conformance ownership and split node-host binary/image/release
+   with behavior-equivalent negative and parity gates. Keep current traffic on
+   the old path.
+5. **Migrate one trusted responsibility at a time if `.1.39` accepts the
+   recommendation.** API waits for R35 generation safety; materializer waits
+   for E18/E19/R38/R44/R50; executor waits for R42/R53 and release provenance.
+   Dark comparison may inspect decisions but must not ACK, enqueue, claim, or
+   perform effects.
+6. **Use the accepted N.7 release protocol for every cutover.** Quiesce new
+   state-changing admission; drain/read/migrate every retained PostgreSQL and
+   JetStream record; deploy one immutable bundle; validate real dependencies;
+   commit traffic once. On failure restore the exact prior bundle, or remain
+   visibly unavailable. Never run dual durable authorities.
+7. **Retire transition infrastructure last.** Remove the general wash
+   host/operator only after code, deployment, state, contract, and proof
+   reachability are zero. Retain Wasmtime node-host isolation and any scoped
+   D3 scheduler hint still in use.
+8. **Perform optional structural cleanup afterward.** Filesystem grouping,
+   `default-members`, package consolidation, scenario topology, gate movement,
+   names, and documentation cleanup require STR9 evidence but are not
+   correctness prerequisites.
+
+Production topology, SLOs, isolation profiles, regional recovery,
+mixed-version rollout, external-client compatibility, custom-node versioning,
+MQTT/time-series, UI, edge, and economics remain deferred to their existing
+Beads. R51's deferred JetStream backup decision does not change the retained
+event architecture and does not become a current lossless-DR claim.
+
+### U.14 Coverage and decision routing
+
+Every architectural plane, ARC3 journey, authoritative state class,
+deployment responsibility, current public-contract family, trust/failure
+class, roadmap seam, and open Critical/High finding has an explicit verdict in
+sections U.2–U.13. Existing Beads cover the current defects and discriminating
+proofs; ARC11 found no new R/E/SR defect.
+
+One genuinely unresolved foundational owner choice was not represented:
+`wamn-4tob.1.39` now decides the trusted-service compute target and wasmCloud
+role, and blocks STR9. Its closure may authorize later canonical D17/D21/D23
+updates and implementation slices; it does not itself fix SR15, SR16, SR17,
+SR20, SR26, R42, or R53.
+
+The remaining production and post-POC decisions `.1.18`–`.1.38` are explicit
+deferrals and do not block expressing this development recommendation.
+Canonical `platform-plan.md`, `core-pivot-plan.md`, REVIEW, and RESTRUCTURE
+content remain unchanged by ARC11.
+
+---
+
 ## 0 — Status board
 
 Priority is (impact ÷ cost), not severity. **§1 comes first**: it is the
