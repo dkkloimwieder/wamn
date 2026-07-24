@@ -149,7 +149,11 @@ verdict / unknown bead:
 Missing product targets are not guessed. The initial granular owner decisions
 were:
 
-- `wamn-4tob.1.12` — supported tenant and deployment cardinality envelopes.
+- `wamn-4tob.1.12` — **decided for exploratory development:** no numeric
+  cardinality, topology, or runtime-placement commitment; correctness for
+  admitted finite load; visible fail-closed capacity exhaustion; and
+  hardware-specific measurement under `wamn-4tob.6.27`. Production
+  cardinality, topology, and unit economics are deferred to `.1.34`–`.1.36`.
 - `wamn-4tob.1.13` — end-to-end latency, throughput, backlog, and catch-up
   service objectives.
 - `wamn-4tob.1.14` — development availability, durability, degradation,
@@ -196,14 +200,16 @@ repository decomposition are the right means. It reviews the frozen source from
 provenance chain.
 
 **ARC1 verdict:** the product job and its controlling correctness invariants are
-clear enough to discriminate alternatives. Supported scale, service objectives,
-the production recovery envelope, isolation/compliance, and upgrade behavior
-remain owner decisions. The development recovery contract is now explicit:
-correctness outranks availability, no numeric availability or RTO applies,
-current T3 is development-only, and documented manual recovery under one
-general owner is acceptable (`wamn-4tob.1.14`). Architecture assessments may
-therefore give conditional verdicts against the scenarios below, but ARC11 must
-carry the explicit production deferrals rather than inventing their values.
+clear enough to discriminate alternatives. Production scale, service
+objectives, recovery, isolation/compliance, and upgrade behavior remain owner
+decisions. The development cardinality and recovery contracts are now
+explicit: correctness outranks availability; no numeric cardinality,
+availability, or RTO applies; the current T3 implementation is exploratory
+rather than an accepted topology; and documented manual recovery under one
+general owner is acceptable (`wamn-4tob.1.12/.1.14`). Architecture assessments
+may therefore give conditional verdicts against the scenarios below, but ARC11
+must carry the explicit production deferrals rather than inventing their
+values.
 
 ### B.1 Product job, actors, and trust assumptions
 
@@ -264,16 +270,19 @@ The current deployment taxonomy is a design hypothesis:
 | Class | Documented shape | Requirement status |
 |---|---|---|
 | Platform environment | One T1 HA control-plane database cluster per platform dev/staging/prod; tenant request paths should continue during T1 loss. | Specified qualitative failure boundary; numeric availability/durability is open (`docs/system-cluster.md:16-31`, `docs/system-cluster.md:47-57`). |
-| Trials / T3 | Multiple organizations share the current single-instance pool. | Owner-confirmed development topology, not a production durability or availability profile. CloudNativePG is the selected database operator so a later production topology can add the required replication, backup, failover, and recovery policy; that future contract is `wamn-4tob.1.24`. |
-| Standard / T2 | Organization-scoped prod/dev recovery domains; prod HA and backup-enabled, dev cheaper/hibernatable; canary may share prod. | Current placement policy, not a customer-certified SLO or isolation contract (`docs/provisioning.md:143-173`, `docs/deployment-model.md:351-367`). |
-| Dedicated or regulated / T4 | Project environments, including canary, may receive their own recovery domain. | Product option is named, but regulatory controls, data residency, operator trust, RPO/RTO, and price/cardinality assumptions are not set (`docs/deployment-model.md:241-261`). |
-| Edge/on-prem/air-gapped | Later distribution profile with MQTT first and OPC UA/Modbus/local HTTP at the edge. | Architectural seam only; supported topology, fleet count, offline duration, upgrade ownership, and recovery expectations remain unknown (`docs/platform-plan.md:118-131`). |
+| Trials / T3 | Multiple organizations share the current single-instance pool. | Current exploratory implementation, not an accepted development target or a production durability/availability profile. CloudNativePG remains the selected database operator; later topology and durability decisions are `.1.35` and `.1.24`. |
+| Standard / T2 | Organization-scoped prod/dev recovery domains; prod HA and backup-enabled, dev cheaper/hibernatable; canary may share prod. | Exploratory renderer and placement hypothesis, not an accepted target, customer-certified SLO, or isolation contract (`docs/provisioning.md:143-173`, `docs/deployment-model.md:351-367`). |
+| Dedicated or regulated / T4 | Project environments, including canary, may receive their own recovery domain. | Exploratory product/topology hypothesis. Regulatory controls, data residency, operator trust, RPO/RTO, and price/cardinality assumptions are unset (`docs/deployment-model.md:241-261`). |
+| Edge/on-prem/air-gapped | Later distribution profile with MQTT first and OPC UA/Modbus/local HTTP at the edge. | Architectural seam only; supported topology, fleet count, offline duration, upgrade ownership, recovery, and economics remain deferred (`docs/platform-plan.md:118-131`, `.1.34`–`.1.36`). |
 
 The topology note explicitly assumes organizations are few, paying, and able to
 absorb instance cost (`docs/postgres-topology.md:1-20`). That is a design input,
-not a product requirement. `wamn-4tob.1.12` must decide the supported
-cardinalities before ARC6 or ARC11 credits either per-project deployments or the
-four-tier topology for scale or cost.
+not a product requirement. The owner decision in `wamn-4tob.1.12` commits to no
+current topology or numeric envelope: T2/T3/T4, bounded cells, per-org,
+per-environment, resident per-project, pooled, leased, and scale-to-zero shapes
+remain exploratory. `wamn-4tob.6.27` must measure hardware-specific limits and
+prove visible fail-closed admission. Production cardinality, topology, and unit
+economics are `.1.34`–`.1.36`.
 
 ### B.3 Requirements, measurements, and unsupported extrapolations
 
@@ -300,6 +309,13 @@ not recorded (`docs/ceilings.md:357-372`, `docs/ceilings.md:658-679`). ARC1 give
 no architecture option credit for extrapolating any of these records beyond its
 captured workload.
 
+The owner decision adds a stricter interpretation: current results come from
+consumer hardware and are evidence only for the exact recorded hardware,
+cluster, artifact, and workload configuration. No organization, project,
+environment, active-workload, node, registration, route, site, or runtime
+placement limit is selected. `wamn-4tob.6.27` owns exploratory measurement and
+the overload proof; it does not establish a production promise.
+
 ### B.4 Quality-attribute scenarios
 
 The response measures below are the acceptance interface for later
@@ -319,7 +335,7 @@ the correctness gate while open.
 | QA8 | A flow definition or dispatcher attempts to give standard node A a capability declared only for standard node B. | The current flowrunner owns the union of standard-node capabilities and applies logical dispatch checks. A malicious standard-node maintainer remains inside that trusted component boundary. | Under the present trust hypothesis, the double checks refuse the misdispatch; if standard-node authors/code are adversarial, the architecture must instead create a structural boundary. | **Required:** zero disallowed dispatch from untrusted flow input. Whether logical containment is acceptable by class is an owner decision in `.15` (`docs/platform-plan.md:81-85`, `docs/node-library.md:111-123`). |
 | QA9 | T1 loses its primary or becomes unavailable while existing tenant APIs and flows are active. | T1 is authoritative for control-plane identity/saga state but excluded from tenant request paths; tenant databases/run state remain authoritative for live work. | Existing data-plane requests continue; provisioning, placement, and promotion fail closed/pause; acknowledged T1 mutations are either present after failover or a durability violation is declared and reconciled. Platform control-plane operator owns recovery. | **Required:** no tenant request-path dependency and no silent acknowledged registry loss. `.14` fixes the qualitative development boundary; production durability, availability, and RTO are `.24/.23/.22` (`docs/system-cluster.md:47-85`). |
 | QA10 | An operator restores/copies a corrupted project environment in trials, standard, or dedicated service. | Backup artifact/PITR point, source registry identity, and durable copy saga steps govern restore and cutover. | Restore to scratch by default; require explicit in-place confirmation; quiesce→snapshot→restore→verify→cutover; report recovered point, missing interval, and audit rewind; never append stale rows. DB/control-plane operator owns the operation. | **Required:** verified data/identity integrity and no unannounced loss. Existing gates prove mechanisms; production manual policy, ownership, RTO, durability, and isolation are `.20/.21/.22/.24/.15` (`docs/provisioning.md:699-785`, `docs/postgres-topology.md:325-331`). |
-| QA11 | Offered API, queue, or CDC load exceeds the supported sustained/burst envelope or a tenant creates a runaway backlog. | Each authoritative store must expose accepted work, backlog, age, and progress; lossy hints cannot become the authority. | Apply bounded backpressure or fail explicitly, preserve acknowledged work, contain noisy-neighbor impact to the promised class, alert before WAL/lease/retention safety is exhausted, and catch up within the contract. | **Required:** zero silent loss plus owner-set backlog age, drain time, throughput, and blast radius. C7/C-CDC only supply candidate shapes; `.12/.13/.19/.23/.24` own the production envelope. |
+| QA11 | Offered API, queue, or CDC load exhausts measured development capacity or a tenant creates a runaway backlog. | Each authoritative store must expose accepted work, backlog, age, and progress; lossy hints cannot become the authority. | Apply bounded backpressure or fail explicitly, preserve acknowledged work, contain noisy-neighbor impact to the measured scope, and alert before WAL/lease/retention safety is exhausted. | **Required now:** zero silent loss and visible fail-closed admission under `.12`; R54/`wamn-2jkm.100` owns the missing invariant and `.6.27` its measured thresholds/overload proof. C7/C-CDC remain candidate shapes. Product backlog/SLO and production cardinality/failure envelopes are `.13/.19/.23/.24/.34`. |
 | QA12 | A quiesced development release changes host/guest/service/WIT/event-wire/SQL contracts, or its rollout fails with active, parked, and scheduled runs. | One immutable release bundle plus persisted flow/catalog/event/executor identities and migration state determine compatibility and rollback/forward-fix. No concurrent old/new processing is promised. | Fence new admission, durably checkpoint or lease-recover active work, and require every retained record to be drained, read compatibly, or migrated. Commit only when the whole bundle is ready; otherwise reverse completely or remain quiesced and recover forward. | **Required:** zero silent state reinterpretation or acknowledged-work loss. N.7 is the development contract. R42/R53/SR17/SR26 and proofs `.6.6/.6.8/.6.25/.6.26` show it is not yet proven; production rollout, external clients, and custom nodes are `.1.31`–`.33`. |
 | QA13 | A component, operator credential, broker identity, replication role, observability store, or cluster is compromised in a regulated/dedicated environment. | Product-defined trust zones, credential scopes, encryption/residency controls, and audit authorities—not tier names—must bound access. | Prevent cross-tenant/plane escalation; revoke and rotate within a defined interval; preserve/produce tamper-evident evidence; notify affected tenants; contain recovery to the promised domain. | **Required:** zero access outside the declared domain and an explicit maximum blast radius. The baseline has no certified regulated contract; `.15` owns it and `.22` owns production recovery time. |
 
@@ -335,7 +351,7 @@ delivery speed:
 | Tenant, secret, artifact, and operator isolation | Default deny depends only on naming/list conventions, a shared credential crosses the accepted threat boundary, or a compromised component exceeds the deployment class's promised blast radius. | Pooled/per-org/per-env topology, runtime sandbox role, builder supply chain, and broker/account layout (ARC5/ARC6/ARC8). |
 | Event/log necessity | A broker adds an acknowledged state authority without a required replay/ordering/fan-out property, or a queue-only alternative cannot meet a stated event-log requirement. | CDC→JetStream vs outbox/direct Postgres/log/workflow alternatives (ARC7). |
 | Failure containment and recovery | A single tenant, slot, broker, primary, rollout, or operator mistake can create unbounded cross-tenant loss, or development recovery contradicts `.14` by depending on undocumented or unaccountable repair. | Topology, event plane, service placement, backup, and day-two design (ARC6/ARC7/ARC9). |
-| Scale and operability | Per-project/per-environment objects, pools, subscriptions, metrics, cold starts, or upgrades cannot fit `.12` and `.13`, or a claimed production operating model cannot satisfy `.20`–`.24`. | Runtime deployment unit, Postgres tiering, and scale-to-zero claims (ARC5/ARC6/ARC9). |
+| Scale and operability | Resource exhaustion is unmeasured or not refused safely under `.12/.6.27`, or a later production model cannot satisfy `.13`, `.20`–`.24`, and `.34`–`.36`. | Runtime deployment unit, Postgres placement, and scale-to-zero claims (ARC5/ARC6/ARC9). |
 | Evolution and upgrades | There is no compatible path for the version combinations, in-flight work, maintenance posture, rollback provenance, and state migration required by `.16`. | Runtime/fork role, contracts, roadmap seams, and target migration order (ARC5/ARC9/ARC10/STR5). |
 
 These tests deliberately do not assume that wasmCloud is the platform, that
@@ -360,8 +376,8 @@ from surviving a correctness-gate failure.
   workloads are not yet shown to be “nearly free” after CRDs, routes, secrets,
   pools, subscriptions, telemetry, reconciliation, cold starts, and upgrade
   fan-out. The proposed 100/1,000/10,000 campaign
-  (`docs/REVIEW-260723.md:373-399`) is a useful input to `.12`; it is not a
-  product scale requirement or completed measurement.
+  (`docs/REVIEW-260723.md:373-399`) is a useful input to `.6.27`; it is not a
+  product scale requirement, prescribed ladder, or completed measurement.
 - **Corroborated and made explicit in QA8:** standard-node isolation is logical
   within a trusted component, unlike the custom-node sandbox
   (`docs/REVIEW-260723.md:403-415`). This is not a newly proven exploit; `.15`
@@ -399,9 +415,9 @@ must distinguish roadmap intent from stale wording.
 
 | Bead | Missing owner requirement | Why it blocks an unconditional target |
 |---|---|---|
-| `wamn-4tob.1.12` | Supported organizations, projects, environments, active workloads, regional/edge installations, and other cardinality envelopes by deployment class. | Current 10,000-project addressability and small benchmark shapes do not establish supported production scale or unit economics. |
+| `wamn-4tob.1.12` | **Decided for exploratory development:** no numeric or topology commitment; correctness for admitted finite load; fail-closed measured capacity; current consumer-hardware results remain configuration-specific evidence. | Supplies the current correctness criterion without inventing scale. Measurement is `.6.27`; production cardinality, topology, and unit economics are `.1.34`–`.1.36`; regional recovery remains `.1.18`. |
 | `wamn-4tob.1.13` | End-to-end latency, sustained/burst throughput, backlog, catch-up, backpressure, payload, percentile, and error-budget objectives. | Development gates and measurement knees cannot be ranked as customer SLOs. |
-| `wamn-4tob.1.14` | **Decided for development:** correctness first; no numeric availability/RTO; T3 is development-only; CloudNativePG remains the database choice; no cross-region promise or event-outage threshold; documented manual recovery and one general owner are acceptable. | Supplies the current audit criterion without pretending that development manifests or guessed numbers are production promises. Granular production decisions are `wamn-4tob.1.18`–`.24`. |
+| `wamn-4tob.1.14` | **Decided for development:** correctness first; no numeric availability/RTO; the current T3 implementation is exploratory and development-only; CloudNativePG remains the database choice; no cross-region promise or event-outage threshold; documented manual recovery and one general owner are acceptable. | Supplies the current audit criterion without pretending that development manifests or guessed numbers are production promises. Granular production decisions are `wamn-4tob.1.18`–`.24`; target topology is `.1.35`. |
 | `wamn-4tob.1.15` | **Decided for development:** clients are isolated at platform API boundaries; the effective boundary is the authority available through narrowly exposed platform/WASI interfaces; trust and security are deferred. | Supplies the current correctness invariant without inventing a threat model or treating topology labels as security guarantees. Granular production decisions are `.1.25`–`.30`. |
 | `wamn-4tob.1.16` | **Decided for development:** quiesced single-version cutover; one atomic and reversible immutable release bundle; fenced admission; preservation of acknowledged work; drain/read/migrate treatment for every durable record; transactional migration or CNPG new-cluster recovery; fail-closed partial rollout; explicit breaking client changes. | Supplies the current correctness criterion without claiming concurrent mixed versions, zero downtime, or a production support window. Production rollout is `.1.31`, external-client compatibility is `.1.32`, and custom-node versioning is explicitly deferred to `.1.33`. |
 
@@ -1131,7 +1147,7 @@ implementation, not every possible design in that family.
 | **No acknowledged-write loss/corruption** | **Pass locally for async run+queue; conditional end to end.** Other journeys retain R34–R44. | **Same durable boundary.** Moving a worker into a Service does not change its transaction protocol. | **Can preserve the same PostgreSQL transaction exactly.** | **Pass only with one authority.** The engine append/history must own start, timer, retry, and completion acknowledgement; PostgreSQL orchestration rows must be projections/domain records, never peers. |
 | **Deterministic resumability** | **Pass for async resume.** Persisted flow version, occurrences, attempts, timers, leases, and queue policy reconstruct the run. Rerun remains planner-only. | **Same custom mechanism.** wasmCloud Services are long-running/stateful components, not a durable event history ([Services](https://wasmcloud.com/docs/overview/workloads/services/)). | **Same mechanism with fewer runtime layers.** | **Strong native fit.** Workflow replay and durable timers reconstruct execution, but workflow code must remain deterministic and version-compatible; external I/O belongs in retryable activities ([Temporal workflow determinism](https://docs.temporal.io/workflow-definition)). |
 | **Idempotent recovery** | **Conditional.** Stable occurrence keys exist; death after effect/before checkpoint repeats the effect. | **Same.** Component restart does not make external effects atomic. | **Same.** | **Conditional.** Even a durable engine retries an activity that performed an effect but did not report completion; the official guidance still requires idempotent activities ([Temporal activity idempotency](https://docs.temporal.io/activity-definition)). |
-| **Bounded failure/backpressure** | **Conditional.** Queue leases and project Deployments help, while shared runtime/plugin/broker scope and R42 weaken containment. | **Conditional.** The operator supplies workload reconciliation, `/scale`, EndpointSlices, and host pools ([operator overview](https://wasmcloud.com/docs/kubernetes-operator/operator-manual/overview/)); shared-host failure and per-tenant placement remain explicit choices. | **Best conventional containment.** Pod/service/node-host boundaries are visible; readiness removes unhealthy endpoints ([Kubernetes readiness](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes)). Backlog metrics/scaling still depend on `.1.12`/`.1.13`. | **Potentially strongest orchestration backpressure**, but adds another stateful service and tenant-partitioning/failure domain. Domain ordering still needs an explicit mapping. |
+| **Bounded failure/backpressure** | **Conditional.** Queue leases and project Deployments help, while shared runtime/plugin/broker scope and R42 weaken containment. | **Conditional.** The operator supplies workload reconciliation, `/scale`, EndpointSlices, and host pools ([operator overview](https://wasmcloud.com/docs/kubernetes-operator/operator-manual/overview/)); shared-host failure and per-tenant placement remain explicit choices. | **Best conventional containment.** Pod/service/node-host boundaries are visible; readiness removes unhealthy endpoints ([Kubernetes readiness](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes)). Backlog metrics and exploratory scaling evidence still depend on `.6.27`/`.1.13`. | **Potentially strongest orchestration backpressure**, but adds another stateful service and tenant-partitioning/failure domain. Domain ordering still needs an explicit mapping. |
 | **Safe upgrades/state migration** | **Fail as-is.** A DB-broken worker stays Ready, reviewed bytes do not identify invoked bytes, and Docker can package stale guest output (R42/R43/SR17). | **Conditional/unproven.** CRD status and restart do not prove lease drain, parked work, mixed host/guest compatibility, or old-capacity preservation. The fork remains if custom runtime behavior remains. | **Conditional.** Kubernetes supplies readiness and rollout mechanics, while wamn still owns WIT/SQL/IR compatibility and artifact pinning. It can remove `wash-runtime` from trusted service execution. | **Conditional with stronger primitives.** History/version routing can retain old code, but long-lived deterministic code, active-run migration, payload schemas, and engine upgrades become explicit contracts rather than disappearing. |
 
 Component-first wasmCloud cannot receive durable-execution credit merely by
@@ -1716,22 +1732,26 @@ row is added or closed merely because the proposal describes a target.
 This section is the ARC6 result for `wamn-4tob.1.6` at baseline
 `f10a008bd6dd466c8c98d5f45a10b2274876885d`. Repository claims are checked
 against source and current official PostgreSQL/CloudNativePG documentation.
-The repository has no fleet-scale or regional measurement, so the target below
-is a conditional architecture direction rather than a ratified capacity plan.
+The repository has no fleet-scale or regional measurement, so the alternatives
+below are evidence-ranked hypotheses rather than a ratified capacity plan.
 
-**Executive verdict: replace the four-tier topology as the target; amend D6
-and D18.** Retain a separate control-plane store, PostgreSQL as the durable
-core, CNPG as one revisitable deployment adapter, and policy-driven placement.
-Treat `trials`, `standard`, and `dedicated` as product presets, not physical
-tiers. The preferred default is a bounded tenant-data **cell** containing
-per-project databases and credentials; per-org and per-environment clusters are
-explicit isolation, recovery, residency, or change-window exceptions. T1 is a
-control plane, not a tenant tier.
+**ARC6 evidence verdict, now explicitly non-binding: the unbounded four-tier
+interpretation should not receive target credit; D6 and D18 require a later
+decision.** Retain a separate control-plane store, PostgreSQL as the durable
+core, CloudNativePG as the selected database operator, and policy-driven
+placement as evidence-backed seams. ARC6 ranked a bounded tenant-data cell
+above the measured alternatives under its assumed requirements, but the owner
+has selected no default or exception hierarchy.
 
-This direction is not final until `.1.12/.13` set cardinality and SLO/backlog
-requirements and ARC11 applies the accepted recovery, isolation, state, and
-upgrade contracts in N.6, M.6, F.6, and N.7. ARC11—not this section—will issue
-the canonical decision reset. Existing D6/D18 rows are not rewritten.
+`wamn-4tob.1.12` supersedes any target wording in this section: T2/T3/T4,
+bounded-cell, per-org, per-environment, resident per-project, pooled, leased,
+and scale-to-zero shapes are all exploratory. Current consumer-hardware results
+are configuration-specific evidence only. `wamn-4tob.6.27` owns measurement
+and fail-closed overload proof; `.1.34`–`.1.36` own future production
+cardinality, topology, and unit economics. `.1.13` remains the separate
+SLO/backlog decision. ARC11—not this section—will issue the canonical decision
+reset, and it must not adopt an exploratory shape as the target. Existing
+D6/D18 rows are not rewritten.
 
 ### J.1 Current topology and authority
 
@@ -1762,10 +1782,10 @@ Correctness eliminates a topology before cost or delivery speed ranks it.
 
 | Alternative | Isolation, recovery, and blast radius | Operations, movement, and cost | Verdict |
 |---|---|---|---|
-| **Current unbounded shared T3** | Shared login, one instance, no standing PITR, one upgrade/storage/WAL domain, and no maximum tenant or connection count. | Lowest nominal footprint; failure and contention radius grows without a capacity invariant. | **Replace.** |
-| **Bounded shared cells with per-project credentials** | Bounds a database, credential, backup, upgrade, and noisy-neighbor incident to an admitted cell of at most `K` active project-envs. Requires explicit connection/storage/WAL/restore limits and a durability policy. | Best default for operability, evolvability, infrastructure cost, and movement. A cell can drain/canary independently without one cluster per customer. | **Preferred conditional default.** |
-| **Per-org clusters** | Bounds data, upgrades, credentials, and recovery to an org; useful for contractual noisy-neighbor and shared-org recovery windows. | Cluster/replica/backup/reconciliation fan-out grows with org count. Moving one env still requires a data and authority cutover. | **Retain as an explicit placement class.** |
-| **Per-environment clusters** | Smallest data/recovery/change boundary and clearest regulated separation when backup, network, keys, and operators are also isolated. | Highest fleet and infrastructure cardinality; universal use would multiply pods/PVCs and upgrade work by environment count. | **Retain only for requirement-driven dedicated placement.** |
+| **Current unbounded shared T3** | Shared login, one instance, no standing PITR, one upgrade/storage/WAL domain, and no maximum tenant or connection count. | Lowest nominal footprint; failure and contention radius grows without a capacity invariant. | **Exploratory only; never a supported unbounded target.** |
+| **Bounded shared cells with per-project credentials** | Bounds a database, credential, backup, upgrade, and noisy-neighbor incident to an admitted cell of at most `K` active project-envs. Requires explicit connection/storage/WAL/restore limits and a durability policy. | ARC6 ranked it strongly for operability, evolvability, infrastructure cost, and movement under assumed requirements. | **Exploratory candidate; no owner preference.** |
+| **Per-org clusters** | Bounds data, upgrades, credentials, and recovery to an org; useful for contractual noisy-neighbor and shared-org recovery windows. | Cluster/replica/backup/reconciliation fan-out grows with org count. Moving one env still requires a data and authority cutover. | **Exploratory candidate.** |
+| **Per-environment clusters** | Smallest data/recovery/change boundary and clearest regulated separation when backup, network, keys, and operators are also isolated. | Highest fleet and infrastructure cardinality; universal use would multiply pods/PVCs and upgrade work by environment count. | **Exploratory candidate.** |
 | **Separate control and tenant stores** | Prevents a T1 incident or credential from entering tenant request paths and keeps tenant bytes out of the registry. | Requires stable application identity and explicit cutover between the stores. Kubernetes deployment state remains native to Kubernetes; it is not a T1 projection. This does not choose tenant cluster size. | **Keep.** |
 | **Managed PostgreSQL instead of CNPG** | Can supply stronger managed failure/backup operations, but does not itself solve role, cell, placement, or cross-store identity defects. | Trades Kubernetes/operator work for provider APIs, regional constraints, cost, and migration adapters. No repository evidence currently selects a provider. | **Keep as a revisitable adapter, not a target conclusion.** |
 
@@ -1807,15 +1827,18 @@ checked-in measurement is one 16-connection host pool at 20,427 qps/p99
 capacity.
 
 Physical cluster count is likewise a requirement function, not a project-count
-constant: bounded cells need `ceil(E/K)` clusters; per-org placement needs
-`O × R` recovery domains (current standard `R=2`, dedicated `R=3`); universal
-per-env placement needs `E`. `.1.12` must set `O`, `E`, and permissible `K`;
-`.1.13` must set connection, backlog, and throughput budgets. Until then, no
-tier receives a supported-scale claim.
+constant: bounded cells would need `ceil(E/K)` clusters; per-org placement
+would need `O × R` recovery domains (current standard `R=2`, dedicated `R=3`);
+universal per-env placement would need `E`. The owner has selected no `O`, `E`,
+`K`, independent scalability obligation, or product count. `.6.27` must discover
+relevant limits and interactions on the recorded consumer hardware; `.1.34`
+later owns production envelopes. No tier receives a supported-scale claim.
 
-### J.4 Target placement and safe movement
+### J.4 Candidate placement constraints and safe movement
 
-The target hypothesis has these load-bearing rules:
+The former target hypothesis is retained only as a candidate for `.1.35`, not
+as accepted design. If a related placement is selected later, these
+load-bearing correctness rules apply:
 
 1. T1 owns semantic `(org, project, env)` identity, placement intent, policy,
    generation, and reconciliation receipts—not tenant bytes, tenant
@@ -1823,15 +1846,15 @@ The target hypothesis has these load-bearing rules:
 2. Physical `placement_id`, cell/cluster identity, region, durability mode,
    credential mode, and desired/observed generation are stored values. They are
    not reconstructed from mutable names.
-3. The default is one database and one runtime login per project-env in a
-   bounded cell. Migration/ownership, dispatcher, CDC, and maintenance roles
-   are separately scoped.
+3. A bounded-cell candidate uses one database and one runtime login per
+   project-env. Migration/ownership, dispatcher, CDC, and maintenance roles are
+   separately scoped.
 4. Cell admission is limited by measured active connections, storage/WAL,
    backup/restore duration, failover, and active-tenant load. Noisy tenants move
    before a bound is breached.
-5. Per-org placement is selected for contractual isolation, recovery,
-   residency, performance, or change windows. Per-env placement additionally
-   requires independent recovery/key/network/operator boundaries.
+5. Per-org and per-env candidates require explicit isolation, recovery,
+   residency, performance, change-window, key, network, and operator
+   requirements; neither is selected by name alone.
 6. A dedicated/regulated promise covers object storage, broker identities,
    Secrets, operators, and recovery—not only Postgres pods.
 7. Routing changes only after the target resource reports the expected applied
@@ -1872,11 +1895,13 @@ application/schema behavior; `.1.31` owns any production mixed-version promise.
 | **R46** | Critical | Every rendered multi-instance cluster uses asynchronous failover. Automatic promotion can omit an acknowledged commit, violating the audit's durability gate. | `wamn-2jkm.86`; proof `wamn-4tob.6.13`; recovery contract `.1.14`. |
 | **R47** | High | One MinIO root credential is used by every WAL archive, logical dump, and Loki workload. A single compromise spans recovery and observability domains. | `wamn-2jkm.87`; proof `wamn-4tob.6.14`; production isolation profile `.1.26`. |
 | **R48** | High | Standing T1/T3 manifests have no WAL/PITR resources despite documentation calling that recovery path shipped. | `wamn-2jkm.88`; proof `wamn-4tob.6.15`. |
+| **R54** | High | The exploratory deployment has no authoritative, measured capacity budget or atomic capacity reservation. It can continue allocating or activating project-scoped resources until an independent downstream limit fails, contradicting the owner-set fail-closed development contract. | `wamn-2jkm.100`; proof `wamn-4tob.6.27`; contract `.1.12`. |
 
 Existing R28 remains the cluster-wide CDC credential owner; R34, R40, and R41
 retain convergence, copy, and restore ownership. `wamn-q3n.12` is only the
-pool-pressure metric/escalation seam. None of these findings closes because a
-target topology is proposed.
+pool-pressure metric/escalation seam; it does not supply R54's compound
+admission authority. None of these findings closes because a target topology
+or measurement plan is proposed.
 
 ---
 
@@ -2424,8 +2449,9 @@ development SLO. The owner-set development recovery and upgrade contracts are
 in N.6 and N.7. Production
 availability, RTO, regional recovery, event-outage policy, manual-recovery
 boundaries, recovery ownership, and acknowledged-write durability are
-explicitly deferred to `.1.18`–`.24`; `.1.12/.1.13` own cardinality and
-capacity.
+explicitly deferred to `.1.18`–`.24`; `.1.12/.6.27` own exploratory
+development admission and measurement, `.1.13` owns performance objectives,
+and `.1.34` owns production cardinality.
 
 **Executive verdict: amend; day-two architecture is incomplete.** PostgreSQL
 transactions, queue leases, idempotent dispatcher writes, reader refusal on a
@@ -2446,7 +2472,7 @@ within owner-selected bounds.
 | **T1 primary failure** | CNPG instance/replica state. Three instances use asynchronous replication and best-effort spread (`deploy/platform/wamn-sysdb.yaml:35-45`). | CNPG automatically promotes; operator then reconciles registry/saga intent, for which no observed-generation reconciler exists (R34). | Acknowledged-write RPO is non-zero/**U** (R46, proof `.6.13`); RTO **U**. CNPG documents that asynchronous failover can lose writes and that failover quorum trades availability for safe promotion ([CNPG failover](https://cloudnative-pg.io/documentation/current/failover/)). |
 | **Total T1 loss** | Cluster/PVC absence and failed control verbs. | Database expert. The standing manifest has no ObjectStore/ScheduledBackup; the documented PITR path is deferred to reprovision (`docs/postgres-topology.md:292-316`). | RPO/RTO **U**, expert/manual, **C** to a credible standing restore path: R48/proof `.6.15`. |
 | **T2/T4 primary failure** | CNPG status plus reader disconnect/preflight. Separate org/env clusters bound the database incident, but every renderer uses asynchronous failover (`crates/wamn-provision/src/org.rs:144-169,182-227`). | Database operator; automatic promotion followed by explicit logical-slot readiness verification before CDC resumes. | Acknowledged-write RPO non-zero/**U** (R46); RTO **U**. |
-| **T3 primary, node, or PVC loss** | Pod/CNPG/connection failure. One instance and one PVC serve all admitted pooled trials (`deploy/infra/cnpg-cluster.yaml:22-48`). | Kubernetes can restart against a surviving PVC; node/PVC loss needs a restore/rebuild that is not standing. | Owner-confirmed **development-only** topology. No production HA/durability claim; no numeric RTO. CloudNativePG remains the production database operator, but the extended topology and failure envelope are deferred to `.1.24`. |
+| **T3 primary, node, or PVC loss** | Pod/CNPG/connection failure. One instance and one PVC serve all admitted pooled trials (`deploy/infra/cnpg-cluster.yaml:22-48`). | Kubernetes can restart against a surviving PVC; node/PVC loss needs a restore/rebuild that is not standing. | Exploratory **development-only implementation**, not an accepted topology. No production HA/durability claim or numeric RTO. CloudNativePG remains the database operator; target topology and failure envelope are deferred to `.1.35/.1.24`. |
 | **Logical slot after promotion** | Reader preflight checks existence, active state, confirmed position, and `wal_status`; missing/lost refuses rather than silently recreating (`crates/wamn-cdc-reader/src/lib.rs:35-48,461-490,650-705`). | Database/event operator verifies the synchronized slot and standby position; otherwise re-enables capture and explicitly assesses the gap/backfill. | RPO can be zero only for a ready slot with retained WAL; otherwise gap **U**. RTO **U**. PostgreSQL says slot synchronization is asynchronous and readiness must be verified ([logical replication failover](https://www.postgresql.org/docs/current/logical-replication-failover.html)). Existing R29 owns reconciliation. |
 | **One JetStream node lost** | NATS health, leader/quorum advisories, and stream state. The R3 three-node cluster has preferred anti-affinity; the gate proves one node deletion only (`deploy/infra/nats-jetstream.yaml:21-22,105-196`). | RAFT elects with intact quorum; event operator replaces the peer if needed. | Product RPO/RTO **U**. A three-replica group needs two available replicas ([JetStream clustering](https://docs.nats.io/running-a-nats-service/configuration/clustering/jetstream_clustering)). |
 | **JetStream quorum unavailable** | Publish retries/stall records and quorum-lost advisory. The reader withholds source feedback, so source WAL grows; the blast crosses broker and source database. | Event operator restores quorum without dropping the logical slot. | Zero event RPO only while the slot remains valid; configured WAL buffer is 1 GiB (`deploy/infra/cnpg-cluster.yaml:54-63`). No development outage-duration or capacity promise; `.1.19` owns the measured production policy and `.6.18` compares fewer-authority alternatives. |
@@ -2473,7 +2499,7 @@ within owner-selected bounds.
 | **Copy/move crash or operator error** | Saga log only; no per-effect durable receipt. R40 can report completion without serving cutover. | Expert inspects source/destination/T1/Secrets, compensates, or forward-fixes. Target move must fence source, attest destination, atomically advance placement generation/credentials, and keep a read-only rollback window. | R40/proof `.6.5`; RPO/RTO **U**, `wamn-2ib` owns orchestration. |
 | **In-place restore error** | CLI/`pg_restore` failure; no traffic fence or readiness attestation. | Restore to scratch, validate, then controlled cutover. Current confirmed `--clean` against a live DB remains unsafe. | R41/proof `.6.5`; chosen restore-point RPO and RTO **U**. |
 | **Destructive catalog migration with asserted backup** | The CLI converts `--confirm-with-backup` directly to a boolean confirmation and checks no backup ID, scope, completion, integrity, or restore health (`crates/wamn-ctl/src/migrate_catalog.rs:68-71,97-107,400-406`). | Project database operator restores from an actually valid checkpoint or forward-fixes; the command cannot currently name one. | **I, High:** irreversible drops/retypes can commit without usable recovery evidence. R52/proof `.6.24`; owner target `.1.14`. |
-| **Bounded-cell failure/movement** | Target cell admission, placement generation, and recovery metrics do not yet exist. | Placement/control and database operators follow the fenced movement protocol in J.4 after cell bounds are selected. | Entire RPO/RTO/admission envelope **U** under `.1.12`–`.1.17`; target design receives no shipped credit. |
+| **Bounded-cell failure/movement** | Candidate cell admission, placement generation, and recovery metrics do not yet exist. | If `.1.35` later selects cells, placement/control and database operators follow the fenced movement protocol in J.4 after measured bounds are selected. | Current exploratory admission evidence is **U** under `.6.27`; production RPO/RTO/cardinality remain `.1.18`–`.1.24/.1.34`. The candidate receives no shipped or target credit. |
 
 F.6 keeps the current WAL → JetStream → materializer path, so broker and
 consumer recovery remain part of this matrix. The direct-PostgreSQL alternative
@@ -2531,7 +2557,7 @@ canonical state-authority decision rather than duplicating these requirements.
 - **Cardinality:** no 100/1,000/10,000-project measurement exists for
   reconciliation time, Kubernetes/etcd objects, NATS consumers, rollout
   duration, cold-start tail, or idle cost. Route those unknowns to
-  `.1.12/.1.13` and STR7; do not infer a fleet limit from local gates.
+  `.6.27/.1.13/.1.34` and STR7; do not infer a fleet limit from local gates.
 
 Runtime forks are therefore owned product subsystems while they remain. Safe
 upgrade requires per-patch negative conformance, immutable deployed
@@ -2545,7 +2571,7 @@ mixed-version production is a separate decision in `.1.31`.
 
 | ID | Sev | Finding and consequence | Bead / proof |
 |---|---:|---|---|
-| **R50** | High | JetStream advertises 3 GB file capacity per server on a 1 GiB PVC, while event streams have no byte/time growth bound. Physical fill can stall publication, exhaust source WAL, and invalidate capture before the declared broker limit. | `wamn-2jkm.90`; proof `wamn-4tob.6.22`; production requirements `.1.12/.13/.19/.24`. |
+| **R50** | High | JetStream advertises 3 GB file capacity per server on a 1 GiB PVC, while event streams have no byte/time growth bound. Physical fill can stall publication, exhaust source WAL, and invalidate capture before the declared broker limit. | `wamn-2jkm.90`; proof `wamn-4tob.6.22`; exploratory measurement `.6.27`; production requirements `.1.13/.19/.24/.34`. |
 | **R51** | High | No event-plane snapshot/restore path exists after PostgreSQL feedback advances on broker ACK. Total broker-PVC loss can permanently lose acknowledged but unmaterialized events that source WAL no longer retains. | `wamn-2jkm.91`; proof `wamn-4tob.6.23`; authority `.1.17`; alternative `.6.18`. |
 | **R52** | High | Destructive migration authorizes drops/retypes from an unaudited boolean backup assertion. No checkpoint identity, scope, completion, integrity, health, or restore evidence is verified before commit. | `wamn-2jkm.92`; proof `wamn-4tob.6.24`; recovery contract `.1.14`. |
 | **R53** | High | A run pins its flow version but not the trusted executor/component/config contract required to interpret and resume persisted state. A queued, parked, or expired-lease run can therefore resume after an atomic release on incompatible bytes without a deterministic pre-effect refusal. | `wamn-2jkm.99`; proof `wamn-4tob.6.26`; development contract `.1.16`. |
@@ -2611,13 +2637,13 @@ The deployment/plane overlay is:
 | Scope | Current recovery verdict | Permitted degradation and fail-closed behavior | Deferred production decision |
 |---|---|---|---|
 | **T1 control plane** | Existing tenant request paths may continue only because they are architecturally independent of T1; provisioning, placement, promotion, and control operations pause on uncertain authority. Current async failover and absent standing restore remain unproven for production. | Never promote or publish from uncertain registry/saga state merely to remain available. Manual development reconciliation is allowed and must be attributable. | In-region durability `.1.24`; availability/RTO `.1.22/.23`; ownership `.1.21`. |
-| **T3 tenant data plane** | The checked-in one-instance/one-PVC pool is development-only. Kubernetes restart with a surviving PVC is supported mechanism evidence; node/PVC loss is outside any production promise. | The environment may remain unavailable or be rebuilt; its limitations must be explicit and must not be marketed as durable production service. | CloudNativePG is retained; production replica/backup/failover/RPO design is `.1.24`. |
-| **T2/T4 standard, dedicated, or regulated shapes** | These are production topology candidates, not current service promises. Dedicated placement does not itself create a stronger recovery contract. | No stale promotion or hidden loss receives availability credit. | Durability `.1.24`; isolation profiles `.1.26`; availability/RTO `.1.22/.23`; manual/owners `.1.20/.21`. |
+| **T3 tenant data plane** | The checked-in one-instance/one-PVC pool is an exploratory development implementation, not an accepted topology. Kubernetes restart with a surviving PVC is mechanism evidence; node/PVC loss is outside any production promise. | The environment may remain unavailable or be rebuilt; its limitations must be explicit and must not be marketed as durable production service. | CloudNativePG is retained; production topology is `.1.35` and replica/backup/failover/RPO design is `.1.24`. |
+| **T2/T4 standard, dedicated, or regulated shapes** | These are exploratory topology candidates, not current service promises or accepted targets. Dedicated placement does not itself create a stronger recovery contract. | No stale promotion or hidden loss receives availability credit. | Topology `.1.35`; durability `.1.24`; isolation profiles `.1.26`; availability/RTO `.1.22/.23`; manual/owners `.1.20/.21`. |
 | **CDC and JetStream event plane** | No time-based outage buffer, WAL-capacity safety threshold, or admission policy is selected during development. | A slot invalidation or capture gap must be explicit and must not be represented as lossless delivery. Documented manual repair/backfill assessment is allowed. | `wamn-4tob.1.19`. |
 | **Flow execution and external effects** | Durable run/queue recovery remains required where promised; a non-idempotent effect with an unobserved outcome remains explicitly ambiguous. | Never infer success or exactly-once effect delivery. Manual reconciliation with the external system is acceptable during development. | Automation boundary `.1.20`; ownership `.1.21`; durability `.1.24`. |
 | **Backup, restore, copy, and migration** | Existing mechanisms are evidence, not cadence/RPO/RTO promises. Manual scratch restore, validation, and explicit reconciliation are acceptable. | Refuse or visibly fail when checkpoint identity, integrity, compatibility, or recovered point cannot be proven; do not silently treat an operator boolean as recovery evidence. | `.1.20/.1.22/.1.24`, with development migration compatibility in N.7. |
 | **Whole region** | No cross-region availability, durability, or recovery promise. | Stay unavailable rather than promote an unverified or stale regional authority. | `wamn-4tob.1.18`. |
-| **Edge/on-prem** | No recovery profile is offered at this stage. | Offline authority, backup, upgrade, and operator behavior remain unsupported rather than guessed. | Cardinality/deployment `.1.12`, isolation `.1.26`, residency/regulation `.1.28`, development compatibility N.7, production/custom-node compatibility `.1.31/.33`, and recovery `.1.18`–`.24` as applicable. |
+| **Edge/on-prem** | No recovery profile is offered at this stage. | Offline authority, backup, upgrade, operator behavior, fleet scale, and economics remain unsupported rather than guessed. | Production cardinality/topology/economics `.1.34`–`.1.36`, isolation `.1.26`, residency/regulation `.1.28`, development compatibility N.7, production/custom-node compatibility `.1.31/.33`, and recovery `.1.18`–`.24` as applicable. |
 
 The seven production deferrals are granular and unclaimed:
 `wamn-4tob.1.18` regional recovery, `.1.19` CDC/broker outage policy, `.1.20`
@@ -2831,6 +2857,13 @@ deferred. No roadmap feature rescues a design that loses acknowledged work,
 crosses a tenant boundary, resumes against different bytes, or cannot bound its
 failure and object cardinality.
 
+The owner cardinality decision adds that no topology, runtime placement,
+cardinality, fleet count, or unit-economics target is selected during
+exploratory development. Consumer-hardware measurements are
+configuration-specific evidence. Development must refuse measured capacity
+exhaustion visibly and safely (`.1.12/.6.27`); production cardinality,
+topology, and economics remain `.1.34`–`.1.36`.
+
 ### P.1 Controlling evolution invariants
 
 Every retained alternative must provide:
@@ -2842,8 +2875,9 @@ Every retained alternative must provide:
 3. deterministic resume from pinned flow, executor, component, configuration,
    and contract identities;
 4. stable idempotency identity across retry, replay, failover, and restore;
-5. separately bounded component, pod, route, resident-object, database, and
-   broker cardinalities; and
+5. measured resource ceilings and fail-closed admission across component, pod,
+   route, resident-object, database, and broker dimensions, without inventing
+   product counts; and
 6. readiness-gated mixed-version upgrades that retain old working capacity
    through cutover and rollback.
 
@@ -2865,14 +2899,14 @@ surviving target after F.6.
 | **External authentication and authorization** | `app_system` user/role/permission/API-key tables are substrate, not an identity provider. The Postgres plugin injects trusted claims, while the gateway has no caller identity (`deploy/sql/app-schema.sql:1-46,57-139,185-213`; `docs/api-gateway.md:107-115`). | **Deferred implementation; seam required now.** Tenant/project/environment comes from trusted route/deployment state, caller identity from an authenticated provider, and RLS remains the final boundary. External and internal credentials, signatures, revocation, and rotation are separate contracts. | Caller-controlled headers select a victim tenant, or stale cached authorization survives revocation. | Required by H/C/K/W. `wamn-0xd`, `wamn-sbh`, `wamn-117`, current client boundary M.6, production trust/credentials `.1.25/.1.27`, upgrade `.1.16`. Custom-node HMAC is not caller authentication. |
 | **Machine flow ingress** | There is no production owner for route-to-tenant/flow resolution or a versioned invocation contract. The F1 POC combines route lookup, run SQL, graph walking, and dispatch (`components/poc-webhook-f1/src/lib.rs:1-26,67-110`). | **Obstructed for production; owner priority undecided.** Keep ingress thin and one canonical executor. Define trusted route binding, stable delivery identity, sync/async acknowledgement, deadline/cancellation, independently authenticated ingress-to-executor traffic, and retention. | Host dies after effect or write-ahead; retry creates a second run while the first unqueued run has no recovery owner. | H/C may use component ingress, K native ingress, W its single workflow authority; transport is intentionally undecided. `wamn-fqg.39`, R36/R37, proof `.6.3`, M.6, `.1.16/.1.17`, `.1.25/.1.27`, STR5. |
 | **Saga control-plane API** | `provisioning.sagas` stores one saga status/step while ctl commands currently cross Postgres, Kubernetes, Secrets, object storage, dumps, and cutover state (`deploy/sql/system-schema.sql:263-293`; `docs/provisioning.md:824-838`). | **Obstructed, active.** Do not turn PostgreSQL into a Kubernetes operation journal. Kubernetes owns deployment, Job retry, rollout, readiness, and reconciliation; Secret and object systems own their operations. A future API may durably own only genuine Wamn business operations and narrow native references, with explicit idempotency at each boundary. | A command crosses systems and dies; retry conflicts, skips an application transition, or reports success before the native owner reports readiness. | ARC11 must reassess the existing saga rows and `wamn-2ib` under F.6. R34/R40/R41 and proofs `.6.1/.6.5` retain current defects; development recovery `.1.14`, production recovery `.1.20`–`.24`, and compatibility `.1.16` still apply. |
-| **Multi-region placement** | Registry policy has pooled/dedicated placement but no stable cell/region, placement generation, durability mode, or observed readiness (`crates/wamn-registry/src/types.rs:123-161,243-305`). | **Deferred implementation; no current promise.** Preserve a data-driven placement axis, then require one write authority, source fencing, desired/observed generations, readiness-gated route cutover, capture timeline/epoch, and rollback window if `.1.18` later selects a regional contract. | Source and destination both accept writes, routes disagree, or restored CDC history reuses identity during a move/failover. | D17 can reopen component posture for a demonstrated regional/edge need; K uses conventional cells; W does not solve data placement. Regional decision `.1.18`, plus `.1.12/.1.16/.1.17/.1.26/.1.28`, R34/R40/R41, ARC11. |
-| **Metering and billing** | OTel/Prometheus metrics are derived observability; there is no billing-event authority or durable usage ledger (`docs/metrics.md:28-48`; `docs/dashboards.md:88-120`). | **Deferred.** Preserve resource and tenant identity now. Billing later needs a durable append-only usage identity, idempotent aggregation, correction/reversal audit, and retention; metrics remain projections. | Restarts reset counters, scrape loss undercounts, replay double-counts, or tenant/project identifiers are mapped to the wrong billable org. | Runtime-neutral. `wamn-7r2`, `wamn-ax7`, M.6, `.1.12/.1.13/.1.17/.1.30`. Prometheus itself says it is unsuitable when per-request billing requires complete accuracy ([official overview](https://prometheus.io/docs/introduction/overview/#when-does-it-not-fit)). |
-| **Industrial connectors and edge execution** | Nothing is deployed. Useful existing seams are the frozen node WIT, bounded payload-reference direction, stable idempotency keys, and partition ordering (`docs/wamn-node.wit:1-23,39-87`; `docs/platform-plan.md:118-131`). | **Deferred; no current implementation debt.** Preserve bounded, watermark-resumable segment identity, one local/cloud owner for each cursor, conflict policy, credential rotation, storage limits, and offline upgrade/recovery contracts. | Offline backlog is unbounded, a mid-upload crash loses/repeats an interval, or cloud and edge independently advance one cursor. | Choose C/K/W only from future requirements. `wamn-4ry`, `wamn-dns`, `wamn-02q`, `wamn-6mg`, `wamn-hlf`, `wamn-zbt`, `.1.12`–`.1.16`. |
+| **Multi-region placement** | Registry policy has pooled/dedicated placement but no stable cell/region, placement generation, durability mode, or observed readiness (`crates/wamn-registry/src/types.rs:123-161,243-305`). | **Deferred implementation; no current promise.** Preserve a data-driven placement axis, then require one write authority, source fencing, desired/observed generations, readiness-gated route cutover, capture timeline/epoch, and rollback window if `.1.18` later selects a regional contract. | Source and destination both accept writes, routes disagree, or restored CDC history reuses identity during a move/failover. | D17 can reopen component posture for a demonstrated regional/edge need; no topology is selected now. Regional decision `.1.18`, production cardinality/topology `.1.34/.1.35`, plus `.1.16/.1.17/.1.26/.1.28`, R34/R40/R41, ARC11. |
+| **Metering and billing** | OTel/Prometheus metrics are derived observability; there is no billing-event authority or durable usage ledger (`docs/metrics.md:28-48`; `docs/dashboards.md:88-120`). | **Deferred.** Preserve resource and tenant identity now. Billing later needs a durable append-only usage identity, idempotent aggregation, correction/reversal audit, and retention; metrics remain projections. | Restarts reset counters, scrape loss undercounts, replay double-counts, or tenant/project identifiers are mapped to the wrong billable org. | Runtime-neutral. `wamn-7r2`, `wamn-ax7`, M.6, `.1.13/.1.17/.1.30`, and unit economics `.1.36`. Prometheus itself says it is unsuitable when per-request billing requires complete accuracy ([official overview](https://prometheus.io/docs/introduction/overview/#when-does-it-not-fit)). |
+| **Industrial connectors and edge execution** | Nothing is deployed. Useful existing seams are the frozen node WIT, bounded payload-reference direction, stable idempotency keys, and partition ordering (`docs/wamn-node.wit:1-23,39-87`; `docs/platform-plan.md:118-131`). | **Deferred; no current implementation debt.** Preserve bounded, watermark-resumable segment identity, one local/cloud owner for each cursor, conflict policy, credential rotation, storage limits, and offline upgrade/recovery contracts. | Offline backlog is unbounded, a mid-upload crash loses/repeats an interval, or cloud and edge independently advance one cursor. | Choose a runtime only from future requirements. `wamn-4ry`, `wamn-dns`, `wamn-02q`, `wamn-6mg`, `wamn-hlf`, `wamn-zbt`; production cardinality/topology/economics `.1.34`–`.1.36`; exploratory measurement `.6.27`. |
 | **UI, schema, and flow designers** | Versioned catalog, flow, test-suite, and manifest contracts already own the domain state; no UI deployable exists (`crates/wamn-catalog/src/lib.rs:1-21`; `docs/flow-schema.md:125-159`; `crates/wamn-node-manifest/src/lib.rs:60-103`). | **Deferred; directionally supported.** A UI is a replaceable client: server-side canonical validation/diff, immutable versions, optimistic base-version refusal, and an explicit unknown-field round-trip policy are the seam. | Two stale editors overwrite one applied version, or an older client silently drops additive fields. | Runtime-neutral. `wamn-ivi`, `wamn-8wg`, `wamn-ma5`, `wamn-srz`, `.1.16`, STR5. No UI debt is created. |
 | **Third-party and custom nodes** | Intended authority is an OCI digest/signature/SBOM plus `wamn.node.manifest`; execution currently mounts unrelated ConfigMap bytes into a native `serve-node` Deployment/Service. `wamn:node@0.1.0` is frozen (`deploy/platform/serve-node.yaml:1-27,43-152`; `docs/wamn-node.wit:1-23`). | **Obstructed for production-grade claims; versioning deferred.** Pin and verify the exact artifact before load, derive capabilities from imports, scope credentials/routes, and fail an unproven resume before effects. `.1.33` must choose artifact/WIT/invocation versioning and per-flow versus platform-wide containment rather than this audit inventing it. | A resumed run invokes replacement bytes or a different WIT, reviewed and invoked artifacts diverge, or node endpoints collide. | All alternatives retain a narrow untrusted-code sandbox. `wamn-fqg.21/.23/.27/.28`, R43, SR15–SR17/SR22, proofs `.6.7/.6.8`, M.6, `.1.12/.1.25`–`.27`, and `.1.33`. |
 | **Long-term contract versioning** | Catalog, flow, event, and WIT contracts have local rules and drift tests. N.7 now supplies a system-wide development cutover rule, but the implementation does not pin executor/component identity or prove every persisted producer/consumer pair; custom-node policy is deferred (`docs/flow-schema.md:133-141`; `docs/event-plane-jetstream.md:67-79`; `crates/wamn-node-manifest/src/lib.rs:73-80`). | **Owner direction set; implementation obstructed.** Use one atomic same-release bundle for internal development contracts and require every retained record to drain, read compatibly, or migrate. Add immutable artifact identity, refusal fixtures, readiness cutover, and rollback/forward-fix proof. | A new worker consumes an incompatible event/flow shape, or a parked run resumes on incompatible bytes after rollout or rollback. | Mandatory for H/C/K/W. N.7, `.1.17/.31`–`.33`, STR5, R42/R53, SR17/SR20/SR26, ARC11. |
 
-### P.3 Cardinality is six separate questions
+### P.3 Cardinality has multiple experimental variables
 
 The external review correctly challenges the idea that a per-project component
 is free, but component count must not be substituted for every other resource
@@ -2883,7 +2917,8 @@ may still share host pods.
 
 Let `P` be project-environments, `T` tenant scopes per environment, `N`
 custom-node/project pairs, `R` event registrations, `F` public flow routes, and
-`Q` saga operations:
+`Q` saga operations. These are descriptive measurement variables, not
+owner-set independent scalability obligations or supported limits:
 
 | Shape | Component instances | Pods/hosts | Services/routes | Resident objects | Durable database/event objects |
 |---|---:|---:|---:|---:|---:|
@@ -2898,29 +2933,35 @@ custom-node/project pairs, `R` event registrations, `F` public flow routes, and
 Thus “one component per project” does not mean one pod, but today's design
 independently adds a workload object, Service/route, cached catalog/pool,
 runner Deployment, database, and event-plane objects. No 100/1,000/10,000
-fleet campaign establishes their ceilings. `wamn-4tob.1.12` must bound each
-axis independently.
+fleet campaign establishes their ceilings. `wamn-4tob.1.12` deliberately sets
+no axis limit at this exploratory stage. `wamn-4tob.6.27` must discover the
+relevant bottlenecks and interactions on the exact recorded consumer hardware;
+`.1.34` owns later production envelopes.
 
-The proposed infrastructure freeze is retained only as an **admission rule**:
+The infrastructure guard is retained only as a development **admission rule**:
 each new durable authority, protocol, fork patch, or project-scoped
 Kubernetes/broker/database object must name its owner, cardinality, correctness
-proof, and removal or simplification path. A blanket freeze would pre-decide
-legitimate ingress, regional, billing, and edge requirements.
+proof, and removal or simplification path. Measured exhaustion must fail
+closed, but the threshold remains exploratory. R54/`wamn-2jkm.100` owns the
+current missing invariant after `.6.27` supplies evidence. A blanket freeze
+would pre-decide legitimate ingress, regional, billing, and edge requirements.
 
 ### P.4 Routing and decision result
 
 - Hot reload remains with `wamn-32n` plus R35 and its proof; generic ingress
   remains with `wamn-fqg.39` plus R36/R37 and their proof.
-- The owner decisions `wamn-4tob.1.12` through `.1.17` remain the requirement
-  boundary for cardinality, SLOs, recovery, trust, mixed-version compatibility,
-  and state authority. ARC10 does not silently decide them.
+- `wamn-4tob.1.12` now supplies the exploratory development cardinality and
+  fail-closed admission contract. `.1.13`–`.1.17` remain the other owner
+  requirement boundaries; production cardinality, topology, and unit economics
+  are deferred to `.1.34`–`.1.36`. ARC10 does not silently decide them.
 - OpenAPI/GraphQL, saga control, metering/billing, and custom-node work retain
   their existing owners. UI, edge, human-auth, and multi-region implementation
   stay parked; no speculative delivery beads are created.
 - Candidate generated-spec skew, billing undercount, node-version mismatch,
-  regional split brain, offline-edge replay, and ingress duplicate/orphan
-  cases deduplicate to R34–R43, SR17, `.1.12`–`.1.17`, and existing proof
-  issues. ARC10 therefore mints no new finding.
+  regional split brain, offline-edge replay, ingress duplicate/orphan, and
+  capacity-exhaustion cases deduplicate to R34–R43, SR17, `.1.12`–`.1.17`,
+  `.1.34`–`.1.36`, `.6.27`, and existing proof issues. ARC10 therefore mints
+  no new finding.
 
 No implementation or live gate ran. This is a source and contract assessment;
 it neither proves deployed artifact provenance nor represents any open
@@ -3414,6 +3455,7 @@ prerequisite that makes everything else findable.
 | R51 | Event-plane disaster recovery is absent after source feedback advances | High | open | wamn-2jkm.91; proof wamn-4tob.6.23 |
 | R52 | Destructive migration trusts an unverified backup assertion | High | open | wamn-2jkm.92; proof wamn-4tob.6.24 |
 | R53 | Persisted runs do not pin compatible trusted-executor identity | High | open | wamn-2jkm.99; proof wamn-4tob.6.26 |
+| R54 | Development admission lacks a measured fail-closed capacity invariant | High | open | wamn-2jkm.100; proof wamn-4tob.6.27 |
 | E18 | Materializer silently accepts stale durable-consumer configuration | High | open | wamn-l5i9.69; proof wamn-4tob.6.10 |
 | E19 | Materializer durable-consumer identity collides across valid registrations | High | open | wamn-l5i9.70; proof wamn-4tob.6.16 |
 | SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78 |
