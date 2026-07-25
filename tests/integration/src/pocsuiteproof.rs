@@ -54,6 +54,7 @@ use http_body_util::{BodyExt, Full};
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
+use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::HostHandler;
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker};
@@ -73,6 +74,7 @@ use wamn_gate_harness::{
 };
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
@@ -623,10 +625,7 @@ async fn drive_f1(
 /// Provision the ephemeral F1 world (floor + run-state + flow registry + catalog
 /// snapshot + business seed + the registered/active F1 flow) — the f1bench
 /// provisioning path, trimmed of its collision-check drill.
-async fn provision_f1(
-    admin_url: &str,
-    schema: &ScenarioSchemaName,
-) -> anyhow::Result<()> {
+async fn provision_f1(admin_url: &str, schema: &ScenarioSchemaName) -> anyhow::Result<()> {
     let (client, conn_task) = connect(admin_url).await?;
     let result = async {
         client
@@ -885,12 +884,13 @@ async fn drive_f3(
         .context("enqueue F3 run")?;
 
     // Drive under the test-double set: virtual clock + a spying egress recorder
-    // that expects only the echo (owner == flow_id — the portable egress key).
+    // enforcing the trusted outer allowlist and flow declaration intersection.
     let mut cfg = WamnPostgresConfig::from_env();
     cfg.database_url = Some(app_url.to_string());
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
-    let recorder = Arc::new(RecordingEgress::spying());
-    recorder.expect(F3_FLOW_ID, [echo_authority.clone()]);
+    let egress_policy = Arc::new(RunnerEgressPolicy::default());
+    let recorder = Arc::new(RecordingEgress::spying(egress_policy.clone()));
+    let allowed_hosts: Arc<[AllowedHost]> = vec![echo_authority.parse::<AllowedHost>()?].into();
     let (scenario, _clock) = ScenarioCapabilities::virtualized(
         EPOCH_SECS,
         SEED,
@@ -921,7 +921,7 @@ async fn drive_f3(
             schema: Some(schema.as_str()),
             project: "default",
         },
-        injected_capabilities(scenario.wasi, scenario.egress),
+        injected_capabilities(scenario.wasi, scenario.egress, allowed_hosts, egress_policy),
         30_000,
     )
     .await
@@ -1029,14 +1029,13 @@ async fn drive_f4(
     let mut cfg = WamnPostgresConfig::from_env();
     cfg.database_url = Some(app_url.to_string());
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
-    let recorder = Arc::new(RecordingEgress::spying());
-    recorder.expect(
-        F4_FLOW_ID,
-        [
-            format!("127.0.0.1:{}", args.node_port),
-            format!("127.0.0.1:{}", args.erp_port),
-        ],
-    );
+    let egress_policy = Arc::new(RunnerEgressPolicy::default());
+    let recorder = Arc::new(RecordingEgress::spying(egress_policy.clone()));
+    let allowed_hosts: Arc<[AllowedHost]> = vec![
+        format!("127.0.0.1:{}", args.node_port).parse::<AllowedHost>()?,
+        format!("127.0.0.1:{}", args.erp_port).parse::<AllowedHost>()?,
+    ]
+    .into();
     let (scenario, _clock) = ScenarioCapabilities::virtualized(
         EPOCH_SECS,
         SEED,
@@ -1054,7 +1053,7 @@ async fn drive_f4(
             schema: Some(schema.as_str()),
             project: "default",
         },
-        injected_capabilities(scenario.wasi, scenario.egress),
+        injected_capabilities(scenario.wasi, scenario.egress, allowed_hosts, egress_policy),
         30_000,
     )
     .await
@@ -1287,10 +1286,7 @@ async fn connect(url: &str) -> anyhow::Result<(Client, tokio::task::JoinHandle<(
     Ok((client, task))
 }
 
-async fn drop_schema(
-    admin_url: &str,
-    schema: &ScenarioSchemaName,
-) -> anyhow::Result<()> {
+async fn drop_schema(admin_url: &str, schema: &ScenarioSchemaName) -> anyhow::Result<()> {
     let (client, task) = connect(admin_url).await?;
     let r = client
         .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE;"))

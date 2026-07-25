@@ -49,6 +49,7 @@ use clap::{Args, ValueEnum};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
+use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::HostHandler;
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::{
@@ -62,6 +63,7 @@ use wamn_gate_harness::scope_session;
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, injected_capabilities};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 use wamn_scenario_runtime::{
@@ -238,6 +240,7 @@ impl Harness {
     fn plugin_map(
         &self,
         plugin: &Arc<WamnPostgres>,
+        egress_policy: Arc<RunnerEgressPolicy>,
     ) -> std::collections::HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> {
         let mut m = std::collections::HashMap::new();
         m.insert(
@@ -252,14 +255,12 @@ impl Harness {
             Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty())
                 as Arc<dyn HostPlugin + Send + Sync>,
         );
-        // fqg.11: the flowrunner declares its per-run egress on every walk, so
-        // the policy plugin must back the linked interface. Enforcement here is
-        // the harness's own http handler, so the declaration is inert — the
-        // plugin exists to keep the trusted channel satisfied.
+        // fqg.11: the flowrunner declares its per-run egress on every walk.
+        // The test handler shares this exact policy object so declarations are
+        // enforced rather than merely satisfying the trusted channel.
         m.insert(
             wamn_runtime::plugins::runner_egress::RUNNER_EGRESS_ID,
-            Arc::new(wamn_runtime::plugins::runner_egress::RunnerEgressPolicy::default())
-                as Arc<dyn HostPlugin + Send + Sync>,
+            egress_policy as Arc<dyn HostPlugin + Send + Sync>,
         );
         m
     }
@@ -272,10 +273,13 @@ impl Harness {
         plugin: &Arc<WamnPostgres>,
         wasi: Option<wasmtime_wasi::WasiCtx>,
         egress: Arc<dyn HostHandler>,
+        allowed_hosts: Arc<[AllowedHost]>,
+        egress_policy: Arc<RunnerEgressPolicy>,
     ) -> anyhow::Result<Worker> {
         let mut builder = Ctx::builder(BENCH_ID.to_string(), BENCH_ID.to_string())
-            .with_plugins(self.plugin_map(plugin))
-            .with_http_handler(egress);
+            .with_plugins(self.plugin_map(plugin, egress_policy))
+            .with_http_handler(egress)
+            .with_allowed_hosts(allowed_hosts);
         if let Some(wasi) = wasi {
             builder = builder.with_wasi_ctx(wasi);
         }
@@ -560,12 +564,13 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
     println!("loopback echo listening on {echo_authority}");
 
     // Prod egress: forward everything (audit only). Test egress: a spy that
-    // denies any authority not on the flow's expectation list — the S6 spy
-    // generalized (delta 3). The bench flow key is the store's workload id.
+    // enforces the trusted outer allowlist and flow declaration intersection.
     let prod_egress: Arc<dyn HostHandler> = Arc::new(RecordingEgress::forwarding());
-    let spy = Arc::new(RecordingEgress::spying());
-    spy.expect(BENCH_ID, [echo_authority.clone()]);
+    let prod_egress_policy = Arc::new(RunnerEgressPolicy::default());
+    let test_egress_policy = Arc::new(RunnerEgressPolicy::default());
+    let spy = Arc::new(RecordingEgress::spying(test_egress_policy.clone()));
     let spy_egress: Arc<dyn HostHandler> = spy.clone();
+    let allowed_hosts: Arc<[AllowedHost]> = vec![echo_authority.parse::<AllowedHost>()?].into();
 
     // The virtual clock the test store reads as its wall clock (and the seeded
     // random) — the extracted double set.
@@ -574,11 +579,23 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
 
     // Build the two workers from the SAME InstancePre.
     let mut prod = harness
-        .worker(&prod_pg, None, prod_egress.clone())
+        .worker(
+            &prod_pg,
+            None,
+            prod_egress.clone(),
+            allowed_hosts.clone(),
+            prod_egress_policy,
+        )
         .await
         .context("build prod worker")?;
     let mut test = harness
-        .worker(&test_pg, Some(test_wasi), spy_egress.clone())
+        .worker(
+            &test_pg,
+            Some(test_wasi),
+            spy_egress.clone(),
+            allowed_hosts,
+            test_egress_policy,
+        )
         .await
         .context("build test worker")?;
 
@@ -1030,6 +1047,12 @@ async fn schemacase_phase(
 
         // A fresh app-role pool per case (prepared plans never alias schemas).
         let case_pg = case_pool(cfg, TENANT, &schema, BENCH_ID)?;
+        let authority = echo_url
+            .parse::<hyper::Uri>()?
+            .authority()
+            .context("echo URL has no authority")?
+            .as_str()
+            .parse::<AllowedHost>()?;
         let mut worker = harness
             .worker(
                 &case_pg,
@@ -1038,6 +1061,8 @@ async fn schemacase_phase(
                     TEST_SEED,
                 )),
                 Arc::new(RecordingEgress::forwarding()),
+                vec![authority].into(),
+                Arc::new(RunnerEgressPolicy::default()),
             )
             .await
             .with_context(|| format!("build case worker {schema}"))?;
@@ -1190,8 +1215,9 @@ async fn runworker_phase(
     // egress handler. The flow key is the runner owner (the store's workload id).
     let plugin = Arc::new(WamnPostgres::new(cfg.clone())?);
     let vault = Arc::new(WamnCredentials::empty());
-    let recorder = Arc::new(RecordingEgress::spying());
-    recorder.expect(RW_OWNER, [echo_authority.to_string()]);
+    let egress_policy = Arc::new(RunnerEgressPolicy::default());
+    let recorder = Arc::new(RecordingEgress::spying(egress_policy.clone()));
+    let allowed_hosts: Arc<[AllowedHost]> = vec![echo_authority.parse::<AllowedHost>()?].into();
     let (scenario, _clock) = ScenarioCapabilities::virtualized(
         TEST_EPOCH_SECS,
         TEST_SEED,
@@ -1210,7 +1236,7 @@ async fn runworker_phase(
             schema: Some(runworker_schema.as_str()),
             project: "default",
         },
-        injected_capabilities(scenario.wasi, scenario.egress),
+        injected_capabilities(scenario.wasi, scenario.egress, allowed_hosts, egress_policy),
         30_000,
     )
     .await

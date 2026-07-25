@@ -30,8 +30,8 @@ pub struct EgressObservation {
     pub authority: String,
     /// The request path.
     pub path: String,
-    /// Whether the recorder forwarded it (`true`) or denied it as unexpected
-    /// (`false`).
+    /// Whether trusted authorization allowed the recorder to forward it
+    /// (`true`) or denied it (`false`).
     pub allowed: bool,
 }
 

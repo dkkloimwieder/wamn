@@ -31,6 +31,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use clap::Args;
+use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::HostHandler;
 
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
@@ -41,6 +42,7 @@ use wamn_node_invoke::{
 };
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
@@ -438,11 +440,12 @@ async fn flow_phase(
         .context("enqueue run_queue row")?;
 
     // Drive the production runner under the test-double set (virtual clock +
-    // seeded random + a spying egress recorder that expects only the echo).
+    // seeded random + trusted outer/flow egress policy intersection).
     let plugin = Arc::new(WamnPostgres::new(cfg.clone())?);
     let vault = Arc::new(WamnCredentials::empty());
-    let recorder = Arc::new(RecordingEgress::spying());
-    recorder.expect(RW_OWNER, [echo_authority.clone()]);
+    let egress_policy = Arc::new(RunnerEgressPolicy::default());
+    let recorder = Arc::new(RecordingEgress::spying(egress_policy.clone()));
+    let allowed_hosts: Arc<[AllowedHost]> = vec![echo_authority.parse::<AllowedHost>()?].into();
     let (scenario, _clock) = ScenarioCapabilities::virtualized(
         TEST_EPOCH_SECS,
         TEST_SEED,
@@ -460,7 +463,7 @@ async fn flow_phase(
             schema: Some(runworker_schema.as_str()),
             project: "default",
         },
-        injected_capabilities(scenario.wasi, scenario.egress),
+        injected_capabilities(scenario.wasi, scenario.egress, allowed_hosts, egress_policy),
         30_000,
     )
     .await

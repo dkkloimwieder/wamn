@@ -373,10 +373,12 @@ The 11.4 `testkitbench` subcommand doubles as the STORED-suite EXECUTOR: it load
 against the `wamn-scenario-model` vocabulary on READ, and executes each case as its OWN
 run through scenario-runtime — a FRESH ephemeral schema per case (the source
 schema is read-only), the graph read from `{source_schema}.flows`,
-`ScenarioCapabilities::virtualized` + `RecordingEgress` (allowlist derived from the case's
-own egress asserts) + `ExecutionHost` + drain, then `wamn_scenario_model::evaluate` per
-case. One `check` line per assertion + a per-suite/summary line; nonzero exit on
-any failure. This is the future callee of the 12g migrate-catalog auto-run seam.
+`ScenarioCapabilities::virtualized` + `RecordingEgress` (trusted
+`--allowed-hosts` outer policy intersected with the flow's declared policy;
+case assertions never authorize) + `ExecutionHost` + drain, then
+`wamn_scenario_model::evaluate` per case. One `check` line per assertion + a
+per-suite/summary line; nonzero exit on any failure. This is the future callee
+of the 12g migrate-catalog auto-run seam.
 
 Selection (exactly one source; `--cases` file mode is preserved unchanged):
 - `--suite <flow_id>@<version> --tenant <t> --source-schema <s>` — runs EVERY
@@ -409,7 +411,7 @@ F1 refuses cleanly while F3/F4 (std nodes) drive.
 
 ```bash
 # Unit tests (SuiteSelector = SuiteEdge shape, i32→u32 version boundary,
-# selection exclusivity, drivability, coherence, egress-allowlist derivation,
+# selection exclusivity, drivability, coherence, egress authorization separation,
 # node-set drift guards) + the flow-tests sql drift/predicate guards:
 cargo test -p wamn-gates testkitbench:: -p wamn-scenario-catalog
 

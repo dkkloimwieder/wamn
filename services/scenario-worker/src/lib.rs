@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::NoTls;
+use wash_runtime::host::allowed_hosts::AllowedHost;
 
 use wamn_execution_host::{
     DEFAULT_FLOWRUNNER_PATH, ExecutionHost, ExecutionIdentity, injected_capabilities,
@@ -16,11 +17,12 @@ use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_run_state::sql::select_completed_node_runs_sql;
 use wamn_run_state::{FailKind as StoredFailKind, RunStatus as StoredRunStatus};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig;
 use wamn_scenario_model::{
-    Assertion, Captured, CaseReport, DbCapture, EgressAssertion, FailKind, RunFacts, RunStatus,
-    ScenarioRefusal, ScenarioReport, TestCase, evaluate,
+    Assertion, Captured, CaseReport, DbCapture, FailKind, RunFacts, RunStatus, ScenarioRefusal,
+    ScenarioReport, TestCase, evaluate,
 };
 use wamn_scenario_runtime::{
     DatabaseClockBoundary, RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, RecordingEgress,
@@ -77,6 +79,14 @@ pub struct ScenarioWorkerArgs {
     /// Project whose scenario credentials may be resolved.
     #[arg(long, env = "WAMN_PROJECT", default_value = "default")]
     pub project: String,
+
+    /// Trusted scenario outbound HTTP allowlist. Empty denies all egress.
+    #[arg(
+        long = "allowed-hosts",
+        env = "WAMN_SCENARIO_ALLOWED_HOSTS",
+        value_delimiter = ','
+    )]
+    pub allowed_hosts: Vec<String>,
 
     /// Virtual-clock epoch seconds.
     #[arg(long, default_value_t = DEFAULT_EPOCH_SECS)]
@@ -146,20 +156,13 @@ async fn scope_session(
     Ok(())
 }
 
-fn expected_authorities(case: &TestCase) -> Vec<String> {
-    case.expect
+fn parse_allowed_hosts(values: &[String]) -> anyhow::Result<Arc<[AllowedHost]>> {
+    values
         .iter()
-        .filter_map(|assertion| match assertion {
-            Assertion::Egress {
-                calls: EgressAssertion::ExactlyThese(matchers)
-                    | EgressAssertion::Includes(matchers),
-                ..
-            } => Some(matchers),
-            _ => None,
-        })
-        .flatten()
-        .filter_map(|matcher| matcher.authority.clone())
-        .collect()
+        .map(|value| value.parse::<AllowedHost>())
+        .collect::<Result<Vec<_>, _>>()
+        .context("parse --allowed-hosts")
+        .map(Into::into)
 }
 
 async fn capture_db_assertions(
@@ -385,6 +388,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
     if args.execution_id.is_empty() {
         bail!("execution-id must not be empty");
     }
+    let allowed_hosts = parse_allowed_hosts(&args.allowed_hosts)?;
 
     wash_runtime::init_crypto();
     let database_url = database_url(args)?;
@@ -494,8 +498,8 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
     let mut checked_flow = false;
 
     for (case_id, ordinal, case, execution_schema) in stored_cases {
-        let recorder = Arc::new(RecordingEgress::spying());
-        recorder.expect(&args.flow_id, expected_authorities(&case));
+        let egress_policy = Arc::new(RunnerEgressPolicy::default());
+        let recorder = Arc::new(RecordingEgress::spying(egress_policy.clone()));
         let (scenario, clock) =
             ScenarioCapabilities::virtualized(args.epoch_secs, args.random_seed, recorder.clone());
         let postgres = case_pool(
@@ -516,7 +520,12 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
                 schema: Some(execution_schema.as_str()),
                 project: &args.project,
             },
-            injected_capabilities(scenario.wasi, scenario.egress),
+            injected_capabilities(
+                scenario.wasi,
+                scenario.egress,
+                allowed_hosts.clone(),
+                egress_policy,
+            ),
             args.lease_ttl_ms,
         )
         .await
@@ -671,6 +680,18 @@ mod tests {
         assert!(manifest.contains("wamn-scenario-catalog"));
         assert!(manifest.contains("wamn-scenario-model"));
         assert!(!manifest.contains("../executor"));
+    }
+
+    #[test]
+    fn trusted_scenario_allowlist_is_separate_and_empty_by_default() {
+        assert!(parse_allowed_hosts(&[]).unwrap().is_empty());
+        assert_eq!(
+            parse_allowed_hosts(&["echo.local:8080".into()])
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(parse_allowed_hosts(&["*bad-wildcard".into()]).is_err());
     }
 
     #[test]

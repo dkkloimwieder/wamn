@@ -126,9 +126,18 @@ pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
     // http_url is a controlled harness value (a loopback URL); escape the two
     // JSON-significant characters defensively anyway.
     let url = http_url.replace('\\', "\\\\").replace('"', "\\\"");
+    let authority = http_url
+        .parse::<hyper::Uri>()
+        .expect("S6 fixture URL must be an absolute HTTP URI")
+        .authority()
+        .expect("S6 fixture URL must include an authority")
+        .as_str()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
     format!(
         r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,
             "trigger":{{"type":"webhook"}},"entry":"in",
+            "allowed-hosts":["{authority}"],
             "nodes":[
               {{"id":"in","type":"webhook-in"}},
               {{"id":"d","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
@@ -139,6 +148,19 @@ pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
             "edges":[{{"from":"in","to":"d"}},{{"from":"d","to":"h"}},
                      {{"from":"h","to":"w"}},{{"from":"w","to":"out"}}]}}"#
     )
+}
+
+#[cfg(test)]
+mod s6_fixture_tests {
+    use super::flow_json_s6;
+
+    #[test]
+    fn s6_flow_declares_its_controlled_http_authority() {
+        let flow = wamn_flow::Flow::from_json(&flow_json_s6(0, "http://127.0.0.1:18080/echo"))
+            .expect("S6 fixture parses");
+
+        assert_eq!(flow.allowed_hosts, ["127.0.0.1:18080"]);
+    }
 }
 
 /// A TWO-delay `poc-s6` fixture: `webhook-in -> delay(d1) -> delay(d2) ->

@@ -68,6 +68,7 @@ pub const DEFAULT_FLOWRUNNER_PATH: &str = "/components/flowrunner.wasm";
 /// Capability composition for a single execution store.
 pub struct ExecutionCapabilities {
     mode: CapabilityMode,
+    egress_policy: Arc<RunnerEgressPolicy>,
 }
 
 impl std::fmt::Debug for ExecutionCapabilities {
@@ -90,6 +91,7 @@ enum CapabilityMode {
     Injected {
         wasi: Box<wasmtime_wasi::WasiCtx>,
         http: Arc<dyn HostHandler>,
+        allowed_hosts: Arc<[AllowedHost]>,
     },
 }
 
@@ -97,22 +99,29 @@ enum CapabilityMode {
 pub fn production_capabilities(allowed_hosts: Arc<[AllowedHost]>) -> ExecutionCapabilities {
     ExecutionCapabilities {
         mode: CapabilityMode::Production { allowed_hosts },
+        egress_policy: Arc::new(RunnerEgressPolicy::default()),
     }
 }
 
 /// Compose externally provided capabilities for a non-serving execution artifact.
 ///
-/// The scenario-worker is the product owner of the deterministic adapters
-/// passed through this seam.
+/// `allowed_hosts` is the trusted host-level outer bound. `egress_policy` is
+/// shared with the trusted flowrunner declaration channel so the injected HTTP
+/// handler can enforce the same intersection as production. The scenario-worker
+/// is the product owner of the deterministic adapters passed through this seam.
 pub fn injected_capabilities(
     wasi: wasmtime_wasi::WasiCtx,
     http: Arc<dyn HostHandler>,
+    allowed_hosts: Arc<[AllowedHost]>,
+    egress_policy: Arc<RunnerEgressPolicy>,
 ) -> ExecutionCapabilities {
     ExecutionCapabilities {
         mode: CapabilityMode::Injected {
             wasi: Box::new(wasi),
             http,
+            allowed_hosts,
         },
+        egress_policy,
     }
 }
 
@@ -421,7 +430,10 @@ impl ExecutionHost {
         wamn_logging::add_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
 
-        let egress_policy = Arc::new(RunnerEgressPolicy::default());
+        let ExecutionCapabilities {
+            mode,
+            egress_policy,
+        } = capabilities;
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
         plugins.insert(
             wamn_postgres::WAMN_POSTGRES_ID,
@@ -440,10 +452,16 @@ impl ExecutionHost {
             logging as Arc<dyn HostPlugin + Send + Sync>,
         );
         let builder = Ctx::builder(owner.to_string(), owner.to_string()).with_plugins(plugins);
-        let ctx = match capabilities.mode {
-            CapabilityMode::Injected { wasi, http } => {
-                builder.with_http_handler(http).with_wasi_ctx(*wasi).build()
-            }
+        let ctx = match mode {
+            CapabilityMode::Injected {
+                wasi,
+                http,
+                allowed_hosts,
+            } => builder
+                .with_http_handler(http)
+                .with_allowed_hosts(allowed_hosts)
+                .with_wasi_ctx(*wasi)
+                .build(),
             CapabilityMode::Production { allowed_hosts } => builder
                 .with_http_handler(Arc::new(RunnerEgress {
                     inner: DefaultOutgoingHandler,

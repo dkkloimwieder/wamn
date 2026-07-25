@@ -36,7 +36,10 @@ translations to durable run-state and node-invoke types live in
 - `flow_ref` present ⇒ **flow-level** case: the scenario worker drives the flow
   in its own caller-provisioned execution schema with virtual clock, seeded
   random, and recording/deny egress adapters and captures the run outcome,
-  egress log, and database reads.
+  egress log, and database reads. Its trusted `--allowed-hosts` configuration
+  (absent = deny all) is intersected with the flow's declared policy;
+  assertions only observe the resulting records and never authorize a
+  destination.
 
 `SCHEMA_VERSION` is `0.1` and mirrors the `wamn-schema-model` precedent: `0.1.x` is
 additive/clarifying only; a breaking wire change waits for `0.2`.
@@ -118,8 +121,11 @@ outbound requests to the flow whose workload id is `flow`.
 | `NoneDenied` | `"none-denied"` | no recorded call for the flow was denied |
 | `Count(n)` | `{"count": 1}` | the flow made exactly `n` recorded outbound calls |
 
-An `EgressMatcher` is `{method?, authority?, path?}`: a present field must equal
-the record's; an absent field is a wildcard.
+An `EgressMatcher` is `{method?, authority?, path?}`: only an authorized
+observation can match; on one of those, a present field must equal the record's
+and an absent field is a wildcard. Denied attempts remain in the audit log and
+cannot satisfy `Includes` or `ExactlyThese`; `NoneDenied` observes them
+explicitly.
 
 ### Error path
 

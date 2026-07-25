@@ -82,10 +82,11 @@ pub fn evaluate(case: &TestCase, captured: &Captured) -> Outcome {
     }
 }
 
-/// A present matcher field must equal the record's; an absent field is a
-/// wildcard.
+/// Only an authorized observation may match. For one of those, a present
+/// matcher field must equal the record's; an absent field is a wildcard.
 fn matcher_matches(m: &EgressMatcher, r: &EgressObservation) -> bool {
-    m.method.as_deref().is_none_or(|x| x == r.method)
+    r.allowed
+        && m.method.as_deref().is_none_or(|x| x == r.method)
         && m.authority.as_deref().is_none_or(|x| x == r.authority)
         && m.path.as_deref().is_none_or(|x| x == r.path)
 }
@@ -659,6 +660,35 @@ mod tests {
         // No records at all — the one expected matcher is unused.
         let out = evaluate(&node_case("n", one_expected_call()), &Captured::default());
         assert!(!out.passed());
+    }
+
+    #[test]
+    fn authorized_but_unexpected_call_fails_the_assertion() {
+        let cap = Captured {
+            egress: vec![rec("f", "GET", "other.local:8080", "/echo", true)],
+            ..Default::default()
+        };
+
+        assert!(!evaluate(&node_case("unexpected", one_expected_call()), &cap).passed());
+    }
+
+    #[test]
+    fn expected_but_unauthorized_call_never_matches_an_assertion() {
+        let cap = Captured {
+            egress: vec![rec("f", "GET", "echo.local:8080", "/echo", false)],
+            ..Default::default()
+        };
+        let includes = vec![Assertion::Egress {
+            flow: "f".into(),
+            calls: EgressAssertion::Includes(vec![EgressMatcher {
+                method: None,
+                authority: Some("echo.local:8080".into()),
+                path: None,
+            }]),
+        }];
+
+        assert!(!evaluate(&node_case("exact", one_expected_call()), &cap).passed());
+        assert!(!evaluate(&node_case("includes", includes), &cap).passed());
     }
 
     #[test]

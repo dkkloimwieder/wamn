@@ -9,8 +9,8 @@
 //!   decision to a claimable PostgreSQL release marker.
 //! - [`ScenarioScheduler`] — advance the virtual clock to the next parked-wake
 //!   deadline and re-drive, collapsing arbitrary delays (delta 2).
-//! - [`RecordingEgress`] — record every outbound request + per-flow allowlist +
-//!   assertion surface (delta 3).
+//! - [`RecordingEgress`] — record every outbound request after enforcing the
+//!   trusted host/flow authorization intersection (delta 3).
 //! - [`EphemeralSchemaProvisioner`] / [`case_pool`] — an isolated schema and app
 //!   pool per scenario.
 //! - [`SeededRng`] / [`build_virtual_wasi`] — a deterministic `wasi:random`
