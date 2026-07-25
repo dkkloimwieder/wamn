@@ -473,14 +473,7 @@ async fn seed_demo(client: &Client, schema: &str, tenant: Option<&str>) -> anyho
     )
     .await?;
     seed_suite_cases(client, tenant, DEMO_FLOW_ID, "success", success_cases()).await?;
-    seed_suite_cases(
-        client,
-        tenant,
-        DEMO_FLOW_ID,
-        "malformed",
-        vec![("malformed", 0, "{}".to_owned())],
-    )
-    .await?;
+    seed_malformed_case(client, tenant).await?;
     seed_suite_cases(
         client,
         tenant,
@@ -512,6 +505,32 @@ async fn seed_demo(client: &Client, schema: &str, tenant: Option<&str>) -> anyho
         )],
     )
     .await
+}
+
+async fn seed_malformed_case(client: &Client, tenant: &str) -> anyhow::Result<()> {
+    seed_suite_cases(
+        client,
+        tenant,
+        DEMO_FLOW_ID,
+        "malformed",
+        vec![("malformed", 0, completion_case("malformed", DEMO_FLOW_ID))],
+    )
+    .await?;
+    // Corrupt only the repository-owned negative fixture after the normal
+    // validating write path so the product worker must reject it on read.
+    let updated = client
+        .execute(
+            "UPDATE test_cases SET case_body = '{}'::jsonb \
+             WHERE tenant_id = $1 AND flow_id = $2 AND flow_version = 1 \
+               AND suite_id = 'malformed' AND case_id = 'malformed'",
+            &[&tenant, &DEMO_FLOW_ID],
+        )
+        .await
+        .context("corrupt repository-only malformed scenario fixture")?;
+    if updated != 1 {
+        bail!("malformed scenario fixture update affected {updated} rows");
+    }
+    Ok(())
 }
 
 async fn seed_suite_cases(
