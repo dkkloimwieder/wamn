@@ -21,13 +21,13 @@ use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig;
 use wamn_scenario_model::{
-    Assertion, Captured, CaseReport, DbCapture, FailKind, RunFacts, RunStatus, ScenarioRefusal,
-    ScenarioReport, TestCase, evaluate,
+    Captured, CaseReport, FailKind, RunFacts, RunStatus, ScenarioRefusal, ScenarioReport, TestCase,
+    evaluate,
 };
 use wamn_scenario_runtime::{
     DatabaseClockBoundary, RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, RecordingEgress,
     ScenarioCapabilities, ScenarioClock, ScenarioScheduler, ScenarioSchemaName, SchedulerBackend,
-    case_pool, load_scenario_credentials, validate_queue_due_nudge,
+    capture_db_assertions, case_pool, load_scenario_credentials, validate_queue_due_nudge,
 };
 
 const DEFAULT_EPOCH_SECS: u64 = 1_700_000_000;
@@ -163,44 +163,6 @@ fn parse_allowed_hosts(values: &[String]) -> anyhow::Result<Arc<[AllowedHost]>> 
         .collect::<Result<Vec<_>, _>>()
         .context("parse --allowed-hosts")
         .map(Into::into)
-}
-
-async fn capture_db_assertions(
-    client: &tokio_postgres::Client,
-    case: &TestCase,
-) -> anyhow::Result<Vec<DbCapture>> {
-    let mut captures = Vec::new();
-    for assertion in &case.expect {
-        let Assertion::DbState { query, params, .. } = assertion else {
-            continue;
-        };
-        let owned: Vec<String> = params
-            .iter()
-            .map(|value| {
-                value
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| value.to_string())
-            })
-            .collect();
-        let references: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = owned
-            .iter()
-            .map(|value| value as &(dyn tokio_postgres::types::ToSql + Sync))
-            .collect();
-        let rows = client
-            .query(query, &references)
-            .await
-            .with_context(|| format!("capture db-state assertion for {}", case.name))?;
-        captures.push(DbCapture {
-            query: query.clone(),
-            params: params.clone(),
-            rows: rows
-                .iter()
-                .map(|row| row.get::<usize, serde_json::Value>(0))
-                .collect(),
-        });
-    }
-    Ok(captures)
 }
 
 async fn capture_terminal_node(
@@ -394,7 +356,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
     let database_url = database_url(args)?;
     let guest = std::fs::read(&args.flowrunner)
         .with_context(|| format!("read flowrunner component {}", args.flowrunner.display()))?;
-    let (client, connection) = tokio_postgres::connect(&database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(&database_url, NoTls)
         .await
         .context("connect scenario catalog")?;
     let connection_task = tokio::spawn(async move {
@@ -630,7 +592,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
                 fail_node: result_row.get(2),
             }),
             egress: recorder.records(),
-            db: capture_db_assertions(&client, &case).await?,
+            db: capture_db_assertions(&mut client, &case).await?,
             ..Default::default()
         };
         reports.push(CaseReport {

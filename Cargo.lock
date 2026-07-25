@@ -4677,6 +4677,7 @@ dependencies = [
  "async-trait",
  "hyper",
  "rand_core 0.10.1",
+ "serde_json",
  "tokio",
  "tokio-postgres",
  "wamn-pg-core",

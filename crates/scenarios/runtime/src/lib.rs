@@ -24,6 +24,7 @@
 
 mod clock;
 mod credentials;
+mod db;
 mod egress;
 mod random;
 mod scheduler;
@@ -36,6 +37,7 @@ use wasmtime_wasi::WasiCtx;
 
 pub use clock::{DatabaseClockBoundary, ScenarioClock, VirtualWallClock};
 pub use credentials::{ScenarioCredentials, load_scenario_credentials};
+pub use db::{DbStateCaptureFailure, DbStateCaptureFailureKind, capture_db_assertions};
 pub use egress::{EgressObservation, RecordingEgress};
 pub use random::{SeededRng, build_virtual_wasi};
 pub use scheduler::{

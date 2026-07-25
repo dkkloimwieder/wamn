@@ -13,24 +13,22 @@
 //!     [`ExecutionHost::instantiate`]) exactly as `testhostbench`'s runworker phase
 //!     does, then captures the run outcome (from the
 //!     [`DrainReport`](wamn_execution_host::DrainReport)), the egress
-//!     log, and admin-pool DB reads.
+//!     log, and tenant-scoped application DB reads.
 //!
 //! Every captured fact bundle is folded through [`wamn_scenario_model::evaluate`] and
 //! each [`AssertionResult`](wamn_scenario_model::AssertionResult) becomes a
 //! [`wamn_gate_harness::check`] line — the library decides, the gate only drives.
 //!
-//! DB-state note: the flow-level DB reads go through the provisioner's SUPERUSER
-//! (admin) session (RLS-bypassing), scoped to the runner's tenant + schema. This
-//! is the same admin path `testhostbench` uses for its final-DB-state asserts,
-//! and it is DISTINCT from the runner's own `wamn_app` (NOSUPERUSER, RLS-forced)
-//! pool — a DB-state assert observes the row a superuser sees, not the row the
-//! tenant-scoped app role would.
+//! DB-state note: flow-level DB reads use a dedicated `wamn_app` connection
+//! scoped to the runner's tenant + schema. Each stored assertion executes in a
+//! fresh read-only transaction and is explicitly rolled back.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use clap::Args;
+use tokio_postgres::NoTls;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::HostHandler;
 
@@ -47,10 +45,11 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wamn_scenario_model::{
-    Assertion, Captured, DbCapture, NodeErrorKind, Outcome, RunFacts, RunStatus, TestCase, evaluate,
+    Captured, NodeErrorKind, Outcome, RunFacts, RunStatus, TestCase, evaluate,
 };
 use wamn_scenario_runtime::{
     EphemeralSchemaProvisioner, RecordingEgress, ScenarioCapabilities, ScenarioSchemaName,
+    capture_db_assertions,
 };
 
 /// The virtual-clock epoch + seed the flow-level test host uses (matching the
@@ -390,9 +389,9 @@ async fn flow_phase(
         cfg.database_url = Some(url.clone());
     }
     cfg.pool_max_size = args.pool_max;
-    if cfg.database_url.is_none() {
-        bail!("flow-level cases need a database url: --database-url or DATABASE_URL / WAMN_PG_URL");
-    }
+    let observer_url = cfg.database_url.clone().context(
+        "flow-level cases need a database url: --database-url or DATABASE_URL / WAMN_PG_URL",
+    )?;
     let admin_url = args
         .admin_database_url
         .clone()
@@ -482,38 +481,33 @@ async fn flow_phase(
     };
     let egress = recorder.records();
 
-    // DB-state asserts read through the ADMIN (superuser) session, scoped to the
-    // runner's tenant + schema (RLS-bypassing — the documented distinction).
-    scope_session(admin, RW_TENANT, RW_SCHEMA).await?;
+    // Observe through the same least-privileged application identity as the
+    // scenario, independently scoped to its tenant and schema.
+    let (mut observer, observer_connection) = tokio_postgres::connect(&observer_url, NoTls)
+        .await
+        .context("connect flow db-state observer")?;
+    let observer_task = tokio::spawn(async move {
+        let _ = observer_connection.await;
+    });
+    scope_session(&observer, RW_TENANT, RW_SCHEMA).await?;
 
     let mut ok = true;
     for case in cases {
-        let mut captured = Captured {
+        let captured = Captured {
             run: Some(RunFacts {
                 status,
                 fail_kind: None,
                 fail_node: None,
             }),
             egress: egress.clone(),
+            db: capture_db_assertions(&mut observer, case).await?,
             ..Default::default()
         };
-        // Run each DB-state assertion's query via the admin pool and capture the
-        // rows (each query selects a single json column — one object per row).
-        for a in &case.expect {
-            if let Assertion::DbState { query, params, .. } = a {
-                let rows = admin_query_json(admin, query, params)
-                    .await
-                    .with_context(|| format!("db-state query for case {}", case.name))?;
-                captured.db.push(DbCapture {
-                    query: query.clone(),
-                    params: params.clone(),
-                    rows,
-                });
-            }
-        }
         fold_outcome(&mut ok, &evaluate(case, &captured));
     }
 
+    drop(observer);
+    observer_task.abort();
     drop(worker);
     drop(plugin);
     provisioner.drop_case(&runworker_schema).await.ok();
@@ -521,29 +515,12 @@ async fn flow_phase(
     Ok(ok)
 }
 
-/// Run a DB-state query that SELECTs a single json column and collect one
-/// [`serde_json::Value`] per row. String params bind as text (the only param
-/// kind the v0 fixtures need).
-async fn admin_query_json(
-    admin: &tokio_postgres::Client,
-    query: &str,
-    params: &[serde_json::Value],
-) -> anyhow::Result<Vec<serde_json::Value>> {
-    let owned: Vec<String> = params
-        .iter()
-        .map(|p| {
-            p.as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| p.to_string())
-        })
-        .collect();
-    let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = owned
-        .iter()
-        .map(|s| s as &(dyn tokio_postgres::types::ToSql + Sync))
-        .collect();
-    let rows = admin.query(query, &refs).await?;
-    Ok(rows
-        .iter()
-        .map(|r| r.get::<usize, serde_json::Value>(0))
-        .collect())
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn integration_gate_uses_scenario_runtime_without_importing_worker() {
+        let manifest = include_str!("../Cargo.toml");
+        assert!(manifest.contains("wamn-scenario-runtime"));
+        assert!(!manifest.contains("wamn-scenario-worker"));
+    }
 }
