@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly WAMN_USAGE='usage:
+  tools/workspace-tier list [TIER]
+  tools/workspace-tier dry-run TIER WORKSPACE MODE
+  tools/workspace-tier run TIER WORKSPACE MODE
+
+WORKSPACE is root or components.
+Root MODE is check, build, test, or test-all.
+Components MODE is check-wasm or build-wasm.'
+
+wamn_fail() {
+  local -r exit_code="$1"
+  shift
+  printf 'workspace-tier: %s\n' "$*" >&2
+  exit "$exit_code"
+}
+
+wamn_usage_error() {
+  printf '%s\n' "$WAMN_USAGE" >&2
+  wamn_fail 64 "$*"
+}
+
+readonly WAMN_TOOL_DIRECTORY="$(
+  CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_REPOSITORY_ROOT="$(
+  CDPATH= cd -- "$WAMN_TOOL_DIRECTORY/.." >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_TIER_MANIFEST="$WAMN_REPOSITORY_ROOT/architecture/workspace-tiers.json"
+
+command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
+[[ -r "$WAMN_TIER_MANIFEST" ]] || {
+  wamn_fail 65 "cannot read $WAMN_TIER_MANIFEST"
+}
+
+jq -e '
+  .schema_version == 1
+  and (.tiers | type == "object" and length > 0)
+  and all(
+    .tiers[];
+    (.root_packages | type == "array")
+    and (.component_packages | type == "array")
+    and (.non_cargo_inputs | type == "array")
+    and (.command_semantics | type == "string" and length > 0)
+  )
+' "$WAMN_TIER_MANIFEST" >/dev/null 2>&1 || {
+  wamn_fail 65 'workspace tier manifest does not satisfy schema version 1'
+}
+
+wamn_require_tier() {
+  local -r tier="$1"
+  jq -e --arg tier "$tier" '.tiers | has($tier)' \
+    "$WAMN_TIER_MANIFEST" >/dev/null 2>&1 || {
+    wamn_usage_error "unknown tier '$tier'"
+  }
+}
+
+wamn_list() {
+  if (($# == 0)); then
+    jq -S '
+      .tiers
+      | to_entries
+      | sort_by(.key)
+      | map({
+          name: .key,
+          root_count: (.value.root_packages | length),
+          component_count: (.value.component_packages | length),
+          non_cargo_count: (.value.non_cargo_inputs | length)
+        })
+    ' "$WAMN_TIER_MANIFEST"
+    return
+  fi
+
+  (($# == 1)) || wamn_usage_error 'list accepts at most one tier'
+  local -r tier="$1"
+  wamn_require_tier "$tier"
+  jq -S --arg tier "$tier" \
+    '{name: $tier} + .tiers[$tier]' "$WAMN_TIER_MANIFEST"
+}
+
+declare WAMN_WORKING_DIRECTORY
+declare WAMN_CARGO_MANIFEST
+declare WAMN_QUALIFICATION
+declare -a WAMN_PACKAGES
+declare -a WAMN_CARGO_ARGUMENTS
+
+wamn_load_plan() {
+  local -r tier="$1"
+  local -r workspace="$2"
+  local -r mode="$3"
+  local selection_key
+
+  wamn_require_tier "$tier"
+
+  case "$workspace" in
+    root)
+      selection_key='root_packages'
+      WAMN_WORKING_DIRECTORY="$WAMN_REPOSITORY_ROOT"
+      WAMN_CARGO_MANIFEST="$WAMN_REPOSITORY_ROOT/Cargo.toml"
+      ;;
+    components)
+      selection_key='component_packages'
+      WAMN_WORKING_DIRECTORY="$WAMN_REPOSITORY_ROOT/components"
+      WAMN_CARGO_MANIFEST="$WAMN_REPOSITORY_ROOT/components/Cargo.toml"
+      ;;
+    *)
+      wamn_usage_error "unknown workspace '$workspace'"
+      ;;
+  esac
+
+  local -a fixed_arguments
+  case "$workspace:$mode" in
+    root:check)
+      fixed_arguments=(check --locked)
+      ;;
+    root:build)
+      fixed_arguments=(build --locked)
+      ;;
+    root:test)
+      fixed_arguments=(test --locked --no-fail-fast)
+      ;;
+    root:test-all)
+      fixed_arguments=(test --locked --all-targets --no-fail-fast)
+      ;;
+    components:check-wasm)
+      fixed_arguments=(check --locked --target wasm32-wasip2)
+      ;;
+    components:build-wasm)
+      fixed_arguments=(build --locked --target wasm32-wasip2)
+      ;;
+    *)
+      wamn_usage_error "mode '$mode' is not valid for workspace '$workspace'"
+      ;;
+  esac
+
+  jq -e --arg tier "$tier" --arg key "$selection_key" '
+    .tiers[$tier][$key] as $selection
+    | ($selection | type == "array")
+      and all($selection[]; type == "string" and test("^[A-Za-z0-9_-]+$"))
+      and (($selection | unique | length) == ($selection | length))
+  ' "$WAMN_TIER_MANIFEST" >/dev/null 2>&1 || {
+    wamn_fail 65 "$tier.$selection_key must contain unique Cargo package names"
+  }
+
+  local selection_length
+  selection_length="$(
+    jq -r --arg tier "$tier" --arg key "$selection_key" \
+      '.tiers[$tier][$key] | length' "$WAMN_TIER_MANIFEST"
+  )"
+  ((selection_length > 0)) || {
+    wamn_fail 65 "$tier has an empty $workspace package selection"
+  }
+
+  mapfile -t WAMN_PACKAGES < <(
+    jq -r --arg tier "$tier" --arg key "$selection_key" \
+      '.tiers[$tier][$key][]' "$WAMN_TIER_MANIFEST"
+  )
+  WAMN_QUALIFICATION="$(
+    jq -er --arg tier "$tier" \
+      '.tiers[$tier].command_semantics' "$WAMN_TIER_MANIFEST"
+  )"
+
+  WAMN_CARGO_ARGUMENTS=("${fixed_arguments[@]}" --manifest-path "$WAMN_CARGO_MANIFEST")
+  local package
+  for package in "${WAMN_PACKAGES[@]}"; do
+    WAMN_CARGO_ARGUMENTS+=(--package "$package")
+  done
+}
+
+wamn_plan_json() {
+  local -r tier="$1"
+  local -r workspace="$2"
+  local -r mode="$3"
+  local -r cargo_executable="${CARGO:-cargo}"
+  local -a plan_argv=("$cargo_executable" "${WAMN_CARGO_ARGUMENTS[@]}")
+
+  jq -n -S \
+    --arg tier "$tier" \
+    --arg workspace "$workspace" \
+    --arg mode "$mode" \
+    --arg working_directory "$WAMN_WORKING_DIRECTORY" \
+    --arg qualification "$WAMN_QUALIFICATION" \
+    --args '
+      $ARGS.named + {argv: $ARGS.positional}
+    ' -- "${plan_argv[@]}"
+}
+
+wamn_run() {
+  local -r cargo_executable="${CARGO:-cargo}"
+  if [[ "$cargo_executable" == */* ]]; then
+    [[ -x "$cargo_executable" ]] || {
+      wamn_fail 127 "Cargo executable is not executable: $cargo_executable"
+    }
+  else
+    command -v "$cargo_executable" >/dev/null 2>&1 || {
+      wamn_fail 127 "Cargo executable was not found: $cargo_executable"
+    }
+  fi
+
+  printf 'workspace-tier: %s\n' "$WAMN_QUALIFICATION" >&2
+  cd -- "$WAMN_WORKING_DIRECTORY"
+  exec "$cargo_executable" "${WAMN_CARGO_ARGUMENTS[@]}"
+}
+
+(($# > 0)) || wamn_usage_error 'missing command'
+readonly WAMN_COMMAND="$1"
+shift
+
+case "$WAMN_COMMAND" in
+  list)
+    wamn_list "$@"
+    ;;
+  dry-run | run)
+    (($# == 3)) || wamn_usage_error "$WAMN_COMMAND requires TIER WORKSPACE MODE"
+    readonly WAMN_TIER="$1"
+    readonly WAMN_WORKSPACE="$2"
+    readonly WAMN_MODE="$3"
+    wamn_load_plan "$WAMN_TIER" "$WAMN_WORKSPACE" "$WAMN_MODE"
+    if [[ "$WAMN_COMMAND" == 'dry-run' ]]; then
+      wamn_plan_json "$WAMN_TIER" "$WAMN_WORKSPACE" "$WAMN_MODE"
+    else
+      wamn_run
+    fi
+    ;;
+  *)
+    wamn_usage_error "unknown command '$WAMN_COMMAND'"
+    ;;
+esac

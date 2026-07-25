@@ -42,30 +42,27 @@ closures stay within the production set.
 
 ### Named selectors
 
-Until wamn-5wd1.28 installs the selected convenience mechanism, the JSON can be
-consumed without duplicating package lists:
+`tools/workspace-tier` reads the canonical JSON on every invocation, resolves
+the repository independently of the caller's working directory, and passes
+package names to Cargo as an argument array. It never evaluates shell text or
+maintains a second package list.
 
 ```bash
-# Fast root loop; substitute build or test for check as needed.
-mapfile -t WAMN_FAST_PACKAGES < <(
-  jq -r '.tiers.fast_developer_native.root_packages[]' architecture/workspace-tiers.json
-)
-WAMN_FAST_ARGS=()
-for WAMN_PACKAGE in "${WAMN_FAST_PACKAGES[@]}"; do
-  WAMN_FAST_ARGS+=(--package "$WAMN_PACKAGE")
-done
-cargo check "${WAMN_FAST_ARGS[@]}"
+# Fast native loop.
+./tools/workspace-tier run fast_developer_native root check
 
-# Product guest artifacts.
-mapfile -t WAMN_PRODUCT_COMPONENTS < <(
-  jq -r '.tiers.product_components.component_packages[]' architecture/workspace-tiers.json
-)
-WAMN_COMPONENT_ARGS=()
-for WAMN_PACKAGE in "${WAMN_PRODUCT_COMPONENTS[@]}"; do
-  WAMN_COMPONENT_ARGS+=(--package "$WAMN_PACKAGE")
-done
-(cd components && cargo build --target wasm32-wasip2 "${WAMN_COMPONENT_ARGS[@]}")
+# Product guest artifacts and contract/conformance tests.
+./tools/workspace-tier run product_components components build-wasm
+./tools/workspace-tier run contract_conformance root test
 ```
+
+Use `list [TIER]` to inspect membership and `dry-run TIER WORKSPACE MODE`
+to inspect the exact working directory and Cargo argument vector without
+executing it. `run` accepts only the documented debug modes; unknown tiers,
+invalid mode/workspace pairs, and empty package selections fail before Cargo
+is resolved or started. The helper prints each tier's qualification before a
+run. In particular, compiling the `deployed_system_proof` or `release`
+membership never constitutes deployed proof or release admission.
 
 ### Bare Cargo semantics and full coverage
 
@@ -73,14 +70,16 @@ There are no `default-members` in either virtual workspace. Consequently:
 
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
   select all 47 root members. Bare `cargo test` uses each package's default
-  test targets; the full-CI command remains
-  `cargo test --workspace --all-targets --no-fail-fast`.
+  test targets.
 - From `components/`, the same bare commands select all 18 component members.
   The production guest build remains
   `cargo build --workspace --target wasm32-wasip2`.
-- Full CI also checks the classified non-Cargo input
-  `components/samples/node-ts`; Cargo coverage alone does not cover it:
+- Full CI remains three explicit steps: all root targets, all component
+  artifacts, and the classified non-Cargo input:
   ```bash
+  ./tools/workspace-tier run full_ci root test-all
+  ./tools/workspace-tier run full_ci components build-wasm
+  ./tools/workspace-tier list full_ci
   jco componentize components/samples/node-ts/node.js \
     --wit components/samples/node-ts/wit --world-name node-bench \
     --disable http --disable fetch-event -o /tmp/wamn-node-ts-full-ci.wasm

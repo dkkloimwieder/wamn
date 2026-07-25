@@ -1,8 +1,10 @@
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const ROOT_WORKSPACE: &str = "root";
 const COMPONENT_WORKSPACE: &str = "components";
@@ -10,6 +12,8 @@ const ROOT_MANIFEST: &str = "Cargo.toml";
 const COMPONENT_MANIFEST: &str = "components/Cargo.toml";
 const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
+const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
+const BUILD_AND_TEST_DOCS: &str = "docs/build-and-test.md";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -147,6 +151,36 @@ struct CargoTarget {
     kind: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HelperTierSummary {
+    name: String,
+    root_count: usize,
+    component_count: usize,
+    non_cargo_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HelperTier {
+    name: String,
+    root_packages: Vec<String>,
+    component_packages: Vec<String>,
+    non_cargo_inputs: Vec<String>,
+    command_semantics: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HelperPlan {
+    tier: String,
+    workspace: String,
+    mode: String,
+    working_directory: String,
+    qualification: String,
+    argv: Vec<String>,
+}
+
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -184,6 +218,46 @@ fn cargo_metadata(root: &Path, manifest: &str) -> CargoMetadata {
     );
     serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("invalid cargo metadata for {manifest}: {error}"))
+}
+
+fn helper_output(root: &Path, arguments: &[&str]) -> Output {
+    Command::new(root.join(WORKSPACE_TIER_HELPER))
+        .args(arguments)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run workspace tier helper: {error}"))
+}
+
+fn helper_json<T: for<'de> Deserialize<'de>>(output: Output, context: &str) -> T {
+    assert!(
+        output.status.success(),
+        "{context} failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{context} returned invalid JSON: {error}"))
+}
+
+fn helper_plan(root: &Path, tier: &str, workspace: &str, mode: &str) -> HelperPlan {
+    helper_json(
+        helper_output(root, &["dry-run", tier, workspace, mode]),
+        &format!("workspace tier dry-run for {tier}/{workspace}/{mode}"),
+    )
+}
+
+fn selected_plan_packages(argv: &[String]) -> Vec<String> {
+    let mut selected = Vec::new();
+    let mut arguments = argv.iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "--package" {
+            selected.push(
+                arguments
+                    .next()
+                    .expect("--package must have a value")
+                    .clone(),
+            );
+        }
+    }
+    selected
 }
 
 fn workspace_names(metadata: &CargoMetadata) -> BTreeSet<String> {
@@ -297,6 +371,335 @@ fn package_target_kinds(metadata: &CargoMetadata, package_name: &str) -> BTreeSe
         .iter()
         .flat_map(|target| target.kind.iter().cloned())
         .collect()
+}
+
+#[test]
+fn workspace_tier_helper_list_matches_manifest() {
+    let root = repository_root();
+    let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
+    let roles: PackageRoleManifest = read_json(&root, PACKAGE_ROLES_MANIFEST);
+    let summaries: Vec<HelperTierSummary> =
+        helper_json(helper_output(&root, &["list"]), "workspace tier list");
+    let summary_by_name = summaries
+        .iter()
+        .map(|summary| (summary.name.as_str(), summary))
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(summary_by_name.len(), all_tiers(&manifest.tiers).len());
+    for (tier_name, tier) in all_tiers(&manifest.tiers) {
+        let summary = summary_by_name
+            .get(tier_name)
+            .unwrap_or_else(|| panic!("workspace tier list omitted {tier_name}"));
+        assert_eq!(summary.root_count, tier.root_packages.len());
+        assert_eq!(summary.component_count, tier.component_packages.len());
+        assert_eq!(summary.non_cargo_count, tier.non_cargo_inputs.len());
+
+        let listed: HelperTier = helper_json(
+            helper_output(&root, &["list", tier_name]),
+            &format!("workspace tier list {tier_name}"),
+        );
+        assert_eq!(listed.name, tier_name);
+        assert_eq!(listed.root_packages, tier.root_packages);
+        assert_eq!(listed.component_packages, tier.component_packages);
+        assert_eq!(listed.non_cargo_inputs, tier.non_cargo_inputs);
+        assert_eq!(listed.command_semantics, tier.command_semantics);
+    }
+
+    let helper_source = fs::read_to_string(root.join(WORKSPACE_TIER_HELPER))
+        .expect("workspace tier helper must be readable");
+    for package in &roles.packages {
+        assert!(
+            !helper_source.contains(&package.name),
+            "helper duplicates package name {} instead of reading the manifest",
+            package.name
+        );
+    }
+    for input in &roles.non_cargo_inputs {
+        assert!(
+            !helper_source.contains(&input.path),
+            "helper duplicates non-Cargo input {} instead of reading the manifest",
+            input.path
+        );
+    }
+}
+
+#[test]
+fn workspace_tier_helper_dry_run_matches_manifest() {
+    let root = repository_root();
+    let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
+    let cases = [
+        (
+            "fast_developer_native",
+            "root",
+            "check",
+            &manifest.tiers.fast_developer_native.root_packages,
+            vec!["check", "--locked"],
+            root.join(ROOT_MANIFEST),
+        ),
+        (
+            "product_components",
+            "components",
+            "build-wasm",
+            &manifest.tiers.product_components.component_packages,
+            vec!["build", "--locked", "--target", "wasm32-wasip2"],
+            root.join(COMPONENT_MANIFEST),
+        ),
+        (
+            "contract_conformance",
+            "root",
+            "test",
+            &manifest.tiers.contract_conformance.root_packages,
+            vec!["test", "--locked", "--no-fail-fast"],
+            root.join(ROOT_MANIFEST),
+        ),
+    ];
+
+    for (tier, workspace, mode, expected_packages, fixed_arguments, cargo_manifest) in cases {
+        let plan = helper_plan(&root, tier, workspace, mode);
+        let expected_working_directory = if workspace == ROOT_WORKSPACE {
+            root.clone()
+        } else {
+            root.join(COMPONENT_WORKSPACE)
+        };
+        assert_eq!(plan.tier, tier);
+        assert_eq!(plan.workspace, workspace);
+        assert_eq!(plan.mode, mode);
+        assert_eq!(
+            Path::new(&plan.working_directory),
+            expected_working_directory.as_path()
+        );
+        assert_eq!(
+            selected_plan_packages(&plan.argv),
+            expected_packages.as_slice()
+        );
+        assert_eq!(
+            plan.qualification.as_str(),
+            match tier {
+                "fast_developer_native" => {
+                    manifest
+                        .tiers
+                        .fast_developer_native
+                        .command_semantics
+                        .as_str()
+                }
+                "product_components" =>
+                    manifest.tiers.product_components.command_semantics.as_str(),
+                "contract_conformance" => {
+                    manifest
+                        .tiers
+                        .contract_conformance
+                        .command_semantics
+                        .as_str()
+                }
+                _ => unreachable!("case table names only the three executable developer tiers"),
+            }
+        );
+        assert!(
+            plan.argv
+                .windows(2)
+                .any(|pair| pair == ["--manifest-path", &cargo_manifest.display().to_string()]),
+            "{tier}/{workspace}/{mode} must use the absolute Cargo manifest"
+        );
+        for argument in fixed_arguments {
+            assert!(
+                plan.argv.iter().any(|actual| actual == argument),
+                "{tier}/{workspace}/{mode} omitted fixed argument {argument}"
+            );
+        }
+        assert!(
+            !plan.argv.iter().any(|argument| argument == "-c"),
+            "helper must not execute Cargo through a shell"
+        );
+    }
+}
+
+#[test]
+fn workspace_tier_helper_runs_safely_outside_repository() {
+    let root = repository_root();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must follow Unix epoch")
+        .as_nanos();
+    let scratch = std::env::temp_dir().join(format!(
+        "wamn workspace tier {} {nonce}",
+        std::process::id()
+    ));
+    fs::create_dir(&scratch).expect("failed to create workspace tier scratch directory");
+    assert!(!scratch.starts_with(&root));
+
+    let fake_cargo = scratch.join("fake cargo");
+    let capture = scratch.join("captured argv");
+    fs::write(
+        &fake_cargo,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf '%s\0' "$PWD"
+  printf '%s\0' "$@"
+} > "$WAMN_FAKE_CARGO_LOG"
+exit 23
+"#,
+    )
+    .expect("failed to write fake Cargo executable");
+    let mut permissions = fs::metadata(&fake_cargo)
+        .expect("failed to read fake Cargo permissions")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake_cargo, permissions).expect("failed to make fake Cargo executable");
+
+    let helper = root.join(WORKSPACE_TIER_HELPER);
+    let plan: HelperPlan = helper_json(
+        Command::new(&helper)
+            .current_dir(&scratch)
+            .env("CARGO", &fake_cargo)
+            .args(["dry-run", "full_ci", "components", "build-wasm"])
+            .output()
+            .expect("failed to dry-run helper outside the repository"),
+        "outside-repository workspace tier dry-run",
+    );
+    let output = Command::new(&helper)
+        .current_dir(&scratch)
+        .env("CARGO", &fake_cargo)
+        .env("WAMN_FAKE_CARGO_LOG", &capture)
+        .args(["run", "full_ci", "components", "build-wasm"])
+        .output()
+        .expect("failed to run helper outside the repository");
+    assert_eq!(output.status.code(), Some(23));
+
+    let captured = fs::read(&capture).expect("fake Cargo did not capture its invocation");
+    let captured = captured
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .map(|field| String::from_utf8(field.to_vec()).expect("captured argv must be UTF-8"))
+        .collect::<Vec<_>>();
+    let mut expected = vec![plan.working_directory.clone()];
+    expected.extend(plan.argv.iter().skip(1).cloned());
+    assert_eq!(captured, expected);
+    assert_eq!(plan.argv.first(), Some(&fake_cargo.display().to_string()));
+
+    fs::remove_dir_all(&scratch).expect("failed to remove workspace tier scratch directory");
+}
+
+#[test]
+fn workspace_tier_helper_refuses_invalid_and_empty_selections() {
+    let root = repository_root();
+    let cases = [
+        (
+            ["dry-run", "unknown_tier", "root", "check"],
+            64,
+            "unknown tier",
+        ),
+        (
+            ["dry-run", "fast_developer_native", "unknown", "check"],
+            64,
+            "unknown workspace",
+        ),
+        (
+            ["dry-run", "fast_developer_native", "root", "clean"],
+            64,
+            "not valid",
+        ),
+        (
+            ["dry-run", "product_components", "root", "check"],
+            65,
+            "empty root package selection",
+        ),
+    ];
+
+    for (arguments, expected_code, expected_message) in cases {
+        let output = Command::new(root.join(WORKSPACE_TIER_HELPER))
+            .current_dir(std::env::temp_dir())
+            .env("CARGO", "/definitely/missing/cargo")
+            .args(arguments)
+            .output()
+            .expect("failed to run refusing workspace tier helper case");
+        assert_eq!(
+            output.status.code(),
+            Some(expected_code),
+            "unexpected status for {arguments:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected_message),
+            "{arguments:?} did not explain its refusal:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn workspace_tier_helper_full_plans_cover_both_workspaces() {
+    let root = repository_root();
+    let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
+    let root_metadata = cargo_metadata(&root, ROOT_MANIFEST);
+    let component_metadata = cargo_metadata(&root, COMPONENT_MANIFEST);
+    let root_plan = helper_plan(&root, "full_ci", "root", "test-all");
+    let component_plan = helper_plan(&root, "full_ci", "components", "build-wasm");
+
+    assert_exact(
+        "full-CI helper root plan",
+        names(&selected_plan_packages(&root_plan.argv)),
+        workspace_names(&root_metadata),
+    );
+    assert_exact(
+        "full-CI helper component plan",
+        names(&selected_plan_packages(&component_plan.argv)),
+        workspace_names(&component_metadata),
+    );
+    for required in ["--all-targets", "--no-fail-fast"] {
+        assert!(
+            root_plan.argv.iter().any(|argument| argument == required),
+            "full-CI root plan omitted {required}"
+        );
+    }
+    assert!(
+        component_plan
+            .argv
+            .windows(2)
+            .any(|pair| pair == ["--target", "wasm32-wasip2"]),
+        "full-CI component plan must build wasm32-wasip2"
+    );
+
+    let listed: HelperTier = helper_json(
+        helper_output(&root, &["list", "full_ci"]),
+        "workspace tier list full_ci",
+    );
+    assert_eq!(
+        listed.non_cargo_inputs,
+        manifest.tiers.full_ci.non_cargo_inputs
+    );
+    assert_eq!(listed.non_cargo_inputs, ["components/samples/node-ts"]);
+}
+
+#[test]
+fn workspace_tier_docs_use_stable_helper_commands() {
+    let root = repository_root();
+    let docs = fs::read_to_string(root.join(BUILD_AND_TEST_DOCS))
+        .expect("build-and-test documentation must be readable");
+    for command in [
+        "./tools/workspace-tier run fast_developer_native root check",
+        "./tools/workspace-tier run product_components components build-wasm",
+        "./tools/workspace-tier run contract_conformance root test",
+        "./tools/workspace-tier run full_ci root test-all",
+        "./tools/workspace-tier run full_ci components build-wasm",
+        "./tools/workspace-tier list full_ci",
+        "jco componentize components/samples/node-ts/node.js",
+    ] {
+        assert!(
+            docs.contains(command),
+            "build-and-test documentation omitted stable command: {command}"
+        );
+    }
+    for temporary in [
+        "Until wamn-5wd1.28",
+        "mapfile -t WAMN_FAST_PACKAGES",
+        "WAMN_FAST_ARGS",
+    ] {
+        assert!(
+            !docs.contains(temporary),
+            "temporary workspace selector remains documented: {temporary}"
+        );
+    }
 }
 
 #[test]
