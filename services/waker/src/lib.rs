@@ -19,9 +19,8 @@
 //!
 //! ## Decisions vs. effects
 //! The load-bearing decision ([`decide`]) is pure over `(tenant, mappings,
-//! current_replicas)` and unit-tested; the k8s call ([`KubeScale`]) and the NATS
-//! doorbell are the effect shell. The scale client is shared with the
-//! `wakeproof` gate (which parks + restores the runner around the proof).
+//! current_replicas)` and unit-tested; the k8s call and the NATS doorbell are
+//! the service's private effect shell.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -108,34 +107,29 @@ fn tenant_of_subject(subject: &str) -> Option<&str> {
     subject.strip_prefix(DOORBELL_PREFIX)
 }
 
-/// Parse the Kubernetes `Scale` subresource JSON — the desired
-/// (`.spec.replicas`) and observed (`.status.replicas`) counts. Absent fields
-/// read as 0 (a freshly-created Deployment reports no status replicas yet).
+/// Parse the desired replica count from Kubernetes `Scale` subresource JSON.
 fn parse_scale(body: &str) -> anyhow::Result<Scale> {
     let v: serde_json::Value = serde_json::from_str(body).context("parse Scale JSON")?;
     Ok(Scale {
         spec_replicas: v["spec"]["replicas"].as_i64().unwrap_or(0) as i32,
-        status_replicas: v["status"]["replicas"].as_i64().unwrap_or(0) as i32,
     })
 }
 
 // ---------------------------------------------------------------------------
-// The in-cluster Kubernetes scale client (effect shell; shared with the gate).
+// The in-cluster Kubernetes scale client (private service effect shell).
 // ---------------------------------------------------------------------------
 
-/// A Deployment's `Scale` subresource counts.
+/// A Deployment's desired replica count from the `Scale` subresource.
 #[derive(Debug, Clone, Copy)]
-pub struct Scale {
+struct Scale {
     /// The DESIRED replica count (`.spec.replicas`) — what the waker actuates.
-    pub spec_replicas: i32,
-    /// The OBSERVED replica count (`.status.replicas`) — running pods.
-    pub status_replicas: i32,
+    spec_replicas: i32,
 }
 
 /// A minimal in-cluster client for the `apps/v1` Deployment `scale` subresource:
-/// GET the current counts, PATCH a new desired count. Trusts ONLY the
+/// GET the desired count, PATCH a new desired count. Trusts ONLY the
 /// service-account CA (`ca.crt`) and authenticates with the mounted bearer token.
-pub struct KubeScale {
+struct KubeScale {
     http: reqwest::Client,
     base: String,
     namespace: String,
@@ -145,7 +139,7 @@ pub struct KubeScale {
 impl KubeScale {
     /// Build from the in-cluster service account: the bearer token, the CA
     /// bundle, and the namespace, all mounted under [`SA_DIR`].
-    pub fn in_cluster() -> anyhow::Result<Self> {
+    fn in_cluster() -> anyhow::Result<Self> {
         let dir = std::path::Path::new(SA_DIR);
         let token = std::fs::read_to_string(dir.join("token"))
             .context("read service-account token")?
@@ -161,7 +155,7 @@ impl KubeScale {
 
     /// Build against an explicit API base + namespace + bearer token, trusting
     /// only the given CA bundle (PEM, one or more certs).
-    pub fn new(base: &str, namespace: &str, token: &str, ca_pem: &[u8]) -> anyhow::Result<Self> {
+    fn new(base: &str, namespace: &str, token: &str, ca_pem: &[u8]) -> anyhow::Result<Self> {
         // Trust ONLY the cluster CA: `tls_certs_only` disables the native/built-in
         // roots and verifies the API server against exactly the certs in ca.crt.
         let certs = reqwest::Certificate::from_pem_bundle(ca_pem)
@@ -186,8 +180,8 @@ impl KubeScale {
         )
     }
 
-    /// GET the Deployment's current `Scale` (desired + observed replicas).
-    pub async fn get_scale(&self, deployment: &str) -> anyhow::Result<Scale> {
+    /// GET the Deployment's current desired replica count.
+    async fn get_scale(&self, deployment: &str) -> anyhow::Result<Scale> {
         let resp = self
             .http
             .get(self.scale_url(deployment))
@@ -204,7 +198,7 @@ impl KubeScale {
     }
 
     /// PATCH the Deployment's desired replica count (a merge-patch on `.spec`).
-    pub async fn set_replicas(&self, deployment: &str, replicas: i32) -> anyhow::Result<()> {
+    async fn set_replicas(&self, deployment: &str, replicas: i32) -> anyhow::Result<()> {
         let body = serde_json::json!({ "spec": { "replicas": replicas } }).to_string();
         let resp = self
             .http
@@ -490,12 +484,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_scale_reads_spec_and_status_replicas() {
+    fn parse_scale_reads_desired_replicas() {
         let body = r#"{"kind":"Scale","spec":{"replicas":2},"status":{"replicas":1,"selector":"app=runner"}}"#;
         let s = parse_scale(body).expect("scale parses");
-        assert_eq!((s.spec_replicas, s.status_replicas), (2, 1));
-        // A freshly-parked deployment with no status replicas reads as 0.
+        assert_eq!(s.spec_replicas, 2);
+        // A freshly-created deployment with no desired replicas reads as 0.
         let parked = parse_scale(r#"{"spec":{"replicas":0},"status":{}}"#).unwrap();
-        assert_eq!((parked.spec_replicas, parked.status_replicas), (0, 0));
+        assert_eq!(parked.spec_replicas, 0);
     }
 }

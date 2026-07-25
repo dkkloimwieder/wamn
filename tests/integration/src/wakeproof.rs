@@ -5,7 +5,7 @@
 //! run, the waker (`deploy/platform/waker.yaml`) sees the doorbell hint and scales the
 //! runner `0 -> 1` via the k8s API, and the woken runner drains the run to
 //! `completed` — all within a bounded window. Like `ladderproof`, it is a pure
-//! DB client (plus the shared `wamn_waker::KubeScale` scale client): it seeds a
+//! DB client plus a repository-only Kubernetes proof adapter: it seeds a
 //! cron flow and asserts terminal DB state + observed actuation. It NEVER
 //! enqueues or doorbells — the LIVE dispatcher's cron fire must, which IS the
 //! acceptance criterion.
@@ -38,11 +38,11 @@ use clap::Args;
 use tokio_postgres::Client;
 
 use wamn_gate_harness::{check, seed_flow_version};
-use wamn_waker::{KubeScale, Scale};
 
 // Reuse the shared app-connection + identifier guard (the same demo schema +
 // RLS floor the deployed runner claims under).
 use wamn_test_fixtures::runner::{connect_app, valid_ident};
+use wamn_test_infrastructure::kubernetes::{DeploymentScale, KubeScale};
 
 #[derive(Debug, Args)]
 pub struct WakeProofArgs {
@@ -159,7 +159,7 @@ async fn wait_for_scale(
     scale: &KubeScale,
     deployment: &str,
     timeout_secs: u64,
-    pred: impl Fn(Scale) -> bool,
+    pred: impl Fn(DeploymentScale) -> bool,
 ) -> bool {
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     loop {

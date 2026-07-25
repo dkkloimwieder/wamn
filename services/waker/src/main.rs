@@ -1,7 +1,7 @@
 //! wamn-waker binary: parse args, init tracing, run the scale-to-zero wake loop.
 //!
-//! Thin over the lib (SR9), mirroring the dispatcher binary: the loop core lives
-//! in `wamn_waker` so the wakeproof gate reuses its scale client.
+//! Thin over the lib (SR9), mirroring the dispatcher binary. The loop core and
+//! Kubernetes client remain private to `wamn_waker`.
 
 use std::str::FromStr as _;
 

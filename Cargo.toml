@@ -43,6 +43,7 @@ opentelemetry = { version = "0.31", default-features = false }
 opentelemetry-otlp = { version = "0.31", default-features = false }
 opentelemetry_sdk = { version = "0.31", default-features = false }
 rand_core = "0.10"
+reqwest = { version = "0.13", default-features = false }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false }
 schemars = "0.8"

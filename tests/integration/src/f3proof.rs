@@ -39,11 +39,11 @@ use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 
 use wamn_gate_harness::{check, seed_flow_version};
-use wamn_waker::KubeScale;
 
 use wamn_test_fixtures::runner::{
     connect_app, fnv1a_64, ladder_ddl, poll_to_terminal, seed_run, valid_ident,
 };
+use wamn_test_infrastructure::kubernetes::{DeploymentScale, KubeScale};
 
 const FLOW_ID: &str = "escalate-stale-holds";
 const TENANT_DEFAULT: &str = "demo-tenant";
@@ -461,7 +461,7 @@ async fn wait_scale(
     kube: &KubeScale,
     deployment: &str,
     deadline: Instant,
-    pred: impl Fn(&wamn_waker::Scale) -> bool,
+    pred: impl Fn(&DeploymentScale) -> bool,
 ) -> anyhow::Result<bool> {
     loop {
         if pred(&kube.get_scale(deployment).await?) {

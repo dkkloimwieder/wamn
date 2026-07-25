@@ -23,6 +23,5 @@ rustls = { workspace = true, features = ["std", "tls12", "aws-lc-rs"] }
 # The in-cluster Kubernetes scale client (GET/PATCH .../scale over HTTPS, trusting
 # only the service-account CA). reqwest 0.13 is ALREADY in the workspace lock
 # (oci-client via wash-runtime) built on the rustls stack, so a direct dep with
-# the `rustls` feature (aws-lc-rs provider) adds no new lock entries. Shared
-# with the wakeproof gate.
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# the `rustls` feature (aws-lc-rs provider) adds no new lock entries.
+reqwest = { workspace = true, features = ["rustls"] }
