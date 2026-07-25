@@ -4321,15 +4321,11 @@ name = "wamn-execution-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
  "async-trait",
- "futures-util",
  "hyper",
- "opentelemetry",
  "tokio",
  "tracing",
  "wamn-runtime",
- "wamn-scheduler",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
@@ -4340,7 +4336,10 @@ name = "wamn-executor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
  "clap",
+ "futures-util",
+ "opentelemetry",
  "tokio",
  "tracing",
  "wamn-execution-host",

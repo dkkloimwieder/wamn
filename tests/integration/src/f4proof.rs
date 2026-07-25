@@ -66,6 +66,7 @@ use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilit
 use wamn_gate_harness::check;
 use wamn_run_state::queue::mint_evt_run_id;
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::{
     self, WAMN_JETSTREAM_ID, WamnJetstream, WamnJetstreamConfig,
@@ -773,7 +774,7 @@ async fn gate_body(
             schema: Some("wamn_run"),
             project: "default",
         },
-        production_capabilities(allowed),
+        production_capabilities(allowed, Arc::new(RunnerEgressPolicy::default())),
         30_000,
     )
     .await?;

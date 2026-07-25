@@ -1,46 +1,14 @@
-//! Shared native host for the compiled flowrunner component.
+//! Shared WASI/Wasm adapter for the compiled flowrunner component.
 //!
-//! fqg.4 shipped the guest-side claim path — the flowrunner component's
-//! `run-next` export claims one currently-claimable run from the durable
-//! `run_queue` (`FOR UPDATE SKIP LOCKED`), reads its flow + trigger input from
-//! the dispatcher-persisted `runs` row, flips it `running`, drives it with the
-//! 5.2 engine (renewing the lease per node), and dequeues (terminal) or parks
-//! (a `delay`). But the fqg.4 gates SEED `run_queue` directly; nothing consumed
-//! it as a *running service*. This module is that service: a long-lived
-//! wamn-run-worker process that instantiates the flowrunner component once and loops
-//! `run-next`, so the LIVE chain closes —
-//!
-//!   dispatcher (fqg.3/a52) write-ahead + enqueue → run_queue → **this runner
-//!   claims + drives** → `runs.status = completed`.
-//!
-//! Single-project (one Deployment per project, the api-gateway analog): one
-//! flowrunner instance keyed to one component id, whose plugin session carries
-//! the host-injected `app.runner` lease owner + tenant + `search_path`. The
-//! owner is per-replica (the pod name), so leases are attributable and
-//! `SKIP LOCKED` makes replicas + scale-out safe. Multi-project (a
-//! dispatcher-style projects file, N instances) is a follow-up.
-//!
-//! Idle handling mirrors the dispatcher (NATS-optional): a doorbell hint on
-//! `wamn.doorbell.<tenant>` — the subject the dispatcher already publishes to —
-//! wakes an immediate drain, and a poll-with-backoff reconcile (reusing the
-//! scheduler's [`wamn_scheduler::Cadence::next_interval`] cadence) guarantees pickup
-//! even when a hint is lost or NATS is absent. SIGTERM is handled explicitly
-//! (PID 1 in-container gets no default disposition), so a rollout exits in
-//! milliseconds instead of waiting out the grace period; abrupt death is safe
-//! anyway — an in-flight run's lease simply ages out and another replica
-//! reclaims it (fqg.2).
-//!
-//! The loop core ([`ExecutionHost`]) is shared by serving and scenario
-//! compositions. Artifact-specific CLI, credentials, and capability selection
-//! remain in their service leaves.
+//! [`ExecutionHost`] instantiates one component with host-injected identity and
+//! capabilities, exposes `check-flow`, and drives the guest's `run-next` export.
+//! Artifact lifecycle policy such as polling, doorbell subscription, shutdown,
+//! and production capability selection remains in the service leaves.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use opentelemetry::KeyValue;
-use opentelemetry::metrics::{Counter, Histogram};
-use tokio::sync::watch;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx, WamnStoreLimiter};
 use wash_runtime::engine::workload::ResolvedWorkload;
@@ -95,11 +63,14 @@ enum CapabilityMode {
     },
 }
 
-/// Compose production HTTP and WASI capabilities.
-pub fn production_capabilities(allowed_hosts: Arc<[AllowedHost]>) -> ExecutionCapabilities {
+/// Compose production HTTP and WASI capabilities from service-selected policy.
+pub fn production_capabilities(
+    allowed_hosts: Arc<[AllowedHost]>,
+    egress_policy: Arc<RunnerEgressPolicy>,
+) -> ExecutionCapabilities {
     ExecutionCapabilities {
         mode: CapabilityMode::Production { allowed_hosts },
-        egress_policy: Arc::new(RunnerEgressPolicy::default()),
+        egress_policy,
     }
 }
 
@@ -131,9 +102,21 @@ type RunNextFunc = TypedFunc<(u64,), (Result<(bool, Option<String>, u32), String
 /// The side-effect-free `check-flow` export's typed signature.
 type CheckFlowFunc = TypedFunc<(String,), (Result<Vec<String>, String>,)>;
 
-/// What one drain of the queue did — the gate's assertion surface. `claimed` is
-/// the total runs this drain pulled; each ends `completed` (0), `parked` (1, a
-/// `delay` re-offered at its wake), or `failed` (2).
+/// One completed guest drive, borrowed for synchronous caller observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DriveObservation<'a> {
+    /// The claimed run identifier, when the guest returned one.
+    pub run_id: Option<&'a str>,
+    /// Guest outcome code: `0` completed, `1` parked, otherwise failed.
+    pub outcome: u32,
+    /// Wall time spent in the guest's `run-next` call.
+    pub elapsed: Duration,
+}
+
+/// What one drain of the queue did — the gate's assertion surface.
+///
+/// `claimed` is the total runs this drain pulled; each ends `completed` (0),
+/// `parked` (1, a `delay` re-offered at its wake), or `failed` (2).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DrainReport {
     pub claimed: usize,
@@ -146,6 +129,23 @@ impl DrainReport {
     pub fn found_work(&self) -> bool {
         self.claimed > 0
     }
+
+    fn record(&mut self, outcome: u32) {
+        self.claimed += 1;
+        match outcome {
+            0 => self.completed += 1,
+            1 => self.parked += 1,
+            _ => self.failed += 1,
+        }
+    }
+}
+
+fn observe_drive<F>(report: &mut DrainReport, observation: DriveObservation<'_>, observe: &mut F)
+where
+    F: for<'a> FnMut(DriveObservation<'a>),
+{
+    report.record(observation.outcome);
+    observe(observation);
 }
 
 /// The runner's outbound-`wasi:http` egress handler: enforce the host
@@ -249,71 +249,6 @@ fn register_logging_claim(logging: &WamnLogging, identity: &ExecutionIdentity<'_
     logging.set_claim(identity.owner, identity.tenant, identity.project);
 }
 
-/// [9.8] Map a guest drive outcome code to its `outcome` metric attribute:
-/// 0 completed, 1 parked, anything else failed — the SAME fold [`DrainReport`]
-/// uses for its tally. A mutant that folds `failed` into the completed bucket (or
-/// drops the attribute) is caught by metricbench phase 1's forced-failure check.
-fn outcome_label(outcome: u32) -> &'static str {
-    match outcome {
-        0 => "completed",
-        1 => "parked",
-        _ => "failed",
-    }
-}
-
-/// [9.8] The run-worker's OTel instruments plus this replica's `(tenant, project)`
-/// base attributes: `wamn.run.executions` (by `outcome`) and the per-drive
-/// `wamn.run.drive.duration_ms` histogram. On the global meter the fork's
-/// observability init installs (the S5/9.1 provider — never a second one); inert
-/// until `OTEL_*` selects a real provider. NO `run_id` attribute (unbounded).
-struct RunMetrics {
-    executions: Counter<u64>,
-    drive_ms: Histogram<f64>,
-    tenant: String,
-    project: String,
-}
-
-impl RunMetrics {
-    fn register(tenant: &str, project: &str) -> Self {
-        let meter = opentelemetry::global::meter("wamn-run-worker");
-        Self {
-            executions: meter
-                .u64_counter("wamn.run.executions")
-                .with_description(
-                    "flow-run drives by terminal outcome (completed / parked / failed)",
-                )
-                .build(),
-            drive_ms: meter
-                .f64_histogram("wamn.run.drive.duration_ms")
-                .with_description(
-                    "wall time to drive one claimed run through run-next, in ms \
-                     (whole-run drive; true per-node duration is guest-side — deferred)",
-                )
-                .build(),
-            tenant: tenant.to_string(),
-            project: project.to_string(),
-        }
-    }
-
-    /// Record one claimed drive: the duration histogram (tenant/project) and the
-    /// executions counter (tenant/project + the terminal `outcome`).
-    fn record_drive(&self, elapsed: Duration, outcome: u32) {
-        let base = [
-            KeyValue::new("wamn.tenant", self.tenant.clone()),
-            KeyValue::new("wamn.project", self.project.clone()),
-        ];
-        self.drive_ms.record(elapsed.as_secs_f64() * 1000.0, &base);
-        self.executions.add(
-            1,
-            &[
-                KeyValue::new("wamn.tenant", self.tenant.clone()),
-                KeyValue::new("wamn.project", self.project.clone()),
-                KeyValue::new("outcome", outcome_label(outcome)),
-            ],
-        );
-    }
-}
-
 /// [9.8] Attach the D16 per-store memory limiter to the flowrunner store when a
 /// budget is configured (`WAMN_MEMORY_LIMIT_MB`), so its high-water + any denials
 /// feed the `wamn.memory.*` gauges (mirrors the fork's `new_store_from_templates`
@@ -330,20 +265,15 @@ fn attach_memory_limiter(store: &mut Store<SharedCtx>, component_id: &str) -> Op
     Some(memory_metrics::global_memory_meter())
 }
 
-/// The production flow runner: a single long-lived flowrunner instance whose
-/// plugin session carries the host-injected lease owner + tenant + schema.
+/// A flowrunner instance whose plugin session carries host-injected identity.
+///
 /// [`ExecutionHost::drain`] pulls every currently-claimable run to a terminal
-/// (or parked) state; [`ExecutionHost::serve`] wraps that in the doorbell +
-/// backoff + shutdown loop.
+/// (or parked) state. Service leaves decide when to invoke another drain.
 pub struct ExecutionHost {
     store: Store<SharedCtx>,
     check_flow: CheckFlowFunc,
     run_next: RunNextFunc,
     ttl_ms: u64,
-    /// The doorbell subject this runner listens on (`wamn.doorbell.<tenant>`).
-    subject: String,
-    /// [9.8] run/drive instruments + this replica's tenant/project attributes.
-    metrics: RunMetrics,
     /// [9.8] `Some` when a memory limiter is attached (a budget was configured);
     /// each drive then publishes the store's high-water into the meter.
     mem: Option<MemoryMeter>,
@@ -354,7 +284,6 @@ impl std::fmt::Debug for ExecutionHost {
         formatter
             .debug_struct("ExecutionHost")
             .field("ttl_ms", &self.ttl_ms)
-            .field("subject", &self.subject)
             .finish_non_exhaustive()
     }
 }
@@ -487,8 +416,6 @@ impl ExecutionHost {
             check_flow,
             run_next,
             ttl_ms,
-            subject: format!("wamn.doorbell.{tenant}"),
-            metrics: RunMetrics::register(tenant, project),
             mem,
         })
     }
@@ -518,6 +445,19 @@ impl ExecutionHost {
     /// strictly shrinks and the loop terminates; a parked run is picked up on a
     /// later wake. Returns the tally.
     pub async fn drain(&mut self) -> anyhow::Result<DrainReport> {
+        self.drain_observing(|_| {}).await
+    }
+
+    /// Drain every currently-claimable run and synchronously observe each drive.
+    ///
+    /// The callback runs after a claimed guest call and memory snapshot, before
+    /// the next claim. Its observation borrows the run id only for that call,
+    /// keeping the report O(1) regardless of queue depth. Successful drives are
+    /// therefore observable even if a later guest call ends the drain in error.
+    pub async fn drain_observing<F>(&mut self, mut observe: F) -> anyhow::Result<DrainReport>
+    where
+        F: for<'a> FnMut(DriveObservation<'a>),
+    {
         let mut report = DrainReport::default();
         loop {
             // [9.8] time the whole run-drive; record only for a CLAIMED run (an
@@ -528,92 +468,23 @@ impl ExecutionHost {
                 break;
             }
             let elapsed = t0.elapsed();
-            report.claimed += 1;
-            match outcome {
-                0 => report.completed += 1,
-                1 => report.parked += 1,
-                _ => report.failed += 1,
-            }
-            // [9.8] the drive's duration + outcome, then the flowrunner store's
-            // memory high-water when a limiter is attached.
-            self.metrics.record_drive(elapsed, outcome);
+            // [9.8] Snapshot the flowrunner store's memory high-water when a
+            // limiter is attached. This remains adapter state because it
+            // requires direct access to the Wasmtime store and its limiter.
             if let Some(mem) = &self.mem {
                 mem.snapshot_from(&self.store.data().wamn_limiter);
             }
-            tracing::info!(
-                run_id = run_id.as_deref().unwrap_or("?"),
-                outcome,
-                "run-worker: drove a claimed run"
+            observe_drive(
+                &mut report,
+                DriveObservation {
+                    run_id: run_id.as_deref(),
+                    outcome,
+                    elapsed,
+                },
+                &mut observe,
             );
         }
         Ok(report)
-    }
-
-    /// The always-on serve loop: drain, then wait for a doorbell hint, the idle
-    /// timeout, or shutdown — backing off toward `max_idle_ms` while the queue
-    /// stays empty and resetting to `min_idle_ms` on work or a hint. A drain
-    /// error is non-fatal (logged + backed off): the pool re-dials on the next
-    /// call, and an in-flight run's lease ages out for another replica (fqg.2).
-    pub async fn serve(
-        &mut self,
-        nats: Option<async_nats::Client>,
-        cadence: wamn_scheduler::Cadence,
-        mut shutdown: watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
-        use futures_util::StreamExt;
-
-        let min = cadence.min();
-        let mut sub = match &nats {
-            Some(c) => Some(c.subscribe(self.subject.clone()).await?),
-            None => None,
-        };
-        let mut idle = min;
-        loop {
-            let found_work = match self.drain().await {
-                Ok(r) => {
-                    if r.claimed > 0 {
-                        tracing::info!(
-                            claimed = r.claimed,
-                            completed = r.completed,
-                            parked = r.parked,
-                            failed = r.failed,
-                            "run-worker: drained"
-                        );
-                    }
-                    r.found_work()
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "run-worker: drain failed (retrying after backoff)");
-                    false
-                }
-            };
-            idle = cadence.next_interval(idle, found_work);
-
-            tokio::select! {
-                hint = async {
-                    match sub.as_mut() {
-                        Some(s) => s.next().await,
-                        None => std::future::pending().await,
-                    }
-                } => {
-                    if hint.is_none() {
-                        // The subscription closed; drop it (the poll-backoff
-                        // reconcile still guarantees pickup).
-                        sub = None;
-                        tracing::warn!("run-worker: doorbell subscription closed; poll-backoff only");
-                    } else {
-                        // A hint means work is likely — drain now at min cadence.
-                        idle = min;
-                    }
-                }
-                _ = tokio::time::sleep(Duration::from_millis(idle as u64)) => {}
-                _ = shutdown.changed() => {
-                    if *shutdown.borrow() {
-                        return Ok(());
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -646,54 +517,39 @@ mod tests {
         assert_eq!(logging.claim_snapshot("some-other-id"), None);
     }
 
-    // [9.8] the executions counter's `outcome` attribute maps 0/1/other to
-    // completed/parked/failed — the SAME fold DrainReport uses. A mutant folding
-    // `failed` into `completed` (or dropping the attribute) diverges here and at
-    // metricbench phase 1.
     #[test]
-    fn outcome_label_maps_codes_to_buckets() {
-        assert_eq!(outcome_label(0), "completed");
-        assert_eq!(outcome_label(1), "parked");
-        assert_eq!(outcome_label(2), "failed");
-        // Any non-0/1 code is a failure (defensive — the guest only emits 0/1/2).
-        assert_eq!(outcome_label(99), "failed");
-    }
-
-    #[test]
-    fn drain_report_tallies_by_outcome() {
+    fn callback_observations_and_aggregate_tallies_agree() {
         let mut r = DrainReport::default();
+        let mut observed = Vec::new();
+        let mut observe = |observation: DriveObservation<'_>| {
+            observed.push((
+                observation.run_id.map(str::to_owned),
+                observation.outcome,
+                observation.elapsed,
+            ));
+        };
         assert!(!r.found_work());
         // completed / parked / failed land in distinct buckets; claimed is the sum.
         for outcome in [0u32, 0, 1, 2] {
-            r.claimed += 1;
-            match outcome {
-                0 => r.completed += 1,
-                1 => r.parked += 1,
-                _ => r.failed += 1,
-            }
+            let run_id = format!("run-{outcome}");
+            observe_drive(
+                &mut r,
+                DriveObservation {
+                    run_id: Some(&run_id),
+                    outcome,
+                    elapsed: Duration::from_millis(outcome as u64 + 1),
+                },
+                &mut observe,
+            );
         }
-        assert_eq!(
-            r,
-            DrainReport {
-                claimed: 4,
-                completed: 2,
-                parked: 1,
-                failed: 1
-            }
-        );
+        assert_eq!(r.claimed, 4);
+        assert_eq!(r.completed, 2);
+        assert_eq!(r.parked, 1);
+        assert_eq!(r.failed, 1);
+        assert_eq!(observed.len(), r.claimed);
+        assert_eq!(observed[2].0.as_deref(), Some("run-1"));
+        assert_eq!(observed[2].1, 1);
+        assert_eq!(observed[2].2, Duration::from_millis(2));
         assert!(r.found_work());
-    }
-
-    #[test]
-    fn idle_backoff_resets_on_work_and_expands_while_idle() {
-        // The runner reuses the dispatcher cadence: work resets to min, idleness
-        // expands toward max.
-        let cadence = wamn_scheduler::Cadence::new(250, 30_000).unwrap();
-        let (min, max) = (cadence.min(), cadence.max());
-        assert_eq!(cadence.next_interval(min, true), min);
-        let a = cadence.next_interval(min, false);
-        let b = cadence.next_interval(a, false);
-        assert!(a > min && b > a && b <= max);
-        assert_eq!(cadence.next_interval(a, true), min);
     }
 }

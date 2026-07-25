@@ -17,7 +17,10 @@ wamn-execution-host = { workspace = true }
 wamn-runtime = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 anyhow = { workspace = true }
+async-nats = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync"] }
+futures-util = { workspace = true }
+opentelemetry = { workspace = true, features = ["metrics"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 tracing = { workspace = true }
 wamn-scheduler = { workspace = true }

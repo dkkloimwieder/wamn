@@ -7,15 +7,13 @@ license.workspace = true
 
 [dependencies]
 wamn-runtime = { workspace = true }
-wamn-scheduler = { workspace = true }
 wash-runtime = { workspace = true }
 wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
 wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-opentelemetry = { workspace = true, features = ["metrics"] }
-tokio = { workspace = true, features = ["time", "rt", "macros", "sync"] }
 tracing = { workspace = true }
-futures-util = { workspace = true }
 hyper = { workspace = true }
-async-nats = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

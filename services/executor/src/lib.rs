@@ -1,14 +1,19 @@
 //! Production composition for the flow serving executor.
 //!
 //! This service leaf selects only production credentials, clock, randomness,
-//! egress, and database adapters. Deterministic scenario capabilities live in
-//! the separate `wamn-scenario-worker` artifact.
+//! egress, and database adapters. It also owns the NATS doorbell, idle cadence,
+//! retry, and shutdown lifecycle around the shared execution host. Deterministic
+//! scenario capabilities live in the separate `wamn-scenario-worker` artifact.
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Args;
+use futures_util::StreamExt as _;
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Counter, Histogram};
 use tokio::sync::watch;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
@@ -16,6 +21,7 @@ use wamn_execution_host::{
     DEFAULT_FLOWRUNNER_PATH, ExecutionHost, ExecutionIdentity, production_capabilities,
 };
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
@@ -94,6 +100,144 @@ fn resolve_owner(arg: Option<String>) -> String {
         .unwrap_or_else(|| "wamn-runner".to_string())
 }
 
+fn doorbell_subject(tenant: &str) -> String {
+    format!("wamn.doorbell.{tenant}")
+}
+
+/// Map a guest drive outcome code to its bounded metric attribute.
+fn outcome_label(outcome: u32) -> &'static str {
+    match outcome {
+        0 => "completed",
+        1 => "parked",
+        _ => "failed",
+    }
+}
+
+/// Production run-worker instruments and replica identity attributes.
+struct RunMetrics {
+    executions: Counter<u64>,
+    drive_ms: Histogram<f64>,
+    tenant: String,
+    project: String,
+}
+
+impl RunMetrics {
+    fn register(tenant: &str, project: &str) -> Self {
+        let meter = opentelemetry::global::meter("wamn-run-worker");
+        Self {
+            executions: meter
+                .u64_counter("wamn.run.executions")
+                .with_description(
+                    "flow-run drives by terminal outcome (completed / parked / failed)",
+                )
+                .build(),
+            drive_ms: meter
+                .f64_histogram("wamn.run.drive.duration_ms")
+                .with_description(
+                    "wall time to drive one claimed run through run-next, in ms \
+                     (whole-run drive; true per-node duration is guest-side — deferred)",
+                )
+                .build(),
+            tenant: tenant.to_string(),
+            project: project.to_string(),
+        }
+    }
+
+    fn record_drive(&self, elapsed: Duration, outcome: u32) {
+        let base = [
+            KeyValue::new("wamn.tenant", self.tenant.clone()),
+            KeyValue::new("wamn.project", self.project.clone()),
+        ];
+        self.drive_ms.record(elapsed.as_secs_f64() * 1000.0, &base);
+        self.executions.add(
+            1,
+            &[
+                KeyValue::new("wamn.tenant", self.tenant.clone()),
+                KeyValue::new("wamn.project", self.project.clone()),
+                KeyValue::new("outcome", outcome_label(outcome)),
+            ],
+        );
+    }
+}
+
+/// Drain continuously, waking on a doorbell, idle reconciliation, or shutdown.
+///
+/// Drain failures are non-fatal: the plugin pool can reconnect on the next
+/// call, while an in-flight run's lease remains reclaimable by another replica.
+async fn serve(
+    executor: &mut ExecutionHost,
+    nats: Option<async_nats::Client>,
+    subject: String,
+    cadence: wamn_scheduler::Cadence,
+    metrics: &RunMetrics,
+    mut shutdown: watch::Receiver<bool>,
+) -> anyhow::Result<()> {
+    let min = cadence.min();
+    let mut subscription = match &nats {
+        Some(client) => Some(client.subscribe(subject).await?),
+        None => None,
+    };
+    let mut idle = min;
+    loop {
+        let found_work = match executor
+            .drain_observing(|observation| {
+                metrics.record_drive(observation.elapsed, observation.outcome);
+                tracing::info!(
+                    run_id = observation.run_id.unwrap_or("?"),
+                    outcome = observation.outcome,
+                    "run-worker: drove a claimed run"
+                );
+            })
+            .await
+        {
+            Ok(report) => {
+                if report.claimed > 0 {
+                    tracing::info!(
+                        claimed = report.claimed,
+                        completed = report.completed,
+                        parked = report.parked,
+                        failed = report.failed,
+                        "run-worker: drained"
+                    );
+                }
+                report.found_work()
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "run-worker: drain failed (retrying after backoff)"
+                );
+                false
+            }
+        };
+        idle = cadence.next_interval(idle, found_work);
+
+        tokio::select! {
+            hint = async {
+                match subscription.as_mut() {
+                    Some(subscription) => subscription.next().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if hint.is_none() {
+                    subscription = None;
+                    tracing::warn!(
+                        "run-worker: doorbell subscription closed; poll-backoff only"
+                    );
+                } else {
+                    idle = min;
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(idle as u64)) => {}
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+}
+
 /// Run the production serving executor until shutdown.
 pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     use wash_runtime::washlet::{NatsConnectionOptions, connect_nats};
@@ -143,7 +287,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
             schema: args.schema.as_deref(),
             project: &args.project,
         },
-        production_capabilities(allowed_hosts),
+        production_capabilities(allowed_hosts, Arc::new(RunnerEgressPolicy::default())),
         args.lease_ttl_ms,
     )
     .await?;
@@ -194,7 +338,16 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         "executor up"
     );
 
-    let result = executor.serve(nats, cadence, shutdown_rx).await;
+    let metrics = RunMetrics::register(&args.tenant, &args.project);
+    let result = serve(
+        &mut executor,
+        nats,
+        doorbell_subject(&args.tenant),
+        cadence,
+        &metrics,
+        shutdown_rx,
+    )
+    .await;
     ticker.abort();
     result
 }
@@ -226,9 +379,57 @@ mod tests {
     }
 
     #[test]
-    fn manifest_excludes_scenario_runtime() {
-        let manifest = include_str!("../Cargo.toml");
-        assert!(!manifest.contains("wamn-scenario-runtime"));
-        assert!(!manifest.contains("../scenario-worker"));
+    fn doorbell_subject_is_tenant_scoped() {
+        assert_eq!(doorbell_subject("acme"), "wamn.doorbell.acme");
+    }
+
+    #[test]
+    fn idle_backoff_resets_on_work_and_expands_while_idle() {
+        let cadence = wamn_scheduler::Cadence::new(250, 30_000).unwrap();
+        let (min, max) = (cadence.min(), cadence.max());
+        assert_eq!(cadence.next_interval(min, true), min);
+        let first_idle = cadence.next_interval(min, false);
+        let second_idle = cadence.next_interval(first_idle, false);
+        assert!(first_idle > min && second_idle > first_idle && second_idle <= max);
+        assert_eq!(cadence.next_interval(first_idle, true), min);
+    }
+
+    #[test]
+    fn outcome_label_maps_codes_to_bounded_buckets() {
+        assert_eq!(outcome_label(0), "completed");
+        assert_eq!(outcome_label(1), "parked");
+        assert_eq!(outcome_label(2), "failed");
+        assert_eq!(outcome_label(99), "failed");
+    }
+
+    #[test]
+    fn manifests_keep_lifecycle_dependencies_in_executor() {
+        let executor_manifest = include_str!("../Cargo.toml");
+        assert!(!executor_manifest.contains("wamn-scenario-runtime"));
+        assert!(!executor_manifest.contains("../scenario-worker"));
+        for dependency in [
+            "async-nats",
+            "futures-util",
+            "opentelemetry",
+            "wamn-scheduler",
+        ] {
+            assert!(
+                executor_manifest.contains(dependency),
+                "executor must own {dependency}"
+            );
+        }
+
+        let host_manifest = include_str!("../../../crates/execution/host/Cargo.toml");
+        for dependency in [
+            "async-nats",
+            "futures-util",
+            "opentelemetry",
+            "wamn-scheduler",
+        ] {
+            assert!(
+                !host_manifest.contains(dependency),
+                "shared execution host must not own {dependency}"
+            );
+        }
     }
 }

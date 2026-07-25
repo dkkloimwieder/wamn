@@ -44,6 +44,7 @@ use wamn_runtime::plugins::wamn_logging::{self, WamnLogging, WamnLoggingConfig};
 use tokio_postgres::{Client, NoTls};
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 
 // ---------------------------------------------------------------------------
@@ -890,7 +891,10 @@ async fn runpath_phase(args: &LogBenchArgs) -> anyhow::Result<()> {
                 schema: Some(RUNPATH_SCHEMA),
                 project: RUNPATH_PROJECT,
             },
-            production_capabilities(std::sync::Arc::from([])),
+            production_capabilities(
+                std::sync::Arc::from([]),
+                Arc::new(RunnerEgressPolicy::default()),
+            ),
             30_000,
         )
         .await?;

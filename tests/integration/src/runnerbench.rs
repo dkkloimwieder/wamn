@@ -48,6 +48,7 @@ use wamn_run_state::queue::{
 
 use wamn_execution_host::{ExecutionHost, production_capabilities};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 
 /// The ephemeral schema unioning the flowrunner's flow tables with the 5.14
@@ -476,7 +477,10 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
                 schema: Some(SCHEMA),
                 project: "default",
             },
-            production_capabilities(std::sync::Arc::from([])),
+            production_capabilities(
+                std::sync::Arc::from([]),
+                Arc::new(RunnerEgressPolicy::default()),
+            ),
             30_000,
         )
         .await?;

@@ -41,6 +41,7 @@ use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_gate_harness::check;
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -434,7 +435,7 @@ async fn gate_body(
             schema: Some(SCHEMA),
             project: PROJECT,
         },
-        production_capabilities(allowed.clone()),
+        production_capabilities(allowed.clone(), Arc::new(RunnerEgressPolicy::default())),
         30_000,
     )
     .await?;
@@ -856,7 +857,7 @@ async fn gate_body(
             schema: Some(SCHEMA),
             project: PROJECT,
         },
-        production_capabilities(allowed.clone()),
+        production_capabilities(allowed.clone(), Arc::new(RunnerEgressPolicy::default())),
         30_000,
     )
     .await?;

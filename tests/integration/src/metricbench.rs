@@ -42,6 +42,7 @@ use crate::dispatcher_process::{DispatcherProcess, ProjectSpec};
 use wamn_execution_host::{ExecutionHost, production_capabilities};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::memory_metrics::global_memory_meter;
+use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wash_runtime::engine::ctx::WamnStoreLimiter;
 use wash_runtime::wasmtime::ResourceLimiter as _;
@@ -276,7 +277,10 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
                 schema: Some(SCHEMA),
                 project: "default",
             },
-            production_capabilities(Arc::from([])),
+            production_capabilities(
+                Arc::from([]),
+                Arc::new(RunnerEgressPolicy::default()),
+            ),
             30_000,
         )
         .await?;
