@@ -153,6 +153,9 @@ ENTRYPOINT ["/usr/local/bin/wamn-waker"]
 # ---- gates image: the host stage + the gate suite + wasm fixtures -----------
 FROM host AS gates
 COPY --from=builder /build/target/release/wamn-gates /usr/local/bin/wamn-gates
+# Control-plane integration proofs drive the deployable ctl artifact through its
+# executable boundary; the proof packages do not link the service crate.
+COPY --from=builder /build/target/release/wamn-ctl /usr/local/bin/wamn-ctl
 # Stored-suite compatibility is a process adapter: the gate invokes the product
 # worker binary and never links its execution engine into wamn-gates.
 COPY --from=builder /build/target/release/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker

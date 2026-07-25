@@ -1,7 +1,7 @@
 //! Integration and measurement proofs that compose real repository adapters.
 
 pub use wamn_test_fixtures::{apifixture, f1fixture};
-pub use wamn_test_infrastructure::{erp_sim, node_host_support, publish_catalog_demo};
+pub use wamn_test_infrastructure::{ctl_process, erp_sim, node_host_support, publish_catalog_demo};
 
 #[cfg(test)]
 use wamn_run_state::schema_drift;

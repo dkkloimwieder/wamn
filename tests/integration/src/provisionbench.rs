@@ -5,7 +5,7 @@
 //!
 //! * **legacy** — the 2.3 flow, kept as regression: provision TWO projects through
 //!   the **real** `provision-project` path
-//!   ([`wamn_ctl::provision::provision_project`]), then prove routing/resolution
+//!   (`wamn-ctl provision-project`), then prove routing/resolution
 //!   (a marker witness resolved through the plugin's own `StaticCredentialProvider`),
 //!   database-level isolation (no cross-database queries), least privilege
 //!   (`wamn_app` is `NOSUPERUSER NOCREATEDB`), and the emitted `Secret` layout.
@@ -45,6 +45,8 @@ use wamn_control_registry::{Org, OrgEnvPolicy, Template, Triple};
 use wamn_runtime::plugins::wamn_postgres::{
     CredentialProvider, StaticCredentialProvider, WamnPostgresConfig,
 };
+
+use crate::ctl_process;
 
 /// The canonical T1 registry DDL (registry + provisioning schemas). Applied into
 /// an ephemeral schema on the throwaway/pool PG for the tier modes' registry +
@@ -136,14 +138,12 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
 
     // 1. Provision both projects through the production path; capture the
     //    emitted app-role URLs.
-    let url_a =
-        wamn_ctl::provision::provision_project(admin_url, PROJECT_A, APP_PASSWORD, None, None)
-            .await
-            .context("provision project a")?;
-    let url_b =
-        wamn_ctl::provision::provision_project(admin_url, PROJECT_B, APP_PASSWORD, None, None)
-            .await
-            .context("provision project b")?;
+    let url_a = provision_project(admin_url, PROJECT_A)
+        .await
+        .context("provision project a")?;
+    let url_b = provision_project(admin_url, PROJECT_B)
+        .await
+        .context("provision project b")?;
 
     // 2. Seed each database with a distinct marker (routing witness) and a
     //    project-private table (isolation witness). provision-project delivers
@@ -217,6 +217,25 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
 
     println!("  legacy: PASS");
     Ok(())
+}
+
+async fn provision_project(admin_url: &str, project: &str) -> anyhow::Result<String> {
+    let output = ctl_process::run_checked([
+        "provision-project",
+        "--admin-database-url",
+        admin_url,
+        "--project",
+        project,
+        "--app-password",
+        APP_PASSWORD,
+    ])
+    .await?;
+    let stdout = String::from_utf8(output.stdout).context("provision output is UTF-8")?;
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("app url: "))
+        .map(str::to_owned)
+        .context("wamn-ctl provision-project did not report its app URL")
 }
 
 /// Drop both gate project databases (pure builder), if present. Autocommit.

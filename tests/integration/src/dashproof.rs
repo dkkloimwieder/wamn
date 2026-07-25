@@ -19,8 +19,8 @@
 //! Auth: admin Basic-auth from the grafana-admin Secret
 //! (GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD) — `/api/datasources`
 //! needs an authenticated admin/editor. The SRE identity + the per-tenant
-//! folder/dashboard uids are the SAME `wamn_ctl::provision_dashboards` values the
-//! verb writes (one source, no cross-crate drift). In-cluster gate of record:
+//! folder/dashboard identities are asserted independently through Grafana's
+//! public API. In-cluster gate of record:
 //! `deploy/gates/dashproof-job.yaml`.
 
 use anyhow::{Context as _, bail};
@@ -28,10 +28,12 @@ use clap::Args;
 use serde_json::Value;
 use tokio_postgres::NoTls;
 
-use wamn_ctl::provision_dashboards::{
-    DS_LOKI, DS_PROM, DS_TEMPO, SRE_DASHBOARD_TITLE, SRE_DASHBOARD_UID, SRE_FOLDER_TITLE,
-    basic_auth, http_json, tenant_dashboard_uid, tenant_folder_title, tenant_folder_uid,
-};
+const DS_PROM: &str = "wamn-prometheus";
+const DS_TEMPO: &str = "wamn-tempo";
+const DS_LOKI: &str = "wamn-loki";
+const SRE_DASHBOARD_UID: &str = "wamn-sre-overview";
+const SRE_DASHBOARD_TITLE: &str = "wamn SRE overview";
+const SRE_FOLDER_TITLE: &str = "wamn SRE";
 
 #[derive(Debug, Args)]
 pub struct DashproofArgs {
@@ -65,7 +67,7 @@ pub struct DashproofArgs {
 
 pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
     let base = args.grafana_url.trim_end_matches('/');
-    let auth = basic_auth(&args.user, &args.password);
+    let auth = (args.user.as_str(), args.password.as_str());
     println!(
         "# wamn-gates [9.9] dashproof -> {base} (local={})",
         args.local
@@ -74,7 +76,7 @@ pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
     let mut pass = true;
 
     // === (1) /api/health -> database: ok (unauth) =========================
-    let (h_status, h_body) = http_json(base, "GET", "/api/health", None, None)
+    let (h_status, h_body) = http_json(base, "/api/health", None)
         .await
         .context("GET /api/health")?;
     let db_ok = h_status == 200
@@ -90,7 +92,7 @@ pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
     check(&mut pass, "(1) /api/health database ok", db_ok, &h_body);
 
     // === (2) datasources present + healthy ================================
-    let (ds_status, ds_body) = http_json(base, "GET", "/api/datasources", Some(&auth), None)
+    let (ds_status, ds_body) = http_json(base, "/api/datasources", Some(auth))
         .await
         .context("GET /api/datasources")?;
     let datasources: Vec<Value> = if ds_status == 200 {
@@ -122,7 +124,7 @@ pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
         ("tempo", DS_TEMPO, !args.local),
         ("loki", DS_LOKI, !args.local),
     ] {
-        let healthy = datasource_healthy(base, &auth, uid).await;
+        let healthy = datasource_healthy(base, auth, uid).await;
         if hard {
             check(
                 &mut pass,
@@ -138,7 +140,7 @@ pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
     }
 
     // === (3) static SRE dashboard + folder present ========================
-    let (_, search_body) = http_json(base, "GET", "/api/search?type=dash-db", Some(&auth), None)
+    let (_, search_body) = http_json(base, "/api/search?type=dash-db", Some(auth))
         .await
         .context("GET /api/search")?;
     let dashboards: Vec<Value> = serde_json::from_str(&search_body).unwrap_or_default();
@@ -156,7 +158,7 @@ pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
         ),
     );
 
-    let folders = fetch_folders(base, &auth).await?;
+    let folders = fetch_folders(base, auth).await?;
     let sre_folder = folders
         .iter()
         .any(|f| f.get("title").and_then(Value::as_str) == Some(SRE_FOLDER_TITLE));
@@ -186,29 +188,22 @@ pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
         };
         println!("## (4) per-tenant folders -> SKIP ({why})");
     } else {
-        let folder_uids: std::collections::HashSet<&str> = folders
-            .iter()
-            .filter_map(|f| f.get("uid").and_then(Value::as_str))
-            .collect();
         let folder_titles: std::collections::HashSet<&str> = folders
             .iter()
             .filter_map(|f| f.get("title").and_then(Value::as_str))
             .collect();
-        let dash_uids: std::collections::HashSet<&str> = dashboards
-            .iter()
-            .filter_map(|d| d.get("uid").and_then(Value::as_str))
-            .collect();
         for org in &orgs {
-            let fu = tenant_folder_uid(org);
-            let du = tenant_dashboard_uid(org);
-            let ft = tenant_folder_title(org);
-            let ok = (folder_uids.contains(fu.as_str()) || folder_titles.contains(ft.as_str()))
-                && dash_uids.contains(du.as_str());
+            let ft = format!("wamn tenant {org}");
+            let dt = format!("wamn tenant {org} — runs / traces / logs");
+            let ok = folder_titles.contains(ft.as_str())
+                && dashboards
+                    .iter()
+                    .any(|dashboard| dashboard.get("title").and_then(Value::as_str) == Some(&dt));
             check(
                 &mut pass,
                 &format!("(4) tenant {org:?} folder + dashboard present"),
                 ok,
-                &format!("want folder {fu:?} + dashboard {du:?}"),
+                &format!("want folder {ft:?} + dashboard title {dt:?}"),
             );
         }
     }
@@ -226,9 +221,9 @@ pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
 /// health resource on this route, so fall back to the datasource PROXY echo
 /// (`/api/datasources/proxy/uid/<uid>/api/echo`), which proves the same
 /// property: Grafana can reach the backend and the backend answers.
-async fn datasource_healthy(base: &str, auth: &str, uid: &str) -> bool {
+async fn datasource_healthy(base: &str, auth: (&str, &str), uid: &str) -> bool {
     let path = format!("/api/datasources/uid/{uid}/health");
-    match http_json(base, "GET", &path, Some(auth), None).await {
+    match http_json(base, &path, Some(auth)).await {
         Ok((200, body)) => {
             serde_json::from_str::<Value>(&body)
                 .ok()
@@ -242,20 +237,33 @@ async fn datasource_healthy(base: &str, auth: &str, uid: &str) -> bool {
         }
         Ok((404, _)) => {
             let proxy = format!("/api/datasources/proxy/uid/{uid}/api/echo");
-            matches!(
-                http_json(base, "GET", &proxy, Some(auth), None).await,
-                Ok((200, _))
-            )
+            matches!(http_json(base, &proxy, Some(auth)).await, Ok((200, _)))
         }
         _ => false,
     }
 }
 
-async fn fetch_folders(base: &str, auth: &str) -> anyhow::Result<Vec<Value>> {
-    let (_, body) = http_json(base, "GET", "/api/folders?limit=1000", Some(auth), None)
+async fn fetch_folders(base: &str, auth: (&str, &str)) -> anyhow::Result<Vec<Value>> {
+    let (_, body) = http_json(base, "/api/folders?limit=1000", Some(auth))
         .await
         .context("GET /api/folders")?;
     Ok(serde_json::from_str(&body).unwrap_or_default())
+}
+
+async fn http_json(
+    base: &str,
+    path: &str,
+    auth: Option<(&str, &str)>,
+) -> anyhow::Result<(u16, String)> {
+    let client = reqwest::Client::new();
+    let mut request = client.get(format!("{base}{path}"));
+    if let Some((user, password)) = auth {
+        request = request.basic_auth(user, Some(password));
+    }
+    let response = request.send().await.context("send Grafana request")?;
+    let status = response.status().as_u16();
+    let body = response.text().await.context("read Grafana response")?;
+    Ok((status, body))
 }
 
 /// The org ids recorded in the T1 registry (the same read `provision-dashboards`

@@ -10,7 +10,7 @@
 //!   2. seed a real terminal run under a `full` capture policy whose payloads
 //!      carry a raw SECRET (a `token` key + a `Bearer ` value) AND volatile fields
 //!      (a UUID + an RFC-3339 timestamp) — the exact shape 9.6 stores;
-//!   3. pin it via the REAL `wamn_ctl::pin_run::pin(...)` core, then assert the
+//!   3. pin it via the real `wamn-ctl pin-run` process boundary, then assert the
 //!      stored `test_cases.case_body`: (a) contains NO secret substring (scrubbed
 //!      on pin even from a FULL run), (b) parses as a `wamn_scenario_model::TestCase`,
 //!      (c) carries `normalize` with `canonicalize` on;
@@ -28,14 +28,12 @@ use clap::Args;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 
-use wamn_ctl::pin_run::{self, PinResult};
-use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
 use wamn_flow::{Capture, CaptureMode};
 use wamn_gate_harness::{check, scope_session, seed_flow_version};
 use wamn_run_state::capture;
-use wamn_scenario_catalog::PinError;
 use wamn_scenario_model::{Assertion, Captured, RunFacts, RunStatus, TestCase, evaluate};
-use wamn_schema_control::BareSchemaName;
+
+use crate::ctl_process;
 
 const FLOW_ID: &str = "pinned-flow";
 /// The raw secret seeded through the FULL-capture run — asserted absent from the
@@ -122,7 +120,7 @@ pub async fn run(args: PinProofArgs) -> anyhow::Result<()> {
 
     // --- provision (superuser) through the production ensure_* path ---
     let (admin, admin_task) = connect(&admin_url).await?;
-    provision(&admin, &args.schema).await?;
+    provision(&admin, &admin_url, &args.schema).await?;
 
     let mut ok = true;
 
@@ -152,24 +150,27 @@ pub async fn run(args: PinProofArgs) -> anyhow::Result<()> {
         stored_has_secret,
     );
 
-    // --- pin via the REAL ctl core; assert Pinned ---
-    let result = pin_run::pin(
-        &app,
+    // --- pin via the public ctl process boundary; assert the stored result ---
+    ctl_process::run_checked([
+        "pin-run",
+        "--database-url",
+        &app_url,
+        "--schema",
         &args.schema,
+        "--tenant",
         &args.tenant,
+        "--run-id",
         "pin-full",
+        "--suite-id",
         "pinned",
+        "--case-id",
         "from-run",
-        0,
-        vec![],
-    )
+        "--ordinal",
+        "0",
+    ])
     .await
     .context("pin the full-capture run")?;
-    check(
-        &mut ok,
-        "PIN: pin(...) pinned the full-capture run",
-        matches!(result, PinResult::Pinned { .. }),
-    );
+    println!("PIN: wamn-ctl pin-run accepted the full-capture run: PASS");
 
     // --- assert the stored case body ---
     let stored: Value = app
@@ -255,22 +256,36 @@ pub async fn run(args: PinProofArgs) -> anyhow::Result<()> {
         &json!({ "in": 1 }),
     );
     write_success(&app, "pin-preview", "final", 0, "main", &preview).await?;
-    let refused = pin_run::pin(
-        &app,
+    let refused = ctl_process::run([
+        "pin-run",
+        "--database-url",
+        &app_url,
+        "--schema",
         &args.schema,
+        "--tenant",
         &args.tenant,
+        "--run-id",
         "pin-preview",
+        "--suite-id",
         "pinned",
+        "--case-id",
         "from-preview",
-        1,
-        vec![],
-    )
+        "--ordinal",
+        "1",
+    ])
     .await
     .context("pin the preview run")?;
+    let refusal = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
     check(
         &mut ok,
-        "REFUSE: pinning a preview/off run returns the typed NotCaptured error",
-        matches!(refused, PinResult::Refused(PinError::NotCaptured { .. })),
+        "REFUSE: pinning a preview/off run reports the public not-captured refusal",
+        !refused.status.success()
+            && refusal.contains("has no captured output")
+            && refusal.contains("cannot pin"),
     );
     let leaked: i64 = app
         .query_one(
@@ -330,8 +345,7 @@ fn replay_captured(node_output: Value) -> Captured {
 
 /// Fresh ephemeral schema + the run-plane / flow-test tables via the SAME
 /// `ensure_*` functions `publish-catalog --runstate` uses (production path).
-async fn provision(admin: &Client, schema: &str) -> anyhow::Result<()> {
-    let schema_name = BareSchemaName::new(schema).context("validate pinproof schema")?;
+async fn provision(admin: &Client, admin_url: &str, schema: &str) -> anyhow::Result<()> {
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \
@@ -341,16 +355,15 @@ async fn provision(admin: &Client, schema: &str) -> anyhow::Result<()> {
         ))
         .await
         .context("reset schema + ensure wamn_app role")?;
-    // run-state creates the schema; flow-tests FKs into flows, so ORDER matters.
-    ensure_runstate(admin, &schema_name)
-        .await
-        .context("ensure run-state")?;
-    ensure_flow_registry(admin, &schema_name)
-        .await
-        .context("ensure flow registry")?;
-    ensure_flow_tests(admin, &schema_name)
-        .await
-        .context("ensure flow-test tables")?;
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        admin_url,
+        "--schema",
+        schema,
+    ])
+    .await
+    .context("reconcile run-plane through wamn-ctl")?;
     println!("## provisioned schema {schema} (run-state + flows + test_suites/test_cases)");
     Ok(())
 }

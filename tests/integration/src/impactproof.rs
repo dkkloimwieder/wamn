@@ -11,7 +11,7 @@
 //!   2. seed one active flow whose postgres node names entity `orders` by NAME
 //!      (the config-keyed edge) + a version-bound suite;
 //!   3. compile a v1→v2 plan IN MEMORY (drop a column on `orders` = destructive)
-//!      and fold the live-read edges through `wamn_ctl::impact_report::gather_impact`
+//!      and read the live edges through `wamn-ctl impact-report`
 //!      — asserting it names the seeded flow + suite + `/api/rest/orders`, and that
 //!      the DESTRUCTIVE change with a dependent flow REQUIRES acknowledgement while
 //!      an ADDITIVE change on the same entity does NOT.
@@ -25,12 +25,10 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::{Client, NoTls};
 
-use wamn_ctl::impact_report::{compile_plan, gather_impact};
-use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
 use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_suite};
-use wamn_schema_control::BareSchemaName;
 use wamn_schema_model::Catalog;
 
+use crate::ctl_process;
 const FLOW_ID: &str = "impactproof-flow";
 const SUITE_ID: &str = "smoke";
 
@@ -120,7 +118,7 @@ pub async fn run(args: ImpactProofArgs) -> anyhow::Result<()> {
 
     // --- provision (superuser) through the production ensure_* path ---
     let (admin, admin_task) = connect(&admin_url).await?;
-    provision(&admin, &args.schema).await?;
+    provision(&admin, &admin_url, &args.schema).await?;
 
     // --- seed one active flow (name-keyed edge) + its suite (app role) ---
     let (app, app_task) = connect(&app_url).await?;
@@ -145,66 +143,105 @@ pub async fn run(args: ImpactProofArgs) -> anyhow::Result<()> {
     let mut ok = true;
     let v1 = cat(1, &["status", "note"], &["kind"]);
     let v2_destructive = cat(2, &["status"], &["kind", "ts"]); // orders drops note; audit adds ts
-    let plan = compile_plan(Some(&v1), &v2_destructive).context("compile destructive plan")?;
-    let report = gather_impact(&admin, &plan, Some(&v1), &v2_destructive, &args.schema)
-        .await
-        .context("gather impact (destructive)")?;
-    println!("{}", report.render());
+    let v1_path = write_catalog_fixture("v1", &v1)?;
+    let destructive_path = write_catalog_fixture("destructive", &v2_destructive)?;
+    ctl_process::run_checked([
+        "migrate-catalog",
+        "--admin-database-url",
+        &admin_url,
+        "--tenant",
+        &args.tenant,
+        "--schema",
+        &args.schema,
+        "--target",
+        v1_path.to_str().context("v1 fixture path is not UTF-8")?,
+        "--skip-reconcile-replica-identity",
+    ])
+    .await
+    .context("apply current catalog through wamn-ctl")?;
+    let destructive = ctl_process::run_checked([
+        "impact-report",
+        "--admin-database-url",
+        &admin_url,
+        "--tenant",
+        &args.tenant,
+        "--schema",
+        &args.schema,
+        "--target",
+        destructive_path
+            .to_str()
+            .context("destructive fixture path is not UTF-8")?,
+    ])
+    .await
+    .context("run destructive impact report")?;
+    let report = String::from_utf8(destructive.stdout).context("impact output is UTF-8")?;
+    print!("{report}");
 
-    let orders = report.entities.iter().find(|e| e.entity_id == "orders");
     check(
         &mut ok,
         "EDGE: the destructively-changed `orders` entity is reported",
-        orders.is_some_and(|e| e.destructive),
+        report.contains("[DESTRUCTIVE] entity \"orders\" (id \"orders\")"),
     );
     check(
         &mut ok,
         "NODE-CONFIG: the flow reading `orders` by NAME is found",
-        orders.is_some_and(|e| {
-            e.flows_via_node_config
-                .iter()
-                .any(|n| n.flow_id == FLOW_ID && n.referenced_name == "orders")
-        }),
+        report.contains(&format!(
+            "flow via node config:  tenant {:?} flow {:?} v1",
+            args.tenant, FLOW_ID
+        )) && report.contains("(config entity \"orders\")"),
     );
     check(
         &mut ok,
         "SUITE: the affected flow's suite is enumerated",
-        orders.is_some_and(|e| e.suites.iter().any(|s| s.suite_id == SUITE_ID)),
+        report.contains(&format!(
+            "suite: tenant {:?} flow {:?} v1 suite {:?}",
+            args.tenant, FLOW_ID, SUITE_ID
+        )),
     );
     check(
         &mut ok,
         "API: the entity's generated REST resource is named",
-        orders.is_some_and(|e| e.api_resources.iter().any(|r| r == "/api/rest/orders")),
+        report.contains("api: /api/rest/orders"),
     );
     check(
         &mut ok,
         "BYSTANDER: `audit` is reported additive (not destructive)",
-        report
-            .entities
-            .iter()
-            .any(|e| e.entity_id == "audit" && !e.destructive),
+        report.contains("[additive   ] entity \"audit\" (id \"audit\")"),
     );
     check(
         &mut ok,
         "GATE: a destructive change with a dependent flow REQUIRES acknowledgement",
-        report.requires_acknowledgement(),
+        report.contains("requires --acknowledge-impact"),
     );
 
     // --- the negative: an ADDITIVE change on the same entity does NOT gate ---
     let v2_additive = cat(2, &["status", "note", "extra"], &["kind"]); // orders ADDs a column
-    let add_plan = compile_plan(Some(&v1), &v2_additive).context("compile additive plan")?;
-    let add_report = gather_impact(&admin, &add_plan, Some(&v1), &v2_additive, &args.schema)
-        .await
-        .context("gather impact (additive)")?;
+    let additive_path = write_catalog_fixture("additive", &v2_additive)?;
+    let additive = ctl_process::run_checked([
+        "impact-report",
+        "--admin-database-url",
+        &admin_url,
+        "--tenant",
+        &args.tenant,
+        "--schema",
+        &args.schema,
+        "--target",
+        additive_path
+            .to_str()
+            .context("additive fixture path is not UTF-8")?,
+    ])
+    .await
+    .context("run additive impact report")?;
+    let add_report = String::from_utf8(additive.stdout).context("impact output is UTF-8")?;
     check(
         &mut ok,
         "GATE: an additive change on the SAME dependent entity does NOT require acknowledgement",
-        !add_report.requires_acknowledgement()
-            && add_report
-                .entities
-                .iter()
-                .any(|e| e.entity_id == "orders" && !e.destructive),
+        !add_report.contains("requires --acknowledge-impact")
+            && add_report.contains("[additive   ] entity \"orders\" (id \"orders\")"),
     );
+    for path in [&v1_path, &destructive_path, &additive_path] {
+        let _ = std::fs::remove_file(path);
+    }
 
     // --- teardown ---
     if !args.keep {
@@ -223,10 +260,8 @@ pub async fn run(args: ImpactProofArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Fresh ephemeral schema + the run-plane / flow-test tables via the SAME
-/// `ensure_*` functions `publish-catalog --runstate` uses (production path).
-async fn provision(admin: &Client, schema: &str) -> anyhow::Result<()> {
-    let schema_name = BareSchemaName::new(schema).context("validate impactproof schema")?;
+/// Fresh ephemeral schema reconciled through the public ctl boundary.
+async fn provision(admin: &Client, admin_url: &str, schema: &str) -> anyhow::Result<()> {
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \
@@ -236,17 +271,27 @@ async fn provision(admin: &Client, schema: &str) -> anyhow::Result<()> {
         ))
         .await
         .context("reset schema + ensure wamn_app role")?;
-    ensure_runstate(admin, &schema_name)
-        .await
-        .context("ensure run-state")?;
-    ensure_flow_registry(admin, &schema_name)
-        .await
-        .context("ensure flow registry")?;
-    ensure_flow_tests(admin, &schema_name)
-        .await
-        .context("ensure flow-test tables")?;
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        admin_url,
+        "--schema",
+        schema,
+    ])
+    .await
+    .context("reconcile run-plane through wamn-ctl")?;
     println!("## provisioned schema {schema} (run-state + flows + test_suites/test_cases)");
     Ok(())
+}
+
+fn write_catalog_fixture(label: &str, catalog: &Catalog) -> anyhow::Result<std::path::PathBuf> {
+    let path = std::env::temp_dir().join(format!(
+        "wamn-impactproof-{}-{label}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, catalog.to_json())
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(path)
 }
 
 /// A bare lowercase SQL identifier (the ephemeral schema is interpolated).
@@ -266,8 +311,9 @@ mod tests {
     fn fixture_catalogs_are_valid_and_shaped() {
         let v1 = cat(1, &["status", "note"], &["kind"]);
         assert_eq!(v1.entities.len(), 2);
-        let plan = compile_plan(Some(&v1), &cat(2, &["status"], &["kind", "ts"]))
-            .expect("destructive plan compiles");
+        let plan =
+            wamn_schema_compiler::Migration::migrate(&v1, &cat(2, &["status"], &["kind", "ts"]))
+                .expect("destructive plan compiles");
         assert!(
             plan.requires_confirmation(),
             "dropping a column is destructive"

@@ -43,14 +43,13 @@ use wasmtime_wasi_http::p2::WasiHttpView;
 use wasmtime_wasi_http::p2::bindings::ProxyPre;
 use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
 
+use crate::ctl_process;
 use crate::f1fixture::{
     self, BURST_HOLDS, F1_FLOW_JSON, F1_SEED_JSON, F1_TENANT, burst, in_spec_receipt, receipt,
 };
-use wamn_ctl::publish_catalog;
 use wamn_gate_harness::{as_array, check};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
-use wamn_schema_control::BareSchemaName;
 
 #[derive(Debug, Args)]
 pub struct F1BenchArgs {
@@ -229,87 +228,49 @@ async fn admin_connect(
     Ok((client, task))
 }
 
-/// Provision the ephemeral F1 world through the SAME helpers `publish-catalog`
-/// runs in production: floor + run-state + flow registry + catalog snapshot +
-/// seed dataset + registered/active flow.
+/// Provision the ephemeral F1 world through `wamn-ctl publish-catalog`.
 async fn provision(admin_url: &str) -> anyhow::Result<()> {
-    let (client, conn_task) = {
-        let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
-            .await
-            .context("admin connect")?;
-        (client, tokio::spawn(conn))
-    };
+    drop_schema(admin_url).await?;
+    let catalog_path = write_ctl_input("catalog", &f1fixture::catalog()?.to_json())?;
+    let seed_path = write_ctl_input("seed", F1_SEED_JSON)?;
+    let flow_path = write_ctl_input("flow", F1_FLOW_JSON)?;
+    let base = [
+        "publish-catalog",
+        "--catalog",
+        catalog_path
+            .to_str()
+            .context("catalog input path is UTF-8")?,
+        "--admin-database-url",
+        admin_url,
+        "--tenant",
+        F1_TENANT,
+        "--schema",
+        EPH_SCHEMA,
+    ];
     let result = async {
-        client
-            .batch_execute(
-                "DO $$ BEGIN \
-                   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                     CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
-                   END IF; \
-                 END $$;",
-            )
-            .await
-            .context("ensure wamn_app role")?;
-        client
-            .batch_execute(&format!(
-                "DROP SCHEMA IF EXISTS {EPH_SCHEMA} CASCADE; \
-                 CREATE SCHEMA {EPH_SCHEMA} AUTHORIZATION postgres; \
-                 GRANT USAGE ON SCHEMA {EPH_SCHEMA} TO wamn_app; \
-                 SET search_path TO {EPH_SCHEMA};"
-            ))
-            .await
-            .context("create ephemeral schema")?;
+        let mut first = base.to_vec();
+        first.extend([
+            "--provision",
+            "--runstate",
+            "--seed-dataset",
+            seed_path.to_str().context("seed input path is UTF-8")?,
+            "--flow",
+            flow_path.to_str().context("flow input path is UTF-8")?,
+            "--skip-reconcile-replica-identity",
+        ]);
+        ctl_process::run_checked(first).await?;
+        let mut second = base.to_vec();
+        second.extend([
+            "--flow",
+            flow_path.to_str().context("flow input path is UTF-8")?,
+            "--skip-reconcile-replica-identity",
+        ]);
+        ctl_process::run_checked(second).await?;
 
-        // 3.2 floor (unqualified — resolved by the session search_path).
-        client
-            .batch_execute(&f1fixture::floor_ddl()?)
-            .await
-            .context("apply floor")?;
-
-        // Run-state + flow registry: the canonical deploy files.
-        let schema = BareSchemaName::new(EPH_SCHEMA).context("validate F1 schema")?;
-        anyhow::ensure!(
-            publish_catalog::ensure_runstate(&client, &schema).await?,
-            "fresh schema must apply run-state"
-        );
-        anyhow::ensure!(
-            publish_catalog::ensure_flow_registry(&client, &schema).await?,
-            "fresh schema must apply the flow registry"
-        );
-
-        // Catalog snapshot (read by the api-gateway component in rest mode).
-        let document = f1fixture::catalog()?.to_json();
-        client
-            .batch_execute(
-                "CREATE TABLE wamn_catalog ( \
-                   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), \
-                   tenant_id text NOT NULL, \
-                   document jsonb NOT NULL); \
-                 ALTER TABLE wamn_catalog ENABLE ROW LEVEL SECURITY; \
-                 ALTER TABLE wamn_catalog FORCE ROW LEVEL SECURITY; \
-                 CREATE POLICY wamn_catalog_tenant ON wamn_catalog \
-                   USING (tenant_id = current_setting('app.tenant', true)) \
-                   WITH CHECK (tenant_id = current_setting('app.tenant', true)); \
-                 GRANT SELECT ON wamn_catalog TO wamn_app;",
-            )
-            .await
-            .context("create wamn_catalog")?;
-        client
-            .execute(
-                "INSERT INTO wamn_catalog (tenant_id, document) VALUES ($1, $2::text::jsonb)",
-                &[&F1_TENANT, &document],
-            )
-            .await
-            .context("write snapshot")?;
-
-        // Business seed (wamn-schema-compiler) + the registered/active F1 flow.
-        let seed = publish_catalog::seed_dataset_sql(F1_SEED_JSON, &f1fixture::catalog()?, F1_TENANT)?;
-        client.batch_execute(&seed).await.context("apply seed")?;
-        // Register TWICE: the second call exercises the deactivate-prior +
-        // ON CONFLICT re-activate arms; exactly one active row must remain.
-        publish_catalog::register_flow(&client, F1_TENANT, F1_FLOW_JSON).await?;
-        let (flow_id, version) =
-            publish_catalog::register_flow(&client, F1_TENANT, F1_FLOW_JSON).await?;
+        let (client, conn_task) = admin_connect(admin_url).await?;
+        let registered = wamn_flow::Flow::from_json(F1_FLOW_JSON).context("parse F1 flow")?;
+        let flow_id = registered.flow_id;
+        let version = registered.version;
         let active: i64 = client
             .query_one(
                 "SELECT count(*) FROM flows WHERE tenant_id = $1 AND active",
@@ -327,9 +288,25 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
         let mut graph: serde_json::Value = serde_json::from_str(F1_FLOW_JSON)?;
         graph["flow-id"] = serde_json::json!("receipt-received-b");
         let collider = serde_json::to_string(&graph)?;
-        let err = publish_catalog::register_flow(&client, F1_TENANT, &collider)
-            .await
-            .expect_err("same-path registration must fail");
+        let collider_path = write_ctl_input("collider", &collider)?;
+        let mut collision_args = base.to_vec();
+        collision_args.extend([
+            "--flow",
+            collider_path
+                .to_str()
+                .context("collider input path is UTF-8")?,
+            "--skip-reconcile-replica-identity",
+        ]);
+        let collision = ctl_process::run(collision_args).await?;
+        anyhow::ensure!(
+            !collision.status.success(),
+            "same-path registration must fail"
+        );
+        let collision_error = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&collision.stdout),
+            String::from_utf8_lossy(&collision.stderr)
+        );
         // State intact FIRST (under a pre-check-dropped mutant this pins the
         // one-txn rollback: the index aborts the insert, so the deactivate
         // must not survive), THEN the friendly named error (kills that mutant).
@@ -346,14 +323,14 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             "failed collision registration must leave {flow_id:?} active (got {active_id:?})"
         );
         anyhow::ensure!(
-            format!("{err:#}").contains("webhook path collision"),
-            "collision must be rejected by the NAMED pre-check error, got: {err:#}"
+            collision_error.contains("webhook path collision"),
+            "collision must be rejected by the NAMED pre-check error, got: {collision_error}"
         );
         let index_err = client
             .execute(
                 "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
                  VALUES ($1, 'receipt-received-b', 1, true, $2::text::jsonb)",
-                &[&F1_TENANT, &collider],
+                &[&F1_TENANT, &collider.as_str()],
             )
             .await
             .expect_err("raw same-path insert must violate the collision index");
@@ -368,7 +345,14 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
         graph["flow-id"] = serde_json::json!("receipt-received-alt");
         graph["trigger"]["path"] = serde_json::json!("/receipts-alt");
         let alt = serde_json::to_string(&graph)?;
-        publish_catalog::register_flow(&client, F1_TENANT, &alt).await?;
+        let alt_path = write_ctl_input("alt", &alt)?;
+        let mut alt_args = base.to_vec();
+        alt_args.extend([
+            "--flow",
+            alt_path.to_str().context("alt input path is UTF-8")?,
+            "--skip-reconcile-replica-identity",
+        ]);
+        ctl_process::run_checked(alt_args).await?;
         client
             .execute(
                 "UPDATE flows SET active = false \
@@ -378,12 +362,25 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .await?;
         println!("  collision rejected (pre-check + index backstop); different path accepted");
         println!("  provisioned {EPH_SCHEMA}: flow {flow_id} v{version} active");
+        for path in [collider_path, alt_path] {
+            let _ = std::fs::remove_file(path);
+        }
+        drop(client);
+        let _ = conn_task.await;
         anyhow::Ok(())
     }
     .await;
-    drop(client);
-    let _ = conn_task.await;
+    for path in [catalog_path, seed_path, flow_path] {
+        let _ = std::fs::remove_file(path);
+    }
     result
+}
+
+fn write_ctl_input(label: &str, contents: &str) -> anyhow::Result<PathBuf> {
+    let path =
+        std::env::temp_dir().join(format!("wamn-f1bench-{}-{label}.json", std::process::id()));
+    std::fs::write(&path, contents).with_context(|| format!("write {}", path.display()))?;
+    Ok(path)
 }
 
 async fn drop_schema(admin_url: &str) -> anyhow::Result<()> {

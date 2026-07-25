@@ -7,11 +7,10 @@ use serde::Deserialize;
 use tokio::process::Command;
 use tokio_postgres::{Client, NoTls};
 
-use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests};
+use crate::ctl_process;
 use wamn_gate_harness::{seed_flow_version, seed_test_case, seed_test_suite};
 use wamn_scenario_model::{ScenarioRefusal, ScenarioReport};
 use wamn_scenario_runtime::ScenarioSchemaName;
-use wamn_schema_control::BareSchemaName;
 
 const DEMO_FLOW_ID: &str = "tk-demo-flow";
 const UNDRIVABLE_FLOW_ID: &str = "tk-undrivable-flow";
@@ -73,7 +72,13 @@ pub async fn run(args: StoredSuiteGateArgs) -> anyhow::Result<()> {
 
     let result = async {
         if args.seed_demo {
-            seed_demo(&admin, &args.source_schema, args.tenant.as_deref()).await?;
+            seed_demo(
+                &admin,
+                &args.admin_database_url,
+                &args.source_schema,
+                args.tenant.as_deref(),
+            )
+            .await?;
         }
         let suites = select_suites(&admin, &args).await?;
         if suites.is_empty() {
@@ -279,7 +284,10 @@ async fn run_selected_suite(
         }
         let schema = template.replace("{ordinal}", &ordinal.to_string());
         schemas.push(schema);
-        if let Err(error) = provision_execution_schema(admin, schemas.last().unwrap()).await {
+        if let Err(error) =
+            provision_execution_schema(admin, &args.admin_database_url, schemas.last().unwrap())
+                .await
+        {
             return combine(
                 Err(error),
                 cleanup_schemas(admin, &schemas).await,
@@ -364,15 +372,22 @@ async fn run_selected_suite(
     Ok(())
 }
 
-async fn provision_execution_schema(client: &Client, schema: &str) -> anyhow::Result<()> {
-    let schema_name = BareSchemaName::new(schema).context("validate execution schema")?;
+async fn provision_execution_schema(
+    client: &Client,
+    admin_url: &str,
+    schema: &str,
+) -> anyhow::Result<()> {
+    ScenarioSchemaName::new(schema.to_owned()).context("validate execution schema")?;
     drop_schema(client, schema).await?;
-    wamn_ctl::reconcile_run_plane::reconcile(client, &schema_name, true)
-        .await
-        .context("apply canonical run-plane schema")?;
-    ensure_flow_registry(client, &schema_name)
-        .await
-        .context("apply canonical flow registry")?;
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        admin_url,
+        "--schema",
+        schema,
+    ])
+    .await
+    .context("apply canonical run-plane schema")?;
     client
         .batch_execute(&format!(
             "CREATE TABLE {schema}.sink (\
@@ -453,15 +468,24 @@ fn combine<T>(
     }
 }
 
-async fn seed_demo(client: &Client, schema: &str, tenant: Option<&str>) -> anyhow::Result<()> {
+async fn seed_demo(
+    client: &Client,
+    admin_url: &str,
+    schema: &str,
+    tenant: Option<&str>,
+) -> anyhow::Result<()> {
     let tenant = tenant.context("--seed-demo needs --tenant")?;
-    let schema_name = BareSchemaName::new(schema).context("validate source schema")?;
+    ScenarioSchemaName::new(schema.to_owned()).context("validate source schema")?;
     drop_schema(client, schema).await?;
-    wamn_ctl::reconcile_run_plane::reconcile(client, &schema_name, true)
-        .await
-        .context("apply canonical source run-plane schema")?;
-    ensure_flow_registry(client, &schema_name).await?;
-    ensure_flow_tests(client, &schema_name).await?;
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        admin_url,
+        "--schema",
+        schema,
+    ])
+    .await
+    .context("apply canonical source run-plane schema")?;
     scope_session(client, tenant, schema).await?;
 
     seed_flow_version(client, tenant, DEMO_FLOW_ID, 1, true, &demo_graph(), true).await?;

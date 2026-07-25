@@ -34,6 +34,8 @@ use wamn_flow::{Capture, CaptureMode, Flow};
 use wamn_run_state::{NodeRunRecord, ReconstructError, RunRecord, capture, reconstruct};
 use wamn_runner::Plan;
 
+use crate::ctl_process;
+
 const SCHEMA: &str = "wamn_capture";
 const TENANT: &str = "capture-t";
 /// The known secret seeded through the scrub gate — asserted to appear NOWHERE.
@@ -508,17 +510,21 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     )
     .await?;
 
-    // Run the REAL verb logic (a fresh app connection, since prune re-pins the
-    // session GUCs itself and needs &mut).
-    let (mut prune_client, conn) = tokio_postgres::connect(app_url, NoTls)
-        .await
-        .context("prune app connect")?;
-    let conn_task = tokio::spawn(conn);
-    let pruned =
-        wamn_ctl::prune_run_history::prune(&mut prune_client, SCHEMA, TENANT, 30, true).await;
-    drop(prune_client);
-    let _ = conn_task.await;
-    let pruned = pruned?;
+    let prune = ctl_process::run_checked([
+        "prune-run-history",
+        "--database-url",
+        app_url,
+        "--schema",
+        SCHEMA,
+        "--tenant",
+        TENANT,
+        "--retention-days",
+        "30",
+    ])
+    .await
+    .context("prune through wamn-ctl")?;
+    let prune_stdout = String::from_utf8(prune.stdout).context("prune output is UTF-8")?;
+    let reported_one = prune_stdout.contains("pruned 1 terminal run(s)");
 
     let old_gone = !run_exists(&app, "old-done").await?;
     let recent_kept = run_exists(&app, "recent-done").await?;
@@ -538,9 +544,9 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
         == 1;
 
     let pass =
-        pruned == 1 && old_gone && recent_kept && running_kept && cascaded && anchor_survived;
+        reported_one && old_gone && recent_kept && running_kept && cascaded && anchor_survived;
     println!(
-        "  pruned={pruned} old_gone={old_gone} recent_kept={recent_kept} \
+        "  reported_one={reported_one} old_gone={old_gone} recent_kept={recent_kept} \
          running_kept={running_kept} node_runs_cascaded={cascaded} anchor_survived={anchor_survived}"
     );
     println!("PASS(retention: old terminal pruned + cascade, recent/running/anchor kept): {pass}");

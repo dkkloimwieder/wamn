@@ -25,7 +25,7 @@
 //!      `tenant-unscopable` REFUSAL (never condition-false, never a cross-tenant
 //!      enqueue);
 //!   2. flip RI → FULL via the REAL l5i9.31/l5i9.61 reconcile
-//!      (`wamn_ctl::reconcile_replica_identity::reconcile`);
+//!      (`wamn-ctl reconcile-replica-identity`);
 //!   3. post-flip DELETE (RI FULL) → the reader decodes a REAL FULL old image
 //!      carrying `tenant_id` → the materializer tenant-scopes it and enqueues a
 //!      scoped `disp-del:evt:<stream_seq>` run.
@@ -68,6 +68,7 @@ use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
+use crate::ctl_process;
 use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
@@ -682,12 +683,21 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
     println!(
         "\n## phase 2: reconcile REPLICA IDENTITY (delete subscription drives dispositions -> FULL)"
     );
-    let plan =
-        wamn_ctl::reconcile_replica_identity::reconcile(&db, &catalog()?, "app", true).await?;
+    let reconcile = ctl_process::reconcile_replica_identity(
+        &swap_db(&args.admin_database_url, DB),
+        &catalog()?,
+        "app",
+    )
+    .await?;
+    let reconcile = String::from_utf8(reconcile.stdout).context("RI output is UTF-8")?;
     check(
         "reconcile flips ONLY dispositions -> FULL (the delete registration drives it)",
-        plan.flips.len() == 1
-            && plan.flips[0].table == TABLE
+        reconcile
+            .lines()
+            .filter(|line| line.starts_with("flipped "))
+            .count()
+            == 1
+            && reconcile.contains("flipped dispositions (")
             && relreplident(&db, TABLE).await? == "f",
     );
 

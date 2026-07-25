@@ -17,6 +17,7 @@ http-body-util = { workspace = true }
 hyper = { workspace = true }
 libc = { workspace = true }
 pg_walstream = { workspace = true }
+reqwest = { workspace = true, features = ["rustls"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net", "process", "sync", "time", "rt", "macros"] }
@@ -24,7 +25,6 @@ tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_
 tracing = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
-wamn-ctl = { workspace = true }
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }

@@ -18,7 +18,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net", "process", "rt"] }
 tokio-postgres = { workspace = true }
 tracing = { workspace = true }
-wamn-ctl = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-node-invoke = { workspace = true }
 wamn-node-runtime = { workspace = true }
@@ -27,5 +26,6 @@ wamn-scenario-catalog = { workspace = true }
 wamn-scenario-model = { workspace = true }
 wamn-scenario-runtime = { workspace = true }
 wamn-schema-control = { workspace = true }
+wamn-schema-model = { workspace = true }
 wamn-test-fixtures = { workspace = true }
 wash-runtime = { workspace = true }

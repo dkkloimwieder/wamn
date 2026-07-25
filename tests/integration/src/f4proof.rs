@@ -76,6 +76,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 use wamn_schema_compiler::{Confirmation, Migration};
 
+use crate::ctl_process;
 use crate::erp_sim::ErpAudit;
 
 #[derive(Debug, Args)]
@@ -582,8 +583,17 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
 
     // The insert-only subscription needs NO REPLICA IDENTITY FULL — the RI
     // reconcile must be a NO-OP (nothing to flip). Asserted below.
-    let ri_plan =
-        wamn_ctl::reconcile_replica_identity::reconcile(&db, &catalog()?, "app", true).await?;
+    let ri_output = ctl_process::reconcile_replica_identity(
+        &swap_db(&args.admin_database_url, DB),
+        &catalog()?,
+        "app",
+    )
+    .await?;
+    let ri_output = String::from_utf8(ri_output.stdout).context("RI output is UTF-8")?;
+    let ri_flips = ri_output
+        .lines()
+        .filter(|line| line.starts_with("flipped "))
+        .count();
 
     // --- NATS + the reader --------------------------------------------------
     let nats = async_nats::connect(&args.nats_url)
@@ -692,7 +702,7 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
         &stream_name,
         &erp,
         &args,
-        ri_plan.flips.len(),
+        ri_flips,
     );
 
     let outcome = tokio::select! {

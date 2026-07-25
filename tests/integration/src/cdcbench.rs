@@ -68,6 +68,7 @@ use pg_walstream::CancellationToken;
 use tokio_postgres::{Client, NoTls};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
+use crate::ctl_process;
 use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
@@ -1215,15 +1216,23 @@ async fn ri_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
 
     // The REAL reconcile (l5i9.31/l5i9.61) — the delete registrations demand
     // FULL for exactly these two tables.
-    let plan =
-        wamn_ctl::reconcile_replica_identity::reconcile(&db, &catalog()?, "app", true).await?;
-    let flipped: Vec<&str> = plan.flips.iter().map(|f| f.table.as_str()).collect();
+    let reconcile = ctl_process::reconcile_replica_identity(
+        &swap_db(&args.admin_database_url, DB),
+        &catalog()?,
+        "app",
+    )
+    .await?;
+    let reconcile = String::from_utf8(reconcile.stdout).context("RI output is UTF-8")?;
+    let flips = reconcile
+        .lines()
+        .filter(|line| line.starts_with("flipped "))
+        .count();
     check(
         pass,
-        &format!("ri: reconcile flipped exactly suppliers + users to FULL (flips: {flipped:?})"),
-        plan.flips.len() == 2
-            && flipped.contains(&"suppliers")
-            && flipped.contains(&"users")
+        &format!("ri: reconcile flipped exactly suppliers + users to FULL ({reconcile:?})"),
+        flips == 2
+            && reconcile.contains("flipped suppliers (")
+            && reconcile.contains("flipped users (")
             && relreplident(&db, "suppliers").await? == "f"
             && relreplident(&db, "users").await? == "f",
     );

@@ -63,10 +63,8 @@ use wasmtime_wasi_http::p2::WasiHttpView;
 use wasmtime_wasi_http::p2::bindings::ProxyPre;
 use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
 
+use crate::ctl_process;
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
-use wamn_ctl::publish_catalog::{
-    ensure_flow_registry, ensure_flow_tests, ensure_runstate, register_flow, seed_dataset_sql,
-};
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, injected_capabilities};
 use wamn_gate_harness::{
     check, scope_session, seed_flow_version, seed_flow_version_if_absent, seed_test_case,
@@ -341,21 +339,21 @@ pub async fn run(args: PocSuiteProofArgs) -> anyhow::Result<()> {
         // seed-only targets a LIVE schema (the composition path seeds poc_f1):
         // NEVER drop it — additively ensure the run-plane + flow-test tables via
         // the same IF-NOT-EXISTS `ensure_*` path production reconcile uses.
-        ensure_runstate(&admin, &schema)
-            .await
-            .context("ensure run-state (additive)")?;
-        ensure_flow_registry(&admin, &schema)
-            .await
-            .context("ensure flow registry (additive)")?;
-        ensure_flow_tests(&admin, &schema)
-            .await
-            .context("ensure flow-test tables (additive)")?;
+        ctl_process::run_checked([
+            "reconcile-run-plane",
+            "--admin-database-url",
+            &admin_url,
+            "--schema",
+            schema.as_str(),
+        ])
+        .await
+        .context("additively reconcile live run-plane")?;
         println!(
             "## seed-only: additive ensure on live schema {} (no drop)",
             args.schema
         );
     } else {
-        provision_data_schema(&admin, &args.schema).await?;
+        provision_data_schema(&admin, &admin_url, &args.schema).await?;
     }
 
     let (app, app_task) = connect(&app_url).await?;
@@ -651,10 +649,16 @@ async fn provision_f1(admin_url: &str, schema: &ScenarioSchemaName) -> anyhow::R
             .batch_execute(&f1fixture::floor_ddl()?)
             .await
             .context("apply F1 floor")?;
-        let bare_schema =
-            BareSchemaName::new(schema.as_str()).context("validate F1 execution schema")?;
-        ensure_runstate(&client, &bare_schema).await?;
-        ensure_flow_registry(&client, &bare_schema).await?;
+        BareSchemaName::new(schema.as_str()).context("validate F1 execution schema")?;
+        ctl_process::run_checked([
+            "reconcile-run-plane",
+            "--admin-database-url",
+            admin_url,
+            "--schema",
+            schema.as_str(),
+        ])
+        .await
+        .context("reconcile F1 run-plane")?;
         client
             .batch_execute(
                 "CREATE TABLE wamn_catalog ( \
@@ -677,11 +681,28 @@ async fn provision_f1(admin_url: &str, schema: &ScenarioSchemaName) -> anyhow::R
             )
             .await
             .context("write catalog snapshot")?;
-        let seed = seed_dataset_sql(F1_SEED_JSON, &f1fixture::catalog()?, F1_TENANT)?;
+        let dataset = wamn_schema_compiler::seed::Dataset::from_json(F1_SEED_JSON)
+            .context("parse F1 seed dataset")?;
+        let seed = wamn_schema_compiler::seed::compile(
+            &dataset,
+            &f1fixture::catalog()?,
+            F1_TENANT,
+        )
+        .map_err(|error| anyhow::anyhow!("compile F1 seed dataset: {error}"))?
+        .sql(wamn_schema_compiler::Confirmation::None)
+        .map_err(|error| anyhow::anyhow!("render F1 seed SQL: {error}"))?;
         client.batch_execute(&seed).await.context("apply F1 seed")?;
-        register_flow(&client, F1_TENANT, F1_FLOW_JSON)
-            .await
-            .context("register F1 flow")?;
+        seed_flow_version(
+            &client,
+            F1_TENANT,
+            F1_FLOW_ID,
+            1,
+            true,
+            F1_FLOW_JSON,
+            true,
+        )
+        .await
+        .context("register F1 flow")?;
         anyhow::Ok(())
     }
     .await;
@@ -1240,10 +1261,13 @@ fn run_facts(status: &str) -> Option<RunFacts> {
     })
 }
 
-/// Provision the DATA schema (run-state + flow registry + test-suite tables) via
-/// the SAME `ensure_*` path production provisioning uses.
-async fn provision_data_schema(admin: &Client, schema: &str) -> anyhow::Result<()> {
-    let schema_name = BareSchemaName::new(schema).context("validate POC data schema")?;
+/// Provision the DATA schema through the public ctl reconcile boundary.
+async fn provision_data_schema(
+    admin: &Client,
+    admin_url: &str,
+    schema: &str,
+) -> anyhow::Result<()> {
+    BareSchemaName::new(schema).context("validate POC data schema")?;
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \
@@ -1253,15 +1277,15 @@ async fn provision_data_schema(admin: &Client, schema: &str) -> anyhow::Result<(
         ))
         .await
         .context("reset DATA schema + ensure wamn_app role")?;
-    ensure_runstate(admin, &schema_name)
-        .await
-        .context("run-state")?;
-    ensure_flow_registry(admin, &schema_name)
-        .await
-        .context("flow registry")?;
-    ensure_flow_tests(admin, &schema_name)
-        .await
-        .context("flow-test tables")?;
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        admin_url,
+        "--schema",
+        schema,
+    ])
+    .await
+    .context("reconcile POC data run-plane")?;
     println!("## provisioned DATA schema {schema} (run-state + flows + test_suites/test_cases)");
     Ok(())
 }
