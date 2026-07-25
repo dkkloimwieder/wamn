@@ -20,6 +20,9 @@ license = "Apache-2.0"
 # workspace's git-pinned one (two wasmtimes = linker typecheck failures upstream
 # solves with a [patch] we'd otherwise have to replicate).
 wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "981fdc56ebc1840f08161aef5edec592538e5d4c", default-features = false }
+# Native sandbox hosts and gates must share one Wasmtime type universe.
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
 # pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch
 # wamn/0.8.0 = upstream v0.8.0 (784e644) + the carried failover-slot-syntax
 # commit (S-CDC-1 finding F1: legacy `… FAILOVER` → 42601 on PG17+; the fork

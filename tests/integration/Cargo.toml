@@ -45,8 +45,8 @@ wamn-schema-model = { workspace = true }
 wamn-scenario-model = { workspace = true }
 wamn-scenario-runtime = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
-wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
-wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+wasmtime-wasi = { workspace = true }
+wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
 wamn-run-state = { workspace = true, features = ["test-util"] }
