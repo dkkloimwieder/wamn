@@ -3,3 +3,4 @@
 pub mod erp_sim;
 pub mod node_host_support;
 pub mod publish_catalog_demo;
+pub mod scenario_worker_gate;

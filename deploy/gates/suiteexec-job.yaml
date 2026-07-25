@@ -20,8 +20,8 @@
 # db-state asserts read through that same superuser session (RLS-bypassing).
 #
 # Co-located with postgres (the cases make real DB round trips), backoffLimit 0,
-# restartPolicy Never, image wamn-gates:dev. Run bench/proof Jobs SEQUENTIALLY on
-# the shared postgres.
+# restartPolicy Never. The gates image carries the product scenario-worker
+# executable; testkitbench is only its repository fixture/process adapter.
 #
 #   kubectl -n wamn-system apply -f deploy/gates/suiteexec-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/suiteexec --timeout=180s
@@ -58,6 +58,7 @@ spec:
             [
               "--log-level", "error",
               "testkitbench",
+              "--scenario-worker", "/usr/local/bin/wamn-scenario-worker",
               "--seed-demo",
               "--tenant", "demo-tenant",
               "--source-schema", "wamn_suiteexec",

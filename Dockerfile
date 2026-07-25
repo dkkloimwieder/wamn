@@ -153,6 +153,9 @@ ENTRYPOINT ["/usr/local/bin/wamn-waker"]
 # ---- gates image: the host stage + the gate suite + wasm fixtures -----------
 FROM host AS gates
 COPY --from=builder /build/target/release/wamn-gates /usr/local/bin/wamn-gates
+# Stored-suite compatibility is a process adapter: the gate invokes the product
+# worker binary and never links its execution engine into wamn-gates.
+COPY --from=builder /build/target/release/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
 # Bench fixtures baked in so the gate Jobs run with no volume plumbing.
 COPY --from=component-builder /component-output/hello.wasm /bench/hello.wasm
 COPY --from=component-builder /component-output/memhog.wasm /bench/memhog.wasm
