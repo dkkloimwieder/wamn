@@ -150,19 +150,6 @@ pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
     )
 }
 
-#[cfg(test)]
-mod s6_fixture_tests {
-    use super::flow_json_s6;
-
-    #[test]
-    fn s6_flow_declares_its_controlled_http_authority() {
-        let flow = wamn_flow::Flow::from_json(&flow_json_s6(0, "http://127.0.0.1:18080/echo"))
-            .expect("S6 fixture parses");
-
-        assert_eq!(flow.allowed_hosts, ["127.0.0.1:18080"]);
-    }
-}
-
 /// A TWO-delay `poc-s6` fixture: `webhook-in -> delay(d1) -> delay(d2) ->
 /// pg-write -> respond` (wamn-2jkm.51). Both delays use the same `delay_secs`.
 /// The two delay nodes must park INDEPENDENTLY: after the first elapses the
@@ -624,4 +611,17 @@ async fn resume_phase(
         && duplicate_absorbed == args.resume_iters;
     println!("PASS(resume: killed mid-run, single idempotent side effect): {pass}");
     Ok(pass)
+}
+
+#[cfg(test)]
+mod s6_fixture_tests {
+    use super::flow_json_s6;
+
+    #[test]
+    fn s6_flow_declares_its_controlled_http_authority() {
+        let flow = wamn_flow::Flow::from_json(&flow_json_s6(0, "http://127.0.0.1:18080/echo"))
+            .expect("S6 fixture parses");
+
+        assert_eq!(flow.allowed_hosts, ["127.0.0.1:18080"]);
+    }
 }
