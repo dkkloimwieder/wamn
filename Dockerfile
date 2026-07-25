@@ -37,6 +37,51 @@ COPY components/samples/disposition-node/cases.json components/samples/dispositi
 # the base image already ships the right version.
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-waker -p wamn-gates -p wamn-builder
 
+# ---- locked component outputs shared by every embedding image --------------
+# Keep the guest workspace separate from the native workspace while reusing the
+# native builder's repository sources for the guests' path dependencies.
+FROM builder AS component-builder
+RUN rustup target add --toolchain 1.97.0 wasm32-wasip2 \
+ && apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install --prefix /opt/jco --save-exact --include=optional \
+      @bytecodealliance/jco@1.25.2 \
+      @bytecodealliance/componentize-js@0.21.0 \
+      @napi-rs/lzma-linux-x64-gnu@1.5.1
+ENV PATH="/opt/jco/node_modules/.bin:${PATH}"
+RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git \
+    cargo +1.97.0 install wac-cli --version 0.10.1 --locked
+COPY components/Cargo.toml components/Cargo.lock ./components/
+COPY components/ingress ./components/ingress
+COPY components/fixtures ./components/fixtures
+COPY components/execution ./components/execution
+COPY components/poc ./components/poc
+COPY components/samples ./components/samples
+WORKDIR /build/components
+RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=wamn-component-target,target=/build/components/target \
+    cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
+      -p api-gateway -p flowrunner -p materializer \
+      -p busyloop -p flow-driver -p hello -p logspewer -p memhog -p pgprobe -p sockprobe \
+      -p poc-webhook-f1 \
+      -p disposition-node -p js-sample -p node-rs -p sample-node \
+ && install -d /component-output \
+ && for artifact in \
+      api_gateway flowrunner materializer \
+      busyloop flow_driver hello logspewer memhog pgprobe sockprobe \
+      poc_webhook_f1 \
+      disposition_node js-sample node_rs sample_node; do \
+      install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm" \
+        "/component-output/${artifact}.wasm"; \
+    done \
+ && jco componentize samples/node-ts/node.js --wit samples/node-ts/wit \
+      --world-name node-bench -o /component-output/node-ts.wasm \
+ && wac plug target/wasm32-wasip2/release/flow_driver.wasm \
+      --plug target/wasm32-wasip2/release/node_rs.wasm \
+      -o /component-output/flow_composed.wasm
+
 # ---- washlet image: the host binary only ------------------------------------
 FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -75,7 +120,7 @@ COPY --from=builder /build/target/release/wamn-run-worker /usr/local/bin/wamn-ru
 # The flowrunner component is a PRODUCTION artifact, not a gate fixture: the
 # run-worker (fqg.8) instantiates it to drive claimed runs, so it travels with
 # this binary (default --flowrunner /components/flowrunner.wasm).
-COPY components/target/wasm32-wasip2/release/flowrunner.wasm /components/flowrunner.wasm
+COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-run-worker"]
 
@@ -85,7 +130,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=builder /build/target/release/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
 # Deliberately the same compiled guest as the production executor. Capability
 # composition differs in the native service artifact, not in flow semantics.
-COPY components/target/wasm32-wasip2/release/flowrunner.wasm /components/flowrunner.wasm
+COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-scenario-worker"]
 
@@ -109,42 +154,42 @@ ENTRYPOINT ["/usr/local/bin/wamn-waker"]
 FROM host AS gates
 COPY --from=builder /build/target/release/wamn-gates /usr/local/bin/wamn-gates
 # Bench fixtures baked in so the gate Jobs run with no volume plumbing.
-COPY components/target/wasm32-wasip2/release/hello.wasm /bench/hello.wasm
-COPY components/target/wasm32-wasip2/release/memhog.wasm /bench/memhog.wasm
-COPY components/target/wasm32-wasip2/release/busyloop.wasm /bench/busyloop.wasm
+COPY --from=component-builder /component-output/hello.wasm /bench/hello.wasm
+COPY --from=component-builder /component-output/memhog.wasm /bench/memhog.wasm
+COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wasm
 # E13/E15 runtime raw-socket fixture: attempts raw TCP + UDP egress via
 # wasi:sockets so egressbench can assert the fork's socket_addr_check deny.
-COPY components/target/wasm32-wasip2/release/sockprobe.wasm /bench/sockprobe.wasm
-COPY components/target/wasm32-wasip2/release/pgprobe.wasm /bench/pgprobe.wasm
-COPY components/target/wasm32-wasip2/release/flowrunner.wasm /bench/flowrunner.wasm
+COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm
+COPY --from=component-builder /component-output/pgprobe.wasm /bench/pgprobe.wasm
+COPY --from=component-builder /component-output/flowrunner.wasm /bench/flowrunner.wasm
 # S4 custom-node fixtures: the Rust node, the wac-composed frozen flow, and the
 # JS/JCO node (built by `jco componentize`, so it lives outside target/).
-COPY components/target/wasm32-wasip2/release/node_rs.wasm /bench/node-rs.wasm
-COPY components/target/wasm32-wasip2/release/flow_composed.wasm /bench/flow-composed.wasm
-COPY components/samples/node-ts/node-ts.wasm /bench/node-ts.wasm
+COPY --from=component-builder /component-output/node_rs.wasm /bench/node-rs.wasm
+COPY --from=component-builder /component-output/flow_composed.wasm /bench/flow-composed.wasm
+COPY --from=component-builder /component-output/node-ts.wasm /bench/node-ts.wasm
 # 5.4 frozen-contract conformance fixture: the scaffolding-built zero-import
 # sample node (nodebench --mode sample / the default `all`).
-COPY components/target/wasm32-wasip2/release/sample_node.wasm /bench/sample-node.wasm
+COPY --from=component-builder /component-output/sample_node.wasm /bench/sample-node.wasm
 # POC-F2 (wamn-1ab) zero-import disposition-recommendation node: the f2invoke
 # gate warm-instantiates it in a ServeNode and calls it per disposition outcome.
-COPY components/target/wasm32-wasip2/release/disposition_node.wasm /bench/disposition-node.wasm
+COPY --from=component-builder /component-output/disposition_node.wasm /bench/disposition-node.wasm
 # S5 logging-capture fixture (imports wasi:logging, exports overhead+emit-batch).
-COPY components/target/wasm32-wasip2/release/logspewer.wasm /bench/logspewer.wasm
+COPY --from=component-builder /component-output/logspewer.wasm /bench/logspewer.wasm
 # 4.1 generated REST API gateway (exports wasi:http/incoming-handler, imports
 # wamn:postgres; the apibench gate drives it via ProxyPre).
-COPY components/target/wasm32-wasip2/release/api_gateway.wasm /bench/api-gateway.wasm
+COPY --from=component-builder /component-output/api_gateway.wasm /bench/api-gateway.wasm
 # l5i9.17 materializer Service guest (wasi:cli/run; imports wamn:postgres +
 # wamn:jetstream; the matbench gate drives it via CommandPre — the same wasm the
 # WorkloadDeployment pulls from the registry in production).
-COPY components/target/wasm32-wasip2/release/materializer.wasm /bench/materializer.wasm
+COPY --from=component-builder /component-output/materializer.wasm /bench/materializer.wasm
 # l5i9.57 E10-e2e wamn:jetstream sample guest (wasi:cli/run; imports
 # wamn:jetstream consumer + producer — the first producer importer + the adopter
 # template; the samplebench gate drives it via CommandPre). Bin crate, so the
 # artifact keeps its hyphen (js-sample.wasm), unlike the cdylib underscore names.
-COPY components/target/wasm32-wasip2/release/js-sample.wasm /bench/js-sample.wasm
+COPY --from=component-builder /component-output/js-sample.wasm /bench/js-sample.wasm
 # POC-F1 sync-webhook ingress (exports wasi:http/incoming-handler, imports
 # wamn:postgres, embeds the wamn-runner engine; the f1bench gate drives it).
-COPY components/target/wasm32-wasip2/release/poc_webhook_f1.wasm /bench/poc-webhook-f1.wasm
+COPY --from=component-builder /component-output/poc_webhook_f1.wasm /bench/poc-webhook-f1.wasm
 # 11.4 assertion-library fixture: the checked-in Vec<TestCase> the testkitbench
 # gate loads (the cases-as-data path). Static JSON, not a compiled artifact.
 COPY deploy/gates/testkit-cases.json /bench/testkit-cases.json

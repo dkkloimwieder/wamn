@@ -8,4 +8,7 @@ pub mod socketguard;
 pub mod testgate;
 
 #[cfg(test)]
+mod docker_component_provenance;
+
+#[cfg(test)]
 mod manifest_dependencies;
