@@ -3268,10 +3268,12 @@ claim.
 - **SR26 is new and High.** Gate-of-record receipts do not prove a fresh
   immutable baseline artifact. `wamn-2jkm.98` owns remediation and targeted
   proof `wamn-4tob.6.25` owns the completed-Job/mutable-image reproducer.
-- **SR20 stays Low and latent.** Host, worker, and gates copy the same direct
-  Wasmtime git revision today, and the locked graph resolves one source
-  identity. `wamn-2jkm.84` owns one workspace declaration plus a resolved-source
-  assertion; there is no present split-runtime finding.
+- **SR20 is closed at Low.** `91b66de` (`wamn-2jkm.84`) replaced the eleven
+  copied direct declarations in six consumer packages with one workspace-owned
+  Wasmtime source contract. Two named guards now check the exact direct-consumer
+  matrix and one canonical resolved source/type universe in Cargo metadata and
+  the lockfile. The pre-fix graph already resolved one source, so this closes a
+  latent split-runtime hazard rather than claiming an observed runtime split.
 - **SR16 remains the builder owner.** Builder service inheritance of the full
   runtime composition/build tree confirms the inversion; no duplicate finding
   or speculative “builder megacrate” split is created.
@@ -3279,10 +3281,12 @@ claim.
   resolve `wamn-run-queue` without its default/`croner` edge. A future check
   must assert that specific feature/source edge, not incorrectly ban all
   transitive `chrono`.
-- **Default members are a measured design input, not a defect.** STR9 must
-  define fast developer, complete CI, component release, and live-system tiers
-  after timing them. It must also add Cargo-metadata layer assertions, including
-  builder-not-host and one Wasmtime source identity.
+- **Default members remain absent by measured choice.** `a07dcf2`
+  (`wamn-4tob.6.29`) records the live 47-root/18-component inventory and selects
+  named explicit selectors for developer, component, conformance, full-CI,
+  deployed-proof, and release tiers. Bare commands remain exhaustive. The
+  Cargo-metadata layer and Wasmtime-source assertions are now executable under
+  SR27 and SR20 respectively.
 
 ### S.5 Target build/deploy constraints
 
@@ -4348,7 +4352,8 @@ owner-bound, and visible in graph deltas.
 
 Other enforcement remains with its granular owner:
 
-- SR20 centralizes the load-bearing Wasmtime source identity;
+- SR20's load-bearing Wasmtime source identity is centralized and guarded by
+  `91b66de`;
 - SR17 builds components inside the attributable release graph;
 - SR23 and existing WIT guards own canonical source/copy coherence;
 - SR13 owns physical DDL, runtime query, and gate-stand-in drift;
@@ -4392,10 +4397,14 @@ release identity. The target build sets are:
 5. deployed-system proof; and
 6. immutable release.
 
-Exact membership and whether Cargo `default-members` or named commands express
-the first sets require measured cold/warm cost and coverage on the current
-consumer hardware. `wamn-4tob.6.29` owns that experiment. Until it closes,
-do not silently change bare Cargo semantics.
+`a07dcf2` (`wamn-4tob.6.29`) records exact membership and cold/warm evidence in
+`architecture/workspace-tiers.json`. It selects named explicit selectors:
+37 root production packages for the fast developer tier, three product
+components, ten contract/conformance packages, all 47 root plus all 18
+component packages and `node-ts` for full CI, and separately enumerated
+deployed-proof and release sets. Neither workspace gains `default-members`;
+bare Cargo commands remain exhaustive and four conformance tests fail closed
+on inventory, classification, bare-command, or release-identity drift.
 
 Every product component is built from source, lock, target, and toolchain
 inside an attributable stage. Native runtime/exception images and component
@@ -4430,7 +4439,7 @@ claim, effect, or deployment path.
 
 | Wave | Work and hard boundary | Reversal / exit |
 |---|---|---|
-| **S0 — classify and prove releases** | Implement SR27 package metadata/checker and SR28 PostgreSQL ownership metadata; measure workspace tiers; close SR17/SR20/SR26 and the exact-artifact proofs before any runtime cutover. Do not mass-move directories. | Revert metadata/checkers independently; no runtime state or traffic changed. |
+| **S0 — classify and prove releases** | SR27 package metadata/checker (`b936e84`), SR28 PostgreSQL ownership metadata (`ea0e18f`), measured workspace tiers (`a07dcf2`), and SR20 source identity (`91b66de`) are complete. Close SR17/SR26 and the exact-artifact proofs before any runtime cutover. Do not mass-move directories. | Revert metadata/checkers independently; no runtime state or traffic changed. |
 | **S1 — repair retained correctness** | Address cross-client authority R45, acknowledged-write safety R46, readiness R42, compatible resume R53, and the applicable event-path blockers before moving affected traffic. | Existing topology remains active; failure is visible unavailability, never a shadow authority. |
 | **S2 — lower contracts without state movement** | Land `wamn-execution-model`, exhaustive node descriptors, canonical runner WIT, config rules, and CDC-local shutdown. Preserve serialized literals and differential fixtures. | Temporary facades retain old imports; rollback restores the old package graph over unchanged stored bytes. |
 | **S3 — remove host inversions** | Extract `wamn-component-policy`; remove builder → host. Prove the component node-host workload, then move `serve-node` behind its independent artifact/host boundary. | Old builder/node path remains available until parity. If the node proof fails, record the native exception and exit condition before creating that fallback. |
@@ -4468,10 +4477,10 @@ Every accepted change, experiment, or later canonical update has a Bead:
 
 | Target obligation | Owner |
 |---|---|
-| Component/native role metadata and dependency enforcement | new SR27 `wamn-2jkm.101` |
-| PostgreSQL table/family and writer ownership enforcement | new SR28 `wamn-2jkm.102`; physical drift remains SR13 |
+| Component/native role metadata and dependency enforcement | SR27 `wamn-2jkm.101`, closed by `b936e84` |
+| PostgreSQL table/family and writer ownership enforcement | SR28 `wamn-2jkm.102`, closed by `ea0e18f`; physical drift remains SR13 |
 | Custom-node component-workload discriminating proof | new `wamn-4tob.6.28`, related to SR15 `wamn-2jkm.78` |
-| Measured workspace/default/release sets | new `wamn-4tob.6.29` |
+| Measured workspace/default/release sets | `wamn-4tob.6.29`, closed by `a07dcf2`; named explicit selectors preserve exhaustive bare commands |
 | Execution Service migration | existing `wamn-l5i9.49` |
 | Dispatcher Service placement | amended decision `wamn-l5i9.51` |
 | Dispatcher Service migration | new `wamn-l5i9.71`, blocked by `.51` |
@@ -4480,14 +4489,16 @@ Every accepted change, experiment, or later canonical update has a Bead:
 | Execution/scenario contract direction | SR19 `wamn-2jkm.83` |
 | Flowrunner internal module boundaries | `wamn-cjv.11` |
 | DDL/query/stand-in ownership | SR13 `wamn-2jkm.24` |
-| Runtime source, artifact, config, proof, and contract guards | SR17–SR26 and their existing proofs |
+| Runtime source, artifact, config, proof, and contract guards | SR20 closed by `91b66de`; remaining SR17–SR19/SR21–SR26 and their existing proofs retain ownership |
 | Generic non-POC flow ingress and invocation contract | `wamn-fqg.39`; still deferred and forbidden from embedding a second executor |
 | Canonical D17/D21/D23 adoption after final audit acceptance | new `wamn-4tob.1.40`, waiting on AUDIT-X1 |
 
-STR9 introduces only SR27 and SR28. It does not close SR13, SR15–SR26, any R/E
-correctness row, or either component migration. A target path is not evidence
-that the current implementation, image, deployment, or live behavior already
-matches it.
+STR9 introduced only SR27 and SR28. Their implementation commits, plus the
+separate SR20 and tier-selection commits above, close those three structural
+findings and the measurement unknown. They do not close SR13, SR15–SR19,
+SR21–SR26, any R/E correctness row, or either component migration. A target
+path is not evidence that the current implementation, image, deployment, or
+live behavior already matches it.
 
 Every root package, component-workspace member, current deployable
 responsibility, public/cross-unit contract family, state-authority class,
@@ -4533,7 +4544,7 @@ prerequisite that makes everything else findable.
 | SR17 | Docker images package caller-built component bytes | High | open | wamn-2jkm.80; proof wamn-4tob.6.8 |
 | SR18 | Control-plane image cannot execute advertised dump/restore/copy paths | Med | open | wamn-2jkm.81 |
 | SR19 | Product test-case contract depends on run-state persistence | Med | open | wamn-2jkm.83; `wamn-execution-model` target in V |
-| SR20 | Load-bearing Wasmtime source pin is duplicated across manifests | Low | open | wamn-2jkm.84; STR7/STR9 own guard/target |
+| SR20 | Load-bearing Wasmtime source pin is duplicated across manifests | Low | **closed** | `91b66de` (wamn-2jkm.84; 11 direct declarations in 6 consumers → one workspace source; 2 named metadata/lock/type-universe guards plus source-split mutation) |
 | SR21 | Stored-suite drivability duplicates an incomplete production dispatch contract | Med | open | wamn-2jkm.93; STR5 set composed descriptor, STR9 packages it |
 | SR22 | Custom-node invocation wire lacks a version and mixed-version contract | Med | open | wamn-2jkm.94; blocked by custom-node decision wamn-4tob.1.33 |
 | SR23 | `wamn:runner` WIT has no canonical source or coherence guard | Low | open | wamn-2jkm.95; N.7 selects same-release atomic development policy |
