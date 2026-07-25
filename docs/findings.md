@@ -3281,12 +3281,14 @@ claim.
   resolve `wamn-run-queue` without its default/`croner` edge. A future check
   must assert that specific feature/source edge, not incorrectly ban all
   transitive `chrono`.
-- **Default members remain absent by measured choice.** `a07dcf2`
+- **Default members remain absent by measured and enforced choice.** `a07dcf2`
   (`wamn-4tob.6.29`) records the live 47-root/18-component inventory and selects
   named explicit selectors for developer, component, conformance, full-CI,
-  deployed-proof, and release tiers. Bare commands remain exhaustive. The
-  Cargo-metadata layer and Wasmtime-source assertions are now executable under
-  SR27 and SR20 respectively.
+  deployed-proof, and release tiers. `bc25a54` (`wamn-5wd1.28`) installs the
+  JSON-driven `tools/workspace-tier` list/dry-run/run helper with fixed safe
+  Cargo modes and no copied package list. Bare commands remain exhaustive; ten
+  named guards now cover live classification, exact helper plans,
+  caller-CWD independence, refusal, full-CI coverage, and release identity.
 
 ### S.5 Target build/deploy constraints
 
@@ -4402,9 +4404,13 @@ release identity. The target build sets are:
 37 root production packages for the fast developer tier, three product
 components, ten contract/conformance packages, all 47 root plus all 18
 component packages and `node-ts` for full CI, and separately enumerated
-deployed-proof and release sets. Neither workspace gains `default-members`;
-bare Cargo commands remain exhaustive and four conformance tests fail closed
-on inventory, classification, bare-command, or release-identity drift.
+deployed-proof and release sets. `bc25a54` (`wamn-5wd1.28`) makes those sets
+executable through `tools/workspace-tier`; it resolves the repository outside
+the caller CWD, constructs a direct Cargo argument vector, exposes list and
+dry-run plans, and refuses unknown or empty selections before Cargo starts.
+Neither workspace gains `default-members`; bare Cargo commands remain
+exhaustive and ten conformance tests fail closed on inventory, classification,
+helper semantics, full coverage, bare-command, or release-identity drift.
 
 Every product component is built from source, lock, target, and toolchain
 inside an attributable stage. Native runtime/exception images and component
@@ -4480,7 +4486,7 @@ Every accepted change, experiment, or later canonical update has a Bead:
 | Component/native role metadata and dependency enforcement | SR27 `wamn-2jkm.101`, closed by `b936e84` |
 | PostgreSQL table/family and writer ownership enforcement | SR28 `wamn-2jkm.102`, closed by `ea0e18f`; physical drift remains SR13 |
 | Custom-node component-workload discriminating proof | new `wamn-4tob.6.28`, related to SR15 `wamn-2jkm.78` |
-| Measured workspace/default/release sets | `wamn-4tob.6.29`, closed by `a07dcf2`; named explicit selectors preserve exhaustive bare commands |
+| Measured workspace/default/release sets and selectors | Measurement `wamn-4tob.6.29` closed by `a07dcf2`; JSON-driven selector helper `wamn-5wd1.28` closed by `bc25a54`; exhaustive bare commands preserved |
 | Execution Service migration | existing `wamn-l5i9.49` |
 | Dispatcher Service placement | amended decision `wamn-l5i9.51` |
 | Dispatcher Service migration | new `wamn-l5i9.71`, blocked by `.51` |
