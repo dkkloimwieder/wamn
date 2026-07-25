@@ -36,8 +36,8 @@ pub use credentials::{ScenarioCredentials, load_scenario_credentials};
 pub use egress::{EgressObservation, RecordingEgress};
 pub use random::{SeededRng, build_virtual_wasi};
 pub use scheduler::{
-    RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, RUN_S6_WAKE_DEADLINES_SQL, ScenarioScheduler,
-    SchedulerBackend,
+    QueueScheduleShiftError, RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL,
+    RUN_S6_WAKE_DEADLINES_SQL, ScenarioScheduler, SchedulerBackend, validate_queue_due_nudge,
 };
 pub use schema::{
     EphemeralSchemaProvisioner, InvalidScenarioSchemaName, ScenarioSchemaName, case_pool,

@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
@@ -24,6 +25,7 @@ use wamn_scenario_model::{
 use wamn_scenario_runtime::{
     RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, RecordingEgress, ScenarioCapabilities,
     ScenarioScheduler, ScenarioSchemaName, SchedulerBackend, case_pool, load_scenario_credentials,
+    validate_queue_due_nudge,
 };
 
 const DEFAULT_EPOCH_SECS: u64 = 1_700_000_000;
@@ -240,25 +242,67 @@ fn parse_run_status(value: &str) -> anyhow::Result<RunStatus> {
 struct QueueScenarioBackend<'a> {
     client: &'a tokio_postgres::Client,
     host: &'a mut ExecutionHost,
+    run_id: &'a str,
+    selected_at: Option<SystemTime>,
+}
+
+impl<'a> QueueScenarioBackend<'a> {
+    fn new(
+        client: &'a tokio_postgres::Client,
+        host: &'a mut ExecutionHost,
+        run_id: &'a str,
+    ) -> Self {
+        Self {
+            client,
+            host,
+            run_id,
+            selected_at: None,
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl SchedulerBackend for QueueScenarioBackend<'_> {
     async fn wake_deadlines_nanos(&mut self) -> anyhow::Result<Vec<u64>> {
-        let row = self.client.query_one(RUN_QUEUE_NEXT_WAKE_SQL, &[]).await?;
-        let seconds: Option<i64> = row.get(0);
-        seconds
-            .map(|seconds| {
-                u64::try_from(seconds)
-                    .context("scenario wake deadline precedes unix epoch")
-                    .map(|seconds| seconds.saturating_mul(1_000_000_000))
-            })
-            .into_iter()
-            .collect()
+        let rows = self
+            .client
+            .query(RUN_QUEUE_NEXT_WAKE_SQL, &[&self.run_id])
+            .await?;
+        if rows.len() > 1 {
+            return Err(wamn_scenario_runtime::QueueScheduleShiftError::Ambiguous {
+                run_id: self.run_id.to_string(),
+                matched: u64::try_from(rows.len()).context("queue row count exceeds u64")?,
+            }
+            .into());
+        }
+        let Some(row) = rows.first() else {
+            self.selected_at = None;
+            return Ok(Vec::new());
+        };
+        let selected_at: SystemTime = row.get(0);
+        let nanos = selected_at
+            .duration_since(UNIX_EPOCH)
+            .context("scenario wake deadline precedes unix epoch")?
+            .as_nanos();
+        let nanos = u64::try_from(nanos).context("scenario wake deadline exceeds u64 nanos")?;
+        self.selected_at = Some(selected_at);
+        Ok(vec![nanos])
     }
 
     async fn redrive(&mut self) -> anyhow::Result<()> {
-        self.client.execute(RUN_QUEUE_DUE_NUDGE_SQL, &[]).await?;
+        let selected_at = self.selected_at.take().ok_or_else(|| {
+            wamn_scenario_runtime::QueueScheduleShiftError::Stale {
+                run_id: self.run_id.to_string(),
+            }
+        })?;
+        let row = self
+            .client
+            .query_one(RUN_QUEUE_DUE_NUDGE_SQL, &[&self.run_id, &selected_at])
+            .await?;
+        let matched =
+            u64::try_from(row.get::<_, i64>(0)).context("negative queue candidate count")?;
+        let shifted = u64::try_from(row.get::<_, i64>(1)).context("negative queue shift count")?;
+        validate_queue_due_nudge(self.run_id, matched, shifted)?;
         self.host.drain().await?;
         Ok(())
     }
@@ -468,10 +512,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
 
         host.drain().await.context("drive stored scenario case")?;
         ScenarioScheduler::new(clock)
-            .drive_to_quiescence(&mut QueueScenarioBackend {
-                client: &client,
-                host: &mut host,
-            })
+            .drive_to_quiescence(&mut QueueScenarioBackend::new(&client, &mut host, &run_id))
             .await
             .context("resume delayed scenario work")?;
         drop(host);
