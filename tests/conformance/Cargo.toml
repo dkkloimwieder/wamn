@@ -23,9 +23,11 @@ wamn-gate-harness = { workspace = true }
 wamn-node-invoke = { workspace = true }
 wamn-node-manifest = { workspace = true }
 wamn-node-runtime = { workspace = true }
-wamn-run-state = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-scenario-model = { workspace = true }
 wash-runtime = { workspace = true }
 wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
 wasm-encoder = { workspace = true }
+
+[dev-dependencies]
+wamn-run-state = { workspace = true, features = ["test-util"] }

@@ -4,7 +4,7 @@ pub use wamn_test_fixtures::{apifixture, f1fixture};
 pub use wamn_test_infrastructure::{erp_sim, node_host_support, publish_catalog_demo};
 
 #[cfg(test)]
-use wamn_proof_conformance::schema_drift;
+use wamn_run_state::schema_drift;
 
 pub mod apibench;
 pub mod bench;

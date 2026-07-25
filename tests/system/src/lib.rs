@@ -1,7 +1,7 @@
 //! Black-box proofs that drive deployed or public repository surfaces.
 
 #[cfg(test)]
-use wamn_proof_conformance::schema_drift;
+use wamn_run_state::schema_drift;
 pub use wamn_test_fixtures::{apifixture, f1fixture};
 
 pub mod apiproof;

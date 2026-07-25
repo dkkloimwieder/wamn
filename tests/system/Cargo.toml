@@ -21,4 +21,4 @@ wamn-schema-compiler = { workspace = true }
 wamn-schema-model = { workspace = true }
 
 [dev-dependencies]
-wamn-proof-conformance = { workspace = true }
+wamn-run-state = { workspace = true, features = ["test-util"] }

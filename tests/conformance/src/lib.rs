@@ -3,7 +3,6 @@
 pub mod buildproof;
 pub mod credprobe;
 pub mod egressbench;
-pub mod schema_drift;
 pub mod socketguard;
 pub mod testgate;
 
@@ -12,3 +11,6 @@ mod docker_component_provenance;
 
 #[cfg(test)]
 mod manifest_dependencies;
+
+#[cfg(test)]
+mod schema_drift;

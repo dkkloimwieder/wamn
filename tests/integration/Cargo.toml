@@ -49,4 +49,4 @@ wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7
 wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
 
 [dev-dependencies]
-wamn-proof-conformance = { workspace = true }
+wamn-run-state = { workspace = true, features = ["test-util"] }

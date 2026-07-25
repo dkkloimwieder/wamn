@@ -59,6 +59,9 @@ mod model;
 pub mod queue;
 mod reconstruct;
 mod rerun;
+/// Contract-owned helpers for checking repository stand-in schemas.
+#[cfg(feature = "test-util")]
+pub mod schema_drift;
 /// Run-state SQL text builders (SR2): the single source both guests and
 /// host drivers execute.
 pub mod sql;
