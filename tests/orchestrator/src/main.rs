@@ -124,9 +124,9 @@ enum Command {
     F4proof(f4proof::F4ProofArgs),
     /// Serve the POC-F4 ERP callback simulator (429 + Retry-After for the first K requests per idempotency key, then 202; GET /audit)
     ErpSim(erp_sim::ErpSimArgs),
-    /// Run the 11.3 record-and-replay gate (pin a full-capture run via the real ctl core: secret scrubbed + volatile normalized + replay round-trip + preview-run refusal, ephemeral schema)
+    /// Run the 11.3 record-and-replay gate (pin a full-capture run through the `wamn-ctl` executable boundary: secret scrubbed + volatile normalized + replay round-trip + preview-run refusal, ephemeral schema)
     Pinproof(pinproof::PinProofArgs),
-    /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert wamn_schema_control::impact names the affected flow/suite/api resource and gates a destructive change with dependents behind acknowledgement
+    /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert `wamn-ctl impact-report` names the affected flow/suite/api resource and gates a destructive change with dependents behind acknowledgement
     Impactproof(impactproof::ImpactProofArgs),
     /// Run the 9.8 metric-set gate (run executions/success-ratio / queue depth / drive duration / memory denial+high-water / pool+query latency; api RPS in-cluster-only)
     Metricbench(metricbench::MetricBenchArgs),
