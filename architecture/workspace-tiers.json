@@ -1,0 +1,493 @@
+{
+  "schema_version": 1,
+  "selection": {
+    "mechanism": "named-explicit-selectors",
+    "default_members_selected": false,
+    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 37-package developer loop and the three product components explicit without hiding POCs, fixtures, samples, or proof packages from bare workspace commands.",
+    "package_classification_source": "architecture/package-roles.json",
+    "membership_evidence": "cargo metadata --locked --offline --format-version 1"
+  },
+  "source_inventory": {
+    "root_workspace": {
+      "manifest": "Cargo.toml",
+      "package_count": 47
+    },
+    "component_workspace": {
+      "manifest": "components/Cargo.toml",
+      "package_count": 18
+    },
+    "non_cargo_inputs": [
+      "components/samples/node-ts"
+    ]
+  },
+  "tiers": {
+    "fast_developer_native": {
+      "root_packages": [
+        "wamn-api",
+        "wamn-builder",
+        "wamn-cdc-reader",
+        "wamn-component-policy",
+        "wamn-control-provision",
+        "wamn-control-registry",
+        "wamn-ctl",
+        "wamn-dispatcher",
+        "wamn-entity-access",
+        "wamn-event-reg",
+        "wamn-event-wire",
+        "wamn-execution-host",
+        "wamn-executor",
+        "wamn-flow",
+        "wamn-host",
+        "wamn-materializer",
+        "wamn-node-guest",
+        "wamn-node-host",
+        "wamn-node-invoke",
+        "wamn-node-manifest",
+        "wamn-node-runtime",
+        "wamn-node-sdk",
+        "wamn-pg-core",
+        "wamn-project-state",
+        "wamn-run-state",
+        "wamn-runner",
+        "wamn-runtime",
+        "wamn-scenario-catalog",
+        "wamn-scenario-model",
+        "wamn-scenario-runtime",
+        "wamn-scenario-worker",
+        "wamn-scheduler",
+        "wamn-schema-compiler",
+        "wamn-schema-control",
+        "wamn-schema-model",
+        "wamn-standard-nodes",
+        "wamn-waker"
+      ],
+      "component_packages": [],
+      "non_cargo_inputs": [],
+      "command_semantics": "Run check, build, or test with these explicit root package selectors. Normal and build path dependencies are resolved by Cargo from live metadata."
+    },
+    "product_components": {
+      "root_packages": [],
+      "component_packages": [
+        "api-gateway",
+        "flowrunner",
+        "materializer"
+      ],
+      "non_cargo_inputs": [],
+      "command_semantics": "Build these explicit component package selectors from components/ with --target wasm32-wasip2. Their root-workspace path dependencies are resolved by Cargo."
+    },
+    "contract_conformance": {
+      "root_packages": [
+        "wamn-event-reg",
+        "wamn-event-wire",
+        "wamn-flow",
+        "wamn-node-invoke",
+        "wamn-node-manifest",
+        "wamn-node-sdk",
+        "wamn-project-state",
+        "wamn-proof-conformance",
+        "wamn-scenario-model",
+        "wamn-schema-model"
+      ],
+      "component_packages": [],
+      "non_cargo_inputs": [],
+      "command_semantics": "Test every package classified as a contract plus the repository conformance proof owner."
+    },
+    "full_ci": {
+      "root_packages": [
+        "wamn-api",
+        "wamn-builder",
+        "wamn-cdc-reader",
+        "wamn-cdc1",
+        "wamn-component-policy",
+        "wamn-control-provision",
+        "wamn-control-registry",
+        "wamn-ctl",
+        "wamn-dispatcher",
+        "wamn-dm1",
+        "wamn-entity-access",
+        "wamn-event-reg",
+        "wamn-event-wire",
+        "wamn-execution-host",
+        "wamn-executor",
+        "wamn-f1",
+        "wamn-flow",
+        "wamn-gate-harness",
+        "wamn-gates",
+        "wamn-host",
+        "wamn-materializer",
+        "wamn-node-guest",
+        "wamn-node-host",
+        "wamn-node-invoke",
+        "wamn-node-manifest",
+        "wamn-node-runtime",
+        "wamn-node-sdk",
+        "wamn-pg-core",
+        "wamn-project-state",
+        "wamn-proof-conformance",
+        "wamn-proof-integration",
+        "wamn-proof-system",
+        "wamn-run-state",
+        "wamn-runner",
+        "wamn-runtime",
+        "wamn-scenario-catalog",
+        "wamn-scenario-model",
+        "wamn-scenario-runtime",
+        "wamn-scenario-worker",
+        "wamn-scheduler",
+        "wamn-schema-compiler",
+        "wamn-schema-control",
+        "wamn-schema-model",
+        "wamn-standard-nodes",
+        "wamn-test-fixtures",
+        "wamn-test-infrastructure",
+        "wamn-waker"
+      ],
+      "component_packages": [
+        "api-gateway",
+        "busyloop",
+        "cred-probe",
+        "disposition-node",
+        "flow-driver",
+        "flowrunner",
+        "hello",
+        "js-sample",
+        "logspewer",
+        "materializer",
+        "memhog",
+        "node-cred",
+        "node-rs",
+        "pgprobe",
+        "poc-webhook-f1",
+        "sample-node",
+        "sockprobe",
+        "trace-relay"
+      ],
+      "non_cargo_inputs": [
+        "components/samples/node-ts"
+      ],
+      "command_semantics": "Test --workspace --all-targets in the root workspace, build --workspace --target wasm32-wasip2 in components/, and run the classified non-Cargo input checks. This is compile-and-test coverage, not deployed proof."
+    },
+    "deployed_system_proof": {
+      "root_packages": [
+        "wamn-builder",
+        "wamn-cdc-reader",
+        "wamn-ctl",
+        "wamn-dispatcher",
+        "wamn-executor",
+        "wamn-gate-harness",
+        "wamn-gates",
+        "wamn-host",
+        "wamn-node-host",
+        "wamn-proof-conformance",
+        "wamn-proof-integration",
+        "wamn-proof-system",
+        "wamn-scenario-worker",
+        "wamn-test-fixtures",
+        "wamn-test-infrastructure",
+        "wamn-waker"
+      ],
+      "component_packages": [
+        "api-gateway",
+        "busyloop",
+        "cred-probe",
+        "disposition-node",
+        "flow-driver",
+        "flowrunner",
+        "hello",
+        "js-sample",
+        "logspewer",
+        "materializer",
+        "memhog",
+        "node-cred",
+        "node-rs",
+        "pgprobe",
+        "poc-webhook-f1",
+        "sample-node",
+        "sockprobe",
+        "trace-relay"
+      ],
+      "non_cargo_inputs": [
+        "components/samples/node-ts"
+      ],
+      "command_semantics": "Build deployable native and proof owners plus every guest proof input, then execute the owning deploy/gates Jobs from docs/build-and-test.md. Local Cargo success never substitutes for a named in-cluster gate of record."
+    },
+    "release": {
+      "root_packages": [
+        "wamn-builder",
+        "wamn-cdc-reader",
+        "wamn-ctl",
+        "wamn-dispatcher",
+        "wamn-executor",
+        "wamn-gates",
+        "wamn-host",
+        "wamn-node-host",
+        "wamn-scenario-worker",
+        "wamn-waker"
+      ],
+      "component_packages": [
+        "api-gateway",
+        "flowrunner",
+        "materializer"
+      ],
+      "non_cargo_inputs": [],
+      "command_semantics": "Release membership is the deployable classification, but release admission requires the immutable SR17/SR26 identity join below. Cargo defaults are not release evidence."
+    }
+  },
+  "bare_cargo_semantics": [
+    {
+      "working_directory": ".",
+      "commands": [
+        "cargo build",
+        "cargo check",
+        "cargo test"
+      ],
+      "selected_packages": "all 47 root workspace members",
+      "qualification": "cargo test selects each member's default test targets; use --workspace --all-targets --no-fail-fast for full-CI target coverage"
+    },
+    {
+      "working_directory": "components",
+      "commands": [
+        "cargo build",
+        "cargo check",
+        "cargo test"
+      ],
+      "selected_packages": "all 18 component workspace members",
+      "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
+    }
+  ],
+  "release_identity": {
+    "membership_source": "architecture/package-roles.json packages where deployable is true",
+    "defaults_are_evidence": false,
+    "admission_requires_all_fields": true,
+    "sr17_owner": "SR17 / wamn-2jkm.80",
+    "sr26_owner": "SR26 / wamn-2jkm.98",
+    "required_join_fields": [
+      "source_revision",
+      "cargo_lock_sha256",
+      "artifact_sha256",
+      "oci_manifest_digest",
+      "proof_receipt_sha256",
+      "proof_source_revision",
+      "proof_artifact_sha256",
+      "proof_oci_manifest_digest"
+    ],
+    "admission_rule": "Every released package artifact and image digest must join to one immutable source revision and Cargo.lock digest under SR17; every required gate-of-record receipt must name that same source revision and exact artifact/image digests under SR26. Missing or mismatched fields fail closed."
+  },
+  "measurement": {
+    "status": "complete",
+    "profile": "dev",
+    "target_directory": "/home/kaalin/dev/wamn/target/lanes/wamn-4tob-6-29-20260725",
+    "method": "Uncontended runs on 2026-07-25. Each cold run follows cargo clean in the assigned target directory; each warm run immediately repeats the identical command. /usr/bin/time recorded elapsed, user, sys, maximum RSS, and exit status. Package-selector commands compose one --package argument per package in the named tier.",
+    "machine": {
+      "hostname": "k11",
+      "kernel": "Linux 7.0.0-28-generic x86_64",
+      "cpu": "11th Gen Intel(R) Core(TM) i7-1185G7 @ 3.00GHz",
+      "logical_cpus": 8,
+      "memory_gib": 60,
+      "filesystem": "NVMe /dev/nvme0n1p6",
+      "rustc": "1.97.0 (2d8144b78 2026-07-07)",
+      "cargo": "1.97.0 (c980f4866 2026-06-30)"
+    },
+    "runs": [
+      {
+        "id": "fast-check-cold",
+        "working_directory": ".",
+        "command": "cargo check --quiet --locked",
+        "package_selector": "tiers.fast_developer_native.root_packages",
+        "cache_state": "cold-after-cargo-clean",
+        "elapsed_seconds": 125.54,
+        "user_seconds": 564.64,
+        "sys_seconds": 70.05,
+        "max_rss_kib": 1266408,
+        "exit_status": 0,
+        "cache_kib": 1663584,
+        "cache_files": 4830
+      },
+      {
+        "id": "fast-check-warm",
+        "working_directory": ".",
+        "command": "cargo check --quiet --locked",
+        "package_selector": "tiers.fast_developer_native.root_packages",
+        "cache_state": "immediate-repeat",
+        "elapsed_seconds": 0.40,
+        "user_seconds": 0.29,
+        "sys_seconds": 0.11,
+        "max_rss_kib": 130060,
+        "exit_status": 0
+      },
+      {
+        "id": "bare-root-check-cold",
+        "working_directory": ".",
+        "command": "cargo check --quiet --locked",
+        "package_selector": "bare-default-members",
+        "cache_state": "cold-after-cargo-clean",
+        "elapsed_seconds": 136.38,
+        "user_seconds": 576.26,
+        "sys_seconds": 71.24,
+        "max_rss_kib": 1268100,
+        "exit_status": 0,
+        "cache_kib": 1824188,
+        "cache_files": 5024
+      },
+      {
+        "id": "bare-root-check-warm",
+        "working_directory": ".",
+        "command": "cargo check --quiet --locked",
+        "package_selector": "bare-default-members",
+        "cache_state": "immediate-repeat",
+        "elapsed_seconds": 0.40,
+        "user_seconds": 0.29,
+        "sys_seconds": 0.11,
+        "max_rss_kib": 130652,
+        "exit_status": 0
+      },
+      {
+        "id": "fast-build-cold",
+        "working_directory": ".",
+        "command": "cargo build --quiet --locked",
+        "package_selector": "tiers.fast_developer_native.root_packages",
+        "cache_state": "cold-after-cargo-clean",
+        "elapsed_seconds": 221.45,
+        "user_seconds": 1167.92,
+        "sys_seconds": 118.76,
+        "max_rss_kib": 3236280,
+        "exit_status": 0,
+        "cache_kib": 10479512,
+        "cache_files": 9966
+      },
+      {
+        "id": "fast-build-warm",
+        "working_directory": ".",
+        "command": "cargo build --quiet --locked",
+        "package_selector": "tiers.fast_developer_native.root_packages",
+        "cache_state": "immediate-repeat",
+        "elapsed_seconds": 0.43,
+        "user_seconds": 0.30,
+        "sys_seconds": 0.13,
+        "max_rss_kib": 129820,
+        "exit_status": 0
+      },
+      {
+        "id": "contract-test-cold",
+        "working_directory": ".",
+        "command": "cargo test --quiet --locked --no-fail-fast",
+        "package_selector": "tiers.contract_conformance.root_packages",
+        "cache_state": "cold-after-cargo-clean",
+        "elapsed_seconds": 181.43,
+        "user_seconds": 902.01,
+        "sys_seconds": 93.55,
+        "max_rss_kib": 2916936,
+        "exit_status": 0,
+        "cache_kib": 5896860,
+        "cache_files": 7891
+      },
+      {
+        "id": "contract-test-warm",
+        "working_directory": ".",
+        "command": "cargo test --quiet --locked --no-fail-fast",
+        "package_selector": "tiers.contract_conformance.root_packages",
+        "cache_state": "immediate-repeat",
+        "elapsed_seconds": 2.17,
+        "user_seconds": 2.77,
+        "sys_seconds": 1.06,
+        "max_rss_kib": 186748,
+        "exit_status": 0
+      },
+      {
+        "id": "product-components-build-cold",
+        "working_directory": "components",
+        "command": "cargo build --quiet --locked --target wasm32-wasip2",
+        "package_selector": "tiers.product_components.component_packages",
+        "cache_state": "cold-after-cargo-clean",
+        "elapsed_seconds": 22.98,
+        "user_seconds": 112.90,
+        "sys_seconds": 13.85,
+        "max_rss_kib": 566944,
+        "exit_status": 0,
+        "cache_kib": 787536,
+        "cache_files": 2213
+      },
+      {
+        "id": "product-components-build-warm",
+        "working_directory": "components",
+        "command": "cargo build --quiet --locked --target wasm32-wasip2",
+        "package_selector": "tiers.product_components.component_packages",
+        "cache_state": "immediate-repeat",
+        "elapsed_seconds": 0.08,
+        "user_seconds": 0.06,
+        "sys_seconds": 0.02,
+        "max_rss_kib": 41296,
+        "exit_status": 0
+      },
+      {
+        "id": "full-components-build-cold",
+        "working_directory": "components",
+        "command": "cargo build --quiet --locked --workspace --target wasm32-wasip2",
+        "package_selector": "all-component-workspace-members",
+        "cache_state": "cold-after-cargo-clean",
+        "elapsed_seconds": 23.99,
+        "user_seconds": 123.18,
+        "sys_seconds": 16.67,
+        "max_rss_kib": 552848,
+        "exit_status": 0,
+        "cache_kib": 922840,
+        "cache_files": 3040
+      },
+      {
+        "id": "full-components-build-warm",
+        "working_directory": "components",
+        "command": "cargo build --quiet --locked --workspace --target wasm32-wasip2",
+        "package_selector": "all-component-workspace-members",
+        "cache_state": "immediate-repeat",
+        "elapsed_seconds": 0.08,
+        "user_seconds": 0.05,
+        "sys_seconds": 0.03,
+        "max_rss_kib": 41588,
+        "exit_status": 0
+      },
+      {
+        "id": "full-root-test-cold-sandbox-attempt",
+        "working_directory": ".",
+        "command": "cargo test --quiet --locked --workspace --all-targets --no-fail-fast",
+        "package_selector": "all-root-workspace-members",
+        "cache_state": "cold-after-cargo-clean",
+        "elapsed_seconds": 293.24,
+        "user_seconds": 1681.31,
+        "sys_seconds": 186.40,
+        "max_rss_kib": 3752728,
+        "exit_status": 101,
+        "cache_kib": 24321132,
+        "cache_files": 20015,
+        "qualification": "Every target ran; only wamn-builder registry_push::push_then_read_back_pins_the_pullable_shape failed because the sandbox denied its local socket with Operation not permitted. This is retained as environment evidence and is not the accepted full-CI result."
+      },
+      {
+        "id": "full-root-test-cold",
+        "working_directory": ".",
+        "command": "cargo test --quiet --locked --workspace --all-targets --no-fail-fast",
+        "package_selector": "all-root-workspace-members",
+        "cache_state": "cold-after-cargo-clean",
+        "execution_environment": "outside the filesystem sandbox so the builder local registry socket could run",
+        "elapsed_seconds": 292.37,
+        "user_seconds": 1676.38,
+        "sys_seconds": 182.01,
+        "max_rss_kib": 3747528,
+        "exit_status": 0,
+        "cache_kib": 24321936,
+        "cache_files": 20017
+      },
+      {
+        "id": "full-root-test-warm",
+        "working_directory": ".",
+        "command": "cargo test --quiet --locked --workspace --all-targets --no-fail-fast",
+        "package_selector": "all-root-workspace-members",
+        "cache_state": "immediate-repeat",
+        "execution_environment": "outside the filesystem sandbox so the builder local registry socket could run",
+        "elapsed_seconds": 3.38,
+        "user_seconds": 3.92,
+        "sys_seconds": 0.86,
+        "max_rss_kib": 134716,
+        "exit_status": 0
+      }
+    ]
+  }
+}

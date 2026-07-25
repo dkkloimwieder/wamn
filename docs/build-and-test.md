@@ -16,6 +16,115 @@ carried epoch-deadline and memory-limiter commits) — see
 rev-bump procedure. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
 
+## Workspace package tiers
+
+`architecture/workspace-tiers.json` is the canonical, machine-readable
+selection for the current **47 root + 18 component packages**. The selection
+uses named explicit selectors and deliberately does not add
+`default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
+sets with live, locked Cargo metadata and `architecture/package-roles.json`.
+
+The selected package roots are:
+
+| Tier | Root | Components | Selection |
+|---|---:|---:|---|
+| fast developer/native | 37 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
+| product components | 0 | 3 | `api-gateway`, `flowrunner`, `materializer` |
+| contract/conformance | 10 | 0 | all 9 contract packages plus `wamn-proof-conformance` |
+| full CI | 47 | 18 | every Cargo member plus the classified non-Cargo `node-ts` sample |
+| deployed-system proof | 16 | 18 | deployable native/proof owners plus every guest proof input and `node-ts` |
+| release | 10 | 3 | every package classified `deployable: true` |
+
+Package roots are selection inputs, not hand-maintained dependency closures.
+Cargo resolves their normal, build, and test path dependencies from live
+metadata; the conformance guard proves that the fast and product-component
+closures stay within the production set.
+
+### Named selectors
+
+Until wamn-5wd1.28 installs the selected convenience mechanism, the JSON can be
+consumed without duplicating package lists:
+
+```bash
+# Fast root loop; substitute build or test for check as needed.
+mapfile -t WAMN_FAST_PACKAGES < <(
+  jq -r '.tiers.fast_developer_native.root_packages[]' architecture/workspace-tiers.json
+)
+WAMN_FAST_ARGS=()
+for WAMN_PACKAGE in "${WAMN_FAST_PACKAGES[@]}"; do
+  WAMN_FAST_ARGS+=(--package "$WAMN_PACKAGE")
+done
+cargo check "${WAMN_FAST_ARGS[@]}"
+
+# Product guest artifacts.
+mapfile -t WAMN_PRODUCT_COMPONENTS < <(
+  jq -r '.tiers.product_components.component_packages[]' architecture/workspace-tiers.json
+)
+WAMN_COMPONENT_ARGS=()
+for WAMN_PACKAGE in "${WAMN_PRODUCT_COMPONENTS[@]}"; do
+  WAMN_COMPONENT_ARGS+=(--package "$WAMN_PACKAGE")
+done
+(cd components && cargo build --target wasm32-wasip2 "${WAMN_COMPONENT_ARGS[@]}")
+```
+
+### Bare Cargo semantics and full coverage
+
+There are no `default-members` in either virtual workspace. Consequently:
+
+- From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
+  select all 47 root members. Bare `cargo test` uses each package's default
+  test targets; the full-CI command remains
+  `cargo test --workspace --all-targets --no-fail-fast`.
+- From `components/`, the same bare commands select all 18 component members.
+  The production guest build remains
+  `cargo build --workspace --target wasm32-wasip2`.
+- Full CI also checks the classified non-Cargo input
+  `components/samples/node-ts`; Cargo coverage alone does not cover it:
+  ```bash
+  jco componentize components/samples/node-ts/node.js \
+    --wit components/samples/node-ts/wit --world-name node-bench \
+    --disable http --disable fetch-event -o /tmp/wamn-node-ts-full-ci.wasm
+  ```
+- Neither local full CI nor a successful Cargo build substitutes for the
+  owning deployed Job below. Gate-of-record semantics are unchanged.
+
+### Release identity
+
+Release membership is the 13 `deployable: true` packages in
+`architecture/package-roles.json`, including the `wamn-gates` proof image.
+Membership is not release admission. SR17 must join source revision and
+`Cargo.lock` digest to exact artifact SHA-256 and OCI manifest digest; SR26
+must join each required gate receipt back to that same source revision and
+artifact/image digests. The exact required fields and fail-closed rule live in
+`architecture/workspace-tiers.json`. Cargo defaults, a mutable tag, or a receipt
+that names only a test command are not release evidence.
+
+### Measurement (2026-07-25)
+
+Measurements used debug/default profile on `k11` (8 logical CPUs, i7-1185G7,
+60 GiB RAM, NVMe; rustc/cargo 1.97.0) with the isolated target directory
+recorded in `architecture/workspace-tiers.json`. Each cold row follows
+`cargo clean`; each warm row immediately repeats the identical command.
+
+| Selection and command | Cold | Warm | Cold cache |
+|---|---:|---:|---:|
+| fast-37 `cargo check` | 125.54s | 0.40s | 1,663,584 KiB / 4,830 files |
+| bare root/all-47 `cargo check` | 136.38s | 0.40s | 1,824,188 KiB / 5,024 files |
+| fast-37 `cargo build` | 221.45s | 0.43s | 10,479,512 KiB / 9,966 files |
+| contract/conformance `cargo test --no-fail-fast` | 181.43s | 2.17s | 5,896,860 KiB / 7,891 files |
+| product-3 wasm build | 22.98s | 0.08s | 787,536 KiB / 2,213 files |
+| all-18 component wasm build | 23.99s | 0.08s | 922,840 KiB / 3,040 files |
+| full root/all-47 `cargo test --workspace --all-targets --no-fail-fast` | 292.37s | 3.38s | 24,321,936 KiB / 20,017 files |
+
+The check comparison saves 10.84s cold and 160,604 KiB by keeping proof/support
+and POC roots out of the ordinary production loop; warm no-op cost is
+identical. The component comparison saves only 1.01s cold, so the product
+selector is justified mainly by artifact intent: fixtures, samples, and POCs
+must remain full-CI/proof inputs without becoming product artifacts. Full-CI
+root testing ran outside the filesystem sandbox because the builder test owns a
+local registry socket; the JSON retains the sandbox-denied attempt separately
+so that environment limitation cannot be mistaken for a repository failure.
+
 ## Gates by bead
 
 ### Workspace build
