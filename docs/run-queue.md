@@ -723,8 +723,9 @@ unchanged; `run-next` is the additive claim path.
   race/guard/claim assertions are mutation-tested. Same co-located, no-CPU-limit
   topology as `queuebench`, locally and in-cluster.
 - **`dispatchbench`** — the trigger dispatcher's gate of record (pure host-side,
-  no wasm guest), driving the *real* `Dispatcher` engine with **stepped time**
-  against two superuser-provisioned ephemeral project schemas. `cron`: a nightly
+  no wasm guest), driving the real dispatcher executable through its stepped
+  process contract against two superuser-provisioned ephemeral project schemas.
+  `cron`: a nightly
   F3-shaped schedule fires exactly once per due tick — not early, once within a
   tick's second, no duplicate across a dispatcher **restart** (anchor recovered
   from the run ids), **misfire collapse** after a simulated three-day outage,

@@ -5,7 +5,7 @@
 //! into the queue; driving them is the runner's job, regression-covered by
 //! flowbench/testhostbench). The gate provisions TWO ephemeral schemas as two
 //! projects through the superuser URL and drives the REAL
-//! [`wamn_dispatcher::Dispatcher`] engine with **stepped time** — the trigger
+//! dispatcher executable with **stepped time** — the trigger
 //! decisions take an injected `now`, so a nightly cron and a three-day outage
 //! are gated in milliseconds with no wall-clock waits (the 11.1
 //! fast-forwardable-cron discipline). Only the wake and live modes touch real
@@ -69,7 +69,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_run_sql};
 use wamn_scheduler::mint_cron_run_id;
 
-use wamn_dispatcher::{Dispatcher, DispatcherConfig, ProjectSpec};
+use crate::dispatcher_process::{DispatcherProcess, LiveDispatcherProcess, ProjectSpec};
 
 const SCHEMA_A: &str = "wamn_dispatch_a";
 const TENANT_A: &str = "dispatch-a";
@@ -264,6 +264,10 @@ fn spec(name: &str, app_url: &str, schema: &str, tenant: &str) -> ProjectSpec {
     }
 }
 
+fn dispatcher(specs: &[ProjectSpec]) -> anyhow::Result<DispatcherProcess> {
+    DispatcherProcess::spawn(specs, "nats://127.0.0.1:1", None, None, None, None)
+}
+
 fn cron_flow_json(flow_id: &str, schedule: &str) -> String {
     serde_json::json!({
         "schema-version": "0.1", "flow-id": flow_id, "version": 1,
@@ -394,7 +398,7 @@ async fn cron_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     seed_flow(&seeder, "nightly", &cron_flow_json("nightly", "0 2 * * *")).await?;
 
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
-    let mut d = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let mut d = dispatcher(&specs)?;
 
     // Before the tick: nothing fires.
     let early = d.tick_project(0, BASE_MS + HOUR).await?;
@@ -424,7 +428,7 @@ async fn cron_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
 
     // RESTART: a fresh dispatcher (empty caches) recovers the anchor from the
     // run ids themselves and does not duplicate the tick.
-    let mut d2 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let mut d2 = dispatcher(&specs)?;
     let restarted = d2.tick_project(0, tick + 900).await?;
     let restart_no_dup = restarted.cron_fired.is_empty();
 
@@ -537,7 +541,7 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     // triad: run row, queue row, anchor row all present with last_tick == t1.
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
     seed_flow(&seeder, "anchored", &cron_flow_json("anchored", SCHEDULE)).await?;
-    let mut d1 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let mut d1 = dispatcher(&specs)?;
     d1.tick_project(0, BASE_MS + HOUR).await?; // bootstrap (first sight, nothing due)
     let fired = d1.tick_project(0, t1 + 300).await?;
     let anchored_t1 = mint_cron_run_id("anchored", t1);
@@ -569,7 +573,7 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     .await?
         == 0;
     let anchor_survived = anchor_last_tick_of(&seeder, "anchored").await? == Some(t1);
-    let mut d2 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let mut d2 = dispatcher(&specs)?;
     let next = d2.tick_project(0, t2 + 300).await?;
     let anchored_t2 = mint_cron_run_id("anchored", t2);
     let only_next_fired = next.cron_fired == [anchored_t2];
@@ -588,7 +592,7 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     // This pins the fallback's honest behavior — the exact bug the durable
     // anchor closes.
     seed_flow(&seeder, "legacy", &cron_flow_json("legacy", SCHEDULE)).await?;
-    let mut d3 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let mut d3 = dispatcher(&specs)?;
     d3.tick_project(0, BASE_MS + HOUR).await?; // bootstrap: first_seen[legacy] = 1am (stale)
     let legacy_t1 = mint_cron_run_id("legacy", t1);
     admin_exec(
@@ -617,7 +621,7 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     // anchor (the exact regression the durable-anchor decoupling depends on NOT
     // having).
     seed_flow(&seeder, "atomic", &cron_flow_json("atomic", SCHEDULE)).await?;
-    let mut d4 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let mut d4 = dispatcher(&specs)?;
     d4.tick_project(0, BASE_MS + HOUR).await?; // bootstrap before arming the trap
     admin_exec(
         admin_url,
@@ -746,7 +750,7 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
     .await?;
 
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
-    let mut d = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let mut d = dispatcher(&specs)?;
     // Bootstrap sweep (first sight — nothing due), then the nightly tick.
     d.tick_project(0, BASE_MS + HOUR).await?;
     let tick = BASE_MS + 2 * HOUR;
@@ -823,8 +827,8 @@ async fn race_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     .await?;
 
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
-    let mut d1 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
-    let mut d2 = Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
+    let mut d1 = dispatcher(&specs)?;
+    let mut d2 = dispatcher(&specs)?;
 
     // Three stepped minutes, both replicas ticking CONCURRENTLY at the same
     // instant. Round 0 bootstraps the cron anchor (first sight); rounds 1..3
@@ -912,15 +916,8 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         spec("b", app_url, SCHEMA_B, TENANT_B),
     ];
     let min = wamn_scheduler::DEFAULT_MIN_INTERVAL_MS;
-    let mut d = Dispatcher::connect(
-        &specs,
-        None,
-        DispatcherConfig {
-            batch: BATCH,
-            ..DispatcherConfig::default()
-        },
-    )
-    .await?;
+    let mut d =
+        DispatcherProcess::spawn(&specs, "nats://127.0.0.1:1", None, None, None, Some(BATCH))?;
 
     // Simulate a healthy runner claiming + completing the hinted runs between
     // sweeps (dequeue), so each sweep's hint set is the backlog's NEXT slice
@@ -977,8 +974,8 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         && b3.woken.is_empty();
     // Independent per-project cadence: A stayed tight while working; B decayed
     // exponentially over its two idle sweeps (min -> 2min -> 4min).
-    let a_interval = d.projects[0].interval_ms;
-    let b_interval = d.projects[1].interval_ms;
+    let a_interval = a3.interval_ms;
+    let b_interval = b3.interval_ms;
     let cadence_ok = a_interval == min && b_interval == 4 * min;
 
     let pass = a_bounded
@@ -1083,10 +1080,20 @@ async fn wake_phase(
     }
 
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
-    let mut d = Dispatcher::connect(&specs, Some(nats), DispatcherConfig::default()).await?;
+    let tls = match (
+        args.nats_tls_ca.as_ref(),
+        args.nats_tls_cert.as_ref(),
+        args.nats_tls_key.as_ref(),
+    ) {
+        (Some(ca), Some(cert), Some(key)) => Some((ca, cert, key)),
+        _ => None,
+    };
+    let mut d = DispatcherProcess::spawn(&specs, &args.nats_url, tls, None, None, None)?;
 
     // Still parked: no hint may arrive.
-    let early = d.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
+    let early = d
+        .tick_project(0, chrono::Utc::now().timestamp_millis())
+        .await?;
     let not_woken_early = early.woken.is_empty();
     let premature = tokio::time::timeout(Duration::from_millis(150), subscription.next()).await;
     let no_premature_hint = premature.is_err();
@@ -1094,7 +1101,9 @@ async fn wake_phase(
     // Once due (available_at is a server-side instant — this wait is real time),
     // the sweep hints the run.
     tokio::time::sleep(Duration::from_millis(delay_ms as u64 + 200)).await;
-    let due = d.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
+    let due = d
+        .tick_project(0, chrono::Utc::now().timestamp_millis())
+        .await?;
     let woken = due.woken == ["parked-1"];
     let hinted = match tokio::time::timeout(Duration::from_secs(5), subscription.next()).await {
         Ok(Some(msg)) => msg.payload.as_ref() == b"parked-1",
@@ -1109,9 +1118,12 @@ async fn wake_phase(
     seed_flow(&app, "secondly", &cron_flow_json("secondly", "* * * * * *")).await?;
     // Bootstrap sweep (first sight — no retroactive tick), then wait past a
     // second boundary so the next sweep fires it.
-    d.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
+    d.tick_project(0, chrono::Utc::now().timestamp_millis())
+        .await?;
     tokio::time::sleep(Duration::from_millis(1_100)).await;
-    let fired_tick = d.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
+    let fired_tick = d
+        .tick_project(0, chrono::Utc::now().timestamp_millis())
+        .await?;
     let fired_id = fired_tick.cron_fired.first().cloned().unwrap_or_default();
     let fire_hinted = !fired_id.is_empty();
     let mut got_fire_hint = false;
@@ -1165,8 +1177,6 @@ async fn live_phase(
     admin_url: &str,
     args: &DispatchBenchArgs,
 ) -> anyhow::Result<bool> {
-    use wash_runtime::washlet::{NatsConnectionOptions, connect_nats};
-
     println!(
         "\n## live — the real dispatch loop: cron keeps firing beside a failing project, \
          reconnect after backend kill, cron-aware sleep"
@@ -1180,14 +1190,14 @@ async fn live_phase(
     )
     .await?;
 
-    let nats_opts = NatsConnectionOptions {
-        request_timeout: None,
-        tls_ca: args.nats_tls_ca.clone(),
-        tls_first: false,
-        tls_cert: args.nats_tls_cert.clone(),
-        tls_key: args.nats_tls_key.clone(),
+    let tls = match (
+        args.nats_tls_ca.as_ref(),
+        args.nats_tls_cert.as_ref(),
+        args.nats_tls_key.as_ref(),
+    ) {
+        (Some(ca), Some(cert), Some(key)) => Some((ca, cert, key)),
+        _ => None,
     };
-    let nats = connect_nats(args.nats_url.clone(), nats_opts).await.ok();
 
     // Project "b-broken" points at a nonexistent schema: every one of its
     // sweeps fails. The healthy project's firing assertions below therefore
@@ -1197,17 +1207,7 @@ async fn live_phase(
         spec("a", app_url, SCHEMA_A, TENANT_A),
         spec("b-broken", app_url, "wamn_dispatch_missing", TENANT_B),
     ];
-    let mut d = Dispatcher::connect(
-        &specs,
-        nats,
-        DispatcherConfig {
-            cadence: wamn_scheduler::Cadence::new(50, 1_000).unwrap(),
-            batch: 64,
-        },
-    )
-    .await?;
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let loop_task = tokio::spawn(async move { d.run_loop(shutdown_rx).await });
+    let d = LiveDispatcherProcess::spawn(&specs, &args.nats_url, tls, 50, 1_000)?;
 
     // The every-second cron must fire within ~2s of loop start (first sight
     // anchors, the next second boundary fires) — beside the failing project.
@@ -1264,8 +1264,7 @@ async fn live_phase(
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let reconnect_latency = restarted.elapsed();
-    let _ = shutdown_tx.send(true);
-    let _ = loop_task.await;
+    let graceful = d.shutdown(Duration::from_secs(5)).await?;
 
     // Cron-aware sleep: a fresh loop with a FIXED 5s interval and the same
     // every-second (6-field) cron must still fire within ~1s of a tick — the
@@ -1273,22 +1272,18 @@ async fn live_phase(
     // sweep. A loop without the cron-aware wake first fires at ~5s. (A fresh
     // dispatcher recovers the anchor from the run ids, so the next SECOND
     // boundary is its first due tick.)
-    let mut d2 = Dispatcher::connect(
+    let d2 = LiveDispatcherProcess::spawn(
         &[spec("a", app_url, SCHEMA_A, TENANT_A)],
-        None,
-        DispatcherConfig {
-            cadence: wamn_scheduler::Cadence::new(5_000, 5_000).unwrap(),
-            batch: 64,
-        },
-    )
-    .await?;
+        &args.nats_url,
+        tls,
+        5_000,
+        5_000,
+    )?;
     let before_aware = scalar_i64(
         &seeder,
         "SELECT count(*) FROM runs WHERE flow_id = 'secondly'",
     )
     .await?;
-    let (shutdown2_tx, shutdown2_rx) = tokio::sync::watch::channel(false);
-    let loop2 = tokio::spawn(async move { d2.run_loop(shutdown2_rx).await });
     let cron_started = Instant::now();
     let mut cron_aware = false;
     while cron_started.elapsed() < Duration::from_secs(3) {
@@ -1304,14 +1299,14 @@ async fn live_phase(
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let cron_latency = cron_started.elapsed();
-    let _ = shutdown2_tx.send(true);
-    let _ = loop2.await;
+    let graceful2 = d2.shutdown(Duration::from_secs(5)).await?;
 
-    let pass = fired && refired && cron_aware;
+    let pass = fired && refired && cron_aware && graceful && graceful2;
     println!(
         "fired={fired} latency={latency:?} (beside a failing project) | \
          reconnect(refired={refired}, latency={reconnect_latency:?}) | \
-         cron_aware={cron_aware} ({cron_latency:?} under a fixed 5s interval)"
+         cron_aware={cron_aware} ({cron_latency:?} under a fixed 5s interval) | \
+         graceful_shutdown={graceful}/{graceful2}"
     );
     println!("PASS(live loop: cron beside failure + reconnect + cron-aware sleep): {pass}");
     Ok(pass)

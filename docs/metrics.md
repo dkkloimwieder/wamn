@@ -99,14 +99,14 @@ port. This is distinct from the collector's OWN telemetry on `:8888`
 
 ## The gate — `metricbench`
 
-`tests/orchestrator/src/metricbench.rs` drives the production emission seams and
+`tests/integration/src/metricbench.rs` drives the production emission seams and
 asserts each family in the `:8889` scrape (the metrics analog of `tracebench` →
 Tempo / `logbench` → Loki):
 
 1. N runs incl. one forced failure → `wamn_run_executions` +N with an
    `outcome="failed"` series;
-2. seeded queue → `wamn_run_queue_depth` > 0 via a real dispatcher tick, drains
-   to 0;
+2. seeded queue → `wamn_run_queue_depth` > 0 via a real dispatcher-process tick,
+   drains to 0;
 3. `wamn_run_drive_duration_ms_count` > 0;
 4. a forced limiter denial → `wamn_memory_denied` > 0 and
    `wamn_memory_high_water_bytes` reads the allowed size, not the budget;

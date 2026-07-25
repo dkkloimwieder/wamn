@@ -25,7 +25,6 @@ tracing = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-ctl = { workspace = true }
-wamn-dispatcher = { workspace = true }
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }

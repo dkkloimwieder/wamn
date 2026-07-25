@@ -56,6 +56,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use clap::Args;
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
 use wamn_flow::{Flow, Ordering, Trigger};
@@ -146,6 +147,14 @@ pub struct DispatchArgs {
     /// fairness bound: one project's backlog cannot monopolize a sweep).
     #[arg(long, default_value_t = 64)]
     pub batch: usize,
+
+    /// Read deterministic tick commands as newline-delimited JSON on stdin.
+    ///
+    /// This process-boundary control mode is for operational probes and gates
+    /// that must supply virtual time without linking the deployable service.
+    /// The normal long-running dispatcher is unchanged when this flag is absent.
+    #[arg(long)]
+    pub stepped_stdio: bool,
 }
 
 /// One project the dispatcher serves: where its flow/queue tables live
@@ -223,7 +232,7 @@ pub struct ProjectState {
 /// racing replica's losing re-fire is a no-op, not work); `cron_lost` counts
 /// the losses, which is how the race gate proves two replicas genuinely
 /// contended.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize)]
 pub struct TickReport {
     pub cron_fired: Vec<String>,
     pub cron_lost: usize,
@@ -632,22 +641,11 @@ impl Dispatcher {
     }
 }
 
-/// Fire one trigger: the write-ahead run row (with the trigger payload) and —
-/// only if this caller WON the insert — the queue row, in one transaction (one
-/// durability domain, D3). A `false` means another replica (or an earlier
-/// redelivery) already fired this deterministic id: the whole firing is a
-/// no-op, and in particular the enqueue is SKIPPED — the winner's queue row is
-/// either still pending or was legitimately dequeued on completion, and
-/// re-inserting it would resurrect a terminal run's queue row (ghost dispatch).
 /// [9.1] A `wamn.trigger` span rooting a dispatcher-fired run's trace, enriched
-/// with the run context the host mints right here — flow, run_id, flow_version,
-/// tenant, and the trigger source (`cron`). This is the
-/// host-known-path home for `flow`/`run_id` enrichment (a webhook's trigger is
-/// instead wash-runtime's inbound HTTP span; guest-minted webhook `run_id` and
-/// per-node `node_id` await the 9.2 guest→host run-context contract). The
-/// runner's `wamn.postgres` spans thread under this once a fired run executes;
-/// cross-replica threading over the queue is 9.2 (traceparent propagation).
-pub fn trigger_span(f: &Firing, tenant: &str) -> tracing::Span {
+/// with the run context the host mints here. Kept private so telemetry remains
+/// an executable/service concern; tracebench exercises it through stepped
+/// stdio's `emit-trigger-span` process command.
+fn trigger_span(f: &Firing, tenant: &str) -> tracing::Span {
     tracing::info_span!(
         "wamn.trigger",
         wamn.flow = %f.flow_id,
@@ -724,6 +722,11 @@ async fn enqueue_firing(
     Ok(())
 }
 
+/// Fire one trigger: write-ahead run, won enqueue, and anchor in one transaction.
+///
+/// A `false` means another replica already fired this deterministic id. The
+/// enqueue stays skipped so a completed run cannot be resurrected as a queue
+/// ghost.
 async fn fire(
     client: &mut Client,
     f: &Firing,
@@ -868,6 +871,10 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         "shared trigger dispatcher up (cron + parked-wake)"
     );
 
+    if args.stepped_stdio {
+        return run_stepped_stdio(&mut dispatcher).await;
+    }
+
     // SIGTERM must be handled explicitly: in-container the dispatcher is PID 1,
     // which gets NO default signal disposition — an unhandled SIGTERM is
     // IGNORED, so every pod termination would hang the full grace period and
@@ -892,6 +899,126 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         let _ = tx.send(true);
     });
     dispatcher.run_loop(rx).await
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "command", rename_all = "kebab-case")]
+enum StepCommand {
+    Tick {
+        project: usize,
+        now_ms: i64,
+    },
+    EmitTriggerSpan {
+        run_id: String,
+        flow_id: String,
+        flow_version: i32,
+        trigger_source: String,
+        tenant: String,
+    },
+}
+
+#[derive(Debug, serde::Serialize)]
+struct StepResponse<'a> {
+    project: usize,
+    now_ms: i64,
+    interval_ms: i64,
+    #[serde(flatten)]
+    outcome: StepOutcome<'a>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+enum StepOutcome<'a> {
+    Ok {
+        #[serde(flatten)]
+        report: &'a TickReport,
+    },
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, serde::Serialize)]
+struct SpanResponse<'a> {
+    status: &'static str,
+    run_id: &'a str,
+}
+
+/// Drive deterministic sweeps through the executable boundary.
+///
+/// Tick input is `{"command":"tick","project":N,"now_ms":T}`. The
+/// `emit-trigger-span` command exercises the service-private production span
+/// builder. One response is flushed before the next command is read, so a
+/// caller can mutate the backing database between ticks while this process
+/// retains its in-memory anchors.
+async fn run_stepped_stdio(dispatcher: &mut Dispatcher) -> anyhow::Result<()> {
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    let mut stdout = tokio::io::stdout();
+    while let Some(line) = lines.next_line().await.context("read stepped command")? {
+        let command: StepCommand =
+            serde_json::from_str(&line).context("parse stepped command JSON")?;
+        let mut json = match command {
+            StepCommand::Tick { project, now_ms } => {
+                if project >= dispatcher.projects.len() {
+                    bail!(
+                        "stepped command project {project} is out of range ({} projects)",
+                        dispatcher.projects.len()
+                    );
+                }
+                let result = dispatcher.tick_project(project, now_ms).await;
+                let interval_ms = dispatcher.projects[project].interval_ms;
+                let response = match &result {
+                    Ok(report) => StepResponse {
+                        project,
+                        now_ms,
+                        interval_ms,
+                        outcome: StepOutcome::Ok { report },
+                    },
+                    Err(error) => StepResponse {
+                        project,
+                        now_ms,
+                        interval_ms,
+                        outcome: StepOutcome::Error {
+                            message: error.to_string(),
+                        },
+                    },
+                };
+                serde_json::to_vec(&response).context("encode stepped response")?
+            }
+            StepCommand::EmitTriggerSpan {
+                run_id,
+                flow_id,
+                flow_version,
+                trigger_source,
+                tenant,
+            } => {
+                let firing = Firing {
+                    run_id,
+                    flow_id,
+                    flow_version,
+                    input_json: "{}".to_string(),
+                    trigger_source,
+                };
+                {
+                    let span = trigger_span(&firing, &tenant);
+                    let _entered = span.enter();
+                    tracing::info!("dispatcher trigger span process proof");
+                }
+                serde_json::to_vec(&SpanResponse {
+                    status: "span-emitted",
+                    run_id: &firing.run_id,
+                })
+                .context("encode span response")?
+            }
+        };
+        json.push(b'\n');
+        stdout
+            .write_all(&json)
+            .await
+            .context("write stepped response")?;
+        stdout.flush().await.context("flush stepped response")?;
+    }
+    Ok(())
 }
 
 /// TLS material for the doorbell connection. Local copy of the fork's

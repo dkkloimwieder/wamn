@@ -8,19 +8,16 @@
 //! pattern). What 9.1 adds host-side is two enriched spans this gate proves
 //! end to end, the S5 `logbench`→Loki analog but against Tempo's TraceQL API:
 //!
-//!   * a **`wamn.trigger`** span — the real
-//!     [`wamn_dispatcher::trigger_span`] the dispatcher roots a fired run's
-//!     trace with, carrying `wamn.flow`/`wamn.run_id`/`wamn.tenant`;
+//!   * a **`wamn.trigger`** span — emitted by the real dispatcher process,
+//!     carrying `wamn.flow`/`wamn.run_id`/`wamn.tenant`;
 //!   * a **`wamn.postgres`** DB span — the real span the `wamn:postgres` plugin
 //!     wraps each guest DB call in, carrying `db.system`/`wamn.tenant`/
 //!     `wamn.project`.
 //!
-//! The gate drives a real guest DB call (`pgprobe` op 6, `SELECT pg_sleep(0)` —
-//! fixture-free) *under* the real `trigger_span`, so the plugin's DB span nests
-//! beneath it. It then queries Tempo and asserts **one trace** threads the
-//! trigger span → the DB span, both enriched. That single trace is the
-//! `trigger → runner → wamn:postgres` thread of the plan's acceptance script,
-//! proven through the production span builders (not gate scaffolding).
+//! The gate separately drives a real guest DB call (`pgprobe` op 6,
+//! `SELECT pg_sleep(0)` — fixture-free) under a gate-owned root and proves the
+//! plugin DB span nests beneath it. Cross-process trigger → runner parenting is
+//! intentionally not fabricated here; it remains the 9.2 traceparent contract.
 //!
 //! Cross-pod threading (traceparent injection on outbound calls) and
 //! guest-minted `run_id`/`node_id` are 9.2 (`docs/tracing.md` § Boundaries).
@@ -41,9 +38,9 @@ use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::TypedFunc;
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, InstancePre, Linker};
 
+use crate::dispatcher_process::{DispatcherProcess, ProjectSpec};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
-use wamn_scheduler::Firing;
 
 type RawEngine = wash_runtime::wasmtime::Engine;
 
@@ -55,8 +52,7 @@ const FLOW_ID: &str = "trace-flow";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
-    /// Drive a guest DB call under the real trigger span; assert the enriched
-    /// single trace (trigger → wamn:postgres) in Tempo.
+    /// Assert the process-owned trigger span and runtime-owned DB span in Tempo.
     Flow,
     /// Every gate (currently just `flow`).
     All,
@@ -164,6 +160,10 @@ pub async fn run(args: TracebenchArgs) -> anyhow::Result<()> {
     if cfg.database_url.is_none() {
         bail!("no database url: pass --database-url or set DATABASE_URL / WAMN_PG_URL");
     }
+    let app_url = cfg
+        .database_url
+        .clone()
+        .expect("database URL presence was checked above");
 
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
     // The gate component's tenant claim — the DB span reads this map.
@@ -179,7 +179,7 @@ pub async fn run(args: TracebenchArgs) -> anyhow::Result<()> {
     let mut pass = true;
     // `all` currently == `flow`; kept as a mode for future trace gates.
     let _ = args.mode;
-    pass &= flow_phase(&harness, &args).await?;
+    pass &= flow_phase(&harness, &args, &app_url).await?;
 
     println!("overall {}", if pass { "PASS" } else { "FAIL" });
     if pass {
@@ -189,9 +189,13 @@ pub async fn run(args: TracebenchArgs) -> anyhow::Result<()> {
     }
 }
 
-/// Drive `pgprobe` op 6 (`SELECT pg_sleep(0)`) *under* the real dispatcher
-/// `trigger_span`, then assert the enriched single trace in Tempo.
-async fn flow_phase(harness: &Harness, args: &TracebenchArgs) -> anyhow::Result<bool> {
+/// Prove the dispatcher-owned trigger trace and runtime-owned DB trace through
+/// their real process/plugin boundaries.
+async fn flow_phase(
+    harness: &Harness,
+    args: &TracebenchArgs,
+    app_url: &str,
+) -> anyhow::Result<bool> {
     // A unique run id keys the assertion to THIS invocation's trace.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -199,22 +203,22 @@ async fn flow_phase(harness: &Harness, args: &TracebenchArgs) -> anyhow::Result<
         .unwrap_or(0);
     let run_id = format!("tracebench-{nanos}");
 
-    // The REAL production span builder — a firing the dispatcher would mint.
-    let firing = Firing {
-        run_id: run_id.clone(),
-        flow_id: FLOW_ID.to_string(),
-        flow_version: 1,
-        input_json: "{}".to_string(),
-        trigger_source: "cron".to_string(),
-    };
-    let span = wamn_dispatcher::trigger_span(&firing, TRACE_TENANT);
+    let specs = [ProjectSpec {
+        name: "tracebench".to_string(),
+        url: app_url.to_string(),
+        tenant: TRACE_TENANT.to_string(),
+        schema: None,
+    }];
+    let mut dispatcher = DispatcherProcess::spawn_traced(&specs, "nats://127.0.0.1:1")?;
+    dispatcher
+        .emit_trigger_span(&run_id, FLOW_ID, 1, "cron", TRACE_TENANT)
+        .await?;
 
     let mut worker = harness.worker().await?;
-    // Instrumenting the guest call with the trigger span makes the plugin's
-    // `wamn.postgres` DB span (created inside) a child — one trace.
+    let db_root = tracing::info_span!("tracebench.db-root", wamn.run_id = %run_id);
     let ret = worker
         .call(6, "0")
-        .instrument(span)
+        .instrument(db_root)
         .await
         .context("driving pgprobe op 6 (pg_sleep) failed")?;
     if let Err(e) = ret {
@@ -223,7 +227,7 @@ async fn flow_phase(harness: &Harness, args: &TracebenchArgs) -> anyhow::Result<
 
     // Poll Tempo until the trace is exported + ingested (bounded — this waits on
     // the OTel batch export + collector + Tempo ingestion, not k8s readiness).
-    let trace = match await_trace(&args.tempo_url, &run_id).await? {
+    let trigger_trace = match await_trace(&args.tempo_url, "wamn.trigger", &run_id).await? {
         Some(t) => t,
         None => {
             println!("  FAIL: trace for run_id={run_id} never appeared in Tempo");
@@ -234,7 +238,7 @@ async fn flow_phase(harness: &Harness, args: &TracebenchArgs) -> anyhow::Result<
     let mut pass = true;
 
     // 1. The trigger span carries flow/run/tenant.
-    let trigger = trace
+    let trigger = trigger_trace
         .iter()
         .find(|s| s.name == "wamn.trigger" && s.attrs.get("wamn.run_id") == Some(&run_id));
     let trigger = match trigger {
@@ -252,8 +256,23 @@ async fn flow_phase(harness: &Harness, args: &TracebenchArgs) -> anyhow::Result<
         &format!("attrs = {:?}", trigger.attrs),
     );
 
+    let db_trace = match await_trace(&args.tempo_url, "tracebench.db-root", &run_id).await? {
+        Some(trace) => trace,
+        None => {
+            println!("  FAIL: DB trace for run_id={run_id} never appeared in Tempo");
+            return Ok(false);
+        }
+    };
+    let db_root = db_trace
+        .iter()
+        .find(|span| span.name == "tracebench.db-root");
+    let db_root = match db_root {
+        Some(root) => root,
+        None => return Ok(false),
+    };
+
     // 2. The wamn:postgres DB span carries db.system/tenant/project.
-    let db = trace.iter().find(|s| s.name == "wamn.postgres");
+    let db = db_trace.iter().find(|s| s.name == "wamn.postgres");
     let db = match db {
         Some(d) => d,
         None => {
@@ -274,14 +293,14 @@ async fn flow_phase(harness: &Harness, args: &TracebenchArgs) -> anyhow::Result<
         &format!("attrs = {:?}", db.attrs),
     );
 
-    // 3. The DB span threads under the trigger span — one trace, one thread.
+    // 3. The runtime-owned DB span threads beneath its caller-owned root.
     check(
         &mut pass,
-        "single trace threads trigger → wamn:postgres",
-        !db.parent_span_id.is_empty() && db.parent_span_id == trigger.span_id,
+        "runtime trace threads caller → wamn:postgres",
+        !db.parent_span_id.is_empty() && db.parent_span_id == db_root.span_id,
         &format!(
-            "db.parent={} trigger.span={}",
-            db.parent_span_id, trigger.span_id
+            "db.parent={} root.span={}",
+            db.parent_span_id, db_root.span_id
         ),
     );
 
@@ -311,10 +330,14 @@ struct SpanRec {
 
 /// Poll Tempo for the trace whose `wamn.trigger` span carries `run_id`. Bounded
 /// (~30s) to cover the OTel batch export delay + collector + Tempo ingestion.
-async fn await_trace(tempo: &str, run_id: &str) -> anyhow::Result<Option<Vec<SpanRec>>> {
+async fn await_trace(
+    tempo: &str,
+    root_name: &str,
+    run_id: &str,
+) -> anyhow::Result<Option<Vec<SpanRec>>> {
     for attempt in 0..30 {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let ids = match search_trigger_traces(tempo).await {
+        let ids = match search_traces(tempo, root_name).await {
             Ok(ids) => ids,
             Err(e) => {
                 if attempt == 0 {
@@ -326,8 +349,7 @@ async fn await_trace(tempo: &str, run_id: &str) -> anyhow::Result<Option<Vec<Spa
         for id in ids {
             if let Ok(spans) = get_trace(tempo, &id).await {
                 let hit = spans.iter().any(|s| {
-                    s.name == "wamn.trigger"
-                        && s.attrs.get("wamn.run_id") == Some(&run_id.to_string())
+                    s.name == root_name && s.attrs.get("wamn.run_id") == Some(&run_id.to_string())
                 });
                 if hit {
                     return Ok(Some(spans));
@@ -340,12 +362,12 @@ async fn await_trace(tempo: &str, run_id: &str) -> anyhow::Result<Option<Vec<Spa
 
 /// TraceQL search by the intrinsic span `name` (robust — no dotted-attribute
 /// selector); the run_id filter happens Rust-side over the full traces.
-async fn search_trigger_traces(tempo: &str) -> anyhow::Result<Vec<String>> {
+async fn search_traces(tempo: &str, name: &str) -> anyhow::Result<Vec<String>> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let q = percent_encode("{ name = \"wamn.trigger\" }");
+    let q = percent_encode(&format!("{{ name = \"{name}\" }}"));
     let path = format!(
         "/api/search?q={q}&limit=50&start={}&end={}",
         now.saturating_sub(600),

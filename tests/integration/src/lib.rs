@@ -13,6 +13,7 @@ mod cdc_reader_process;
 pub mod cdcbench;
 pub mod dashproof;
 pub mod dispatchbench;
+mod dispatcher_process;
 pub mod f1bench;
 pub mod f2invoke;
 pub mod f3proof;

@@ -204,6 +204,7 @@ Docs: docs/tracing.md
 ```bash
 cargo clippy -p wamn-host -p wamn-dispatcher -p wamn-gates --all-targets \
   && cargo fmt -p wamn-host -p wamn-dispatcher -p wamn-gates --check
+cargo build -p wamn-dispatcher -p wamn-gates   # tracebench spawns the sibling service binary
 # Local iteration (throwaway Postgres + Tempo + collector on a docker network;
 # spans are INFO):
 docker network create wamn-s5 2>/dev/null || true
@@ -239,6 +240,7 @@ Docs: docs/metrics.md
 
 ```bash
 cargo test -p wamn-host -p wamn-executor -p wamn-dispatcher -p wamn-gates --no-fail-fast
+cargo build -p wamn-dispatcher -p wamn-gates   # metricbench spawns the sibling service binary
 # Local iteration: a throwaway Postgres (+ the NOSUPERUSER wamn_app role) and the
 # local collector with the new :8889 metrics pipeline. metricbench drives the
 # real run/queue/pool/memory seams, then scrapes :8889 for the wamn_* families.
@@ -1928,6 +1930,7 @@ Docs: docs/run-queue.md
 cargo test -p wamn-run-state -p wamn-scheduler   # durable anchors + pure cron/cadence decisions
 cargo clippy -p wamn-run-state -p wamn-scheduler --all-targets \
   && cargo fmt -p wamn-run-state -p wamn-scheduler --check
+cargo build --release -p wamn-dispatcher -p wamn-gates   # gate spawns the sibling service binary
 # optional live-apply gate (run-state.sql + run-queue.sql; claim/janitor/partition
 # paths + cron last-tick recovery + wake scan; skips when unset):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \

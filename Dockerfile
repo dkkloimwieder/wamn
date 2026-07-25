@@ -159,6 +159,9 @@ COPY --from=builder /build/target/release/wamn-scenario-worker /usr/local/bin/wa
 # Reader-inclusive gates exercise the native CDC service through its executable
 # boundary; the gates package does not link the service crate.
 COPY --from=builder /build/target/release/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
+# Dispatcher gates drive stepped and lifecycle behavior through the executable
+# boundary; the gates package does not link the deployable service crate.
+COPY --from=builder /build/target/release/wamn-dispatcher /usr/local/bin/wamn-dispatcher
 # Bench fixtures baked in so the gate Jobs run with no volume plumbing.
 COPY --from=component-builder /component-output/hello.wasm /bench/hello.wasm
 COPY --from=component-builder /component-output/memhog.wasm /bench/memhog.wasm

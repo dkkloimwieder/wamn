@@ -38,7 +38,7 @@ use tokio::net::TcpStream;
 use tokio_postgres::{Client, NoTls};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
-use wamn_dispatcher::{Dispatcher, DispatcherConfig, ProjectSpec, register_queue_depth_gauge};
+use crate::dispatcher_process::{DispatcherProcess, ProjectSpec};
 use wamn_execution_host::{ExecutionHost, production_capabilities};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::memory_metrics::global_memory_meter;
@@ -50,6 +50,7 @@ use wash_runtime::wasmtime::ResourceLimiter as _;
 /// concurrent run does not collide).
 const SCHEMA: &str = "wamn_metricbench";
 const TENANT: &str = "metric-tenant";
+const TENANT_METRIC_LABEL: &str = "wamn_tenant=\"metric-tenant\"";
 const OWNER: &str = "metric-bench";
 /// The normal (completing) fixture flow — poc-receipt (webhook, pg-write): its DB
 /// write also drives the pool + query-latency families.
@@ -345,8 +346,8 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
         );
 
         // === (2) run-queue depth via the dispatcher tick ====================
-        // A real Dispatcher over the same schema; register the gauge over its
-        // depth registry. Seed a claimable batch, tick -> depth > 0; drain ->
+        // The real dispatcher executable owns the gauge and samples it during
+        // stepped sweeps. Seed a claimable batch, tick -> depth > 0; drain ->
         // tick -> depth back to 0. The claimable predicate is the mutant target.
         let specs = [ProjectSpec {
             name: "default".to_string(),
@@ -354,24 +355,41 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
             tenant: TENANT.to_string(),
             schema: Some(SCHEMA.to_string()),
         }];
-        let mut dispatcher =
-            Dispatcher::connect(&specs, None, DispatcherConfig::default()).await?;
-        register_queue_depth_gauge(&dispatcher.depth_registry());
+        let mut dispatcher = DispatcherProcess::spawn(
+            &specs,
+            "nats://127.0.0.1:1",
+            None,
+            None,
+            None,
+            None,
+        )?;
         let m = args.depth_seed;
         for i in 0..m {
             seed_run(&mut seed_conn, &format!("mq-{i}"), FLOW_ID).await?;
         }
-        dispatcher.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
+        dispatcher
+            .tick_project(0, chrono::Utc::now().timestamp_millis())
+            .await?;
         let (depth_up_ok, depth_up) = poll(&args.metrics_url, |text| {
-            let d = family_sum(text, "wamn_run_queue_depth");
+            let d = label_sum(
+                text,
+                "wamn_run_queue_depth",
+                TENANT_METRIC_LABEL,
+            );
             (d >= m as f64, d)
         })
         .await;
         // Drain the seeded batch, re-tick: the gauge must fall to 0.
         let r2 = worker.drain().await?;
-        dispatcher.tick_project(0, wamn_dispatcher::epoch_ms()).await?;
+        dispatcher
+            .tick_project(0, chrono::Utc::now().timestamp_millis())
+            .await?;
         let (depth_zero_ok, depth_zero) = poll(&args.metrics_url, |text| {
-            let d = family_sum(text, "wamn_run_queue_depth");
+            let d = label_sum(
+                text,
+                "wamn_run_queue_depth",
+                TENANT_METRIC_LABEL,
+            );
             (d == 0.0, d)
         })
         .await;
@@ -623,6 +641,8 @@ wamn_run_executions{outcome=\"failed\",wamn_project=\"default\"} 1
 wamn_run_executions_created{outcome=\"completed\"} 1.72e9
 wamn_run_drive_duration_ms_count{wamn_project=\"default\"} 9
 wamn_memory_high_water_bytes{component=\"metricbench-memhog\"} 33554432
+wamn_run_queue_depth{wamn_project=\"default\",wamn_tenant=\"metric-tenant\"} 6
+wamn_run_queue_depth{wamn_project=\"f1\",wamn_tenant=\"f1-tenant\"} 3619
 ";
         // Family sum ignores the `_created` sibling (its huge timestamp would
         // otherwise dominate) and the `_count` of a different family.
@@ -634,6 +654,12 @@ wamn_memory_high_water_bytes{component=\"metricbench-memhog\"} 33554432
         );
         // A distinct family matched exactly.
         assert_eq!(family_sum(text, "wamn_run_drive_duration_ms_count"), 9.0);
+        // A live cluster can carry unrelated project backlog; the gate must
+        // isolate the ephemeral metricbench tenant instead of summing it.
+        assert_eq!(
+            label_sum(text, "wamn_run_queue_depth", TENANT_METRIC_LABEL),
+            6.0
+        );
         // Label value read (high-water = the allowed 32 MiB, not a budget).
         assert_eq!(
             label_value(

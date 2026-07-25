@@ -33,7 +33,8 @@ wash-runtime's HTTP path (`host/http.rs`) already emits:
 the plan names and wires the sink:
 
 1. **`wamn.postgres` DB span** — the `wamn:postgres` plugin
-   (`services/host/src/plugins/wamn_postgres.rs`, `db_span`) wraps every
+   (`crates/platform/runtime/src/plugins/wamn_postgres/resources.rs`, `db_span`)
+   wraps every
    guest DB call (one-shot `query`/`execute`, transaction `query`/`execute`) in
    a span carrying `db.system=postgresql`, `db.operation`, and — enriched
    host-side from the same claim maps that inject `app.tenant`, so the guest
@@ -42,12 +43,12 @@ the plan names and wires the sink:
    request handler, or a trigger span) and threads into that trace.
 
 2. **`wamn.trigger` span** — the dispatcher
-   (`services/host/src/dispatch.rs`, `trigger_span`) roots a fired run's
+   (`services/dispatcher/src/lib.rs`, `trigger_span`) roots a fired run's
    trace with `wamn.flow` / `wamn.run_id` / `wamn.flow_version` /
    `wamn.trigger_source` / `wamn.tenant`. The dispatcher is the **host-known
-   path**: it mints `flow`/`run_id` here, so this is their enrichment home. Both
-   the cron and outbox (row-event) fire sites instrument their write-ahead under
-   it.
+   path**: it mints `flow`/`run_id` here, so this is their enrichment home. Cron
+   fire instruments its write-ahead under this span; row-event materialization
+   is a separate event-plane path.
 
 3. **Tempo sink + collector traces pipeline** — `deploy/infra/tempo.yaml`
    (single-binary Tempo, OTLP-gRPC in on :4317, TraceQL query API on :3200) and
@@ -132,26 +133,26 @@ a blind copy). In-cluster gate of record: `deploy/gates/serve-echo.yaml` +
 
 ## The gate — `tracebench` (the S5 `logbench`→Loki analog)
 
-`tests/orchestrator/src/tracebench.rs` drives a real guest DB call (`pgprobe`
-op 6, `SELECT pg_sleep(0)` — fixture-free) *under* the real `trigger_span`, so
-the plugin's DB span nests beneath it. It then queries Tempo's TraceQL API
-(`/api/search` by the intrinsic span name, `/api/traces/<id>` for the full
-trace) and asserts **one trace** with:
+`tests/integration/src/tracebench.rs` drives two process-accurate proofs and
+queries Tempo's TraceQL API (`/api/search` by intrinsic span name,
+`/api/traces/<id>` for the full trace):
 
-- a `wamn.trigger` span carrying `wamn.flow` / `wamn.run_id` / `wamn.tenant`;
-- a `wamn.postgres` DB span carrying `db.system` / `wamn.tenant` / `wamn.project`;
-- the DB span threaded **under** the trigger span (`parentSpanId == trigger`).
+- the real dispatcher process exports its private production `wamn.trigger`
+  span carrying `wamn.flow` / `wamn.run_id` / `wamn.tenant`;
+- a real guest DB call (`pgprobe` op 6, `SELECT pg_sleep(0)`) produces a
+  `wamn.postgres` span carrying `db.system` / `wamn.tenant` / `wamn.project`,
+  threaded beneath the gate caller's root.
 
-That single trace is the `trigger → runner → wamn:postgres` thread of the plan's
-acceptance script, proven through the **production span builders** (the gate
-uses `wamn_dispatcher::trigger_span` and the real plugin span), not gate
-scaffolding.
+These are deliberately separate traces. The gate does not fabricate the
+cross-process `trigger → runner` parent link; carrying that context through the
+durable queue remains the deferred 9.2 contract.
 
 ### Run it
 
 Local iteration (throwaway Postgres + Tempo + collector on a docker network):
 
 ```sh
+cargo build -p wamn-dispatcher -p wamn-gates
 docker network create wamn-s5 2>/dev/null || true
 docker run -d --rm --name wamn-trace-pg --network wamn-s5 -p 5482:5432 \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
@@ -173,9 +174,8 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 OTEL_EXPORTER_OTLP_PROTOCOL=gr
 `INFO`. In-cluster gate of record: `deploy/gates/tracebench-job.yaml` (against real
 Tempo + collector + Postgres; no CPU limit — the S2 lesson).
 
-Mutation-tested (`scratchpad/mutate_9.1.py`): the DB span's tenant, the trigger
-span's flow field, the DB span's name, and the DB span's parent inheritance
-(threading) each flip a named `tracebench` assertion to FAIL.
+The gate names separate assertions for the DB span's tenant, the trigger span's
+flow field, the DB span's name, and the DB span's caller parentage.
 
 ## References
 
