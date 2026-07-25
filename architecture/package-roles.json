@@ -1,0 +1,693 @@
+{
+  "schema_version": 1,
+  "graph_delta": {
+    "accepted_edges": [
+      {
+        "from_manifest": "crates/execution/standard-nodes/Cargo.toml",
+        "to_manifest": "crates/data/entity-access/Cargo.toml",
+        "dependency_kind": "normal",
+        "target": "all",
+        "reason": "Standard nodes reuse the transport-neutral entity planner; this is pure planner reuse, not deployable-root coupling."
+      }
+    ],
+    "transition_exceptions": []
+  },
+  "packages": [
+    {
+      "workspace": "root",
+      "name": "wamn-api",
+      "manifest_path": "crates/data/api/Cargo.toml",
+      "role": "adapter",
+      "target_class": "shared",
+      "bounded_context": "data",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-builder",
+      "manifest_path": "services/builder/Cargo.toml",
+      "role": "native",
+      "target_class": "native",
+      "bounded_context": "node-supply-chain",
+      "deployable": true,
+      "native": {
+        "native_kind": "toolchain",
+        "native_reason": "Rust and JavaScript toolchains, sandboxed subprocesses, filesystem access, signing, and OCI publication require a native build boundary.",
+        "owner": "SR16 / node supply-chain owners",
+        "credential_failure_scope": "One build Job owns temporary source, toolchain, registry, and publication access; it does not import the runtime host.",
+        "tested_boundary": "Builder allowlist, golden deployment, and registry-push conformance tests exercise the one-shot artifact boundary.",
+        "exit_condition": "Replace only when a component-safe toolchain and OCI publication capability provides equivalent sandbox, signing, and provenance guarantees."
+      }
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-cdc-reader",
+      "manifest_path": "services/cdc-reader/Cargo.toml",
+      "role": "native",
+      "target_class": "native",
+      "bounded_context": "events",
+      "deployable": true,
+      "native": {
+        "native_kind": "protocol",
+        "native_reason": "PostgreSQL logical-replication and walsender feedback have no equivalent guest-safe client capability.",
+        "owner": "SR25 / CDC owners",
+        "credential_failure_scope": "One reader process owns the replication credential, slot feedback, and JetStream publication lifecycle.",
+        "tested_boundary": "The event-reader live test and CDC process-boundary proofs cover capture, acknowledgement, and feedback.",
+        "exit_condition": "Exit when a component-safe logical-replication capability provides equivalent acknowledgement, feedback, and failover-slot semantics."
+      }
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-cdc1",
+      "manifest_path": "poc/cdc1/Cargo.toml",
+      "role": "poc",
+      "target_class": "native",
+      "bounded_context": "events",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-component-policy",
+      "manifest_path": "crates/platform/component-policy/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "platform",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-control-provision",
+      "manifest_path": "crates/control/provision/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "control",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-control-registry",
+      "manifest_path": "crates/control/registry/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "control",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-ctl",
+      "manifest_path": "services/ctl/Cargo.toml",
+      "role": "native",
+      "target_class": "native",
+      "bounded_context": "control",
+      "deployable": true,
+      "native": {
+        "native_kind": "operator-tool",
+        "native_reason": "One-shot provisioning, migration, recovery, and PostgreSQL tooling are operator effects rather than a long-running component service.",
+        "owner": "SR18 / control-plane owners",
+        "credential_failure_scope": "Each invocation receives only the operator and database credentials required by its selected verb and exits after the operation.",
+        "tested_boundary": "Executable-boundary, live catalog, recovery, replica-identity, and run-plane tests invoke the shipped control binary.",
+        "exit_condition": "Retain while human-operated recovery and database tooling require native process and filesystem capabilities."
+      }
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-dispatcher",
+      "manifest_path": "services/dispatcher/Cargo.toml",
+      "role": "native",
+      "target_class": "native",
+      "bounded_context": "execution",
+      "deployable": true,
+      "native": {
+        "native_kind": "transition-runtime",
+        "native_reason": "The current cron and parked-wake effect shell uses native PostgreSQL and JetStream clients while durable scheduling decisions remain below it.",
+        "owner": "wamn-l5i9.71 / execution owners",
+        "credential_failure_scope": "The dispatcher owns only cross-project scheduling reads, enqueue writes, and wake-doorbell publication.",
+        "tested_boundary": "Dispatcher process-boundary, ordering, race, fairness, wake, and live database proofs cover the executable shell.",
+        "exit_condition": "Retire after the dispatcher component reaches exact behavior, artifact, rollback, and operational parity (wamn-l5i9.71)."
+      }
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-dm1",
+      "manifest_path": "poc/dm1/Cargo.toml",
+      "role": "poc",
+      "target_class": "shared",
+      "bounded_context": "schema",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-entity-access",
+      "manifest_path": "crates/data/entity-access/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "data",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-event-reg",
+      "manifest_path": "crates/events/registration/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "events",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-event-wire",
+      "manifest_path": "crates/events/wire/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "events",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-execution-host",
+      "manifest_path": "crates/execution/host/Cargo.toml",
+      "role": "adapter",
+      "target_class": "native",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-executor",
+      "manifest_path": "services/executor/Cargo.toml",
+      "role": "native",
+      "target_class": "native",
+      "bounded_context": "execution",
+      "deployable": true,
+      "native": {
+        "native_kind": "transition-runtime",
+        "native_reason": "The serving executor currently embeds the flowrunner component through the shared native execution host.",
+        "owner": "wamn-l5i9.49 / execution owners",
+        "credential_failure_scope": "One worker process owns its queue lease, project database session, and embedded component failure domain.",
+        "tested_boundary": "Executor process and runner integration proofs cover queue claim, component execution, and durable completion.",
+        "exit_condition": "Retire when flowrunner is promoted to a production Service workload with equivalent lease, failure, and rollback behavior (wamn-l5i9.49)."
+      }
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-f1",
+      "manifest_path": "poc/f1/Cargo.toml",
+      "role": "poc",
+      "target_class": "shared",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-flow",
+      "manifest_path": "crates/execution/flow-model/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-gate-harness",
+      "manifest_path": "test-support/harness/Cargo.toml",
+      "role": "test",
+      "target_class": "native",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-gates",
+      "manifest_path": "tests/orchestrator/Cargo.toml",
+      "role": "test",
+      "target_class": "native",
+      "bounded_context": "proof",
+      "deployable": true,
+      "native": {
+        "native_kind": "proof-infrastructure",
+        "native_reason": "The deployed gate Job composes exact native production paths and external systems for proof receipts.",
+        "owner": "SR26 / wamn-cjv.11",
+        "credential_failure_scope": "Gate credentials and failures are confined to an explicit proof Job and its temporary infrastructure.",
+        "tested_boundary": "The gates image and orchestrator commands execute conformance, integration, and black-box proof packages.",
+        "exit_condition": "Retain while release gates require native external-system orchestration; individual proofs move down when their owning boundary becomes package-local."
+      }
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-host",
+      "manifest_path": "services/host/Cargo.toml",
+      "role": "native",
+      "target_class": "native",
+      "bounded_context": "platform-runtime",
+      "deployable": true,
+      "native": {
+        "native_kind": "runtime-infrastructure",
+        "native_reason": "The wasmCloud washlet and deliberately scoped host capability plugins are the platform runtime infrastructure.",
+        "owner": "SR15 / runtime owners",
+        "credential_failure_scope": "A host-group process owns runtime operator integration and host capability credentials; application services remain separate.",
+        "tested_boundary": "Host build, embedded-component provenance, plugin conformance, and deployed host-group gates exercise the runtime boundary.",
+        "exit_condition": "Retain while wasmCloud washlet and host-plugin integration require a native runtime process; replace only with an equivalent platform runtime boundary."
+      }
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-materializer",
+      "manifest_path": "crates/events/materializer/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "events",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-node-guest",
+      "manifest_path": "crates/node/guest/Cargo.toml",
+      "role": "adapter",
+      "target_class": "guest",
+      "bounded_context": "node",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-node-host",
+      "manifest_path": "services/node-host/Cargo.toml",
+      "role": "native",
+      "target_class": "native",
+      "bounded_context": "node",
+      "deployable": true,
+      "native": {
+        "native_kind": "transition-runtime",
+        "native_reason": "A dedicated native transport leaf hosts one warm custom-node component with authentication and grant isolation.",
+        "owner": "SR15 / node runtime owners",
+        "credential_failure_scope": "One node-host process confines a tenant component, invocation key, capability grant, egress, and failure domain.",
+        "tested_boundary": "Node-host HTTP authentication, grant-before-invoke, component import, and warm-runtime proofs cover the service boundary.",
+        "exit_condition": "Exit when a component-native service boundary provides equivalent warm hosting, authentication, grant, and failure isolation."
+      }
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-node-invoke",
+      "manifest_path": "crates/node/invoke/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "node",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-node-manifest",
+      "manifest_path": "crates/node/manifest/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "node",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-node-runtime",
+      "manifest_path": "crates/platform/node-runtime/Cargo.toml",
+      "role": "adapter",
+      "target_class": "native",
+      "bounded_context": "node",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-node-sdk",
+      "manifest_path": "crates/node/sdk/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "node",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-pg-core",
+      "manifest_path": "crates/platform/pg-core/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "platform",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-project-state",
+      "manifest_path": "crates/identity/project-state/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "identity",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-proof-conformance",
+      "manifest_path": "tests/conformance/Cargo.toml",
+      "role": "test",
+      "target_class": "native",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-proof-integration",
+      "manifest_path": "tests/integration/Cargo.toml",
+      "role": "test",
+      "target_class": "native",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-proof-system",
+      "manifest_path": "tests/system/Cargo.toml",
+      "role": "test",
+      "target_class": "native",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-run-state",
+      "manifest_path": "crates/execution/run-state/Cargo.toml",
+      "role": "persistence",
+      "target_class": "shared",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-runner",
+      "manifest_path": "crates/execution/flow-engine/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-runtime",
+      "manifest_path": "crates/platform/runtime/Cargo.toml",
+      "role": "adapter",
+      "target_class": "native",
+      "bounded_context": "platform-runtime",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-scenario-catalog",
+      "manifest_path": "crates/scenarios/catalog/Cargo.toml",
+      "role": "persistence",
+      "target_class": "shared",
+      "bounded_context": "scenarios",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-scenario-model",
+      "manifest_path": "crates/scenarios/model/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "scenarios",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-scenario-runtime",
+      "manifest_path": "crates/scenarios/runtime/Cargo.toml",
+      "role": "adapter",
+      "target_class": "native",
+      "bounded_context": "scenarios",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-scenario-worker",
+      "manifest_path": "services/scenario-worker/Cargo.toml",
+      "role": "native",
+      "target_class": "native",
+      "bounded_context": "scenarios",
+      "deployable": true,
+      "native": {
+        "native_kind": "transition-runtime",
+        "native_reason": "Stored deterministic scenario execution currently embeds the production flowrunner and native observation adapters.",
+        "owner": "wamn-5wd1.7 / scenario execution owners",
+        "credential_failure_scope": "One worker confines a selected stored suite, project database access, deterministic adapters, and run failure.",
+        "tested_boundary": "Scenario-worker process-boundary, stored-suite, observation-resource, and replay proofs exercise the executable.",
+        "exit_condition": "Exit when an independently deployed component workload can provide the same stored-suite, observation, and deterministic-adapter boundary."
+      }
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-scheduler",
+      "manifest_path": "crates/execution/scheduler/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-schema-compiler",
+      "manifest_path": "crates/schema/compiler/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "schema",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-schema-control",
+      "manifest_path": "crates/schema/control/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "schema",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-schema-model",
+      "manifest_path": "crates/schema/model/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "schema",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-standard-nodes",
+      "manifest_path": "crates/execution/standard-nodes/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-test-fixtures",
+      "manifest_path": "test-support/fixtures/Cargo.toml",
+      "role": "test",
+      "target_class": "native",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-test-infrastructure",
+      "manifest_path": "test-support/infrastructure/Cargo.toml",
+      "role": "test",
+      "target_class": "native",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-waker",
+      "manifest_path": "services/waker/Cargo.toml",
+      "role": "native",
+      "target_class": "native",
+      "bounded_context": "execution",
+      "deployable": true,
+      "native": {
+        "native_kind": "capability",
+        "native_reason": "Kubernetes scale-subresource mutation is deliberately unavailable to guest components and must remain a narrow native capability.",
+        "owner": "wamn-fqg.40 / execution platform owners",
+        "credential_failure_scope": "The always-on waker alone owns the Kubernetes scale credential and can mutate only the runner deployment boundary.",
+        "tested_boundary": "Waker process-boundary and scale-to-zero proofs exercise the doorbell-to-scale transition.",
+        "exit_condition": "Exit when the runtime operator, HPA, KEDA, or an equally narrow capability wakes workloads from PostgreSQL-authoritative backlog (wamn-fqg.40)."
+      }
+    },
+    {
+      "workspace": "components",
+      "name": "api-gateway",
+      "manifest_path": "components/ingress/api-gateway/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "data",
+      "deployable": true
+    },
+    {
+      "workspace": "components",
+      "name": "flowrunner",
+      "manifest_path": "components/execution/flowrunner/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "execution",
+      "deployable": true
+    },
+    {
+      "workspace": "components",
+      "name": "materializer",
+      "manifest_path": "components/execution/materializer/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "events",
+      "deployable": true
+    },
+    {
+      "workspace": "components",
+      "name": "busyloop",
+      "manifest_path": "components/fixtures/busyloop/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "cred-probe",
+      "manifest_path": "components/fixtures/cred-probe/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "flow-driver",
+      "manifest_path": "components/fixtures/flow-driver/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "hello",
+      "manifest_path": "components/fixtures/hello/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "logspewer",
+      "manifest_path": "components/fixtures/logspewer/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "memhog",
+      "manifest_path": "components/fixtures/memhog/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "pgprobe",
+      "manifest_path": "components/fixtures/pgprobe/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "sockprobe",
+      "manifest_path": "components/fixtures/sockprobe/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "trace-relay",
+      "manifest_path": "components/fixtures/trace-relay/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "poc-webhook-f1",
+      "manifest_path": "components/poc/webhook-f1/Cargo.toml",
+      "role": "poc",
+      "target_class": "guest",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "disposition-node",
+      "manifest_path": "components/samples/disposition-node/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "node",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "js-sample",
+      "manifest_path": "components/samples/js-sample/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "events",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "node-rs",
+      "manifest_path": "components/samples/node-rs/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "node",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "node-cred",
+      "manifest_path": "components/samples/node-cred/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "node",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "sample-node",
+      "manifest_path": "components/samples/sample-node/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "node",
+      "deployable": false
+    }
+  ],
+  "non_cargo_inputs": [
+    {
+      "name": "node-ts",
+      "path": "components/samples/node-ts",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "node",
+      "deployable": false,
+      "release_class": "sample-toolchain-input"
+    }
+  ]
+}
