@@ -26,8 +26,8 @@ use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
 
 use wamn_schema_control::{
-    Catalog, Confirmation, Env, MigrationError, MigrationRequest, Value, dry_run, plan_migration,
-    sql,
+    BareSchemaName, Catalog, Confirmation, Env, MigrationError, MigrationRequest, Value, dry_run,
+    plan_migration, sql,
 };
 
 #[derive(Debug, Args)]
@@ -87,13 +87,8 @@ pub struct MigrateCatalogArgs {
 }
 
 pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
-    // A bare-identifier data schema (it is interpolated into SET search_path).
-    if !is_bare_ident(&args.schema) {
-        bail!(
-            "--schema must be a bare identifier [a-z_][a-z0-9_]*: {:?}",
-            args.schema
-        );
-    }
+    let schema = BareSchemaName::new(args.schema.clone())
+        .with_context(|| format!("invalid --schema {:?}", args.schema))?;
     let target_json = std::fs::read_to_string(&args.target)
         .with_context(|| format!("read target catalog {}", args.target.display()))?;
     let target = Catalog::from_json(&target_json).context("parse target catalog JSON")?;
@@ -122,8 +117,8 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         // (non-dry) apply path creates the schema (see apply_catalog_target).
         let tx = client.transaction().await.context("begin")?;
         tx.batch_execute(&format!(
-            "SET LOCAL search_path = {schema}, catalog",
-            schema = args.schema
+            "SET LOCAL search_path = {}, catalog",
+            schema.quoted()
         ))
         .await
         .context("set search_path")?;
@@ -153,7 +148,7 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
             &impact_plan,
             current.as_ref(),
             &target,
-            &args.schema,
+            schema.as_str(),
         )
         .await?;
         println!("{}", impact.render());
@@ -200,8 +195,8 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
             .await
             .context("begin impact snapshot")?;
         snap.batch_execute(&format!(
-            "SET LOCAL search_path = {schema}, catalog",
-            schema = args.schema
+            "SET LOCAL search_path = {}, catalog",
+            schema.quoted()
         ))
         .await
         .context("set search_path")?;
@@ -214,7 +209,7 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
             &impact_plan,
             current.as_ref(),
             &target,
-            &args.schema,
+            schema.as_str(),
         )
         .await?;
         println!("{}", impact.render());
@@ -229,7 +224,7 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         &mut client,
         &args.tenant,
         &env_str,
-        &args.schema,
+        &schema,
         &target,
         args.base,
         confirm,
@@ -252,7 +247,7 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
     // meanwhile). Runs on the same superuser connection AFTER commit (reads the
     // post-migration table set), scoped strictly to the data schema. Idempotent.
     if !args.skip_reconcile_replica_identity {
-        crate::reconcile_replica_identity::reconcile_after_apply(&client, &target, &args.schema)
+        crate::reconcile_replica_identity::reconcile_after_apply(&client, &target, schema.as_str())
             .await?;
     }
 
@@ -297,12 +292,13 @@ pub(crate) enum ApplyOutcome {
 /// transaction — it is provisioning, not part of the atomic apply.
 pub(crate) async fn ensure_data_schema(
     client: &tokio_postgres::Client,
-    schema: &str,
+    schema: &BareSchemaName,
 ) -> anyhow::Result<()> {
     client
         .batch_execute(&format!(
             "CREATE SCHEMA IF NOT EXISTS {schema} AUTHORIZATION CURRENT_USER; \
-             GRANT USAGE ON SCHEMA {schema} TO wamn_app;"
+             GRANT USAGE ON SCHEMA {schema} TO wamn_app;",
+            schema = schema.quoted(),
         ))
         .await
         .context("ensure data schema")?;
@@ -347,16 +343,19 @@ pub(crate) async fn apply_catalog_target(
     client: &mut tokio_postgres::Client,
     tenant: &str,
     environment: &str,
-    schema: &str,
+    schema: &BareSchemaName,
     target: &Catalog,
     expected_base: Option<u32>,
     confirm: Confirmation,
 ) -> anyhow::Result<ApplyOutcome> {
     ensure_data_schema(client, schema).await?;
     let tx = client.transaction().await.context("begin")?;
-    tx.batch_execute(&format!("SET LOCAL search_path = {schema}, catalog"))
-        .await
-        .context("set search_path")?;
+    tx.batch_execute(&format!(
+        "SET LOCAL search_path = {}, catalog",
+        schema.quoted()
+    ))
+    .await
+    .context("set search_path")?;
 
     let current = read_current_applied(&tx, tenant, &target.catalog_id, environment).await?;
     let request = MigrationRequest {
@@ -423,9 +422,7 @@ fn to_sql_params(vals: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
 }
 
 pub(crate) fn is_bare_ident(s: &str) -> bool {
-    let mut cs = s.chars();
-    matches!(cs.next(), Some(c) if c == '_' || c.is_ascii_lowercase())
-        && cs.all(|c| c == '_' || c.is_ascii_lowercase() || c.is_ascii_digit())
+    BareSchemaName::new(s).is_ok()
 }
 
 #[cfg(test)]
@@ -440,6 +437,8 @@ mod tests {
         assert!(!is_bare_ident("Public")); // lowercase only
         assert!(!is_bare_ident("a; drop")); // no punctuation/space
         assert!(!is_bare_ident(""));
+        assert!(is_bare_ident(&format!("s{}", "a".repeat(62))));
+        assert!(!is_bare_ident(&format!("s{}", "a".repeat(63))));
     }
 
     #[test]

@@ -35,6 +35,7 @@ use wamn_gate_harness::{check, scope_session, seed_flow_version};
 use wamn_run_state::capture;
 use wamn_scenario_catalog::PinError;
 use wamn_scenario_model::{Assertion, Captured, RunFacts, RunStatus, TestCase, evaluate};
+use wamn_schema_control::BareSchemaName;
 
 const FLOW_ID: &str = "pinned-flow";
 /// The raw secret seeded through the FULL-capture run — asserted absent from the
@@ -330,6 +331,7 @@ fn replay_captured(node_output: Value) -> Captured {
 /// Fresh ephemeral schema + the run-plane / flow-test tables via the SAME
 /// `ensure_*` functions `publish-catalog --runstate` uses (production path).
 async fn provision(admin: &Client, schema: &str) -> anyhow::Result<()> {
+    let schema_name = BareSchemaName::new(schema).context("validate pinproof schema")?;
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \
@@ -340,13 +342,13 @@ async fn provision(admin: &Client, schema: &str) -> anyhow::Result<()> {
         .await
         .context("reset schema + ensure wamn_app role")?;
     // run-state creates the schema; flow-tests FKs into flows, so ORDER matters.
-    ensure_runstate(admin, schema)
+    ensure_runstate(admin, &schema_name)
         .await
         .context("ensure run-state")?;
-    ensure_flow_registry(admin, schema)
+    ensure_flow_registry(admin, &schema_name)
         .await
         .context("ensure flow registry")?;
-    ensure_flow_tests(admin, schema)
+    ensure_flow_tests(admin, &schema_name)
         .await
         .context("ensure flow-test tables")?;
     println!("## provisioned schema {schema} (run-state + flows + test_suites/test_cases)");

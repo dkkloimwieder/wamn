@@ -57,6 +57,9 @@
 //! constraint reconciler, scoped strictly to that one CHECK.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+use wamn_pg_core::{Identifier, InvalidIdentifier};
 
 /// The schema of record, compiled in — the same sources provisioning applies
 /// (`publish-catalog --runstate`, the f1 provisioning Job) and the wamn-9mg8
@@ -81,6 +84,94 @@ pub const LEGACY_OUTBOX_TABLES: [&str; 2] = ["outbox", "evt_shadow"];
 /// wamn_outbox_event()`, one trigger per entity table, the function unqualified
 /// so it landed in the apply-time schema).
 pub const OUTBOX_TRIGGER_NAME: &str = "wamn_outbox_event";
+
+/// A validated project schema name usable in both quoted SQL and bare DDL rewrites.
+///
+/// PostgreSQL's identifier representation, byte limit, and quoting live in
+/// [`Identifier`]. This wrapper adds only the lowercase unquoted grammar required
+/// by [`rewrite_schema`], which substitutes the name into canonical deploy SQL as
+/// a bare identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BareSchemaName(Identifier);
+
+/// Why a value cannot be used as a bare project schema name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidBareSchemaName {
+    kind: InvalidBareSchemaNameKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InvalidBareSchemaNameKind {
+    PostgreSql(InvalidIdentifier),
+    BareSyntax,
+}
+
+impl InvalidBareSchemaName {
+    /// The violated PostgreSQL or bare-schema invariant.
+    pub fn reason(&self) -> &str {
+        match &self.kind {
+            InvalidBareSchemaNameKind::PostgreSql(error) => error.reason(),
+            InvalidBareSchemaNameKind::BareSyntax => {
+                "schema name must match the lowercase bare identifier syntax [a-z_][a-z0-9_]*"
+            }
+        }
+    }
+}
+
+impl fmt::Display for InvalidBareSchemaName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.reason())
+    }
+}
+
+impl std::error::Error for InvalidBareSchemaName {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.kind {
+            InvalidBareSchemaNameKind::PostgreSql(error) => Some(error),
+            InvalidBareSchemaNameKind::BareSyntax => None,
+        }
+    }
+}
+
+impl From<InvalidIdentifier> for InvalidBareSchemaName {
+    fn from(error: InvalidIdentifier) -> Self {
+        Self {
+            kind: InvalidBareSchemaNameKind::PostgreSql(error),
+        }
+    }
+}
+
+impl BareSchemaName {
+    /// Validate a schema name before it reaches generated SQL or an admin effect.
+    pub fn new(value: impl Into<String>) -> Result<Self, InvalidBareSchemaName> {
+        let identifier = Identifier::new(value)?;
+        let mut bytes = identifier.as_str().bytes();
+        if !matches!(bytes.next(), Some(b'a'..=b'z' | b'_'))
+            || !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(InvalidBareSchemaName {
+                kind: InvalidBareSchemaNameKind::BareSyntax,
+            });
+        }
+        Ok(Self(identifier))
+    }
+
+    /// The validated identifier in the bare representation used by deploy SQL.
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    /// The validated identifier quoted by the canonical pg-core implementation.
+    pub fn quoted(&self) -> String {
+        self.0.quoted()
+    }
+}
+
+impl fmt::Display for BareSchemaName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
 
 /// The constraint name Postgres auto-generates for the inline unnamed
 /// `runs.fail_kind` CHECK in `run-state.sql` (empirically `runs_fail_kind_check`
@@ -186,7 +277,7 @@ impl RunPlanePlan {
 /// Reconcile one project-env's run-plane schema (+ the per-database `catalog`
 /// metadata schema) against the schema of record. Pure: `obs` is what the
 /// driver read; the returned plan is what it should execute, in order.
-pub fn plan_run_plane(schema: &str, obs: &RunPlaneObservation) -> RunPlanePlan {
+pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> RunPlanePlan {
     let mut plan = RunPlanePlan::default();
 
     // 1. Missing run-plane tables → EnsureSchema once, then per-table sections
@@ -230,7 +321,7 @@ pub fn plan_run_plane(schema: &str, obs: &RunPlaneObservation) -> RunPlanePlan {
                         target: format!("{table}.{col}"),
                         sql: format!(
                             "ALTER TABLE {}.{} ADD COLUMN {def}",
-                            quote_ident(schema),
+                            schema.quoted(),
                             quote_ident(&table),
                         ),
                     });
@@ -285,14 +376,14 @@ pub fn plan_run_plane(schema: &str, obs: &RunPlaneObservation) -> RunPlanePlan {
             // Drifted: drop the OBSERVED name, re-add the convergent one.
             Some((name, _)) => Some(format!(
                 "ALTER TABLE {}.{} DROP CONSTRAINT {}, {add}",
-                quote_ident(schema),
+                schema.quoted(),
                 quote_ident("runs"),
                 quote_ident(name),
             )),
             // Column present but the CHECK is absent → ADD only.
             None => Some(format!(
                 "ALTER TABLE {}.{} {add}",
-                quote_ident(schema),
+                schema.quoted(),
                 quote_ident("runs"),
             )),
         };
@@ -325,7 +416,7 @@ pub fn plan_run_plane(schema: &str, obs: &RunPlaneObservation) -> RunPlanePlan {
                         target: name.clone(),
                         sql: format!(
                             "DROP INDEX {}.{}; {}",
-                            quote_ident(schema),
+                            schema.quoted(),
                             quote_ident(&name),
                             rewrite_schema(&stmt, schema),
                         ),
@@ -345,7 +436,7 @@ pub fn plan_run_plane(schema: &str, obs: &RunPlaneObservation) -> RunPlanePlan {
                 target: legacy.to_string(),
                 sql: format!(
                     "DROP TABLE IF EXISTS {}.{}",
-                    quote_ident(schema),
+                    schema.quoted(),
                     quote_ident(legacy),
                 ),
             });
@@ -357,7 +448,7 @@ pub fn plan_run_plane(schema: &str, obs: &RunPlaneObservation) -> RunPlanePlan {
             target: table.clone(),
             sql: format!(
                 "DROP TRIGGER IF EXISTS {OUTBOX_TRIGGER_NAME} ON {}.{}",
-                quote_ident(schema),
+                schema.quoted(),
                 quote_ident(table),
             ),
         });
@@ -368,7 +459,7 @@ pub fn plan_run_plane(schema: &str, obs: &RunPlaneObservation) -> RunPlanePlan {
             target: OUTBOX_TRIGGER_NAME.to_string(),
             sql: format!(
                 "DROP FUNCTION IF EXISTS {}.{OUTBOX_TRIGGER_NAME}()",
-                quote_ident(schema),
+                schema.quoted(),
             ),
         });
     }
@@ -555,9 +646,9 @@ pub fn select_runs_fail_kind_check_sql() -> &'static str {
 /// The canonical deploy DDL rewrite from the `wamn_run` schema to the target
 /// project schema (the `publish-catalog --runstate` convention, relocated here
 /// as the single owner). The dot-anchored replace leaves prose mentions like
-/// `wamn_run_store` untouched; the caller has validated `schema` as a bare
-/// lowercase identifier, so bare interpolation is safe.
-pub fn rewrite_schema(ddl: &str, schema: &str) -> String {
+/// `wamn_run_store` untouched. [`BareSchemaName`] makes the unquoted
+/// interpolation requirement explicit in the API.
+pub fn rewrite_schema(ddl: &str, schema: &BareSchemaName) -> String {
     ddl.replace("wamn_run.", &format!("{schema}."))
         // The guarded form FIRST: `SCHEMA wamn_run` is not a substring of it, so
         // missing it left `CREATE SCHEMA IF NOT EXISTS wamn_run` unrewritten (the
@@ -732,7 +823,79 @@ fn index_statements(src: &str, qualifier: &str) -> Vec<(String, String, String)>
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error as _;
+
     use super::*;
+
+    fn schema(value: &str) -> BareSchemaName {
+        BareSchemaName::new(value).expect("test schema is valid")
+    }
+
+    #[test]
+    fn bare_schema_delegates_postgresql_identifier_boundaries_to_pg_core() {
+        let at_limit = format!("s{}", "a".repeat(62));
+        let accepted = BareSchemaName::new(at_limit.clone()).expect("63 bytes are accepted");
+        assert_eq!(accepted.as_str(), at_limit);
+        assert_eq!(accepted.quoted(), format!("\"{at_limit}\""));
+
+        let over_limit = format!("s{}", "a".repeat(63));
+        let error = BareSchemaName::new(over_limit).expect_err("64 bytes are rejected");
+        assert_eq!(
+            error.reason(),
+            "identifier exceeds PostgreSQL's 63-byte limit"
+        );
+        assert_eq!(
+            error.source().map(ToString::to_string).as_deref(),
+            Some("identifier exceeds PostgreSQL's 63-byte limit"),
+            "the rejection retains pg-core's canonical error as its source"
+        );
+
+        assert_eq!(
+            BareSchemaName::new("").unwrap_err().reason(),
+            "identifier is empty"
+        );
+        assert_eq!(
+            BareSchemaName::new("safe\0suffix").unwrap_err().reason(),
+            "identifier contains NUL"
+        );
+    }
+
+    #[test]
+    fn overlong_schema_inputs_cannot_alias_after_postgresql_truncation() {
+        let first = format!("s{}", "a".repeat(63));
+        let second = format!("s{}b", "a".repeat(62));
+        assert_ne!(first, second);
+        assert_eq!(&first.as_bytes()[..63], &second.as_bytes()[..63]);
+        assert!(BareSchemaName::new(first).is_err());
+        assert!(BareSchemaName::new(second).is_err());
+    }
+
+    #[test]
+    fn bare_schema_measures_utf8_bytes_before_checking_bare_syntax() {
+        let over_limit = format!("s{}", "é".repeat(32));
+        assert_eq!(
+            BareSchemaName::new(over_limit).unwrap_err().reason(),
+            "identifier exceeds PostgreSQL's 63-byte limit"
+        );
+
+        let within_limit_but_not_bare = format!("s{}", "é".repeat(31));
+        assert_eq!(
+            BareSchemaName::new(within_limit_but_not_bare)
+                .unwrap_err()
+                .reason(),
+            "schema name must match the lowercase bare identifier syntax [a-z_][a-z0-9_]*"
+        );
+    }
+
+    #[test]
+    fn bare_schema_rejects_syntax_that_the_unquoted_rewrite_cannot_represent() {
+        for value in ["1bad", "Upper", "has-hyphen", "a b", "drop;schema"] {
+            assert!(
+                BareSchemaName::new(value).is_err(),
+                "{value:?} must be rejected"
+            );
+        }
+    }
 
     /// Build the observation the record itself describes: every record table
     /// with its record columns, every record index with the record statement as
@@ -913,7 +1076,7 @@ mod tests {
     /// at target by construction.
     #[test]
     fn observation_at_record_plans_a_noop() {
-        let plan = plan_run_plane("demo", &observation_at_record());
+        let plan = plan_run_plane(&schema("demo"), &observation_at_record());
         assert!(plan.is_noop(), "actions: {:#?}", plan.actions);
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
@@ -955,7 +1118,7 @@ mod tests {
         // The catalog schema predates l5i9.16.
         obs.catalog_tables.remove("event_registrations");
 
-        let plan = plan_run_plane("demo", &obs);
+        let plan = plan_run_plane(&schema("demo"), &obs);
         let sqls: Vec<&str> = plan.actions.iter().map(|a| a.sql.as_str()).collect();
         let kinds: Vec<RunPlaneActionKind> = plan.actions.iter().map(|a| a.kind).collect();
 
@@ -1019,7 +1182,7 @@ mod tests {
     #[test]
     fn from_zero_plans_the_full_set_in_order() {
         let obs = RunPlaneObservation::default();
-        let plan = plan_run_plane("wamn_runner_demo", &obs);
+        let plan = plan_run_plane(&schema("wamn_runner_demo"), &obs);
         let kinds: Vec<RunPlaneActionKind> = plan.actions.iter().map(|a| a.kind).collect();
         assert_eq!(kinds[0], RunPlaneActionKind::EnsureSchema);
         let creates: Vec<&str> = plan
@@ -1068,7 +1231,7 @@ mod tests {
             .get_mut("run_queue")
             .unwrap()
             .insert("legacy_x".into());
-        let plan = plan_run_plane("demo", &obs);
+        let plan = plan_run_plane(&schema("demo"), &obs);
         assert_eq!(
             plan.extra_columns,
             [("run_queue".to_string(), "legacy_x".to_string())]
@@ -1088,7 +1251,7 @@ mod tests {
              'retry-exhausted'::text, 'invalid-input'::text])))"
                 .to_string(),
         ));
-        let plan = plan_run_plane("demo", &obs);
+        let plan = plan_run_plane(&schema("demo"), &obs);
         let repair = plan
             .actions
             .iter()
@@ -1116,7 +1279,7 @@ mod tests {
              'retry-exhausted'::text, 'invalid-input'::text])))"
                 .to_string(),
         ));
-        let repair = plan_run_plane("demo", &obs)
+        let repair = plan_run_plane(&schema("demo"), &obs)
             .actions
             .into_iter()
             .find(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck)
@@ -1146,7 +1309,7 @@ mod tests {
              'retry-exhausted', 'terminal'))"
                 .to_string(),
         ));
-        let plan = plan_run_plane("demo", &obs);
+        let plan = plan_run_plane(&schema("demo"), &obs);
         assert!(
             !plan
                 .actions
@@ -1163,7 +1326,7 @@ mod tests {
     fn absent_fail_kind_check_plans_add_only() {
         let mut obs = observation_at_record();
         obs.runs_fail_kind_check = None;
-        let repair = plan_run_plane("demo", &obs)
+        let repair = plan_run_plane(&schema("demo"), &obs)
             .actions
             .into_iter()
             .find(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck)
@@ -1187,7 +1350,7 @@ mod tests {
             "runs_fail_kind_check".to_string(),
             "CHECK ((fail_kind = ANY (ARRAY['terminal'::text])))".to_string(),
         ));
-        let plan = plan_run_plane("demo", &obs);
+        let plan = plan_run_plane(&schema("demo"), &obs);
         assert!(
             !plan
                 .actions
@@ -1214,7 +1377,7 @@ mod tests {
         obs.tables.remove("run_dead_letters");
         obs.indexes.remove("run_queue_claimable");
         obs.indexes.remove("run_queue_partition");
-        let plan = plan_run_plane("poc_f1", &obs);
+        let plan = plan_run_plane(&schema("poc_f1"), &obs);
         let creates: Vec<&str> = plan
             .actions
             .iter()
@@ -1236,8 +1399,9 @@ mod tests {
     /// owner): qualified names + the schema header rewrite; prose does not.
     #[test]
     fn schema_rewrite_is_dot_anchored() {
+        let schema = schema("poc_f1");
         for (ddl, table) in [(RUN_STATE_SQL, "runs"), (FLOWS_SQL, "flows")] {
-            let out = rewrite_schema(ddl, "poc_f1");
+            let out = rewrite_schema(ddl, &schema);
             assert!(
                 out.contains(&format!("CREATE TABLE poc_f1.{table}")),
                 "{table}"
@@ -1248,14 +1412,14 @@ mod tests {
         // The GUARDED schema-create form rewrites too (the pre-wamn-1wdq bug:
         // `SCHEMA wamn_run` is not a substring of `SCHEMA IF NOT EXISTS
         // wamn_run`, so the header create silently targeted `wamn_run`).
-        let out = rewrite_schema(RUN_STATE_SQL, "poc_f1");
+        let out = rewrite_schema(RUN_STATE_SQL, &schema);
         assert!(out.contains("CREATE SCHEMA IF NOT EXISTS poc_f1 "));
         assert!(!out.contains("IF NOT EXISTS wamn_run"));
         // The prose mention of the wamn_run_store crate must survive verbatim.
-        assert!(rewrite_schema(RUN_STATE_SQL, "poc_f1").contains("wamn_run_store"));
-        assert!(rewrite_schema(RUN_STATE_SQL, "poc_f1").contains("CREATE TABLE poc_f1.node_runs"));
+        assert!(rewrite_schema(RUN_STATE_SQL, &schema).contains("wamn_run_store"));
+        assert!(rewrite_schema(RUN_STATE_SQL, &schema).contains("CREATE TABLE poc_f1.node_runs"));
         assert!(
-            rewrite_schema(FLOWS_SQL, "poc_f1")
+            rewrite_schema(FLOWS_SQL, &schema)
                 .contains("CREATE UNIQUE INDEX flows_active_webhook_path ON poc_f1.flows")
         );
     }

@@ -55,9 +55,10 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 
-use crate::migrate_catalog::{ApplyOutcome, apply_catalog_target, is_bare_ident};
+use crate::migrate_catalog::{ApplyOutcome, apply_catalog_target};
 use crate::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
 use crate::restore_project_env::swap_db;
+use wamn_schema_control::BareSchemaName;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum IncludeArg {
@@ -176,14 +177,10 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("src names: {e}"))?;
     validate_project_env(&args.dst_org, &args.dst_project, &args.dst_env)
         .map_err(|e| anyhow::anyhow!("dst names: {e}"))?;
-    for (label, s) in [
-        ("--data-schema", &args.data_schema),
-        ("--flow-schema", &args.flow_schema),
-    ] {
-        if !is_bare_ident(s) {
-            bail!("{label} must be a bare identifier [a-z_][a-z0-9_]*: {s:?}");
-        }
-    }
+    let data_schema = BareSchemaName::new(args.data_schema.clone())
+        .with_context(|| format!("invalid --data-schema {:?}", args.data_schema))?;
+    let flow_schema = BareSchemaName::new(args.flow_schema.clone())
+        .with_context(|| format!("invalid --flow-schema {:?}", args.flow_schema))?;
 
     let src = Triple::new(&args.src_org, &args.src_project, args.src_env.as_str());
     let dst = Triple::new(&args.dst_org, &args.dst_project, args.dst_env.as_str());
@@ -261,6 +258,8 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
         dst_admin,
         src_db: &src_db,
         dst_db: &dst_db,
+        data_schema,
+        flow_schema,
         dump_dir: None,
         quiesced: false,
     };
@@ -349,6 +348,8 @@ struct ExecCtx<'a> {
     dst_admin: &'a str,
     src_db: &'a str,
     dst_db: &'a str,
+    data_schema: BareSchemaName,
+    flow_schema: BareSchemaName,
     /// Set by the Snapshot step; consumed by RestoreData.
     dump_dir: Option<PathBuf>,
     quiesced: bool,
@@ -487,8 +488,8 @@ async fn exec_copy_definition(
     //    NEITHER the src flow registry (what block 2 installs) NOR the dst's
     //    existing flows — the `test_suites → flows` FK would otherwise reject the
     //    insert with a bare error mid-copy. src has no test-suite table ⇒ clean
-    //    pass. Runs on the flow_schema (a validated bare ident, checked upfront).
-    guard_suite_orphans(&src_client, &dst_client, &ctx.args.flow_schema, tenant).await?;
+    //    pass. Runs on the validated flow schema.
+    guard_suite_orphans(&src_client, &dst_client, &ctx.flow_schema, tenant).await?;
 
     // 1. Applied catalogs: promote each of the src env's applied catalogs into
     //    the dst env through the migrate engine (one-transaction apply each).
@@ -525,7 +526,7 @@ async fn exec_copy_definition(
             &mut dst_client,
             tenant,
             dst_env,
-            &ctx.args.data_schema,
+            &ctx.data_schema,
             cat,
             None,
             confirm,
@@ -554,7 +555,7 @@ async fn exec_copy_definition(
 
     // 2. Flow registrations: copy the tenant's flows rows verbatim (versions +
     //    active flags — a copy, not a re-registration).
-    let fs = &ctx.args.flow_schema;
+    let fs = &ctx.flow_schema;
     let src_has_flows: Option<String> = src_client
         .query_one(&format!("SELECT to_regclass('{fs}.flows')::text"), &[])
         .await?
@@ -622,7 +623,7 @@ async fn exec_copy_definition(
             .with_context(|| format!("copy RLS policy {policy_id}"))?;
     }
     if !policies.is_empty() {
-        apply_rls_policies(&dst_client, &ctx.args.data_schema, &catalogs, &policies).await?;
+        apply_rls_policies(&dst_client, &ctx.data_schema, &catalogs, &policies).await?;
     }
     println!("  rls: {} policy row(s) copied + applied", policies.len());
 
@@ -784,7 +785,7 @@ async fn exec_copy_definition(
 async fn guard_suite_orphans(
     src: &tokio_postgres::Client,
     dst: &tokio_postgres::Client,
-    flow_schema: &str,
+    flow_schema: &BareSchemaName,
     tenant: &str,
 ) -> anyhow::Result<()> {
     let src_has_suites: Option<String> = src
@@ -797,7 +798,7 @@ async fn guard_suite_orphans(
     if src_has_suites.is_none() {
         return Ok(());
     }
-    let suites_sql = wamn_schema_control::sql::select_suites_for_tenant_sql(flow_schema);
+    let suites_sql = wamn_schema_control::sql::select_suites_for_tenant_sql(flow_schema.as_str());
     let referenced: Vec<wamn_schema_control::SuiteRef> = src
         .query(&suites_sql, &[&tenant])
         .await
@@ -815,7 +816,8 @@ async fn guard_suite_orphans(
     }
     // The versions the destination WILL hold: src flows (block 2 copies them) ∪
     // dst's current flows. A flows table absent on the dst reads as empty.
-    let versions_sql = wamn_schema_control::sql::select_flow_versions_for_tenant_sql(flow_schema);
+    let versions_sql =
+        wamn_schema_control::sql::select_flow_versions_for_tenant_sql(flow_schema.as_str());
     let mut present: std::collections::BTreeSet<(String, i32)> = std::collections::BTreeSet::new();
     for client in [src, dst] {
         let has_flows: Option<String> = client
@@ -846,7 +848,7 @@ async fn guard_suite_orphans(
 /// idempotent skip — the re-copy case.
 async fn apply_rls_policies(
     dst: &tokio_postgres::Client,
-    data_schema: &str,
+    data_schema: &BareSchemaName,
     catalogs: &[wamn_schema_control::Catalog],
     rows: &[tokio_postgres::Row],
 ) -> anyhow::Result<()> {
@@ -903,7 +905,7 @@ async fn exec_restore_data(ctx: &mut ExecCtx<'_>, data_only: bool) -> anyhow::Re
         .to_string();
     let dst_url = swap_db(ctx.dst_admin, ctx.dst_db);
     let argv = if data_only {
-        pg_restore_data_only_argv(&dst_url, &dump_dir, &ctx.args.data_schema)
+        pg_restore_data_only_argv(&dst_url, &dump_dir, ctx.data_schema.as_str())
     } else {
         // Full fidelity: schema + rows + ownership/ACLs (no --no-owner).
         vec![
@@ -935,11 +937,11 @@ async fn exec_verify(
     let (dst_client, dst_task) = connect(&swap_db(ctx.dst_admin, ctx.dst_db)).await?;
 
     if include.wants_data() {
-        let schema = &ctx.args.data_schema;
-        let src_tables = list_tables(&src_client, schema)
+        let schema = &ctx.data_schema;
+        let src_tables = list_tables(&src_client, schema.as_str())
             .await
             .context("list src tables")?;
-        let dst_tables = list_tables(&dst_client, schema)
+        let dst_tables = list_tables(&dst_client, schema.as_str())
             .await
             .context("list dst tables")?;
         anyhow::ensure!(
@@ -948,7 +950,7 @@ async fn exec_verify(
              dst {dst_tables:?})"
         );
         for table in &src_tables {
-            let sql = count_rows_sql(schema, table);
+            let sql = count_rows_sql(schema.as_str(), table);
             let s: i64 = src_client.query_one(sql.as_str(), &[]).await?.get(0);
             let d: i64 = dst_client.query_one(sql.as_str(), &[]).await?.get(0);
             anyhow::ensure!(
@@ -983,7 +985,7 @@ async fn exec_verify(
                 "verify FAILED: applied catalog {sid:?} differs on the dst"
             );
         }
-        let fs = &ctx.args.flow_schema;
+        let fs = &ctx.flow_schema;
         for (label, sql) in [
             (
                 "flows",

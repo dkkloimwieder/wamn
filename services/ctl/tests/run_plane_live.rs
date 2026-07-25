@@ -34,7 +34,7 @@
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
-use wamn_schema_control::{RunPlaneActionKind, rewrite_schema};
+use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
@@ -43,6 +43,10 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 const SCHEMA: &str = "rp_live";
+
+fn schema() -> BareSchemaName {
+    BareSchemaName::new(SCHEMA).expect("live-test schema is valid")
+}
 
 async fn connect(url: &str) -> Client {
     let (client, conn) = tokio_postgres::connect(url, NoTls).await.expect("connect");
@@ -115,12 +119,13 @@ async fn run_plane_reconcile_live() {
 /// Manifestations 1 + 4: the 2jkm.41-sweep drift set plus the outbox era.
 async fn v1_era_drifted_leg(su: &Client, url: &str) {
     reset(su).await;
+    let schema = schema();
 
     // Current-era runs/node_runs/flows (the drift was queue-side)…
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, SCHEMA))
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, SCHEMA))
+    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
         .await
         .expect("apply flows");
     // …and the v1-era queue: no stream_seq / partition_policy, the pre-E4
@@ -292,7 +297,7 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
     assert_eq!(reg_id, "r1", "registration document otherwise intact");
 
     // Idempotence: a second reconcile plans nothing.
-    let again = reconcile_run_plane::reconcile(su, SCHEMA, false)
+    let again = reconcile_run_plane::reconcile(su, &schema, false)
         .await
         .expect("re-plan");
     assert!(again.is_noop(), "re-run is a no-op: {:#?}", again.actions);
@@ -303,14 +308,15 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
 /// dead-letter ledger keeps its append-only grant shape.
 async fn queue_missing_leg(su: &Client) {
     reset(su).await;
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, SCHEMA))
+    let schema = schema();
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, SCHEMA))
+    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
         .await
         .expect("apply flows");
 
-    let plan = reconcile_run_plane::reconcile(su, SCHEMA, true)
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
         .expect("reconcile applies");
     assert!(!plan.is_noop());
@@ -357,6 +363,7 @@ async fn queue_missing_leg(su: &Client) {
 /// `wamn_app` proves grants + RLS isolation from the applied sections.
 async fn from_zero_leg(su: &Client) {
     reset(su).await;
+    let schema = schema();
     su.batch_execute(
         "DROP OWNED BY wamn_app; \
          DROP ROLE wamn_app;",
@@ -365,7 +372,7 @@ async fn from_zero_leg(su: &Client) {
     .expect("remove the runtime role (bare database)");
 
     // --dry-run is STRICTLY read-only: it neither creates the role nor tables.
-    let dry = reconcile_run_plane::reconcile(su, SCHEMA, false)
+    let dry = reconcile_run_plane::reconcile(su, &schema, false)
         .await
         .expect("dry-run plans");
     assert!(!dry.is_noop());
@@ -383,7 +390,7 @@ async fn from_zero_leg(su: &Client) {
         "dry-run creates nothing"
     );
 
-    let plan = reconcile_run_plane::reconcile(su, SCHEMA, true)
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
         .expect("from-zero reconcile applies");
     assert!(!plan.is_noop());
@@ -440,23 +447,24 @@ async fn from_zero_leg(su: &Client) {
 /// dry-run and apply mode alike.
 async fn current_noop_leg(su: &Client) {
     reset(su).await;
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, SCHEMA))
+    let schema = schema();
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, SCHEMA))
+    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
         .await
         .expect("apply flows");
-    su.batch_execute(&rewrite_schema(FLOW_TESTS_SQL, SCHEMA))
+    su.batch_execute(&rewrite_schema(FLOW_TESTS_SQL, &schema))
         .await
         .expect("apply flow-tests");
-    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, SCHEMA))
+    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog-schema");
 
-    let dry = reconcile_run_plane::reconcile(su, SCHEMA, false)
+    let dry = reconcile_run_plane::reconcile(su, &schema, false)
         .await
         .expect("dry-run plans");
     assert!(
@@ -470,7 +478,7 @@ async fn current_noop_leg(su: &Client) {
         "all nine run-plane tables at target"
     );
 
-    let apply = reconcile_run_plane::reconcile(su, SCHEMA, true)
+    let apply = reconcile_run_plane::reconcile(su, &schema, true)
         .await
         .expect("apply-mode reconcile");
     assert!(
@@ -487,14 +495,15 @@ async fn current_noop_leg(su: &Client) {
 /// canonical def carries `runaway-budget`, and a re-run is a no-op.
 async fn fail_kind_check_drift_leg(su: &Client) {
     reset(su).await;
+    let schema = schema();
     // Provision the CURRENT run plane (fresh 4-literal fail_kind CHECK)…
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, SCHEMA))
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, SCHEMA))
+    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
         .await
         .expect("apply flows");
-    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, SCHEMA))
+    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
     su.batch_execute(CATALOG_SCHEMA_SQL)
@@ -533,7 +542,7 @@ async fn fail_kind_check_drift_leg(su: &Client) {
     );
 
     // Reconcile: exactly the fail_kind CHECK repair is planned + applied.
-    let plan = reconcile_run_plane::reconcile(su, SCHEMA, true)
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
         .expect("reconcile applies");
     assert!(
@@ -576,7 +585,7 @@ async fn fail_kind_check_drift_leg(su: &Client) {
     assert_eq!(updated, 1, "the runaway verdict lands on the audit row");
 
     // (iii) a second reconcile plans nothing (idempotence + convergence).
-    let again = reconcile_run_plane::reconcile(su, SCHEMA, false)
+    let again = reconcile_run_plane::reconcile(su, &schema, false)
         .await
         .expect("re-plan");
     assert!(again.is_noop(), "re-run is a no-op: {:#?}", again.actions);

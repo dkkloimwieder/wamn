@@ -4576,6 +4576,7 @@ dependencies = [
  "wamn-scenario-runtime",
  "wamn-scheduler",
  "wamn-schema-compiler",
+ "wamn-schema-control",
  "wamn-schema-model",
  "wamn-test-fixtures",
  "wamn-test-infrastructure",
@@ -4736,6 +4737,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-event-reg",
  "wamn-flow",
+ "wamn-pg-core",
  "wamn-schema-compiler",
  "wamn-schema-model",
 ]
@@ -4798,6 +4800,7 @@ dependencies = [
  "wamn-scenario-catalog",
  "wamn-scenario-model",
  "wamn-scenario-runtime",
+ "wamn-schema-control",
  "wamn-test-fixtures",
  "wash-runtime",
 ]

@@ -84,9 +84,9 @@ pub use replica_identity::{
     entities_requiring_full, reconcile_replica_identity, select_replica_identity_sql,
 };
 pub use run_plane::{
-    LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME, RunPlaneAction, RunPlaneActionKind,
-    RunPlaneObservation, RunPlanePlan, catalog_schema_present_sql,
-    count_stale_registration_state_sql, plan_run_plane, rewrite_schema,
+    BareSchemaName, InvalidBareSchemaName, LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME,
+    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
+    catalog_schema_present_sql, count_stale_registration_state_sql, plan_run_plane, rewrite_schema,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_runs_fail_kind_check_sql, select_schema_columns_sql, select_schema_indexes_sql,
     strip_registration_state_sql,

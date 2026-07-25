@@ -36,10 +36,10 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::NoTls;
 
-// The canonical `wamn_run` → project-schema deploy-DDL rewrite: the single
-// owner is the reconcile-run-plane planner's crate (dot-anchored; `schema` has
-// already passed [`valid_ident`], so bare interpolation is safe).
-use wamn_schema_control::rewrite_schema;
+// The canonical `wamn_run` → project-schema deploy-DDL rewrite and its
+// lowercase bare-schema type share one owner in the reconcile-run-plane
+// planner's crate.
+use wamn_schema_control::{BareSchemaName, rewrite_schema};
 
 #[derive(Debug, Args)]
 pub struct PublishCatalogArgs {
@@ -91,18 +91,10 @@ pub struct PublishCatalogArgs {
     pub skip_reconcile_replica_identity: bool,
 }
 
-/// A bare SQL identifier safe to embed after validating: starts with a
-/// LOWERCASE letter or `_`, then lowercase letters/digits/`_`. Lowercase-only
-/// on purpose: the run-state rewrite emits the schema UNQUOTED (Postgres would
-/// case-fold an uppercase name there while the quoted `publish` statements
-/// preserved it — two different schemas). Mirrors the `wamn:postgres` check.
-fn valid_ident(s: &str) -> bool {
-    let mut chars = s.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c == '_')
-        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-}
-
 pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
+    let schema = BareSchemaName::new(args.schema.clone())
+        .with_context(|| format!("invalid schema name {:?}", args.schema))?;
+
     // Parse (and thereby validate) the catalog; this is the snapshot document.
     let catalog_src = std::fs::read_to_string(&args.catalog)
         .with_context(|| format!("read catalog {}", args.catalog.display()))?;
@@ -115,18 +107,11 @@ pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
         .clone()
         .context("no admin database url: pass --admin-database-url or set WAMN_PG_ADMIN_URL")?;
 
-    if !valid_ident(&args.schema) {
-        bail!(
-            "invalid schema name {:?}: must be a bare SQL identifier",
-            args.schema
-        );
-    }
-
     let (client, conn) = tokio_postgres::connect(&admin_url, NoTls)
         .await
         .context("admin connect")?;
     let conn_task = tokio::spawn(conn);
-    let result = publish(&client, &cat, &args, &document).await;
+    let result = publish(&client, &cat, &args, &document, &schema).await;
     drop(client);
     let _ = conn_task.await;
     result?;
@@ -143,9 +128,8 @@ async fn publish(
     cat: &wamn_schema_model::Catalog,
     args: &PublishCatalogArgs,
     document: &str,
+    schema: &BareSchemaName,
 ) -> anyhow::Result<()> {
-    let schema = &args.schema;
-
     // D24 (EVT-REG, wamn-rmxa): refuse a publish that would drop an entity still
     // referenced by an event registration — BEFORE any mutation, naming every
     // orphan. The owner deletes the registrations via the API first; publish
@@ -160,9 +144,10 @@ async fn publish(
     // names there, exactly as the gateway does via the host-injected search_path.
     client
         .batch_execute(&format!(
-            "CREATE SCHEMA IF NOT EXISTS \"{schema}\"; \
-             GRANT USAGE ON SCHEMA \"{schema}\" TO wamn_app; \
-             SET search_path TO \"{schema}\";"
+            "CREATE SCHEMA IF NOT EXISTS {schema}; \
+             GRANT USAGE ON SCHEMA {schema} TO wamn_app; \
+             SET search_path TO {schema};",
+            schema = schema.quoted(),
         ))
         .await
         .context("ensure schema")?;
@@ -295,7 +280,8 @@ async fn publish(
     // so the gap would be permanent for events captured meanwhile). Idempotent and
     // scoped strictly to `schema`; a schema without the floor yet is a clean no-op.
     if !args.skip_reconcile_replica_identity {
-        crate::reconcile_replica_identity::reconcile_after_apply(client, cat, schema).await?;
+        crate::reconcile_replica_identity::reconcile_after_apply(client, cat, schema.as_str())
+            .await?;
     }
 
     Ok(())
@@ -308,13 +294,15 @@ async fn publish(
 pub async fn upsert_entity_map(
     client: &impl tokio_postgres::GenericClient,
     cat: &wamn_schema_model::Catalog,
-    schema: &str,
+    schema: &BareSchemaName,
 ) -> anyhow::Result<()> {
     client
-        .batch_execute(&wamn_control_provision::sql::ensure_entity_map_sql(schema))
+        .batch_execute(&wamn_control_provision::sql::ensure_entity_map_sql(
+            schema.as_str(),
+        ))
         .await
         .context("ensure entity map")?;
-    let upsert = wamn_control_provision::sql::upsert_entity_map_sql(schema);
+    let upsert = wamn_control_provision::sql::upsert_entity_map_sql(schema.as_str());
     for e in &cat.entities {
         client
             .execute(upsert.as_str(), &[&e.id.as_str(), &e.name])
@@ -394,7 +382,7 @@ pub(crate) async fn ensure_wamn_app_role(client: &tokio_postgres::Client) -> any
 /// `runs` table is absent. Returns whether it applied (false = already there).
 pub async fn ensure_runstate(
     client: &tokio_postgres::Client,
-    schema: &str,
+    schema: &BareSchemaName,
 ) -> anyhow::Result<bool> {
     if table_exists(client, schema, "runs").await? {
         return Ok(false);
@@ -411,7 +399,7 @@ pub async fn ensure_runstate(
 /// table is absent. Returns whether it applied.
 pub async fn ensure_flow_registry(
     client: &tokio_postgres::Client,
-    schema: &str,
+    schema: &BareSchemaName,
 ) -> anyhow::Result<bool> {
     if table_exists(client, schema, "flows").await? {
         return Ok(false);
@@ -430,7 +418,7 @@ pub async fn ensure_flow_registry(
 /// them in that order below.
 pub async fn ensure_flow_tests(
     client: &tokio_postgres::Client,
-    schema: &str,
+    schema: &BareSchemaName,
 ) -> anyhow::Result<bool> {
     if table_exists(client, schema, "test_suites").await? {
         return Ok(false);
@@ -445,14 +433,14 @@ pub async fn ensure_flow_tests(
 
 async fn table_exists(
     client: &tokio_postgres::Client,
-    schema: &str,
+    schema: &BareSchemaName,
     table: &str,
 ) -> anyhow::Result<bool> {
     Ok(client
         .query_one(
             "SELECT EXISTS ( SELECT FROM information_schema.tables \
              WHERE table_schema = $1 AND table_name = $2 )",
-            &[&schema, &table],
+            &[&schema.as_str(), &table],
         )
         .await
         .with_context(|| format!("probe {schema}.{table}"))?
@@ -564,24 +552,31 @@ pub async fn register_flow(
 
 #[cfg(test)]
 mod tests {
-    use super::valid_ident;
+    use super::*;
 
-    // The dot-anchored `rewrite_schema` pins live with their owner
-    // (`wamn_schema_control::run_plane`, `schema_rewrite_is_dot_anchored`).
-
-    #[test]
-    fn identifier_validation() {
-        assert!(valid_ident("api_proof"));
-        assert!(valid_ident("public"));
-        assert!(valid_ident("_x1"));
-        assert!(!valid_ident(""));
-        assert!(!valid_ident("1bad"));
-        assert!(!valid_ident("has-hyphen"));
-        assert!(!valid_ident("drop table x; --"));
-        assert!(!valid_ident("a b"));
-        // Uppercase rejected: the unquoted run-state rewrite would case-fold
-        // it into a DIFFERENT schema than the quoted publish statements.
-        assert!(!valid_ident("Poc"));
-        assert!(!valid_ident("POC_F1"));
+    #[tokio::test]
+    async fn invalid_schema_is_rejected_before_catalog_io_or_admin_connect() {
+        let missing =
+            std::env::temp_dir().join("invalid-schema-must-not-read-catalog-5wd1-29.json");
+        let error = run(PublishCatalogArgs {
+            catalog: missing,
+            admin_database_url: Some("postgresql://invalid.invalid/never".to_string()),
+            tenant: "t1".to_string(),
+            schema: format!("s{}", "a".repeat(63)),
+            provision: true,
+            runstate: true,
+            seed_dataset: None,
+            flow: vec![],
+            skip_reconcile_replica_identity: false,
+        })
+        .await
+        .expect_err("overlong schema must fail before any effect");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("identifier exceeds PostgreSQL's 63-byte limit"),
+            "{message}"
+        );
+        assert!(!message.contains("read catalog"), "{message}");
+        assert!(!message.contains("admin connect"), "{message}");
     }
 }

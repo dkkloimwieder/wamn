@@ -82,6 +82,7 @@ use wamn_scenario_model::{
 use wamn_scenario_runtime::{
     EphemeralSchemaProvisioner, RecordingEgress, ScenarioCapabilities, ScenarioSchemaName,
 };
+use wamn_schema_control::BareSchemaName;
 
 use crate::erp_sim::ErpAudit;
 use crate::f1fixture::{self, F1_FLOW_JSON, F1_SEED_JSON, F1_TENANT};
@@ -333,16 +334,18 @@ pub async fn run(args: PocSuiteProofArgs) -> anyhow::Result<()> {
     // --- Phase A: provision the DATA schema + seed all three suites ---
     let (admin, admin_task) = connect(&admin_url).await?;
     if args.seed_only {
+        let schema =
+            BareSchemaName::new(args.schema.clone()).context("validate POC suite schema")?;
         // seed-only targets a LIVE schema (the composition path seeds poc_f1):
         // NEVER drop it — additively ensure the run-plane + flow-test tables via
         // the same IF-NOT-EXISTS `ensure_*` path production reconcile uses.
-        ensure_runstate(&admin, &args.schema)
+        ensure_runstate(&admin, &schema)
             .await
             .context("ensure run-state (additive)")?;
-        ensure_flow_registry(&admin, &args.schema)
+        ensure_flow_registry(&admin, &schema)
             .await
             .context("ensure flow registry (additive)")?;
-        ensure_flow_tests(&admin, &args.schema)
+        ensure_flow_tests(&admin, &schema)
             .await
             .context("ensure flow-test tables (additive)")?;
         println!(
@@ -649,8 +652,10 @@ async fn provision_f1(
             .batch_execute(&f1fixture::floor_ddl()?)
             .await
             .context("apply F1 floor")?;
-        ensure_runstate(&client, schema.as_str()).await?;
-        ensure_flow_registry(&client, schema.as_str()).await?;
+        let bare_schema =
+            BareSchemaName::new(schema.as_str()).context("validate F1 execution schema")?;
+        ensure_runstate(&client, &bare_schema).await?;
+        ensure_flow_registry(&client, &bare_schema).await?;
         client
             .batch_execute(
                 "CREATE TABLE wamn_catalog ( \
@@ -1239,6 +1244,7 @@ fn run_facts(status: &str) -> Option<RunFacts> {
 /// Provision the DATA schema (run-state + flow registry + test-suite tables) via
 /// the SAME `ensure_*` path production provisioning uses.
 async fn provision_data_schema(admin: &Client, schema: &str) -> anyhow::Result<()> {
+    let schema_name = BareSchemaName::new(schema).context("validate POC data schema")?;
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \
@@ -1248,11 +1254,13 @@ async fn provision_data_schema(admin: &Client, schema: &str) -> anyhow::Result<(
         ))
         .await
         .context("reset DATA schema + ensure wamn_app role")?;
-    ensure_runstate(admin, schema).await.context("run-state")?;
-    ensure_flow_registry(admin, schema)
+    ensure_runstate(admin, &schema_name)
+        .await
+        .context("run-state")?;
+    ensure_flow_registry(admin, &schema_name)
         .await
         .context("flow registry")?;
-    ensure_flow_tests(admin, schema)
+    ensure_flow_tests(admin, &schema_name)
         .await
         .context("flow-test tables")?;
     println!("## provisioned DATA schema {schema} (run-state + flows + test_suites/test_cases)");

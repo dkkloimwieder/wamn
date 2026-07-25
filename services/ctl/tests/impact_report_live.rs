@@ -25,6 +25,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_ctl::impact_report::{compile_plan, gather_impact};
 use wamn_ctl::migrate_catalog;
 use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
+use wamn_schema_control::BareSchemaName;
 
 const DATA_SCHEMA: &str = "wvb_data";
 const TENANT: &str = "t1";
@@ -118,6 +119,7 @@ fn migrate_args(
 /// run-plane (flows + test_suites) into the DATA schema via the SAME `ensure_*`
 /// production path (publish-catalog --runstate uses it).
 async fn reset(su: &Client) {
+    let schema = BareSchemaName::new(DATA_SCHEMA).expect("live-test schema is valid");
     let catalog_schema = include_str!("../../../deploy/sql/catalog-schema.sql");
     su.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS catalog CASCADE; \
@@ -132,13 +134,13 @@ async fn reset(su: &Client) {
         .await
         .expect("apply deploy/sql/catalog-schema.sql");
     // Provision flows + test_suites into the DATA schema (ensure_runstate creates it).
-    ensure_runstate(su, DATA_SCHEMA)
+    ensure_runstate(su, &schema)
         .await
         .expect("ensure run-state");
-    ensure_flow_registry(su, DATA_SCHEMA)
+    ensure_flow_registry(su, &schema)
         .await
         .expect("ensure flows");
-    ensure_flow_tests(su, DATA_SCHEMA)
+    ensure_flow_tests(su, &schema)
         .await
         .expect("ensure flow-tests");
 }

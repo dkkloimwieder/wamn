@@ -25,6 +25,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
 use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_case, seed_test_suite};
 use wamn_scenario_model::TestSuite;
+use wamn_schema_control::BareSchemaName;
 
 const FLOW_ID: &str = "escalate-holds";
 
@@ -265,6 +266,7 @@ pub async fn run(args: SuiteProofArgs) -> anyhow::Result<()> {
 /// Fresh ephemeral schema + the run-plane / flow-test tables via the SAME
 /// `ensure_*` functions `publish-catalog --runstate` uses (production path).
 async fn provision(admin: &Client, schema: &str) -> anyhow::Result<()> {
+    let schema_name = BareSchemaName::new(schema).context("validate suiteproof schema")?;
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \
@@ -276,13 +278,13 @@ async fn provision(admin: &Client, schema: &str) -> anyhow::Result<()> {
         .context("reset schema + ensure wamn_app role")?;
     // run-state creates the schema (rewritten header); flows FKs into nothing
     // new; flow-tests FKs into flows, so this ORDER matters.
-    ensure_runstate(admin, schema)
+    ensure_runstate(admin, &schema_name)
         .await
         .context("ensure run-state")?;
-    ensure_flow_registry(admin, schema)
+    ensure_flow_registry(admin, &schema_name)
         .await
         .context("ensure flow registry")?;
-    ensure_flow_tests(admin, schema)
+    ensure_flow_tests(admin, &schema_name)
         .await
         .context("ensure flow-test tables")?;
     println!("## provisioned schema {schema} (run-state + flows + test_suites/test_cases)");

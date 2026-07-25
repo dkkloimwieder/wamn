@@ -50,6 +50,7 @@ use wamn_ctl::publish_catalog;
 use wamn_gate_harness::{as_array, check};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_schema_control::BareSchemaName;
 
 #[derive(Debug, Args)]
 pub struct F1BenchArgs {
@@ -266,12 +267,13 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .context("apply floor")?;
 
         // Run-state + flow registry: the canonical deploy files.
+        let schema = BareSchemaName::new(EPH_SCHEMA).context("validate F1 schema")?;
         anyhow::ensure!(
-            publish_catalog::ensure_runstate(&client, EPH_SCHEMA).await?,
+            publish_catalog::ensure_runstate(&client, &schema).await?,
             "fresh schema must apply run-state"
         );
         anyhow::ensure!(
-            publish_catalog::ensure_flow_registry(&client, EPH_SCHEMA).await?,
+            publish_catalog::ensure_flow_registry(&client, &schema).await?,
             "fresh schema must apply the flow registry"
         );
 

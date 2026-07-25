@@ -42,12 +42,12 @@
 //! `--dry-run` is STRICTLY read-only: it neither ensures the `wamn_app` role
 //! nor executes any plan action.
 
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
 
 use wamn_schema_control::{
-    RunPlaneObservation, RunPlanePlan, catalog_schema_present_sql,
+    BareSchemaName, RunPlaneObservation, RunPlanePlan, catalog_schema_present_sql,
     count_stale_registration_state_sql, plan_run_plane, select_outbox_function_present_sql,
     select_outbox_trigger_tables_sql, select_runs_fail_kind_check_sql, select_schema_columns_sql,
     select_schema_indexes_sql,
@@ -72,17 +72,13 @@ pub struct ReconcileRunPlaneArgs {
 }
 
 pub async fn run(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
-    if !crate::migrate_catalog::is_bare_ident(&args.schema) {
-        bail!(
-            "--schema must be a bare identifier [a-z_][a-z0-9_]*: {:?}",
-            args.schema
-        );
-    }
+    let schema = BareSchemaName::new(args.schema.clone())
+        .with_context(|| format!("invalid --schema {:?}", args.schema))?;
     let (client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)
         .await
         .context("admin connect")?;
     let conn_task = tokio::spawn(conn);
-    let result = reconcile(&client, &args.schema, !args.dry_run).await;
+    let result = reconcile(&client, &schema, !args.dry_run).await;
     drop(client);
     let _ = conn_task.await;
     let plan = result?;
@@ -97,7 +93,7 @@ pub async fn run(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
 /// and the live gate so both exercise one code path.
 pub async fn reconcile(
     client: &tokio_postgres::Client,
-    schema: &str,
+    schema: &BareSchemaName,
     apply: bool,
 ) -> anyhow::Result<RunPlanePlan> {
     let obs = observe(client, schema).await?;
@@ -117,12 +113,12 @@ pub async fn reconcile(
 /// Read everything the pure planner decides on. Read-only.
 async fn observe(
     client: &tokio_postgres::Client,
-    schema: &str,
+    schema: &BareSchemaName,
 ) -> anyhow::Result<RunPlaneObservation> {
     let mut obs = RunPlaneObservation::default();
 
     for row in client
-        .query(select_schema_columns_sql(), &[&schema])
+        .query(select_schema_columns_sql(), &[&schema.as_str()])
         .await
         .context("read schema tables/columns")?
     {
@@ -131,7 +127,7 @@ async fn observe(
         obs.tables.entry(table).or_default().insert(column);
     }
     for row in client
-        .query(select_schema_indexes_sql(), &[&schema])
+        .query(select_schema_indexes_sql(), &[&schema.as_str()])
         .await
         .context("read schema indexes")?
     {
@@ -140,19 +136,19 @@ async fn observe(
     // The live runs.fail_kind CHECK (name + canonical def), for the fqg.16
     // literal-drift repair — zero rows when runs / the CHECK is absent.
     obs.runs_fail_kind_check = client
-        .query_opt(select_runs_fail_kind_check_sql(), &[&schema])
+        .query_opt(select_runs_fail_kind_check_sql(), &[&schema.as_str()])
         .await
         .context("read runs.fail_kind check constraint")?
         .map(|row| (row.get(0), row.get(1)));
     for row in client
-        .query(select_outbox_trigger_tables_sql(), &[&schema])
+        .query(select_outbox_trigger_tables_sql(), &[&schema.as_str()])
         .await
         .context("survey legacy outbox triggers")?
     {
         obs.outbox_trigger_tables.push(row.get(0));
     }
     obs.outbox_function_present = client
-        .query_one(select_outbox_function_present_sql(), &[&schema])
+        .query_one(select_outbox_function_present_sql(), &[&schema.as_str()])
         .await
         .context("survey legacy outbox function")?
         .get(0);
