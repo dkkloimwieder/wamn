@@ -4300,12 +4300,13 @@ The controlling ownership rules are:
 | Platform SQL | per-table semantic owner under SR13 | Checked DDL is generated from owning descriptions and queries/stand-ins are structurally compared. One owner does not require one crate. |
 | External operational state | Kubernetes, JetStream, OCI/signing, Secret, backup, and telemetry native authorities | PostgreSQL may store Wamn identity or immutable references, never a duplicate Kubernetes operating model or secret/artifact bytes. |
 
-Adopt the proposal's `architecture/state-owners.toml` as **repository-only CI
+The implemented `architecture/state-owners.json` is **repository-only CI
 metadata for PostgreSQL ownership**, not runtime metadata and not a PostgreSQL
 model of Kubernetes. It records each table/family's semantic owner, migration
 owner, schema source, authorized writers/readers, compatibility horizon, and
-drift gate. New SR28/`wamn-2jkm.102` owns that manifest and writer enforcement;
-SR13 remains the physical DDL/query/stand-in generation and comparison owner.
+drift gate. SR28/`wamn-2jkm.102` implemented that manifest and writer
+enforcement in `ea0e18f`; SR13 remains the physical DDL/query/stand-in
+generation and comparison owner.
 Kubernetes, JetStream, OCI/signing, Secrets, backups, and telemetry stay
 governed and reconciled through their native APIs and existing R/E proof
 owners.
@@ -4323,12 +4324,13 @@ deployable composition root -> peer deployable root for reuse     forbidden
 component -> native-only crate or repository test support         forbidden
 production -> POC or repository-only test support                 forbidden
 builder -> wamn-host                                              forbidden
-standard nodes -> wamn-api pure planner                           allowed
+standard nodes -> wamn-entity-access pure planner                 allowed
 flowrunner/materializer -> run-queue without dispatcher features  required
 native platform responsibility without constraint + exit          forbidden
 ```
 
-`wamn-2jkm.101` (SR27) owns package metadata and the Cargo-metadata checker.
+`wamn-2jkm.101` (SR27) implemented package metadata and the Cargo-metadata
+checker in `b936e84`.
 Every package must declare or receive a deterministic classification for:
 
 ```toml
@@ -4538,8 +4540,8 @@ prerequisite that makes everything else findable.
 | SR24 | Mounted runtime configuration contracts are unversioned and inconsistent | Low | open | wamn-2jkm.96; N.7 selects atomic image/config development policy |
 | SR25 | CDC reader public API leaks the `pg_walstream` cancellation type | Low | open | wamn-2jkm.97 |
 | SR26 | Gate-of-record receipts do not prove a fresh immutable baseline artifact | High | open | wamn-2jkm.98; proof wamn-4tob.6.25 |
-| SR27 | Package roles and component/native dependency rules are not machine-enforced | Med | open | wamn-2jkm.101; STR9 target in section V |
-| SR28 | Durable PostgreSQL objects and writers lack an executable ownership manifest | Med | open | wamn-2jkm.102; complements SR13 |
+| SR27 | Package roles and component/native dependency rules are not machine-enforced | Med | **closed** | `b936e84` (wamn-2jkm.101; 47 root + 18 component packages and `node-ts`; resolved graph + 9 named conformance tests) |
+| SR28 | Durable PostgreSQL objects and writers lack an executable ownership manifest | Med | **closed** | `ea0e18f` (wamn-2jkm.102; 34 tables + 3 generated families; 71 static writes + 10 named conformance tests; complements SR13) |
 | **§1** | **Docs consolidation + archive (single source of truth)** | — | **closed** | `b7fa9af`…`6ac07d9` (2026-07-19, wamn-2jkm.1–.6); residuals as beads: §1.5=wamn-2jkm.28, §1.9a=wamn-2jkm.10, in-cluster deploy verify=wamn-2jkm.41 |
 | SR14 | D4/D19 contradiction unmarked in the decision table (§1.2) | High | **closed** | `b7fa9af` (wamn-2jkm.1; table sweep found no other same-shape row) |
 | §1.9a | Amendment-density audit (verdict per file) | Med | **closed** | `3a3bb34` (wamn-2jkm.10; 15 stamped — 13 additive, 2 contradict → rewrites wamn-2jkm.59/.60; platform-plan re-audit wamn-2jkm.63) |
