@@ -10,7 +10,7 @@
 //! on demand, and the gate asserts the queue-park backoff produces NO stampede.
 //!
 //! Nothing here is taped: ONE `INSERT INTO dispositions` under the tenant claim
-//! is the SOLE stimulus, and it drives the REAL reader (`run_with_token`), the
+//! is the SOLE stimulus, and it drives the REAL `wamn-cdc-reader` process, the
 //! REAL materializer guest (`materializer.wasm`), the REAL production runner
 //! (`ExecutionHost` driving `flowrunner.wasm`), a REAL serve-node hosting the REAL
 //! `disposition-node.wasm`, and the ERP simulator — over a throwaway
@@ -46,7 +46,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
-use pg_walstream::CancellationToken;
 use tokio_postgres::NoTls;
 
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
@@ -57,8 +56,8 @@ use wash_runtime::wasmtime::{Engine as RawEngine, Store};
 use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
+use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
-use wamn_cdc_reader::{EventReaderArgs, run_with_token};
 use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
@@ -598,26 +597,15 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
         .await
         .context("create failover slot")?;
 
-    let token = CancellationToken::new();
-    let reader = tokio::spawn(run_with_token(
-        EventReaderArgs {
-            org: ORG.into(),
-            project: PROJECT.into(),
-            env: ENV.into(),
-            system_database_url: swap_db(&args.admin_database_url, DB),
-            cdc_url: role_url(&args.admin_database_url, &cdc_name, CDC_PW),
-            nats_url: args.nats_url.clone(),
-            sslmode: "disable".into(),
-            stream_replicas: 1,
-            dup_window_secs: 120,
-            feedback_secs: 1,
-            stall_threshold_secs: 30,
-            slot_poll_secs: 0,
-            slot_safe_wal_warn_bytes: 268_435_456,
-        },
-        token.clone(),
-    ));
-    println!("reader up (one pg_walstream session -> {stream_name})");
+    let reader = ReaderProcess::spawn(ReaderArgs {
+        org: ORG.into(),
+        project: PROJECT.into(),
+        env: ENV.into(),
+        system_database_url: swap_db(&args.admin_database_url, DB),
+        cdc_url: role_url(&args.admin_database_url, &cdc_name, CDC_PW),
+        nats_url: args.nats_url.clone(),
+    })?;
+    println!("reader process up (one pg_walstream session -> {stream_name})");
 
     // --- the materializer harness (rie2ebench shape) ------------------------
     let engine = build_engine(&[])?;
@@ -713,8 +701,7 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
     };
 
     // --- teardown (zero residue) --------------------------------------------
-    token.cancel();
-    let _ = tokio::time::timeout(Duration::from_secs(15), reader).await;
+    let reader_clean = reader.shutdown(Duration::from_secs(15)).await?;
     erp_task.abort();
     let _ = db
         .execute(
@@ -734,7 +721,12 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
     let _ = std::fs::remove_dir_all(&report_dir);
     ticker.abort();
 
-    let pass = outcome?;
+    let mut pass = outcome?;
+    check(
+        &mut pass,
+        "reader process handled SIGTERM and exited cleanly",
+        reader_clean,
+    );
     println!("\nf4proof complete — overall PASS: {pass}");
     if !pass {
         bail!("wamn-lxk f4proof gate failed");

@@ -8,8 +8,8 @@
 //! ctl flip machinery on `pg_class.relreplident` — but neither drives a real
 //! reader.
 //!
-//! This gate embeds the REAL `wamn-cdc-reader` service body
-//! (`run_with_token`) as a tokio task next to the REAL materializer Service
+//! This gate launches the REAL `wamn-cdc-reader` executable next to the REAL
+//! materializer Service
 //! guest (`materializer.wasm`, wasi:cli/run) — the matbench harness shape — over
 //! a throwaway `wal_level=logical` Postgres and a throwaway JetStream. Nothing is
 //! taped or synthesized between the DELETE and the materializer's verdict: the
@@ -58,7 +58,6 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail};
 use clap::Args;
 use futures_util::StreamExt as _;
-use pg_walstream::CancellationToken;
 use tokio_postgres::NoTls;
 
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
@@ -68,7 +67,7 @@ use wash_runtime::wasmtime::{Engine as RawEngine, Store};
 use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
-use wamn_cdc_reader::{EventReaderArgs, run_with_token};
+use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
@@ -558,26 +557,15 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
         .await
         .context("create failover slot")?;
 
-    let token = CancellationToken::new();
-    let reader = tokio::spawn(run_with_token(
-        EventReaderArgs {
-            org: ORG.into(),
-            project: PROJECT.into(),
-            env: ENV.into(),
-            system_database_url: swap_db(&args.admin_database_url, DB),
-            cdc_url: role_url(&args.admin_database_url, &cdc_name, CDC_PW),
-            nats_url: args.nats_url.clone(),
-            sslmode: "disable".into(),
-            stream_replicas: 1,
-            dup_window_secs: 120,
-            feedback_secs: 1,
-            stall_threshold_secs: 30,
-            slot_poll_secs: 0,
-            slot_safe_wal_warn_bytes: 268_435_456,
-        },
-        token.clone(),
-    ));
-    println!("reader up (one pg_walstream session -> {stream_name})");
+    let mut reader = ReaderProcess::spawn(ReaderArgs {
+        org: ORG.into(),
+        project: PROJECT.into(),
+        env: ENV.into(),
+        system_database_url: swap_db(&args.admin_database_url, DB),
+        cdc_url: role_url(&args.admin_database_url, &cdc_name, CDC_PW),
+        nats_url: args.nats_url.clone(),
+    })?;
+    println!("reader process up (one pg_walstream session -> {stream_name})");
 
     // --- plugins + engine (the matbench harness) ----------------------------
     let app_url = role_url(&args.admin_database_url, "wamn_app", "wamn_app");
@@ -658,8 +646,8 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
         "the pre-flip delete reached the stream (1 event)",
         have == 1,
     );
-    if reader.is_finished() {
-        bail!("reader died mid-gate: {:?}", reader.await);
+    if reader.is_finished()? {
+        bail!("reader died mid-gate: {}", reader.wait().await?);
     }
     let report1 = harness.run_guest(4, 64).await?;
     println!("phase-1 guest report: {report1}");
@@ -719,8 +707,8 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
         "the post-flip delete reached the stream (2 events total)",
         have == 2,
     );
-    if reader.is_finished() {
-        bail!("reader died mid-gate: {:?}", reader.await);
+    if reader.is_finished()? {
+        bail!("reader died mid-gate: {}", reader.wait().await?);
     }
     let report2 = harness.run_guest(4, 64).await?;
     println!("phase-3 guest report: {report2}");
@@ -781,8 +769,7 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
     );
 
     // --- teardown (zero residue: slot FIRST, then stream, then the db) ------
-    token.cancel();
-    let _ = tokio::time::timeout(Duration::from_secs(15), reader).await;
+    let reader_clean = reader.shutdown(Duration::from_secs(15)).await?;
     let _ = db
         .execute(
             "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots \
@@ -801,6 +788,10 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
     let _ = std::fs::remove_dir_all(&report_dir);
     ticker.abort();
 
+    check(
+        "reader process handled SIGTERM and exited cleanly",
+        reader_clean,
+    );
     println!("\nrie2ebench complete — overall PASS: {pass}");
     if !pass {
         bail!("wamn-3glr rie2ebench gate failed");

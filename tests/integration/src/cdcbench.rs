@@ -6,7 +6,7 @@
 //!
 //!   drain      — decode drain rate after a bulk import: the slot exists, the
 //!                bulk import lands with the reader DOWN, then the REAL reader
-//!                (`wamn_cdc_reader::run_with_token`) starts and the gate
+//!                (`wamn-cdc-reader` process) starts and the gate
 //!                samples stream depth + slot lag until every row event is on
 //!                the `EVT_` stream. Serial decode per project-env is the
 //!                capture ceiling (§11) — this measures it. Variants: batched
@@ -67,7 +67,7 @@ use futures_util::StreamExt as _;
 use pg_walstream::CancellationToken;
 use tokio_postgres::{Client, NoTls};
 
-use wamn_cdc_reader::{EventReaderArgs, run_with_token};
+use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
@@ -555,46 +555,24 @@ async fn teardown(admin_url: &str, nats_url: &str) {
     }
 }
 
-/// The embedded REAL reader — the same service body the deployment runs.
-fn spawn_reader(
-    admin_url: &str,
-    nats_url: &str,
-) -> (
-    CancellationToken,
-    tokio::task::JoinHandle<anyhow::Result<()>>,
-) {
+/// Launch the REAL reader executable — the same process boundary deployment runs.
+fn spawn_reader(admin_url: &str, nats_url: &str) -> anyhow::Result<ReaderProcess> {
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV);
-    let token = CancellationToken::new();
-    let handle = tokio::spawn(run_with_token(
-        EventReaderArgs {
-            org: ORG.into(),
-            project: PROJECT.into(),
-            env: ENV.into(),
-            system_database_url: swap_db(admin_url, DB),
-            cdc_url: role_url(admin_url, &cdc_name, CDC_PW),
-            nats_url: nats_url.to_string(),
-            sslmode: "disable".into(),
-            stream_replicas: 1,
-            dup_window_secs: 120,
-            feedback_secs: 1,
-            stall_threshold_secs: 30,
-            slot_poll_secs: 0,
-            slot_safe_wal_warn_bytes: 268_435_456,
-        },
-        token.clone(),
-    ));
-    (token, handle)
+    ReaderProcess::spawn(ReaderArgs {
+        org: ORG.into(),
+        project: PROJECT.into(),
+        env: ENV.into(),
+        system_database_url: swap_db(admin_url, DB),
+        cdc_url: role_url(admin_url, &cdc_name, CDC_PW),
+        nats_url: nats_url.to_string(),
+    })
 }
 
-async fn stop_reader(
-    token: CancellationToken,
-    handle: tokio::task::JoinHandle<anyhow::Result<()>>,
-) -> bool {
-    token.cancel();
-    matches!(
-        tokio::time::timeout(Duration::from_secs(15), handle).await,
-        Ok(Ok(Ok(())))
-    )
+async fn stop_reader(reader: ReaderProcess) -> bool {
+    reader
+        .shutdown(Duration::from_secs(15))
+        .await
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -764,7 +742,7 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
         );
 
         // Reader up — the drain window starts here (includes session open).
-        let (token, handle) = spawn_reader(&args.admin_database_url, &args.nats_url);
+        let mut reader = spawn_reader(&args.admin_database_url, &args.nats_url)?;
         let t0 = Instant::now();
         let deadline = t0 + Duration::from_secs(args.drain_deadline_secs);
         let drain_secs = loop {
@@ -778,8 +756,8 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
             if msgs >= v.rows as u64 {
                 break t0.elapsed().as_secs_f64();
             }
-            if handle.is_finished() {
-                bail!("reader died mid-drain: {:?}", handle.await);
+            if reader.is_finished()? {
+                bail!("reader died mid-drain: {}", reader.wait().await?);
             }
             if Instant::now() > deadline {
                 bail!(
@@ -806,7 +784,7 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
         check(
             pass,
             &format!("drain {}: reader alive through the drain", v.name),
-            !handle.is_finished(),
+            !reader.is_finished()?,
         );
         if v.work_mem.is_some() {
             // The starved-buffer leg must actually spill — otherwise the
@@ -820,7 +798,7 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
                 stats.spill_txns > 0 && stats.spill_bytes > 0,
             );
         }
-        let clean = stop_reader(token, handle).await;
+        let clean = stop_reader(reader).await;
         check(
             pass,
             &format!("drain {}: reader cancelled cleanly", v.name),
@@ -877,7 +855,7 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
     db.batch_execute(&provision_sql::create_failover_slot_sql(&cdc_name))
         .await
         .context("create failover slot")?;
-    let (token, handle) = spawn_reader(&args.admin_database_url, &args.nats_url);
+    let mut reader = spawn_reader(&args.admin_database_url, &args.nats_url)?;
 
     // Warm write: proves the pipeline is live before the first step.
     let app = connect_app(&args.admin_database_url).await?;
@@ -967,8 +945,8 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
             "{rate:.0},{},{},{written},{achieved:.0},{published},{pub_rate:.0},{lag_start},{lag_end},{lag_max}\n",
             args.lag_writers, args.lag_step_secs
         ));
-        if handle.is_finished() {
-            bail!("reader died mid-lag-step");
+        if reader.is_finished()? {
+            bail!("reader died mid-lag-step: {}", reader.wait().await?);
         }
     }
 
@@ -996,7 +974,7 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
         final_msgs == total_written,
     );
     println!("  post-ramp catch-up: {catchup_secs:.1}s");
-    let clean = stop_reader(token, handle).await;
+    let clean = stop_reader(reader).await;
     check(pass, "lag: reader cancelled cleanly", clean);
     drop_slot(&db, &cdc_name).await;
 
@@ -1321,7 +1299,7 @@ async fn switchover_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result
     db.batch_execute(&provision_sql::create_failover_slot_sql(&cdc_name))
         .await
         .context("create failover slot")?;
-    let (token, handle) = spawn_reader(&args.admin_database_url, &args.nats_url);
+    let mut reader = spawn_reader(&args.admin_database_url, &args.nats_url)?;
 
     // Warm write as the superuser with an explicit tenant (no dependence on a
     // wamn_app password on a shared cluster); `sw-warm` never parses as a seq.
@@ -1478,8 +1456,8 @@ async fn switchover_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result
     let catchup_secs = catchup_t0.elapsed().as_secs_f64();
     tail_token.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(10), tail).await;
-    let reader_alive = !handle.is_finished();
-    let clean = stop_reader(token, handle).await;
+    let reader_alive = !reader.is_finished()?;
+    let clean = stop_reader(reader).await;
 
     // Metrics.
     let rec = received.lock().unwrap().clone();

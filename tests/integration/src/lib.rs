@@ -9,6 +9,7 @@ use wamn_proof_conformance::schema_drift;
 pub mod apibench;
 pub mod bench;
 pub mod capturebench;
+mod cdc_reader_process;
 pub mod cdcbench;
 pub mod dashproof;
 pub mod dispatchbench;

@@ -1,6 +1,6 @@
 # wamn-3glr in-cluster [EVT-RI-E2E] gate: reader-inclusive REPLICA IDENTITY
 # flip e2e (the coverage cutbench's phase 3 carried before the l5i9.19
-# teardown). Embeds the REAL wamn-cdc-reader (`run_with_token`) next to the
+# teardown). Launches the REAL wamn-cdc-reader executable next to the
 # image's /bench/materializer.wasm over a gate-owned throwaway database on the
 # fixture Postgres + the DATA-PLANE JetStream (Service `evt-nats`): pre-flip
 # DELETE refused (tenant-unscopable), reconcile flips RI→FULL, post-flip

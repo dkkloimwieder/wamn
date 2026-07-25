@@ -1,6 +1,6 @@
 # EVT-C-CDC axis 4 (wamn-l5i9.14): the TIMED availability drill against the
 # LIVE wamn-pg CNPG pool. The gate provisions a throwaway database + failover
-# slot + the REAL embedded reader on wamn-pg, writes one row every 200 ms, and
+# slot + the REAL reader executable on wamn-pg, writes one row every 200 ms, and
 # an OPERATOR triggers the availability event INSIDE the drill window; the run
 # times the write blackout, the publish gap, and catch-up, and asserts the
 # cdc1 no-gap property (every committed row on the stream exactly once — the

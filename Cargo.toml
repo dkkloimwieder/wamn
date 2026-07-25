@@ -38,6 +38,7 @@ http-body-util = "0.1"
 hyper = "1"
 hyper-util = "0.1"
 jmespath = "0.3"
+libc = "0.2"
 opentelemetry = { version = "0.31", default-features = false }
 opentelemetry-otlp = { version = "0.31", default-features = false }
 opentelemetry_sdk = { version = "0.31", default-features = false }
