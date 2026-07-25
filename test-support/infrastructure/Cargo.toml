@@ -24,6 +24,7 @@ wamn-node-invoke = { workspace = true }
 wamn-node-runtime = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-scenario-catalog = { workspace = true }
+wamn-scenario-model = { workspace = true }
 wamn-scenario-runtime = { workspace = true }
 wamn-test-fixtures = { workspace = true }
 wash-runtime = { workspace = true }

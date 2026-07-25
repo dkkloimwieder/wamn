@@ -75,6 +75,10 @@ world flowrunner {
   /// percentiles over-report (conservative). Stats are computed host-side.
   export dispatch-bench: func(iterations: u32, flow-json: string) -> result<tuple<u64, list<u32>>, string>;
 
+  /// Return the sorted, unique node types this compiled runner cannot dispatch.
+  /// This is a side-effect-free check over the supplied canonical flow.
+  export check-flow: func(flow-json: string) -> result<list<string>, string>;
+
   /// Read the currently-active flow version from the catalog — the guest-side
   /// observation point the hot-reload gate polls (seeding/flipping versions is
   /// host-side fixture work, SR2).

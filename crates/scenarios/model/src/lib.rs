@@ -47,6 +47,7 @@ mod captured;
 mod context;
 mod evaluate;
 mod normalize;
+mod report;
 mod status;
 mod suite;
 
@@ -58,6 +59,7 @@ pub use captured::{Captured, DbCapture, EgressObservation, RunFacts};
 pub use context::RunContext;
 pub use evaluate::{AssertionResult, Outcome, evaluate, subset_match};
 pub use normalize::{Normalize, normalize};
+pub use report::{CaseReport, ScenarioRefusal, ScenarioReport};
 pub use status::{FailKind, NodeErrorKind, RunStatus};
 pub use suite::{CaseEntry, SUITE_SCHEMA_VERSION, TestSuite, TestSuiteError};
 

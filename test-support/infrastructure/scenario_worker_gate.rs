@@ -9,6 +9,7 @@ use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests};
 use wamn_gate_harness::{seed_flow_version, seed_test_case, seed_test_suite};
+use wamn_scenario_model::{ScenarioRefusal, ScenarioReport};
 use wamn_scenario_runtime::ScenarioSchemaName;
 
 const DEMO_FLOW_ID: &str = "tk-demo-flow";
@@ -48,6 +49,7 @@ struct SelectedSuite {
 #[derive(Debug, Clone, Copy)]
 enum ExpectedExit {
     Success,
+    Refusal(&'static str),
     Failure(&'static str),
 }
 
@@ -117,7 +119,7 @@ async fn select_suites(
                 &tenant,
                 UNDRIVABLE_FLOW_ID,
                 "undrivable",
-                ExpectedExit::Failure("stored scenario"),
+                ExpectedExit::Refusal("repository-unknown-node"),
             ),
             selected(
                 &tenant,
@@ -211,6 +213,33 @@ fn parse_flow_at_version(value: &str) -> anyhow::Result<(String, i32)> {
     Ok((flow_id.to_owned(), version))
 }
 
+fn accepted_success_label(
+    report: &ScenarioReport,
+    expected: ExpectedExit,
+) -> anyhow::Result<&'static str> {
+    match expected {
+        ExpectedExit::Success => Ok(if report.refusal.is_some() {
+            "REFUSED"
+        } else {
+            "PASS"
+        }),
+        ExpectedExit::Refusal(expected_node_type) => match &report.refusal {
+            Some(ScenarioRefusal::UndrivableNodes { node_types })
+                if node_types
+                    .iter()
+                    .any(|node_type| node_type == expected_node_type) =>
+            {
+                Ok("expected refusal PASS")
+            }
+            Some(ScenarioRefusal::UndrivableNodes { node_types }) => bail!(
+                "scenario-worker refusal did not name expected node type {expected_node_type:?}: {node_types:?}"
+            ),
+            None => bail!("scenario-worker unexpectedly executed an undrivable suite"),
+        },
+        ExpectedExit::Failure(_) => bail!("expected a scenario-worker process failure"),
+    }
+}
+
 async fn run_selected_suite(
     admin: &Client,
     database_url: &str,
@@ -294,16 +323,17 @@ async fn run_selected_suite(
         eprint!("{stderr}");
     }
     match selected.expected {
-        ExpectedExit::Success => {
+        ExpectedExit::Success | ExpectedExit::Refusal(_) => {
             if !output.status.success() {
                 bail!(
                     "scenario-worker unexpectedly failed for {}",
                     selector.suite_id
                 );
             }
-            serde_json::from_slice::<serde_json::Value>(&output.stdout)
+            let report = serde_json::from_slice::<ScenarioReport>(&output.stdout)
                 .with_context(|| format!("parse worker JSON for {}", selector.suite_id))?;
-            println!("scenario-worker black-box {}: PASS", selector.suite_id);
+            let label = accepted_success_label(&report, selected.expected)?;
+            println!("scenario-worker black-box {}: {label}", selector.suite_id);
         }
         ExpectedExit::Failure(fragment) => {
             if output.status.success() {
@@ -568,6 +598,31 @@ mod tests {
             ExpectedExit::Failure("parse"),
         );
         assert!(matches!(selected.expected, ExpectedExit::Failure("parse")));
+    }
+
+    #[test]
+    fn canonical_refusal_is_visible_and_requires_the_seeded_node_type() {
+        let report = ScenarioReport {
+            execution_id: "gate-2".into(),
+            flow_id: UNDRIVABLE_FLOW_ID.into(),
+            flow_version: 1,
+            suite_id: "undrivable".into(),
+            refusal: Some(ScenarioRefusal::UndrivableNodes {
+                node_types: vec!["repository-unknown-node".into()],
+            }),
+            cases: Vec::new(),
+        };
+
+        assert_eq!(
+            accepted_success_label(&report, ExpectedExit::Refusal("repository-unknown-node"))
+                .unwrap(),
+            "expected refusal PASS"
+        );
+        assert_eq!(
+            accepted_success_label(&report, ExpectedExit::Success).unwrap(),
+            "REFUSED"
+        );
+        assert!(accepted_success_label(&report, ExpectedExit::Refusal("wrong-node")).is_err());
     }
 
     #[test]

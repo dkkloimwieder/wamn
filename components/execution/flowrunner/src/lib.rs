@@ -989,6 +989,53 @@ struct RunOutcome {
     http_status: u32,
 }
 
+/// The implementation family selected for one node.
+///
+/// Both dispatch and the side-effect-free flow check go through this resolver,
+/// so the compiled runner has one authoritative support decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResolvedNode {
+    WebhookIn,
+    LegacyTransform,
+    LegacyConditional,
+    Respond,
+    PgWrite,
+    Delay,
+    HttpCall,
+    Custom,
+    Standard,
+}
+
+fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
+    match node_type {
+        "webhook-in" => Some(ResolvedNode::WebhookIn),
+        "transform" if config.get("expression").is_none() => Some(ResolvedNode::LegacyTransform),
+        "conditional" if config.get("expression").is_none() => {
+            Some(ResolvedNode::LegacyConditional)
+        }
+        "respond" => Some(ResolvedNode::Respond),
+        "pg-write" => Some(ResolvedNode::PgWrite),
+        "delay" => Some(ResolvedNode::Delay),
+        "http-call" => Some(ResolvedNode::HttpCall),
+        "custom" => Some(ResolvedNode::Custom),
+        node_type if wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),
+        _ => None,
+    }
+}
+
+fn check_flow(flow_json: &str) -> Result<Vec<String>, String> {
+    let flow = Flow::from_json(flow_json).map_err(|error| format!("check flow: {error}"))?;
+    let mut unsupported: Vec<String> = flow
+        .nodes
+        .iter()
+        .filter(|node| resolve_node(&node.node_type, &node.config).is_none())
+        .map(|node| node.node_type.clone())
+        .collect();
+    unsupported.sort_unstable();
+    unsupported.dedup();
+    Ok(unsupported)
+}
+
 /// Dispatch one node — the native standard-node library. A node reached here is
 /// OUTSTANDING (reconstruction never re-dispatches a node that already has a
 /// `node_runs` row), so effectful nodes run their effect unconditionally,
@@ -1003,13 +1050,15 @@ fn dispatch_node(
     kill_after_write: bool,
     http_status: &mut u32,
 ) -> Result<NodeAction, String> {
-    match d.node_type.as_str() {
+    let resolved = resolve_node(&d.node_type, &d.config)
+        .ok_or_else(|| format!("unknown node type: {}", d.node_type))?;
+    match resolved {
         // The trigger payload already sits in the node's input.
-        "webhook-in" => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
+        ResolvedNode::WebhookIn => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
         // An `expression` config routes to the standard library's JMESPath
         // transform/conditional below; the S3 fixture shapes (`op`/`min-len`)
         // keep their legacy semantics byte-identical.
-        "transform" if d.config.get("expression").is_none() => {
+        ResolvedNode::LegacyTransform => {
             let op = d
                 .config
                 .get("op")
@@ -1023,13 +1072,11 @@ fn dispatch_node(
         }
         // Records a branch decision but keeps the fixture's linear main path;
         // true branching is exercised in the wamn-runner / wamn-run-state tests.
-        "conditional" if d.config.get("expression").is_none() => {
-            Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
-        }
+        ResolvedNode::LegacyConditional => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
         // Passthrough terminal — identical to the standard library's respond
         // (this driver has no HTTP response to answer; poc-webhook-f1 does).
-        "respond" => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
-        "pg-write" => {
+        ResolvedNode::Respond => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
+        ResolvedNode::PgWrite => {
             pg_write(run_id, node_index(flow, &d.node), value_str(&d.payload))?;
             if kill_after_write {
                 // Side effect committed; the node_runs row NOT yet written. Spin
@@ -1043,7 +1090,7 @@ fn dispatch_node(
             }
             Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
         }
-        "delay" => {
+        ResolvedNode::Delay => {
             let delay_secs = d
                 .config
                 .get("delay-secs")
@@ -1069,7 +1116,7 @@ fn dispatch_node(
                 Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
             }
         }
-        "http-call" => {
+        ResolvedNode::HttpCall => {
             let url = d.config.get("url").and_then(|v| v.as_str()).unwrap_or("");
             *http_status = http_get(url);
             Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
@@ -1082,12 +1129,13 @@ fn dispatch_node(
         // allowed-hosts), then fold the node's emission / node-error back into
         // the walk. The grant is EXACTLY `node.credential` (never the project's
         // whole set); the serve-node host installs it before invoking, get-only.
-        "custom" => custom_node_dispatch(d, run_id, flow),
+        ResolvedNode::Custom => custom_node_dispatch(d, run_id, flow),
         // The standard node library (5.3): everything the library ships
         // dispatches through the capability policy table over this
         // component's real imports. A NodeError feeds the engine, which
         // decides retry-vs-error-path-vs-fail mechanically from the variant.
-        t if wamn_nodes::is_standard(t) => {
+        ResolvedNode::Standard => {
+            let node_type = d.node_type.as_str();
             let run_ctx = sdk::RunContext {
                 run_id,
                 flow_id: &flow.flow_id,
@@ -1119,13 +1167,12 @@ fn dispatch_node(
             };
             let granted = wamn_nodes::granted_for(sdk::NodeCtx::raw_sql_enabled(&ctx));
             Ok(NodeAction::Emit(
-                match wamn_nodes::dispatch(t, granted, &mut ctx, &run_ctx, &d.payload) {
+                match wamn_nodes::dispatch(node_type, granted, &mut ctx, &run_ctx, &d.payload) {
                     Ok(em) => NodeOutcome::ok_on(em.payload, em.port),
                     Err(e) => NodeOutcome::Error(e),
                 },
             ))
         }
-        other => Err(format!("unknown node type: {other}")),
     }
 }
 
@@ -2160,6 +2207,10 @@ impl Guest for Component {
         Ok((bare_ns, samples))
     }
 
+    fn check_flow(flow_json: String) -> Result<Vec<String>, String> {
+        check_flow(&flow_json)
+    }
+
     fn active_version() -> Result<u32, String> {
         let rs = client::query(
             "SELECT version FROM flows WHERE active AND flow_id = $1",
@@ -2209,5 +2260,43 @@ impl Guest for Component {
 
     fn run_s6(run_id: String, payload: String) -> Result<(u32, u32), String> {
         execute(&run_id, &payload, false, FLOW_ID_S6).map(|r| (r.outcome, r.http_status))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_flow_reports_sorted_unique_types_from_the_dispatch_resolver() {
+        let flow = r#"{
+            "schema-version":"0.1",
+            "flow-id":"check",
+            "version":1,
+            "trigger":{"type":"manual"},
+            "entry":"known",
+            "nodes":[
+                {"id":"known","type":"webhook-in"},
+                {"id":"standard","type":"time-shift"},
+                {"id":"z1","type":"z-unsupported"},
+                {"id":"a","type":"a-unsupported"},
+                {"id":"z2","type":"z-unsupported"}
+            ],
+            "edges":[]
+        }"#;
+
+        assert_eq!(
+            check_flow(flow).unwrap(),
+            vec!["a-unsupported".to_string(), "z-unsupported".to_string()]
+        );
+    }
+
+    #[test]
+    fn expression_transform_resolves_through_the_standard_library() {
+        let config = serde_json::json!({"expression": "payload"});
+        assert_eq!(
+            resolve_node("transform", &config),
+            Some(ResolvedNode::Standard)
+        );
     }
 }

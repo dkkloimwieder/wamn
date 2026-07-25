@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use clap::Args;
-use serde::Serialize;
 use tokio_postgres::NoTls;
 
 use wamn_execution_host::{
@@ -19,8 +18,8 @@ use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker}
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig;
 use wamn_scenario_model::{
-    Assertion, Captured, DbCapture, EgressAssertion, FailKind, Outcome, RunFacts, RunStatus,
-    TestCase, evaluate,
+    Assertion, Captured, CaseReport, DbCapture, EgressAssertion, FailKind, RunFacts, RunStatus,
+    ScenarioRefusal, ScenarioReport, TestCase, evaluate,
 };
 use wamn_scenario_runtime::{
     RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, RecordingEgress, ScenarioCapabilities,
@@ -88,32 +87,6 @@ pub struct ScenarioWorkerArgs {
     /// Lease TTL for a claimed scenario run, in milliseconds.
     #[arg(long, default_value_t = 30_000)]
     pub lease_ttl_ms: u64,
-}
-
-/// Report emitted after a stored suite has executed.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct ScenarioReport {
-    pub execution_id: String,
-    pub flow_id: String,
-    pub flow_version: i32,
-    pub suite_id: String,
-    pub cases: Vec<CaseReport>,
-}
-
-impl ScenarioReport {
-    fn passed(&self) -> bool {
-        self.cases.iter().all(|case| case.outcome.passed())
-    }
-}
-
-/// One stored case's durable run identity and evaluated replay outcome.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct CaseReport {
-    pub case_id: String,
-    pub run_id: String,
-    pub outcome: Outcome,
 }
 
 fn database_url(args: &ScenarioWorkerArgs) -> anyhow::Result<String> {
@@ -371,6 +344,31 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         &source_schema,
         stored_cases.iter().map(|(_, ordinal, _)| *ordinal),
     )?;
+    let stored_cases = stored_cases
+        .into_iter()
+        .zip(execution_schemas)
+        .map(|((case_id, ordinal, case_body), execution_schema)| {
+            let case: TestCase = serde_json::from_str(&case_body)
+                .with_context(|| format!("parse stored case {}/{}", args.suite_id, case_id))?;
+            case.validate()
+                .with_context(|| format!("validate stored case {}/{}", args.suite_id, case_id))?;
+            let flow_ref = case
+                .flow_ref
+                .as_ref()
+                .with_context(|| format!("stored case {case_id:?} is not a flow scenario"))?;
+            if flow_ref.flow_id != args.flow_id || flow_ref.version as i32 != args.flow_version {
+                bail!(
+                    "stored case {:?} targets {}@{}, expected {}@{}",
+                    case_id,
+                    flow_ref.flow_id,
+                    flow_ref.version,
+                    args.flow_id,
+                    args.flow_version
+                );
+            }
+            Ok((case_id, ordinal, case, execution_schema))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let mut postgres_config = WamnPostgresConfig::from_env();
     postgres_config.database_url = Some(database_url);
@@ -380,27 +378,55 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
     let engine = build_engine(&[])?;
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
     let mut reports = Vec::with_capacity(stored_cases.len());
+    let mut checked_flow = false;
 
-    for ((case_id, ordinal, case_body), execution_schema) in
-        stored_cases.into_iter().zip(execution_schemas)
-    {
-        let case: TestCase = serde_json::from_str(&case_body)
-            .with_context(|| format!("parse stored case {}/{}", args.suite_id, case_id))?;
-        case.validate()
-            .with_context(|| format!("validate stored case {}/{}", args.suite_id, case_id))?;
-        let flow_ref = case
-            .flow_ref
-            .as_ref()
-            .with_context(|| format!("stored case {case_id:?} is not a flow scenario"))?;
-        if flow_ref.flow_id != args.flow_id || flow_ref.version as i32 != args.flow_version {
-            bail!(
-                "stored case {:?} targets {}@{}, expected {}@{}",
-                case_id,
-                flow_ref.flow_id,
-                flow_ref.version,
-                args.flow_id,
-                args.flow_version
-            );
+    for (case_id, ordinal, case, execution_schema) in stored_cases {
+        let recorder = Arc::new(RecordingEgress::spying());
+        recorder.expect(&args.flow_id, expected_authorities(&case));
+        let (scenario, clock) =
+            ScenarioCapabilities::virtualized(args.epoch_secs, args.random_seed, recorder.clone());
+        let postgres = case_pool(
+            &postgres_config,
+            &args.tenant,
+            &execution_schema,
+            &args.flow_id,
+        )?;
+        let mut host = ExecutionHost::instantiate(
+            &engine,
+            &guest,
+            postgres,
+            credentials.clone(),
+            logging.clone(),
+            ExecutionIdentity {
+                owner: &args.flow_id,
+                tenant: &args.tenant,
+                schema: Some(execution_schema.as_str()),
+                project: &args.project,
+            },
+            injected_capabilities(scenario.wasi, scenario.egress),
+            args.lease_ttl_ms,
+        )
+        .await
+        .context("instantiate scenario flowrunner")?;
+        if !checked_flow {
+            let node_types = host
+                .check_flow(&graph_json)
+                .await
+                .context("preflight stored scenario flow")?;
+            if !node_types.is_empty() {
+                drop(host);
+                ticker.abort();
+                connection_task.abort();
+                return Ok(ScenarioReport {
+                    execution_id: args.execution_id.clone(),
+                    flow_id: args.flow_id.clone(),
+                    flow_version: args.flow_version,
+                    suite_id: args.suite_id.clone(),
+                    refusal: Some(ScenarioRefusal::UndrivableNodes { node_types }),
+                    cases: reports,
+                });
+            }
+            checked_flow = true;
         }
 
         scope_session(&client, &args.tenant, &execution_schema).await?;
@@ -440,33 +466,6 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
             .await
             .context("enqueue scenario run")?;
 
-        let recorder = Arc::new(RecordingEgress::spying());
-        recorder.expect(&args.flow_id, expected_authorities(&case));
-        let (scenario, clock) =
-            ScenarioCapabilities::virtualized(args.epoch_secs, args.random_seed, recorder.clone());
-        let postgres = case_pool(
-            &postgres_config,
-            &args.tenant,
-            &execution_schema,
-            &args.flow_id,
-        )?;
-        let mut host = ExecutionHost::instantiate(
-            &engine,
-            &guest,
-            postgres,
-            credentials.clone(),
-            logging.clone(),
-            ExecutionIdentity {
-                owner: &args.flow_id,
-                tenant: &args.tenant,
-                schema: Some(execution_schema.as_str()),
-                project: &args.project,
-            },
-            injected_capabilities(scenario.wasi, scenario.egress),
-            args.lease_ttl_ms,
-        )
-        .await
-        .context("instantiate scenario flowrunner")?;
         host.drain().await.context("drive stored scenario case")?;
         ScenarioScheduler::new(clock)
             .drive_to_quiescence(&mut QueueScenarioBackend {
@@ -516,6 +515,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         flow_id: args.flow_id.clone(),
         flow_version: args.flow_version,
         suite_id: args.suite_id.clone(),
+        refusal: None,
         cases: reports,
     })
 }

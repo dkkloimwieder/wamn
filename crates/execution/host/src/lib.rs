@@ -119,6 +119,8 @@ pub fn injected_capabilities(
 /// The `run-next` export's typed signature: `(lease-ttl-ms) -> (claimed, run-id,
 /// outcome)`.
 type RunNextFunc = TypedFunc<(u64,), (Result<(bool, Option<String>, u32), String>,)>;
+/// The side-effect-free `check-flow` export's typed signature.
+type CheckFlowFunc = TypedFunc<(String,), (Result<Vec<String>, String>,)>;
 
 /// What one drain of the queue did — the gate's assertion surface. `claimed` is
 /// the total runs this drain pulled; each ends `completed` (0), `parked` (1, a
@@ -326,6 +328,7 @@ fn attach_memory_limiter(store: &mut Store<SharedCtx>, component_id: &str) -> Op
 /// backoff + shutdown loop.
 pub struct ExecutionHost {
     store: Store<SharedCtx>,
+    check_flow: CheckFlowFunc,
     run_next: RunNextFunc,
     ttl_ms: u64,
     /// The doorbell subject this runner listens on (`wamn.doorbell.<tenant>`).
@@ -458,16 +461,27 @@ impl ExecutionHost {
         // still advances) never traps a legitimately long run.
         store.set_epoch_deadline(u64::MAX / 2);
         let instance = pre.instantiate_async(&mut store).await?;
+        let check_flow = instance.get_typed_func(&mut store, "check-flow")?;
         let run_next = instance.get_typed_func(&mut store, "run-next")?;
 
         Ok(Self {
             store,
+            check_flow,
             run_next,
             ttl_ms,
             subject: format!("wamn.doorbell.{tenant}"),
             metrics: RunMetrics::register(tenant, project),
             mem,
         })
+    }
+
+    /// Return the sorted, unique node types this compiled runner cannot dispatch.
+    pub async fn check_flow(&mut self, flow_json: &str) -> anyhow::Result<Vec<String>> {
+        let (result,) = self
+            .check_flow
+            .call_async(&mut self.store, (flow_json.to_owned(),))
+            .await?;
+        result.map_err(|error| anyhow::anyhow!("check-flow: {error}"))
     }
 
     /// One turn of the guest's dispatch loop: claim + drive + dequeue/park the
