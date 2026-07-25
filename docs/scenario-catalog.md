@@ -117,6 +117,41 @@ component. Its `--execution-schema-template` maps each case ordinal to a
 distinct caller-provisioned schema, preserving case isolation without granting
 the worker schema-creation privileges.
 
+### DbState POC resource envelope
+
+`wamn-scenario-runtime` applies one fixed exploratory-development policy to
+every stored DbState assertion: a 5 second PostgreSQL `statement_timeout`, at
+most 256 rows, and at most 1 MiB of serialized JSON text. These are safety rails,
+not production capacity or latency promises.
+
+The policy is deliberately conservative relative to the checked-in POC evidence
+at baseline `48a3478`. Across `poc-f{1,3,4}-suite.json` and
+`testkit-cases.json`, ten DbState assertions are stored; every assertion declares
+at most one result row, and the largest declared first-row JSON value is 34
+bytes. Reproduce that inventory with:
+
+```bash
+jq -s '[.. | objects | select(has("db-state")) | .["db-state"]] |
+  {assertions:length,
+   max_declared_row_count:
+     (map(.expect["row-count"] //
+       (if .expect["first-row"] then 1 else 0 end)) | max),
+   max_expected_first_row_json_bytes:
+     (map(.expect["first-row"].row? | select(. != null) |
+       tojson | utf8bytelength) | max)}' \
+  deploy/gates/poc-f1-suite.json deploy/gates/poc-f3-suite.json \
+  deploy/gates/poc-f4-suite.json deploy/gates/testkit-cases.json
+```
+
+Each assertion runs in its existing tenant-scoped read-only transaction. The
+runtime sets the timeout transaction-locally, asks PostgreSQL for at most one
+sentinel row beyond the limit, and streams rows instead of collecting them.
+PostgreSQL replaces a single over-limit JSON value with a small marker before
+protocol transfer; checked cumulative accounting rejects the row before parsing
+or retaining it. Any timeout, row, byte, cancellation, dependency, or result
+shape failure rolls the transaction back and discards the assertion's partial
+capture.
+
 ## Gates
 
 - **`wamn-ctl tests/suite_promote_live.rs`** — drives the REAL

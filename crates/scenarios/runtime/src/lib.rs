@@ -37,7 +37,10 @@ use wasmtime_wasi::WasiCtx;
 
 pub use clock::{DatabaseClockBoundary, ScenarioClock, VirtualWallClock};
 pub use credentials::{ScenarioCredentials, load_scenario_credentials};
-pub use db::{DbStateCaptureFailure, DbStateCaptureFailureKind, capture_db_assertions};
+pub use db::{
+    DbStateCaptureFailure, DbStateCaptureFailureKind, DbStateCaptureLimits, capture_db_assertions,
+    capture_db_assertions_with_limits,
+};
 pub use egress::{EgressObservation, RecordingEgress};
 pub use random::{SeededRng, build_virtual_wasi};
 pub use scheduler::{

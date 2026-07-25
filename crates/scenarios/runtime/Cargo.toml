@@ -11,6 +11,7 @@ wamn-runtime = { workspace = true }
 wamn-scenario-model = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+futures-util = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 wash-runtime = { workspace = true }
 hyper = { workspace = true }

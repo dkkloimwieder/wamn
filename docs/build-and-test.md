@@ -363,6 +363,14 @@ adapters come from `wamn-scenario-runtime`; none are linked into
 cargo test -p wamn-scenario-model -p wamn-scenario-catalog \
   -p wamn-scenario-runtime -p wamn-scenario-worker
 cargo run -p wamn-scenario-worker -- --help
+
+# DbState adapter gate of record (disposable PostgreSQL 18; no kind rollout):
+docker run -d --name wamn-dbstate-proof -p 55439:5432 \
+  -e POSTGRES_PASSWORD=postgres postgres:18
+until docker exec wamn-dbstate-proof pg_isready -U postgres; do sleep 1; done
+WAMN_DB_STATE_TEST_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55439/postgres \
+  cargo test -p wamn-scenario-runtime --test db_state_live -- --ignored --nocapture
+docker rm -f wamn-dbstate-proof
 ```
 
 The retained `testkitbench --suite / --impact-report` path is the compatibility

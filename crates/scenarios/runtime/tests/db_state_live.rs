@@ -1,9 +1,12 @@
 //! Disposable-PostgreSQL proof for the production DbState observation boundary.
 
+use std::time::Duration;
+
 use tokio_postgres::NoTls;
 use wamn_scenario_model::TestCase;
 use wamn_scenario_runtime::{
-    DbStateCaptureFailure, DbStateCaptureFailureKind, capture_db_assertions,
+    DbStateCaptureFailure, DbStateCaptureFailureKind, DbStateCaptureLimits, capture_db_assertions,
+    capture_db_assertions_with_limits,
 };
 
 const SCHEMA: &str = "scenario_dbstate_boundary";
@@ -33,13 +36,40 @@ fn case(name: &str, queries: &[&str]) -> TestCase {
     .expect("proof case is valid")
 }
 
+fn limits(timeout_ms: u64, max_rows: u32, max_json_bytes: u32) -> DbStateCaptureLimits {
+    DbStateCaptureLimits::new(Duration::from_millis(timeout_ms), max_rows, max_json_bytes)
+        .expect("proof limits are finite and non-zero")
+}
+
+fn capture_failure(error: &anyhow::Error) -> &DbStateCaptureFailure {
+    error
+        .downcast_ref::<DbStateCaptureFailure>()
+        .expect("bounded observation refusal must retain its typed failure")
+}
+
+async fn assert_bounded_failure(
+    client: &mut tokio_postgres::Client,
+    name: &str,
+    query: &str,
+    limits: DbStateCaptureLimits,
+    expected: DbStateCaptureFailureKind,
+) {
+    let error = capture_db_assertions_with_limits(client, &case(name, &[query]), limits)
+        .await
+        .expect_err("bounded DbState query must fail");
+    let failure = capture_failure(&error);
+    assert_eq!(failure.kind(), expected);
+    assert!(!failure.to_string().contains(query));
+    assert!(!failure.to_string().contains(PASSWORD));
+}
+
 async fn assert_read_only_rejection(client: &mut tokio_postgres::Client, name: &str, query: &str) {
     let error = capture_db_assertions(client, &case(name, &[query]))
         .await
         .expect_err("mutating DbState query must be rejected");
     let failure = error
         .downcast_ref::<DbStateCaptureFailure>()
-        .expect("read-only rejection must retain its typed failure");
+        .unwrap_or_else(|| panic!("read-only rejection must retain its typed failure: {error:?}"));
     assert_eq!(failure.kind(), DbStateCaptureFailureKind::ReadOnlyViolation);
     assert_eq!(failure.to_string(), "db-state observation rejected a write");
     assert!(!failure.to_string().contains(query));
@@ -150,6 +180,97 @@ async fn db_state_boundary_rejects_writes_and_contains_transaction_control() {
         vec![serde_json::json!({"tenant_id": "tenant-a", "value": 1})]
     );
 
+    let original_statement_timeout: String = observer
+        .query_one("SHOW statement_timeout", &[])
+        .await
+        .expect("read original statement timeout")
+        .get(0);
+    let local_timeout = capture_db_assertions_with_limits(
+        &mut observer,
+        &case(
+            "transaction-local-timeout",
+            &["SELECT to_jsonb(current_setting('statement_timeout'))"],
+        ),
+        limits(17, 2, 1024),
+    )
+    .await
+    .expect("statement timeout is visible inside the observation");
+    assert_eq!(local_timeout[0].rows, vec![serde_json::json!("17ms")]);
+    let restored_statement_timeout: String = observer
+        .query_one("SHOW statement_timeout", &[])
+        .await
+        .expect("read restored statement timeout")
+        .get(0);
+    assert_eq!(restored_statement_timeout, original_statement_timeout);
+
+    assert_bounded_failure(
+        &mut observer,
+        "statement-timeout",
+        "SELECT to_jsonb(count(*)) FROM generate_series(1, 10000000)",
+        limits(1, 2, 1024),
+        DbStateCaptureFailureKind::StatementTimeout,
+    )
+    .await;
+    assert_bounded_failure(
+        &mut observer,
+        "row-limit",
+        "SELECT to_jsonb(n) FROM generate_series(1, 3) AS n",
+        limits(1_000, 2, 1024),
+        DbStateCaptureFailureKind::RowLimit,
+    )
+    .await;
+    assert_bounded_failure(
+        &mut observer,
+        "single-value-byte-limit",
+        "SELECT to_jsonb(repeat('x', 8))",
+        limits(1_000, 2, 9),
+        DbStateCaptureFailureKind::ByteLimit,
+    )
+    .await;
+    assert_bounded_failure(
+        &mut observer,
+        "cumulative-byte-limit",
+        "SELECT to_jsonb('xxxx'::text) FROM generate_series(1, 2)",
+        limits(1_000, 2, 10),
+        DbStateCaptureFailureKind::ByteLimit,
+    )
+    .await;
+    let exact_byte_boundary = capture_db_assertions_with_limits(
+        &mut observer,
+        &case("exact-byte-boundary", &["SELECT to_jsonb(repeat('x', 7))"]),
+        limits(1_000, 1, 9),
+    )
+    .await
+    .expect("a JSON value exactly at the byte limit remains valid");
+    assert_eq!(
+        exact_byte_boundary[0].rows,
+        vec![serde_json::json!("xxxxxxx")]
+    );
+    assert_bounded_failure(
+        &mut observer,
+        "result-shape",
+        "SELECT 1",
+        limits(1_000, 2, 1024),
+        DbStateCaptureFailureKind::ResultShape,
+    )
+    .await;
+    assert_bounded_failure(
+        &mut observer,
+        "external-cancellation",
+        "SELECT to_jsonb(pg_cancel_backend(pg_backend_pid()))",
+        limits(1_000, 2, 1024),
+        DbStateCaptureFailureKind::Cancelled,
+    )
+    .await;
+
+    let after_bounded_failures = capture_db_assertions(
+        &mut observer,
+        &case("after-bounded-failures", &["SELECT to_jsonb(1)"]),
+    )
+    .await
+    .expect("bounded failures roll back and do not poison the observer");
+    assert_eq!(after_bounded_failures[0].rows, vec![serde_json::json!(1)]);
+
     assert_read_only_rejection(
         &mut observer,
         "update-returning",
@@ -236,6 +357,32 @@ async fn db_state_boundary_rejects_writes_and_contains_transaction_control() {
         .expect("verify DDL did not persist")
         .get(0);
     assert!(!escaped);
+
+    let (mut doomed_observer, doomed_connection) = observer_config
+        .connect(NoTls)
+        .await
+        .expect("connect dependency-loss observer");
+    let doomed_task = tokio::spawn(async move {
+        let _ = doomed_connection.await;
+    });
+    doomed_observer
+        .query_one(
+            "SELECT set_config('app.tenant', 'tenant-a', false),
+                    set_config('search_path', $1, false)",
+            &[&SCHEMA],
+        )
+        .await
+        .expect("scope dependency-loss observer");
+    assert_bounded_failure(
+        &mut doomed_observer,
+        "dependency-loss",
+        "SELECT to_jsonb(pg_terminate_backend(pg_backend_pid()))",
+        limits(1_000, 2, 1024),
+        DbStateCaptureFailureKind::DependencyUnavailable,
+    )
+    .await;
+    drop(doomed_observer);
+    doomed_task.abort();
 
     drop(observer);
     observer_task.abort();

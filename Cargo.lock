@@ -4674,6 +4674,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures-util",
  "hyper",
  "rand_core 0.10.1",
  "serde_json",
