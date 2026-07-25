@@ -6,19 +6,19 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 # The published JSON Schema contract (docs/flow-schema.schema.json) is GENERATED
 # from these types (single source of truth); a drift test keeps them in lockstep.
-schemars = "0.8"
+schemars = { workspace = true }
 # The `partitioned(key)` ordering key (5.11) is a JMESPath over the run input —
 # the SAME expression surface (crate + version) the node library evaluates
 # (wamn-standard-nodes), so validation and the dispatcher/materializer key stamping share
 # one grammar.
-jmespath = "0.3"
+jmespath = { workspace = true }
 
 [dev-dependencies]
 # tests validate each fixture flow against the generated JSON Schema, tying the
 # language-neutral contract to the Rust types. boon is a pure-Rust validator
 # with no network/reqwest dependency.
-boon = "0.6"
+boon = { workspace = true }

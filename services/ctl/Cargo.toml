@@ -7,38 +7,38 @@ license.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { version = "4", features = ["derive", "env"] }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
-tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
-serde_json = "1"
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net"] }
+tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 # The verbs are println!-style tools; this fmt layer exists so --log-level
 # keeps its meaning (dep diagnostics to stderr), matching the pre-split
 # no-OTEL behavior of wash_runtime::observability::initialize_observability.
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 # 4.1b publish-catalog: catalog snapshot model + the 3.2 tenant-floor DDL.
-wamn-schema-model = { path = "../../crates/schema/model" }
-wamn-schema-compiler = { path = "../../crates/schema/compiler" }
+wamn-schema-model = { workspace = true }
+wamn-schema-compiler = { workspace = true }
 # publish-catalog --flow: parse/validate the flow graph before the flows row.
-wamn-flow = { path = "../../crates/execution/flow-model" }
+wamn-flow = { workspace = true }
 # 2.5 migrate-catalog: the pure migration engine — reads the current applied
 # catalog, plans the one-transaction apply (DDL + lifecycle + history).
-wamn-schema-control = { path = "../../crates/schema/control" }
+wamn-schema-control = { workspace = true }
 # 2.3 provision-project: the pure CREATE DATABASE / role / GRANT CONNECT
 # builders + project-id naming + credential Secret rendering.
-wamn-control-provision = { path = "../../crates/control/provision" }
+wamn-control-provision = { workspace = true }
 # wamn-q3n.6 provision-org: the control-plane registry model + registry SQL.
-wamn-control-registry = { path = "../../crates/control/registry" }
+wamn-control-registry = { workspace = true }
 # wamn-8df.5 copy-project-env: the definition pass re-compiles the copied RLS
 # policy rows and applies them on the dst.
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
 # 11.3 pin-run also reuses its run/node-run read builders + `capture::scrub`.
-wamn-run-state = { path = "../../crates/execution/run-state" }
+wamn-run-state = { workspace = true }
 # 11.3 pin-run: the scenario-catalog transform (RunRecord + node_runs ->
 # TestCase) and the canonical scenario-model vocabulary it serializes.
-wamn-scenario-model = { path = "../../crates/scenarios/model" }
-wamn-scenario-catalog = { path = "../../crates/scenarios/catalog" }
+wamn-scenario-model = { workspace = true }
+wamn-scenario-catalog = { workspace = true }
 # 11.8 impact-report / migrate-catalog acknowledge gate: the PURE schema-change
 # impact analysis (entities → flows via registration + node config → suites →
 # generated-API). This shell reads the dependency rows and calls wamn_schema_control::impact::analyze.

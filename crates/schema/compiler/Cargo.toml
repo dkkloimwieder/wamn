@@ -7,11 +7,11 @@ license.workspace = true
 
 [dependencies]
 # The compiler consumes the canonical catalog model (3.1) and its diff.
-wamn-schema-model = { path = "../../schema/model" }
-serde_json = "1"
-serde = { version = "1", features = ["derive"] }
+wamn-schema-model = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 uuid = { version = "1", default-features = false, features = ["v5"] }
-wamn-pg-core = { path = "../../platform/pg-core" }
+wamn-pg-core = { workspace = true }
 
 # No DB dependency: this crate EMITS SQL, it does not execute it (the live apply
 # path is the migration engine 2.5 / hosting). The apply-verification test shells

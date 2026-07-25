@@ -11,9 +11,9 @@ edition.workspace = true
 # The POC-F2 custom node (wamn-1ab) starts from this shape.
 
 [dependencies]
-serde_json = "1"
-wamn-node-sdk = { path = "../../../crates/node/sdk" }
-wamn-node-guest = { path = "../../../crates/node/guest" }
+serde_json = { workspace = true }
+wamn-node-sdk = { workspace = true }
+wamn-node-guest = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

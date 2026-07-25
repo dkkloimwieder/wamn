@@ -14,16 +14,16 @@ license.workspace = true
 # so the live engine never diverges from them. This crate stays PURE (no DB,
 # clock, or wasm — the schema compiler/control SR6 pure/effect precedent): it emits
 # `$n`-parameterized SQL text, and the driver holds the connection.
-wamn-schema-model = { path = "../../schema/model" }
-wamn-schema-compiler = { path = "../compiler" }
-wamn-control-registry = { path = "../../control/registry" }
-wamn-flow = { path = "../../execution/flow-model" }
+wamn-schema-model = { workspace = true }
+wamn-schema-compiler = { workspace = true }
+wamn-control-registry = { workspace = true }
+wamn-flow = { workspace = true }
 # EVT-REPLICA-IDENT (wamn-l5i9.31): the registration model + the SINGLE root-`old`
 # detector, so the RI-FULL derivation and the materializer's per-event old-absent
 # guard can never diverge (one parser). Light closure (catalog/event-wire/jmespath).
-wamn-event-reg = { path = "../../events/registration" }
+wamn-event-reg = { workspace = true }
 
 [dev-dependencies]
 # The live-apply gate builds catalogs as structs and renders the apply plan into
 # a psql script; no JSON needed for the fixtures.
-serde_json = "1"
+serde_json = { workspace = true }

@@ -19,7 +19,7 @@ license = "Apache-2.0"
 # default-features off: `wasi-webgpu` pulls crates.io wasmtime alongside the
 # workspace's git-pinned one (two wasmtimes = linker typecheck failures upstream
 # solves with a [patch] we'd otherwise have to replicate).
-wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "981fdc56ebc1840f08161aef5edec592538e5d4c", default-features = false, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel"] }
+wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "981fdc56ebc1840f08161aef5edec592538e5d4c", default-features = false }
 # pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch
 # wamn/0.8.0 = upstream v0.8.0 (784e644) + the carried failover-slot-syntax
 # commit (S-CDC-1 finding F1: legacy `… FAILOVER` → 42601 on PG17+; the fork
@@ -27,9 +27,82 @@ wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "981f
 # Carried-commit ledger + sync runbook: docs/pg-walstream-fork.md.
 pg_walstream = { git = "https://github.com/dkkloimwieder/pg-walstream", rev = "0b007cd627bb913d4b159c705a106b6d4152c91a" }
 anyhow = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+async-nats = { version = "0.47", default-features = false }
+boon = "0.6"
+bytes = "1"
+chrono = { version = "0.4", default-features = false }
+clap = "4"
+futures-util = "0.3"
+hex = "0.4"
+http-body-util = "0.1"
+hyper = "1"
+hyper-util = "0.1"
+jmespath = "0.3"
+opentelemetry = { version = "0.31", default-features = false }
+opentelemetry-otlp = { version = "0.31", default-features = false }
+opentelemetry_sdk = { version = "0.31", default-features = false }
+rand_core = "0.10"
+ring = "0.17"
+rustls = { version = "0.23", default-features = false }
+schemars = "0.8"
+serde = "1"
+serde_json = "1"
+sha2 = "0.11"
+tokio = "1"
+tokio-postgres = "0.7"
 tracing = "0.1"
+tracing-subscriber = "0.3"
 async-trait = "0.1"
+wasm-encoder = "0.251"
+
+# Every project crate has one canonical path + version identity (M-CRATES-IN-WORKSPACE).
+wamn-api = { path = "crates/data/api", version = "0.1.0" }
+wamn-builder = { path = "services/builder", version = "0.1.0" }
+wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
+wamn-cdc1 = { path = "poc/cdc1", version = "0.1.0" }
+wamn-component-policy = { path = "crates/platform/component-policy", version = "0.1.0" }
+wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" }
+wamn-control-registry = { path = "crates/control/registry", version = "0.1.0" }
+wamn-ctl = { path = "services/ctl", version = "0.1.0" }
+wamn-dispatcher = { path = "services/dispatcher", version = "0.1.0" }
+wamn-dm1 = { path = "poc/dm1", version = "0.1.0" }
+wamn-entity-access = { path = "crates/data/entity-access", version = "0.1.0" }
+wamn-event-reg = { path = "crates/events/registration", version = "0.1.0" }
+wamn-event-wire = { path = "crates/events/wire", version = "0.1.0" }
+wamn-execution-host = { path = "crates/execution/host", version = "0.1.0" }
+wamn-executor = { path = "services/executor", version = "0.1.0" }
+wamn-f1 = { path = "poc/f1", version = "0.1.0" }
+wamn-flow = { path = "crates/execution/flow-model", version = "0.1.0" }
+wamn-gate-harness = { path = "test-support/harness", version = "0.1.0" }
+wamn-gates = { path = "tests/orchestrator", version = "0.1.0" }
+wamn-host = { path = "services/host", version = "0.1.0" }
+wamn-materializer = { path = "crates/events/materializer", version = "0.1.0" }
+wamn-node-guest = { path = "crates/node/guest", version = "0.1.0" }
+wamn-node-host = { path = "services/node-host", version = "0.1.0" }
+wamn-node-invoke = { path = "crates/node/invoke", version = "0.1.0" }
+wamn-node-manifest = { path = "crates/node/manifest", version = "0.1.0" }
+wamn-node-runtime = { path = "crates/platform/node-runtime", version = "0.1.0" }
+wamn-node-sdk = { path = "crates/node/sdk", version = "0.1.0" }
+wamn-pg-core = { path = "crates/platform/pg-core", version = "0.1.0" }
+wamn-project-state = { path = "crates/identity/project-state", version = "0.1.0" }
+wamn-proof-conformance = { path = "tests/conformance", version = "0.1.0" }
+wamn-proof-integration = { path = "tests/integration", version = "0.1.0" }
+wamn-proof-system = { path = "tests/system", version = "0.1.0" }
+wamn-run-state = { path = "crates/execution/run-state", version = "0.1.0" }
+wamn-runner = { path = "crates/execution/flow-engine", version = "0.1.0" }
+wamn-runtime = { path = "crates/platform/runtime", version = "0.1.0" }
+wamn-scenario-catalog = { path = "crates/scenarios/catalog", version = "0.1.0" }
+wamn-scenario-model = { path = "crates/scenarios/model", version = "0.1.0" }
+wamn-scenario-runtime = { path = "crates/scenarios/runtime", version = "0.1.0" }
+wamn-scenario-worker = { path = "services/scenario-worker", version = "0.1.0" }
+wamn-scheduler = { path = "crates/execution/scheduler", version = "0.1.0" }
+wamn-schema-compiler = { path = "crates/schema/compiler", version = "0.1.0" }
+wamn-schema-control = { path = "crates/schema/control", version = "0.1.0" }
+wamn-schema-model = { path = "crates/schema/model", version = "0.1.0" }
+wamn-standard-nodes = { path = "crates/execution/standard-nodes", version = "0.1.0" }
+wamn-test-fixtures = { path = "test-support/fixtures", version = "0.1.0" }
+wamn-test-infrastructure = { path = "test-support/infrastructure", version = "0.1.0" }
+wamn-waker = { path = "services/waker", version = "0.1.0" }
 
 [profile.release]
 lto = "thin"

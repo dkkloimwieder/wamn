@@ -10,15 +10,15 @@ path = "lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { version = "4", features = ["derive", "env"] }
-hyper = "1"
-serde_json = "1"
-tokio = { workspace = true, features = ["io-util", "net", "sync"] }
-tokio-postgres = "0.7"
+clap = { workspace = true, features = ["derive", "env"] }
+hyper = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "net", "rt"] }
+tokio-postgres = { workspace = true }
 tracing = { workspace = true }
-wamn-ctl = { path = "../../services/ctl" }
-wamn-node-invoke = { path = "../../crates/node/invoke" }
-wamn-node-runtime = { path = "../../crates/platform/node-runtime" }
-wamn-runtime = { path = "../../crates/platform/runtime" }
-wamn-test-fixtures = { path = "../fixtures" }
+wamn-ctl = { workspace = true }
+wamn-node-invoke = { workspace = true }
+wamn-node-runtime = { workspace = true }
+wamn-runtime = { workspace = true }
+wamn-test-fixtures = { workspace = true }
 wash-runtime = { workspace = true }

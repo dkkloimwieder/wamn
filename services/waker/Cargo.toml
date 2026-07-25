@@ -7,19 +7,19 @@ license.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { version = "4", features = ["derive", "env"] }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time"] }
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-serde_json = "1"
-futures-util = "0.3"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+serde_json = { workspace = true }
+futures-util = { workspace = true }
 # The doorbell client. Same version req as the runtime's so cargo unifies to one
 # crate instance across the workspace build (the dispatcher/run-worker pattern).
-async-nats = { version = "0.47", default-features = false }
+async-nats = { workspace = true }
 # init_crypto: standardize the process rustls provider on aws-lc-rs (the local
 # copy of the fork's wash_runtime::init_crypto — same feature shape as the
 # dispatcher, so the mTLS doorbell handshake has a deterministic provider).
-rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws-lc-rs"] }
+rustls = { workspace = true, features = ["std", "tls12", "aws-lc-rs"] }
 # The in-cluster Kubernetes scale client (GET/PATCH .../scale over HTTPS, trusting
 # only the service-account CA). reqwest 0.13 is ALREADY in the workspace lock
 # (oci-client via wash-runtime) built on the rustls stack, so a direct dep with

@@ -6,10 +6,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-wamn-runtime = { path = "../../crates/platform/runtime" }
-wash-runtime = { workspace = true }
+wamn-runtime = { workspace = true }
+wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-otel"] }
 anyhow = { workspace = true }
-async-nats = { version = "0.47", default-features = false }
-clap = { version = "4", features = ["derive", "env"] }
+async-nats = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tracing = { workspace = true }

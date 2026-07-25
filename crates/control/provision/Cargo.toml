@@ -10,14 +10,14 @@ license.workspace = true
 # StaticCredentialProvider parses) and the per-project credential Secret render
 # as JSON (kubectl apply accepts JSON manifests). No schemars — this is a
 # provisioning tool, not a published contract.
-serde_json = "1"
+serde_json = { workspace = true }
 
 # wamn-q3n.6 provision-org: the org Cluster-PAIR renderer takes the registry's
 # Org / Tier / Side vocabulary and derives cluster names via `cluster_name`, so
 # the rendered clusters and the org's registry.orgs row name the same clusters.
 # A lean pure→pure edge (wamn-control-registry deps serde + serde_json only).
-wamn-control-registry = { path = "../../control/registry" }
-wamn-pg-core = { path = "../../platform/pg-core" }
+wamn-control-registry = { workspace = true }
+wamn-pg-core = { workspace = true }
 
 # NO DB / K8s / tokio / clock dependency: the builders are pure text and the
 # renderers are pure JSON. The `provision-project` driver (wamn-ctl) holds the

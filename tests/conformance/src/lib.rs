@@ -6,3 +6,6 @@ pub mod egressbench;
 pub mod schema_drift;
 pub mod socketguard;
 pub mod testgate;
+
+#[cfg(test)]
+mod manifest_dependencies;

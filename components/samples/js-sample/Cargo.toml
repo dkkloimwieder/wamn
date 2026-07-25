@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-wit-bindgen = "0.44"
+wit-bindgen = { workspace = true }
 
 # A COMMAND component (wasi:cli/run via `main`), like the materializer — NOT a
 # cdylib. It binds a durable consumer, drains it, re-publishes, and exits: the

@@ -12,9 +12,9 @@ license.workspace = true
 # exactly {serde_json}, and the bindgen machinery must not leak into it.
 
 [dependencies]
-wamn-node-sdk = { path = "../../node/sdk" }
+wamn-node-sdk = { workspace = true }
 wit-bindgen = "0.44"
-serde_json = "1"
+serde_json = { workspace = true }
 
 [features]
 # The capability-bearing shell facade (caps.rs): CapsCtx + the WIT<->SDK value

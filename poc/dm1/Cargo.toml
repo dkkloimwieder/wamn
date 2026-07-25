@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-wamn-schema-compiler = { path = "../../crates/schema/compiler" }
-wamn-schema-model = { path = "../../crates/schema/model" }
-wamn-schema-control = { path = "../../crates/schema/control" }
+wamn-schema-compiler = { workspace = true }
+wamn-schema-model = { workspace = true }
+wamn-schema-control = { workspace = true }
 
 [dev-dependencies]
-wamn-project-state = { path = "../../crates/identity/project-state" }
-serde_json = "1"
+wamn-project-state = { workspace = true }
+serde_json = { workspace = true }

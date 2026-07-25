@@ -7,50 +7,50 @@ license.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { version = "4", features = ["derive", "env"] }
-tokio = { workspace = true, features = ["process", "rt", "rt-multi-thread", "macros", "fs", "io-util", "net", "time"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["process", "rt-multi-thread", "macros", "fs", "net"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 # 5.5c: the dependency allowlist policy file (policy/default-allowlist.toml) is
 # TOML — a crate-name surface list. serde_json parses the `cargo metadata`
 # resolve graph (shelled, no cargo_metadata crate).
 toml = "0.8"
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-wamn-component-policy = { path = "../../crates/platform/component-policy" }
-wamn-runtime = { path = "../../crates/platform/runtime" }
-wamn-node-runtime = { path = "../../crates/platform/node-runtime" }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+wamn-component-policy = { workspace = true }
+wamn-runtime = { workspace = true }
+wamn-node-runtime = { workspace = true }
 # 5.5e: the canonical wamn.node.manifest model (ANNOTATION_KEY, NodeManifest,
 # from_json/to_json, is_valid) — the builder writes the annotation, never a
 # second copy of the schema.
-wamn-node-manifest = { path = "../../crates/node/manifest" }
+wamn-node-manifest = { workspace = true }
 # 11.5: the pure invocation wire types (NodeInvokeRequest / NodeInvokeResponse /
 # WireNodeError) the test gate builds + asserts against — the SAME wire model the
 # node runtime and node-host use; kept direct so the builder's wire use is explicit.
-wamn-node-invoke = { path = "../../crates/node/invoke" }
+wamn-node-invoke = { workspace = true }
 # The test gate parses cases.json into wamn_scenario_model::NodeCaseFile,
 # lowers each NodeCase to a TestCase, and evaluates the canonical scenario
 # vocabulary without local case types.
-wamn-scenario-model = { path = "../../crates/scenarios/model" }
+wamn-scenario-model = { workspace = true }
 # 5.5e: the hand-rolled OCI registry-v2 writer (the repo's first Rust OCI push)
 # rides the hyper 1 stack already in the graph — a plain-HTTP client for the
 # in-cluster registry:2, full control of the manifest media types + annotations.
-hyper = { version = "1", features = ["client", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
-bytes = "1"
+hyper = { workspace = true, features = ["client", "http1"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
 # Content-addressing (the OCI sha256 digest); the wamn-node-invoke sha2/hex line.
-sha2 = "0.11"
-hex = "0.4"
+sha2 = { workspace = true }
+hex = { workspace = true }
 # 5.5d artifact provenance: an ed25519 detached signature over sha256(wasm).
 # `ring` is already resolved in the workspace lock (transitive via the TLS
 # stack); its Ed25519KeyPair is a clean detached-signature API — no new heavy dep.
-ring = "0.17"
+ring = { workspace = true }
 
 [dev-dependencies]
 # The 5.5e push gate stands up an in-process registry-v2 STUB (a hyper server)
 # and asserts the exact bytes/manifest/annotations PUT — the lane's push gate.
-hyper = { version = "1", features = ["server", "http1"] }
+hyper = { workspace = true, features = ["server", "http1"] }
 # 5.5f golden tests synthesize world-node vs http-node components in-process
 # (the socketguard pattern) and derive their grants from the compiled bytes.
-wasm-encoder = "0.251"
+wasm-encoder = { workspace = true }

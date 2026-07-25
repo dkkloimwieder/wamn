@@ -6,6 +6,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-serde_json = { version = "1", features = ["raw_value"] }
+serde_json = { workspace = true, features = ["raw_value"] }
 croner = "3"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono = { workspace = true, features = ["std"] }

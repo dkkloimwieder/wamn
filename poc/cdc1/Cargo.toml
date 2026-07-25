@@ -7,6 +7,6 @@ edition.workspace = true
 # The vendored fork, rev-pinned once in the root workspace table (wamn-l5i9.8;
 # ledger: docs/pg-walstream-fork.md).
 pg_walstream = { workspace = true }
-tokio = { workspace = true }
-tokio-postgres = "0.7"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tokio-postgres = { workspace = true }
 anyhow = { workspace = true }

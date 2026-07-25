@@ -7,25 +7,25 @@ license.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-bytes = "1"
-clap = { version = "4", features = ["derive", "env"] }
-http-body-util = "0.1"
-hyper = "1"
-hyper-util = { version = "0.1", features = ["tokio"] }
-hex = "0.4"
-ring = "0.17"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.11"
-tokio = { workspace = true, features = ["fs", "io-util", "net", "sync", "time"] }
-wamn-component-policy = { path = "../../crates/platform/component-policy" }
-wamn-gate-harness = { path = "../../test-support/harness" }
-wamn-node-invoke = { path = "../../crates/node/invoke" }
-wamn-node-manifest = { path = "../../crates/node/manifest" }
-wamn-node-runtime = { path = "../../crates/platform/node-runtime" }
-wamn-run-state = { path = "../../crates/execution/run-state" }
-wamn-runtime = { path = "../../crates/platform/runtime" }
-wamn-scenario-model = { path = "../../crates/scenarios/model" }
+bytes = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true, features = ["tokio"] }
+hex = { workspace = true }
+ring = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["net", "time", "rt", "macros"] }
+wamn-component-policy = { workspace = true }
+wamn-gate-harness = { workspace = true }
+wamn-node-invoke = { workspace = true }
+wamn-node-manifest = { workspace = true }
+wamn-node-runtime = { workspace = true }
+wamn-run-state = { workspace = true }
+wamn-runtime = { workspace = true }
+wamn-scenario-model = { workspace = true }
 wash-runtime = { workspace = true }
 wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
-wasm-encoder = "0.251"
+wasm-encoder = { workspace = true }
