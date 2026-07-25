@@ -66,7 +66,7 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 use wamn_scenario_runtime::{
     EphemeralSchemaProvisioner, RUN_S6_WAKE_DEADLINES_SQL, RecordingEgress, ScenarioCapabilities,
-    ScenarioScheduler, ScenarioSchemaName, SchedulerBackend, VirtualClock, build_virtual_wasi,
+    ScenarioClock, ScenarioScheduler, ScenarioSchemaName, SchedulerBackend, build_virtual_wasi,
     case_pool,
 };
 // 11.4: the schemacase + runworker inline asserts now route through the pure
@@ -150,7 +150,7 @@ const EPH_SCHEMA: &str = "s6_test";
 /// store's expectation list, so the egress spy must flag and deny it.
 const PLANTED_URL: &str = "http://169.254.169.254/latest/meta-data/";
 
-// The virtual clock (`VirtualClock`/`VirtualWallClock`) and the egress spy
+// The virtual clock (`ScenarioClock`/`VirtualWallClock`) and the egress spy
 // (`RecordingEgress`) that used to live here are now reusable scenario-runtime
 // machinery in `wamn_scenario_runtime` (wamn-t92). This bench drives that
 // library — the regression proof the extraction changed nothing.
@@ -569,7 +569,7 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
 
     // The virtual clock the test store reads as its wall clock (and the seeded
     // random) — the extracted double set.
-    let vclock = VirtualClock::at_secs(TEST_EPOCH_SECS);
+    let vclock = ScenarioClock::at_secs(TEST_EPOCH_SECS);
     let test_wasi = build_virtual_wasi(&vclock, TEST_SEED);
 
     // Build the two workers from the SAME InstancePre.
@@ -690,7 +690,7 @@ async fn delay_phase(
     prod: &mut Worker,
     test: &mut Worker,
     admin: &tokio_postgres::Client,
-    vclock: &VirtualClock,
+    vclock: &ScenarioClock,
     echo_url: &str,
     delay_secs: u64,
 ) -> anyhow::Result<bool> {
@@ -902,7 +902,7 @@ impl SchedulerBackend for RunS6Backend<'_> {
 async fn scheduler_phase(
     test: &mut Worker,
     admin: &tokio_postgres::Client,
-    vclock: &VirtualClock,
+    vclock: &ScenarioClock,
     echo_url: &str,
     delay_secs: u64,
 ) -> anyhow::Result<bool> {
@@ -1034,7 +1034,7 @@ async fn schemacase_phase(
             .worker(
                 &case_pg,
                 Some(build_virtual_wasi(
-                    &VirtualClock::at_secs(TEST_EPOCH_SECS),
+                    &ScenarioClock::at_secs(TEST_EPOCH_SECS),
                     TEST_SEED,
                 )),
                 Arc::new(RecordingEgress::forwarding()),

@@ -497,13 +497,34 @@ fn save_retry(
     run_id: &str,
     node: &str,
     attempt: u32,
+    delay_ms: u64,
     throttle: Option<&ThrottleKey>,
 ) -> Result<(), String> {
     // wamn-2jkm.66: persist the shared-throttle key alongside (node, attempt) so
-    // a `rate-limited` retry's CROSS-run gate identity survives the park (the
-    // per-run backoff already rides the queue's `available_at`). Absent key =>
+    // a `rate-limited` retry's CROSS-run gate identity survives the park.
+    // `delay-ms` records the same engine-produced backoff that the production
+    // queue materializes in `available_at`, allowing scenarios to replay it
+    // without treating that database timestamp as logical time. Absent key =>
     // no `throttle` sub-object, so an ordinary retryable retry round-trips None.
-    let mut retry = json!({ "node": node, "attempt": attempt });
+    let state = retry_state(node, attempt, delay_ms, throttle);
+    client::execute(
+        &run_sql::update_run_state_sql(),
+        &[text(run_id), text(state.to_string())],
+    )
+    .map_err(|e| err_name(&e))?;
+    Ok(())
+}
+
+/// The minimum durable schedule needed to replay a retry without consulting
+/// database wall time. Existing readers ignore `delay-ms`, so adding it is
+/// backward-compatible; [`load_retry`] still accepts legacy state that has only
+/// `(node, attempt[, throttle])`.
+fn retry_state(node: &str, attempt: u32, delay_ms: u64, throttle: Option<&ThrottleKey>) -> Value {
+    let mut retry = json!({
+        "node": node,
+        "attempt": attempt,
+        "delay-ms": delay_ms,
+    });
     if let Some(t) = throttle {
         retry["throttle"] = json!({
             "node-type": t.node_type,
@@ -511,12 +532,7 @@ fn save_retry(
             "host": t.host,
         });
     }
-    client::execute(
-        &run_sql::update_run_state_sql(),
-        &[text(run_id), text(json!({ "retry": retry }).to_string())],
-    )
-    .map_err(|e| err_name(&e))?;
-    Ok(())
+    json!({ "retry": retry })
 }
 
 /// Load a persisted in-flight retry cursor `(node, attempt, throttle)` from
@@ -532,9 +548,11 @@ fn load_retry(run_id: &str) -> Result<Option<(String, u32, Option<ThrottleKey>)>
         _ => return Ok(None),
     };
     let v: Value = serde_json::from_str(&raw).map_err(|e| format!("state_json parse: {e}"))?;
-    let Some(retry) = v.get("retry") else {
-        return Ok(None);
-    };
+    Ok(parse_retry(&v))
+}
+
+fn parse_retry(v: &Value) -> Option<(String, u32, Option<ThrottleKey>)> {
+    let retry = v.get("retry")?;
     match (
         retry.get("node").and_then(|n| n.as_str()),
         retry.get("attempt").and_then(|a| a.as_u64()),
@@ -549,9 +567,9 @@ fn load_retry(run_id: &str) -> Result<Option<(String, u32, Option<ThrottleKey>)>
                     t.get("host").and_then(|v| v.as_str()).map(String::from),
                 )
             });
-            Ok(Some((node.to_string(), attempt as u32, throttle)))
+            Some((node.to_string(), attempt as u32, throttle))
         }
-        _ => Ok(None),
+        _ => None,
     }
 }
 
@@ -1419,11 +1437,11 @@ fn execute(
             // the budget advances until success, error-route, or RetryExhausted.
             Step::Wait {
                 node,
+                until_ms,
                 attempt,
                 throttle,
-                ..
             } => {
-                save_retry(run_id, &node, attempt, throttle.as_ref())?;
+                save_retry(run_id, &node, attempt, until_ms, throttle.as_ref())?;
                 return Ok(RunOutcome {
                     version,
                     outcome: 1,
@@ -2015,7 +2033,7 @@ fn execute_claimed(
                 attempt,
                 throttle,
             } => {
-                save_retry(run_id, &node, attempt, throttle.as_ref())?;
+                save_retry(run_id, &node, attempt, until_ms, throttle.as_ref())?;
                 return Ok(ClaimOutcome {
                     outcome: 1,
                     park_ms: until_ms,
@@ -2297,6 +2315,32 @@ mod tests {
         assert_eq!(
             resolve_node("transform", &config),
             Some(ResolvedNode::Standard)
+        );
+    }
+
+    #[test]
+    fn retry_state_records_only_the_deterministic_delay_schedule() {
+        assert_eq!(
+            retry_state("call", 2, 750, None),
+            serde_json::json!({
+                "retry": {
+                    "node": "call",
+                    "attempt": 2,
+                    "delay-ms": 750
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn legacy_retry_state_shape_remains_a_valid_cursor() {
+        let legacy = serde_json::json!({"retry": {"node": "call", "attempt": 2}});
+        assert!(
+            matches!(
+                parse_retry(&legacy),
+                Some((ref node, 2, None)) if node == "call"
+            ),
+            "the production parser must not require the additive schedule field"
         );
     }
 }

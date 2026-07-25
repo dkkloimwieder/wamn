@@ -1,9 +1,10 @@
 //! The virtual wall clock a scenario swaps in for `wasi:clocks/wall-clock`
 //! (production delta 2, design-note 9).
 //!
-//! A [`VirtualClock`] is an `Arc`-shared atomic nanosecond counter a scenario
-//! scheduler drives; [`VirtualWallClock`] adapts it to the fork's
-//! [`HostWallClock`] so it can be injected into a store's `WasiCtx` via
+//! A [`ScenarioClock`] is an absolute virtual Unix instant shared by every
+//! scheduling decision in one scenario. It is an `Arc`-shared atomic nanosecond
+//! counter a scenario scheduler drives; [`VirtualWallClock`] adapts it to the
+//! fork's [`HostWallClock`] so it can be injected into a store's `WasiCtx` via
 //! `WasiCtxBuilder::wall_clock`. Guest code that reads the wall clock (a `delay`
 //! node computing its wake deadline, say) then sees the time the scheduler
 //! chooses — so a 24h delay collapses to milliseconds of real wall time once the
@@ -17,15 +18,18 @@ use std::time::Duration;
 
 use wasmtime_wasi::HostWallClock;
 
-/// A wall clock a scenario scheduler drives. Cheap to [`Clone`] (an `Arc` to the
-/// shared instant), so the scheduler can advance the very instant a store's
-/// `WasiCtx` reads.
+/// The absolute virtual Unix instant governing one scenario's scheduling.
+///
+/// Park, wake, retry, and deadline comparisons all use the inclusive
+/// [`ScenarioClock::is_due`] rule. Cheap to [`Clone`] (an `Arc` to the shared
+/// instant), so the scheduler advances the same instant a store's `WasiCtx`
+/// reads.
 #[derive(Clone, Debug)]
-pub struct VirtualClock {
+pub struct ScenarioClock {
     nanos: Arc<AtomicU64>,
 }
 
-impl VirtualClock {
+impl ScenarioClock {
     /// A clock reading `secs` seconds since the unix epoch. Tests pick an
     /// arbitrary but fixed base so the guest's `now()` is deterministic.
     pub fn at_secs(secs: u64) -> Self {
@@ -66,13 +70,61 @@ impl VirtualClock {
     pub fn now_nanos(&self) -> u64 {
         self.nanos.load(Ordering::SeqCst)
     }
+
+    /// Whether `deadline_nanos` is due at the current scenario instant.
+    ///
+    /// Equality is due. This is the single comparison contract used for park,
+    /// wake, retry, and deadline decisions.
+    pub fn is_due(&self, deadline_nanos: u64) -> bool {
+        deadline_nanos <= self.now_nanos()
+    }
 }
 
-/// [`HostWallClock`] backed by a shared [`VirtualClock`]. Inject into a store's
+/// The one boundary translating a scenario due decision into PostgreSQL time.
+///
+/// PostgreSQL keeps its production `timestamptz`/`now()` domain, but its queue
+/// timestamp is only an opaque stale token in scenario execution. This boundary
+/// captures one database instant and the one shared [`ScenarioClock`]. It
+/// releases a row at the captured database instant only after that logical
+/// clock declares the virtual schedule due.
+#[derive(Clone, Debug)]
+pub struct DatabaseClockBoundary {
+    clock: ScenarioClock,
+    database_origin_nanos: u64,
+}
+
+impl DatabaseClockBoundary {
+    /// Capture `database_origin_nanos` beside `clock`'s current instant.
+    pub fn capture(clock: &ScenarioClock, database_origin_nanos: u64) -> Self {
+        Self {
+            clock: clock.clone(),
+            database_origin_nanos,
+        }
+    }
+
+    /// The captured database instant used to release a logically-due queue row.
+    pub fn database_origin_nanos(&self) -> u64 {
+        self.database_origin_nanos
+    }
+
+    /// Convert a logically-due scenario schedule into the database marker used
+    /// by the production claim path.
+    ///
+    /// A not-yet-due schedule has no database release instant. A due schedule
+    /// maps to the captured database origin, which was read before the case was
+    /// enqueued and therefore precedes the later release update and claim.
+    pub fn release_nanos(&self, scenario_deadline_nanos: u64) -> Option<u64> {
+        self.clock
+            .is_due(scenario_deadline_nanos)
+            .then_some(self.database_origin_nanos)
+    }
+}
+
+/// [`HostWallClock`] backed by a shared [`ScenarioClock`]. Inject into a store's
 /// `WasiCtx` via `WasiCtxBuilder::wall_clock`; the fork reads it for every
 /// `wasi:clocks/wall-clock` call the guest makes.
 #[derive(Debug)]
-pub struct VirtualWallClock(pub VirtualClock);
+pub struct VirtualWallClock(pub ScenarioClock);
 
 impl HostWallClock for VirtualWallClock {
     fn resolution(&self) -> Duration {
@@ -89,7 +141,7 @@ mod tests {
 
     #[test]
     fn advance_secs_is_monotonic_and_additive() {
-        let c = VirtualClock::at_secs(1_000);
+        let c = ScenarioClock::at_secs(1_000);
         assert_eq!(c.now_nanos(), 1_000_000_000_000);
         c.advance_secs(5);
         assert_eq!(c.now_nanos(), 1_005_000_000_000);
@@ -107,7 +159,7 @@ mod tests {
     // and spin. A mutant that lets `advance_to_nanos` move backward fails here.
     #[test]
     fn advance_to_nanos_moves_forward_only() {
-        let c = VirtualClock::at_secs(100);
+        let c = ScenarioClock::at_secs(100);
         let base = c.now_nanos();
 
         // Forward: moves and reports it moved.
@@ -125,7 +177,7 @@ mod tests {
 
     #[test]
     fn cloned_handles_share_one_instant() {
-        let a = VirtualClock::at_secs(0);
+        let a = ScenarioClock::at_secs(0);
         let b = a.clone();
         a.advance_secs(7);
         assert_eq!(
@@ -137,10 +189,63 @@ mod tests {
 
     #[test]
     fn wall_clock_reads_the_shared_instant() {
-        let c = VirtualClock::at_secs(42);
+        let c = ScenarioClock::at_secs(42);
         let wc = VirtualWallClock(c.clone());
         assert_eq!(wc.now(), Duration::from_secs(42));
         c.advance_secs(8);
         assert_eq!(wc.now(), Duration::from_secs(50));
+    }
+
+    #[test]
+    fn every_schedule_kind_uses_the_same_inclusive_due_boundary() {
+        let clock = ScenarioClock::at_secs(10);
+        let now = clock.now_nanos();
+
+        for kind in ["park", "wake", "retry", "deadline"] {
+            assert!(clock.is_due(now - 1), "{kind}: just-before is due");
+            assert!(clock.is_due(now), "{kind}: equality is due");
+            assert!(!clock.is_due(now + 1), "{kind}: just-after is not due");
+        }
+    }
+
+    #[test]
+    fn database_calendar_date_does_not_change_release_classification() {
+        let first = ScenarioClock::at_secs(1_700_000_000);
+        let second = ScenarioClock::at_secs(1_700_000_000);
+        let day = 86_400 * 1_000_000_000;
+        let delay = 3_600 * 1_000_000_000;
+        let july = DatabaseClockBoundary::capture(&first, 1_800_000_000_000_000_000);
+        let august = DatabaseClockBoundary::capture(&second, 1_800_000_000_000_000_000 + 31 * day);
+        let deadline = first.now_nanos() + delay;
+
+        assert_eq!(july.release_nanos(deadline), None);
+        assert_eq!(august.release_nanos(deadline), None);
+        first.advance_to_nanos(deadline);
+        second.advance_to_nanos(deadline);
+        assert_eq!(
+            july.release_nanos(deadline),
+            Some(july.database_origin_nanos())
+        );
+        assert_eq!(
+            august.release_nanos(deadline),
+            Some(august.database_origin_nanos())
+        );
+    }
+
+    #[test]
+    fn only_a_logically_due_schedule_crosses_the_database_boundary() {
+        let clock = ScenarioClock::at_secs(50);
+        let boundary = DatabaseClockBoundary::capture(&clock, 100_000_000_000);
+        let now = clock.now_nanos();
+
+        assert_eq!(
+            boundary.release_nanos(now - 1),
+            Some(boundary.database_origin_nanos())
+        );
+        assert_eq!(
+            boundary.release_nanos(now),
+            Some(boundary.database_origin_nanos())
+        );
+        assert_eq!(boundary.release_nanos(now + 1), None);
     }
 }

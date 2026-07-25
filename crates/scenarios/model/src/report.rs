@@ -7,6 +7,9 @@ use crate::Outcome;
 #[serde(rename_all = "kebab-case")]
 pub struct ScenarioReport {
     pub execution_id: String,
+    /// Absolute virtual Unix epoch seconds used to replay every clock decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenario_epoch_secs: Option<u64>,
     pub flow_id: String,
     pub flow_version: i32,
     pub suite_id: String,
@@ -57,6 +60,7 @@ mod tests {
     fn undrivable_report_round_trips_without_changing_normal_fields() {
         let report = ScenarioReport {
             execution_id: "exec-1".into(),
+            scenario_epoch_secs: Some(1_700_000_000),
             flow_id: "flow-1".into(),
             flow_version: 2,
             suite_id: "suite-1".into(),
@@ -68,6 +72,7 @@ mod tests {
 
         let json = serde_json::to_value(&report).unwrap();
         assert_eq!(json["execution-id"], "exec-1");
+        assert_eq!(json["scenario-epoch-secs"], 1_700_000_000u64);
         assert_eq!(json["flow-id"], "flow-1");
         assert_eq!(json["flow-version"], 2);
         assert_eq!(json["suite-id"], "suite-1");
@@ -81,6 +86,20 @@ mod tests {
         assert_eq!(
             serde_json::from_value::<ScenarioReport>(json).unwrap(),
             report
+        );
+
+        let legacy = serde_json::json!({
+            "execution-id": "old",
+            "flow-id": "flow-1",
+            "flow-version": 2,
+            "suite-id": "suite-1",
+            "cases": []
+        });
+        assert_eq!(
+            serde_json::from_value::<ScenarioReport>(legacy)
+                .unwrap()
+                .scenario_epoch_secs,
+            None
         );
 
         let mut contradictory = report.clone();

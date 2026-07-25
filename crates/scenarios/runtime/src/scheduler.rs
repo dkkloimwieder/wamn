@@ -1,4 +1,4 @@
-//! The scenario scheduler: drive a [`VirtualClock`] to the next
+//! The scenario scheduler: drive a [`ScenarioClock`] to the next
 //! parked-wake deadline and re-drive, until nothing is parked.
 //!
 //! A real flow with a 24h `delay` node parks: it records a wake deadline and
@@ -15,25 +15,27 @@
 //!   the guest's (virtualized) wall clock — so advancing the virtual clock
 //!   alone collapses it. Query it with [`RUN_S6_WAKE_DEADLINES_SQL`].
 //! - **run-next** (the production `ExecutionHost` claim loop): the wake lives in
-//!   `run_queue.available_at`, anchored to Postgres `now()` at park time — so a
-//!   virtual GUEST clock cannot make it claimable. A run-next backend's
-//!   `redrive` must ALSO nudge the DB before draining. The queue statements take
-//!   the exact scenario `run_id`; [`RUN_QUEUE_NEXT_WAKE_SQL`] selects that run's
-//!   deadline and [`RUN_QUEUE_DUE_NUDGE_SQL`] shifts only that same selected row.
+//!   `run_queue.available_at`, but scenarios treat that database timestamp only
+//!   as an opaque stale-selection token. The authoritative deadline comes from
+//!   the run's virtual `wake` or deterministic retry `delay-ms`. When the
+//!   logical clock makes that schedule due, [`DatabaseClockBoundary`](crate::DatabaseClockBoundary)
+//!   maps the decision to the captured database origin and
+//!   [`RUN_QUEUE_DUE_NUDGE_SQL`] moves only that row there so the unchanged
+//!   production claim path can take it.
 //!
-//! The scheduler clock/deadlines are epoch nanoseconds (the [`VirtualClock`]
-//! unit). Queue backends retain PostgreSQL's exact timestamp as a stale-selection
-//! token while converting it to nanoseconds for the scheduler.
+//! The scheduler clock/deadlines are epoch nanoseconds (the [`ScenarioClock`]
+//! unit). Queue backends retain PostgreSQL's exact timestamp only as a
+//! stale-selection token.
 
 use std::fmt;
 
-use super::clock::VirtualClock;
+use super::clock::ScenarioClock;
 
 /// The earliest-first pick, and the loop that applies it, live here so the
 /// "advance to the EARLIEST deadline" rule is one testable line.
 #[derive(Debug)]
 pub struct ScenarioScheduler {
-    clock: VirtualClock,
+    clock: ScenarioClock,
     max_steps: usize,
 }
 
@@ -127,7 +129,7 @@ pub fn validate_queue_due_nudge(
 impl ScenarioScheduler {
     /// A scheduler driving `clock`, capped at a generous default step count so a
     /// run that never makes progress fails loudly instead of looping forever.
-    pub fn new(clock: VirtualClock) -> Self {
+    pub fn new(clock: ScenarioClock) -> Self {
         Self {
             clock,
             max_steps: 1024,
@@ -181,22 +183,25 @@ pub const RUN_S6_WAKE_DEADLINES_SQL: &str = "SELECT (w.value#>>'{}')::bigint \
      WHERE r.tenant_id = current_setting('app.tenant', true) \
        AND r.state_json ? 'wake'";
 
-/// The selected scenario run's FUTURE parked-wake deadline on `run_queue`
+/// The selected scenario run's parked-wake deadline on `run_queue`
 /// (run-next path). Parameter `$1` is the exact case-owned `run_id`. Returning
-/// the PostgreSQL timestamp itself gives the shift statement an exact stale
-/// selection token. Global (unpartitioned) rows only, matching the global
-/// claim.
-pub const RUN_QUEUE_NEXT_WAKE_SQL: &str = "SELECT available_at \
-     FROM run_queue \
-     WHERE tenant_id = current_setting('app.tenant', true) \
-       AND run_id = $1 \
-       AND partition_key IS NULL \
-       AND available_at > now()";
+/// the PostgreSQL timestamp itself gives the shift statement an exact opaque
+/// stale-selection token; `state_json` carries the authoritative virtual
+/// schedule. Due/not-due is decided only from that virtual schedule, and this
+/// query deliberately has no database-wall-clock comparison. Global
+/// (unpartitioned) rows only, matching the global claim.
+pub const RUN_QUEUE_NEXT_WAKE_SQL: &str = "SELECT q.available_at, r.state_json::text \
+     FROM run_queue AS q \
+     JOIN runs AS r ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id \
+     WHERE q.tenant_id = current_setting('app.tenant', true) \
+       AND q.run_id = $1 \
+       AND q.partition_key IS NULL";
 
 /// Shift one selected scenario queue row claimable NOW (run-next path).
 ///
-/// Parameters are `$1` = exact case-owned `run_id` and `$2` = the exact
-/// `available_at` returned by [`RUN_QUEUE_NEXT_WAKE_SQL`]. The materialized
+/// Parameters are `$1` = exact case-owned `run_id`, `$2` = the exact
+/// `available_at` returned by [`RUN_QUEUE_NEXT_WAKE_SQL`], and `$3` = the
+/// database origin captured beside the scenario origin. The materialized
 /// candidate is counted before the update CTE. Only a cardinality of one opens
 /// the update gate; zero (deleted or concurrently rescheduled) and impossible
 /// ambiguity both update nothing. The returned `(matched, shifted)` counts must
@@ -208,11 +213,10 @@ pub const RUN_QUEUE_DUE_NUDGE_SQL: &str = "WITH candidate AS MATERIALIZED ( \
          AND q.run_id = $1 \
          AND q.partition_key IS NULL \
          AND q.available_at = $2 \
-         AND q.available_at > now() \
      ), cardinality AS ( \
        SELECT count(*)::bigint AS matched FROM candidate \
      ), shifted AS ( \
-       UPDATE run_queue AS q SET available_at = now() \
+       UPDATE run_queue AS q SET available_at = $3 \
        FROM candidate AS c, cardinality AS n \
        WHERE n.matched = 1 AND q.ctid = c.ctid \
        RETURNING 1 \
@@ -232,7 +236,7 @@ mod tests {
     /// clock, mirroring the guest's `now < wake` park check — so the scheduler's
     /// earliest-first pick is observable without a database.
     struct FakeBackend {
-        clock: VirtualClock,
+        clock: ScenarioClock,
         /// (deadline_nanos, completed)
         runs: Arc<Mutex<Vec<(u64, bool)>>>,
     }
@@ -271,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn scheduler_wakes_the_earliest_deadline_first() {
         let hour = 3_600u64 * 1_000_000_000;
-        let clock = VirtualClock::at_secs(1_000_000_000);
+        let clock = ScenarioClock::at_secs(1_000_000_000);
         let base = clock.now_nanos(); // the clock's start, in nanos
         let runs = Arc::new(Mutex::new(vec![
             (base + hour, false),      // run A: +1h
@@ -298,7 +302,7 @@ mod tests {
 
     #[tokio::test]
     async fn scheduler_is_quiescent_when_nothing_is_parked() {
-        let clock = VirtualClock::at_secs(100);
+        let clock = ScenarioClock::at_secs(100);
         let mut backend = FakeBackend {
             clock: clock.clone(),
             runs: Arc::new(Mutex::new(Vec::new())),
@@ -314,7 +318,7 @@ mod tests {
     async fn scheduler_collapses_a_single_far_future_delay() {
         let base = 500u64 * 1_000_000_000;
         let far = base + 86_400 * 1_000_000_000; // +24h
-        let clock = VirtualClock::at_secs(500);
+        let clock = ScenarioClock::at_secs(500);
         let mut backend = FakeBackend {
             clock: clock.clone(),
             runs: Arc::new(Mutex::new(vec![(far, false)])),
@@ -354,10 +358,14 @@ mod tests {
 
     #[test]
     fn queue_sql_requires_run_and_selected_schedule_before_update() {
-        assert!(RUN_QUEUE_NEXT_WAKE_SQL.contains("run_id = $1"));
+        assert!(RUN_QUEUE_NEXT_WAKE_SQL.contains("q.run_id = $1"));
+        assert!(RUN_QUEUE_NEXT_WAKE_SQL.contains("r.state_json::text"));
         assert!(RUN_QUEUE_DUE_NUDGE_SQL.contains("q.run_id = $1"));
         assert!(RUN_QUEUE_DUE_NUDGE_SQL.contains("q.available_at = $2"));
+        assert!(RUN_QUEUE_DUE_NUDGE_SQL.contains("available_at = $3"));
         assert!(RUN_QUEUE_DUE_NUDGE_SQL.contains("n.matched = 1"));
+        assert!(!RUN_QUEUE_NEXT_WAKE_SQL.contains("now()"));
+        assert!(!RUN_QUEUE_DUE_NUDGE_SQL.contains("now()"));
         let cardinality = RUN_QUEUE_DUE_NUDGE_SQL
             .find("SELECT count(*)::bigint AS matched")
             .unwrap();
@@ -372,9 +380,13 @@ mod tests {
         client: &tokio_postgres::Client,
         run_id: &str,
         selected_at: SystemTime,
+        database_origin: SystemTime,
     ) -> (u64, u64) {
         let row = client
-            .query_one(RUN_QUEUE_DUE_NUDGE_SQL, &[&run_id, &selected_at])
+            .query_one(
+                RUN_QUEUE_DUE_NUDGE_SQL,
+                &[&run_id, &selected_at, &database_origin],
+            )
             .await
             .unwrap();
         let matched = u64::try_from(row.get::<_, i64>(0)).unwrap();
@@ -405,8 +417,18 @@ mod tests {
                    available_at timestamptz NOT NULL, \
                    PRIMARY KEY (tenant_id, run_id) \
                  ); \
+                 CREATE TABLE wamn_scenario_schedule_test.runs ( \
+                   tenant_id text NOT NULL, \
+                   run_id text NOT NULL, \
+                   state_json jsonb NOT NULL, \
+                   PRIMARY KEY (tenant_id, run_id) \
+                 ); \
                  SELECT set_config('app.tenant', 'tenant-a', false); \
                  SELECT set_config('search_path', 'wamn_scenario_schedule_test', false); \
+                 INSERT INTO wamn_scenario_schedule_test.runs \
+                   (tenant_id, run_id, state_json) VALUES \
+                   ('tenant-a', 'scenario-execution-a', '{\"retry\":{\"delay-ms\":3600000}}'), \
+                   ('tenant-a', 'scenario-execution-b', '{\"retry\":{\"delay-ms\":86400000}}'); \
                  INSERT INTO wamn_scenario_schedule_test.run_queue \
                    (tenant_id, run_id, available_at) VALUES \
                    ('tenant-a', 'scenario-execution-a', now() + interval '1 hour'), \
@@ -431,6 +453,8 @@ mod tests {
             .await
             .unwrap()
             .get(0);
+        let database_origin: SystemTime =
+            client.query_one("SELECT now()", &[]).await.unwrap().get(0);
         let unrelated_before: SystemTime = client
             .query_one(
                 "SELECT available_at FROM run_queue WHERE run_id = 'scenario-execution-b'",
@@ -440,8 +464,13 @@ mod tests {
             .unwrap()
             .get(0);
         let (selected_counts, stale_counts) = tokio::join!(
-            execute_queue_shift(&client, "scenario-execution-a", selected_at),
-            execute_queue_shift(&peer, "scenario-execution-b", selected_at),
+            execute_queue_shift(
+                &client,
+                "scenario-execution-a",
+                selected_at,
+                database_origin
+            ),
+            execute_queue_shift(&peer, "scenario-execution-b", selected_at, database_origin),
         );
         validate_queue_due_nudge("scenario-execution-a", selected_counts.0, selected_counts.1)
             .unwrap();
@@ -480,6 +509,9 @@ mod tests {
         client
             .batch_execute(
                 "ALTER TABLE run_queue DROP CONSTRAINT run_queue_pkey; \
+                 INSERT INTO runs (tenant_id, run_id, state_json) \
+                 VALUES ('tenant-a', 'ambiguous', \
+                         '{\"retry\":{\"delay-ms\":172800000}}'); \
                  INSERT INTO run_queue (tenant_id, run_id, available_at) \
                  SELECT 'tenant-a', 'ambiguous', now() + interval '48 hours' \
                  FROM (VALUES (1), (2)) AS duplicate(n);",
@@ -494,7 +526,8 @@ mod tests {
             .await
             .unwrap()
             .get(0);
-        let ambiguous_counts = execute_queue_shift(&client, "ambiguous", ambiguous_at).await;
+        let ambiguous_counts =
+            execute_queue_shift(&client, "ambiguous", ambiguous_at, database_origin).await;
         assert_eq!(
             validate_queue_due_nudge("ambiguous", ambiguous_counts.0, ambiguous_counts.1),
             Err(QueueScheduleShiftError::Ambiguous {

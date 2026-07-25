@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
@@ -23,9 +23,9 @@ use wamn_scenario_model::{
     ScenarioRefusal, ScenarioReport, TestCase, evaluate,
 };
 use wamn_scenario_runtime::{
-    RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, RecordingEgress, ScenarioCapabilities,
-    ScenarioScheduler, ScenarioSchemaName, SchedulerBackend, case_pool, load_scenario_credentials,
-    validate_queue_due_nudge,
+    DatabaseClockBoundary, RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, RecordingEgress,
+    ScenarioCapabilities, ScenarioClock, ScenarioScheduler, ScenarioSchemaName, SchedulerBackend,
+    case_pool, load_scenario_credentials, validate_queue_due_nudge,
 };
 
 const DEFAULT_EPOCH_SECS: u64 = 1_700_000_000;
@@ -239,11 +239,61 @@ fn parse_run_status(value: &str) -> anyhow::Result<RunStatus> {
         .with_context(|| format!("unknown persisted run status {value:?}"))
 }
 
+fn unix_nanos(instant: SystemTime) -> anyhow::Result<u64> {
+    let nanos = instant
+        .duration_since(UNIX_EPOCH)
+        .context("database clock instant precedes unix epoch")?
+        .as_nanos();
+    u64::try_from(nanos).context("database clock instant exceeds u64 nanos")
+}
+
+fn logical_schedule_deadline(clock: &ScenarioClock, state_json: &str) -> anyhow::Result<u64> {
+    let state: serde_json::Value =
+        serde_json::from_str(state_json).context("parse scenario scheduling state")?;
+    let wake = state
+        .get("wake")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|wake| wake.values().filter_map(serde_json::Value::as_u64).min())
+        .map(|seconds| {
+            seconds
+                .checked_mul(1_000_000_000)
+                .context("scenario wake deadline exceeds u64 nanos")
+        })
+        .transpose()?;
+    let retry = state.get("retry").and_then(serde_json::Value::as_object);
+    let retry_deadline = retry
+        .and_then(|retry| retry.get("delay-ms"))
+        .and_then(serde_json::Value::as_u64)
+        .map(|delay_ms| {
+            let delay_nanos = delay_ms
+                .checked_mul(1_000_000)
+                .context("scenario retry delay exceeds u64 nanos")?;
+            clock
+                .now_nanos()
+                .checked_add(delay_nanos)
+                .context("scenario retry deadline exceeds u64 nanos")
+        })
+        .transpose()?;
+
+    match (wake, retry_deadline) {
+        (Some(wake), Some(retry)) => Ok(wake.min(retry)),
+        (Some(wake), None) => Ok(wake),
+        (None, Some(retry)) => Ok(retry),
+        (None, None) if retry.is_some() => {
+            bail!("legacy retry schedule has no deterministic delay-ms")
+        }
+        (None, None) => bail!("parked scenario run has no virtual wake or retry schedule"),
+    }
+}
+
 struct QueueScenarioBackend<'a> {
     client: &'a tokio_postgres::Client,
     host: &'a mut ExecutionHost,
     run_id: &'a str,
+    clock: ScenarioClock,
+    clock_boundary: DatabaseClockBoundary,
     selected_at: Option<SystemTime>,
+    selected_deadline_nanos: Option<u64>,
 }
 
 impl<'a> QueueScenarioBackend<'a> {
@@ -251,12 +301,17 @@ impl<'a> QueueScenarioBackend<'a> {
         client: &'a tokio_postgres::Client,
         host: &'a mut ExecutionHost,
         run_id: &'a str,
+        clock: ScenarioClock,
+        clock_boundary: DatabaseClockBoundary,
     ) -> Self {
         Self {
             client,
             host,
             run_id,
+            clock,
+            clock_boundary,
             selected_at: None,
+            selected_deadline_nanos: None,
         }
     }
 }
@@ -277,15 +332,14 @@ impl SchedulerBackend for QueueScenarioBackend<'_> {
         }
         let Some(row) = rows.first() else {
             self.selected_at = None;
+            self.selected_deadline_nanos = None;
             return Ok(Vec::new());
         };
         let selected_at: SystemTime = row.get(0);
-        let nanos = selected_at
-            .duration_since(UNIX_EPOCH)
-            .context("scenario wake deadline precedes unix epoch")?
-            .as_nanos();
-        let nanos = u64::try_from(nanos).context("scenario wake deadline exceeds u64 nanos")?;
+        let state_json: String = row.get(1);
+        let nanos = logical_schedule_deadline(&self.clock, &state_json)?;
         self.selected_at = Some(selected_at);
+        self.selected_deadline_nanos = Some(nanos);
         Ok(vec![nanos])
     }
 
@@ -295,9 +349,24 @@ impl SchedulerBackend for QueueScenarioBackend<'_> {
                 run_id: self.run_id.to_string(),
             }
         })?;
+        let selected_deadline_nanos = self.selected_deadline_nanos.take().ok_or_else(|| {
+            wamn_scenario_runtime::QueueScheduleShiftError::Stale {
+                run_id: self.run_id.to_string(),
+            }
+        })?;
+        let release_nanos = self
+            .clock_boundary
+            .release_nanos(selected_deadline_nanos)
+            .context("scenario scheduler attempted to release work before its logical deadline")?;
+        let release_at = UNIX_EPOCH
+            .checked_add(Duration::from_nanos(release_nanos))
+            .context("database release instant exceeds SystemTime")?;
         let row = self
             .client
-            .query_one(RUN_QUEUE_DUE_NUDGE_SQL, &[&self.run_id, &selected_at])
+            .query_one(
+                RUN_QUEUE_DUE_NUDGE_SQL,
+                &[&self.run_id, &selected_at, &release_at],
+            )
             .await?;
         let matched =
             u64::try_from(row.get::<_, i64>(0)).context("negative queue candidate count")?;
@@ -463,6 +532,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
                 connection_task.abort();
                 return Ok(ScenarioReport {
                     execution_id: args.execution_id.clone(),
+                    scenario_epoch_secs: Some(args.epoch_secs),
                     flow_id: args.flow_id.clone(),
                     flow_version: args.flow_version,
                     suite_id: args.suite_id.clone(),
@@ -486,6 +556,12 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
             .context("stage scenario flow graph")?;
         let run_id = format!("scenario-{}-{ordinal}", args.execution_id);
         let input = case.input.to_string();
+        let database_origin: SystemTime = client
+            .query_one("SELECT now()", &[])
+            .await
+            .context("capture scenario database clock boundary")?
+            .get(0);
+        let clock_boundary = DatabaseClockBoundary::capture(&clock, unix_nanos(database_origin)?);
         let inserted = client
             .execute(
                 &write_ahead_triggered_run_sql(),
@@ -511,8 +587,14 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
             .context("enqueue scenario run")?;
 
         host.drain().await.context("drive stored scenario case")?;
-        ScenarioScheduler::new(clock)
-            .drive_to_quiescence(&mut QueueScenarioBackend::new(&client, &mut host, &run_id))
+        ScenarioScheduler::new(clock.clone())
+            .drive_to_quiescence(&mut QueueScenarioBackend::new(
+                &client,
+                &mut host,
+                &run_id,
+                clock.clone(),
+                clock_boundary,
+            ))
             .await
             .context("resume delayed scenario work")?;
         drop(host);
@@ -553,6 +635,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
     connection_task.abort();
     Ok(ScenarioReport {
         execution_id: args.execution_id.clone(),
+        scenario_epoch_secs: Some(args.epoch_secs),
         flow_id: args.flow_id.clone(),
         flow_version: args.flow_version,
         suite_id: args.suite_id.clone(),
@@ -619,5 +702,50 @@ mod tests {
         }
 
         assert_eq!(staging_writes, 0);
+    }
+
+    #[test]
+    fn virtual_wake_and_retry_schedules_ignore_database_calendar_time() {
+        let clock = ScenarioClock::at_secs(1_700_000_000);
+        let now = clock.now_nanos();
+        let wake = logical_schedule_deadline(&clock, r#"{"wake":{"delay":1700000001}}"#).unwrap();
+        let retry = logical_schedule_deadline(&clock, r#"{"retry":{"delay-ms":750}}"#).unwrap();
+
+        assert_eq!(wake, now + 1_000_000_000);
+        assert_eq!(retry, now + 750_000_000);
+        assert!(!clock.is_due(wake));
+        assert!(!clock.is_due(retry));
+        clock.advance_to_nanos(retry);
+        assert!(clock.is_due(retry), "retry is due at equality");
+        assert!(!clock.is_due(wake), "later wake remains parked");
+        clock.advance_to_nanos(wake);
+        assert!(clock.is_due(wake), "wake is due at equality");
+    }
+
+    #[test]
+    fn legacy_retry_without_a_logical_delay_fails_closed() {
+        let clock = ScenarioClock::at_secs(1_700_000_000);
+        let error = logical_schedule_deadline(&clock, r#"{"retry":{"node":"call","attempt":1}}"#)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("legacy retry schedule has no deterministic delay-ms")
+        );
+    }
+
+    #[test]
+    fn logical_schedule_arithmetic_is_checked() {
+        let clock = ScenarioClock::at_secs(u64::MAX / 1_000_000_000);
+        assert!(logical_schedule_deadline(&clock, r#"{"retry":{"delay-ms":1000}}"#).is_err());
+        assert!(logical_schedule_deadline(&clock, r#"{"wake":{"delay":18446744074}}"#).is_err());
+    }
+
+    #[test]
+    fn queue_timestamp_is_only_an_opaque_stale_token() {
+        assert!(RUN_QUEUE_NEXT_WAKE_SQL.contains("q.available_at"));
+        assert!(RUN_QUEUE_NEXT_WAKE_SQL.contains("r.state_json::text"));
+        assert!(!RUN_QUEUE_NEXT_WAKE_SQL.contains("extract(epoch"));
+        assert!(!RUN_QUEUE_NEXT_WAKE_SQL.contains("available_at >"));
     }
 }

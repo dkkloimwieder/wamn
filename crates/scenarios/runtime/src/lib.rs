@@ -3,7 +3,10 @@
 //! These product adapters run the same flowrunner component as serving, with
 //! virtual time, seeded randomness, recorded egress, and isolated schemas:
 //!
-//! - [`VirtualClock`] / [`VirtualWallClock`] — a scenario-controlled wall clock.
+//! - [`ScenarioClock`] / [`VirtualWallClock`] — one absolute virtual instant for
+//!   every scenario scheduling comparison.
+//! - [`DatabaseClockBoundary`] — the one-way boundary from a logical due
+//!   decision to a claimable PostgreSQL release marker.
 //! - [`ScenarioScheduler`] — advance the virtual clock to the next parked-wake
 //!   deadline and re-drive, collapsing arbitrary delays (delta 2).
 //! - [`RecordingEgress`] — record every outbound request + per-flow allowlist +
@@ -31,7 +34,7 @@ use std::sync::Arc;
 use wash_runtime::host::http::HostHandler;
 use wasmtime_wasi::WasiCtx;
 
-pub use clock::{VirtualClock, VirtualWallClock};
+pub use clock::{DatabaseClockBoundary, ScenarioClock, VirtualWallClock};
 pub use credentials::{ScenarioCredentials, load_scenario_credentials};
 pub use egress::{EgressObservation, RecordingEgress};
 pub use random::{SeededRng, build_virtual_wasi};
@@ -45,7 +48,7 @@ pub use schema::{
 
 /// Deterministic capabilities consumed by one scenario execution store.
 ///
-/// The caller retains handles to [`VirtualClock`] and [`RecordingEgress`] before
+/// The caller retains handles to [`ScenarioClock`] and [`RecordingEgress`] before
 /// moving this value into the shared execution host.
 pub struct ScenarioCapabilities {
     /// The custom `WasiCtx` the store gets (virtual clock + seeded random).
@@ -65,15 +68,15 @@ impl std::fmt::Debug for ScenarioCapabilities {
 impl ScenarioCapabilities {
     /// Assemble virtual scenario capabilities: a wall clock based at
     /// `epoch_secs`, `wasi:random` seeded with `seed`, and `egress` as the
-    /// store's HTTP handler. Returns the set plus the shared [`VirtualClock`]
+    /// store's HTTP handler. Returns the set plus the shared [`ScenarioClock`]
     /// the caller drives (via a [`ScenarioScheduler`]). `egress` is typically
     /// an `Arc<RecordingEgress>` the caller also holds for audit.
     pub fn virtualized(
         epoch_secs: u64,
         seed: u64,
         egress: Arc<dyn HostHandler>,
-    ) -> (Self, VirtualClock) {
-        let clock = VirtualClock::at_secs(epoch_secs);
+    ) -> (Self, ScenarioClock) {
+        let clock = ScenarioClock::at_secs(epoch_secs);
         let wasi = build_virtual_wasi(&clock, seed);
         (Self { wasi, egress }, clock)
     }

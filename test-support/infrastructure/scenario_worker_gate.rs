@@ -626,6 +626,7 @@ mod tests {
     fn canonical_refusal_is_visible_and_requires_the_seeded_node_type() {
         let report = ScenarioReport {
             execution_id: "gate-2".into(),
+            scenario_epoch_secs: Some(1_700_000_000),
             flow_id: UNDRIVABLE_FLOW_ID.into(),
             flow_version: 1,
             suite_id: "undrivable".into(),

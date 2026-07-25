@@ -41,6 +41,30 @@ translations to durable run-state and node-invoke types live in
 `SCHEMA_VERSION` is `0.1` and mirrors the `wamn-schema-model` precedent: `0.1.x` is
 additive/clarifying only; a breaking wire change waits for `0.2`.
 
+## Scenario clock contract
+
+One `ScenarioClock` supplies an absolute virtual Unix instant to the guest and
+every scenario scheduling decision. A park, wake, retry, or deadline is due
+exactly when `deadline <= scenario_now`; equality is due. The configured
+`scenario-epoch-secs` is emitted in `ScenarioReport` so a failure records the
+clock input required for replay.
+
+Delay nodes persist their absolute virtual wake. Retry parks persist only the
+engine-produced deterministic `delay-ms`; the scenario worker turns that into a
+virtual deadline with checked arithmetic. `run_queue.available_at` is never a
+logical deadline in a scenario: it is an opaque PostgreSQL stale-selection
+token. After virtual time makes the persisted schedule due, the single
+database-clock boundary rewrites only that selected row to a PostgreSQL instant
+captured before the case was enqueued. That origin necessarily precedes the
+later release update and claim, so the unchanged production `available_at <=
+now()` predicate sees the row as claimable without letting database calendar
+time or elapsed wall time decide scenario behavior.
+
+Legacy reports without `scenario-epoch-secs` still deserialize with the field
+absent. Production retry restoration likewise accepts legacy retry cursors
+without `delay-ms`; scenario replay fails closed on such a cursor rather than
+falling back to a database timestamp.
+
 ## Matcher semantics
 
 Every assertion is an externally-tagged, kebab-case enum variant.

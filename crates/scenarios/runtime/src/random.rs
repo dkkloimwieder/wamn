@@ -18,7 +18,7 @@ use std::convert::Infallible;
 use rand_core::TryRng;
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder};
 
-use super::clock::{VirtualClock, VirtualWallClock};
+use super::clock::{ScenarioClock, VirtualWallClock};
 
 /// A deterministic splitmix64 generator seeded from a `u64`. The same seed
 /// always yields the same stream — the property scenario replay relies on for a
@@ -77,10 +77,10 @@ impl TryRng for SeededRng {
 const INSECURE_SEED_FOLD: u64 = 0x5DEE_CE66_D9E3_779B;
 
 /// Build the scenario-worker `WasiCtx`: a virtual wall clock a scheduler drives
-/// ([`VirtualClock`]) plus a deterministic RNG on every `wasi:random` surface
+/// ([`ScenarioClock`]) plus a deterministic RNG on every `wasi:random` surface
 /// (secure, insecure, and the insecure seed). `epoch_secs` bases the clock;
 /// `seed` seeds the randomness.
-pub fn build_virtual_wasi(clock: &VirtualClock, seed: u64) -> WasiCtx {
+pub fn build_virtual_wasi(clock: &ScenarioClock, seed: u64) -> WasiCtx {
     WasiCtxBuilder::new()
         .args(&["main.wasm"])
         .inherit_stderr()
