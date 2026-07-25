@@ -21,15 +21,16 @@ use anyhow::Context as _;
 use tokio::task::JoinHandle;
 use tokio_postgres::{Client, NoTls};
 
+use wamn_pg_core::{Identifier, InvalidIdentifier};
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 
 /// A validated schema name used for isolated scenario execution.
 ///
 /// Scenario schemas deliberately use PostgreSQL's unquoted, lowercase identifier
-/// subset. Keeping that syntax and PostgreSQL's 63-byte identifier limit in this
-/// type prevents distinct caller inputs from aliasing after server truncation.
+/// subset. The scenario-specific syntax is enforced here, while PostgreSQL's
+/// identifier invariants and representation are owned by [`Identifier`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ScenarioSchemaName(String);
+pub struct ScenarioSchemaName(Identifier);
 
 /// Why a value cannot name an isolated scenario schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,34 +53,47 @@ impl fmt::Display for InvalidScenarioSchemaName {
 
 impl std::error::Error for InvalidScenarioSchemaName {}
 
+impl From<InvalidIdentifier> for InvalidScenarioSchemaName {
+    fn from(error: InvalidIdentifier) -> Self {
+        Self {
+            reason: error.reason(),
+        }
+    }
+}
+
 impl ScenarioSchemaName {
     /// Validate the complete schema name before any scenario database effect.
     pub fn new(value: impl Into<String>) -> Result<Self, InvalidScenarioSchemaName> {
-        let value = value.into();
-        if value.len() > 63 {
-            return Err(InvalidScenarioSchemaName {
-                reason: "scenario schema name exceeds PostgreSQL's 63-byte identifier limit",
-            });
-        }
-
-        let mut bytes = value.bytes();
-        if !matches!(bytes.next(), Some(b'a'..=b'z' | b'_')) {
+        let identifier = Identifier::new(value)?;
+        let (first, rest) = identifier
+            .as_str()
+            .as_bytes()
+            .split_first()
+            .expect("Identifier rejects empty names");
+        if !matches!(first, b'a'..=b'z' | b'_') {
             return Err(InvalidScenarioSchemaName {
                 reason: "scenario schema name must start with a lowercase ASCII letter or underscore",
             });
         }
-        if !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_') {
+        if !rest
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
+        {
             return Err(InvalidScenarioSchemaName {
                 reason: "scenario schema name must contain only lowercase ASCII letters, digits, or underscores",
             });
         }
 
-        Ok(Self(value))
+        Ok(Self(identifier))
     }
 
     /// The validated, unquoted PostgreSQL identifier.
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
+    }
+
+    fn quoted(&self) -> String {
+        self.0.quoted()
     }
 }
 
@@ -174,6 +188,7 @@ pub fn case_pool(
 }
 
 fn reset_schema_sql(schema: &ScenarioSchemaName) -> String {
+    let schema = schema.quoted();
     format!(
         "DROP SCHEMA IF EXISTS {schema} CASCADE; \
          CREATE SCHEMA {schema} AUTHORIZATION postgres; \
@@ -182,6 +197,7 @@ fn reset_schema_sql(schema: &ScenarioSchemaName) -> String {
 }
 
 fn drop_schema_sql(schema: &ScenarioSchemaName) -> String {
+    let schema = schema.quoted();
     format!("DROP SCHEMA IF EXISTS {schema} CASCADE;")
 }
 
@@ -194,6 +210,18 @@ mod tests {
         let value = format!("s{}", "a".repeat(62));
         let schema = ScenarioSchemaName::new(value.clone()).unwrap();
         assert_eq!(schema.as_str(), value);
+        assert_eq!(schema.to_string(), value);
+    }
+
+    #[test]
+    fn delegates_empty_and_nul_validation_to_postgresql_identifiers() {
+        for (value, reason) in [
+            ("", "identifier is empty"),
+            ("scenario\0case", "identifier contains NUL"),
+        ] {
+            let error = ScenarioSchemaName::new(value).unwrap_err();
+            assert_eq!(error.reason(), reason);
+        }
     }
 
     #[test]
@@ -212,10 +240,11 @@ mod tests {
         let error = ScenarioSchemaName::new(over_limit).unwrap_err();
         assert_eq!(
             error.reason(),
-            "scenario schema name exceeds PostgreSQL's 63-byte identifier limit"
+            "identifier exceeds PostgreSQL's 63-byte limit"
         );
 
         let within_limit_but_not_bare = format!("s{}", "é".repeat(31));
+        assert_eq!(within_limit_but_not_bare.len(), 63);
         let error = ScenarioSchemaName::new(within_limit_but_not_bare).unwrap_err();
         assert_eq!(
             error.reason(),
@@ -225,7 +254,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_bare_identifier_syntax() {
-        for value in ["", "Upper", "1st", "scenario-case", "scenario;drop"] {
+        for value in ["Upper", "1st", "scenario-case", "scenario;drop"] {
             assert!(
                 ScenarioSchemaName::new(value).is_err(),
                 "{value:?} must be rejected"
@@ -238,13 +267,13 @@ mod tests {
         let schema = ScenarioSchemaName::new("scenario_case_1").unwrap();
         assert_eq!(
             reset_schema_sql(&schema),
-            "DROP SCHEMA IF EXISTS scenario_case_1 CASCADE; \
-             CREATE SCHEMA scenario_case_1 AUTHORIZATION postgres; \
-             GRANT USAGE ON SCHEMA scenario_case_1 TO wamn_app;"
+            "DROP SCHEMA IF EXISTS \"scenario_case_1\" CASCADE; \
+             CREATE SCHEMA \"scenario_case_1\" AUTHORIZATION postgres; \
+             GRANT USAGE ON SCHEMA \"scenario_case_1\" TO wamn_app;"
         );
         assert_eq!(
             drop_schema_sql(&schema),
-            "DROP SCHEMA IF EXISTS scenario_case_1 CASCADE;"
+            "DROP SCHEMA IF EXISTS \"scenario_case_1\" CASCADE;"
         );
     }
 }

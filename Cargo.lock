@@ -4680,6 +4680,7 @@ dependencies = [
  "rand_core 0.10.1",
  "tokio",
  "tokio-postgres",
+ "wamn-pg-core",
  "wamn-runtime",
  "wamn-scenario-model",
  "wash-runtime",

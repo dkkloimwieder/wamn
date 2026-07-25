@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-pg-core = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-scenario-model = { workspace = true }
 anyhow = { workspace = true }
