@@ -79,7 +79,9 @@ use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfi
 use wamn_scenario_model::{
     Assertion, Captured, DbCapture, Outcome, RunFacts, RunStatus, TestCase, TestSuite, evaluate,
 };
-use wamn_scenario_runtime::{EphemeralSchemaProvisioner, RecordingEgress, ScenarioCapabilities};
+use wamn_scenario_runtime::{
+    EphemeralSchemaProvisioner, RecordingEgress, ScenarioCapabilities, ScenarioSchemaName,
+};
 
 use crate::erp_sim::ErpAudit;
 use crate::f1fixture::{self, F1_FLOW_JSON, F1_SEED_JSON, F1_TENANT};
@@ -552,7 +554,7 @@ async fn drive_f1(
         "\n## F1 drive — {} case(s) via poc-webhook-f1 (sync webhook), body+DB via admin queries",
         cases.len()
     );
-    let schema = f1_schema(args);
+    let schema = ScenarioSchemaName::new(f1_schema(args))?;
     provision_f1(admin_url, &schema).await?;
 
     let webhook_wasm = std::fs::read(&args.webhook_entry)
@@ -563,11 +565,11 @@ async fn drive_f1(
     cfg.database_url = Some(app_url.to_string());
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
     plugin.set_tenant(F1_BENCH_ID, F1_TENANT)?;
-    plugin.set_schema(F1_BENCH_ID, &schema)?;
+    plugin.set_schema(F1_BENCH_ID, schema.as_str())?;
     plugin.probe_checkout().await?;
 
     let (admin, admin_task) = connect(admin_url).await?;
-    scope_session(&admin, F1_TENANT, &schema).await?;
+    scope_session(&admin, F1_TENANT, schema.as_str()).await?;
 
     let mut ok = true;
     for case in cases {
@@ -618,7 +620,10 @@ async fn drive_f1(
 /// Provision the ephemeral F1 world (floor + run-state + flow registry + catalog
 /// snapshot + business seed + the registered/active F1 flow) — the f1bench
 /// provisioning path, trimmed of its collision-check drill.
-async fn provision_f1(admin_url: &str, schema: &str) -> anyhow::Result<()> {
+async fn provision_f1(
+    admin_url: &str,
+    schema: &ScenarioSchemaName,
+) -> anyhow::Result<()> {
     let (client, conn_task) = connect(admin_url).await?;
     let result = async {
         client
@@ -644,8 +649,8 @@ async fn provision_f1(admin_url: &str, schema: &str) -> anyhow::Result<()> {
             .batch_execute(&f1fixture::floor_ddl()?)
             .await
             .context("apply F1 floor")?;
-        ensure_runstate(&client, schema).await?;
-        ensure_flow_registry(&client, schema).await?;
+        ensure_runstate(&client, schema.as_str()).await?;
+        ensure_flow_registry(&client, schema.as_str()).await?;
         client
             .batch_execute(
                 "CREATE TABLE wamn_catalog ( \
@@ -795,7 +800,7 @@ async fn drive_f3(
         "\n## F3 drive — {} case(s) via flowrunner doubles at virtual epoch {EPOCH_SECS} (48h cutoff)",
         cases.len()
     );
-    let schema = f3_schema(args);
+    let schema = ScenarioSchemaName::new(f3_schema(args))?;
     let tenant: &str = &args.tenant;
     let flowrunner = std::fs::read(&args.flowrunner)
         .with_context(|| format!("read {}", args.flowrunner.display()))?;
@@ -810,10 +815,10 @@ async fn drive_f3(
     provisioner.provision_case(&schema).await?;
     let admin = provisioner.admin();
     admin
-        .batch_execute(&f3_holds_ddl(&schema))
+        .batch_execute(&f3_holds_ddl(schema.as_str()))
         .await
         .context("apply F3 holds DDL")?;
-    scope_session(admin, tenant, &schema).await?;
+    scope_session(admin, tenant, schema.as_str()).await?;
     admin
         .execute(
             "INSERT INTO wamn_catalog (tenant_id, document) VALUES ($1, $2::text::jsonb)",
@@ -947,7 +952,7 @@ async fn drive_f4(
         "\n## F4 drive — {} case(s) via flowrunner doubles + serve-node hop + loopback ERP (egress spy)",
         cases.len()
     );
-    let schema = f4_schema(args);
+    let schema = ScenarioSchemaName::new(f4_schema(args))?;
     let tenant: &str = &args.tenant;
     let flowrunner = std::fs::read(&args.flowrunner)
         .with_context(|| format!("read {}", args.flowrunner.display()))?;
@@ -959,7 +964,7 @@ async fn drive_f4(
         EphemeralSchemaProvisioner::connect(admin_url, crate::runnerbench::runner_ddl).await?;
     provisioner.provision_case(&schema).await?;
     let admin = provisioner.admin();
-    scope_session(admin, tenant, &schema).await?;
+    scope_session(admin, tenant, schema.as_str()).await?;
     seed_flow_version(
         admin,
         tenant,
@@ -1274,7 +1279,10 @@ async fn connect(url: &str) -> anyhow::Result<(Client, tokio::task::JoinHandle<(
     Ok((client, task))
 }
 
-async fn drop_schema(admin_url: &str, schema: &str) -> anyhow::Result<()> {
+async fn drop_schema(
+    admin_url: &str,
+    schema: &ScenarioSchemaName,
+) -> anyhow::Result<()> {
     let (client, task) = connect(admin_url).await?;
     let r = client
         .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE;"))

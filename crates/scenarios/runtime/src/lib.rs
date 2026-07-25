@@ -39,7 +39,9 @@ pub use scheduler::{
     RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, RUN_S6_WAKE_DEADLINES_SQL, ScenarioScheduler,
     SchedulerBackend,
 };
-pub use schema::{EphemeralSchemaProvisioner, case_pool};
+pub use schema::{
+    EphemeralSchemaProvisioner, InvalidScenarioSchemaName, ScenarioSchemaName, case_pool,
+};
 
 /// Deterministic capabilities consumed by one scenario execution store.
 ///

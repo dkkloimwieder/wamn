@@ -24,7 +24,7 @@ use wamn_scenario_model::{
 };
 use wamn_scenario_runtime::{
     RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, RecordingEgress, ScenarioCapabilities,
-    ScenarioScheduler, SchedulerBackend, case_pool, load_scenario_credentials,
+    ScenarioScheduler, ScenarioSchemaName, SchedulerBackend, case_pool, load_scenario_credentials,
 };
 
 const DEFAULT_EPOCH_SECS: u64 = 1_700_000_000;
@@ -124,13 +124,7 @@ fn database_url(args: &ScenarioWorkerArgs) -> anyhow::Result<String> {
         .context("no database url: pass --database-url or set WAMN_PG_URL / DATABASE_URL")
 }
 
-fn is_bare_identifier(value: &str) -> bool {
-    let mut bytes = value.bytes();
-    matches!(bytes.next(), Some(b'a'..=b'z' | b'_'))
-        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-}
-
-fn execution_schema_for_case(template: &str, ordinal: i32) -> anyhow::Result<String> {
+fn execution_schema_for_case(template: &str, ordinal: i32) -> anyhow::Result<ScenarioSchemaName> {
     if ordinal < 0 {
         bail!("scenario case ordinal must not be negative: {ordinal}");
     }
@@ -138,24 +132,40 @@ fn execution_schema_for_case(template: &str, ordinal: i32) -> anyhow::Result<Str
         bail!("execution-schema-template must contain `{{ordinal}}` exactly once");
     }
     let schema = template.replace("{ordinal}", &ordinal.to_string());
-    if !is_bare_identifier(&schema) {
-        bail!(
-            "execution-schema-template must produce a bare lowercase SQL identifier, got {schema:?}"
-        );
-    }
-    Ok(schema)
+    ScenarioSchemaName::new(schema.clone()).with_context(|| {
+        format!("execution-schema-template produced invalid scenario schema {schema:?}")
+    })
+}
+
+fn execution_schemas_for_cases(
+    template: &str,
+    source_schema: &ScenarioSchemaName,
+    ordinals: impl IntoIterator<Item = i32>,
+) -> anyhow::Result<Vec<ScenarioSchemaName>> {
+    ordinals
+        .into_iter()
+        .map(|ordinal| {
+            let schema = execution_schema_for_case(template, ordinal)?;
+            if &schema == source_schema {
+                bail!(
+                    "scenario case ordinal {ordinal} execution schema must differ from the source catalog"
+                );
+            }
+            Ok(schema)
+        })
+        .collect()
 }
 
 async fn scope_session(
     client: &tokio_postgres::Client,
     tenant: &str,
-    schema: &str,
+    schema: &ScenarioSchemaName,
 ) -> anyhow::Result<()> {
     client
         .query_one(
             "SELECT set_config('app.tenant', $1, false), \
                     set_config('search_path', $2, false)",
-            &[&tenant, &schema],
+            &[&tenant, &schema.as_str()],
         )
         .await?;
     Ok(())
@@ -283,9 +293,8 @@ impl SchedulerBackend for QueueScenarioBackend<'_> {
 
 /// Execute one stored suite through the compiled flowrunner and evaluate it.
 pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport> {
-    if !is_bare_identifier(&args.source_schema) {
-        bail!("source schema must be a bare lowercase SQL identifier");
-    }
+    let source_schema = ScenarioSchemaName::new(args.source_schema.clone())
+        .context("source schema is not a valid scenario schema name")?;
     execution_schema_for_case(&args.execution_schema_template, 0)?;
     if args.execution_id.is_empty() {
         bail!("execution-id must not be empty");
@@ -304,7 +313,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         }
     });
 
-    scope_session(&client, &args.tenant, &args.source_schema).await?;
+    scope_session(&client, &args.tenant, &source_schema).await?;
     let graph_row = client
         .query_opt(
             "SELECT graph_json::text FROM flows \
@@ -316,7 +325,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         .with_context(|| {
             format!(
                 "flow {}@{} not found in {}",
-                args.flow_id, args.flow_version, args.source_schema
+                args.flow_id, args.flow_version, source_schema
             )
         })?;
     let graph_json: String = graph_row.get(0);
@@ -341,16 +350,8 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         );
     }
 
-    let mut postgres_config = WamnPostgresConfig::from_env();
-    postgres_config.database_url = Some(database_url);
-    let credentials =
-        load_scenario_credentials(args.scenario_credentials_file.as_deref())?.into_plugin();
-    let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
-    let engine = build_engine(&[])?;
-    let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
-    let mut reports = Vec::with_capacity(case_rows.len());
     let mut seen_ordinals = BTreeSet::new();
-
+    let mut stored_cases = Vec::with_capacity(case_rows.len());
     for row in case_rows {
         let case_id: String = row.get(0);
         let ordinal: i32 = row.get(1);
@@ -361,10 +362,28 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
                 args.suite_id
             );
         }
-        let execution_schema = execution_schema_for_case(&args.execution_schema_template, ordinal)?;
-        if execution_schema == args.source_schema {
-            bail!("scenario case {case_id:?} execution schema must differ from the source catalog");
-        }
+        stored_cases.push((case_id, ordinal, case_body));
+    }
+    // Validate every generated name as one batch before the first staging write.
+    // A later ordinal can add enough digits to cross PostgreSQL's byte limit.
+    let execution_schemas = execution_schemas_for_cases(
+        &args.execution_schema_template,
+        &source_schema,
+        stored_cases.iter().map(|(_, ordinal, _)| *ordinal),
+    )?;
+
+    let mut postgres_config = WamnPostgresConfig::from_env();
+    postgres_config.database_url = Some(database_url);
+    let credentials =
+        load_scenario_credentials(args.scenario_credentials_file.as_deref())?.into_plugin();
+    let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
+    let engine = build_engine(&[])?;
+    let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
+    let mut reports = Vec::with_capacity(stored_cases.len());
+
+    for ((case_id, ordinal, case_body), execution_schema) in
+        stored_cases.into_iter().zip(execution_schemas)
+    {
         let case: TestCase = serde_json::from_str(&case_body)
             .with_context(|| format!("parse stored case {}/{}", args.suite_id, case_id))?;
         case.validate()
@@ -440,7 +459,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
             ExecutionIdentity {
                 owner: &args.flow_id,
                 tenant: &args.tenant,
-                schema: Some(&execution_schema),
+                schema: Some(execution_schema.as_str()),
                 project: &args.project,
             },
             injected_capabilities(scenario.wasi, scenario.egress),
@@ -531,21 +550,33 @@ mod tests {
     }
 
     #[test]
-    fn identifiers_are_restricted_before_search_path_use() {
-        assert!(is_bare_identifier("scenario_exec_1"));
-        assert!(!is_bare_identifier("scenario; DROP SCHEMA public"));
-        assert!(!is_bare_identifier("Upper"));
-    }
-
-    #[test]
     fn execution_schema_template_is_explicit_and_case_isolated() {
         assert_eq!(
-            execution_schema_for_case("scenario_exec_{ordinal}", 7).unwrap(),
+            execution_schema_for_case("scenario_exec_{ordinal}", 7)
+                .unwrap()
+                .as_str(),
             "scenario_exec_7"
         );
         assert!(execution_schema_for_case("scenario_exec", 0).is_err());
         assert!(execution_schema_for_case("{ordinal}_{ordinal}", 0).is_err());
         assert!(execution_schema_for_case("scenario-exec-{ordinal}", 0).is_err());
         assert!(execution_schema_for_case("scenario_exec_{ordinal}", -1).is_err());
+    }
+
+    #[test]
+    fn all_case_schema_names_validate_before_the_staging_loop() {
+        let source = ScenarioSchemaName::new("wamn_run").unwrap();
+        let template = format!("{}{{ordinal}}", "s".repeat(59));
+        let mut staging_writes = 0;
+
+        let schemas = execution_schemas_for_cases(&template, &source, [0, 10_000]);
+        assert!(schemas.is_err());
+        if let Ok(schemas) = schemas {
+            for _ in schemas {
+                staging_writes += 1;
+            }
+        }
+
+        assert_eq!(staging_writes, 0);
     }
 }

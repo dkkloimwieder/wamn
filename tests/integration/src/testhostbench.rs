@@ -66,7 +66,8 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 use wamn_scenario_runtime::{
     EphemeralSchemaProvisioner, RUN_S6_WAKE_DEADLINES_SQL, RecordingEgress, ScenarioCapabilities,
-    ScenarioScheduler, SchedulerBackend, VirtualClock, build_virtual_wasi, case_pool,
+    ScenarioScheduler, ScenarioSchemaName, SchedulerBackend, VirtualClock, build_virtual_wasi,
+    case_pool,
 };
 // 11.4: the schemacase + runworker inline asserts now route through the pure
 // assertion vocabulary (the extraction-regression proof that the vocabulary
@@ -520,9 +521,10 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
     let prod_pg = Arc::new(WamnPostgres::new(cfg.clone())?);
     prod_pg.set_tenant(BENCH_ID, TENANT)?;
     prod_pg.set_schema(BENCH_ID, PROD_SCHEMA)?;
+    let ephemeral_schema = ScenarioSchemaName::new(EPH_SCHEMA)?;
     let test_pg = Arc::new(WamnPostgres::new(cfg.clone())?);
     test_pg.set_tenant(BENCH_ID, TENANT)?;
-    test_pg.set_schema(BENCH_ID, EPH_SCHEMA)?;
+    test_pg.set_schema(BENCH_ID, ephemeral_schema.as_str())?;
 
     prod_pg
         .probe_checkout()
@@ -538,7 +540,7 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
         .await
         .context("connect ephemeral schema provisioner")?;
     provisioner
-        .provision_case(EPH_SCHEMA)
+        .provision_case(&ephemeral_schema)
         .await
         .context("provision ephemeral schema")?;
     println!("provisioned ephemeral schema {EPH_SCHEMA} from template DDL");
@@ -610,7 +612,7 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
     drop(test);
     drop(prod_pg);
     drop(test_pg);
-    if let Err(e) = provisioner.drop_case(EPH_SCHEMA).await {
+    if let Err(e) = provisioner.drop_case(&ephemeral_schema).await {
         tracing::warn!(error = %e, "ephemeral schema teardown failed (non-fatal)");
     }
 
@@ -1011,7 +1013,7 @@ async fn schemacase_phase(
 
     let mut pass = true;
     for i in 0..2u32 {
-        let schema = format!("s6_case_{i}");
+        let schema = ScenarioSchemaName::new(format!("s6_case_{i}"))?;
         provisioner
             .provision_case(&schema)
             .await
@@ -1019,7 +1021,7 @@ async fn schemacase_phase(
 
         // A FRESH case must start empty — the isolation proof. If a prior case's
         // rows survived (schema reuse), this count would be non-zero.
-        scope_session(provisioner.admin(), TENANT, &schema).await?;
+        scope_session(provisioner.admin(), TENANT, schema.as_str()).await?;
         let before: i64 = provisioner
             .admin()
             .query_one("SELECT count(*) FROM sink", &[])
@@ -1042,12 +1044,12 @@ async fn schemacase_phase(
 
         let run_id = format!("case-{i}");
         worker.call_reset(&run_id).await?;
-        seed_s6_flow(provisioner.admin(), &schema, 0, echo_url).await?;
+        seed_s6_flow(provisioner.admin(), schema.as_str(), 0, echo_url).await?;
         let (outcome, _http) = worker.call_run_s6(&run_id, "receipt").await?;
         let sink = worker.call_sink_count(&run_id).await?;
 
         // Confirm the write landed in THIS case's schema (and only here).
-        scope_session(provisioner.admin(), TENANT, &schema).await?;
+        scope_session(provisioner.admin(), TENANT, schema.as_str()).await?;
         let after: i64 = provisioner
             .admin()
             .query_one("SELECT count(*) FROM sink", &[])
@@ -1154,8 +1156,9 @@ async fn runworker_phase(
         EphemeralSchemaProvisioner::connect(admin_url, crate::runnerbench::runner_ddl)
             .await
             .context("connect runworker provisioner")?;
+    let runworker_schema = ScenarioSchemaName::new(RW_SCHEMA)?;
     provisioner
-        .provision_case(RW_SCHEMA)
+        .provision_case(&runworker_schema)
         .await
         .context("provision runworker schema")?;
 
@@ -1204,7 +1207,7 @@ async fn runworker_phase(
         ExecutionIdentity {
             owner: RW_OWNER,
             tenant: RW_TENANT,
-            schema: Some(RW_SCHEMA),
+            schema: Some(runworker_schema.as_str()),
             project: "default",
         },
         injected_capabilities(scenario.wasi, scenario.egress),
@@ -1277,6 +1280,6 @@ async fn runworker_phase(
 
     drop(worker);
     drop(plugin);
-    provisioner.drop_case(RW_SCHEMA).await.ok();
+    provisioner.drop_case(&runworker_schema).await.ok();
     Ok(pass)
 }

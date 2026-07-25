@@ -51,7 +51,8 @@ use wamn_scenario_model::{
     TestCase, evaluate,
 };
 use wamn_scenario_runtime::{
-    EphemeralSchemaProvisioner, RecordingEgress, ScenarioCapabilities, case_pool,
+    EphemeralSchemaProvisioner, RecordingEgress, ScenarioCapabilities, ScenarioSchemaName,
+    case_pool,
 };
 
 /// The virtual-clock epoch + seed the flow-level test host uses (matching the
@@ -413,8 +414,9 @@ async fn flow_phase(
         EphemeralSchemaProvisioner::connect(&admin_url, crate::runnerbench::runner_ddl)
             .await
             .context("connect flow provisioner")?;
+    let runworker_schema = ScenarioSchemaName::new(RW_SCHEMA)?;
     provisioner
-        .provision_case(RW_SCHEMA)
+        .provision_case(&runworker_schema)
         .await
         .context("provision flow schema")?;
     let admin = provisioner.admin();
@@ -458,7 +460,7 @@ async fn flow_phase(
         ExecutionIdentity {
             owner: RW_OWNER,
             tenant: RW_TENANT,
-            schema: Some(RW_SCHEMA),
+            schema: Some(runworker_schema.as_str()),
             project: "default",
         },
         injected_capabilities(scenario.wasi, scenario.egress),
@@ -514,7 +516,7 @@ async fn flow_phase(
 
     drop(worker);
     drop(plugin);
-    provisioner.drop_case(RW_SCHEMA).await.ok();
+    provisioner.drop_case(&runworker_schema).await.ok();
     echo_task.abort();
     Ok(ok)
 }
@@ -961,7 +963,8 @@ async fn run_stored_suites(
             }
 
             // --- execute the case as its OWN run in a FRESH ephemeral schema ---
-            let exec_schema = format!("{}_{}", args.exec_schema, case_counter);
+            let exec_schema =
+                ScenarioSchemaName::new(format!("{}_{}", args.exec_schema, case_counter))?;
             let case_ok = drive_stored_case(
                 engine,
                 &guest,
@@ -1011,7 +1014,7 @@ async fn drive_stored_case(
     guest: &[u8],
     cfg: &WamnPostgresConfig,
     provisioner: &EphemeralSchemaProvisioner,
-    exec_schema: &str,
+    exec_schema: &ScenarioSchemaName,
     tenant: &str,
     flow_id: &str,
     flow_version: i32,
@@ -1027,7 +1030,7 @@ async fn drive_stored_case(
         .provision_case(exec_schema)
         .await
         .with_context(|| format!("provision exec schema {exec_schema}"))?;
-    scope_session(admin, tenant, exec_schema).await?;
+    scope_session(admin, tenant, exec_schema.as_str()).await?;
     seed_flow_version(admin, tenant, flow_id, flow_version, true, graph_json, true)
         .await
         .context("seed flow graph into exec schema")?;
@@ -1073,7 +1076,7 @@ async fn drive_stored_case(
         ExecutionIdentity {
             owner: flow_id,
             tenant,
-            schema: Some(exec_schema),
+            schema: Some(exec_schema.as_str()),
             project: "default",
         },
         injected_capabilities(scenario.wasi, scenario.egress),
@@ -1100,7 +1103,7 @@ async fn drive_stored_case(
     );
 
     // DB-state asserts read through the admin session, scoped to the exec schema.
-    scope_session(admin, tenant, exec_schema).await?;
+    scope_session(admin, tenant, exec_schema.as_str()).await?;
     let mut captured = Captured {
         run: Some(RunFacts {
             status,
