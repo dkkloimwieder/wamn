@@ -1,0 +1,434 @@
+{
+  "schema_version": 1,
+  "scope": {
+    "included_authority": "Wamn-owned production PostgreSQL tables and generated table families",
+    "excluded_external_authorities": [
+      "kubernetes-desired-and-observed-state",
+      "secret-bytes-and-native-metadata",
+      "oci-and-signing-artifacts",
+      "jetstream-transport-state",
+      "backup-objects-and-native-metadata",
+      "telemetry"
+    ]
+  },
+  "principals": {
+    "system-schema-installer": {
+      "path": "deploy/sql/system-schema.sql",
+      "role": "migration"
+    },
+    "registry-store": {
+      "path": "crates/control/registry",
+      "role": "persistence"
+    },
+    "provision-store": {
+      "path": "crates/control/provision",
+      "role": "persistence"
+    },
+    "schema-model": {
+      "path": "crates/schema/model",
+      "role": "semantic"
+    },
+    "schema-compiler": {
+      "path": "crates/schema/compiler",
+      "role": "migration"
+    },
+    "schema-control": {
+      "path": "crates/schema/control",
+      "role": "persistence"
+    },
+    "project-state": {
+      "path": "crates/identity/project-state",
+      "role": "semantic"
+    },
+    "entity-access": {
+      "path": "crates/data/entity-access",
+      "role": "persistence"
+    },
+    "event-registration-api": {
+      "path": "crates/data/api/src/registration.rs",
+      "role": "persistence"
+    },
+    "event-registration-model": {
+      "path": "crates/events/registration",
+      "role": "semantic"
+    },
+    "run-state": {
+      "path": "crates/execution/run-state",
+      "role": "persistence"
+    },
+    "flow-model": {
+      "path": "crates/execution/flow-model",
+      "role": "semantic"
+    },
+    "scenario-catalog": {
+      "path": "crates/scenarios/catalog",
+      "role": "persistence"
+    },
+    "scenario-runtime": {
+      "path": "crates/scenarios/runtime",
+      "role": "persistence"
+    },
+    "standard-nodes-entity": {
+      "path": "crates/execution/standard-nodes/src/postgres.rs",
+      "role": "effect"
+    },
+    "standard-nodes-raw-sql": {
+      "path": "crates/execution/standard-nodes/src/postgres.rs",
+      "role": "compatibility-writer",
+      "temporary": {
+        "expiry_bead": "wamn-1nd",
+        "may_gain_writes": false,
+        "writer_families": [
+          "generated-tenant-entities"
+        ]
+      }
+    },
+    "ctl-copy": {
+      "path": "services/ctl/src/copy_project_env.rs",
+      "role": "effect"
+    },
+    "ctl-publish": {
+      "path": "services/ctl/src/publish_catalog.rs",
+      "role": "effect"
+    },
+    "ctl-migrate": {
+      "path": "services/ctl/src/migrate_catalog.rs",
+      "role": "effect"
+    },
+    "dispatcher": {
+      "path": "services/dispatcher",
+      "role": "effect"
+    },
+    "scenario-worker": {
+      "path": "services/scenario-worker",
+      "role": "effect"
+    },
+    "cdc-reader": {
+      "path": "services/cdc-reader",
+      "role": "reader"
+    },
+    "flowrunner": {
+      "path": "components/execution/flowrunner",
+      "role": "effect"
+    },
+    "materializer": {
+      "path": "components/execution/materializer",
+      "role": "effect"
+    },
+    "api-gateway": {
+      "path": "components/ingress/api-gateway",
+      "role": "effect"
+    },
+    "node-guest": {
+      "path": "crates/node/guest",
+      "role": "reader"
+    }
+  },
+  "canonical_sources": [
+    {
+      "path": "deploy/sql/system-schema.sql",
+      "kind": "ddl",
+      "scope": "production-control-database"
+    },
+    {
+      "path": "deploy/sql/catalog-schema.sql",
+      "kind": "ddl",
+      "scope": "production-project-database"
+    },
+    {
+      "path": "deploy/sql/app-schema.sql",
+      "kind": "ddl",
+      "scope": "production-project-database"
+    },
+    {
+      "path": "deploy/sql/flows.sql",
+      "kind": "ddl",
+      "scope": "production-project-database"
+    },
+    {
+      "path": "deploy/sql/flow-tests.sql",
+      "kind": "ddl",
+      "scope": "production-project-database"
+    },
+    {
+      "path": "deploy/sql/run-state.sql",
+      "kind": "ddl",
+      "scope": "production-project-database"
+    },
+    {
+      "path": "deploy/sql/run-queue.sql",
+      "kind": "ddl",
+      "scope": "production-project-database"
+    },
+    {
+      "path": "services/ctl/src/publish_catalog.rs",
+      "kind": "inline-family",
+      "scope": "production-project-database",
+      "marker": "CREATE TABLE IF NOT EXISTS wamn_catalog"
+    },
+    {
+      "path": "crates/control/provision/src/sql.rs",
+      "kind": "inline-family",
+      "scope": "production-project-database",
+      "marker": "CREATE TABLE IF NOT EXISTS {schema}.wamn_entities"
+    },
+    {
+      "path": "crates/schema/compiler/src/emit.rs",
+      "kind": "generated-family",
+      "scope": "production-project-database",
+      "marker": "CREATE TABLE {}"
+    }
+  ],
+  "excluded_sources": [
+    {
+      "path": "deploy/sql/postgres-init.sql",
+      "source_class": "gate-fixture-stand-in",
+      "reason": "S2/S3 benchmark and host-plugin fixtures are not production PostgreSQL authority",
+      "expected_objects": [
+        "s2.bench",
+        "s2.rls_secrets",
+        "s2.scratch",
+        "s2.fkchild",
+        "s3.flows",
+        "s3.flow_runs",
+        "s3.sink",
+        "s3.runs",
+        "s3.node_runs"
+      ]
+    }
+  ],
+  "scan_policy": {
+    "roots": [
+      "crates",
+      "services",
+      "components",
+      "deploy/sql"
+    ],
+    "extensions": [
+      "rs",
+      "sql"
+    ],
+    "rust_cfg_test_modules": "exclude",
+    "exclusions": [
+      {
+        "kind": "path-segment",
+        "value": "tests",
+        "source_class": "repository-test"
+      },
+      {
+        "kind": "path-segment",
+        "value": "examples",
+        "source_class": "repository-example"
+      },
+      {
+        "kind": "path-prefix",
+        "value": "components/fixtures",
+        "source_class": "gate-fixture"
+      },
+      {
+        "kind": "path-prefix",
+        "value": "components/samples",
+        "source_class": "sample"
+      },
+      {
+        "kind": "path-prefix",
+        "value": "components/poc",
+        "source_class": "poc"
+      },
+      {
+        "kind": "exact-file",
+        "value": "deploy/sql/postgres-init.sql",
+        "source_class": "gate-fixture-stand-in"
+      }
+    ],
+    "unqualified_contexts": [
+      {
+        "path_prefix": "crates/execution/run-state/src",
+        "default_schema": "wamn_run"
+      },
+      {
+        "path_prefix": "crates/scenarios/catalog/src",
+        "default_schema": "wamn_run"
+      },
+      {
+        "path_prefix": "crates/scenarios/runtime/src/scheduler.rs",
+        "default_schema": "wamn_run"
+      },
+      {
+        "path_prefix": "services/scenario-worker/src",
+        "default_schema": "wamn_run"
+      },
+      {
+        "path_prefix": "services/ctl/src/publish_catalog.rs",
+        "default_schema": "wamn_run"
+      },
+      {
+        "path_prefix": "services/ctl/src/copy_project_env.rs",
+        "default_schema": "wamn_run"
+      },
+      {
+        "path_prefix": "components/execution/flowrunner/src",
+        "default_schema": "wamn_run"
+      }
+    ],
+    "dynamic_writers": [
+      {
+        "path": "crates/data/entity-access/src/planner.rs",
+        "principal": "entity-access",
+        "family": "generated-tenant-entities",
+        "marker": "INSERT INTO {}",
+        "operations": [
+          "insert",
+          "update",
+          "delete"
+        ]
+      },
+      {
+        "path": "crates/schema/compiler/src/seed/emit.rs",
+        "principal": "schema-compiler",
+        "family": "generated-tenant-entities",
+        "marker": "INSERT INTO {tbl}",
+        "operations": [
+          "insert"
+        ]
+      },
+      {
+        "path": "components/execution/flowrunner/src/lib.rs",
+        "principal": "flowrunner",
+        "family": "generated-tenant-entities",
+        "marker": "\"INSERT INTO sink",
+        "operations": [
+          "insert",
+          "delete"
+        ]
+      },
+      {
+        "path": "crates/execution/standard-nodes/src/postgres.rs",
+        "principal": "standard-nodes-raw-sql",
+        "family": "generated-tenant-entities",
+        "marker": "ctx.pg_execute(sql",
+        "operations": [
+          "insert",
+          "update",
+          "delete",
+          "merge",
+          "truncate"
+        ]
+      }
+    ],
+    "ignored_literals": [
+      {
+        "path": "services/cdc-reader/src/lib.rs",
+        "literal": "TRUNCATE observed — not published",
+        "reason": "telemetry for an observed replication event, not a SQL statement"
+      }
+    ]
+  },
+  "objects": [
+    {"id":"registry.meta","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["system-schema-installer"],"readers":["registry-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"registry.orgs","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["registry-store"],"readers":["registry-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"registry.env_policies","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["registry-store"],"readers":["registry-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"registry.projects","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["registry-store"],"readers":["registry-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"registry.project_envs","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["registry-store"],"readers":["registry-store","provision-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"registry.event_readers","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["registry-store"],"readers":["registry-store","cdc-reader"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"provisioning.sagas","plane":"control","semantic_owner":"provision-store","migration_owners":["provision-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["provision-store"],"readers":["provision-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"provisioning.dumps","plane":"control","semantic_owner":"provision-store","migration_owners":["provision-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["provision-store"],"readers":["provision-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+
+    {"id":"catalog.catalogs","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control","ctl-copy"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"catalog.schema_migrations","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"catalog.entities","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"catalog.fields","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"catalog.relations","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"catalog.indexes","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"catalog.constraints","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"catalog.rls_policies","plane":"project","semantic_owner":"schema-compiler","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-copy"],"readers":["schema-control","ctl-copy"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"catalog.seed_datasets","plane":"project","semantic_owner":"schema-compiler","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"catalog.event_registrations","plane":"project","semantic_owner":"event-registration-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["event-registration-api","schema-control","ctl-copy"],"readers":["event-registration-api","schema-control","ctl-copy","materializer"],"compatibility_horizon":"frozen-0.1-event-contract-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+
+    {"id":"app_system.users","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"app_system.roles","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"app_system.user_roles","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"app_system.permissions","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"app_system.configurations","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"app_system.audit_log","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"app_system.api_keys","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+
+    {"id":"wamn_run.flows","plane":"project","semantic_owner":"flow-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/flows.sql","writers":["ctl-publish","ctl-copy","scenario-worker"],"readers":["flowrunner","dispatcher","scenario-worker","materializer"],"compatibility_horizon":"flow-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"wamn_run.test_suites","plane":"project","semantic_owner":"scenario-catalog","migration_owners":["schema-control"],"schema_source":"deploy/sql/flow-tests.sql","writers":["scenario-catalog","ctl-copy"],"readers":["scenario-catalog","ctl-copy","scenario-worker"],"compatibility_horizon":"scenario-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"wamn_run.test_cases","plane":"project","semantic_owner":"scenario-catalog","migration_owners":["schema-control"],"schema_source":"deploy/sql/flow-tests.sql","writers":["scenario-catalog","ctl-copy"],"readers":["scenario-catalog","ctl-copy","scenario-worker"],"compatibility_horizon":"scenario-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+
+    {"id":"wamn_run.runs","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state","dispatcher","scenario-worker","flowrunner","materializer"],"readers":["run-state","dispatcher","scenario-worker","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"wamn_run.cron_anchor","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state","dispatcher"],"readers":["run-state","dispatcher"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"wamn_run.node_runs","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state","flowrunner"],"readers":["run-state","scenario-worker","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"wamn_run.run_queue","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-queue.sql","writers":["run-state","dispatcher","scenario-runtime","scenario-worker","flowrunner","materializer"],"readers":["run-state","dispatcher","scenario-runtime","scenario-worker","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"wamn_run.partition_owner","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-queue.sql","writers":["run-state","flowrunner"],"readers":["run-state","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"wamn_run.run_dead_letters","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-queue.sql","writers":["run-state","flowrunner"],"readers":["run-state","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"}
+  ],
+  "families": [
+    {
+      "id": "app-schema-catalog-snapshot",
+      "plane": "project",
+      "pattern": "<app_schema>.wamn_catalog",
+      "semantic_owner": "schema-model",
+      "migration_owners": [
+        "ctl-publish"
+      ],
+      "schema_source": "services/ctl/src/publish_catalog.rs",
+      "writers": [
+        "ctl-publish"
+      ],
+      "readers": [
+        "api-gateway",
+        "node-guest",
+        "flowrunner"
+      ],
+      "compatibility_horizon": "one-published-catalog-generation-and-single-version-development-release",
+      "drift_gate": "R35:transactional-pinned-serving-generation"
+    },
+    {
+      "id": "app-schema-entity-map",
+      "plane": "project",
+      "pattern": "<app_schema>.wamn_entities",
+      "semantic_owner": "provision-store",
+      "migration_owners": [
+        "provision-store"
+      ],
+      "schema_source": "crates/control/provision/src/sql.rs",
+      "writers": [
+        "provision-store",
+        "ctl-publish",
+        "ctl-migrate"
+      ],
+      "readers": [
+        "cdc-reader"
+      ],
+      "compatibility_horizon": "catalog-migration-and-retained-wal-horizon",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "generated-tenant-entities",
+      "plane": "project",
+      "pattern": "<app_schema>.<catalog_entity_name>",
+      "semantic_owner": "schema-model",
+      "migration_owners": [
+        "schema-compiler"
+      ],
+      "schema_source": "crates/schema/compiler/src/emit.rs",
+      "writers": [
+        "api-gateway",
+        "entity-access",
+        "schema-compiler",
+        "flowrunner",
+        "standard-nodes-entity",
+        "standard-nodes-raw-sql"
+      ],
+      "readers": [
+        "entity-access",
+        "flowrunner",
+        "cdc-reader"
+      ],
+      "compatibility_horizon": "one-catalog-version-and-migration-transaction",
+      "drift_gate": "SR13:generate-from-catalog-and-live-apply"
+    }
+  ]
+}
