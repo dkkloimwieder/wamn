@@ -74,8 +74,9 @@ There are no `default-members` in either virtual workspace. Consequently:
 - From `components/`, the same bare commands select all 18 component members.
   The production guest build remains
   `cargo build --workspace --target wasm32-wasip2`.
-- Full CI remains three explicit steps: all root targets, all component
-  artifacts, and the classified non-Cargo input:
+- Full CI keeps three package/artifact steps—every root target, every component
+  artifact, and the classified non-Cargo input—then runs the fail-closed recipe
+  test selector:
   ```bash
   ./tools/workspace-tier run full_ci root test-all
   ./tools/workspace-tier run full_ci components build-wasm
@@ -83,6 +84,7 @@ There are no `default-members` in either virtual workspace. Consequently:
   jco componentize components/samples/node-ts/node.js \
     --wit components/samples/node-ts/wit --world-name node-bench \
     --disable http --disable fetch-event -o /tmp/wamn-node-ts-full-ci.wasm
+  ./tools/build-recipe-test-check
   ```
 - Neither local full CI nor a successful Cargo build substitutes for the
   owning deployed Job below. Gate-of-record semantics are unchanged.
@@ -142,8 +144,9 @@ cargo test -p wamn-proof-conformance -p wamn-proof-integration -p wamn-proof-sys
 # Repository-only fixture and temporary-infrastructure support.
 cargo test -p wamn-test-fixtures -p wamn-test-infrastructure
 
-# Compatibility command router used by the existing Jobs.
-cargo test -p wamn-gates
+# Compile the compatibility command router used by the existing Jobs. Its test
+# implementations belong to the three proof libraries above.
+cargo check -p wamn-gates
 ```
 
 ### S1/4p3/bp4.1 gates
@@ -177,7 +180,8 @@ docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
 # sibling superuser recipe below. Without it, --mode all now REFUSES up front
 # (a preflight bail) rather than silently skipping to a false-green (C7-2).
 # --mode attack is the wamn-cjv.2 in-band claim-override gate (pgprobe ops 7/8/9);
-# guard unit tests: cargo test -p wamn-host guard_
+# recipe-test: H5-S2-GUARDS | unit | wamn-runtime | lib | - | plugins::wamn_postgres::claims::tests::guard_ | 5 | crates/platform/runtime/src/plugins/wamn_postgres/claims.rs claim-mutation SQL guard
+cargo test -p wamn-runtime --lib plugins::wamn_postgres::claims::tests::guard_
 # Mutation harness (3 guard mutants, each must fail --mode attack): scratchpad/mutate_cjv2.py
 # In-cluster gate of record (p99 is measured in-cluster):
 kubectl -n wamn-system create configmap pg-init --from-file=init.sql=deploy/sql/postgres-init.sql
@@ -213,8 +217,11 @@ docker run -d --rm --name wamn-lb3-pg -p 5465:5432 -e POSTGRES_PASSWORD=postgres
 # GOTCHA: postgres:18 inits-then-restarts — wait >=10s before the first connect,
 # then verify the setting IS off before running the test:
 sleep 12 && docker exec wamn-lb3-pg psql -U postgres -c "SHOW standard_conforming_strings"  # => off
+# recipe-test: H5-R18-NEG | live-negative | wamn-runtime | lib | - | plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed | 1 | crates/platform/runtime Postgres checkout hook against the throwaway unsafe server
 WAMN_SCS_OFF_PG_URL=postgres://postgres:postgres@127.0.0.1:5465/postgres \
-  cargo test -p wamn-host live_scs_off_server_fails_checkout_closed -- --nocapture
+  cargo test -p wamn-runtime --lib \
+    plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed \
+    -- --exact --nocapture
 docker stop wamn-lb3-pg
 ```
 
@@ -310,8 +317,10 @@ kubectl -n wamn-system logs -f job/logbench
 Docs: docs/tracing.md
 
 ```bash
-cargo clippy -p wamn-host -p wamn-dispatcher -p wamn-gates --all-targets \
-  && cargo fmt -p wamn-host -p wamn-dispatcher -p wamn-gates --check
+# Static proof spans the thin host artifact and the runtime library that owns
+# its logging/plugin implementation boundary.
+cargo clippy -p wamn-host -p wamn-runtime -p wamn-dispatcher -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-host -p wamn-runtime -p wamn-dispatcher -p wamn-gates --check
 cargo build -p wamn-dispatcher -p wamn-gates   # tracebench spawns the sibling service binary
 # Local iteration (throwaway Postgres + Tempo + collector on a docker network;
 # spans are INFO):
@@ -347,7 +356,13 @@ kubectl -n wamn-system logs job/tracebench
 Docs: docs/metrics.md
 
 ```bash
-cargo test -p wamn-host -p wamn-executor -p wamn-dispatcher -p wamn-gates --no-fail-fast
+# Unit proof: the memory instruments live in wamn-runtime; execution/service
+# supervision and the metricbench assertions retain their separate owners.
+# recipe-test: H5-METRIC-RUNTIME | unit | wamn-runtime | lib | - | memory_metrics::tests:: | 2 | crates/platform/runtime/src/memory_metrics.rs instrument snapshots
+cargo test -p wamn-runtime --lib memory_metrics::tests::
+cargo test -p wamn-execution-host -p wamn-executor -p wamn-dispatcher --no-fail-fast
+# recipe-test: H5-METRIC-PROOF | integration | wamn-proof-integration | lib | - | metricbench::tests:: | 2 | tests/integration/src/metricbench.rs scrape parsing and body assembly
+cargo test -p wamn-proof-integration --lib metricbench::tests::
 cargo build -p wamn-dispatcher -p wamn-gates   # metricbench spawns the sibling service binary
 # Local iteration: a throwaway Postgres (+ the NOSUPERUSER wamn_app role) and the
 # local collector with the new :8889 metrics pipeline. metricbench drives the
@@ -385,7 +400,9 @@ Docs: docs/wash-runtime-fork.md, docs/tracing.md
 
 ```bash
 cargo test -p wamn-node-sdk -p wamn-standard-nodes   # trace_headers/apply + http-node forward + explicit-header-wins
-cargo test -p wamn-gates --bin wamn-gates traceproof   # w3c/header-parse units
+# System-proof unit boundary: deployed trace headers are parsed by traceproof.
+# recipe-test: H5-TRACEPROOF | system | wamn-proof-system | lib | - | traceproof::tests:: | 2 | tests/system/src/traceproof.rs W3C trace-header parsing
+cargo test -p wamn-proof-system --lib traceproof::tests::
 cargo clippy -p wamn-node-sdk -p wamn-standard-nodes -p wamn-gates --all-targets \
   && cargo fmt -p wamn-node-sdk -p wamn-standard-nodes -p wamn-gates --check
 (cd components && cargo build --release --target wasm32-wasip2 -p trace-relay)
@@ -529,7 +546,11 @@ F1 refuses cleanly while F3/F4 (std nodes) drive.
 # Unit tests (SuiteSelector = SuiteEdge shape, i32→u32 version boundary,
 # selection exclusivity, drivability, coherence, egress authorization separation,
 # node-set drift guards) + the flow-tests sql drift/predicate guards:
-cargo test -p wamn-gates testkitbench:: -p wamn-scenario-catalog
+# Integration proof: the router delegates testkitbench to the integration
+# library; scenario catalog retains its own storage tests.
+# recipe-test: H5-TESTKITBENCH | integration | wamn-proof-integration | lib | - | testkitbench::tests:: | 1 | tests/integration/src/testkitbench.rs scenario-runtime ownership guard
+cargo test -p wamn-proof-integration --lib testkitbench::tests::
+cargo test -p wamn-scenario-catalog
 
 # Local FULL gate (throwaway PG). The flowrunner release wasm is reused (no
 # rebuild). --seed-demo is the simplest hermetic proof of the arc:
@@ -634,8 +655,12 @@ REL=components/target/wasm32-wasip2/release
   # node-rs / flow-composed are nodebench fixtures (import the bench-only
   # wamn:nodebench) — exercised by the nodebench gate, not this DB-path review.
 
-cargo clippy -p wamn-host -p wamn-executor -p wamn-gates -p wamn-gate-harness --all-targets \
-  && cargo fmt -p wamn-host -p wamn-executor -p wamn-gates -p wamn-gate-harness --check
+# Static proof spans the host artifact, reusable runtime/execution adapters,
+# component import policy, executor service, and proof owners.
+cargo clippy -p wamn-host -p wamn-runtime -p wamn-component-policy \
+  -p wamn-execution-host -p wamn-executor -p wamn-gates -p wamn-gate-harness --all-targets \
+  && cargo fmt -p wamn-host -p wamn-runtime -p wamn-component-policy \
+    -p wamn-execution-host -p wamn-executor -p wamn-gates -p wamn-gate-harness --check
 
 # E13/E15 runtime raw-socket deny + E17 rejection (wamn-o3u6), the in-cluster
 # gate of record. sockprobe attempts raw TCP/UDP egress through the production
@@ -663,8 +688,14 @@ Docs: docs/security-db-path.md · Manifest: deploy/gates/socketguard-job.yaml
 # a standard world (must publish) in-process — no registry, no fixtures, no DB,
 # so the local run IS the whole gate. Unlike egressbench (which walks the shipped
 # components), this proves the guard REJECTS an adversarial world.
-cargo test -p wamn-gates            # +the egressbench runtime/reject-tenant units
-cargo test -p wamn-host egress_guard  # the shared classifier units
+# Conformance proof: egressbench and socketguard live behind the router in the
+# conformance library. The shared classifier itself lives in component-policy.
+# recipe-test: H5-EGRESSBENCH | conformance | wamn-proof-conformance | lib | - | egressbench::tests:: | 11 | tests/conformance/src/egressbench.rs runtime and reject-tenant assertions
+cargo test -p wamn-proof-conformance --lib egressbench::tests::
+# recipe-test: H5-SOCKETGUARD | conformance | wamn-proof-conformance | lib | - | socketguard::tests:: | 2 | tests/conformance/src/socketguard.rs publish refusal and standard-workload control
+cargo test -p wamn-proof-conformance --lib socketguard::tests::
+# recipe-test: H5-COMPONENT-POLICY | policy-unit | wamn-component-policy | lib | - | tests:: | 19 | crates/platform/component-policy/src/lib.rs import classifiers and derived grants
+cargo test -p wamn-component-policy --lib tests::
 ./target/release/wamn-gates --log-level warn socketguard
 # in-cluster sweep (carries the hermetic gate alongside egressbench-job):
 kubectl -n wamn-system apply -f deploy/gates/socketguard-job.yaml
@@ -682,7 +713,10 @@ Docs: docs/builder.md §11.5 · Manifest: deploy/gates/f2-testgate-job.yaml
 # publish (nothing is pushed). Build the disposition-node wasm the gate drives:
 cd components && cargo build --release --target wasm32-wasip2 -p disposition-node && cd ..
 cargo test -p wamn-builder            # test_gate serde/subset/display units
-cargo test -p wamn-gates testgate     # run_cases over the compiled node: pass / value-mismatch / error-variant / port
+# Conformance proof boundary: run_cases is owned by the proof library; the
+# wamn-gates binary only routes the deployed command.
+# recipe-test: H5-TESTGATE | conformance | wamn-proof-conformance | lib | - | testgate::tests:: | 4 | tests/conformance/src/testgate.rs compiled-node pass and typed refusal cases
+cargo test -p wamn-proof-conformance --lib testgate::tests::
 # Hermetic (positive arm passes; negative arm REFUSES with the typed error before any push):
 ./target/debug/wamn-gates --log-level warn testgate \
   --node components/target/wasm32-wasip2/release/disposition_node.wasm
@@ -800,7 +834,12 @@ Docs: docs/credential-vault.md
 # drift-guards (the credentials copies) + the credproof fixture pins.
 cargo test -p wamn-node-sdk && cargo test -p wamn-standard-nodes
 cargo test -p wamn-node-guest --all-features
-cargo test -p wamn-host wamn_credentials && cargo test -p wamn-gates credproof
+# Unit boundary: the credential plugin moved to wamn-runtime. The deployed
+# fixture contract is owned by the system-proof library.
+# recipe-test: H5-CREDENTIALS | unit | wamn-runtime | lib | - | plugins::wamn_credentials::tests:: | 8 | crates/platform/runtime/src/plugins/wamn_credentials.rs vault and per-execution grant semantics
+cargo test -p wamn-runtime --lib plugins::wamn_credentials::tests::
+# recipe-test: H5-CREDPROOF | system | wamn-proof-system | lib | - | credproof::tests:: | 3 | tests/system/src/credproof.rs credential and deny deployment fixtures
+cargo test -p wamn-proof-system --lib credproof::tests::
 
 # cjv.3 host-enforced per-execution grant + fail-closed project. credprobe
 # drives the direct-import THREAT fixture (components/fixtures/cred-probe,
@@ -946,7 +985,10 @@ by: representative-app WAL volume BEFORE any publication/slot exists (bd dep
 wamn-l5i9.9 → wamn-l5i9.4 keeps it strictly pre-CDC).
 
 ```bash
-cargo test -p wamn-gates walbench   # rates parse / wide-blob entropy / poc-catalog floor compile
+# Integration-proof unit boundary: walbench implementation and fixtures live
+# in wamn-proof-integration, not the wamn-gates router.
+# recipe-test: H5-WALBENCH | integration | wamn-proof-integration | lib | - | walbench::tests:: | 3 | tests/integration/src/walbench.rs rate parser, blob entropy, and catalog floor
+cargo test -p wamn-proof-integration --lib walbench::tests::
 # Local iteration (short knobs; correctness only — debug build, dev-host PG):
 docker run -d --rm --name wamn-cwal0-pg -p 5444:5432 -e POSTGRES_PASSWORD=postgres postgres:18
 docker exec wamn-cwal0-pg psql -U postgres -c \
@@ -1273,7 +1315,9 @@ wamn-host) AND GUEST-changed (the runner declares the channel) — the in-cluste
 gate rebakes the host image + rebuilds the flowrunner wasm.
 
 ```bash
-cargo test -p wamn-host --lib plugins::wamn_postgres::tests  # emit bytes pinned + batch wiring (run set/unset) + forgery guard + current_run map
+# Unit boundary: the Postgres plugin is owned by the wamn-runtime library.
+# recipe-test: H5-CAUSATION | unit | wamn-runtime | lib | - | plugins::wamn_postgres::claims::tests:: | 15 | crates/platform/runtime/src/plugins/wamn_postgres/claims.rs claims, causation emit, forgery guard, and current-run map
+cargo test -p wamn-runtime --lib plugins::wamn_postgres::claims::tests::
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)  # guest declares the channel
 # Local live proof — the REAL plugin emit through the REAL runner (both drive
 # paths: run/run_s6/run_until_kill via execute(), run_next via execute_claimed()):
@@ -1463,7 +1507,10 @@ hard-wired per-POC-flow so it can drive F1, whose node types are baked into
 # committed source fixtures (deploy/poc/f3-flow.json,
 # crates/execution/flow-model/tests/fixtures/f4-disposition-recorded.flow.json), the F3
 # epoch-anchor straddles the cutoff, the F4 egress-spy names exactly {/run,/dispositions}:
-cargo test -p wamn-gates pocsuiteproof
+# Integration-proof boundary: pocsuiteproof fixtures and assertions live in
+# wamn-proof-integration; wamn-gates only routes the executable subcommand.
+# recipe-test: H5-POCSUITEPROOF | integration | wamn-proof-integration | lib | - | pocsuiteproof::tests:: | 7 | tests/integration/src/pocsuiteproof.rs stored F1/F3/F4 suite fixtures
+cargo test -p wamn-proof-integration --lib pocsuiteproof::tests::
 cargo test -p wamn-scenario-model -p wamn-scenario-catalog
 
 # Build the gate + the three guests this drive needs (all release wasm):
@@ -1569,8 +1616,12 @@ doorbell → ack. Decisions are the PURE `wamn-materializer` crate; the guest
 
 ```bash
 cargo test -p wamn-materializer -p wamn-run-state          # decide/condition/causation/mint + E4 model/SQL pins
-cargo test -p wamn-host --lib plugins::wamn_jetstream      # doorbell subject/tenant map (+ live round-trip w/ WAMN_EVT_NATS_URL)
-cargo test -p wamn-host --test jetstream_wit_coherence     # docs WIT == built WIT (doorbell included)
+# Unit and contract boundaries: the JetStream plugin and its WIT target are
+# owned by wamn-runtime; the host package is now a binary-only composition leaf.
+# recipe-test: H5-JETSTREAM-UNIT | unit | wamn-runtime | lib | - | plugins::wamn_jetstream::tests:: | 12 | crates/platform/runtime/src/plugins/wamn_jetstream.rs mappings, doorbell policy, and optional live round-trip
+cargo test -p wamn-runtime --lib plugins::wamn_jetstream::tests::
+# recipe-test: H5-JETSTREAM-WIT-MATERIALIZER | contract | wamn-runtime | test | jetstream_wit_coherence | - | 3 | crates/platform/runtime/tests/jetstream_wit_coherence.rs docs, host, and guest WIT copies
+cargo test -p wamn-runtime --test jetstream_wit_coherence
 (cd components && cargo build -p materializer --target wasm32-wasip2 --release)
 # Live gate — REAL guest + REAL deploy/sql DDL (include_str! — drift-proof) +
 # REAL JetStream; 17 asserts: rows/ids/keys/policy, causation thread, distinct
@@ -1613,7 +1664,9 @@ nothing), full-redelivery dedupe (delete the durable → same ids come back
 (publish to an uncovered subject → `publish-rejected` surfaces as a `js-error`).
 
 ```bash
-cargo test -p wamn-host --test jetstream_wit_coherence   # docs WIT == host + both vendored guest copies (materializer + js-sample)
+# Contract boundary: this named integration target belongs to wamn-runtime.
+# recipe-test: H5-JETSTREAM-WIT-SAMPLE | contract | wamn-runtime | test | jetstream_wit_coherence | - | 3 | crates/platform/runtime/tests/jetstream_wit_coherence.rs materializer and js-sample WIT coherence
+cargo test -p wamn-runtime --test jetstream_wit_coherence
 (cd components && cargo build -p js-sample --target wasm32-wasip2 --release)
 # Local gate — REAL guest + REAL WamnJetstream plugin + REAL JetStream:
 docker run -d --name sample-nats -p 44232:4222 nats:2.10 -js
@@ -1663,7 +1716,10 @@ is created LAST (provisioning + seed writes stay uncaptured) and dropped
 deterministically at teardown (zero residue).
 
 ```bash
-cargo test -p wamn-gates rie2ebench          # fixture drift guards (registration/flow/catalog parse the frozen types)
+# Integration-proof boundary: rie2ebench fixtures are owned by the integration
+# library rather than the command router.
+# recipe-test: H5-RIE2EBENCH | integration | wamn-proof-integration | lib | - | rie2ebench::tests:: | 2 | tests/integration/src/rie2ebench.rs frozen registration, flow, and catalog fixtures
+cargo test -p wamn-proof-integration --lib rie2ebench::tests::
 # Local gate — REAL reader + REAL materializer guest + REAL deploy/sql DDL +
 # REAL JetStream. Postgres MUST be wal_level=logical (the real slot/reader):
 docker run -d --name wamn-lanec-rie-pg -p 57231:5432 -e POSTGRES_PASSWORD=postgres \
@@ -1717,7 +1773,10 @@ catch-up timed from commit wall-times + JetStream ingest timestamps.
 `--mode all` = drain+lag+ri; switchover is always explicit.
 
 ```bash
-cargo test -p wamn-gates cdcbench            # fixture drift guards (frozen registration parse, catalog shapes, URL helpers)
+# Integration-proof boundary: cdcbench fixture and URL guards live in
+# wamn-proof-integration.
+# recipe-test: H5-CDCBENCH | integration | wamn-proof-integration | lib | - | cdcbench::tests:: | 4 | tests/integration/src/cdcbench.rs registration, catalog, rates, and URL helpers
+cargo test -p wamn-proof-integration --lib cdcbench::tests::
 # Local bring-up — REAL reader + REAL DDL + REAL JetStream (numbers are NOT
 # the record; the record is the in-cluster release-image job):
 docker run -d --name wamn-ccdc-pg -p 55444:5432 -e POSTGRES_PASSWORD=postgres \
@@ -1953,7 +2012,10 @@ threads to the merged result. `--setup` registers EVERY rung's flow so one schem
 serves the whole ladder.
 
 ```bash
-cargo test -p wamn-gates ladderproof   # rung1/2/3 fixture drift-guards (parse + validate) + chain/port/routing units
+# System-proof boundary: ladderproof owns the deployed rung fixture and routing
+# assertions; the wamn-gates binary only dispatches it.
+# recipe-test: H5-LADDERPROOF | system | wamn-proof-system | lib | - | ladderproof::tests:: | 9 | tests/system/src/ladderproof.rs rung fixtures, routing, schema, and terminal-state guards
+cargo test -p wamn-proof-system --lib ladderproof::tests::
 cargo clippy -p wamn-gates --all-targets && cargo fmt -p wamn-gates --check
 # Local end-to-end (throwaway postgres:18 + a background run-worker; guest + host
 # UNCHANGED — ladderproof is gates-only, no wasm/host rebuild). Start the runner
@@ -2004,7 +2066,11 @@ distinct `dispatcher-fires` phase separates a projects-Secret wiring gap from a
 wake failure.
 
 ```bash
-cargo test -p wamn-waker -p wamn-gates   # decision units (parse/decide/scale-parse) + cron-flow drift guard
+cargo test -p wamn-waker   # decision units (parse/decide/scale-parse)
+# Integration-proof boundary: the cron-flow drift guard lives with wakeproof;
+# wamn-gates only routes the deployed command.
+# recipe-test: H5-WAKEPROOF | integration | wamn-proof-integration | lib | - | wakeproof::tests:: | 1 | tests/integration/src/wakeproof.rs cron-flow fixture parse and validation
+cargo test -p wamn-proof-integration --lib wakeproof::tests::
 cargo clippy -p wamn-waker -p wamn-gates --all-targets
 # Mutation (decision is a load-bearing assert): flip `current_replicas == 0` in
 # services/waker/src/lib.rs decide() -> `!= 0`; then
@@ -2477,7 +2543,7 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn
 Docs: docs/deployment-model.md, docs/registry-model.md, docs/provisioning.md
 
 ```bash
-cargo test -p wamn-control-registry -p wamn-ctl -p wamn-gates   # Template presets + OrgEnvPolicy + org-scoped validate/resolve/SQL + subcommand units
+cargo test -p wamn-control-registry -p wamn-ctl   # Template presets + OrgEnvPolicy + org-scoped validate/resolve/SQL + subcommand units
 cargo clippy -p wamn-control-registry -p wamn-ctl -p wamn-gates --all-targets \
   && cargo fmt -p wamn-control-registry -p wamn-ctl -p wamn-gates --check
 # Throwaway-PG live gates (superuser url): the storage live-apply (composite
@@ -2610,8 +2676,10 @@ Docs: docs/migration-engine.md
 ```bash
 cargo test -p wamn-schema-control     # unit (guards/gate/dry-run/rollback) + drift-guard + live-apply
 cargo test -p wamn-ctl --lib migrate_catalog   # the subcommand's bare-ident + param-map units
-cargo clippy -p wamn-schema-control -p wamn-host --all-targets \
-  && cargo fmt -p wamn-schema-control -p wamn-host --check
+# Static proof spans the decision library and the ctl service library that owns
+# migrate-catalog; the binary-only host is outside this boundary.
+cargo clippy -p wamn-schema-control -p wamn-ctl --all-targets \
+  && cargo fmt -p wamn-schema-control -p wamn-ctl --check
 # optional live-apply gate (throwaway postgres:18; superuser url — provisions
 # unset):
 docker run -d --rm --name wamn-schema-control-pg -p 5467:5432 -e POSTGRES_PASSWORD=postgres \
@@ -2735,8 +2803,15 @@ kubectl -n wamn-system logs -f job/apibench
 Docs: docs/api-gateway.md
 
 ```bash
-cargo test -p wamn-host -p wamn-gates   # publish-catalog ident test + apifixture drift-guard
-cargo clippy -p wamn-host -p wamn-gates --all-targets && cargo fmt -p wamn-host -p wamn-gates --check
+# Unit/fixture boundaries: publish-catalog belongs to wamn-ctl and the API
+# fixture lives in repository test support. The host remains the serving
+# artifact and the gates package remains the deployed router.
+# recipe-test: H5-API-PUBLISH | unit | wamn-ctl | lib | - | publish_catalog::tests:: | 1 | services/ctl/src/publish_catalog.rs pre-I/O schema boundary
+cargo test -p wamn-ctl --lib publish_catalog::tests::
+# recipe-test: H5-API-FIXTURE | fixture | wamn-test-fixtures | lib | - | apifixture::tests:: | 2 | test-support/fixtures/apifixture.rs API catalog and floor coherence
+cargo test -p wamn-test-fixtures --lib apifixture::tests::
+cargo clippy -p wamn-host -p wamn-ctl -p wamn-gates --all-targets \
+  && cargo fmt -p wamn-host -p wamn-ctl -p wamn-gates --check
 # In-cluster proof of record (needs the kind 'wamn' cluster + operator + postgres):
 docker build --target host -t wamn-host:dev . \
   && docker build --target gates -t wamn-gates:dev .   # cached; two tags, one build
@@ -2790,7 +2865,10 @@ cargo clippy -p wamn-f1 --all-targets && cargo fmt -p wamn-f1 --check
 (cd components && cargo build --release --target wasm32-wasip2 -p poc-webhook-f1)
 cargo clippy --manifest-path components/poc/webhook-f1/Cargo.toml --release --target wasm32-wasip2 \
   && cargo fmt --manifest-path components/poc/webhook-f1/Cargo.toml --check
-cargo test -p wamn-gates    # f1fixture coherence (burst = 20 receipts / 3 out-of-spec /
+# Fixture boundary: F1 coherence moved to repository test support; the gates
+# package only routes the executable f1bench/f1proof commands.
+# recipe-test: H5-F1-FIXTURE | fixture | wamn-test-fixtures | lib | - | f1fixture::tests:: | 1 | test-support/fixtures/f1fixture.rs receipt burst and flow coherence
+cargo test -p wamn-test-fixtures --lib f1fixture::tests::
 # cross-check incl expand=line). Local iteration (throwaway PG; superuser
 # provisions the ephemeral schema):
 docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
@@ -3277,7 +3355,10 @@ and `buildproof` verifies the pushed artifact FROM the registry.
 # an in-process registry stub, sign/verify, golden deployment manifests, the
 # buildproof manifest/signature/SBOM checks).
 cargo test -p wamn-builder
-cargo test -p wamn-gates --bin wamn-gates -- buildproof   # verify_* units
+# Conformance boundary: buildproof verification units live in the conformance
+# library; the gates binary only exposes the deployed subcommand.
+# recipe-test: H5-BUILDPROOF | conformance | wamn-proof-conformance | lib | - | buildproof::tests:: | 3 | tests/conformance/src/buildproof.rs manifest, SBOM, and signature verification
+cargo test -p wamn-proof-conformance --lib buildproof::tests::
 cargo test -p wamn-component-policy                      # 5.5a lint + derived grants
 # regen the emission golden files after an intentional shape change:
 BLESS=1 cargo test -p wamn-builder --test golden_deploy
@@ -3320,8 +3401,10 @@ Docs: docs/dashboards.md
 
 ```bash
 # Unit tests (dashboards-as-code drift guards: metric names vs docs/metrics.md,
-# the checked-in SRE JSON vs the render, tenant->folder uid mapping, base64/auth):
-cargo test -p wamn-ctl -p wamn-gates provision_dashboards
+# the checked-in SRE JSON vs the render, tenant->folder uid mapping, base64/auth).
+# The implementation belongs to wamn-ctl; wamn-gates only routes dashproof:
+# recipe-test: H5-DASHBOARDS | unit | wamn-ctl | lib | - | provision_dashboards::tests:: | 7 | services/ctl/src/provision_dashboards.rs dashboard drift, rendering, tenant, and encoding guards
+cargo test -p wamn-ctl --lib provision_dashboards::tests::
 # (regenerate the SRE dashboard JSON after a panel change:)
 cargo run -p wamn-ctl -- provision-dashboards --emit-sre deploy/infra/grafana/dashboards
 # Local iteration: Prometheus + Grafana (SRE dashboards file-provisioned) + a
