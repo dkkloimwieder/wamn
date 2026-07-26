@@ -340,7 +340,7 @@ pub async fn run(args: QueueBenchArgs) -> anyhow::Result<()> {
         "queuebench needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL",
     )?;
 
-    println!("# wamn-host 5.14 queuebench (schema {SCHEMA}, tenant {TENANT})");
+    println!("# wamn-gates 5.14 queuebench (schema {SCHEMA}, tenant {TENANT})");
     provision(&admin_url)
         .await
         .context("provision ephemeral schema")?;

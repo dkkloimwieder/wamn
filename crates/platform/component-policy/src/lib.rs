@@ -15,7 +15,8 @@
 //! This module is that enforcement: a single structural rule — reject a
 //! component that imports any interface of the `wasi:sockets` package — reusable
 //! by any wamn build/publish path that has the component bytes, and driven by
-//! the `socketguard` refusal gate (tests/orchestrator). It intentionally keys on
+//! the `socketguard` refusal gate (`tests/conformance/src/socketguard.rs`). It
+//! intentionally keys on
 //! the WIT `namespace:package` (`wasi:sockets`), not fragile interface-name
 //! matching: every socket interface (`wasi:sockets/tcp@…`, `…/udp@…`,
 //! `…/ip-name-lookup@…`, a bare `wasi:sockets@…`) collapses to the same package
@@ -34,8 +35,9 @@
 //! [`screen_imports`] (socket denylist) for the first-party flow-runner, which
 //! legitimately imports `wamn:postgres`; [`screen_tenant_imports`] (positive
 //! allowlist) for tenant artifacts. Both classifiers share [`import_pkg`], and
-//! both the `egressbench` publish-gate backstop (tests/orchestrator) and any host
-//! publish path go through these same functions — one classifier, not a fork.
+//! both the `egressbench` publish-gate backstop
+//! (`tests/conformance/src/egressbench.rs`) and any host publish path go through
+//! these same functions — one classifier, not a fork.
 
 /// Ordered top-level imports declared by a component world.
 #[derive(Debug, Clone, PartialEq, Eq)]

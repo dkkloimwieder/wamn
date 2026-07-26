@@ -3,7 +3,7 @@
 -- execution). This is the durable, queryable record behind run history, at-
 -- least-once execution, branch-aware replay, and partial re-run — the durable
 -- half of what the pure engine (crates/execution/flow-engine, 5.2) left as an in-memory
--- seam. The reconstruction/partial-re-run LOGIC lives in crates/execution/run-state-store;
+-- seam. The reconstruction/partial-re-run LOGIC lives in crates/execution/run-state;
 -- these tables are the shape it reads and the driver (components/execution/flowrunner)
 -- writes.
 --
@@ -77,7 +77,7 @@ CREATE INDEX runs_flow ON wamn_run.runs (tenant_id, flow_id, created_at);
 CREATE INDEX runs_root ON wamn_run.runs (tenant_id, root_run_id) WHERE root_run_id IS NOT NULL;
 -- Cron anchor recovery (5.14 dispatcher): a restarted dispatcher recovers each
 -- cron flow's last-fired tick from max(run_id) over that flow's cron runs
--- (crates/execution/run-state-queue cron_last_run_sql). This partial index serves that as
+-- (crates/execution/run-state/src/queue cron_last_run_sql). This partial index serves that as
 -- a backward index scan instead of a seq scan at production runs-table scale,
 -- and stays small — only cron-triggered runs enter it.
 CREATE INDEX runs_cron_anchor ON wamn_run.runs (tenant_id, flow_id, run_id)
@@ -122,7 +122,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.cron_anchor TO wamn_app;
 -- The idempotency key is (tenant_id, run_id, node_id, occurrence): `occurrence`
 -- disambiguates a node the flow LOOPS through (0 = first visit); retries of ONE
 -- occurrence share the row and bump `attempt` — they never create new rows.
--- Reconstruction (crates/execution/run-state-store) replays only COMPLETED rows
+-- Reconstruction (crates/execution/run-state) replays only COMPLETED rows
 -- (status success/error) in `seq` order, folding each as an emission on
 -- `output_port` carrying `output_json`; a `running`/`parked` row is an
 -- outstanding node the driver re-dispatches. `input_json` is what a partial

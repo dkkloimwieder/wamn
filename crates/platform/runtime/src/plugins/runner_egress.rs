@@ -7,7 +7,7 @@
 //! compiled-in flow-runner declares each run's `allowed-hosts` (from the flow
 //! definition) through a channel linked ONLY into its world, and the host
 //! enforces it on the outgoing-`wasi:http` path (`RunnerEgress` in
-//! run_worker.rs).
+//! `crates/execution/host/src/lib.rs`).
 //!
 //! Host-enforced invariants:
 //!

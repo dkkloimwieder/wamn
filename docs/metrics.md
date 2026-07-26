@@ -40,8 +40,8 @@ added (histograms keep their structural `_count`/`_sum`/`_bucket`).
 | `wamn.run.drive.duration_ms` | histogram | `wamn.tenant`, `wamn.project` | run-worker `drain` (timed around `call_run_next`) |
 | `wamn.run_queue.depth` | observable gauge (i64) | `wamn.tenant`, `wamn.project` | dispatcher `tick_project` (`services/dispatcher/src/lib.rs`, `RUN_QUEUE_DEPTH_SQL`) |
 | `wamn.postgres.pool.{size,available,waiting}` | observable gauge (u64) | `wamn.project` | `WamnPostgres::register_pool_metrics` (deadpool `Pool::status()`) |
-| `wamn.postgres.query.duration_ms` | histogram | `db.operation` (query/execute/txn.query/txn.execute), `wamn.project` | the `db_span` sites (`services/host/src/plugins/wamn_postgres/resources.rs`) |
-| `wamn.memory.denied` | observable counter (u64) | `component` | `MemoryMeter` (`services/host/src/memory_metrics.rs`) |
+| `wamn.postgres.query.duration_ms` | histogram | `db.operation` (query/execute/txn.query/txn.execute), `wamn.project` | the `db_span` sites (`crates/platform/runtime/src/plugins/wamn_postgres/resources.rs`) |
+| `wamn.memory.denied` | observable counter (u64) | `component` | `MemoryMeter` (`crates/platform/runtime/src/memory_metrics.rs`) |
 | `wamn.memory.high_water_bytes` | observable gauge (u64) | `component` | `MemoryMeter` |
 | `wamn.memory.budget_bytes` | observable gauge (u64) | `component` | `MemoryMeter` (budgeted stores only) |
 | `wamn.api.requests` | counter (u64) | `status_class` (2xx/4xx/5xx/…) | **fork** `record_response_status` (`host/http.rs`) |

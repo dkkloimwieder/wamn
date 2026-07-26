@@ -2,7 +2,7 @@ package wamn:pgprobe@0.1.0;
 
 /// Guest bench/gate component for the S2 wamn:postgres spike. Imports the
 /// host Postgres capability and exports one repeatable entry point the
-/// `wamn-host pgbench` harness drives. The component's tenant identity comes
+/// `wamn-gates pgbench` harness drives. The component's tenant identity comes
 /// from its workload identity (host-injected claim), NOT from any argument —
 /// there is deliberately no way for this guest to choose its own tenant.
 world pgprobe {

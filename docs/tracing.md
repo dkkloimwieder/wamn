@@ -100,7 +100,7 @@ one, **host-enforced**:
 
 The 9.1 in-proc `tracebench` cannot exercise this: `ProxyPre` bypasses
 wash-runtime's HTTP server, so the outbound send path where the fork stamps the
-context never runs. `traceproof` (`tests/orchestrator/src/traceproof.rs`) runs
+context never runs. `traceproof` (`tests/system/src/traceproof.rs`) runs
 against **real deployed workloads**:
 
 ```text

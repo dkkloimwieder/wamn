@@ -135,7 +135,7 @@ are needed.)
 
 ## The gate — `dashproof`
 
-`tests/orchestrator/src/dashproof.rs` — a proof (no emission seam to drive), the
+`tests/integration/src/dashproof.rs` — a proof (no emission seam to drive), the
 `traceproof`/`apiproof` shape, asserting a deployed Grafana over its HTTP API.
 Each check is a NAMED failure:
 

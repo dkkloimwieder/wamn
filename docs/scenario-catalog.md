@@ -36,8 +36,8 @@ Every suite and case row pins a concrete `(flow_id, flow_version)`. There is **n
 "active suite" pointer** in v0: a suite tests one specific flow version, full
 stop. The `test_suites/test_cases → flows` FK `ON DELETE CASCADE` makes the
 binding structural — dropping a flow version takes its suites and their cases
-with it (proven live: `wamn-ctl tests/suite_promote_live.rs`, `wamn-gates
-suiteproof`).
+with it (proven live:
+`services/ctl/tests/suite_promote_live.rs`, `wamn-gates suiteproof`).
 
 ## Promote semantics (`copy-project-env --include definition`)
 
@@ -154,7 +154,7 @@ capture.
 
 ## Gates
 
-- **`wamn-ctl tests/suite_promote_live.rs`** — drives the REAL
+- **`services/ctl/tests/suite_promote_live.rs`** — drives the REAL
   `copy-project-env --include definition` across two project-env databases:
   promote (flow v1 + suite/cases arrive version-bound, counts match), RLS (a
   second tenant sees zero suites), FK cascade, and the guard refusal. Recipe:

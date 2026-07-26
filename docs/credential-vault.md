@@ -31,7 +31,7 @@ nodes:                         mounted from a K8s Secret;                    │
    kind?, description?}` + `node.credential`. `validate()` rejects an
    undeclared reference. No secret material ever enters the graph.
 2. **Host resolution** — the `wamn_credentials` plugin
-   (`services/host/src/plugins/wamn_credentials.rs`) implements the frozen
+   (`crates/platform/runtime/src/plugins/wamn_credentials.rs`) implements the frozen
    `wamn:node/credentials` `get(handle) -> result<string, credential-error>`.
    Resolution is **project-scoped**: the executing component's project is a
    host-injected claim (`set_project` / the `wamn.project` workload config —
@@ -86,7 +86,7 @@ nodes:                         mounted from a K8s Secret;                    │
 
 `not-granted` precedes any lookup, so an ungranted `get` never learns whether
 the secret exists. The direct-import bypass is proven closed by the
-`credprobe` gate (`tests/orchestrator/src/credprobe.rs` +
+`credprobe` gate (`tests/conformance/src/credprobe.rs` +
 `components/fixtures/cred-probe`): a fixture that imports `wamn:node/credentials`
 directly — exactly as a custom node would — is granted a narrow set host-side,
 and an ungranted / unregistered-project `get` is refused over the real WIT
@@ -101,7 +101,8 @@ cleanly); a **malformed** file is a hard startup error.
 The vault's consumer is outbound `wasi:http`, and the run-worker's store
 previously had **no outgoing handler at all** — an outbound call trapped
 ("http client not available") and poisoned the instance. 5.9 wires
-`RunnerEgress` (`run_worker.rs`): the fork's `check_allowed_hosts` gate over
+`RunnerEgress` (`crates/execution/host/src/lib.rs`): the fork's
+`check_allowed_hosts` gate over
 `DefaultOutgoingHandler` (which also stamps the 9.2 trace context).
 **Fail-closed**: the allowlist comes from `--allowed-hosts` /
 `WAMN_ALLOWED_HOSTS` (repeatable; `host[:port]`, `scheme://host`, `*.domain`,
@@ -111,7 +112,7 @@ per-flow allowlists are the fqg.11 refinement.
 
 ## The gate (`credproof`)
 
-`tests/orchestrator/src/credproof.rs` — the ladderproof shape: a pure DB
+`tests/system/src/credproof.rs` — the ladderproof shape: a pure DB
 client seeds ONE manual run of `deploy/cred/notify.flow.json`
 (`in → http-request{credential: notify-token} → transform{status} → respond`)
 and waits for the **separately-deployed** run-worker to drive it against

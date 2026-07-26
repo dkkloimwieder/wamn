@@ -4,7 +4,7 @@
 -- state, one durability domain — D3); NATS-core carries fire-and-forget doorbells
 -- (a hint per enqueue) with a slow reconciliation sweep for lost hints; a
 -- run-claim lease reclaims a dead replica's work. The claim/lease/janitor LOGIC
--- lives in crates/execution/run-state-queue (pure); this file is the shape it reads and the
+-- lives in crates/execution/run-state/src/queue (pure); this file is the shape it reads and the
 -- driver (services/host queuebench / the dispatcher) writes.
 --
 -- STANDALONE ARTIFACT, ADDITIVE to deploy/sql/run-state.sql: same convention as
@@ -12,7 +12,7 @@
 -- deploy/sql/postgres-init.sql. Assumes deploy/sql/run-state.sql has been applied first
 -- (schema `wamn_run` + the `runs` table this FKs, and the `wamn_app` role). The
 -- queuebench gate provisions an ephemeral schema clone of `runs` + `run_queue`
--- (services/host/src/queuebench.rs) rather than touching this production schema.
+-- (tests/integration/src/queuebench.rs) rather than touching this production schema.
 --
 -- Security shape mirrors the rest of the platform (runs/node_runs, s2/s3, catalog):
 -- tenant separation purely via the `app.tenant` claim the wamn:postgres plugin
@@ -29,7 +29,7 @@
 -- materializer; the outbox table + poller were torn down at l5i9.19.)
 -- Unpartitioned runs (`partition_key IS NULL`) claim globally in `available_at`
 -- order; a run with a `partition_key` is dispatched only through the partition
--- path (crates/execution/run-state-queue `acquire_partitions_sql` + `claim_partition_head_sql`),
+-- path (crates/execution/run-state/src/queue `acquire_partitions_sql` + `claim_partition_head_sql`),
 -- under the row's `partition_policy` (D20: 'blocking' default / 'leapfrog' opt-in).
 -- `priority` remains reserved (default 0).
 
@@ -101,7 +101,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.run_queue TO wamn_app;
 -- partition_owner: one lease per (tenant, partition_key). A runner replica leases a
 -- partition and, while the lease is live, is the ONLY replica that dispatches that
 -- key's runs (claiming them head-first, one in flight at a time — see
--- crates/execution/run-state-queue `partition`), so ordering within the key is preserved under
+-- crates/execution/run-state/src/queue `partition`), so ordering within the key is preserved under
 -- horizontal scaling. When the owner dies the lease expires and another replica
 -- reacquires the whole key and continues in order (crash-safe failover). This is a
 -- coarse coordination row, not run state: it is NOT FK'd to run_queue (partition_key
@@ -134,7 +134,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.partition_owner TO wamn_app;
 -- silently would break the strict-ordering promise without a trace. The chosen
 -- contract: the runner dequeues the head so the key CONTINUES in order, and the
 -- SAME transaction inserts one row here (`dead_letter_dequeue_sql` in
--- crates/execution/run-state-queue) as the alertable marker that ordering proceeded past a
+-- crates/execution/run-state/src/queue) as the alertable marker that ordering proceeded past a
 -- failed run. Scope: 'blocking' partitioned rows ONLY — an unpartitioned or
 -- 'leapfrog' terminal dequeue made no strict-ordering promise and writes
 -- nothing. The run's own history (status, fail_kind/fail_node/fail_reason)

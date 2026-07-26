@@ -126,6 +126,65 @@ root testing ran outside the filesystem sandbox because the builder test owns a
 local registry socket; the JSON retains the sandbox-denied attempt separately
 so that environment limitation cannot be mistaken for a repository failure.
 
+### Restructure integration proof (wamn-5wd1.8, 2026-07-25)
+
+The final repository-organization proof ran from an isolated worktree with a
+dedicated on-disk target directory. These are the executed build and test
+boundaries; the bead closure notes retain the exact zero-match obsolete-path
+expression and resolved path inventory.
+
+```bash
+WAMN_5WD1_8_TARGET=/home/kaalin/dev/wamn/target/wamn-5wd1-8
+
+cargo metadata --locked --offline --format-version 1 \
+  > /tmp/wamn-5wd1-8-root-metadata.json
+cargo metadata --locked --offline --format-version 1 \
+  --manifest-path components/Cargo.toml \
+  > /tmp/wamn-5wd1-8-components-metadata.json
+
+CARGO_TARGET_DIR="$WAMN_5WD1_8_TARGET" \
+  cargo test --locked --offline -p wamn-proof-conformance --no-fail-fast
+CARGO_TARGET_DIR="$WAMN_5WD1_8_TARGET" CARGO_NET_OFFLINE=true \
+  ./tools/workspace-tier run full_ci root test-all
+CARGO_TARGET_DIR="$WAMN_5WD1_8_TARGET" CARGO_NET_OFFLINE=true \
+  ./tools/workspace-tier run full_ci components build-wasm
+CARGO_TARGET_DIR="$WAMN_5WD1_8_TARGET" \
+  cargo test --locked --offline --manifest-path components/Cargo.toml \
+  --workspace --all-targets --no-fail-fast
+./tools/build-recipe-test-check
+
+WAMN_5WD1_8_JCO=/tmp/wamn-jco-1.25.2-fresh/node_modules/.bin/jco
+test "$("$WAMN_5WD1_8_JCO" --version)" = 1.25.2
+"$WAMN_5WD1_8_JCO" componentize components/samples/node-ts/node.js \
+  --wit components/samples/node-ts/wit --world-name node-bench \
+  --disable http --disable fetch-event -o /tmp/wamn-node-ts-full-ci.wasm
+wasm-tools validate /tmp/wamn-node-ts-full-ci.wasm
+wasm-tools component wit /tmp/wamn-node-ts-full-ci.wasm
+sha256sum /tmp/wamn-node-ts-full-ci.wasm
+
+docker buildx build --check --progress=plain .
+git diff --check
+jq empty crates/node/manifest/tests/fixtures/sample-echo.manifest.json
+```
+
+Result: locked resolved metadata covered 47 root and 18 component packages; 59
+named conformance checks passed; every root workspace target passed; all 18
+components built for `wasm32-wasip2` in debug and passed their host-side tests;
+every documented recipe selector matched at least its required count. Pinned
+`jco` 1.25.2 produced a valid 12 MiB component exporting
+`wamn:node/handler@0.1.0` (SHA-256
+`a165e58901da2442172c5db9490137933a9c6d3fdfc2bff36252bba2bc516b5e`).
+BuildKit's static Dockerfile evaluation completed with no warnings. The only
+sandbox-specific failure was the builder registry test's loopback bind; the
+single test and then the exhaustive root command passed outside the sandbox.
+
+This is repository/debug/structural evidence. It built no release-profile
+artifacts or images, pushed no image, and changed no live cluster. The
+fail-closed recipe inventory proves that every deployed gate still resolves to
+its current package, target, filter, fixture, image, and manifest; it does not
+claim that those live gates ran here. The tiered live ladder remains
+`wamn-5wd1.9`.
+
 ## Gates by bead
 
 ### Workspace build

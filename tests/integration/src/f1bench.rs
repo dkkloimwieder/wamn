@@ -996,7 +996,7 @@ pub async fn run(args: F1BenchArgs) -> anyhow::Result<()> {
         .clone()
         .context("no admin database url: pass --admin-database-url or set WAMN_PG_ADMIN_URL")?;
 
-    println!("# wamn-host f1bench — POC-F1 receipt-received gate (P1 exit)");
+    println!("# wamn-gates f1bench — POC-F1 receipt-received gate (P1 exit)");
     provision(&admin_url).await?;
 
     let plugin = Arc::new(WamnPostgres::new(cfg)?);

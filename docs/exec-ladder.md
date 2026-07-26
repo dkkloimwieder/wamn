@@ -17,7 +17,7 @@ that closes the `dispatcher → run_queue → runner` chain.
 
 ## The proof (`ladderproof`)
 
-`tests/orchestrator/src/ladderproof.rs` is a pure DB **client** — the
+`tests/system/src/ladderproof.rs` is a pure DB **client** — the
 f1proof/apiproof shape. Unlike `runnerbench` (which instantiates the flowrunner
 **in-proc** via `ExecutionHost` and drives the claim loop itself), `ladderproof`
 never touches the component: it seeds ONE run the dispatcher way (write-ahead

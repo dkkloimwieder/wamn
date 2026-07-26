@@ -260,19 +260,19 @@ provisioning and both exec paths (migrate + copy) and is deferred to its own bea
   `engine/linked_call.rs:176-191` (allow-all `socket_addr_check`),
   `sockets/mod.rs:68,90` (`AllowedNetworkUses` default + coarse `check_allowed_tcp`),
   `engine/workload.rs:1418` (`host_interfaces` gates plugins only).
-- Plugin: `services/host/src/plugins/wamn_postgres.rs`; memory
+- Plugin: `crates/platform/runtime/src/plugins/wamn_postgres/mod.rs`; memory
   `wamn-2.2-postgres-production-facts`, `wamn-postgres-wit-0.1-frozen`.
 - In-band claim guard (cjv.2): `reject_claim_mutation` /
   `statement_mutates_session` in `wamn_postgres.rs`; gate
-  `tests/orchestrator/src/pgbench.rs` (`--mode attack`) + pgprobe ops 7/8/9;
+  `tests/integration/src/pgbench.rs` (`--mode attack`) + pgprobe ops 7/8/9;
   structural close deferred to `wamn-1nd`.
 - Expression-chaining guard (cjv.5): `wamn_schema_model::unsafe_expression_reason`
   (`crates/schema/model/src/validate.rs`), wired into the `Check` validator
   (`wamn-schema-model`) and the `RolePredicate` validator (`wamn-schema-compiler`); splice sites
   `crates/schema/compiler/src/emit.rs` +
-  `crates/schema/compiler/src/rls/src/compile.rs`; exec paths
+  `crates/schema/compiler/src/rls/compile.rs`; exec paths
   `migrate_catalog.rs` + `copy_project_env.rs`; live proof
   `crates/schema/compiler/tests/ddl.rs::chaining_check_expression_never_reaches_postgres`;
   least-privileged migrate role deferred to its own bead.
 - HTTP egress chokepoint: memory `wamn-s6-testhost-facts` (egress spy).
-- Gate: `services/host/src/egressbench.rs`.
+- Gate: `tests/conformance/src/egressbench.rs`.

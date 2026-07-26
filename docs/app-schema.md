@@ -94,7 +94,8 @@ the authoritative artifact and the model is tied to it by a drift guard.
 
 - **Unit** (`cargo test -p wamn-project-state`): the `UserStatus` literals and the
   table manifest.
-- **Drift guard** (`tests/schema.rs`): `deploy/sql/app-schema.sql` must mirror the
+- **Drift guard** (`crates/identity/project-state/tests/schema.rs`):
+  `deploy/sql/app-schema.sql` must mirror the
   model — the schema name, every table + its pinned columns, the RLS floor + a45
   hardening (one `CHECK (tenant_id <> '')` per table), the `users.status` CHECK
   literals from `UserStatus::as_str`, and the FK cascades (plus that `audit_log`

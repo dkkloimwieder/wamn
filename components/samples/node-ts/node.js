@@ -1,5 +1,5 @@
 // S4 JS/JCO bench node — the "interpreted" arm. Implements the same minimal
-// wamn:node handler as components/node-rs, driven by the JSON config on the
+// wamn:node handler as components/samples/node-rs, driven by the JSON config on the
 // run-context, so the interpreted-vs-composed gap (docs/p0-exit-criteria.md S4)
 // compares like with like. Componentized with `jco componentize` (StarlingMonkey).
 //

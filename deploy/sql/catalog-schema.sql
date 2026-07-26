@@ -28,13 +28,13 @@ GRANT USAGE ON SCHEMA catalog TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Catalog header: one row per (catalog_id, version) — the unit versioned and
--- promoted between environments (3.4, crates/schema/lifecycle). `schema_version` is
+-- promoted between environments (3.4, crates/schema/control/src/lifecycle). `schema_version` is
 -- the catalog-MODEL format version (crates/schema/model SCHEMA_VERSION),
 -- distinct from `version`.
 --
 -- Lifecycle (3.4): `state` carries the draft -> staged -> applied -> superseded
 -- lifecycle (generalizing the earlier `active` boolean); its values are exactly
--- crates/schema/lifecycle State::as_sql, tied to the crate by a test. `environment`
+-- crates/schema/control/src/lifecycle State::as_sql, tied to the crate by a test. `environment`
 -- (dev/canary/prod = the closed wamn_registry::Env set, tied to the crate by a
 -- test; = a project-env database in the 2.2/2.3 per-project-DB model) makes the
 -- deployment target first-class. Version numbers are GLOBALLY UNIQUE per catalog
@@ -48,7 +48,7 @@ GRANT USAGE ON SCHEMA catalog TO wamn_app;
 -- version per (catalog, environment).
 --
 -- `document` is the full catalog JSON (crates/schema/model Catalog) for this
--- version — written by the migration engine (2.5, crates/schema/migration) as the
+-- version — written by the migration engine (2.5, crates/schema/control) as the
 -- diff source: the next migration reads the applied version's `document` to diff
 -- a target against it. Nullable (populated for versions the engine applies).
 -- ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ CREATE UNIQUE INDEX catalogs_one_applied_per_env
     WHERE state = 'applied';
 
 -- ---------------------------------------------------------------------------
--- Migration history (2.5, crates/schema/migration). One IMMUTABLE row per applied
+-- Migration history (2.5, crates/schema/control). One IMMUTABLE row per applied
 -- migration — the versioned, forward-only apply journal the migration engine
 -- writes inside the SAME transaction as the DDL + the lifecycle advance. A row
 -- records the (from -> to) version step, whether it was destructive (so a
@@ -251,7 +251,7 @@ CREATE POLICY constraints_tenant ON catalog.constraints
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.constraints TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- RLS access rules (3.5, crates/schema/rls-compiler). Per-entity access rules tied to
+-- RLS access rules (3.5, crates/schema/compiler/src/rls). Per-entity access rules tied to
 -- roles — row ownership, role command gates, custom per-role predicates —
 -- authored against a catalog and compiled to Postgres RLS policies that layer
 -- AS RESTRICTIVE on top of the 3.2 tenant floor. Each `rule` is the Rule JSON
@@ -277,7 +277,7 @@ CREATE POLICY rls_policies_tenant ON catalog.rls_policies
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.rls_policies TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- Seed datasets (3.6, crates/schema/seed-compiler). Reference/fixture data for a catalog —
+-- Seed datasets (3.6, crates/schema/compiler/src/seed). Reference/fixture data for a catalog —
 -- rows grouped by entity, referenced by symbolic key — authored once and
 -- compiled to tenant-scoped, idempotent INSERTs against the generated tables
 -- (deterministic uuidv5 ids keep re-seeds and test-host schema clones stable).

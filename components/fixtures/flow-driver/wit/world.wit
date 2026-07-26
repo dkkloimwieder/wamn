@@ -1,7 +1,7 @@
 // S4 composed-arm socket. `flow-driver` imports the wamn:node handler and
 // exports a single `run-flow` that walks a linear N-node flow by invoking the
 // handler N times. `wac plug` fills the handler import with the Rust node
-// (components/node-rs), yielding ONE frozen component (flow-composed.wasm) that
+// (components/samples/node-rs), yielding ONE frozen component (flow-composed.wasm) that
 // the `nodebench` harness instantiates once and drives — the "composed" arm of
 // the interpreted-vs-composed measurement (docs/p0-exit-criteria.md S4).
 //

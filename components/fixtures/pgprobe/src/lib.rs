@@ -1,6 +1,6 @@
 //! Guest bench/gate component for the S2 `wamn:postgres` spike.
 //!
-//! One export, `run(op, arg)`, that the `wamn-host pgbench` harness calls
+//! One export, `run(op, arg)`, that the `wamn-gates pgbench` harness calls
 //! repeatedly. All SQL is parameterized ($1..$n) — there is no string
 //! interpolation of `arg` into SQL anywhere in this file; `arg` only ever
 //! travels as a bound parameter value. The guest never learns or chooses its

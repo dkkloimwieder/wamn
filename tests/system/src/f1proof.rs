@@ -344,7 +344,7 @@ async fn rest_phase(rest: &Client) -> anyhow::Result<bool> {
 }
 
 pub async fn run(args: F1ProofArgs) -> anyhow::Result<()> {
-    println!("# wamn-host f1proof — deployed POC-F1 path over real HTTP");
+    println!("# wamn-gates f1proof — deployed POC-F1 path over real HTTP");
     let webhook = Client::new(&args.url, &args.host);
     let rest = Client::new(&args.rest_url, &args.rest_host);
 

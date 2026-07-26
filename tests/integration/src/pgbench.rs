@@ -295,7 +295,7 @@ pub async fn run(args: PgBenchArgs) -> anyhow::Result<()> {
         bail!("no database url: pass --database-url or set DATABASE_URL / WAMN_PG_URL");
     }
 
-    println!("# wamn-host S2 pgbench");
+    println!("# wamn-gates S2 pgbench");
     println!(
         "pool_max = {}, statement_timeout = {} ms, row_limit = {}",
         cfg.pool_max_size, cfg.statement_timeout_ms, cfg.row_limit

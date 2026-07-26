@@ -34,7 +34,7 @@ through NodePort 30950).
 
 **Engine config:** pooling allocator, `max_memory_size = 256 MiB`, 512 slots
 (memories/tables/component-instances/stacks). Benches run with
-`wamn-host bench` (in-image fixtures), methodology mirrors upstream's
+`wamn-gates bench` (in-image fixtures), methodology mirrors upstream's
 `wasmtime_baseline` bench: cold instantiation = `Store::new` +
 `CommandPre::instantiate_async` on a pre-compiled component, one instance per
 store, matching the runtime's per-invocation serving strategy.
@@ -92,7 +92,7 @@ required pieces touches upstream code:
 
 1. *No patch* — `Config::epoch_interruption(true)` layers onto the engine via
    `EngineBuilder::with_config` (base config; pooling/proposals stack on top) —
-   `services/host/src/engine.rs`.
+   `crates/platform/runtime/src/engine.rs`.
 2. *No patch* — a tokio task drives the public `Engine::increment_epoch()`
    every 10 ms (`spawn_epoch_ticker`; `host` flag `--epoch-tick-ms`, 0 = off).
 3. *Patch* — `patches/0001-wash-runtime-store-epoch-deadline.patch` adds one
@@ -137,7 +137,7 @@ by tracking live stores — that needs no further upstream changes.
 ## S2 — wamn:postgres plugin (2.1–2.2) — **PASS** (2026-07-10)
 
 **Deliverable shipped:** the real `wamn:postgres` host plugin
-(`services/host/src/plugins/wamn_postgres.rs`) implementing the full
+(`crates/platform/runtime/src/plugins/wamn_postgres/mod.rs`) implementing the full
 `wamn-postgres.wit` surface — `query`/`execute` (single statement in an
 implicit, claim-injected, auto-committed transaction), explicit `transaction`
 (query/execute/open-cursor/commit/rollback), and server-side `cursor` (bounded
@@ -152,8 +152,8 @@ app.tenant`) with no guest override; `statement_timeout` + row limit applied
 host-side; abnormal instance death destroys the connection; parameters are
 bound values only, never interpolated.
 
-**Method:** a new `wamn-host pgbench` subcommand instantiates the `pgprobe`
-guest (`components/pgprobe`, which imports `wamn:postgres/client`) into a
+**Method:** the `wamn-gates pgbench` command instantiates the `pgprobe`
+guest (`components/fixtures/pgprobe`, which imports `wamn:postgres/client`) into a
 hand-built `SharedCtx` store with the plugin linked, and drives its
 `run(op,arg)` export — "sustained qps from one component" per the spike. The
 same harness hosts the three security gates. The in-cluster Job
@@ -267,8 +267,8 @@ capability) holds. Closing S2 unblocks 2.2 (production plugin, wamn-ui3), D5
 
 **Deliverable shipped:** a guest flow-runner (`components/execution/flowrunner`) that
 embeds the standard node library as **native Rust** and imports
-`wamn:postgres/client`, plus a `wamn-host flowbench` subcommand
-(`services/host/src/flowbench.rs`) that drives it. The runner *is* a
+`wamn:postgres/client`, plus a `wamn-gates flowbench` command
+(`tests/integration/src/flowbench.rs`) that drives it. The runner *is* a
 long-lived component; the standard nodes are compiled in, so dispatching one is
 an ordinary same-binary function call (`std_node`) — that is the `< 50 µs`
 overhead the dispatch gate measures. Everything durable — the flow IR, the
@@ -352,11 +352,12 @@ granularity. Both held. Closing S3 unblocks S4 (wamn-veg), S6 (wamn-jy9),
 ## S4 — Custom-node invocation + config parse (5.6, D7, note 9b) — **PASS** (2026-07-10)
 
 **Deliverable shipped:** one custom node in **two guest languages** implementing
-the minimal `wamn:node` contract (docs/wamn-node.wit) — `components/node-rs`
-(Rust) and `components/node-ts` (TypeScript/JS via **JCO** / ComponentizeJS /
+the minimal `wamn:node` contract (docs/wamn-node.wit) —
+`components/samples/node-rs` (Rust) and `components/samples/node-ts`
+(TypeScript/JS via **JCO** / ComponentizeJS /
 StarlingMonkey) — plus a **`wac`-composed** frozen 3-node flow
 (`components/fixtures/flow-driver` + node-rs → `flow-composed.wasm`), driven by a new
-`wamn-host nodebench` subcommand (`services/host/src/nodebench.rs`) and a
+`wamn-gates nodebench` command (`tests/integration/src/nodebench.rs`) and a
 `serve-node` HTTP node host. The node has three config-selected modes: `noop`
 (hop), `io` (a host `wait-ns` sleep modelling an outbound call), and `compute`
 (a bounded FNV-1a loop). Both guests call the **same** host `wait-ns` import, so
@@ -454,10 +455,11 @@ data).
 ## S5 — Logging capture (9.3) — **PASS** (2026-07-10)
 
 **Deliverable shipped:** a custom **`wamn:logging` host plugin**
-(`services/host/src/plugins/wamn_logging.rs`) implementing `wasi:logging/logging`
+(`crates/platform/runtime/src/plugins/wamn_logging.rs`) implementing
+`wasi:logging/logging`
 as the platform's log-capture path, plus a guest fixture
-(`components/logspewer`) and a `wamn-host logbench` subcommand
-(`services/host/src/logbench.rs`) that drives it against a real **OTel
+(`components/fixtures/logspewer`) and a `wamn-gates logbench` command
+(`tests/integration/src/logbench.rs`) that drives it against a real **OTel
 Collector → Loki** pipeline (`deploy/infra/otel-collector.yaml`, `deploy/infra/loki.yaml`).
 The plugin replaces the vendored `TracingLogger`: it **enriches** every record
 with host-trusted `tenant`/`project` (from a component→claim map — a guest can
@@ -556,8 +558,8 @@ logging plugin 9.3 (wamn-yf3) and feeds [P0-EXIT] wamn-2rl.
 **Deliverable shipped:** the S3 flow-runner (`components/execution/flowrunner`) extended
 with two nodes that touch *non-deterministic* host capabilities — a **`delay`**
 node (reads `wasi:clocks/wall-clock`, parks durably) and an **`http-call`** node
-(makes a `wasi:http/outgoing-handler` outbound request) — plus a `wamn-host
-testhostbench` subcommand (`tests/orchestrator/src/testhostbench.rs`) that compiles
+(makes a `wasi:http/outgoing-handler` outbound request) — plus a `wamn-gates
+testhostbench` command (`tests/integration/src/testhostbench.rs`) that compiles
 the extended runner **once** and instantiates the *identical bytes* into two
 stores that differ only in host-injected capabilities:
 

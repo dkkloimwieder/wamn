@@ -39,8 +39,8 @@
 //!
 //! This crate is **pure** (no DB, clock, or wasm — the wamn-schema-compiler/wamn-schema-control
 //! SR6 precedent): it emits SQL text and the driver
-//! ([`wamn-host migrate-catalog`](../wamn_host/migrate_catalog/index.html))
-//! executes it. The whole [`ApplyPlan`] runs in **one transaction**, which is
+//! (`wamn-ctl migrate-catalog`) executes it. The whole [`ApplyPlan`] runs in
+//! **one transaction**, which is
 //! what makes the wamn-schema-compiler name-freeing preamble's *zero-residue* guarantee hold
 //! (a mid-plan failure rolls the aside-renames back, so no `wamn_mig_drop_*`
 //! survives — no compensation path is needed). This holds while the compiler

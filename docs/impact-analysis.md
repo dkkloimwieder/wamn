@@ -115,7 +115,7 @@ executes stored `test_cases` today.
 - The `$n` read builders are pinned against the schema of record by drift-guard
   tests in `crates/schema/control/src/sql.rs` (the `include_str!` mirror of the gates
   `schema_drift` discipline).
-- Live gate: `wamn-ctl tests/impact_report_live.rs` (throwaway PG). In-cluster
+- Live gate: `services/ctl/tests/impact_report_live.rs` (throwaway PG). In-cluster
   gate: `wamn-gates impactproof` + `deploy/gates/impactproof-job.yaml`. Commands:
   `docs/build-and-test.md` [11.8].
 

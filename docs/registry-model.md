@@ -267,7 +267,8 @@ table set (invariant 3) is exactly what they hold:
 | 3 | no tenant data | the only tables are the control-plane set above | live-apply asserts the exact `registry`+`provisioning` table set |
 | 4 | dev ≠ prod recovery domain | the `cluster_of` derivation (distinct `own`-domain envs derive distinct `<org>-<owner>` clusters) + `validate()` recovery-domain integrity — no per-org CHECK (D18; a pooled org's collapse onto the pool is placement, not a domain violation) | `cluster_of` unit + mutation tests; `shared-with` integrity in `validate()` |
 
-Tests live in `crates/control/registry/tests/storage.rs`: a DDL↔model **drift guard**
+Tests live in `crates/control/provision/tests/control_storage.rs`: a
+DDL↔model **drift guard**
 (table/column shape, the placement/saga CHECK literals, the `env_policies`
 seed pinned against `EnvPolicy::dev()`/`prod()`, `SCHEMA_VERSION`), the
 invariant-1 grep, and a **live-apply gate** (`WAMN_REGISTRY_PG_URL`, applied as
@@ -302,7 +303,8 @@ live-apply gates).
 ## References
 
 - Topology: `docs/postgres-topology.md` (§T1, §Environments, §Reversibility).
-- The reversibility seam: `services/host/src/plugins/wamn_postgres.rs`
+- The reversibility seam:
+  `crates/platform/runtime/src/plugins/wamn_postgres/mod.rs`
   (`CredentialProvider` / `ProjectConfig`).
 - Slug discipline: `crates/control/provision` (`validate_project_id`), wamn-66x,
   wi4.

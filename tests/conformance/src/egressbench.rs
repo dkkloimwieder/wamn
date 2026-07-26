@@ -368,7 +368,7 @@ async fn assert_runtime_sockets(sockprobe: &[u8]) -> anyhow::Result<bool> {
 pub async fn run(args: EgressBenchArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
-    println!("# wamn-host 2.6/E17 egressbench — DB-path egress review");
+    println!("# wamn-gates 2.6/E17 egressbench — DB-path egress review");
     println!("# claim: the wamn:postgres plugin is the only DB path. The first-party");
     println!("#        flow-runner imports it and no raw sockets; tenant / custom-node");
     println!("#        artifacts are held to the positive allowlist v1 (no wamn:postgres).");

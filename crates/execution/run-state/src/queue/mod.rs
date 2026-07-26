@@ -11,8 +11,8 @@
 //! Like the rest of `wamn-run-state`, this
 //! crate is **pure**: no DB, no NATS, no clock. Every decision is a function of
 //! `(rows, now, config)` with `now` a passed-in [`crate::queue::Millis`]; the SQL is emitted as
-//! parameterized `String`s. The driver (`tests/orchestrator` `queuebench` / the
-//! dispatcher) supplies the `wamn:postgres` effects against the schema in
+//! parameterized `String`s. The driver (`tests/integration/src/queuebench.rs` /
+//! the dispatcher) supplies the `wamn:postgres` effects against the schema in
 //! `deploy/sql/run-queue.sql`, the NATS-core doorbell, the real clock, and the replica
 //! identity.
 //!

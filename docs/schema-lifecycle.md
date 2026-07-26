@@ -153,7 +153,8 @@ cargo clippy -p wamn-schema-control --all-targets && cargo fmt -p wamn-schema-co
 Tests cover the transition table, the single-applied and stale-base guards,
 promotion (first `CREATE`, additive, gated destructive, environment-aware — incl.
 the same-application guard and `promote` being order-agnostic), and the storage
-drift guards in `tests/schema.rs`: `State` stays in lockstep with the `state`
+drift guards in `crates/schema/control/tests/lifecycle.rs`: `State` stays in
+lockstep with the `state`
 `CHECK` in `catalog-schema.sql`, and the `environment` column exists, defaults
 to `dev`, and carries **no** closed `IN (...)` `CHECK` (D18 — env is an open
 slug). The storage additions re-apply cleanly on a throwaway Postgres 18 (as

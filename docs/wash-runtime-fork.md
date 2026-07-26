@@ -49,7 +49,7 @@ condition**: the upstream change that makes it deletable.
 Everything else epoch-related lives **unforked** in wamn-host:
 `Config::epoch_interruption(true)` layers in via `EngineBuilder::with_config`,
 and `spawn_epoch_ticker` drives the public `Engine::increment_epoch()`
-(`services/host/src/engine.rs`; `host --epoch-tick-ms`, 0 = off).
+(`crates/platform/runtime/src/engine.rs`; `host --epoch-tick-ms`, 0 = off).
 
 Retired with the vendoring mechanism: patch `0002-workspace-lints-warn-not-deny`
 existed because a `[patch]` *path* dep got the monorepo's full `-D warnings`
