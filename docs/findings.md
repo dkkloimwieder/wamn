@@ -4487,6 +4487,7 @@ Every accepted change, experiment, or later canonical update has a Bead:
 | PostgreSQL table/family and writer ownership enforcement | SR28 `wamn-2jkm.102`, closed by `ea0e18f`; physical drift remains SR13 |
 | Custom-node component-workload discriminating proof | new `wamn-4tob.6.28`, related to SR15 `wamn-2jkm.78` |
 | Measured workspace/default/release sets and selectors | Measurement `wamn-4tob.6.29` closed by `a07dcf2`; JSON-driven selector helper `wamn-5wd1.28` closed by `bc25a54`; exhaustive bare commands preserved |
+| Final reorganized-topology integration and debug/structural proof | `wamn-5wd1.8`, closed by `95be7d1`; the separate live ladder remains `wamn-5wd1.9` |
 | Execution Service migration | existing `wamn-l5i9.49` |
 | Dispatcher Service placement | amended decision `wamn-l5i9.51` |
 | Dispatcher Service migration | new `wamn-l5i9.71`, blocked by `.51` |
@@ -4512,6 +4513,18 @@ proof/build tier, and accepted runtime transition now has an explicit
 retain/amend/replace/retire verdict. The only experimental unknowns introduced
 by this target—the node workload and workspace tiers—have dedicated
 `AUDIT-VERIFY` owners.
+
+`95be7d1` completes the repository-only integration boundary: locked resolved
+metadata covers 47 root and 18 component packages; 59 named architecture,
+ownership, source-identity, tier, recipe, and provenance checks pass; every
+root target and all 18 debug component builds/tests pass; pinned JCO emits a
+valid non-Cargo component; and BuildKit's static graph check reports no
+warnings. Active canonical source, deployment, SQL/config, fixture, proof, and
+documentation references resolve to the reorganized topology. The protected
+agent-instruction pair still needs an owner-coordinated wording cleanup under
+`wamn-5wd1.32`. This evidence built no release image and ran no live gate, so it
+does not close any remaining R/E/SR finding or claim `wamn-5wd1.9`'s deployed
+proof.
 
 ---
 
