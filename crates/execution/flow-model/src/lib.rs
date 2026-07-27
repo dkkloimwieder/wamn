@@ -38,13 +38,21 @@ pub use validate::{Issue, ResolvedInterfaces, Severity, validate};
 /// This is the stable identity used when a durable boundary must compare a
 /// replayed JSON body with the outcome that previously committed.
 pub fn canonical_json_sha256(value: &Value) -> String {
-    let digest = canonical::sha256(&canonical::to_vec(value));
+    let digest = canonical::sha256(&canonical_json_bytes(value));
     let mut hash = String::with_capacity("sha256:".len() + digest.len() * 2);
     hash.push_str("sha256:");
     for byte in digest {
         write!(&mut hash, "{byte:02x}").expect("writing to String cannot fail");
     }
     hash
+}
+
+/// RFC 8785 canonical bytes for an arbitrary JSON value.
+///
+/// Durable boundaries that verify a hash outside Rust must bind these exact
+/// bytes rather than a normal JSON serialization or PostgreSQL `jsonb::text`.
+pub fn canonical_json_bytes(value: &Value) -> Vec<u8> {
+    canonical::to_vec(value)
 }
 
 /// The JSON Schema for [`Flow`], generated from the Rust types (the single
@@ -67,7 +75,7 @@ pub fn json_schema_string() -> String {
 mod tests {
     use serde_json::json;
 
-    use super::canonical_json_sha256;
+    use super::{canonical_json_bytes, canonical_json_sha256};
 
     #[test]
     fn canonical_json_hash_ignores_object_insertion_order() {
@@ -79,5 +87,23 @@ mod tests {
         assert_ne!(left, changed);
         assert!(left.starts_with("sha256:"));
         assert_eq!(left.len(), "sha256:".len() + 64);
+    }
+
+    #[test]
+    fn durable_identity_bytes_cover_ordering_and_numeric_edges() {
+        let left = json!({"z": -0.0, "large": 1e30, "small": 0.000001, "nested": {"b": 2, "a": 1}});
+        let reordered =
+            json!({"nested": {"a": 1, "b": 2}, "small": 0.000001, "large": 1e30, "z": -0.0});
+        let bytes = canonical_json_bytes(&left);
+
+        assert_eq!(bytes, canonical_json_bytes(&reordered));
+        assert_eq!(
+            canonical_json_sha256(&left),
+            canonical_json_sha256(&reordered)
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            serde_json::from_slice::<serde_json::Value>(&canonical_json_bytes(&reordered)).unwrap()
+        );
     }
 }

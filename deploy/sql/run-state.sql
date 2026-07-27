@@ -34,6 +34,36 @@
 CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
 
+-- Final admission must share-lock the stable catalog head, but the application
+-- role must never gain UPDATE privilege on that control-plane row. This narrow
+-- SECURITY DEFINER bridge takes only the key-share lock and returns the applied
+-- version while rechecking the session tenant claim.
+CREATE FUNCTION wamn_run.lock_catalog_head(
+    p_tenant_id text,
+    p_catalog_id text,
+    p_environment text
+)
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, catalog
+AS $$
+DECLARE
+    applied_version int;
+BEGIN
+    SELECT head.applied_catalog_version INTO applied_version
+    FROM catalog.catalog_heads AS head
+    WHERE p_tenant_id = NULLIF(current_setting('app.tenant', true), '')
+      AND head.tenant_id = p_tenant_id
+      AND head.catalog_id = p_catalog_id
+      AND head.environment = p_environment
+    FOR KEY SHARE OF head;
+    RETURN applied_version;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.lock_catalog_head(text, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text) TO wamn_app;
+
 -- ---------------------------------------------------------------------------
 -- runs: one row per flow execution. `input_json` is the trigger payload replay
 -- seeds the entry node with; `result_json` is the last node's output on
@@ -166,8 +196,9 @@ CREATE TABLE wamn_run.invocation_admissions (
     CONSTRAINT invocation_admissions_identity UNIQUE
         (tenant_id, catalog_id, environment, attachment_id,
          principal_digest, client_key_digest),
-    FOREIGN KEY (tenant_id, run_id)
+    CONSTRAINT invocation_admissions_run_fk FOREIGN KEY (tenant_id, run_id)
         REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
+        DEFERRABLE INITIALLY DEFERRED
 );
 CREATE INDEX invocation_admissions_run
     ON wamn_run.invocation_admissions (tenant_id, run_id);

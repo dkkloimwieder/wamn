@@ -1358,6 +1358,26 @@ fn lowercase_undeclared_writer_is_rejected() {
 }
 
 #[test]
+fn producer_side_direct_run_admission_is_rejected() {
+    let manifest = read_manifest(&repository());
+    for (path, statement) in [
+        (
+            "services/rogue-producer/src/lib.rs",
+            "INSERT INTO wamn_run.runs (tenant_id, run_id) VALUES ('t1', 'bypass')",
+        ),
+        (
+            "components/rogue-producer/src/lib.rs",
+            "INSERT INTO wamn_run.run_queue (tenant_id, run_id) VALUES ('t1', 'bypass')",
+        ),
+    ] {
+        let discoveries = discover_writes(path, 1, statement);
+        assert_eq!(discoveries.len(), 1, "admission bypass must be inventoried");
+        let error = validate_discovered_writers(&manifest, &discoveries).unwrap_err();
+        assert!(error.contains("undeclared insert writer"), "{error}");
+    }
+}
+
+#[test]
 fn trigger_event_declarations_are_not_inventoried_as_writes() {
     let discoveries = discover_writes(
         "deploy/sql/catalog-schema.sql",

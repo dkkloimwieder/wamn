@@ -52,6 +52,8 @@
 //! pure tests do NOT cover; the live half is the throwaway-PG gates over the
 //! real prepared-statement path (SR12b).
 
+/// The single producer-shaped callable-flow admission transition.
+pub mod admission;
 /// Node-level I/O capture policy application (9.6): the pure scrub / truncate /
 /// preview-derivation the flowrunner guest links to fill a `node_runs` row's
 /// capture columns before the write.
