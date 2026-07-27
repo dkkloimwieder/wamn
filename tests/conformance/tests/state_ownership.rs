@@ -1369,11 +1369,16 @@ fn producer_side_direct_run_admission_is_rejected() {
             "components/rogue-producer/src/lib.rs",
             "INSERT INTO wamn_run.run_queue (tenant_id, run_id) VALUES ('t1', 'bypass')",
         ),
+        (
+            "components/rogue-producer/src/lib.rs",
+            "UPDATE wamn_run.run_queue SET partition_key='patched' WHERE run_id='bypass'",
+        ),
     ] {
         let discoveries = discover_writes(path, 1, statement);
         assert_eq!(discoveries.len(), 1, "admission bypass must be inventoried");
         let error = validate_discovered_writers(&manifest, &discoveries).unwrap_err();
-        assert!(error.contains("undeclared insert writer"), "{error}");
+        assert!(error.contains("undeclared"), "{error}");
+        assert!(error.contains("wamn_run.run"), "{error}");
     }
 }
 

@@ -903,6 +903,18 @@ cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --releas
   && cargo fmt --manifest-path components/execution/flowrunner/Cargo.toml --check
 ```
 
+Callable-flow admission uses the same throwaway database and explicitly runs
+the ignored admission transaction gate:
+
+```bash
+cargo test --locked -p wamn-run-state
+docker run -d --rm --name wamn-admission-pg -p 5458:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
+  cargo test --locked -p wamn-run-state --test admission_live -- --ignored
+docker stop wamn-admission-pg
+```
+
 ### [5.7-resume-pin / wamn-cox] resume pins the run's persisted flow_version
 
 Docs: docs/run-state.md § *Resume pins the run's persisted version*

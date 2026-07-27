@@ -8,6 +8,8 @@
 
 use serde_json::Value;
 
+use crate::queue::PartitionPolicy;
+
 /// Producer variant accepted by the admission transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdmissionProducer {
@@ -24,6 +26,60 @@ impl AdmissionProducer {
             Self::Event => "event",
         }
     }
+}
+
+/// Resolved queue ordering carried by every producer into admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmissionOrdering {
+    partition_key: Option<String>,
+    partition_policy: PartitionPolicy,
+}
+
+impl AdmissionOrdering {
+    /// Unordered work uses the queue's blocking default and no partition key.
+    pub fn unordered() -> AdmissionOrdering {
+        AdmissionOrdering {
+            partition_key: None,
+            partition_policy: PartitionPolicy::Blocking,
+        }
+    }
+
+    /// Validate resolved adapter inputs before binding the admission statement.
+    pub fn from_parts(
+        partition_key: Option<String>,
+        partition_policy: &str,
+    ) -> Result<AdmissionOrdering, AdmissionOrderingError> {
+        let partition_policy = PartitionPolicy::from_sql(partition_policy)
+            .ok_or(AdmissionOrderingError::UnknownPolicy)?;
+        match partition_key {
+            Some(partition_key) if partition_key.is_empty() => {
+                Err(AdmissionOrderingError::EmptyPartitionKey)
+            }
+            None if partition_policy == PartitionPolicy::Leapfrog => {
+                Err(AdmissionOrderingError::UnkeyedLeapfrog)
+            }
+            partition_key => Ok(AdmissionOrdering {
+                partition_key,
+                partition_policy,
+            }),
+        }
+    }
+
+    pub fn partition_key(&self) -> Option<&str> {
+        self.partition_key.as_deref()
+    }
+
+    pub fn partition_policy(&self) -> PartitionPolicy {
+        self.partition_policy
+    }
+}
+
+/// Invalid queue-ordering input at the admission boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmissionOrderingError {
+    UnknownPolicy,
+    EmptyPartitionKey,
+    UnkeyedLeapfrog,
 }
 
 /// Typed result returned by the admission transition.
@@ -157,6 +213,8 @@ fn lock_catalog_head_sql() -> String {
 /// 24. event sequence (event)
 /// 25. RFC 8785 registration JSON text (event)
 /// 26. canonical registration hash (event)
+/// 27. resolved partition key (all producers; null means unordered)
+/// 28. resolved partition policy (all producers; `blocking | leapfrog`)
 ///
 /// HTTP identity is reserved in the deferred-FK ledger before the run insert.
 /// The named unique constraint chooses the concurrent winner without allowing a
@@ -177,7 +235,8 @@ WITH input AS ( \
            $20::bigint AS lease_ttl_ms, $21::bigint AS cron_generation, \
            $22::text AS cron_tick, $23::text AS registration_id, \
            $24::bigint AS event_seq, $25::text::jsonb AS registration_document, \
-           $26::text AS registration_hash \
+           $26::text AS registration_hash, $27::text AS partition_key, \
+           $28::text AS partition_policy \
 ), \
 locked_head AS MATERIALIZED ( \
     SELECT h.applied_catalog_version \
@@ -222,6 +281,17 @@ existing_http AS MATERIALIZED ( \
        AND a.client_key_digest = i.client_key_digest \
      FOR KEY SHARE OF a \
 ), \
+existing_queue AS MATERIALIZED ( \
+    SELECT q.* FROM wamn_run.run_queue AS q, input AS i \
+     WHERE q.tenant_id = i.tenant_id \
+       AND q.run_id = COALESCE((SELECT run_id FROM existing_http), ( \
+         SELECT r.run_id FROM wamn_run.runs AS r \
+          WHERE r.tenant_id = i.tenant_id \
+            AND (r.run_id = i.run_id OR (i.producer = 'event' \
+              AND r.idempotency_key = 'evt:' || i.registration_id || ':' || i.event_seq::text)) \
+       ), i.run_id) \
+     FOR KEY SHARE OF q \
+), \
 existing_identity_run AS MATERIALIZED ( \
     SELECT r.* FROM wamn_run.runs AS r, input AS i \
      WHERE r.tenant_id = i.tenant_id \
@@ -240,6 +310,11 @@ classified AS ( \
         OR i.flow_version <= 0 OR i.run_id IS NULL OR i.run_id = '' \
         OR i.input_json IS NULL OR i.invocation_context IS NULL \
         OR i.platform_revision IS NULL OR i.platform_revision = '' THEN 'invalid-input' \
+      WHEN i.partition_policy IS NULL \
+        OR i.partition_policy NOT IN ('blocking', 'leapfrog') \
+        OR i.partition_key = '' \
+        OR (i.partition_key IS NULL AND i.partition_policy <> 'blocking') \
+        THEN 'invalid-input' \
       WHEN i.response_deadline_at IS NOT NULL AND i.run_deadline_at IS NOT NULL \
         AND i.response_deadline_at > i.run_deadline_at THEN 'invalid-input' \
       WHEN i.producer = 'http' AND (i.attachment_id IS NULL \
@@ -249,16 +324,32 @@ classified AS ( \
         OR i.client_key_digest = '' OR i.request_fingerprint IS NULL \
         OR i.request_fingerprint = '' OR i.admission_expires_at IS NULL \
         OR i.executor_id IS NULL OR i.executor_id = '' \
-        OR i.lease_ttl_ms IS NULL OR i.lease_ttl_ms <= 0) THEN 'invalid-input' \
+        OR i.lease_ttl_ms IS NULL OR i.lease_ttl_ms <= 0 \
+        OR i.cron_generation IS NOT NULL OR i.cron_tick IS NOT NULL \
+        OR i.registration_id IS NOT NULL OR i.event_seq IS NOT NULL \
+        OR i.registration_document IS NOT NULL OR i.registration_hash IS NOT NULL) \
+        THEN 'invalid-input' \
       WHEN i.producer = 'cron' AND (i.attachment_id IS NULL \
         OR i.expected_definition_hash IS NULL OR i.cron_generation IS NULL \
         OR i.cron_generation < 0 OR i.cron_tick IS NULL OR i.cron_tick = '' \
-        OR i.run_id <> i.flow_id || ':cron:' || i.cron_generation::text || ':' || i.cron_tick) \
+        OR i.run_id <> i.flow_id || ':cron:' || i.cron_generation::text || ':' || i.cron_tick \
+        OR i.response_deadline_at IS NOT NULL OR i.principal_digest IS NOT NULL \
+        OR i.client_key_digest IS NOT NULL OR i.request_fingerprint IS NOT NULL \
+        OR i.admission_expires_at IS NOT NULL OR i.executor_id IS NOT NULL \
+        OR i.lease_ttl_ms IS NOT NULL OR i.registration_id IS NOT NULL \
+        OR i.event_seq IS NOT NULL OR i.registration_document IS NOT NULL \
+        OR i.registration_hash IS NOT NULL) \
         THEN 'invalid-input' \
       WHEN i.producer = 'event' AND (i.registration_id IS NULL \
         OR i.registration_id = '' OR i.event_seq IS NULL OR i.event_seq < 0 \
         OR i.registration_document IS NULL OR i.registration_hash IS NULL \
-        OR i.registration_hash = '') THEN 'invalid-input' \
+        OR i.registration_hash = '' OR i.attachment_id IS NOT NULL \
+        OR i.expected_definition_hash IS NOT NULL OR i.response_deadline_at IS NOT NULL \
+        OR i.principal_digest IS NOT NULL OR i.client_key_digest IS NOT NULL \
+        OR i.request_fingerprint IS NOT NULL OR i.admission_expires_at IS NOT NULL \
+        OR i.executor_id IS NOT NULL OR i.lease_ttl_ms IS NOT NULL \
+        OR i.cron_generation IS NOT NULL OR i.cron_tick IS NOT NULL) \
+        THEN 'invalid-input' \
       WHEN h.applied_catalog_version IS NULL THEN 'head-not-found' \
       WHEN h.applied_catalog_version <> i.expected_catalog_version THEN 'head-drift' \
       WHEN rf.flow_id IS NULL THEN 'definition-drift' \
@@ -281,9 +372,14 @@ classified AS ( \
       WHEN i.producer = 'http' AND eh.run_id IS NOT NULL \
        AND eh.client_request_fingerprint <> i.request_fingerprint \
         THEN 'idempotency-key-reused' \
+      WHEN eq.run_id IS NOT NULL \
+       AND (eq.partition_key IS DISTINCT FROM i.partition_key \
+         OR eq.partition_policy <> i.partition_policy) \
+        THEN 'conflicting-run-identity' \
       WHEN i.producer = 'http' AND eh.run_id IS NOT NULL THEN 'duplicate' \
       WHEN xr.run_id IS NOT NULL \
-       AND (xr.flow_id <> i.flow_id OR xr.flow_version <> i.flow_version \
+       AND (xr.trigger_source <> i.producer \
+         OR xr.flow_id <> i.flow_id OR xr.flow_version <> i.flow_version \
          OR xr.catalog_id IS DISTINCT FROM i.catalog_id \
          OR xr.catalog_version IS DISTINCT FROM i.expected_catalog_version \
          OR xr.attachment_id IS DISTINCT FROM i.attachment_id \
@@ -299,6 +395,7 @@ classified AS ( \
     LEFT JOIN live_registration AS er ON true \
     LEFT JOIN release_flow AS rf ON true \
     LEFT JOIN existing_http AS eh ON true \
+    LEFT JOIN existing_queue AS eq ON true \
     LEFT JOIN existing_identity_run AS xr ON true \
 ), \
 created_http AS ( \
@@ -340,8 +437,9 @@ created_run AS ( \
 ), \
 created_queue AS ( \
     INSERT INTO wamn_run.run_queue \
-      (tenant_id, run_id, available_at, lease_owner, lease_expires_at, lease_generation, stream_seq) \
-    SELECT r.tenant_id, r.run_id, now(), \
+      (tenant_id, run_id, partition_key, partition_policy, available_at, \
+       lease_owner, lease_expires_at, lease_generation, stream_seq) \
+    SELECT r.tenant_id, r.run_id, c.partition_key, c.partition_policy, now(), \
            CASE WHEN c.producer = 'http' THEN c.executor_id END, \
            CASE WHEN c.producer = 'http' \
              THEN now() + (c.lease_ttl_ms * interval '1 millisecond') END, \
@@ -377,6 +475,33 @@ mod tests {
     }
 
     #[test]
+    fn admission_ordering_rejects_untyped_or_incoherent_inputs() {
+        assert_eq!(
+            AdmissionOrdering::from_parts(Some("site-7".to_string()), "leapfrog")
+                .unwrap()
+                .partition_policy(),
+            PartitionPolicy::Leapfrog
+        );
+        assert_eq!(
+            AdmissionOrdering::unordered().partition_key(),
+            None,
+            "unordered work has no key"
+        );
+        assert_eq!(
+            AdmissionOrdering::from_parts(None, "leapfrog"),
+            Err(AdmissionOrderingError::UnkeyedLeapfrog)
+        );
+        assert_eq!(
+            AdmissionOrdering::from_parts(Some(String::new()), "blocking"),
+            Err(AdmissionOrderingError::EmptyPartitionKey)
+        );
+        assert_eq!(
+            AdmissionOrdering::from_parts(Some("site-7".to_string()), "unknown"),
+            Err(AdmissionOrderingError::UnknownPolicy)
+        );
+    }
+
+    #[test]
     fn registration_hash_is_canonical() {
         assert_eq!(
             registration_hash(&json!({"b": 2, "a": 1})),
@@ -408,6 +533,8 @@ mod tests {
         assert!(ddl.contains("SECURITY DEFINER"));
         assert!(sql.contains("INSERT INTO wamn_run.runs"));
         assert!(sql.contains("INSERT INTO wamn_run.run_queue"));
+        assert!(sql.contains("c.partition_key, c.partition_policy, now()"));
+        assert!(!sql.contains("UPDATE wamn_run.run_queue"));
         assert!(sql.contains("INSERT INTO wamn_run.invocation_admissions"));
         assert!(sql.contains("FROM created_run AS r"));
         assert!(sql.contains("EXISTS (SELECT 1 FROM created_http)"));
@@ -435,6 +562,9 @@ mod tests {
         assert!(sql.contains("THEN c.executor_id END"));
         assert!(sql.contains("THEN c.event_seq ELSE 0 END"));
         assert!(sql.contains("'evt:' || c.registration_id"));
+        assert!(sql.contains("i.partition_policy NOT IN ('blocking', 'leapfrog')"));
+        assert!(sql.contains("i.partition_key IS NULL AND i.partition_policy <> 'blocking'"));
+        assert!(sql.contains("eq.partition_key IS DISTINCT FROM i.partition_key"));
     }
 
     #[test]

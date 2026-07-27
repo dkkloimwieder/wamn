@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use wamn_run_state::admission::{admission_sql, registration_evidence};
+use wamn_run_state::queue::claim_partition_head_sql;
 
 fn psql(url: &str, script: &str) -> Output {
     Command::new("psql")
@@ -34,22 +35,45 @@ fn prepare(sql: &str) -> String {
         "PREPARE admit_stmt \
          (text,text,text,int,text,text,text,int,text,text,text,text, \
           timestamptz,timestamptz,text,text,text,timestamptz,text,bigint, \
-          bigint,text,text,bigint,text,text) AS {sql};"
+          bigint,text,text,bigint,text,text,text,text) AS {sql};"
     )
 }
 
-fn execute_http(run_id: &str, key: &str, fingerprint: &str) -> String {
+fn ordering(partition_key: Option<&str>, partition_policy: &str) -> String {
+    format!(
+        "{},'{partition_policy}'",
+        partition_key.map_or_else(|| "NULL".to_string(), |key| format!("'{key}'"))
+    )
+}
+
+fn execute_http_ordered(
+    run_id: &str,
+    key: &str,
+    fingerprint: &str,
+    partition_key: Option<&str>,
+    partition_policy: &str,
+) -> String {
     format!(
         "EXECUTE admit_stmt(\
          'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
          '{run_id}','{{\"request\":1}}','{{\"request-id\":\"req-1\"}}','rev-test',\
          now()+interval '30 seconds',now()+interval '1 minute',\
          'principal','{key}','{fingerprint}',now()+interval '1 day',\
-         'inline-1',30000,NULL,NULL,NULL,NULL,NULL,NULL)"
+         'inline-1',30000,NULL,NULL,NULL,NULL,NULL,NULL,{})",
+        ordering(partition_key, partition_policy)
     )
 }
 
-fn execute_cron(generation: i64, tick: &str) -> String {
+fn execute_http(run_id: &str, key: &str, fingerprint: &str) -> String {
+    execute_http_ordered(run_id, key, fingerprint, None, "blocking")
+}
+
+fn execute_cron_ordered(
+    generation: i64,
+    tick: &str,
+    partition_key: Option<&str>,
+    partition_policy: &str,
+) -> String {
     let run_id = format!("flow-cron:cron:{generation}:{tick}");
     format!(
         "EXECUTE admit_stmt(\
@@ -57,18 +81,47 @@ fn execute_cron(generation: i64, tick: &str) -> String {
          '{run_id}','{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}',\
          '{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}','rev-test',\
          NULL,now()+interval '1 minute',NULL,NULL,NULL,NULL,NULL,NULL,\
-         {generation},'{tick}',NULL,NULL,NULL,NULL)"
+         {generation},'{tick}',NULL,NULL,NULL,NULL,{})",
+        ordering(partition_key, partition_policy)
     )
 }
 
-fn execute_event(run_id: &str, document: &str, hash: &str, seq: i64) -> String {
+fn execute_cron(generation: i64, tick: &str) -> String {
+    execute_cron_ordered(generation, tick, None, "blocking")
+}
+
+fn execute_cron_with_http_principal(generation: i64, tick: &str) -> String {
+    let run_id = format!("flow-cron:cron:{generation}:{tick}");
+    format!(
+        "EXECUTE admit_stmt(\
+         'cron','c1','dev',1,'cron-a','sha256:cron','flow-cron',1,\
+         '{run_id}','{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}',\
+         '{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}','rev-test',\
+         NULL,now()+interval '1 minute','swapped',NULL,NULL,NULL,NULL,NULL,\
+         {generation},'{tick}',NULL,NULL,NULL,NULL,NULL,'blocking')"
+    )
+}
+
+fn execute_event_ordered(
+    run_id: &str,
+    document: &str,
+    hash: &str,
+    seq: i64,
+    partition_key: Option<&str>,
+    partition_policy: &str,
+) -> String {
     format!(
         "EXECUTE admit_stmt(\
          'event','c1','dev',1,NULL,NULL,'flow-event',1,\
          '{run_id}','{{\"event\":{seq}}}','{{\"event-seq\":{seq}}}','rev-test',\
          NULL,now()+interval '1 minute',NULL,NULL,NULL,NULL,NULL,NULL,\
-         NULL,NULL,'reg-a',{seq},'{document}','{hash}')"
+         NULL,NULL,'reg-a',{seq},'{document}','{hash}',{})",
+        ordering(partition_key, partition_policy)
     )
+}
+
+fn execute_event(run_id: &str, document: &str, hash: &str, seq: i64) -> String {
+    execute_event_ordered(run_id, document, hash, seq, None, "blocking")
 }
 
 #[test]
@@ -214,6 +267,140 @@ fn admission_live() {
         ),
     );
 
+    // The centralized insert carries ordering for every producer. Unordered
+    // work is explicitly null+blocking; keyed work preserves either policy.
+    for (execution, expected) in [
+        (
+            execute_http_ordered(
+                "http-ordered",
+                "key-ordered",
+                "fp-ordered",
+                Some("account-7"),
+                "blocking",
+            ),
+            "admitted|http-ordered",
+        ),
+        (
+            execute_cron_ordered(5, "ordered", Some("site-strict"), "blocking"),
+            "admitted|flow-cron:cron:5:ordered",
+        ),
+        (
+            execute_event_ordered(
+                "event-ordered",
+                &registration_document,
+                &registration_digest,
+                44,
+                Some("site-leap"),
+                "leapfrog",
+            ),
+            "admitted|event-ordered",
+        ),
+        (
+            execute_cron_ordered(6, "ordered-next", Some("site-strict"), "blocking"),
+            "admitted|flow-cron:cron:6:ordered-next",
+        ),
+        (
+            execute_event_ordered(
+                "event-ordered-next",
+                &registration_document,
+                &registration_digest,
+                45,
+                Some("site-leap"),
+                "leapfrog",
+            ),
+            "admitted|event-ordered-next",
+        ),
+    ] {
+        let result = success(
+            &url,
+            &format!("{} {} {}; COMMIT;", app_preamble(), prepared, execution),
+        );
+        assert_eq!(result.trim(), expected);
+    }
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT partition_key IS NULL AND partition_policy='blocking' \
+                     FROM wamn_run.run_queue WHERE run_id='http-1'); \
+           ASSERT (SELECT partition_key='account-7' AND partition_policy='blocking' \
+                     FROM wamn_run.run_queue WHERE run_id='http-ordered'); \
+           ASSERT (SELECT partition_key='site-strict' AND partition_policy='blocking' \
+                     FROM wamn_run.run_queue WHERE run_id='flow-cron:cron:5:ordered'); \
+           ASSERT (SELECT partition_key='site-leap' AND partition_policy='leapfrog' \
+                     FROM wamn_run.run_queue WHERE run_id='event-ordered'); \
+         END $$;",
+    );
+
+    // The policies stamped by admission drive the real partition claim: a
+    // backed-off blocking head holds its later sibling, while leapfrog yields.
+    let claim = claim_partition_head_sql(10);
+    success(
+        &url,
+        &format!(
+            "{} SET LOCAL search_path=wamn_run,public; \
+             UPDATE wamn_run.run_queue SET available_at=now()+interval '1 hour' \
+              WHERE run_id IN ('flow-cron:cron:5:ordered','event-ordered'); \
+             INSERT INTO wamn_run.partition_owner \
+               (tenant_id,partition_key,lease_owner,lease_expires_at) VALUES \
+               ('t1','site-strict','ordering-probe',now()+interval '1 minute'),\
+               ('t1','site-leap','ordering-probe',now()+interval '1 minute'); \
+             PREPARE ordering_claim_stmt(text,bigint) AS {claim}; \
+             EXECUTE ordering_claim_stmt('ordering-probe',30000); \
+             DO $$ BEGIN \
+               ASSERT (SELECT lease_owner FROM wamn_run.run_queue \
+                 WHERE run_id='flow-cron:cron:6:ordered-next') IS NULL, \
+                 'blocking admission holds the later sibling'; \
+               ASSERT (SELECT lease_owner FROM wamn_run.run_queue \
+                 WHERE run_id='event-ordered-next') = 'ordering-probe', \
+                 'leapfrog admission yields to the ready sibling'; \
+             END $$; COMMIT;",
+            app_preamble()
+        ),
+    );
+
+    // A retry may recover the existing admission, but it cannot alter the
+    // ordering already stamped on that queue row.
+    for execution in [
+        execute_http_ordered(
+            "http-ordered-retry",
+            "key-ordered",
+            "fp-ordered",
+            Some("changed"),
+            "blocking",
+        ),
+        execute_cron_ordered(5, "ordered", Some("changed"), "blocking"),
+        execute_event_ordered(
+            "event-ordered-retry",
+            &registration_document,
+            &registration_digest,
+            44,
+            Some("changed"),
+            "blocking",
+        ),
+    ] {
+        let result = success(
+            &url,
+            &format!("{} {} {}; COMMIT;", app_preamble(), prepared, execution),
+        );
+        assert!(
+            result.trim().starts_with("conflicting-run-identity|"),
+            "{result}"
+        );
+    }
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT partition_key='account-7' AND partition_policy='blocking' \
+                     FROM wamn_run.run_queue WHERE run_id='http-ordered'); \
+           ASSERT (SELECT partition_key='site-strict' AND partition_policy='blocking' \
+                     FROM wamn_run.run_queue WHERE run_id='flow-cron:cron:5:ordered'); \
+           ASSERT (SELECT partition_key='site-leap' AND partition_policy='leapfrog' \
+                     FROM wamn_run.run_queue WHERE run_id='event-ordered'); \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
+                     WHERE run_id IN ('http-ordered-retry','event-ordered-retry')); \
+         END $$;",
+    );
+
     // Definition/head drift, conflicting HTTP reuse, and stale/bad event
     // registration evidence are typed refusals and create no run.
     let negatives = format!(
@@ -223,11 +410,11 @@ fn admission_live() {
          CREATE TEMP TABLE stale_head AS EXECUTE admit_stmt(\
            'cron','c1','dev',99,'cron-a','sha256:cron','flow-cron',1,\
            'flow-cron:cron:9:stale','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           9,'stale',NULL,NULL,NULL,NULL); \
+           9,'stale',NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE inactive AS EXECUTE admit_stmt(\
            'cron','c1','dev',1,'missing','sha256:cron','flow-cron',1,\
            'flow-cron:cron:10:inactive','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           10,'inactive',NULL,NULL,NULL,NULL); \
+           10,'inactive',NULL,NULL,NULL,NULL,NULL,'blocking'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM reused) = 'idempotency-key-reused'; \
            ASSERT (SELECT result_code FROM bad_hash) = 'invalid-registration-hash'; \
@@ -249,15 +436,15 @@ fn admission_live() {
          CREATE TEMP TABLE bad_http AS EXECUTE admit_stmt(\
            'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
            'bad-http','{{}}','{{}}','rev-test',NULL,NULL,'p','k','f',now()+interval '1 day',\
-           NULL,30000,NULL,NULL,NULL,NULL,NULL,NULL); \
+           NULL,30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE bad_cron AS EXECUTE admit_stmt(\
            'cron','c1','dev',1,'cron-a','sha256:cron','flow-cron',1,\
            'caller-chosen','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           1,'tick',NULL,NULL,NULL,NULL); \
+           1,'tick',NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE bad_event AS EXECUTE admit_stmt(\
            'event','c1','dev',1,NULL,NULL,'flow-event',1,\
            'bad-event','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           NULL,NULL,'reg-a',43,'{}',NULL); \
+           NULL,NULL,'reg-a',43,'{}',NULL,NULL,'blocking'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM bad_http) = 'invalid-input'; \
            ASSERT (SELECT result_code FROM bad_cron) = 'invalid-input'; \
@@ -271,11 +458,38 @@ fn admission_live() {
     );
     success(&url, &invalid_inputs);
 
+    for execution in [
+        execute_cron_ordered(11, "unknown-policy", Some("site"), "unknown"),
+        execute_cron_ordered(12, "unkeyed-leapfrog", None, "leapfrog"),
+        execute_cron_ordered(13, "empty-key", Some(""), "blocking"),
+        execute_cron_with_http_principal(14, "swapped"),
+    ] {
+        let result = success(
+            &url,
+            &format!("{} {} {}; COMMIT;", app_preamble(), prepared, execution),
+        );
+        assert_eq!(result.trim(), "invalid-input|");
+    }
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE run_id IN (\
+             'flow-cron:cron:11:unknown-policy',\
+             'flow-cron:cron:12:unkeyed-leapfrog',\
+             'flow-cron:cron:13:empty-key',\
+             'flow-cron:cron:14:swapped')); \
+         END $$;",
+    );
+
     // A failure at every run -> queue -> HTTP-ledger seam rolls back every
     // preceding CTE.
     for (name, target, execution) in [
         ("run", "wamn_run.runs", execute_cron(3, "run-fault")),
-        ("queue", "wamn_run.run_queue", execute_cron(2, "fault")),
+        (
+            "queue",
+            "wamn_run.run_queue",
+            execute_cron_ordered(2, "fault", Some("fault-key"), "leapfrog"),
+        ),
         (
             "ledger",
             "wamn_run.invocation_admissions",
@@ -348,7 +562,13 @@ fn admission_live() {
                     "{} {} {}; COMMIT;",
                     app_preamble(),
                     prepare(&race_sql),
-                    execute_http(run_id, "race-key", "race-fingerprint")
+                    execute_http_ordered(
+                        run_id,
+                        "race-key",
+                        "race-fingerprint",
+                        Some("race-partition"),
+                        "leapfrog",
+                    )
                 ),
             )
         }));
@@ -380,6 +600,9 @@ fn admission_live() {
                    WHERE run_id IN ('race-a','race-b')) = 1, 'one race run'; \
            ASSERT (SELECT count(*) FROM wamn_run.run_queue \
                    WHERE run_id IN ('race-a','race-b')) = 1, 'one race queue'; \
+           ASSERT (SELECT bool_and(partition_key='race-partition' \
+                     AND partition_policy='leapfrog') FROM wamn_run.run_queue \
+                   WHERE run_id IN ('race-a','race-b')), 'race ordering is coherent'; \
          END $$;",
     );
 
