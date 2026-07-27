@@ -29,10 +29,13 @@
 //! artifacts, and publishes artifacts + release membership + head atomically.
 //! It does not write the retired mutable `flows.active` publication path.
 
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use clap::Args;
+use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 use tokio_postgres::NoTls;
 
 // The canonical `wamn_run` → project-schema deploy-DDL rewrite and its
@@ -90,6 +93,12 @@ pub struct PublishCatalogArgs {
     #[arg(long)]
     pub flow: Vec<PathBuf>,
 
+    /// Custom-node publication descriptor JSON. Repeat for each supplied node.
+    /// Each descriptor pins a node type, component path, manifest path, and the
+    /// expected sha256 digest of the exact component bytes.
+    #[arg(long = "custom-node")]
+    pub custom_node: Vec<PathBuf>,
+
     /// Sources and attachments JSON for this immutable catalog release.
     #[arg(long)]
     pub exposure: Option<PathBuf>,
@@ -122,6 +131,8 @@ pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
                 .with_context(|| format!("parse project config {}", path.display()))
         })
         .transpose()?;
+    let supplied = load_supplied_components(&args.custom_node)?;
+    let prepared_flows = prepare_publication_flows(&args, &supplied)?;
 
     let admin_url = args
         .admin_database_url
@@ -132,7 +143,16 @@ pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
         .await
         .context("admin connect")?;
     let conn_task = tokio::spawn(conn);
-    let result = publish(&client, &cat, &args, &document, &schema, raw_sql_enabled).await;
+    let result = publish(
+        &client,
+        &cat,
+        &args,
+        &document,
+        &schema,
+        raw_sql_enabled,
+        prepared_flows,
+    )
+    .await;
     drop(client);
     let _ = conn_task.await;
     result?;
@@ -151,6 +171,7 @@ async fn publish(
     document: &str,
     schema: &BareSchemaName,
     raw_sql_enabled: Option<bool>,
+    prepared_flows: PreparedPublicationFlows,
 ) -> anyhow::Result<()> {
     // D24 (EVT-REG, wamn-rmxa): refuse a publish that would drop an entity still
     // referenced by an event registration — BEFORE any mutation, naming every
@@ -172,41 +193,10 @@ async fn publish(
     } else {
         None
     };
-    let mut artifacts = Vec::new();
-    for path in &args.flow {
-        let src = std::fs::read_to_string(path)
-            .with_context(|| format!("read flow {}", path.display()))?;
-        let prepared = prepare_flow_artifact(&args.tenant, &src)?;
-        let id = prepared.artifact.identity().id();
-        println!(
-            "prepared immutable flow artifact {} v{}",
-            id.flow_id(),
-            id.flow_version()
-        );
-        artifacts.push(prepared);
-    }
-    let exposure = if let Some(path) = &args.exposure {
-        let source = std::fs::read_to_string(path)
-            .with_context(|| format!("read exposure {}", path.display()))?;
-        let authored: wamn_schema_control::ExposureRelease =
-            serde_json::from_str(&source).context("parse exposure")?;
-        let flows = artifacts
-            .iter()
-            .map(|prepared| {
-                let id = prepared.artifact.identity().id();
-                wamn_schema_control::FlowExposure {
-                    flow_id: id.flow_id(),
-                    entry_kind: prepared.entry_kind,
-                    artifact_hash: prepared.artifact.identity().artifact_hash().as_str(),
-                }
-            })
-            .collect::<Vec<_>>();
-        let resolved =
-            wamn_schema_control::resolve_exposure(&authored, &flows).map_err(anyhow::Error::new)?;
-        Some((authored, resolved))
-    } else {
-        None
-    };
+    let PreparedPublicationFlows {
+        artifacts,
+        exposure,
+    } = prepared_flows;
     let expected_base: Option<i32> = client
         .query_one(
             wamn_schema_control::sql::select_publication_base_sql(),
@@ -1150,13 +1140,176 @@ struct PreparedFlowArtifact {
     graph_json: String,
     entry_kind: wamn_flow::EntryKind,
     artifact: wamn_catalog::Artifact,
+    supplied_node_types: BTreeSet<String>,
 }
 
-/// Resolve the standard-node interface bundle and build the canonical
-/// CF-DEF-ID artifact without mutating storage.
-fn prepare_flow_artifact(tenant: &str, graph_json: &str) -> anyhow::Result<PreparedFlowArtifact> {
-    use std::collections::BTreeSet;
+#[derive(Debug)]
+struct PreparedPublicationFlows {
+    artifacts: Vec<PreparedFlowArtifact>,
+    exposure: Option<(
+        wamn_schema_control::ExposureRelease,
+        Vec<wamn_schema_control::ResolvedAttachment>,
+    )>,
+}
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct SuppliedComponentDescriptor {
+    node_type: String,
+    component: PathBuf,
+    manifest: PathBuf,
+    component_digest: String,
+}
+
+fn descriptor_path(descriptor: &Path, supplied: &Path) -> PathBuf {
+    if supplied.is_absolute() {
+        supplied.to_path_buf()
+    } else {
+        descriptor
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(supplied)
+    }
+}
+
+fn component_digest(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut result = String::with_capacity("sha256:".len() + digest.len() * 2);
+    result.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut result, "{byte:02x}").expect("writing to a string is infallible");
+    }
+    result
+}
+
+/// Read and verify all explicit custom-node publication inputs before any
+/// database connection or publication mutation.
+fn load_supplied_components(
+    descriptors: &[PathBuf],
+) -> anyhow::Result<BTreeMap<String, wamn_catalog::NodeImplementation>> {
+    let mut supplied = BTreeMap::new();
+    for descriptor_pathname in descriptors {
+        let source = std::fs::read_to_string(descriptor_pathname).with_context(|| {
+            format!(
+                "read custom-node descriptor {}",
+                descriptor_pathname.display()
+            )
+        })?;
+        let descriptor: SuppliedComponentDescriptor =
+            serde_json::from_str(&source).with_context(|| {
+                format!(
+                    "parse custom-node descriptor {}",
+                    descriptor_pathname.display()
+                )
+            })?;
+        let component_path = descriptor_path(descriptor_pathname, &descriptor.component);
+        let manifest_path = descriptor_path(descriptor_pathname, &descriptor.manifest);
+        let bytes = std::fs::read(&component_path)
+            .with_context(|| format!("read custom-node component {}", component_path.display()))?;
+        let actual_digest = component_digest(&bytes);
+        anyhow::ensure!(
+            descriptor.component_digest == actual_digest,
+            "custom-node component digest mismatch for {:?}: expected {}, got {}",
+            descriptor.node_type,
+            descriptor.component_digest,
+            actual_digest
+        );
+        let manifest_source = std::fs::read_to_string(&manifest_path)
+            .with_context(|| format!("read custom-node manifest {}", manifest_path.display()))?;
+        let manifest = wamn_node_manifest::NodeManifest::from_json(&manifest_source)
+            .with_context(|| format!("parse custom-node manifest {}", manifest_path.display()))?;
+        anyhow::ensure!(
+            manifest.node_type == descriptor.node_type,
+            "custom-node manifest node-type mismatch: descriptor {:?}, manifest {:?}",
+            descriptor.node_type,
+            manifest.node_type
+        );
+        let resolved = manifest
+            .resolved_component(actual_digest)
+            .map_err(|issues| anyhow::anyhow!("resolve custom-node manifest: {issues:?}"))?;
+        let implementation = wamn_catalog::NodeImplementation::from_resolved_component(resolved)
+            .map_err(|error| anyhow::anyhow!("resolve custom-node implementation: {error}"))?;
+        anyhow::ensure!(
+            supplied
+                .insert(descriptor.node_type.clone(), implementation)
+                .is_none(),
+            "duplicate custom-node implementation for {:?}",
+            descriptor.node_type
+        );
+    }
+    Ok(supplied)
+}
+
+fn prepare_publication_flows(
+    args: &PublishCatalogArgs,
+    supplied: &BTreeMap<String, wamn_catalog::NodeImplementation>,
+) -> anyhow::Result<PreparedPublicationFlows> {
+    let mut artifacts = Vec::new();
+    let mut used_supplied = BTreeSet::new();
+    for path in &args.flow {
+        let source = std::fs::read_to_string(path)
+            .with_context(|| format!("read flow {}", path.display()))?;
+        let prepared = prepare_flow_artifact(&args.tenant, &source, supplied)
+            .with_context(|| format!("prepare flow {}", path.display()))?;
+        used_supplied.extend(prepared.supplied_node_types.iter().cloned());
+        let id = prepared.artifact.identity().id();
+        println!(
+            "prepared immutable flow artifact {} v{}",
+            id.flow_id(),
+            id.flow_version()
+        );
+        artifacts.push(prepared);
+    }
+    ensure_all_supplied_used(supplied, &used_supplied)?;
+    let exposure = if let Some(path) = &args.exposure {
+        let source = std::fs::read_to_string(path)
+            .with_context(|| format!("read exposure {}", path.display()))?;
+        let authored: wamn_schema_control::ExposureRelease =
+            serde_json::from_str(&source).context("parse exposure")?;
+        let flows = artifacts
+            .iter()
+            .map(|prepared| {
+                let id = prepared.artifact.identity().id();
+                wamn_schema_control::FlowExposure {
+                    flow_id: id.flow_id(),
+                    entry_kind: prepared.entry_kind,
+                    artifact_hash: prepared.artifact.identity().artifact_hash().as_str(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let resolved =
+            wamn_schema_control::resolve_exposure(&authored, &flows).map_err(anyhow::Error::new)?;
+        Some((authored, resolved))
+    } else {
+        None
+    };
+    Ok(PreparedPublicationFlows {
+        artifacts,
+        exposure,
+    })
+}
+
+fn ensure_all_supplied_used(
+    supplied: &BTreeMap<String, wamn_catalog::NodeImplementation>,
+    used_supplied: &BTreeSet<String>,
+) -> anyhow::Result<()> {
+    if let Some(node_type) = supplied
+        .keys()
+        .find(|node_type| !used_supplied.contains(*node_type))
+    {
+        anyhow::bail!("unknown supplied custom node {node_type:?}: no published graph declares it");
+    }
+    Ok(())
+}
+
+/// Resolve standard and verified supplied-node interfaces, then build the
+/// canonical CF-DEF-ID artifact without mutating storage.
+fn prepare_flow_artifact(
+    tenant: &str,
+    graph_json: &str,
+    supplied: &BTreeMap<String, wamn_catalog::NodeImplementation>,
+) -> anyhow::Result<PreparedFlowArtifact> {
     use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
 
     let flow =
@@ -1172,6 +1325,9 @@ fn prepare_flow_artifact(tenant: &str, graph_json: &str) -> anyhow::Result<Prepa
             continue;
         }
         let Some(ports) = wamn_standard_nodes::completion_ports(node_type) else {
+            if let Some(implementation) = supplied.get(node_type) {
+                implementations.push(implementation.clone());
+            }
             continue;
         };
         let replay_safe =
@@ -1193,6 +1349,11 @@ fn prepare_flow_artifact(tenant: &str, graph_json: &str) -> anyhow::Result<Prepa
             },
         ));
     }
+    let supplied_node_types = implementations
+        .iter()
+        .filter(|implementation| implementation.component_digest().is_some())
+        .map(|implementation| implementation.interface().node_type.clone())
+        .collect();
     let artifact = wamn_catalog::Artifact::new(tenant, &flow, implementations)
         .map_err(|error| anyhow::anyhow!("immutable artifact: {error}"))?;
     Ok(PreparedFlowArtifact {
@@ -1203,12 +1364,70 @@ fn prepare_flow_artifact(tenant: &str, graph_json: &str) -> anyhow::Result<Prepa
             .find_map(wamn_flow::Node::entry_kind)
             .expect("validated flow has one entry"),
         artifact,
+        supplied_node_types,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn custom_graph(node_type: &str) -> String {
+        format!(
+            r#"{{
+              "schema-version":"0.1","flow-id":"custom-flow","version":1,
+              "nodes":[
+                {{"id":"request","type":"request","config":{{"input-schema":{{
+                  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"
+                }}}}}},
+                {{"id":"custom","type":"{node_type}"}},
+                {{"id":"respond","type":"respond","config":{{"status":200}}}}
+              ],
+              "edges":[
+                {{"from":"request","to":"custom"}},
+                {{"from":"custom","to":"respond"}}
+              ]
+            }}"#
+        )
+    }
+
+    fn manifest_json(node_type: &str, purity: Option<&str>) -> String {
+        let purity = purity.map_or_else(String::new, |value| format!(r#","purity":"{value}""#));
+        format!(
+            r#"{{"schema-version":"0.1","node-type":"{node_type}","name":"Fixture","version":"0.1.0","contract":"0.1.0"{purity}}}"#
+        )
+    }
+
+    fn custom_input_fixture(
+        suffix: &str,
+        descriptor_node_type: &str,
+        manifest_node_type: &str,
+        purity: Option<&str>,
+        bytes: &[u8],
+    ) -> (PathBuf, PathBuf, PathBuf) {
+        let directory = std::env::temp_dir().join(format!(
+            "wamn-custom-publish-{}-{suffix}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let component = directory.join("node.wasm");
+        let manifest = directory.join("manifest.json");
+        let descriptor = directory.join("descriptor.json");
+        std::fs::write(&component, bytes).unwrap();
+        std::fs::write(&manifest, manifest_json(manifest_node_type, purity)).unwrap();
+        std::fs::write(
+            &descriptor,
+            serde_json::json!({
+                "node-type": descriptor_node_type,
+                "component": "node.wasm",
+                "manifest": "manifest.json",
+                "component-digest": component_digest(bytes),
+            })
+            .to_string(),
+        )
+        .unwrap();
+        (descriptor, component, manifest)
+    }
 
     fn release_fixture(suffix: &str) -> (wamn_schema_model::Catalog, String) {
         let catalog_json = format!(
@@ -1310,7 +1529,7 @@ mod tests {
                 &tenant,
                 "dev",
                 &run_schema,
-                vec![prepare_flow_artifact(&tenant, &graph).unwrap()],
+                vec![prepare_flow_artifact(&tenant, &graph, &BTreeMap::new()).unwrap()],
                 None,
                 &document,
                 None,
@@ -1347,7 +1566,7 @@ mod tests {
                 &tenant,
                 "dev",
                 &run_schema,
-                vec![prepare_flow_artifact(&tenant, &graph).unwrap()],
+                vec![prepare_flow_artifact(&tenant, &graph, &BTreeMap::new()).unwrap()],
                 None,
                 &document,
                 None,
@@ -1365,7 +1584,7 @@ mod tests {
                 &tenant,
                 "dev",
                 &run_schema,
-                vec![prepare_flow_artifact(&tenant, &graph).unwrap()],
+                vec![prepare_flow_artifact(&tenant, &graph, &BTreeMap::new()).unwrap()],
                 None,
                 &document,
                 Some(1),
@@ -1380,6 +1599,91 @@ mod tests {
             );
         }
 
+        drop(client);
+        let _ = connection_task.await;
+    }
+
+    #[tokio::test]
+    async fn resolved_custom_component_rolls_back_at_publication_fault_and_retries() {
+        let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
+            return;
+        };
+        let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
+        let connection_task = tokio::spawn(connection);
+        ensure_wamn_app_role(&client).await.unwrap();
+        ensure_catalog_storage(&client).await.unwrap();
+        let suffix = std::process::id();
+        let tenant = format!("custom-fault-{suffix}");
+        let catalog_json = format!(
+            r#"{{"schema-version":"0.1","catalog-id":"custom-fault-{suffix}","version":1,"entities":[]}}"#
+        );
+        let catalog = wamn_schema_model::Catalog::from_json(&catalog_json).unwrap();
+        let (descriptor, _, _) = custom_input_fixture(
+            "fault-live",
+            "normalize-receipt",
+            "normalize-receipt",
+            Some("pure"),
+            b"resolved-before-transaction",
+        );
+        let supplied = load_supplied_components(&[descriptor]).unwrap();
+        let graph = custom_graph("normalize-receipt");
+
+        client.batch_execute("BEGIN").await.unwrap();
+        client
+            .batch_execute("SET LOCAL wamn.test.publication_fault = 'after-artifacts'")
+            .await
+            .unwrap();
+        let failure = publish_release(
+            &client,
+            &catalog,
+            &tenant,
+            "dev",
+            &BareSchemaName::new("pg_temp").unwrap(),
+            vec![prepare_flow_artifact(&tenant, &graph, &supplied).unwrap()],
+            None,
+            &catalog_json,
+            None,
+        )
+        .await;
+        let error = finish_publication_transaction(&client, failure)
+            .await
+            .expect_err("fault after custom artifact insert must roll back");
+        assert!(format!("{error:#}").contains("injected-publication-fault-after-artifacts"));
+        let count: i64 = client
+            .query_one(
+                "SELECT count(*) FROM catalog.flow_artifacts WHERE tenant_id = $1",
+                &[&tenant],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(count, 0);
+
+        client.batch_execute("BEGIN").await.unwrap();
+        let retry = publish_release(
+            &client,
+            &catalog,
+            &tenant,
+            "dev",
+            &BareSchemaName::new("pg_temp").unwrap(),
+            vec![prepare_flow_artifact(&tenant, &graph, &supplied).unwrap()],
+            None,
+            &catalog_json,
+            None,
+        )
+        .await;
+        finish_publication_transaction(&client, retry)
+            .await
+            .unwrap();
+        let count: i64 = client
+            .query_one(
+                "SELECT count(*) FROM catalog.flow_artifacts WHERE tenant_id = $1",
+                &[&tenant],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(count, 1);
         drop(client);
         let _ = connection_task.await;
     }
@@ -1488,6 +1792,7 @@ mod tests {
             runstate: true,
             seed_dataset: None,
             flow: vec![],
+            custom_node: vec![],
             exposure: None,
             skip_reconcile_replica_identity: false,
         })
@@ -1532,7 +1837,8 @@ mod tests {
             {"from":"shape","to":"respond"}
           ]
         }"#;
-        let prepared = prepare_flow_artifact("tenant", graph).expect("standard node resolves");
+        let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new())
+            .expect("standard node resolves");
         assert_eq!(prepared.artifact.interfaces().len(), 1);
         assert_eq!(prepared.artifact.interfaces()[0].node_type, "transform");
         assert_eq!(prepared.artifact.interfaces()[0].output_ports, ["main"]);
@@ -1540,11 +1846,126 @@ mod tests {
 
     #[test]
     fn unresolved_custom_node_is_refused_before_storage() {
-        let graph = r#"{
+        let graph = custom_graph("tenant-custom");
+        let error = prepare_flow_artifact("tenant", &graph, &BTreeMap::new())
+            .expect_err("unresolved custom node must fail closed");
+        assert!(format!("{error:#}").contains("has no resolved interface"));
+    }
+
+    #[test]
+    fn verified_custom_component_pins_exact_bytes_and_pure_manifest() {
+        let (descriptor, _, _) = custom_input_fixture(
+            "pure",
+            "normalize-receipt",
+            "normalize-receipt",
+            Some("pure"),
+            b"component",
+        );
+        let supplied = load_supplied_components(&[descriptor]).unwrap();
+        let graph = custom_graph("normalize-receipt");
+        let prepared = prepare_flow_artifact("tenant", &graph, &supplied).unwrap();
+
+        assert_eq!(
+            prepared.supplied_node_types,
+            BTreeSet::from(["normalize-receipt".to_string()])
+        );
+        assert_eq!(
+            prepared.artifact.supplied_components()[0].component_digest,
+            component_digest(b"component")
+        );
+        let interface = &prepared.artifact.supplied_components()[0].interface;
+        assert_eq!(interface.node_type, "normalize-receipt");
+        assert_eq!(interface.output_ports, ["main"]);
+        assert_eq!(interface.purity, wamn_node_manifest::ResolvedPurity::Pure);
+        assert_eq!(
+            interface.recovery_class,
+            wamn_node_manifest::RecoveryClass::Replay
+        );
+    }
+
+    #[test]
+    fn absent_custom_purity_resolves_effectful_never_replay() {
+        let (descriptor, _, _) = custom_input_fixture(
+            "absent-purity",
+            "legacy-node",
+            "legacy-node",
+            None,
+            b"component",
+        );
+        let supplied = load_supplied_components(&[descriptor]).unwrap();
+        let graph = custom_graph("legacy-node");
+        let prepared = prepare_flow_artifact("tenant", &graph, &supplied).unwrap();
+        let interface = &prepared.artifact.supplied_components()[0].interface;
+        assert_eq!(
+            interface.purity,
+            wamn_node_manifest::ResolvedPurity::Effectful
+        );
+        assert_eq!(
+            interface.recovery_class,
+            wamn_node_manifest::RecoveryClass::NeverReplay
+        );
+    }
+
+    #[test]
+    fn custom_inputs_refuse_missing_mismatched_mutated_and_duplicate_material() {
+        let (descriptor, component, manifest) =
+            custom_input_fixture("negative", "node-a", "node-a", Some("pure"), b"component");
+
+        let original_descriptor = std::fs::read_to_string(&descriptor).unwrap();
+        let mut missing_digest: serde_json::Value =
+            serde_json::from_str(&original_descriptor).unwrap();
+        missing_digest
+            .as_object_mut()
+            .unwrap()
+            .remove("component-digest");
+        std::fs::write(&descriptor, missing_digest.to_string()).unwrap();
+        let error = load_supplied_components(std::slice::from_ref(&descriptor)).unwrap_err();
+        assert!(format!("{error:#}").contains("component-digest"));
+        std::fs::write(&descriptor, &original_descriptor).unwrap();
+
+        std::fs::write(&component, b"altered").unwrap();
+        let error = load_supplied_components(std::slice::from_ref(&descriptor)).unwrap_err();
+        assert!(format!("{error:#}").contains("component digest mismatch"));
+        std::fs::write(&component, b"component").unwrap();
+
+        let mut value: serde_json::Value = serde_json::from_str(&original_descriptor).unwrap();
+        value["component-digest"] = serde_json::Value::String(format!("sha256:{}", "0".repeat(64)));
+        std::fs::write(&descriptor, value.to_string()).unwrap();
+        let error = load_supplied_components(std::slice::from_ref(&descriptor)).unwrap_err();
+        assert!(format!("{error:#}").contains("component digest mismatch"));
+        std::fs::write(&descriptor, &original_descriptor).unwrap();
+
+        std::fs::write(&manifest, manifest_json("node-b", Some("pure"))).unwrap();
+        let error = load_supplied_components(std::slice::from_ref(&descriptor)).unwrap_err();
+        assert!(format!("{error:#}").contains("manifest node-type mismatch"));
+        std::fs::write(&manifest, manifest_json("node-a", Some("pure"))).unwrap();
+
+        let error =
+            load_supplied_components(&[descriptor.clone(), descriptor.clone()]).unwrap_err();
+        assert!(format!("{error:#}").contains("duplicate custom-node implementation"));
+
+        std::fs::remove_file(&manifest).unwrap();
+        let error = load_supplied_components(&[descriptor]).unwrap_err();
+        assert!(format!("{error:#}").contains("read custom-node manifest"));
+    }
+
+    #[test]
+    fn supplied_node_must_be_declared_directly_by_a_graph() {
+        let (descriptor, _, _) = custom_input_fixture(
+            "graph-shape",
+            "normalize-receipt",
+            "normalize-receipt",
+            Some("pure"),
+            b"component",
+        );
+        let supplied = load_supplied_components(&[descriptor]).unwrap();
+        let legacy_indirection = r#"{
           "schema-version":"0.1","flow-id":"custom-flow","version":1,
           "nodes":[
-            {"id":"request","type":"request"},
-            {"id":"custom","type":"tenant-custom"},
+            {"id":"request","type":"request","config":{"input-schema":{
+              "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"
+            }}},
+            {"id":"custom","type":"custom","config":{"manifest":"normalize-receipt"}},
             {"id":"respond","type":"respond","config":{"status":200}}
           ],
           "edges":[
@@ -1552,9 +1973,12 @@ mod tests {
             {"from":"custom","to":"respond"}
           ]
         }"#;
-        let error = prepare_flow_artifact("tenant", graph)
-            .expect_err("unresolved custom node must fail closed");
+        let error = prepare_flow_artifact("tenant", legacy_indirection, &supplied)
+            .expect_err("indirect custom declaration must not bypass graph/interface coherence");
         assert!(format!("{error:#}").contains("has no resolved interface"));
+
+        let error = ensure_all_supplied_used(&supplied, &BTreeSet::new()).unwrap_err();
+        assert!(format!("{error:#}").contains("unknown supplied custom node"));
     }
 
     #[test]

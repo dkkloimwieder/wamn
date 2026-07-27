@@ -3664,3 +3664,34 @@ WAMN_MIGRATE_PG_URL="$THROWAWAY_PG_URL" \
 CARGO_TARGET_DIR=/tmp/wamn-target-cf-interface-bundle-65 \
   cargo test --locked -p wamn-proof-integration --lib catalog_live::tests::
 ```
+
+## CF-CUSTOM-PUBLISH — verified supplied components (`wamn-5wd1.67`)
+
+`publish-catalog --custom-node` accepts a repeatable JSON descriptor containing
+`node-type`, `component`, `manifest`, and `component-digest`. Preflight reads the
+exact component bytes, recomputes the SHA-256 digest, resolves the typed manifest
+ports/purity/recovery contract, and requires every supplied node type to be
+declared directly by a published graph before the immutable release transaction.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-custom-publish-67 \
+  cargo test --locked -p wamn-ctl -p wamn-catalog -p wamn-control-registry
+
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-custom-publish-67-components \
+  cargo build --locked --manifest-path components/Cargo.toml \
+  -p normalize-receipt -p evaluate-specs -p disposition-node \
+  --target wasm32-wasip2
+
+docker run -d --rm --name wamn-cf-custom-publish-pg \
+  -p 127.0.0.1:15622:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+# postgres:18 initializes, restarts, then becomes ready; wait for the second
+# successful pg_isready before running the proof.
+WAMN_MIGRATE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15622/wamn \
+WAMN_CF_NORMALIZE_RECEIPT_WASM=/tmp/wamn-target-cf-custom-publish-67-components/wasm32-wasip2/debug/normalize_receipt.wasm \
+WAMN_CF_EVALUATE_SPECS_WASM=/tmp/wamn-target-cf-custom-publish-67-components/wasm32-wasip2/debug/evaluate_specs.wasm \
+WAMN_CF_DISPOSITION_NODE_WASM=/tmp/wamn-target-cf-custom-publish-67-components/wasm32-wasip2/debug/disposition_node.wasm \
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-custom-publish-67 \
+  cargo test --locked -p wamn-ctl --test custom_publish_live \
+  real_f1_f2_components_publish_retry_and_conflict_by_exact_bytes -- --exact
+```
