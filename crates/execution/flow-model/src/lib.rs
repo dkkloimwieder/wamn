@@ -21,6 +21,10 @@ mod diff;
 mod types;
 mod validate;
 
+use std::fmt::Write as _;
+
+use serde_json::Value;
+
 pub use diff::{FlowDiff, NodeChange, diff};
 pub use types::{
     Capture, CaptureMode, CredentialRef, CronInput, DEFAULT_CAPTURE_MAX_BYTES, ENTRY_TYPES,
@@ -28,6 +32,20 @@ pub use types::{
     PartitionPolicy, RequestConfig, RespondConfig, RowEvent, SCHEMA_VERSION,
 };
 pub use validate::{Issue, ResolvedInterfaces, Severity, validate};
+
+/// `sha256:<hex>` over the RFC 8785 canonical representation of arbitrary JSON.
+///
+/// This is the stable identity used when a durable boundary must compare a
+/// replayed JSON body with the outcome that previously committed.
+pub fn canonical_json_sha256(value: &Value) -> String {
+    let digest = canonical::sha256(&canonical::to_vec(value));
+    let mut hash = String::with_capacity("sha256:".len() + digest.len() * 2);
+    hash.push_str("sha256:");
+    for byte in digest {
+        write!(&mut hash, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    hash
+}
 
 /// The JSON Schema for [`Flow`], generated from the Rust types (the single
 /// source of truth). Serialized to `docs/flow-schema.schema.json`; a drift test
@@ -43,4 +61,23 @@ pub fn json_schema_string() -> String {
     let mut s = serde_json::to_string_pretty(&json_schema()).expect("schema serializes");
     s.push('\n');
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::canonical_json_sha256;
+
+    #[test]
+    fn canonical_json_hash_ignores_object_insertion_order() {
+        let left = canonical_json_sha256(&json!({"a": 1, "b": 2}));
+        let reordered = canonical_json_sha256(&json!({"b": 2, "a": 1}));
+        let changed = canonical_json_sha256(&json!({"a": 9, "b": 2}));
+
+        assert_eq!(left, reordered);
+        assert_ne!(left, changed);
+        assert!(left.starts_with("sha256:"));
+        assert_eq!(left.len(), "sha256:".len() + 64);
+    }
 }

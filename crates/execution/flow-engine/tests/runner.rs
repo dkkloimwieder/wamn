@@ -6,7 +6,7 @@
 use std::cell::Cell;
 
 use serde_json::{Value, json};
-use wamn_flow::Flow;
+use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_runner::{
     ConcurrencyGate, Dispatch, EngineError, ExecutionFailureKind, ExecutionState, ExecutionStatus,
     NodeError, NodeOutcome, Plan, RateLimitDetail, RetryPolicy, Step, ThrottleKey, ThrottleTable,
@@ -40,7 +40,7 @@ fn run(
     let clock = Cell::new(0u64);
     let mut visited = Vec::new();
     let mut waits = Vec::new();
-    let mut st = plan.start(run_id, input);
+    let mut st = started(&plan, run_id, input);
     let status = loop {
         match plan.next(&mut st, clock.get()) {
             Step::Done(s) => break s,
@@ -53,10 +53,13 @@ fn run(
                 waits.push((node, until_ms, throttle));
                 clock.set(until_ms); // virtual sleep
             }
+            Step::Reserved(step) => {
+                plan.apply_reserved(&mut st, &step).unwrap();
+            }
             Step::Dispatch(d) => {
                 visited.push(d.clone());
                 let outcome = dispatch_fn(&d);
-                plan.apply(&mut st, &d, outcome, clock.get());
+                plan.apply(&mut st, &d, outcome, clock.get()).unwrap();
             }
         }
     };
@@ -69,7 +72,87 @@ fn run(
 }
 
 fn flow(json_str: &str) -> Flow {
-    Flow::from_json(json_str).expect("fixture flow parses")
+    let mut value: Value = serde_json::from_str(json_str).expect("fixture JSON parses");
+    let object = value.as_object_mut().expect("fixture is a JSON object");
+    let entry = object
+        .remove("entry")
+        .and_then(|value| value.as_str().map(str::to_string));
+    object.remove("trigger");
+    if let Some(entry) = entry {
+        let nodes = object["nodes"].as_array_mut().expect("nodes array");
+        for node in nodes.iter_mut() {
+            if node["type"] == "respond" {
+                node["type"] = json!("echo");
+            }
+        }
+        nodes.insert(0, json!({"id":"__entry","type":"cron"}));
+        object["edges"]
+            .as_array_mut()
+            .expect("edges array")
+            .insert(0, json!({"from":"__entry","to":entry}));
+    }
+    serde_json::from_value(value).expect("fixture flow parses")
+}
+
+fn compile(flow: &Flow) -> Result<Plan<'_>, EngineError> {
+    let mut interfaces = ResolvedInterfaces::new();
+    for node in &flow.nodes {
+        if matches!(
+            node.node_type.as_str(),
+            "request" | "cron" | "event" | "respond" | "fail"
+        ) {
+            continue;
+        }
+        let ports = interfaces.entry(node.node_type.clone()).or_default();
+        if !ports.iter().any(|port| port == "main") {
+            ports.push("main".to_string());
+        }
+        for edge in flow.edges.iter().filter(|edge| edge.from == node.id) {
+            if edge.from_port != "error" && !ports.contains(&edge.from_port) {
+                ports.push(edge.from_port.clone());
+            }
+        }
+    }
+    Plan::compile(flow, &interfaces)
+}
+
+fn started(plan: &Plan<'_>, run_id: impl Into<String>, input: Value) -> ExecutionState {
+    let mut state = plan.start(run_id, input);
+    let Step::Reserved(step) = plan.next(&mut state, 0) else {
+        panic!("fresh run must start at its synthetic entry");
+    };
+    plan.apply_reserved(&mut state, &step).unwrap();
+    state
+}
+
+fn resumed(
+    plan: &Plan<'_>,
+    run_id: impl Into<String>,
+    input: Value,
+    completed: &[Recorded],
+) -> Result<ExecutionState, ResumeError> {
+    if completed.is_empty() {
+        let mut state = plan.resume(run_id, input, completed)?;
+        let Step::Reserved(step) = plan.next(&mut state, 0) else {
+            panic!("empty legacy history must begin at its synthetic entry");
+        };
+        plan.apply_reserved(&mut state, &step).unwrap();
+        return Ok(state);
+    }
+
+    let mut history = Vec::with_capacity(completed.len() + 1);
+    if completed
+        .first()
+        .is_some_and(|record| record.node != plan.entry().id)
+    {
+        history.push(Recorded::new(
+            plan.entry().id.clone(),
+            "main",
+            input.clone(),
+        ));
+    }
+    history.extend_from_slice(completed);
+    plan.resume(run_id, input, &history)
 }
 
 // ---- walk: linear / branch / merge / fan-out ------------------------------
@@ -82,14 +165,14 @@ fn linear_walk_completes_in_order() {
             "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"echo"},{"id":"c","type":"echo"}],
             "edges":[{"from":"a","to":"b"},{"from":"b","to":"c"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     // Each node emits a payload naming itself, so the result is the last node's.
     let t = run(&plan, "r1", json!({ "seen": [] }), |d| {
         NodeOutcome::ok(json!({ "at": d.node }))
     });
     assert_eq!(t.status, ExecutionStatus::Completed);
     assert_eq!(t.nodes(), ["a", "b", "c"]);
-    assert_eq!(t.state.step_seq(), 3);
+    assert_eq!(t.state.step_seq(), 4); // synthetic entry + three user nodes
     assert_eq!(t.state.result(), &json!({ "at": "c" }));
     // Each node's input payload is the upstream node's output.
     assert_eq!(t.visited[0].payload, json!({ "seen": [] })); // entry gets the trigger payload
@@ -106,7 +189,7 @@ fn branch_follows_only_the_selected_port() {
             "edges":[{"from":"cond","from-port":"true","to":"yes"},
                      {"from":"cond","from-port":"false","to":"no"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
         "cond" => NodeOutcome::ok_on(json!({ "picked": true }), "true"),
         _ => NodeOutcome::ok(json!({ "at": d.node })),
@@ -126,14 +209,14 @@ fn fan_out_and_merge_without_a_join_barrier() {
             "edges":[{"from":"s","to":"a"},{"from":"s","to":"b"},
                      {"from":"a","to":"m"},{"from":"b","to":"m"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |d| {
         NodeOutcome::ok(json!({ "at": d.node }))
     });
     assert_eq!(t.status, ExecutionStatus::Completed);
     // BFS order: s, then a, b, then m (from a), m (from b).
     assert_eq!(t.nodes(), ["s", "a", "b", "m", "m"]);
-    assert_eq!(t.state.step_seq(), 5);
+    assert_eq!(t.state.step_seq(), 6); // synthetic entry + five user visits
 }
 
 #[test]
@@ -149,7 +232,7 @@ fn merge_visits_carry_distinct_occurrences() {
             "edges":[{"from":"s","to":"a"},{"from":"s","to":"b"},
                      {"from":"a","to":"m"},{"from":"b","to":"m"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |d| {
         NodeOutcome::ok(json!({ "at": d.node }))
     });
@@ -180,7 +263,7 @@ fn occurrence_is_stable_across_retries_of_one_visit() {
             "trigger":{"type":"manual"},"entry":"b",
             "nodes":[{"id":"b","type":"call"}],"edges":[]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let attempts = Cell::new(0u32);
     let t = run(&plan, "r1", json!({}), |_| {
         let n = attempts.replace(attempts.get() + 1);
@@ -211,7 +294,7 @@ fn an_error_routed_visit_advances_the_occurrence() {
                      {"from":"b","from-port":"error","to":"h"},
                      {"from":"h","to":"b"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let first = Cell::new(true);
     let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
         "b" if first.replace(false) => {
@@ -235,7 +318,7 @@ fn a_leaf_with_no_successors_just_ends() {
             "trigger":{"type":"manual"},"entry":"a",
             "nodes":[{"id":"a","type":"echo"}],"edges":[]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({ "x": 1 }), |_| {
         NodeOutcome::ok(json!({ "done": true }))
     });
@@ -257,7 +340,7 @@ fn terminal_error_routes_to_error_port_and_continues() {
             "edges":[{"from":"a","to":"b"},{"from":"b","to":"c"},
                      {"from":"b","from-port":"error","to":"h"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
         "b" => NodeOutcome::Error(NodeError::Terminal(wamn_runner::ErrorDetail {
             message: "boom".into(),
@@ -285,7 +368,7 @@ fn terminal_error_with_no_error_path_fails_the_run() {
             "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"call"}],
             "edges":[{"from":"a","to":"b"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
         "b" => NodeOutcome::Error(NodeError::Terminal(wamn_runner::ErrorDetail::msg("boom"))),
         _ => NodeOutcome::ok(json!({})),
@@ -306,7 +389,7 @@ fn retryable_retries_then_succeeds_with_stable_idempotency_key() {
             "trigger":{"type":"manual"},"entry":"b",
             "nodes":[{"id":"b","type":"call"}],"edges":[]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let attempts = Cell::new(0u32);
     let t = run(&plan, "run-9", json!({}), |_| {
         let n = attempts.get();
@@ -334,7 +417,7 @@ fn retryable_retries_then_succeeds_with_stable_idempotency_key() {
     assert_eq!(key, "run-9:b:0");
     assert!(t.visited.iter().all(|d| &d.idempotency_key == key));
     // step_seq counts only the one successful completion.
-    assert_eq!(t.state.step_seq(), 1);
+    assert_eq!(t.state.step_seq(), 2); // synthetic entry + successful node
 }
 
 #[test]
@@ -344,7 +427,7 @@ fn retry_budget_exhausts_to_failure() {
             "trigger":{"type":"manual"},"entry":"b",
             "nodes":[{"id":"b","type":"call"}],"edges":[]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |_| {
         NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("nope")))
     });
@@ -366,7 +449,7 @@ fn retry_config_overrides_budget_and_routes_to_error_path_when_exhausted() {
                      {"id":"h","type":"handler"}],
             "edges":[{"from":"b","from-port":"error","to":"h"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
         "b" => NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("x"))),
         _ => NodeOutcome::ok(json!({ "handled": true })),
@@ -384,7 +467,7 @@ fn rate_limited_honors_retry_after_and_emits_the_shared_throttle_key() {
             "nodes":[{"id":"call","type":"http-call","credential":"erp"}],
             "edges":[],"credentials":[{"name":"erp"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let first = Cell::new(true);
     let t = run(&plan, "r1", json!({}), |_| {
         if first.replace(false) {
@@ -418,7 +501,7 @@ fn invalid_input_is_never_retried() {
             "trigger":{"type":"manual"},"entry":"b",
             "nodes":[{"id":"b","type":"call","config":{"retry":{"max-attempts":9}}}],"edges":[]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |_| {
         NodeOutcome::Error(NodeError::InvalidInput(wamn_runner::ErrorDetail::msg(
             "bad shape",
@@ -440,7 +523,7 @@ fn cancelled_stops_the_run_and_does_not_fire_error_branches() {
             "nodes":[{"id":"b","type":"call"},{"id":"h","type":"handler"}],
             "edges":[{"from":"b","from-port":"error","to":"h"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
         "b" => NodeOutcome::Error(NodeError::Cancelled),
         _ => NodeOutcome::ok(json!({})),
@@ -460,7 +543,7 @@ fn dispatch_carries_type_config_credential_and_deadline() {
                       "config":{"url":"https://x","deadline-ms":5000}}],
             "edges":[],"credentials":[{"name":"c"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |_| NodeOutcome::ok(json!({})));
     let d = &t.visited[0];
     assert_eq!(d.node_type, "http-call");
@@ -479,7 +562,7 @@ fn compile_rejects_an_invalid_flow() {
             "trigger":{"type":"manual"},"entry":"missing",
             "nodes":[{"id":"a","type":"echo"}],"edges":[]}"#,
     );
-    let err = Plan::compile(&f).unwrap_err();
+    let err = compile(&f).unwrap_err();
     assert!(matches!(err, EngineError::Invalid(_)));
 }
 
@@ -554,7 +637,7 @@ fn concurrency_gate_enforces_per_flow_concurrency() {
 
 // ---- resume: branch-aware reconstruction from recorded steps --------------
 
-use wamn_runner::{Recorded, ResumeError, UnknownNode};
+use wamn_runner::{Recorded, ResumeError, SeedError};
 
 /// A 4-node linear flow a -> b -> c -> d.
 fn linear4() -> Flow {
@@ -586,17 +669,15 @@ fn branchy() -> Flow {
 #[test]
 fn resume_reconstructs_a_linear_frontier_and_continues() {
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     // The run was killed after b committed: a and b are recorded, c/d are not.
     let completed = [
         Recorded::new("a", "main", json!({ "at": "a" })),
         Recorded::new("b", "main", json!({ "at": "b" })),
     ];
-    let mut st = plan
-        .resume("r1", json!({ "trigger": 1 }), &completed)
-        .unwrap();
+    let mut st = resumed(&plan, "r1", json!({ "trigger": 1 }), &completed).unwrap();
     assert_eq!(st.status(), ExecutionStatus::Running);
-    assert_eq!(st.step_seq(), 2); // two steps folded
+    assert_eq!(st.step_seq(), 3); // synthetic entry + two recorded user steps
 
     // The driver continues: the very next dispatch is c (not a re-run of a/b),
     // and c sees b's recorded output as its input.
@@ -617,7 +698,7 @@ fn resume_reconstructs_a_linear_frontier_and_continues() {
 #[test]
 fn resume_is_branch_aware_only_the_taken_branch_is_outstanding() {
     let f = branchy();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     // cond took the "true" port; y1 (pg-write) committed but the run was killed
     // before y2 was recorded. Reconstruction must leave the frontier at y2 and
     // NEVER touch the false branch (n1/n2).
@@ -625,7 +706,7 @@ fn resume_is_branch_aware_only_the_taken_branch_is_outstanding() {
         Recorded::new("cond", "true", json!({ "picked": "true" })),
         Recorded::new("y1", "main", json!({ "wrote": "y" })),
     ];
-    let mut st = plan.resume("r1", json!({}), &completed).unwrap();
+    let mut st = resumed(&plan, "r1", json!({}), &completed).unwrap();
     let mut resumed = Vec::new();
     let status = plan.drive(
         &mut st,
@@ -647,11 +728,11 @@ fn resume_kill_mid_branch_then_resume_completes_the_correct_branch() {
     // resumed run finishes the SAME branch exactly once (the branch-aware
     // kill-mid-branch -> resume proof).
     let f = branchy();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
 
     // Original run: cond picks "false"; capture records up to the killed node.
     let mut records: Vec<Recorded> = Vec::new();
-    let mut st = plan.start("orig", json!({}));
+    let mut st = started(&plan, "orig", json!({}));
     // Walk manually, recording each success, and "kill" right after n1.
     loop {
         match plan.next(&mut st, 0) {
@@ -661,7 +742,8 @@ fn resume_kill_mid_branch_then_resume_completes_the_correct_branch() {
                     other => (json!({ "at": other }), "main".to_string()),
                 };
                 records.push(Recorded::new(d.node.clone(), port.clone(), payload.clone()));
-                plan.apply(&mut st, &d, NodeOutcome::Success { payload, port }, 0);
+                plan.apply(&mut st, &d, NodeOutcome::Success { payload, port }, 0)
+                    .unwrap();
                 if d.node == "n1" {
                     break; // killed after n1 committed, before n2
                 }
@@ -675,7 +757,7 @@ fn resume_kill_mid_branch_then_resume_completes_the_correct_branch() {
     );
 
     // Resume a fresh state from the records; only n2 remains.
-    let mut st2 = plan.resume("resumed", json!({}), &records).unwrap();
+    let mut st2 = resumed(&plan, "resumed", json!({}), &records).unwrap();
     let mut resumed = Vec::new();
     let status = plan.drive(
         &mut st2,
@@ -722,14 +804,14 @@ fn resume_diamond_killed_mid_merge_reconstructs_and_completes() {
     // second outstanding — reconstructs without Mismatch/Overrun and completes
     // with exactly the one remaining visit, at the right occurrence.
     let f = diamond();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let completed = [
         Recorded::new("a", "main", json!({ "at": "a" })),
         Recorded::new("b", "main", json!({ "at": "b" })),
         Recorded::new("c", "main", json!({ "at": "c" })),
         Recorded::new("d", "main", json!({ "at": "d" })), // D's FIRST visit only
     ];
-    let mut st = plan.resume("r1", json!({}), &completed).unwrap();
+    let mut st = resumed(&plan, "r1", json!({}), &completed).unwrap();
     let mut resumed = Vec::new();
     let mut keys = Vec::new();
     let status = plan.drive(
@@ -760,7 +842,7 @@ fn resume_of_a_fully_recorded_diamond_is_idempotent() {
     // completes with nothing re-dispatched — the merge history no longer
     // collapses (pre-R24 the dropped second D row made this walk re-run D).
     let f = diamond();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let completed = [
         Recorded::new("a", "main", json!({ "at": "a" })),
         Recorded::new("b", "main", json!({ "at": "b" })),
@@ -768,7 +850,7 @@ fn resume_of_a_fully_recorded_diamond_is_idempotent() {
         Recorded::new("d", "main", json!({ "d": 1 })),
         Recorded::new("d", "main", json!({ "d": 2 })),
     ];
-    let mut st = plan.resume("r1", json!({}), &completed).unwrap();
+    let mut st = resumed(&plan, "r1", json!({}), &completed).unwrap();
     let mut resumed = Vec::new();
     let status = plan.drive(
         &mut st,
@@ -790,7 +872,7 @@ fn resume_mid_loop_continues_at_the_right_visit() {
     // at the correct occurrence — pre-R24 a loop crashing after 2 visits was
     // permanently unrecoverable (its collapsed history could not replay).
     let f = bounded_loop();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     // Two full laps recorded (x emitting "next"), killed with x's third visit
     // outstanding: in, x@0, y@0, x@1, y@1.
     let completed = [
@@ -800,7 +882,7 @@ fn resume_mid_loop_continues_at_the_right_visit() {
         Recorded::new("x", "next", json!(2)),
         Recorded::new("y", "main", json!(2)),
     ];
-    let mut st = plan.resume("r1", json!(0), &completed).unwrap();
+    let mut st = resumed(&plan, "r1", json!(0), &completed).unwrap();
     let mut resumed = Vec::new();
     let status = plan.drive(
         &mut st,
@@ -836,13 +918,13 @@ fn resume_reconstructs_an_error_routed_branch() {
                      {"id":"ok","type":"respond"}],
             "edges":[{"from":"a","to":"ok"},{"from":"a","from-port":"error","to":"h"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let completed = [Recorded::new(
         "a",
         "error",
         json!({ "error": { "message": "boom" } }),
     )];
-    let mut st = plan.resume("r1", json!({}), &completed).unwrap();
+    let mut st = resumed(&plan, "r1", json!({}), &completed).unwrap();
     let mut resumed = Vec::new();
     let status = plan.drive(
         &mut st,
@@ -878,7 +960,7 @@ fn resumed_error_routed_run_matches_live_step_seq_and_result() {
     // and assert step_seq and result match live exactly (pre-fix the resumed
     // step_seq was one higher — the error record wrongly bumped it).
     let f = error_route_flow();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
 
     // LIVE: a fails terminally -> error-routes to h; ok never runs; h succeeds.
     let live = run(&plan, "live", json!({}), |d| match d.node.as_str() {
@@ -889,7 +971,7 @@ fn resumed_error_routed_run_matches_live_step_seq_and_result() {
     });
     assert_eq!(live.status, ExecutionStatus::Completed);
     assert_eq!(live.nodes(), ["a", "h"]); // ok skipped
-    assert_eq!(live.state.step_seq(), 1); // only h's success counts
+    assert_eq!(live.state.step_seq(), 2); // synthetic entry + h's success
     // The error payload a actually emitted (h's live input) — reuse it verbatim
     // so the record matches what the run emitted.
     let error_payload = live
@@ -905,7 +987,7 @@ fn resumed_error_routed_run_matches_live_step_seq_and_result() {
         Recorded::new("a", "error", error_payload.clone()),
         Recorded::new("h", "main", json!({ "handled": true })),
     ];
-    let mut st = plan.resume("resumed", json!({}), &records).unwrap();
+    let mut st = resumed(&plan, "resumed", json!({}), &records).unwrap();
     assert_eq!(
         st.step_seq(),
         live.state.step_seq(),
@@ -938,12 +1020,20 @@ fn resume_partial_after_error_route_leaves_step_seq_zero_and_null_result() {
     // step_seq 0 / result Null — the error route touches neither. Driving on
     // completes via h, which receives the error payload as its input.
     let f = error_route_flow();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let error_payload = json!({ "error": { "message": "boom", "code": "HTTP_500" } });
     let records = [Recorded::new("a", "error", error_payload.clone())];
-    let mut st = plan.resume("partial", json!({}), &records).unwrap();
-    assert_eq!(st.step_seq(), 0, "an error route is not a completed step");
-    assert_eq!(st.result(), &Value::Null, "no success has set a result yet");
+    let mut st = resumed(&plan, "partial", json!({}), &records).unwrap();
+    assert_eq!(
+        st.step_seq(),
+        1,
+        "only the synthetic entry is completed; an error route is not"
+    );
+    assert_eq!(
+        st.result(),
+        &json!({}),
+        "the synthetic entry retains the admitted payload"
+    );
 
     // The live remainder: h runs with the error payload as its input, then done.
     let mut seen = Vec::new();
@@ -975,13 +1065,13 @@ fn resume_error_route_still_advances_the_occurrence() {
                      {"from":"b","from-port":"error","to":"h"},
                      {"from":"h","to":"b"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let records = [
         Recorded::new("a", "main", json!({ "at": "a" })),
         Recorded::new("b", "error", json!({ "error": { "message": "boom" } })),
         Recorded::new("h", "main", json!({ "at": "h" })),
     ];
-    let mut st = plan.resume("r1", json!({}), &records).unwrap();
+    let mut st = resumed(&plan, "r1", json!({}), &records).unwrap();
     match plan.next(&mut st, 0) {
         Step::Dispatch(d) => {
             assert_eq!(d.node, "b");
@@ -998,10 +1088,10 @@ fn resume_error_route_still_advances_the_occurrence() {
 #[test]
 fn resume_detects_history_drift() {
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     // The first recorded step names "b", but the flow dispatches "a" first.
     let completed = [Recorded::new("b", "main", json!({}))];
-    let err = plan.resume("r1", json!({}), &completed).unwrap_err();
+    let err = resumed(&plan, "r1", json!({}), &completed).unwrap_err();
     assert_eq!(
         err,
         ResumeError::Mismatch {
@@ -1014,25 +1104,25 @@ fn resume_detects_history_drift() {
 #[test]
 fn resume_rejects_more_records_than_the_flow_walks() {
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     // Five records for a four-node flow: the fifth overruns the terminal state.
     let completed: Vec<Recorded> = ["a", "b", "c", "d", "e"]
         .iter()
         .map(|n| Recorded::new(*n, "main", json!({})))
         .collect();
-    let err = plan.resume("r1", json!({}), &completed).unwrap_err();
+    let err = resumed(&plan, "r1", json!({}), &completed).unwrap_err();
     assert_eq!(err, ResumeError::Overrun { node: "e".into() });
 }
 
 #[test]
 fn resume_of_a_fully_recorded_run_is_complete_and_idempotent() {
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let completed: Vec<Recorded> = ["a", "b", "c", "d"]
         .iter()
         .map(|n| Recorded::new(*n, "main", json!({ "at": n })))
         .collect();
-    let mut st = plan.resume("r1", json!({}), &completed).unwrap();
+    let mut st = resumed(&plan, "r1", json!({}), &completed).unwrap();
     // Nothing remains: the driver's first step completes without re-dispatching.
     let mut resumed = Vec::new();
     let status = plan.drive(
@@ -1053,7 +1143,7 @@ fn resume_of_a_fully_recorded_run_is_complete_and_idempotent() {
 #[test]
 fn seed_at_runs_only_the_downstream_subtree() {
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     // Partial re-run from c with its captured input: a and b are NOT re-run.
     let mut st = plan
         .seed_at("rerun-1", "c", json!({ "captured": "c-input" }))
@@ -1082,9 +1172,9 @@ fn seed_at_runs_only_the_downstream_subtree() {
 #[test]
 fn seed_at_unknown_node_is_rejected() {
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let err = plan.seed_at("r", "nope", json!({})).unwrap_err();
-    assert_eq!(err, UnknownNode("nope".into()));
+    assert_eq!(err, SeedError::UnknownNode("nope".into()));
 }
 
 // ---- dispatch budget: the runaway-loop runtime bound (cjv.4) --------------
@@ -1116,9 +1206,11 @@ fn run_bounded(
         match plan.next(st, 0) {
             Step::Done(s) => return (dispatched, s),
             Step::Wait { .. } => panic!("unexpected wait in a budget test"),
+            Step::Reserved(step) => plan.apply_reserved(st, &step).unwrap(),
             Step::Dispatch(d) => {
                 dispatched.push(d.node.clone());
-                plan.apply(st, &d, NodeOutcome::ok(json!("loop")), 0);
+                plan.apply(st, &d, NodeOutcome::ok(json!("loop")), 0)
+                    .unwrap();
             }
         }
     }
@@ -1128,9 +1220,9 @@ fn run_bounded(
 #[test]
 fn a_runaway_cycle_fails_at_exactly_the_budget() {
     let f = runaway_cycle();
-    let mut plan = Plan::compile(&f).unwrap();
+    let mut plan = compile(&f).unwrap();
     plan.set_dispatch_budget(5);
-    let mut st = plan.start("r1", json!("go"));
+    let mut st = started(&plan, "r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 20);
     // Exactly 5 node executions were allowed, then the run failed terminally.
     assert_eq!(dispatched.len(), 5);
@@ -1148,9 +1240,9 @@ fn a_flow_that_uses_exactly_the_budget_completes() {
     // linear4 dispatches exactly 4 nodes; budget 4 must let it complete (the
     // budget is "may execute N nodes", not "fails at N").
     let f = linear4();
-    let mut plan = Plan::compile(&f).unwrap();
+    let mut plan = compile(&f).unwrap();
     plan.set_dispatch_budget(4);
-    let mut st = plan.start("r1", json!("go"));
+    let mut st = started(&plan, "r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 20);
     assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(dispatched.len(), 4);
@@ -1169,9 +1261,9 @@ fn retries_count_against_the_budget() {
                       "config":{"retry":{"max-attempts":10,"base-ms":0}}}],
             "edges":[]}"#,
     );
-    let mut plan = Plan::compile(&f).unwrap();
+    let mut plan = compile(&f).unwrap();
     plan.set_dispatch_budget(3);
-    let mut st = plan.start("r1", json!("go"));
+    let mut st = started(&plan, "r1", json!("go"));
     let mut executions = 0;
     let status = loop {
         if executions > 20 {
@@ -1181,6 +1273,7 @@ fn retries_count_against_the_budget() {
         match plan.next(&mut st, u64::MAX / 2) {
             Step::Done(s) => break s,
             Step::Wait { .. } => panic!("retry should be due at a huge now"),
+            Step::Reserved(step) => plan.apply_reserved(&mut st, &step).unwrap(),
             Step::Dispatch(d) => {
                 executions += 1;
                 plan.apply(
@@ -1190,7 +1283,8 @@ fn retries_count_against_the_budget() {
                         "flaky",
                     ))),
                     u64::MAX / 2,
-                );
+                )
+                .unwrap();
             }
         }
     };
@@ -1207,13 +1301,13 @@ fn reconstruction_is_exempt_from_the_budget() {
     // 4 recorded steps exceed a budget of 3, but resume folds history without
     // counting: the resumed live walk (0 outstanding nodes here) completes.
     let f = linear4();
-    let mut plan = Plan::compile(&f).unwrap();
+    let mut plan = compile(&f).unwrap();
     plan.set_dispatch_budget(3);
     let completed: Vec<Recorded> = ["a", "b", "c", "d"]
         .iter()
         .map(|n| Recorded::new(*n, "main", json!({ "at": n })))
         .collect();
-    let mut st = plan.resume("r1", json!("go"), &completed).unwrap();
+    let mut st = resumed(&plan, "r1", json!("go"), &completed).unwrap();
     assert_eq!(st.dispatched(), 0, "folded history must not count");
     let (dispatched, status) = run_bounded(&plan, &mut st, 10);
     assert_eq!(status, ExecutionStatus::Completed);
@@ -1221,9 +1315,9 @@ fn reconstruction_is_exempt_from_the_budget() {
 
     // A partially-recorded resume still gets the FULL budget for live work:
     // 3 recorded + budget 1 leaves exactly the one outstanding node runnable.
-    let mut plan2 = Plan::compile(&f).unwrap();
+    let mut plan2 = compile(&f).unwrap();
     plan2.set_dispatch_budget(1);
-    let mut st2 = plan2.resume("r2", json!("go"), &completed[..3]).unwrap();
+    let mut st2 = resumed(&plan2, "r2", json!("go"), &completed[..3]).unwrap();
     let (live, status2) = run_bounded(&plan2, &mut st2, 10);
     assert_eq!(status2, ExecutionStatus::Completed);
     assert_eq!(live, ["d"]);
@@ -1242,9 +1336,9 @@ fn the_budget_verdict_is_terminal_even_with_an_error_path() {
                      {"from":"b","to":"a"},
                      {"from":"a","from-port":"error","to":"rescue"}]}"#,
     );
-    let mut plan = Plan::compile(&f).unwrap();
+    let mut plan = compile(&f).unwrap();
     plan.set_dispatch_budget(5);
-    let mut st = plan.start("r1", json!("go"));
+    let mut st = started(&plan, "r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 20);
     assert_eq!(status, ExecutionStatus::Failed);
     assert_eq!(
@@ -1258,10 +1352,10 @@ fn the_budget_verdict_is_terminal_even_with_an_error_path() {
 #[test]
 fn the_default_budget_is_generous_but_finite() {
     let f = runaway_cycle();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     assert_eq!(plan.dispatch_budget(), wamn_runner::DEFAULT_DISPATCH_BUDGET);
     assert_eq!(wamn_runner::DEFAULT_DISPATCH_BUDGET, 10_000);
-    let mut st = plan.start("r1", json!("go"));
+    let mut st = started(&plan, "r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 10_100);
     assert_eq!(status, ExecutionStatus::Failed);
     assert_eq!(dispatched.len(), 10_000);
@@ -1331,7 +1425,7 @@ fn drive_across_parks(
     let mut dispatches = Vec::new();
     let mut parks = 0usize;
     for claim in 1..=max_claims {
-        let mut st = plan.resume(run_id, input.clone(), &completed).unwrap();
+        let mut st = resumed(&plan, run_id, input.clone(), &completed).unwrap();
         if let Some((node, attempt, throttle)) = &retry {
             plan.restore_retry(&mut st, node, *attempt, throttle.clone());
         }
@@ -1358,6 +1452,9 @@ fn drive_across_parks(
                     parks += 1;
                     break;
                 }
+                Step::Reserved(step) => {
+                    plan.apply_reserved(&mut st, &step).unwrap();
+                }
                 Step::Dispatch(d) => {
                     dispatches.push((d.node.clone(), d.attempt));
                     let outcome = dispatch_fn(&d);
@@ -1374,7 +1471,7 @@ fn drive_across_parks(
                             payload.clone(),
                         ));
                     }
-                    plan.apply(&mut st, &d, outcome, 0);
+                    plan.apply(&mut st, &d, outcome, 0).unwrap();
                 }
             }
         }
@@ -1390,8 +1487,8 @@ fn wait_carries_the_pending_retry_attempt() {
     // NEXT step is a Wait carrying the attempt the driver persists (1) at the
     // default backoff (100ms). A mutant that zeroes this cursor is caught here.
     let f = one_retryable_node("");
-    let plan = Plan::compile(&f).unwrap();
-    let mut st = plan.start("r1", json!({}));
+    let plan = compile(&f).unwrap();
+    let mut st = started(&plan, "r1", json!({}));
     let Step::Dispatch(d) = plan.next(&mut st, 0) else {
         panic!("first step dispatches");
     };
@@ -1401,7 +1498,8 @@ fn wait_carries_the_pending_retry_attempt() {
         &d,
         NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("flaky"))),
         0,
-    );
+    )
+    .unwrap();
     match plan.next(&mut st, 0) {
         Step::Wait {
             node,
@@ -1427,8 +1525,8 @@ fn restore_retry_promotes_the_outstanding_node_due_now_with_its_attempt() {
     // attempt, DUE NOW (the queue served the backoff), so the next step is a
     // Dispatch at that attempt — not a fresh attempt-0 promotion, not a re-Wait.
     let f = one_retryable_node("");
-    let plan = Plan::compile(&f).unwrap();
-    let mut st = plan.resume("r1", json!({}), &[]).unwrap(); // fresh: b outstanding
+    let plan = compile(&f).unwrap();
+    let mut st = resumed(&plan, "r1", json!({}), &[]).unwrap(); // fresh: b outstanding
     assert!(plan.restore_retry(&mut st, "b", 2, None));
     match plan.next(&mut st, 0) {
         Step::Dispatch(d) => {
@@ -1449,8 +1547,8 @@ fn restore_retry_carries_the_persisted_shared_throttle_key() {
     // queue park, but the cross-run GATE identity must survive the reclaim too —
     // restore_retry must promote the node carrying the ORIGINAL key, not None.
     let f = one_retryable_node("");
-    let plan = Plan::compile(&f).unwrap();
-    let mut st = plan.resume("r1", json!({}), &[]).unwrap(); // fresh: b outstanding
+    let plan = compile(&f).unwrap();
+    let mut st = resumed(&plan, "r1", json!({}), &[]).unwrap(); // fresh: b outstanding
     let key = ThrottleKey::new("http-call", Some("erp".into()), Some("erp.example".into()));
     assert!(plan.restore_retry(&mut st, "b", 2, Some(key.clone())));
     assert_eq!(
@@ -1460,7 +1558,7 @@ fn restore_retry_carries_the_persisted_shared_throttle_key() {
     );
 
     // The absent-key round-trip stays None (a plain retryable retry has no gate).
-    let mut st2 = plan.resume("r2", json!({}), &[]).unwrap();
+    let mut st2 = resumed(&plan, "r2", json!({}), &[]).unwrap();
     assert!(plan.restore_retry(&mut st2, "b", 1, None));
     assert_eq!(
         st2.current_throttle(),
@@ -1475,8 +1573,8 @@ fn restore_retry_is_a_noop_for_a_node_that_is_not_the_front() {
     // no longer the frontier front) must NOT hijack the walk, nor must an unknown
     // node id.
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
-    let mut st = plan.resume("r1", json!("go"), &[]).unwrap(); // front is "a"
+    let plan = compile(&f).unwrap();
+    let mut st = resumed(&plan, "r1", json!("go"), &[]).unwrap(); // front is "a"
     assert!(!plan.restore_retry(&mut st, "c", 5, None)); // c is not the front
     assert!(!plan.restore_retry(&mut st, "nope", 5, None)); // unknown node
     // The walk is untouched: the next dispatch is still the real front, fresh.
@@ -1497,7 +1595,7 @@ fn retry_budget_survives_parks_to_exhaustion() {
     // RetryExhausted — it does NOT loop forever re-running attempt 0. Default
     // budget = 3 attempts.
     let f = one_retryable_node("");
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = drive_across_parks(&plan, "r1", json!({}), 50, |_| {
         NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg(
             "always",
@@ -1523,7 +1621,7 @@ fn retry_budget_survives_parks_then_error_routes_when_exhausted() {
                      {"id":"h","type":"handler"}],
             "edges":[{"from":"b","from-port":"error","to":"h"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let t = drive_across_parks(&plan, "r1", json!({}), 50, |d| match d.node.as_str() {
         "b" => NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("x"))),
         _ => NodeOutcome::ok(json!({ "handled": true })),
@@ -1544,7 +1642,7 @@ fn a_completed_predecessor_is_not_re_run_across_a_retry_park() {
             "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"call"}],
             "edges":[{"from":"a","to":"b"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f).unwrap();
     let b_attempts = Cell::new(0u32);
     let t = drive_across_parks(&plan, "r1", json!("go"), 50, |d| match d.node.as_str() {
         "a" => NodeOutcome::ok(json!({ "at": "a" })),

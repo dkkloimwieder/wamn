@@ -39,9 +39,10 @@
 //! ```
 //!
 //! ## Scope (5.2) vs siblings
-//! Owns: the ported-edge walk, branch/merge, error-path routing, the
-//! retry/backoff loop, the shared per-target throttle key + per-flow concurrency
-//! accounting ([`ThrottleTable`]), the hot-reload *consumer* seam (recompile a
+//! Owns: synthetic entry completion; reserved `respond`/`fail` boundaries and
+//! caller-release state; the ported-edge walk, branch/merge, error-path routing;
+//! the retry/backoff loop; the shared per-target throttle key + per-flow concurrency
+//! accounting ([`ThrottleTable`]); the hot-reload *consumer* seam (recompile a
 //! [`Plan`] on a new flow version), and the pure **reconstruction primitives**
 //! [`resume`](Plan::resume) (rebuild a run's frontier from its recorded steps —
 //! branch-aware) and [`seed_at`](Plan::seed_at) (partial re-run from one node).
@@ -60,8 +61,8 @@ mod retry;
 mod throttle;
 
 pub use engine::{
-    Dispatch, ExecutionFailureKind, ExecutionState, ExecutionStatus, Failure, Recorded,
-    ResumeError, Step, UnknownNode,
+    ApplyError, CallerState, Dispatch, ExecutionFailureKind, ExecutionState, ExecutionStatus,
+    Failure, Recorded, ReservedStep, ResumeError, SeedError, Step,
 };
 pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
 pub use plan::{DEFAULT_DISPATCH_BUDGET, EngineError, Plan};

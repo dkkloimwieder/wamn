@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::RunStatus;
+use crate::{NodeRunStatus, RunStatus};
 
 const FENCED_PREFIX: &str = "\
 WITH input AS ( \
@@ -59,6 +59,27 @@ pub struct StoredCallerOutcome {
     pub http_status: Option<u16>,
     pub release_node_id: Option<String>,
     pub hash: Option<String>,
+}
+
+impl StoredCallerOutcome {
+    /// Whether an idempotent caller-release replay names the exact outcome that
+    /// already won the CAS. Body and hash are both compared: the hash is the
+    /// persisted replay identity, while the body comparison guards a corrupt
+    /// or incorrectly decoded row.
+    pub fn exactly_matches(
+        &self,
+        kind: &str,
+        body: &Value,
+        http_status: Option<u16>,
+        release_node_id: Option<&str>,
+        hash: &str,
+    ) -> bool {
+        self.kind == kind
+            && &self.body == body
+            && self.http_status == http_status
+            && self.release_node_id.as_deref() == release_node_id
+            && self.hash.as_deref() == Some(hash)
+    }
 }
 
 /// Typed result of [`release_caller_sql`].
@@ -189,6 +210,77 @@ impl TerminalizeResult {
     }
 }
 
+/// Typed result of [`reserved_checkpoint_sql`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReservedCheckpointResult {
+    Recorded,
+    RunTerminal(RunStatus),
+    FenceLost,
+    CrossRunAuthority,
+    NotFound,
+}
+
+impl ReservedCheckpointResult {
+    pub fn from_parts(code: &str, run_status: &str) -> Option<ReservedCheckpointResult> {
+        match code {
+            "recorded" => Some(ReservedCheckpointResult::Recorded),
+            "run-terminal" => Some(ReservedCheckpointResult::RunTerminal(RunStatus::from_sql(
+                run_status,
+            )?)),
+            "fence-lost" => Some(ReservedCheckpointResult::FenceLost),
+            "cross-run-authority" => Some(ReservedCheckpointResult::CrossRunAuthority),
+            "not-found" => Some(ReservedCheckpointResult::NotFound),
+            _ => None,
+        }
+    }
+
+    /// `FenceLost` is absolute: callers must stop without another store access.
+    pub fn permits_access(self) -> bool {
+        self != ReservedCheckpointResult::FenceLost
+    }
+}
+
+/// Record an engine-reserved checkpoint and renew its queue lease under the
+/// exact claim generation.
+///
+/// Params: target run id, authority run id, lease owner, lease generation,
+/// node id, occurrence, sequence, output port, output JSON text, input JSON
+/// text, preview head, payload size, payload hash, capture mode, redacted,
+/// lease TTL milliseconds. A replayed checkpoint still renews, but a stale
+/// owner or generation cannot insert the checkpoint.
+pub fn reserved_checkpoint_sql() -> String {
+    format!(
+        "{FENCED_PREFIX}, \
+         recorded AS ( \
+             INSERT INTO node_runs \
+                    (tenant_id, run_id, node_id, occurrence, seq, status, \
+                     output_port, output_json, input_json, preview_head, \
+                     payload_size, payload_hash, capture_mode, redacted) \
+             SELECT a.tenant_id, a.run_id, $5, $6, $7, '{success}', \
+                    $8, $9::text::jsonb, $10::text::jsonb, $11, $12, $13, $14, $15 \
+               FROM authority AS a \
+              WHERE a.result_code = 'ready' \
+             ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING \
+             RETURNING run_id \
+         ), \
+         renewed AS ( \
+             UPDATE run_queue AS q \
+                SET lease_expires_at = \
+                    now() + ($16::bigint * interval '1 millisecond') \
+               FROM authority AS a \
+              WHERE a.result_code = 'ready' \
+                AND q.tenant_id = a.tenant_id AND q.run_id = a.run_id \
+                AND (SELECT count(*) FROM recorded) >= 0 \
+             RETURNING q.run_id \
+         ) \
+         SELECT CASE WHEN r.run_id IS NOT NULL THEN 'recorded' ELSE a.result_code END \
+                    AS result_code, \
+                a.status AS run_status \
+           FROM authority AS a LEFT JOIN renewed AS r ON true",
+        success = NodeRunStatus::Success.as_sql(),
+    )
+}
+
 /// Take the first durable terminal result and remove its queue row atomically.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
@@ -216,11 +308,26 @@ pub fn terminalize_sql() -> String {
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
-             RETURNING r.tenant_id, r.run_id, r.status \
+             RETURNING r.tenant_id, r.run_id, r.flow_id, r.status \
+         ), \
+         dead_lettered AS ( \
+             INSERT INTO run_dead_letters \
+                    (tenant_id, run_id, partition_key, flow_id, reason) \
+             SELECT t.tenant_id, t.run_id, q.partition_key, t.flow_id, \
+                    COALESCE($6::text, 'failed') \
+               FROM terminalized AS t \
+               JOIN run_queue AS q \
+                 ON q.tenant_id = t.tenant_id AND q.run_id = t.run_id \
+              WHERE t.status = 'failed' \
+                AND q.partition_key IS NOT NULL \
+                AND q.partition_policy = 'blocking' \
+             ON CONFLICT (tenant_id, run_id) DO NOTHING \
+             RETURNING run_id \
          ), \
          dequeued AS ( \
              DELETE FROM run_queue AS q USING terminalized AS t \
               WHERE q.tenant_id = t.tenant_id AND q.run_id = t.run_id \
+                AND (SELECT count(*) FROM dead_lettered) >= 0 \
              RETURNING q.run_id \
          ) \
          SELECT CASE WHEN t.run_id IS NOT NULL THEN 'terminalized' ELSE c.result_code END \
@@ -367,6 +474,7 @@ mod tests {
     fn fence_lost_forbids_subsequent_access() {
         assert!(!CallerReleaseResult::FenceLost.permits_access());
         assert!(!TerminalizeResult::FenceLost.permits_access());
+        assert!(!ReservedCheckpointResult::FenceLost.permits_access());
         assert!(!CheckpointResult::FenceLost.permits_access());
     }
 
@@ -394,6 +502,38 @@ mod tests {
     }
 
     #[test]
+    fn caller_replay_identity_requires_exact_body_and_hash() {
+        let stored = StoredCallerOutcome {
+            kind: "responded".to_string(),
+            body: json!({"a": 1, "b": 2}),
+            http_status: Some(200),
+            release_node_id: Some("respond".to_string()),
+            hash: Some("sha256:exact".to_string()),
+        };
+        assert!(stored.exactly_matches(
+            "responded",
+            &json!({"b": 2, "a": 1}),
+            Some(200),
+            Some("respond"),
+            "sha256:exact",
+        ));
+        assert!(!stored.exactly_matches(
+            "responded",
+            &json!({"a": 9, "b": 2}),
+            Some(200),
+            Some("respond"),
+            "sha256:exact",
+        ));
+        assert!(!stored.exactly_matches(
+            "responded",
+            &json!({"a": 1, "b": 2}),
+            Some(200),
+            Some("respond"),
+            "sha256:changed",
+        ));
+    }
+
+    #[test]
     fn duplicate_admission_constraint_is_a_typed_refusal() {
         let ddl = include_str!("../../../../deploy/sql/run-state.sql");
         assert!(ddl.contains("CONSTRAINT invocation_admissions_identity UNIQUE"));
@@ -411,6 +551,7 @@ mod tests {
     fn transitions_are_queue_joined_and_generation_fenced() {
         for sql in [
             release_caller_sql(),
+            reserved_checkpoint_sql(),
             terminalize_sql(),
             park_sql(),
             complete_sql(),
@@ -430,9 +571,35 @@ mod tests {
     }
 
     #[test]
+    fn reserved_checkpoint_inserts_only_from_ready_generation_authority() {
+        let sql = reserved_checkpoint_sql();
+        assert!(sql.contains("INSERT INTO node_runs"), "{sql}");
+        assert!(sql.contains("FROM authority AS a"), "{sql}");
+        assert!(sql.contains("WHERE a.result_code = 'ready'"), "{sql}");
+        assert!(
+            sql.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"),
+            "{sql}"
+        );
+        assert!(
+            sql.find("authority AS").expect("authority CTE")
+                < sql.find("recorded AS").expect("record CTE"),
+            "{sql}"
+        );
+    }
+
+    #[test]
     fn terminal_and_checkpoint_transitions_are_atomic_statements() {
         let terminal = terminalize_sql();
         assert!(terminal.contains("terminalized AS"));
+        assert!(terminal.contains("dead_lettered AS"));
+        assert!(terminal.contains("INSERT INTO run_dead_letters"));
+        assert!(terminal.contains("t.status = 'failed'"));
+        assert!(terminal.contains("q.partition_policy = 'blocking'"));
+        assert!(terminal.contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
+        assert!(
+            terminal.find("dead_lettered AS").expect("ledger CTE")
+                < terminal.find("dequeued AS").expect("dequeue CTE")
+        );
         assert!(terminal.contains("dequeued AS"));
 
         let park = park_sql();

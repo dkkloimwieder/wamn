@@ -235,6 +235,7 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
               CHECK (partition_policy IN ('blocking','leapfrog')), \
             priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
             lease_owner text, lease_expires_at timestamptz, \
+            lease_generation bigint NOT NULL DEFAULT 0, \
             attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
             enqueued_at timestamptz NOT NULL DEFAULT now(), \
             stream_seq bigint NOT NULL DEFAULT 0, \
@@ -993,5 +994,27 @@ mod tests {
                 ("run_dead_letters", Need::Required),
             ],
         );
+    }
+
+    #[test]
+    fn failed_blocking_terminal_transition_ledgers_before_dequeue() {
+        let sql = wamn_run_state::transitions::terminalize_sql();
+        let ledger = sql.find("dead_lettered AS").expect("dead-letter CTE");
+        let dequeue = sql.find("dequeued AS").expect("dequeue CTE");
+
+        assert!(sql.contains("INSERT INTO run_dead_letters"));
+        assert!(sql.contains("t.status = 'failed'"));
+        assert!(sql.contains("q.partition_policy = 'blocking'"));
+        assert!(ledger < dequeue);
+    }
+
+    #[test]
+    fn reserved_entry_checkpoint_is_lease_generation_fenced() {
+        let sql = wamn_run_state::transitions::reserved_checkpoint_sql();
+
+        assert!(sql.contains("INSERT INTO node_runs"));
+        assert!(sql.contains("WHERE a.result_code = 'ready'"));
+        assert!(sql.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
+        assert!(sql.contains("'fence-lost'"));
     }
 }

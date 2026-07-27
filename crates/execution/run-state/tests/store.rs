@@ -132,19 +132,23 @@ fn reconstruct_replays_an_error_routed_node() {
     // output_port is `error` and whose output is the `{"error": …}` payload.
     let f = flow(
         r#"{"schema-version":"0.1","flow-id":"err","version":1,
-            "nodes":[{"id":"a","type":"cron"},{"id":"h","type":"notify"},
-                     {"id":"ok","type":"echo"}],
-            "edges":[{"from":"a","to":"ok"},{"from":"a","from-port":"error","to":"h"}]}"#,
+            "nodes":[{"id":"a","type":"cron"},{"id":"work","type":"http-call"},
+                     {"id":"h","type":"notify"},{"id":"ok","type":"echo"}],
+            "edges":[{"from":"a","to":"work"},{"from":"work","to":"ok"},
+                     {"from":"work","from-port":"error","to":"h"}]}"#,
     );
     let plan = compile(&f);
     let run = RunRecord::new("r1", "err", 1, json!({}));
-    let node_runs = [NodeRunRecord {
-        status: NodeRunStatus::Error,
-        output_port: Some("error".into()),
-        output: Some(json!({ "error": { "message": "boom" } })),
-        error_kind: Some(NodeErrorKind::Terminal),
-        ..NodeRunRecord::success("r1", "a", 0, "error", Value::Null)
-    }];
+    let node_runs = [
+        NodeRunRecord::success("r1", "a", 0, "main", json!({})),
+        NodeRunRecord {
+            status: NodeRunStatus::Error,
+            output_port: Some("error".into()),
+            output: Some(json!({ "error": { "message": "boom" } })),
+            error_kind: Some(NodeErrorKind::Terminal),
+            ..NodeRunRecord::success("r1", "work", 1, "error", Value::Null)
+        },
+    ];
     let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
     assert_eq!(drive_collect(&plan, &mut st), ["h"]); // error branch, not "ok"
 }
@@ -377,7 +381,8 @@ fn partial_rerun_seeds_from_the_failed_nodes_captured_input() {
         Step::Dispatch(d) => {
             assert_eq!(d.node, "c");
             assert_eq!(d.payload, json!({ "captured": "c-input" }));
-            plan.apply(&mut st, &d, NodeOutcome::ok(json!({ "at": "c" })), 0);
+            plan.apply(&mut st, &d, NodeOutcome::ok(json!({ "at": "c" })), 0)
+                .unwrap();
         }
         other => panic!("expected dispatch of c, got {other:?}"),
     }

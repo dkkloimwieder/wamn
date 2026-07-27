@@ -9,6 +9,7 @@
 //! loop {
 //!     match plan.next(&mut st, now_ms()) {
 //!         Step::Dispatch(d)  => { let o = run_node(&d); plan.apply(&mut st, &d, o, now_ms()); }
+//!         Step::Reserved(r)  => { commit_reserved(&r); plan.apply_reserved(&mut st, &r); }
 //!         Step::Wait { until_ms, throttle, .. } => { /* gate `throttle`, sleep to until_ms */ }
 //!         Step::Done(status) => break status,
 //!     }
@@ -28,6 +29,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use serde_json::Value;
+use wamn_flow::{EntryKind, FailConfig, RespondConfig};
 
 use crate::outcome::{ErrorDetail, NodeError, NodeOutcome};
 use crate::plan::Plan;
@@ -116,6 +118,7 @@ pub struct ExecutionState {
     visits: HashMap<String, u32>,
     result: Value,
     failure: Option<Failure>,
+    caller: CallerState,
 }
 
 impl ExecutionState {
@@ -144,6 +147,10 @@ impl ExecutionState {
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
     }
+    /// Durable caller ownership as understood by the graph walk.
+    pub fn caller_state(&self) -> CallerState {
+        self.caller
+    }
     /// The shared-throttle key the currently-active node carries, if any — the
     /// gate a `rate-limited` retry must coordinate on before its next dispatch.
     /// Exposed so a driver (and [`Plan::restore_retry`]'s round-trip test) can
@@ -158,6 +165,10 @@ impl ExecutionState {
 pub enum Step {
     /// Run this node, then feed its outcome back via [`Plan::apply`].
     Dispatch(Dispatch),
+    /// Apply an engine-reserved graph transition. These nodes are never handed
+    /// to the user node dispatcher. A durable driver first commits the described
+    /// boundary, then acknowledges it with [`Plan::apply_reserved`].
+    Reserved(ReservedStep),
     /// The next node is a scheduled retry not yet due: coordinate on `throttle`
     /// (if any) and sleep until `until_ms`, then call [`Plan::next`] again. A
     /// driver that spans invocations (the durable queue) translates this into a
@@ -175,6 +186,104 @@ pub enum Step {
     /// The run reached a terminal status.
     Done(ExecutionStatus),
 }
+
+/// Caller ownership tracked independently from run terminality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallerState {
+    /// Cron/event runs have no attached synchronous caller.
+    None,
+    /// A request caller is attached and has not received an outcome.
+    Attached,
+    /// The request caller outcome has been durably chosen.
+    Released,
+}
+
+/// An engine-owned node transition. Repeated calls to [`Plan::next`] return the
+/// same value until the driver acknowledges it, making a crash before or after
+/// the caller CAS safe to replay.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReservedStep {
+    /// Synthetically complete the unique entry with the admitted payload.
+    Entry {
+        node: String,
+        payload: Value,
+        occurrence: u32,
+    },
+    /// Release a request caller with `payload`, then continue on the optional
+    /// `main` successor. `complete` means there is no successor, so release and
+    /// terminal completion belong to one durable transaction.
+    Respond {
+        node: String,
+        payload: Value,
+        occurrence: u32,
+        status: u16,
+        complete: bool,
+    },
+    /// End the run with the authored failure, releasing an attached request
+    /// caller with the same body and status.
+    Fail {
+        node: String,
+        payload: Value,
+        occurrence: u32,
+        code: String,
+        message: Option<String>,
+        status: u16,
+    },
+}
+
+impl ReservedStep {
+    pub fn node(&self) -> &str {
+        match self {
+            ReservedStep::Entry { node, .. }
+            | ReservedStep::Respond { node, .. }
+            | ReservedStep::Fail { node, .. } => node,
+        }
+    }
+
+    pub fn payload(&self) -> &Value {
+        match self {
+            ReservedStep::Entry { payload, .. }
+            | ReservedStep::Respond { payload, .. }
+            | ReservedStep::Fail { payload, .. } => payload,
+        }
+    }
+
+    pub fn occurrence(&self) -> u32 {
+        match self {
+            ReservedStep::Entry { occurrence, .. }
+            | ReservedStep::Respond { occurrence, .. }
+            | ReservedStep::Fail { occurrence, .. } => *occurrence,
+        }
+    }
+}
+
+/// A graph transition was applied against the wrong state boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApplyError {
+    Terminal(ExecutionStatus),
+    NoActiveNode,
+    MismatchedNode { expected: String, actual: String },
+    NotReserved(String),
+    CallerAlreadyReleased,
+    RespondWithoutCaller,
+}
+
+impl std::fmt::Display for ApplyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ApplyError::Terminal(status) => write!(f, "run is already terminal: {status:?}"),
+            ApplyError::NoActiveNode => write!(f, "run has no active node"),
+            ApplyError::MismatchedNode { expected, actual } => {
+                write!(f, "active node is {expected:?}, not {actual:?}")
+            }
+            ApplyError::NotReserved(node) => write!(f, "node {node:?} is not engine-reserved"),
+            ApplyError::CallerAlreadyReleased => write!(f, "caller was already released"),
+            ApplyError::RespondWithoutCaller => write!(f, "respond requires a request caller"),
+        }
+    }
+}
+
+impl std::error::Error for ApplyError {}
 
 /// A single node execution the driver must perform. Mirrors the runner-owned
 /// fields of `wamn:node`'s `run-context`.
@@ -279,17 +388,25 @@ impl std::fmt::Display for ResumeError {
 
 impl std::error::Error for ResumeError {}
 
-/// A node id that does not resolve in the plan, given to [`Plan::seed_at`].
-#[derive(Debug, Clone, PartialEq)]
-pub struct UnknownNode(pub String);
+/// Why a partial re-run seed was rejected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SeedError {
+    UnknownNode(String),
+    ReservedNode(String),
+}
 
-impl std::fmt::Display for UnknownNode {
+impl std::fmt::Display for SeedError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unknown node {:?}", self.0)
+        match self {
+            SeedError::UnknownNode(node) => write!(f, "unknown node {node:?}"),
+            SeedError::ReservedNode(node) => {
+                write!(f, "engine-reserved node {node:?} cannot be user-seeded")
+            }
+        }
     }
 }
 
-impl std::error::Error for UnknownNode {}
+impl std::error::Error for SeedError {}
 
 impl<'f> Plan<'f> {
     /// Start a run: the entry node holds the trigger payload.
@@ -309,6 +426,14 @@ impl<'f> Plan<'f> {
             visits: HashMap::new(),
             result: Value::Null,
             failure: None,
+            caller: match self
+                .entry()
+                .entry_kind()
+                .expect("validated entry has a reserved kind")
+            {
+                EntryKind::Request => CallerState::Attached,
+                EntryKind::Cron | EntryKind::Event => CallerState::None,
+            },
         }
     }
 
@@ -342,10 +467,25 @@ impl<'f> Plan<'f> {
                     });
                 }
                 None => {
+                    if state.caller == CallerState::Attached {
+                        state.status = ExecutionStatus::Failed;
+                        state.failure = Some(Failure {
+                            node: self.entry().id.clone(),
+                            kind: ExecutionFailureKind::InvalidInput,
+                            detail: ErrorDetail::coded(
+                                "ambiguous-exhausted-outcome",
+                                "request frontier exhausted before caller release",
+                            ),
+                        });
+                        return Step::Done(ExecutionStatus::Failed);
+                    }
                     state.status = ExecutionStatus::Completed;
                     return Step::Done(ExecutionStatus::Completed);
                 }
             }
+        }
+        if let Some(step) = self.build_reserved(state) {
+            return Step::Reserved(step);
         }
         {
             let a = state.current.as_ref().expect("current set above");
@@ -404,6 +544,48 @@ impl<'f> Plan<'f> {
         }
     }
 
+    fn build_reserved(&self, state: &ExecutionState) -> Option<ReservedStep> {
+        let active = state
+            .current
+            .as_ref()
+            .expect("current set before reserved check");
+        let node = self
+            .node(&active.node)
+            .expect("active node in validated flow");
+        let occurrence = state.visits.get(&active.node).copied().unwrap_or(0);
+        match node.node_type.as_str() {
+            "request" | "cron" | "event" => Some(ReservedStep::Entry {
+                node: node.id.clone(),
+                payload: active.payload.clone(),
+                occurrence,
+            }),
+            "respond" => {
+                let config: RespondConfig =
+                    serde_json::from_value(node.config.clone()).expect("validated respond config");
+                Some(ReservedStep::Respond {
+                    node: node.id.clone(),
+                    payload: active.payload.clone(),
+                    occurrence,
+                    status: config.status,
+                    complete: self.successors(&node.id, crate::MAIN_PORT).is_empty(),
+                })
+            }
+            "fail" => {
+                let config: FailConfig =
+                    serde_json::from_value(node.config.clone()).expect("validated fail config");
+                Some(ReservedStep::Fail {
+                    node: node.id.clone(),
+                    payload: active.payload.clone(),
+                    occurrence,
+                    code: config.code,
+                    message: config.message,
+                    status: config.status,
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Fold a node's outcome into the run: advance on success, schedule a retry,
     /// route to the error path, or fail — all decided mechanically from the
     /// outcome variant. `dispatch` is the [`Dispatch`] whose node just ran.
@@ -413,10 +595,19 @@ impl<'f> Plan<'f> {
         dispatch: &Dispatch,
         outcome: NodeOutcome,
         now_ms: u64,
-    ) {
-        // Defensive: only act while running and on the active node.
+    ) -> Result<(), ApplyError> {
         if state.status.is_terminal() {
-            return;
+            return Err(ApplyError::Terminal(state.status));
+        }
+        let active = state.current.as_ref().ok_or(ApplyError::NoActiveNode)?;
+        if active.node != dispatch.node {
+            return Err(ApplyError::MismatchedNode {
+                expected: active.node.clone(),
+                actual: dispatch.node.clone(),
+            });
+        }
+        if self.build_reserved(state).is_some() {
+            return Err(ApplyError::NotReserved(dispatch.node.clone()));
         }
         let attempt = state
             .current
@@ -489,6 +680,88 @@ impl<'f> Plan<'f> {
                 state.status = ExecutionStatus::Cancelled;
             }
         }
+        Ok(())
+    }
+
+    /// Acknowledge a durable engine-reserved boundary.
+    pub fn apply_reserved(
+        &self,
+        state: &mut ExecutionState,
+        step: &ReservedStep,
+    ) -> Result<(), ApplyError> {
+        if state.status.is_terminal() {
+            return Err(ApplyError::Terminal(state.status));
+        }
+        let active = state.current.as_ref().ok_or(ApplyError::NoActiveNode)?;
+        if active.node != step.node() {
+            return Err(ApplyError::MismatchedNode {
+                expected: active.node.clone(),
+                actual: step.node().to_string(),
+            });
+        }
+        let expected = self
+            .build_reserved(state)
+            .ok_or_else(|| ApplyError::NotReserved(active.node.clone()))?;
+        if expected != *step {
+            return Err(ApplyError::MismatchedNode {
+                expected: expected.node().to_string(),
+                actual: step.node().to_string(),
+            });
+        }
+
+        match step {
+            ReservedStep::Entry { node, payload, .. } => {
+                state.current = None;
+                state.step_seq += 1;
+                *state.visits.entry(node.clone()).or_default() += 1;
+                state.result = payload.clone();
+                self.enqueue_successors(state, node, crate::MAIN_PORT, payload.clone());
+            }
+            ReservedStep::Respond {
+                node,
+                payload,
+                complete,
+                ..
+            } => {
+                match state.caller {
+                    CallerState::None => return Err(ApplyError::RespondWithoutCaller),
+                    CallerState::Released => return Err(ApplyError::CallerAlreadyReleased),
+                    CallerState::Attached => state.caller = CallerState::Released,
+                }
+                state.current = None;
+                state.step_seq += 1;
+                *state.visits.entry(node.clone()).or_default() += 1;
+                state.result = payload.clone();
+                self.enqueue_successors(state, node, crate::MAIN_PORT, payload.clone());
+                if *complete {
+                    state.status = ExecutionStatus::Completed;
+                }
+            }
+            ReservedStep::Fail {
+                node,
+                code,
+                message,
+                ..
+            } => {
+                if state.caller == CallerState::Attached {
+                    state.caller = CallerState::Released;
+                }
+                state.current = None;
+                state.frontier.clear();
+                state.step_seq += 1;
+                *state.visits.entry(node.clone()).or_default() += 1;
+                state.status = ExecutionStatus::Failed;
+                state.failure = Some(Failure {
+                    node: node.clone(),
+                    kind: ExecutionFailureKind::Terminal,
+                    detail: ErrorDetail::coded(
+                        code.clone(),
+                        message.clone().unwrap_or_else(|| code.clone()),
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Enqueue the edges leaving `node` on `port`, each carrying `payload`.
@@ -581,9 +854,14 @@ impl<'f> Plan<'f> {
                 Step::Wait {
                     until_ms, throttle, ..
                 } => sleep_until(until_ms, throttle.as_ref()),
+                Step::Reserved(step) => {
+                    self.apply_reserved(state, &step)
+                        .expect("reserved step came from this state");
+                }
                 Step::Dispatch(d) => {
                     let outcome = dispatch(&d);
-                    self.apply(state, &d, outcome, now());
+                    self.apply(state, &d, outcome, now())
+                        .expect("dispatch came from this state");
                 }
             }
         }
@@ -644,8 +922,19 @@ impl<'f> Plan<'f> {
                                 port: rec.port.clone(),
                             },
                             0,
-                        );
+                        )
+                        .expect("recorded dispatch matches active state");
                     }
+                }
+                Step::Reserved(step) => {
+                    if step.node() != rec.node {
+                        return Err(ResumeError::Mismatch {
+                            recorded: rec.node.clone(),
+                            dispatched: step.node().to_string(),
+                        });
+                    }
+                    self.apply_reserved(&mut state, &step)
+                        .expect("reserved replay matches active state");
                 }
                 Step::Wait { node, .. } => return Err(ResumeError::UnexpectedWait { node }),
                 Step::Done(_) => {
@@ -670,9 +959,15 @@ impl<'f> Plan<'f> {
         run_id: impl Into<String>,
         node: &str,
         payload: Value,
-    ) -> Result<ExecutionState, UnknownNode> {
-        if self.node(node).is_none() {
-            return Err(UnknownNode(node.to_string()));
+    ) -> Result<ExecutionState, SeedError> {
+        let Some(seed) = self.node(node) else {
+            return Err(SeedError::UnknownNode(node.to_string()));
+        };
+        if matches!(
+            seed.node_type.as_str(),
+            "request" | "cron" | "event" | "respond" | "fail"
+        ) {
+            return Err(SeedError::ReservedNode(node.to_string()));
         }
         let mut frontier = VecDeque::new();
         frontier.push_back(Token {
@@ -689,6 +984,7 @@ impl<'f> Plan<'f> {
             visits: HashMap::new(),
             result: Value::Null,
             failure: None,
+            caller: CallerState::None,
         })
     }
 

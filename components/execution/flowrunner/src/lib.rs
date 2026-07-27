@@ -53,21 +53,26 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use serde_json::{Value, json};
-use wamn_flow::Flow;
+use wamn_flow::{Flow, canonical_json_sha256};
 use wamn_node_sdk as sdk;
+use wamn_run_state::transitions::{
+    CallerReleaseResult, ReservedCheckpointResult, TerminalizeResult, release_caller_sql,
+    reserved_checkpoint_sql, terminalize_sql,
+};
 use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
 // The durable-queue claim-path builders (5.14). Scheduling is a separate crate,
 // so the cron/calendar dependency closure never enters this guest (fqg.4).
 // The combined claim/checkpoint/complete statements are the fqg.18 record-stream
 // amortization: one statement where the split path spent two or three.
 use wamn_run_state::queue::{
-    acquire_partitions_sql, claim_dispatch_sql, claim_partition_head_sql, complete_dequeue_sql,
-    dead_letter_dequeue_sql, mark_running_sql, park_sql, record_error_and_renew_sql,
-    record_success_and_renew_sql, release_partition_sql, renew_partition_sql,
+    acquire_partitions_sql, claim_dispatch_sql, claim_partition_head_sql, dead_letter_dequeue_sql,
+    mark_running_sql, park_sql, record_error_and_renew_sql, record_success_and_renew_sql,
+    release_partition_sql, renew_partition_sql,
 };
 use wamn_runner::{
-    Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState, ExecutionStatus,
-    NodeError, NodeOutcome, Plan, RateLimitDetail, RetryPolicy, Step, ThrottleKey,
+    CallerState, Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState,
+    ExecutionStatus, NodeError, NodeOutcome, Plan, RateLimitDetail, ReservedStep, RetryPolicy,
+    Step, ThrottleKey,
 };
 
 use wamn_node_invoke::{
@@ -1017,7 +1022,6 @@ enum ResolvedNode {
     WebhookIn,
     LegacyTransform,
     LegacyConditional,
-    Respond,
     PgWrite,
     Delay,
     HttpCall,
@@ -1032,7 +1036,6 @@ fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
         "conditional" if config.get("expression").is_none() => {
             Some(ResolvedNode::LegacyConditional)
         }
-        "respond" => Some(ResolvedNode::Respond),
         "pg-write" => Some(ResolvedNode::PgWrite),
         "delay" => Some(ResolvedNode::Delay),
         "http-call" => Some(ResolvedNode::HttpCall),
@@ -1047,6 +1050,12 @@ fn check_flow(flow_json: &str) -> Result<Vec<String>, String> {
     let mut unsupported: Vec<String> = flow
         .nodes
         .iter()
+        .filter(|node| {
+            !matches!(
+                node.node_type.as_str(),
+                "request" | "cron" | "event" | "respond" | "fail"
+            )
+        })
         .filter(|node| resolve_node(&node.node_type, &node.config).is_none())
         .map(|node| node.node_type.clone())
         .collect();
@@ -1092,9 +1101,6 @@ fn dispatch_node(
         // Records a branch decision but keeps the fixture's linear main path;
         // true branching is exercised in the wamn-runner / wamn-run-state tests.
         ResolvedNode::LegacyConditional => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
-        // Passthrough terminal — identical to the standard library's respond
-        // (this driver has no HTTP response to answer; poc-webhook-f1 does).
-        ResolvedNode::Respond => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
         ResolvedNode::PgWrite => {
             pg_write(run_id, node_index(flow, &d.node), value_str(&d.payload))?;
             if kill_after_write {
@@ -1451,6 +1457,26 @@ fn execute(
                     http_status,
                 });
             }
+            Step::Reserved(step) => {
+                if let ReservedStep::Respond { status, .. } | ReservedStep::Fail { status, .. } =
+                    &step
+                {
+                    http_status = u32::from(*status);
+                }
+                record_node_run(
+                    run_id,
+                    step.node(),
+                    step.occurrence(),
+                    next_seq,
+                    "main",
+                    step.payload(),
+                    step.payload(),
+                    &flow.capture,
+                )?;
+                next_seq += 1;
+                plan.apply_reserved(&mut st, &step)
+                    .map_err(|error| error.to_string())?;
+            }
             Step::Dispatch(d) => {
                 match dispatch_node(&d, run_id, &flow, kill_after_write, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
@@ -1493,7 +1519,8 @@ fn execute(
                             }
                             NodeOutcome::Error(_) => {}
                         }
-                        plan.apply(&mut st, &d, outcome, 0);
+                        plan.apply(&mut st, &d, outcome, 0)
+                            .map_err(|error| error.to_string())?;
                     }
                     NodeAction::Park => {
                         return Ok(RunOutcome {
@@ -1572,6 +1599,7 @@ struct ClaimedRun {
     /// dispatched under, the plan-cache probe. `None` only if the column is
     /// somehow unreadable (the flow load then reports it).
     flow_version: Option<u32>,
+    lease_generation: i64,
 }
 
 /// Claim ONE currently-claimable **unpartitioned** run for `owner` and return
@@ -1605,11 +1633,17 @@ fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String
         Some(SqlValue::Int64(v)) => u32::try_from(*v).ok(),
         _ => None,
     };
+    let lease_generation = match row.get(4) {
+        Some(SqlValue::Int64(value)) => *value,
+        Some(SqlValue::Int32(value)) => i64::from(*value),
+        other => return Err(format!("claim lease_generation shape: {other:?}")),
+    };
     Ok(Some(ClaimedRun {
         run_id,
         flow_id,
         input,
         flow_version,
+        lease_generation,
     }))
 }
 
@@ -1734,13 +1768,337 @@ fn record_error_and_renew(
     Ok(())
 }
 
-/// Mark the run completed AND drop its queue row in one atomic statement
-/// (fqg.18) — the claim path's terminal write; [`run_next`] skips its dequeue
-/// for a completed run.
-fn complete_and_dequeue(run_id: &str, result: &Value) -> Result<(), String> {
-    client::execute(&complete_dequeue_sql(), &[text(run_id), jsonb(result)])
-        .map_err(|e| err_name(&e))?;
-    Ok(())
+/// Commit one engine-owned boundary under the claimed run's fence. Respond and
+/// fail couple caller release, the synthetic node record, and any terminal
+/// verdict in one transaction. A replay may observe `already-released`; it is
+/// accepted only when every stored outcome field matches the boundary being
+/// replayed.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "reserved checkpoint identity plus the queue fence and capture policy"
+)]
+fn commit_reserved_and_renew(
+    run_id: &str,
+    flow_id: &str,
+    flow_version: u32,
+    step: &ReservedStep,
+    caller: CallerState,
+    seq: i32,
+    capture: &wamn_flow::Capture,
+    ttl_ms: i64,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<(), String> {
+    if matches!(step, ReservedStep::Entry { .. }) {
+        let (binds, _) = capture_binds(capture, step.payload(), step.payload());
+        let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+        let response = client::query(
+            &reserved_checkpoint_sql(),
+            &[
+                text(run_id),
+                text(run_id),
+                text(owner),
+                int64(lease_generation),
+                text(step.node()),
+                int32(step.occurrence() as i32),
+                int32(seq),
+                text("main"),
+                out_j,
+                in_j,
+                preview,
+                size,
+                hash,
+                mode,
+                redacted,
+                int64(ttl_ms),
+            ],
+        )
+        .map_err(|error| err_name(&error))?;
+        let row = response
+            .rows
+            .first()
+            .ok_or("reserved entry checkpoint returned no result row")?;
+        let code = match row.first() {
+            Some(SqlValue::Text(code)) => code.as_str(),
+            other => return Err(format!("reserved entry result shape: {other:?}")),
+        };
+        let run_status = match row.get(1) {
+            Some(SqlValue::Text(status)) => status.as_str(),
+            Some(SqlValue::Null) => "",
+            other => return Err(format!("reserved entry status shape: {other:?}")),
+        };
+        return match ReservedCheckpointResult::from_parts(code, run_status)
+            .ok_or_else(|| format!("unknown reserved entry result: {code}"))?
+        {
+            ReservedCheckpointResult::Recorded => Ok(()),
+            // FenceLost is absolute: the helper returns without a later record,
+            // renew, terminal transition, or legacy settle.
+            ReservedCheckpointResult::FenceLost => {
+                Err("reserved entry checkpoint refused: fence-lost".to_string())
+            }
+            other => Err(format!("reserved entry checkpoint refused: {other:?}")),
+        };
+    }
+
+    let txn = client::begin().map_err(|error| err_name(&error))?;
+    let (release_kind, release_body, release_status, release_node) = match step {
+        ReservedStep::Respond {
+            payload,
+            status,
+            node,
+            ..
+        } => (
+            Some("responded"),
+            payload.clone(),
+            Some(*status),
+            Some(node.as_str()),
+        ),
+        ReservedStep::Fail {
+            code,
+            message,
+            status,
+            node,
+            ..
+        } => {
+            let mut error = serde_json::Map::from_iter([
+                ("code".to_string(), Value::String(code.clone())),
+                ("run-id".to_string(), Value::String(run_id.to_string())),
+                ("flow-id".to_string(), Value::String(flow_id.to_string())),
+                (
+                    "flow-version".to_string(),
+                    Value::Number(flow_version.into()),
+                ),
+            ]);
+            if let Some(message) = message {
+                error.insert("message".to_string(), Value::String(message.clone()));
+            }
+            (
+                (caller == CallerState::Attached).then_some("failed"),
+                json!({"error": error}),
+                (caller == CallerState::Attached).then_some(*status),
+                (caller == CallerState::Attached).then_some(node.as_str()),
+            )
+        }
+        ReservedStep::Entry { .. } => unreachable!("entry returned above"),
+    };
+
+    if let Some(kind) = release_kind {
+        let release_hash = canonical_json_sha256(&release_body);
+        let response = txn
+            .query(
+                &release_caller_sql(),
+                &[
+                    text(run_id),
+                    text(run_id),
+                    text(owner),
+                    int64(lease_generation),
+                    text(kind),
+                    jsonb(&release_body),
+                    int32(i32::from(release_status.expect("release has status"))),
+                    text(release_node.expect("release has node")),
+                    text(&release_hash),
+                ],
+            )
+            .map_err(|error| err_name(&error))?;
+        let row = response
+            .rows
+            .first()
+            .ok_or("caller release returned no result row")?;
+        let code = match row.first() {
+            Some(SqlValue::Text(value)) => value.as_str(),
+            other => return Err(format!("caller release result shape: {other:?}")),
+        };
+        let run_status = match row.get(1) {
+            Some(SqlValue::Text(value)) => value.as_str(),
+            Some(SqlValue::Null) => "",
+            other => return Err(format!("caller release run status shape: {other:?}")),
+        };
+        let stored_kind = match row.get(2) {
+            Some(SqlValue::Text(value)) => Some(value.clone()),
+            Some(SqlValue::Null) => None,
+            other => return Err(format!("caller release kind shape: {other:?}")),
+        };
+        let stored_body = match row.get(3) {
+            Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Some(
+                serde_json::from_str::<Value>(value)
+                    .map_err(|error| format!("caller release body parse: {error}"))?,
+            ),
+            Some(SqlValue::Null) => None,
+            other => return Err(format!("caller release body shape: {other:?}")),
+        };
+        let stored_status = match row.get(4) {
+            Some(SqlValue::Int32(value)) => u16::try_from(*value).ok(),
+            Some(SqlValue::Int64(value)) => u16::try_from(*value).ok(),
+            Some(SqlValue::Null) => None,
+            other => return Err(format!("caller release HTTP status shape: {other:?}")),
+        };
+        let stored_node = match row.get(5) {
+            Some(SqlValue::Text(value)) => Some(value.clone()),
+            Some(SqlValue::Null) => None,
+            other => return Err(format!("caller release node shape: {other:?}")),
+        };
+        let stored_hash = match row.get(6) {
+            Some(SqlValue::Text(value)) => Some(value.clone()),
+            Some(SqlValue::Null) => None,
+            other => return Err(format!("caller release hash shape: {other:?}")),
+        };
+        let release = CallerReleaseResult::from_parts(
+            code,
+            run_status,
+            stored_kind,
+            stored_body,
+            stored_status,
+            stored_node,
+            stored_hash,
+        )
+        .ok_or_else(|| format!("unknown caller release result: {code}"))?;
+        match release {
+            CallerReleaseResult::Released => {}
+            CallerReleaseResult::AlreadyReleased(stored)
+                if stored.exactly_matches(
+                    kind,
+                    &release_body,
+                    release_status,
+                    release_node,
+                    &release_hash,
+                ) => {}
+            CallerReleaseResult::AlreadyReleased(_) => {
+                return Err("caller release replay disagrees with stored outcome".to_string());
+            }
+            // FenceLost is absolute: return before recording, terminalizing, or
+            // committing anything else through this transaction.
+            CallerReleaseResult::FenceLost => {
+                return Err("caller release refused: fence-lost".to_string());
+            }
+            other => return Err(format!("caller release refused: {other:?}")),
+        }
+    }
+
+    let (binds, _) = capture_binds(capture, step.payload(), step.payload());
+    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+    txn.execute(
+        &record_success_and_renew_sql(),
+        &[
+            text(run_id),
+            text(step.node()),
+            int32(step.occurrence() as i32),
+            int32(seq),
+            text("main"),
+            out_j,
+            in_j,
+            preview,
+            size,
+            hash,
+            mode,
+            redacted,
+            int64(ttl_ms),
+            text(owner),
+        ],
+    )
+    .map_err(|error| err_name(&error))?;
+
+    let terminal = match step {
+        ReservedStep::Respond { complete: true, .. } => {
+            Some(("completed", None, step.payload().clone()))
+        }
+        ReservedStep::Fail { code, .. } => {
+            Some(("failed", Some(code.as_str()), release_body.clone()))
+        }
+        ReservedStep::Respond {
+            complete: false, ..
+        }
+        | ReservedStep::Entry { .. } => None,
+    };
+    if let Some((status, reason, result)) = terminal {
+        let response = txn
+            .query(
+                &terminalize_sql(),
+                &[
+                    text(run_id),
+                    text(run_id),
+                    text(owner),
+                    int64(lease_generation),
+                    text(status),
+                    reason.map_or(SqlValue::Null, text),
+                    SqlValue::Null,
+                    jsonb(&result),
+                ],
+            )
+            .map_err(|error| err_name(&error))?;
+        let row = response
+            .rows
+            .first()
+            .ok_or("terminal transition returned no result row")?;
+        let code = match row.first() {
+            Some(SqlValue::Text(value)) => value.as_str(),
+            other => return Err(format!("terminal result shape: {other:?}")),
+        };
+        let stored_status = match row.get(1) {
+            Some(SqlValue::Text(value)) => value.as_str(),
+            Some(SqlValue::Null) => "",
+            other => return Err(format!("terminal run status shape: {other:?}")),
+        };
+        let terminal = TerminalizeResult::from_parts(code, stored_status)
+            .ok_or_else(|| format!("unknown terminal transition result: {code}"))?;
+        match terminal {
+            TerminalizeResult::Terminalized => {}
+            TerminalizeResult::RunTerminal(stored) if stored.as_sql() == status => {}
+            // FenceLost is absolute: return before committing or issuing any
+            // later store operation.
+            TerminalizeResult::FenceLost => {
+                return Err("terminal transition refused: fence-lost".to_string());
+            }
+            other => return Err(format!("terminal transition refused: {other:?}")),
+        }
+    }
+    txn.commit().map_err(|error| err_name(&error))
+}
+
+/// Fenced frontier-exhaustion completion. The transition owns the final result
+/// and queue removal in one statement and refuses an unreleased request caller.
+fn terminalize_claimed(
+    run_id: &str,
+    result: &Value,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<(), String> {
+    let response = client::query(
+        &terminalize_sql(),
+        &[
+            text(run_id),
+            text(run_id),
+            text(owner),
+            int64(lease_generation),
+            text("completed"),
+            SqlValue::Null,
+            SqlValue::Null,
+            jsonb(result),
+        ],
+    )
+    .map_err(|error| err_name(&error))?;
+    let row = response
+        .rows
+        .first()
+        .ok_or("terminal completion returned no result row")?;
+    let code = match row.first() {
+        Some(SqlValue::Text(code)) => code.as_str(),
+        other => return Err(format!("terminal completion result shape: {other:?}")),
+    };
+    let stored_status = match row.get(1) {
+        Some(SqlValue::Text(status)) => status.as_str(),
+        Some(SqlValue::Null) => "",
+        other => return Err(format!("terminal completion status shape: {other:?}")),
+    };
+    match TerminalizeResult::from_parts(code, stored_status)
+        .ok_or_else(|| format!("unknown terminal completion result: {code}"))?
+    {
+        TerminalizeResult::Terminalized => Ok(()),
+        TerminalizeResult::RunTerminal(stored) if stored.as_sql() == "completed" => Ok(()),
+        // FenceLost is absolute: the helper returns without another store
+        // access, including a legacy settle attempt.
+        TerminalizeResult::FenceLost => Err("terminal completion refused: fence-lost".to_string()),
+        other => Err(format!("terminal completion refused: {other:?}")),
+    }
 }
 
 /// Remove a run's queue row on a guest-observed TERMINAL failure (the `runs`
@@ -1784,6 +2142,7 @@ fn park(run_id: &str, park_ms: u64) -> Result<(), String> {
 struct PartitionHead {
     run_id: String,
     partition_key: String,
+    lease_generation: i64,
 }
 
 /// Lease up to one ACQUIRABLE partition for `owner` (unowned, or lease-expired =
@@ -1822,9 +2181,15 @@ fn claim_partition_head(owner: &str, ttl_ms: i64) -> Result<Option<PartitionHead
         Some(SqlValue::Text(s)) => s.clone(),
         other => return Err(format!("partition head partition_key shape: {other:?}")),
     };
+    let lease_generation = match row.get(4) {
+        Some(SqlValue::Int64(value)) => *value,
+        Some(SqlValue::Int32(value)) => i64::from(*value),
+        other => return Err(format!("partition head lease_generation shape: {other:?}")),
+    };
     Ok(Some(PartitionHead {
         run_id,
         partition_key,
+        lease_generation,
     }))
 }
 
@@ -1890,7 +2255,7 @@ fn release_partition(partition_key: &str, owner: &str) -> Result<(), String> {
 }
 
 /// Settle a driven run's terminal outcome (shared by both claim paths): completed
-/// (0) already dropped its queue row inside [`complete_and_dequeue`]; parked (1)
+/// (0) already dropped its queue row inside the fenced terminal transition; parked (1)
 /// pushes `available_at` and releases the run lease; failed (2) dequeues — via
 /// [`dead_letter_dequeue`], so a `blocking`-partition head's key continues past
 /// the failure WITH its ledger marker in the same transaction (wamn-v8cv).
@@ -1929,6 +2294,7 @@ fn claim_partition_run(owner: &str, ttl_ms: i64) -> Result<Option<(String, u32)>
         owner,
         ttl_ms,
         Some(&head.partition_key),
+        head.lease_generation,
     )?;
     settle(&head.run_id, &claim)?;
     Ok(Some((head.run_id, claim.outcome)))
@@ -1947,6 +2313,7 @@ fn execute_claimed(
     owner: &str,
     ttl_ms: i64,
     partition: Option<&str>,
+    lease_generation: i64,
 ) -> Result<ClaimOutcome, String> {
     // l5i9.12.2: the production dispatch path (run-next) — declare this run's
     // causation BEFORE any write so the wamn:postgres plugin stamps
@@ -1980,7 +2347,7 @@ fn execute_claimed(
     loop {
         match plan.next(&mut st, 0) {
             Step::Done(ExecutionStatus::Completed) => {
-                complete_and_dequeue(run_id, st.result())?;
+                terminalize_claimed(run_id, st.result(), owner, lease_generation)?;
                 emit_run_end(&flow.flow_id, run_id, next_seq, &tp, "completed");
                 return Ok(ClaimOutcome {
                     outcome: 0,
@@ -2042,6 +2409,50 @@ fn execute_claimed(
                     park_ms: until_ms,
                     fail_reason: None,
                 });
+            }
+            Step::Reserved(step) => {
+                let caller = st.caller_state();
+                commit_reserved_and_renew(
+                    run_id,
+                    &flow.flow_id,
+                    flow.version,
+                    &step,
+                    caller,
+                    next_seq,
+                    &flow.capture,
+                    ttl_ms,
+                    owner,
+                    lease_generation,
+                )?;
+                next_seq += 1;
+                emit_node_complete(
+                    &flow.flow_id,
+                    run_id,
+                    step.node(),
+                    next_seq - 1,
+                    &tp,
+                    "main",
+                );
+                plan.apply_reserved(&mut st, &step)
+                    .map_err(|error| error.to_string())?;
+                if st.status().is_terminal() {
+                    let failed = st.status() == ExecutionStatus::Failed;
+                    return Ok(ClaimOutcome {
+                        outcome: if failed { 2 } else { 0 },
+                        park_ms: 0,
+                        fail_reason: failed.then(|| {
+                            st.failure()
+                                .map(|failure| {
+                                    format!(
+                                        "{}: {}",
+                                        failure.detail.code.as_deref().unwrap_or("failed"),
+                                        failure.detail.message
+                                    )
+                                })
+                                .unwrap_or_else(|| "failed".to_string())
+                        }),
+                    });
+                }
             }
             Step::Dispatch(d) => {
                 // The lease heartbeat rides each node's checkpoint statement
@@ -2110,7 +2521,8 @@ fn execute_claimed(
                         if let Some(pk) = partition {
                             renew_partition(pk, ttl_ms, owner)?;
                         }
-                        plan.apply(&mut st, &d, outcome, 0);
+                        plan.apply(&mut st, &d, outcome, 0)
+                            .map_err(|error| error.to_string())?;
                     }
                     NodeAction::Park => {
                         // The delay node recorded a wake deadline in state_json;
@@ -2142,7 +2554,15 @@ fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
     // unordered NULL-key runs concurrently across replicas (the fqg.4 path).
     if let Some(claimed) = claim_dispatch(&owner, ttl)? {
         let flow = flow_at(&claimed.flow_id, claimed.flow_version)?;
-        let claim = execute_claimed(&claimed.run_id, &flow, claimed.input, &owner, ttl, None)?;
+        let claim = execute_claimed(
+            &claimed.run_id,
+            &flow,
+            claimed.input,
+            &owner,
+            ttl,
+            None,
+            claimed.lease_generation,
+        )?;
         settle(&claimed.run_id, &claim)?;
         return Ok((true, Some(claimed.run_id), claim.outcome));
     }
@@ -2182,9 +2602,17 @@ fn bench_node(d: &Dispatch) -> NodeOutcome {
 /// `on_step` for each node dispatch so the caller can time it.
 fn bench_walk(plan: &Plan, mut on_step: impl FnMut(&Dispatch, NodeOutcome, &mut ExecutionState)) {
     let mut st = plan.start("bench", Value::String("dispatch-probe-payload".into()));
-    while let Step::Dispatch(d) = plan.next(&mut st, 0) {
-        let outcome = bench_node(&d);
-        on_step(&d, outcome, &mut st);
+    loop {
+        match plan.next(&mut st, 0) {
+            Step::Reserved(step) => plan
+                .apply_reserved(&mut st, &step)
+                .expect("benchmark reserved transition"),
+            Step::Dispatch(d) => {
+                let outcome = bench_node(&d);
+                on_step(&d, outcome, &mut st);
+            }
+            Step::Done(_) | Step::Wait { .. } => break,
+        }
     }
 }
 
@@ -2200,14 +2628,18 @@ impl Guest for Component {
 
         // Warm up (page in, settle the branch predictor) before measuring.
         for _ in 0..1000 {
-            bench_walk(&plan, |d, o, st| plan.apply(st, d, o, 0));
+            bench_walk(&plan, |d, o, st| {
+                plan.apply(st, d, o, 0).expect("benchmark dispatch")
+            });
         }
 
         // Un-instrumented pass: one clock read for the whole batch — the
         // harness derives the amortized per-dispatch mean from the total.
         let t_bare = Instant::now();
         for _ in 0..iters {
-            bench_walk(&plan, |d, o, st| plan.apply(st, d, o, 0));
+            bench_walk(&plan, |d, o, st| {
+                plan.apply(st, d, o, 0).expect("benchmark dispatch")
+            });
         }
         let bare_ns = t_bare.elapsed().as_nanos() as u64;
 
@@ -2220,7 +2652,7 @@ impl Guest for Component {
         for _ in 0..iters {
             bench_walk(&plan, |d, o, st| {
                 let t0 = Instant::now();
-                plan.apply(st, d, o, 0);
+                plan.apply(st, d, o, 0).expect("benchmark dispatch");
                 let dt = t0.elapsed().as_nanos();
                 samples.push(dt.min(u32::MAX as u128) as u32);
             });

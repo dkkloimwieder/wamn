@@ -4,7 +4,9 @@ use std::process::{Command, Output};
 use std::thread;
 use std::time::Duration;
 
-use wamn_run_state::transitions::{complete_sql, park_sql, release_caller_sql, terminalize_sql};
+use wamn_run_state::transitions::{
+    complete_sql, park_sql, release_caller_sql, reserved_checkpoint_sql, terminalize_sql,
+};
 
 fn psql(url: &str, script: &str) -> Output {
     Command::new("psql")
@@ -54,8 +56,49 @@ fn run_state_live() {
 
     let release = release_caller_sql();
     let terminalize = terminalize_sql();
+    let reserved_checkpoint = reserved_checkpoint_sql();
     let park = park_sql();
     let complete = complete_sql();
+
+    // A stale entry boundary cannot insert its synthetic node checkpoint. The
+    // same statement succeeds under the current generation.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,status) \
+         VALUES ('t1','entry-1','f',1,'running'); \
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
+         VALUES ('t1','entry-1','worker-entry',now()+interval '1 minute',8);",
+    );
+    let entry_script = format!(
+        "{} PREPARE entry_stmt \
+           (text,text,text,bigint,text,int,int,text,text,text,text,bigint,text,text,boolean,bigint) \
+           AS {}; \
+         CREATE TEMP TABLE stale_entry AS \
+           EXECUTE entry_stmt('entry-1','entry-1','worker-entry',7, \
+                              'in',0,0,'main','{{\"tick\":1}}','{{\"tick\":1}}', \
+                              NULL,NULL,NULL,'full',false,30000); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM stale_entry) = 'fence-lost', \
+                  'stale entry generation loses'; \
+           ASSERT NOT EXISTS (SELECT FROM node_runs WHERE run_id='entry-1'), \
+                  'stale generation writes no entry checkpoint'; \
+         END $$; \
+         CREATE TEMP TABLE current_entry AS \
+           EXECUTE entry_stmt('entry-1','entry-1','worker-entry',8, \
+                              'in',0,0,'main','{{\"tick\":1}}','{{\"tick\":1}}', \
+                              NULL,NULL,NULL,'full',false,30000); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM current_entry) = 'recorded', \
+                  'current entry generation records'; \
+           ASSERT EXISTS (SELECT FROM node_runs WHERE run_id='entry-1' AND node_id='in'), \
+                  'current generation writes entry checkpoint'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        reserved_checkpoint
+    );
+    success(&url, &entry_script);
 
     // Positive caller release, duplicate replay, then terminalization. A
     // transition after terminal state returns its typed refusal.
