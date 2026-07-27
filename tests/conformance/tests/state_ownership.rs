@@ -934,7 +934,12 @@ fn discover_writes(path: &str, starting_line: usize, source: &str) -> Vec<Discov
                 index += 2;
                 "insert"
             }
-            "UPDATE" => {
+            "UPDATE"
+                if !tokens[..index].iter().rev().take(3).any(|(previous, _)| {
+                    previous.eq_ignore_ascii_case("BEFORE")
+                        || previous.eq_ignore_ascii_case("AFTER")
+                }) =>
+            {
                 index += 1;
                 "update"
             }
@@ -1350,4 +1355,18 @@ fn lowercase_undeclared_writer_is_rejected() {
     let error = validate_discovered_writers(&manifest, &discoveries).unwrap_err();
     assert!(error.contains("undeclared insert writer"), "{error}");
     assert!(error.contains("registry.orgs"), "{error}");
+}
+
+#[test]
+fn trigger_event_declarations_are_not_inventoried_as_writes() {
+    let discoveries = discover_writes(
+        "deploy/sql/catalog-schema.sql",
+        1,
+        "CREATE TRIGGER immutable BEFORE INSERT OR UPDATE ON catalog.release_attachments \
+         FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()",
+    );
+    assert!(
+        discoveries.is_empty(),
+        "a trigger event is DDL, not an UPDATE statement: {discoveries:?}"
+    );
 }

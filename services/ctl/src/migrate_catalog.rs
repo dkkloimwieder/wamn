@@ -475,6 +475,7 @@ pub(crate) async fn apply_catalog_target_in_transaction(
             &target.catalog_id,
             current_version,
             target_version,
+            environment,
             schema,
         )
         .await?;
@@ -527,6 +528,8 @@ async fn ensure_existing_release_manifest(
     let present: bool = tx
         .query_one(
             "SELECT EXISTS (SELECT 1 FROM catalog.release_manifests \
+             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3) \
+             AND EXISTS (SELECT 1 FROM catalog.release_exposure_manifests \
              WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3)",
             &[&tenant, &catalog_id, &catalog_version],
         )
@@ -548,6 +551,7 @@ async fn carry_forward_release(
     catalog_id: &str,
     current_version: Option<i32>,
     target_version: i32,
+    environment: &str,
     schema: &BareSchemaName,
 ) -> anyhow::Result<()> {
     let manifest = if let Some(source_version) = current_version {
@@ -614,6 +618,64 @@ async fn carry_forward_release(
         .await
         .context("carry migrated release members forward")?;
     }
+    let exposure_manifest = if let Some(source_version) = current_version {
+        tx.query_one(
+            "SELECT definitions_json::text FROM catalog.release_exposure_manifests \
+             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+            &[&tenant, &catalog_id, &source_version],
+        )
+        .await
+        .context("read applied release exposure")?
+        .get::<_, String>(0)
+    } else {
+        r#"{"attachments":[],"sources":[]}"#.to_string()
+    };
+    tx.execute(
+        wamn_schema_control::sql::register_release_exposure_manifest_sql(),
+        &[&tenant, &catalog_id, &target_version, &exposure_manifest],
+    )
+    .await
+    .context("seal migrated release exposure")?;
+    if let Some(source_version) = current_version {
+        tx.execute(
+            "INSERT INTO catalog.release_sources \
+               (tenant_id, catalog_id, catalog_version, source_id, source_kind, \
+                definition_json, source_hash) \
+             SELECT tenant_id, catalog_id, $4, source_id, source_kind, \
+                    definition_json, source_hash \
+             FROM catalog.release_sources \
+             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+            &[&tenant, &catalog_id, &source_version, &target_version],
+        )
+        .await
+        .context("carry migrated release sources forward")?;
+        tx.execute(
+            "INSERT INTO catalog.release_attachments \
+               (tenant_id, catalog_id, catalog_version, attachment_id, attachment_kind, \
+                flow_id, source_id, definition_hash, definition_json, route_host, \
+                route_path, route_template, route_method) \
+             SELECT tenant_id, catalog_id, $4, attachment_id, attachment_kind, \
+                    flow_id, source_id, definition_hash, definition_json, route_host, \
+                    route_path, route_template, route_method \
+             FROM catalog.release_attachments \
+             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+            &[&tenant, &catalog_id, &source_version, &target_version],
+        )
+        .await
+        .context("carry migrated release attachments forward")?;
+    }
+    tx.execute(
+        wamn_schema_control::sql::apply_release_exposure_sql(),
+        &[
+            &tenant,
+            &catalog_id,
+            &environment,
+            &target_version,
+            &"migrate-catalog",
+        ],
+    )
+    .await
+    .context("carry migrated attachment activation")?;
     Ok(())
 }
 
@@ -712,6 +774,18 @@ mod tests {
             )
             .await
             .unwrap();
+        client
+            .execute(
+                wamn_schema_control::sql::register_release_exposure_manifest_sql(),
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &1_i32,
+                    &r#"{"attachments":[],"sources":[]}"#,
+                ],
+            )
+            .await
+            .unwrap();
         client.batch_execute("COMMIT").await.unwrap();
 
         let tx = client.transaction().await.unwrap();
@@ -721,6 +795,7 @@ mod tests {
             &catalog_id,
             Some(1),
             2,
+            "dev",
             &BareSchemaName::new("pg_temp").unwrap(),
         )
         .await

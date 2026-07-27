@@ -130,6 +130,7 @@ fn publish_args(
         runstate: false,
         seed_dataset: None,
         flow: vec![],
+        exposure: None,
         skip_reconcile_replica_identity: skip_reconcile,
     }
 }

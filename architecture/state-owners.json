@@ -16,6 +16,10 @@
       "path": "deploy/sql/system-schema.sql",
       "role": "migration"
     },
+    "catalog-schema-installer": {
+      "path": "deploy/sql/catalog-schema.sql",
+      "role": "migration"
+    },
     "registry-store": {
       "path": "crates/control/registry",
       "role": "persistence"
@@ -58,6 +62,10 @@
     },
     "flow-model": {
       "path": "crates/execution/flow-model",
+      "role": "semantic"
+    },
+    "catalog-model": {
+      "path": "crates/catalog/model",
       "role": "semantic"
     },
     "scenario-catalog": {
@@ -342,11 +350,17 @@
     {"id":"provisioning.sagas","plane":"control","semantic_owner":"provision-store","migration_owners":["provision-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["provision-store"],"readers":["provision-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
     {"id":"provisioning.dumps","plane":"control","semantic_owner":"provision-store","migration_owners":["provision-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["provision-store"],"readers":["provision-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
 
-    {"id":"catalog.catalogs","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control","ctl-copy"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.flow_artifacts","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["ctl-publish","ctl-copy"],"readers":["ctl-copy"],"compatibility_horizon":"flow-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
-    {"id":"catalog.release_manifests","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["ctl-publish","ctl-copy"],"readers":["ctl-publish","ctl-copy"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
-    {"id":"catalog.release_flows","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["ctl-publish","ctl-copy"],"readers":["ctl-copy"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
+    {"id":"catalog.catalogs","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-publish","ctl-migrate"],"readers":["schema-control","ctl-copy"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"catalog.flow_artifacts","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy"],"readers":["ctl-copy"],"compatibility_horizon":"flow-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
+    {"id":"catalog.release_manifests","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy"],"readers":["ctl-publish","ctl-copy"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
+    {"id":"catalog.release_flows","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["ctl-copy","ctl-migrate"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
     {"id":"catalog.catalog_heads","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-publish","ctl-copy"],"readers":["schema-control","ctl-copy"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
+    {"id":"catalog.release_exposure_manifests","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["ctl-publish","ctl-copy","ctl-migrate"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
+    {"id":"catalog.release_sources","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["ctl-copy","ctl-migrate"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
+    {"id":"catalog.release_attachments","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["ctl-copy","ctl-migrate"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
+    {"id":"catalog.attachment_tombstones","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["ctl-publish","ctl-copy","ctl-migrate"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
+    {"id":"catalog.attachment_activation","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
+    {"id":"catalog.attachment_activation_events","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
     {"id":"catalog.schema_migrations","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
     {"id":"catalog.entities","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
     {"id":"catalog.fields","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},

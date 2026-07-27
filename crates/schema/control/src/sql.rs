@@ -198,6 +198,52 @@ pub fn insert_release_flow_sql() -> &'static str {
      ON CONFLICT (tenant_id, catalog_id, catalog_version, flow_id) DO NOTHING"
 }
 
+/// Seal the canonical authored exposure document for a release.
+pub fn register_release_exposure_manifest_sql() -> &'static str {
+    "SELECT catalog.register_release_exposure_manifest($1, $2, $3, $4::text::jsonb)"
+}
+
+/// Persist one immutable source definition.
+pub fn insert_release_source_sql() -> &'static str {
+    "INSERT INTO catalog.release_sources \
+       (tenant_id, catalog_id, catalog_version, source_id, source_kind, \
+        definition_json, source_hash) \
+     VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
+     ON CONFLICT (tenant_id, catalog_id, catalog_version, source_id) DO NOTHING"
+}
+
+/// Persist one fully resolved immutable attachment definition.
+pub fn insert_release_attachment_sql() -> &'static str {
+    "INSERT INTO catalog.release_attachments \
+       (tenant_id, catalog_id, catalog_version, attachment_id, attachment_kind, \
+        flow_id, source_id, definition_hash, definition_json, route_host, \
+        route_path, route_template, route_method) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10, $11, $12, $13) \
+     ON CONFLICT (tenant_id, catalog_id, catalog_version, attachment_id) DO NOTHING"
+}
+
+/// Carry activation for unchanged definitions and tombstone removed IDs.
+pub fn apply_release_exposure_sql() -> &'static str {
+    "SELECT catalog.apply_release_exposure($1, $2, $3, $4, $5)"
+}
+
+/// Read every source definition copied by `copy-project-env`.
+pub fn select_release_sources_sql() -> &'static str {
+    "SELECT source_id, source_kind, definition_json::text, source_hash \
+     FROM catalog.release_sources \
+     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+     ORDER BY source_id"
+}
+
+/// Read every resolved attachment definition copied by `copy-project-env`.
+pub fn select_release_attachments_sql() -> &'static str {
+    "SELECT attachment_id, attachment_kind, flow_id, source_id, definition_hash, \
+            definition_json::text, route_host, route_path, route_template, route_method \
+     FROM catalog.release_attachments \
+     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+     ORDER BY attachment_id"
+}
+
 /// Advance (or initialize) the stable head after every other release write.
 pub fn advance_catalog_head_sql() -> &'static str {
     "INSERT INTO catalog.catalog_heads \
@@ -343,6 +389,12 @@ mod tests {
             "release_manifests",
             "release_flows",
             "catalog_heads",
+            "release_exposure_manifests",
+            "release_sources",
+            "release_attachments",
+            "attachment_activation",
+            "attachment_activation_events",
+            "attachment_tombstones",
         ] {
             assert!(
                 CATALOG_SCHEMA.contains(&format!("CREATE TABLE catalog.{table}")),
@@ -357,6 +409,9 @@ mod tests {
         assert!(super::lock_catalog_head_sql().contains("FOR UPDATE"));
         assert!(super::count_nonterminal_release_runs_sql("app").contains("catalog_version = $3"));
         assert!(super::insert_release_flow_sql().contains("DO NOTHING"));
+        assert!(super::insert_release_source_sql().contains("DO NOTHING"));
+        assert!(super::insert_release_attachment_sql().contains("DO NOTHING"));
+        assert!(super::apply_release_exposure_sql().contains("apply_release_exposure"));
         assert!(super::advance_catalog_head_sql().contains("DO UPDATE"));
     }
 }

@@ -62,6 +62,7 @@
 //! real prepared-statement path (SR12b).
 
 mod engine;
+pub mod exposure;
 pub mod impact;
 pub mod lifecycle;
 mod model;
@@ -72,6 +73,11 @@ mod run_plane;
 pub mod sql;
 
 pub use engine::{dry_run, plan_migration, rollback_plan};
+pub use exposure::{
+    Attachment, AttachmentKind, Cardinality, ExposureError, ExposureRelease, FlowExposure,
+    HttpRoute, InputMapping, MappingSource, ResolvedAttachment, Source, SourceKind,
+    resolve_exposure,
+};
 pub use model::{
     ApplyPlan, Confirmation, Env, MigrationError, MigrationReport, MigrationRequest, RollbackPlan,
     SqlStatement, Value,

@@ -23,8 +23,10 @@ wamn-pg-core = { workspace = true }
 # detector, so the RI-FULL derivation and the materializer's per-event old-absent
 # guard can never diverge (one parser). Light closure (catalog/event-wire/jmespath).
 wamn-event-reg = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 # The live-apply gate builds catalogs as structs and renders the apply plan into
 # a psql script; no JSON needed for the fixtures.
-serde_json = { workspace = true }

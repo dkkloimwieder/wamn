@@ -128,6 +128,7 @@ fn publish_args(catalog: std::path::PathBuf, url: &str) -> publish_catalog::Publ
         runstate: false,
         seed_dataset: None,
         flow: vec![],
+        exposure: None,
         // This gate exercises only the D24 orphan guard; the EVT-RI-ORCH
         // post-apply reconcile (l5i9.61) has its own gate (ri_orch_live).
         skip_reconcile_replica_identity: true,

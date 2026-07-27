@@ -3617,3 +3617,18 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-release-46 \
 CARGO_TARGET_DIR=/tmp/wamn-target-cf-release-46 \
   cargo test --locked -p wamn-proof-integration --lib catalog_live::tests::
 ```
+
+## CF-EXPOSURE — sources, attachments, and activation (`wamn-5wd1.47`)
+
+The exposure gate validates route/mapping/source/entry matching in the pure
+preflight model, then proves immutable definitions, single-hash activation,
+carry-forward, tombstones, disabled-definition recovery, and atomic publication
+through the production publish/copy boundaries.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
+  cargo test --locked -p wamn-control-registry -p wamn-schema-control -p wamn-ctl
+
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
+  cargo test --locked -p wamn-proof-integration --lib exposure_live::tests::
+```

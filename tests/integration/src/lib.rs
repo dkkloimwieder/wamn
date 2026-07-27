@@ -16,6 +16,7 @@ pub mod contextproof;
 pub mod dashproof;
 pub mod dispatchbench;
 mod dispatcher_process;
+pub mod exposure_live;
 pub mod f1bench;
 pub mod f2invoke;
 pub mod f3proof;

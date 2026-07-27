@@ -4754,7 +4754,9 @@ dependencies = [
 name = "wamn-schema-control"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
+ "sha2 0.11.0",
  "wamn-control-registry",
  "wamn-event-reg",
  "wamn-flow",

@@ -122,7 +122,10 @@ END
 $$;
 
 CREATE TRIGGER flow_artifacts_immutable
-BEFORE UPDATE OR DELETE ON catalog.flow_artifacts
+BEFORE UPDATE ON catalog.flow_artifacts
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+CREATE TRIGGER flow_artifacts_delete_immutable
+BEFORE DELETE ON catalog.flow_artifacts
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 CREATE FUNCTION catalog.register_flow_artifact(
@@ -192,7 +195,10 @@ CREATE POLICY release_manifests_tenant ON catalog.release_manifests
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.release_manifests TO wamn_app;
 CREATE TRIGGER release_manifests_immutable
-BEFORE UPDATE OR DELETE ON catalog.release_manifests
+BEFORE UPDATE ON catalog.release_manifests
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+CREATE TRIGGER release_manifests_delete_immutable
+BEFORE DELETE ON catalog.release_manifests
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 CREATE FUNCTION catalog.register_release_manifest(
@@ -248,7 +254,10 @@ CREATE POLICY release_flows_tenant ON catalog.release_flows
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.release_flows TO wamn_app;
 CREATE TRIGGER release_flows_immutable
-BEFORE UPDATE OR DELETE ON catalog.release_flows
+BEFORE UPDATE ON catalog.release_flows
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+CREATE TRIGGER release_flows_delete_immutable
+BEFORE DELETE ON catalog.release_flows
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 CREATE FUNCTION catalog.validate_release_members()
@@ -346,6 +355,515 @@ CREATE POLICY catalog_heads_tenant ON catalog.catalog_heads
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.catalog_heads TO wamn_app;
+
+-- ---------------------------------------------------------------------------
+-- Callable-flow sources, attachments, and activation (FLOW-SPEC rev18
+-- §§5.3-5.4, §7). Definitions are immutable release members. Activation is an
+-- operational, environment-scoped overlay which confirms exactly one resolved
+-- definition hash. Runtime readers use the authoritative views below.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.release_exposure_manifests (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id      text NOT NULL,
+    catalog_version int NOT NULL,
+    definitions_json jsonb NOT NULL CHECK (jsonb_typeof(definitions_json) = 'object'),
+    PRIMARY KEY (tenant_id, catalog_id, catalog_version),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version)
+);
+ALTER TABLE catalog.release_exposure_manifests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.release_exposure_manifests FORCE ROW LEVEL SECURITY;
+CREATE POLICY release_exposure_manifests_tenant ON catalog.release_exposure_manifests
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.release_exposure_manifests TO wamn_app;
+CREATE TRIGGER release_exposure_manifests_immutable
+BEFORE UPDATE ON catalog.release_exposure_manifests
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+CREATE TRIGGER release_exposure_manifests_delete_immutable
+BEFORE DELETE ON catalog.release_exposure_manifests
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+CREATE FUNCTION catalog.register_release_exposure_manifest(
+    p_tenant_id text,
+    p_catalog_id text,
+    p_catalog_version int,
+    p_definitions_json jsonb
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO catalog.release_exposure_manifests (
+        tenant_id, catalog_id, catalog_version, definitions_json
+    )
+    VALUES (p_tenant_id, p_catalog_id, p_catalog_version, p_definitions_json)
+    ON CONFLICT (tenant_id, catalog_id, catalog_version) DO NOTHING;
+    IF NOT EXISTS (
+        SELECT 1 FROM catalog.release_exposure_manifests
+        WHERE tenant_id = p_tenant_id
+          AND catalog_id = p_catalog_id
+          AND catalog_version = p_catalog_version
+          AND definitions_json = p_definitions_json
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23505',
+            MESSAGE = 'catalog-release-exposure-content-conflict';
+    END IF;
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.register_release_exposure_manifest(
+    text, text, int, jsonb
+) FROM PUBLIC;
+
+CREATE TABLE catalog.release_sources (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id      text NOT NULL,
+    catalog_version int NOT NULL,
+    source_id       text NOT NULL,
+    source_kind     text NOT NULL CHECK (source_kind IN ('auth', 'caller-policy', 'schedule')),
+    definition_json jsonb NOT NULL CHECK (jsonb_typeof(definition_json) = 'object'),
+    source_hash     text NOT NULL,
+    PRIMARY KEY (tenant_id, catalog_id, catalog_version, source_id),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.release_exposure_manifests (tenant_id, catalog_id, catalog_version)
+);
+ALTER TABLE catalog.release_sources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.release_sources FORCE ROW LEVEL SECURITY;
+CREATE POLICY release_sources_tenant ON catalog.release_sources
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.release_sources TO wamn_app;
+CREATE TRIGGER release_sources_immutable
+BEFORE UPDATE ON catalog.release_sources
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+CREATE TRIGGER release_sources_delete_immutable
+BEFORE DELETE ON catalog.release_sources
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+CREATE TABLE catalog.release_attachments (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id      text NOT NULL,
+    catalog_version int NOT NULL,
+    attachment_id   text NOT NULL,
+    attachment_kind text NOT NULL CHECK (attachment_kind IN ('http', 'internal', 'studio', 'cron')),
+    flow_id         text NOT NULL,
+    source_id       text NOT NULL,
+    definition_hash text NOT NULL,
+    definition_json jsonb NOT NULL CHECK (jsonb_typeof(definition_json) = 'object'),
+    route_host      text,
+    route_path      text,
+    route_template  text,
+    route_method    text,
+    PRIMARY KEY (tenant_id, catalog_id, catalog_version, attachment_id),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version, flow_id)
+        REFERENCES catalog.release_flows (tenant_id, catalog_id, catalog_version, flow_id),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version, source_id)
+        REFERENCES catalog.release_sources (tenant_id, catalog_id, catalog_version, source_id),
+    CONSTRAINT release_attachment_route_shape CHECK (
+        (attachment_kind IN ('http', 'studio')
+          AND route_host IS NOT NULL AND route_path IS NOT NULL
+          AND route_template IS NOT NULL AND route_method IS NOT NULL)
+        OR
+        (attachment_kind IN ('internal', 'cron')
+          AND route_host IS NULL AND route_path IS NULL
+          AND route_template IS NULL AND route_method IS NULL)
+    ),
+    UNIQUE (
+        tenant_id, catalog_id, catalog_version,
+        route_host, route_template, route_method
+    )
+);
+ALTER TABLE catalog.release_attachments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.release_attachments FORCE ROW LEVEL SECURITY;
+CREATE POLICY release_attachments_tenant ON catalog.release_attachments
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.release_attachments TO wamn_app;
+CREATE TRIGGER release_attachments_immutable
+BEFORE UPDATE ON catalog.release_attachments
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+CREATE TRIGGER release_attachments_delete_immutable
+BEFORE DELETE ON catalog.release_attachments
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+CREATE TABLE catalog.attachment_tombstones (
+    tenant_id     text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id    text NOT NULL,
+    environment   text NOT NULL,
+    attachment_id text NOT NULL,
+    removed_in_catalog_version int NOT NULL,
+    removed_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, catalog_id, environment, attachment_id)
+);
+ALTER TABLE catalog.attachment_tombstones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.attachment_tombstones FORCE ROW LEVEL SECURITY;
+CREATE POLICY attachment_tombstones_tenant ON catalog.attachment_tombstones
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.attachment_tombstones TO wamn_app;
+
+CREATE TABLE catalog.attachment_activation (
+    tenant_id     text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id    text NOT NULL,
+    environment   text NOT NULL,
+    attachment_id text NOT NULL,
+    confirmed_definition_hash text NOT NULL,
+    enabled       boolean NOT NULL DEFAULT false,
+    changed_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, catalog_id, environment, attachment_id)
+);
+ALTER TABLE catalog.attachment_activation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.attachment_activation FORCE ROW LEVEL SECURITY;
+CREATE POLICY attachment_activation_tenant ON catalog.attachment_activation
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.attachment_activation TO wamn_app;
+
+CREATE FUNCTION catalog.validate_attachment_activation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    target_kind text;
+    target_flow text;
+BEGIN
+    IF NOT NEW.enabled THEN
+        RETURN NEW;
+    END IF;
+    SELECT attachment.attachment_kind, attachment.flow_id
+    INTO target_kind, target_flow
+    FROM catalog.catalog_heads head
+    JOIN catalog.release_attachments attachment
+      ON attachment.tenant_id = head.tenant_id
+     AND attachment.catalog_id = head.catalog_id
+     AND attachment.catalog_version = head.applied_catalog_version
+    WHERE head.tenant_id = NEW.tenant_id
+      AND head.catalog_id = NEW.catalog_id
+      AND head.environment = NEW.environment
+      AND attachment.attachment_id = NEW.attachment_id
+      AND attachment.definition_hash = NEW.confirmed_definition_hash
+      AND NOT EXISTS (
+          SELECT 1 FROM catalog.attachment_tombstones dead
+          WHERE dead.tenant_id = NEW.tenant_id
+            AND dead.catalog_id = NEW.catalog_id
+            AND dead.environment = NEW.environment
+            AND dead.attachment_id = NEW.attachment_id
+      );
+    IF target_kind IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE = '23503',
+            MESSAGE = 'attachment-definition-not-current';
+    END IF;
+    IF target_kind IN ('internal', 'cron') AND EXISTS (
+        SELECT 1
+        FROM catalog.attachment_activation active
+        JOIN catalog.catalog_heads head
+          ON head.tenant_id = active.tenant_id
+         AND head.catalog_id = active.catalog_id
+         AND head.environment = active.environment
+        JOIN catalog.release_attachments attachment
+          ON attachment.tenant_id = head.tenant_id
+         AND attachment.catalog_id = head.catalog_id
+         AND attachment.catalog_version = head.applied_catalog_version
+         AND attachment.attachment_id = active.attachment_id
+         AND attachment.definition_hash = active.confirmed_definition_hash
+        WHERE active.tenant_id = NEW.tenant_id
+          AND active.catalog_id = NEW.catalog_id
+          AND active.environment = NEW.environment
+          AND active.enabled
+          AND attachment.attachment_kind = target_kind
+          AND attachment.flow_id = target_flow
+          AND active.attachment_id <> NEW.attachment_id
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23505',
+            MESSAGE = 'multiple-enabled-' || target_kind || '-attachments';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER attachment_activation_valid
+BEFORE INSERT OR UPDATE ON catalog.attachment_activation
+FOR EACH ROW EXECUTE FUNCTION catalog.validate_attachment_activation();
+
+CREATE TABLE catalog.attachment_activation_events (
+    event_seq     bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id     text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id    text NOT NULL,
+    environment   text NOT NULL,
+    attachment_id text NOT NULL,
+    enabled       boolean NOT NULL,
+    confirmed_definition_hash text NOT NULL,
+    changed_at    timestamptz NOT NULL DEFAULT now(),
+    changed_by    text NOT NULL,
+    reason        text NOT NULL
+);
+ALTER TABLE catalog.attachment_activation_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.attachment_activation_events FORCE ROW LEVEL SECURITY;
+CREATE POLICY attachment_activation_events_tenant ON catalog.attachment_activation_events
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.attachment_activation_events TO wamn_app;
+
+-- Apply a release's exposure overlay while the publisher holds catalog_heads.
+-- Same-id/same-hash retains activation. New/changed definitions are disabled;
+-- removed IDs are permanently tombstoned and cannot be reused.
+CREATE FUNCTION catalog.apply_release_exposure(
+    p_tenant_id text,
+    p_catalog_id text,
+    p_environment text,
+    p_catalog_version int,
+    p_changed_by text
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    previous_version int;
+    definition record;
+    removed record;
+    prior_hash text;
+BEGIN
+    SELECT applied_catalog_version INTO previous_version
+    FROM catalog.catalog_heads
+    WHERE tenant_id = p_tenant_id
+      AND catalog_id = p_catalog_id
+      AND environment = p_environment;
+
+    IF EXISTS (
+        SELECT 1
+        FROM catalog.release_attachments next
+        JOIN catalog.attachment_tombstones dead
+          ON dead.tenant_id = next.tenant_id
+         AND dead.catalog_id = next.catalog_id
+         AND dead.environment = p_environment
+         AND dead.attachment_id = next.attachment_id
+        WHERE next.tenant_id = p_tenant_id
+          AND next.catalog_id = p_catalog_id
+          AND next.catalog_version = p_catalog_version
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23505',
+            MESSAGE = 'tombstoned-attachment-id';
+    END IF;
+
+    IF previous_version IS NOT NULL THEN
+        FOR removed IN
+            SELECT old.attachment_id, old.definition_hash
+            FROM catalog.release_attachments old
+            WHERE old.tenant_id = p_tenant_id
+              AND old.catalog_id = p_catalog_id
+              AND old.catalog_version = previous_version
+              AND NOT EXISTS (
+                SELECT 1 FROM catalog.release_attachments next
+                WHERE next.tenant_id = old.tenant_id
+                  AND next.catalog_id = old.catalog_id
+                  AND next.catalog_version = p_catalog_version
+                  AND next.attachment_id = old.attachment_id
+              )
+        LOOP
+            INSERT INTO catalog.attachment_tombstones (
+                tenant_id, catalog_id, environment, attachment_id,
+                removed_in_catalog_version
+            ) VALUES (
+                p_tenant_id, p_catalog_id, p_environment,
+                removed.attachment_id, p_catalog_version
+            ) ON CONFLICT DO NOTHING;
+            UPDATE catalog.attachment_activation
+            SET enabled = false, changed_at = now()
+            WHERE tenant_id = p_tenant_id
+              AND catalog_id = p_catalog_id
+              AND environment = p_environment
+              AND attachment_id = removed.attachment_id;
+            INSERT INTO catalog.attachment_activation_events (
+                tenant_id, catalog_id, environment, attachment_id, enabled,
+                confirmed_definition_hash, changed_by, reason
+            ) VALUES (
+                p_tenant_id, p_catalog_id, p_environment,
+                removed.attachment_id, false, removed.definition_hash,
+                p_changed_by, 'removed'
+            );
+        END LOOP;
+    END IF;
+
+    FOR definition IN
+        SELECT attachment_id, definition_hash
+        FROM catalog.release_attachments
+        WHERE tenant_id = p_tenant_id
+          AND catalog_id = p_catalog_id
+          AND catalog_version = p_catalog_version
+        ORDER BY attachment_id
+    LOOP
+        SELECT confirmed_definition_hash INTO prior_hash
+        FROM catalog.attachment_activation
+        WHERE tenant_id = p_tenant_id
+          AND catalog_id = p_catalog_id
+          AND environment = p_environment
+          AND attachment_id = definition.attachment_id;
+        IF prior_hash IS NULL THEN
+            INSERT INTO catalog.attachment_activation (
+                tenant_id, catalog_id, environment, attachment_id,
+                confirmed_definition_hash, enabled
+            ) VALUES (
+                p_tenant_id, p_catalog_id, p_environment,
+                definition.attachment_id, definition.definition_hash, false
+            );
+            INSERT INTO catalog.attachment_activation_events (
+                tenant_id, catalog_id, environment, attachment_id, enabled,
+                confirmed_definition_hash, changed_by, reason
+            ) VALUES (
+                p_tenant_id, p_catalog_id, p_environment,
+                definition.attachment_id, false, definition.definition_hash,
+                p_changed_by, 'new-definition'
+            );
+        ELSIF prior_hash <> definition.definition_hash THEN
+            UPDATE catalog.attachment_activation
+            SET confirmed_definition_hash = definition.definition_hash,
+                enabled = false, changed_at = now()
+            WHERE tenant_id = p_tenant_id
+              AND catalog_id = p_catalog_id
+              AND environment = p_environment
+              AND attachment_id = definition.attachment_id;
+            INSERT INTO catalog.attachment_activation_events (
+                tenant_id, catalog_id, environment, attachment_id, enabled,
+                confirmed_definition_hash, changed_by, reason
+            ) VALUES (
+                p_tenant_id, p_catalog_id, p_environment,
+                definition.attachment_id, false, definition.definition_hash,
+                p_changed_by, 'definition-changed'
+            );
+        END IF;
+        prior_hash := NULL;
+    END LOOP;
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.apply_release_exposure(
+    text, text, text, int, text
+) FROM PUBLIC;
+
+CREATE FUNCTION catalog.set_attachment_activation(
+    p_tenant_id text,
+    p_catalog_id text,
+    p_environment text,
+    p_attachment_id text,
+    p_confirmed_definition_hash text,
+    p_enabled boolean,
+    p_changed_by text,
+    p_reason text
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    target_kind text;
+    target_flow text;
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM catalog.attachment_tombstones
+        WHERE tenant_id = p_tenant_id AND catalog_id = p_catalog_id
+          AND environment = p_environment AND attachment_id = p_attachment_id
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM catalog.catalog_heads head
+        JOIN catalog.release_attachments attachment
+          ON attachment.tenant_id = head.tenant_id
+         AND attachment.catalog_id = head.catalog_id
+         AND attachment.catalog_version = head.applied_catalog_version
+        WHERE head.tenant_id = p_tenant_id
+          AND head.catalog_id = p_catalog_id
+          AND head.environment = p_environment
+          AND attachment.attachment_id = p_attachment_id
+          AND attachment.definition_hash = p_confirmed_definition_hash
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23503',
+            MESSAGE = 'attachment-definition-not-current';
+    END IF;
+    SELECT attachment.attachment_kind, attachment.flow_id
+    INTO target_kind, target_flow
+    FROM catalog.catalog_heads head
+    JOIN catalog.release_attachments attachment
+      ON attachment.tenant_id = head.tenant_id
+     AND attachment.catalog_id = head.catalog_id
+     AND attachment.catalog_version = head.applied_catalog_version
+    WHERE head.tenant_id = p_tenant_id
+      AND head.catalog_id = p_catalog_id
+      AND head.environment = p_environment
+      AND attachment.attachment_id = p_attachment_id;
+    IF p_enabled AND target_kind IN ('internal', 'cron') AND EXISTS (
+        SELECT 1 FROM catalog.active_attachments active
+        WHERE active.tenant_id = p_tenant_id
+          AND active.catalog_id = p_catalog_id
+          AND active.environment = p_environment
+          AND active.attachment_kind = target_kind
+          AND active.flow_id = target_flow
+          AND active.attachment_id <> p_attachment_id
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23505',
+            MESSAGE = 'multiple-enabled-' || target_kind || '-attachments';
+    END IF;
+    INSERT INTO catalog.attachment_activation (
+        tenant_id, catalog_id, environment, attachment_id,
+        confirmed_definition_hash, enabled
+    ) VALUES (
+        p_tenant_id, p_catalog_id, p_environment, p_attachment_id,
+        p_confirmed_definition_hash, p_enabled
+    )
+    ON CONFLICT (tenant_id, catalog_id, environment, attachment_id)
+    DO UPDATE SET confirmed_definition_hash = EXCLUDED.confirmed_definition_hash,
+                  enabled = EXCLUDED.enabled, changed_at = now();
+    INSERT INTO catalog.attachment_activation_events (
+        tenant_id, catalog_id, environment, attachment_id, enabled,
+        confirmed_definition_hash, changed_by, reason
+    ) VALUES (
+        p_tenant_id, p_catalog_id, p_environment, p_attachment_id, p_enabled,
+        p_confirmed_definition_hash, p_changed_by, p_reason
+    );
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.set_attachment_activation(
+    text, text, text, text, text, boolean, text, text
+) FROM PUBLIC;
+
+CREATE VIEW catalog.attachment_definitions
+WITH (security_invoker = true) AS
+SELECT attachment.*, source.source_kind, source.definition_json AS source_definition_json
+FROM catalog.release_attachments attachment
+JOIN catalog.release_sources source
+  USING (tenant_id, catalog_id, catalog_version, source_id);
+GRANT SELECT ON catalog.attachment_definitions TO wamn_app;
+
+CREATE VIEW catalog.active_attachments
+WITH (security_invoker = true) AS
+SELECT head.environment, definition.*
+FROM catalog.catalog_heads head
+JOIN catalog.attachment_definitions definition
+  ON definition.tenant_id = head.tenant_id
+ AND definition.catalog_id = head.catalog_id
+ AND definition.catalog_version = head.applied_catalog_version
+JOIN catalog.attachment_activation activation
+  ON activation.tenant_id = head.tenant_id
+ AND activation.catalog_id = head.catalog_id
+ AND activation.environment = head.environment
+ AND activation.attachment_id = definition.attachment_id
+ AND activation.confirmed_definition_hash = definition.definition_hash
+WHERE activation.enabled
+  AND NOT EXISTS (
+      SELECT 1 FROM catalog.attachment_tombstones dead
+      WHERE dead.tenant_id = head.tenant_id
+        AND dead.catalog_id = head.catalog_id
+        AND dead.environment = head.environment
+        AND dead.attachment_id = definition.attachment_id
+  );
+GRANT SELECT ON catalog.active_attachments TO wamn_app;
+
+CREATE VIEW catalog.http_routes
+WITH (security_invoker = true) AS
+SELECT * FROM catalog.active_attachments
+WHERE attachment_kind IN ('http', 'studio');
+GRANT SELECT ON catalog.http_routes TO wamn_app;
+
+CREATE VIEW catalog.cron_attachments
+WITH (security_invoker = true) AS
+SELECT * FROM catalog.active_attachments
+WHERE attachment_kind = 'cron';
+GRANT SELECT ON catalog.cron_attachments TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Migration history (2.5, crates/schema/control). One IMMUTABLE row per applied

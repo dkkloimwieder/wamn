@@ -745,6 +745,100 @@ async fn exec_copy_definition(
                     .get(0);
                 anyhow::ensure!(exact, "catalog-release-content-conflict");
             }
+            let exposure_manifest: String = src_client
+                .query_one(
+                    "SELECT definitions_json::text \
+                     FROM catalog.release_exposure_manifests \
+                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+                    &[&tenant, &catalog_id, &catalog_version],
+                )
+                .await
+                .with_context(|| format!("read exposure manifest for {catalog_id:?}"))?
+                .get(0);
+            tx.execute(
+                wamn_schema_control::sql::register_release_exposure_manifest_sql(),
+                &[&tenant, &catalog_id, &catalog_version, &exposure_manifest],
+            )
+            .await
+            .with_context(|| format!("seal copied exposure {catalog_id:?}"))?;
+            let sources = src_client
+                .query(
+                    wamn_schema_control::sql::select_release_sources_sql(),
+                    &[&tenant, &catalog_id, &catalog_version],
+                )
+                .await
+                .with_context(|| format!("read release sources for {catalog_id:?}"))?;
+            for source in &sources {
+                let source_id: String = source.get(0);
+                let source_kind: String = source.get(1);
+                let definition_json: String = source.get(2);
+                let source_hash: String = source.get(3);
+                tx.execute(
+                    wamn_schema_control::sql::insert_release_source_sql(),
+                    &[
+                        &tenant,
+                        &catalog_id,
+                        &catalog_version,
+                        &source_id,
+                        &source_kind,
+                        &definition_json,
+                        &source_hash,
+                    ],
+                )
+                .await
+                .with_context(|| format!("copy release source {source_id:?}"))?;
+            }
+            let attachments = src_client
+                .query(
+                    wamn_schema_control::sql::select_release_attachments_sql(),
+                    &[&tenant, &catalog_id, &catalog_version],
+                )
+                .await
+                .with_context(|| format!("read release attachments for {catalog_id:?}"))?;
+            for attachment in &attachments {
+                let attachment_id: String = attachment.get(0);
+                let attachment_kind: String = attachment.get(1);
+                let flow_id: String = attachment.get(2);
+                let source_id: String = attachment.get(3);
+                let definition_hash: String = attachment.get(4);
+                let definition_json: String = attachment.get(5);
+                let route_host: Option<String> = attachment.get(6);
+                let route_path: Option<String> = attachment.get(7);
+                let route_template: Option<String> = attachment.get(8);
+                let route_method: Option<String> = attachment.get(9);
+                tx.execute(
+                    wamn_schema_control::sql::insert_release_attachment_sql(),
+                    &[
+                        &tenant,
+                        &catalog_id,
+                        &catalog_version,
+                        &attachment_id,
+                        &attachment_kind,
+                        &flow_id,
+                        &source_id,
+                        &definition_hash,
+                        &definition_json,
+                        &route_host,
+                        &route_path,
+                        &route_template,
+                        &route_method,
+                    ],
+                )
+                .await
+                .with_context(|| format!("copy release attachment {attachment_id:?}"))?;
+            }
+            tx.execute(
+                wamn_schema_control::sql::apply_release_exposure_sql(),
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &dst_env,
+                    &catalog_version,
+                    &"copy-project-env",
+                ],
+            )
+            .await
+            .context("carry copied attachment activation")?;
             let copied: i64 = tx
                 .query_one(
                     "SELECT count(*) FROM catalog.release_flows \

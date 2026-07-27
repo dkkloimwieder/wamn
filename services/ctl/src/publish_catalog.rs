@@ -84,6 +84,10 @@ pub struct PublishCatalogArgs {
     #[arg(long)]
     pub flow: Vec<PathBuf>,
 
+    /// Sources and attachments JSON for this immutable catalog release.
+    #[arg(long)]
+    pub exposure: Option<PathBuf>,
+
     /// Skip the post-publish REPLICA IDENTITY reconcile (EVT-RI-ORCH, l5i9.61).
     /// By default publish reconciles RI for the catalog's data schema so an
     /// entity that needs the old image is never left on DEFAULT; pass this to run
@@ -164,6 +168,28 @@ async fn publish(
         );
         artifacts.push(prepared);
     }
+    let exposure = if let Some(path) = &args.exposure {
+        let source = std::fs::read_to_string(path)
+            .with_context(|| format!("read exposure {}", path.display()))?;
+        let authored: wamn_schema_control::ExposureRelease =
+            serde_json::from_str(&source).context("parse exposure")?;
+        let flows = artifacts
+            .iter()
+            .map(|prepared| {
+                let id = prepared.artifact.identity().id();
+                wamn_schema_control::FlowExposure {
+                    flow_id: id.flow_id(),
+                    entry_kind: prepared.entry_kind,
+                    artifact_hash: prepared.artifact.identity().artifact_hash().as_str(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let resolved =
+            wamn_schema_control::resolve_exposure(&authored, &flows).map_err(anyhow::Error::new)?;
+        Some((authored, resolved))
+    } else {
+        None
+    };
     let expected_base: Option<i32> = client
         .query_one(
             wamn_schema_control::sql::select_publication_base_sql(),
@@ -280,6 +306,7 @@ async fn publish(
         "dev",
         schema,
         artifacts,
+        exposure,
         document,
         expected_base,
     )
@@ -395,7 +422,13 @@ pub(crate) async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> a
             "SELECT to_regclass('catalog.flow_artifacts') IS NOT NULL, \
                     to_regclass('catalog.release_manifests') IS NOT NULL, \
                     to_regclass('catalog.release_flows') IS NOT NULL, \
-                    to_regclass('catalog.catalog_heads') IS NOT NULL",
+                    to_regclass('catalog.catalog_heads') IS NOT NULL, \
+                    to_regclass('catalog.release_exposure_manifests') IS NOT NULL, \
+                    to_regclass('catalog.release_sources') IS NOT NULL, \
+                    to_regclass('catalog.release_attachments') IS NOT NULL, \
+                    to_regclass('catalog.attachment_tombstones') IS NOT NULL, \
+                    to_regclass('catalog.attachment_activation') IS NOT NULL, \
+                    to_regclass('catalog.attachment_activation_events') IS NOT NULL",
             &[],
         )
         .await?;
@@ -404,6 +437,12 @@ pub(crate) async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> a
         release_row.get::<_, bool>(1),
         release_row.get::<_, bool>(2),
         release_row.get::<_, bool>(3),
+        release_row.get::<_, bool>(4),
+        release_row.get::<_, bool>(5),
+        release_row.get::<_, bool>(6),
+        release_row.get::<_, bool>(7),
+        release_row.get::<_, bool>(8),
+        release_row.get::<_, bool>(9),
     ];
     if release_objects.iter().all(|present| *present) {
         return Ok(());
@@ -472,6 +511,10 @@ async fn publish_release(
     environment: &str,
     run_schema: &BareSchemaName,
     artifacts: Vec<PreparedFlowArtifact>,
+    exposure: Option<(
+        wamn_schema_control::ExposureRelease,
+        Vec<wamn_schema_control::ResolvedAttachment>,
+    )>,
     document: &str,
     expected_base: Option<i32>,
 ) -> anyhow::Result<()> {
@@ -751,6 +794,80 @@ async fn publish_release(
                 .get(0);
             anyhow::ensure!(exact, "catalog-release-content-conflict");
         }
+        let exposure_json = serde_json::to_string(&exposure.as_ref().map_or_else(
+            || serde_json::json!({"attachments":[],"sources":[]}),
+            |(a, _)| serde_json::to_value(a).expect("exposure is serializable"),
+        ))
+        .context("serialize release exposure")?;
+        client
+            .execute(
+                wamn_schema_control::sql::register_release_exposure_manifest_sql(),
+                &[&tenant, &cat.catalog_id, &catalog_version, &exposure_json],
+            )
+            .await
+            .context("seal release exposure")?;
+        if let Some((authored, resolved)) = &exposure {
+            for source in &authored.sources {
+                let definition = serde_json::to_string(&source.definition)
+                    .context("serialize exposure source")?;
+                let source_hash = wamn_schema_control::sql::ddl_checksum(&definition);
+                client
+                    .execute(
+                        wamn_schema_control::sql::insert_release_source_sql(),
+                        &[
+                            &tenant,
+                            &cat.catalog_id,
+                            &catalog_version,
+                            &source.id,
+                            &source.kind.as_str(),
+                            &definition,
+                            &source_hash,
+                        ],
+                    )
+                    .await
+                    .with_context(|| format!("publish source {:?}", source.id))?;
+            }
+            for definition in resolved {
+                let authored_json = serde_json::to_string(&definition.attachment)
+                    .context("serialize resolved attachment")?;
+                client
+                    .execute(
+                        wamn_schema_control::sql::insert_release_attachment_sql(),
+                        &[
+                            &tenant,
+                            &cat.catalog_id,
+                            &catalog_version,
+                            &definition.attachment.id,
+                            &definition.attachment.kind.as_str(),
+                            &definition.attachment.flow_id,
+                            &definition.attachment.source_id,
+                            &definition.definition_hash,
+                            &authored_json,
+                            &definition.normalized_host,
+                            &definition.normalized_path,
+                            &definition.normalized_template,
+                            &definition.normalized_method,
+                        ],
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("publish attachment {:?}", definition.attachment.id)
+                    })?;
+            }
+        }
+        client
+            .execute(
+                wamn_schema_control::sql::apply_release_exposure_sql(),
+                &[
+                    &tenant,
+                    &cat.catalog_id,
+                    &environment,
+                    &catalog_version,
+                    &"publish-catalog",
+                ],
+            )
+            .await
+            .context("carry attachment activation")?;
         let stored_members: i64 = client
             .query_one(
                 "SELECT count(*) FROM catalog.release_flows \
@@ -979,6 +1096,7 @@ pub fn seed_dataset_sql(
 #[derive(Debug)]
 struct PreparedFlowArtifact {
     graph_json: String,
+    entry_kind: wamn_flow::EntryKind,
     artifact: wamn_catalog::Artifact,
 }
 
@@ -1027,6 +1145,11 @@ fn prepare_flow_artifact(tenant: &str, graph_json: &str) -> anyhow::Result<Prepa
         .map_err(|error| anyhow::anyhow!("immutable artifact: {error}"))?;
     Ok(PreparedFlowArtifact {
         graph_json: graph_json.to_string(),
+        entry_kind: flow
+            .nodes
+            .iter()
+            .find_map(wamn_flow::Node::entry_kind)
+            .expect("validated flow has one entry"),
         artifact,
     })
 }
@@ -1134,6 +1257,7 @@ mod tests {
                 "dev",
                 &run_schema,
                 vec![prepare_flow_artifact(&tenant, &graph).unwrap()],
+                None,
                 &document,
                 None,
             )
@@ -1170,6 +1294,7 @@ mod tests {
                 "dev",
                 &run_schema,
                 vec![prepare_flow_artifact(&tenant, &graph).unwrap()],
+                None,
                 &document,
                 None,
             )
@@ -1187,6 +1312,7 @@ mod tests {
                 "dev",
                 &run_schema,
                 vec![prepare_flow_artifact(&tenant, &graph).unwrap()],
+                None,
                 &document,
                 Some(1),
             )
@@ -1264,6 +1390,7 @@ mod tests {
             "dev",
             &BareSchemaName::new("pg_temp").unwrap(),
             vec![],
+            None,
             &target_document,
             expected_base,
         )
@@ -1306,6 +1433,7 @@ mod tests {
             runstate: true,
             seed_dataset: None,
             flow: vec![],
+            exposure: None,
             skip_reconcile_replica_identity: false,
         })
         .await

@@ -955,9 +955,19 @@ mod tests {
         let catalog = record_tables(CATALOG_SCHEMA_SQL, "catalog");
         assert!(catalog.first().is_some_and(|t| t == "catalogs"));
         assert!(catalog.contains(&"event_registrations".to_string()));
+        for exposure_table in [
+            "release_exposure_manifests",
+            "release_sources",
+            "release_attachments",
+            "attachment_tombstones",
+            "attachment_activation",
+            "attachment_activation_events",
+        ] {
+            assert!(catalog.contains(&exposure_table.to_string()));
+        }
         assert_eq!(
             catalog.len(),
-            14,
+            20,
             "catalog-schema.sql table count: {catalog:?}"
         );
     }
