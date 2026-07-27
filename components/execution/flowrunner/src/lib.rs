@@ -53,9 +53,11 @@ use std::time::Instant;
 use serde_json::{Value, json};
 use wamn_flow::{Flow, canonical_json_sha256};
 use wamn_node_sdk as sdk;
+use wamn_run_state::attempt::{AttemptDispatchResult, AttemptStartResult, RecoveryClass};
 use wamn_run_state::transitions::{
-    CallerReleaseResult, ReservedCheckpointResult, TerminalizeResult, node_context_checkpoint_sql,
-    release_caller_sql, reserved_checkpoint_sql, terminalize_sql,
+    CallerReleaseResult, CheckpointResult, ReservedCheckpointResult, TerminalizeResult,
+    begin_attempt_sql, complete_attempt_error_sql, complete_attempt_success_sql,
+    mark_attempt_dispatched_sql, release_caller_sql, reserved_checkpoint_sql, terminalize_sql,
 };
 use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
 // The durable-queue claim-path builders (5.14). Scheduling is a separate crate,
@@ -64,8 +66,8 @@ use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
 // amortization: one statement where the split path spent two or three.
 use wamn_run_state::queue::{
     acquire_partitions_sql, claim_dispatch_sql, claim_partition_head_sql, dead_letter_dequeue_sql,
-    mark_running_sql, park_sql, record_error_and_renew_sql, record_success_and_renew_sql,
-    release_partition_sql, renew_partition_sql,
+    mark_running_sql, park_sql, record_success_and_renew_sql, release_partition_sql,
+    renew_partition_sql,
 };
 use wamn_runner::{
     CallerState, Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState,
@@ -1161,6 +1163,59 @@ enum ResolvedNode {
     Standard,
 }
 
+fn recovery_class(artifact: &wamn_catalog::PinnedArtifact, dispatch: &Dispatch) -> RecoveryClass {
+    classify_recovery(
+        &dispatch.node_type,
+        &dispatch.config,
+        artifact
+            .interface_bundle()
+            .interface(&dispatch.node_type)
+            .map(|interface| interface.recovery_class),
+    )
+}
+
+fn classify_recovery(
+    node_type: &str,
+    config: &Value,
+    pinned: Option<wamn_node_manifest::RecoveryClass>,
+) -> RecoveryClass {
+    if let Some(pinned) = pinned {
+        return match pinned {
+            wamn_node_manifest::RecoveryClass::Replay => RecoveryClass::Replay,
+            wamn_node_manifest::RecoveryClass::NeverReplay => RecoveryClass::NeverReplay,
+        };
+    }
+    if wamn_nodes::is_replay_safe(node_type) == Some(true) {
+        return RecoveryClass::Replay;
+    }
+    match node_type {
+        "pg-write" => RecoveryClass::IdempotentWithKey,
+        "http-request" => {
+            let method = config
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("GET")
+                .to_ascii_uppercase();
+            match method.as_str() {
+                "GET" | "HEAD" => RecoveryClass::Replay,
+                "PUT" | "DELETE" => RecoveryClass::IdempotentWithKey,
+                "POST" | "PATCH"
+                    if config.get("idempotency-key").and_then(Value::as_bool) == Some(true) =>
+                {
+                    RecoveryClass::IdempotentWithKey
+                }
+                _ => RecoveryClass::NeverReplay,
+            }
+        }
+        "postgres" | "postgres-query"
+            if config.get("idempotent-with-key").and_then(Value::as_bool) == Some(true) =>
+        {
+            RecoveryClass::IdempotentWithKey
+        }
+        _ => RecoveryClass::NeverReplay,
+    }
+}
+
 fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
     match node_type {
         "webhook-in" => Some(ResolvedNode::WebhookIn),
@@ -1786,41 +1841,109 @@ fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String
     }))
 }
 
-/// Per-node checkpoint + lease heartbeat in ONE statement (fqg.18). The renew
-/// fires even when the record is an idempotency no-op (a cycle revisiting a
-/// node), so a long walk's lease stays live exactly as the split
-/// renew-before-dispatch kept it: the claim's fresh lease covers the first
-/// node, each record covers the next.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the checkpoint row's columns + the 9.6 capture policy + the renew pair"
+    reason = "durable attempt identity and the queue fence are one transition"
 )]
-fn record_node_run_and_renew(
+fn begin_attempt(
     run_id: &str,
-    node_id: &str,
-    occurrence: u32,
+    dispatch: &Dispatch,
     seq: i32,
-    port: &str,
-    output: &Value,
-    input: &Value,
-    capture: &wamn_flow::Capture,
-    ttl_ms: i64,
+    class: RecoveryClass,
     owner: &str,
     lease_generation: i64,
-    context: &Value,
-) -> Result<(), String> {
-    let (binds, _) = capture_binds(capture, output, input);
-    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+    ttl_ms: i64,
+) -> Result<AttemptStartResult, String> {
+    let input_ref = canonical_json_sha256(&dispatch.attempt_input());
+    let attempt_key = (class == RecoveryClass::IdempotentWithKey)
+        .then_some(dispatch.idempotency_key.as_str())
+        .filter(|key| !key.is_empty());
     let response = client::query(
-        &node_context_checkpoint_sql(),
+        &begin_attempt_sql(),
         &[
             text(run_id),
             text(run_id),
             text(owner),
             int64(lease_generation),
-            text(node_id),
-            int32(occurrence as i32),
+            text(&dispatch.node),
+            int32(dispatch.occurrence as i32),
             int32(seq),
+            text(class.as_sql()),
+            text(input_ref),
+            attempt_key.map_or(SqlValue::Null, text),
+            int64(ttl_ms),
+        ],
+    )
+    .map_err(|error| err_name(&error))?;
+    let code = match response.rows.first().and_then(|row| row.first()) {
+        Some(SqlValue::Text(code)) => code.as_str(),
+        other => return Err(format!("attempt intent result shape: {other:?}")),
+    };
+    AttemptStartResult::from_code(code)
+        .ok_or_else(|| format!("unknown attempt intent result: {code}"))
+}
+
+fn mark_attempt_dispatched(
+    run_id: &str,
+    dispatch: &Dispatch,
+    owner: &str,
+    lease_generation: i64,
+    ttl_ms: i64,
+) -> Result<(), String> {
+    let response = client::query(
+        &mark_attempt_dispatched_sql(),
+        &[
+            text(run_id),
+            text(run_id),
+            text(owner),
+            int64(lease_generation),
+            text(&dispatch.node),
+            int32(dispatch.occurrence as i32),
+            int64(ttl_ms),
+        ],
+    )
+    .map_err(|error| err_name(&error))?;
+    let code = match response.rows.first().and_then(|row| row.first()) {
+        Some(SqlValue::Text(code)) => code.as_str(),
+        other => return Err(format!("attempt dispatch marker result shape: {other:?}")),
+    };
+    match AttemptDispatchResult::from_code(code)
+        .ok_or_else(|| format!("unknown attempt dispatch marker result: {code}"))?
+    {
+        AttemptDispatchResult::Marked => Ok(()),
+        AttemptDispatchResult::FenceLost => {
+            Err("attempt dispatch marker refused: fence-lost".to_string())
+        }
+        other => Err(format!("attempt dispatch marker refused: {other:?}")),
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "attempt completion, capture, context, and fence form one transition"
+)]
+fn complete_attempt_success(
+    run_id: &str,
+    dispatch: &Dispatch,
+    port: &str,
+    output: &Value,
+    capture: &wamn_flow::Capture,
+    context: &Value,
+    ttl_ms: i64,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<(), String> {
+    let (binds, _) = capture_binds(capture, output, &dispatch.payload);
+    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+    let response = client::query(
+        &complete_attempt_success_sql(),
+        &[
+            text(run_id),
+            text(run_id),
+            text(owner),
+            int64(lease_generation),
+            text(&dispatch.node),
+            int32(dispatch.occurrence as i32),
             text(port),
             out_j,
             in_j,
@@ -1833,28 +1956,27 @@ fn record_node_run_and_renew(
             int64(ttl_ms),
         ],
     )
-    .map_err(|e| err_name(&e))?;
-    let row = response
-        .rows
-        .first()
-        .ok_or("node context checkpoint returned no result row")?;
+    .map_err(|error| err_name(&error))?;
+    decode_attempt_completion(&response.rows)
+}
+
+fn decode_attempt_completion(rows: &[Vec<SqlValue>]) -> Result<(), String> {
+    let row = rows.first().ok_or("attempt completion returned no row")?;
     let code = match row.first() {
         Some(SqlValue::Text(code)) => code.as_str(),
-        other => return Err(format!("node context checkpoint result shape: {other:?}")),
+        other => return Err(format!("attempt completion result shape: {other:?}")),
     };
-    let run_status = match row.get(1) {
+    let status = match row.get(1) {
         Some(SqlValue::Text(status)) => status.as_str(),
         Some(SqlValue::Null) => "",
-        other => return Err(format!("node context checkpoint status shape: {other:?}")),
+        other => return Err(format!("attempt completion status shape: {other:?}")),
     };
-    match ReservedCheckpointResult::from_parts(code, run_status)
-        .ok_or_else(|| format!("unknown node context checkpoint result: {code}"))?
+    match CheckpointResult::from_parts(code, status)
+        .ok_or_else(|| format!("unknown attempt completion result: {code}"))?
     {
-        ReservedCheckpointResult::Recorded => Ok(()),
-        ReservedCheckpointResult::FenceLost => {
-            Err("node context checkpoint refused: fence-lost".to_string())
-        }
-        other => Err(format!("node context checkpoint refused: {other:?}")),
+        CheckpointResult::Applied => Ok(()),
+        CheckpointResult::FenceLost => Err("attempt completion refused: fence-lost".to_string()),
+        other => Err(format!("attempt completion refused: {other:?}")),
     }
 }
 
@@ -1867,12 +1989,13 @@ fn record_error_and_renew(
     run_id: &str,
     node_id: &str,
     occurrence: u32,
-    seq: i32,
+    _seq: i32,
     err: &NodeError,
     input: &Value,
     capture: &wamn_flow::Capture,
     ttl_ms: i64,
     owner: &str,
+    lease_generation: i64,
 ) -> Result<(), String> {
     let (kind, payload, mut detail_json) = error_row_values(err);
     let (binds, redacted) = capture_binds(capture, &payload, input);
@@ -1880,13 +2003,15 @@ fn record_error_and_renew(
         wamn_run_state::capture::scrub(&mut detail_json);
     }
     let [out_j, in_j, preview, size, hash, mode, red] = binds;
-    client::execute(
-        &record_error_and_renew_sql(),
+    let response = client::query(
+        &complete_attempt_error_sql(),
         &[
             text(run_id),
+            text(run_id),
+            text(owner),
+            int64(lease_generation),
             text(node_id),
             int32(occurrence as i32),
-            int32(seq),
             out_j,
             in_j,
             text(kind),
@@ -1897,11 +2022,10 @@ fn record_error_and_renew(
             mode,
             red,
             int64(ttl_ms),
-            text(owner),
         ],
     )
     .map_err(|e| err_name(&e))?;
-    Ok(())
+    decode_attempt_completion(&response.rows)
 }
 
 /// Commit one engine-owned boundary under the claimed run's fence. Respond and
@@ -2234,6 +2358,55 @@ fn terminalize_claimed(
         // access, including a legacy settle attempt.
         TerminalizeResult::FenceLost => Err("terminal completion refused: fence-lost".to_string()),
         other => Err(format!("terminal completion refused: {other:?}")),
+    }
+}
+
+/// Fenced terminalization for an incomplete attempt that cannot be replayed.
+fn terminalize_effect_uncertain(
+    run_id: &str,
+    node_id: &str,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<(), String> {
+    let reason = format!("effect-uncertain:{node_id}");
+    let response = client::query(
+        &terminalize_sql(),
+        &[
+            text(run_id),
+            text(run_id),
+            text(owner),
+            int64(lease_generation),
+            text("failed"),
+            text(&reason),
+            SqlValue::Null,
+            jsonb(&json!({"code":"effect-uncertain","node":node_id})),
+        ],
+    )
+    .map_err(|error| err_name(&error))?;
+    let row = response
+        .rows
+        .first()
+        .ok_or("effect-uncertain terminalization returned no result row")?;
+    let code = match row.first() {
+        Some(SqlValue::Text(code)) => code.as_str(),
+        other => return Err(format!("effect-uncertain result shape: {other:?}")),
+    };
+    let status = match row.get(1) {
+        Some(SqlValue::Text(status)) => status.as_str(),
+        Some(SqlValue::Null) => "",
+        other => return Err(format!("effect-uncertain status shape: {other:?}")),
+    };
+    match TerminalizeResult::from_parts(code, status)
+        .ok_or_else(|| format!("unknown effect-uncertain result: {code}"))?
+    {
+        TerminalizeResult::Terminalized => Ok(()),
+        TerminalizeResult::RunTerminal(stored) if stored.as_sql() == "failed" => Ok(()),
+        TerminalizeResult::FenceLost => {
+            Err("effect-uncertain terminalization refused: fence-lost".to_string())
+        }
+        other => Err(format!(
+            "effect-uncertain terminalization refused: {other:?}"
+        )),
     }
 }
 
@@ -2605,6 +2778,27 @@ fn execute_claimed(
                 // (fqg.18): the claim's fresh lease covers the first node, each
                 // record's renew covers the next — the same coverage the split
                 // renew-before-dispatch gave, one round trip cheaper.
+                let class = recovery_class(artifact, &d);
+                match begin_attempt(run_id, &d, next_seq, class, owner, lease_generation, ttl_ms)? {
+                    AttemptStartResult::Started | AttemptStartResult::Redispatch => {
+                        mark_attempt_dispatched(run_id, &d, owner, lease_generation, ttl_ms)?;
+                    }
+                    AttemptStartResult::EffectUncertain | AttemptStartResult::MissingAttemptKey => {
+                        terminalize_effect_uncertain(run_id, &d.node, owner, lease_generation)?;
+                        return Ok(ClaimOutcome {
+                            outcome: 2,
+                            park_ms: 0,
+                            fail_reason: Some(format!(
+                                "effect-uncertain: {}: incomplete attempt",
+                                d.node
+                            )),
+                        });
+                    }
+                    AttemptStartResult::FenceLost => {
+                        return Err("attempt intent refused: fence-lost".to_string());
+                    }
+                    other => return Err(format!("attempt intent refused: {other:?}")),
+                }
                 match dispatch_node(&d, run_id, flow, false, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
                         match &outcome {
@@ -2614,19 +2808,16 @@ fn execute_claimed(
                                 context,
                             } => {
                                 let checkpoint_context = context.as_ref().unwrap_or(&d.context);
-                                record_node_run_and_renew(
+                                complete_attempt_success(
                                     run_id,
-                                    &d.node,
-                                    d.occurrence,
-                                    next_seq,
+                                    &d,
                                     port,
                                     payload,
-                                    &d.payload,
                                     &flow.capture,
+                                    checkpoint_context,
                                     ttl_ms,
                                     owner,
                                     lease_generation,
-                                    checkpoint_context,
                                 )?;
                                 next_seq += 1;
                                 emit_node_complete(
@@ -2652,6 +2843,7 @@ fn execute_claimed(
                                     &flow.capture,
                                     ttl_ms,
                                     owner,
+                                    lease_generation,
                                 )?;
                                 next_seq += 1;
                                 emit_node_error(
@@ -2986,5 +3178,49 @@ mod tests {
         }
         assert!(!PINNED_ARTIFACT_SQL.contains("FROM flows"));
         assert!(!PINNED_ARTIFACT_SQL.contains("catalog_heads"));
+    }
+
+    #[test]
+    fn pinned_custom_purity_is_the_replay_authority() {
+        assert_eq!(
+            classify_recovery(
+                "normalize-receipt",
+                &json!({}),
+                Some(wamn_node_manifest::RecoveryClass::Replay),
+            ),
+            RecoveryClass::Replay
+        );
+        assert_eq!(
+            classify_recovery(
+                "custom-without-purity",
+                &json!({}),
+                Some(wamn_node_manifest::RecoveryClass::NeverReplay),
+            ),
+            RecoveryClass::NeverReplay
+        );
+    }
+
+    #[test]
+    fn effectful_standard_nodes_require_their_replay_contract() {
+        assert_eq!(
+            classify_recovery("http-request", &json!({"method":"GET"}), None),
+            RecoveryClass::Replay
+        );
+        assert_eq!(
+            classify_recovery("http-request", &json!({"method":"POST"}), None),
+            RecoveryClass::NeverReplay
+        );
+        assert_eq!(
+            classify_recovery(
+                "http-request",
+                &json!({"method":"POST","idempotency-key":true}),
+                None,
+            ),
+            RecoveryClass::IdempotentWithKey
+        );
+        assert_eq!(
+            classify_recovery("postgres-query", &json!({}), None),
+            RecoveryClass::NeverReplay
+        );
     }
 }

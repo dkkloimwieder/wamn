@@ -5,7 +5,8 @@ use std::thread;
 use std::time::Duration;
 
 use wamn_run_state::transitions::{
-    complete_sql, park_sql, release_caller_sql, reserved_checkpoint_sql, terminalize_sql,
+    begin_attempt_sql, complete_sql, mark_attempt_dispatched_sql, park_sql, release_caller_sql,
+    reserved_checkpoint_sql, terminalize_sql,
 };
 
 fn psql(url: &str, script: &str) -> Output {
@@ -59,6 +60,8 @@ fn run_state_live() {
     let reserved_checkpoint = reserved_checkpoint_sql();
     let park = park_sql();
     let complete = complete_sql();
+    let begin_attempt = begin_attempt_sql();
+    let mark_attempt = mark_attempt_dispatched_sql();
 
     // A stale entry boundary cannot insert its synthetic node checkpoint. The
     // same statement succeeds under the current generation.
@@ -281,6 +284,108 @@ fn run_state_live() {
         complete
     );
     success(&url, &complete_script);
+
+    // T-NR: fault each durable seam independently.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,status) VALUES \
+           ('t1','nr-rollback','f',1,'running'), \
+           ('t1','nr-before-send','f',1,'running'), \
+           ('t1','nr-never','f',1,'running'), \
+           ('t1','nr-replay','f',1,'running'), \
+           ('t1','nr-keyed','f',1,'running'); \
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           ('t1','nr-rollback','worker-nr',now()+interval '1 minute',1), \
+           ('t1','nr-before-send','worker-nr',now()+interval '1 minute',1), \
+           ('t1','nr-never','worker-nr',now()+interval '1 minute',1), \
+           ('t1','nr-replay','worker-nr',now()+interval '1 minute',1), \
+           ('t1','nr-keyed','worker-nr',now()+interval '1 minute',1);",
+    );
+    let rollback_script = format!(
+        "{} PREPARE begin_stmt \
+           (text,text,text,bigint,text,int,int,text,text,text,bigint) AS {}; \
+         EXECUTE begin_stmt('nr-rollback','nr-rollback','worker-nr',1, \
+                            'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+         ROLLBACK;",
+        app_preamble(),
+        begin_attempt
+    );
+    success(&url, &rollback_script);
+    let nr_script = format!(
+        "{} PREPARE begin_stmt \
+           (text,text,text,bigint,text,int,int,text,text,text,bigint) AS {}; \
+         PREPARE mark_stmt (text,text,text,bigint,text,int,bigint) AS {}; \
+         CREATE TEMP TABLE rollback_recovery AS \
+           EXECUTE begin_stmt('nr-rollback','nr-rollback','worker-nr',1, \
+                              'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+         CREATE TEMP TABLE before_first AS \
+           EXECUTE begin_stmt('nr-before-send','nr-before-send','worker-nr',1, \
+                              'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+         CREATE TEMP TABLE before_recovery AS \
+           EXECUTE begin_stmt('nr-before-send','nr-before-send','worker-nr',1, \
+                              'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+         CREATE TEMP TABLE before_marked AS \
+           EXECUTE mark_stmt('nr-before-send','nr-before-send','worker-nr',1, \
+                             'effect',0,30000); \
+         CREATE TEMP TABLE nr_first AS \
+           EXECUTE begin_stmt('nr-never','nr-never','worker-nr',1, \
+                              'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+         CREATE TEMP TABLE nr_marked AS \
+           EXECUTE mark_stmt('nr-never','nr-never','worker-nr',1,'effect',0,30000); \
+         CREATE TEMP TABLE nr_recovery AS \
+           EXECUTE begin_stmt('nr-never','nr-never','worker-nr',1, \
+                              'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+         CREATE TEMP TABLE pure_first AS \
+           EXECUTE begin_stmt('nr-replay','nr-replay','worker-nr',1, \
+                              'pure',0,1,'replay','sha256:input',NULL,30000); \
+         CREATE TEMP TABLE pure_marked AS \
+           EXECUTE mark_stmt('nr-replay','nr-replay','worker-nr',1,'pure',0,30000); \
+         CREATE TEMP TABLE pure_recovery AS \
+           EXECUTE begin_stmt('nr-replay','nr-replay','worker-nr',1, \
+                              'pure',0,1,'replay','sha256:input',NULL,30000); \
+         CREATE TEMP TABLE keyed_first AS \
+           EXECUTE begin_stmt('nr-keyed','nr-keyed','worker-nr',1, \
+                              'keyed',0,1,'idempotent-with-key','sha256:input','key-1',30000); \
+         CREATE TEMP TABLE keyed_prepared_missing AS \
+           EXECUTE begin_stmt('nr-keyed','nr-keyed','worker-nr',1, \
+                              'keyed',0,1,'idempotent-with-key','sha256:input',NULL,30000); \
+         CREATE TEMP TABLE keyed_marked AS \
+           EXECUTE mark_stmt('nr-keyed','nr-keyed','worker-nr',1,'keyed',0,30000); \
+         CREATE TEMP TABLE keyed_missing AS \
+           EXECUTE begin_stmt('nr-keyed','nr-keyed','worker-nr',1, \
+                              'keyed',0,1,'idempotent-with-key','sha256:input',NULL,30000); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM rollback_recovery) = 'started', \
+                  'crash before intent commit leaves the occurrence resumable'; \
+           ASSERT (SELECT result_code FROM before_recovery) = 'started', \
+                  'committed intent before send remains resumable'; \
+           ASSERT (SELECT result_code FROM before_marked) = 'marked', \
+                  'resumed occurrence crosses the durable send boundary once'; \
+           ASSERT (SELECT result_code FROM nr_first) = 'started', 'intent commits before send'; \
+           ASSERT (SELECT result_code FROM nr_marked) = 'marked', \
+                  'send boundary commits immediately before dispatch'; \
+           ASSERT (SELECT result_code FROM nr_recovery) = 'effect-uncertain', \
+                  'sent-but-unrecorded never-replay does not redispatch'; \
+           ASSERT (SELECT result_code FROM pure_recovery) = 'redispatch', \
+                  'pure recovery redispatches'; \
+           ASSERT (SELECT attempt FROM node_runs WHERE run_id='nr-replay') = 1, \
+                  'authorized redispatch increments the durable attempt'; \
+           ASSERT (SELECT attempt FROM node_runs WHERE run_id='nr-never') = 0, \
+                  'effect-uncertain performs no second attempt'; \
+           ASSERT (SELECT result_code FROM keyed_prepared_missing) = 'missing-attempt-key', \
+                  'prepared keyed attempt still requires the original key'; \
+           ASSERT (SELECT result_code FROM keyed_missing) = 'missing-attempt-key', \
+                  'keyed recovery refuses without the original key'; \
+           ASSERT (SELECT count(*) FROM node_runs WHERE run_id LIKE 'nr-%') = 5, \
+                  'recovery does not create a second occurrence'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        begin_attempt,
+        mark_attempt
+    );
+    success(&url, &nr_script);
 
     // The named unique constraint is the stable input to the public
     // InvocationAdmissionRefusal mapping.

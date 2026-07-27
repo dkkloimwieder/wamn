@@ -246,6 +246,7 @@ dependencies = [
  "wamn-flow",
  "wamn-node-guest",
  "wamn-node-invoke",
+ "wamn-node-manifest",
  "wamn-node-sdk",
  "wamn-run-state",
  "wamn-runner",

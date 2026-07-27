@@ -3700,3 +3700,28 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-custom-publish-67 \
   cargo test --locked -p wamn-ctl --test custom_publish_live \
   real_f1_f2_components_publish_retry_and_conflict_by_exact_bytes -- --exact
 ```
+
+## CF-ATTEMPTS — durable effect protocol and replay classes (`wamn-5wd1.54`)
+
+Flowrunner commits an attempt intent before any external dispatch, marks that
+attempt dispatched immediately before the effect, and commits success or error
+afterward. An unmarked prepared attempt is resumable for every recovery class.
+A marked pure or idempotent-with-key attempt may redispatch under its exact
+key; a marked never-replay attempt becomes effect-uncertain and cannot send
+again. Custom nodes without declared purity remain never-replay.
+
+```bash
+cargo test --locked -p wamn-runner -p wamn-run-state -p wamn-node-manifest
+cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+cargo build --locked --manifest-path components/Cargo.toml \
+  -p flowrunner --target wasm32-wasip2
+cargo test --locked -p wamn-proof-integration --lib never_replay::tests::
+
+docker run -d --rm --name wamn-cf-attempts-pg \
+  -p 127.0.0.1:15623:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+# Wait for PostgreSQL to complete its initialization restart.
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15623/wamn \
+  cargo test --locked -p wamn-run-state --test run_state_live \
+  run_state_live -- --ignored --exact --nocapture
+```

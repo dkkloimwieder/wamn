@@ -28,6 +28,7 @@ pub mod logbench;
 pub mod matbench;
 pub mod materializer;
 pub mod metricbench;
+pub mod never_replay;
 pub mod nodebench;
 pub mod nodeinvoke;
 pub mod pgbench;

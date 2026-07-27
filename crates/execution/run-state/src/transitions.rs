@@ -50,6 +50,134 @@ authority AS ( \
       LEFT JOIN locked_queue AS q ON true \
 )";
 
+/// Persist an attempt intent and renew the exact queue lease before dispatch.
+///
+/// Params: target run id, authority run id, lease owner, lease generation,
+/// node id, occurrence, sequence, recovery class, immutable input reference,
+/// optional attempt key, and lease TTL milliseconds. An authorized redispatch
+/// advances the durable attempt counter in the same statement.
+pub fn begin_attempt_sql() -> String {
+    format!(
+        "{FENCED_PREFIX}, \
+         locked_attempt AS MATERIALIZED ( \
+             SELECT n.* FROM node_runs AS n, authority AS a \
+              WHERE a.result_code = 'ready' \
+                AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
+                AND n.node_id = $5 AND n.occurrence = $6 \
+              FOR UPDATE OF n \
+         ), \
+         classified AS ( \
+             SELECT CASE \
+                      WHEN a.result_code <> 'ready' THEN a.result_code \
+                      WHEN n.run_id IS NULL AND $8::text = 'idempotent-with-key' \
+                       AND ($10::text IS NULL OR $10::text = '') \
+                        THEN 'missing-attempt-key' \
+                      WHEN n.run_id IS NULL THEN 'new' \
+                      WHEN n.status IN ('success', 'error') THEN 'already-completed' \
+                      WHEN n.status <> 'started' THEN 'attempt-not-started' \
+                      WHEN n.recovery_class = 'idempotent-with-key' \
+                       AND (n.attempt_key IS NULL OR n.attempt_key = '' \
+                            OR $10::text IS NULL OR $10::text = '' \
+                            OR n.attempt_key <> $10::text) THEN 'missing-attempt-key' \
+                      WHEN n.attempt_dispatched_at IS NULL THEN 'prepared' \
+                      WHEN n.recovery_class = 'never-replay' THEN 'effect-uncertain' \
+                      WHEN n.recovery_class IN ('replay', 'idempotent-with-key') \
+                        THEN 'redispatch' \
+                      ELSE 'effect-uncertain' \
+                    END AS result_code, a.tenant_id, a.run_id, a.status \
+               FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
+         ), \
+         inserted AS ( \
+             INSERT INTO node_runs \
+                    (tenant_id, run_id, node_id, occurrence, seq, status, \
+                     recovery_class, attempt_started_at, attempt_deadline_at, \
+                     attempt_input_ref, attempt_key) \
+             SELECT c.tenant_id, c.run_id, $5, $6, $7, 'started', $8, now(), \
+                    now() + ($11::bigint * interval '1 millisecond'), $9, $10 \
+               FROM classified AS c WHERE c.result_code = 'new' \
+             RETURNING run_id \
+         ), \
+         redispatched AS ( \
+             UPDATE node_runs AS n \
+                SET attempt = n.attempt + 1, attempt_started_at = now(), \
+                    attempt_dispatched_at = NULL, \
+                    attempt_deadline_at = \
+                        now() + ($11::bigint * interval '1 millisecond') \
+               FROM classified AS c \
+              WHERE c.result_code = 'redispatch' \
+                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
+                AND n.node_id = $5 AND n.occurrence = $6 \
+             RETURNING n.run_id \
+         ), \
+         renewed AS ( \
+             UPDATE run_queue AS q \
+                SET lease_expires_at = now() + ($11::bigint * interval '1 millisecond') \
+               FROM classified AS c \
+              WHERE c.result_code IN ('new', 'prepared', 'redispatch') \
+                AND q.tenant_id = c.tenant_id AND q.run_id = c.run_id \
+                AND (SELECT count(*) FROM inserted) >= 0 \
+                AND (SELECT count(*) FROM redispatched) >= 0 \
+             RETURNING q.run_id \
+         ) \
+         SELECT CASE \
+                  WHEN i.run_id IS NOT NULL THEN 'started' \
+                  WHEN c.result_code = 'prepared' AND r.run_id IS NOT NULL THEN 'started' \
+                  WHEN d.run_id IS NOT NULL AND r.run_id IS NOT NULL THEN 'redispatch' \
+                  ELSE c.result_code \
+                END AS result_code, c.status AS run_status \
+           FROM classified AS c \
+           LEFT JOIN inserted AS i ON true \
+           LEFT JOIN redispatched AS d ON true \
+           LEFT JOIN renewed AS r ON true"
+    )
+}
+
+/// Mark the durable send boundary immediately before external dispatch.
+///
+/// Params: fence `$1..$4`, node id, occurrence, and lease TTL milliseconds.
+/// A second mark is a typed refusal, so no caller can accidentally dispatch
+/// twice without first passing the recovery-class transition above.
+pub fn mark_attempt_dispatched_sql() -> String {
+    format!(
+        "{FENCED_PREFIX}, \
+         locked_attempt AS MATERIALIZED ( \
+             SELECT n.* FROM node_runs AS n, authority AS a \
+              WHERE a.result_code = 'ready' \
+                AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
+                AND n.node_id = $5 AND n.occurrence = $6 \
+              FOR UPDATE OF n \
+         ), \
+         classified AS ( \
+             SELECT CASE \
+                      WHEN a.result_code <> 'ready' THEN a.result_code \
+                      WHEN n.run_id IS NULL THEN 'attempt-not-found' \
+                      WHEN n.status <> 'started' THEN 'attempt-not-started' \
+                      WHEN n.attempt_dispatched_at IS NOT NULL THEN 'already-dispatched' \
+                      ELSE 'ready' \
+                    END AS result_code, a.tenant_id, a.run_id, a.status \
+               FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
+         ), \
+         marked AS ( \
+             UPDATE node_runs AS n SET attempt_dispatched_at = now() \
+               FROM classified AS c \
+              WHERE c.result_code = 'ready' \
+                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
+                AND n.node_id = $5 AND n.occurrence = $6 \
+             RETURNING n.run_id \
+         ), \
+         renewed AS ( \
+             UPDATE run_queue AS q \
+                SET lease_expires_at = now() + ($7::bigint * interval '1 millisecond') \
+               FROM marked AS m, classified AS c \
+              WHERE q.tenant_id = c.tenant_id AND q.run_id = m.run_id \
+             RETURNING q.run_id \
+         ) \
+         SELECT CASE WHEN r.run_id IS NOT NULL THEN 'marked' ELSE c.result_code END \
+                    AS result_code, c.status AS run_status \
+           FROM classified AS c LEFT JOIN renewed AS r ON true"
+    )
+}
+
 /// A caller outcome returned with `already-released`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -503,6 +631,116 @@ pub fn complete_sql() -> String {
     )
 }
 
+/// Complete a successful attempt, checkpoint replacement context, and renew.
+///
+/// Params: fence `$1..$4`, node id, occurrence, output port, captured output,
+/// captured input, preview, size, hash, capture mode, redacted, replacement
+/// context document, and lease TTL milliseconds.
+pub fn complete_attempt_success_sql() -> String {
+    format!(
+        "{FENCED_PREFIX}, \
+         locked_attempt AS MATERIALIZED ( \
+             SELECT n.* FROM node_runs AS n, authority AS a \
+              WHERE a.result_code = 'ready' \
+                AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
+                AND n.node_id = $5 AND n.occurrence = $6 \
+              FOR UPDATE OF n \
+         ), \
+         classified AS ( \
+             SELECT CASE \
+                      WHEN a.result_code <> 'ready' THEN a.result_code \
+                      WHEN n.run_id IS NULL THEN 'attempt-not-found' \
+                      WHEN n.status IN ('success', 'error') THEN 'already-completed' \
+                      WHEN n.status <> 'started' THEN 'attempt-not-started' \
+                      ELSE 'ready' \
+                    END AS result_code, a.tenant_id, a.run_id, a.status \
+               FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
+         ), \
+         completed_attempt AS ( \
+             UPDATE node_runs AS n \
+                SET status = 'success', output_port = $7, output_json = $8::text::jsonb, \
+                    input_json = $9::text::jsonb, preview_head = $10, payload_size = $11, \
+                    payload_hash = $12, capture_mode = $13, redacted = $14, ended_at = now() \
+               FROM classified AS c \
+              WHERE c.result_code = 'ready' \
+                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
+                AND n.node_id = $5 AND n.occurrence = $6 \
+             RETURNING n.tenant_id, n.run_id \
+         ), \
+         checkpointed AS ( \
+             UPDATE runs AS r \
+                SET state_json = jsonb_set(COALESCE(r.state_json, '{{}}'::jsonb), \
+                                           '{{context}}', $15::text::jsonb, true), \
+                    updated_at = now() \
+               FROM completed_attempt AS n \
+              WHERE r.tenant_id = n.tenant_id AND r.run_id = n.run_id \
+                AND jsonb_typeof($15::text::jsonb) = 'object' \
+             RETURNING r.run_id \
+         ), \
+         renewed AS ( \
+             UPDATE run_queue AS q \
+                SET lease_expires_at = now() + ($16::bigint * interval '1 millisecond') \
+               FROM checkpointed AS p, classified AS c \
+              WHERE q.tenant_id = c.tenant_id AND q.run_id = p.run_id \
+             RETURNING q.run_id \
+         ) \
+         SELECT CASE WHEN r.run_id IS NOT NULL THEN 'completed' ELSE c.result_code END \
+                    AS result_code, c.status AS run_status \
+           FROM classified AS c LEFT JOIN renewed AS r ON true"
+    )
+}
+
+/// Complete an error-routed attempt and renew the exact queue lease.
+///
+/// Params: fence `$1..$4`, node id, occurrence, captured error output,
+/// captured input, error kind/detail, preview, size, hash, capture mode,
+/// redacted, and lease TTL milliseconds.
+pub fn complete_attempt_error_sql() -> String {
+    format!(
+        "{FENCED_PREFIX}, \
+         locked_attempt AS MATERIALIZED ( \
+             SELECT n.* FROM node_runs AS n, authority AS a \
+              WHERE a.result_code = 'ready' \
+                AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
+                AND n.node_id = $5 AND n.occurrence = $6 \
+              FOR UPDATE OF n \
+         ), \
+         classified AS ( \
+             SELECT CASE \
+                      WHEN a.result_code <> 'ready' THEN a.result_code \
+                      WHEN n.run_id IS NULL THEN 'attempt-not-found' \
+                      WHEN n.status IN ('success', 'error') THEN 'already-completed' \
+                      WHEN n.status <> 'started' THEN 'attempt-not-started' \
+                      ELSE 'ready' \
+                    END AS result_code, a.tenant_id, a.run_id, a.status \
+               FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
+         ), \
+         completed_attempt AS ( \
+             UPDATE node_runs AS n \
+                SET status = 'error', output_port = 'error', \
+                    output_json = $7::text::jsonb, input_json = $8::text::jsonb, \
+                    error_kind = $9, error_detail = $10::text::jsonb, \
+                    preview_head = $11, payload_size = $12, payload_hash = $13, \
+                    capture_mode = $14, redacted = $15, ended_at = now() \
+               FROM classified AS c \
+              WHERE c.result_code = 'ready' \
+                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
+                AND n.node_id = $5 AND n.occurrence = $6 \
+             RETURNING n.run_id \
+         ), \
+         renewed AS ( \
+             UPDATE run_queue AS q \
+                SET lease_expires_at = now() + ($16::bigint * interval '1 millisecond') \
+               FROM completed_attempt AS n, classified AS c \
+              WHERE q.tenant_id = c.tenant_id AND q.run_id = n.run_id \
+             RETURNING q.run_id \
+         ) \
+         SELECT CASE WHEN r.run_id IS NOT NULL THEN 'completed' ELSE c.result_code END \
+                    AS result_code, c.status AS run_status \
+           FROM classified AS c LEFT JOIN renewed AS r ON true"
+    )
+}
+
 /// Typed mapping for the admissions ledger's named duplicate identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvocationAdmissionRefusal {
@@ -664,6 +902,49 @@ mod tests {
     }
 
     #[test]
+    fn attempt_intent_precedes_dispatch_and_classifies_recovery() {
+        let sql = begin_attempt_sql();
+        assert!(sql.contains("INSERT INTO node_runs"));
+        assert!(sql.contains("'started', $8, now()"));
+        assert!(sql.contains("attempt_input_ref, attempt_key"));
+        assert!(sql.contains("n.recovery_class = 'never-replay'"));
+        assert!(sql.contains("n.attempt_dispatched_at IS NULL THEN 'prepared'"));
+        assert!(sql.contains("THEN 'effect-uncertain'"));
+        assert!(sql.contains("n.recovery_class = 'idempotent-with-key'"));
+        assert!(sql.contains("THEN 'missing-attempt-key'"));
+        assert!(sql.contains("THEN 'redispatch'"));
+        assert!(
+            sql.find("inserted AS").expect("intent") < sql.find("renewed AS").expect("renewal"),
+            "intent and renewal must share one statement"
+        );
+        assert!(
+            !sql.contains("output_json"),
+            "intent is capture-independent"
+        );
+
+        let dispatched = mark_attempt_dispatched_sql();
+        assert!(dispatched.contains("SET attempt_dispatched_at = now()"));
+        assert!(dispatched.contains("THEN 'already-dispatched'"));
+        assert!(dispatched.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
+    }
+
+    #[test]
+    fn attempt_completion_updates_existing_intent_atomically() {
+        let success = complete_attempt_success_sql();
+        assert!(success.contains("UPDATE node_runs AS n"));
+        assert!(success.contains("SET status = 'success'"));
+        assert!(success.contains("checkpointed AS"));
+        assert!(success.contains("renewed AS"));
+        assert!(!success.contains("INSERT INTO node_runs"));
+
+        let error = complete_attempt_error_sql();
+        assert!(error.contains("SET status = 'error'"));
+        assert!(error.contains("output_port = 'error'"));
+        assert!(error.contains("renewed AS"));
+        assert!(!error.contains("INSERT INTO node_runs"));
+    }
+
+    #[test]
     fn context_checkpoint_is_generation_fenced_and_atomic_with_output() {
         let sql = node_context_checkpoint_sql();
         assert!(sql.starts_with("WITH input AS"));
@@ -709,6 +990,7 @@ mod tests {
             "terminal_reason",
             "recovery_class",
             "attempt_started_at",
+            "attempt_dispatched_at",
             "attempt_deadline_at",
             "attempt_input_ref",
             "attempt_key",

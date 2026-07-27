@@ -264,6 +264,7 @@ CREATE TABLE wamn_run.node_runs (
     recovery_class text
         CHECK (recovery_class IN ('replay', 'idempotent-with-key', 'never-replay')),
     attempt_started_at timestamptz,
+    attempt_dispatched_at timestamptz,
     attempt_deadline_at timestamptz,
     attempt_input_ref text,
     attempt_key text,
@@ -291,6 +292,8 @@ CREATE TABLE wamn_run.node_runs (
             AND attempt_input_ref IS NOT NULL)),
     CHECK (attempt_deadline_at IS NULL OR attempt_started_at IS NULL
            OR attempt_started_at <= attempt_deadline_at),
+    CHECK (attempt_dispatched_at IS NULL OR attempt_started_at IS NULL
+           OR attempt_started_at <= attempt_dispatched_at),
     PRIMARY KEY (tenant_id, run_id, node_id, occurrence),
     FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
 );
