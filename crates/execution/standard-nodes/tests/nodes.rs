@@ -60,7 +60,7 @@ impl NodeCtx for Mock {
     }
 }
 
-fn run<'a>(config: &'a Value) -> RunContext<'a> {
+fn run_with_context<'a>(config: &'a Value, context: &'a Value) -> RunContext<'a> {
     RunContext {
         run_id: "r-1",
         flow_id: "f",
@@ -72,8 +72,12 @@ fn run<'a>(config: &'a Value) -> RunContext<'a> {
         traceparent: None,
         tracestate: None,
         config,
-        context: config,
+        context,
     }
+}
+
+fn run<'a>(config: &'a Value) -> RunContext<'a> {
+    run_with_context(config, config)
 }
 
 /// Dispatch under the default grants (D8 flag OFF).
@@ -88,6 +92,22 @@ fn go(
         granted_for(mock.raw_sql),
         mock,
         &run(config),
+        input,
+    )
+}
+
+fn go_with_context(
+    node_type: &str,
+    mock: &mut Mock,
+    config: &Value,
+    context: &Value,
+    input: &Value,
+) -> Result<wamn_standard_nodes::Emission, NodeError> {
+    dispatch(
+        node_type,
+        granted_for(mock.raw_sql),
+        mock,
+        &run_with_context(config, context),
         input,
     )
 }
@@ -193,6 +213,126 @@ fn transform_missing_path_yields_null_not_an_error() {
     )
     .unwrap();
     assert_eq!(em.payload, Value::Null);
+}
+
+#[test]
+fn context_function_reads_durable_context_without_injecting_it_into_input() {
+    let mut mock = Mock::default();
+    let context = json!({"secret": "durable"});
+    let input = json!({"context": {"secret": "payload"}});
+
+    let from_context = go_with_context(
+        "transform",
+        &mut mock,
+        &json!({"expression": "context().secret"}),
+        &context,
+        &input,
+    )
+    .unwrap();
+    assert_eq!(from_context.payload, json!("durable"));
+
+    let bare_input_field = go_with_context(
+        "transform",
+        &mut mock,
+        &json!({"expression": "context.secret"}),
+        &context,
+        &input,
+    )
+    .unwrap();
+    assert_eq!(
+        bare_input_field.payload,
+        json!("payload"),
+        "ambient context is available only through context()"
+    );
+}
+
+#[test]
+fn context_function_rejects_arguments() {
+    let mut mock = Mock::default();
+    let error = go_with_context(
+        "transform",
+        &mut mock,
+        &json!({"expression": "context(@)"}),
+        &json!({"hold": 1}),
+        &json!({}),
+    )
+    .unwrap_err();
+    assert_eq!(terminal_code(&error), "expression-failed");
+}
+
+/// T-CTX MUTANT WITNESS: replacing `emission.ctx = replacement` with an
+/// implicit merge must fail because the prior `discarded` key is absent.
+#[test]
+fn t_ctx_write_replaces_instead_of_implicitly_merging() {
+    let mut mock = Mock::default();
+    let emission = go_with_context(
+        "transform",
+        &mut mock,
+        &json!({"expression": "@", "ctx": "{kept: value}"}),
+        &json!({"discarded": true}),
+        &json!({"value": 7}),
+    )
+    .unwrap();
+    assert_eq!(emission.ctx, Some(json!({"kept": 7})));
+}
+
+#[test]
+fn t_ctx_merge_is_available_only_when_authored_explicitly() {
+    let mut mock = Mock::default();
+    let emission = go_with_context(
+        "transform",
+        &mut mock,
+        &json!({
+            "expression": "@",
+            "ctx": "merge(context(), {kept: value})"
+        }),
+        &json!({"prior": true}),
+        &json!({"value": 7}),
+    )
+    .unwrap();
+    assert_eq!(emission.ctx, Some(json!({"kept": 7, "prior": true})));
+}
+
+/// T-CTX MUTANT WITNESS: resolving `ctx` against pre-node input would produce
+/// `null`; it must see the transform's completed output.
+#[test]
+fn t_ctx_expression_resolves_against_post_node_output() {
+    let mut mock = Mock::default();
+    let emission = go_with_context(
+        "transform",
+        &mut mock,
+        &json!({
+            "expression": "{derived: source}",
+            "ctx": "{seen: derived}"
+        }),
+        &json!({}),
+        &json!({"source": "node-output"}),
+    )
+    .unwrap();
+    assert_eq!(emission.payload, json!({"derived": "node-output"}));
+    assert_eq!(emission.ctx, Some(json!({"seen": "node-output"})));
+}
+
+#[test]
+fn invalid_context_replacements_are_terminal() {
+    let mut mock = Mock::default();
+    let wrong_config_type = go(
+        "transform",
+        &mut mock,
+        &json!({"expression": "@", "ctx": {"not": "an expression"}}),
+        &json!({}),
+    )
+    .unwrap_err();
+    assert_eq!(terminal_code(&wrong_config_type), "invalid-config");
+
+    let non_document = go(
+        "transform",
+        &mut mock,
+        &json!({"expression": "@", "ctx": "[value]"}),
+        &json!({"value": 7}),
+    )
+    .unwrap_err();
+    assert_eq!(terminal_code(&non_document), "invalid-context");
 }
 
 #[test]
@@ -1017,6 +1157,32 @@ fn raw_sql_binds_jmespath_params_when_granted() {
     assert_eq!(params[0], PgValue::Text("abc".into()));
     assert_eq!(params[1], PgValue::Bool(true));
     assert_eq!(em.payload["rows"], json!([{"n": 1, "qty": "12.50"}]));
+}
+
+#[test]
+fn context_function_is_available_to_parameter_expressions() {
+    let mut mock = Mock {
+        raw_sql: true,
+        ..Mock::default()
+    };
+    mock.pg_results.push_back(Ok(PgRows {
+        columns: vec!["id".into()],
+        rows: vec![vec![PgValue::Text("h-7".into())]],
+    }));
+    let config = json!({
+        "sql": "SELECT $1::text AS id",
+        "params": ["context().hold.id"]
+    });
+    let emission = go_with_context(
+        "postgres-query",
+        &mut mock,
+        &config,
+        &json!({"hold": {"id": "h-7"}}),
+        &json!({"unrelated": true}),
+    )
+    .unwrap();
+    assert_eq!(mock.pg_calls[0].1, vec![PgValue::Text("h-7".into())]);
+    assert_eq!(emission.payload, json!({"rows": [{"id": "h-7"}]}));
 }
 
 #[test]

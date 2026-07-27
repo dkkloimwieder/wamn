@@ -25,7 +25,7 @@ impl Node for Conditional {
         input: &Value,
     ) -> Result<Emission, NodeError> {
         let expr = config_str(run.config, "expression")?;
-        let port = if eval_truthy(expr, input)? {
+        let port = if eval_truthy(expr, input, run.context)? {
             TRUE_PORT
         } else {
             FALSE_PORT

@@ -1,6 +1,7 @@
 //! `{{expression}}` string templating over the input payload — used by
 //! `http-request` (url, header values) and the `postgres` list filters. The
-//! text between `{{` and `}}` is a JMESPath expression; its result is
+//! text between `{{` and `}}` is a JMESPath expression with `context()`;
+//! its result is
 //! stringified: a string verbatim, a number/bool via `to_string` (numbers pass
 //! through `serde_json::Number` — exact), `null` as the empty string, and an
 //! array/object as compact JSON.
@@ -11,7 +12,7 @@ use wamn_node_sdk::{ErrorDetail, NodeError};
 use crate::expr::eval_to_value;
 
 /// Expand every `{{expr}}` span in `template` against `input`.
-pub(crate) fn expand(template: &str, input: &Value) -> Result<String, NodeError> {
+pub(crate) fn expand(template: &str, input: &Value, context: &Value) -> Result<String, NodeError> {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(start) = rest.find("{{") {
@@ -24,7 +25,7 @@ pub(crate) fn expand(template: &str, input: &Value) -> Result<String, NodeError>
             )));
         };
         let expr = after[..end].trim();
-        out.push_str(&stringify(&eval_to_value(expr, input)?));
+        out.push_str(&stringify(&eval_to_value(expr, input, context)?));
         rest = &after[end + 2..];
     }
     out.push_str(rest);

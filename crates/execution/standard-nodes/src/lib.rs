@@ -22,8 +22,8 @@
 //! concerns, not node effects); loops are STRUCTURAL (cycles + `conditional`
 //! express them; dedicated split/merge nodes land with the 5.11 ordering
 //! semantics); `email`/`notify` wait for an email egress capability decision.
-//! Expression power is exactly the JMESPath spec — off the shelf, no language
-//! of our own to maintain.
+//! Expression power is the JMESPath spec plus the single `context()` reader;
+//! standard nodes may attach a whole context replacement with config `ctx`.
 
 mod conditional;
 mod expr;
@@ -146,11 +146,34 @@ pub fn dispatch(
             format!("no standard node type {node_type:?}"),
         )));
     };
+    let replacement_expr = match run.config.get("ctx") {
+        None => None,
+        Some(Value::String(expr)) => Some(expr.as_str()),
+        Some(_) => {
+            return Err(NodeError::Terminal(ErrorDetail::coded(
+                "invalid-config",
+                "standard-node \"ctx\" must be a JMESPath expression string",
+            )));
+        }
+    };
     let declared = node.capabilities();
     policy::check_grants(node_type, declared, granted)?;
     let mut gated = policy::GatedCtx {
         inner: ctx,
         allowed: declared,
     };
-    node.run(&mut gated, run, input)
+    let mut emission = node.run(&mut gated, run, input)?;
+    if let Some(replacement_expr) = replacement_expr {
+        let replacement = expr::eval_to_value(replacement_expr, &emission.payload, run.context)?;
+        if !replacement.is_object() {
+            return Err(NodeError::Terminal(ErrorDetail::coded(
+                "invalid-context",
+                format!(
+                    "standard-node \"ctx\" expression {replacement_expr:?} must yield an object, got {replacement}"
+                ),
+            )));
+        }
+        emission.ctx = Some(replacement);
+    }
+    Ok(emission)
 }

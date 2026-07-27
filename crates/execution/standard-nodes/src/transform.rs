@@ -20,6 +20,6 @@ impl Node for Transform {
         input: &Value,
     ) -> Result<Emission, NodeError> {
         let expr = config_str(run.config, "expression")?;
-        Ok(Emission::main(eval_to_value(expr, input)?))
+        Ok(Emission::main(eval_to_value(expr, input, run.context)?))
     }
 }

@@ -49,7 +49,7 @@ impl Node for HttpRequestNode {
         run: &RunContext<'_>,
         input: &Value,
     ) -> Result<Emission, NodeError> {
-        let mut req = build_request(run.config, input)?;
+        let mut req = build_request(run.config, input, run.context)?;
         // 9.2: forward the active W3C trace context so this request continues
         // the run's trace. The host also stamps outbound `wasi:http` calls, so
         // continuity holds regardless; forwarding here keeps `traceparent`
@@ -74,14 +74,18 @@ impl Node for HttpRequestNode {
 }
 
 /// Build the outbound request from config + input (pure).
-pub(crate) fn build_request(config: &Value, input: &Value) -> Result<HttpRequest, NodeError> {
+pub(crate) fn build_request(
+    config: &Value,
+    input: &Value,
+    context: &Value,
+) -> Result<HttpRequest, NodeError> {
     let url_template = config.get("url").and_then(Value::as_str).ok_or_else(|| {
         NodeError::Terminal(ErrorDetail::coded(
             "invalid-config",
             "http-request config requires a string \"url\"",
         ))
     })?;
-    let url = expand(url_template, input)?;
+    let url = expand(url_template, input, context)?;
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(NodeError::Terminal(ErrorDetail::coded(
             "invalid-config",
@@ -109,12 +113,12 @@ pub(crate) fn build_request(config: &Value, input: &Value) -> Result<HttpRequest
                     format!("http-request header {k:?} must be a string"),
                 ))
             })?;
-            headers.push((k.clone(), expand(raw, input)?));
+            headers.push((k.clone(), expand(raw, input, context)?));
         }
     }
 
     let body = match config.get("body").and_then(Value::as_str) {
-        Some(expr) => match eval_to_value(expr, input)? {
+        Some(expr) => match eval_to_value(expr, input, context)? {
             Value::Null => None,
             v => {
                 if !headers

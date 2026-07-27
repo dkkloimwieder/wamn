@@ -161,21 +161,21 @@ impl Node for PostgresEntity {
         })?;
         let operation = match op {
             "create" => EntityOperation::Create {
-                fields: body_from(config, input)?,
+                fields: body_from(config, input, run.context)?,
             },
             "get" => EntityOperation::Get {
-                id: id_from(config, input)?,
+                id: id_from(config, input, run.context)?,
                 expand: Vec::new(),
             },
             "update" => EntityOperation::Update {
-                id: id_from(config, input)?,
-                fields: body_from(config, input)?,
+                id: id_from(config, input, run.context)?,
+                fields: body_from(config, input, run.context)?,
                 mode: UpdateMode::Merge,
             },
             "delete" => EntityOperation::Delete {
-                id: id_from(config, input)?,
+                id: id_from(config, input, run.context)?,
             },
-            "list" => EntityOperation::List(list_options(config, input)?),
+            "list" => EntityOperation::List(list_options(config, input, run.context)?),
             other => {
                 return Err(NodeError::Terminal(ErrorDetail::coded(
                     "invalid-config",
@@ -248,9 +248,9 @@ pub(crate) fn classify_entity_access(e: EntityAccessError) -> NodeError {
 
 /// The row id for get/update/delete: config `"id"` is a jmespath over the
 /// input (default the input's `id` key). Must resolve to a string.
-fn id_from(config: &Value, input: &Value) -> Result<String, NodeError> {
+fn id_from(config: &Value, input: &Value, context: &Value) -> Result<String, NodeError> {
     let expr = config.get("id").and_then(Value::as_str).unwrap_or("id");
-    match eval_to_value(expr, input)? {
+    match eval_to_value(expr, input, context)? {
         Value::String(s) if !s.is_empty() => Ok(s),
         other => Err(NodeError::InvalidInput(ErrorDetail::coded(
             "missing-id",
@@ -262,9 +262,9 @@ fn id_from(config: &Value, input: &Value) -> Result<String, NodeError> {
 /// The field object for create/update: config `"body"` is a jmespath over the
 /// input (default `@`, the whole input). Managed `id`/`tenant_id` keys are
 /// stripped — the platform owns them (the 3.2 floor injects both).
-fn body_from(config: &Value, input: &Value) -> Result<Value, NodeError> {
+fn body_from(config: &Value, input: &Value, context: &Value) -> Result<Value, NodeError> {
     let expr = config.get("body").and_then(Value::as_str).unwrap_or("@");
-    match eval_to_value(expr, input)? {
+    match eval_to_value(expr, input, context)? {
         Value::Object(mut m) => {
             m.remove("id");
             m.remove("tenant_id");
@@ -278,7 +278,7 @@ fn body_from(config: &Value, input: &Value) -> Result<Value, NodeError> {
 }
 
 /// The list op's query pairs: templated filters + sort/limit/offset.
-fn list_options(config: &Value, input: &Value) -> Result<ListOptions, NodeError> {
+fn list_options(config: &Value, input: &Value, context: &Value) -> Result<ListOptions, NodeError> {
     let mut options = ListOptions::default();
     if let Some(filters) = config.get("filters") {
         let obj = filters.as_object().ok_or_else(|| {
@@ -289,7 +289,7 @@ fn list_options(config: &Value, input: &Value) -> Result<ListOptions, NodeError>
         })?;
         for (field, v) in obj {
             let raw = match v {
-                Value::String(s) => expand(s, input)?,
+                Value::String(s) => expand(s, input, context)?,
                 Value::Number(n) => n.to_string(),
                 Value::Bool(b) => b.to_string(),
                 other => {
@@ -412,7 +412,7 @@ impl Node for PostgresQuery {
                         "postgres-query params must be jmespath strings",
                     ))
                 })?;
-                params.push(value_to_pg(eval_to_value(expr, input)?));
+                params.push(value_to_pg(eval_to_value(expr, input, run.context)?));
             }
         }
 

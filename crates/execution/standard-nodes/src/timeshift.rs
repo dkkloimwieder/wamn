@@ -69,7 +69,7 @@ impl Node for TimeShift {
         // The base is a JMESPath over runtime INPUT: a missing/non-integer value
         // is the input's fault (invalid-input, never retried), matching the
         // postgres node's id/body faults — not a flow-authoring bug.
-        let base_ms = match eval_to_value(base_expr, input)? {
+        let base_ms = match eval_to_value(base_expr, input, run.context)? {
             Value::Number(n) => n.as_i64().ok_or_else(|| {
                 NodeError::InvalidInput(ErrorDetail::coded(
                     "invalid-base",
