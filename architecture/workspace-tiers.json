@@ -3,14 +3,14 @@
   "selection": {
     "mechanism": "named-explicit-selectors",
     "default_members_selected": false,
-    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 38-package developer loop and the three product components explicit without hiding POCs, fixtures, samples, or proof packages from bare workspace commands.",
+    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 39-package developer loop and the three product components explicit without hiding POCs, fixtures, samples, or proof packages from bare workspace commands.",
     "package_classification_source": "architecture/package-roles.json",
     "membership_evidence": "cargo metadata --locked --offline --format-version 1"
   },
   "source_inventory": {
     "root_workspace": {
       "manifest": "Cargo.toml",
-      "package_count": 48
+      "package_count": 49
     },
     "component_workspace": {
       "manifest": "components/Cargo.toml",
@@ -25,6 +25,7 @@
       "root_packages": [
         "wamn-api",
         "wamn-builder",
+        "wamn-catalog",
         "wamn-cdc-reader",
         "wamn-component-policy",
         "wamn-control-provision",
@@ -78,6 +79,7 @@
     },
     "contract_conformance": {
       "root_packages": [
+        "wamn-catalog",
         "wamn-event-reg",
         "wamn-event-wire",
         "wamn-flow",
@@ -98,6 +100,7 @@
       "root_packages": [
         "wamn-api",
         "wamn-builder",
+        "wamn-catalog",
         "wamn-cdc-reader",
         "wamn-cdc1",
         "wamn-component-policy",
@@ -244,7 +247,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "all 48 root workspace members",
+      "selected_packages": "all 49 root workspace members",
       "qualification": "cargo test selects each member's default test targets; use --workspace --all-targets --no-fail-fast for full-CI target coverage"
     },
     {

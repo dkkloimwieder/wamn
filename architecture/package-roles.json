@@ -41,6 +41,15 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-catalog",
+      "manifest_path": "crates/catalog/model/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "catalog",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-cdc-reader",
       "manifest_path": "services/cdc-reader/Cargo.toml",
       "role": "native",

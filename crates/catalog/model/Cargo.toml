@@ -1,0 +1,13 @@
+[package]
+name = "wamn-catalog"
+description = "Canonical immutable catalog identities and definition hashing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+wamn-flow = { workspace = true }
+wamn-node-manifest = { workspace = true }

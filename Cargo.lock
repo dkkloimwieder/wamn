@@ -4177,6 +4177,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-catalog"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "wamn-flow",
+ "wamn-node-manifest",
+]
+
+[[package]]
 name = "wamn-cdc-reader"
 version = "0.1.0"
 dependencies = [
@@ -4528,6 +4539,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tokio",
+ "wamn-catalog",
  "wamn-component-policy",
  "wamn-flow",
  "wamn-flow-invocation",

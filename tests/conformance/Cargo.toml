@@ -19,6 +19,7 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["net", "time", "rt", "macros"] }
 wamn-component-policy = { workspace = true }
+wamn-catalog = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-flow-invocation = { workspace = true }
 wamn-gate-harness = { workspace = true }
