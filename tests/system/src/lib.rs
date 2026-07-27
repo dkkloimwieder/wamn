@@ -8,4 +8,5 @@ pub mod apiproof;
 pub mod credproof;
 pub mod f1proof;
 pub mod ladderproof;
+pub mod pocsuiteproof;
 pub mod traceproof;

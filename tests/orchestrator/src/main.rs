@@ -15,7 +15,9 @@ use wamn_proof_integration::{
     rie2ebench, runnerbench, samplebench, streambench, suiteproof, testhostbench, testkitbench,
     tracebench, wakeproof, walbench,
 };
-use wamn_proof_system::{apiproof, credproof, f1proof, ladderproof, traceproof};
+use wamn_proof_system::{
+    apiproof, credproof, f1proof, ladderproof, pocsuiteproof as callable_flow_schema, traceproof,
+};
 
 // Repository-only fixture and temporary-service commands.
 use wamn_test_infrastructure::{erp_sim, publish_catalog_demo};
@@ -134,6 +136,8 @@ enum Command {
     Dashproof(dashproof::DashproofArgs),
     /// Run the POC-TESTS gate (wamn-3rj): seed the F1/F3/F4 stored suites as catalog data + drive each flow once through its real path, folding the stored assertions (F1 webhook body+DB, F3 virtual-time 48h cutoff, F4 egress spy); --seed-only for the composition gate
     Pocsuiteproof(pocsuiteproof::PocSuiteProofArgs),
+    /// Prove the canonical F0-F4 POC catalog applies from zero atomically and enforces replay keys.
+    CallableFlowSchema(callable_flow_schema::CallableFlowSchemaArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -201,6 +205,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Metricbench(args) => metricbench::run(args).await,
         Command::Dashproof(args) => dashproof::run(args).await,
         Command::Pocsuiteproof(args) => pocsuiteproof::run(args).await,
+        Command::CallableFlowSchema(args) => callable_flow_schema::run(args).await,
     };
 
     shutdown_observability();

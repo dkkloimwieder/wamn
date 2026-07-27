@@ -468,10 +468,6 @@ pub fn seed_dataset_sql(
 /// dispatcher's column==graph equality guard (wi4) holds by construction. The
 /// superuser connection bypasses RLS, hence the explicit tenant predicates.
 ///
-/// A webhook path already served by another ACTIVE flow of the tenant is
-/// rejected before any write (the ingress routes a path to ONE flow — a second
-/// claimant would be silently shadowed); the flows_active_webhook_path unique
-/// index backstops the check under concurrent registration.
 pub async fn register_flow(
     client: &tokio_postgres::Client,
     tenant: &str,
@@ -479,7 +475,10 @@ pub async fn register_flow(
 ) -> anyhow::Result<(String, u32)> {
     let flow =
         wamn_flow::Flow::from_json(graph_json).map_err(|e| anyhow::anyhow!("flow parse: {e}"))?;
-    let issues = flow.issues();
+    // Phase 1 has no custom-node manifest resolver in this legacy registration
+    // path. Built-in interfaces still resolve structurally; custom nodes fail
+    // closed until immutable publication supplies the pinned interface bundle.
+    let issues = flow.issues(&Default::default());
     if issues
         .iter()
         .any(|i| i.severity == wamn_flow::Severity::Error)
@@ -487,29 +486,6 @@ pub async fn register_flow(
         bail!("flow {} does not validate: {issues:?}", flow.flow_id);
     }
     let version = i32::try_from(flow.version).context("flow version")?;
-    if let wamn_flow::Trigger::Webhook {
-        path: Some(path), ..
-    } = &flow.trigger
-    {
-        let holder = client
-            .query_opt(
-                "SELECT flow_id FROM flows \
-                 WHERE tenant_id = $1 AND flow_id <> $2 AND active \
-                   AND graph_json->'trigger'->>'type' = 'webhook' \
-                   AND graph_json->'trigger'->>'path' = $3",
-                &[&tenant, &flow.flow_id, &path],
-            )
-            .await
-            .context("webhook path collision pre-check")?;
-        if let Some(row) = holder {
-            let holder: String = row.get(0);
-            bail!(
-                "webhook path collision: active flow {holder:?} already serves path {path:?} \
-                 for tenant {tenant:?}; deactivate it or change the path before registering {:?}",
-                flow.flow_id
-            );
-        }
-    }
     // Deactivate-prior + insert are ONE transaction: a failed insert (e.g. the
     // collision index catching a racing registration) must roll the deactivate
     // back, never stranding the flow with no active version.

@@ -63,8 +63,12 @@
       "name": "receipt_lines",
       "fields": [
         { "id": "receipt_id", "name": "receipt_id", "type": { "kind": "reference", "entity": "receipts" } },
+        { "id": "line_no", "name": "line_no", "type": { "kind": "int" } },
         { "id": "material_id", "name": "material_id", "type": { "kind": "reference", "entity": "materials" } },
         { "id": "quantity", "name": "quantity", "type": { "kind": "numeric", "precision": 12, "scale": 3, "unit": "kg" } }
+      ],
+      "constraints": [
+        { "kind": "unique", "name": "receipt_lines_receipt_line_uniq", "fields": ["receipt_id", "line_no"] }
       ]
     },
     {
@@ -78,6 +82,9 @@
       ],
       "indexes": [
         { "name": "quality_holds_site_idx", "fields": ["site_id"] }
+      ],
+      "constraints": [
+        { "kind": "unique", "name": "quality_holds_line_uniq", "fields": ["line_id"] }
       ]
     },
     {
@@ -89,12 +96,26 @@
         { "id": "decision", "name": "decision", "type": { "kind": "enum", "variants": ["accept", "reject", "use-as-is"] } },
         { "id": "decided_at", "name": "decided_at", "type": { "kind": "timestamptz" } }
       ]
+    },
+    {
+      "id": "disposition_reviews",
+      "name": "disposition_reviews",
+      "fields": [
+        { "id": "disposition_id", "name": "disposition_id", "type": { "kind": "reference", "entity": "dispositions" } },
+        { "id": "recommendation", "name": "recommendation", "type": { "kind": "enum", "variants": ["accept", "reject", "use-as-is"] } },
+        { "id": "confidence", "name": "confidence", "type": { "kind": "text", "max-len": 32 } },
+        { "id": "matched", "name": "matched", "type": { "kind": "bool" } }
+      ],
+      "constraints": [
+        { "kind": "unique", "name": "disposition_reviews_disposition_uniq", "fields": ["disposition_id"] }
+      ]
     }
   ],
   "relations": [
     { "id": "receipt_lines_rel", "name": "lines", "cardinality": "one-to-many", "from": "receipt_lines", "to": "receipts", "from-field": "receipt_id" },
     { "id": "line_material_rel", "name": "material", "cardinality": "one-to-many", "from": "receipt_lines", "to": "materials", "from-field": "material_id" },
     { "id": "hold_line_rel", "name": "line", "cardinality": "one-to-many", "from": "quality_holds", "to": "receipt_lines", "from-field": "line_id" },
-    { "id": "disposition_hold_rel", "name": "hold", "cardinality": "one-to-many", "from": "dispositions", "to": "quality_holds", "from-field": "hold_id" }
+    { "id": "disposition_hold_rel", "name": "hold", "cardinality": "one-to-many", "from": "dispositions", "to": "quality_holds", "from-field": "hold_id" },
+    { "id": "review_disposition_rel", "name": "disposition", "cardinality": "one-to-many", "from": "disposition_reviews", "to": "dispositions", "from-field": "disposition_id" }
   ]
 }

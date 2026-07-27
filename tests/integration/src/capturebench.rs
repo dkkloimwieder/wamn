@@ -294,7 +294,8 @@ async fn reconstruct_verdict(
         .await
         .context("read completed node_runs")?;
     let node_runs = load_node_runs(&rows, run_id);
-    let plan = Plan::compile(flow).map_err(|e| anyhow::anyhow!("compile: {e}"))?;
+    let plan =
+        Plan::compile(flow, &Default::default()).map_err(|e| anyhow::anyhow!("compile: {e}"))?;
     let run = RunRecord::new(run_id, "cap", 1, json!({ "trig": 1 }));
     Ok(reconstruct(&plan, &run, &node_runs).map(|_| ()))
 }

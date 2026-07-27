@@ -59,7 +59,7 @@ use clap::Args;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
-use wamn_flow::{Flow, Ordering, Trigger};
+use wamn_flow::{EntryKind, Flow, Ordering};
 use wamn_run_state::queue::{
     PartitionPolicy, active_flows_sql, cron_anchor_sql, cron_last_run_sql, enqueue_sql,
     enqueue_with_policy_sql, parked_due_sql, upsert_cron_anchor_sql, write_ahead_triggered_run_sql,
@@ -298,7 +298,7 @@ struct Registry {
 /// Parse the active-flows scan. A flow that fails to parse or validate is
 /// skipped with a warning (a bad flow must not wedge the project).
 fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
-    let mut reg = Registry::default();
+    let reg = Registry::default();
     for row in rows {
         let flow_id: String = row.get("flow_id");
         let version: i32 = row.get("version");
@@ -306,7 +306,7 @@ fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
         let parsed = Flow::from_json(&graph)
             .map_err(|e| e.to_string())
             .and_then(|f| {
-                f.validate()
+                f.validate(&Default::default())
                     .map_err(|issues| format!("{issues:?}"))
                     .map(|_| f)
             });
@@ -329,21 +329,16 @@ fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
                 "dispatcher: flows.flow_id != graph flow-id — flow skipped");
             continue;
         }
-        match &flow.trigger {
-            Trigger::Cron { schedule } => {
-                // Record the ordering (5.11) + head-unavailability policy (D20)
-                // declarations so fire() can stamp the partition key AND its
-                // materialized policy; only flows this service fires (cron)
-                // need them.
-                reg.ordering.insert(flow_id.clone(), flow.ordering.clone());
-                reg.policy
-                    .insert(flow_id.clone(), rq_policy(flow.partition_policy));
-                reg.crons.push((flow_id, version, schedule.clone()));
-            }
-            // Webhook is routed by the API gateway; manual by the editor;
-            // row-event by the materializer (its event registration is the
-            // trigger record — l5i9.16/.17).
-            Trigger::RowEvent { .. } | Trigger::Webhook { .. } | Trigger::Manual => {}
+        if flow
+            .entry_node()
+            .is_some_and(|entry| entry.entry_kind() == Some(EntryKind::Cron))
+        {
+            // Rev18 schedules live on cron attachments, not in graph entry
+            // nodes. The attachment-backed registry lands in CF-CRON; until
+            // then, fail closed instead of inventing a schedule from graph
+            // data or preserving the retired Trigger reader.
+            tracing::warn!(project = %project, %flow_id, version,
+                "dispatcher: cron entry has no attachment resolver — flow skipped");
         }
     }
     reg
@@ -685,16 +680,6 @@ fn partition_policy_for_firing(reg: &Registry, f: &Firing) -> &'static str {
         .copied()
         .unwrap_or_default()
         .as_sql()
-}
-
-/// Bridge the `wamn-flow` policy contract enum to the `wamn-run-state` storage
-/// enum (whose [`PartitionPolicy::as_sql`] owns the single storage literal). The
-/// two are structurally mirrored; this is the one crossing point.
-fn rq_policy(p: wamn_flow::PartitionPolicy) -> PartitionPolicy {
-    match p {
-        wamn_flow::PartitionPolicy::Blocking => PartitionPolicy::Blocking,
-        wamn_flow::PartitionPolicy::Leapfrog => PartitionPolicy::Leapfrog,
-    }
 }
 
 /// Enqueue one won firing's queue row, materializing the D20 policy COHERENTLY

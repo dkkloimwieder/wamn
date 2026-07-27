@@ -325,7 +325,7 @@ fn load_flow(flow_id: &str) -> Option<FlowDeclaration> {
         _ => return None,
     };
     let flow = Flow::from_json(graph).ok()?;
-    flow.validate().ok()?;
+    flow.validate(&Default::default()).ok()?;
     if flow.flow_id != flow_id {
         // The flows-table column and the graph's embedded id must agree (the
         // dispatcher's charset-extension rule); a mismatch holds.

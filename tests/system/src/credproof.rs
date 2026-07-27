@@ -433,7 +433,8 @@ mod tests {
     fn cred_fixture_declares_the_credential_by_name_only() {
         let v: Value = serde_json::from_str(FLOW_JSON).expect("fixture parses");
         let flow = wamn_flow::Flow::from_json(FLOW_JSON).expect("fixture is a wamn-flow");
-        flow.validate().expect("fixture validates");
+        flow.validate(&Default::default())
+            .expect("fixture validates");
         assert_eq!(flow.flow_id.as_str(), FLOW_ID);
         assert_eq!(v["trigger"]["type"], json!("manual"));
 
@@ -482,7 +483,8 @@ mod tests {
     #[test]
     fn deny_fixture_declares_no_egress() {
         let flow = wamn_flow::Flow::from_json(DENY_FLOW_JSON).expect("fixture is a wamn-flow");
-        flow.validate().expect("fixture validates");
+        flow.validate(&Default::default())
+            .expect("fixture validates");
         assert_eq!(flow.flow_id.as_str(), DENY_FLOW_ID);
         assert!(
             flow.allowed_hosts.is_empty(),

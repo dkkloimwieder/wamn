@@ -1393,7 +1393,7 @@ fn execute(
     };
     declare_run_grant(&flow);
     declare_run_egress(&flow);
-    let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
+    let plan = Plan::compile(&flow, &Default::default()).map_err(|e| e.to_string())?;
     let version = plan.version();
 
     // Reconstruct the frontier from what already completed (empty on a fresh run
@@ -1960,7 +1960,7 @@ fn execute_claimed(
 
     declare_run_grant(flow);
     declare_run_egress(flow);
-    let plan = Plan::compile(flow).map_err(|e| e.to_string())?;
+    let plan = Plan::compile(flow, &Default::default()).map_err(|e| e.to_string())?;
     let version = plan.version();
     // wamn-yf3: the run's trace identity, shared by every log record it emits.
     let tp = run_traceparent(run_id);
@@ -2195,7 +2195,7 @@ fn bench_walk(plan: &Plan, mut on_step: impl FnMut(&Dispatch, NodeOutcome, &mut 
 impl Guest for Component {
     fn dispatch_bench(iterations: u32, flow_json: String) -> Result<(u64, Vec<u32>), String> {
         let flow = Flow::from_json(&flow_json).map_err(|e| format!("bench flow: {e}"))?;
-        let plan = Plan::compile(&flow).map_err(|e| e.to_string())?;
+        let plan = Plan::compile(&flow, &Default::default()).map_err(|e| e.to_string())?;
         let iters = iterations.max(1) as usize;
 
         // Warm up (page in, settle the branch predictor) before measuring.

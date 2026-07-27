@@ -41,7 +41,7 @@ use wamn_schema_control::{
 use wamn_schema_model::Catalog;
 
 /// The promoted POC catalog (`deploy/poc/poc-material-receiving.catalog.json`) — the
-/// 8-entity data model, drift-guarded against the wamn-schema-model fixture.
+/// 9-entity data model, drift-guarded against the wamn-schema-model fixture.
 pub const CATALOG_JSON: &str =
     include_str!("../../../deploy/poc/poc-material-receiving.catalog.json");
 /// The POC RLS policy: inspector hold site-scoping + the ERP receipts-insert gate.

@@ -43,7 +43,7 @@ use bindings::wasi::http::types::{
 use bindings::wasi::io::streams::StreamError;
 use serde_json::{Value, json};
 use wamn_f1 as f1;
-use wamn_flow::{Flow, Trigger};
+use wamn_flow::Flow;
 use wamn_run_state::sql as run_sql;
 use wamn_runner::{
     Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionStatus, NodeError,
@@ -66,27 +66,24 @@ bindings::export!(Component with_types_in bindings);
 // ---------------------------------------------------------------------------
 
 fn process(request: &IncomingRequest) -> (u16, Value) {
-    let target = request.path_with_query().unwrap_or_default();
-    let path = target.split('?').next().unwrap_or("").to_string();
-
-    // Route: the active flow whose sync-webhook trigger owns this path. Re-read
-    // per request so activating a new flow version needs no restart.
-    let flows = match load_active_flows() {
-        Ok(f) => f,
-        Err(e) => return (503, error_body("unavailable", &e)),
-    };
-    let Some(flow) = flows.into_iter().find(
-        |f| matches!(&f.trigger, Trigger::Webhook { sync: true, path: Some(p) } if *p == path),
-    ) else {
-        return (
-            404,
-            error_body("not-found", "no active sync-webhook flow on this path"),
-        );
-    };
     if !matches!(request.method(), HttpMethod::Post) {
         return (405, error_body("method-not-allowed", "POST required"));
     }
 
+    // Rev18 routes requests through source attachments, which this legacy POC
+    // ingress cannot resolve. Keep it fail-closed until F1 cuts over to
+    // flow-http; do not infer routing from the graph or revive Trigger.
+    (
+        503,
+        error_body(
+            "unavailable",
+            "request attachment routing requires flow-http",
+        ),
+    )
+}
+
+#[allow(dead_code)]
+fn process_legacy(request: &IncomingRequest, flow: &Flow) -> (u16, Value) {
     // The payload verbatim. A body that is not JSON still gets a run (and its
     // 400): it is carried as a JSON string so the write-ahead row records
     // exactly what arrived.
@@ -94,7 +91,7 @@ fn process(request: &IncomingRequest) -> (u16, Value) {
     let input: Value = serde_json::from_slice(&raw)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&raw).into_owned()));
 
-    let plan = match Plan::compile(&flow) {
+    let plan = match Plan::compile(flow, &Default::default()) {
         Ok(p) => p,
         Err(e) => return (500, error_body("bad-flow", &e.to_string())),
     };
@@ -753,6 +750,7 @@ fn error_body(code: &str, message: &str) -> Value {
 /// another active flow already serves (pre-check + the
 /// flows_active_webhook_path unique index — wamn-i7i), so a collision can only
 /// be pre-index residue; ORDER BY flow_id keeps even that pick deterministic.
+#[allow(dead_code)]
 fn load_active_flows() -> Result<Vec<Flow>, String> {
     let rs = client::query(
         "SELECT graph_json::text FROM flows WHERE active ORDER BY flow_id",

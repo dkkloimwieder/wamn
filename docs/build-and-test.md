@@ -1532,6 +1532,26 @@ docker rm -f lane-828-pg
 # M3 RLS policy dropped from flow-tests.sql → suiteproof RLS zero-rows assert.
 ```
 
+### [CALLABLE-FLOWS-POC / wamn-5wd1.40] from-zero F0–F4 catalog
+
+The promoted material-receiving catalog is the single from-zero data fixture
+for F0–F4. The local tests pin its receipt-line and hold natural keys,
+required `dispositions.decided_at`, and unique `disposition_reviews` key. The
+live Job compiles that same fixture through `wamn-schema-compiler`, injects a
+failure halfway through the ordered DDL in one transaction, verifies zero
+residue, then proves a clean retry is byte-identical and the database rejects
+all named negative cases.
+
+```bash
+# recipe-test: H5-CALLABLE-FLOW-SCHEMA | system | wamn-proof-system | lib | - | pocsuiteproof::tests:: | 4 | tests/system/src/pocsuiteproof.rs canonical F0-F4 schema contract and fault seam
+cargo test --locked -p wamn-proof-system --lib pocsuiteproof::tests::
+
+kubectl -n wamn-system apply -f deploy/gates/callable-flow-schema-job.yaml
+kubectl -n wamn-system wait --for=condition=complete \
+  job/callable-flow-schema --timeout=180s
+kubectl -n wamn-system logs job/callable-flow-schema
+```
+
 ### [POC-TESTS / wamn-3rj] F1/F3/F4 stored suites + drive-and-fold (pocsuiteproof)
 
 Docs: docs/poc-material-receiving.md ("Tests", L37–39). The F1/F3/F4 POC test

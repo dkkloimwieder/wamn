@@ -498,7 +498,8 @@ mod tests {
         assert_eq!(v["flow-id"], json!(flow_id));
         assert_eq!(v["trigger"]["type"], json!("manual"));
         let flow = wamn_flow::Flow::from_json(json).expect("fixture is a wamn-flow");
-        flow.validate().expect("fixture validates");
+        flow.validate(&Default::default())
+            .expect("fixture validates");
         assert_eq!(flow.flow_id.as_str(), flow_id);
         v
     }
