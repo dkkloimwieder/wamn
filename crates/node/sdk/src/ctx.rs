@@ -236,6 +236,26 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    struct Defaults;
+
+    impl NodeCtx for Defaults {
+        fn http(&mut self, _req: &HttpRequest) -> Result<HttpResponse, HttpCapError> {
+            unreachable!("default-policy test performs no effects")
+        }
+
+        fn pg_query(&mut self, _sql: &str, _params: &[PgValue]) -> Result<PgRows, PgCapError> {
+            unreachable!("default-policy test performs no effects")
+        }
+
+        fn pg_execute(&mut self, _sql: &str, _params: &[PgValue]) -> Result<u64, PgCapError> {
+            unreachable!("default-policy test performs no effects")
+        }
+
+        fn catalog_json(&mut self) -> Result<String, PgCapError> {
+            unreachable!("default-policy test performs no effects")
+        }
+    }
+
     fn ctx<'a>(tp: Option<&'a str>, ts: Option<&'a str>, config: &'a Value) -> RunContext<'a> {
         RunContext {
             run_id: "r1",
@@ -259,6 +279,11 @@ mod tests {
         let mut run = ctx(None, None, &config);
         run.context = &context;
         assert_eq!(run.context["hold"]["id"], 7);
+    }
+
+    #[test]
+    fn raw_sql_defaults_off_for_every_context_implementation() {
+        assert!(!Defaults.raw_sql_enabled());
     }
 
     #[test]

@@ -123,6 +123,7 @@ fn publish_args(catalog: std::path::PathBuf, url: &str) -> publish_catalog::Publ
         catalog,
         admin_database_url: Some(url.to_string()),
         tenant: "t1".to_string(),
+        project_config: None,
         schema: "public".to_string(),
         provision: false,
         runstate: false,

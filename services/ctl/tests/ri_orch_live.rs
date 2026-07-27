@@ -125,6 +125,7 @@ fn publish_args(
         catalog,
         admin_database_url: Some(url.to_string()),
         tenant: "t1".to_string(),
+        project_config: None,
         schema: DATA_SCHEMA.to_string(),
         provision,
         runstate: false,

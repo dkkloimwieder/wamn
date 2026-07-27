@@ -99,6 +99,20 @@ export!(Component);
 const FLOW_ID: &str = "poc-receipt";
 /// The S6 delay+http flow.
 const FLOW_ID_S6: &str = "poc-s6";
+/// Database-local project-environment setting that grants the POC's RawSql node.
+///
+/// The explicit tenant predicate is intentional even though the table also has
+/// forced RLS: the configuration lookup must stay scoped if an administrative
+/// host connection ever bypasses RLS. The primary key makes duplicates
+/// impossible in the canonical schema; `LIMIT 2` lets the reader fail closed if
+/// a drifted schema admits them.
+const RAW_SQL_ENABLED_SQL: &str = "SELECT config_value::text \
+    FROM app_system.configurations \
+    WHERE tenant_id = NULLIF(current_setting('app.tenant', true), '') \
+      AND config_key = $1 \
+    ORDER BY tenant_id, config_key \
+    LIMIT 2";
+const RAW_SQL_ENABLED_KEY: &str = "raw_sql_enabled";
 
 // ---------------------------------------------------------------------------
 // SqlValue helpers + error naming
@@ -118,6 +132,28 @@ fn int64(v: i64) -> SqlValue {
 /// `state_json` write used — so the engine's `serde_json::Value` round-trips.
 fn jsonb(v: &Value) -> SqlValue {
     SqlValue::Text(v.to_string())
+}
+
+/// Read the trusted project-environment RawSql grant.
+///
+/// Missing storage, query failures, zero/multiple rows, malformed JSON, and
+/// every JSON value other than the boolean `true` deny the grant. In
+/// particular, node input and node config are not consulted.
+fn raw_sql_enabled() -> bool {
+    let Ok(result) = client::query(RAW_SQL_ENABLED_SQL, &[text(RAW_SQL_ENABLED_KEY)]) else {
+        return false;
+    };
+    raw_sql_enabled_rows(&result.rows)
+}
+
+fn raw_sql_enabled_rows(rows: &[Vec<SqlValue>]) -> bool {
+    let [row] = rows else {
+        return false;
+    };
+    let [SqlValue::Text(value) | SqlValue::Json(value)] = row.as_slice() else {
+        return false;
+    };
+    matches!(serde_json::from_str::<Value>(value), Ok(Value::Bool(true)))
 }
 
 /// A boolean column bind (the 9.6 `redacted` flag).
@@ -1220,8 +1256,10 @@ fn dispatch_node(
             // wamn:node credentials import, so the secret is scoped to the
             // executing node's context structurally (siblings never see it).
             let mut ctx = wamn_node_guest::caps::CapsCtx {
+                raw_sql: wamn_nodes::required_capabilities(node_type)
+                    .is_some_and(|capabilities| capabilities.contains(&sdk::Capability::RawSql))
+                    && raw_sql_enabled(),
                 credential: d.credential.clone(),
-                ..Default::default()
             };
             let granted = wamn_nodes::granted_for(sdk::NodeCtx::raw_sql_enabled(&ctx));
             Ok(NodeAction::Emit(
@@ -2860,5 +2898,30 @@ mod tests {
             ),
             "the production parser must not require the additive schedule field"
         );
+    }
+
+    #[test]
+    fn raw_sql_config_requires_exactly_one_json_true() {
+        assert!(raw_sql_enabled_rows(&[vec![SqlValue::Text("true".into())]]));
+        assert!(raw_sql_enabled_rows(&[vec![SqlValue::Json("true".into())]]));
+
+        for rows in [
+            Vec::new(),
+            vec![
+                vec![SqlValue::Text("true".into())],
+                vec![SqlValue::Text("true".into())],
+            ],
+            vec![vec![SqlValue::Text("false".into())]],
+            vec![vec![SqlValue::Text("\"true\"".into())]],
+            vec![vec![SqlValue::Text("{\"enabled\":true}".into())]],
+            vec![vec![SqlValue::Text("not-json".into())]],
+            vec![vec![SqlValue::Boolean(true)]],
+            vec![vec![]],
+        ] {
+            assert!(
+                !raw_sql_enabled_rows(&rows),
+                "non-canonical config must deny: {rows:?}"
+            );
+        }
     }
 }

@@ -108,8 +108,10 @@ the node with `terminal("capability-denied")` (naming the flag) before it
 runs, and nothing reaches the database. Values still bind as `$n` params (a
 `params` array of JMESPath expressions over the input; strings travel as text
 the server casts per column type — exact decimals stay exact). Enablement for
-real projects is gated on the dedicated user-SQL role (wamn-1nd); the
-flowrunner's facade hard-returns `raw_sql_enabled() = false` until that lands.
+real projects is gated on the dedicated user-SQL role (wamn-1nd). The production
+runner reads only the database-local `app_system.configurations` JSON boolean
+for the current tenant; missing, malformed, duplicate, and non-boolean values
+deny the grant. Only the callable-flow POC fixture seeds `true`.
 
 ## The capability policy table
 

@@ -57,6 +57,12 @@ pub struct PublishCatalogArgs {
     #[arg(long)]
     pub tenant: String,
 
+    /// Optional callable-flow POC project configuration. The accepted shape is
+    /// exactly `{"raw_sql_enabled": <boolean>}`; other environments omit this
+    /// fixture and retain the fail-closed default.
+    #[arg(long)]
+    pub project_config: Option<PathBuf>,
+
     /// Schema the `wamn_catalog` table (and, with `--provision`, the entity
     /// tables) live in; the gateway reaches them via the host-injected
     /// `search_path`.
@@ -106,6 +112,16 @@ pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
     let cat = wamn_schema_model::Catalog::from_json(&catalog_src)
         .map_err(|e| anyhow::anyhow!("catalog parse/validate: {e}"))?;
     let document = cat.to_json();
+    let raw_sql_enabled = args
+        .project_config
+        .as_ref()
+        .map(|path| {
+            let source = std::fs::read_to_string(path)
+                .with_context(|| format!("read project config {}", path.display()))?;
+            parse_raw_sql_config(&source)
+                .with_context(|| format!("parse project config {}", path.display()))
+        })
+        .transpose()?;
 
     let admin_url = args
         .admin_database_url
@@ -116,7 +132,7 @@ pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
         .await
         .context("admin connect")?;
     let conn_task = tokio::spawn(conn);
-    let result = publish(&client, &cat, &args, &document, &schema).await;
+    let result = publish(&client, &cat, &args, &document, &schema, raw_sql_enabled).await;
     drop(client);
     let _ = conn_task.await;
     result?;
@@ -134,6 +150,7 @@ async fn publish(
     args: &PublishCatalogArgs,
     document: &str,
     schema: &BareSchemaName,
+    raw_sql_enabled: Option<bool>,
 ) -> anyhow::Result<()> {
     // D24 (EVT-REG, wamn-rmxa): refuse a publish that would drop an entity still
     // referenced by an event registration — BEFORE any mutation, naming every
@@ -299,6 +316,21 @@ async fn publish(
         println!("applied seed dataset {path} in schema {schema}");
     }
 
+    if let Some(enabled) = raw_sql_enabled {
+        let value = enabled.to_string();
+        client
+            .execute(
+                "INSERT INTO app_system.configurations \
+                   (tenant_id, config_key, config_value) \
+                 VALUES ($1, 'raw_sql_enabled', $2::text::jsonb) \
+                 ON CONFLICT (tenant_id, config_key) DO UPDATE \
+                 SET config_value = EXCLUDED.config_value, updated_at = now()",
+                &[&args.tenant, &value],
+            )
+            .await
+            .context("apply callable-flow POC project config")?;
+    }
+
     publish_release(
         client,
         cat,
@@ -355,6 +387,20 @@ async fn publish(
     }
     .await;
     finish_publication_transaction(client, publication_result).await
+}
+
+fn parse_raw_sql_config(source: &str) -> anyhow::Result<bool> {
+    let value: serde_json::Value = serde_json::from_str(source)?;
+    let object = value
+        .as_object()
+        .context("project config must be a JSON object")?;
+    if object.len() != 1 {
+        anyhow::bail!("project config must contain exactly raw_sql_enabled");
+    }
+    object
+        .get("raw_sql_enabled")
+        .and_then(serde_json::Value::as_bool)
+        .context("raw_sql_enabled must be a JSON boolean")
 }
 
 /// End a manually scoped publication transaction without ever returning a
@@ -1428,6 +1474,7 @@ mod tests {
             catalog: missing,
             admin_database_url: Some("postgresql://invalid.invalid/never".to_string()),
             tenant: "t1".to_string(),
+            project_config: None,
             schema: format!("s{}", "a".repeat(63)),
             provision: true,
             runstate: true,
@@ -1445,6 +1492,20 @@ mod tests {
         );
         assert!(!message.contains("read catalog"), "{message}");
         assert!(!message.contains("admin connect"), "{message}");
+    }
+
+    #[test]
+    fn callable_poc_config_is_exact_and_boolean() {
+        assert!(parse_raw_sql_config(r#"{"raw_sql_enabled":true}"#).unwrap());
+        assert!(!parse_raw_sql_config(r#"{"raw_sql_enabled":false}"#).unwrap());
+        for source in [
+            "{}",
+            r#"{"raw_sql_enabled":"true"}"#,
+            r#"{"raw_sql_enabled":true,"other":false}"#,
+            "not-json",
+        ] {
+            assert!(parse_raw_sql_config(source).is_err(), "{source}");
+        }
     }
 
     #[test]

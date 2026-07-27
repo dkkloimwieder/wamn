@@ -27,6 +27,7 @@ fn publish_args(catalog: &std::path::Path, url: &str, schema: String) -> Publish
         catalog: catalog.to_path_buf(),
         admin_database_url: Some(url.to_string()),
         tenant: "boundary-tenant".to_string(),
+        project_config: None,
         schema,
         provision: true,
         runstate: true,

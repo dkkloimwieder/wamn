@@ -6,6 +6,7 @@ pub mod credprobe;
 pub mod egressbench;
 pub mod flow;
 pub mod invocation;
+pub mod raw_sql;
 pub mod socketguard;
 pub mod testgate;
 

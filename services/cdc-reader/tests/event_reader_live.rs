@@ -776,11 +776,13 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         catalog: catalog_file("cat_v1", DRILL_CAT_V1),
         admin_database_url: Some(admin_url.clone()),
         tenant: TENANT.into(),
+        project_config: None,
         schema: "app".into(),
         provision: false,
         runstate: false,
         seed_dataset: None,
         flow: vec![],
+        exposure: None,
         skip_reconcile_replica_identity: true,
     })
     .await

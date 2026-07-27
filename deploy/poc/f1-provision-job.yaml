@@ -5,6 +5,7 @@
 # Fixtures come from the f1-fixtures ConfigMap:
 #   kubectl -n wamn-system create configmap f1-fixtures \
 #     --from-file=poc-receiving.catalog.json=crates/schema/model/tests/fixtures/poc-receiving.catalog.json \
+#     --from-file=poc-receiving.config.json=deploy/poc/poc-material-receiving.config.json \
 #     --from-file=f1-flow.json=deploy/poc/f1-flow.json \
 #     --from-file=f1-seed.dataset.json=deploy/poc/f1-seed.dataset.json
 apiVersion: batch/v1
@@ -36,6 +37,7 @@ spec:
               "--log-level", "error",
               "publish-catalog",
               "--catalog", "/fixtures/poc-receiving.catalog.json",
+              "--project-config", "/fixtures/poc-receiving.config.json",
               "--tenant", "f1-tenant",
               "--schema", "poc_f1",
               "--provision",
