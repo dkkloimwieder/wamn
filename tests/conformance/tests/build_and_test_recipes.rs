@@ -15,6 +15,7 @@ const REQUIRED_RECIPE_IDS: &[&str] = &[
     "H5-API-FIXTURE",
     "H5-API-PUBLISH",
     "H5-BUILDPROOF",
+    "H5-CATALOG-IDENTITY",
     "H5-CAUSATION",
     "H5-CDCBENCH",
     "H5-COMPONENT-POLICY",
@@ -658,6 +659,34 @@ fn recipe_test_directives_name_real_owners_and_commands() {
             "missing required corrected recipe directive {required}"
         );
     }
+}
+
+#[test]
+fn catalog_identity_recipe_pins_the_real_owner_and_filter() {
+    let root = repository_root();
+    let source = fs::read_to_string(root.join(BUILD_AND_TEST_DOC)).expect("read build recipes");
+    let lines = bash_lines(&source);
+    let commands = logical_commands(&lines);
+    let directives = recipe_directives(&lines);
+    let directive = directives
+        .iter()
+        .find(|directive| directive.id == "H5-CATALOG-IDENTITY")
+        .expect("H5-CATALOG-IDENTITY directive");
+
+    assert_eq!(directive.package, "wamn-proof-conformance");
+    assert_eq!(directive.kind, "lib");
+    assert_eq!(directive.target, "-");
+    assert_eq!(directive.filter, "catalog::tests::");
+    assert_eq!(directive.minimum, 3);
+
+    let command = commands
+        .iter()
+        .find(|command| command.block == directive.block && command.number > directive.number)
+        .expect("H5-CATALOG-IDENTITY command");
+    assert_eq!(
+        command.text,
+        "cargo test --locked -p wamn-proof-conformance --lib catalog::tests::"
+    );
 }
 
 fn temporary_directory(label: &str) -> PathBuf {

@@ -808,7 +808,7 @@ Docs: `docs/FLOW-SPEC.md` §§5.1–5.4 and Phase 2A.
 ```bash
 cargo test --locked -p wamn-catalog -p wamn-flow
 # recipe-test: H5-CATALOG-IDENTITY | conformance | wamn-proof-conformance | lib | - | catalog::tests:: | 3 | tests/conformance/src/catalog.rs canonical artifact/release identity, resolved-source hash refusal, activation/head types
-cargo test --locked -p wamn-proof-conformance --lib catalog
+cargo test --locked -p wamn-proof-conformance --lib catalog::tests::
 cargo clippy --locked -p wamn-catalog --all-targets -- -D warnings
 cargo fmt -p wamn-catalog --check
 ```
