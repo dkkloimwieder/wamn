@@ -3,7 +3,7 @@
   "selection": {
     "mechanism": "named-explicit-selectors",
     "default_members_selected": false,
-    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 39-package developer loop and the three product components explicit without hiding POCs, fixtures, samples, or proof packages from bare workspace commands.",
+    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 39-package developer loop and the four product components explicit without hiding POCs, fixtures, samples, or proof packages from bare workspace commands.",
     "package_classification_source": "architecture/package-roles.json",
     "membership_evidence": "cargo metadata --locked --offline --format-version 1"
   },
@@ -14,7 +14,7 @@
     },
     "component_workspace": {
       "manifest": "components/Cargo.toml",
-      "package_count": 18
+      "package_count": 19
     },
     "non_cargo_inputs": [
       "components/samples/node-ts"
@@ -72,7 +72,8 @@
       "component_packages": [
         "api-gateway",
         "flowrunner",
-        "materializer"
+        "materializer",
+        "time-shift"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Build these explicit component package selectors from components/ with --target wasm32-wasip2. Their root-workspace path dependencies are resolved by Cargo."
@@ -166,6 +167,7 @@
         "poc-webhook-f1",
         "sample-node",
         "sockprobe",
+        "time-shift",
         "trace-relay"
       ],
       "non_cargo_inputs": [
@@ -210,6 +212,7 @@
         "poc-webhook-f1",
         "sample-node",
         "sockprobe",
+        "time-shift",
         "trace-relay"
       ],
       "non_cargo_inputs": [
@@ -233,7 +236,8 @@
       "component_packages": [
         "api-gateway",
         "flowrunner",
-        "materializer"
+        "materializer",
+        "time-shift"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Release membership is the deployable classification, but release admission requires the immutable SR17/SR26 identity join below. Cargo defaults are not release evidence."
@@ -257,7 +261,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "all 18 component workspace members",
+      "selected_packages": "all 19 component workspace members",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     }
   ],

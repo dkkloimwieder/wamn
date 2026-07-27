@@ -2,7 +2,7 @@
 resolver = "2"
 # Product components are grouped by runtime role. Bench fixtures, reference
 # samples, and POC components remain visibly outside those product tiers.
-members = ["ingress/api-gateway", "execution/flowrunner", "execution/materializer", "fixtures/busyloop", "fixtures/cred-probe", "fixtures/flow-driver", "fixtures/hello", "fixtures/logspewer", "fixtures/memhog", "fixtures/pgprobe", "fixtures/sockprobe", "fixtures/trace-relay", "poc/webhook-f1", "samples/disposition-node", "samples/js-sample", "samples/node-rs", "samples/node-cred", "samples/sample-node"]
+members = ["ingress/api-gateway", "execution/flowrunner", "execution/materializer", "nodes/time-shift", "fixtures/busyloop", "fixtures/cred-probe", "fixtures/flow-driver", "fixtures/hello", "fixtures/logspewer", "fixtures/memhog", "fixtures/pgprobe", "fixtures/sockprobe", "fixtures/trace-relay", "poc/webhook-f1", "samples/disposition-node", "samples/js-sample", "samples/node-rs", "samples/node-cred", "samples/sample-node"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,7 @@ edition = "2024"
 serde = "1"
 serde_json = "1"
 wit-bindgen = "0.44"
+chrono = { version = "0.4", default-features = false }
 
 # Guest-owned path identities are independent of the native workspace contract.
 wamn-api = { path = "../crates/data/api", version = "0.1.0" }

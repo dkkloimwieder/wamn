@@ -19,7 +19,7 @@ rev-bump procedure. The rev is pinned in one place:
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
-selection for the current **49 root + 18 component packages**. The selection
+selection for the current **49 root + 19 component packages**. The selection
 uses named explicit selectors and deliberately does not add
 `default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
 sets with live, locked Cargo metadata and `architecture/package-roles.json`.
@@ -29,11 +29,11 @@ The selected package roots are:
 | Tier | Root | Components | Selection |
 |---|---:|---:|---|
 | fast developer/native | 39 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
-| product components | 0 | 3 | `api-gateway`, `flowrunner`, `materializer` |
+| product components | 0 | 4 | `api-gateway`, `flowrunner`, `materializer`, `time-shift` |
 | contract/conformance | 12 | 0 | all 11 contract packages plus `wamn-proof-conformance` |
-| full CI | 49 | 18 | every Cargo member plus the classified non-Cargo `node-ts` sample |
-| deployed-system proof | 16 | 18 | deployable native/proof owners plus every guest proof input and `node-ts` |
-| release | 10 | 3 | every package classified `deployable: true` |
+| full CI | 49 | 19 | every Cargo member plus the classified non-Cargo `node-ts` sample |
+| deployed-system proof | 16 | 19 | deployable native/proof owners plus every guest proof input and `node-ts` |
+| release | 10 | 4 | every package classified `deployable: true` |
 
 Package roots are selection inputs, not hand-maintained dependency closures.
 Cargo resolves their normal, build, and test path dependencies from live
@@ -71,7 +71,7 @@ There are no `default-members` in either virtual workspace. Consequently:
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
   select all 49 root members. Bare `cargo test` uses each package's default
   test targets.
-- From `components/`, the same bare commands select all 18 component members.
+- From `components/`, the same bare commands select all 19 component members.
   The production guest build remains
   `cargo build --workspace --target wasm32-wasip2`.
 - Full CI keeps three package/artifact steps—every root target, every component
@@ -91,7 +91,7 @@ There are no `default-members` in either virtual workspace. Consequently:
 
 ### Release identity
 
-Release membership is the 13 `deployable: true` packages in
+Release membership is the 14 `deployable: true` packages in
 `architecture/package-roles.json`, including the `wamn-gates` proof image.
 Membership is not release admission. SR17 must join source revision and
 `Cargo.lock` digest to exact artifact SHA-256 and OCI manifest digest; SR26
@@ -3001,6 +3001,22 @@ kubectl -n wamn-system logs job/f1proof
 
 docker build --target host -t wamn-host:dev . \
   && docker build --target gates -t wamn-gates:dev .   # fork git dep fetched in the builder stage
+```
+
+### [CF-TIMESHIFT / wamn-5wd1.41] deterministic RFC3339 time-shift component
+
+`time-shift` is a pure, zero-import custom-node component. Its `base` config
+names an RFC3339 string field, `offset-ms` is a checked signed integer, and its
+single output is canonical UTC RFC3339. The named tests pin F3's 48-hour shift,
+timezone normalization, malformed input refusal, and both four-digit-year
+boundaries.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-timeshift-41 \
+  cargo test --locked --manifest-path components/Cargo.toml -p time-shift
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-timeshift-41 \
+  cargo build --locked --manifest-path components/Cargo.toml -p time-shift \
+  --target wasm32-wasip2
 ```
 
 ### [POC-F4] disposition-recorded CDC row-event flow + 429 throttle (wamn-lxk)

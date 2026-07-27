@@ -563,6 +563,15 @@
     },
     {
       "workspace": "components",
+      "name": "time-shift",
+      "manifest_path": "components/nodes/time-shift/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "node",
+      "deployable": true
+    },
+    {
+      "workspace": "components",
       "name": "busyloop",
       "manifest_path": "components/fixtures/busyloop/Cargo.toml",
       "role": "test",

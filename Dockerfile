@@ -56,6 +56,7 @@ COPY components/Cargo.toml components/Cargo.lock ./components/
 COPY components/ingress ./components/ingress
 COPY components/fixtures ./components/fixtures
 COPY components/execution ./components/execution
+COPY components/nodes ./components/nodes
 COPY components/poc ./components/poc
 COPY components/samples ./components/samples
 WORKDIR /build/components
@@ -238,6 +239,7 @@ COPY components/Cargo.toml components/Cargo.lock ./components/
 COPY components/ingress/api-gateway ./components/ingress/api-gateway
 COPY components/fixtures ./components/fixtures
 COPY components/execution ./components/execution
+COPY components/nodes ./components/nodes
 COPY components/poc ./components/poc
 COPY components/samples ./components/samples
 RUN cd components && cargo fetch
