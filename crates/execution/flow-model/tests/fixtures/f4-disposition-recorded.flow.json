@@ -2,18 +2,87 @@
   "schema-version": "0.1",
   "flow-id": "disposition-recorded",
   "version": 1,
-  "name": "F4 disposition-recorded (row-event)",
+  "name": "F4 disposition-recorded",
   "nodes": [
-    { "id": "on-disposition", "type": "event" },
-    { "id": "recommend", "type": "custom", "label": "F2 disposition recommendation", "config": { "endpoint": "http://serve-node:8091" } },
-    { "id": "callback", "type": "http-request", "label": "POST ERP callback", "config": { "method": "POST", "url": "http://erp.example/dispositions", "body": "@", "idempotency-key": true }, "credential": "erp-callback" }
+    { "id": "event", "type": "event" },
+    {
+      "id": "capture",
+      "type": "transform",
+      "config": { "expression": "@", "ctx": "{disposition: new}" }
+    },
+    {
+      "id": "load-hold-context",
+      "type": "postgres-query",
+      "config": { "mode": "query", "statement": "load-hold-context" }
+    },
+    {
+      "id": "shape-input",
+      "type": "transform",
+      "config": {
+        "expression": "{hold: rows[0].hold, history: rows[0].history, decision: context().disposition.decision}"
+      }
+    },
+    {
+      "id": "invoke-recommendation",
+      "type": "invoke-flow",
+      "config": {
+        "flow-id": "disposition-recommendation",
+        "attachment-id": "disposition-recommendation-internal",
+        "actor-mode": "service"
+      }
+    },
+    {
+      "id": "record-comparison",
+      "type": "postgres-query",
+      "config": {
+        "mode": "query",
+        "statement": "record-comparison-returning",
+        "params": ["context().disposition.id"]
+      }
+    },
+    {
+      "id": "shape-callback",
+      "type": "transform",
+      "config": { "expression": "{review: rows[0], disposition: context().disposition}" }
+    },
+    {
+      "id": "notify-erp",
+      "type": "http-request",
+      "credential": "erp-callback",
+      "config": {
+        "method": "POST",
+        "url": "https://erp.example/dispositions",
+        "body": "@"
+      }
+    },
+    {
+      "id": "recommendation-failed",
+      "type": "fail",
+      "config": { "code": "recommendation-failed" }
+    },
+    {
+      "id": "callback-failed",
+      "type": "fail",
+      "config": { "code": "callback-failed" }
+    }
   ],
   "edges": [
-    { "from": "on-disposition", "to": "recommend" },
-    { "from": "recommend", "to": "callback" }
+    { "from": "event", "to": "capture" },
+    { "from": "capture", "to": "load-hold-context" },
+    { "from": "load-hold-context", "to": "shape-input" },
+    { "from": "shape-input", "to": "invoke-recommendation" },
+    { "from": "invoke-recommendation", "to": "record-comparison" },
+    { "from": "invoke-recommendation", "from-port": "error", "to": "recommendation-failed" },
+    { "from": "record-comparison", "to": "shape-callback" },
+    { "from": "shape-callback", "to": "notify-erp" },
+    { "from": "notify-erp", "from-port": "error", "to": "callback-failed" }
   ],
   "credentials": [
-    { "name": "erp-callback", "kind": "api-key", "description": "ERP disposition callback" }
+    {
+      "name": "erp-callback",
+      "kind": "api-key",
+      "description": "ERP disposition callback"
+    }
   ],
-  "allowed-hosts": ["serve-node:8091", "erp.example"]
+  "allowed-hosts": ["erp.example"]
 }

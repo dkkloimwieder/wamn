@@ -41,7 +41,7 @@ pub struct FirePlan {
     pub flow_version: i32,
     /// The audit `trigger_source` (`evt:<stream_seq>` — the trigger-source grammar).
     pub trigger_source: String,
-    /// The persisted run input (causation thread embedded).
+    /// The persisted author-visible event business input.
     pub input_json: String,
     /// The stamped key (`None` = unordered → the global claim).
     pub partition_key: Option<String>,
@@ -52,7 +52,7 @@ pub struct FirePlan {
     /// The numeric stream position
     /// ([`wamn_run_state::queue::enqueue_evt_sql`]'s `$5`, E4).
     pub stream_seq: i64,
-    /// The child causation (also embedded in `input_json`) — for logging.
+    /// The child causation for trusted lineage persistence and logging.
     pub causation: Causation,
 }
 
@@ -351,7 +351,9 @@ mod tests {
         assert_eq!(plan.causation.depth, 0);
         assert_eq!(plan.causation.root, plan.run_id);
         let input: Value = serde_json::from_str(&plan.input_json).unwrap();
-        assert_eq!(input["causation"]["depth"], 0);
+        assert_eq!(input["event"], "insert");
+        assert_eq!(input["new"]["id"], "7");
+        assert!(input.get("causation").is_none());
     }
 
     #[test]
@@ -465,7 +467,12 @@ mod tests {
         let changed = Envelope {
             op: Op::Update,
             old: Some(json!({"status": "draft"}).as_object().unwrap().clone()),
-            new: Some(json!({"tenant_id": "t1", "status": "shipped"}).as_object().unwrap().clone()),
+            new: Some(
+                json!({"tenant_id": "t1", "status": "shipped"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
             entity: Some("receipts".into()),
             table: "receipts".into(),
             lsn: 1,
@@ -504,7 +511,12 @@ mod tests {
         let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
         let full_del = Envelope {
             op: Op::Delete,
-            old: Some(json!({"id": "7", "tenant_id": "t1"}).as_object().unwrap().clone()),
+            old: Some(
+                json!({"id": "7", "tenant_id": "t1"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
             new: None,
             entity: Some("receipts".into()),
             table: "receipts".into(),
@@ -521,7 +533,12 @@ mod tests {
         ));
         // A foreign tenant's FULL delete is a normal skip, never ours to fire.
         let mut foreign = full_del.clone();
-        foreign.old = Some(json!({"id": "7", "tenant_id": "t2"}).as_object().unwrap().clone());
+        foreign.old = Some(
+            json!({"id": "7", "tenant_id": "t2"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
         assert_eq!(
             decide(&reg, &f, None, &foreign, 2, "t1", 16),
             Verdict::Skip(SkipReason::ForeignTenant)
@@ -571,7 +588,7 @@ mod tests {
         let reg_extract = registration(None, Some("new.site"));
         let part = flow(
             Ordering::Partitioned {
-                partition_key: "payload.site".into(),
+                partition_key: "new.site".into(),
             },
             wamn_flow::PartitionPolicy::Blocking,
         );
@@ -579,7 +596,7 @@ mod tests {
         assert_eq!(plan.partition_key.as_deref(), Some("s-9"));
 
         // Partitioned, NO extractor: the flow's own expression over the RUN
-        // INPUT (whose row image is `payload` — dispatcher grammar).
+        // INPUT (whose insert row image is `new` in the §4.3 grammar).
         let plan = fire(decide(&reg, &part, None, &env, 3, "t1", 16));
         assert_eq!(plan.partition_key.as_deref(), Some("s-9"));
 

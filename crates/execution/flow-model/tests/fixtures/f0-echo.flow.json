@@ -1,0 +1,24 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "echo",
+  "version": 1,
+  "name": "F0 echo (pure two-commit fixture)",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "request",
+      "config": {
+        "input-schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object"
+        }
+      }
+    },
+    { "id": "shape", "type": "transform", "config": { "expression": "@" } },
+    { "id": "respond", "type": "respond", "config": { "status": 200 } }
+  ],
+  "edges": [
+    { "from": "request", "to": "shape" },
+    { "from": "shape", "to": "respond" }
+  ]
+}

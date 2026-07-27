@@ -15,16 +15,18 @@
 //! ```
 //! use wamn_run_state::{reconstruct, NodeRunRecord, RunRecord};
 //! use wamn_runner::{ExecutionStatus, Plan};
-//! use wamn_flow::Flow;
+//! use wamn_flow::{Flow, ResolvedInterfaces};
 //! use serde_json::json;
 //!
 //! let flow = Flow::from_json(r#"{
 //!   "schema-version": "0.1", "flow-id": "f", "version": 1,
-//!   "trigger": {"type": "manual"}, "entry": "a",
-//!   "nodes": [{"id": "a", "type": "echo"}, {"id": "b", "type": "echo"}],
+//!   "nodes": [{"id": "a", "type": "cron"}, {"id": "b", "type": "echo"}],
 //!   "edges": [{"from": "a", "to": "b"}]
 //! }"#).unwrap();
-//! let plan = Plan::compile(&flow).unwrap();
+//! let interfaces = ResolvedInterfaces::from([
+//!     ("echo".to_string(), vec!["main".to_string()])
+//! ]);
+//! let plan = Plan::compile(&flow, &interfaces).unwrap();
 //!
 //! // The run was killed after `a` committed: only `a` is persisted.
 //! let run = RunRecord::new("run-1", "f", 1, json!({"n": 1}));

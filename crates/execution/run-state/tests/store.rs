@@ -5,7 +5,7 @@
 //! `WAMN_RUN_STORE_PG_URL` and skips cleanly when unset (mirrors wamn-schema-compiler/rls/seed).
 
 use serde_json::{Value, json};
-use wamn_flow::Flow;
+use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_run_state::{
     FailKind, NodeErrorKind, NodeRunRecord, NodeRunStatus, ReconstructError, RerunError, RunRecord,
     RunStatus, plan_partial_rerun, plan_replay, reconstruct,
@@ -16,12 +16,25 @@ fn flow(json_str: &str) -> Flow {
     Flow::from_json(json_str).expect("fixture flow parses")
 }
 
+fn interfaces() -> ResolvedInterfaces {
+    std::collections::BTreeMap::from([
+        ("conditional".into(), vec!["true".into(), "false".into()]),
+        ("echo".into(), vec!["main".into()]),
+        ("http-call".into(), vec!["main".into()]),
+        ("notify".into(), vec!["main".into()]),
+        ("pg-write".into(), vec!["main".into()]),
+    ])
+}
+
+fn compile(flow: &Flow) -> Plan<'_> {
+    Plan::compile(flow, &interfaces()).expect("fixture flow compiles")
+}
+
 /// A 4-node linear flow a -> b -> c -> d.
 fn linear4() -> Flow {
     flow(
         r#"{"schema-version":"0.1","flow-id":"lin4","version":1,
-            "trigger":{"type":"manual"},"entry":"a",
-            "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"echo"},
+            "nodes":[{"id":"a","type":"cron"},{"id":"b","type":"echo"},
                      {"id":"c","type":"echo"},{"id":"d","type":"echo"}],
             "edges":[{"from":"a","to":"b"},{"from":"b","to":"c"},{"from":"c","to":"d"}]}"#,
     )
@@ -31,11 +44,11 @@ fn linear4() -> Flow {
 fn branchy() -> Flow {
     flow(
         r#"{"schema-version":"0.1","flow-id":"brc","version":1,
-            "trigger":{"type":"manual"},"entry":"cond",
-            "nodes":[{"id":"cond","type":"conditional"},
-                     {"id":"y1","type":"pg-write"},{"id":"y2","type":"respond"},
-                     {"id":"n1","type":"pg-write"},{"id":"n2","type":"respond"}],
-            "edges":[{"from":"cond","from-port":"true","to":"y1"},
+            "nodes":[{"id":"start","type":"cron"},{"id":"cond","type":"conditional"},
+                     {"id":"y1","type":"pg-write"},{"id":"y2","type":"echo"},
+                     {"id":"n1","type":"pg-write"},{"id":"n2","type":"echo"}],
+            "edges":[{"from":"start","to":"cond"},
+                     {"from":"cond","from-port":"true","to":"y1"},
                      {"from":"y1","to":"y2"},
                      {"from":"cond","from-port":"false","to":"n1"},
                      {"from":"n1","to":"n2"}]}"#,
@@ -63,7 +76,7 @@ fn drive_collect(plan: &Plan, st: &mut wamn_runner::ExecutionState) -> Vec<Strin
 #[test]
 fn reconstruct_linear_resumes_at_the_killed_node() {
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     // Killed after b: a and b persisted, c/d not.
     let run = RunRecord::new("r1", "lin4", 1, json!({ "trig": 1 }));
     let node_runs = [
@@ -80,7 +93,7 @@ fn reconstruct_ignores_running_and_parked_rows() {
     // A `running` row (in-flight when killed) and a `parked` row are outstanding,
     // not completed — reconstruction must NOT replay them.
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     let run = RunRecord::new("r1", "lin4", 1, json!({}));
     let node_runs = [
         NodeRunRecord::success("r1", "a", 0, "main", json!({ "at": "a" })),
@@ -102,11 +115,12 @@ fn reconstruct_is_branch_aware_kill_mid_branch_completes_the_right_branch() {
     // cond took "false" and n1 committed, then the run was killed. Reconstruction
     // must place the frontier at n2 (the taken branch) and never touch y1/y2.
     let f = branchy();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     let run = RunRecord::new("r1", "brc", 1, json!({}));
     let node_runs = [
-        NodeRunRecord::success("r1", "cond", 0, "false", json!({ "picked": "false" })),
-        NodeRunRecord::success("r1", "n1", 1, "main", json!({ "wrote": "n" })),
+        NodeRunRecord::success("r1", "start", 0, "main", json!({})),
+        NodeRunRecord::success("r1", "cond", 1, "false", json!({ "picked": "false" })),
+        NodeRunRecord::success("r1", "n1", 2, "main", json!({ "wrote": "n" })),
     ];
     let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
     assert_eq!(drive_collect(&plan, &mut st), ["n2"]); // y1/y2 never run
@@ -118,12 +132,11 @@ fn reconstruct_replays_an_error_routed_node() {
     // output_port is `error` and whose output is the `{"error": …}` payload.
     let f = flow(
         r#"{"schema-version":"0.1","flow-id":"err","version":1,
-            "trigger":{"type":"manual"},"entry":"a",
-            "nodes":[{"id":"a","type":"http-call"},{"id":"h","type":"notify"},
-                     {"id":"ok","type":"respond"}],
+            "nodes":[{"id":"a","type":"cron"},{"id":"h","type":"notify"},
+                     {"id":"ok","type":"echo"}],
             "edges":[{"from":"a","to":"ok"},{"from":"a","from-port":"error","to":"h"}]}"#,
     );
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     let run = RunRecord::new("r1", "err", 1, json!({}));
     let node_runs = [NodeRunRecord {
         status: NodeRunStatus::Error,
@@ -141,8 +154,7 @@ fn reconstruct_replays_an_error_routed_node() {
 fn diamond_e() -> Flow {
     flow(
         r#"{"schema-version":"0.1","flow-id":"dia","version":1,
-            "trigger":{"type":"manual"},"entry":"a",
-            "nodes":[{"id":"a","type":"echo"},{"id":"b","type":"echo"},
+            "nodes":[{"id":"a","type":"cron"},{"id":"b","type":"echo"},
                      {"id":"c","type":"echo"},{"id":"d","type":"echo"},
                      {"id":"e","type":"echo"}],
             "edges":[{"from":"a","to":"b"},{"from":"a","to":"c"},
@@ -171,7 +183,7 @@ fn reconstruct_replays_per_visit_merge_rows() {
     // row (occurrence 0), the second outstanding. Reconstruction replays the
     // per-visit history and re-dispatches ONLY the missing second visit.
     let f = diamond_e();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     let run = RunRecord::new("r1", "dia", 1, json!({}));
     let node_runs = [
         success_at("a", 0, 0),
@@ -194,7 +206,7 @@ fn reconstruct_full_per_visit_history_is_idempotent() {
     // before e's first): resume folds seven rows and completes without
     // re-dispatching anything.
     let f = diamond_e();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     let run = RunRecord::new("r1", "dia", 1, json!({}));
     let node_runs = [
         success_at("a", 0, 0),
@@ -217,7 +229,7 @@ fn reconstruct_detects_legacy_collapsed_merge_history() {
     // second visit where the history says e — a loud Mismatch, never a silent
     // divergence (the damage is pre-existing; the guard makes it detectable).
     let f = diamond_e();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     let run = RunRecord::new("r1", "dia", 1, json!({}));
     let node_runs = [
         success_at("a", 0, 0),
@@ -239,7 +251,7 @@ fn reconstruct_detects_legacy_collapsed_merge_history() {
 #[test]
 fn reconstruct_capture_off_run_is_not_replayable() {
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     let run = RunRecord::new("r1", "lin4", 1, json!({}));
     // A completed success row with no captured output (9.6 capture off).
     let node_runs = [NodeRunRecord {
@@ -253,7 +265,7 @@ fn reconstruct_capture_off_run_is_not_replayable() {
 #[test]
 fn reconstruct_detects_history_drift() {
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     let run = RunRecord::new("r1", "lin4", 1, json!({}));
     // First recorded step names "b", but the flow dispatches "a" first.
     let node_runs = [NodeRunRecord::success("r1", "b", 0, "main", json!({}))];
@@ -271,7 +283,7 @@ fn reconstruct_detects_history_drift() {
 fn reconstruct_sorts_by_seq_not_row_order() {
     // Rows arrive out of order; reconstruction sorts by `seq` before replaying.
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     let run = RunRecord::new("r1", "lin4", 1, json!({}));
     let node_runs = [
         NodeRunRecord::success("r1", "b", 1, "main", json!({ "at": "b" })),
@@ -279,6 +291,17 @@ fn reconstruct_sorts_by_seq_not_row_order() {
     ];
     let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
     assert_eq!(drive_collect(&plan, &mut st), ["c", "d"]);
+}
+
+#[test]
+fn legacy_trigger_and_entry_fixture_fields_have_no_run_state_reader() {
+    let legacy = r#"{"schema-version":"0.1","flow-id":"legacy","version":1,
+        "trigger":{"type":"manual"},"entry":"a",
+        "nodes":[{"id":"a","type":"echo"}]}"#;
+    assert!(
+        Flow::from_json(legacy).is_err(),
+        "run-state fixtures must use typed entry nodes"
+    );
 }
 
 // ---- replay & partial re-run ----------------------------------------------
@@ -322,7 +345,7 @@ fn plan_replay_requires_captured_input() {
 #[test]
 fn partial_rerun_seeds_from_the_failed_nodes_captured_input() {
     let f = linear4();
-    let plan = Plan::compile(&f).unwrap();
+    let plan = compile(&f);
     let orig = RunRecord::new("orig", "lin4", 1, json!({ "trig": 1 }));
     // c failed; its captured input is recorded on the node-run.
     let node_runs = [

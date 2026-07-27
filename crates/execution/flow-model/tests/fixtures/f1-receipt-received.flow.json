@@ -2,10 +2,10 @@
   "schema-version": "0.1",
   "flow-id": "receipt-received",
   "version": 1,
-  "name": "F1 receipt-received (sync webhook, write-ahead)",
+  "name": "F1 receipt-received",
   "nodes": [
     {
-      "id": "in",
+      "id": "request",
       "type": "request",
       "config": {
         "input-schema": {
@@ -38,20 +38,57 @@
         }
       }
     },
-    { "id": "validate", "type": "transform", "label": "validate payload", "config": { "schema": "receipt" } },
-    { "id": "upsert", "type": "postgres-query", "label": "upsert receipt + lines", "config": { "op": "upsert", "transaction": true } },
-    { "id": "evaluate", "type": "evaluate-specs", "label": "evaluate lines vs specs", "config": { "compare": "exact-decimal" } },
-    { "id": "holds", "type": "postgres-query", "label": "create quality_holds", "config": { "op": "insert", "table": "quality_holds" } },
-    { "id": "respond-ok", "type": "respond", "config": { "status": 200 } },
-    { "id": "invalid-input", "type": "fail", "config": { "code": "invalid-input", "status": 400 } }
+    {
+      "id": "normalize-receipt",
+      "type": "custom",
+      "config": { "manifest": "normalize-receipt" }
+    },
+    {
+      "id": "resolve-and-persist",
+      "type": "postgres-query",
+      "config": { "mode": "query", "statement": "resolve-and-persist-returning" }
+    },
+    {
+      "id": "references-valid",
+      "type": "conditional",
+      "config": { "expression": "references_valid" }
+    },
+    {
+      "id": "invalid-reference",
+      "type": "fail",
+      "config": { "code": "invalid-reference", "status": 400 }
+    },
+    {
+      "id": "evaluate-specs",
+      "type": "custom",
+      "config": { "manifest": "evaluate-specs" }
+    },
+    {
+      "id": "create-holds",
+      "type": "postgres-query",
+      "config": { "mode": "query", "statement": "create-holds-returning" }
+    },
+    {
+      "id": "shape-response",
+      "type": "transform",
+      "config": { "expression": "@" }
+    },
+    { "id": "respond", "type": "respond", "config": { "status": 200 } },
+    {
+      "id": "invalid-input",
+      "type": "fail",
+      "config": { "code": "invalid-input", "status": 400 }
+    }
   ],
   "edges": [
-    { "from": "in", "to": "validate" },
-    { "from": "validate", "to": "upsert" },
-    { "from": "validate", "from-port": "error", "to": "invalid-input" },
-    { "from": "upsert", "to": "evaluate" },
-    { "from": "evaluate", "from-port": "out-of-spec", "to": "holds" },
-    { "from": "evaluate", "to": "respond-ok" },
-    { "from": "holds", "to": "respond-ok" }
+    { "from": "request", "to": "normalize-receipt" },
+    { "from": "normalize-receipt", "to": "resolve-and-persist" },
+    { "from": "normalize-receipt", "from-port": "error", "to": "invalid-input" },
+    { "from": "resolve-and-persist", "to": "references-valid" },
+    { "from": "references-valid", "from-port": "false", "to": "invalid-reference" },
+    { "from": "references-valid", "from-port": "true", "to": "evaluate-specs" },
+    { "from": "evaluate-specs", "to": "create-holds" },
+    { "from": "create-holds", "to": "shape-response" },
+    { "from": "shape-response", "to": "respond" }
   ]
 }

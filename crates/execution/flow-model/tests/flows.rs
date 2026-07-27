@@ -11,8 +11,10 @@ use serde_json::json;
 use wamn_flow::{CronInput, EventInput, Flow, ResolvedInterfaces, RowEvent};
 
 const FIXTURES: &[&str] = &[
+    "f0-echo.flow.json",
     "s3-demo.flow.json",
     "f1-receipt-received.flow.json",
+    "f2-disposition-recommendation.flow.json",
     "f3-escalate-stale-holds.flow.json",
     "f4-disposition-recorded.flow.json",
 ];
@@ -36,6 +38,7 @@ fn interfaces() -> ResolvedInterfaces {
         ),
         ("custom".into(), vec!["main".into()]),
         ("http-request".into(), vec!["main".into()]),
+        ("invoke-flow".into(), vec!["main".into()]),
         ("pg-write".into(), vec!["main".into()]),
         ("postgres".into(), vec!["main".into()]),
         ("postgres-query".into(), vec!["main".into()]),
@@ -117,7 +120,7 @@ fn diff_detects_changes() {
     // 1) change a node's config
     v2.nodes
         .iter_mut()
-        .find(|n| n.id == "evaluate")
+        .find(|n| n.id == "evaluate-specs")
         .unwrap()
         .config = serde_json::json!({ "compare": "exact-decimal", "tolerance": true });
     // 2) add a node + edge
@@ -129,7 +132,7 @@ fn diff_detects_changes() {
         credential: None,
     });
     v2.edges.push(wamn_flow::Edge {
-        from: "holds".into(),
+        from: "create-holds".into(),
         from_port: "main".into(),
         to: "audit".into(),
         to_port: None,
@@ -148,7 +151,7 @@ fn diff_detects_changes() {
     assert!(
         d.nodes_changed
             .iter()
-            .any(|c| c.id == "evaluate" && c.config_changed)
+            .any(|c| c.id == "evaluate-specs" && c.config_changed)
     );
     assert!(d.edges_added.iter().any(|e| e.to == "audit"));
     assert!(d.credentials_added.contains(&"audit-sink".to_string()));
@@ -157,27 +160,9 @@ fn diff_detects_changes() {
     assert!(wamn_flow::diff(&v1, &v1).is_empty());
 }
 
-/// F3 `escalate-stale-holds` drains ALL stale holds through a STRUCTURAL cycle,
-/// not a single hold. The design (POC F3, wamn-24i):
-///
-/// - `shift` (time-shift, entry) computes `cutoff = fire-at-ms − 48h` ONCE — the
-///   arithmetic JMESPath lacks. The cutoff is consumed by the `list` filter and
-///   never needs to survive the cycle.
-/// - `list-stale` (postgres list) captures the stale open holds (opened_at <
-///   cutoff) as an in-memory array, oldest first, capped at `limit`.
-/// - the loop `gate → advance → gate` walks that array: `gate` (conditional,
-///   pass-through) tests `length(@) > 0`; on the TRUE port it fans out to
-///   `escalate` (mark head hold escalated) and to `advance` (transform `[1:]`,
-///   the tail) which loops back to `gate`. `escalate → notify` is a DEAD-END
-///   branch — the loop state (the array) lives only on the pass-through /
-///   transform edges, so the destructive `escalate`/`notify`/`list` node
-///   outputs never clobber it. FALSE port ends at `done`.
-///
-/// Practical bound: ~4 dispatches/hold (gate, escalate, advance, notify) under
-/// the engine's 10k per-run dispatch budget, and `list.limit = 500` — so one
-/// nightly run drains up to 500 stale holds; a larger backlog drains across
-/// successive nights (each run escalates the oldest 500). The cycle proves the
-/// engine's per-visit occurrence tracking (R24) on the deployed runner.
+/// F3 keeps the scheduled anchor and selected hold in durable context while it
+/// drains one row at a time. The false port is deliberately unwired: frontier
+/// exhaustion is the callerless flow's successful completion.
 #[test]
 fn f3_escalate_stale_holds_shape() {
     let (_, f) = load("f3-escalate-stale-holds.flow.json");
@@ -185,13 +170,13 @@ fn f3_escalate_stale_holds_shape() {
     assert!(
         f.nodes
             .iter()
-            .any(|node| node.id == "tick" && node.node_type == "cron"),
+            .any(|node| node.id == "cron" && node.node_type == "cron"),
         "F3 has a cron entry"
     );
     assert!(
         f.edges
             .iter()
-            .any(|edge| edge.from == "tick" && edge.to == "shift"),
+            .any(|edge| edge.from == "cron" && edge.to == "cutoff-at-48h"),
         "the cron payload enters the cutoff computation first"
     );
     assert!(
@@ -208,54 +193,39 @@ fn f3_escalate_stale_holds_shape() {
     assert_eq!(
         f.nodes
             .iter()
-            .find(|n| n.id == "notify")
+            .find(|n| n.id == "notify-manager")
             .and_then(|n| n.credential.clone()),
         Some("notify-webhook".to_string()),
         "notify references the declared credential"
     );
 
-    // The STRUCTURAL cycle: advance loops back to the gate (a real cycle, not a
-    // rejected self-loop), and the gate fans out to both escalate and advance
-    // on its TRUE port.
     assert!(
         f.edges
             .iter()
-            .any(|e| e.from == "advance" && e.to == "gate"),
-        "advance closes the cycle back to the gate"
+            .any(|e| e.from == "escalate-head" && e.to == "next-stale-hold"),
+        "escalation loops to the next one-row selection"
     );
-    let true_targets: Vec<&str> = f
-        .edges
-        .iter()
-        .filter(|e| e.from == "gate" && e.from_port == "true")
-        .map(|e| e.to.as_str())
-        .collect();
     assert!(
-        true_targets.contains(&"escalate") && true_targets.contains(&"advance"),
-        "gate.true fans out to escalate AND the loop advance; got {true_targets:?}"
+        !f.edges
+            .iter()
+            .any(|edge| edge.from == "found" && edge.from_port == "false"),
+        "found.false completes naturally"
     );
-
-    // notify is the dead-end of the escalate branch — it carries no loop state.
-    assert!(
-        !f.edges.iter().any(|e| e.from == "notify"),
-        "notify is a dead-end (its output never re-enters the loop)"
-    );
-
-    // The list filter is BOTH predicates: status = open (so disposed/escalated
-    // holds are never re-escalated — mutant ii) AND opened_at < the cutoff (so
-    // fresh holds are left alone). Dropping either is a real escalation bug.
-    let list = f
+    let cutoff = f
         .nodes
         .iter()
-        .find(|n| n.id == "list-stale")
-        .expect("list-stale node");
-    let filters = &list.config["filters"];
+        .find(|node| node.id == "cutoff-at-48h")
+        .expect("cutoff node");
+    assert_eq!(cutoff.config["base"], "scheduled-at");
+    assert_eq!(cutoff.config["ctx"], "@");
+    let mark = f
+        .nodes
+        .iter()
+        .find(|node| node.id == "mark")
+        .expect("mark node");
     assert_eq!(
-        filters["status"], "eq.open",
-        "list must filter status = open"
-    );
-    assert_eq!(
-        filters["opened_at"], "lt.{{cutoff}}",
-        "list must filter opened_at < the computed cutoff"
+        mark.config["ctx"], "merge(context(), {hold: rows[0]})",
+        "mark explicitly preserves the cutoff while storing the selected hold"
     );
 }
 
@@ -304,6 +274,113 @@ fn t0_old_trigger_and_scalar_entry_have_no_reader() {
       "nodes": [{"id": "out", "type": "respond", "config": {"status": 200}}]
     }"#;
     assert!(Flow::from_json(legacy).is_err());
+}
+
+#[test]
+fn t0_f0_through_f4_use_typed_entries_and_no_legacy_definition_fields() {
+    let expected = [
+        ("f0-echo.flow.json", "request"),
+        ("f1-receipt-received.flow.json", "request"),
+        ("f2-disposition-recommendation.flow.json", "request"),
+        ("f3-escalate-stale-holds.flow.json", "cron"),
+        ("f4-disposition-recorded.flow.json", "event"),
+    ];
+    for (name, entry_type) in expected {
+        let (raw, flow) = load(name);
+        let object = serde_json::from_str::<serde_json::Value>(&raw)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
+        assert!(!object.contains_key("trigger"), "{name} has legacy Trigger");
+        assert!(
+            !object.contains_key("entry"),
+            "{name} has legacy Flow::entry"
+        );
+        assert_eq!(
+            flow.entry_node().map(|node| node.node_type.as_str()),
+            Some(entry_type),
+            "{name} has the wrong typed entry"
+        );
+    }
+}
+
+#[test]
+fn t0_event_entry_has_no_attachment_lookup_and_callerless_flows_have_no_response() {
+    let (_, event) = load("f4-disposition-recorded.flow.json");
+    let entry = event.entry_node().expect("F4 event entry");
+    assert!(
+        entry.config.is_null()
+            || entry
+                .config
+                .as_object()
+                .is_some_and(serde_json::Map::is_empty),
+        "event registration resolution stays outside the graph"
+    );
+    for name in [
+        "f3-escalate-stale-holds.flow.json",
+        "f4-disposition-recorded.flow.json",
+    ] {
+        let (_, flow) = load(name);
+        assert!(
+            flow.nodes.iter().all(|node| node.node_type != "respond"),
+            "{name} must complete naturally or fail"
+        );
+    }
+}
+
+#[test]
+fn mutant_event_attachment_lookup_is_rejected_at_the_entry_field_home() {
+    let (_, mut flow) = load("f4-disposition-recorded.flow.json");
+    flow.nodes
+        .iter_mut()
+        .find(|node| node.node_type == "event")
+        .unwrap()
+        .config = json!({"attachment-id": "legacy-event-source"});
+    assert!(
+        flow.issues(&interfaces())
+            .iter()
+            .any(|issue| issue.code == "entry-has-source-config"),
+        "an event entry must not absorb attachment/registration lookup"
+    );
+}
+
+#[test]
+fn mutant_f3_or_f4_terminal_response_is_rejected() {
+    for name in [
+        "f3-escalate-stale-holds.flow.json",
+        "f4-disposition-recorded.flow.json",
+    ] {
+        let (_, mut flow) = load(name);
+        flow.nodes.push(wamn_flow::Node {
+            id: "legacy-response".into(),
+            node_type: "respond".into(),
+            label: None,
+            config: json!({"status": 200}),
+            credential: None,
+        });
+        let from = if name.starts_with("f3") {
+            "found"
+        } else {
+            "notify-erp"
+        };
+        flow.edges.push(wamn_flow::Edge {
+            from: from.into(),
+            from_port: if name.starts_with("f3") {
+                "false".into()
+            } else {
+                "main".into()
+            },
+            to: "legacy-response".into(),
+            to_port: None,
+        });
+        assert!(
+            flow.issues(&interfaces())
+                .iter()
+                .any(|issue| issue.code == "respond-without-request-entry"),
+            "{name} accepted a response node"
+        );
+    }
 }
 
 #[test]

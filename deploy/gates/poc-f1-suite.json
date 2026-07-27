@@ -66,11 +66,11 @@
       }
     },
     {
-      "case-id": "malformed-invalid-input",
+      "case-id": "unknown-supplier-invalid-reference",
       "ordinal": 2,
       "case": {
         "schema-version": "0.1",
-        "name": "malformed-invalid-input",
+        "name": "unknown-supplier-invalid-reference",
         "flow-ref": { "flow-id": "receipt-received", "version": 1 },
         "input": {
           "receipt_no": "r-3003",
@@ -82,7 +82,7 @@
           ]
         },
         "expect": [
-          { "run-outcome": { "status": "completed" } },
+          { "run-outcome": { "status": "failed" } },
           { "db-state": {
               "query": "SELECT result_json FROM runs WHERE input_json->>'receipt_no' = $1",
               "params": ["r-3003"],

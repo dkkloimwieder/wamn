@@ -6,7 +6,7 @@
 //! delivered CDC envelope with its JetStream `stream_seq`, decide — fire a
 //! run, skip, or refuse — and, for a fire, mint everything the enqueue needs:
 //! the deterministic zero-padded run id ([`wamn_run_state::queue::mint_evt_run_id`]),
-//! the run-input envelope (causation embedded, the event-chain thread), the
+//! the author-visible event business input, the child lineage stamp, the
 //! partition key + policy (kq0z-coherent), and the numeric stream position.
 //!
 //! Like `wamn-run-state` / `wamn-runner`, this crate is **pure**: no DB, no
@@ -36,9 +36,8 @@
 //!   flip is NON-RETROACTIVE (only WAL written after it carries the old image).
 //! - **Causation budget** (depth 16, l5i9.1): a child run's depth is
 //!   `parent.depth + 1` (0 for an organic write); over-budget is a distinct,
-//!   alertable refusal. The child causation rides the run input so the
-//!   flow-runner declares it (`wamn:runner/causation`) and the NEXT hop's
-//!   envelopes carry the incremented depth — the event-chain thread.
+//!   alertable refusal. Child causation is separate from the author-visible
+//!   input and belongs to trusted lineage persistence.
 //! - **Ordering** (fqg.20/D20/kq0z): the FLOW's `ordering` declaration is
 //!   authoritative. `partitioned` keys come from the registration's
 //!   `partition-key` extractor over the EVENT context when declared, else the

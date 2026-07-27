@@ -105,7 +105,7 @@ const SEED: u64 = 0x7492_5EED_5EED_7492;
 /// F3 seed anchoring (unix seconds, relative to the virtual epoch — the
 /// load-bearing mechanic, see the module + f3proof docs). The stale holds sit
 /// 49h before the epoch, the fresh one AT the epoch; the flow's `time-shift`
-/// cutoff is `fire-at-ms − 48h`, so the two stale holds fall before the cutoff
+/// cutoff is `scheduled-at − 48h`, so the two stale holds fall before the cutoff
 /// and the fresh one after it.
 const F3_STALE_OPENED_SECS: i64 = EPOCH_SECS as i64 - 49 * 3600;
 const F3_FRESH_OPENED_SECS: i64 = EPOCH_SECS as i64;
@@ -178,47 +178,51 @@ pub struct PocSuiteProofArgs {
 // sibling gates' private `gate_flow_json` visibility).
 // ---------------------------------------------------------------------------
 
-/// The F3 gate flow — the committed `deploy/poc/f3-flow.json` shape (time-shift →
-/// list → gate → {escalate → notify (dead-end), advance → gate}) with the notify
-/// url + allowed-host bound to `echo_host` and the offset as a signed ms.
+/// The F3 gate flow — the committed rev18/r6 one-row drain shape, with its
+/// notification endpoint and 48-hour offset bound for the proof harness.
 fn f3_gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
-    format!(
-        r#"{{
-  "schema-version": "0.1",
-  "flow-id": "{F3_FLOW_ID}",
-  "version": 1,
-  "name": "F3 escalate-stale-holds (pocsuiteproof)",
-  "trigger": {{ "type": "cron", "schedule": "* * * * *" }},
-  "entry": "shift",
-  "nodes": [
-    {{ "id": "shift", "type": "time-shift",
-       "config": {{ "base": "\"fire-at-ms\"", "offset-ms": {offset_ms}, "format": "iso", "key": "cutoff" }} }},
-    {{ "id": "list-stale", "type": "postgres",
-       "config": {{ "entity": "quality_holds", "op": "list",
-                    "filters": {{ "status": "eq.open", "opened_at": "lt.{{{{cutoff}}}}" }},
-                    "sort": "opened_at", "limit": 500 }} }},
-    {{ "id": "gate", "type": "conditional", "config": {{ "expression": "length(@) > `0`" }} }},
-    {{ "id": "escalate", "type": "postgres",
-       "config": {{ "entity": "quality_holds", "op": "update", "id": "[0].id", "body": "{{status: 'escalated'}}" }} }},
-    {{ "id": "notify", "type": "http-request", "credential": "notify-webhook",
-       "config": {{ "method": "POST", "url": "http://{echo_host}/holds",
-                    "body": "{{hold: id, status: status, opened_at: opened_at}}" }} }},
-    {{ "id": "advance", "type": "transform", "config": {{ "expression": "[1:]" }} }},
-    {{ "id": "done", "type": "respond" }}
-  ],
-  "edges": [
-    {{ "from": "shift", "to": "list-stale" }},
-    {{ "from": "list-stale", "to": "gate" }},
-    {{ "from": "gate", "from-port": "true", "to": "escalate" }},
-    {{ "from": "gate", "from-port": "true", "to": "advance" }},
-    {{ "from": "escalate", "to": "notify" }},
-    {{ "from": "advance", "to": "gate" }},
-    {{ "from": "gate", "from-port": "false", "to": "done" }}
-  ],
-  "credentials": [ {{ "name": "notify-webhook", "kind": "api-key" }} ],
-  "allowed-hosts": ["{echo_host}"]
-}}"#
-    )
+    json!({
+        "schema-version": "0.1",
+        "flow-id": F3_FLOW_ID,
+        "version": 1,
+        "name": "F3 escalate-stale-holds (pocsuiteproof)",
+        "nodes": [
+            { "id": "cron", "type": "cron" },
+            { "id": "cutoff-at-48h", "type": "time-shift",
+              "config": { "base": "scheduled-at", "offset-ms": offset_ms,
+                          "format": "iso", "key": "cutoff", "ctx": "@" } },
+            { "id": "next-stale-hold", "type": "postgres-query",
+              "config": { "mode": "query", "statement": "next-stale-hold",
+                          "params": ["context().cutoff"] } },
+            { "id": "found", "type": "conditional",
+              "config": { "expression": "length(rows) > `0`" } },
+            { "id": "mark", "type": "transform",
+              "config": { "expression": "@",
+                          "ctx": "merge(context(), {hold: rows[0]})" } },
+            { "id": "notify-manager", "type": "http-request",
+              "credential": "notify-webhook",
+              "config": { "method": "POST", "url": format!("http://{echo_host}/holds"),
+                          "body": "context().hold" } },
+            { "id": "escalate-head", "type": "postgres-query",
+              "config": { "mode": "execute", "statement": "escalate-head",
+                          "params": ["context().hold.id"] } },
+            { "id": "notification-failed", "type": "fail",
+              "config": { "code": "notification-failed" } }
+        ],
+        "edges": [
+            { "from": "cron", "to": "cutoff-at-48h" },
+            { "from": "cutoff-at-48h", "to": "next-stale-hold" },
+            { "from": "next-stale-hold", "to": "found" },
+            { "from": "found", "from-port": "true", "to": "mark" },
+            { "from": "mark", "to": "notify-manager" },
+            { "from": "notify-manager", "to": "escalate-head" },
+            { "from": "notify-manager", "from-port": "error", "to": "notification-failed" },
+            { "from": "escalate-head", "to": "next-stale-hold" }
+        ],
+        "credentials": [{ "name": "notify-webhook", "kind": "api-key" }],
+        "allowed-hosts": [echo_host]
+    })
+    .to_string()
 }
 
 /// The minimal quality_holds catalog the F3 `postgres` node compiles against.
@@ -264,20 +268,19 @@ fn f3_holds_ddl(schema: &str) -> String {
     )
 }
 
-/// The F4 gate flow — the f4proof runnable shape (row-event insert → shape →
-/// recommend (F2 node hop) → callback (ERP POST, idempotency-key ON)), with both
-/// loopback hops declared egress. NO credential (the sim needs no auth — the
-/// vault is out of this egress-spy proof).
+/// The F4 proof copy uses a typed event entry and the normative event payload.
 fn f4_gate_flow_json(node_port: u16, erp_port: u16) -> String {
     json!({
         "schema-version": "0.1",
         "flow-id": F4_FLOW_ID,
         "version": 1,
         "name": "F4 disposition-recorded (pocsuiteproof)",
-        "trigger": { "type": "row-event", "table": "dispositions", "event": "insert" },
-        "entry": "shape",
         "nodes": [
-            { "id": "shape", "type": "transform", "config": { "expression": "{hold: payload}" } },
+            { "id": "event", "type": "event" },
+            { "id": "capture", "type": "transform",
+              "config": { "expression": "@", "ctx": "{disposition: new}" } },
+            { "id": "shape", "type": "transform",
+              "config": { "expression": "{hold: new}" } },
             { "id": "recommend", "type": "custom", "label": "F2 disposition recommendation",
               "config": { "endpoint": format!("http://127.0.0.1:{node_port}") } },
             { "id": "callback", "type": "http-request", "label": "POST ERP callback",
@@ -285,6 +288,8 @@ fn f4_gate_flow_json(node_port: u16, erp_port: u16) -> String {
                           "body": "@", "idempotency-key": true } }
         ],
         "edges": [
+            { "from": "event", "to": "capture" },
+            { "from": "capture", "to": "shape" },
             { "from": "shape", "to": "recommend" },
             { "from": "recommend", "to": "callback" }
         ],
@@ -880,7 +885,7 @@ async fn drive_f3(
     .await
     .context("register F3 flow")?;
 
-    // The single case's input carries fire-at-ms (the cutoff base).
+    // The single case's input carries scheduled-at (the cutoff base).
     let case = &cases[0];
     let run_id = "pocsuite-f3-0";
     admin
@@ -1345,6 +1350,17 @@ fn is_bare_ident(s: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn fixture_interfaces() -> wamn_flow::ResolvedInterfaces {
+        std::collections::BTreeMap::from([
+            ("conditional".into(), vec!["true".into(), "false".into()]),
+            ("custom".into(), vec!["main".into()]),
+            ("http-request".into(), vec!["main".into()]),
+            ("postgres-query".into(), vec!["main".into()]),
+            ("time-shift".into(), vec!["main".into()]),
+            ("transform".into(), vec!["main".into()]),
+        ])
+    }
+
     /// Every embedded suite is a valid, version-bound `wamn-scenario-catalog` envelope
     /// whose case bodies pass validate-on-write (parse as `wamn_scenario_model::TestCase`)
     /// — a broken fixture fails HERE, at `cargo test`, not only against Postgres.
@@ -1381,8 +1397,8 @@ mod tests {
     }
 
     /// COHERENCE: 3rj's F3 graph copy mirrors the committed `deploy/poc/f3-flow.json`
-    /// — same flow id, cron trigger, the declared credential, the structural
-    /// cycle (advance loops to the gate), and notify as a dead-end. A drift in
+    /// — same flow id, typed cron entry, declared credential, and one-row
+    /// selection cycle. A drift in
     /// either the source fixture or 3rj's copy fails this NAMED test.
     #[test]
     fn f3_graph_copy_mirrors_the_source_fixture() {
@@ -1390,10 +1406,14 @@ mod tests {
         let src = wamn_flow::Flow::from_json(SRC).expect("source F3 flow parses");
         let mine = wamn_flow::Flow::from_json(&f3_gate_flow_json("serve-echo:8091", F3_OFFSET_MS))
             .expect("3rj F3 graph parses");
-        mine.validate().expect("3rj F3 graph validates");
+        mine.validate(&fixture_interfaces())
+            .expect("3rj F3 graph validates");
         assert_eq!(mine.flow_id, src.flow_id);
         assert_eq!(mine.flow_id, F3_FLOW_ID);
-        assert_eq!(mine.entry, src.entry);
+        assert_eq!(
+            mine.entry_node().map(|node| node.node_type.as_str()),
+            src.entry_node().map(|node| node.node_type.as_str())
+        );
         // Same node id → type set.
         let types = |f: &wamn_flow::Flow| {
             let mut v: Vec<(String, String)> = f
@@ -1409,36 +1429,42 @@ mod tests {
         assert!(
             mine.edges
                 .iter()
-                .any(|e| e.from == "advance" && e.to == "gate"),
+                .any(|e| e.from == "escalate-head" && e.to == "next-stale-hold"),
             "the structural cycle must close back to the gate"
         );
         assert!(
-            !mine.edges.iter().any(|e| e.from == "notify"),
-            "notify is a dead-end"
+            mine.nodes.iter().all(|node| node.node_type != "respond"),
+            "F3 has no terminal response"
         );
     }
 
     /// COHERENCE: 3rj's F4 graph copy mirrors the committed design fixture
-    /// `f4-disposition-recorded.flow.json` — same flow id + row-event insert
-    /// trigger on `dispositions`, the callback POSTs `/dispositions` with the
+    /// `f4-disposition-recorded.flow.json` — same flow id + typed event entry;
+    /// the proof callback POSTs `/dispositions` with the
     /// idempotency key ON. (3rj's drive graph adds a `shape` reshape node and
     /// drops the credential — the egress-spy proof keeps the vault out — so the
     /// shared invariants, not byte-equality, are pinned.)
     #[test]
     fn f4_graph_copy_mirrors_the_design_fixture() {
-        use wamn_flow::{RowEvent, Trigger};
         const SRC: &str = include_str!(
             "../../../crates/execution/flow-model/tests/fixtures/f4-disposition-recorded.flow.json"
         );
         let src = wamn_flow::Flow::from_json(SRC).expect("design F4 fixture parses");
         let mine = wamn_flow::Flow::from_json(&f4_gate_flow_json(18191, 18192))
             .expect("3rj F4 graph parses");
-        mine.validate().expect("3rj F4 graph validates");
+        mine.validate(&fixture_interfaces())
+            .expect("3rj F4 graph validates");
         assert_eq!(mine.flow_id, src.flow_id);
         assert_eq!(mine.flow_id, F4_FLOW_ID);
-        assert!(
-            matches!(&mine.trigger, Trigger::RowEvent { table, event: RowEvent::Insert } if table.as_str() == "dispositions"),
-            "F4 is a row-event insert on dispositions"
+        assert_eq!(
+            mine.entry_node().map(|node| node.node_type.as_str()),
+            Some("event"),
+            "F4 has a typed event entry"
+        );
+        assert_eq!(
+            mine.entry_node().map(|node| &node.config),
+            src.entry_node().map(|node| &node.config),
+            "event registration lookup stays out of both graph copies"
         );
         let cb = mine
             .nodes
@@ -1462,14 +1488,17 @@ mod tests {
     }
 
     /// The F3 epoch-anchor arithmetic is coherent: the two stale holds sit BEFORE
-    /// the `fire-at-ms − 48h` cutoff and the fresh hold AFTER it. A broken anchor
+    /// the `scheduled-at − 48h` cutoff and the fresh hold AFTER it. A broken anchor
     /// (a mutant that seeds `now()`-relative or flips the sign) fails here.
     #[test]
     fn f3_epoch_anchor_straddles_the_cutoff() {
         let suite = TestSuite::from_json(F3_SUITE_JSON).unwrap();
         let tc: TestCase = serde_json::from_value(suite.cases[0].case.clone()).unwrap();
-        let fire_at_ms = tc.input["fire-at-ms"].as_i64().expect("fire-at-ms present");
-        let cutoff_secs = (fire_at_ms + F3_OFFSET_MS) / 1000;
+        assert_eq!(
+            tc.input["scheduled-at"], "2023-11-14T22:13:20Z",
+            "the schedule anchor is the normative RFC 3339 input"
+        );
+        let cutoff_secs = EPOCH_SECS as i64 + F3_OFFSET_MS / 1000;
         assert!(
             F3_STALE_OPENED_SECS < cutoff_secs,
             "stale holds ({F3_STALE_OPENED_SECS}) must fall before the cutoff ({cutoff_secs})"
@@ -1482,12 +1511,12 @@ mod tests {
         assert_eq!(F3_OFFSET_MS, -48 * 3600 * 1000);
     }
 
-    /// The F4 stored egress assertion names EXACTLY the F2 node hop (`/run`) + the
-    /// one ERP callback (`/dispositions`) and nothing else — the egress-spy set
+    /// The F4 stored egress assertion names exactly the ERP callback. F2 is an
+    /// `invoke-flow` child/double, not an author-visible HTTP egress call.
     /// (path-keyed so it is port-independent). A mutant that widens or narrows
     /// this set breaks the stored proof.
     #[test]
-    fn f4_egress_spy_names_exactly_the_hop_and_callback() {
+    fn f4_egress_spy_names_exactly_the_callback() {
         use wamn_scenario_model::{EgressAssertion, EgressMatcher};
         let suite = TestSuite::from_json(F4_SUITE_JSON).unwrap();
         let tc: TestCase = serde_json::from_value(suite.cases[0].case.clone()).unwrap();
@@ -1508,14 +1537,47 @@ mod tests {
             .collect();
         assert_eq!(
             paths,
-            ["/run", "/dispositions"]
+            ["/dispositions"]
                 .into_iter()
                 .map(|s| Some(s.to_string()))
                 .collect()
         );
         assert!(
             exactly.iter().all(|m| m.method.as_deref() == Some("POST")),
-            "both expected calls are POSTs"
+            "the expected call is a POST"
+        );
+    }
+
+    #[test]
+    fn stored_cron_and_event_scenarios_use_only_normative_business_inputs() {
+        let f3 = TestSuite::from_json(F3_SUITE_JSON).unwrap();
+        let cron: TestCase = serde_json::from_value(f3.cases[0].case.clone()).unwrap();
+        assert_eq!(
+            cron.input,
+            json!({
+                "scheduled-at": "2023-11-14T22:13:20Z",
+                "fired-at": "2023-11-14T22:13:23Z"
+            })
+        );
+
+        let f4 = TestSuite::from_json(F4_SUITE_JSON).unwrap();
+        let event_case: TestCase = serde_json::from_value(f4.cases[0].case.clone()).unwrap();
+        let event: wamn_flow::EventInput =
+            serde_json::from_value(event_case.input.clone()).expect("normative event input");
+        assert_eq!(event.event, wamn_flow::RowEvent::Insert);
+        assert!(event.old.is_none(), "insert omits old");
+        for legacy in ["trigger", "entity", "table", "seq", "payload", "causation"] {
+            assert!(
+                event_case.input.get(legacy).is_none(),
+                "{legacy} moved into the stored business input"
+            );
+        }
+
+        let mut null_image = event_case.input;
+        null_image["old"] = Value::Null;
+        assert!(
+            serde_json::from_value::<wamn_flow::EventInput>(null_image).is_err(),
+            "old:null must not acquire a second absent-image representation"
         );
     }
 

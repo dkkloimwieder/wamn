@@ -2,23 +2,69 @@
   "schema-version": "0.1",
   "flow-id": "receipt-received",
   "version": 1,
-  "name": "F1 receipt-received (sync webhook, write-ahead)",
-  "trigger": { "type": "webhook", "sync": true, "path": "/receipts" },
-  "entry": "validate",
+  "name": "F1 receipt-received",
   "nodes": [
-    { "id": "validate", "type": "validate-receipt", "label": "validate payload + resolve business keys" },
-    { "id": "upsert", "type": "upsert-receipt", "label": "upsert receipt + lines", "config": { "transaction": true } },
-    { "id": "evaluate", "type": "evaluate-specs", "label": "evaluate lines vs material specs", "config": { "compare": "exact-decimal" } },
-    { "id": "holds", "type": "create-holds", "label": "create quality_holds" },
-    { "id": "respond-ok", "type": "respond", "config": { "status": 200 } },
-    { "id": "respond-bad", "type": "respond", "config": { "status": 400, "error": "invalid-input" } }
+    {
+      "id": "request",
+      "type": "request",
+      "config": {
+        "input-schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "required": ["receipt_no", "supplier", "site", "received_at", "lines"],
+          "properties": {
+            "receipt_no": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "supplier": { "type": "string", "minLength": 1 },
+            "site": { "type": "string", "minLength": 1 },
+            "received_at": { "type": "string", "format": "date-time" },
+            "lines": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "required": ["material", "quantity", "moisture_pct", "weight_kg"],
+                "properties": {
+                  "material": { "type": "string", "minLength": 1 },
+                  "quantity": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" },
+                  "moisture_pct": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" },
+                  "weight_kg": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    { "id": "normalize-receipt", "type": "custom", "config": { "manifest": "normalize-receipt" } },
+    {
+      "id": "resolve-and-persist",
+      "type": "postgres-query",
+      "config": { "mode": "query", "statement": "resolve-and-persist-returning" }
+    },
+    { "id": "references-valid", "type": "conditional", "config": { "expression": "references_valid" } },
+    { "id": "invalid-reference", "type": "fail", "config": { "code": "invalid-reference", "status": 400 } },
+    { "id": "evaluate-specs", "type": "custom", "config": { "manifest": "evaluate-specs" } },
+    {
+      "id": "create-holds",
+      "type": "postgres-query",
+      "config": { "mode": "query", "statement": "create-holds-returning" }
+    },
+    { "id": "shape-response", "type": "transform", "config": { "expression": "@" } },
+    { "id": "respond", "type": "respond", "config": { "status": 200 } },
+    { "id": "invalid-input", "type": "fail", "config": { "code": "invalid-input", "status": 400 } }
   ],
   "edges": [
-    { "from": "validate", "to": "upsert" },
-    { "from": "validate", "from-port": "error", "to": "respond-bad" },
-    { "from": "upsert", "to": "evaluate" },
-    { "from": "evaluate", "from-port": "out-of-spec", "to": "holds" },
-    { "from": "evaluate", "to": "respond-ok" },
-    { "from": "holds", "to": "respond-ok" }
+    { "from": "request", "to": "normalize-receipt" },
+    { "from": "normalize-receipt", "to": "resolve-and-persist" },
+    { "from": "normalize-receipt", "from-port": "error", "to": "invalid-input" },
+    { "from": "resolve-and-persist", "to": "references-valid" },
+    { "from": "references-valid", "from-port": "false", "to": "invalid-reference" },
+    { "from": "references-valid", "from-port": "true", "to": "evaluate-specs" },
+    { "from": "evaluate-specs", "to": "create-holds" },
+    { "from": "create-holds", "to": "shape-response" },
+    { "from": "shape-response", "to": "respond" }
   ]
 }

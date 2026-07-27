@@ -2,68 +2,83 @@
   "schema-version": "0.1",
   "flow-id": "escalate-stale-holds",
   "version": 1,
-  "name": "F3 escalate-stale-holds (nightly cron)",
+  "name": "F3 escalate-stale-holds",
   "nodes": [
-    { "id": "tick", "type": "cron" },
+    { "id": "cron", "type": "cron" },
     {
-      "id": "shift",
+      "id": "cutoff-at-48h",
       "type": "time-shift",
-      "label": "cutoff = fire-at-ms - 48h",
-      "config": { "base": "\"fire-at-ms\"", "offset-ms": -172800000, "format": "iso", "key": "cutoff" }
-    },
-    {
-      "id": "list-stale",
-      "type": "postgres",
-      "label": "open holds older than the cutoff",
       "config": {
-        "entity": "quality_holds",
-        "op": "list",
-        "filters": { "status": "eq.open", "opened_at": "lt.{{cutoff}}" },
-        "sort": "opened_at",
-        "limit": 500
+        "base": "scheduled-at",
+        "offset-ms": -172800000,
+        "format": "iso",
+        "key": "cutoff",
+        "ctx": "@"
       }
     },
     {
-      "id": "gate",
+      "id": "next-stale-hold",
+      "type": "postgres-query",
+      "config": {
+        "mode": "query",
+        "statement": "next-stale-hold",
+        "params": ["context().cutoff"]
+      }
+    },
+    {
+      "id": "found",
       "type": "conditional",
-      "label": "any stale hold left?",
-      "config": { "expression": "length(@) > `0`" }
+      "config": { "expression": "length(rows) > `0`" }
     },
     {
-      "id": "escalate",
-      "type": "postgres",
-      "label": "mark the head hold escalated",
-      "config": { "entity": "quality_holds", "op": "update", "id": "[0].id", "body": "{status: 'escalated'}" }
+      "id": "mark",
+      "type": "transform",
+      "config": {
+        "expression": "@",
+        "ctx": "merge(context(), {hold: rows[0]})"
+      }
     },
     {
-      "id": "notify",
+      "id": "notify-manager",
       "type": "http-request",
-      "label": "notify manager (credentialed webhook)",
+      "credential": "notify-webhook",
       "config": {
         "method": "POST",
         "url": "https://notify.example/holds",
-        "body": "{hold: id, status: status, opened_at: opened_at, message: 'quality hold escalated past 48h'}"
-      },
-      "credential": "notify-webhook"
+        "body": "context().hold"
+      }
     },
     {
-      "id": "advance",
-      "type": "transform",
-      "label": "drop the head, loop on the tail",
-      "config": { "expression": "[1:]" }
+      "id": "escalate-head",
+      "type": "postgres-query",
+      "config": {
+        "mode": "execute",
+        "statement": "escalate-head",
+        "params": ["context().hold.id"]
+      }
+    },
+    {
+      "id": "notification-failed",
+      "type": "fail",
+      "config": { "code": "notification-failed" }
     }
   ],
   "edges": [
-    { "from": "tick", "to": "shift" },
-    { "from": "shift", "to": "list-stale" },
-    { "from": "list-stale", "to": "gate" },
-    { "from": "gate", "from-port": "true", "to": "escalate" },
-    { "from": "gate", "from-port": "true", "to": "advance" },
-    { "from": "escalate", "to": "notify" },
-    { "from": "advance", "to": "gate" }
+    { "from": "cron", "to": "cutoff-at-48h" },
+    { "from": "cutoff-at-48h", "to": "next-stale-hold" },
+    { "from": "next-stale-hold", "to": "found" },
+    { "from": "found", "from-port": "true", "to": "mark" },
+    { "from": "mark", "to": "notify-manager" },
+    { "from": "notify-manager", "to": "escalate-head" },
+    { "from": "notify-manager", "from-port": "error", "to": "notification-failed" },
+    { "from": "escalate-head", "to": "next-stale-hold" }
   ],
   "credentials": [
-    { "name": "notify-webhook", "kind": "api-key", "description": "manager notification endpoint" }
+    {
+      "name": "notify-webhook",
+      "kind": "api-key",
+      "description": "manager notification endpoint"
+    }
   ],
   "allowed-hosts": ["notify.example"]
 }

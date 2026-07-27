@@ -1,77 +1,43 @@
-//! The run-input envelope an evt firing persists (`runs.input_json`, 5.7 —
-//! what a replay re-runs and the flow's trigger node reads).
+//! Synthesis of the business input emitted by an `event` entry.
 //!
-//! Shape (**STATUS: FROZEN 0.1.0**, 2026-07-19, wamn-l5i9.30, like every
-//! event-plane wire shape — additive/clarifying only, pinned by a golden test):
-//! `{"trigger":"event", "entity"?, "table", "event", "seq", "payload",
-//! "old"?, "causation":{run,root,depth}}` — the retired outbox firing's
-//! `{trigger,table,event,seq,payload}` grammar preserved (so a flow reads
-//! `payload.<column>` the same way post-cutover), extended with the stable
-//! entity id, the delete/update old image when present, and the CAUSATION
-//! THREAD: the flow-runner reads `causation` at claim time and declares it on
-//! the `wamn:runner/causation` channel, so this run's own writes carry
-//! `depth = parent + 1` and the chain budget is real.
-//!
-//! `payload` is the row image the op is ABOUT: the new image for
-//! insert/update, the old (key) image for delete. Values are pgoutput text
-//! representation (strings/null) passed through verbatim — exact numerics
-//! survive as strings, the no-float rule holds trivially.
+//! FLOW-SPEC rev18 §4.3 has one current shape:
+//! `{"event": …, "new": …, "old": …}`, with absent images omitted. CDC and
+//! admission metadata do not ride the author-visible payload: entity, table,
+//! sequence, and trigger kind belong to trusted invocation context; causation
+//! belongs to lineage columns.
 
-use serde_json::{Value, json};
 use wamn_event_wire::{Causation, Envelope, Op};
+use wamn_flow::{EventInput, RowEvent};
 
-/// Mint the run input for one firing. `run_id` is the minted evt run id (the
-/// causation stamp's `run`); `child` is the [`crate::child_causation`] result.
-pub fn evt_input_json(envelope: &Envelope, stream_seq: u64, child: &Causation) -> String {
-    let payload: Value = match envelope.op {
-        Op::Insert | Op::Update => envelope
-            .new
-            .clone()
-            .map(Value::Object)
-            .unwrap_or(Value::Null),
-        Op::Delete => envelope
-            .old
-            .clone()
-            .map(Value::Object)
-            .unwrap_or(Value::Null),
-    };
-    let mut input = json!({
-        "trigger": "event",
-        "table": envelope.table,
-        "event": envelope.op.as_str(),
-        "seq": stream_seq,
-        "payload": payload,
-        "causation": {
-            "run": child.run,
-            "root": child.root,
-            "depth": child.depth,
+/// Mint the author-visible business input for one materialized event.
+///
+/// `stream_seq` and `child` remain inputs because the materializer decision
+/// owns them, but their field homes are trusted persistence rather than this
+/// payload. The admission rewrite persists those homes; this synthesizer
+/// deliberately cannot serialize them into the event input.
+pub fn evt_input_json(envelope: &Envelope, _stream_seq: u64, _child: &Causation) -> String {
+    let input = EventInput {
+        event: match envelope.op {
+            Op::Insert => RowEvent::Insert,
+            Op::Update => RowEvent::Update,
+            Op::Delete => RowEvent::Delete,
         },
-    });
-    let obj = input.as_object_mut().expect("object literal");
-    if let Some(entity) = &envelope.entity {
-        obj.insert("entity".into(), Value::String(entity.clone()));
-    }
-    // The UPDATE old image (present only under the l5i9.31 FULL knob today —
-    // DEFAULT emits no update old image) rides along for condition-parity
-    // debugging; deletes already carry old AS the payload.
-    if envelope.op == Op::Update
-        && let Some(old) = &envelope.old
-    {
-        obj.insert("old".into(), Value::Object(old.clone()));
-    }
-    serde_json::to_string(&input).expect("input envelope serializes")
+        new: envelope.new.clone(),
+        old: envelope.old.clone(),
+    };
+    serde_json::to_string(&input).expect("event input serializes")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn envelope(op: Op, old: Option<Value>, new: Option<Value>) -> Envelope {
         Envelope {
             op,
-            old: old.map(|v| v.as_object().unwrap().clone()),
-            new: new.map(|v| v.as_object().unwrap().clone()),
+            old: old.map(|value| value.as_object().unwrap().clone()),
+            new: new.map(|value| value.as_object().unwrap().clone()),
             entity: Some("receipts".into()),
             table: "receipts_v2".into(),
             lsn: 42,
@@ -83,78 +49,68 @@ mod tests {
         }
     }
 
-    #[test]
-    fn frozen_run_input_shape_is_the_evt_grammar() {
-        // The freeze golden (wamn-l5i9.30): the exact run-input field set +
-        // spellings a replay re-runs. A field rename/removal breaks THIS string.
-        let env = envelope(Op::Insert, None, Some(json!({"id": "7"})));
-        let child = Causation {
+    fn child() -> Causation {
+        Causation {
             run: "f1:evt:00000000000000000009".into(),
             root: "f1:evt:00000000000000000009".into(),
             depth: 0,
-        };
+        }
+    }
+
+    #[test]
+    fn current_event_input_golden_pins_every_business_field_home() {
+        let event = envelope(Op::Insert, None, Some(json!({"id": "7", "qty": "12.3400"})));
         assert_eq!(
-            evt_input_json(&env, 9, &child),
-            r#"{"causation":{"depth":0,"root":"f1:evt:00000000000000000009","run":"f1:evt:00000000000000000009"},"entity":"receipts","event":"insert","payload":{"id":"7"},"seq":9,"table":"receipts_v2","trigger":"event"}"#
+            evt_input_json(&event, 9, &child()),
+            r#"{"event":"insert","new":{"id":"7","qty":"12.3400"}}"#
         );
     }
 
     #[test]
-    fn insert_input_is_the_row_event_grammar_plus_entity_and_causation() {
-        let env = envelope(
-            Op::Insert,
-            None,
-            Some(json!({"id": "7", "qty": "12.3400", "tenant_id": "t1"})),
+    fn update_carries_new_and_old_under_their_normative_names() {
+        let event = envelope(
+            Op::Update,
+            Some(json!({"id": "7", "status": "draft"})),
+            Some(json!({"id": "7", "status": "shipped"})),
         );
-        let child = Causation {
-            run: "f1:evt:00000000000000000009".into(),
-            root: "f1:evt:00000000000000000009".into(),
-            depth: 0,
-        };
-        let input: Value = serde_json::from_str(&evt_input_json(&env, 9, &child)).unwrap();
-        assert_eq!(input["trigger"], "event");
-        assert_eq!(input["table"], "receipts_v2");
-        assert_eq!(input["entity"], "receipts");
-        assert_eq!(input["event"], "insert");
-        assert_eq!(input["seq"], 9);
-        // The row image is `payload` — the row-event grammar a flow already reads.
-        assert_eq!(input["payload"]["qty"], "12.3400");
-        // The causation thread the flow-runner declares at claim time.
-        assert_eq!(input["causation"]["depth"], 0);
-        assert_eq!(input["causation"]["run"], "f1:evt:00000000000000000009");
-        assert!(input.get("old").is_none());
+        let input: Value = serde_json::from_str(&evt_input_json(&event, 11, &child())).unwrap();
+        assert_eq!(
+            input,
+            json!({
+                "event": "update",
+                "new": {"id": "7", "status": "shipped"},
+                "old": {"id": "7", "status": "draft"}
+            })
+        );
     }
 
     #[test]
-    fn delete_input_carries_the_old_key_image_as_payload() {
-        let env = envelope(Op::Delete, Some(json!({"id": "7"})), None);
-        let child = Causation {
-            run: "r".into(),
-            root: "root".into(),
-            depth: 3,
-        };
-        let input: Value = serde_json::from_str(&evt_input_json(&env, 11, &child)).unwrap();
-        assert_eq!(input["event"], "delete");
-        assert_eq!(input["payload"]["id"], "7");
-        assert_eq!(input["causation"]["root"], "root");
-        assert_eq!(input["causation"]["depth"], 3);
+    fn delete_omits_new_and_keeps_old_as_old_not_payload() {
+        let event = envelope(Op::Delete, Some(json!({"id": "7"})), None);
+        assert_eq!(
+            evt_input_json(&event, 11, &child()),
+            r#"{"event":"delete","old":{"id":"7"}}"#
+        );
     }
 
     #[test]
-    fn unmapped_envelope_omits_entity() {
-        let mut env = envelope(Op::Insert, None, Some(json!({"id": "1"})));
-        env.entity = None;
-        let input: Value = serde_json::from_str(&evt_input_json(
-            &env,
-            1,
-            &Causation {
-                run: "r".into(),
-                root: "r".into(),
-                depth: 0,
-            },
-        ))
-        .unwrap();
-        assert!(input.get("entity").is_none());
-        assert_eq!(input["table"], "receipts_v2");
+    fn absent_images_are_omitted_and_legacy_metadata_never_leaks_into_input() {
+        let event = envelope(Op::Insert, None, Some(json!({"id": "7"})));
+        let input: Value = serde_json::from_str(&evt_input_json(&event, 9, &child())).unwrap();
+        for absent in [
+            "old",
+            "trigger",
+            "entity",
+            "table",
+            "seq",
+            "payload",
+            "causation",
+        ] {
+            assert!(
+                input.get(absent).is_none(),
+                "{absent} moved into the business input"
+            );
+        }
+        assert_ne!(input.get("old"), Some(&Value::Null));
     }
 }

@@ -145,13 +145,12 @@ fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
         .map_err(|e| anyhow::anyhow!("rie2ebench catalog parse: {e}"))
 }
 
-/// The delete-subscribed flow (manual trigger, one noop node — the materializer
-/// fires on the REGISTRATION match, not the flow trigger; matbench proves it).
+/// The delete-subscribed flow (one typed event entry — the materializer fires on
+/// the REGISTRATION match; matbench proves it).
 fn flow_json() -> String {
     serde_json::json!({
         "schema-version": "0.1", "flow-id": FLOW_ID, "version": 1,
-        "trigger": {"type": "manual"},
-        "entry": "n1", "nodes": [{"id": "n1", "type": "noop"}],
+        "nodes": [{"id": "event", "type": "event"}],
     })
     .to_string()
 }
@@ -829,7 +828,12 @@ mod tests {
         );
 
         let flow = wamn_flow::Flow::from_json(&flow_json()).expect("flow fixture parses");
-        flow.validate().expect("flow fixture validates");
+        flow.validate(&Default::default())
+            .expect("flow fixture validates");
+        assert_eq!(
+            flow.entry_node().map(|node| node.node_type.as_str()),
+            Some("event")
+        );
     }
 
     /// The catalog compiles and names exactly the one entity → table the gate

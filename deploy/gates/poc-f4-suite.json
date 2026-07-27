@@ -3,7 +3,7 @@
   "flow-id": "disposition-recorded",
   "flow-version": 1,
   "suite-id": "poc-f4-suite",
-  "name": "POC-F4 disposition-recorded egress spy (exactly one ERP callback, nothing else)",
+  "name": "POC-F4 disposition-recorded event input and ERP callback",
   "cases": [
     {
       "case-id": "exactly-one-erp-callback",
@@ -12,11 +12,19 @@
         "schema-version": "0.1",
         "name": "exactly-one-erp-callback",
         "flow-ref": { "flow-id": "disposition-recorded", "version": 1 },
-        "input": { "payload": { "material": "resin-A", "moisture_pct": "12.00", "moisture_max_pct": "5.00" } },
+        "input": {
+          "event": "insert",
+          "new": {
+            "id": "00000000-0000-0000-0000-000000000401",
+            "hold_id": "00000000-0000-0000-0000-000000000301",
+            "decision": "accept",
+            "inspector_id": "inspector-7",
+            "decided_at": "2026-07-26T14:03:22Z"
+          }
+        },
         "expect": [
           { "run-outcome": { "status": "completed" } },
           { "egress": { "flow": "disposition-recorded", "calls": { "exactly-these": [
-              { "method": "POST", "path": "/run" },
               { "method": "POST", "path": "/dispositions" }
           ] } } },
           { "egress": { "flow": "disposition-recorded", "calls": "none-denied" } }

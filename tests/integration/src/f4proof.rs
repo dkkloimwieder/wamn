@@ -170,8 +170,8 @@ fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
         .map_err(|e| anyhow::anyhow!("f4proof catalog parse: {e}"))
 }
 
-/// The runnable F4 flow (f3proof programmatic-JSON pattern): row-event trigger,
-/// `shape` reshapes the event payload to the F2 node's `{hold: …}` contract,
+/// The runnable F4 flow (f3proof programmatic-JSON pattern): typed event entry,
+/// `shape` reshapes the new row to the F2 node's `{hold: …}` contract,
 /// `recommend` invokes the F2 node over the serve-node hop, and `callback` POSTs
 /// the recommendation to the ERP sim with `idempotency-key: true`. NO credential
 /// on the callback (the sim needs no auth — the vault is out of the throttle
@@ -182,10 +182,9 @@ fn gate_flow_json(node_port: u16, erp_port: u16) -> String {
         "flow-id": FLOW_ID,
         "version": 1,
         "name": "F4 disposition-recorded (gate)",
-        "trigger": { "type": "row-event", "table": TABLE, "event": "insert" },
-        "entry": "shape",
         "nodes": [
-            { "id": "shape", "type": "transform", "config": { "expression": "{hold: payload}" } },
+            { "id": "event", "type": "event" },
+            { "id": "shape", "type": "transform", "config": { "expression": "{hold: new}" } },
             { "id": "recommend", "type": "custom", "label": "F2 disposition recommendation",
               "config": { "endpoint": format!("http://127.0.0.1:{node_port}") } },
             { "id": "callback", "type": "http-request", "label": "POST ERP callback",
@@ -193,6 +192,7 @@ fn gate_flow_json(node_port: u16, erp_port: u16) -> String {
                           "body": "@", "idempotency-key": true } }
         ],
         "edges": [
+            { "from": "event", "to": "shape" },
             { "from": "shape", "to": "recommend" },
             { "from": "recommend", "to": "callback" }
         ],
@@ -1115,16 +1115,25 @@ mod tests {
     /// malformed builder fails here at `cargo test`, before any live infra.
     #[test]
     fn gate_flow_is_a_valid_f4_flow() {
-        use wamn_flow::{RowEvent, Trigger};
         let json = gate_flow_json(8191, 8192);
         let flow = wamn_flow::Flow::from_json(&json).expect("gate flow parses");
-        flow.validate().expect("gate flow validates");
+        let interfaces = std::collections::BTreeMap::from([
+            ("custom".into(), vec!["main".into()]),
+            ("http-request".into(), vec!["main".into()]),
+            ("transform".into(), vec!["main".into()]),
+        ]);
+        flow.validate(&interfaces).expect("gate flow validates");
         assert_eq!(flow.flow_id, FLOW_ID);
-        assert!(
-            matches!(flow.trigger, Trigger::RowEvent { ref table, event: RowEvent::Insert } if table == TABLE),
-            "F4 is a row-event insert trigger on dispositions"
+        assert_eq!(
+            flow.entry_node().map(|node| node.node_type.as_str()),
+            Some("event"),
+            "F4 uses a typed event entry"
         );
-        assert_eq!(flow.entry, "shape");
+        assert!(
+            flow.entry_node()
+                .is_some_and(|node| node.config.is_null() || node.config == serde_json::json!({})),
+            "event registration lookup stays outside the graph"
+        );
         // The callback opts into the idempotency header (the exactly-once belt).
         let cb = flow
             .nodes

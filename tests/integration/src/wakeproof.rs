@@ -78,24 +78,21 @@ pub struct WakeProofArgs {
     pub flow_id: String,
 }
 
-/// The seeded cron flow: `webhook-in -> respond` (ladderproof rung 1's proven
-/// completable graph) under an every-second cron trigger. The dispatcher fires
-/// it; the woken runner drives it to `completed`. Built in code (no fixture) —
+/// The seeded cron flow: a typed `cron -> transform` completable graph. The
+/// dispatcher fires it; the woken runner drives it to `completed`. Built in code —
 /// the run result is not asserted, only that a cron-fired run completes.
-fn cron_flow_json(flow_id: &str, schedule: &str) -> String {
+fn cron_flow_json(flow_id: &str, _schedule: &str) -> String {
     serde_json::json!({
         "schema-version": "0.1",
         "flow-id": flow_id,
         "version": 1,
         "name": "wakeproof scale-to-zero cron",
-        "trigger": { "type": "cron", "schedule": schedule },
-        "entry": "in",
         "nodes": [
-            { "id": "in", "type": "webhook-in" },
-            { "id": "out", "type": "respond" }
+            { "id": "cron", "type": "cron" },
+            { "id": "out", "type": "transform", "config": { "expression": "@" } }
         ],
         "edges": [
-            { "from": "in", "to": "out" }
+            { "from": "cron", "to": "out" }
         ]
     })
     .to_string()
@@ -369,13 +366,14 @@ mod tests {
         let json = cron_flow_json("wakeproof-cron", "* * * * * *");
         let v: serde_json::Value = serde_json::from_str(&json).expect("fixture parses");
         assert_eq!(v["flow-id"], serde_json::json!("wakeproof-cron"));
-        assert_eq!(v["trigger"]["type"], serde_json::json!("cron"));
         let flow = wamn_flow::Flow::from_json(&json).expect("cron flow is a wamn-flow");
-        flow.validate().expect("cron flow validates");
+        let interfaces =
+            std::collections::BTreeMap::from([("transform".into(), vec!["main".into()])]);
+        flow.validate(&interfaces).expect("cron flow validates");
         assert_eq!(flow.flow_id.as_str(), "wakeproof-cron");
-        match &flow.trigger {
-            wamn_flow::Trigger::Cron { schedule } => assert_eq!(schedule, "* * * * * *"),
-            _ => panic!("expected a cron trigger"),
-        }
+        assert_eq!(
+            flow.entry_node().map(|node| node.node_type.as_str()),
+            Some("cron")
+        );
     }
 }

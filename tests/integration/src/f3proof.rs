@@ -6,7 +6,7 @@
 //! nights. This gate proves the whole chain on the LIVE runner + `wamn:postgres`
 //! plugin + vault + egress guard, exercising the pieces F3 exists to validate:
 //!
-//! * **time-shift + structural cycle** — the flow computes `cutoff = fire-at-ms
+//! * **time-shift + structural cycle** — the flow computes `cutoff = scheduled-at
 //!   − 48h` (seconds-scale here, virtual time) with the `time-shift` node JMESPath
 //!   cannot express, lists the stale open holds ONCE, and drains them through a
 //!   `conditional`/`transform` cycle (`gate → advance → gate`), `escalate`/`notify`
@@ -108,10 +108,9 @@ pub struct F3ProofArgs {
     pub timeout_secs: u64,
 }
 
-/// The gate flow: the committed F3 shape (`time-shift → list → gate → {escalate
-/// → notify (dead-end), advance → gate}`), but with the notify url + allowed-host
-/// baked to the echo authority and a seconds-scale offset. CRON-triggered so the
-/// in-cluster dispatcher fires it; the local path seeds a run directly.
+/// The gate flow: the committed F3 shape (`cron → time-shift → list → gate →
+/// {escalate → notify (dead-end), advance → gate}`), but with the notify url +
+/// allowed-host baked to the echo authority and a seconds-scale offset.
 fn gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
     format!(
         r#"{{
@@ -119,11 +118,10 @@ fn gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
   "flow-id": "{FLOW_ID}",
   "version": 1,
   "name": "F3 escalate-stale-holds (gate)",
-  "trigger": {{ "type": "cron", "schedule": "* * * * *" }},
-  "entry": "shift",
   "nodes": [
+    {{ "id": "cron", "type": "cron" }},
     {{ "id": "shift", "type": "time-shift",
-       "config": {{ "base": "\"fire-at-ms\"", "offset-ms": {offset_ms}, "format": "iso", "key": "cutoff" }} }},
+       "config": {{ "base": "scheduled-at", "offset-ms": {offset_ms}, "format": "iso", "key": "cutoff" }} }},
     {{ "id": "list-stale", "type": "postgres",
        "config": {{ "entity": "quality_holds", "op": "list",
                     "filters": {{ "status": "eq.open", "opened_at": "lt.{{{{cutoff}}}}" }},
@@ -134,17 +132,16 @@ fn gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
     {{ "id": "notify", "type": "http-request", "credential": "notify-webhook",
        "config": {{ "method": "POST", "url": "http://{echo_host}/holds",
                     "body": "{{hold: id, status: status, opened_at: opened_at}}" }} }},
-    {{ "id": "advance", "type": "transform", "config": {{ "expression": "[1:]" }} }},
-    {{ "id": "done", "type": "respond" }}
+    {{ "id": "advance", "type": "transform", "config": {{ "expression": "[1:]" }} }}
   ],
   "edges": [
+    {{ "from": "cron", "to": "shift" }},
     {{ "from": "shift", "to": "list-stale" }},
     {{ "from": "list-stale", "to": "gate" }},
     {{ "from": "gate", "from-port": "true", "to": "escalate" }},
     {{ "from": "gate", "from-port": "true", "to": "advance" }},
     {{ "from": "escalate", "to": "notify" }},
-    {{ "from": "advance", "to": "gate" }},
-    {{ "from": "gate", "from-port": "false", "to": "done" }}
+    {{ "from": "advance", "to": "gate" }}
   ],
   "credentials": [ {{ "name": "notify-webhook", "kind": "api-key" }} ],
   "allowed-hosts": ["{echo_host}"]
@@ -386,18 +383,25 @@ pub async fn run(args: F3ProofArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// LOCAL: seed a cron-shaped run directly and let the separately-started
-/// run-worker drain it. `fire-at-ms` = now, so the seconds-scale cutoff lands
+/// LOCAL: seed a normative cron input directly and let the separately-started
+/// run-worker drain it. `scheduled-at` = now, so the seconds-scale cutoff lands
 /// between the stale (1h old) and fresh (now) holds.
 async fn drive_local(client: &mut Client, args: &F3ProofArgs) -> anyhow::Result<String> {
-    let now_ms = SystemTime::now()
+    let now = SystemTime::now();
+    let now_ms = now
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-    let input = json!({ "trigger": "cron", "schedule": "* * * * *", "fire-at-ms": now_ms });
+    let scheduled_at = chrono::DateTime::<chrono::Utc>::from(now).to_rfc3339();
+    let input = json!({
+        "scheduled-at": scheduled_at,
+        "fired-at": scheduled_at,
+    });
     let run_id = format!("f3-{now_ms}");
     seed_run(client, FLOW_ID, &run_id, &serde_json::to_string(&input)?).await?;
-    println!("## seed — cron-shaped run {run_id} (fire-at-ms {now_ms}); awaiting the runner");
+    println!(
+        "## seed — cron-shaped run {run_id} (scheduled-at {scheduled_at}); awaiting the runner"
+    );
     let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
     let status = poll_to_terminal(client, &run_id, deadline).await?;
     println!("## drained — run reached {status}");
@@ -654,8 +658,19 @@ mod tests {
     fn gate_flow_is_a_valid_f3_flow() {
         let json = gate_flow_json("serve-echo:8091", -60_000);
         let flow = wamn_flow::Flow::from_json(&json).expect("gate flow parses");
-        flow.validate().expect("gate flow validates");
+        let interfaces = std::collections::BTreeMap::from([
+            ("conditional".into(), vec!["true".into(), "false".into()]),
+            ("http-request".into(), vec!["main".into()]),
+            ("postgres".into(), vec!["main".into()]),
+            ("time-shift".into(), vec!["main".into()]),
+            ("transform".into(), vec!["main".into()]),
+        ]);
+        flow.validate(&interfaces).expect("gate flow validates");
         assert_eq!(flow.flow_id, FLOW_ID);
+        assert_eq!(
+            flow.entry_node().map(|node| node.node_type.as_str()),
+            Some("cron")
+        );
         assert_eq!(flow.allowed_hosts, vec!["serve-echo:8091".to_string()]);
         assert!(flow.credentials.iter().any(|c| c.name == "notify-webhook"));
         assert!(
@@ -668,6 +683,7 @@ mod tests {
             !flow.edges.iter().any(|e| e.from == "notify"),
             "notify is a dead-end — it carries no loop state"
         );
+        assert!(flow.nodes.iter().all(|node| node.node_type != "respond"));
         // The catalog document the node compiles against is well-formed JSON.
         let cat: Value = serde_json::from_str(&holds_catalog_json()).expect("catalog json");
         assert_eq!(cat["entities"][0]["name"], "quality_holds");

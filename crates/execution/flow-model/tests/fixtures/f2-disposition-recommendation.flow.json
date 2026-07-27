@@ -1,0 +1,35 @@
+{
+  "schema-version": "0.1",
+  "flow-id": "disposition-recommendation",
+  "version": 1,
+  "name": "F2 disposition-recommendation",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "request",
+      "config": {
+        "input-schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "required": ["hold", "history", "decision"],
+          "properties": {
+            "hold": { "type": "object" },
+            "history": { "type": "array" },
+            "decision": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "id": "recommend-disposition",
+      "type": "custom",
+      "config": { "manifest": "disposition-node" }
+    },
+    { "id": "respond", "type": "respond", "config": { "status": 200 } }
+  ],
+  "edges": [
+    { "from": "request", "to": "recommend-disposition" },
+    { "from": "recommend-disposition", "to": "respond" }
+  ]
+}

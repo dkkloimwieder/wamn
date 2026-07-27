@@ -12,7 +12,10 @@
         "schema-version": "0.1",
         "name": "escalates-48h-stale",
         "flow-ref": { "flow-id": "escalate-stale-holds", "version": 1 },
-        "input": { "trigger": "cron", "schedule": "* * * * *", "fire-at-ms": 1700000000000 },
+        "input": {
+          "scheduled-at": "2023-11-14T22:13:20Z",
+          "fired-at": "2023-11-14T22:13:23Z"
+        },
         "expect": [
           { "run-outcome": { "status": "completed" } },
           { "db-state": {
