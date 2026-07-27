@@ -3,7 +3,9 @@
 //! committed-schema drift guard (the wamn-flow/wamn-schema-model pattern).
 
 use boon::{Compiler, Schemas};
-use wamn_node_manifest::{ANNOTATION_KEY, NodeManifest, OrderingPolicy};
+use wamn_node_manifest::{
+    ANNOTATION_KEY, NodeManifest, OrderingPolicy, Purity, RecoveryClass, ResolvedPurity,
+};
 
 const FIXTURE: &str = include_str!("fixtures/sample-echo.manifest.json");
 
@@ -22,6 +24,7 @@ fn fixture_parses_validates_and_round_trips() {
     assert_eq!(m.node_type, "sample-echo");
     assert_eq!(m.contract, "0.1.0");
     assert_eq!(m.ordering, vec![OrderingPolicy::Unordered]);
+    assert_eq!(m.purity, Some(Purity::Pure));
     // Defaults fill unlisted fields.
     assert_eq!(m.output_ports, vec!["main"]);
     let again = NodeManifest::from_json(&m.to_json()).expect("re-parses");
@@ -44,6 +47,82 @@ fn minimal_manifest_gets_the_defaults() {
         ]
     );
     assert_eq!(m.output_ports, vec!["main"]);
+    assert_eq!(m.purity, None);
+}
+
+#[test]
+fn t_nr_absent_purity_resolves_to_effectful_never_replay() {
+    let mut m = fixture();
+    m.purity = None;
+    let resolved = m.resolved_interface().expect("valid manifest resolves");
+    assert_eq!(resolved.purity, ResolvedPurity::Effectful);
+    assert_eq!(resolved.recovery_class, RecoveryClass::NeverReplay);
+}
+
+#[test]
+fn declared_pure_resolves_to_replay_and_sorted_ports() {
+    let mut m = fixture();
+    m.output_ports = vec!["retry".to_string(), "main".to_string()];
+    let resolved = m.resolved_interface().expect("valid manifest resolves");
+    assert_eq!(resolved.output_ports, vec!["main", "retry"]);
+    assert_eq!(resolved.purity, ResolvedPurity::Pure);
+    assert_eq!(resolved.recovery_class, RecoveryClass::Replay);
+    assert!(resolved.permits_output_port("retry"));
+    assert!(!resolved.permits_output_port("undeclared"));
+}
+
+#[test]
+fn mismatched_resolved_interface_is_rejected() {
+    let m = fixture();
+    let mut resolved = m.resolved_interface().expect("valid manifest resolves");
+    resolved.output_ports.push("undeclared".to_string());
+    let issues = m
+        .validate_resolved_interface(&resolved)
+        .expect_err("an undeclared port must not enter the pinned interface");
+    assert_eq!(issues[0].code, "resolved-interface-mismatch");
+}
+
+#[test]
+fn artifact_identity_pins_interface_and_component_digest() {
+    let m = fixture();
+    let digest_a = format!("sha256:{}", "1".repeat(64));
+    let digest_b = format!("sha256:{}", "2".repeat(64));
+    let a = m
+        .resolved_component(digest_a)
+        .expect("complete identity inputs resolve");
+    let changed_digest = m
+        .resolved_component(digest_b)
+        .expect("complete identity inputs resolve");
+
+    let mut changed_manifest = m.clone();
+    changed_manifest.output_ports.push("retry".to_string());
+    let changed_interface = changed_manifest
+        .resolved_component(format!("sha256:{}", "1".repeat(64)))
+        .expect("complete identity inputs resolve");
+
+    assert_ne!(a.identity_hash(), changed_digest.identity_hash());
+    assert_ne!(a.identity_hash(), changed_interface.identity_hash());
+    assert!(
+        a.identity_bytes()
+            .windows(b"interface".len())
+            .any(|window| window == b"interface")
+    );
+    assert!(
+        a.identity_bytes()
+            .windows(b"component-digest".len())
+            .any(|window| { window == b"component-digest" })
+    );
+}
+
+#[test]
+fn missing_or_malformed_component_digest_is_rejected() {
+    let m = fixture();
+    for digest in ["", "sha256:", "sha256:ABC", "sha512:abc"] {
+        let issues = m
+            .resolved_component(digest)
+            .expect_err("identity must pin a valid supplied-component digest");
+        assert_eq!(issues[0].code, "invalid-component-digest");
+    }
 }
 
 #[test]
@@ -98,6 +177,12 @@ fn unknown_fields_are_rejected() {
     let json = r#"{"schema-version":"0.1","node-type":"t","name":"T","version":"1.0.0","contract":"0.1.0","grants":["http"]}"#;
     // Grants are DERIVED from WIT imports (design-note 7), never declared in
     // the manifest — an attempt to declare them must not parse.
+    assert!(NodeManifest::from_json(json).is_err());
+}
+
+#[test]
+fn invalid_purity_value_is_rejected() {
+    let json = r#"{"schema-version":"0.1","node-type":"t","name":"T","version":"1.0.0","contract":"0.1.0","purity":"effectful"}"#;
     assert!(NodeManifest::from_json(json).is_err());
 }
 

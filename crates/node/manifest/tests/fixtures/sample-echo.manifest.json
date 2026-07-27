@@ -21,5 +21,6 @@
       "attempt": { "type": "integer" }
     }
   },
-  "ordering": ["unordered"]
+  "ordering": ["unordered"],
+  "purity": "pure"
 }

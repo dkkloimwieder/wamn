@@ -341,6 +341,7 @@ mod tests {
             output_schema: None,
             ordering: vec![wamn_node_manifest::OrderingPolicy::Unordered],
             output_ports: vec!["main".to_string()],
+            purity: None,
         }
         .to_json()
     }

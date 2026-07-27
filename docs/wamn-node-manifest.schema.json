@@ -27,6 +27,18 @@
           "type": "string"
         }
       ]
+    },
+    "Purity": {
+      "description": "The only manifest-level purity assertion a custom node may make.\n\nAbsence is intentionally not represented by another wire value: an absent declaration resolves to effectful, never-replay semantics.",
+      "oneOf": [
+        {
+          "description": "The node has no externally observable effects and may be replayed.",
+          "enum": [
+            "pure"
+          ],
+          "type": "string"
+        }
+      ]
     }
   },
   "description": "The `wamn.node.manifest` document.",
@@ -71,6 +83,17 @@
     },
     "output-schema": {
       "description": "JSON Schema for the output payload."
+    },
+    "purity": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Purity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Trusted semantic override. Absent custom-node manifests resolve to effectful + never-replay; only the typed value `pure` authorizes replay."
     },
     "schema-version": {
       "description": "Manifest schema version (\"0.1\"); 0.1.x admits additive changes only.",

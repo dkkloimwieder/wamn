@@ -9,7 +9,7 @@
 use anyhow::{Context as _, bail};
 use serde::Deserialize;
 use serde_json::Value;
-use wamn_node_manifest::{NodeManifest, OrderingPolicy, SCHEMA_VERSION};
+use wamn_node_manifest::{NodeManifest, OrderingPolicy, Purity, ResolvedComponent, SCHEMA_VERSION};
 
 /// The `[package.metadata.wamn-node]` table a node crate may carry (all fields
 /// optional — sensible defaults come from the package). kebab-case to mirror the
@@ -26,6 +26,7 @@ struct NodeMeta {
     config_schema: Option<Value>,
     input_schema: Option<Value>,
     output_schema: Option<Value>,
+    purity: Option<Purity>,
 }
 
 // The slices of cargo metadata this stage needs: the root package's version +
@@ -88,6 +89,7 @@ pub fn manifest_from_metadata(metadata_json: &str, package: &str) -> anyhow::Res
         output_ports: node_meta
             .output_ports
             .unwrap_or_else(|| vec!["main".to_string()]),
+        purity: node_meta.purity,
     };
 
     if let Err(issues) = manifest.validate() {
@@ -120,11 +122,23 @@ pub fn minimal_manifest(
             OrderingPolicy::Unordered,
         ],
         output_ports: vec!["main".to_string()],
+        purity: None,
     };
     if let Err(issues) = manifest.validate() {
         bail!("assembled node manifest does not validate: {issues:?}");
     }
     Ok(manifest)
+}
+
+/// Resolve the manifest and exact component bytes into artifact-identity input.
+pub fn resolved_component(
+    manifest: &NodeManifest,
+    wasm: &[u8],
+) -> anyhow::Result<ResolvedComponent> {
+    let digest = format!("sha256:{}", crate::sign::artifact_digest_hex(wasm));
+    manifest
+        .resolved_component(digest)
+        .map_err(|issues| anyhow::anyhow!("resolve component identity: {issues:?}"))
 }
 
 #[cfg(test)]
@@ -138,7 +152,7 @@ mod tests {
     #[test]
     fn manifest_from_metadata_reads_wamn_node_table() {
         let json = metadata_with_wamn_node(
-            r#"{"wamn-node":{"node-type":"sample-echo","name":"Sample Echo","ordering":["unordered"]}}"#,
+            r#"{"wamn-node":{"node-type":"sample-echo","name":"Sample Echo","ordering":["unordered"],"output-ports":["retry","main"],"purity":"pure"}}"#,
         );
         let m = manifest_from_metadata(&json, "sample-node").unwrap();
         assert_eq!(m.schema_version, "0.1");
@@ -147,6 +161,11 @@ mod tests {
         assert_eq!(m.version, "0.1.0");
         assert_eq!(m.contract, "0.1.0");
         assert_eq!(m.ordering, vec![OrderingPolicy::Unordered]);
+        assert_eq!(m.purity, Some(Purity::Pure));
+        assert_eq!(
+            m.resolved_interface().unwrap().output_ports,
+            vec!["main", "retry"]
+        );
         assert!(m.is_valid());
     }
 
@@ -160,6 +179,11 @@ mod tests {
         assert_eq!(m.name, "my-node");
         assert_eq!(m.version, "2.3.4");
         assert_eq!(m.contract, DEFAULT_CONTRACT);
+        assert_eq!(m.purity, None);
+        assert_eq!(
+            m.resolved_interface().unwrap().recovery_class,
+            wamn_node_manifest::RecoveryClass::NeverReplay
+        );
         assert!(m.is_valid());
     }
 
@@ -175,5 +199,21 @@ mod tests {
         let m = minimal_manifest("node-ts", "Node TS", "0.1.0", "0.1.0").unwrap();
         assert!(m.is_valid());
         assert_eq!(m.node_type, "node-ts");
+        assert_eq!(
+            m.resolved_interface().unwrap().recovery_class,
+            wamn_node_manifest::RecoveryClass::NeverReplay
+        );
+    }
+
+    #[test]
+    fn resolved_component_identity_pins_built_bytes_and_interface() {
+        let mut manifest = minimal_manifest("node-ts", "Node TS", "0.1.0", "0.1.0").unwrap();
+        let first = resolved_component(&manifest, b"first").unwrap();
+        let changed_bytes = resolved_component(&manifest, b"second").unwrap();
+        manifest.output_ports.push("retry".to_string());
+        let changed_interface = resolved_component(&manifest, b"first").unwrap();
+
+        assert_ne!(first.identity_hash(), changed_bytes.identity_hash());
+        assert_ne!(first.identity_hash(), changed_interface.identity_hash());
     }
 }

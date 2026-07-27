@@ -26,3 +26,4 @@ node-type = "sample-echo"
 name = "Sample Echo"
 description = "Reference zero-import custom node (5.4): echoes its input on a config-selected port; the frozen wamn:node 0.1 conformance fixture."
 ordering = ["unordered"]
+purity = "pure"

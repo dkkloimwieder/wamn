@@ -231,6 +231,7 @@ pub async fn run(args: TestGateArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_node_manifest::{NodeManifest, RecoveryClass};
 
     /// The compiled disposition node, built from the components workspace. Absent
     /// = these wasm-driven checks SKIP (the pure test_gate units in wamn-builder
@@ -249,6 +250,39 @@ mod tests {
                 None
             }
         }
+    }
+
+    fn custom_manifest(extra: &str) -> NodeManifest {
+        NodeManifest::from_json(&format!(
+            r#"{{"schema-version":"0.1","node-type":"custom","name":"Custom","version":"0.1.0","contract":"0.1.0"{extra}}}"#
+        ))
+        .expect("custom manifest parses")
+    }
+
+    /// T-NR control: absence is the dangerous custom-node default, never replay.
+    #[test]
+    fn t_nr_custom_manifest_without_purity_is_never_replay() {
+        let interface = custom_manifest("")
+            .resolved_interface()
+            .expect("valid manifest resolves");
+        assert_eq!(interface.recovery_class, RecoveryClass::NeverReplay);
+    }
+
+    /// Identity gate: both the resolved interface and component digest are pins.
+    #[test]
+    fn component_identity_changes_with_interface_or_digest() {
+        let base = custom_manifest("")
+            .resolved_component(format!("sha256:{}", "1".repeat(64)))
+            .expect("identity resolves");
+        let changed_interface = custom_manifest(r#","output-ports":["main","branch"]"#)
+            .resolved_component(format!("sha256:{}", "1".repeat(64)))
+            .expect("identity resolves");
+        let changed_digest = custom_manifest("")
+            .resolved_component(format!("sha256:{}", "2".repeat(64)))
+            .expect("identity resolves");
+
+        assert_ne!(base.identity_hash(), changed_interface.identity_hash());
+        assert_ne!(base.identity_hash(), changed_digest.identity_hash());
     }
 
     /// PASS: the real cases.json passes against the compiled artifact.
