@@ -110,6 +110,7 @@ impl Guest for Component {
         Ok(Emission {
             payload: Payload::Inline(out),
             port: None,
+            ctx: None,
         })
     }
 }

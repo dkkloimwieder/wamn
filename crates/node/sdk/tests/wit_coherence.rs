@@ -5,7 +5,28 @@
 //! mirrors (or vice versa) fails a named test instead of shipping skew.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+const VENDORED_WIT_PATHS: [&str; 9] = [
+    "components/execution/flowrunner/wit/deps/wamn-node/package.wit",
+    "components/fixtures/cred-probe/wit/deps/wamn-node/package.wit",
+    "components/fixtures/flow-driver/wit/deps/wamn-node/package.wit",
+    "components/samples/node-cred/wit/deps/wamn-node/package.wit",
+    "components/samples/node-rs/wit/deps/wamn-node/package.wit",
+    "components/samples/node-ts/wit/deps/wamn-node/package.wit",
+    "crates/node/guest/wit-caps/deps/wamn-node/package.wit",
+    "crates/node/guest/wit/deps/wamn-node/package.wit",
+    "crates/platform/runtime/wit/deps/wamn-node/package.wit",
+];
+
+const FULL_TYPE_WIT_PATHS: [&str; 6] = [
+    "components/fixtures/flow-driver/wit/deps/wamn-node/package.wit",
+    "components/samples/node-cred/wit/deps/wamn-node/package.wit",
+    "components/samples/node-rs/wit/deps/wamn-node/package.wit",
+    "components/samples/node-ts/wit/deps/wamn-node/package.wit",
+    "crates/node/guest/wit/deps/wamn-node/package.wit",
+    "crates/platform/runtime/wit/deps/wamn-node/package.wit",
+];
 
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -16,12 +37,65 @@ fn docs_wit() -> String {
         .expect("docs/wamn-node.wit reads")
 }
 
+fn workspace_root() -> PathBuf {
+    root()
+        .join("../../..")
+        .canonicalize()
+        .expect("workspace root")
+}
+
+fn workspace_wit(path: &str) -> String {
+    fs::read_to_string(workspace_root().join(path)).unwrap_or_else(|e| panic!("{path} reads: {e}"))
+}
+
 /// Comment- and blank-stripped, whitespace-trimmed code lines.
 fn code_lines(wit: &str) -> Vec<&str> {
     wit.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with("//"))
         .collect()
+}
+
+fn block_lines<'a>(wit: &'a str, declaration: &str) -> Vec<&'a str> {
+    code_lines(wit)
+        .into_iter()
+        .skip_while(|line| *line != declaration)
+        .take_while(|line| *line != "}")
+        .collect()
+}
+
+fn discover_wamn_node_packages(dir: &Path, found: &mut Vec<String>) {
+    for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("{} reads: {e}", dir.display())) {
+        let entry = entry.expect("directory entry reads");
+        let path = entry.path();
+        if path.is_dir() {
+            if matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some(".git" | "target")
+            ) {
+                continue;
+            }
+            discover_wamn_node_packages(&path, found);
+        } else if path.file_name().and_then(|name| name.to_str()) == Some("package.wit") {
+            let wit = fs::read_to_string(&path).expect("candidate package.wit reads");
+            if wit.contains("package wamn:node@") {
+                found.push(
+                    path.strip_prefix(workspace_root())
+                        .expect("vendored WIT is within workspace")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn vendored_wit_inventory_is_complete() {
+    let mut found = Vec::new();
+    discover_wamn_node_packages(&workspace_root(), &mut found);
+    found.sort();
+    assert_eq!(found, VENDORED_WIT_PATHS);
 }
 
 /// Every vendored copy's code lines must appear IN ORDER in the contract file
@@ -76,6 +150,13 @@ fn vendored_wit_copies_match_the_frozen_contract() {
     )];
     copies.push((trimmed_paths[0], first));
     copies.push((cred_paths[0], cred_first));
+    copies.push((
+        "../../../components/samples/node-cred/wit/deps/wamn-node/package.wit",
+        fs::read_to_string(
+            root().join("../../../components/samples/node-cred/wit/deps/wamn-node/package.wit"),
+        )
+        .expect("credential-bearing node copy reads"),
+    ));
 
     for (name, copy) in &copies {
         let mut docs_iter = docs_lines.iter();
@@ -86,6 +167,60 @@ fn vendored_wit_copies_match_the_frozen_contract() {
                  a vendored copy drifted from the frozen contract"
             );
         }
+    }
+}
+
+#[test]
+fn every_invocation_wit_requires_input_context() {
+    let docs = docs_wit();
+    assert!(
+        block_lines(&docs, "record run-context {").contains(&"context: json,"),
+        "canonical run-context must carry input context"
+    );
+    for path in FULL_TYPE_WIT_PATHS {
+        let wit = workspace_wit(path);
+        assert!(
+            block_lines(&wit, "record run-context {").contains(&"context: json,"),
+            "{path}: run-context must carry input context"
+        );
+    }
+}
+
+#[test]
+fn replacement_context_exists_only_on_success_emissions() {
+    let mut copies = vec![("docs/wamn-node.wit", docs_wit())];
+    copies.extend(
+        FULL_TYPE_WIT_PATHS
+            .into_iter()
+            .map(|path| (path, workspace_wit(path))),
+    );
+
+    for (path, wit) in copies {
+        let emission = block_lines(&wit, "record emission {");
+        assert!(
+            emission.contains(&"ctx: option<json>,"),
+            "{path}: success emission must allow replacement context"
+        );
+        for declaration in [
+            "record error-detail {",
+            "record rate-limit-detail {",
+            "variant node-error {",
+        ] {
+            assert!(
+                !block_lines(&wit, declaration)
+                    .iter()
+                    .any(|line| line.starts_with("ctx:")),
+                "{path}: {declaration} must remain context-free"
+            );
+        }
+        assert_eq!(
+            code_lines(&wit)
+                .into_iter()
+                .filter(|line| *line == "ctx: option<json>,")
+                .count(),
+            1,
+            "{path}: replacement ctx belongs only to the success emission"
+        );
     }
 }
 
@@ -126,6 +261,10 @@ fn sdk_mirrors_the_frozen_wit() {
     assert!(has("record emission {"), "emission record missing");
     assert!(has("port: option<string>,"), "emission port line missing");
     assert!(
+        has("ctx: option<json>,"),
+        "emission replacement context line missing"
+    );
+    assert!(
         has("run: func(ctx: run-context, input: payload) -> result<emission, node-error>;"),
         "run signature missing"
     );
@@ -142,6 +281,7 @@ fn sdk_mirrors_the_frozen_wit() {
         "tracestate: option<string>,",
         "deadline-ms: option<u64>,",
         "config: json,",
+        "context: json,",
     ] {
         assert!(has(l), "run-context field line missing: {l:?}");
     }

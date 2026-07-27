@@ -400,6 +400,7 @@ impl NodeRuntime {
             tracestate: request.ctx.tracestate,
             deadline_ms: request.ctx.deadline_ms,
             config: request.ctx.config,
+            context: request.ctx.context,
         };
         let input = Payload::Inline(request.input.inline().unwrap_or("null").to_string());
         match instance.run(&context, &input).await {
@@ -448,6 +449,7 @@ fn emission_to_wire(emission: Emission) -> WireEmission {
     WireEmission {
         payload: payload_to_wire(emission.payload),
         port: emission.port,
+        ctx: emission.ctx,
     }
 }
 
@@ -531,7 +533,10 @@ impl ConfigCache {
 mod tests {
     use std::sync::Arc;
 
-    use super::{ConfigCache, DenyAllCredentials, NodeCredentials};
+    use super::{
+        ConfigCache, DenyAllCredentials, Emission, NodeCredentials, Payload, emission_to_wire,
+    };
+    use wamn_node_invoke::WirePayload;
 
     #[test]
     fn config_cache_parses_once_per_node_version_and_config() {
@@ -554,6 +559,18 @@ mod tests {
         assert!(cache.prepared("node", 1, "{").is_err());
         assert!(cache.prepared("node", 1, "{").is_err());
         assert_eq!(cache.parse_count(), 0);
+    }
+
+    #[test]
+    fn successful_emission_preserves_replacement_context_on_the_wire() {
+        let wire = emission_to_wire(Emission {
+            payload: Payload::Inline("null".to_string()),
+            port: None,
+            ctx: Some(r#"{"hold":{"id":7}}"#.to_string()),
+        });
+
+        assert_eq!(wire.payload, WirePayload::Inline("null".to_string()));
+        assert_eq!(wire.ctx.as_deref(), Some(r#"{"hold":{"id":7}}"#));
     }
 
     #[test]

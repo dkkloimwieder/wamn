@@ -52,6 +52,7 @@ fn request(input: &str) -> NodeInvokeRequest {
             traceparent: None,
             tracestate: None,
             config: "{}".to_string(),
+            context: "{}".to_string(),
         },
         input: WirePayload::Inline(input.to_string()),
         grant: Vec::new(),

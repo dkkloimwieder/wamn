@@ -123,6 +123,7 @@ fn build_request(case: &NodeCase) -> NodeInvokeRequest {
             traceparent: None,
             tracestate: None,
             config,
+            context: "{}".to_string(),
         },
         input: WirePayload::Inline(case.input.to_string()),
         grant: case.grant.clone().unwrap_or_default(),
@@ -278,6 +279,7 @@ mod tests {
         let ok = capture(&NodeInvokeResponse::Ok(WireEmission {
             payload: WirePayload::Inline(json!({"recommended": "reject"}).to_string()),
             port: None,
+            ctx: None,
         }));
         assert_eq!(ok.node_output, Some(json!({"recommended": "reject"})));
         assert_eq!(ok.node_port.as_deref(), Some("main"));

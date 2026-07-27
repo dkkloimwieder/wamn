@@ -85,6 +85,9 @@ interface types {
     /// manifest) before dispatch. Secret-typed fields are replaced by
     /// credential handles.
     config: json,
+    /// Durable per-run context as a JSON document. Every node may read it;
+    /// successful emissions may replace it atomically with their payload.
+    context: json,
   }
 
   record error-detail {
@@ -137,6 +140,9 @@ interface types {
   record emission {
     payload: payload,
     port: option<string>,
+    /// Optional replacement for the durable run context. Error emissions
+    /// cannot carry this field because errors travel as `node-error`.
+    ctx: option<json>,
   }
 }
 

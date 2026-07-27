@@ -256,6 +256,7 @@ fn mk_ctx(config: &str) -> RunContext {
         tracestate: None,
         deadline_ms: None,
         config: config.to_string(),
+        context: "{}".to_string(),
     }
 }
 
@@ -865,6 +866,7 @@ async fn sample_phase(
         Ok(Emission {
             payload: Payload::Inline(s),
             port,
+            ..
         }) => {
             let v: serde_json::Value = serde_json::from_str(&s)?;
             check("echo payload round-trips", v["echo"]["x"] == 7);

@@ -56,6 +56,9 @@ pub struct RunContext<'a> {
     pub tracestate: Option<&'a str>,
     /// Node configuration (already parsed; the flow graph carries it as JSON).
     pub config: &'a Value,
+    /// Durable per-run context. Nodes may read it without changing their
+    /// single-input payload semantics.
+    pub context: &'a Value,
 }
 
 impl RunContext<'_> {
@@ -245,7 +248,17 @@ mod tests {
             traceparent: tp,
             tracestate: ts,
             config,
+            context: config,
         }
+    }
+
+    #[test]
+    fn run_context_exposes_the_input_context() {
+        let config = json!({});
+        let context = json!({"hold": {"id": 7}});
+        let mut run = ctx(None, None, &config);
+        run.context = &context;
+        assert_eq!(run.context["hold"]["id"], 7);
     }
 
     #[test]

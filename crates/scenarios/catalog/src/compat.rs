@@ -99,6 +99,7 @@ pub fn run_context_from_wire(context: WireRunContext) -> RunContext {
         traceparent: context.traceparent,
         tracestate: context.tracestate,
         config: context.config,
+        context: context.context,
     }
 }
 
@@ -115,6 +116,7 @@ pub fn run_context_to_wire(context: RunContext) -> WireRunContext {
         traceparent: context.traceparent,
         tracestate: context.tracestate,
         config: context.config,
+        context: context.context,
     }
 }
 
@@ -200,6 +202,7 @@ mod tests {
             traceparent: Some("trace".into()),
             tracestate: Some("state".into()),
             config: r#"{"mode":"safe"}"#.into(),
+            context: r#"{"hold":{"id":7}}"#.into(),
         };
         let scenario = run_context_from_wire(wire.clone());
         assert_same_wire!(&wire, &scenario);

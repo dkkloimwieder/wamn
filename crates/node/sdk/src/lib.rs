@@ -39,11 +39,14 @@ pub const MAIN_PORT: &str = "main";
 /// The reserved error-path port. Mirrors `wamn_flow::ERROR_PORT`.
 pub const ERROR_PORT: &str = "error";
 
-/// A node's successful result: the output payload and the port it emits on.
+/// A node's successful result: output payload, port, and optional context replacement.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Emission {
     pub payload: Value,
     pub port: String,
+    /// A replacement for the durable run context, applied atomically with
+    /// successful emission processing. `None` leaves context unchanged.
+    pub ctx: Option<Value>,
 }
 
 impl Emission {
@@ -52,6 +55,7 @@ impl Emission {
         Emission {
             payload,
             port: MAIN_PORT.to_string(),
+            ctx: None,
         }
     }
 
@@ -60,7 +64,14 @@ impl Emission {
         Emission {
             payload,
             port: port.into(),
+            ctx: None,
         }
+    }
+
+    /// Attach a durable run-context replacement to this successful emission.
+    pub fn with_ctx(mut self, ctx: Value) -> Emission {
+        self.ctx = Some(ctx);
+        self
     }
 }
 
@@ -83,4 +94,22 @@ pub trait Node {
         run: &RunContext<'_>,
         input: &Value,
     ) -> Result<Emission, NodeError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::Emission;
+
+    #[test]
+    fn successful_emission_may_replace_context() {
+        let emission = Emission::main(json!({"output": 1})).with_ctx(json!({"hold": {"id": 7}}));
+        assert_eq!(emission.ctx, Some(json!({"hold": {"id": 7}})));
+    }
+
+    #[test]
+    fn successful_emission_without_ctx_leaves_context_unchanged() {
+        assert_eq!(Emission::main(json!(null)).ctx, None);
+    }
 }

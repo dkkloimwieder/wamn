@@ -72,6 +72,7 @@ fn run<'a>(config: &'a Value) -> RunContext<'a> {
         traceparent: None,
         tracestate: None,
         config,
+        context: config,
     }
 }
 
@@ -489,6 +490,7 @@ fn http_request_forwards_active_traceparent() {
     let mut mock = Mock::default();
     mock.http_results.push_back(ok_http(200, &[], "{}"));
     let config = json!({"url": "http://api.test/x"});
+    let context = json!({});
     let rc = RunContext {
         run_id: "r-1",
         flow_id: "f",
@@ -500,6 +502,7 @@ fn http_request_forwards_active_traceparent() {
         traceparent: Some("00-abc-def-01"),
         tracestate: Some("vendor=1"),
         config: &config,
+        context: &context,
     };
     dispatch(
         "http-request",
@@ -534,6 +537,7 @@ fn http_request_explicit_traceparent_header_wins() {
         "url": "http://api.test/x",
         "headers": {"traceparent": "00-explicit-01"}
     });
+    let context = json!({});
     let rc = RunContext {
         run_id: "r-1",
         flow_id: "f",
@@ -545,6 +549,7 @@ fn http_request_explicit_traceparent_header_wins() {
         traceparent: Some("00-host-01"),
         tracestate: None,
         config: &config,
+        context: &context,
     };
     dispatch(
         "http-request",
@@ -574,6 +579,7 @@ fn http_request_stamps_opt_in_idempotency_key() {
     mock.http_results.push_back(ok_http(202, &[], "{}"));
     let config =
         json!({"method": "post", "url": "http://erp.test/callback", "idempotency-key": true});
+    let context = json!({});
     let rc = RunContext {
         run_id: "disp:evt:9",
         flow_id: "f",
@@ -585,6 +591,7 @@ fn http_request_stamps_opt_in_idempotency_key() {
         traceparent: None,
         tracestate: None,
         config: &config,
+        context: &context,
     };
     dispatch(
         "http-request",

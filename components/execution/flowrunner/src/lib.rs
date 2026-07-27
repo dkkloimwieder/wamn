@@ -659,6 +659,7 @@ fn custom_node_dispatch(d: &Dispatch, run_id: &str, flow: &Flow) -> Result<NodeA
             traceparent: None,
             tracestate: None,
             config: d.config.to_string(),
+            context: "{}".to_string(),
         },
         input: WirePayload::Inline(d.payload.to_string()),
         // cjv.3: EXACTLY this node step's declared credential(s) — the shared
@@ -1154,6 +1155,7 @@ fn dispatch_node(
         // decides retry-vs-error-path-vs-fail mechanically from the variant.
         ResolvedNode::Standard => {
             let node_type = d.node_type.as_str();
+            let context = Value::Object(Default::default());
             let run_ctx = sdk::RunContext {
                 run_id,
                 flow_id: &flow.flow_id,
@@ -1174,6 +1176,7 @@ fn dispatch_node(
                 traceparent: None,
                 tracestate: None,
                 config: &d.config,
+                context: &context,
             };
             // 5.9: the ctx is FRESH per dispatch and carries ONLY this node's
             // declared credential name — the vault resolves it lazily via the

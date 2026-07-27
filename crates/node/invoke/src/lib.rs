@@ -52,6 +52,10 @@ pub struct WireRunContext {
     /// The node's JSON config document (template-expanded by the runner). A
     /// `json` string, exactly as the frozen contract types it.
     pub config: String,
+    /// Durable per-run context as a JSON document. This is required on every
+    /// invocation so custom nodes have the same universal read surface as
+    /// in-process nodes.
+    pub context: String,
 }
 
 /// A node input/output payload on the wire. v0 carries only the `inline` case
@@ -96,7 +100,9 @@ impl NodeInvokeRequest {
 
     /// Decode a request body received by `serve-node`.
     pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(s)
+        let request: Self = serde_json::from_str(s)?;
+        validate_json(&request.ctx.context)?;
+        Ok(request)
     }
 }
 
@@ -109,6 +115,10 @@ pub struct WireEmission {
     pub payload: WirePayload,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<String>,
+    /// Optional replacement durable context. This belongs only to the success
+    /// envelope; [`WireNodeError`] has no corresponding field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ctx: Option<String>,
 }
 
 /// A machine-readable error detail (`wamn:node/types`'s `error-detail`).
@@ -165,8 +175,16 @@ impl NodeInvokeResponse {
 
     /// Decode a response body received by the runner.
     pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(s)
+        let response: Self = serde_json::from_str(s)?;
+        if let NodeInvokeResponse::Ok(WireEmission { ctx: Some(ctx), .. }) = &response {
+            validate_json(ctx)?;
+        }
+        Ok(response)
     }
+}
+
+fn validate_json(json: &str) -> Result<(), serde_json::Error> {
+    serde_json::from_str::<serde_json::Value>(json).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +400,7 @@ mod tests {
             traceparent: None,
             tracestate: None,
             config: r#"{"mode":"noop"}"#.into(),
+            context: r#"{"hold":{"id":7}}"#.into(),
         }
     }
 
@@ -399,6 +418,15 @@ mod tests {
         assert!(wire.contains("notify-token"));
         // No secret material — only the credential NAME.
         assert!(!wire.contains("s3cr3t"));
+        assert!(wire.contains(r#""context":"{\"hold\":{\"id\":7}}""#));
+    }
+
+    #[test]
+    fn request_without_input_context_is_rejected() {
+        let mut value = serde_json::to_value(sample_request()).unwrap();
+        value["ctx"].as_object_mut().unwrap().remove("context");
+        let wire = serde_json::to_string(&value).unwrap();
+        assert!(NodeInvokeRequest::from_json(&wire).is_err());
     }
 
     #[test]
@@ -406,6 +434,7 @@ mod tests {
         let ok = NodeInvokeResponse::Ok(WireEmission {
             payload: WirePayload::Inline(r#"{"echo":1}"#.into()),
             port: Some("true".into()),
+            ctx: Some(r#"{"hold":{"id":7}}"#.into()),
         });
         assert_eq!(NodeInvokeResponse::from_json(&ok.to_json()).unwrap(), ok);
 
@@ -449,12 +478,37 @@ mod tests {
         let ok = NodeInvokeResponse::Ok(WireEmission {
             payload: WirePayload::Inline("null".into()),
             port: None,
+            ctx: None,
         });
         let wire = ok.to_json();
         assert!(
             !wire.contains("port"),
             "absent port must not serialize: {wire}"
         );
+    }
+
+    #[test]
+    fn successful_emission_with_invalid_replacement_context_is_rejected() {
+        let wire = NodeInvokeResponse::Ok(WireEmission {
+            payload: WirePayload::Inline("null".into()),
+            port: None,
+            ctx: Some("{".into()),
+        })
+        .to_json();
+        assert!(NodeInvokeResponse::from_json(&wire).is_err());
+    }
+
+    #[test]
+    fn error_emission_cannot_carry_context() {
+        let wire = r#"{"err":{"terminal":{"message":"boom","ctx":"{}"}}}"#;
+        assert!(NodeInvokeResponse::from_json(wire).is_err());
+
+        let error = NodeInvokeResponse::Err(WireNodeError::Terminal(WireErrorDetail {
+            message: "boom".into(),
+            code: None,
+            data: None,
+        }));
+        assert!(!error.to_json().contains(r#""ctx""#));
     }
 
     // --- runner->node authn (wamn-fqg.22) -----------------------------------

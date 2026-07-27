@@ -112,6 +112,7 @@ pub fn emission_to_wit(e: Emission) -> wit::Emission {
     wit::Emission {
         payload: wit::Payload::Inline(e.payload.to_string()),
         port: (e.port != wamn_node_sdk::MAIN_PORT).then_some(e.port),
+        ctx: e.ctx.map(|ctx| ctx.to_string()),
     }
 }
 
@@ -156,6 +157,8 @@ pub fn run_node<N: Node>(
     // dispatch; unparseable config reaching a node is a runner bug, not input.
     let config: Value = serde_json::from_str(&ctx.config)
         .map_err(|e| terminal("invalid-config", format!("config is not valid JSON: {e}")))?;
+    let context: Value = serde_json::from_str(&ctx.context)
+        .map_err(|e| terminal("invalid-context", format!("context is not valid JSON: {e}")))?;
     let run = RunContext {
         run_id: &ctx.run_id,
         flow_id: &ctx.flow_id,
@@ -167,6 +170,7 @@ pub fn run_node<N: Node>(
         traceparent: ctx.traceparent.as_deref(),
         tracestate: ctx.tracestate.as_deref(),
         config: &config,
+        context: &context,
     };
     node.run(caps, &run, &input)
         .map(emission_to_wit)
@@ -231,6 +235,7 @@ mod tests {
             tracestate: None,
             deadline_ms: None,
             config: config.into(),
+            context: r#"{"before":1}"#.into(),
         }
     }
 
@@ -270,8 +275,17 @@ mod tests {
     fn main_port_travels_absent_and_named_ports_travel_present() {
         let m = emission_to_wit(Emission::main(serde_json::json!({"a": 1})));
         assert_eq!(m.port, None);
+        assert_eq!(m.ctx, None);
         let b = emission_to_wit(Emission::on(Value::Null, "true"));
         assert_eq!(b.port.as_deref(), Some("true"));
+    }
+
+    #[test]
+    fn successful_emission_replacement_context_travels_as_json() {
+        let emission = Emission::main(Value::Null).with_ctx(serde_json::json!({"hold": {"id": 7}}));
+        let wit = emission_to_wit(emission);
+        let ctx: Value = serde_json::from_str(wit.ctx.as_deref().expect("ctx present")).unwrap();
+        assert_eq!(ctx["hold"]["id"], 7);
     }
 
     #[test]
@@ -299,6 +313,7 @@ mod tests {
         )
         .expect("probe succeeds");
         assert_eq!(out.port, None);
+        assert_eq!(out.ctx, None);
         match out.payload {
             wit::Payload::Inline(s) => {
                 assert_eq!(serde_json::from_str::<Value>(&s).unwrap()["x"], 7)
@@ -313,6 +328,57 @@ mod tests {
         )
         .expect("probe succeeds");
         assert_eq!(branched.port.as_deref(), Some("true"));
+    }
+
+    struct ContextProbe;
+
+    impl Node for ContextProbe {
+        fn run(
+            &self,
+            _ctx: &mut dyn NodeCtx,
+            run: &RunContext<'_>,
+            _input: &Value,
+        ) -> Result<Emission, NodeError> {
+            Ok(Emission::main(run.context.clone())
+                .with_ctx(serde_json::json!({"after": run.context["before"]})))
+        }
+    }
+
+    #[test]
+    fn run_node_passes_input_context_and_returns_replacement_context() {
+        let out = run_node(
+            &ContextProbe,
+            &mut NoCapsCtx,
+            &wit_ctx("{}"),
+            &wit::Payload::Inline("null".into()),
+        )
+        .expect("context probe succeeds");
+
+        let wit::Payload::Inline(payload) = out.payload else {
+            panic!("inline expected");
+        };
+        let payload: Value = serde_json::from_str(&payload).unwrap();
+        let ctx: Value =
+            serde_json::from_str(out.ctx.as_deref().expect("replacement ctx present")).unwrap();
+        assert_eq!(payload["before"], 1);
+        assert_eq!(ctx["after"], 1);
+    }
+
+    #[test]
+    fn invalid_input_context_is_rejected_before_node_execution() {
+        let mut ctx = wit_ctx("{}");
+        ctx.context = "{".into();
+        match run_node(
+            &Probe,
+            &mut NoCapsCtx,
+            &ctx,
+            &wit::Payload::Inline("null".into()),
+        ) {
+            Err(wit::NodeError::Terminal(detail)) => {
+                assert_eq!(detail.code.as_deref(), Some("invalid-context"));
+            }
+            other => panic!("expected invalid-context terminal error, got {other:?}"),
+        }
     }
 
     #[test]

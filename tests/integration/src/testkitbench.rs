@@ -335,6 +335,7 @@ fn default_ctx(case: &TestCase) -> WireRunContext {
             .as_ref()
             .map(|c| c.to_string())
             .unwrap_or_else(|| "{}".into()),
+        context: "{}".into(),
     }
 }
 

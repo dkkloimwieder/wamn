@@ -31,6 +31,7 @@ impl Guest for Component {
                 tracestate: None,
                 deadline_ms: None,
                 config: config.clone(),
+                context: "{}".to_string(),
             };
             cur = match node_run(&ctx, &cur) {
                 // Frozen 0.1 (5.4): run returns an emission; the linear bench

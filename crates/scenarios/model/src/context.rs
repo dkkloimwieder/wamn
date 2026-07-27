@@ -24,6 +24,8 @@ pub struct RunContext {
     pub tracestate: Option<String>,
     /// The node's JSON configuration document.
     pub config: String,
+    /// Durable per-run context passed to every node invocation.
+    pub context: String,
 }
 
 #[cfg(test)]
@@ -44,6 +46,7 @@ mod tests {
             traceparent: None,
             tracestate: None,
             config: "{}".into(),
+            context: r#"{"hold":{"id":7}}"#.into(),
         };
         assert_eq!(
             serde_json::to_value(context).unwrap(),
@@ -55,7 +58,8 @@ mod tests {
                 "attempt": 3,
                 "idempotency-key": "run-1:node:3",
                 "deadline-ms": 42,
-                "config": "{}"
+                "config": "{}",
+                "context": "{\"hold\":{\"id\":7}}"
             })
         );
     }

@@ -924,6 +924,7 @@ fn canonical_request() -> NodeInvokeRequest {
             tracestate: None,
             config: r#"{"endpoint":"http://127.0.0.1","probe":"granted","forbidden":"sibling"}"#
                 .into(),
+            context: "{}".into(),
         },
         input: WirePayload::Inline("\"hello\"".into()),
         grant: granted_credentials(Some("granted")),

@@ -84,6 +84,7 @@ fn request(case: &NodeCase) -> NodeInvokeRequest {
                 .as_ref()
                 .map(ToString::to_string)
                 .unwrap_or_else(|| "{}".to_string()),
+            context: "{}".to_string(),
         },
         input: WirePayload::Inline(case.input.to_string()),
         grant: case.grant.clone().unwrap_or_default(),

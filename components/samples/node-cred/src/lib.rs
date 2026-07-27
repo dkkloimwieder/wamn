@@ -89,6 +89,7 @@ impl Guest for Component {
         Ok(Emission {
             payload: Payload::Inline(out.to_string()),
             port: None,
+            ctx: None,
         })
     }
 }
