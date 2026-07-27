@@ -9,6 +9,7 @@ use wamn_run_state::schema_drift;
 pub mod apibench;
 pub mod bench;
 pub mod capturebench;
+pub mod catalog_live;
 mod cdc_reader_process;
 pub mod cdcbench;
 pub mod dashproof;

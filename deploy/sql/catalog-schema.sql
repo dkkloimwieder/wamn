@@ -82,6 +82,272 @@ CREATE UNIQUE INDEX catalogs_one_applied_per_env
     WHERE state = 'applied';
 
 -- ---------------------------------------------------------------------------
+-- Immutable flow artifacts and catalog-release membership (FLOW-SPEC §5.1).
+--
+-- A flow version is content-addressed once. `register_flow_artifact` makes an
+-- identical retry a no-op and gives a stable named conflict for different
+-- content at the same `(tenant, flow, version)`. Direct UPDATE/DELETE is
+-- rejected by the database, including for the owning role.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.flow_artifacts (
+    tenant_id             text NOT NULL CHECK (tenant_id <> ''),
+    flow_id               text NOT NULL,
+    flow_version          int  NOT NULL CHECK (flow_version > 0),
+    schema_version        text NOT NULL,
+    graph_json            jsonb NOT NULL,
+    graph_hash            text NOT NULL,
+    artifact_hash         text NOT NULL,
+    interface_bundle_hash text NOT NULL,
+    component_digests     jsonb NOT NULL
+        CHECK (jsonb_typeof(component_digests) = 'array'),
+    created_at             timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, flow_id, flow_version)
+);
+ALTER TABLE catalog.flow_artifacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.flow_artifacts FORCE ROW LEVEL SECURITY;
+CREATE POLICY flow_artifacts_tenant ON catalog.flow_artifacts
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.flow_artifacts TO wamn_app;
+
+CREATE FUNCTION catalog.reject_immutable_row_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME || ' is immutable';
+END
+$$;
+
+CREATE TRIGGER flow_artifacts_immutable
+BEFORE UPDATE OR DELETE ON catalog.flow_artifacts
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+CREATE FUNCTION catalog.register_flow_artifact(
+    p_tenant_id text,
+    p_flow_id text,
+    p_flow_version int,
+    p_schema_version text,
+    p_graph_json jsonb,
+    p_graph_hash text,
+    p_artifact_hash text,
+    p_interface_bundle_hash text,
+    p_component_digests jsonb
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO catalog.flow_artifacts (
+        tenant_id, flow_id, flow_version, schema_version, graph_json,
+        graph_hash, artifact_hash, interface_bundle_hash, component_digests
+    )
+    VALUES (
+        p_tenant_id, p_flow_id, p_flow_version, p_schema_version, p_graph_json,
+        p_graph_hash, p_artifact_hash, p_interface_bundle_hash,
+        p_component_digests
+    )
+    ON CONFLICT (tenant_id, flow_id, flow_version) DO NOTHING;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM catalog.flow_artifacts
+        WHERE tenant_id = p_tenant_id
+          AND flow_id = p_flow_id
+          AND flow_version = p_flow_version
+          AND schema_version = p_schema_version
+          AND graph_json = p_graph_json
+          AND graph_hash = p_graph_hash
+          AND artifact_hash = p_artifact_hash
+          AND interface_bundle_hash = p_interface_bundle_hash
+          AND component_digests = p_component_digests
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23505',
+            MESSAGE = 'flow-version-content-conflict';
+    END IF;
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.register_flow_artifact(
+    text, text, int, text, jsonb, text, text, text, jsonb
+) FROM PUBLIC;
+
+-- The sealed canonical member set. Registering the same set converges;
+-- attempting to add/remove/change a member of an existing release conflicts.
+CREATE TABLE catalog.release_manifests (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id      text NOT NULL,
+    catalog_version int  NOT NULL,
+    members_json    jsonb NOT NULL CHECK (jsonb_typeof(members_json) = 'array'),
+    PRIMARY KEY (tenant_id, catalog_id, catalog_version),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
+);
+ALTER TABLE catalog.release_manifests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.release_manifests FORCE ROW LEVEL SECURITY;
+CREATE POLICY release_manifests_tenant ON catalog.release_manifests
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.release_manifests TO wamn_app;
+CREATE TRIGGER release_manifests_immutable
+BEFORE UPDATE OR DELETE ON catalog.release_manifests
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+CREATE FUNCTION catalog.register_release_manifest(
+    p_tenant_id text,
+    p_catalog_id text,
+    p_catalog_version int,
+    p_members_json jsonb
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO catalog.release_manifests (
+        tenant_id, catalog_id, catalog_version, members_json
+    )
+    VALUES (p_tenant_id, p_catalog_id, p_catalog_version, p_members_json)
+    ON CONFLICT (tenant_id, catalog_id, catalog_version) DO NOTHING;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM catalog.release_manifests
+        WHERE tenant_id = p_tenant_id
+          AND catalog_id = p_catalog_id
+          AND catalog_version = p_catalog_version
+          AND members_json = p_members_json
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23505',
+            MESSAGE = 'catalog-release-content-conflict';
+    END IF;
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.register_release_manifest(
+    text, text, int, jsonb
+) FROM PUBLIC;
+
+CREATE TABLE catalog.release_flows (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id      text NOT NULL,
+    catalog_version int  NOT NULL,
+    flow_id         text NOT NULL,
+    flow_version    int  NOT NULL,
+    PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
+    FOREIGN KEY (tenant_id, flow_id, flow_version)
+        REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version)
+);
+ALTER TABLE catalog.release_flows ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.release_flows FORCE ROW LEVEL SECURITY;
+CREATE POLICY release_flows_tenant ON catalog.release_flows
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.release_flows TO wamn_app;
+CREATE TRIGGER release_flows_immutable
+BEFORE UPDATE OR DELETE ON catalog.release_flows
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+CREATE FUNCTION catalog.validate_release_members()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    p_tenant_id text := NEW.tenant_id;
+    p_catalog_id text := NEW.catalog_id;
+    p_catalog_version int := NEW.catalog_version;
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM catalog.release_manifests m
+        WHERE m.tenant_id = p_tenant_id
+          AND m.catalog_id = p_catalog_id
+          AND m.catalog_version = p_catalog_version
+          AND (
+            jsonb_array_length(m.members_json) <> (
+                SELECT count(*)
+                FROM catalog.release_flows r
+                WHERE r.tenant_id = p_tenant_id
+                  AND r.catalog_id = p_catalog_id
+                  AND r.catalog_version = p_catalog_version
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM catalog.release_flows r
+                WHERE r.tenant_id = p_tenant_id
+                  AND r.catalog_id = p_catalog_id
+                  AND r.catalog_version = p_catalog_version
+                  AND NOT m.members_json @> jsonb_build_array(jsonb_build_object(
+                      'flow-id', r.flow_id,
+                      'flow-version', r.flow_version,
+                      'artifact-hash', (
+                          SELECT a.artifact_hash
+                          FROM catalog.flow_artifacts a
+                          WHERE a.tenant_id = r.tenant_id
+                            AND a.flow_id = r.flow_id
+                            AND a.flow_version = r.flow_version
+                      )
+                  ))
+            )
+          )
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23514',
+            MESSAGE = 'catalog-release-membership-mismatch';
+    END IF;
+    RETURN NULL;
+END
+$$;
+
+CREATE CONSTRAINT TRIGGER release_manifest_members_complete
+AFTER INSERT ON catalog.release_manifests
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION catalog.validate_release_members();
+CREATE CONSTRAINT TRIGGER release_flows_match_manifest
+AFTER INSERT ON catalog.release_flows
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION catalog.validate_release_members();
+
+-- A superuser-only fault boundary used by the release gate to prove that the
+-- production transaction rolls every definition write back. Normal sessions
+-- have no `wamn.test.publication_fault` setting, so this is a no-op.
+CREATE FUNCTION catalog.publication_boundary(p_stage text)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF current_setting('wamn.test.publication_fault', true) = p_stage THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '40000',
+            MESSAGE = 'injected-publication-fault-' || p_stage;
+    END IF;
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.publication_boundary(text) FROM PUBLIC;
+
+-- The stable row locked by every publication into an environment. The row
+-- identity never changes; only its applied release pointer advances.
+CREATE TABLE catalog.catalog_heads (
+    tenant_id              text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id             text NOT NULL,
+    environment            text NOT NULL,
+    applied_catalog_version int NOT NULL,
+    updated_at              timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, catalog_id, environment),
+    FOREIGN KEY (tenant_id, catalog_id, applied_catalog_version)
+        REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
+);
+ALTER TABLE catalog.catalog_heads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.catalog_heads FORCE ROW LEVEL SECURITY;
+CREATE POLICY catalog_heads_tenant ON catalog.catalog_heads
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.catalog_heads TO wamn_app;
+
+-- ---------------------------------------------------------------------------
 -- Migration history (2.5, crates/schema/control). One IMMUTABLE row per applied
 -- migration — the versioned, forward-only apply journal the migration engine
 -- writes inside the SAME transaction as the DDL + the lifecycle advance. A row
@@ -332,9 +598,4 @@ CREATE TABLE catalog.event_registrations (
 ALTER TABLE catalog.event_registrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.event_registrations FORCE ROW LEVEL SECURITY;
 CREATE POLICY event_registrations_tenant ON catalog.event_registrations
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app;
--- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
-CREATE INDEX event_registrations_by_entity
-    ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
+    USING (tenant_id = NULLIF(current_setting('app.t

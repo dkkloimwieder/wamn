@@ -25,14 +25,13 @@
 //! from `wamn_run` to the target schema — when their tables are absent;
 //! `--seed-dataset` compiles a wamn-schema-compiler (3.6) dataset against the catalog and
 //! applies it (deterministic ids, `ON CONFLICT DO NOTHING` — idempotent); and
-//! `--flow` validates a wamn-flow (5.1) graph and registers it ACTIVE in the
-//! registry (deactivating prior versions of the same flow). The flows-table
-//! `flow_id` column is written from the graph's own embedded flow-id, so the
-//! column==graph equality the dispatcher enforces (wi4) holds by construction.
+//! `--flow` resolves standard-node interfaces, constructs canonical CF-DEF-ID
+//! artifacts, and publishes artifacts + release membership + head atomically.
+//! It does not write the retired mutable `flows.active` publication path.
 
 use std::path::PathBuf;
 
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
 
@@ -40,6 +39,8 @@ use tokio_postgres::NoTls;
 // lowercase bare-schema type share one owner in the reconcile-run-plane
 // planner's crate.
 use wamn_schema_control::{BareSchemaName, rewrite_schema};
+
+const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 #[derive(Debug, Args)]
 pub struct PublishCatalogArgs {
@@ -78,8 +79,8 @@ pub struct PublishCatalogArgs {
     #[arg(long)]
     pub seed_dataset: Option<PathBuf>,
 
-    /// Flow graph JSON (wamn-flow, 5.1) to validate, register, and ACTIVATE in
-    /// the flow registry (repeatable; prior versions of the flow deactivate).
+    /// Flow graph JSON (wamn-flow, 5.1) to resolve and publish as an immutable
+    /// member of this catalog release.
     #[arg(long)]
     pub flow: Vec<PathBuf>,
 
@@ -138,19 +139,57 @@ async fn publish(
 
     // Ensure the non-superuser runtime role exists (pre-created in production).
     ensure_wamn_app_role(client).await?;
+    ensure_catalog_storage(client).await?;
 
-    // Create the schema if absent and pin this session's search_path to it, so
-    // every statement below — and the parameterized UPSERT — resolves unqualified
-    // names there, exactly as the gateway does via the host-injected search_path.
-    client
-        .batch_execute(&format!(
-            "CREATE SCHEMA IF NOT EXISTS {schema}; \
-             GRANT USAGE ON SCHEMA {schema} TO wamn_app; \
-             SET search_path TO {schema};",
-            schema = schema.quoted(),
+    let seed_sql = if let Some(path) = &args.seed_dataset {
+        let src = std::fs::read_to_string(path)
+            .with_context(|| format!("read seed dataset {}", path.display()))?;
+        Some((
+            path.display().to_string(),
+            seed_dataset_sql(&src, cat, &args.tenant)?,
         ))
+    } else {
+        None
+    };
+    let mut artifacts = Vec::new();
+    for path in &args.flow {
+        let src = std::fs::read_to_string(path)
+            .with_context(|| format!("read flow {}", path.display()))?;
+        let prepared = prepare_flow_artifact(&args.tenant, &src)?;
+        let id = prepared.artifact.identity().id();
+        println!(
+            "prepared immutable flow artifact {} v{}",
+            id.flow_id(),
+            id.flow_version()
+        );
+        artifacts.push(prepared);
+    }
+    let expected_base: Option<i32> = client
+        .query_one(
+            wamn_schema_control::sql::select_publication_base_sql(),
+            &[&args.tenant, &cat.catalog_id, &"dev"],
+        )
         .await
-        .context("ensure schema")?;
+        .context("read publication base")?
+        .get(0);
+    client
+        .batch_execute("BEGIN")
+        .await
+        .context("begin publication")?;
+    let publication_result: anyhow::Result<()> = async {
+
+        // Create the schema if absent and pin this session's search_path to it, so
+        // every statement below — and the parameterized UPSERT — resolves unqualified
+        // names there, exactly as the gateway does via the host-injected search_path.
+        client
+            .batch_execute(&format!(
+                "CREATE SCHEMA IF NOT EXISTS {schema}; \
+                 GRANT USAGE ON SCHEMA {schema} TO wamn_app; \
+                 SET search_path TO {schema};",
+                schema = schema.quoted(),
+            ))
+            .await
+            .context("ensure schema")?;
 
     // The catalog snapshot table (idempotent): tenant-scoped, read-only to wamn_app.
     client
@@ -226,24 +265,25 @@ async fn publish(
     }
 
     // Optionally compile + apply a wamn-schema-compiler dataset against this catalog.
-    if let Some(path) = &args.seed_dataset {
-        let src = std::fs::read_to_string(path)
-            .with_context(|| format!("read seed dataset {}", path.display()))?;
-        let sql = seed_dataset_sql(&src, cat, &args.tenant)?;
+    if let Some((path, sql)) = &seed_sql {
         client
-            .batch_execute(&sql)
+            .batch_execute(sql)
             .await
             .context("apply seed dataset")?;
-        println!("applied seed dataset {} in schema {schema}", path.display());
+        println!("applied seed dataset {path} in schema {schema}");
     }
 
-    // Optionally register + activate flow graphs in the registry.
-    for path in &args.flow {
-        let src = std::fs::read_to_string(path)
-            .with_context(|| format!("read flow {}", path.display()))?;
-        let (flow_id, version) = register_flow(client, &args.tenant, &src).await?;
-        println!("registered flow {flow_id} v{version} (active) in schema {schema}");
-    }
+    publish_release(
+        client,
+        cat,
+        &args.tenant,
+        "dev",
+        schema,
+        artifacts,
+        document,
+        expected_base,
+    )
+    .await?;
 
     // Snapshot UPSERT: replace this tenant's row. The document (arbitrary jsonb)
     // is a bound parameter — never string-interpolated — so it can carry no SQL;
@@ -284,7 +324,482 @@ async fn publish(
             .await?;
     }
 
+        anyhow::Ok(())
+    }
+    .await;
+    finish_publication_transaction(client, publication_result).await
+}
+
+/// End a manually scoped publication transaction without ever returning a
+/// reusable client in an open or aborted transaction. The original publication
+/// error remains the primary error if rollback itself also fails.
+async fn finish_publication_transaction(
+    client: &tokio_postgres::Client,
+    publication_result: anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    match publication_result {
+        Ok(()) => {
+            if let Err(commit_error) = client
+                .batch_execute("COMMIT")
+                .await
+                .context("commit publication")
+            {
+                let rollback_result = client.batch_execute("ROLLBACK").await;
+                return match rollback_result {
+                    Ok(()) => Err(commit_error),
+                    Err(rollback_error) => Err(commit_error.context(format!(
+                        "publication rollback after commit failure also failed: {rollback_error}"
+                    ))),
+                };
+            }
+            Ok(())
+        }
+        Err(publication_error) => {
+            let rollback_result = client.batch_execute("ROLLBACK").await;
+            match rollback_result {
+                Ok(()) => Err(publication_error),
+                Err(rollback_error) => Err(publication_error.context(format!(
+                    "publication rollback also failed: {rollback_error}"
+                ))),
+            }
+        }
+    }
+}
+
+pub(crate) async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    let baseline_present: bool = client
+        .query_one("SELECT to_regclass('catalog.catalogs') IS NOT NULL", &[])
+        .await?
+        .get(0);
+    if !baseline_present {
+        let catalog_schema_present: bool = client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'catalog')",
+                &[],
+            )
+            .await?
+            .get(0);
+        anyhow::ensure!(
+            !catalog_schema_present,
+            "catalog schema exists without catalog.catalogs; reconcile it before publication"
+        );
+        client
+            .batch_execute(CATALOG_SCHEMA_SQL)
+            .await
+            .context("apply catalog storage")?;
+        return Ok(());
+    }
+
+    let release_row = client
+        .query_one(
+            "SELECT to_regclass('catalog.flow_artifacts') IS NOT NULL, \
+                    to_regclass('catalog.release_manifests') IS NOT NULL, \
+                    to_regclass('catalog.release_flows') IS NOT NULL, \
+                    to_regclass('catalog.catalog_heads') IS NOT NULL",
+            &[],
+        )
+        .await?;
+    let release_objects = [
+        release_row.get::<_, bool>(0),
+        release_row.get::<_, bool>(1),
+        release_row.get::<_, bool>(2),
+        release_row.get::<_, bool>(3),
+    ];
+    if release_objects.iter().all(|present| *present) {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        release_objects.iter().all(|present| !*present),
+        "catalog release storage is partially installed; reconcile it before publication"
+    );
+    let start = CATALOG_SCHEMA_SQL
+        .find("CREATE TABLE catalog.flow_artifacts")
+        .expect("catalog release section start");
+    let end = CATALOG_SCHEMA_SQL
+        .find("-- Migration history (2.5")
+        .expect("catalog release section end");
+    client
+        .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+        .await
+        .context("install catalog release storage into baseline catalog")?;
     Ok(())
+}
+
+/// Lock the stable head for a release, initializing it from an applied legacy
+/// catalog in the same transaction. Locking the legacy catalog row serializes
+/// concurrent first-head initialization and makes its pinned runs visible to
+/// the replacement guard.
+pub(crate) async fn lock_or_initialize_catalog_head(
+    client: &impl tokio_postgres::GenericClient,
+    tenant: &str,
+    catalog_id: &str,
+    environment: &str,
+) -> anyhow::Result<Option<i32>> {
+    if let Some(head) = client
+        .query_opt(
+            wamn_schema_control::sql::lock_catalog_head_sql(),
+            &[&tenant, &catalog_id, &environment],
+        )
+        .await
+        .context("lock catalog head")?
+    {
+        return Ok(Some(head.get(0)));
+    }
+    let legacy_applied = client
+        .query_opt(
+            wamn_schema_control::sql::lock_current_applied_version_sql(),
+            &[&tenant, &catalog_id, &environment],
+        )
+        .await
+        .context("lock applied legacy catalog")?
+        .map(|row| row.get::<_, i32>(0));
+    if let Some(version) = legacy_applied {
+        client
+            .execute(
+                wamn_schema_control::sql::advance_catalog_head_sql(),
+                &[&tenant, &catalog_id, &environment, &version],
+            )
+            .await
+            .context("initialize catalog head from applied legacy catalog")?;
+    }
+    Ok(legacy_applied)
+}
+
+async fn publish_release(
+    client: &tokio_postgres::Client,
+    cat: &wamn_schema_model::Catalog,
+    tenant: &str,
+    environment: &str,
+    run_schema: &BareSchemaName,
+    artifacts: Vec<PreparedFlowArtifact>,
+    document: &str,
+    expected_base: Option<i32>,
+) -> anyhow::Result<()> {
+    let members = wamn_schema_control::canonical_release_flows(
+        artifacts
+            .iter()
+            .map(|prepared| {
+                let id = prepared.artifact.identity().id();
+                Ok(wamn_schema_control::ReleaseFlow {
+                    flow_id: id.flow_id().to_string(),
+                    flow_version: i32::try_from(id.flow_version()).context("flow version")?,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?,
+    )
+    .map_err(anyhow::Error::new)?;
+    let release_manifest = serde_json::to_string(
+        &members
+            .iter()
+            .map(|member| {
+                let artifact = artifacts
+                    .iter()
+                    .find(|prepared| prepared.artifact.identity().id().flow_id() == member.flow_id)
+                    .expect("canonical member came from prepared artifact");
+                serde_json::json!({
+                    "flow-id": member.flow_id,
+                    "flow-version": member.flow_version,
+                    "artifact-hash": artifact.artifact.identity().artifact_hash().as_str(),
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .context("serialize release manifest")?;
+    let catalog_version = i32::try_from(cat.version).context("catalog version")?;
+    let writes = async {
+        let applied_version =
+            lock_or_initialize_catalog_head(client, tenant, &cat.catalog_id, environment).await?;
+        let runs_present: bool = client
+            .query_one(
+                &format!(
+                    "SELECT to_regclass('{}.runs') IS NOT NULL",
+                    run_schema.as_str()
+                ),
+                &[],
+            )
+            .await?
+            .get(0);
+        let nonterminal_runs = if runs_present {
+            if let Some(applied) = applied_version {
+                client
+                    .query_one(
+                        &wamn_schema_control::sql::count_nonterminal_release_runs_sql(
+                            run_schema.as_str(),
+                        ),
+                        &[&tenant, &cat.catalog_id, &applied],
+                    )
+                    .await
+                    .context("check release-pinned runs")?
+                    .get(0)
+            } else {
+                0_i64
+            }
+        } else {
+            0_i64
+        };
+        wamn_schema_control::guard_publication(&wamn_schema_control::PublicationGuard {
+            expected_base,
+            applied_version,
+            nonterminal_runs,
+            unresolved_sources: &[],
+        })
+        .map_err(anyhow::Error::new)?;
+        let same_target_retry = publication_is_same_target_retry(applied_version, catalog_version)?;
+        if let Some(existing) = client
+            .query_opt(
+                "SELECT members_json::text FROM catalog.release_manifests \
+                 WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+                &[&tenant, &cat.catalog_id, &catalog_version],
+            )
+            .await
+            .context("preflight existing release membership")?
+        {
+            let existing: String = existing.get(0);
+            let existing: serde_json::Value =
+                serde_json::from_str(&existing).context("parse stored release manifest")?;
+            let requested: serde_json::Value =
+                serde_json::from_str(&release_manifest).expect("prepared manifest is JSON");
+            anyhow::ensure!(existing == requested, "catalog-release-content-conflict");
+        }
+
+        for prepared in &artifacts {
+            let artifact = &prepared.artifact;
+            let id = artifact.identity().id();
+            let flow_version = i32::try_from(id.flow_version()).context("flow version")?;
+            let interfaces =
+                serde_json::to_string(artifact.interfaces()).context("serialize interfaces")?;
+            let interface_bundle_hash = wamn_schema_control::sql::ddl_checksum(&interfaces);
+            let component_digests = serde_json::to_string(artifact.supplied_component_digests())
+                .context("serialize digests")?;
+            client
+                .execute(
+                    wamn_schema_control::sql::register_flow_artifact_sql(),
+                    &[
+                        &tenant,
+                        &id.flow_id(),
+                        &flow_version,
+                        &artifact.schema_version(),
+                        &prepared.graph_json.as_str(),
+                        &artifact.graph_hash(),
+                        &artifact.identity().artifact_hash().as_str(),
+                        &interface_bundle_hash,
+                        &component_digests.as_str(),
+                    ],
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "register immutable flow artifact {} v{}",
+                        id.flow_id(),
+                        id.flow_version()
+                    )
+                })?;
+        }
+        client
+            .execute(
+                wamn_schema_control::sql::publication_boundary_sql(),
+                &[&"after-artifacts"],
+            )
+            .await
+            .context("publication boundary after artifacts")?;
+
+        client
+            .execute(
+                "UPDATE catalog.catalogs SET state = 'superseded' \
+                 WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 \
+                   AND state = 'applied' AND version <> $4",
+                &[&tenant, &cat.catalog_id, &environment, &catalog_version],
+            )
+            .await
+            .context("supersede prior release")?;
+        client
+            .execute(
+                "INSERT INTO catalog.catalogs \
+                   (tenant_id, catalog_id, version, environment, schema_version, state, document) \
+                 VALUES ($1, $2, $3, $4, $5, 'applied', $6::text::jsonb) \
+                 ON CONFLICT (tenant_id, catalog_id, version) DO NOTHING",
+                &[
+                    &tenant,
+                    &cat.catalog_id,
+                    &catalog_version,
+                    &environment,
+                    &cat.schema_version,
+                    &document,
+                ],
+            )
+            .await
+            .context("persist catalog release")?;
+        let stored: bool = client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM catalog.catalogs \
+                 WHERE tenant_id = $1 AND catalog_id = $2 AND version = $3 \
+                   AND environment = $4 AND document = $5::text::jsonb)",
+                &[
+                    &tenant,
+                    &cat.catalog_id,
+                    &catalog_version,
+                    &environment,
+                    &document,
+                ],
+            )
+            .await?
+            .get(0);
+        anyhow::ensure!(stored, "catalog-version-content-conflict");
+        let journal_checksum = wamn_schema_control::sql::ddl_checksum(document);
+        let exact_journal: bool = if same_target_retry {
+            client
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM catalog.schema_migrations \
+                     WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 \
+                       AND to_version = $4 \
+                       AND confirmation = 'none' AND statement_count = 0 \
+                       AND destructive = false AND checksum = $5)",
+                    &[
+                        &tenant,
+                        &cat.catalog_id,
+                        &environment,
+                        &catalog_version,
+                        &journal_checksum,
+                    ],
+                )
+                .await
+                .context("verify retried release publication journal")?
+                .get(0)
+        } else {
+            client
+                .execute(
+                    wamn_schema_control::sql::record_release_publication_sql(),
+                    &[
+                        &tenant,
+                        &cat.catalog_id,
+                        &environment,
+                        &applied_version,
+                        &catalog_version,
+                        &journal_checksum,
+                    ],
+                )
+                .await
+                .context("record release publication")?;
+            client
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM catalog.schema_migrations \
+                     WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 \
+                       AND from_version IS NOT DISTINCT FROM $4 AND to_version = $5 \
+                       AND confirmation = 'none' AND statement_count = 0 \
+                       AND destructive = false AND checksum = $6)",
+                    &[
+                        &tenant,
+                        &cat.catalog_id,
+                        &environment,
+                        &applied_version,
+                        &catalog_version,
+                        &journal_checksum,
+                    ],
+                )
+                .await
+                .context("verify release publication journal base")?
+                .get(0)
+        };
+        anyhow::ensure!(exact_journal, "catalog-release-journal-conflict");
+        client
+            .execute(
+                wamn_schema_control::sql::publication_boundary_sql(),
+                &[&"after-journal"],
+            )
+            .await
+            .context("publication boundary after-journal")?;
+        client
+            .execute(
+                wamn_schema_control::sql::register_release_manifest_sql(),
+                &[
+                    &tenant,
+                    &cat.catalog_id,
+                    &catalog_version,
+                    &release_manifest.as_str(),
+                ],
+            )
+            .await
+            .context("seal release membership")?;
+        for member in &members {
+            client
+                .execute(
+                    wamn_schema_control::sql::insert_release_flow_sql(),
+                    &[
+                        &tenant,
+                        &cat.catalog_id,
+                        &catalog_version,
+                        &member.flow_id,
+                        &member.flow_version,
+                    ],
+                )
+                .await
+                .with_context(|| format!("publish flow {:?}", member.flow_id))?;
+            let exact: bool = client
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM catalog.release_flows \
+                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+                       AND flow_id = $4 AND flow_version = $5)",
+                    &[
+                        &tenant,
+                        &cat.catalog_id,
+                        &catalog_version,
+                        &member.flow_id,
+                        &member.flow_version,
+                    ],
+                )
+                .await?
+                .get(0);
+            anyhow::ensure!(exact, "catalog-release-content-conflict");
+        }
+        let stored_members: i64 = client
+            .query_one(
+                "SELECT count(*) FROM catalog.release_flows \
+                 WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+                &[&tenant, &cat.catalog_id, &catalog_version],
+            )
+            .await?
+            .get(0);
+        anyhow::ensure!(
+            stored_members == i64::try_from(members.len()).unwrap_or(i64::MAX),
+            "catalog-release-content-conflict"
+        );
+        for stage in ["after-members", "before-head"] {
+            client
+                .execute(
+                    wamn_schema_control::sql::publication_boundary_sql(),
+                    &[&stage],
+                )
+                .await
+                .with_context(|| format!("publication boundary {stage}"))?;
+        }
+        client
+            .execute(
+                wamn_schema_control::sql::advance_catalog_head_sql(),
+                &[&tenant, &cat.catalog_id, &environment, &catalog_version],
+            )
+            .await
+            .context("advance catalog head")?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(error) = writes {
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn publication_is_same_target_retry(
+    applied_version: Option<i32>,
+    target_version: i32,
+) -> anyhow::Result<bool> {
+    let same_target_retry = applied_version == Some(target_version);
+    if let Some(applied) = applied_version {
+        anyhow::ensure!(
+            same_target_retry || target_version > applied,
+            "catalog-release-version-regression: target {target_version}, applied {applied}"
+        );
+    }
+    Ok(same_target_retry)
 }
 
 /// Ensure + upsert the `wamn_entities` map for every entity of `cat` (rows are
@@ -461,74 +976,322 @@ pub fn seed_dataset_sql(
         .map_err(|e| anyhow::anyhow!("seed sql: {e}"))
 }
 
-/// Validate a flow graph and register it ACTIVE under `tenant` (assumes the
-/// session `search_path` already points at the project schema). Prior versions
-/// of the same flow deactivate; re-registering a version refreshes its graph.
-/// The `flow_id` column is written from the graph's embedded id, so the
-/// dispatcher's column==graph equality guard (wi4) holds by construction. The
-/// superuser connection bypasses RLS, hence the explicit tenant predicates.
-///
-pub async fn register_flow(
-    client: &tokio_postgres::Client,
-    tenant: &str,
-    graph_json: &str,
-) -> anyhow::Result<(String, u32)> {
+#[derive(Debug)]
+struct PreparedFlowArtifact {
+    graph_json: String,
+    artifact: wamn_catalog::Artifact,
+}
+
+/// Resolve the standard-node interface bundle and build the canonical
+/// CF-DEF-ID artifact without mutating storage.
+fn prepare_flow_artifact(tenant: &str, graph_json: &str) -> anyhow::Result<PreparedFlowArtifact> {
+    use std::collections::BTreeSet;
+
+    use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+
     let flow =
         wamn_flow::Flow::from_json(graph_json).map_err(|e| anyhow::anyhow!("flow parse: {e}"))?;
-    // Phase 1 has no custom-node manifest resolver in this legacy registration
-    // path. Built-in interfaces still resolve structurally; custom nodes fail
-    // closed until immutable publication supplies the pinned interface bundle.
-    let issues = flow.issues(&Default::default());
-    if issues
+    let mut implementations = Vec::new();
+    let node_types: BTreeSet<_> = flow
+        .nodes
         .iter()
-        .any(|i| i.severity == wamn_flow::Severity::Error)
-    {
-        bail!("flow {} does not validate: {issues:?}", flow.flow_id);
+        .map(|node| node.node_type.as_str())
+        .collect();
+    for node_type in node_types {
+        if matches!(node_type, "cron" | "event" | "fail" | "request" | "respond") {
+            continue;
+        }
+        let Some(ports) = wamn_standard_nodes::completion_ports(node_type) else {
+            continue;
+        };
+        let replay_safe =
+            wamn_standard_nodes::is_replay_safe(node_type).expect("standard node has semantics");
+        implementations.push(wamn_catalog::NodeImplementation::platform(
+            ResolvedNodeInterface {
+                node_type: node_type.to_string(),
+                output_ports: ports.iter().map(|port| (*port).to_string()).collect(),
+                purity: if replay_safe {
+                    ResolvedPurity::Pure
+                } else {
+                    ResolvedPurity::Effectful
+                },
+                recovery_class: if replay_safe {
+                    RecoveryClass::Replay
+                } else {
+                    RecoveryClass::NeverReplay
+                },
+            },
+        ));
     }
-    let version = i32::try_from(flow.version).context("flow version")?;
-    // Deactivate-prior + insert are ONE transaction: a failed insert (e.g. the
-    // collision index catching a racing registration) must roll the deactivate
-    // back, never stranding the flow with no active version.
-    client
-        .batch_execute("BEGIN")
-        .await
-        .context("begin registration")?;
-    let writes = async {
-        client
-            .execute(
-                "UPDATE flows SET active = false, updated_at = now() \
-                 WHERE tenant_id = $1 AND flow_id = $2",
-                &[&tenant, &flow.flow_id],
-            )
-            .await
-            .context("deactivate prior versions")?;
-        client
-            .execute(
-                "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
-                 VALUES ($1, $2, $3, true, $4::text::jsonb) \
-                 ON CONFLICT (tenant_id, flow_id, version) \
-                   DO UPDATE SET graph_json = EXCLUDED.graph_json, active = true, updated_at = now()",
-                &[&tenant, &flow.flow_id, &version, &graph_json],
-            )
-            .await
-            .context("register flow")?;
-        anyhow::Ok(())
-    }
-    .await;
-    if let Err(e) = writes {
-        let _ = client.batch_execute("ROLLBACK").await;
-        return Err(e);
-    }
-    client
-        .batch_execute("COMMIT")
-        .await
-        .context("commit registration")?;
-    Ok((flow.flow_id.clone(), flow.version))
+    let artifact = wamn_catalog::Artifact::new(tenant, &flow, implementations)
+        .map_err(|error| anyhow::anyhow!("immutable artifact: {error}"))?;
+    Ok(PreparedFlowArtifact {
+        graph_json: graph_json.to_string(),
+        artifact,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn release_fixture(suffix: &str) -> (wamn_schema_model::Catalog, String) {
+        let catalog_json = format!(
+            r#"{{"schema-version":"0.1","catalog-id":"release-{suffix}","version":1,"entities":[]}}"#
+        );
+        let catalog = wamn_schema_model::Catalog::from_json(&catalog_json).unwrap();
+        let graph = format!(
+            r#"{{
+              "schema-version":"0.1","flow-id":"flow-{suffix}","version":1,
+              "nodes":[
+                {{"id":"request","type":"request"}},
+                {{"id":"shape","type":"transform","config":{{"expression":"@"}}}},
+                {{"id":"respond","type":"respond","config":{{"status":200}}}}
+              ],
+              "edges":[
+                {{"from":"request","to":"shape"}},
+                {{"from":"shape","to":"respond"}}
+              ]
+            }}"#
+        );
+        (catalog, graph)
+    }
+
+    async fn persisted_release_bytes(
+        client: &tokio_postgres::Client,
+        tenant: &str,
+        catalog_id: &str,
+    ) -> Vec<u8> {
+        let row = client
+            .query_one(
+                "SELECT \
+                   COALESCE((SELECT jsonb_agg(to_jsonb(a) - 'created_at' ORDER BY flow_id, flow_version)::text \
+                     FROM catalog.flow_artifacts a WHERE tenant_id = $1), '[]'), \
+                   (SELECT members_json::text FROM catalog.release_manifests \
+                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 1), \
+                   COALESCE((SELECT jsonb_agg(jsonb_build_array(flow_id, flow_version) \
+                     ORDER BY flow_id)::text FROM catalog.release_flows \
+                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 1), '[]'), \
+                   (SELECT jsonb_build_array(from_version, to_version, confirmation, \
+                     statement_count, destructive, checksum)::text \
+                     FROM catalog.schema_migrations WHERE tenant_id = $1 \
+                       AND catalog_id = $2 AND environment = 'dev' AND to_version = 1), \
+                   (SELECT applied_catalog_version::text FROM catalog.catalog_heads \
+                     WHERE tenant_id = $1 AND catalog_id = $2 AND environment = 'dev')",
+                &[&tenant, &catalog_id],
+            )
+            .await
+            .unwrap();
+        format!(
+            "{:?}",
+            (
+                row.get::<_, String>(0),
+                row.get::<_, String>(1),
+                row.get::<_, String>(2),
+                row.get::<_, String>(3),
+                row.get::<_, String>(4),
+            )
+        )
+        .into_bytes()
+    }
+
+    #[tokio::test]
+    async fn every_failed_publication_boundary_rolls_back_and_same_connection_retries_identically()
+    {
+        let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
+            return;
+        };
+        let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
+        let connection_task = tokio::spawn(connection);
+        ensure_wamn_app_role(&client).await.unwrap();
+        ensure_catalog_storage(&client).await.unwrap();
+        let run_schema = BareSchemaName::new("cf_release_retry_probe").unwrap();
+        for (index, stage) in [
+            "after-artifacts",
+            "after-journal",
+            "after-members",
+            "before-head",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let suffix = format!("{index}");
+            let tenant = format!("release-retry-{index}");
+            let (catalog, graph) = release_fixture(&suffix);
+            let document = catalog.to_json();
+
+            client.batch_execute("BEGIN").await.unwrap();
+            client
+                .batch_execute(&format!(
+                    "SET LOCAL wamn.test.publication_fault = '{stage}'"
+                ))
+                .await
+                .unwrap();
+            let failed_writes = publish_release(
+                &client,
+                &catalog,
+                &tenant,
+                "dev",
+                &run_schema,
+                vec![prepare_flow_artifact(&tenant, &graph).unwrap()],
+                &document,
+                None,
+            )
+            .await;
+            let error = finish_publication_transaction(&client, failed_writes)
+                .await
+                .expect_err("injected publication failure");
+            assert!(format!("{error:#}").contains(&format!("injected-publication-fault-{stage}")));
+            let counts = client
+                .query_one(
+                    "SELECT \
+                       (SELECT count(*) FROM catalog.flow_artifacts WHERE tenant_id = $1), \
+                       (SELECT count(*) FROM catalog.release_manifests WHERE tenant_id = $1), \
+                       (SELECT count(*) FROM catalog.release_flows WHERE tenant_id = $1), \
+                       (SELECT count(*) FROM catalog.schema_migrations WHERE tenant_id = $1), \
+                       (SELECT count(*) FROM catalog.catalog_heads WHERE tenant_id = $1)",
+                    &[&tenant],
+                )
+                .await
+                .expect("same connection is usable after rollback");
+            for column in 0..5 {
+                assert_eq!(
+                    counts.get::<_, i64>(column),
+                    0,
+                    "{stage} left column {column}"
+                );
+            }
+
+            client.batch_execute("BEGIN").await.unwrap();
+            let first_retry = publish_release(
+                &client,
+                &catalog,
+                &tenant,
+                "dev",
+                &run_schema,
+                vec![prepare_flow_artifact(&tenant, &graph).unwrap()],
+                &document,
+                None,
+            )
+            .await;
+            finish_publication_transaction(&client, first_retry)
+                .await
+                .expect("first retry commits");
+            let first = persisted_release_bytes(&client, &tenant, &catalog.catalog_id).await;
+
+            client.batch_execute("BEGIN").await.unwrap();
+            let same_content_retry = publish_release(
+                &client,
+                &catalog,
+                &tenant,
+                "dev",
+                &run_schema,
+                vec![prepare_flow_artifact(&tenant, &graph).unwrap()],
+                &document,
+                Some(1),
+            )
+            .await;
+            finish_publication_transaction(&client, same_content_retry)
+                .await
+                .expect("same-content retry commits");
+            assert_eq!(
+                persisted_release_bytes(&client, &tenant, &catalog.catalog_id).await,
+                first
+            );
+        }
+
+        drop(client);
+        let _ = connection_task.await;
+    }
+
+    #[tokio::test]
+    async fn legacy_applied_catalog_initializes_head_and_refuses_its_nonterminal_run() {
+        let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
+            return;
+        };
+        let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
+        let connection_task = tokio::spawn(connection);
+        ensure_wamn_app_role(&client).await.unwrap();
+        ensure_catalog_storage(&client).await.unwrap();
+        let suffix = std::process::id();
+        let tenant = format!("legacy-guard-{suffix}");
+        let catalog_id = format!("legacy-guard-{suffix}");
+        let current_document = format!(
+            r#"{{"schema-version":"0.1","catalog-id":"{catalog_id}","version":1,"entities":[]}}"#
+        );
+        client
+            .execute(
+                "INSERT INTO catalog.catalogs \
+                   (tenant_id, catalog_id, version, environment, schema_version, state, document) \
+                 VALUES ($1, $2, 1, 'dev', '0.1', 'applied', $3::text::jsonb)",
+                &[&tenant, &catalog_id, &current_document],
+            )
+            .await
+            .unwrap();
+        client
+            .batch_execute(
+                "CREATE TEMP TABLE runs (\
+                   tenant_id text, catalog_id text, catalog_version int, status text)",
+            )
+            .await
+            .unwrap();
+        client
+            .execute(
+                "INSERT INTO runs VALUES ($1, $2, 1, 'running')",
+                &[&tenant, &catalog_id],
+            )
+            .await
+            .unwrap();
+        let target_document = format!(
+            r#"{{"schema-version":"0.1","catalog-id":"{catalog_id}","version":2,"entities":[]}}"#
+        );
+        let target = wamn_schema_model::Catalog::from_json(&target_document).unwrap();
+        let expected_base: Option<i32> = client
+            .query_one(
+                wamn_schema_control::sql::select_publication_base_sql(),
+                &[&tenant, &catalog_id, &"dev"],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(expected_base, Some(1));
+
+        client.batch_execute("BEGIN").await.unwrap();
+        let refusal = publish_release(
+            &client,
+            &target,
+            &tenant,
+            "dev",
+            &BareSchemaName::new("pg_temp").unwrap(),
+            vec![],
+            &target_document,
+            expected_base,
+        )
+        .await;
+        let error = finish_publication_transaction(&client, refusal)
+            .await
+            .expect_err("legacy pinned run must refuse replacement");
+        assert!(format!("{error:#}").contains("catalog-release-has-nonterminal-runs"));
+        let head_present: bool = client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM catalog.catalog_heads \
+                 WHERE tenant_id = $1 AND catalog_id = $2 AND environment = 'dev')",
+                &[&tenant, &catalog_id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert!(!head_present, "rolled-back head initialization leaked");
+        client
+            .execute(
+                "DELETE FROM catalog.catalogs WHERE tenant_id = $1 AND catalog_id = $2",
+                &[&tenant, &catalog_id],
+            )
+            .await
+            .unwrap();
+        drop(client);
+        let _ = connection_task.await;
+    }
 
     #[tokio::test]
     async fn invalid_schema_is_rejected_before_catalog_io_or_admin_connect() {
@@ -554,5 +1317,58 @@ mod tests {
         );
         assert!(!message.contains("read catalog"), "{message}");
         assert!(!message.contains("admin connect"), "{message}");
+    }
+
+    #[test]
+    fn standard_transform_resolves_into_a_canonical_artifact() {
+        let graph = r#"{
+          "schema-version":"0.1","flow-id":"standard-flow","version":1,
+          "nodes":[
+            {"id":"request","type":"request","config":{"input-schema":{
+              "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"
+            }}},
+            {"id":"shape","type":"transform","config":{"expression":"@"}},
+            {"id":"respond","type":"respond","config":{"status":200}}
+          ],
+          "edges":[
+            {"from":"request","to":"shape"},
+            {"from":"shape","to":"respond"}
+          ]
+        }"#;
+        let prepared = prepare_flow_artifact("tenant", graph).expect("standard node resolves");
+        assert_eq!(prepared.artifact.interfaces().len(), 1);
+        assert_eq!(prepared.artifact.interfaces()[0].node_type, "transform");
+        assert_eq!(prepared.artifact.interfaces()[0].output_ports, ["main"]);
+    }
+
+    #[test]
+    fn unresolved_custom_node_is_refused_before_storage() {
+        let graph = r#"{
+          "schema-version":"0.1","flow-id":"custom-flow","version":1,
+          "nodes":[
+            {"id":"request","type":"request"},
+            {"id":"custom","type":"tenant-custom"},
+            {"id":"respond","type":"respond","config":{"status":200}}
+          ],
+          "edges":[
+            {"from":"request","to":"custom"},
+            {"from":"custom","to":"respond"}
+          ]
+        }"#;
+        let error = prepare_flow_artifact("tenant", graph)
+            .expect_err("unresolved custom node must fail closed");
+        assert!(format!("{error:#}").contains("has no resolved interface"));
+    }
+
+    #[test]
+    fn journal_base_is_preserved_only_for_a_true_same_target_retry() {
+        assert!(!publication_is_same_target_retry(None, 1).unwrap());
+        assert!(!publication_is_same_target_retry(Some(1), 2).unwrap());
+        assert!(publication_is_same_target_retry(Some(2), 2).unwrap());
+        let regression = publication_is_same_target_retry(Some(3), 2).unwrap_err();
+        assert!(format!("{regression:#}").contains("catalog-release-version-regression"));
+        let source = include_str!("publish_catalog.rs");
+        assert!(source.contains("from_version IS NOT DISTINCT FROM $4"));
+        assert!(source.contains("verify retried release publication journal"));
     }
 }

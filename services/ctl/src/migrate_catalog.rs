@@ -176,6 +176,8 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    crate::publish_catalog::ensure_wamn_app_role(&client).await?;
+    crate::publish_catalog::ensure_catalog_storage(&client).await?;
 
     // D24 (EVT-REG, wamn-rmxa): refuse a migration that would remove an entity
     // still referenced by an event registration — across ALL tenants, since the
@@ -228,6 +230,7 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         &target,
         args.base,
         confirm,
+        true,
     )
     .await?
     {
@@ -291,7 +294,7 @@ pub(crate) enum ApplyOutcome {
 /// tables to wamn_app, and the schema needs USAGE too). Outside the migration
 /// transaction — it is provisioning, not part of the atomic apply.
 pub(crate) async fn ensure_data_schema(
-    client: &tokio_postgres::Client,
+    client: &impl tokio_postgres::GenericClient,
     schema: &BareSchemaName,
 ) -> anyhow::Result<()> {
     client
@@ -347,9 +350,35 @@ pub(crate) async fn apply_catalog_target(
     target: &Catalog,
     expected_base: Option<u32>,
     confirm: Confirmation,
+    advance_release_head: bool,
 ) -> anyhow::Result<ApplyOutcome> {
-    ensure_data_schema(client, schema).await?;
     let tx = client.transaction().await.context("begin")?;
+    let outcome = apply_catalog_target_in_transaction(
+        &tx,
+        tenant,
+        environment,
+        schema,
+        target,
+        expected_base,
+        confirm,
+        advance_release_head,
+    )
+    .await?;
+    tx.commit().await.context("commit migration")?;
+    Ok(outcome)
+}
+
+pub(crate) async fn apply_catalog_target_in_transaction(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant: &str,
+    environment: &str,
+    schema: &BareSchemaName,
+    target: &Catalog,
+    expected_base: Option<u32>,
+    confirm: Confirmation,
+    advance_release_head: bool,
+) -> anyhow::Result<ApplyOutcome> {
+    ensure_data_schema(tx, schema).await?;
     tx.batch_execute(&format!(
         "SET LOCAL search_path = {}, catalog",
         schema.quoted()
@@ -358,6 +387,50 @@ pub(crate) async fn apply_catalog_target(
     .context("set search_path")?;
 
     let current = read_current_applied(&tx, tenant, &target.catalog_id, environment).await?;
+    let head_version = crate::publish_catalog::lock_or_initialize_catalog_head(
+        tx,
+        tenant,
+        &target.catalog_id,
+        environment,
+    )
+    .await?;
+    let current_version = current
+        .as_ref()
+        .map(|catalog| i32::try_from(catalog.version).context("current catalog version"))
+        .transpose()?;
+    anyhow::ensure!(
+        head_version.is_none() || head_version == current_version,
+        "catalog-head-state-conflict: head {head_version:?}, applied catalog {current_version:?}"
+    );
+    let runs_present: bool = tx
+        .query_one(
+            &format!("SELECT to_regclass('{}.runs') IS NOT NULL", schema.as_str()),
+            &[],
+        )
+        .await?
+        .get(0);
+    let nonterminal_runs = if runs_present {
+        if let Some(applied) = head_version.or(current_version) {
+            tx.query_one(
+                &wamn_schema_control::sql::count_nonterminal_release_runs_sql(schema.as_str()),
+                &[&tenant, &target.catalog_id, &applied],
+            )
+            .await
+            .context("check release-pinned runs")?
+            .get(0)
+        } else {
+            0_i64
+        }
+    } else {
+        0_i64
+    };
+    wamn_schema_control::guard_publication(&wamn_schema_control::PublicationGuard {
+        expected_base: current_version,
+        applied_version: head_version.or(current_version),
+        nonterminal_runs,
+        unresolved_sources: &[],
+    })
+    .map_err(anyhow::Error::new)?;
     let request = MigrationRequest {
         tenant,
         environment: Env::new(environment),
@@ -368,30 +441,180 @@ pub(crate) async fn apply_catalog_target(
     };
     let plan = match plan_migration(&request) {
         Err(MigrationError::AlreadyApplied { version }) => {
-            drop(tx);
+            if advance_release_head {
+                let version_i32 = i32::try_from(version).context("catalog version")?;
+                ensure_existing_release_manifest(tx, tenant, &target.catalog_id, version_i32)
+                    .await?;
+                tx.execute(
+                    wamn_schema_control::sql::advance_catalog_head_sql(),
+                    &[&tenant, &target.catalog_id, &environment, &version_i32],
+                )
+                .await
+                .context("initialize catalog head")?;
+            }
             return Ok(ApplyOutcome::AlreadyApplied { version });
         }
         other => plan_error(other)?,
     };
     for stmt in &plan.statements {
-        if stmt.params.is_empty() {
-            tx.batch_execute(&stmt.sql)
-                .await
-                .with_context(|| format!("apply: {}", stmt.summary))?;
-        } else {
-            let params = to_sql_params(&stmt.params);
-            tx.execute(stmt.sql.as_str(), &params)
-                .await
-                .with_context(|| format!("apply: {}", stmt.summary))?;
+        if !should_execute_migration_statement(advance_release_head, stmt) {
+            continue;
         }
+        execute_migration_statement(tx, stmt).await?;
     }
     // Refresh the decode-time entity map (wamn-l5i9.11) IN the apply
     // transaction: the OID-keyed rows commit atomically with the DDL that
     // created/renamed the tables, so a CDC reader's lookup never sees one
     // without the other.
-    crate::publish_catalog::upsert_entity_map(&tx, target, schema).await?;
-    tx.commit().await.context("commit migration")?;
+    crate::publish_catalog::upsert_entity_map(tx, target, schema).await?;
+    if advance_release_head {
+        let target_version = i32::try_from(target.version).context("catalog version")?;
+        carry_forward_release(
+            tx,
+            tenant,
+            &target.catalog_id,
+            current_version,
+            target_version,
+            schema,
+        )
+        .await?;
+        tx.execute(
+            wamn_schema_control::sql::advance_catalog_head_sql(),
+            &[&tenant, &target.catalog_id, &environment, &target_version],
+        )
+        .await
+        .context("advance catalog head")?;
+    }
     Ok(ApplyOutcome::Applied(plan))
+}
+
+pub(crate) fn is_migration_journal_statement(
+    statement: &wamn_schema_control::SqlStatement,
+) -> bool {
+    statement.summary == "record the migration in schema_migrations"
+}
+
+fn should_execute_migration_statement(
+    advance_release_head: bool,
+    statement: &wamn_schema_control::SqlStatement,
+) -> bool {
+    advance_release_head || !is_migration_journal_statement(statement)
+}
+
+pub(crate) async fn execute_migration_statement(
+    tx: &tokio_postgres::Transaction<'_>,
+    statement: &wamn_schema_control::SqlStatement,
+) -> anyhow::Result<()> {
+    if statement.params.is_empty() {
+        tx.batch_execute(&statement.sql)
+            .await
+            .with_context(|| format!("apply: {}", statement.summary))?;
+    } else {
+        let params = to_sql_params(&statement.params);
+        tx.execute(statement.sql.as_str(), &params)
+            .await
+            .with_context(|| format!("apply: {}", statement.summary))?;
+    }
+    Ok(())
+}
+
+async fn ensure_existing_release_manifest(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant: &str,
+    catalog_id: &str,
+    catalog_version: i32,
+) -> anyhow::Result<()> {
+    let present: bool = tx
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM catalog.release_manifests \
+             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3)",
+            &[&tenant, &catalog_id, &catalog_version],
+        )
+        .await
+        .context("verify existing release manifest")?
+        .get(0);
+    anyhow::ensure!(
+        present,
+        "catalog-release-manifest-missing: applied release {catalog_id:?} v{catalog_version}"
+    );
+    Ok(())
+}
+
+/// A schema-only migration keeps the prior sealed flow set. A first release may
+/// be sealed empty only when the project flow registry is genuinely empty.
+async fn carry_forward_release(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant: &str,
+    catalog_id: &str,
+    current_version: Option<i32>,
+    target_version: i32,
+    schema: &BareSchemaName,
+) -> anyhow::Result<()> {
+    let manifest = if let Some(source_version) = current_version {
+        tx.query_opt(
+            "SELECT members_json::text FROM catalog.release_manifests \
+             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+            &[&tenant, &catalog_id, &source_version],
+        )
+        .await
+        .context("read applied release manifest")?
+        .with_context(|| {
+            format!(
+                "catalog-release-manifest-missing: cannot migrate {catalog_id:?} v{source_version}"
+            )
+        })?
+        .get::<_, String>(0)
+    } else {
+        let flows_present: bool = tx
+            .query_one(
+                &format!(
+                    "SELECT to_regclass('{}.flows') IS NOT NULL",
+                    schema.as_str()
+                ),
+                &[],
+            )
+            .await?
+            .get(0);
+        let flow_count = if flows_present {
+            tx.query_one(
+                &format!(
+                    "SELECT count(*) FROM {}.flows WHERE tenant_id = $1",
+                    schema.as_str()
+                ),
+                &[&tenant],
+            )
+            .await
+            .context("check first release flow registry")?
+            .get::<_, i64>(0)
+        } else {
+            0
+        };
+        anyhow::ensure!(
+            flow_count == 0,
+            "catalog-release-unresolved-sources: first release has {flow_count} legacy flow(s)"
+        );
+        "[]".to_string()
+    };
+    tx.execute(
+        wamn_schema_control::sql::register_release_manifest_sql(),
+        &[&tenant, &catalog_id, &target_version, &manifest],
+    )
+    .await
+    .context("seal migrated release manifest")?;
+    if let Some(source_version) = current_version {
+        tx.execute(
+            "INSERT INTO catalog.release_flows \
+               (tenant_id, catalog_id, catalog_version, flow_id, flow_version) \
+             SELECT tenant_id, catalog_id, $4, flow_id, flow_version \
+             FROM catalog.release_flows \
+             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+             ON CONFLICT (tenant_id, catalog_id, catalog_version, flow_id) DO NOTHING",
+            &[&tenant, &catalog_id, &source_version, &target_version],
+        )
+        .await
+        .context("carry migrated release members forward")?;
+    }
+    Ok(())
 }
 
 /// Map a [`MigrationError`] to a clear operator-facing failure (the confirmation
@@ -429,6 +652,104 @@ pub(crate) fn is_bare_ident(s: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn migration_carries_the_sealed_release_forward_before_head_advance() {
+        let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
+            return;
+        };
+        let (mut client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
+        let connection_task = tokio::spawn(connection);
+        crate::publish_catalog::ensure_wamn_app_role(&client)
+            .await
+            .unwrap();
+        crate::publish_catalog::ensure_catalog_storage(&client)
+            .await
+            .unwrap();
+        let suffix = std::process::id();
+        let tenant = format!("migrate-release-{suffix}");
+        let catalog_id = format!("migrate-release-{suffix}");
+        client
+            .execute(
+                "INSERT INTO catalog.catalogs \
+                   (tenant_id, catalog_id, version, environment, schema_version, state, document) \
+                 VALUES \
+                   ($1, $2, 1, 'dev', '0.1', 'superseded', '{}'::jsonb), \
+                   ($1, $2, 2, 'dev', '0.1', 'applied', '{}'::jsonb)",
+                &[&tenant, &catalog_id],
+            )
+            .await
+            .unwrap();
+        client
+            .execute(
+                wamn_schema_control::sql::register_flow_artifact_sql(),
+                &[
+                    &tenant,
+                    &"flow",
+                    &1_i32,
+                    &"0.1",
+                    &r#"{"flow-id":"flow"}"#,
+                    &"graph",
+                    &"artifact",
+                    &"interfaces",
+                    &"[]",
+                ],
+            )
+            .await
+            .unwrap();
+        let manifest = r#"[{"flow-id":"flow","flow-version":1,"artifact-hash":"artifact"}]"#;
+        client.batch_execute("BEGIN").await.unwrap();
+        client
+            .execute(
+                wamn_schema_control::sql::register_release_manifest_sql(),
+                &[&tenant, &catalog_id, &1_i32, &manifest],
+            )
+            .await
+            .unwrap();
+        client
+            .execute(
+                wamn_schema_control::sql::insert_release_flow_sql(),
+                &[&tenant, &catalog_id, &1_i32, &"flow", &1_i32],
+            )
+            .await
+            .unwrap();
+        client.batch_execute("COMMIT").await.unwrap();
+
+        let tx = client.transaction().await.unwrap();
+        carry_forward_release(
+            &tx,
+            &tenant,
+            &catalog_id,
+            Some(1),
+            2,
+            &BareSchemaName::new("pg_temp").unwrap(),
+        )
+        .await
+        .unwrap();
+        tx.execute(
+            wamn_schema_control::sql::advance_catalog_head_sql(),
+            &[&tenant, &catalog_id, &"dev", &2_i32],
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let copied: bool = client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM catalog.release_flows \
+                 WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 2 \
+                   AND flow_id = 'flow' AND flow_version = 1) \
+                 AND EXISTS (SELECT 1 FROM catalog.catalog_heads \
+                 WHERE tenant_id = $1 AND catalog_id = $2 AND environment = 'dev' \
+                   AND applied_catalog_version = 2)",
+                &[&tenant, &catalog_id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert!(copied);
+        drop(client);
+        let _ = connection_task.await;
+    }
+
     #[test]
     fn bare_ident_rules() {
         assert!(is_bare_ident("public"));
@@ -439,6 +760,23 @@ mod tests {
         assert!(!is_bare_ident(""));
         assert!(is_bare_ident(&format!("s{}", "a".repeat(62))));
         assert!(!is_bare_ident(&format!("s{}", "a".repeat(63))));
+    }
+
+    #[test]
+    fn normal_migrate_executes_journal_while_copy_defers_it() {
+        let journal = wamn_schema_control::SqlStatement {
+            summary: "record the migration in schema_migrations".into(),
+            sql: "INSERT INTO catalog.schema_migrations".into(),
+            params: vec![],
+        };
+        assert!(should_execute_migration_statement(true, &journal));
+        assert!(!should_execute_migration_statement(false, &journal));
+        let ddl = wamn_schema_control::SqlStatement {
+            summary: "apply DDL".into(),
+            sql: "SELECT 1".into(),
+            params: vec![],
+        };
+        assert!(should_execute_migration_statement(false, &ddl));
     }
 
     #[test]

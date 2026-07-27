@@ -132,6 +132,104 @@ pub fn select_flow_versions_for_tenant_sql(schema: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Immutable catalog releases (FLOW-SPEC rev18 §5.1–§5.4a).
+// ---------------------------------------------------------------------------
+
+/// Register one fully resolved immutable artifact. The database function makes
+/// an identical retry a no-op and raises `flow-version-content-conflict` when
+/// the identity tuple already names different content.
+pub fn register_flow_artifact_sql() -> &'static str {
+    "SELECT catalog.register_flow_artifact(\
+       $1, $2, $3, $4, $5::text::jsonb, $6, $7, $8, $9::text::jsonb)"
+}
+
+/// Seal the exact canonical member set for one release.
+pub fn register_release_manifest_sql() -> &'static str {
+    "SELECT catalog.register_release_manifest($1, $2, $3, $4::text::jsonb)"
+}
+
+/// Traverse a named, superuser-only publication fault boundary. This is a
+/// no-op unless the release gate set `wamn.test.publication_fault` locally.
+pub fn publication_boundary_sql() -> &'static str {
+    "SELECT catalog.publication_boundary($1)"
+}
+
+/// Read the stable head, falling back to an applied legacy catalog when release
+/// heads have not yet been initialized.
+pub fn select_publication_base_sql() -> &'static str {
+    "SELECT COALESCE(\
+       (SELECT applied_catalog_version FROM catalog.catalog_heads \
+        WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3), \
+       (SELECT version FROM catalog.catalogs \
+        WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 \
+          AND state = 'applied'))"
+}
+
+/// Lock an applied legacy catalog while initializing its first stable head.
+pub fn lock_current_applied_version_sql() -> &'static str {
+    "SELECT version FROM catalog.catalogs \
+     WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 \
+       AND state = 'applied' FOR UPDATE"
+}
+
+/// Lock the stable head row before checking its applied release.
+pub fn lock_catalog_head_sql() -> &'static str {
+    "SELECT applied_catalog_version FROM catalog.catalog_heads \
+     WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 \
+     FOR UPDATE"
+}
+
+/// Count runs which still pin the release being replaced. `schema` is a
+/// validated bare identifier owned by the caller.
+pub fn count_nonterminal_release_runs_sql(schema: &str) -> String {
+    format!(
+        "SELECT count(*) FROM {schema}.runs \
+         WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+           AND status IN ('dispatched', 'running')"
+    )
+}
+
+/// Persist one release member. A missing artifact is rejected by the FK; an
+/// identical retry converges through `DO NOTHING`.
+pub fn insert_release_flow_sql() -> &'static str {
+    "INSERT INTO catalog.release_flows \
+       (tenant_id, catalog_id, catalog_version, flow_id, flow_version) \
+     VALUES ($1, $2, $3, $4, $5) \
+     ON CONFLICT (tenant_id, catalog_id, catalog_version, flow_id) DO NOTHING"
+}
+
+/// Advance (or initialize) the stable head after every other release write.
+pub fn advance_catalog_head_sql() -> &'static str {
+    "INSERT INTO catalog.catalog_heads \
+       (tenant_id, catalog_id, environment, applied_catalog_version) \
+     VALUES ($1, $2, $3, $4) \
+     ON CONFLICT (tenant_id, catalog_id, environment) DO UPDATE SET \
+       applied_catalog_version = EXCLUDED.applied_catalog_version, updated_at = now()"
+}
+
+/// Append the publication journal row, converging on an identical retry.
+pub fn record_release_publication_sql() -> &'static str {
+    "INSERT INTO catalog.schema_migrations \
+       (tenant_id, catalog_id, environment, from_version, to_version, confirmation, \
+        statement_count, destructive, checksum) \
+     VALUES ($1, $2, $3, $4, $5, 'none', 0, false, $6) \
+     ON CONFLICT (tenant_id, catalog_id, environment, to_version) DO NOTHING"
+}
+
+/// Read the immutable artifacts and memberships copied by `copy-project-env`.
+pub fn select_release_artifacts_sql() -> &'static str {
+    "SELECT a.flow_id, a.flow_version, a.schema_version, a.graph_json::text, \
+            a.graph_hash, a.artifact_hash, a.interface_bundle_hash, \
+            a.component_digests::text \
+     FROM catalog.release_flows r \
+     JOIN catalog.flow_artifacts a \
+       ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
+      AND a.flow_version = r.flow_version \
+     WHERE r.tenant_id = $1 AND r.catalog_id = $2 AND r.catalog_version = $3 \
+     ORDER BY a.flow_id"
+}
+
+// ---------------------------------------------------------------------------
 // Schema-impact analysis (11.8, wamn-wvb): the dependency-edge reads the
 // `impact-report` / `migrate-catalog` shell folds through `wamn_schema_control::impact::analyze`.
 // All cross-tenant (the superuser driver bypasses RLS), like the D24 read above:
@@ -236,5 +334,29 @@ mod tests {
                 "flow-tests.sql no longer has {col}"
             );
         }
+    }
+
+    #[test]
+    fn immutable_release_sql_tracks_catalog_schema() {
+        for table in [
+            "flow_artifacts",
+            "release_manifests",
+            "release_flows",
+            "catalog_heads",
+        ] {
+            assert!(
+                CATALOG_SCHEMA.contains(&format!("CREATE TABLE catalog.{table}")),
+                "missing catalog.{table}"
+            );
+        }
+        assert!(super::register_flow_artifact_sql().contains("catalog.register_flow_artifact"));
+        assert!(
+            super::register_release_manifest_sql().contains("catalog.register_release_manifest")
+        );
+        assert!(super::publication_boundary_sql().contains("catalog.publication_boundary"));
+        assert!(super::lock_catalog_head_sql().contains("FOR UPDATE"));
+        assert!(super::count_nonterminal_release_runs_sql("app").contains("catalog_version = $3"));
+        assert!(super::insert_release_flow_sql().contains("DO NOTHING"));
+        assert!(super::advance_catalog_head_sql().contains("DO UPDATE"));
     }
 }

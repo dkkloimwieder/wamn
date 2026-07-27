@@ -66,6 +66,7 @@ pub mod impact;
 pub mod lifecycle;
 mod model;
 mod orphan;
+mod publication;
 mod replica_identity;
 mod run_plane;
 pub mod sql;
@@ -78,6 +79,9 @@ pub use model::{
 pub use orphan::{
     OrphaningPublish, OrphaningSuiteCopy, RegistrationRef, SuiteRef, check_registration_orphans,
     check_suite_orphans,
+};
+pub use publication::{
+    PublicationError, PublicationGuard, ReleaseFlow, canonical_release_flows, guard_publication,
 };
 pub use replica_identity::{
     ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, alter_replica_identity_sql,

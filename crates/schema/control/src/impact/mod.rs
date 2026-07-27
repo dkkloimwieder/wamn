@@ -546,9 +546,8 @@ mod tests {
             "schema-version": "0.1",
             "flow-id": flow_id,
             "version": version,
-            "trigger": { "type": "manual" },
-            "entry": "read",
             "nodes": [ { "id": "read", "type": "postgres", "config": { "entity": entity_name, "op": "get" } } ],
+            "edges": [],
         });
         FlowGraph {
             tenant: tenant.into(),

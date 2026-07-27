@@ -4252,15 +4252,18 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "tracing-subscriber",
+ "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-flow",
+ "wamn-node-manifest",
  "wamn-run-state",
  "wamn-scenario-catalog",
  "wamn-scenario-model",
  "wamn-schema-compiler",
  "wamn-schema-control",
  "wamn-schema-model",
+ "wamn-standard-nodes",
 ]
 
 [[package]]

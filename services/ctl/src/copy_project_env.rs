@@ -8,11 +8,13 @@
 //!
 //! * `include: definition` — the src env's **applied catalogs** promote into the
 //!   dst through the 2.5 migrate engine (the same one-transaction apply
-//!   `migrate-catalog` runs), plus the **flow registrations**, the **RLS
+//!   `migrate-catalog` runs), plus the immutable **flow artifacts and release
+//!   membership**, the **RLS
 //!   policy rows** (re-compiled and applied on the dst), the **event
 //!   registration rows** (EVT-REG — copied verbatim, no re-apply), and the
 //!   **11.2 flow test suites + cases** (copied verbatim, version-bound to the
-//!   flows copied alongside them). A suite-orphan guard refuses FIRST, naming
+//!   flow versions already present on the destination legacy test plane). A
+//!   suite-orphan guard refuses FIRST, naming
 //!   any suite that pins a flow version the destination will not hold. Config
 //!   has no defined artifact yet — deferred, noted at runtime.
 //! * `include: data` — `pg_restore --data-only --disable-triggers` of the data
@@ -38,7 +40,8 @@
 //! Preconditions (this tool copies, it does not provision): the dst database
 //! exists (`provision-project-env` + its Database CR), and for a definition
 //! copy the dst carries the catalog storage schema (`deploy/sql/catalog-schema.sql`).
-//! The flow registry is ensured on demand (`publish-catalog`'s idempotent DDL).
+//! Mutable `flows.active` rows are not copied; immutable catalog releases are
+//! the authoritative definition source.
 
 use std::path::PathBuf;
 
@@ -55,8 +58,8 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 
-use crate::migrate_catalog::{ApplyOutcome, apply_catalog_target};
-use crate::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
+use crate::migrate_catalog::{ApplyOutcome, apply_catalog_target_in_transaction};
+use crate::publish_catalog::ensure_flow_tests;
 use crate::restore_project_env::swap_db;
 use wamn_schema_control::BareSchemaName;
 
@@ -485,8 +488,8 @@ async fn exec_copy_definition(
     // 0. The 11.2 suite-orphan guard — BEFORE any mutation (the D24 shape). A
     //    definition copy carries the tenant's test suites (block 5); each pins a
     //    concrete flow version. Refuse if a suite pins a version present in
-    //    NEITHER the src flow registry (what block 2 installs) NOR the dst's
-    //    existing flows — the `test_suites → flows` FK would otherwise reject the
+    //    destination's legacy test-plane registry — the `test_suites → flows`
+    //    FK would otherwise reject the
     //    insert with a bare error mid-copy. src has no test-suite table ⇒ clean
     //    pass. Runs on the validated flow schema.
     guard_suite_orphans(&src_client, &dst_client, &ctx.flow_schema, tenant).await?;
@@ -513,6 +516,19 @@ async fn exec_copy_definition(
             .with_context(|| format!("parse applied catalog {catalog_id:?}"))?;
         catalogs.push(cat);
     }
+    let mut destination_bases = std::collections::BTreeMap::new();
+    for cat in &catalogs {
+        let base = dst_client
+            .query_opt(
+                "SELECT applied_catalog_version FROM catalog.catalog_heads \
+                 WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3",
+                &[&tenant, &cat.catalog_id, &dst_env],
+            )
+            .await
+            .with_context(|| format!("read destination base for {:?}", cat.catalog_id))?
+            .map(|row| row.get::<_, i32>(0));
+        destination_bases.insert(cat.catalog_id.clone(), base);
+    }
     if catalogs.is_empty() {
         println!("  no applied catalogs for tenant {tenant:?} in the src env");
     }
@@ -521,31 +537,58 @@ async fn exec_copy_definition(
     } else {
         wamn_schema_control::Confirmation::None
     };
+    let source_heads = src_client
+        .query(
+            "SELECT catalog_id, applied_catalog_version \
+             FROM catalog.catalog_heads \
+             WHERE tenant_id = $1 AND environment = $2 \
+             ORDER BY catalog_id",
+            &[&tenant, &src_env],
+        )
+        .await
+        .context("read source catalog heads")?;
+    let tx = dst_client
+        .transaction()
+        .await
+        .context("begin atomic definition copy")?;
+    let mut deferred_journals = std::collections::BTreeMap::new();
     for cat in &catalogs {
-        match apply_catalog_target(
-            &mut dst_client,
+        match apply_catalog_target_in_transaction(
+            &tx,
             tenant,
             dst_env,
             &ctx.data_schema,
             cat,
             None,
             confirm,
+            false,
         )
         .await
         .with_context(|| format!("promote catalog {:?} into the dst", cat.catalog_id))?
         {
-            ApplyOutcome::Applied(plan) => println!(
-                "  catalog {:?}: applied {} -> {}{}",
-                plan.catalog_id,
-                plan.from_version
-                    .map_or_else(|| "(none)".into(), |v| v.to_string()),
-                plan.to_version,
-                if plan.destructive {
-                    " (DESTRUCTIVE)"
-                } else {
-                    ""
-                },
-            ),
+            ApplyOutcome::Applied(plan) => {
+                let journal = plan
+                    .statements
+                    .iter()
+                    .find(|statement| {
+                        crate::migrate_catalog::is_migration_journal_statement(statement)
+                    })
+                    .cloned()
+                    .context("applied catalog plan has no migration journal")?;
+                deferred_journals.insert(plan.catalog_id.clone(), journal);
+                println!(
+                    "  catalog {:?}: applied {} -> {}{}",
+                    plan.catalog_id,
+                    plan.from_version
+                        .map_or_else(|| "(none)".into(), |v| v.to_string()),
+                    plan.to_version,
+                    if plan.destructive {
+                        " (DESTRUCTIVE)"
+                    } else {
+                        ""
+                    },
+                );
+            }
             ApplyOutcome::AlreadyApplied { version } => println!(
                 "  catalog {:?}: version {version} already applied (skip)",
                 cat.catalog_id
@@ -553,49 +596,211 @@ async fn exec_copy_definition(
         }
     }
 
-    // 2. Flow registrations: copy the tenant's flows rows verbatim (versions +
-    //    active flags — a copy, not a re-registration).
-    let fs = &ctx.flow_schema;
-    let src_has_flows: Option<String> = src_client
-        .query_one(&format!("SELECT to_regclass('{fs}.flows')::text"), &[])
-        .await?
-        .get(0);
-    if src_has_flows.is_some() {
-        ensure_runstate(&dst_client, fs).await?;
-        ensure_flow_registry(&dst_client, fs).await?;
-        let flows = src_client
-            .query(
-                &format!(
-                    "SELECT flow_id, version, active, graph_json::text \
-                     FROM {fs}.flows WHERE tenant_id = $1"
-                ),
-                &[&tenant],
-            )
-            .await
-            .context("read src flows")?;
-        for row in &flows {
-            let flow_id: String = row.get(0);
-            let version: i32 = row.get(1);
-            let active: bool = row.get(2);
-            let graph: String = row.get(3);
-            dst_client
-                .execute(
-                    &format!(
-                        "INSERT INTO {fs}.flows (tenant_id, flow_id, version, active, graph_json) \
-                         VALUES ($1, $2, $3, $4, $5::text::jsonb) \
-                         ON CONFLICT (tenant_id, flow_id, version) DO UPDATE SET \
-                           active = EXCLUDED.active, graph_json = EXCLUDED.graph_json, \
-                           updated_at = now()"
-                    ),
-                    &[&tenant, &flow_id, &version, &active, &graph],
+    // 2a. Immutable release artifacts + membership. The complete release slice
+    //     is copied in one destination transaction; a missing artifact or
+    //     different-content retry rolls the entire slice back.
+    if !source_heads.is_empty() {
+        for head in &source_heads {
+            let catalog_id: String = head.get(0);
+            let catalog_version: i32 = head.get(1);
+            let expected_base = destination_bases
+                .get(&catalog_id)
+                .copied()
+                .context("source head has no copied catalog")?;
+            let locked_head = tx
+                .query_opt(
+                    wamn_schema_control::sql::lock_catalog_head_sql(),
+                    &[&tenant, &catalog_id, &dst_env],
                 )
                 .await
-                .with_context(|| format!("copy flow {flow_id} v{version}"))?;
+                .with_context(|| format!("lock destination head for {catalog_id:?}"))?;
+            let applied_version = locked_head.map(|row| row.get::<_, i32>(0));
+            let runs_present: bool = tx
+                .query_one(
+                    &format!(
+                        "SELECT to_regclass('{}.runs') IS NOT NULL",
+                        ctx.flow_schema.as_str()
+                    ),
+                    &[],
+                )
+                .await?
+                .get(0);
+            let nonterminal_runs = if runs_present {
+                if let Some(applied) = applied_version {
+                    tx.query_one(
+                        &wamn_schema_control::sql::count_nonterminal_release_runs_sql(
+                            ctx.flow_schema.as_str(),
+                        ),
+                        &[&tenant, &catalog_id, &applied],
+                    )
+                    .await
+                    .context("check destination release-pinned runs")?
+                    .get(0)
+                } else {
+                    0_i64
+                }
+            } else {
+                0_i64
+            };
+            guard_copy_destination(expected_base, applied_version, nonterminal_runs)?;
+            let source_manifest: String = src_client
+                .query_one(
+                    "SELECT members_json::text FROM catalog.release_manifests \
+                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+                    &[&tenant, &catalog_id, &catalog_version],
+                )
+                .await
+                .with_context(|| format!("read release manifest for {catalog_id:?}"))?
+                .get(0);
+            if let Some(existing) = tx
+                .query_opt(
+                    "SELECT members_json::text FROM catalog.release_manifests \
+                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+                    &[&tenant, &catalog_id, &catalog_version],
+                )
+                .await
+                .context("preflight destination release membership")?
+            {
+                let existing: String = existing.get(0);
+                let existing: serde_json::Value =
+                    serde_json::from_str(&existing).context("parse destination manifest")?;
+                let source: serde_json::Value =
+                    serde_json::from_str(&source_manifest).context("parse source manifest")?;
+                anyhow::ensure!(existing == source, "catalog-release-content-conflict");
+            }
+            let artifacts = src_client
+                .query(
+                    wamn_schema_control::sql::select_release_artifacts_sql(),
+                    &[&tenant, &catalog_id, &catalog_version],
+                )
+                .await
+                .with_context(|| format!("read release artifacts for {catalog_id:?}"))?;
+            for artifact in &artifacts {
+                let flow_id: String = artifact.get(0);
+                let flow_version: i32 = artifact.get(1);
+                let schema_version: String = artifact.get(2);
+                let graph_json: String = artifact.get(3);
+                let graph_hash: String = artifact.get(4);
+                let artifact_hash: String = artifact.get(5);
+                let interface_bundle_hash: String = artifact.get(6);
+                let component_digests: String = artifact.get(7);
+                tx.execute(
+                    wamn_schema_control::sql::register_flow_artifact_sql(),
+                    &[
+                        &tenant,
+                        &flow_id,
+                        &flow_version,
+                        &schema_version,
+                        &graph_json,
+                        &graph_hash,
+                        &artifact_hash,
+                        &interface_bundle_hash,
+                        &component_digests,
+                    ],
+                )
+                .await
+                .with_context(|| format!("copy immutable flow {flow_id} v{flow_version}"))?;
+            }
+            tx.execute(
+                wamn_schema_control::sql::publication_boundary_sql(),
+                &[&"after-artifacts"],
+            )
+            .await
+            .context("copy boundary after artifacts")?;
+            tx.execute(
+                wamn_schema_control::sql::register_release_manifest_sql(),
+                &[&tenant, &catalog_id, &catalog_version, &source_manifest],
+            )
+            .await
+            .with_context(|| format!("seal copied release {catalog_id:?}"))?;
+            for artifact in &artifacts {
+                let flow_id: String = artifact.get(0);
+                let flow_version: i32 = artifact.get(1);
+                tx.execute(
+                    wamn_schema_control::sql::insert_release_flow_sql(),
+                    &[
+                        &tenant,
+                        &catalog_id,
+                        &catalog_version,
+                        &flow_id,
+                        &flow_version,
+                    ],
+                )
+                .await
+                .with_context(|| format!("copy release member {flow_id} v{flow_version}"))?;
+                let exact: bool = tx
+                    .query_one(
+                        "SELECT EXISTS (SELECT 1 FROM catalog.release_flows \
+                         WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+                           AND flow_id = $4 AND flow_version = $5)",
+                        &[
+                            &tenant,
+                            &catalog_id,
+                            &catalog_version,
+                            &flow_id,
+                            &flow_version,
+                        ],
+                    )
+                    .await?
+                    .get(0);
+                anyhow::ensure!(exact, "catalog-release-content-conflict");
+            }
+            let copied: i64 = tx
+                .query_one(
+                    "SELECT count(*) FROM catalog.release_flows \
+                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+                    &[&tenant, &catalog_id, &catalog_version],
+                )
+                .await?
+                .get(0);
+            anyhow::ensure!(
+                copied == i64::try_from(artifacts.len()).unwrap_or(i64::MAX),
+                "catalog-release-content-conflict"
+            );
+            tx.execute(
+                wamn_schema_control::sql::publication_boundary_sql(),
+                &[&"after-members"],
+            )
+            .await
+            .context("copy boundary after-members")?;
+            if let Some(journal) = deferred_journals.remove(&catalog_id) {
+                crate::migrate_catalog::execute_migration_statement(&tx, &journal)
+                    .await
+                    .with_context(|| format!("record copied catalog journal for {catalog_id:?}"))?;
+            }
+            tx.execute(
+                wamn_schema_control::sql::publication_boundary_sql(),
+                &[&"after-journal"],
+            )
+            .await
+            .context("copy boundary after-journal")?;
+            tx.execute(
+                wamn_schema_control::sql::publication_boundary_sql(),
+                &[&"before-head"],
+            )
+            .await
+            .context("copy boundary before-head")?;
+            tx.execute(
+                wamn_schema_control::sql::advance_catalog_head_sql(),
+                &[&tenant, &catalog_id, &dst_env, &catalog_version],
+            )
+            .await
+            .with_context(|| format!("advance destination head for {catalog_id:?}"))?;
         }
-        println!("  flows: {} registration(s) copied", flows.len());
-    } else {
-        println!("  flows: src has no {fs}.flows registry — skipped");
+        println!(
+            "  immutable releases: {} catalog release(s) copied atomically",
+            source_heads.len()
+        );
     }
+    anyhow::ensure!(
+        deferred_journals.is_empty(),
+        "copied catalog plan has no matching source release head: {:?}",
+        deferred_journals.keys().collect::<Vec<_>>()
+    );
+    tx.commit().await.context("commit atomic definition copy")?;
+
+    let fs = &ctx.flow_schema;
+    println!("  mutable flows.active registry: not copied (immutable release is authoritative)");
 
     // 3. RLS policies: copy the definition rows, then re-compile and apply them
     //    on the dst so its tables actually carry the policies.
@@ -685,8 +890,8 @@ async fn exec_copy_definition(
         .await?
         .get(0);
     if src_has_suites.is_some() {
-        // ensure_flow_registry already ran in block 2 (a suite implies a flow),
-        // so the FK target table exists on the dst before ensure_flow_tests.
+        // The pre-mutation guard proved the destination's legacy test-plane
+        // flow row already exists, so the FK target precedes this table.
         ensure_flow_tests(&dst_client, fs).await?;
         let suites = src_client
             .query(
@@ -775,11 +980,24 @@ async fn exec_copy_definition(
     Ok(())
 }
 
+fn guard_copy_destination(
+    expected_base: Option<i32>,
+    applied_version: Option<i32>,
+    nonterminal_runs: i64,
+) -> anyhow::Result<()> {
+    wamn_schema_control::guard_publication(&wamn_schema_control::PublicationGuard {
+        expected_base,
+        applied_version,
+        nonterminal_runs,
+        unresolved_sources: &[],
+    })
+    .map_err(anyhow::Error::new)
+}
+
 /// The 11.2 suite-orphan guard (wamn-828): refuse a definition copy that would
 /// carry a suite pinning a flow version the destination will not have. Reads the
 /// src's suites (scoped to `tenant`) and the `(flow_id, version)` pairs the copy
-/// will make present — the UNION of the src flow registry (block 2 installs it)
-/// and the dst's existing flows — then runs the pure
+/// finds in the destination's legacy test-plane registry, then runs the pure
 /// [`wamn_schema_control::check_suite_orphans`]. A src without the `test_suites` table
 /// (never provisioned for suites) has nothing to orphan: a clean pass. Read-only.
 async fn guard_suite_orphans(
@@ -814,12 +1032,13 @@ async fn guard_suite_orphans(
     if referenced.is_empty() {
         return Ok(());
     }
-    // The versions the destination WILL hold: src flows (block 2 copies them) ∪
-    // dst's current flows. A flows table absent on the dst reads as empty.
+    // Test suites still FK to the legacy test-plane registry. Immutable release
+    // publication never writes it, so only versions already present on the
+    // destination satisfy the suite-copy guard.
     let versions_sql =
         wamn_schema_control::sql::select_flow_versions_for_tenant_sql(flow_schema.as_str());
     let mut present: std::collections::BTreeSet<(String, i32)> = std::collections::BTreeSet::new();
-    for client in [src, dst] {
+    for client in [dst] {
         let has_flows: Option<String> = client
             .query_one(
                 &format!("SELECT to_regclass('{flow_schema}.flows')::text"),
@@ -926,7 +1145,7 @@ async fn exec_restore_data(ctx: &mut ExecCtx<'_>, data_only: bool) -> anyhow::Re
 
 /// Verify the dst against the src. Data: the data schema's table sets match and
 /// every table's exact row count matches. Definition: each applied catalog's
-/// document is byte-equal on the dst, and the flows / RLS row counts match.
+/// document is byte-equal on the dst, and immutable releases / RLS rows match.
 async fn exec_verify(
     ctx: &mut ExecCtx<'_>,
     _src: &Triple,
@@ -988,10 +1207,6 @@ async fn exec_verify(
         let fs = &ctx.flow_schema;
         for (label, sql) in [
             (
-                "flows",
-                format!("SELECT count(*) FROM {fs}.flows WHERE tenant_id = $1"),
-            ),
-            (
                 "rls policies",
                 "SELECT count(*) FROM catalog.rls_policies WHERE tenant_id = $1".to_string(),
             ),
@@ -1010,9 +1225,9 @@ async fn exec_verify(
         ] {
             let s: i64 = match src_client.query_one(sql.as_str(), &[&tenant]).await {
                 Ok(row) => row.get(0),
-                // The src may have no flow registry / test-suite tables at all —
+                // The src may have no test-suite tables at all —
                 // nothing to compare.
-                Err(_) if label == "flows" || label == "test suites" || label == "test cases" => {
+                Err(_) if label == "test suites" || label == "test cases" => {
                     continue;
                 }
                 Err(e) => return Err(e).context("verify src counts"),
@@ -1208,5 +1423,33 @@ mod tests {
         );
         assert_eq!(CopyInclude::from(IncludeArg::Data).as_str(), "data");
         assert_eq!(CopyInclude::from(IncludeArg::Both).as_str(), "both");
+    }
+
+    #[test]
+    fn destination_promotion_refuses_head_drift_and_nonterminal_runs() {
+        let drift = guard_copy_destination(Some(3), Some(4), 0).unwrap_err();
+        assert!(format!("{drift:#}").contains("catalog-release-stale-base"));
+        let pinned = guard_copy_destination(Some(3), Some(3), 1).unwrap_err();
+        assert!(format!("{pinned:#}").contains("catalog-release-has-nonterminal-runs"));
+        assert!(wamn_schema_control::sql::advance_catalog_head_sql().contains("DO UPDATE"));
+    }
+
+    #[test]
+    fn definition_copy_orders_members_then_journal_then_head_fault_boundaries() {
+        let source = include_str!("copy_project_env.rs");
+        let after_artifacts = source.find("copy boundary after artifacts").unwrap();
+        let after_members = source.find("copy boundary after-members").unwrap();
+        let deferred_journal = source.find("record copied catalog journal for").unwrap();
+        let after_journal = source.find("copy boundary after-journal").unwrap();
+        let before_head = source.find("copy boundary before-head").unwrap();
+        let head = source.find("advance destination head for").unwrap();
+        assert!(
+            after_artifacts < after_members
+                && after_members < deferred_journal
+                && deferred_journal < after_journal
+                && after_journal < before_head
+                && before_head < head
+        );
+        assert_ne!(after_members, after_journal);
     }
 }

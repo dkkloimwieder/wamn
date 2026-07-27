@@ -3602,3 +3602,18 @@ kubectl -n wamn-system apply -f deploy/gates/dashproof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/dashproof --timeout=180s
 kubectl -n wamn-system logs job/dashproof
 ```
+## CF-RELEASE — immutable catalog publication (`wamn-5wd1.46`)
+
+The release writer stores canonical `wamn-catalog` artifacts in
+`catalog.flow_artifacts`, immutable membership in `catalog.release_flows`, and
+serializes promotion through the stable `catalog.catalog_heads` row. The
+statement-level proof uses a disposable Postgres when `WAMN_MIGRATE_PG_URL` is
+set; its deterministic fault mutants always run.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-release-46 \
+  cargo test --locked -p wamn-control-registry -p wamn-schema-control -p wamn-ctl
+
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-release-46 \
+  cargo test --locked -p wamn-proof-integration --lib catalog_live::tests::
+```

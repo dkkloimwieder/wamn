@@ -160,6 +160,36 @@ pub fn select_event_reader_sql() -> &'static str {
 mod tests {
     use super::*;
 
+    const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
+
+    #[test]
+    fn catalog_release_storage_has_stable_head_and_db_immutable_artifacts() {
+        for table in [
+            "flow_artifacts",
+            "release_manifests",
+            "release_flows",
+            "catalog_heads",
+        ] {
+            assert!(
+                CATALOG_SCHEMA.contains(&format!("CREATE TABLE catalog.{table}")),
+                "missing catalog.{table}"
+            );
+        }
+        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER flow_artifacts_immutable"));
+        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER release_flows_immutable"));
+        assert!(CATALOG_SCHEMA.contains("MESSAGE = 'flow-version-content-conflict'"));
+        assert!(CATALOG_SCHEMA.contains("PRIMARY KEY (tenant_id, catalog_id, environment)"));
+        assert!(CATALOG_SCHEMA.contains("GRANT SELECT ON catalog.flow_artifacts"));
+        assert!(
+            !CATALOG_SCHEMA
+                .contains("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.flow_artifacts")
+        );
+        assert!(
+            CATALOG_SCHEMA
+                .contains("REVOKE ALL ON FUNCTION catalog.publication_boundary(text) FROM PUBLIC")
+        );
+    }
+
     #[test]
     fn upsert_org_targets_the_placement_columns_and_upserts() {
         let sql = upsert_org_sql();

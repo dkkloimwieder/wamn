@@ -56,6 +56,29 @@ pub const NODE_TYPES: [&str; 7] = [
     "respond",
 ];
 
+const MAIN_COMPLETION_PORTS: &[&str] = &["main"];
+const CONDITIONAL_COMPLETION_PORTS: &[&str] = &["false", "true"];
+
+/// Canonical completion-port source for immutable standard-node interfaces.
+///
+/// The list is sorted because catalog artifact identity treats ports as a set.
+pub fn completion_ports(node_type: &str) -> Option<&'static [&'static str]> {
+    match node_type {
+        "conditional" => Some(CONDITIONAL_COMPLETION_PORTS),
+        node_type if NODE_TYPES.contains(&node_type) => Some(MAIN_COMPLETION_PORTS),
+        _ => None,
+    }
+}
+
+/// Whether the standard implementation is pure and therefore replay-safe.
+pub fn is_replay_safe(node_type: &str) -> Option<bool> {
+    match node_type {
+        "transform" | "conditional" | "time-shift" | "respond" => Some(true),
+        "http-request" | "postgres" | "postgres-query" => Some(false),
+        _ => None,
+    }
+}
+
 static TRANSFORM: transform::Transform = transform::Transform;
 static CONDITIONAL: conditional::Conditional = conditional::Conditional;
 static TIME_SHIFT: timeshift::TimeShift = timeshift::TimeShift;

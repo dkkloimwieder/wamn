@@ -19,8 +19,13 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 # 4.1b publish-catalog: catalog snapshot model + the 3.2 tenant-floor DDL.
 wamn-schema-model = { workspace = true }
 wamn-schema-compiler = { workspace = true }
-# publish-catalog --flow: parse/validate the flow graph before the flows row.
+# publish-catalog --flow: parse and validate the immutable graph.
 wamn-flow = { workspace = true }
+# CF-DEF-ID: immutable flow registration uses the canonical artifact identity
+# implemented by the catalog model; the writer never re-derives that hash.
+wamn-catalog = { workspace = true }
+wamn-node-manifest = { workspace = true }
+wamn-standard-nodes = { workspace = true }
 # 2.5 migrate-catalog: the pure migration engine — reads the current applied
 # catalog, plans the one-transaction apply (DDL + lifecycle + history).
 wamn-schema-control = { workspace = true }

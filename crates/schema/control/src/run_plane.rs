@@ -941,7 +941,7 @@ mod tests {
     fn record_tables_are_pinned() {
         assert_eq!(
             record_tables(RUN_STATE_SQL, "wamn_run"),
-            ["runs", "cron_anchor", "node_runs"]
+            ["runs", "invocation_admissions", "cron_anchor", "node_runs"]
         );
         assert_eq!(record_tables(FLOWS_SQL, "wamn_run"), ["flows"]);
         assert_eq!(
@@ -957,7 +957,7 @@ mod tests {
         assert!(catalog.contains(&"event_registrations".to_string()));
         assert_eq!(
             catalog.len(),
-            10,
+            14,
             "catalog-schema.sql table count: {catalog:?}"
         );
     }
@@ -978,6 +978,7 @@ mod tests {
                 "stream_seq",
                 "lease_owner",
                 "lease_expires_at",
+                "lease_generation",
                 "attempts",
                 "max_attempts",
                 "enqueued_at",
@@ -1047,13 +1048,20 @@ mod tests {
             [
                 "flows_active",
                 "flows_active_webhook_path",
+                "invocation_admissions_expiry",
+                "invocation_admissions_run",
                 "node_runs_seq",
                 "run_queue_claimable",
                 "run_queue_partition",
+                "runs_cancel_requested",
                 "runs_cron_anchor",
                 "runs_flow",
                 "runs_idempotency",
+                "runs_parent_occurrence",
+                "runs_response_deadline",
                 "runs_root",
+                "runs_run_deadline",
+                "runs_waiting_child",
             ]
         );
         let (_, table, stmt) = index_statements(RUN_QUEUE_SQL, "wamn_run")
@@ -1081,8 +1089,8 @@ mod tests {
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            9,
-            "all nine run-plane tables at target (incl. the 11.2 test-suite tables)"
+            10,
+            "all ten run-plane tables at target (incl. invocation admission and test suites)"
         );
     }
 
@@ -1195,6 +1203,7 @@ mod tests {
             creates,
             [
                 "runs",
+                "invocation_admissions",
                 "cron_anchor",
                 "node_runs",
                 "flows",
@@ -1262,7 +1271,8 @@ mod tests {
             repair.sql,
             "ALTER TABLE \"demo\".\"runs\" DROP CONSTRAINT \"runs_fail_kind_check\", \
              ADD CONSTRAINT \"runs_fail_kind_check\" CHECK (fail_kind IN \
-             ('terminal', 'retry-exhausted', 'invalid-input', 'runaway-budget'))"
+             ('terminal', 'retry-exhausted', 'invalid-input', 'runaway-budget', \
+             'effect-uncertain'))"
         );
         // runs was touched, so it is not reported at target.
         assert!(!plan.at_target.contains(&"runs".to_string()));
@@ -1305,7 +1315,7 @@ mod tests {
         let mut obs = observation_at_record();
         obs.runs_fail_kind_check = Some((
             "runs_fail_kind_check".to_string(),
-            "CHECK (fail_kind IN ('runaway-budget', 'invalid-input', \
+            "CHECK (fail_kind IN ('effect-uncertain', 'runaway-budget', 'invalid-input', \
              'retry-exhausted', 'terminal'))"
                 .to_string(),
         ));
@@ -1335,7 +1345,8 @@ mod tests {
             repair.sql,
             "ALTER TABLE \"demo\".\"runs\" ADD CONSTRAINT \"runs_fail_kind_check\" \
              CHECK (fail_kind IN \
-             ('terminal', 'retry-exhausted', 'invalid-input', 'runaway-budget'))"
+             ('terminal', 'retry-exhausted', 'invalid-input', 'runaway-budget', \
+             'effect-uncertain'))"
         );
         assert!(!repair.sql.contains("DROP CONSTRAINT"));
     }

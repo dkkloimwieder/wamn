@@ -43,9 +43,8 @@ mod tests {
             "schema-version": "0.1",
             "flow-id": "f",
             "version": 1,
-            "trigger": { "type": "manual" },
-            "entry": "n",
             "nodes": [ { "id": "n", "type": node_type, "config": config } ],
+            "edges": [],
         });
         Flow::from_json(&json.to_string()).expect("valid flow fixture")
     }
