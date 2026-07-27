@@ -68,6 +68,8 @@ pub mod schema_drift;
 /// host drivers execute.
 pub mod sql;
 mod status;
+/// Typed, queue-joined executor transitions.
+pub mod transitions;
 
 pub use capture::{Captured, derive as derive_capture};
 pub use model::{NodeRunRecord, RunRecord};

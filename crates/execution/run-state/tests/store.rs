@@ -98,7 +98,7 @@ fn reconstruct_ignores_running_and_parked_rows() {
     let node_runs = [
         NodeRunRecord::success("r1", "a", 0, "main", json!({ "at": "a" })),
         NodeRunRecord {
-            status: NodeRunStatus::Running, // b was in flight; no emission
+            status: NodeRunStatus::Started, // b was in flight; no emission
             output: None,
             output_port: None,
             ..NodeRunRecord::success("r1", "b", 1, "main", Value::Null)

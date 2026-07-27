@@ -121,7 +121,7 @@ impl From<wamn_runner::ExecutionFailureKind> for FailKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeRunStatus {
-    Running,
+    Started,
     Parked,
     Success,
     Error,
@@ -129,7 +129,7 @@ pub enum NodeRunStatus {
 
 impl NodeRunStatus {
     pub const ALL: [NodeRunStatus; 4] = [
-        NodeRunStatus::Running,
+        NodeRunStatus::Started,
         NodeRunStatus::Parked,
         NodeRunStatus::Success,
         NodeRunStatus::Error,
@@ -137,7 +137,7 @@ impl NodeRunStatus {
 
     pub fn as_sql(self) -> &'static str {
         match self {
-            NodeRunStatus::Running => "running",
+            NodeRunStatus::Started => "started",
             NodeRunStatus::Parked => "parked",
             NodeRunStatus::Success => "success",
             NodeRunStatus::Error => "error",

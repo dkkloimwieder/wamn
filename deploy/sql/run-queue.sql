@@ -75,6 +75,9 @@ CREATE TABLE wamn_run.run_queue (
     stream_seq       bigint NOT NULL DEFAULT 0,
     lease_owner      text,
     lease_expires_at timestamptz,
+    -- Queue-owned executor authority (§9.5). Every claim/reclaim increments the
+    -- generation; executor mutations join on owner + generation.
+    lease_generation bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
     attempts         int  NOT NULL DEFAULT 0,
     max_attempts     int  NOT NULL DEFAULT 20,
     enqueued_at      timestamptz NOT NULL DEFAULT now(),

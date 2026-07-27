@@ -116,8 +116,9 @@ pub fn enqueue_evt_with_policy_sql() -> String {
 /// it did not crash), so the crash budget must not exclude it — it is claimed, its
 /// `attempts` unchanged (the crash-evidence `CASE` does not bump a NULL lease). Poison
 /// stays terminal: a crash *after* the budget is spent leaves a non-NULL expired
-/// lease, which fails both halves and falls to the janitor. Returns each claimed
-/// `run_id`, its new `attempts`, and `lease_expires_at`. `limit` is a numeric literal
+/// lease, which fails both halves and falls to the janitor. Every successful
+/// claim increments and returns the queue-owned `lease_generation` alongside its
+/// `run_id`, new `attempts`, and `lease_expires_at`. `limit` is a numeric literal
 /// (a `usize`, not user text).
 ///
 /// The `partition_key IS NULL` guard leaves partitioned runs to the per-partition
@@ -155,7 +156,7 @@ pub fn claim_batch_sql(limit: usize) -> String {
             {set} \
            FROM claimed \
           WHERE q.tenant_id = claimed.tenant_id AND q.run_id = claimed.run_id \
-          RETURNING q.run_id, q.attempts, q.lease_expires_at",
+          RETURNING q.run_id, q.attempts, q.lease_expires_at, q.lease_generation",
         cte = global_claim_cte(limit),
         set = CLAIM_LEASE_SET,
     )
@@ -197,6 +198,7 @@ fn global_claim_cte(limit: usize) -> String {
 /// attempts bump only as crash evidence — an expired prior lease (fqg.5).
 const CLAIM_LEASE_SET: &str = "SET lease_owner = $1, \
                 lease_expires_at = now() + ($2::bigint * interval '1 millisecond'), \
+                lease_generation = q.lease_generation + 1, \
                 attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END";
 
 /// The record-stream claim (fqg.18): ONE statement doing what the guest's claim
@@ -221,7 +223,7 @@ pub fn claim_dispatch_sql() -> String {
                {set} \
               FROM claimed \
              WHERE q.tenant_id = claimed.tenant_id AND q.run_id = claimed.run_id \
-             RETURNING q.tenant_id, q.run_id \
+             RETURNING q.tenant_id, q.run_id, q.lease_generation \
          ), \
          marked AS ( \
             UPDATE runs AS r \
@@ -230,7 +232,8 @@ pub fn claim_dispatch_sql() -> String {
              WHERE r.tenant_id = leased.tenant_id AND r.run_id = leased.run_id \
                AND r.status = '{dispatched}' \
          ) \
-         SELECT l.run_id, r.flow_id, r.input_json::text, r.flow_version AS flow_version \
+         SELECT l.run_id, r.flow_id, r.input_json::text, r.flow_version AS flow_version, \
+                l.lease_generation \
            FROM leased AS l \
            JOIN runs AS r ON r.tenant_id = l.tenant_id AND r.run_id = l.run_id",
         cte = global_claim_cte(1),
@@ -663,8 +666,9 @@ pub fn release_partition_sql() -> String {
 /// an earlier such sibling still blocks the later head so in-order is preserved. A
 /// poison head (budget spent, lease *expired* not NULL) fails the guard on both — it
 /// is left to the janitor and does not block its partition's later runs.
-/// Returns each claimed `run_id`, its `partition_key`, new `attempts`, and
-/// `lease_expires_at`. `limit` is a numeric literal.
+/// Returns each claimed `run_id`, its `partition_key`, new `attempts`,
+/// `lease_expires_at`, and incremented `lease_generation`. `limit` is a numeric
+/// literal.
 pub fn claim_partition_head_sql(limit: usize) -> String {
     // Same evaluation-fence discipline as [`claim_batch_sql`]: the locking head
     // selection lives in a CTE fenced `AS MATERIALIZED` so `FOR UPDATE OF c SKIP
@@ -707,10 +711,12 @@ pub fn claim_partition_head_sql(limit: usize) -> String {
         UPDATE run_queue AS q \
             SET lease_owner = $1, \
                 lease_expires_at = now() + ($2::bigint * interval '1 millisecond'), \
+                lease_generation = q.lease_generation + 1, \
                 attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
            FROM heads \
           WHERE q.tenant_id = heads.tenant_id AND q.run_id = heads.run_id \
-          RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at",
+          RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at, \
+                    q.lease_generation",
         blocking = PartitionPolicy::Blocking.as_sql(),
         leapfrog = PartitionPolicy::Leapfrog.as_sql(),
     )

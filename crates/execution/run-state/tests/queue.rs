@@ -265,7 +265,8 @@ fn claim_sql_is_skip_locked_and_bounded() {
     assert!(sql.contains(
         "attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END"
     ));
-    assert!(sql.contains("RETURNING q.run_id, q.attempts, q.lease_expires_at"));
+    assert!(sql.contains("RETURNING q.run_id, q.attempts, q.lease_expires_at, q.lease_generation"));
+    assert!(sql.contains("lease_generation = q.lease_generation + 1"));
     // The global claim leaves partitioned runs to the per-partition path.
     assert!(sql.contains("c.partition_key IS NULL"));
     // R8b-b: the shared claim scan carries the EXPLICIT tenant predicate (inert —
@@ -479,7 +480,11 @@ fn partition_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(claim.contains(
         "attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END"
     ));
-    assert!(claim.contains("RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at"));
+    assert!(claim.contains(
+        "RETURNING q.run_id, q.partition_key, q.attempts, q.lease_expires_at, \
+                    q.lease_generation"
+    ));
+    assert!(claim.contains("lease_generation = q.lease_generation + 1"));
     // The head selection is fenced `AS MATERIALIZED` (same over-lock fix as the global
     // claim, wamn-fqg.10): `FOR UPDATE OF c SKIP LOCKED LIMIT n` runs once, then the
     // outer UPDATE joins the materialized heads by PK — no re-scannable `IN (subquery)`
@@ -1251,6 +1256,7 @@ fn run_queue_sql_matches_the_model() {
         "stream_seq",
         "lease_owner",
         "lease_expires_at",
+        "lease_generation",
         "attempts",
         "max_attempts",
     ] {
@@ -1260,6 +1266,7 @@ fn run_queue_sql_matches_the_model() {
     // to 0, and sits in the claimable index's ordering prefix so the numeric claim
     // key is index-supported.
     assert!(sql.contains("stream_seq       bigint NOT NULL DEFAULT 0"));
+    assert!(sql.contains("lease_generation bigint NOT NULL DEFAULT 0"));
     assert!(
         sql.contains("run_queue_claimable ON wamn_run.run_queue (tenant_id, available_at, stream_seq, lease_expires_at)"),
         "the claimable index must carry stream_seq in its ordering prefix (E4)"
