@@ -984,7 +984,7 @@ fn bare_cargo_commands_remain_exhaustive() {
         .iter()
         .map(|entry| (entry.working_directory.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
-    for (working_directory, package_count) in [(".", 49), ("components", 18)] {
+    for (working_directory, package_count) in [(".", 49), ("components", 20)] {
         let entry = semantics
             .get(working_directory)
             .unwrap_or_else(|| panic!("missing bare Cargo semantics for {working_directory}"));

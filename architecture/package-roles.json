@@ -545,6 +545,15 @@
     },
     {
       "workspace": "components",
+      "name": "evaluate-specs",
+      "manifest_path": "components/nodes/evaluate-specs/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "execution",
+      "deployable": true
+    },
+    {
+      "workspace": "components",
       "name": "flowrunner",
       "manifest_path": "components/execution/flowrunner/Cargo.toml",
       "role": "component",
@@ -568,6 +577,15 @@
       "role": "component",
       "target_class": "guest",
       "bounded_context": "node",
+      "deployable": true
+    },
+    {
+      "workspace": "components",
+      "name": "normalize-receipt",
+      "manifest_path": "components/nodes/normalize-receipt/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "execution",
       "deployable": true
     },
     {

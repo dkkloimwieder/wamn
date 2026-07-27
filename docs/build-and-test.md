@@ -19,7 +19,7 @@ rev-bump procedure. The rev is pinned in one place:
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
-selection for the current **49 root + 19 component packages**. The selection
+selection for the current **49 root + 21 component packages**. The selection
 uses named explicit selectors and deliberately does not add
 `default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
 sets with live, locked Cargo metadata and `architecture/package-roles.json`.
@@ -29,11 +29,11 @@ The selected package roots are:
 | Tier | Root | Components | Selection |
 |---|---:|---:|---|
 | fast developer/native | 39 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
-| product components | 0 | 4 | `api-gateway`, `flowrunner`, `materializer`, `time-shift` |
+| product components | 0 | 6 | `api-gateway`, `evaluate-specs`, `flowrunner`, `materializer`, `normalize-receipt`, `time-shift` |
 | contract/conformance | 12 | 0 | all 11 contract packages plus `wamn-proof-conformance` |
-| full CI | 49 | 19 | every Cargo member plus the classified non-Cargo `node-ts` sample |
-| deployed-system proof | 16 | 19 | deployable native/proof owners plus every guest proof input and `node-ts` |
-| release | 10 | 4 | every package classified `deployable: true` |
+| full CI | 49 | 21 | every Cargo member plus the classified non-Cargo `node-ts` sample |
+| deployed-system proof | 16 | 21 | deployable native/proof owners plus every guest proof input and `node-ts` |
+| release | 10 | 6 | every package classified `deployable: true` |
 
 Package roots are selection inputs, not hand-maintained dependency closures.
 Cargo resolves their normal, build, and test path dependencies from live
@@ -71,7 +71,7 @@ There are no `default-members` in either virtual workspace. Consequently:
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
   select all 49 root members. Bare `cargo test` uses each package's default
   test targets.
-- From `components/`, the same bare commands select all 19 component members.
+- From `components/`, the same bare commands select all 21 component members.
   The production guest build remains
   `cargo build --workspace --target wasm32-wasip2`.
 - Full CI keeps three package/artifact steps—every root target, every component
@@ -91,7 +91,7 @@ There are no `default-members` in either virtual workspace. Consequently:
 
 ### Release identity
 
-Release membership is the 14 `deployable: true` packages in
+Release membership is the 16 `deployable: true` packages in
 `architecture/package-roles.json`, including the `wamn-gates` proof image.
 Membership is not release admission. SR17 must join source revision and
 `Cargo.lock` digest to exact artifact SHA-256 and OCI manifest digest; SR26
@@ -811,6 +811,28 @@ cargo test --locked -p wamn-catalog -p wamn-flow
 cargo test --locked -p wamn-proof-conformance --lib catalog
 cargo clippy --locked -p wamn-catalog --all-targets -- -D warnings
 cargo fmt -p wamn-catalog --check
+```
+
+### [CALLABLE-FLOWS-POC-F1 / wamn-5wd1.42] pure receipt components
+
+Docs: `docs/FLOW-SPEC.md` §10.3 and `docs/POC-PLAN.md` F1 / Named mechanical
+deltas. Both components use the zero-import `wamn:node/handler` world, declare
+only the `main` output port, and carry the explicit `purity: pure` assertion
+that authorizes replay. The host tests run the named decimal, float-refusal,
+manifest-purity, undeclared-dependency, and interface-drift guards before the
+debug Wasm artifacts are built.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-f1-components-42 \
+  cargo test --locked --manifest-path components/Cargo.toml \
+  -p normalize-receipt -p evaluate-specs
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-f1-components-42 \
+  cargo build --locked --manifest-path components/Cargo.toml \
+  -p normalize-receipt -p evaluate-specs --target wasm32-wasip2
+wasm-tools component wit \
+  /tmp/wamn-target-cf-f1-components-42/wasm32-wasip2/debug/normalize_receipt.wasm
+wasm-tools component wit \
+  /tmp/wamn-target-cf-f1-components-42/wasm32-wasip2/debug/evaluate_specs.wasm
 ```
 
 ### [CALLABLE-FLOWS-P4] flow invocation contract

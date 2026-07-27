@@ -16,6 +16,10 @@ fn every_embedded_component_comes_from_the_locked_builder() {
             "/bench/disposition-node.wasm",
         ),
         (
+            "/component-output/evaluate_specs.wasm",
+            "/bench/evaluate-specs.wasm",
+        ),
+        (
             "/component-output/flow_composed.wasm",
             "/bench/flow-composed.wasm",
         ),
@@ -41,6 +45,10 @@ fn every_embedded_component_comes_from_the_locked_builder() {
         ("/component-output/memhog.wasm", "/bench/memhog.wasm"),
         ("/component-output/node-ts.wasm", "/bench/node-ts.wasm"),
         ("/component-output/node_rs.wasm", "/bench/node-rs.wasm"),
+        (
+            "/component-output/normalize_receipt.wasm",
+            "/bench/normalize-receipt.wasm",
+        ),
         ("/component-output/pgprobe.wasm", "/bench/pgprobe.wasm"),
         (
             "/component-output/poc_webhook_f1.wasm",

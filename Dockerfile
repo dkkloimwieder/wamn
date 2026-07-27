@@ -64,13 +64,13 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=wamn-component-target,target=/build/components/target \
     cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
-      -p api-gateway -p flowrunner -p materializer \
+      -p api-gateway -p evaluate-specs -p flowrunner -p materializer -p normalize-receipt \
       -p busyloop -p flow-driver -p hello -p logspewer -p memhog -p pgprobe -p sockprobe \
       -p poc-webhook-f1 \
       -p disposition-node -p js-sample -p node-rs -p sample-node \
  && install -d /component-output \
  && for artifact in \
-      api_gateway flowrunner materializer \
+      api_gateway evaluate_specs flowrunner materializer normalize_receipt \
       busyloop flow_driver hello logspewer memhog pgprobe sockprobe \
       poc_webhook_f1 \
       disposition_node js-sample node_rs sample_node; do \
@@ -186,6 +186,11 @@ COPY --from=component-builder /component-output/sample_node.wasm /bench/sample-n
 # POC-F2 (wamn-1ab) zero-import disposition-recommendation node: the f2invoke
 # gate warm-instantiates it in a ServeNode and calls it per disposition outcome.
 COPY --from=component-builder /component-output/disposition_node.wasm /bench/disposition-node.wasm
+# Callable-flow F1 pure custom nodes: zero-import handler components whose
+# manifest purity authorizes replay. The component tests pin decimal behavior
+# and the exact main-only interface before this locked build emits artifacts.
+COPY --from=component-builder /component-output/evaluate_specs.wasm /bench/evaluate-specs.wasm
+COPY --from=component-builder /component-output/normalize_receipt.wasm /bench/normalize-receipt.wasm
 # S5 logging-capture fixture (imports wasi:logging, exports overhead+emit-batch).
 COPY --from=component-builder /component-output/logspewer.wasm /bench/logspewer.wasm
 # 4.1 generated REST API gateway (exports wasi:http/incoming-handler, imports

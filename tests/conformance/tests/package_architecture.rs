@@ -7,7 +7,7 @@ use std::process::Command;
 const ROOT_WORKSPACE: &str = "root";
 const COMPONENT_WORKSPACE: &str = "components";
 const ROOT_MEMBER_COUNT: usize = 49;
-const COMPONENT_MEMBER_COUNT: usize = 19;
+const COMPONENT_MEMBER_COUNT: usize = 21;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]

@@ -14,7 +14,7 @@
     },
     "component_workspace": {
       "manifest": "components/Cargo.toml",
-      "package_count": 19
+      "package_count": 21
     },
     "non_cargo_inputs": [
       "components/samples/node-ts"
@@ -71,8 +71,10 @@
       "root_packages": [],
       "component_packages": [
         "api-gateway",
+        "evaluate-specs",
         "flowrunner",
         "materializer",
+        "normalize-receipt",
         "time-shift"
       ],
       "non_cargo_inputs": [],
@@ -154,6 +156,7 @@
         "busyloop",
         "cred-probe",
         "disposition-node",
+        "evaluate-specs",
         "flow-driver",
         "flowrunner",
         "hello",
@@ -163,6 +166,7 @@
         "memhog",
         "node-cred",
         "node-rs",
+        "normalize-receipt",
         "pgprobe",
         "poc-webhook-f1",
         "sample-node",
@@ -199,6 +203,7 @@
         "busyloop",
         "cred-probe",
         "disposition-node",
+        "evaluate-specs",
         "flow-driver",
         "flowrunner",
         "hello",
@@ -208,6 +213,7 @@
         "memhog",
         "node-cred",
         "node-rs",
+        "normalize-receipt",
         "pgprobe",
         "poc-webhook-f1",
         "sample-node",
@@ -235,8 +241,10 @@
       ],
       "component_packages": [
         "api-gateway",
+        "evaluate-specs",
         "flowrunner",
         "materializer",
+        "normalize-receipt",
         "time-shift"
       ],
       "non_cargo_inputs": [],
@@ -261,7 +269,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "all 19 component workspace members",
+      "selected_packages": "all 21 component workspace members",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     }
   ],
