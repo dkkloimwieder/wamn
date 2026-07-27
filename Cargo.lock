@@ -4369,6 +4369,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-flow-invocation"
+version = "0.1.0"
+
+[[package]]
 name = "wamn-gate-harness"
 version = "0.1.0"
 dependencies = [
@@ -4524,6 +4528,7 @@ dependencies = [
  "sha2 0.11.0",
  "tokio",
  "wamn-component-policy",
+ "wamn-flow-invocation",
  "wamn-gate-harness",
  "wamn-node-invoke",
  "wamn-node-manifest",

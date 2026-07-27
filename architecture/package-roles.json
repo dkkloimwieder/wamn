@@ -208,6 +208,15 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-flow-invocation",
+      "manifest_path": "crates/execution/flow-invocation/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-gate-harness",
       "manifest_path": "test-support/harness/Cargo.toml",
       "role": "test",

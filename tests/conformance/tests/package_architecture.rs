@@ -6,7 +6,7 @@ use std::process::Command;
 
 const ROOT_WORKSPACE: &str = "root";
 const COMPONENT_WORKSPACE: &str = "components";
-const ROOT_MEMBER_COUNT: usize = 47;
+const ROOT_MEMBER_COUNT: usize = 48;
 const COMPONENT_MEMBER_COUNT: usize = 18;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]

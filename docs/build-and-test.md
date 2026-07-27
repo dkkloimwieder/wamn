@@ -19,7 +19,7 @@ rev-bump procedure. The rev is pinned in one place:
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
-selection for the current **47 root + 18 component packages**. The selection
+selection for the current **48 root + 18 component packages**. The selection
 uses named explicit selectors and deliberately does not add
 `default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
 sets with live, locked Cargo metadata and `architecture/package-roles.json`.
@@ -28,10 +28,10 @@ The selected package roots are:
 
 | Tier | Root | Components | Selection |
 |---|---:|---:|---|
-| fast developer/native | 37 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
+| fast developer/native | 38 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
 | product components | 0 | 3 | `api-gateway`, `flowrunner`, `materializer` |
-| contract/conformance | 10 | 0 | all 9 contract packages plus `wamn-proof-conformance` |
-| full CI | 47 | 18 | every Cargo member plus the classified non-Cargo `node-ts` sample |
+| contract/conformance | 11 | 0 | all 10 contract packages plus `wamn-proof-conformance` |
+| full CI | 48 | 18 | every Cargo member plus the classified non-Cargo `node-ts` sample |
 | deployed-system proof | 16 | 18 | deployable native/proof owners plus every guest proof input and `node-ts` |
 | release | 10 | 3 | every package classified `deployable: true` |
 
@@ -69,7 +69,7 @@ membership never constitutes deployed proof or release admission.
 There are no `default-members` in either virtual workspace. Consequently:
 
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
-  select all 47 root members. Bare `cargo test` uses each package's default
+  select all 48 root members. Bare `cargo test` uses each package's default
   test targets.
 - From `components/`, the same bare commands select all 18 component members.
   The production guest build remains
@@ -797,6 +797,16 @@ cargo test -p wamn-flow
 cargo clippy -p wamn-flow --all-targets && cargo fmt -p wamn-flow --check
 # regenerate the published JSON Schema contract after changing the types:
 cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
+```
+
+### [CALLABLE-FLOWS-P4] flow invocation contract
+
+Docs: `docs/FLOW-SPEC.md` §8, §§9.1–9.7, §11, Phase 4.
+
+```bash
+cargo test --locked -p wamn-flow-invocation
+cargo test --locked -p wamn-proof-conformance --lib invocation
+cargo clippy --locked -p wamn-flow-invocation --all-targets -- -D warnings
 ```
 
 ### [5.2] production flow-runner engine (crates/execution/flow-engine)
