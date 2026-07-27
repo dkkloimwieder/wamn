@@ -7,21 +7,23 @@
 //! proof; the F4 flow later invokes it as an audit comparison, out of scope here).
 //!
 //! # Contract
-//! Input: `{"hold": {…}, "history": [{"decision": …}, …]}`.
+//! Input: `{"hold": {…}, "history": [{"decision": …}, …], "decision": <decision>}`.
 //! - `hold.material` (string, required) — the material identity.
 //! - Spec context (numeric-as-STRING exact decimals, F1 style; at least one
 //!   dimension required, each all-or-nothing):
 //!   - moisture: `moisture_pct` vs `moisture_max_pct` (catalog `numeric(5,2)` pct);
 //!   - weight: `weight_kg` deviation from `quantity_kg` vs `weight_tolerance_kg`
 //!     (catalog `numeric(8,3)` kg tolerance).
-//! - `hold.reasons` (optional array of F1-format strings) — echoed into the
-//!   rationale; not load-bearing for the decision.
+//! - `hold.reasons` (optional array of F1-format strings) — validated for
+//!   compatibility; not load-bearing for the decision.
 //! - `history` (optional) — prior dispositions for the material/supplier; each
 //!   entry's `decision` is one of the catalog `dispositions.decision` enum
 //!   (`accept` / `reject` / `use-as-is`).
+//! - `decision` (required) — the recorded decision to compare with the
+//!   recommendation.
 //!
-//! Output on `main`: `{"recommended": <decision>, "confidence": <0..1 f64>,
-//! "rationale": <string>}`.
+//! Output on `main`: `{"recommendation": <decision>, "confidence": <decimal
+//! string>, "matched": <bool>}`. No legacy fields are emitted.
 //!
 //! # Policy (deterministic, pure)
 //! 1. Exceedance SEVERITY per dimension, by exact-decimal compare (no float in
@@ -341,7 +343,7 @@ fn recommend(input: &Value) -> Result<Value, NodeError> {
         .and_then(Value::as_object)
         .ok_or_else(|| invalid("missing-hold", "input requires a \"hold\" object"))?;
 
-    let material = hold
+    let _material = hold
         .get("material")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
@@ -352,8 +354,9 @@ fn recommend(input: &Value) -> Result<Value, NodeError> {
             )
         })?;
 
-    // reasons: optional F1-format strings, echoed into the rationale.
-    let reasons = match hold.get("reasons") {
+    // Preserve the established F1-format validation even though the r6 output
+    // deliberately omits rationale text.
+    let _reasons = match hold.get("reasons") {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::Array(a)) => a
             .iter()
@@ -390,6 +393,16 @@ fn recommend(input: &Value) -> Result<Value, NodeError> {
 
     let history = parse_history(input)?;
     let majority = majority(&history);
+    let decision = input
+        .get("decision")
+        .and_then(Value::as_str)
+        .and_then(Decision::parse)
+        .ok_or_else(|| {
+            invalid(
+                "missing-or-invalid-decision",
+                format!("input.decision must be one of {DECISIONS:?}"),
+            )
+        })?;
 
     // Severity -> (recommendation, confidence base, span over history support).
     // MUTATION (i) TARGET: swapping Reject<->Accept in the Severe arm flips
@@ -408,32 +421,12 @@ fn recommend(input: &Value) -> Result<Value, NodeError> {
     } else {
         history.iter().filter(|&&d| d == rec).count() as f64 / history.len() as f64
     };
-    let confidence = round2(base + span * support);
-
-    let severity_word = match severity {
-        Severity::Severe => "severe",
-        Severity::Mild => "mild",
-        Severity::InSpec => "in-spec",
-    };
-    let history_note = match (history.len(), majority) {
-        (0, _) => "no prior dispositions".to_string(),
-        (n, Some(d)) => format!("{n} prior disposition(s), majority {}", d.as_str()),
-        (n, None) => format!("{n} prior disposition(s), no majority"),
-    };
-    let reason_note = if reasons.is_empty() {
-        String::new()
-    } else {
-        format!("; out-of-spec: {}", reasons.join("; "))
-    };
-    let rationale = format!(
-        "{material}: {severity_word} exceedance with {history_note}{reason_note} — recommend {}",
-        rec.as_str()
-    );
+    let confidence = format!("{:.2}", round2(base + span * support));
 
     Ok(json!({
-        "recommended": rec.as_str(),
+        "recommendation": rec.as_str(),
         "confidence": confidence,
-        "rationale": rationale,
+        "matched": rec == decision,
     }))
 }
 
@@ -459,7 +452,14 @@ mod tests {
     use super::*;
 
     fn hold_moisture(measured: &str, max: &str) -> Value {
-        json!({"hold": {"material": "resin-A", "moisture_pct": measured, "moisture_max_pct": max}})
+        json!({
+            "hold": {
+                "material": "resin-A",
+                "moisture_pct": measured,
+                "moisture_max_pct": max
+            },
+            "decision": "accept"
+        })
     }
 
     fn with_history(mut input: Value, decisions: &[&str]) -> Value {
@@ -472,10 +472,10 @@ mod tests {
     }
 
     fn rec_of(out: &Value) -> &str {
-        out["recommended"].as_str().unwrap()
+        out["recommendation"].as_str().unwrap()
     }
     fn conf_of(out: &Value) -> f64 {
-        out["confidence"].as_f64().unwrap()
+        out["confidence"].as_str().unwrap().parse().unwrap()
     }
 
     // ---- decimal ---------------------------------------------------------
@@ -566,7 +566,7 @@ mod tests {
         let input = json!({"hold": {
             "material": "billet-9", "weight_kg": "110.000",
             "quantity_kg": "100.000", "weight_tolerance_kg": "2.000"
-        }});
+        }, "decision": "use-as-is"});
         assert_eq!(rec_of(&recommend(&input).unwrap()), "reject");
     }
 
@@ -577,7 +577,7 @@ mod tests {
             "material": "mix-1",
             "moisture_pct": "6.00", "moisture_max_pct": "5.00",
             "weight_kg": "50.000", "quantity_kg": "10.000", "weight_tolerance_kg": "1.000"
-        }});
+        }, "decision": "reject"});
         assert_eq!(rec_of(&recommend(&input).unwrap()), "reject");
     }
 
@@ -622,12 +622,12 @@ mod tests {
     #[test]
     fn malformed_and_missing_inputs_are_invalid_input() {
         let cases = [
-            json!({}),                                                             // no hold
-            json!({"hold": {"moisture_pct": "6.00", "moisture_max_pct": "5.00"}}), // no material
-            json!({"hold": {"material": "x"}}), // no spec dimension
-            json!({"hold": {"material": "x", "moisture_pct": "6.00"}}), // half a dimension
-            json!({"hold": {"material": "x", "moisture_pct": "abc", "moisture_max_pct": "5.00"}}), // bad decimal
-            json!({"hold": {"material": "x", "moisture_pct": 6.0, "moisture_max_pct": "5.00"}}), // float, not string
+            json!({"decision": "accept"}), // no hold
+            json!({"hold": {"moisture_pct": "6.00", "moisture_max_pct": "5.00"}, "decision": "accept"}), // no material
+            json!({"hold": {"material": "x"}, "decision": "accept"}), // no spec dimension
+            json!({"hold": {"material": "x", "moisture_pct": "6.00"}, "decision": "accept"}), // half a dimension
+            json!({"hold": {"material": "x", "moisture_pct": "abc", "moisture_max_pct": "5.00"}, "decision": "accept"}), // bad decimal
+            json!({"hold": {"material": "x", "moisture_pct": 6.0, "moisture_max_pct": "5.00"}, "decision": "accept"}), // float, not string
         ];
         for case in cases {
             assert!(
@@ -646,14 +646,90 @@ mod tests {
     // ---- output-shape + catalog-enum drift guards ------------------------
 
     #[test]
-    fn output_carries_exactly_the_pinned_keys() {
+    fn f2_contract_accepts_decision_and_emits_exact_string_shape() {
         let out = recommend(&hold_moisture("6.00", "5.00")).unwrap();
-        let obj = out.as_object().unwrap();
-        assert_eq!(obj.len(), 3);
-        for key in ["recommended", "confidence", "rationale"] {
-            assert!(obj.contains_key(key), "output missing {key}");
-        }
-        assert!(obj["rationale"].as_str().unwrap().contains("resin-A"));
+        assert_eq!(
+            out,
+            json!({
+                "recommendation": "use-as-is",
+                "confidence": "0.50",
+                "matched": false,
+            })
+        );
+        assert!(
+            out["confidence"].is_string(),
+            "numeric-confidence mutant survived"
+        );
+    }
+
+    #[test]
+    fn f2_contract_matched_compares_the_recorded_decision() {
+        let mut input = hold_moisture("6.00", "5.00");
+        input["decision"] = json!("use-as-is");
+        let matched = recommend(&input).unwrap();
+        assert_eq!(matched["recommendation"], "use-as-is");
+        assert_eq!(matched["matched"], true);
+
+        input["decision"] = json!("reject");
+        let mismatched = recommend(&input).unwrap();
+        assert_eq!(mismatched["recommendation"], matched["recommendation"]);
+        assert_eq!(mismatched["confidence"], matched["confidence"]);
+        assert_eq!(mismatched["matched"], false);
+    }
+
+    #[test]
+    fn f2_contract_rejects_old_shape_and_unknown_decision() {
+        let old = json!({
+            "hold": {
+                "material": "resin-A",
+                "moisture_pct": "6.00",
+                "moisture_max_pct": "5.00"
+            },
+            "history": []
+        });
+        assert!(matches!(recommend(&old), Err(NodeError::InvalidInput(_))));
+
+        let mut unknown = hold_moisture("6.00", "5.00");
+        unknown["decision"] = json!("approve");
+        assert!(matches!(
+            recommend(&unknown),
+            Err(NodeError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn zero_import_contract_declares_and_uses_no_capabilities() {
+        let node = DispositionRecommendation;
+        assert!(node.capabilities().is_empty());
+
+        let config = json!({});
+        let run = RunContext {
+            run_id: "r",
+            flow_id: "f",
+            flow_version: 1,
+            node_id: "recommend",
+            attempt: 0,
+            idempotency_key: "r:recommend",
+            deadline_ms: None,
+            traceparent: None,
+            tracestate: None,
+            config: &config,
+            context: &config,
+        };
+        let mut ctx = wamn_node_guest::NoCapsCtx;
+        let emission = node
+            .run(&mut ctx, &run, &hold_moisture("6.00", "5.00"))
+            .expect("pure node runs with the zero-capability facade");
+        assert_eq!(emission.payload["recommendation"], "use-as-is");
+    }
+
+    #[test]
+    fn manifest_declares_purity_pure_and_absence_mutant_fails() {
+        let purity_lines = include_str!("../Cargo.toml")
+            .lines()
+            .filter(|line| line.trim_start().starts_with("purity ="))
+            .collect::<Vec<_>>();
+        assert_eq!(purity_lines, ["purity = \"pure\""]);
     }
 
     /// Drift guard: our recommendable set + `Decision` mapping must track the

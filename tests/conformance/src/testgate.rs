@@ -154,7 +154,7 @@ const BAD_CASES: &str =
     include_str!("../../../components/samples/disposition-node/cases-refusal-fixture.json");
 
 /// The one case the refusal fixture must name in its typed refusal.
-const REFUSAL_CASE_NAME: &str = "severe-moisture-WRONGLY-expects-accept";
+const REFUSAL_CASE_NAME: &str = "severe-recommendation-WRONGLY-expects-accept";
 
 #[derive(Debug, Args)]
 pub struct TestGateArgs {
@@ -319,7 +319,7 @@ mod tests {
         let cases = CaseFile::from_json(
             r#"{"cases":[{
               "name":"bad-decimal-wrongly-expects-terminal",
-              "input":{"hold":{"material":"x","moisture_pct":"abc","moisture_max_pct":"5.00"}},
+              "input":{"hold":{"material":"x","moisture_pct":"abc","moisture_max_pct":"5.00"},"decision":"accept"},
               "expect":{"error":"terminal"}
             }]}"#,
         )
@@ -338,8 +338,8 @@ mod tests {
         let cases = CaseFile::from_json(
             r#"{"cases":[{
               "name":"reject-wrongly-pins-a-branch-port",
-              "input":{"hold":{"material":"resin-A","moisture_pct":"12.00","moisture_max_pct":"5.00"}},
-              "expect":{"ok":{"value":{"recommended":"reject"},"match":"subset","port":"reject-branch"}}
+              "input":{"hold":{"material":"resin-A","moisture_pct":"12.00","moisture_max_pct":"5.00"},"decision":"accept"},
+              "expect":{"ok":{"value":{"recommendation":"reject","confidence":"0.80","matched":false},"match":"exact","port":"reject-branch"}}
             }]}"#,
         )
         .expect("parses");

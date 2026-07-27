@@ -7,9 +7,9 @@ edition.workspace = true
 # zero-import `world node` component on the wamn-node-guest scaffolding. Its deps
 # are EXACTLY sample-node's ({serde_json, wamn-node-{sdk,guest}}), so its resolved
 # closure stays inside the builder's pinned allowlist (5.5c) — no new crate name.
-# It recommends a disposition from a hold + material history with PURE compute
-# (hand-rolled exact-decimal severity + history frequency), imports nothing, and
-# so proves the builder emits EMPTY hostInterfaces / no --allowed-hosts (5.4-5.6).
+# It recommends a disposition from a hold + material history with PURE compute,
+# compares it to the supplied decision, imports nothing, and so proves the
+# builder emits EMPTY hostInterfaces / no --allowed-hosts (5.4-5.6).
 
 [dependencies]
 serde_json = { workspace = true }
@@ -24,5 +24,6 @@ crate-type = ["cdylib"]
 [package.metadata.wamn-node]
 node-type = "disposition-recommendation"
 name = "Disposition Recommendation"
-description = "POC-F2 zero-import custom node (5.4): recommends a quality-hold disposition (accept / reject / use-as-is) with a confidence from exact-decimal exceedance severity + prior-disposition frequency. Imports nothing."
+description = "POC-F2 zero-import pure custom node: compares a deterministic quality-hold recommendation with the recorded decision and emits string confidence."
 ordering = ["unordered"]
+purity = "pure"

@@ -3,7 +3,7 @@
   "selection": {
     "mechanism": "named-explicit-selectors",
     "default_members_selected": false,
-    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 39-package developer loop and the four product components explicit without hiding POCs, fixtures, samples, or proof packages from bare workspace commands.",
+    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 39-package developer loop and the six product components explicit without hiding POCs, fixtures, samples, or proof packages from bare workspace commands.",
     "package_classification_source": "architecture/package-roles.json",
     "membership_evidence": "cargo metadata --locked --offline --format-version 1"
   },
