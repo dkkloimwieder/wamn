@@ -18,8 +18,8 @@
 //!      16, and an UPDATE carrying a FULL old image → the changed-to eval fires),
 //!      run the
 //!      guest, and assert: the run/queue rows (padded run ids, REAL
-//!      `stream_seq`, kq0z-coherent key+policy), the causation thread
-//!      (`input_json.causation.depth = parent+1`), the doorbell rings, and the
+//!      `stream_seq`, kq0z-coherent key+policy), trusted invocation metadata,
+//!      causation-budget refusals, the doorbell rings, and the
 //!      DISTINCT refusal counters (the guest's report file).
 //!   2. burst   — publish `--burst` more matching inserts and time the drain:
 //!      the first C-MAT deliveries→enqueue number (provenance: local, debug).
@@ -95,7 +95,6 @@ const ENTITY: &str = "receipts";
 // The REAL shipped DDL, compiled in — the gate cannot drift from deploy/sql.
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
-const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 // ---------------------------------------------------------------------------
@@ -105,8 +104,7 @@ const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql")
 fn flow_json(flow_id: &str, ordering: serde_json::Value, policy: Option<&str>) -> String {
     let mut flow = serde_json::json!({
         "schema-version": "0.1", "flow-id": flow_id, "version": 1,
-        "trigger": {"type": "manual"},
-        "entry": "n1", "nodes": [{"id": "n1", "type": "noop"}],
+        "nodes": [{"id": "event", "type": "event"}],
     });
     if !ordering.is_null() {
         flow["ordering"] = ordering;
@@ -165,12 +163,16 @@ fn envelope_json(
     if let Some((depth, root)) = causation {
         env["causation"] = serde_json::json!({
             // The frozen evt run-id builder — no inline padded copy (l5i9.30).
-            "run": mint_evt_run_id("parent", u64::from(depth)),
+            "run": registered_evt_run_id("parent", "parent-reg", u64::from(depth)),
             "root": root,
             "depth": depth,
         });
     }
     env.to_string()
+}
+
+fn registered_evt_run_id(flow_id: &str, registration_id: &str, stream_seq: u64) -> String {
+    mint_evt_run_id(&format!("{flow_id}:{registration_id}"), stream_seq)
 }
 
 // ---------------------------------------------------------------------------
@@ -302,18 +304,27 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .await
         .context("apply run-queue.sql")?;
     admin
-        .batch_execute(FLOWS_SQL)
-        .await
-        .context("apply flows.sql")?;
-    admin
         .batch_execute(CATALOG_SQL)
         .await
         .context("apply catalog-schema.sql")?;
     println!("provisioned wamn_run + catalog from deploy/sql (include_str! — drift-proof)");
 
-    // Seed flows: unordered/unconditional, unordered/conditional, partitioned
-    // (leapfrog; the registration carries the event-context extractor), and
-    // the old-condition flow (held at the registration, so never fired).
+    admin
+        .batch_execute("BEGIN")
+        .await
+        .context("begin release seed")?;
+    admin
+        .execute(
+            "INSERT INTO catalog.catalogs \
+             (tenant_id,catalog_id,version,environment,schema_version,state) \
+             VALUES ($1,'matcat',1,$2,'0.1','applied')",
+            &[&TENANT, &ENV],
+        )
+        .await
+        .context("seed callable catalog")?;
+
+    // Seed immutable flow artifacts and the applied release.
+    let mut members = Vec::new();
     for (flow_id, ordering, policy) in [
         ("f-plain", serde_json::Value::Null, None),
         ("f-cond", serde_json::Value::Null, None),
@@ -324,15 +335,56 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         ),
         ("f-old", serde_json::Value::Null, None),
     ] {
+        let artifact_hash = format!("artifact-{flow_id}");
+        let graph = flow_json(flow_id, ordering, policy);
         admin
             .execute(
-                "INSERT INTO wamn_run.flows (tenant_id, flow_id, version, active, graph_json) \
-                 VALUES ($1, $2, 1, true, $3::text::jsonb)",
-                &[&TENANT, &flow_id, &flow_json(flow_id, ordering, policy)],
+                "INSERT INTO catalog.flow_artifacts \
+                 (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
+                  artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
+                 VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,'[]',$6,'[]')",
+                &[
+                    &TENANT,
+                    &flow_id,
+                    &graph,
+                    &format!("graph-{flow_id}"),
+                    &artifact_hash,
+                    &format!("interfaces-{flow_id}"),
+                ],
             )
             .await
             .with_context(|| format!("seed flow {flow_id}"))?;
+        members.push(serde_json::json!({
+            "flow-id": flow_id,
+            "flow-version": 1,
+            "artifact-hash": artifact_hash,
+        }));
     }
+    admin
+        .execute(
+            "INSERT INTO catalog.release_manifests \
+             (tenant_id,catalog_id,catalog_version,members_json) \
+             VALUES ($1,'matcat',1,$2::text::jsonb)",
+            &[&TENANT, &serde_json::Value::Array(members).to_string()],
+        )
+        .await
+        .context("seed release manifest")?;
+    admin
+        .batch_execute(
+            "INSERT INTO catalog.release_flows \
+               (tenant_id,catalog_id,catalog_version,flow_id,flow_version) VALUES \
+               ('t1','matcat',1,'f-plain',1),('t1','matcat',1,'f-cond',1), \
+               ('t1','matcat',1,'f-key',1),('t1','matcat',1,'f-old',1); \
+             INSERT INTO catalog.catalog_heads \
+               (tenant_id,catalog_id,environment,applied_catalog_version) \
+             VALUES ('t1','matcat','menv',1);",
+        )
+        .await
+        .context("seed applied release")?;
+    admin
+        .batch_execute("COMMIT")
+        .await
+        .context("commit release seed")?;
     // Registrations (superuser bypasses the tenant-FORCE RLS for seeding).
     for (rid, flow_id, ops, condition, extractor) in [
         (
@@ -615,7 +667,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     check("9 queue rows co-transacted", queued == 9);
 
     // E1 through f-plain: unkeyed, blocking default, REAL stream_seq, padded id.
-    let plain_e1 = mint_evt_run_id("f-plain", 1);
+    let plain_e1 = registered_evt_run_id("f-plain", "r-plain", 1);
     let row = admin
         .query_one(
             "SELECT partition_key, partition_policy, stream_seq::bigint FROM wamn_run.run_queue \
@@ -632,7 +684,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     );
 
     // E1 through f-key: the registration extractor key + declared leapfrog.
-    let key_e1 = mint_evt_run_id("f-key", 1);
+    let key_e1 = registered_evt_run_id("f-key", "r-key", 1);
     let row = admin
         .query_one(
             "SELECT partition_key, partition_policy, stream_seq::bigint FROM wamn_run.run_queue \
@@ -648,29 +700,32 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             && row.get::<_, i64>(2) == 1,
     );
 
-    // E6: the causation thread — child depth = parent(3) + 1, root carried.
-    let plain_e6 = mint_evt_run_id("f-plain", 6);
+    // E6: trusted event metadata stays outside the business input.
+    let plain_e6 = registered_evt_run_id("f-plain", "r-plain", 6);
     let row = admin
         .query_one(
-            "SELECT trigger_source, input_json->'causation'->>'depth', \
-                    input_json->'causation'->>'root', input_json->>'trigger' \
+            "SELECT trigger_source, invocation_context->>'trigger', \
+                    invocation_context->>'entity', invocation_context->>'table', \
+                    invocation_context->>'seq' \
              FROM wamn_run.runs WHERE tenant_id = $1 AND run_id = $2",
             &[&TENANT, &plain_e6],
         )
         .await
         .with_context(|| format!("runs row {plain_e6}"))?;
     check(
-        "evt run persists trigger_source + the causation thread (depth 4, root carried)",
-        row.get::<_, String>(0) == "evt:6"
-            && row.get::<_, String>(1) == "4"
-            && row.get::<_, String>(2) == "origin-root"
-            && row.get::<_, String>(3) == "event",
+        "evt run persists the producer and trusted metadata outside business input",
+        row.get::<_, String>(0) == "event"
+            && row.get::<_, String>(1) == "event"
+            && row.get::<_, String>(2) == ENTITY
+            && row.get::<_, String>(3) == "receipts_v2"
+            && row.get::<_, String>(4) == "6",
     );
 
     // The depth-16 parent (E7) fired NOTHING.
     let e7_runs: i64 = admin
         .query_one(
-            "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = $1 AND trigger_source = 'evt:7'",
+            "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = $1 \
+             AND invocation_context->>'seq' = '7'",
             &[&TENANT],
         )
         .await?
@@ -680,10 +735,10 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     // E8: the old-image evaluation fires end to end (l5i9.31). r-old read root
     // `old`, compared `new.status != old.status` over the FULL old image, and
     // fired a real f-old run — proving the served (no-longer-held) old condition.
-    let old_e8 = mint_evt_run_id("f-old", 8);
+    let old_e8 = registered_evt_run_id("f-old", "r-old", 8);
     let e8 = admin
         .query_one(
-            "SELECT trigger_source, input_json->>'trigger' FROM wamn_run.runs \
+            "SELECT trigger_source, invocation_context->>'trigger' FROM wamn_run.runs \
              WHERE tenant_id = $1 AND run_id = $2",
             &[&TENANT, &old_e8],
         )
@@ -691,7 +746,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .with_context(|| format!("old-image fire {old_e8} (E8 must fire under RI FULL)"))?;
     check(
         "old-image UPDATE evaluates end to end and fires (f-old:evt:8)",
-        e8.get::<_, String>(0) == "evt:8" && e8.get::<_, String>(1) == "event",
+        e8.get::<_, String>(0) == "event" && e8.get::<_, String>(1) == "event",
     );
 
     // The guest's DISTINCT counters (v3 §4 alertable refusals).
@@ -896,7 +951,7 @@ mod tests {
         assert_eq!(env.op, wamn_event_wire::Op::Delete);
         assert_eq!(
             env.causation.expect("stamped").run,
-            mint_evt_run_id("parent", 3)
+            registered_evt_run_id("parent", "parent-reg", 3)
         );
     }
 }

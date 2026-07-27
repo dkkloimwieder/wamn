@@ -113,4 +113,21 @@ mod tests {
         }
         assert_ne!(input.get("old"), Some(&Value::Null));
     }
+
+    #[test]
+    fn legacy_event_input_envelope_is_rejected() {
+        let legacy = json!({
+            "trigger": "event",
+            "entity": "receipts",
+            "table": "receipts_v2",
+            "event": "insert",
+            "seq": 9,
+            "payload": {"id": "7"},
+            "causation": {"depth": 0}
+        });
+        assert!(
+            serde_json::from_value::<EventInput>(legacy).is_err(),
+            "the rev18 business envelope has no legacy reader"
+        );
+    }
 }

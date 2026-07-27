@@ -7,12 +7,13 @@
 //! run, skip, or refuse — and, for a fire, mint everything the enqueue needs:
 //! the deterministic zero-padded run id ([`wamn_run_state::queue::mint_evt_run_id`]),
 //! the author-visible event business input, the child lineage stamp, the
-//! partition key + policy (kq0z-coherent), and the numeric stream position.
+//! trusted invocation context, partition key + policy (kq0z-coherent), and the
+//! numeric stream position.
 //!
 //! Like `wamn-run-state` / `wamn-runner`, this crate is **pure**: no DB, no
 //! NATS, no clock. The guest supplies the `wamn:postgres` transaction
-//! (write-ahead + enqueue, `ON CONFLICT DO NOTHING` — the exactly-once
-//! guarantee), the `wamn:jetstream` fetch/ack, and the post-commit doorbell.
+//! (the centralized callable-flow admission transition), the
+//! `wamn:jetstream` fetch/ack, and the post-commit doorbell.
 //!
 //! ## The decision contract (the .17 design fields, load-bearing)
 //!
@@ -58,7 +59,7 @@ pub use condition::{CompiledCondition, ConditionOutcome, compile_condition};
 pub use context::{event_context, tenant_of};
 pub use decide::{
     DecideError, FirePlan, FlowDeclaration, RefuseReason, SkipReason, Verdict, child_causation,
-    decide, rq_policy, serviceable,
+    decide, event_invocation_context_json, mint_registered_evt_run_id, rq_policy, serviceable,
 };
 pub use input::evt_input_json;
 pub use wamn_event_reg::{condition_references_old, references_old};

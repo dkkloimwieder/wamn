@@ -1,8 +1,8 @@
 //! The per-event decision — one delivered envelope against one registration,
 //! producing exactly one [`Verdict`]: fire (with everything the enqueue
 //! needs), a normal skip, or an ALERTABLE refusal. The guest maps verdicts to
-//! effects: `Fire` → write-ahead + enqueue in one `wamn:postgres` transaction,
-//! doorbell after commit, then ack; `Skip`/`Refuse` → ack (the decision is
+//! effects: `Fire` → centralized callable-flow admission, doorbell after
+//! commit, then ack; `Skip`/`Refuse` → ack (the decision is
 //! deterministic — a redelivery cannot change it; events stay on the stream
 //! for replay regardless of ack). Refusals are counted + warned DISTINCTLY
 //! (v3 §4: "refusals are a distinct, alertable outcome").
@@ -35,25 +35,42 @@ pub struct FlowDeclaration {
 /// Everything the guest's fire transaction needs for one won firing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FirePlan {
-    /// `mint_evt_run_id(flow, stream_seq)` — deterministic, zero-padded.
+    /// Deterministic over the full event admission scope.
     pub run_id: String,
     pub flow_id: String,
     pub flow_version: i32,
-    /// The audit `trigger_source` (`evt:<stream_seq>` — the trigger-source grammar).
-    pub trigger_source: String,
     /// The persisted author-visible event business input.
     pub input_json: String,
+    /// Trusted producer metadata, separate from the author-visible input.
+    pub invocation_context_json: String,
     /// The stamped key (`None` = unordered → the global claim).
     pub partition_key: Option<String>,
-    /// The policy literal for a KEYED row
-    /// ([`wamn_run_state::queue::enqueue_evt_with_policy_sql`]'s `$6`; unused
-    /// when `partition_key` is `None` — kq0z coherence).
+    /// The policy carried to centralized admission; unused when
+    /// `partition_key` is `None` except for the required blocking default.
     pub policy: PartitionPolicy,
-    /// The numeric stream position
-    /// ([`wamn_run_state::queue::enqueue_evt_sql`]'s `$5`, E4).
+    /// The numeric stream position carried as the event admission sequence.
     pub stream_seq: i64,
     /// The child causation for trusted lineage persistence and logging.
     pub causation: Causation,
+}
+
+/// Mint an event run identity scoped to the live registration.
+///
+/// A flow may have multiple registrations consuming the same stream sequence;
+/// including the registration prevents their run primary keys from collapsing.
+pub fn mint_registered_evt_run_id(flow_id: &str, registration_id: &str, stream_seq: u64) -> String {
+    mint_evt_run_id(&format!("{flow_id}:{registration_id}"), stream_seq)
+}
+
+/// Build the trusted invocation context for one event admission.
+pub fn event_invocation_context_json(envelope: &Envelope, stream_seq: u64) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "trigger": "event",
+        "entity": envelope.entity,
+        "table": envelope.table,
+        "seq": stream_seq,
+    }))
+    .expect("event invocation context serializes")
 }
 
 /// Normal, non-alertable outcomes: the event is simply not this consumer's to
@@ -261,20 +278,21 @@ pub fn decide(
         return Verdict::Refuse(RefuseReason::SeqOverflow(stream_seq));
     };
     // 6. Mint: run id, causation chain, input, key + policy.
-    let run_id = mint_evt_run_id(&flow.flow_id, stream_seq);
+    let run_id = mint_registered_evt_run_id(&flow.flow_id, &reg.registration_id, stream_seq);
     let child = match child_causation(envelope, &run_id, max_depth) {
         Ok(c) => c,
         Err(refuse) => return Verdict::Refuse(refuse),
     };
     let input_json = evt_input_json(envelope, stream_seq, &child);
+    let invocation_context_json = event_invocation_context_json(envelope, stream_seq);
     let run_input: Value = serde_json::from_str(&input_json).expect("minted input parses");
     let key = partition_key(flow, reg, &event_ctx, &run_input);
     Verdict::Fire(Box::new(FirePlan {
         run_id,
         flow_id: flow.flow_id.clone(),
         flow_version: flow.flow_version,
-        trigger_source: format!("evt:{stream_seq}"),
         input_json,
+        invocation_context_json,
         partition_key: key,
         policy: rq_policy(flow.partition_policy),
         stream_seq: seq_i64,
@@ -343,8 +361,7 @@ mod tests {
         let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
         let env = envelope(Op::Insert, json!({"id": "7", "tenant_id": "t1"}));
         let plan = fire(decide(&reg, &f, None, &env, 9, "t1", 16));
-        assert_eq!(plan.run_id, "f1:evt:00000000000000000009");
-        assert_eq!(plan.trigger_source, "evt:9");
+        assert_eq!(plan.run_id, "f1:r1:evt:00000000000000000009");
         assert_eq!(plan.stream_seq, 9);
         assert_eq!(plan.partition_key, None, "unordered flow → global claim");
         // Organic write → fresh root at depth 0.
@@ -354,6 +371,23 @@ mod tests {
         assert_eq!(input["event"], "insert");
         assert_eq!(input["new"]["id"], "7");
         assert!(input.get("causation").is_none());
+        assert_eq!(
+            serde_json::from_str::<Value>(&plan.invocation_context_json).unwrap(),
+            json!({
+                "trigger": "event",
+                "entity": "receipts",
+                "table": "receipts",
+                "seq": 9
+            })
+        );
+    }
+
+    #[test]
+    fn registration_identity_scopes_equal_stream_sequences() {
+        assert_ne!(
+            mint_registered_evt_run_id("f1", "r1", 9),
+            mint_registered_evt_run_id("f1", "r2", 9)
+        );
     }
 
     #[test]

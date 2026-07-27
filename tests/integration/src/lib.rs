@@ -26,6 +26,7 @@ pub mod flowbench;
 pub mod impactproof;
 pub mod logbench;
 pub mod matbench;
+pub mod materializer;
 pub mod metricbench;
 pub mod nodebench;
 pub mod nodeinvoke;

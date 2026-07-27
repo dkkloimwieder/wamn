@@ -7,12 +7,10 @@
 //! (subject-filtered to the registration's entity) and fetch a bounded batch;
 //! per delivered event run [`wamn_materializer::decide`] and map the verdict:
 //!
-//! - `Fire` → write-ahead run + evt enqueue in ONE transaction (both halves
-//!   `ON CONFLICT DO NOTHING` — the exactly-once guarantee past the JetStream
-//!   dedupe window), then ring the doorbell (best-effort, post-commit), then
-//!   ack. A LOST write-ahead (another replica / an earlier redelivery won)
-//!   skips the enqueue — re-inserting could resurrect a terminal run's queue
-//!   row (the dispatcher's ghost-dispatch rule) — and still acks.
+//! - `Fire` → the shared callable-flow admission transaction: head lock, live
+//!   registration evidence check, scoped dedupe, run + available queue row.
+//!   Then ring the doorbell (best-effort, post-commit) and ack. A duplicate
+//!   admission is the exactly-once no-op and still acks.
 //! - `Skip` → ack (deterministic; the event stays on the stream for replay).
 //! - `Refuse` → **alertable**: a distinct `wamn::materializer` warn + counter,
 //!   then ack (a redelivery cannot change a deterministic refusal; nacking
@@ -46,10 +44,10 @@ use wamn_flow::Flow;
 use wamn_materializer::{
     DecideError, FirePlan, FlowDeclaration, MAX_CAUSATION_DEPTH, RefuseReason, SkipReason, Verdict,
     decide, serviceable,
-    sql::{select_active_flow_sql, select_registrations_sql},
+    sql::{select_registrations_sql, select_release_flow_sql},
 };
-use wamn_run_state::queue::{
-    enqueue_evt_sql, enqueue_evt_with_policy_sql, write_ahead_triggered_run_sql,
+use wamn_run_state::admission::{
+    AdmissionProducer, AdmissionResult, admission_sql, registration_evidence,
 };
 
 use wamn::jetstream::consumer::{self, ConsumerConfig};
@@ -200,6 +198,9 @@ fn int32(v: i32) -> SqlValue {
 fn int64(v: i64) -> SqlValue {
     SqlValue::Int64(v)
 }
+fn null() -> SqlValue {
+    SqlValue::Null
+}
 
 fn pg_name(e: &PgError) -> String {
     match e {
@@ -225,6 +226,9 @@ struct Serving {
     reg: EventRegistration,
     flow: FlowDeclaration,
     condition: Option<wamn_materializer::CompiledCondition>,
+    catalog_version: i32,
+    registration_document: String,
+    registration_hash: String,
 }
 
 /// A durable-consumer name from the registration identity. The charset is
@@ -254,17 +258,31 @@ fn durable_name(tenant: &str, catalog_id: &str, registration_id: &str) -> String
 /// (warned, not consumed). Flow graphs are read once per distinct flow.
 fn load_servings(cfg: &Config, counters: &mut Counters) -> Result<Vec<Serving>, String> {
     let rs = client::query(&select_registrations_sql(), &[]).map_err(|e| pg_name(&e))?;
-    let mut flows: HashMap<String, Option<FlowDeclaration>> = HashMap::new();
+    let mut flows: HashMap<(String, String), Option<(i32, FlowDeclaration)>> = HashMap::new();
     let mut servings = Vec::new();
     for row in &rs.rows {
-        let (Some(SqlValue::Text(reg_id)), Some(SqlValue::Text(flow_id)), Some(doc)) =
-            (row.first(), row.get(1), row.get(2))
+        let (
+            Some(SqlValue::Text(reg_id)),
+            Some(SqlValue::Text(catalog_id)),
+            Some(SqlValue::Text(flow_id)),
+            Some(doc),
+        ) = (row.first(), row.get(1), row.get(2), row.get(3))
         else {
             return Err("registration row shape".into());
         };
         let doc = match doc {
             SqlValue::Text(s) | SqlValue::Json(s) => s.as_str(),
             other => return Err(format!("registration doc shape: {other:?}")),
+        };
+        let document: serde_json::Value = match serde_json::from_str(doc) {
+            Ok(document) => document,
+            Err(e) => {
+                counters.held_registrations += 1;
+                eprintln!(
+                    "wamn::materializer HELD registration {reg_id}: invalid JSON document ({e}) — events stay on the stream"
+                );
+                continue;
+            }
         };
         let reg = match EventRegistration::from_json(doc) {
             Ok(r) => r,
@@ -276,6 +294,17 @@ fn load_servings(cfg: &Config, counters: &mut Counters) -> Result<Vec<Serving>, 
                 continue;
             }
         };
+        if reg.registration_id != *reg_id
+            || reg.catalog_id != *catalog_id
+            || reg.flow_id != *flow_id
+        {
+            counters.held_registrations += 1;
+            eprintln!(
+                "wamn::materializer HELD registration {reg_id}: trusted identity columns disagree with the document — events stay on the stream"
+            );
+            continue;
+        }
+        let (registration_document, registration_hash) = registration_evidence(&document);
         let condition = match serviceable(&reg) {
             Ok(c) => c,
             Err(DecideError::UnserviceableCondition(why)) => {
@@ -286,11 +315,12 @@ fn load_servings(cfg: &Config, counters: &mut Counters) -> Result<Vec<Serving>, 
                 continue;
             }
         };
+        let flow_key = (catalog_id.clone(), flow_id.clone());
         let decl = flows
-            .entry(flow_id.clone())
-            .or_insert_with(|| load_flow(flow_id))
+            .entry(flow_key)
+            .or_insert_with(|| load_flow(catalog_id, &cfg.env, flow_id))
             .clone();
-        let Some(flow) = decl else {
+        let Some((catalog_version, flow)) = decl else {
             counters.held_registrations += 1;
             eprintln!(
                 "wamn::materializer HELD registration {reg_id}: flow {flow_id} missing, inactive, or invalid — events stay on the stream"
@@ -301,26 +331,34 @@ fn load_servings(cfg: &Config, counters: &mut Counters) -> Result<Vec<Serving>, 
             reg,
             flow,
             condition,
+            catalog_version,
+            registration_document,
+            registration_hash,
         });
     }
-    let _ = cfg;
     Ok(servings)
 }
 
-/// One subscribed flow's ACTIVE declaration — `None` holds the registration
-/// (missing, inactive, unparseable, or failing validation — the dispatcher's
-/// invalid-flow posture).
-fn load_flow(flow_id: &str) -> Option<FlowDeclaration> {
-    let rs = client::query(&select_active_flow_sql(), &[text(flow_id)])
-        .map_err(|e| pg_name(&e))
-        .ok()?;
+/// One subscribed flow declaration from the environment's applied release.
+fn load_flow(catalog_id: &str, environment: &str, flow_id: &str) -> Option<(i32, FlowDeclaration)> {
+    let rs = client::query(
+        &select_release_flow_sql(),
+        &[text(catalog_id), text(environment), text(flow_id)],
+    )
+    .map_err(|e| pg_name(&e))
+    .ok()?;
     let row = rs.rows.first()?;
-    let version = match row.first() {
+    let catalog_version = match row.first() {
         Some(SqlValue::Int32(v)) => *v,
         Some(SqlValue::Int64(v)) => i32::try_from(*v).ok()?,
         _ => return None,
     };
-    let graph = match row.get(1) {
+    let flow_version = match row.get(1) {
+        Some(SqlValue::Int32(v)) => *v,
+        Some(SqlValue::Int64(v)) => i32::try_from(*v).ok()?,
+        _ => return None,
+    };
+    let graph = match row.get(2) {
         Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s,
         _ => return None,
     };
@@ -331,62 +369,87 @@ fn load_flow(flow_id: &str) -> Option<FlowDeclaration> {
         // dispatcher's charset-extension rule); a mismatch holds.
         return None;
     }
-    Some(FlowDeclaration {
-        flow_id: flow.flow_id.clone(),
-        flow_version: version,
-        ordering: flow.ordering.clone(),
-        partition_policy: flow.partition_policy,
-    })
+    Some((
+        catalog_version,
+        FlowDeclaration {
+            flow_id: flow.flow_id.clone(),
+            flow_version,
+            ordering: flow.ordering.clone(),
+            partition_policy: flow.partition_policy,
+        },
+    ))
 }
 
-/// The fire transaction — the dispatcher's `fire()` shape through
-/// `wamn:postgres`. Returns whether this caller WON the write-ahead (a loss =
-/// the exactly-once no-op; the enqueue is skipped, never resurrected).
-fn fire_txn(plan: &FirePlan) -> Result<bool, String> {
+/// Final event admission through the shared callable-flow transition.
+///
+/// Returns whether this caller created the run; a duplicate is the
+/// exactly-once no-op. Every typed drift/refusal rolls back and is retried from
+/// candidate resolution on redelivery.
+fn fire_txn(cfg: &Config, serving: &Serving, plan: &FirePlan) -> Result<bool, String> {
+    let recipe = admission_sql();
     let txn = client::begin().map_err(|e| pg_name(&e))?;
-    let inserted = txn
-        .execute(
-            &write_ahead_triggered_run_sql(),
+    txn.query(
+        recipe.lock_head(),
+        &[text(&serving.reg.catalog_id), text(&cfg.env)],
+    )
+    .map_err(|e| pg_name(&e))?;
+    let admitted = txn
+        .query(
+            recipe.admit(),
             &[
-                text(&plan.run_id),
+                text(AdmissionProducer::Event.as_sql()),
+                text(&serving.reg.catalog_id),
+                text(&cfg.env),
+                int32(serving.catalog_version),
+                null(),
+                null(),
                 text(&plan.flow_id),
                 int32(plan.flow_version),
-                text(&plan.trigger_source),
+                text(&plan.run_id),
                 text(&plan.input_json),
+                text(&plan.invocation_context_json),
+                text(concat!("materializer@", env!("CARGO_PKG_VERSION"))),
+                null(),
+                null(),
+                null(),
+                null(),
+                null(),
+                null(),
+                null(),
+                null(),
+                null(),
+                null(),
+                text(&serving.reg.registration_id),
+                int64(plan.stream_seq),
+                text(&serving.registration_document),
+                text(&serving.registration_hash),
+                plan.partition_key.as_ref().map_or_else(null, text),
+                text(plan.policy.as_sql()),
             ],
         )
         .map_err(|e| pg_name(&e))?;
-    if inserted == 1 {
-        match &plan.partition_key {
-            Some(key) => txn
-                .execute(
-                    &enqueue_evt_with_policy_sql(),
-                    &[
-                        text(&plan.run_id),
-                        text(key),
-                        int32(0),
-                        int64(0),
-                        int64(plan.stream_seq),
-                        text(plan.policy.as_sql()),
-                    ],
-                )
-                .map_err(|e| pg_name(&e))?,
-            None => txn
-                .execute(
-                    &enqueue_evt_sql(),
-                    &[
-                        text(&plan.run_id),
-                        SqlValue::Null,
-                        int32(0),
-                        int64(0),
-                        int64(plan.stream_seq),
-                    ],
-                )
-                .map_err(|e| pg_name(&e))?,
-        };
-    }
+    let row = admitted
+        .rows
+        .first()
+        .ok_or_else(|| "admission returned no result row".to_string())?;
+    let code = match row.first() {
+        Some(SqlValue::Text(code)) => code,
+        _ => return Err("admission result code shape".into()),
+    };
+    let run_id = match row.get(1) {
+        Some(SqlValue::Text(run_id)) => Some(run_id.clone()),
+        Some(SqlValue::Null) | None => None,
+        _ => return Err("admission run id shape".into()),
+    };
+    let result = AdmissionResult::from_parts(code, run_id)
+        .ok_or_else(|| format!("unknown admission result: {code}"))?;
+    let won = match result {
+        AdmissionResult::Admitted { .. } => true,
+        AdmissionResult::Duplicate { .. } => false,
+        refusal => return Err(format!("event admission refused: {refusal:?}")),
+    };
     txn.commit().map_err(|e| pg_name(&e))?;
-    Ok(inserted == 1)
+    Ok(won)
 }
 
 /// Serve one registration for one sweep: bind its durable consumer, fetch a
@@ -460,7 +523,7 @@ fn serve(cfg: &Config, s: &Serving, counters: &mut Counters) {
             &cfg.tenant,
             cfg.max_depth,
         ) {
-            Verdict::Fire(plan) => match fire_txn(&plan) {
+            Verdict::Fire(plan) => match fire_txn(cfg, s, &plan) {
                 Ok(won) => {
                     if won {
                         counters.fired += 1;

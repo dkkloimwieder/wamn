@@ -1741,25 +1741,30 @@ deploy/platform/materializer.example.yaml) and the **first `wamn:jetstream`
 importer** (the plugin is now wired in the washlet; the doorbell rides the
 host's control-plane NATS client). Per event: registration match (rename-proof
 entity-id) → tenant guard (unscopable = alertable refusal, never a cross-tenant
-enqueue) → causation budget (depth 16; the chain THREADS: the run input carries
-`{run,root,depth}`, the flowrunner declares it, so the next hop's envelopes
-carry `depth+1`) → condition eval (root-`old` conditions HELD until l5i9.31 —
-old-absent is cannot-evaluate, never condition-false) → deterministic
-`run_id = <flow>:evt:<stream_seq>` (zero-padded 20, `mint_evt_run_id`) →
-write-ahead + `enqueue_evt[_with_policy]_sql` in ONE transaction (REAL
-`stream_seq` on the row — E4; key+policy stamp kq0z-coherently) → post-commit
-doorbell → ack. Decisions are the PURE `wamn-materializer` crate; the guest
-(`components/execution/materializer`) is the effect shell.
+admission) → causation budget → condition eval (root-`old` conditions HELD
+until l5i9.31 — old-absent is cannot-evaluate, never condition-false) → lock
+the authoritative catalog head and resolve the immutable release membership
+and artifact → verify the live registration document/hash → deterministic
+registration-scoped event identity → centralized `wamn_run.admit` in one
+transaction → post-commit doorbell → ack. The business input contains only the
+normative event envelope; trusted trigger/entity/table/sequence metadata is
+stored in invocation context. Event admission never resolves an attachment and
+the producer performs no direct run or queue insert. Decisions are the PURE
+`wamn-materializer` crate; the guest (`components/execution/materializer`) is
+the effect shell.
 
 ```bash
-cargo test -p wamn-materializer -p wamn-run-state          # decide/condition/causation/mint + E4 model/SQL pins
+cargo test --locked --manifest-path components/Cargo.toml -p materializer
+cargo test --locked -p wamn-materializer
+cargo test --locked -p wamn-proof-integration --lib materializer::tests::
+cargo test --locked -p wamn-proof-integration --lib matbench::tests::
 # Unit and contract boundaries: the JetStream plugin and its WIT target are
 # owned by wamn-runtime; the host package is now a binary-only composition leaf.
 # recipe-test: H5-JETSTREAM-UNIT | unit | wamn-runtime | lib | - | plugins::wamn_jetstream::tests:: | 12 | crates/platform/runtime/src/plugins/wamn_jetstream.rs mappings, doorbell policy, and optional live round-trip
 cargo test -p wamn-runtime --lib plugins::wamn_jetstream::tests::
 # recipe-test: H5-JETSTREAM-WIT-MATERIALIZER | contract | wamn-runtime | test | jetstream_wit_coherence | - | 3 | crates/platform/runtime/tests/jetstream_wit_coherence.rs docs, host, and guest WIT copies
 cargo test -p wamn-runtime --test jetstream_wit_coherence
-(cd components && cargo build -p materializer --target wasm32-wasip2 --release)
+(cd components && cargo build --locked -p materializer --target wasm32-wasip2)
 # Live gate — REAL guest + REAL deploy/sql DDL (include_str! — drift-proof) +
 # REAL JetStream; 17 asserts: rows/ids/keys/policy, causation thread, distinct
 # refusal counters, doorbell rings, burst drain (C-MAT numbers), and a full
@@ -1767,7 +1772,7 @@ cargo test -p wamn-runtime --test jetstream_wit_coherence
 docker run -d --name mat-pg -p 55461:5432 -e POSTGRES_PASSWORD=matpass postgres:18
 docker run -d --name mat-nats -p 44461:4222 nats:2.10 -js
 ./target/debug/wamn-gates matbench \
-  --component components/target/wasm32-wasip2/release/materializer.wasm \
+  --component components/target/wasm32-wasip2/debug/materializer.wasm \
   --admin-database-url postgres://postgres:matpass@127.0.0.1:55461/postgres \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:55461/postgres \
   --nats-url nats://127.0.0.1:44461
