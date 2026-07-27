@@ -11,6 +11,7 @@ serde_json = { workspace = true }
 # canonical `wamn-flow` (5.1) graph; this component is the thin shell that drives
 # it against wamn:postgres + the native standard nodes (the wamn-api pattern).
 wamn-flow = { workspace = true }
+wamn-catalog = { workspace = true }
 wamn-runner = { workspace = true }
 # One guest-safe owner for run history, queue, lease, timer, and replay state.
 wamn-run-state = { workspace = true }

@@ -140,7 +140,7 @@ pub fn select_flow_versions_for_tenant_sql(schema: &str) -> String {
 /// the identity tuple already names different content.
 pub fn register_flow_artifact_sql() -> &'static str {
     "SELECT catalog.register_flow_artifact(\
-       $1, $2, $3, $4, $5::text::jsonb, $6, $7, $8, $9::text::jsonb)"
+       $1, $2, $3, $4, $5::text::jsonb, $6, $7, $8, $9, $10::text::jsonb)"
 }
 
 /// Seal the exact canonical member set for one release.
@@ -265,8 +265,8 @@ pub fn record_release_publication_sql() -> &'static str {
 /// Read the immutable artifacts and memberships copied by `copy-project-env`.
 pub fn select_release_artifacts_sql() -> &'static str {
     "SELECT a.flow_id, a.flow_version, a.schema_version, a.graph_json::text, \
-            a.graph_hash, a.artifact_hash, a.interface_bundle_hash, \
-            a.component_digests::text \
+            a.graph_hash, a.artifact_hash, a.interface_bundle_json, \
+            a.interface_bundle_hash, a.component_digests::text \
      FROM catalog.release_flows r \
      JOIN catalog.flow_artifacts a \
        ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
@@ -401,7 +401,23 @@ mod tests {
                 "missing catalog.{table}"
             );
         }
-        assert!(super::register_flow_artifact_sql().contains("catalog.register_flow_artifact"));
+        assert_eq!(
+            super::register_flow_artifact_sql(),
+            "SELECT catalog.register_flow_artifact(\
+       $1, $2, $3, $4, $5::text::jsonb, $6, $7, $8, $9, $10::text::jsonb)"
+        );
+        assert_eq!(
+            super::select_release_artifacts_sql(),
+            "SELECT a.flow_id, a.flow_version, a.schema_version, a.graph_json::text, \
+            a.graph_hash, a.artifact_hash, a.interface_bundle_json, \
+            a.interface_bundle_hash, a.component_digests::text \
+     FROM catalog.release_flows r \
+     JOIN catalog.flow_artifacts a \
+       ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
+      AND a.flow_version = r.flow_version \
+     WHERE r.tenant_id = $1 AND r.catalog_id = $2 AND r.catalog_version = $3 \
+     ORDER BY a.flow_id"
+        );
         assert!(
             super::register_release_manifest_sql().contains("catalog.register_release_manifest")
         );

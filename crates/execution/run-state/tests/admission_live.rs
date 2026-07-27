@@ -131,10 +131,10 @@ fn admission_live() {
              VALUES ('t1','c1',1,'dev','0.1','applied'); \
              INSERT INTO catalog.flow_artifacts \
                (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                artifact_hash,interface_bundle_hash,component_digests) VALUES \
-               ('t1','flow-http',1,'0.1','{{}}','gh-http','ah-http','ih-http','[]'), \
-               ('t1','flow-cron',1,'0.1','{{}}','gh-cron','ah-cron','ih-cron','[]'), \
-               ('t1','flow-event',1,'0.1','{{}}','gh-event','ah-event','ih-event','[]'); \
+                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) VALUES \
+               ('t1','flow-http',1,'0.1','{{}}','gh-http','ah-http','[]','ih-http','[]'), \
+               ('t1','flow-cron',1,'0.1','{{}}','gh-cron','ah-cron','[]','ih-cron','[]'), \
+               ('t1','flow-event',1,'0.1','{{}}','gh-event','ah-event','[]','ih-event','[]'); \
              INSERT INTO catalog.release_manifests \
                (tenant_id,catalog_id,catalog_version,members_json) VALUES \
                ('t1','c1',1,'[\

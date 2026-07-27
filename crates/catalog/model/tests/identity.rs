@@ -1,8 +1,8 @@
 use serde_json::json;
 use wamn_catalog::{
     Artifact, Attachment, AttachmentActivation, AttachmentDraft, AttachmentId, AttachmentKind,
-    CanonicalJson, CatalogHead, CatalogIdentityError, DefinitionHash, NodeImplementation, Release,
-    ReleaseId, Source, SourceId, SourceKind,
+    CanonicalJson, CatalogHead, CatalogIdentityError, DefinitionHash, InterfaceBundle,
+    NodeImplementation, PinnedArtifact, Release, ReleaseId, Source, SourceId, SourceKind,
 };
 use wamn_flow::Flow;
 use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
@@ -157,6 +157,173 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
         baseline_hash, "sha256:7ffb85fc00483d38f78c09969dd26da8a07a5b43842df2040f28f843a0037f7c",
         "artifact frame sequence changed"
     );
+}
+
+#[test]
+fn interface_bundle_round_trips_exact_canonical_bytes_and_typed_recovery() {
+    let bundle = InterfaceBundle::new(vec![interface()]).unwrap();
+    let canonical = std::str::from_utf8(bundle.canonical_bytes()).unwrap();
+    assert_eq!(
+        canonical,
+        r#"[{"node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"}]"#
+    );
+    assert!(bundle.hash().starts_with("sha256:"));
+    assert_eq!(
+        bundle.interface("custom-node").unwrap().recovery_class,
+        RecoveryClass::NeverReplay
+    );
+    assert_eq!(
+        InterfaceBundle::from_canonical_json(canonical).unwrap(),
+        bundle
+    );
+}
+
+#[test]
+fn interface_bundle_refuses_shape_canonicality_hash_and_order_mutations() {
+    let artifact = artifact();
+    let canonical = std::str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap();
+    for mutant in [
+        format!(" {canonical}"),
+        canonical.replace(r#""purity":"effectful""#, r#""purity":"pure""#),
+        canonical.replace(r#","recovery-class":"never-replay""#, ""),
+        canonical.replace(r#""node-type":"custom-node""#, r#""unknown":"custom-node""#),
+    ] {
+        assert!(
+            InterfaceBundle::from_canonical_json(&mutant).is_err(),
+            "mutation survived: {mutant}"
+        );
+    }
+
+    let reversed = InterfaceBundle::new(vec![
+        ResolvedNodeInterface {
+            node_type: "z-node".into(),
+            output_ports: vec!["main".into()],
+            purity: ResolvedPurity::Effectful,
+            recovery_class: RecoveryClass::NeverReplay,
+        },
+        interface(),
+    ]);
+    assert!(matches!(
+        reversed,
+        Err(CatalogIdentityError::NonCanonicalInterfaceOrder { .. })
+    ));
+}
+
+#[test]
+fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
+    let flow = request_flow();
+    let artifact = artifact();
+    let graph = flow.to_json();
+    let bundle = std::str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap();
+    let verified = PinnedArtifact::from_storage(
+        "tenant-a",
+        &flow.flow_id,
+        flow.version,
+        &graph,
+        artifact.graph_hash(),
+        artifact.identity().artifact_hash().as_str(),
+        bundle,
+        artifact.interface_bundle().hash(),
+        &serde_json::to_string(artifact.supplied_components()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(verified.flow(), &flow);
+    assert_eq!(
+        verified
+            .interface_bundle()
+            .interface("custom-node")
+            .unwrap()
+            .purity,
+        ResolvedPurity::Effectful
+    );
+
+    let bad_graph_hash = format!("sha256:{}", "0".repeat(64));
+    let bad_bundle_hash = format!("sha256:{}", "2".repeat(64));
+    let bad_artifact_hash = format!("sha256:{}", "3".repeat(64));
+    assert!(matches!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            &flow.flow_id,
+            flow.version,
+            &graph,
+            artifact.graph_hash(),
+            &bad_artifact_hash,
+            bundle,
+            artifact.interface_bundle().hash(),
+            &serde_json::to_string(artifact.supplied_components()).unwrap(),
+        ),
+        Err(CatalogIdentityError::ArtifactHashMismatch)
+    ));
+    assert!(matches!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            &flow.flow_id,
+            flow.version,
+            &graph,
+            artifact.graph_hash(),
+            artifact.identity().artifact_hash().as_str(),
+            bundle,
+            artifact.interface_bundle().hash(),
+            "[]",
+        ),
+        Err(CatalogIdentityError::ArtifactHashMismatch)
+    ));
+    assert!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            &flow.flow_id,
+            flow.version,
+            &graph,
+            artifact.graph_hash(),
+            artifact.identity().artifact_hash().as_str(),
+            bundle,
+            artifact.interface_bundle().hash(),
+            "not-json",
+        )
+        .is_err()
+    );
+    assert!(matches!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            &flow.flow_id,
+            flow.version,
+            &graph,
+            &bad_graph_hash,
+            artifact.identity().artifact_hash().as_str(),
+            bundle,
+            artifact.interface_bundle().hash(),
+            &serde_json::to_string(artifact.supplied_components()).unwrap(),
+        ),
+        Err(CatalogIdentityError::GraphHashMismatch)
+    ));
+    assert!(matches!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            &flow.flow_id,
+            flow.version,
+            &graph,
+            artifact.graph_hash(),
+            artifact.identity().artifact_hash().as_str(),
+            bundle,
+            &bad_bundle_hash,
+            &serde_json::to_string(artifact.supplied_components()).unwrap(),
+        ),
+        Err(CatalogIdentityError::InterfaceBundleHashMismatch)
+    ));
+    assert!(matches!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            "different-flow",
+            flow.version,
+            &graph,
+            artifact.graph_hash(),
+            artifact.identity().artifact_hash().as_str(),
+            bundle,
+            artifact.interface_bundle().hash(),
+            &serde_json::to_string(artifact.supplied_components()).unwrap(),
+        ),
+        Err(CatalogIdentityError::ArtifactIdMismatch)
+    ));
 }
 
 #[test]

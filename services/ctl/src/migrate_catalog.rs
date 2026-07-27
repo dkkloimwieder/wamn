@@ -752,6 +752,7 @@ mod tests {
                     &r#"{"flow-id":"flow"}"#,
                     &"graph",
                     &"artifact",
+                    &"[]",
                     &"interfaces",
                     &"[]",
                 ],

@@ -31,6 +31,10 @@ pub enum CatalogIdentityError {
     DuplicateInterface { node_type: String },
     NonCanonicalInterfaceOrder { node_type: String },
     InvalidInterface { node_type: String, message: String },
+    InterfaceBundleHashMismatch,
+    GraphHashMismatch,
+    ArtifactIdMismatch,
+    ArtifactHashMismatch,
     UnresolvedInterface { node_type: String },
     UnexpectedInterface { node_type: String },
     FlowInvalid { codes: Vec<&'static str> },
@@ -78,6 +82,17 @@ impl fmt::Display for CatalogIdentityError {
                     "node interface {node_type:?} is invalid: {message}"
                 )
             }
+            Self::InterfaceBundleHashMismatch => {
+                write!(formatter, "resolved interface bundle hash does not match")
+            }
+            Self::GraphHashMismatch => write!(formatter, "flow graph hash does not match"),
+            Self::ArtifactIdMismatch => {
+                write!(
+                    formatter,
+                    "flow graph does not match the pinned artifact id"
+                )
+            }
+            Self::ArtifactHashMismatch => write!(formatter, "flow artifact hash does not match"),
             Self::UnresolvedInterface { node_type } => {
                 write!(
                     formatter,
@@ -449,8 +464,8 @@ pub struct Artifact {
     identity: ArtifactIdentity,
     schema_version: String,
     graph_hash: String,
-    interfaces: Vec<ResolvedNodeInterface>,
-    supplied_component_digests: Vec<String>,
+    interface_bundle: InterfaceBundle,
+    supplied_components: Vec<ResolvedComponent>,
     canonical_bytes: Box<[u8]>,
 }
 
@@ -479,7 +494,6 @@ impl Artifact {
                 codes: flow_errors.into_iter().map(|issue| issue.code).collect(),
             });
         }
-
         let graph_bytes = flow.canonical_bytes();
         let graph_hash = digest(&graph_bytes);
         let mut owned = Vec::new();
@@ -495,9 +509,17 @@ impl Artifact {
                 ),
             ));
         }
-        let supplied_component_digests: Vec<_> = implementations
+        let supplied_components: Vec<_> = implementations
             .iter()
-            .filter_map(|implementation| implementation.component_digest.clone())
+            .filter_map(|implementation| {
+                implementation
+                    .component_digest
+                    .as_ref()
+                    .map(|component_digest| ResolvedComponent {
+                        interface: implementation.interface.clone(),
+                        component_digest: component_digest.clone(),
+                    })
+            })
             .collect();
         for implementation in implementations
             .iter()
@@ -517,12 +539,13 @@ impl Artifact {
             .collect();
         let canonical_bytes = frames("artifact", borrowed).into_boxed_slice();
         let artifact_hash = ArtifactHash(digest(&canonical_bytes));
+        let interface_bundle = InterfaceBundle::new(interfaces)?;
         Ok(Self {
             identity: ArtifactIdentity { id, artifact_hash },
             schema_version: flow.schema_version.clone(),
             graph_hash,
-            interfaces,
-            supplied_component_digests,
+            interface_bundle,
+            supplied_components,
             canonical_bytes,
         })
     }
@@ -540,11 +563,16 @@ impl Artifact {
     }
 
     pub fn interfaces(&self) -> &[ResolvedNodeInterface] {
-        &self.interfaces
+        self.interface_bundle.interfaces()
     }
 
-    pub fn supplied_component_digests(&self) -> &[String] {
-        &self.supplied_component_digests
+    /// The canonical resolved interface bundle persisted with this artifact.
+    pub fn interface_bundle(&self) -> &InterfaceBundle {
+        &self.interface_bundle
+    }
+
+    pub fn supplied_components(&self) -> &[ResolvedComponent] {
+        &self.supplied_components
     }
 
     pub fn canonical_bytes(&self) -> &[u8] {
@@ -552,17 +580,179 @@ impl Artifact {
     }
 }
 
-fn validate_implementations(
-    flow: &Flow,
-    implementations: &[NodeImplementation],
+/// Exact canonical JSON bytes and typed semantics for one resolved interface bundle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceBundle {
+    interfaces: Box<[ResolvedNodeInterface]>,
+    canonical_bytes: Box<[u8]>,
+    hash: String,
+}
+
+impl InterfaceBundle {
+    /// Build a canonical bundle from interfaces already resolved at publication.
+    pub fn new(interfaces: Vec<ResolvedNodeInterface>) -> Result<Self, CatalogIdentityError> {
+        validate_interface_order(&interfaces)?;
+        let value =
+            serde_json::to_value(&interfaces).expect("resolved interfaces serialize to JSON");
+        let canonical_bytes = canonical_json(&value).into_boxed_slice();
+        let hash = digest(&canonical_bytes);
+        Ok(Self {
+            interfaces: interfaces.into_boxed_slice(),
+            canonical_bytes,
+            hash,
+        })
+    }
+
+    /// Parse exact RFC 8785 bytes from immutable storage.
+    pub fn from_canonical_json(input: &str) -> Result<Self, CatalogIdentityError> {
+        let value: Value = serde_json::from_str(input).map_err(|error| {
+            CatalogIdentityError::InvalidDefinition {
+                message: format!("resolved interface bundle JSON is invalid: {error}"),
+            }
+        })?;
+        let interfaces: Vec<ResolvedNodeInterface> = serde_json::from_value(value.clone())
+            .map_err(|error| CatalogIdentityError::InvalidDefinition {
+                message: format!("resolved interface bundle shape is invalid: {error}"),
+            })?;
+        let bundle = Self::new(interfaces)?;
+        if bundle.canonical_bytes.as_ref() != input.as_bytes() {
+            return Err(CatalogIdentityError::NonCanonicalJson);
+        }
+        Ok(bundle)
+    }
+
+    pub fn interfaces(&self) -> &[ResolvedNodeInterface] {
+        &self.interfaces
+    }
+
+    pub fn canonical_bytes(&self) -> &[u8] {
+        &self.canonical_bytes
+    }
+
+    pub fn hash(&self) -> &str {
+        &self.hash
+    }
+
+    pub fn resolved_ports(&self) -> ResolvedInterfaces {
+        self.interfaces
+            .iter()
+            .map(|interface| (interface.node_type.clone(), interface.output_ports.clone()))
+            .collect()
+    }
+
+    pub fn interface(&self, node_type: &str) -> Option<&ResolvedNodeInterface> {
+        self.interfaces
+            .binary_search_by(|interface| interface.node_type.as_str().cmp(node_type))
+            .ok()
+            .map(|index| &self.interfaces[index])
+    }
+}
+
+/// A graph and resolved interfaces verified against one immutable artifact row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PinnedArtifact {
+    flow: Flow,
+    interface_bundle: InterfaceBundle,
+}
+
+impl PinnedArtifact {
+    /// Verify storage bytes before exposing them to the runtime.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the immutable artifact row's identity and content columns are verified together"
+    )]
+    pub fn from_storage(
+        expected_tenant_id: &str,
+        expected_flow_id: &str,
+        expected_flow_version: u32,
+        graph_json: &str,
+        graph_hash: &str,
+        artifact_hash: &str,
+        interface_bundle_json: &str,
+        interface_bundle_hash: &str,
+        component_digests_json: &str,
+    ) -> Result<Self, CatalogIdentityError> {
+        validate_digest(artifact_hash, "artifact-hash")?;
+        validate_digest(graph_hash, "graph-hash")?;
+        validate_digest(interface_bundle_hash, "interface-bundle-hash")?;
+        let flow = Flow::from_json(graph_json).map_err(|error| {
+            CatalogIdentityError::InvalidDefinition {
+                message: format!("flow graph JSON is invalid: {error}"),
+            }
+        })?;
+        if flow.flow_id != expected_flow_id || flow.version != expected_flow_version {
+            return Err(CatalogIdentityError::ArtifactIdMismatch);
+        }
+        if digest(&flow.canonical_bytes()) != graph_hash {
+            return Err(CatalogIdentityError::GraphHashMismatch);
+        }
+        let interface_bundle = InterfaceBundle::from_canonical_json(interface_bundle_json)?;
+        if interface_bundle.hash() != interface_bundle_hash {
+            return Err(CatalogIdentityError::InterfaceBundleHashMismatch);
+        }
+        flow.validate(&interface_bundle.resolved_ports())
+            .map_err(|issues| CatalogIdentityError::FlowInvalid {
+                codes: issues.into_iter().map(|issue| issue.code).collect(),
+            })?;
+        let supplied_components: Vec<ResolvedComponent> =
+            serde_json::from_str(component_digests_json).map_err(|error| {
+                CatalogIdentityError::InvalidDefinition {
+                    message: format!("supplied component digest bundle is invalid: {error}"),
+                }
+            })?;
+        let mut components_by_node = BTreeMap::new();
+        for component in supplied_components {
+            let node_type = component.interface.node_type.clone();
+            if components_by_node
+                .insert(node_type.clone(), component)
+                .is_some()
+            {
+                return Err(CatalogIdentityError::DuplicateInterface { node_type });
+            }
+        }
+        let mut implementations = Vec::with_capacity(interface_bundle.interfaces().len());
+        for interface in interface_bundle.interfaces() {
+            let implementation =
+                if let Some(component) = components_by_node.remove(&interface.node_type) {
+                    if component.interface != *interface {
+                        return Err(CatalogIdentityError::ArtifactHashMismatch);
+                    }
+                    NodeImplementation::supplied(interface.clone(), component.component_digest)?
+                } else {
+                    NodeImplementation::platform(interface.clone())
+                };
+            implementations.push(implementation);
+        }
+        if let Some((node_type, _)) = components_by_node.pop_first() {
+            return Err(CatalogIdentityError::UnexpectedInterface { node_type });
+        }
+        let reconstructed = Artifact::new(expected_tenant_id, &flow, implementations)?;
+        if reconstructed.identity().artifact_hash().as_str() != artifact_hash {
+            return Err(CatalogIdentityError::ArtifactHashMismatch);
+        }
+        Ok(Self {
+            flow,
+            interface_bundle,
+        })
+    }
+
+    pub fn flow(&self) -> &Flow {
+        &self.flow
+    }
+
+    pub fn interface_bundle(&self) -> &InterfaceBundle {
+        &self.interface_bundle
+    }
+}
+
+fn validate_interface_order(
+    interfaces: &[ResolvedNodeInterface],
 ) -> Result<(), CatalogIdentityError> {
     let mut previous = None;
-    let mut resolved = BTreeSet::new();
-    for implementation in implementations {
-        let interface = &implementation.interface;
+    for interface in interfaces {
         validate_text(&interface.node_type, "node-type")?;
         if previous.is_some_and(|value: &str| value >= interface.node_type.as_str()) {
-            return if resolved.contains(&interface.node_type) {
+            return if previous == Some(interface.node_type.as_str()) {
                 Err(CatalogIdentityError::DuplicateInterface {
                     node_type: interface.node_type.clone(),
                 })
@@ -574,6 +764,22 @@ fn validate_implementations(
         }
         validate_interface(interface)?;
         previous = Some(interface.node_type.as_str());
+    }
+    Ok(())
+}
+
+fn validate_implementations(
+    flow: &Flow,
+    implementations: &[NodeImplementation],
+) -> Result<(), CatalogIdentityError> {
+    let mut resolved = BTreeSet::new();
+    let interfaces: Vec<_> = implementations
+        .iter()
+        .map(|implementation| implementation.interface.clone())
+        .collect();
+    validate_interface_order(&interfaces)?;
+    for implementation in implementations {
+        let interface = &implementation.interface;
         resolved.insert(interface.node_type.clone());
     }
 

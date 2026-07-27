@@ -3632,3 +3632,23 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
 CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
   cargo test --locked -p wamn-proof-integration --lib exposure_live::tests::
 ```
+
+## CF-INTERFACE-BUNDLE — pinned runtime artifact lookup (`wamn-5wd1.65`)
+
+Publication stores the exact RFC 8785 resolved-interface bundle text beside
+its SHA-256. Copy verifies the graph, bundle bytes, hashes, and artifact key
+before writing. The production queue path reads graph plus typed
+purity/recovery metadata in one release-pinned artifact query, with no legacy
+flow-table fallback.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-interface-bundle-65 \
+  cargo test --locked -p wamn-catalog -p wamn-control-registry -p wamn-ctl -p wamn-runner
+
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-interface-bundle-65-components \
+  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+
+WAMN_MIGRATE_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-interface-bundle-65 \
+  cargo test --locked -p wamn-proof-integration --lib catalog_live::tests::
+```

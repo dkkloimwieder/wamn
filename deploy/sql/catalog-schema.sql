@@ -97,6 +97,8 @@ CREATE TABLE catalog.flow_artifacts (
     graph_json            jsonb NOT NULL,
     graph_hash            text NOT NULL,
     artifact_hash         text NOT NULL,
+    interface_bundle_json text NOT NULL
+        CHECK (jsonb_typeof(interface_bundle_json::jsonb) = 'array'),
     interface_bundle_hash text NOT NULL,
     component_digests     jsonb NOT NULL
         CHECK (jsonb_typeof(component_digests) = 'array'),
@@ -136,6 +138,7 @@ CREATE FUNCTION catalog.register_flow_artifact(
     p_graph_json jsonb,
     p_graph_hash text,
     p_artifact_hash text,
+    p_interface_bundle_json text,
     p_interface_bundle_hash text,
     p_component_digests jsonb
 )
@@ -145,11 +148,13 @@ AS $$
 BEGIN
     INSERT INTO catalog.flow_artifacts (
         tenant_id, flow_id, flow_version, schema_version, graph_json,
-        graph_hash, artifact_hash, interface_bundle_hash, component_digests
+        graph_hash, artifact_hash, interface_bundle_json,
+        interface_bundle_hash, component_digests
     )
     VALUES (
         p_tenant_id, p_flow_id, p_flow_version, p_schema_version, p_graph_json,
-        p_graph_hash, p_artifact_hash, p_interface_bundle_hash,
+        p_graph_hash, p_artifact_hash, p_interface_bundle_json,
+        p_interface_bundle_hash,
         p_component_digests
     )
     ON CONFLICT (tenant_id, flow_id, flow_version) DO NOTHING;
@@ -164,6 +169,7 @@ BEGIN
           AND graph_json = p_graph_json
           AND graph_hash = p_graph_hash
           AND artifact_hash = p_artifact_hash
+          AND interface_bundle_json = p_interface_bundle_json
           AND interface_bundle_hash = p_interface_bundle_hash
           AND component_digests = p_component_digests
     ) THEN
@@ -174,7 +180,7 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.register_flow_artifact(
-    text, text, int, text, jsonb, text, text, text, jsonb
+    text, text, int, text, jsonb, text, text, text, text, jsonb
 ) FROM PUBLIC;
 
 -- The sealed canonical member set. Registering the same set converges;

@@ -682,8 +682,25 @@ async fn exec_copy_definition(
                 let graph_json: String = artifact.get(3);
                 let graph_hash: String = artifact.get(4);
                 let artifact_hash: String = artifact.get(5);
-                let interface_bundle_hash: String = artifact.get(6);
-                let component_digests: String = artifact.get(7);
+                let interface_bundle_json: String = artifact.get(6);
+                let interface_bundle_hash: String = artifact.get(7);
+                let component_digests: String = artifact.get(8);
+                let flow_version_u32 =
+                    u32::try_from(flow_version).context("copied flow version must be positive")?;
+                wamn_catalog::PinnedArtifact::from_storage(
+                    tenant,
+                    &flow_id,
+                    flow_version_u32,
+                    &graph_json,
+                    &graph_hash,
+                    &artifact_hash,
+                    &interface_bundle_json,
+                    &interface_bundle_hash,
+                    &component_digests,
+                )
+                .with_context(|| {
+                    format!("verify copied immutable flow {flow_id} v{flow_version}")
+                })?;
                 tx.execute(
                     wamn_schema_control::sql::register_flow_artifact_sql(),
                     &[
@@ -694,6 +711,7 @@ async fn exec_copy_definition(
                         &graph_json,
                         &graph_hash,
                         &artifact_hash,
+                        &interface_bundle_json,
                         &interface_bundle_hash,
                         &component_digests,
                     ],

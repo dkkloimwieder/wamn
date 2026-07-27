@@ -48,8 +48,6 @@ wit_bindgen::generate!({
 });
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
 use std::time::Instant;
 
 use serde_json::{Value, json};
@@ -287,6 +285,72 @@ fn load_flow_at(flow_id: &str, version: u32) -> Result<Flow, String> {
         other => return Err(format!("unexpected graph_json shape: {other:?}")),
     };
     Flow::from_json(&raw).map_err(|e| format!("flow parse: {e}"))
+}
+
+/// Read and verify the graph plus resolved interfaces from the exact release
+/// artifact pinned on `runs`. The joins make mixed graph/interface identities
+/// unrepresentable in the result, and there is deliberately no legacy fallback.
+const PINNED_ARTIFACT_SQL: &str = "\
+SELECT r.tenant_id, r.flow_id, r.flow_version, a.graph_json::text, a.graph_hash, \
+       a.artifact_hash, a.interface_bundle_json, a.interface_bundle_hash, \
+       a.component_digests::text \
+  FROM runs AS r \
+  JOIN catalog.release_flows AS rf \
+    ON rf.tenant_id = r.tenant_id \
+   AND rf.catalog_id = r.catalog_id \
+   AND rf.catalog_version = r.catalog_version \
+   AND rf.flow_id = r.flow_id \
+   AND rf.flow_version = r.flow_version \
+  JOIN catalog.release_manifests AS rm \
+    ON rm.tenant_id = rf.tenant_id \
+   AND rm.catalog_id = rf.catalog_id \
+   AND rm.catalog_version = rf.catalog_version \
+  JOIN catalog.flow_artifacts AS a \
+    ON a.tenant_id = rf.tenant_id \
+   AND a.flow_id = rf.flow_id \
+   AND a.flow_version = rf.flow_version \
+ WHERE EXISTS ( \
+       SELECT 1 FROM jsonb_array_elements(rm.members_json) AS member \
+        WHERE member ->> 'flow-id' = rf.flow_id \
+          AND (member ->> 'flow-version')::int = rf.flow_version \
+          AND member ->> 'artifact-hash' = a.artifact_hash \
+   ) \
+   AND r.run_id = $1 \
+   AND r.catalog_id IS NOT NULL \
+   AND r.catalog_version IS NOT NULL";
+
+fn load_pinned_artifact(run_id: &str) -> Result<wamn_catalog::PinnedArtifact, String> {
+    let rs = client::query(PINNED_ARTIFACT_SQL, &[text(run_id)]).map_err(|e| err_name(&e))?;
+    let row = rs
+        .rows
+        .first()
+        .ok_or("run has no immutable pinned flow artifact")?;
+    let string = |index: usize, name: &str| match row.get(index) {
+        Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Ok(value.as_str()),
+        other => Err(format!("{name} shape: {other:?}")),
+    };
+    let tenant_id = string(0, "runs.tenant_id")?;
+    let flow_id = string(1, "runs.flow_id")?;
+    let flow_version =
+        match row.get(2) {
+            Some(SqlValue::Int32(value)) => u32::try_from(*value)
+                .map_err(|_| "runs.flow_version is not positive".to_string())?,
+            Some(SqlValue::Int64(value)) => u32::try_from(*value)
+                .map_err(|_| "runs.flow_version is not positive".to_string())?,
+            other => return Err(format!("runs.flow_version shape: {other:?}")),
+        };
+    wamn_catalog::PinnedArtifact::from_storage(
+        tenant_id,
+        flow_id,
+        flow_version,
+        string(3, "flow_artifacts.graph_json")?,
+        string(4, "flow_artifacts.graph_hash")?,
+        string(5, "flow_artifacts.artifact_hash")?,
+        string(6, "flow_artifacts.interface_bundle_json")?,
+        string(7, "flow_artifacts.interface_bundle_hash")?,
+        string(8, "flow_artifacts.component_digests")?,
+    )
+    .map_err(|error| format!("pinned flow artifact verification: {error}"))
 }
 
 /// Read the run's persisted `flow_version` — the version the dispatcher (or the
@@ -1653,14 +1717,6 @@ thread_local! {
     /// from per-replica config at instantiate and never re-sets it, so the value
     /// is immutable for this instance's lifetime.
     static RUNNER_OWNER: RefCell<Option<String>> = const { RefCell::new(None) };
-    /// Parsed flows keyed by `flow_id` -> (version, flow) — the fqg.18 plan
-    /// cache. Probed against the RUN'S PERSISTED `flow_version` (what the claim
-    /// statement returns, wamn-cox), so each claimed run drives the exact version
-    /// it was dispatched under. A hot reload is still picked up because newly
-    /// dispatched runs carry the new version, which misses the cache and reloads;
-    /// an in-place graph edit that does NOT bump the version is not picked up, and
-    /// registration always bumps versions (register_flow + i7i).
-    static FLOW_CACHE: RefCell<HashMap<String, (u32, Rc<Flow>)>> = RefCell::new(HashMap::new());
 }
 
 /// The instance-cached lease owner (see [`RUNNER_OWNER`]).
@@ -1728,35 +1784,6 @@ fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String
         flow_version,
         lease_generation,
     }))
-}
-
-/// The flow to drive at a PINNED version (wamn-cox): the cached parse when it
-/// matches the requested `version`, else a fresh load (which also refreshes the
-/// cache). `Some(v)` — the run's persisted version — loads exactly v via
-/// [`load_flow_at`], never the active version, so a resume reconstructs against
-/// the graph the run started on; `None` (no version known) falls back to the
-/// active version. The cache is keyed by the loaded flow's own version, so a
-/// later claim of the same version is served from cache. See [`FLOW_CACHE`].
-fn flow_at(flow_id: &str, version: Option<u32>) -> Result<Rc<Flow>, String> {
-    if let Some(v) = version {
-        let hit = FLOW_CACHE.with(|c| {
-            c.borrow()
-                .get(flow_id)
-                .and_then(|(ver, f)| (*ver == v).then(|| f.clone()))
-        });
-        if let Some(flow) = hit {
-            return Ok(flow);
-        }
-    }
-    let flow = Rc::new(match version {
-        Some(v) => load_flow_at(flow_id, v)?,
-        None => load_active_flow(flow_id)?,
-    });
-    FLOW_CACHE.with(|c| {
-        c.borrow_mut()
-            .insert(flow_id.to_string(), (flow.version, flow.clone()));
-    });
-    Ok(flow)
 }
 
 /// Per-node checkpoint + lease heartbeat in ONE statement (fqg.18). The renew
@@ -2395,10 +2422,13 @@ fn claim_partition_run(owner: &str, ttl_ms: i64) -> Result<Option<(String, u32)>
     };
     mark_running(&head.run_id)?;
     let (flow_id, flow_version, input) = read_dispatch(&head.run_id)?;
-    let flow = flow_at(&flow_id, flow_version)?;
+    let artifact = load_pinned_artifact(&head.run_id)?;
+    if artifact.flow().flow_id != flow_id || Some(artifact.flow().version) != flow_version {
+        return Err("claimed run and pinned artifact identity disagree".to_string());
+    }
     let claim = execute_claimed(
         &head.run_id,
-        &flow,
+        &artifact,
         input,
         owner,
         ttl_ms,
@@ -2417,13 +2447,14 @@ fn claim_partition_run(owner: &str, ttl_ms: i64) -> Result<Option<(String, u32)>
 /// NOT re-open the run — it reconstructs from `node_runs` and continues.
 fn execute_claimed(
     run_id: &str,
-    flow: &Flow,
+    artifact: &wamn_catalog::PinnedArtifact,
     input: Value,
     owner: &str,
     ttl_ms: i64,
     partition: Option<&str>,
     lease_generation: i64,
 ) -> Result<ClaimOutcome, String> {
+    let flow = artifact.flow();
     // l5i9.12.2: the production dispatch path (run-next) — declare this run's
     // causation BEFORE any write so the wamn:postgres plugin stamps
     // {run, root, depth} onto every run-owned txn (checkpoints included; the CDC
@@ -2436,7 +2467,8 @@ fn execute_claimed(
 
     declare_run_grant(flow);
     declare_run_egress(flow);
-    let plan = Plan::compile(flow, &Default::default()).map_err(|e| e.to_string())?;
+    let resolved_interfaces = artifact.interface_bundle().resolved_ports();
+    let plan = Plan::compile(flow, &resolved_interfaces).map_err(|e| e.to_string())?;
     let version = plan.version();
     // wamn-yf3: the run's trace identity, shared by every log record it emits.
     let tp = run_traceparent(run_id);
@@ -2674,10 +2706,15 @@ fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
     // Unpartitioned first: the global `FOR UPDATE SKIP LOCKED` claim drains
     // unordered NULL-key runs concurrently across replicas (the fqg.4 path).
     if let Some(claimed) = claim_dispatch(&owner, ttl)? {
-        let flow = flow_at(&claimed.flow_id, claimed.flow_version)?;
+        let artifact = load_pinned_artifact(&claimed.run_id)?;
+        if artifact.flow().flow_id != claimed.flow_id
+            || Some(artifact.flow().version) != claimed.flow_version
+        {
+            return Err("claimed run and pinned artifact identity disagree".to_string());
+        }
         let claim = execute_claimed(
             &claimed.run_id,
-            &flow,
+            &artifact,
             claimed.input,
             &owner,
             ttl,
@@ -2847,9 +2884,8 @@ mod tests {
             "schema-version":"0.1",
             "flow-id":"check",
             "version":1,
-            "trigger":{"type":"manual"},
-            "entry":"known",
             "nodes":[
+                {"id":"request","type":"request"},
                 {"id":"known","type":"webhook-in"},
                 {"id":"standard","type":"time-shift"},
                 {"id":"z1","type":"z-unsupported"},
@@ -2923,5 +2959,32 @@ mod tests {
                 "non-canonical config must deny: {rows:?}"
             );
         }
+    }
+
+    #[test]
+    fn production_lookup_reads_one_pinned_graph_and_bundle_without_legacy_fallback() {
+        assert_eq!(PINNED_ARTIFACT_SQL.matches("SELECT r.tenant_id").count(), 1);
+        assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.release_flows AS rf"));
+        assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.release_manifests AS rm"));
+        assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.flow_artifacts AS a"));
+        assert!(PINNED_ARTIFACT_SQL.contains("a.graph_json::text"));
+        assert!(PINNED_ARTIFACT_SQL.contains("a.interface_bundle_json"));
+        assert!(PINNED_ARTIFACT_SQL.contains("a.interface_bundle_hash"));
+        for join in [
+            "rf.catalog_id = r.catalog_id",
+            "rf.catalog_version = r.catalog_version",
+            "rf.flow_id = r.flow_id",
+            "rf.flow_version = r.flow_version",
+            "a.flow_id = rf.flow_id",
+            "a.flow_version = rf.flow_version",
+            "member ->> 'artifact-hash' = a.artifact_hash",
+        ] {
+            assert!(
+                PINNED_ARTIFACT_SQL.contains(join),
+                "pinned identity join missing {join}"
+            );
+        }
+        assert!(!PINNED_ARTIFACT_SQL.contains("FROM flows"));
+        assert!(!PINNED_ARTIFACT_SQL.contains("catalog_heads"));
     }
 }

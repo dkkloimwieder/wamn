@@ -242,6 +242,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "wamn-catalog",
  "wamn-flow",
  "wamn-node-guest",
  "wamn-node-invoke",
@@ -1052,6 +1053,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-catalog"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "wamn-flow",
+ "wamn-node-manifest",
+]
+
+[[package]]
 name = "wamn-entity-access"
 version = "0.1.0"
 dependencies = [
@@ -1127,6 +1139,16 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "hmac",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "wamn-node-manifest"
+version = "0.1.0"
+dependencies = [
+ "schemars",
  "serde",
  "serde_json",
  "sha2",

@@ -474,7 +474,11 @@ pub(crate) async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> a
                     to_regclass('catalog.release_attachments') IS NOT NULL, \
                     to_regclass('catalog.attachment_tombstones') IS NOT NULL, \
                     to_regclass('catalog.attachment_activation') IS NOT NULL, \
-                    to_regclass('catalog.attachment_activation_events') IS NOT NULL",
+                    to_regclass('catalog.attachment_activation_events') IS NOT NULL, \
+                    EXISTS (SELECT 1 FROM information_schema.columns \
+                             WHERE table_schema = 'catalog' \
+                               AND table_name = 'flow_artifacts' \
+                               AND column_name = 'interface_bundle_json')",
             &[],
         )
         .await?;
@@ -489,6 +493,7 @@ pub(crate) async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> a
         release_row.get::<_, bool>(7),
         release_row.get::<_, bool>(8),
         release_row.get::<_, bool>(9),
+        release_row.get::<_, bool>(10),
     ];
     if release_objects.iter().all(|present| *present) {
         return Ok(());
@@ -655,10 +660,10 @@ async fn publish_release(
             let artifact = &prepared.artifact;
             let id = artifact.identity().id();
             let flow_version = i32::try_from(id.flow_version()).context("flow version")?;
-            let interfaces =
-                serde_json::to_string(artifact.interfaces()).context("serialize interfaces")?;
-            let interface_bundle_hash = wamn_schema_control::sql::ddl_checksum(&interfaces);
-            let component_digests = serde_json::to_string(artifact.supplied_component_digests())
+            let interfaces = std::str::from_utf8(artifact.interface_bundle().canonical_bytes())
+                .context("canonical interface bundle is UTF-8")?;
+            let interface_bundle_hash = artifact.interface_bundle().hash();
+            let component_digests = serde_json::to_string(artifact.supplied_components())
                 .context("serialize digests")?;
             client
                 .execute(
@@ -671,6 +676,7 @@ async fn publish_release(
                         &prepared.graph_json.as_str(),
                         &artifact.graph_hash(),
                         &artifact.identity().artifact_hash().as_str(),
+                        &interfaces,
                         &interface_bundle_hash,
                         &component_digests.as_str(),
                     ],
@@ -1213,7 +1219,9 @@ mod tests {
             r#"{{
               "schema-version":"0.1","flow-id":"flow-{suffix}","version":1,
               "nodes":[
-                {{"id":"request","type":"request"}},
+                {{"id":"request","type":"request","config":{{"input-schema":{{
+                  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"
+                }}}}}},
                 {{"id":"shape","type":"transform","config":{{"expression":"@"}}}},
                 {{"id":"respond","type":"respond","config":{{"status":200}}}}
               ],

@@ -91,8 +91,8 @@ impl ResolvedNodeInterface {
 ///
 /// Construction always requires both the resolved interface and the digest of
 /// the supplied component bytes, so neither pin can be omitted accidentally.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ResolvedComponent {
     pub interface: ResolvedNodeInterface,
     pub component_digest: String,
