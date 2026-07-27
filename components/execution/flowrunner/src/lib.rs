@@ -56,8 +56,8 @@ use serde_json::{Value, json};
 use wamn_flow::{Flow, canonical_json_sha256};
 use wamn_node_sdk as sdk;
 use wamn_run_state::transitions::{
-    CallerReleaseResult, ReservedCheckpointResult, TerminalizeResult, release_caller_sql,
-    reserved_checkpoint_sql, terminalize_sql,
+    CallerReleaseResult, ReservedCheckpointResult, TerminalizeResult, node_context_checkpoint_sql,
+    release_caller_sql, reserved_checkpoint_sql, terminalize_sql,
 };
 use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
 // The durable-queue claim-path builders (5.14). Scheduling is a separate crate,
@@ -366,12 +366,14 @@ fn record_node_run(
     output: &Value,
     input: &Value,
     capture: &wamn_flow::Capture,
+    context: &Value,
 ) -> Result<(), String> {
     // 9.6: the flow's capture policy fills the payload + preview/size/hash/mode/
     // redacted columns before the jsonb choke point (scrub/truncate applied here).
     let (binds, _) = capture_binds(capture, output, input);
     let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
-    client::execute(
+    let txn = client::begin().map_err(|error| err_name(&error))?;
+    txn.execute(
         &run_sql::insert_node_run_success_sql(),
         &[
             text(run_id),
@@ -389,7 +391,12 @@ fn record_node_run(
         ],
     )
     .map_err(|e| err_name(&e))?;
-    Ok(())
+    txn.execute(
+        &run_sql::update_run_context_sql(),
+        &[text(run_id), text(context.to_string())],
+    )
+    .map_err(|error| err_name(&error))?;
+    txn.commit().map_err(|error| err_name(&error))
 }
 
 /// Mark the run completed and record its result payload.
@@ -420,13 +427,7 @@ fn wall_now_secs() -> u64 {
 /// before this upgrade) is IGNORED (None), so the node re-parks once under the
 /// keyed form — a benign one-time re-delay, not a lost or double-run.
 fn load_wake(run_id: &str, node: &str) -> Result<Option<u64>, String> {
-    let rs = client::query(&run_sql::select_run_state_sql(), &[text(run_id)])
-        .map_err(|e| err_name(&e))?;
-    let raw = match rs.rows.first().and_then(|r| r.first()) {
-        Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s.clone(),
-        _ => return Ok(None), // NULL / absent
-    };
-    let v: Value = serde_json::from_str(&raw).map_err(|e| format!("state_json parse: {e}"))?;
+    let v = load_checkpoint(run_id)?;
     // A keyed wake object -> this node's deadline; a legacy bare number -> None.
     Ok(v.get("wake")
         .and_then(|w| w.as_object())
@@ -437,12 +438,13 @@ fn load_wake(run_id: &str, node: &str) -> Result<Option<u64>, String> {
 /// Persist the parked-wake deadline for delay node `node`, keyed by node id
 /// (wamn-2jkm.51). Shares the `state_json` home with the retry cursor; the engine
 /// drives ONE node at a time, so at most one park's state is live and this
-/// last-writer overwrite is safe (each reader re-validates against the
-/// reconstructed frontier: `load_wake` fires only while its node is outstanding).
+/// replaces only the wake cursor while preserving durable run context (each
+/// reader re-validates against the reconstructed frontier: `load_wake` fires
+/// only while its node is outstanding).
 fn save_wake(run_id: &str, node: &str, wake_secs: u64) -> Result<(), String> {
+    let mut top = checkpoint_object(load_checkpoint(run_id)?);
     let mut per_node = serde_json::Map::new();
     per_node.insert(node.to_string(), Value::from(wake_secs));
-    let mut top = serde_json::Map::new();
     top.insert("wake".to_string(), Value::Object(per_node));
     client::execute(
         &run_sql::update_run_state_sql(),
@@ -495,9 +497,10 @@ fn clear_wake(run_id: &str, node: &str) -> Result<(), String> {
 /// attempt instead of resetting to 0 (reconstruction replays only COMPLETED
 /// node_runs, so a mid-retry node otherwise loses its count). Home-shares
 /// `state_json` with the delay node's `wake`; the engine has one `current` node,
-/// so at most one park's state is live at a time, and both readers re-validate
-/// against the reconstructed frontier (`restore_retry` no-ops off the front;
-/// `load_wake` only fires while its node is outstanding).
+/// so at most one park's state is live at a time. The write preserves durable
+/// run context, and both cursor readers re-validate against the reconstructed
+/// frontier (`restore_retry` no-ops off the front; `load_wake` only fires while
+/// its node is outstanding).
 fn save_retry(
     run_id: &str,
     node: &str,
@@ -511,10 +514,14 @@ fn save_retry(
     // queue materializes in `available_at`, allowing scenarios to replay it
     // without treating that database timestamp as logical time. Absent key =>
     // no `throttle` sub-object, so an ordinary retryable retry round-trips None.
-    let state = retry_state(node, attempt, delay_ms, throttle);
+    let mut state = checkpoint_object(load_checkpoint(run_id)?);
+    state.insert(
+        "retry".to_string(),
+        retry_state(node, attempt, delay_ms, throttle)["retry"].clone(),
+    );
     client::execute(
         &run_sql::update_run_state_sql(),
-        &[text(run_id), text(state.to_string())],
+        &[text(run_id), text(Value::Object(state).to_string())],
     )
     .map_err(|e| err_name(&e))?;
     Ok(())
@@ -546,14 +553,27 @@ fn retry_state(node: &str, attempt: u32, delay_ms: u64, throttle: Option<&Thrott
 /// shared-throttle key a `rate-limited` retry parked with; it is absent for a
 /// plain retryable retry, which restores with no key.
 fn load_retry(run_id: &str) -> Result<Option<(String, u32, Option<ThrottleKey>)>, String> {
+    let v = load_checkpoint(run_id)?;
+    Ok(parse_retry(&v))
+}
+
+fn load_checkpoint(run_id: &str) -> Result<Value, String> {
     let rs = client::query(&run_sql::select_run_state_sql(), &[text(run_id)])
         .map_err(|e| err_name(&e))?;
-    let raw = match rs.rows.first().and_then(|r| r.first()) {
-        Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s.clone(),
-        _ => return Ok(None),
+    let raw = match rs.rows.first().and_then(|row| row.first()) {
+        Some(SqlValue::Text(raw)) | Some(SqlValue::Json(raw)) => raw,
+        _ => return Ok(json!({})),
     };
-    let v: Value = serde_json::from_str(&raw).map_err(|e| format!("state_json parse: {e}"))?;
-    Ok(parse_retry(&v))
+    serde_json::from_str(raw).map_err(|error| format!("state_json parse: {error}"))
+}
+
+fn checkpoint_object(value: Value) -> serde_json::Map<String, Value> {
+    value.as_object().cloned().unwrap_or_default()
+}
+
+fn load_context(run_id: &str) -> Result<Value, String> {
+    let checkpoint = load_checkpoint(run_id)?;
+    wamn_run_state::context::read(Some(&checkpoint)).map_err(|error| error.to_string())
 }
 
 fn parse_retry(v: &Value) -> Option<(String, u32, Option<ThrottleKey>)> {
@@ -664,7 +684,7 @@ fn custom_node_dispatch(d: &Dispatch, run_id: &str, flow: &Flow) -> Result<NodeA
             traceparent: None,
             tracestate: None,
             config: d.config.to_string(),
-            context: "{}".to_string(),
+            context: d.context.to_string(),
         },
         input: WirePayload::Inline(d.payload.to_string()),
         // cjv.3: EXACTLY this node step's declared credential(s) — the shared
@@ -710,9 +730,21 @@ fn custom_node_dispatch(d: &Dispatch, run_id: &str, flow: &Flow) -> Result<NodeA
                     .map_err(|e| format!("custom node output payload is not JSON: {e}"))?,
                 None => Value::Null,
             };
-            match em.port {
-                Some(p) => NodeOutcome::ok_on(payload, p),
-                None => NodeOutcome::ok(payload),
+            let port = em.port.unwrap_or_else(|| "main".to_string());
+            match em.ctx {
+                Some(context) => {
+                    let context: Value = serde_json::from_str(&context)
+                        .map_err(|e| format!("custom node context is not JSON: {e}"))?;
+                    if context.is_object() {
+                        NodeOutcome::ok_with_context(payload, port, context)
+                    } else {
+                        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
+                            "invalid-context",
+                            "custom node context replacement must be an object",
+                        )))
+                    }
+                }
+                None => NodeOutcome::ok_on(payload, port),
             }
         }
         NodeInvokeResponse::Err(we) => NodeOutcome::Error(wire_error_to_runner(we)),
@@ -1161,7 +1193,6 @@ fn dispatch_node(
         // decides retry-vs-error-path-vs-fail mechanically from the variant.
         ResolvedNode::Standard => {
             let node_type = d.node_type.as_str();
-            let context = Value::Object(Default::default());
             let run_ctx = sdk::RunContext {
                 run_id,
                 flow_id: &flow.flow_id,
@@ -1182,7 +1213,7 @@ fn dispatch_node(
                 traceparent: None,
                 tracestate: None,
                 config: &d.config,
-                context: &context,
+                context: &d.context,
             };
             // 5.9: the ctx is FRESH per dispatch and carries ONLY this node's
             // declared credential name — the vault resolves it lazily via the
@@ -1195,7 +1226,10 @@ fn dispatch_node(
             let granted = wamn_nodes::granted_for(sdk::NodeCtx::raw_sql_enabled(&ctx));
             Ok(NodeAction::Emit(
                 match wamn_nodes::dispatch(node_type, granted, &mut ctx, &run_ctx, &d.payload) {
-                    Ok(em) => NodeOutcome::ok_on(em.payload, em.port),
+                    Ok(em) => match em.ctx {
+                        Some(context) => NodeOutcome::ok_with_context(em.payload, em.port, context),
+                        None => NodeOutcome::ok_on(em.payload, em.port),
+                    },
                     Err(e) => NodeOutcome::Error(e),
                 },
             ))
@@ -1408,8 +1442,13 @@ fn execute(
     let completed = load_completed(run_id)?;
     let mut next_seq = completed.len() as i32;
     let run_rec = RunRecord::new(run_id, flow_id, version, input);
-    let mut st =
-        wamn_run_state::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
+    let mut st = wamn_run_state::reconstruct_with_context(
+        &plan,
+        &run_rec,
+        &completed,
+        load_context(run_id)?,
+    )
+    .map_err(|e| e.to_string())?;
     // R32: restore an in-flight retry parked on a prior invocation — the
     // outstanding node re-enters carrying its persisted attempt (the queue served
     // the backoff) so the retry budget advances instead of resetting to 0.
@@ -1472,6 +1511,7 @@ fn execute(
                     step.payload(),
                     step.payload(),
                     &flow.capture,
+                    st.context(),
                 )?;
                 next_seq += 1;
                 plan.apply_reserved(&mut st, &step)
@@ -1483,7 +1523,11 @@ fn execute(
                         match &outcome {
                             // Record the completed node (after its effect
                             // commits) so a later invocation reconstructs past it.
-                            NodeOutcome::Success { payload, port } => {
+                            NodeOutcome::Success {
+                                payload,
+                                port,
+                                context,
+                            } => {
                                 record_node_run(
                                     run_id,
                                     &d.node,
@@ -1493,6 +1537,7 @@ fn execute(
                                     payload,
                                     &d.payload,
                                     &flow.capture,
+                                    context.as_ref().unwrap_or(&d.context),
                                 )?;
                                 next_seq += 1;
                             }
@@ -1696,13 +1741,18 @@ fn record_node_run_and_renew(
     capture: &wamn_flow::Capture,
     ttl_ms: i64,
     owner: &str,
+    lease_generation: i64,
+    context: &Value,
 ) -> Result<(), String> {
     let (binds, _) = capture_binds(capture, output, input);
     let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
-    client::execute(
-        &record_success_and_renew_sql(),
+    let response = client::query(
+        &node_context_checkpoint_sql(),
         &[
             text(run_id),
+            text(run_id),
+            text(owner),
+            int64(lease_generation),
             text(node_id),
             int32(occurrence as i32),
             int32(seq),
@@ -1714,12 +1764,33 @@ fn record_node_run_and_renew(
             hash,
             mode,
             redacted,
+            text(context.to_string()),
             int64(ttl_ms),
-            text(owner),
         ],
     )
     .map_err(|e| err_name(&e))?;
-    Ok(())
+    let row = response
+        .rows
+        .first()
+        .ok_or("node context checkpoint returned no result row")?;
+    let code = match row.first() {
+        Some(SqlValue::Text(code)) => code.as_str(),
+        other => return Err(format!("node context checkpoint result shape: {other:?}")),
+    };
+    let run_status = match row.get(1) {
+        Some(SqlValue::Text(status)) => status.as_str(),
+        Some(SqlValue::Null) => "",
+        other => return Err(format!("node context checkpoint status shape: {other:?}")),
+    };
+    match ReservedCheckpointResult::from_parts(code, run_status)
+        .ok_or_else(|| format!("unknown node context checkpoint result: {code}"))?
+    {
+        ReservedCheckpointResult::Recorded => Ok(()),
+        ReservedCheckpointResult::FenceLost => {
+            Err("node context checkpoint refused: fence-lost".to_string())
+        }
+        other => Err(format!("node context checkpoint refused: {other:?}")),
+    }
 }
 
 /// The error-routed twin of [`record_node_run_and_renew`].
@@ -2334,8 +2405,13 @@ fn execute_claimed(
     let completed = load_completed(run_id)?;
     let mut next_seq = completed.len() as i32;
     let run_rec = RunRecord::new(run_id, &flow.flow_id, version, input);
-    let mut st =
-        wamn_run_state::reconstruct(&plan, &run_rec, &completed).map_err(|e| e.to_string())?;
+    let mut st = wamn_run_state::reconstruct_with_context(
+        &plan,
+        &run_rec,
+        &completed,
+        load_context(run_id)?,
+    )
+    .map_err(|e| e.to_string())?;
     // R32: restore an in-flight retry parked on a prior claim — the outstanding
     // node re-enters carrying its persisted attempt (the queue served the
     // backoff) so the retry budget advances instead of resetting to 0.
@@ -2462,7 +2538,12 @@ fn execute_claimed(
                 match dispatch_node(&d, run_id, flow, false, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
                         match &outcome {
-                            NodeOutcome::Success { payload, port } => {
+                            NodeOutcome::Success {
+                                payload,
+                                port,
+                                context,
+                            } => {
+                                let checkpoint_context = context.as_ref().unwrap_or(&d.context);
                                 record_node_run_and_renew(
                                     run_id,
                                     &d.node,
@@ -2474,6 +2555,8 @@ fn execute_claimed(
                                     &flow.capture,
                                     ttl_ms,
                                     owner,
+                                    lease_generation,
+                                    checkpoint_context,
                                 )?;
                                 next_seq += 1;
                                 emit_node_complete(

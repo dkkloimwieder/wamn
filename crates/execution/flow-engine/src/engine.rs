@@ -116,6 +116,9 @@ pub struct ExecutionState {
     /// merge/loop node's Nth visit persists as its own `node_runs` row instead of
     /// colliding on occurrence 0 (wamn-03m / R24).
     visits: HashMap<String, u32>,
+    /// Durable per-run document. Successful emissions may replace it; error
+    /// emissions never can.
+    context: Value,
     result: Value,
     failure: Option<Failure>,
     caller: CallerState,
@@ -142,6 +145,10 @@ impl ExecutionState {
     /// completion).
     pub fn result(&self) -> &Value {
         &self.result
+    }
+    /// The durable per-run context document visible to the next dispatch.
+    pub fn context(&self) -> &Value {
+        &self.context
     }
     /// The recorded failure, if the run failed.
     pub fn failure(&self) -> Option<&Failure> {
@@ -266,6 +273,7 @@ pub enum ApplyError {
     NotReserved(String),
     CallerAlreadyReleased,
     RespondWithoutCaller,
+    InvalidContext(Value),
 }
 
 impl std::fmt::Display for ApplyError {
@@ -279,6 +287,9 @@ impl std::fmt::Display for ApplyError {
             ApplyError::NotReserved(node) => write!(f, "node {node:?} is not engine-reserved"),
             ApplyError::CallerAlreadyReleased => write!(f, "caller was already released"),
             ApplyError::RespondWithoutCaller => write!(f, "respond requires a request caller"),
+            ApplyError::InvalidContext(value) => {
+                write!(f, "run context replacement must be an object, got {value}")
+            }
         }
     }
 }
@@ -296,6 +307,8 @@ pub struct Dispatch {
     /// The payload entering this node — the trigger payload at `entry`, otherwise
     /// the upstream node's output (unchanged across retries of this node).
     pub payload: Value,
+    /// Snapshot of the durable run context observed by this dispatch.
+    pub context: Value,
     /// 0 on first execution, incremented per retry.
     pub attempt: u32,
     /// Which VISIT of this node in this run (0 = first): a merge runs once per
@@ -312,6 +325,21 @@ pub struct Dispatch {
     pub idempotency_key: String,
     /// Remaining time budget for this node, if the flow set one.
     pub deadline_ms: Option<u64>,
+}
+
+impl Dispatch {
+    /// Canonical logical input captured before an effect attempt is dispatched.
+    ///
+    /// The attempt protocol stores this document (or a reference to its bytes),
+    /// ensuring recovery evaluates context-dependent parameters against the
+    /// snapshot the original attempt observed.
+    pub fn attempt_input(&self) -> Value {
+        serde_json::json!({
+            "config": self.config,
+            "context": self.context,
+            "input": self.payload,
+        })
+    }
 }
 
 /// One completed node execution, replayed to reconstruct a run's frontier on
@@ -331,6 +359,8 @@ pub struct Recorded {
     pub port: String,
     /// The payload it emitted (the next token's payload downstream).
     pub payload: Value,
+    /// Whole-document context replacement emitted by this completed node.
+    pub context: Option<Value>,
 }
 
 impl Recorded {
@@ -339,7 +369,14 @@ impl Recorded {
             node: node.into(),
             port: port.into(),
             payload,
+            context: None,
         }
+    }
+
+    /// Attach the whole-document context replacement recorded with this emission.
+    pub fn with_context(mut self, context: Value) -> Recorded {
+        self.context = Some(context);
+        self
     }
 }
 
@@ -361,6 +398,8 @@ pub enum ResumeError {
     /// The engine asked to wait (a scheduled retry) mid-reconstruction; recorded
     /// steps are terminal emissions and must never wait.
     UnexpectedWait { node: String },
+    /// Error-port emissions are context-free by contract.
+    ErrorContext { node: String },
 }
 
 impl std::fmt::Display for ResumeError {
@@ -381,6 +420,9 @@ impl std::fmt::Display for ResumeError {
                     f,
                     "unexpected retry wait at node {node:?} during reconstruction"
                 )
+            }
+            ResumeError::ErrorContext { node } => {
+                write!(f, "error-port record for node {node:?} carries context")
             }
         }
     }
@@ -424,6 +466,7 @@ impl<'f> Plan<'f> {
             step_seq: 0,
             dispatched: 0,
             visits: HashMap::new(),
+            context: Value::Object(Default::default()),
             result: Value::Null,
             failure: None,
             caller: match self
@@ -535,6 +578,7 @@ impl<'f> Plan<'f> {
             config: node.config.clone(),
             credential: node.credential.clone(),
             payload: a.payload.clone(),
+            context: state.context.clone(),
             attempt: a.attempt,
             occurrence,
             // R25: the occurrence keeps distinct visits distinct while retries
@@ -617,11 +661,23 @@ impl<'f> Plan<'f> {
             .unwrap_or(dispatch.attempt);
 
         match outcome {
-            NodeOutcome::Success { payload, port } => {
+            NodeOutcome::Success {
+                payload,
+                port,
+                context,
+            } => {
+                if let Some(replacement) = context.as_ref() {
+                    if !replacement.is_object() {
+                        return Err(ApplyError::InvalidContext(replacement.clone()));
+                    }
+                }
                 state.current = None;
                 state.step_seq += 1;
                 *state.visits.entry(dispatch.node.clone()).or_default() += 1;
                 state.result = payload.clone();
+                if let Some(replacement) = context {
+                    state.context = replacement;
+                }
                 self.enqueue_successors(state, &dispatch.node, &port, payload);
             }
             NodeOutcome::Error(NodeError::Retryable(detail)) => {
@@ -905,6 +961,11 @@ impl<'f> Plan<'f> {
                         });
                     }
                     if rec.port == crate::outcome::ERROR_PORT {
+                        if rec.context.is_some() {
+                            return Err(ResumeError::ErrorContext {
+                                node: rec.node.clone(),
+                            });
+                        }
                         // R26: an error-ROUTED record replays as the LIVE
                         // error-route transition, NOT a success fold. Folding it
                         // through apply(Success) would bump `step_seq` and
@@ -920,6 +981,7 @@ impl<'f> Plan<'f> {
                             NodeOutcome::Success {
                                 payload: rec.payload.clone(),
                                 port: rec.port.clone(),
+                                context: rec.context.clone(),
                             },
                             0,
                         )
@@ -945,6 +1007,22 @@ impl<'f> Plan<'f> {
             }
         }
         Ok(state)
+    }
+
+    /// Restore the durable context snapshot read from the run checkpoint.
+    ///
+    /// The driver first reconstructs the frontier from immutable node emissions,
+    /// then installs the context stored atomically with the latest boundary.
+    pub fn restore_context(
+        &self,
+        state: &mut ExecutionState,
+        context: Value,
+    ) -> Result<(), ApplyError> {
+        if !context.is_object() {
+            return Err(ApplyError::InvalidContext(context));
+        }
+        state.context = context;
+        Ok(())
     }
 
     /// Seed a fresh run whose frontier is a single token at `node` carrying
@@ -982,6 +1060,7 @@ impl<'f> Plan<'f> {
             step_seq: 0,
             dispatched: 0,
             visits: HashMap::new(),
+            context: Value::Object(Default::default()),
             result: Value::Null,
             failure: None,
             caller: CallerState::None,

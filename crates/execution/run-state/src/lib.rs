@@ -56,6 +56,7 @@
 /// preview-derivation the flowrunner guest links to fill a `node_runs` row's
 /// capture columns before the write.
 pub mod capture;
+pub mod context;
 mod model;
 /// Durable queue, lease, partition, timer, and dead-letter decisions and SQL.
 pub mod queue;
@@ -73,6 +74,6 @@ pub mod transitions;
 
 pub use capture::{Captured, derive as derive_capture};
 pub use model::{NodeRunRecord, RunRecord};
-pub use reconstruct::{ReconstructError, reconstruct};
+pub use reconstruct::{ReconstructError, reconstruct, reconstruct_with_context};
 pub use rerun::{PartialRerun, RerunError, plan_partial_rerun, plan_replay};
 pub use status::{FailKind, NodeErrorKind, NodeRunStatus, RunStatus};

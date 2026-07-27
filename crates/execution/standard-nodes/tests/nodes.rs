@@ -1284,13 +1284,9 @@ fn dispatch_refuses_ungranted_capability_rows() {
     assert!(mock.http_calls.is_empty(), "the node never ran");
 }
 
-/// Drift guard: every node type the committed F3 fixture uses must be a node
-/// this library actually SHIPS (`is_standard`). The F3 flow (wamn-flow's
-/// fixtures) drives the deployed runner, whose std nodes are exactly this
-/// crate — so a fixture that named a type the library dropped (or renamed
-/// `time-shift`) would fail to dispatch in-cluster; this catches it in unit
-/// tests instead. Reads the sibling crate's fixture by manifest-relative path
-/// (the wit_coherence precedent), keeping the two crates decoupled.
+/// Drift guard: every non-reserved node type the committed F3 fixture uses must
+/// be a node this library actually SHIPS (`is_standard`). Entry and boundary
+/// nodes are executed by the engine, never dispatched to this crate.
 #[test]
 fn f3_fixture_node_types_are_all_standard() {
     use wamn_standard_nodes::is_standard;
@@ -1300,7 +1296,12 @@ fn f3_fixture_node_types_are_all_standard() {
     let flow: Value = serde_json::from_str(&raw).expect("F3 fixture is json");
     let nodes = flow["nodes"].as_array().expect("nodes array");
     let types: Vec<&str> = nodes.iter().map(|n| n["type"].as_str().unwrap()).collect();
-    for t in &types {
+    for t in types.iter().filter(|node_type| {
+        !matches!(
+            **node_type,
+            "request" | "cron" | "event" | "respond" | "fail"
+        )
+    }) {
         assert!(
             is_standard(t),
             "F3 node type {t:?} is not a shipped standard node"

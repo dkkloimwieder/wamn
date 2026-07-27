@@ -12,6 +12,7 @@ pub mod capturebench;
 pub mod catalog_live;
 mod cdc_reader_process;
 pub mod cdcbench;
+pub mod contextproof;
 pub mod dashproof;
 pub mod dispatchbench;
 mod dispatcher_process;

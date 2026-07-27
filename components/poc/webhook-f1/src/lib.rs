@@ -165,7 +165,7 @@ fn drive(plan: &Plan<'_>, run_id: &str, input: Value) -> (u16, Value) {
             Step::Dispatch(d) => {
                 let outcome = dispatch_node(&d, &mut http_status);
                 let recorded = match &outcome {
-                    NodeOutcome::Success { payload, port } => record_success(
+                    NodeOutcome::Success { payload, port, .. } => record_success(
                         run_id,
                         &d.node,
                         d.occurrence,

@@ -267,10 +267,62 @@ pub fn reserved_checkpoint_sql() -> String {
              UPDATE run_queue AS q \
                 SET lease_expires_at = \
                     now() + ($16::bigint * interval '1 millisecond') \
-               FROM authority AS a \
+              FROM authority AS a \
               WHERE a.result_code = 'ready' \
                 AND q.tenant_id = a.tenant_id AND q.run_id = a.run_id \
                 AND (SELECT count(*) FROM recorded) >= 0 \
+             RETURNING q.run_id \
+         ) \
+         SELECT CASE WHEN r.run_id IS NOT NULL THEN 'recorded' ELSE a.result_code END \
+                    AS result_code, \
+                a.status AS run_status \
+           FROM authority AS a LEFT JOIN renewed AS r ON true",
+        success = NodeRunStatus::Success.as_sql(),
+    )
+}
+
+/// Record a successful user-node emission and its replacement context under the
+/// exact queue fence.
+///
+/// Params match [`reserved_checkpoint_sql`] through `$15`, followed by the
+/// complete context JSON document (`$16`) and lease TTL milliseconds (`$17`).
+/// The node output and context checkpoint are one statement: a stale owner or
+/// generation writes neither.
+pub fn node_context_checkpoint_sql() -> String {
+    format!(
+        "{FENCED_PREFIX}, \
+         recorded AS ( \
+             INSERT INTO node_runs \
+                    (tenant_id, run_id, node_id, occurrence, seq, status, \
+                     output_port, output_json, input_json, preview_head, \
+                     payload_size, payload_hash, capture_mode, redacted) \
+             SELECT a.tenant_id, a.run_id, $5, $6, $7, '{success}', \
+                    $8, $9::text::jsonb, $10::text::jsonb, $11, $12, $13, $14, $15 \
+               FROM authority AS a \
+              WHERE a.result_code = 'ready' \
+                AND jsonb_typeof($16::text::jsonb) = 'object' \
+             ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING \
+             RETURNING run_id \
+         ), \
+         checkpointed AS ( \
+             UPDATE runs AS r \
+                SET state_json = jsonb_set(COALESCE(r.state_json, '{{}}'::jsonb), \
+                                           '{{context}}', $16::text::jsonb, true), \
+                    updated_at = now() \
+               FROM authority AS a \
+              WHERE a.result_code = 'ready' \
+                AND r.tenant_id = a.tenant_id AND r.run_id = a.run_id \
+                AND (SELECT count(*) FROM recorded) = 1 \
+             RETURNING r.run_id \
+         ), \
+         renewed AS ( \
+             UPDATE run_queue AS q \
+                SET lease_expires_at = \
+                    now() + ($17::bigint * interval '1 millisecond') \
+               FROM authority AS a \
+              WHERE a.result_code = 'ready' \
+                AND q.tenant_id = a.tenant_id AND q.run_id = a.run_id \
+                AND (SELECT count(*) FROM checkpointed) = 1 \
              RETURNING q.run_id \
          ) \
          SELECT CASE WHEN r.run_id IS NOT NULL THEN 'recorded' ELSE a.result_code END \
@@ -609,6 +661,20 @@ mod tests {
         let complete = complete_sql();
         assert!(complete.contains("completed_attempt AS"));
         assert!(complete.contains("checkpointed AS"));
+    }
+
+    #[test]
+    fn context_checkpoint_is_generation_fenced_and_atomic_with_output() {
+        let sql = node_context_checkpoint_sql();
+        assert!(sql.starts_with("WITH input AS"));
+        assert!(sql.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
+        assert!(sql.contains("INSERT INTO node_runs"));
+        assert!(sql.contains("jsonb_typeof($16::text::jsonb) = 'object'"));
+        assert!(sql.contains("SET state_json = jsonb_set"));
+        assert!(sql.contains("(SELECT count(*) FROM recorded) = 1"));
+        assert!(sql.contains("'{context}', $16::text::jsonb"));
+        assert!(sql.contains("$17::bigint * interval '1 millisecond'"));
+        assert_eq!(sql.matches("WITH input AS").count(), 1);
     }
 
     #[test]

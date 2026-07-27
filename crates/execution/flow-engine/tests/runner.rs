@@ -742,8 +742,17 @@ fn resume_kill_mid_branch_then_resume_completes_the_correct_branch() {
                     other => (json!({ "at": other }), "main".to_string()),
                 };
                 records.push(Recorded::new(d.node.clone(), port.clone(), payload.clone()));
-                plan.apply(&mut st, &d, NodeOutcome::Success { payload, port }, 0)
-                    .unwrap();
+                plan.apply(
+                    &mut st,
+                    &d,
+                    NodeOutcome::Success {
+                        payload,
+                        port,
+                        context: None,
+                    },
+                    0,
+                )
+                .unwrap();
                 if d.node == "n1" {
                     break; // killed after n1 committed, before n2
                 }
@@ -1458,7 +1467,7 @@ fn drive_across_parks(
                 Step::Dispatch(d) => {
                     dispatches.push((d.node.clone(), d.attempt));
                     let outcome = dispatch_fn(&d);
-                    if let NodeOutcome::Success { payload, port } = &outcome {
+                    if let NodeOutcome::Success { payload, port, .. } = &outcome {
                         // Checkpoint the completed node (the driver's node_runs
                         // row) so the next claim folds it instead of re-dispatching.
                         // A now-stale retry cursor is left as-is: restore_retry's

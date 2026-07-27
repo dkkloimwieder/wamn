@@ -5,7 +5,7 @@
 //! original walk left outstanding: the same branch, the same merges, error-routed
 //! nodes back on their error branch.
 
-use wamn_runner::{ExecutionState, MAIN_PORT, Plan, Recorded, ResumeError};
+use wamn_runner::{ApplyError, ExecutionState, MAIN_PORT, Plan, Recorded, ResumeError};
 
 use crate::model::{NodeRunRecord, RunRecord};
 
@@ -18,6 +18,8 @@ pub enum ReconstructError {
     /// The engine could not fold the recorded steps (drift / overrun / a
     /// mid-reconstruction wait). Wraps the engine's [`ResumeError`].
     Resume(ResumeError),
+    /// The persisted checkpoint context was not a JSON object.
+    Context(ApplyError),
 }
 
 impl std::fmt::Display for ReconstructError {
@@ -28,6 +30,7 @@ impl std::fmt::Display for ReconstructError {
                 "node {node:?} has no captured output — run is not replayable (capture off)"
             ),
             ReconstructError::Resume(e) => write!(f, "reconstruction failed: {e}"),
+            ReconstructError::Context(e) => write!(f, "context reconstruction failed: {e}"),
         }
     }
 }
@@ -78,4 +81,18 @@ pub fn reconstruct(
 
     let input = run.input.clone().unwrap_or(serde_json::Value::Null);
     Ok(plan.resume(run.run_id.clone(), input, &recorded)?)
+}
+
+/// Rebuild a run and install the context snapshot persisted with its latest
+/// boundary checkpoint.
+pub fn reconstruct_with_context(
+    plan: &Plan,
+    run: &RunRecord,
+    node_runs: &[NodeRunRecord],
+    context: serde_json::Value,
+) -> Result<ExecutionState, ReconstructError> {
+    let mut state = reconstruct(plan, run, node_runs)?;
+    plan.restore_context(&mut state, context)
+        .map_err(ReconstructError::Context)?;
+    Ok(state)
 }

@@ -123,6 +123,17 @@ pub fn update_run_state_sql() -> String {
     "UPDATE runs SET state_json = $2, updated_at = now() WHERE run_id = $1".to_string()
 }
 
+/// Replace the durable context document while preserving co-resident checkpoint
+/// cursors. `$1` run id, `$2` complete context JSON text.
+pub fn update_run_context_sql() -> String {
+    "UPDATE runs \
+        SET state_json = jsonb_set(COALESCE(state_json, '{}'::jsonb), \
+                                   '{context}', $2::text::jsonb, true), \
+            updated_at = now() \
+      WHERE run_id = $1"
+        .to_string()
+}
+
 /// Record a completed node execution — the durable per-node checkpoint,
 /// written after the node's effect commits; idempotent by
 /// `(run_id, node_id, occurrence)`. `occurrence` is the engine-computed visit

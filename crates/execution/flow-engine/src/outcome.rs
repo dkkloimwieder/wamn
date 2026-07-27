@@ -23,7 +23,13 @@ pub use wamn_node_sdk::{ErrorDetail, NodeError, RateLimitDetail};
 /// most nodes emit on `MAIN_PORT`); `Error` carries the classified failure.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeOutcome {
-    Success { payload: Value, port: String },
+    Success {
+        payload: Value,
+        port: String,
+        /// Whole-document durable run-context replacement. `None` leaves the
+        /// current document unchanged; there are deliberately no merge semantics.
+        context: Option<Value>,
+    },
     Error(NodeError),
 }
 
@@ -33,6 +39,7 @@ impl NodeOutcome {
         NodeOutcome::Success {
             payload,
             port: MAIN_PORT.to_string(),
+            context: None,
         }
     }
 
@@ -41,6 +48,16 @@ impl NodeOutcome {
         NodeOutcome::Success {
             payload,
             port: port.into(),
+            context: None,
+        }
+    }
+
+    /// A success carrying a whole-document context replacement.
+    pub fn ok_with_context(payload: Value, port: impl Into<String>, context: Value) -> NodeOutcome {
+        NodeOutcome::Success {
+            payload,
+            port: port.into(),
+            context: Some(context),
         }
     }
 }
