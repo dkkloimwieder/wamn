@@ -47,10 +47,13 @@ use wamn_flow::Flow;
 use wamn_run_state::sql as run_sql;
 use wamn_runner::{
     Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionStatus, NodeError,
-    NodeOutcome, Plan, Step,
+    NodeOutcome, Plan, ReservedStep, Step,
 };
 
 struct Component;
+
+const RESERVED_STEP_FAILURE: &str =
+    "legacy F1 webhook cannot execute engine-reserved flow nodes";
 
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
@@ -162,6 +165,10 @@ fn drive(plan: &Plan<'_>, run_id: &str, input: Value) -> (u16, Value) {
                 let _ = mark_failed(run_id, "terminal", &node, "unexpected retry wait");
                 return (500, error_body("run-failed", "unexpected retry wait"));
             }
+            Step::Reserved(step) => {
+                let _ = mark_failed(run_id, "terminal", step.node(), RESERVED_STEP_FAILURE);
+                return reserved_step_refusal(&step);
+            }
             Step::Dispatch(d) => {
                 let outcome = dispatch_node(&d, &mut http_status);
                 let recorded = match &outcome {
@@ -203,6 +210,16 @@ fn drive(plan: &Plan<'_>, run_id: &str, input: Value) -> (u16, Value) {
             }
         }
     }
+}
+
+fn reserved_step_refusal(step: &ReservedStep) -> (u16, Value) {
+    (
+        500,
+        error_body(
+            "unsupported-reserved-node",
+            &format!("{RESERVED_STEP_FAILURE}: {}", step.node()),
+        ),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -807,4 +824,49 @@ fn send_response(response_out: ResponseOutparam, status: u16, body: Value) {
         }
     }
     let _ = OutgoingBody::finish(outgoing_body, None);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_reserved_step_is_refused_explicitly() {
+        let steps = [
+            ReservedStep::Entry {
+                node: "request".to_string(),
+                payload: json!({"receipt": 1}),
+                occurrence: 0,
+            },
+            ReservedStep::Respond {
+                node: "respond".to_string(),
+                payload: json!({"ok": true}),
+                occurrence: 0,
+                status: 200,
+                complete: true,
+            },
+            ReservedStep::Fail {
+                node: "fail".to_string(),
+                payload: json!({"error": "authored"}),
+                occurrence: 0,
+                code: "authored".to_string(),
+                message: None,
+                status: 400,
+            },
+        ];
+
+        for step in steps {
+            let node = step.node().to_string();
+            assert_eq!(
+                reserved_step_refusal(&step),
+                (
+                    500,
+                    error_body(
+                        "unsupported-reserved-node",
+                        &format!("{RESERVED_STEP_FAILURE}: {node}"),
+                    ),
+                ),
+            );
+        }
+    }
 }
