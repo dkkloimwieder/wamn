@@ -793,8 +793,10 @@ kubectl -n wamn-system logs job/f2-testgate-refusal   # a TestGateError naming t
 Docs: docs/flow-schema.md
 
 ```bash
-cargo test -p wamn-flow
-cargo clippy -p wamn-flow --all-targets && cargo fmt -p wamn-flow --check
+cargo test --locked -p wamn-flow
+cargo test --locked -p wamn-proof-conformance --lib flow
+cargo clippy --locked -p wamn-flow --all-targets -- -D warnings
+cargo fmt -p wamn-flow --check
 # regenerate the published JSON Schema contract after changing the types:
 cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
 ```

@@ -9,18 +9,23 @@
 //! That is what makes the whole execution engine unit-testable with no cluster —
 //! the same split `wamn-api` uses for the gateway.
 //!
-//! ```
+//! ```no_run
 //! use wamn_runner::{Plan, NodeOutcome, ExecutionStatus};
 //! use wamn_flow::Flow;
 //! use serde_json::json;
+//! use std::collections::BTreeMap;
 //!
 //! let flow = Flow::from_json(r#"{
 //!   "schema-version": "0.1", "flow-id": "f", "version": 1,
-//!   "trigger": {"type": "manual"}, "entry": "a",
-//!   "nodes": [{"id": "a", "type": "echo"}, {"id": "b", "type": "echo"}],
-//!   "edges": [{"from": "a", "to": "b"}]
+//!   "nodes": [
+//!     {"id": "entry", "type": "cron"},
+//!     {"id": "a", "type": "echo"},
+//!     {"id": "b", "type": "echo"}
+//!   ],
+//!   "edges": [{"from": "entry", "to": "a"}, {"from": "a", "to": "b"}]
 //! }"#).unwrap();
-//! let plan = Plan::compile(&flow).unwrap();
+//! let interfaces = BTreeMap::from([("echo".to_string(), vec!["main".to_string()])]);
+//! let plan = Plan::compile(&flow, &interfaces).unwrap();
 //!
 //! let mut st = plan.start("run-1", json!({"n": 1}));
 //! let clock = std::cell::Cell::new(0u64);

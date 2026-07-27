@@ -1,11 +1,11 @@
 //! Structured version diff between two flows — the editor's change view.
 //!
-//! Compares by node id, edge identity, trigger, entry and credential set, so a
+//! Compares by node id, edge identity, and credential set, so a
 //! reviewer sees *what changed* between two versions rather than a text diff.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use crate::types::{Edge, Flow, NodeId, Trigger};
+use crate::types::{Edge, Flow, NodeId};
 
 /// What changed about a single node kept across both versions.
 #[derive(Debug, Clone, PartialEq)]
@@ -33,8 +33,6 @@ pub struct FlowDiff {
     pub nodes_changed: Vec<NodeChange>,
     pub edges_added: Vec<Edge>,
     pub edges_removed: Vec<Edge>,
-    pub entry_changed: Option<(NodeId, NodeId)>,
-    pub trigger_changed: Option<(Trigger, Trigger)>,
     pub credentials_added: Vec<String>,
     pub credentials_removed: Vec<String>,
 }
@@ -47,8 +45,6 @@ impl FlowDiff {
             && self.nodes_changed.is_empty()
             && self.edges_added.is_empty()
             && self.edges_removed.is_empty()
-            && self.entry_changed.is_none()
-            && self.trigger_changed.is_none()
             && self.credentials_added.is_empty()
             && self.credentials_removed.is_empty()
     }
@@ -99,13 +95,6 @@ pub fn diff(old: &Flow, new: &Flow) -> FlowDiff {
         if !new_edges.contains(e) {
             d.edges_removed.push(e.clone());
         }
-    }
-
-    if old.entry != new.entry {
-        d.entry_changed = Some((old.entry.clone(), new.entry.clone()));
-    }
-    if old.trigger != new.trigger {
-        d.trigger_changed = Some((old.trigger.clone(), new.trigger.clone()));
     }
 
     let old_creds: BTreeSet<&str> = old.credentials.iter().map(|c| c.name.as_str()).collect();

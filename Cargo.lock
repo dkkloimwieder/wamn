@@ -4528,6 +4528,7 @@ dependencies = [
  "sha2 0.11.0",
  "tokio",
  "wamn-component-policy",
+ "wamn-flow",
  "wamn-flow-invocation",
  "wamn-gate-harness",
  "wamn-node-invoke",

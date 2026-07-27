@@ -3,17 +3,27 @@
   "flow-id": "s3-demo",
   "version": 1,
   "name": "S3 demo (transform -> pg-write -> conditional -> respond)",
-  "trigger": { "type": "webhook", "sync": true },
-  "entry": "t",
   "nodes": [
+    {
+      "id": "in",
+      "type": "request",
+      "config": {
+        "input-schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema"
+        }
+      }
+    },
     { "id": "t", "type": "transform", "config": { "op": "upper" } },
     { "id": "w", "type": "pg-write" },
     { "id": "c", "type": "conditional", "config": { "min-len": 3 } },
-    { "id": "out", "type": "respond" }
+    { "id": "out", "type": "respond", "config": { "status": 200 } },
+    { "id": "too-short", "type": "fail", "config": { "code": "too-short", "status": 400 } }
   ],
   "edges": [
+    { "from": "in", "to": "t" },
     { "from": "t", "to": "w" },
     { "from": "w", "to": "c" },
-    { "from": "c", "from-port": "true", "to": "out" }
+    { "from": "c", "from-port": "true", "to": "out" },
+    { "from": "c", "from-port": "false", "to": "too-short" }
   ]
 }

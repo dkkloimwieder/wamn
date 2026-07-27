@@ -1,7 +1,7 @@
 //! Canonical wamn flow-graph schema (5.1).
 //!
 //! A flow is **data, not code**: a versioned directed graph of typed nodes
-//! ([`Node`]) wired by ported edges ([`Edge`]), invoked by one [`Trigger`],
+//! ([`Node`]) wired by ported edges ([`Edge`]), starting at one typed entry,
 //! referencing credentials by name ([`CredentialRef`]). Deploying a flow flips
 //! an active-version pointer (5.14); the graph itself is this crate's [`Flow`].
 //!
@@ -10,22 +10,24 @@
 //!
 //! - **types** — the canonical serde model ([`Flow`] and friends);
 //! - **import/export** — [`Flow::from_json`] / [`Flow::to_json`] (round-trip);
-//! - **validation** — [`Flow::validate`] (graph well-formedness; per-node-type
-//!   `config` is validated by the node library, 5.3, not here);
+//! - **validation** — [`Flow::validate`] (graph well-formedness against pinned
+//!   node interfaces; ordinary node `config` remains node-library-owned);
 //! - **diff** — [`diff::diff`] (structured version diff for the editor);
 //! - **contract** — [`json_schema`] generates the language-neutral JSON Schema
 //!   published at `docs/flow-schema.schema.json` (drift-guarded by a test).
 
+mod canonical;
 mod diff;
 mod types;
 mod validate;
 
 pub use diff::{FlowDiff, NodeChange, diff};
 pub use types::{
-    Capture, CaptureMode, CredentialRef, DEFAULT_CAPTURE_MAX_BYTES, ERROR_PORT, Edge, Flow,
-    MAIN_PORT, Node, NodeId, Ordering, PartitionPolicy, RowEvent, SCHEMA_VERSION, Trigger,
+    Capture, CaptureMode, CredentialRef, CronInput, DEFAULT_CAPTURE_MAX_BYTES, ENTRY_TYPES,
+    ERROR_PORT, Edge, EntryKind, EventInput, FailConfig, Flow, MAIN_PORT, Node, NodeId, Ordering,
+    PartitionPolicy, RequestConfig, RespondConfig, RowEvent, SCHEMA_VERSION,
 };
-pub use validate::{Issue, Severity, validate};
+pub use validate::{Issue, ResolvedInterfaces, Severity, validate};
 
 /// The JSON Schema for [`Flow`], generated from the Rust types (the single
 /// source of truth). Serialized to `docs/flow-schema.schema.json`; a drift test

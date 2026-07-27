@@ -3,6 +3,7 @@
 pub mod buildproof;
 pub mod credprobe;
 pub mod egressbench;
+pub mod flow;
 pub mod invocation;
 pub mod socketguard;
 pub mod testgate;

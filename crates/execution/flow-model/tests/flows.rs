@@ -3,10 +3,12 @@
 //! published JSON Schema, the committed schema matches the types, and the diff
 //! detects real changes.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use boon::{Compiler, Schemas};
-use wamn_flow::Flow;
+use serde_json::json;
+use wamn_flow::{CronInput, EventInput, Flow, ResolvedInterfaces, RowEvent};
 
 const FIXTURES: &[&str] = &[
     "s3-demo.flow.json",
@@ -25,20 +27,36 @@ fn load(name: &str) -> (String, Flow) {
     (raw, flow)
 }
 
+fn interfaces() -> ResolvedInterfaces {
+    BTreeMap::from([
+        ("conditional".into(), vec!["true".into(), "false".into()]),
+        (
+            "evaluate-specs".into(),
+            vec!["main".into(), "out-of-spec".into()],
+        ),
+        ("custom".into(), vec!["main".into()]),
+        ("http-request".into(), vec!["main".into()]),
+        ("pg-write".into(), vec!["main".into()]),
+        ("postgres".into(), vec!["main".into()]),
+        ("postgres-query".into(), vec!["main".into()]),
+        ("time-shift".into(), vec!["main".into()]),
+        ("transform".into(), vec!["main".into()]),
+    ])
+}
+
 #[test]
-fn fixtures_parse_and_validate() {
+fn t0_fixtures_parse_and_pass_structural_validation() {
     for name in FIXTURES {
         let (_, flow) = load(name);
         assert!(
-            flow.is_valid(),
+            flow.is_valid(&interfaces()),
             "{name} should validate; issues: {:?}",
-            flow.issues()
+            flow.issues(&interfaces())
         );
-        // No warnings either — the example flows are clean (no dead nodes).
         assert!(
-            flow.issues().is_empty(),
+            flow.issues(&interfaces()).is_empty(),
             "{name} has unexpected issues: {:?}",
-            flow.issues()
+            flow.issues(&interfaces())
         );
     }
 }
@@ -162,14 +180,24 @@ fn diff_detects_changes() {
 /// engine's per-visit occurrence tracking (R24) on the deployed runner.
 #[test]
 fn f3_escalate_stale_holds_shape() {
-    use wamn_flow::Trigger;
     let (_, f) = load("f3-escalate-stale-holds.flow.json");
 
     assert!(
-        matches!(f.trigger, Trigger::Cron { .. }),
-        "F3 is cron-triggered"
+        f.nodes
+            .iter()
+            .any(|node| node.id == "tick" && node.node_type == "cron"),
+        "F3 has a cron entry"
     );
-    assert_eq!(f.entry, "shift", "entry computes the cutoff first");
+    assert!(
+        f.edges
+            .iter()
+            .any(|edge| edge.from == "tick" && edge.to == "shift"),
+        "the cron payload enters the cutoff computation first"
+    );
+    assert!(
+        !f.nodes.iter().any(|node| node.node_type == "respond"),
+        "callerless F3 has no response node"
+    );
 
     // Egress + credential are DECLARED (fail-closed capability-by-declaration).
     assert_eq!(f.allowed_hosts, vec!["notify.example".to_string()]);
@@ -229,4 +257,83 @@ fn f3_escalate_stale_holds_shape() {
         filters["opened_at"], "lt.{{cutoff}}",
         "list must filter opened_at < the computed cutoff"
     );
+}
+
+#[test]
+fn t0_cron_and_event_inputs_round_trip_and_omit_absent_images() {
+    let cron = CronInput {
+        scheduled_at: "2026-07-27T02:00:00Z".into(),
+        fired_at: "2026-07-27T02:00:03Z".into(),
+    };
+    let cron_json = serde_json::to_string(&cron).unwrap();
+    assert_eq!(serde_json::from_str::<CronInput>(&cron_json).unwrap(), cron);
+
+    let event = EventInput {
+        event: RowEvent::Insert,
+        new: Some(
+            json!({"id": "d-1", "decision": "accept"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        ),
+        old: None,
+    };
+    let event_json = serde_json::to_string(&event).unwrap();
+    assert!(!event_json.contains("\"old\""), "{event_json}");
+    assert_eq!(
+        serde_json::from_str::<EventInput>(&event_json).unwrap(),
+        event
+    );
+    assert!(
+        serde_json::from_value::<EventInput>(
+            json!({"event": "insert", "new": {"id": "d-1"}, "old": null})
+        )
+        .is_err(),
+        "absent event images are omitted, never null"
+    );
+}
+
+#[test]
+fn t0_old_trigger_and_scalar_entry_have_no_reader() {
+    let legacy = r#"{
+      "schema-version": "0.1",
+      "flow-id": "legacy",
+      "version": 1,
+      "trigger": {"type": "manual"},
+      "entry": "out",
+      "nodes": [{"id": "out", "type": "respond", "config": {"status": 200}}]
+    }"#;
+    assert!(Flow::from_json(legacy).is_err());
+}
+
+#[test]
+fn t0_canonical_graph_bytes_and_hash_ignore_json_key_order_and_whitespace() {
+    let raw_a = r#"{
+      "schema-version": "0.1",
+      "flow-id": "canonical",
+      "version": 1,
+      "nodes": [
+        {"id": "tick", "type": "cron"},
+        {"id": "work", "type": "custom", "config": {"z": 2, "a": 1}}
+      ],
+      "edges": [{"from": "tick", "to": "work"}]
+    }"#;
+    let raw_b = r#"{"edges":[{"to":"work","from":"tick"}],"nodes":[
+      {"type":"cron","id":"tick"},
+      {"config":{"a":1,"z":2},"type":"custom","id":"work"}
+    ],"version":1,"flow-id":"canonical","schema-version":"0.1"}"#;
+    let a = Flow::from_json(raw_a).unwrap();
+    let b = Flow::from_json(raw_b).unwrap();
+    assert_eq!(a.canonical_bytes(), b.canonical_bytes());
+    assert_eq!(a.graph_hash(), b.graph_hash());
+
+    let mut unequal_hashes = std::collections::BTreeSet::new();
+    for version in 1..=64 {
+        let mut variant = a.clone();
+        variant.version = version;
+        assert!(
+            unequal_hashes.insert(variant.graph_hash()),
+            "unequal generated fixture {version} reused a digest"
+        );
+    }
 }

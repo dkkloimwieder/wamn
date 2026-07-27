@@ -3,19 +3,52 @@
   "flow-id": "receipt-received",
   "version": 1,
   "name": "F1 receipt-received (sync webhook, write-ahead)",
-  "trigger": { "type": "webhook", "sync": true, "path": "/receipts" },
-  "entry": "validate",
   "nodes": [
+    {
+      "id": "in",
+      "type": "request",
+      "config": {
+        "input-schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "required": ["receipt_no", "supplier", "site", "received_at", "lines"],
+          "properties": {
+            "receipt_no": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "supplier": { "type": "string", "minLength": 1 },
+            "site": { "type": "string", "minLength": 1 },
+            "received_at": { "type": "string", "format": "date-time" },
+            "lines": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "required": ["material", "quantity", "moisture_pct", "weight_kg"],
+                "properties": {
+                  "material": { "type": "string", "minLength": 1 },
+                  "quantity": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" },
+                  "moisture_pct": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" },
+                  "weight_kg": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
     { "id": "validate", "type": "transform", "label": "validate payload", "config": { "schema": "receipt" } },
     { "id": "upsert", "type": "postgres-query", "label": "upsert receipt + lines", "config": { "op": "upsert", "transaction": true } },
-    { "id": "evaluate", "type": "transform", "label": "evaluate lines vs specs", "config": { "compare": "exact-decimal" } },
+    { "id": "evaluate", "type": "evaluate-specs", "label": "evaluate lines vs specs", "config": { "compare": "exact-decimal" } },
     { "id": "holds", "type": "postgres-query", "label": "create quality_holds", "config": { "op": "insert", "table": "quality_holds" } },
     { "id": "respond-ok", "type": "respond", "config": { "status": 200 } },
-    { "id": "respond-bad", "type": "respond", "config": { "status": 400, "error": "invalid-input" } }
+    { "id": "invalid-input", "type": "fail", "config": { "code": "invalid-input", "status": 400 } }
   ],
   "edges": [
+    { "from": "in", "to": "validate" },
     { "from": "validate", "to": "upsert" },
-    { "from": "validate", "from-port": "error", "to": "respond-bad" },
+    { "from": "validate", "from-port": "error", "to": "invalid-input" },
     { "from": "upsert", "to": "evaluate" },
     { "from": "evaluate", "from-port": "out-of-spec", "to": "holds" },
     { "from": "evaluate", "to": "respond-ok" },

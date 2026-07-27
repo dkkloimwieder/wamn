@@ -16,9 +16,8 @@ schemars = { workspace = true }
 # (wamn-standard-nodes), so validation and the dispatcher/materializer key stamping share
 # one grammar.
 jmespath = { workspace = true }
-
-[dev-dependencies]
 # tests validate each fixture flow against the generated JSON Schema, tying the
 # language-neutral contract to the Rust types. boon is a pure-Rust validator
-# with no network/reqwest dependency.
+# with no network/reqwest dependency. Request-entry input contracts also use it
+# to compile JSON Schema draft 2020-12 during structural validation.
 boon = { workspace = true }

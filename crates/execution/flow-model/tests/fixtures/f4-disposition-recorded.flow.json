@@ -3,13 +3,13 @@
   "flow-id": "disposition-recorded",
   "version": 1,
   "name": "F4 disposition-recorded (row-event)",
-  "trigger": { "type": "row-event", "table": "dispositions", "event": "insert" },
-  "entry": "recommend",
   "nodes": [
+    { "id": "on-disposition", "type": "event" },
     { "id": "recommend", "type": "custom", "label": "F2 disposition recommendation", "config": { "endpoint": "http://serve-node:8091" } },
     { "id": "callback", "type": "http-request", "label": "POST ERP callback", "config": { "method": "POST", "url": "http://erp.example/dispositions", "body": "@", "idempotency-key": true }, "credential": "erp-callback" }
   ],
   "edges": [
+    { "from": "on-disposition", "to": "recommend" },
     { "from": "recommend", "to": "callback" }
   ],
   "credentials": [

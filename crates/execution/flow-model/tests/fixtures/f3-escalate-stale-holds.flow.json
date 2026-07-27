@@ -3,9 +3,8 @@
   "flow-id": "escalate-stale-holds",
   "version": 1,
   "name": "F3 escalate-stale-holds (nightly cron)",
-  "trigger": { "type": "cron", "schedule": "0 2 * * *" },
-  "entry": "shift",
   "nodes": [
+    { "id": "tick", "type": "cron" },
     {
       "id": "shift",
       "type": "time-shift",
@@ -52,17 +51,16 @@
       "type": "transform",
       "label": "drop the head, loop on the tail",
       "config": { "expression": "[1:]" }
-    },
-    { "id": "done", "type": "respond", "label": "no stale holds remain" }
+    }
   ],
   "edges": [
+    { "from": "tick", "to": "shift" },
     { "from": "shift", "to": "list-stale" },
     { "from": "list-stale", "to": "gate" },
     { "from": "gate", "from-port": "true", "to": "escalate" },
     { "from": "gate", "from-port": "true", "to": "advance" },
     { "from": "escalate", "to": "notify" },
-    { "from": "advance", "to": "gate" },
-    { "from": "gate", "from-port": "false", "to": "done" }
+    { "from": "advance", "to": "gate" }
   ],
   "credentials": [
     { "name": "notify-webhook", "kind": "api-key", "description": "manager notification endpoint" }

@@ -142,7 +142,7 @@
           ]
         },
         "type": {
-          "description": "The node type — an open string the runner's node library (5.3) resolves (e.g. `postgres-query`, `transform`, `http-request`, `conditional`, `respond`, `delay`, `custom`). Structural validation here does not constrain it.",
+          "description": "The node type. Engine-reserved types are checked here; ordinary open strings are resolved through the pinned node-interface bundle.",
           "type": "string"
         }
       },
@@ -225,107 +225,6 @@
           "type": "string"
         }
       ]
-    },
-    "RowEvent": {
-      "description": "The row mutation a [`Trigger::RowEvent`] fires on.",
-      "enum": [
-        "insert",
-        "update",
-        "delete"
-      ],
-      "type": "string"
-    },
-    "Trigger": {
-      "description": "How a flow is invoked. The dispatcher (5.14) registers cron and row-event triggers; webhook triggers are routed by the API gateway.",
-      "oneOf": [
-        {
-          "description": "HTTP webhook. `sync` = respond within the request (write-ahead default, D15); otherwise fire-and-forget.",
-          "properties": {
-            "path": {
-              "description": "Optional path suffix under the flow's webhook route.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "sync": {
-              "default": false,
-              "type": "boolean"
-            },
-            "type": {
-              "enum": [
-                "webhook"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Scheduled invocation (cron expression). Dispatcher-owned; wakes parked projects (F3).",
-          "properties": {
-            "schedule": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "cron"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "schedule",
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Fires from a durable row event, e.g. F4 on `dispositions` insert — delivered by the D19 v3 event plane (CDC reader → JetStream → materializer) via the flow's event registration; the run id is `{flow}:evt:{stream_seq}`.",
-          "properties": {
-            "event": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/RowEvent"
-                }
-              ],
-              "default": "insert"
-            },
-            "table": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "row-event"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "table",
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Manual / test-run invocation (editor test-run).",
-          "properties": {
-            "type": {
-              "enum": [
-                "manual"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        }
-      ]
     }
   },
   "description": "One version of a flow — the unit stored in the catalog and pointed at by the active-version pointer (deploying = flipping that pointer + a NATS doorbell, 5.14).",
@@ -359,10 +258,6 @@
       },
       "type": "array"
     },
-    "entry": {
-      "description": "The node the trigger payload enters the graph at.",
-      "type": "string"
-    },
     "flow-id": {
       "description": "Stable identifier shared across every version of this flow.",
       "type": "string"
@@ -375,7 +270,7 @@
       ]
     },
     "nodes": {
-      "description": "The nodes of the graph.",
+      "description": "The nodes of the graph. Exactly one has a type in [`ENTRY_TYPES`].",
       "items": {
         "$ref": "#/definitions/Node"
       },
@@ -401,14 +296,6 @@
       "description": "The flow-schema format version (e.g. `\"0.1\"`). See [`SCHEMA_VERSION`].",
       "type": "string"
     },
-    "trigger": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/Trigger"
-        }
-      ],
-      "description": "How the flow is invoked. Exactly one."
-    },
     "version": {
       "description": "Monotonic version of this flow (>= 1).",
       "format": "uint32",
@@ -417,11 +304,9 @@
     }
   },
   "required": [
-    "entry",
     "flow-id",
     "nodes",
     "schema-version",
-    "trigger",
     "version"
   ],
   "title": "Flow",

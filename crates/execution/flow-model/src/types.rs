@@ -1,16 +1,18 @@
 //! Canonical flow-graph types (5.1).
 //!
 //! A flow is **data, not code**: a versioned directed graph of typed nodes
-//! wired by ported edges, invoked by one trigger, referencing credentials by
-//! name. Node `type` is an open string resolved by the runner's node library
-//! (5.3) — this crate validates graph *structure*, not per-node-type config.
+//! wired by ported edges, starting at one typed entry node, and referencing
+//! credentials by name. Ordinary node `type` values are open strings resolved
+//! by the runner's node library (5.3).
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Map, Value};
+
+use crate::canonical;
 
 /// The flow-schema **format** version this crate implements. Distinct from a
-/// flow's own [`Flow::version`]. Compatibility rule (mirrors the WIT freeze):
-/// `0.1.x` is additive/clarifying only; a breaking change waits for `0.2`.
+/// flow's own [`Flow::version`]. This pre-version-alpha contract is refreshed
+/// from zero; there is one current reader and no legacy migration path.
 pub const SCHEMA_VERSION: &str = "0.1";
 
 /// The default (main) output port of a node.
@@ -18,6 +20,8 @@ pub const MAIN_PORT: &str = "main";
 /// The reserved output port a node emits on when it errors — the "error path"
 /// (5.2). Edges from this port route failures without aborting the run.
 pub const ERROR_PORT: &str = "error";
+/// Node types which identify the graph's unique entry.
+pub const ENTRY_TYPES: [&str; 3] = ["request", "cron", "event"];
 
 /// A stable node identifier, unique within a flow.
 pub type NodeId = String;
@@ -37,11 +41,7 @@ pub struct Flow {
     /// Human-readable label (editor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// How the flow is invoked. Exactly one.
-    pub trigger: Trigger,
-    /// The node the trigger payload enters the graph at.
-    pub entry: NodeId,
-    /// The nodes of the graph.
+    /// The nodes of the graph. Exactly one has a type in [`ENTRY_TYPES`].
     pub nodes: Vec<Node>,
     /// The wiring between node output ports and downstream nodes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -299,10 +299,8 @@ impl PartitionPolicy {
 pub struct Node {
     /// Unique within the flow.
     pub id: NodeId,
-    /// The node type — an open string the runner's node library (5.3) resolves
-    /// (e.g. `postgres-query`, `transform`, `http-request`, `conditional`,
-    /// `respond`, `delay`, `custom`). Structural validation here does not
-    /// constrain it.
+    /// The node type. Engine-reserved types are checked here; ordinary open
+    /// strings are resolved through the pinned node-interface bundle.
     #[serde(rename = "type")]
     pub node_type: String,
     /// Human-readable label (editor).
@@ -315,6 +313,18 @@ pub struct Node {
     /// Optional reference to a declared credential by [`CredentialRef::name`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
+}
+
+impl Node {
+    /// The engine-reserved entry kind represented by this node, if any.
+    pub fn entry_kind(&self) -> Option<EntryKind> {
+        match self.node_type.as_str() {
+            "request" => Some(EntryKind::Request),
+            "cron" => Some(EntryKind::Cron),
+            "event" => Some(EntryKind::Event),
+            _ => None,
+        }
+    }
 }
 
 /// A wire from one node's output port to a downstream node. Branch = several
@@ -337,37 +347,85 @@ pub struct Edge {
     pub to_port: Option<String>,
 }
 
-/// How a flow is invoked. The dispatcher (5.14) registers cron and row-event
-/// triggers; webhook triggers are routed by the API gateway.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-pub enum Trigger {
-    /// HTTP webhook. `sync` = respond within the request (write-ahead default,
-    /// D15); otherwise fire-and-forget.
-    Webhook {
-        #[serde(default)]
-        sync: bool,
-        /// Optional path suffix under the flow's webhook route.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        path: Option<String>,
-    },
-    /// Scheduled invocation (cron expression). Dispatcher-owned; wakes parked
-    /// projects (F3).
-    Cron { schedule: String },
-    /// Fires from a durable row event, e.g. F4 on `dispositions` insert —
-    /// delivered by the D19 v3 event plane (CDC reader → JetStream →
-    /// materializer) via the flow's event registration; the run id is
-    /// `{flow}:evt:{stream_seq}`.
-    RowEvent {
-        table: String,
-        #[serde(default)]
-        event: RowEvent,
-    },
-    /// Manual / test-run invocation (editor test-run).
-    Manual,
+/// The graph's unique engine-reserved entry kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    Request,
+    Cron,
+    Event,
 }
 
-/// The row mutation a [`Trigger::RowEvent`] fires on.
+/// Configuration carried by a `request` entry node.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RequestConfig {
+    /// The draft 2020-12 contract checked before a run is admitted.
+    pub input_schema: Value,
+}
+
+/// Configuration carried by a `respond` node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RespondConfig {
+    /// Final caller status. Informational statuses cannot release a caller.
+    pub status: u16,
+}
+
+/// Configuration carried by a universal `fail` node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct FailConfig {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default = "default_fail_status")]
+    pub status: u16,
+}
+
+fn default_fail_status() -> u16 {
+    400
+}
+
+/// Input synthesized for a `cron` entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct CronInput {
+    /// The schedule anchor, as RFC 3339 UTC.
+    pub scheduled_at: String,
+    /// The actual firing time, as RFC 3339 UTC.
+    pub fired_at: String,
+}
+
+/// Input synthesized for an `event` entry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct EventInput {
+    pub event: RowEvent,
+    /// The new row image. Absent when the operation has no new image.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_image"
+    )]
+    pub new: Option<Map<String, Value>>,
+    /// The old row image. Absent when the operation has no old image; `null`
+    /// is deliberately rejected so omission has one wire representation.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_image"
+    )]
+    pub old: Option<Map<String, Value>>,
+}
+
+fn deserialize_image<'de, D>(deserializer: D) -> Result<Option<Map<String, Value>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Map::<String, Value>::deserialize(deserializer).map(Some)
+}
+
+/// A durable row mutation carried by [`EventInput`].
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -396,15 +454,33 @@ pub struct CredentialRef {
 }
 
 impl Flow {
-    /// Parse a flow from canonical JSON (import).
+    /// The unique typed entry node, or `None` while cardinality is invalid.
+    pub fn entry_node(&self) -> Option<&Node> {
+        let mut entries = self.nodes.iter().filter(|node| node.entry_kind().is_some());
+        let entry = entries.next()?;
+        entries.next().is_none().then_some(entry)
+    }
+
+    /// Parse a flow from JSON (import).
     pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(s)
     }
 
-    /// Serialize a flow to canonical pretty JSON (export).
+    /// Serialize a flow to human-readable JSON (export).
     pub fn to_json(&self) -> String {
         // Infallible for this type; a plain data struct never fails to encode.
         serde_json::to_string_pretty(self).expect("Flow serializes")
+    }
+
+    /// RFC 8785 JSON Canonicalization Scheme bytes for artifact identity.
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let value = serde_json::to_value(self).expect("Flow serializes");
+        canonical::to_vec(&value)
+    }
+
+    /// SHA-256 of [`Flow::canonical_bytes`], the stored `graph_hash`.
+    pub fn graph_hash(&self) -> [u8; 32] {
+        canonical::sha256(&self.canonical_bytes())
     }
 }
 

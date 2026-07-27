@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use wamn_flow::{Edge, Flow, Issue, Node};
+use wamn_flow::{Edge, Flow, Issue, Node, ResolvedInterfaces};
 
 /// Why a flow could not be compiled into a runnable plan.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,12 +51,15 @@ pub struct Plan<'f> {
 }
 
 impl<'f> Plan<'f> {
-    /// Validate (`Flow::validate` — errors only) and index the flow. On success
-    /// the caller may rely on every structural guarantee 5.1 checks: unique
-    /// non-empty node ids, `entry` resolves to a node, every edge endpoint
-    /// resolves, no self-loop, node types non-empty.
-    pub fn compile(flow: &'f Flow) -> Result<Plan<'f>, EngineError> {
-        flow.validate().map_err(EngineError::Invalid)?;
+    /// Validate (`Flow::validate` — errors only) against the release's resolved
+    /// node interfaces and index the flow. On success the caller may rely on
+    /// every structural guarantee 5.1 checks.
+    pub fn compile(
+        flow: &'f Flow,
+        resolved_interfaces: &ResolvedInterfaces,
+    ) -> Result<Plan<'f>, EngineError> {
+        flow.validate(resolved_interfaces)
+            .map_err(EngineError::Invalid)?;
 
         let mut by_id = HashMap::with_capacity(flow.nodes.len());
         for node in &flow.nodes {
@@ -110,7 +113,9 @@ impl<'f> Plan<'f> {
 
     /// The entry node (guaranteed present post-compile).
     pub fn entry(&self) -> &'f Node {
-        self.by_id[self.flow.entry.as_str()]
+        self.flow
+            .entry_node()
+            .expect("validated plan has exactly one entry node")
     }
 
     /// Look up a node by id.
