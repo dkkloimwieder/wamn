@@ -1116,4 +1116,9 @@ CREATE TABLE catalog.event_registrations (
 ALTER TABLE catalog.event_registrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.event_registrations FORCE ROW LEVEL SECURITY;
 CREATE POLICY event_registrations_tenant ON catalog.event_registrations
-    USING (tenant_id = NULLIF(current_setting('app.t
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app;
+-- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
+CREATE INDEX event_registrations_by_entity
+    ON catalog.event_registrations (tenant_id, catalog_id, entity_id);

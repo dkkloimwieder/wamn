@@ -13,12 +13,15 @@
 //!   Postgres (`WAMN_MIGRATE_PG_URL`, a superuser URL; skipped when unset).
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use wamn_schema_control::{
     Confirmation, Env, MigrationError, MigrationRequest, SqlStatement, Value, dry_run,
     plan_migration, rollback_plan,
 };
 use wamn_schema_model::{Catalog, Entity, Field, FieldType};
+
+static LIVE_DATABASE: Mutex<()> = Mutex::new(());
 
 // --- fixtures ---------------------------------------------------------------
 
@@ -416,6 +419,69 @@ fn apply_block(plan: &wamn_schema_control::ApplyPlan) -> String {
 }
 
 #[test]
+fn catalog_schema_from_zero_is_complete_and_transactional_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
+        eprintln!(
+            "skipping catalog_schema_from_zero_is_complete_and_transactional_on_postgres \
+             (set WAMN_MIGRATE_PG_URL to run)"
+        );
+        return;
+    };
+    let _live_database = LIVE_DATABASE
+        .lock()
+        .expect("live database test lock is not poisoned");
+
+    run_psql(
+        &url,
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
+         CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+         END IF; END $$;\n\
+         DROP SCHEMA IF EXISTS catalog CASCADE;",
+    );
+
+    let schema = catalog_schema_sql();
+    let faulted = schema.replacen(
+        "CREATE TABLE catalog.schema_migrations (",
+        "SELECT 1 / 0;\nCREATE TABLE catalog.schema_migrations (",
+        1,
+    );
+    assert_ne!(faulted, schema, "fault seam must exist in canonical DDL");
+    run_psql_expect_failure(&url, &format!("BEGIN;\n{faulted}\nCOMMIT;"));
+    assert_eq!(
+        query_psql(&url, "SELECT to_regnamespace('catalog') IS NULL").trim(),
+        "t",
+        "the injected failure must roll back every earlier catalog object"
+    );
+
+    run_psql(
+        &url,
+        &format!(
+            "BEGIN;\n{schema}\n\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT count(*) FROM pg_tables WHERE schemaname='catalog')=20,\n\
+                 'complete catalog table set';\n\
+               ASSERT to_regclass('catalog.event_registrations') IS NOT NULL,\n\
+                 'event registrations table';\n\
+               ASSERT EXISTS (\n\
+                 SELECT 1 FROM pg_policies\n\
+                 WHERE schemaname='catalog' AND tablename='event_registrations'\n\
+                   AND policyname='event_registrations_tenant'\n\
+               ), 'event registrations tenant policy';\n\
+               ASSERT has_table_privilege(\n\
+                 'wamn_app', 'catalog.event_registrations',\n\
+                 'SELECT, INSERT, UPDATE, DELETE'\n\
+               ), 'event registrations grant';\n\
+               ASSERT to_regclass('catalog.event_registrations_by_entity') IS NOT NULL,\n\
+                 'event registrations entity index';\n\
+             END $$;\n\
+             COMMIT;"
+        ),
+    );
+
+    run_psql(&url, "DROP SCHEMA catalog CASCADE;");
+}
+
+#[test]
 fn migration_engine_applies_forward_and_gates_destructive_on_postgres() {
     let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
         eprintln!(
@@ -424,6 +490,9 @@ fn migration_engine_applies_forward_and_gates_destructive_on_postgres() {
         );
         return;
     };
+    let _live_database = LIVE_DATABASE
+        .lock()
+        .expect("live database test lock is not poisoned");
 
     let v1 = widget_catalog(1, false);
     let v2 = widget_catalog(2, true);
@@ -518,6 +587,15 @@ fn migration_engine_applies_forward_and_gates_destructive_on_postgres() {
 }
 
 fn run_psql(url: &str, script: &str) {
+    let out = psql_output(url, script);
+    assert!(
+        out.status.success(),
+        "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn psql_output(url: &str, script: &str) -> std::process::Output {
     use std::io::Write;
     use std::process::{Command as Proc, Stdio};
     let mut child = Proc::new("psql")
@@ -534,10 +612,18 @@ fn run_psql(url: &str, script: &str) {
         .unwrap()
         .write_all(script.as_bytes())
         .unwrap();
-    let out = child.wait_with_output().unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn run_psql_expect_failure(url: &str, script: &str) {
+    let out = psql_output(url, script);
     assert!(
-        out.status.success(),
-        "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
+        !out.status.success(),
+        "faulted catalog apply unexpectedly succeeded:\n{script}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("division by zero"),
+        "faulted catalog apply failed at the wrong seam: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }

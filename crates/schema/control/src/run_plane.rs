@@ -827,6 +827,24 @@ mod tests {
 
     use super::*;
 
+    // Verified against the last complete reorganized schema in git history
+    // (`95be7d1`). Keeping the required final apparatus as one exact suffix
+    // detects mid-token truncation, omitted grants/indexes, reordered objects,
+    // and unreviewed objects appended after the canonical tail.
+    const EVENT_REGISTRATIONS_TAIL: &str = "\
+CREATE POLICY event_registrations_tenant ON catalog.event_registrations
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app;
+-- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
+CREATE INDEX event_registrations_by_entity
+    ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
+";
+
+    fn catalog_tail_is_complete(sql: &str) -> bool {
+        sql.ends_with(EVENT_REGISTRATIONS_TAIL)
+    }
+
     fn schema(value: &str) -> BareSchemaName {
         BareSchemaName::new(value).expect("test schema is valid")
     }
@@ -970,6 +988,34 @@ mod tests {
             20,
             "catalog-schema.sql table count: {catalog:?}"
         );
+    }
+
+    #[test]
+    fn catalog_schema_ends_with_the_complete_event_registration_apparatus() {
+        assert!(catalog_tail_is_complete(CATALOG_SCHEMA_SQL));
+    }
+
+    #[test]
+    fn catalog_tail_guard_rejects_truncation_omission_and_object_order_drift() {
+        let truncated = CATALOG_SCHEMA_SQL
+            .strip_suffix("id);\n")
+            .expect("canonical tail ends with the entity index");
+        assert!(!catalog_tail_is_complete(truncated));
+
+        let without_grant = CATALOG_SCHEMA_SQL.replace(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app;\n",
+            "",
+        );
+        assert!(!catalog_tail_is_complete(&without_grant));
+
+        let grant =
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app;\n";
+        let before_tail = CATALOG_SCHEMA_SQL
+            .strip_suffix(EVENT_REGISTRATIONS_TAIL)
+            .expect("canonical schema has the guarded tail");
+        let reordered_tail = format!("{}{grant}", EVENT_REGISTRATIONS_TAIL.replace(grant, ""));
+        let reordered = format!("{before_tail}{reordered_tail}");
+        assert!(!catalog_tail_is_complete(&reordered));
     }
 
     #[test]
