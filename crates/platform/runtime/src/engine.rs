@@ -21,6 +21,9 @@ const POOL_SLOTS: u32 = 512;
 /// deadline of N ticks caps guest execution at roughly N × 10 ms.
 pub const DEFAULT_EPOCH_TICK: Duration = Duration::from_millis(10);
 
+/// Hard upper bound for one guest attempt and any host call it starts.
+pub const MAX_HOST_CALL_DURATION: Duration = Duration::from_secs(30);
+
 /// Advertise the platform memory ceiling to the fork's per-store limiter.
 ///
 /// Call this before the Tokio runtime starts, while no other thread can read

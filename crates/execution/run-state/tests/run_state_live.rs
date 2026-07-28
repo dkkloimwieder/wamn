@@ -387,6 +387,49 @@ fn run_state_live() {
     );
     success(&url, &nr_script);
 
+    // The final host-side send marker refuses both expired authority windows
+    // and performs no dispatch-state write.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,status,run_deadline_at) VALUES \
+           ('t1','deadline-attempt','f',1,'running',now()+interval '1 minute'), \
+           ('t1','deadline-run','f',1,'running',now()-interval '1 second'); \
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           ('t1','deadline-attempt','worker-deadline',now()+interval '1 minute',1), \
+           ('t1','deadline-run','worker-deadline',now()+interval '1 minute',1); \
+         INSERT INTO wamn_run.node_runs \
+           (tenant_id,run_id,node_id,occurrence,seq,status,recovery_class, \
+            attempt_started_at,attempt_deadline_at,attempt_input_ref) VALUES \
+           ('t1','deadline-attempt','effect',0,1,'started','replay', \
+            now()-interval '2 seconds',now()-interval '1 second','sha256:expired'), \
+           ('t1','deadline-run','effect',0,1,'started','replay', \
+            now()-interval '2 seconds',now()+interval '1 minute','sha256:run-expired');",
+    );
+    let deadline_script = format!(
+        "{} PREPARE mark_stmt (text,text,text,bigint,text,int,bigint) AS {}; \
+         CREATE TEMP TABLE attempt_expired AS \
+           EXECUTE mark_stmt('deadline-attempt','deadline-attempt','worker-deadline',1, \
+                             'effect',0,30000); \
+         CREATE TEMP TABLE run_expired AS \
+           EXECUTE mark_stmt('deadline-run','deadline-run','worker-deadline',1, \
+                             'effect',0,30000); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM attempt_expired) = 'attempt-deadline-expired', \
+                  'expired attempt is refused at the send boundary'; \
+           ASSERT (SELECT result_code FROM run_expired) = 'run-deadline-expired', \
+                  'expired invocation budget is refused at the send boundary'; \
+           ASSERT NOT EXISTS (SELECT FROM node_runs \
+                               WHERE run_id LIKE 'deadline-%' \
+                                 AND attempt_dispatched_at IS NOT NULL), \
+                  'expired authority performs no dispatch marker write'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        mark_attempt
+    );
+    success(&url, &deadline_script);
+
     // The named unique constraint is the stable input to the public
     // InvocationAdmissionRefusal mapping.
     success(

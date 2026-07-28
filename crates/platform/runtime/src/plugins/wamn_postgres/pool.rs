@@ -9,6 +9,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Context as _;
 use deadpool_postgres::{Hook, HookError, Object, Pool};
 
+use crate::engine::MAX_HOST_CALL_DURATION;
+
+fn bounded_wait_timeout_ms(value: u64) -> u64 {
+    value.clamp(1, MAX_HOST_CALL_DURATION.as_millis() as u64)
+}
+
+fn bounded_statement_timeout_ms(value: u64) -> u32 {
+    value.clamp(1, MAX_HOST_CALL_DURATION.as_millis() as u64) as u32
+}
+
 #[derive(Clone, Debug)]
 pub struct WamnPostgresConfig {
     /// `postgres://user:pass@host:port/db`. None = plugin registers but every
@@ -36,8 +46,11 @@ impl WamnPostgresConfig {
                 .or_else(|_| std::env::var("WAMN_PG_URL"))
                 .ok(),
             pool_max_size: num("WAMN_PG_POOL_MAX", 16),
-            wait_timeout_ms: num("WAMN_PG_WAIT_TIMEOUT_MS", 2_000),
-            statement_timeout_ms: num("WAMN_PG_STATEMENT_TIMEOUT_MS", 5_000),
+            wait_timeout_ms: bounded_wait_timeout_ms(num("WAMN_PG_WAIT_TIMEOUT_MS", 2_000)),
+            statement_timeout_ms: bounded_statement_timeout_ms(num(
+                "WAMN_PG_STATEMENT_TIMEOUT_MS",
+                5_000,
+            )),
             row_limit: num("WAMN_PG_ROW_LIMIT", 100_000),
         }
     }
@@ -135,11 +148,14 @@ impl StaticCredentialProvider {
                 ProjectConfig {
                     database_url: url,
                     pool_max_size: u64_or("pool_max_size", base.pool_max_size as u64) as usize,
-                    wait_timeout_ms: u64_or("wait_timeout_ms", base.wait_timeout_ms),
-                    statement_timeout_ms: u64_or(
+                    wait_timeout_ms: bounded_wait_timeout_ms(u64_or(
+                        "wait_timeout_ms",
+                        base.wait_timeout_ms,
+                    )),
+                    statement_timeout_ms: bounded_statement_timeout_ms(u64_or(
                         "statement_timeout_ms",
                         base.statement_timeout_ms as u64,
-                    ) as u32,
+                    )),
                     row_limit: u64_or("row_limit", base.row_limit),
                 },
             );
@@ -260,5 +276,14 @@ mod tests {
         assert!(!standard_conforming_strings_ok("off"));
         assert!(!standard_conforming_strings_ok(""));
         assert!(!standard_conforming_strings_ok("ON"));
+    }
+
+    #[test]
+    fn configured_database_waits_are_finite_and_nonzero() {
+        let max = MAX_HOST_CALL_DURATION.as_millis() as u64;
+        assert_eq!(bounded_wait_timeout_ms(0), 1);
+        assert_eq!(bounded_wait_timeout_ms(u64::MAX), max);
+        assert_eq!(bounded_statement_timeout_ms(0), 1);
+        assert_eq!(u64::from(bounded_statement_timeout_ms(u64::MAX)), max);
     }
 }

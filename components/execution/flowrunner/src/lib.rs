@@ -1914,6 +1914,12 @@ fn mark_attempt_dispatched(
         AttemptDispatchResult::FenceLost => {
             Err("attempt dispatch marker refused: fence-lost".to_string())
         }
+        AttemptDispatchResult::AttemptDeadlineExpired => {
+            Err("attempt dispatch refused: attempt-deadline-expired".to_string())
+        }
+        AttemptDispatchResult::RunDeadlineExpired => {
+            Err("attempt dispatch refused: run-deadline-expired".to_string())
+        }
         other => Err(format!("attempt dispatch marker refused: {other:?}")),
     }
 }

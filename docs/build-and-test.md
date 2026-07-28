@@ -3755,3 +3755,28 @@ WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15623/wamn \
   cargo test --locked -p wamn-run-state --test run_state_live \
   run_state_live -- --ignored --exact --nocapture
 ```
+
+## CF-DEADLINES — bounded attempts and poisoned-instance disposal (`wamn-fqg.14`)
+
+The final fenced send marker rejects elapsed attempt and run deadlines before
+writing `attempt_dispatched_at`. The execution host applies the same finite
+ceiling to the Wasmtime epoch and outbound HTTP waits; Postgres pool and
+statement waits clamp to that ceiling. A Wasmtime interruption drops the live
+store before the executor exits for replacement, so no later call can enter the
+poisoned instance.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-fqg14 \
+  cargo test --locked -p wamn-runtime -p wamn-execution-host -p wamn-runner
+
+CARGO_TARGET_DIR=/tmp/wamn-target-fqg14 \
+  cargo test --locked -p wamn-proof-system --lib deadlineproof::tests::
+
+CARGO_TARGET_DIR=/tmp/wamn-target-fqg14-components \
+  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15623/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-fqg14 \
+  cargo test --locked -p wamn-run-state --test run_state_live \
+  run_state_live -- --ignored --exact --nocapture
+```

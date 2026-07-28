@@ -44,7 +44,7 @@ authority AS ( \
            r.tenant_id, r.run_id, r.status, \
            r.caller_outcome_kind, r.caller_outcome_json, \
            r.caller_http_status, r.caller_release_node_id, \
-           r.caller_outcome_hash, r.caller_released_at \
+           r.caller_outcome_hash, r.caller_released_at, r.run_deadline_at \
       FROM input AS i \
       LEFT JOIN locked_run AS r ON true \
       LEFT JOIN locked_queue AS q ON true \
@@ -84,7 +84,8 @@ pub fn begin_attempt_sql() -> String {
                       WHEN n.recovery_class IN ('replay', 'idempotent-with-key') \
                         THEN 'redispatch' \
                       ELSE 'effect-uncertain' \
-                    END AS result_code, a.tenant_id, a.run_id, a.status \
+                    END AS result_code, a.tenant_id, a.run_id, a.status, \
+                    a.run_deadline_at \
                FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
          ), \
          inserted AS ( \
@@ -93,7 +94,10 @@ pub fn begin_attempt_sql() -> String {
                      recovery_class, attempt_started_at, attempt_deadline_at, \
                      attempt_input_ref, attempt_key) \
              SELECT c.tenant_id, c.run_id, $5, $6, $7, 'started', $8, now(), \
-                    now() + ($11::bigint * interval '1 millisecond'), $9, $10 \
+                    LEAST( \
+                        now() + ($11::bigint * interval '1 millisecond'), \
+                        COALESCE(c.run_deadline_at, 'infinity'::timestamptz) \
+                    ), $9, $10 \
                FROM classified AS c WHERE c.result_code = 'new' \
              RETURNING run_id \
          ), \
@@ -101,8 +105,10 @@ pub fn begin_attempt_sql() -> String {
              UPDATE node_runs AS n \
                 SET attempt = n.attempt + 1, attempt_started_at = now(), \
                     attempt_dispatched_at = NULL, \
-                    attempt_deadline_at = \
-                        now() + ($11::bigint * interval '1 millisecond') \
+                    attempt_deadline_at = LEAST( \
+                        now() + ($11::bigint * interval '1 millisecond'), \
+                        COALESCE(c.run_deadline_at, 'infinity'::timestamptz) \
+                    ) \
                FROM classified AS c \
               WHERE c.result_code = 'redispatch' \
                 AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
@@ -152,6 +158,10 @@ pub fn mark_attempt_dispatched_sql() -> String {
                       WHEN a.result_code <> 'ready' THEN a.result_code \
                       WHEN n.run_id IS NULL THEN 'attempt-not-found' \
                       WHEN n.status <> 'started' THEN 'attempt-not-started' \
+                      WHEN n.attempt_deadline_at <= now() \
+                        THEN 'attempt-deadline-expired' \
+                      WHEN a.run_deadline_at IS NOT NULL \
+                       AND a.run_deadline_at <= now() THEN 'run-deadline-expired' \
                       WHEN n.attempt_dispatched_at IS NOT NULL THEN 'already-dispatched' \
                       ELSE 'ready' \
                     END AS result_code, a.tenant_id, a.run_id, a.status \
@@ -907,6 +917,7 @@ mod tests {
         assert!(sql.contains("INSERT INTO node_runs"));
         assert!(sql.contains("'started', $8, now()"));
         assert!(sql.contains("attempt_input_ref, attempt_key"));
+        assert!(sql.contains("COALESCE(c.run_deadline_at, 'infinity'::timestamptz)"));
         assert!(sql.contains("n.recovery_class = 'never-replay'"));
         assert!(sql.contains("n.attempt_dispatched_at IS NULL THEN 'prepared'"));
         assert!(sql.contains("THEN 'effect-uncertain'"));
@@ -924,6 +935,8 @@ mod tests {
 
         let dispatched = mark_attempt_dispatched_sql();
         assert!(dispatched.contains("SET attempt_dispatched_at = now()"));
+        assert!(dispatched.contains("THEN 'attempt-deadline-expired'"));
+        assert!(dispatched.contains("THEN 'run-deadline-expired'"));
         assert!(dispatched.contains("THEN 'already-dispatched'"));
         assert!(dispatched.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
     }

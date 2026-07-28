@@ -24,6 +24,7 @@ use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
 use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
 use wamn_runtime::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
@@ -102,6 +103,15 @@ type RunNextFunc = TypedFunc<(u64,), (Result<(bool, Option<String>, u32), String
 /// The side-effect-free `check-flow` export's typed signature.
 type CheckFlowFunc = TypedFunc<(String,), (Result<Vec<String>, String>,)>;
 
+fn bounded_attempt_ms(value: u64) -> u64 {
+    value.clamp(1, MAX_HOST_CALL_DURATION.as_millis() as u64)
+}
+
+fn deadline_ticks(attempt_ms: u64) -> u64 {
+    let tick_ms = DEFAULT_EPOCH_TICK.as_millis() as u64;
+    bounded_attempt_ms(attempt_ms).div_ceil(tick_ms)
+}
+
 /// One completed guest drive, borrowed for synchronous caller observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DriveObservation<'a> {
@@ -166,6 +176,13 @@ struct RunnerEgress {
     policy: Arc<RunnerEgressPolicy>,
 }
 
+fn bounded_outgoing_config(mut config: OutgoingRequestConfig) -> OutgoingRequestConfig {
+    config.connect_timeout = config.connect_timeout.min(MAX_HOST_CALL_DURATION);
+    config.first_byte_timeout = config.first_byte_timeout.min(MAX_HOST_CALL_DURATION);
+    config.between_bytes_timeout = config.between_bytes_timeout.min(MAX_HOST_CALL_DURATION);
+    config
+}
+
 #[async_trait::async_trait]
 impl HostHandler for RunnerEgress {
     async fn start(&self) -> anyhow::Result<()> {
@@ -222,7 +239,8 @@ impl HostHandler for RunnerEgress {
                 ErrorCode::HttpRequestDenied,
             ))));
         }
-        self.inner.send_request(workload_id, request, config)
+        self.inner
+            .send_request(workload_id, request, bounded_outgoing_config(config))
     }
 }
 
@@ -269,10 +287,14 @@ fn attach_memory_limiter(store: &mut Store<SharedCtx>, component_id: &str) -> Op
 ///
 /// [`ExecutionHost::drain`] pulls every currently-claimable run to a terminal
 /// (or parked) state. Service leaves decide when to invoke another drain.
-pub struct ExecutionHost {
+struct LiveExecution {
     store: Store<SharedCtx>,
     check_flow: CheckFlowFunc,
     run_next: RunNextFunc,
+}
+
+pub struct ExecutionHost {
+    live: Option<LiveExecution>,
     ttl_ms: u64,
     /// [9.8] `Some` when a memory limiter is attached (a budget was configured);
     /// each drive then publishes the store's high-water into the meter.
@@ -284,6 +306,7 @@ impl std::fmt::Debug for ExecutionHost {
         formatter
             .debug_struct("ExecutionHost")
             .field("ttl_ms", &self.ttl_ms)
+            .field("disposed", &self.live.is_none())
             .finish_non_exhaustive()
     }
 }
@@ -404,38 +427,73 @@ impl ExecutionHost {
         // instantiation, so baseline-memory creation is counted) — unbudgeted =
         // no limiter, unchanged behavior.
         let mem = attach_memory_limiter(&mut store, owner);
-        // No kill semantics: a huge deadline so the epoch (which the ticker
-        // still advances) never traps a legitimately long run.
-        store.set_epoch_deadline(u64::MAX / 2);
+        store.set_epoch_deadline(deadline_ticks(ttl_ms));
         let instance = pre.instantiate_async(&mut store).await?;
         let check_flow = instance.get_typed_func(&mut store, "check-flow")?;
         let run_next = instance.get_typed_func(&mut store, "run-next")?;
 
         Ok(Self {
-            store,
-            check_flow,
-            run_next,
-            ttl_ms,
+            live: Some(LiveExecution {
+                store,
+                check_flow,
+                run_next,
+            }),
+            ttl_ms: bounded_attempt_ms(ttl_ms),
             mem,
         })
     }
 
+    /// Whether a Wasmtime interruption or trap disposed this instance.
+    pub fn is_disposed(&self) -> bool {
+        self.live.is_none()
+    }
+
     /// Return the sorted, unique node types this compiled runner cannot dispatch.
     pub async fn check_flow(&mut self, flow_json: &str) -> anyhow::Result<Vec<String>> {
-        let (result,) = self
-            .check_flow
-            .call_async(&mut self.store, (flow_json.to_owned(),))
-            .await?;
+        let call = {
+            let live = self
+                .live
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("execution instance disposed"))?;
+            live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));
+            live.check_flow
+                .call_async(&mut live.store, (flow_json.to_owned(),))
+                .await
+        };
+        let (result,) = match call {
+            Ok(result) => result,
+            Err(error) => {
+                self.live.take();
+                return Err(anyhow::anyhow!(
+                    "check-flow trapped; execution instance disposed: {error}"
+                ));
+            }
+        };
         result.map_err(|error| anyhow::anyhow!("check-flow: {error}"))
     }
 
     /// One turn of the guest's dispatch loop: claim + drive + dequeue/park the
     /// next queued run. Returns (claimed, run_id, outcome).
     async fn call_run_next(&mut self) -> anyhow::Result<(bool, Option<String>, u32)> {
-        let (r,) = self
-            .run_next
-            .call_async(&mut self.store, (self.ttl_ms,))
-            .await?;
+        let call = {
+            let live = self
+                .live
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("execution instance disposed"))?;
+            live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));
+            live.run_next
+                .call_async(&mut live.store, (self.ttl_ms,))
+                .await
+        };
+        let (r,) = match call {
+            Ok(result) => result,
+            Err(error) => {
+                self.live.take();
+                return Err(anyhow::anyhow!(
+                    "run-next trapped; execution instance disposed: {error}"
+                ));
+            }
+        };
         r.map_err(|e| anyhow::anyhow!("run-next: {e}"))
     }
 
@@ -472,7 +530,11 @@ impl ExecutionHost {
             // limiter is attached. This remains adapter state because it
             // requires direct access to the Wasmtime store and its limiter.
             if let Some(mem) = &self.mem {
-                mem.snapshot_from(&self.store.data().wamn_limiter);
+                let live = self
+                    .live
+                    .as_ref()
+                    .expect("a successful drive retains its execution instance");
+                mem.snapshot_from(&live.store.data().wamn_limiter);
             }
             observe_drive(
                 &mut report,
@@ -515,6 +577,27 @@ mod tests {
         );
         // Nothing registered under any other id (no accidental broad claim).
         assert_eq!(logging.claim_snapshot("some-other-id"), None);
+    }
+
+    #[test]
+    fn attempt_and_outbound_deadlines_are_finite() {
+        assert_eq!(bounded_attempt_ms(0), 1);
+        assert_eq!(
+            bounded_attempt_ms(u64::MAX),
+            MAX_HOST_CALL_DURATION.as_millis() as u64
+        );
+        assert_eq!(deadline_ticks(0), 1);
+
+        let bounded = bounded_outgoing_config(OutgoingRequestConfig {
+            use_tls: true,
+            connect_timeout: Duration::MAX,
+            first_byte_timeout: Duration::MAX,
+            between_bytes_timeout: Duration::MAX,
+        });
+        assert!(bounded.use_tls);
+        assert_eq!(bounded.connect_timeout, MAX_HOST_CALL_DURATION);
+        assert_eq!(bounded.first_byte_timeout, MAX_HOST_CALL_DURATION);
+        assert_eq!(bounded.between_bytes_timeout, MAX_HOST_CALL_DURATION);
     }
 
     #[test]

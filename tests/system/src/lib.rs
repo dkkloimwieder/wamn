@@ -6,6 +6,7 @@ pub use wamn_test_fixtures::{apifixture, f1fixture};
 
 pub mod apiproof;
 pub mod credproof;
+pub mod deadlineproof;
 pub mod f1proof;
 pub mod ladderproof;
 pub mod pocsuiteproof;

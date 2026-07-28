@@ -203,6 +203,10 @@ async fn serve(
                 report.found_work()
             }
             Err(error) => {
+                if executor.is_disposed() {
+                    return Err(error)
+                        .context("run-worker execution instance was interrupted and disposed");
+                }
                 tracing::warn!(
                     error = %error,
                     "run-worker: drain failed (retrying after backoff)"
