@@ -64,7 +64,8 @@ ordering declaration + dispatcher key-stamping (**done 2026-07-19**, `c32ffaf`),
 and bumped `wamn-fqg.9` guest partitioned claim P3→P2 — ~~`fqg.9`~~ **done
 2026-07-20** (`091e35a`, guest run-next claims partitioned heads in order;
 5.11 is now fully closed),
-`wamn-dq5` (5.12 cancel), `wamn-sdp` (5.10 payload store).
+~~`wamn-dq5`~~ (5.12 rev18 durable cancellation — **done 2026-07-28**,
+`5a02458`), `wamn-sdp` (5.10 payload store).
 
 ## Track 2 — API surface correctness · primary, interleave
 

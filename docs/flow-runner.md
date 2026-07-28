@@ -57,8 +57,9 @@ unconditionally terminal, so the driver's ordinary `Done(Failed)` handling
 (mark failed + dequeue) frees the runner. Reconstruction (`Plan::resume`) is
 exempt — recorded history never counts, so a parked-and-resumed long run gets
 the full budget for its live walk each invocation. A single node that never
-*returns* is outside the engine's reach (control never comes back); that host
-backstop (epoch deadline) is deferred to wamn-dq5 [5.12].
+*returns* is bounded by the host epoch/call deadlines and poisoned-instance
+disposal shipped in `wamn-fqg.14`; `wamn-dq5` adds durable cancellation,
+deferred live-attempt seizure, and the dispatcher deadline sweep.
 
 ## Error taxonomy → runner action (mechanical, no string-matching)
 

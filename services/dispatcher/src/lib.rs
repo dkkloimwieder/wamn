@@ -987,7 +987,7 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         projects = dispatcher.projects.len(),
         min_interval_ms = args.min_interval_ms,
         max_interval_ms = args.max_interval_ms,
-        "shared trigger dispatcher up (cron + parked-wake)"
+        "shared trigger dispatcher up (cron + parked-wake + deadline sweep)"
     );
 
     if args.stepped_stdio {

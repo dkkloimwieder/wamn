@@ -381,11 +381,11 @@ retries included): once spent, the run fails with the terminal
 `runaway-budget` fail kind and **dequeues** through the ordinary
 `outcome = 2` path, freeing the runner. So every claimed run terminates, parks,
 or exhausts its budget — the drain always ends. Reconstruction on a resumed run
-is exempt (recorded history never counts against the live budget). The
-remaining gap — a single node that never returns (infinite compute inside one
-node) — is the run-worker's `set_epoch_deadline(u64::MAX / 2)` backstop
-deliberately deferred to wamn-dq5 [5.12], whose epoch-cancel machinery owns
-trap handling + re-instantiation.
+is exempt (recorded history never counts against the live budget). A single
+node that never returns is bounded by the host epoch/call deadlines and
+poisoned-instance disposal shipped in `wamn-fqg.14`; `wamn-dq5` adds durable
+cancellation, deferred live-attempt seizure, and the dispatcher deadline
+sweep.
 
 **Single-project** (one Deployment per project — the api-gateway analog,
 `deploy/platform/runner.yaml`): one flowrunner instance whose plugin session carries this
