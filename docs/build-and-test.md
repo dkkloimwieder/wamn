@@ -2340,6 +2340,30 @@ immutable catalog/source/attachment/head/activation chain for every phase and
 exercises this centralized admission path under race, rollback, retention,
 reconnect, fairness, and wake faults.
 
+### [CALLABLE-FLOWS-POC-F0 / wamn-5wd1.56] echo release and two-commit path
+
+The canonical F0 graph and HTTP attachment are resolved through the immutable
+artifact/release types. The proof refuses malformed input, bad idempotency keys,
+stale artifacts, bypass publication, and a third commit; both named crash seams
+recover to the same stored response and exactly two commits. The gate image is
+tagged with the implementation commit; substitute that tag without editing the
+tracked Job.
+
+```bash
+# recipe-test: H5-CALLABLE-F0 | system | wamn-proof-system | lib | - | callable_f0::tests:: | 5 | tests/system/src/callable_f0.rs F0 immutable release, HTTP attachment, refusals, and two-commit recovery
+cargo test --locked -p wamn-proof-system --lib callable_f0::tests::
+cargo test --locked -p wamn-flow --test flows f0_
+
+docker build --target gates -t wamn-gates:cf-f0-<commit> .
+kind load docker-image wamn-gates:cf-f0-<commit> --name wamn
+kubectl -n wamn-system delete job callable-flow-f0 --ignore-not-found
+sed "s/wamn-gates:cf-f0-ISSUE/wamn-gates:cf-f0-<commit>/" \
+  deploy/gates/callable-flow-f0-job.yaml | kubectl -n wamn-system apply -f -
+kubectl -n wamn-system wait --for=condition=complete \
+  job/callable-flow-f0 --timeout=180s
+kubectl -n wamn-system logs job/callable-flow-f0
+```
+
 ### [CALLABLE-FLOWS-POC-F3 / wamn-5wd1.58] stale-hold escalation r6
 
 The canonical F3 graph and minimal cron attachment prove the scheduled-time

@@ -1,0 +1,31 @@
+# Exact-image gate for the callable-flow F0 release, HTTP attachment, and two-commit proof.
+#
+# Build and load the issue commit's gates image before applying this immutable Job:
+#   docker build --target gates -t wamn-gates:cf-f0-<commit> .
+#   kind load docker-image wamn-gates:cf-f0-<commit> --name wamn
+#   sed "s/wamn-gates:cf-f0-ISSUE/wamn-gates:cf-f0-<commit>/" \
+#     deploy/gates/callable-flow-f0-job.yaml | kubectl -n wamn-system apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: callable-flow-f0
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: callable-flow-f0
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: proof
+          image: wamn-gates:cf-f0-ISSUE
+          imagePullPolicy: Never
+          args: ["--log-level", "error", "callable-f0"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+            limits:
+              memory: "128Mi"
