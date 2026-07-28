@@ -24,6 +24,22 @@ fn success(url: &str, script: &str) {
     );
 }
 
+fn failure(url: &str, script: &str, expected: &str) {
+    let output = psql(url, script);
+    assert!(
+        !output.status.success(),
+        "psql unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(expected),
+        "expected failure {expected:?}\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn app_preamble() -> &'static str {
     "BEGIN; SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; \
      SET LOCAL app.tenant = 't1';"
@@ -306,6 +322,251 @@ fn cancellation_live() {
             sweep,
             request,
             sweep_hash
+        ),
+    );
+
+    // Response expiry is the one cancellation class stored as 504. It wins
+    // when response/run deadlines are equal, while durable operator requests
+    // and run-only deadlines retain 499. A released response deadline is inert,
+    // and a live attempt still defers the sweep.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,status,response_deadline_at,run_deadline_at) \
+         VALUES \
+           ('t1','response-only','f',1,'running', \
+            TIMESTAMPTZ '2000-01-01 00:00:00Z',now()+interval '1 hour'), \
+           ('t1','deadline-equal','f',1,'running', \
+            TIMESTAMPTZ '2000-01-02 00:00:00Z',TIMESTAMPTZ '2000-01-02 00:00:00Z'), \
+           ('t1','run-only','f',1,'running',NULL,TIMESTAMPTZ '2000-01-03 00:00:00Z'), \
+           ('t1','operator-request','f',1,'running', \
+            TIMESTAMPTZ '2000-01-04 00:00:00Z',TIMESTAMPTZ '2000-01-04 00:00:00Z'), \
+           ('t1','response-live-attempt','f',1,'running', \
+            TIMESTAMPTZ '2000-01-05 00:00:00Z',now()+interval '1 hour'); \
+         INSERT INTO wamn_run.run_queue (tenant_id,run_id,lease_generation) VALUES \
+           ('t1','response-only',11),('t1','deadline-equal',12),('t1','run-only',13), \
+           ('t1','operator-request',14),('t1','response-live-attempt',15); \
+         INSERT INTO wamn_run.node_runs \
+           (tenant_id,run_id,node_id,occurrence,seq,status,recovery_class, \
+            attempt_started_at,attempt_dispatched_at,attempt_deadline_at,attempt_input_ref) \
+         VALUES ('t1','response-live-attempt','effect',0,1,'started','replay', \
+                 now(),now(),now()+interval '1 minute','sha256:response-live'); \
+         INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,status,caller_outcome_kind, \
+            caller_outcome_json,caller_http_status,caller_release_node_id, \
+            caller_outcome_hash,caller_released_at,response_deadline_at,run_deadline_at) \
+         VALUES ('t1','released-response','f',1,'running','responded','{}',202,'respond', \
+                 'sha256:released-response',now(), \
+                 TIMESTAMPTZ '2000-01-06 00:00:00Z',now()+interval '1 hour'); \
+         INSERT INTO wamn_run.run_queue (tenant_id,run_id,lease_generation) \
+         VALUES ('t1','released-response',16);",
+    );
+    let response_hash = canonical_json_sha256(&serde_json::json!({
+        "error": {
+            "code": "response-deadline",
+            "flow-id": "f",
+            "flow-version": 1,
+            "run-id": "response-only"
+        }
+    }));
+    success(
+        &url,
+        &format!(
+            "{} PREPARE request_stmt (text,text,bigint) AS {}; \
+             CREATE TEMP TABLE operator_requested AS \
+               EXECUTE request_stmt('operator-request','operator',14); \
+             PREPARE sweep_stmt (bigint) AS {}; \
+             CREATE TEMP TABLE boundary_sweep AS EXECUTE sweep_stmt(16); \
+             DO $$ BEGIN \
+               ASSERT (SELECT result_code FROM operator_requested) = 'requested', \
+                      'operator request persisted before the deadline sweep'; \
+               ASSERT (SELECT count(*) FROM boundary_sweep) = 4, \
+                      'exactly the four eligible boundary rows terminalized'; \
+               ASSERT (SELECT min(notification_count) FROM boundary_sweep) = 4 \
+                  AND (SELECT max(notification_count) FROM boundary_sweep) = 4, \
+                      'four terminalizations emit exactly four waiter notifications'; \
+               ASSERT (SELECT caller_outcome_kind FROM runs \
+                        WHERE run_id='response-only') = 'cancelled' \
+                  AND (SELECT cancel_kind FROM runs WHERE run_id='response-only') \
+                        = 'response-deadline' \
+                  AND (SELECT terminal_reason FROM runs WHERE run_id='response-only') \
+                        = 'response-deadline' \
+                  AND (SELECT caller_http_status FROM runs WHERE run_id='response-only') = 504, \
+                      'pre-release response deadline stores cancelled/504 and exact code'; \
+               ASSERT (SELECT caller_outcome_json FROM runs \
+                        WHERE run_id='response-only') = \
+                        '{{\"error\":{{\"code\":\"response-deadline\", \
+                         \"flow-id\":\"f\",\"flow-version\":1, \
+                         \"run-id\":\"response-only\"}}}}'::jsonb, \
+                      'response deadline stores the canonical failure envelope'; \
+               ASSERT (SELECT caller_outcome_hash FROM runs \
+                        WHERE run_id='response-only') = '{}', \
+                      'response deadline hash matches the Rust RFC8785 canonicalizer'; \
+               ASSERT (SELECT seized_generation FROM boundary_sweep \
+                        WHERE run_id='response-only') = 12, \
+                      'response terminalization seizes the next generation'; \
+               ASSERT (SELECT cancel_kind FROM runs WHERE run_id='deadline-equal') \
+                        = 'response-deadline' \
+                  AND (SELECT caller_http_status FROM runs WHERE run_id='deadline-equal') = 504, \
+                      'response deadline wins the equal run-deadline boundary'; \
+               ASSERT (SELECT cancel_kind FROM runs WHERE run_id='run-only') = 'run-deadline' \
+                  AND (SELECT caller_http_status FROM runs WHERE run_id='run-only') = 499, \
+                      'run-only deadline retains 499'; \
+               ASSERT (SELECT cancel_kind FROM runs WHERE run_id='operator-request') = 'operator' \
+                  AND (SELECT caller_http_status FROM runs \
+                       WHERE run_id='operator-request') = 499, \
+                      'durable operator request wins elapsed deadlines and retains 499'; \
+               ASSERT (SELECT status FROM runs WHERE run_id='released-response') = 'running' \
+                  AND (SELECT caller_outcome_kind FROM runs \
+                       WHERE run_id='released-response') = 'responded' \
+                  AND (SELECT caller_http_status FROM runs \
+                       WHERE run_id='released-response') = 202 \
+                  AND (SELECT caller_outcome_hash FROM runs \
+                       WHERE run_id='released-response') = 'sha256:released-response' \
+                  AND EXISTS (SELECT FROM run_queue WHERE run_id='released-response'), \
+                      'released response deadline is inert and outcome remains untouched'; \
+               ASSERT (SELECT status FROM runs WHERE run_id='response-live-attempt') = 'running' \
+                  AND EXISTS (SELECT FROM run_queue \
+                              WHERE run_id='response-live-attempt' \
+                                AND lease_generation=15), \
+                      'live attempt defers response-deadline seizure'; \
+             END $$; COMMIT;",
+            app_preamble(),
+            request,
+            sweep,
+            response_hash
+        ),
+    );
+
+    // A fault immediately before terminalization rolls the queue seizure back.
+    // Retrying stores one outcome and reports one transactional notification.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,status,response_deadline_at,run_deadline_at) \
+         VALUES ('t1','fault-before','f',1,'running', \
+                 TIMESTAMPTZ '2000-02-01 00:00:00Z',now()+interval '1 hour'); \
+         INSERT INTO wamn_run.run_queue (tenant_id,run_id,lease_generation) \
+         VALUES ('t1','fault-before',21); \
+         CREATE FUNCTION wamn_run.reject_before_terminalization() RETURNS trigger \
+           LANGUAGE plpgsql AS $$ BEGIN \
+             IF NEW.run_id='fault-before' AND NEW.status='cancelled' THEN \
+               RAISE EXCEPTION 'fault-before-terminalization'; \
+             END IF; \
+             RETURN NEW; \
+           END $$; \
+         CREATE TRIGGER reject_before_terminalization \
+           BEFORE UPDATE ON wamn_run.runs FOR EACH ROW \
+           EXECUTE FUNCTION wamn_run.reject_before_terminalization();",
+    );
+    failure(
+        &url,
+        &format!(
+            "{} PREPARE sweep_stmt (bigint) AS {}; EXECUTE sweep_stmt(16); COMMIT;",
+            app_preamble(),
+            sweep
+        ),
+        "fault-before-terminalization",
+    );
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT status FROM wamn_run.runs WHERE run_id='fault-before') = 'running' \
+              AND (SELECT caller_released_at FROM wamn_run.runs \
+                   WHERE run_id='fault-before') IS NULL, \
+                  'pre-terminal fault stores no outcome'; \
+           ASSERT (SELECT lease_generation FROM wamn_run.run_queue \
+                   WHERE run_id='fault-before') = 21, \
+                  'pre-terminal fault rolls seizure back'; \
+         END $$; \
+         DROP TRIGGER reject_before_terminalization ON wamn_run.runs; \
+         DROP FUNCTION wamn_run.reject_before_terminalization();",
+    );
+    success(
+        &url,
+        &format!(
+            "{} PREPARE sweep_stmt (bigint) AS {}; \
+             CREATE TEMP TABLE retried AS EXECUTE sweep_stmt(16); \
+             DO $$ BEGIN \
+               ASSERT (SELECT count(*) FROM retried WHERE run_id='fault-before') = 1 \
+                  AND (SELECT notification_count FROM retried \
+                       WHERE run_id='fault-before') = 1 \
+                  AND (SELECT seized_generation FROM retried \
+                       WHERE run_id='fault-before') = 22, \
+                      'pre-terminal fault retry stores and notifies exactly once'; \
+               ASSERT (SELECT caller_http_status FROM runs \
+                        WHERE run_id='fault-before') = 504, \
+                      'pre-terminal retry preserves response 504'; \
+             END $$; COMMIT;",
+            app_preamble(),
+            sweep
+        ),
+    );
+
+    // An AFTER trigger is the immediately-after-terminalization fault seam.
+    // PostgreSQL must roll back the terminal row, seizure, and notification
+    // together; the clean retry is again the sole committed outcome.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,status,response_deadline_at,run_deadline_at) \
+         VALUES ('t1','fault-after','f',1,'running', \
+                 TIMESTAMPTZ '2000-02-02 00:00:00Z',now()+interval '1 hour'); \
+         INSERT INTO wamn_run.run_queue (tenant_id,run_id,lease_generation) \
+         VALUES ('t1','fault-after',31); \
+         CREATE FUNCTION wamn_run.reject_after_terminalization() RETURNS trigger \
+           LANGUAGE plpgsql AS $$ BEGIN \
+             IF NEW.run_id='fault-after' AND NEW.status='cancelled' THEN \
+               RAISE EXCEPTION 'fault-after-terminalization'; \
+             END IF; \
+             RETURN NEW; \
+           END $$; \
+         CREATE TRIGGER reject_after_terminalization \
+           AFTER UPDATE ON wamn_run.runs FOR EACH ROW \
+           EXECUTE FUNCTION wamn_run.reject_after_terminalization();",
+    );
+    failure(
+        &url,
+        &format!(
+            "{} PREPARE sweep_stmt (bigint) AS {}; EXECUTE sweep_stmt(16); COMMIT;",
+            app_preamble(),
+            sweep
+        ),
+        "fault-after-terminalization",
+    );
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT status FROM wamn_run.runs WHERE run_id='fault-after') = 'running' \
+              AND (SELECT caller_released_at FROM wamn_run.runs \
+                   WHERE run_id='fault-after') IS NULL, \
+                  'post-terminal fault rolls the stored outcome back'; \
+           ASSERT (SELECT lease_generation FROM wamn_run.run_queue \
+                   WHERE run_id='fault-after') = 31, \
+                  'post-terminal fault rolls seizure back'; \
+         END $$; \
+         DROP TRIGGER reject_after_terminalization ON wamn_run.runs; \
+         DROP FUNCTION wamn_run.reject_after_terminalization();",
+    );
+    success(
+        &url,
+        &format!(
+            "{} PREPARE sweep_stmt (bigint) AS {}; \
+             CREATE TEMP TABLE retried AS EXECUTE sweep_stmt(16); \
+             CREATE TEMP TABLE no_second_outcome AS EXECUTE sweep_stmt(16); \
+             DO $$ BEGIN \
+               ASSERT (SELECT count(*) FROM retried WHERE run_id='fault-after') = 1 \
+                  AND (SELECT notification_count FROM retried \
+                       WHERE run_id='fault-after') = 1 \
+                  AND (SELECT seized_generation FROM retried \
+                       WHERE run_id='fault-after') = 32, \
+                      'post-terminal fault retry stores and notifies exactly once'; \
+               ASSERT NOT EXISTS (SELECT FROM no_second_outcome \
+                                  WHERE run_id='fault-after'), \
+                      'post-terminal retry cannot store or notify twice'; \
+             END $$; COMMIT;",
+            app_preamble(),
+            sweep
         ),
     );
 }

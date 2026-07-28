@@ -1197,11 +1197,19 @@ fn init_crypto() {
 mod tests {
     use super::{
         CRON_ATTACHMENTS_SQL, DispatcherConfig, Ordering, PartitionPolicy, RUN_QUEUE_DEPTH_SQL,
-        Registry, fire, parse_registry, partition_key_for_firing, partition_policy_for_firing,
-        valid_tenant,
+        Registry, cancellation_sweep_sql, fire, parse_registry, partition_key_for_firing,
+        partition_policy_for_firing, valid_tenant,
     };
     use wamn_run_state::admission::AdmissionResult;
     use wamn_scheduler::Firing;
+
+    #[test]
+    fn dispatcher_sweep_uses_run_state_response_deadline_mapping() {
+        let sql = cancellation_sweep_sql();
+        assert!(sql.contains("e.cancel_kind = 'response-deadline'"));
+        assert!(sql.contains("THEN 504 ELSE 499"));
+        assert!(sql.contains("FOR UPDATE SKIP LOCKED"));
+    }
 
     // [9.8] the run_queue.depth count must reuse the CLAIMABLE predicate (rows a
     // runner could take now), not its inverse. A mutant that counts parked rows

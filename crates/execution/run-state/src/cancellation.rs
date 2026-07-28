@@ -102,7 +102,8 @@ WITH candidates AS MATERIALIZED ( \
     SELECT tenant_id, run_id FROM runs \
      WHERE status IN ('dispatched','running') \
        AND (cancel_requested_at IS NOT NULL \
-         OR (response_deadline_at IS NOT NULL AND response_deadline_at <= now()) \
+         OR (caller_released_at IS NULL \
+             AND response_deadline_at IS NOT NULL AND response_deadline_at <= now()) \
          OR (run_deadline_at IS NOT NULL AND run_deadline_at <= now())) \
      ORDER BY COALESCE(cancel_requested_at, response_deadline_at, run_deadline_at), run_id \
      LIMIT $1 \
@@ -111,8 +112,12 @@ WITH candidates AS MATERIALIZED ( \
 eligible AS MATERIALIZED ( \
     SELECT r.tenant_id, r.run_id, r.flow_id, r.flow_version, \
            COALESCE(r.cancel_requested_kind, \
-                    CASE WHEN r.run_deadline_at IS NOT NULL AND r.run_deadline_at <= now() \
-                         THEN 'run-deadline' ELSE 'response-deadline' END) AS cancel_kind \
+                    CASE WHEN r.caller_released_at IS NULL \
+                               AND r.response_deadline_at IS NOT NULL \
+                               AND r.response_deadline_at <= now() \
+                         THEN 'response-deadline' \
+                         WHEN r.run_deadline_at IS NOT NULL AND r.run_deadline_at <= now() \
+                         THEN 'run-deadline' END) AS cancel_kind \
       FROM runs AS r JOIN candidates AS c USING (tenant_id, run_id) \
      WHERE r.status IN ('dispatched','running') \
        AND NOT EXISTS ( \
@@ -123,6 +128,8 @@ eligible AS MATERIALIZED ( \
 ), \
 outcomes AS MATERIALIZED ( \
     SELECT e.*, \
+           CASE WHEN e.cancel_kind = 'response-deadline' THEN 504 ELSE 499 END \
+               AS caller_http_status, \
            '{\"error\":{\"code\":' || to_jsonb(e.cancel_kind)::text || \
            ',\"flow-id\":' || to_jsonb(e.flow_id)::text || \
            ',\"flow-version\":' || e.flow_version::text || \
@@ -144,7 +151,8 @@ terminalized AS ( \
                                       THEN o.canonical_text::jsonb \
                                       ELSE r.caller_outcome_json END, \
            caller_http_status = CASE WHEN r.caller_released_at IS NULL \
-                                     THEN 499 ELSE r.caller_http_status END, \
+                                     THEN o.caller_http_status \
+                                     ELSE r.caller_http_status END, \
            caller_outcome_hash = CASE WHEN r.caller_released_at IS NULL \
                                       THEN 'sha256:' || encode( \
                                           sha256(convert_to(o.canonical_text, 'UTF8')), 'hex') \
@@ -154,7 +162,7 @@ terminalized AS ( \
       FROM outcomes AS o JOIN seized AS s USING (tenant_id, run_id) \
      WHERE r.tenant_id = o.tenant_id AND r.run_id = o.run_id \
        AND r.status IN ('dispatched','running') \
-    RETURNING r.tenant_id, r.run_id, r.cancel_kind \
+    RETURNING r.tenant_id, r.run_id, r.cancel_kind, s.seized_generation \
 ), \
 descendants AS ( \
     WITH RECURSIVE tree AS ( \
@@ -185,7 +193,8 @@ notified AS ( \
      WHERE (SELECT count(*) FROM propagated) >= 0 \
 ) \
 SELECT t.run_id, t.cancel_kind, \
-       (SELECT count(*) FROM notified) AS notification_count \
+       (SELECT count(*) FROM notified) AS notification_count, \
+       t.seized_generation \
   FROM terminalized AS t \
  WHERE (SELECT count(*) FROM notified) >= 0 \
  ORDER BY t.run_id"
@@ -225,9 +234,29 @@ mod tests {
         assert!(sql.contains("status = 'cancelled'"));
         assert!(sql.contains("sha256(convert_to(o.canonical_text, 'UTF8'))"));
         assert!(!sql.contains("jsonb::text"));
-        assert!(sql.contains("THEN 499"));
+        assert!(sql.contains("THEN o.caller_http_status"));
         assert!(sql.contains("(SELECT count(*) FROM notified) AS notification_count"));
+        assert!(sql.contains("t.seized_generation"));
         assert!(sql.contains("WITH RECURSIVE tree"));
         assert!(sql.contains("pg_notify('wamn_run_outcome'"));
+    }
+
+    #[test]
+    fn response_deadline_status_mapping_rejects_499_mutant() {
+        let sql = cancellation_sweep_sql();
+        assert!(
+            sql.contains("CASE WHEN e.cancel_kind = 'response-deadline' THEN 504 ELSE 499 END"),
+            "response deadline must be the sole 504 cancellation class"
+        );
+        assert!(
+            sql.contains("r.caller_released_at IS NULL AND r.response_deadline_at IS NOT NULL"),
+            "only an unreleased caller is eligible for response-deadline terminalization"
+        );
+        assert!(
+            sql.contains(
+                "WHEN r.caller_released_at IS NULL AND r.response_deadline_at IS NOT NULL"
+            ),
+            "response deadline must win the equal/elapsed run-deadline boundary"
+        );
     }
 }
