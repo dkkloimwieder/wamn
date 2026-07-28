@@ -46,14 +46,14 @@ use wamn_f1 as f1;
 use wamn_flow::Flow;
 use wamn_run_state::sql as run_sql;
 use wamn_runner::{
-    Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionStatus, NodeError,
-    NodeOutcome, Plan, ReservedStep, Step,
+    ApplyError, Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState,
+    ExecutionStatus, NodeError, NodeOutcome, Plan, ReservedStep, Step,
 };
 
 struct Component;
 
-const RESERVED_STEP_FAILURE: &str =
-    "legacy F1 webhook cannot execute engine-reserved flow nodes";
+const RESERVED_STEP_FAILURE: &str = "legacy F1 webhook cannot execute engine-reserved flow nodes";
+const APPLY_FAILURE: &str = "legacy F1 webhook engine transition rejected";
 
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
@@ -206,9 +206,53 @@ fn drive(plan: &Plan<'_>, run_id: &str, input: Value) -> (u16, Value) {
                     return (503, error_body("unavailable", &e));
                 }
                 next_seq += 1;
-                plan.apply(&mut st, &d, outcome, 0);
+                if let Err(failure) = apply_dispatch(plan, &mut st, &d, outcome) {
+                    if let Err(e) =
+                        mark_failed(run_id, failure.kind, &failure.node, &failure.reason)
+                    {
+                        return (503, error_body("unavailable", &e));
+                    }
+                    return failure.http_response();
+                }
             }
         }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ApplyFailure {
+    kind: &'static str,
+    node: String,
+    reason: String,
+}
+
+impl ApplyFailure {
+    fn http_response(&self) -> (u16, Value) {
+        (
+            500,
+            error_body(
+                "state-transition-failed",
+                "engine transition failed; see run history",
+            ),
+        )
+    }
+}
+
+fn apply_dispatch(
+    plan: &Plan<'_>,
+    state: &mut ExecutionState,
+    dispatch: &Dispatch,
+    outcome: NodeOutcome,
+) -> Result<(), ApplyFailure> {
+    plan.apply(state, dispatch, outcome, 0)
+        .map_err(|error| apply_failure(dispatch, error))
+}
+
+fn apply_failure(dispatch: &Dispatch, error: ApplyError) -> ApplyFailure {
+    ApplyFailure {
+        kind: "terminal",
+        node: dispatch.node.clone(),
+        reason: format!("{APPLY_FAILURE}: {error}"),
     }
 }
 
@@ -829,6 +873,105 @@ fn send_response(response_out: ResponseOutparam, status: u16, body: Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn apply_test_flow() -> Flow {
+        Flow::from_json(
+            r#"{
+              "schema-version":"0.1",
+              "flow-id":"apply-test",
+              "version":1,
+              "nodes":[
+                {"id":"in","type":"request","config":{"input-schema":{}}},
+                {"id":"work","type":"echo"},
+                {"id":"out","type":"respond","config":{"status":200}}
+              ],
+              "edges":[
+                {"from":"in","to":"work"},
+                {"from":"work","to":"out"}
+              ]
+            }"#,
+        )
+        .expect("apply test flow parses")
+    }
+
+    fn first_dispatch(plan: &Plan<'_>, state: &mut ExecutionState) -> Dispatch {
+        let Step::Reserved(entry) = plan.next(state, 0) else {
+            panic!("request entry must be engine-reserved");
+        };
+        plan.apply_reserved(state, &entry)
+            .expect("entry completion matches active state");
+        let Step::Dispatch(dispatch) = plan.next(state, 0) else {
+            panic!("work node must dispatch");
+        };
+        dispatch
+    }
+
+    #[test]
+    fn apply_success_preserves_legacy_dispatch_progression() {
+        let flow = apply_test_flow();
+        let interfaces =
+            wamn_flow::ResolvedInterfaces::from([("echo".to_string(), vec!["main".to_string()])]);
+        let plan = Plan::compile(&flow, &interfaces).expect("apply test plan compiles");
+        let mut state = plan.start("run-success", json!({"receipt": 1}));
+        let dispatch = first_dispatch(&plan, &mut state);
+        let output = json!({"accepted": true});
+
+        apply_dispatch(
+            &plan,
+            &mut state,
+            &dispatch,
+            NodeOutcome::ok(output.clone()),
+        )
+        .expect("matching dispatch advances");
+
+        assert!(matches!(
+            plan.next(&mut state, 0),
+            Step::Reserved(ReservedStep::Respond { node, payload, .. })
+                if node == "out" && payload == output
+        ));
+    }
+
+    #[test]
+    fn apply_mismatch_terminalizes_with_explicit_http_error() {
+        let flow = apply_test_flow();
+        let interfaces =
+            wamn_flow::ResolvedInterfaces::from([("echo".to_string(), vec!["main".to_string()])]);
+        let plan = Plan::compile(&flow, &interfaces).expect("apply test plan compiles");
+        let mut state = plan.start("run-mismatch", json!({"receipt": 1}));
+        let mut dispatch = first_dispatch(&plan, &mut state);
+        dispatch.node = "wrong-node".to_string();
+
+        let failure = apply_dispatch(
+            &plan,
+            &mut state,
+            &dispatch,
+            NodeOutcome::ok(json!({"must-not-advance": true})),
+        )
+        .expect_err("mismatched dispatch must be terminalized by the adapter");
+
+        assert_eq!(failure.kind, "terminal");
+        assert_eq!(failure.node, "wrong-node");
+        assert_eq!(
+            failure.reason,
+            "legacy F1 webhook engine transition rejected: \
+             active node is \"work\", not \"wrong-node\""
+        );
+        assert_eq!(
+            failure.http_response(),
+            (
+                500,
+                error_body(
+                    "state-transition-failed",
+                    "engine transition failed; see run history",
+                ),
+            )
+        );
+        assert_eq!(
+            state.status(),
+            ExecutionStatus::Running,
+            "the adapter must persist terminal status because rejected apply leaves engine state unchanged"
+        );
+    }
 
     #[test]
     fn every_reserved_step_is_refused_explicitly() {
