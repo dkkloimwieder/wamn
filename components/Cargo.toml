@@ -26,6 +26,7 @@ wamn-flow-invocation = { path = "../crates/execution/flow-invocation", version =
 wamn-materializer = { path = "../crates/events/materializer", version = "0.1.0" }
 wamn-node-guest = { path = "../crates/node/guest", version = "0.1.0" }
 wamn-node-invoke = { path = "../crates/node/invoke", version = "0.1.0" }
+wamn-node-manifest = { path = "../crates/node/manifest", version = "0.1.0" }
 wamn-node-sdk = { path = "../crates/node/sdk", version = "0.1.0" }
 wamn-nodes = { package = "wamn-standard-nodes", path = "../crates/execution/standard-nodes", version = "0.1.0" }
 wamn-run-state = { path = "../crates/execution/run-state", version = "0.1.0" }

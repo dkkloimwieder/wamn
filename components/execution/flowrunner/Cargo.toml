@@ -32,7 +32,7 @@ wamn-node-guest = { workspace = true, features = ["caps"] }
 # the two ends. Pure serde; the guest links only the envelope + the grant helper
 # (never the host-side ConfigCache).
 wamn-node-invoke = { workspace = true }
-wamn-node-manifest = { path = "../../../crates/node/manifest", version = "0.1.0" }
+wamn-node-manifest = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
