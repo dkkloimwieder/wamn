@@ -106,6 +106,19 @@ world flowrunner {
   /// to do, `run-id` absent); otherwise `run-id` is the claimed run and
   /// `outcome` is 0 = completed, 1 = parked (re-claimable at wake), 2 = failed.
   export run-next: func(lease-ttl-ms: u64) -> result<tuple<bool, option<string>, u32>, string>;
+
+  /// Drive exactly one HTTP run whose queue row was claimed atomically by
+  /// admission. Tenant and runner identity are host-injected; the caller must
+  /// present the admitted run id, lease owner, and lease generation. This never
+  /// scans available work or performs a second claim. A crashed driver may
+  /// recover the same fence only after its prior lease expires.
+  export execute-claimed: func(
+    run-id: string,
+    lease-owner: string,
+    lease-generation: s64,
+    lease-ttl-ms: u64,
+  ) -> result<u32, string>;
+
   /// Like `run`, but busy-loops after the side-effect write commits and BEFORE
   /// the checkpoint advances — the exact pod-death window. Never returns; the
   /// harness epoch-kills it, then calls `run` on a fresh instance to resume.

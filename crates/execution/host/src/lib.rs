@@ -100,6 +100,8 @@ pub fn injected_capabilities(
 /// The `run-next` export's typed signature: `(lease-ttl-ms) -> (claimed, run-id,
 /// outcome)`.
 type RunNextFunc = TypedFunc<(u64,), (Result<(bool, Option<String>, u32), String>,)>;
+/// The exact claimed-run export's typed signature.
+type ExecuteClaimedFunc = TypedFunc<(String, String, i64, u64), (Result<u32, String>,)>;
 /// The side-effect-free `check-flow` export's typed signature.
 type CheckFlowFunc = TypedFunc<(String,), (Result<Vec<String>, String>,)>;
 
@@ -291,6 +293,7 @@ struct LiveExecution {
     store: Store<SharedCtx>,
     check_flow: CheckFlowFunc,
     run_next: RunNextFunc,
+    execute_claimed: ExecuteClaimedFunc,
 }
 
 pub struct ExecutionHost {
@@ -431,12 +434,14 @@ impl ExecutionHost {
         let instance = pre.instantiate_async(&mut store).await?;
         let check_flow = instance.get_typed_func(&mut store, "check-flow")?;
         let run_next = instance.get_typed_func(&mut store, "run-next")?;
+        let execute_claimed = instance.get_typed_func(&mut store, "execute-claimed")?;
 
         Ok(Self {
             live: Some(LiveExecution {
                 store,
                 check_flow,
                 run_next,
+                execute_claimed,
             }),
             ttl_ms: bounded_attempt_ms(ttl_ms),
             mem,
@@ -495,6 +500,47 @@ impl ExecutionHost {
             }
         };
         r.map_err(|e| anyhow::anyhow!("run-next: {e}"))
+    }
+
+    /// Drive exactly one run already claimed by HTTP admission.
+    ///
+    /// This invokes the versioned `execute-claimed` guest export directly; it
+    /// never calls `run-next` and therefore cannot scan or claim generic queue
+    /// work. A trap disposes the Wasmtime instance before the error is returned.
+    pub async fn execute_claimed(
+        &mut self,
+        run_id: &str,
+        lease_owner: &str,
+        lease_generation: i64,
+    ) -> anyhow::Result<u32> {
+        let call = {
+            let live = self
+                .live
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("execution instance disposed"))?;
+            live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));
+            live.execute_claimed
+                .call_async(
+                    &mut live.store,
+                    (
+                        run_id.to_owned(),
+                        lease_owner.to_owned(),
+                        lease_generation,
+                        self.ttl_ms,
+                    ),
+                )
+                .await
+        };
+        let (result,) = match call {
+            Ok(result) => result,
+            Err(error) => {
+                self.live.take();
+                return Err(anyhow::anyhow!(
+                    "execute-claimed trapped; execution instance disposed: {error}"
+                ));
+            }
+        };
+        result.map_err(|error| anyhow::anyhow!("execute-claimed: {error}"))
     }
 
     /// Drain every currently-claimable run. Each `run-next` claims one run and

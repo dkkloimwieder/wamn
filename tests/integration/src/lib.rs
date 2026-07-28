@@ -25,6 +25,7 @@ pub mod f4proof;
 pub mod failoverbench;
 pub mod flowbench;
 pub mod impactproof;
+pub mod invocationproof;
 pub mod logbench;
 pub mod matbench;
 pub mod materializer;

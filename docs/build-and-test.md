@@ -845,6 +845,30 @@ cargo test --locked -p wamn-proof-conformance --lib invocation
 cargo clippy --locked -p wamn-flow-invocation --all-targets -- -D warnings
 ```
 
+### [CALLABLE-FLOWS-P4] exact claimed-run driver
+
+Docs: `docs/FLOW-SPEC.md` §§9.1–9.7, §10, §11, Phase 4.
+
+```bash
+cargo test --locked -p wamn-runner -p wamn-runtime -p wamn-run-state
+cargo test --locked -p wamn-proof-system --lib invocationproof::tests::
+cargo test --locked -p wamn-proof-conformance --lib invocation
+cargo check --locked --manifest-path components/execution/flowrunner/Cargo.toml
+
+# PostgreSQL live race/fault proof (throwaway PostgreSQL 18):
+WAMN_RUN_QUEUE_PG_URL=postgresql://postgres:postgres@127.0.0.1:55472/postgres \
+  cargo test --locked -p wamn-run-state --test claimed_inline_live -- --ignored --nocapture
+
+# Gate of record: build the canonical two-stage exact image, load it into kind,
+# then drive the baked /bench/flowrunner.wasm through the production host seam.
+docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system delete job invocationproof --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/invocationproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/invocationproof --timeout=300s
+kubectl -n wamn-system logs job/invocationproof
+```
+
 ### [5.2] production flow-runner engine (crates/execution/flow-engine)
 
 Docs: docs/flow-runner.md

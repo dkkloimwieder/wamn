@@ -25,6 +25,7 @@ tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_
 tracing = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
+wamn-catalog = { workspace = true }
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }

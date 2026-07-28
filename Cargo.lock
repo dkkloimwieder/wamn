@@ -4581,6 +4581,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
+ "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-event-reg",

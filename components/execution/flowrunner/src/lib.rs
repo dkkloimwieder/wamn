@@ -65,9 +65,9 @@ use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
 // The combined claim/checkpoint/complete statements are the fqg.18 record-stream
 // amortization: one statement where the split path spent two or three.
 use wamn_run_state::queue::{
-    acquire_partitions_sql, claim_dispatch_sql, claim_partition_head_sql, dead_letter_dequeue_sql,
-    mark_running_sql, park_sql, record_success_and_renew_sql, release_partition_sql,
-    renew_partition_sql,
+    acquire_partitions_sql, begin_claimed_run_sql, claim_dispatch_sql, claim_partition_head_sql,
+    dead_letter_dequeue_sql, mark_running_sql, park_sql, record_success_and_renew_sql,
+    release_partition_sql, renew_partition_sql,
 };
 use wamn_runner::{
     CallerState, Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState,
@@ -2944,6 +2944,76 @@ fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
     Ok((false, None, 0)) // queue drained (unpartitioned + owned partitions)
 }
 
+/// Drive the exact HTTP run/fence claimed by final admission.
+///
+/// The first statement is the single-driver arbitration point. Every refusal
+/// returns before loading the artifact or touching run state again; in
+/// particular, `fence-lost` is absolute. Generic `run-next` remains the only
+/// path that scans available work.
+fn execute_admitted_claimed(
+    run_id: &str,
+    lease_owner: &str,
+    lease_generation: i64,
+    lease_ttl_ms: u64,
+) -> Result<u32, String> {
+    let ttl = i64::try_from(lease_ttl_ms).map_err(|_| "lease-ttl-ms too large".to_string())?;
+    let injected_owner = runner_owner()?;
+    if lease_owner != injected_owner {
+        return Err("execute-claimed refused: fence-lost".to_string());
+    }
+
+    let response = client::query(
+        &begin_claimed_run_sql(),
+        &[
+            text(run_id),
+            text(lease_owner),
+            int64(lease_generation),
+            int64(ttl),
+        ],
+    )
+    .map_err(|error| err_name(&error))?;
+    let row = response
+        .rows
+        .first()
+        .ok_or("execute-claimed arbitration returned no result row")?;
+    let result_code = match row.first() {
+        Some(SqlValue::Text(code)) => code.as_str(),
+        other => return Err(format!("execute-claimed result shape: {other:?}")),
+    };
+    if result_code != "claimed" {
+        return Err(format!("execute-claimed refused: {result_code}"));
+    }
+    let flow_id = match row.get(1) {
+        Some(SqlValue::Text(value)) => value.clone(),
+        other => return Err(format!("execute-claimed flow_id shape: {other:?}")),
+    };
+    let input = match row.get(2) {
+        Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => serde_json::from_str(value)
+            .map_err(|error| format!("execute-claimed input parse: {error}"))?,
+        other => return Err(format!("execute-claimed input shape: {other:?}")),
+    };
+    let flow_version = match row.get(3) {
+        Some(SqlValue::Int32(value)) => u32::try_from(*value).ok(),
+        Some(SqlValue::Int64(value)) => u32::try_from(*value).ok(),
+        _ => None,
+    };
+    let artifact = load_pinned_artifact(run_id)?;
+    if artifact.flow().flow_id != flow_id || Some(artifact.flow().version) != flow_version {
+        return Err("claimed run and pinned artifact identity disagree".to_string());
+    }
+    let claim = execute_claimed(
+        run_id,
+        &artifact,
+        input,
+        lease_owner,
+        ttl,
+        None,
+        lease_generation,
+    )?;
+    settle(run_id, &claim)?;
+    Ok(claim.outcome)
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch bench: same-binary node dispatch overhead, no DB
 // ---------------------------------------------------------------------------
@@ -3054,6 +3124,15 @@ impl Guest for Component {
 
     fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
         run_next(lease_ttl_ms)
+    }
+
+    fn execute_claimed(
+        run_id: String,
+        lease_owner: String,
+        lease_generation: i64,
+        lease_ttl_ms: u64,
+    ) -> Result<u32, String> {
+        execute_admitted_claimed(&run_id, &lease_owner, lease_generation, lease_ttl_ms)
     }
 
     fn run_until_kill(run_id: String, payload: String) -> Result<u32, String> {

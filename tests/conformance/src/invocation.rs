@@ -7,6 +7,8 @@ use wamn_flow_invocation::{
 
 #[cfg(test)]
 const WIT: &str = include_str!("../../../crates/execution/flow-invocation/wit/package.wit");
+#[cfg(test)]
+const FLOWRUNNER_WIT: &str = include_str!("../../../components/execution/flowrunner/wit/world.wit");
 
 #[cfg(test)]
 mod tests {
@@ -26,6 +28,21 @@ mod tests {
         );
         assert!(WIT.contains("cancel: func(run-id: string) -> cancel-ack;"));
         assert!(!code.contains("wamn:node"));
+    }
+
+    #[test]
+    fn flowrunner_exact_claimed_export_is_fenced_and_distinct_from_run_next() {
+        assert!(FLOWRUNNER_WIT.contains(
+            "export execute-claimed: func(\n    run-id: string,\n    lease-owner: string,\n    lease-generation: s64,\n    lease-ttl-ms: u64,\n  ) -> result<u32, string>;"
+        ));
+        assert!(FLOWRUNNER_WIT.contains(
+            "export run-next: func(lease-ttl-ms: u64) -> result<tuple<bool, option<string>, u32>, string>;"
+        ));
+        let exact = FLOWRUNNER_WIT
+            .split("export execute-claimed:")
+            .nth(1)
+            .expect("execute-claimed export");
+        assert!(!exact.lines().take(7).any(|line| line.contains("option<")));
     }
 
     #[test]

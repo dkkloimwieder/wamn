@@ -10,8 +10,8 @@
 use wamn_proof_conformance::{buildproof, credprobe, egressbench, socketguard, testgate};
 use wamn_proof_integration::{
     apibench, bench, callable_cron, capturebench, cdcbench, dashproof, dispatchbench, f1bench,
-    f2invoke, f3proof, f4proof, failoverbench, flowbench, impactproof, logbench, matbench,
-    metricbench, nodebench, nodeinvoke, pgbench, pinproof, pocsuiteproof, provisionbench,
+    f2invoke, f3proof, f4proof, failoverbench, flowbench, impactproof, invocationproof, logbench,
+    matbench, metricbench, nodebench, nodeinvoke, pgbench, pinproof, pocsuiteproof, provisionbench,
     queuebench, readerbench, rie2ebench, runnerbench, samplebench, streambench, suiteproof,
     testhostbench, testkitbench, tracebench, wakeproof, walbench,
 };
@@ -132,6 +132,8 @@ enum Command {
     Pinproof(pinproof::PinProofArgs),
     /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert `wamn-ctl impact-report` names the affected flow/suite/api resource and gates a destructive change with dependents behind acknowledgement
     Impactproof(impactproof::ImpactProofArgs),
+    /// Prove exact claimed-run execution through the production host and baked flowrunner image.
+    Invocationproof(invocationproof::InvocationProofArgs),
     /// Run the 9.8 metric-set gate (run executions/success-ratio / queue depth / drive duration / memory denial+high-water / pool+query latency; api RPS in-cluster-only)
     Metricbench(metricbench::MetricBenchArgs),
     /// Run the 9.9 dashboards proof (wamn-b4e): assert a deployed Grafana — health, the three datasources present+healthy (Tempo/Loki soft in --local), the static SRE dashboard/folder, and every registry org's per-tenant folder+dashboard after provision-dashboards
@@ -205,6 +207,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ErpSim(args) => erp_sim::run(args).await,
         Command::Pinproof(args) => pinproof::run(args).await,
         Command::Impactproof(args) => impactproof::run(args).await,
+        Command::Invocationproof(args) => invocationproof::run(args).await,
         Command::Metricbench(args) => metricbench::run(args).await,
         Command::Dashproof(args) => dashproof::run(args).await,
         Command::Pocsuiteproof(args) => pocsuiteproof::run(args).await,
