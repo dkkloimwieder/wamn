@@ -3,8 +3,9 @@
 //!
 //! Pure host-side like queuebench (no wasm guest — the dispatcher fires runs
 //! into the queue; driving them is the runner's job, regression-covered by
-//! flowbench/testhostbench). The gate provisions TWO ephemeral schemas as two
-//! projects through the superuser URL and drives the REAL
+//! flowbench/testhostbench). The gate provisions TWO ephemeral databases as two
+//! projects, each with the canonical `catalog` + `wamn_run` schemas, through
+//! the superuser URL and drives the REAL
 //! dispatcher executable with **stepped time** — the trigger
 //! decisions take an injected `now`, so a nightly cron and a three-day outage
 //! are gated in milliseconds with no wall-clock waits (the 11.1
@@ -67,18 +68,23 @@ use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_run_sql};
-use wamn_scheduler::mint_cron_run_id;
+use wamn_scheduler::{canonical_tick, mint_cron_run_id};
 
 use crate::dispatcher_process::{DispatcherProcess, LiveDispatcherProcess, ProjectSpec};
 
-const SCHEMA_A: &str = "wamn_dispatch_a";
+const DB_A: &str = "wamn_dispatch_a";
+const DB_B: &str = "wamn_dispatch_b";
+const SCHEMA_A: &str = "wamn_run";
 const TENANT_A: &str = "dispatch-a";
-const SCHEMA_B: &str = "wamn_dispatch_b";
+const SCHEMA_B: &str = "wamn_run";
 const TENANT_B: &str = "dispatch-b";
 /// 2026-01-01 00:00:00 UTC — the virtual epoch the stepped ticks start from.
 const BASE_MS: i64 = 1_767_225_600_000;
 const HOUR: i64 = 3_600_000;
 const DAY: i64 = 86_400_000;
+const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
+const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
@@ -99,7 +105,7 @@ pub struct DispatchBenchArgs {
     #[arg(long)]
     pub database_url: Option<String>,
 
-    /// Superuser URL: provisions/drops the two ephemeral project schemas.
+    /// Superuser URL: provisions/drops the two ephemeral project databases.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: Option<String>,
 
@@ -120,65 +126,6 @@ pub struct DispatchBenchArgs {
     pub mode: Mode,
 }
 
-/// The ephemeral project schema: flows (the trigger registry), runs (the 5.7
-/// shape incl. trigger_source/input_json — the write-ahead target), and
-/// run_queue — self-contained stand-ins for the production DDL so the gate
-/// never touches a shared schema.
-fn dispatch_ddl(schema: &str) -> String {
-    format!(
-        "CREATE TABLE {schema}.flows (\
-            tenant_id text NOT NULL, flow_id text NOT NULL, version int NOT NULL, \
-            active boolean NOT NULL DEFAULT false, graph_json jsonb NOT NULL, \
-            PRIMARY KEY (tenant_id, flow_id, version));\
-         ALTER TABLE {schema}.flows ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.flows FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY flows_tenant ON {schema}.flows \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.flows TO wamn_app;\
-         CREATE TABLE {schema}.runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-            flow_version int NOT NULL, \
-            status text NOT NULL DEFAULT 'running' \
-              CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
-            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
-            PRIMARY KEY (tenant_id, run_id));\
-         ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY runs_tenant ON {schema}.runs \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
-         CREATE TABLE {schema}.cron_anchor (\
-            tenant_id text NOT NULL, flow_id text NOT NULL, last_tick bigint NOT NULL, \
-            PRIMARY KEY (tenant_id, flow_id));\
-         ALTER TABLE {schema}.cron_anchor ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.cron_anchor FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY cron_anchor_tenant ON {schema}.cron_anchor \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.cron_anchor TO wamn_app;\
-         CREATE TABLE {schema}.run_queue (\
-            tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
-            partition_policy text NOT NULL DEFAULT 'blocking' \
-              CHECK (partition_policy IN ('blocking', 'leapfrog')), \
-            priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
-            stream_seq bigint NOT NULL DEFAULT 0, \
-            lease_owner text, lease_expires_at timestamptz, \
-            attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
-            enqueued_at timestamptz NOT NULL DEFAULT now(), \
-            PRIMARY KEY (tenant_id, run_id), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         CREATE INDEX {schema}_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
-         ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY run_queue_tenant ON {schema}.run_queue \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;"
-    )
-}
-
 async fn admin_exec(admin_url: &str, sql: &str) -> anyhow::Result<()> {
     let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
         .await
@@ -193,41 +140,60 @@ async fn admin_exec(admin_url: &str, sql: &str) -> anyhow::Result<()> {
     r
 }
 
+/// Replace the database segment while preserving any connection query.
+fn swap_db(url: &str, database: &str) -> anyhow::Result<String> {
+    let (base, tail) = url
+        .rsplit_once('/')
+        .context("Postgres URL must contain a database path")?;
+    Ok(match tail.split_once('?') {
+        Some((_, query)) => format!("{base}/{database}?{query}"),
+        None => format!("{base}/{database}"),
+    })
+}
+
 async fn provision(admin_url: &str) -> anyhow::Result<()> {
-    for schema in [SCHEMA_A, SCHEMA_B] {
+    for database in [DB_A, DB_B] {
         admin_exec(
             admin_url,
-            &format!(
-                "DROP SCHEMA IF EXISTS {schema} CASCADE; \
-                 CREATE SCHEMA {schema} AUTHORIZATION postgres; \
-                 GRANT USAGE ON SCHEMA {schema} TO wamn_app;"
-            ),
+            &format!("DROP DATABASE IF EXISTS {database} WITH (FORCE)"),
         )
         .await?;
-        admin_exec(admin_url, &dispatch_ddl(schema)).await?;
+        admin_exec(admin_url, &format!("CREATE DATABASE {database}")).await?;
+        let project_admin = swap_db(admin_url, database)?;
+        admin_exec(&project_admin, CATALOG_SQL)
+            .await
+            .with_context(|| format!("apply canonical catalog schema to {database}"))?;
+        admin_exec(&project_admin, RUN_STATE_SQL)
+            .await
+            .with_context(|| format!("apply canonical run-state schema to {database}"))?;
+        admin_exec(&project_admin, RUN_QUEUE_SQL)
+            .await
+            .with_context(|| format!("apply canonical run-queue schema to {database}"))?;
     }
     Ok(())
 }
 
 async fn teardown(admin_url: &str) -> anyhow::Result<()> {
-    admin_exec(
-        admin_url,
-        &format!(
-            "DROP SCHEMA IF EXISTS {SCHEMA_A} CASCADE; DROP SCHEMA IF EXISTS {SCHEMA_B} CASCADE;"
-        ),
-    )
-    .await
+    for database in [DB_A, DB_B] {
+        admin_exec(
+            admin_url,
+            &format!("DROP DATABASE IF EXISTS {database} WITH (FORCE)"),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
-/// Clean slate for one project schema: runs (CASCADEs to run_queue) and the
-/// registry.
+/// Clean slate for one project schema and the shared tenant-scoped catalog.
 async fn reset(admin_url: &str, schema: &str) -> anyhow::Result<()> {
     admin_exec(
         admin_url,
         &format!(
             "TRUNCATE {schema}.runs CASCADE; \
              TRUNCATE {schema}.cron_anchor; \
-             TRUNCATE {schema}.flows;"
+             TRUNCATE catalog.attachment_activation_events, \
+                      catalog.attachment_activation; \
+             TRUNCATE catalog.catalogs, catalog.flow_artifacts CASCADE;"
         ),
     )
     .await
@@ -268,24 +234,251 @@ fn dispatcher(specs: &[ProjectSpec]) -> anyhow::Result<DispatcherProcess> {
     DispatcherProcess::spawn(specs, "nats://127.0.0.1:1", None, None, None, None)
 }
 
-fn cron_flow_json(flow_id: &str, schedule: &str) -> String {
-    serde_json::json!({
-        "schema-version": "0.1", "flow-id": flow_id, "version": 1,
-        "trigger": {"type": "cron", "schedule": schedule},
-        "entry": "n1", "nodes": [{"id": "n1", "type": "noop"}],
-    })
-    .to_string()
+struct CronFixture {
+    graph_json: String,
+    schedule: String,
 }
 
-async fn seed_flow(client: &Client, flow_id: &str, graph_json: &str) -> anyhow::Result<()> {
-    client
+fn cron_flow_json(flow_id: &str, schedule: &str) -> CronFixture {
+    CronFixture {
+        graph_json: serde_json::json!({
+            "schema-version": "0.1",
+            "flow-id": flow_id,
+            "version": 1,
+            "nodes": [{"id": "cron", "type": "cron"}],
+        })
+        .to_string(),
+        schedule: schedule.to_string(),
+    }
+}
+
+/// Publish one complete immutable cron definition and activate its exact hash.
+async fn seed_flow(
+    admin_url: &str,
+    tenant: &str,
+    flow_id: &str,
+    fixture: &CronFixture,
+) -> anyhow::Result<()> {
+    let (mut client, connection) = tokio_postgres::connect(admin_url, NoTls)
+        .await
+        .context("control-plane seed connect")?;
+    let connection = tokio::spawn(connection);
+    let catalog_id = format!("dispatch-{flow_id}");
+    let source_id = format!("schedule-{flow_id}");
+    let attachment_id = format!("cron-{flow_id}");
+    let graph_hash = format!("fixture-graph:{flow_id}");
+    let artifact_hash = format!("fixture-artifact:{flow_id}");
+    let source_hash = format!("fixture-source:{flow_id}");
+    let definition_hash = format!("fixture-definition:{flow_id}");
+    let members = serde_json::json!([{
+        "flow-id": flow_id,
+        "flow-version": 1,
+        "artifact-hash": artifact_hash,
+    }]);
+    let source = serde_json::json!({
+        "schedule": fixture.schedule,
+        "timezone": "UTC",
+        "catch-up": "skip",
+    });
+    let attachment = serde_json::json!({
+        "id": attachment_id,
+        "kind": "cron",
+        "flow-id": flow_id,
+        "source-id": source_id,
+        "run-deadline-ms": 60_000,
+    });
+    let definitions = serde_json::json!({
+        "sources": [{
+            "id": source_id,
+            "kind": "schedule",
+            "definition": source,
+        }],
+        "attachments": [attachment],
+    });
+
+    let transaction = client.transaction().await?;
+    transaction
         .execute(
-            "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
-             VALUES (current_setting('app.tenant', true), $1, 1, true, $2::text::jsonb)",
-            &[&flow_id, &graph_json],
+            "INSERT INTO catalog.catalogs \
+               (tenant_id,catalog_id,version,environment,schema_version,state) \
+             VALUES ($1,$2,1,'dev','0.1','applied')",
+            &[&tenant, &catalog_id],
         )
         .await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.flow_artifacts \
+               (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
+                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
+             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,'[]','fixture-interfaces','[]')",
+            &[
+                &tenant,
+                &flow_id,
+                &fixture.graph_json,
+                &graph_hash,
+                &artifact_hash,
+            ],
+        )
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.release_manifests \
+               (tenant_id,catalog_id,catalog_version,members_json) \
+             VALUES ($1,$2,1,$3)",
+            &[&tenant, &catalog_id, &members],
+        )
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.release_flows \
+               (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
+             VALUES ($1,$2,1,$3,1)",
+            &[&tenant, &catalog_id, &flow_id],
+        )
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.release_exposure_manifests \
+               (tenant_id,catalog_id,catalog_version,definitions_json) \
+             VALUES ($1,$2,1,$3)",
+            &[&tenant, &catalog_id, &definitions],
+        )
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.release_sources \
+               (tenant_id,catalog_id,catalog_version,source_id,source_kind,definition_json,source_hash) \
+             VALUES ($1,$2,1,$3,'schedule',$4,$5)",
+            &[&tenant, &catalog_id, &source_id, &source, &source_hash],
+        )
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.release_attachments \
+               (tenant_id,catalog_id,catalog_version,attachment_id,attachment_kind,flow_id, \
+                source_id,definition_hash,definition_json) \
+             VALUES ($1,$2,1,$3,'cron',$4,$5,$6,$7)",
+            &[
+                &tenant,
+                &catalog_id,
+                &attachment_id,
+                &flow_id,
+                &source_id,
+                &definition_hash,
+                &attachment,
+            ],
+        )
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.catalog_heads \
+               (tenant_id,catalog_id,environment,applied_catalog_version) \
+             VALUES ($1,$2,'dev',1)",
+            &[&tenant, &catalog_id],
+        )
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.attachment_activation \
+               (tenant_id,catalog_id,environment,attachment_id,confirmed_definition_hash,enabled) \
+             VALUES ($1,$2,'dev',$3,$4,true)",
+            &[&tenant, &catalog_id, &attachment_id, &definition_hash],
+        )
+        .await?;
+    transaction.commit().await?;
+
+    let visible: i64 = client
+        .query_one(
+            "SELECT count(*) FROM catalog.cron_attachments \
+             WHERE tenant_id=$1 AND catalog_id=$2 AND attachment_id=$3 \
+               AND definition_hash=$4",
+            &[&tenant, &catalog_id, &attachment_id, &definition_hash],
+        )
+        .await?
+        .get(0);
+    anyhow::ensure!(
+        visible == 1,
+        "authoritative cron definition is not visible after publication"
+    );
+    drop(client);
+    connection.await??;
     Ok(())
+}
+
+/// Prove the authoritative projection rejects immutable source mutation and
+/// hides an attachment whenever its activation or applied head drifts.
+async fn assert_catalog_drift_rejected(
+    admin_url: &str,
+    tenant: &str,
+    flow_id: &str,
+) -> anyhow::Result<bool> {
+    let (mut client, connection) = tokio_postgres::connect(admin_url, NoTls)
+        .await
+        .context("catalog drift probe connect")?;
+    let connection = tokio::spawn(connection);
+    let catalog_id = format!("dispatch-{flow_id}");
+    let attachment_id = format!("cron-{flow_id}");
+
+    let source_immutable = {
+        let transaction = client.transaction().await?;
+        let rejected = transaction
+            .execute(
+                "UPDATE catalog.release_sources \
+                 SET definition_json = '{}'::jsonb \
+                 WHERE tenant_id=$1 AND catalog_id=$2",
+                &[&tenant, &catalog_id],
+            )
+            .await
+            .is_err();
+        transaction.rollback().await?;
+        rejected
+    };
+
+    let activation_drift_hidden = {
+        let transaction = client.transaction().await?;
+        transaction
+            .execute(
+                "UPDATE catalog.attachment_activation SET enabled=false \
+                 WHERE tenant_id=$1 AND catalog_id=$2 AND attachment_id=$3",
+                &[&tenant, &catalog_id, &attachment_id],
+            )
+            .await?;
+        let visible: i64 = transaction
+            .query_one(
+                "SELECT count(*) FROM catalog.cron_attachments \
+                 WHERE tenant_id=$1 AND catalog_id=$2 AND attachment_id=$3",
+                &[&tenant, &catalog_id, &attachment_id],
+            )
+            .await?
+            .get(0);
+        transaction.rollback().await?;
+        visible == 0
+    };
+
+    let head_drift_hidden = {
+        let transaction = client.transaction().await?;
+        transaction
+            .execute(
+                "DELETE FROM catalog.catalog_heads \
+                 WHERE tenant_id=$1 AND catalog_id=$2 AND environment='dev'",
+                &[&tenant, &catalog_id],
+            )
+            .await?;
+        let visible: i64 = transaction
+            .query_one(
+                "SELECT count(*) FROM catalog.cron_attachments \
+                 WHERE tenant_id=$1 AND catalog_id=$2 AND attachment_id=$3",
+                &[&tenant, &catalog_id, &attachment_id],
+            )
+            .await?
+            .get(0);
+        transaction.rollback().await?;
+        visible == 0
+    };
+
+    drop(client);
+    connection.await??;
+    Ok(source_immutable && activation_drift_hidden && head_drift_hidden)
 }
 
 async fn scalar_i64(client: &Client, sql: &str) -> anyhow::Result<i64> {
@@ -341,42 +534,42 @@ pub async fn run(args: DispatchBenchArgs) -> anyhow::Result<()> {
         "dispatchbench needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL",
     )?;
 
-    println!(
-        "# wamn-host 5.14 dispatchbench (projects {SCHEMA_A}/{TENANT_A} + {SCHEMA_B}/{TENANT_B})"
-    );
+    println!("# wamn-host 5.14 dispatchbench (projects {DB_A}/{TENANT_A} + {DB_B}/{TENANT_B})");
     provision(&admin_url)
         .await
-        .context("provision ephemeral project schemas")?;
+        .context("provision ephemeral project databases")?;
+    let app_url = swap_db(&app_url, DB_A)?;
+    let admin_a = swap_db(&admin_url, DB_A)?;
 
     let run_all = args.mode == Mode::All;
     let mut pass = true;
     let outcome = async {
         if run_all || args.mode == Mode::Cron {
-            pass &= cron_phase(&app_url, &admin_url).await?;
+            pass &= cron_phase(&app_url, &admin_a).await?;
         }
         if run_all || args.mode == Mode::Retention {
-            pass &= retention_phase(&app_url, &admin_url).await?;
+            pass &= retention_phase(&app_url, &admin_a).await?;
         }
         if run_all || args.mode == Mode::Ordering {
-            pass &= ordering_phase(&app_url, &admin_url).await?;
+            pass &= ordering_phase(&app_url, &admin_a).await?;
         }
         if run_all || args.mode == Mode::Race {
-            pass &= race_phase(&app_url, &admin_url).await?;
+            pass &= race_phase(&app_url, &admin_a).await?;
         }
         if run_all || args.mode == Mode::Fairness {
-            pass &= fairness_phase(&app_url, &admin_url).await?;
+            pass &= fairness_phase(&app_url, &admin_a).await?;
         }
         if run_all || args.mode == Mode::Wake {
-            pass &= wake_phase(&app_url, &admin_url, &args).await?;
+            pass &= wake_phase(&app_url, &admin_a, &args).await?;
         }
         if run_all || args.mode == Mode::Live {
-            pass &= live_phase(&app_url, &admin_url, &args).await?;
+            pass &= live_phase(&app_url, &admin_a, &args).await?;
         }
         anyhow::Ok(())
     }
     .await;
 
-    // Always drop the ephemeral schemas, even on a phase error.
+    // Always drop the ephemeral databases, even on a phase error.
     let _ = teardown(&admin_url).await;
     outcome?;
 
@@ -395,7 +588,15 @@ async fn cron_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     println!("\n## cron — nightly (F3 shape) fires exactly once per due tick, stepped time");
     reset(admin_url, SCHEMA_A).await?;
     let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
-    seed_flow(&seeder, "nightly", &cron_flow_json("nightly", "0 2 * * *")).await?;
+    seed_flow(
+        admin_url,
+        TENANT_A,
+        "nightly",
+        &cron_flow_json("nightly", "0 2 * * *"),
+    )
+    .await?;
+    let catalog_drift_rejected =
+        assert_catalog_drift_rejected(admin_url, TENANT_A, "nightly").await?;
 
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
     let mut d = dispatcher(&specs)?;
@@ -408,10 +609,11 @@ async fn cron_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     let tick = BASE_MS + 2 * HOUR;
     let fired = d.tick_project(0, tick + 300).await?;
     let expected_id = mint_cron_run_id("nightly", tick);
+    let expected_scheduled_at = canonical_tick(tick)?;
     let fired_once = fired.cron_fired == [expected_id.clone()];
     let row = seeder
         .query_one(
-            "SELECT status, trigger_source, (input_json->>'fire-at-ms')::bigint AS fire_at, \
+            "SELECT status, trigger_source, input_json->>'scheduled-at' AS scheduled_at, \
                     (SELECT count(*) FROM run_queue WHERE run_id = $1) AS queued \
                FROM runs WHERE run_id = $1",
             &[&expected_id],
@@ -419,7 +621,8 @@ async fn cron_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
         .await?;
     let persisted = row.get::<_, String>("status") == "dispatched"
         && row.get::<_, Option<String>>("trigger_source").as_deref() == Some("cron")
-        && row.get::<_, Option<i64>>("fire_at") == Some(tick)
+        && row.get::<_, Option<String>>("scheduled_at").as_deref()
+            == Some(expected_scheduled_at.as_str())
         && row.get::<_, i64>("queued") == 1;
 
     // A later sweep in the same tick window: no re-fire (cached anchor).
@@ -446,7 +649,13 @@ async fn cron_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
 
     // Bootstrap: a NEWLY seeded cron flow starts firing from dispatcher-sight —
     // no retroactive tick at first sight, the next boundary fires once.
-    seed_flow(&seeder, "hourly", &cron_flow_json("hourly", "0 * * * *")).await?;
+    seed_flow(
+        admin_url,
+        TENANT_A,
+        "hourly",
+        &cron_flow_json("hourly", "0 * * * *"),
+    )
+    .await?;
     let sight = outage_now + 30 * 60_000; // 12:30
     let at_sight = d2.tick_project(0, sight).await?;
     let no_retro = !at_sight.cron_fired.iter().any(|id| id.contains("hourly"));
@@ -496,6 +705,7 @@ async fn cron_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     let cron_refired = retried.cron_fired == [mint_cron_run_id("hourly", trap_tick)];
 
     let pass = not_early
+        && catalog_drift_rejected
         && fired_once
         && persisted
         && no_refire
@@ -509,7 +719,8 @@ async fn cron_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
         && retracted
         && cron_refired;
     println!(
-        "not_early={not_early} fired_once={fired_once} persisted={persisted} no_refire={no_refire} \
+        "catalog_drift_rejected={catalog_drift_rejected} not_early={not_early} \
+         fired_once={fired_once} persisted={persisted} no_refire={no_refire} \
          restart_no_dup={restart_no_dup} collapse_once={collapse_once} nightly_total={nightly_total} \
          bootstrap(no_retro={no_retro}, fires={bootstrap_fires}, total={hourly_total}) \
          atomicity(tick_failed={cron_tick_failed}, retracted={retracted}, refired={cron_refired})"
@@ -540,7 +751,13 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     // run + queue row (fire() exercises upsert_cron_anchor_sql). Assert the
     // triad: run row, queue row, anchor row all present with last_tick == t1.
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
-    seed_flow(&seeder, "anchored", &cron_flow_json("anchored", SCHEDULE)).await?;
+    seed_flow(
+        admin_url,
+        TENANT_A,
+        "anchored",
+        &cron_flow_json("anchored", SCHEDULE),
+    )
+    .await?;
     let mut d1 = dispatcher(&specs)?;
     d1.tick_project(0, BASE_MS + HOUR).await?; // bootstrap (first sight, nothing due)
     let fired = d1.tick_project(0, t1 + 300).await?;
@@ -584,29 +801,34 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     .await?
         == 0;
 
-    // --- Leg 3 (THE CONTRAST): a PRE-ANCHOR flow — NO anchor row, plus a stale
-    // first-seen from a bootstrap sweep before the tick. Its run is fired (by
-    // another replica) and then pruned BETWEEN this dispatcher's sweeps, so it
-    // never cached the tick and the runs-based fallback loses the anchor:
-    // due-tick falls back to the stale first-seen and RE-FIRES the pruned tick.
-    // This pins the fallback's honest behavior — the exact bug the durable
-    // anchor closes.
-    seed_flow(&seeder, "legacy", &cron_flow_json("legacy", SCHEDULE)).await?;
+    // --- Leg 3 (THE CONTRAST): simulate a PRE-ANCHOR definition by firing it
+    // through centralized admission, then removing both the historical anchor
+    // and its pruned run. A separate dispatcher has stale first-seen state but
+    // never cached the firing, so the runs fallback loses the tick and re-fires
+    // it. There is no fixture-only cron run insert.
+    seed_flow(
+        admin_url,
+        TENANT_A,
+        "legacy",
+        &cron_flow_json("legacy", SCHEDULE),
+    )
+    .await?;
     let mut d3 = dispatcher(&specs)?;
     d3.tick_project(0, BASE_MS + HOUR).await?; // bootstrap: first_seen[legacy] = 1am (stale)
     let legacy_t1 = mint_cron_run_id("legacy", t1);
+    let mut prior = dispatcher(&specs)?;
+    prior.tick_project(0, BASE_MS + HOUR).await?;
+    let prior_fire = prior.tick_project(0, t1 + 100).await?;
+    anyhow::ensure!(
+        prior_fire.cron_fired == [legacy_t1.clone()],
+        "central admission did not create the pre-anchor contrast run"
+    );
     admin_exec(
         admin_url,
         &format!(
-            "INSERT INTO {SCHEMA_A}.runs \
-               (tenant_id, run_id, flow_id, flow_version, status, trigger_source) \
-             VALUES ('{TENANT_A}', '{legacy_t1}', 'legacy', 1, 'completed', 'cron');"
+            "DELETE FROM {SCHEMA_A}.cron_anchor WHERE flow_id = 'legacy'; \
+             DELETE FROM {SCHEMA_A}.runs WHERE run_id = '{legacy_t1}';"
         ),
-    )
-    .await?;
-    admin_exec(
-        admin_url,
-        &format!("DELETE FROM {SCHEMA_A}.runs WHERE run_id = '{legacy_t1}';"),
     )
     .await?;
     let refire = d3.tick_project(0, t1 + 12 * HOUR).await?;
@@ -620,7 +842,13 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     // would survive the anchor failure — a crash window leaving a run with no
     // anchor (the exact regression the durable-anchor decoupling depends on NOT
     // having).
-    seed_flow(&seeder, "atomic", &cron_flow_json("atomic", SCHEDULE)).await?;
+    seed_flow(
+        admin_url,
+        TENANT_A,
+        "atomic",
+        &cron_flow_json("atomic", SCHEDULE),
+    )
+    .await?;
     let mut d4 = dispatcher(&specs)?;
     d4.tick_project(0, BASE_MS + HOUR).await?; // bootstrap before arming the trap
     admin_exec(
@@ -691,8 +919,8 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
 
     // Cron flows on the SAME nightly schedule, so ONE stepped tick fires all of
     // them — a per-flow key+policy assertion off a single sweep. The cron input
-    // envelope is {"trigger":"cron","schedule":...,"fire-at-ms":...}: a
-    // partitioned key of `schedule` evaluates to a scalar (the declared-key
+    // envelope is {"scheduled-at":...,"fired-at":...}: a partitioned key of
+    // `scheduled-at` evaluates to a scalar (the declared-key
     // case), while `payload.customer` is absent from a cron input (the
     // fallback case). `policy` (D20) is the field ABSENT for the default
     // (blocking); the leapfrog flow declares it so we can prove the declared
@@ -700,9 +928,10 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
     const SCHEDULE: &str = "0 2 * * *";
     let ordered_flow = |flow_id: &str, ordering: serde_json::Value, policy: Option<&str>| {
         let mut graph = serde_json::json!({
-            "schema-version": "0.1", "flow-id": flow_id, "version": 1,
-            "trigger": {"type": "cron", "schedule": SCHEDULE},
-            "entry": "n1", "nodes": [{"id": "n1", "type": "noop"}],
+            "schema-version": "0.1",
+            "flow-id": flow_id,
+            "version": 1,
+            "nodes": [{"id": "cron", "type": "cron"}],
         });
         if !ordering.is_null() {
             graph["ordering"] = ordering;
@@ -710,27 +939,33 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         if let Some(p) = policy {
             graph["partition-policy"] = serde_json::json!(p);
         }
-        graph.to_string()
+        CronFixture {
+            graph_json: graph.to_string(),
+            schedule: SCHEDULE.to_string(),
+        }
     };
     // unordered = the field absent (today's default).
     seed_flow(
-        &seeder,
+        admin_url,
+        TENANT_A,
         "unordered-flow",
         &ordered_flow("unordered-flow", serde_json::Value::Null, None),
     )
     .await?;
     seed_flow(
-        &seeder,
+        admin_url,
+        TENANT_A,
         "strict-flow",
         &ordered_flow("strict-flow", serde_json::json!({"mode": "strict"}), None),
     )
     .await?;
     seed_flow(
-        &seeder,
+        admin_url,
+        TENANT_A,
         "partitioned-flow",
         &ordered_flow(
             "partitioned-flow",
-            serde_json::json!({"mode": "partitioned", "partition-key": "schedule"}),
+            serde_json::json!({"mode": "partitioned", "partition-key": "\"scheduled-at\""}),
             None,
         ),
     )
@@ -739,7 +974,8 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
     // flow-wide fallback. It ALSO declares leapfrog — its keyed rows must carry
     // 'leapfrog', not the column default (the exact wamn-kq0z regression).
     seed_flow(
-        &seeder,
+        admin_url,
+        TENANT_A,
         "leapfrog-flow",
         &ordered_flow(
             "leapfrog-flow",
@@ -757,6 +993,7 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
     let report = d.tick_project(0, tick + 300).await?;
     let fired = report.cron_fired.len() == 4;
     let rid = |flow_id: &str| mint_cron_run_id(flow_id, tick);
+    let scheduled_at_key = canonical_tick(tick)?;
 
     // Unordered: NULL key — byte-for-byte today's global-claim behavior.
     let unordered_null = partition_key_of(&seeder, &rid("unordered-flow"))
@@ -771,7 +1008,7 @@ async fn ordering_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
     let partitioned_keyed = partition_key_of(&seeder, &rid("partitioned-flow"))
         .await?
         .as_deref()
-        == Some(SCHEDULE);
+        == Some(scheduled_at_key.as_str());
     // Partitioned with a MISSING key: the flow-wide stream (flow id), never NULL.
     let partitioned_fallback = partition_key_of(&seeder, &rid("leapfrog-flow"))
         .await?
@@ -820,7 +1057,8 @@ async fn race_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     reset(admin_url, SCHEMA_A).await?;
     let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
     seed_flow(
-        &seeder,
+        admin_url,
+        TENANT_A,
         "minutely",
         &cron_flow_json("minutely", "* * * * *"),
     )
@@ -871,10 +1109,11 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
     println!(
         "\n## fairness — project A's due parked backlog {BACKLOG} (batch {BATCH}) must not starve project B"
     );
+    let app_b = swap_db(app_url, DB_B)?;
+    let admin_b = swap_db(admin_url, DB_B)?;
     reset(admin_url, SCHEMA_A).await?;
-    reset(admin_url, SCHEMA_B).await?;
+    reset(&admin_b, SCHEMA_B).await?;
     let (mut seed_a, _ha) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
-    let (seed_b, _hb) = connect_app(app_url, SCHEMA_B, TENANT_B).await?;
 
     // A: a deep DUE backlog (a scale-to-zero runner's unclaimed runs — every
     // sweep hints wake candidates, batch-bounded). One transaction, so every
@@ -893,27 +1132,33 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         tx.commit().await?;
     }
     seed_flow(
-        &seed_b,
+        &admin_b,
+        TENANT_B,
         "b-nightly",
         &cron_flow_json("b-nightly", "0 2 * * *"),
     )
     .await?;
-    // Give B's cron a fired history (the previous nightly tick) so the stepped
-    // tick at BASE+2h is due in B's FIRST sweep — and the anchor recovery from
-    // seeded history is exercised.
+    // Give B a previous nightly firing through the real centralized admission
+    // path, then consume only its queue row as a healthy runner would. The
+    // durable anchor makes BASE+2h due in B's first fairness sweep.
     let prev_tick_id = mint_cron_run_id("b-nightly", BASE_MS - 22 * HOUR);
+    let b_spec = [spec("b-history", &app_b, SCHEMA_B, TENANT_B)];
+    let mut history = dispatcher(&b_spec)?;
+    history.tick_project(0, BASE_MS - 23 * HOUR).await?;
+    let history_fire = history.tick_project(0, BASE_MS - 22 * HOUR + 100).await?;
+    anyhow::ensure!(
+        history_fire.cron_fired == [prev_tick_id.clone()],
+        "central admission did not seed B's prior nightly firing"
+    );
     admin_exec(
-        admin_url,
-        &format!(
-            "INSERT INTO {SCHEMA_B}.runs (tenant_id, run_id, flow_id, flow_version, status, trigger_source) \
-             VALUES ('{TENANT_B}', '{prev_tick_id}', 'b-nightly', 1, 'completed', 'cron');"
-        ),
+        &admin_b,
+        &format!("DELETE FROM {SCHEMA_B}.run_queue WHERE run_id = '{prev_tick_id}';"),
     )
     .await?;
 
     let specs = [
         spec("a", app_url, SCHEMA_A, TENANT_A),
-        spec("b", app_url, SCHEMA_B, TENANT_B),
+        spec("b", &app_b, SCHEMA_B, TENANT_B),
     ];
     let min = wamn_scheduler::DEFAULT_MIN_INTERVAL_MS;
     let mut d =
@@ -952,7 +1197,7 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
     // B's fired cron run would otherwise sit due in ITS queue and be
     // wake-hinted every sweep (work, pinning B's cadence tight) — complete it,
     // as a healthy runner would.
-    admin_exec(admin_url, &format!("DELETE FROM {SCHEMA_B}.run_queue;")).await?;
+    admin_exec(&admin_b, &format!("DELETE FROM {SCHEMA_B}.run_queue;")).await?;
 
     // Sweep 2: A keeps draining at the tight interval; B is idle and decays.
     let t2 = t1 + min;
@@ -1115,7 +1360,13 @@ async fn wake_phase(
     // (publish strictly after commit: a hint for uncommitted work would wake a
     // runner into an empty claim). The parked run may be re-hinted by the same
     // sweep (duplicates are by design), so scan hints for the fired id.
-    seed_flow(&app, "secondly", &cron_flow_json("secondly", "* * * * * *")).await?;
+    seed_flow(
+        admin_url,
+        TENANT_A,
+        "secondly",
+        &cron_flow_json("secondly", "* * * * * *"),
+    )
+    .await?;
     // Bootstrap sweep (first sight — no retroactive tick), then wait past a
     // second boundary so the next sweep fires it.
     d.tick_project(0, chrono::Utc::now().timestamp_millis())
@@ -1184,7 +1435,8 @@ async fn live_phase(
     reset(admin_url, SCHEMA_A).await?;
     let (seeder, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
     seed_flow(
-        &seeder,
+        admin_url,
+        TENANT_A,
         "secondly",
         &cron_flow_json("secondly", "* * * * * *"),
     )
@@ -1315,24 +1567,41 @@ async fn live_phase(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema_drift::{Need, assert_stand_in};
 
-    /// wamn-9mg8 [GATE-DRIFT]: dispatchbench's `run_queue` stand-in vs the schema
-    /// of record, through the uniform guard. The dispatcher enqueues + stamps
-    /// `partition_key`/`partition_policy` and checks ordering, but never runs the
-    /// per-partition claim path or a guest terminal settle — so `partition_owner`
-    /// and `run_dead_letters` are AbsentByDesign, while every `run_queue` column
-    /// (the c32ffaf `stream_seq` drift class) stays pinned.
     #[test]
-    fn dispatchbench_stand_in_tracks_run_queue_schema_of_record() {
-        assert_stand_in(
-            "dispatchbench",
-            &dispatch_ddl("wamn_run"),
-            &[
-                ("run_queue", Need::Required),
-                ("partition_owner", Need::AbsentByDesign),
-                ("run_dead_letters", Need::AbsentByDesign),
-            ],
-        );
+    fn dispatchbench_provisions_the_canonical_catalog_and_run_plane() {
+        assert!(CATALOG_SQL.contains("CREATE TABLE catalog.flow_artifacts"));
+        assert!(CATALOG_SQL.contains("CREATE TABLE catalog.release_flows"));
+        assert!(CATALOG_SQL.contains("CREATE TABLE catalog.catalog_heads"));
+        assert!(CATALOG_SQL.contains("CREATE VIEW catalog.cron_attachments"));
+        assert!(RUN_STATE_SQL.contains("CREATE TABLE wamn_run.runs"));
+        assert!(RUN_QUEUE_SQL.contains("CREATE TABLE wamn_run.run_queue"));
+        assert!(RUN_QUEUE_SQL.contains("lease_generation"));
+    }
+
+    #[test]
+    fn dispatchbench_has_no_legacy_cron_registry_or_direct_cron_run_writer() {
+        let source = include_str!("dispatchbench.rs");
+        for required in [
+            "catalog.flow_artifacts",
+            "catalog.release_manifests",
+            "catalog.release_flows",
+            "catalog.release_sources",
+            "catalog.release_attachments",
+            "catalog.catalog_heads",
+            "catalog.attachment_activation",
+            "catalog.cron_attachments",
+        ] {
+            assert!(source.contains(required), "missing {required}");
+        }
+        for forbidden in [
+            ["CREATE TABLE {schema}.", "flows"].concat(),
+            ["INSERT INTO ", "flows"].concat(),
+            ["\"trigger\": ", "{\"type\": \"cron\""].concat(),
+            ["INSERT INTO {SCHEMA_A}.", "runs"].concat(),
+            ["INSERT INTO {SCHEMA_B}.", "runs"].concat(),
+        ] {
+            assert!(!source.contains(&forbidden), "found {forbidden}");
+        }
     }
 }

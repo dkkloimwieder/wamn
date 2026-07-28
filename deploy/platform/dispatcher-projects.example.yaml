@@ -3,11 +3,10 @@
 # is per-environment config, and re-applying the Deployment manifest must not
 # clobber customized project entries back to these demo values.
 #
-# The example points at the shared in-cluster Postgres with the
-# wamn_dispatch_demo schema (production run-state.sql + run-queue.sql objects
-# plus a stand-in `flows` registry, provisioned additively for the live
-# smoke). Real per-project entries — one per provisioned project DB — land
-# with hosting/2.3 provisioning.
+# The example points at the shared in-cluster Postgres. Definitions and active
+# cron attachments are read from the canonical `catalog` schema; run state and
+# queue objects live in the canonical `wamn_run` schema. Real per-project
+# entries — one per provisioned project DB — land with hosting/2.3 provisioning.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -26,6 +25,6 @@ stringData:
       "demo": {
         "url": "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn",
         "tenant": "demo-tenant",
-        "schema": "wamn_dispatch_demo"
+        "schema": "wamn_run"
       }
     }

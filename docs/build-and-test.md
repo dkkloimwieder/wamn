@@ -2274,9 +2274,10 @@ kubectl -n wamn-system wait --for=condition=complete \
 kubectl -n wamn-system logs job/callable-flow-cron
 ```
 
-The older multi-mode `dispatchbench` fixtures still model the retired local
-`flows` table and are tracked for explicit conversion by `wamn-5wd1.68`; they
-are not evidence for this callable-flow gate.
+The multi-mode `dispatchbench` gate below independently publishes the same
+immutable catalog/source/attachment/head/activation chain for every phase and
+exercises this centralized admission path under race, rollback, retention,
+reconnect, fairness, and wake faults.
 
 ### [5.14] shared trigger dispatcher
 
@@ -2286,9 +2287,12 @@ Docs: docs/run-queue.md
 cargo test -p wamn-run-state -p wamn-scheduler   # durable anchors + pure cron/cadence decisions
 cargo clippy -p wamn-run-state -p wamn-scheduler --all-targets \
   && cargo fmt -p wamn-run-state -p wamn-scheduler --check
-cargo build --release -p wamn-dispatcher -p wamn-gates   # gate spawns the sibling service binary
-# optional live-apply gate (run-state.sql + run-queue.sql; claim/janitor/partition
-# paths + cron last-tick recovery + wake scan; skips when unset):
+cargo test --locked -p wamn-proof-integration --lib dispatchbench::tests::
+cargo test --locked -p wamn-dispatcher -p wamn-scheduler
+cargo build -p wamn-dispatcher -p wamn-gates   # gate spawns the sibling service binary
+# optional live-apply gate (two disposable project databases, each with canonical
+# catalog + run-state.sql + run-queue.sql; cron admission + last-tick recovery +
+# wake scan):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
 docker exec wamn-rq-pg psql -U postgres -c \
@@ -2297,7 +2301,7 @@ WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo tes
 # the live-apply gate] + a throwaway NATS for the wake/live doorbell hints):
 docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
-  ./target/release/wamn-gates --log-level error dispatchbench \
+  ./target/debug/wamn-gates --log-level error dispatchbench \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn \
   --nats-url nats://127.0.0.1:4232 --mode all
 docker stop wamn-rq-pg wamn-rq-nats
@@ -2306,8 +2310,12 @@ docker stop wamn-rq-pg wamn-rq-nats
 # matbench/streambench/readerbench territory).
 # wake (and thus --mode all) now HARD-REQUIRES NATS: a missing/unreachable
 # --nats-url is a loud bail, never a soft skip that greens the Job (C7-2).
-# The production service is `wamn-dispatcher --projects-file <json>` (one entry
-# In-cluster gate of record (co-located with postgres,
+# Each phase provisions canonical catalog artifacts, schedule sources, cron
+# attachments, an applied head, and activation. Source/attachment/head drift
+# therefore fails the phase before any run can be admitted; there is no local
+# flow-registry fallback or direct producer run insert.
+# The production service is `wamn-dispatcher --projects-file <json>`.
+# In-cluster gate of record (co-located with postgres):
 # HOST change => full docker rebuild (both --target stages + kind load BOTH images):
 kubectl -n wamn-system apply -f deploy/gates/dispatchbench-job.yaml
 kubectl -n wamn-system logs -f job/dispatchbench
