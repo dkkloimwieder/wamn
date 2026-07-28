@@ -14,32 +14,29 @@
 //! get identical behaviour (the 11.1 fast-forwardable-cron discipline).
 //!
 //! One sweep of one project ("tick"):
-//!   1. registry — scan active flows, parse each graph (wamn-flow), register
-//!      cron triggers (webhook = gateway's, manual = editor's, row-event =
-//!      the materializer's via its event registration). A flow that
-//!      fails to parse or validate is skipped with a warning (a bad flow must
-//!      not wedge the project);
+//!   1. registry — scan authoritative enabled cron attachments, join their
+//!      immutable schedule sources and pinned release artifacts, then validate
+//!      each graph. Disabled or tombstoned definitions are absent by
+//!      construction;
 //!   2. cron — recover each flow's last-fired tick (in-memory cache, else the
 //!      durable `cron_anchor` row via [`cron_anchor_sql`], else the run ids
 //!      themselves via [`cron_last_run_sql`] as a bootstrap fallback — the
 //!      anchor is decoupled from prunable run history so 9.6 retention cannot
 //!      make an already-fired tick re-fire, wamn-fqg.6), fire the due tick via
-//!      the write-ahead + enqueue + anchor-upsert co-transaction, doorbell the
-//!      winner;
+//!      the centralized callable-flow admission + anchor co-transaction,
+//!      doorbell the winner;
 //!   3. wake — doorbell every currently-due unleased queue row (a parked run
 //!      whose `available_at` arrived, or a run whose enqueue hint was lost) —
 //!      one read-only scan doubling as the reconciliation backstop;
 //!   4. cadence — tighten the project's interval on work, decay while idle.
 //!
 //! Exactly-once across restart AND concurrently racing replicas needs no leader:
-//! run ids are deterministic per firing (`{flow}:cron:{tick}`),
-//! so every duplicate path collapses on the write-ahead
-//! `ON CONFLICT` — the dispatchbench `race` mode runs two live dispatchers over
-//! one project and asserts it. A firing that LOSES the write-ahead skips its
-//! enqueue too: the winner's queue row was created in the same past transaction
-//! and either still exists or was legitimately dequeued on completion —
-//! re-inserting it would resurrect a terminal run's queue row (a ghost
-//! dispatch).
+//! run ids are deterministic per firing (`{flow}:cron:{generation}:{tick}`),
+//! so every duplicate path collapses in centralized admission — the
+//! dispatchbench `race` mode runs two live dispatchers over
+//! one project and asserts it. A duplicate admission never recreates a queue
+//! row: the winner's row either still exists or was legitimately dequeued on
+//! completion, and resurrection would be a ghost dispatch.
 //!
 //! The loop is hardened for always-on duty: a dropped project connection is
 //! re-dialed on the next sweep (a Postgres restart must not permanently silence
@@ -60,12 +57,13 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
 use wamn_flow::{EntryKind, Flow, Ordering};
+use wamn_run_state::admission::{AdmissionProducer, AdmissionResult, admission_sql};
 use wamn_run_state::queue::{
-    PartitionPolicy, active_flows_sql, cron_anchor_sql, cron_last_run_sql, enqueue_sql,
-    enqueue_with_policy_sql, parked_due_sql, upsert_cron_anchor_sql, write_ahead_triggered_run_sql,
+    PartitionPolicy, cron_anchor_sql, cron_last_run_sql, parked_due_sql, upsert_cron_anchor_sql,
 };
 use wamn_scheduler::{
-    Cadence, Firing, cron_firing, cron_tick_of, due_tick, next_fire, next_reconcile, reconcile_due,
+    Cadence, Firing, canonical_tick, cron_firing, cron_tick_of, due_tick, next_fire,
+    next_reconcile, reconcile_due,
 };
 
 // R16b (wamn-2jkm.20): the dispatcher's pinned session `SET`s interpolate the
@@ -272,12 +270,46 @@ impl Default for DispatcherConfig {
     }
 }
 
-/// The trigger registry one sweep works from: the cron flows (webhook is the
-/// gateway's, manual the editor's, row-event the materializer's via its event
-/// registration).
+/// Authoritative enabled cron definitions for the tenant's applied releases.
+///
+/// This is intentionally a read-only producer query. Run and queue writes must
+/// pass through [`admission_sql`].
+pub const CRON_ATTACHMENTS_SQL: &str = "\
+SELECT a.catalog_id, a.environment, a.catalog_version, a.attachment_id, \
+       a.definition_hash, a.flow_id, rf.flow_version, fa.graph_json::text, \
+       source.definition_json->>'schedule' AS schedule, \
+       (a.definition_json->>'run-deadline-ms')::bigint AS run_deadline_ms \
+  FROM catalog.cron_attachments AS a \
+  JOIN catalog.release_sources AS source \
+    ON source.tenant_id = a.tenant_id AND source.catalog_id = a.catalog_id \
+   AND source.catalog_version = a.catalog_version AND source.source_id = a.source_id \
+   AND source.source_kind = 'schedule' \
+  JOIN catalog.release_flows AS rf \
+    ON rf.tenant_id = a.tenant_id AND rf.catalog_id = a.catalog_id \
+   AND rf.catalog_version = a.catalog_version AND rf.flow_id = a.flow_id \
+  JOIN catalog.flow_artifacts AS fa \
+    ON fa.tenant_id = rf.tenant_id AND fa.flow_id = rf.flow_id \
+   AND fa.flow_version = rf.flow_version \
+ ORDER BY a.catalog_id, a.environment, a.attachment_id";
+
+const PHASE_2A_CRON_GENERATION: i64 = 0;
+
+#[derive(Clone, Debug)]
+struct CronAttachment {
+    catalog_id: String,
+    environment: String,
+    catalog_version: i32,
+    attachment_id: String,
+    definition_hash: String,
+    flow_id: String,
+    flow_version: i32,
+    schedule: String,
+    run_deadline_ms: i64,
+}
+
 #[derive(Default)]
 struct Registry {
-    crons: Vec<(String, i32, String)>,
+    crons: Vec<CronAttachment>,
     /// Flow-level record-stream ordering (5.11, wamn-fqg.20) per registered
     /// flow_id — the dispatcher evaluates it at fire() to stamp
     /// `run_queue.partition_key` ([`partition_key_for_firing`]). Every cron
@@ -295,13 +327,14 @@ struct Registry {
     policy: HashMap<String, PartitionPolicy>,
 }
 
-/// Parse the active-flows scan. A flow that fails to parse or validate is
-/// skipped with a warning (a bad flow must not wedge the project).
+/// Parse the authoritative attachment scan. A pinned artifact that fails to
+/// parse or validate is skipped with a warning (one bad definition must not
+/// wedge the project).
 fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
-    let reg = Registry::default();
+    let mut reg = Registry::default();
     for row in rows {
         let flow_id: String = row.get("flow_id");
-        let version: i32 = row.get("version");
+        let flow_version: i32 = row.get("flow_version");
         let graph: String = row.get("graph_json");
         let parsed = Flow::from_json(&graph)
             .map_err(|e| e.to_string())
@@ -318,27 +351,61 @@ fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
                 continue;
             }
         };
-        // The run ids embed the registry id ({flow}:cron:{tick})
-        // taken from the flows-table COLUMN, while the
+        // The run ids embed the registry id
+        // ({flow}:cron:{generation}:{tick}) taken from the release column, while the
         // slug charset rule just validated only the graph's embedded flow-id.
         // Requiring the two to be EQUAL extends the charset guarantee to the
         // id that is actually minted; a mismatched row is skipped
         // exactly like any other invalid flow.
         if flow.flow_id != flow_id {
             tracing::warn!(project = %project, %flow_id, graph_flow_id = %flow.flow_id,
-                "dispatcher: flows.flow_id != graph flow-id — flow skipped");
+                "dispatcher: release flow-id != graph flow-id — flow skipped");
+            continue;
+        }
+        if i32::try_from(flow.version).ok() != Some(flow_version) {
+            tracing::warn!(project = %project, %flow_id, graph_version = flow.version,
+                release_version = flow_version,
+                "dispatcher: release flow version != graph version — flow skipped");
             continue;
         }
         if flow
             .entry_node()
             .is_some_and(|entry| entry.entry_kind() == Some(EntryKind::Cron))
         {
-            // Rev18 schedules live on cron attachments, not in graph entry
-            // nodes. The attachment-backed registry lands in CF-CRON; until
-            // then, fail closed instead of inventing a schedule from graph
-            // data or preserving the retired Trigger reader.
-            tracing::warn!(project = %project, %flow_id, version,
-                "dispatcher: cron entry has no attachment resolver — flow skipped");
+            let schedule: Option<String> = row.get("schedule");
+            let run_deadline_ms: Option<i64> = row.get("run_deadline_ms");
+            let (Some(schedule), Some(run_deadline_ms)) = (schedule, run_deadline_ms) else {
+                tracing::warn!(project = %project, %flow_id,
+                    "dispatcher: cron attachment has incomplete schedule/deadline — skipped");
+                continue;
+            };
+            if run_deadline_ms <= 0 || schedule.is_empty() {
+                tracing::warn!(project = %project, %flow_id,
+                    "dispatcher: cron attachment has invalid schedule/deadline — skipped");
+                continue;
+            }
+            reg.ordering.insert(flow_id.clone(), flow.ordering);
+            reg.policy.insert(
+                flow_id.clone(),
+                match flow.partition_policy {
+                    wamn_flow::PartitionPolicy::Blocking => PartitionPolicy::Blocking,
+                    wamn_flow::PartitionPolicy::Leapfrog => PartitionPolicy::Leapfrog,
+                },
+            );
+            reg.crons.push(CronAttachment {
+                catalog_id: row.get("catalog_id"),
+                environment: row.get("environment"),
+                catalog_version: row.get("catalog_version"),
+                attachment_id: row.get("attachment_id"),
+                definition_hash: row.get("definition_hash"),
+                flow_id,
+                flow_version,
+                schedule,
+                run_deadline_ms,
+            });
+        } else {
+            tracing::warn!(project = %project, %flow_id,
+                "dispatcher: cron attachment targets a non-cron entry — skipped");
         }
     }
     reg
@@ -428,17 +495,21 @@ impl Dispatcher {
         let p = &mut self.projects[idx];
         let mut report = TickReport::default();
 
-        // 1. Registry: the trigger lives inside each active flow's graph_json.
+        // 1. Registry: authoritative active cron attachments select the pinned
+        // release artifact. Disabled and tombstoned definitions are absent from
+        // this view and therefore cannot produce a run.
         let reg = parse_registry(
             &p.spec.name,
-            &p.client.query(&active_flows_sql(), &[]).await?,
+            &p.client.query(CRON_ATTACHMENTS_SQL, &[]).await?,
         );
 
         // 2. Cron: recover the anchor, fire the due tick.
         let anchor_sql = cron_anchor_sql();
         let last_run_sql = cron_last_run_sql();
         let mut doorbells: Vec<String> = Vec::new();
-        for (flow_id, version, schedule) in &reg.crons {
+        for cron in &reg.crons {
+            let flow_id = &cron.flow_id;
+            let schedule = &cron.schedule;
             // A schedule that ever errored (parseable but unsatisfiable — a
             // Feb 30) is quarantined: evaluating it re-walks croner's whole
             // search horizon EVERY sweep for a flow that can never fire. It was
@@ -494,23 +565,53 @@ impl Dispatcher {
                 }
             };
             if let Some(tick) = due {
-                let firing = cron_firing(flow_id, *version, schedule, tick);
+                let firing = cron_firing(
+                    flow_id,
+                    cron.flow_version,
+                    PHASE_2A_CRON_GENERATION,
+                    tick,
+                    now_ms,
+                )?;
                 // 5.11 ordering + D20 policy: stamp the partition key from the
                 // flow's declaration and, for a keyed row, its declared
                 // head-unavailability policy (unordered cron flows keep a NULL
                 // key + the column-default policy = today's behavior).
                 let key = partition_key_for_firing(&reg, &firing);
-                let policy = partition_policy_for_firing(&reg, &firing);
+                let policy = key
+                    .as_ref()
+                    .map_or(PartitionPolicy::Blocking.as_sql(), |_| {
+                        partition_policy_for_firing(&reg, &firing)
+                    });
                 let span = trigger_span(&firing, &p.spec.tenant);
-                let won = fire(&mut p.client, &firing, tick, key.as_deref(), policy)
-                    .instrument(span)
-                    .await?;
-                p.last_fired.insert(flow_id.clone(), tick);
-                if won {
-                    doorbells.push(firing.run_id.clone());
-                    report.cron_fired.push(firing.run_id);
-                } else {
-                    report.cron_lost += 1;
+                let result = fire(
+                    &mut p.client,
+                    cron,
+                    &firing,
+                    tick,
+                    now_ms,
+                    key.as_deref(),
+                    policy,
+                )
+                .instrument(span)
+                .await?;
+                match result {
+                    AdmissionResult::Admitted { .. } => {
+                        p.last_fired.insert(flow_id.clone(), tick);
+                        doorbells.push(firing.run_id.clone());
+                        report.cron_fired.push(firing.run_id);
+                    }
+                    AdmissionResult::Duplicate { .. } => {
+                        p.last_fired.insert(flow_id.clone(), tick);
+                        report.cron_lost += 1;
+                    }
+                    rejection => {
+                        tracing::warn!(
+                            project = %p.spec.name,
+                            attachment_id = %cron.attachment_id,
+                            ?rejection,
+                            "dispatcher: cron admission refused"
+                        );
+                    }
                 }
             }
         }
@@ -519,8 +620,8 @@ impl Dispatcher {
         p.next_cron_fire = reg
             .crons
             .iter()
-            .filter(|(_, _, s)| !p.bad_schedules.contains(s))
-            .filter_map(|(_, _, s)| next_fire(s, now_ms).ok())
+            .filter(|cron| !p.bad_schedules.contains(&cron.schedule))
+            .filter_map(|cron| next_fire(&cron.schedule, now_ms).ok())
             .min();
 
         // 3. Wake / reconciliation: hint every currently-due unleased row.
@@ -682,72 +783,87 @@ fn partition_policy_for_firing(reg: &Registry, f: &Firing) -> &'static str {
         .as_sql()
 }
 
-/// Enqueue one won firing's queue row, materializing the D20 policy COHERENTLY
-/// with its key (wamn-kq0z): a keyed row (strict/partitioned) carries the flow's
-/// declared `partition_policy` via [`enqueue_with_policy_sql`], while an
-/// unordered row keeps a NULL key and the column-default policy via
-/// [`enqueue_sql`] (today's behavior, byte-identical). `$3` priority and `$4`
-/// delay are 0 — a trigger firing is immediately claimable.
-async fn enqueue_firing(
-    tx: &tokio_postgres::Transaction<'_>,
-    run_id: &str,
-    partition_key: Option<&str>,
-    policy: &str,
-) -> Result<(), tokio_postgres::Error> {
-    if partition_key.is_some() {
-        tx.execute(
-            &enqueue_with_policy_sql(),
-            &[&run_id, &partition_key, &0i32, &0i64, &policy],
-        )
-        .await?;
-    } else {
-        tx.execute(&enqueue_sql(), &[&run_id, &partition_key, &0i32, &0i64])
-            .await?;
-    }
-    Ok(())
-}
-
-/// Fire one trigger: write-ahead run, won enqueue, and anchor in one transaction.
+/// Fire one attachment through the single callable-flow admission transition.
 ///
-/// A `false` means another replica already fired this deterministic id. The
-/// enqueue stays skipped so a completed run cannot be resurrected as a queue
-/// ghost.
+/// The head lock, definition recheck, run creation, queue creation, and anchor
+/// advance share one transaction. A crash at any seam rolls all of them back.
 async fn fire(
     client: &mut Client,
+    cron: &CronAttachment,
     f: &Firing,
     tick: i64,
+    fired_at: i64,
     partition_key: Option<&str>,
     policy: &str,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<AdmissionResult> {
+    let recipe = admission_sql();
     let tx = client.transaction().await?;
-    let inserted = tx
-        .execute(
-            &write_ahead_triggered_run_sql(),
+    tx.query_one(recipe.lock_head(), &[&cron.catalog_id, &cron.environment])
+        .await?;
+
+    let run_deadline_ms = fired_at
+        .checked_add(cron.run_deadline_ms)
+        .context("cron run deadline overflow")?;
+    let run_deadline = std::time::UNIX_EPOCH
+        .checked_add(Duration::from_millis(
+            u64::try_from(run_deadline_ms).context("cron run deadline predates epoch")?,
+        ))
+        .context("cron run deadline is outside system-time range")?;
+    let tick_identity = canonical_tick(tick)?;
+    let invocation_context = "{}";
+    let no_text: Option<&str> = None;
+    let no_i64: Option<i64> = None;
+    let no_timestamp: Option<std::time::SystemTime> = None;
+    let run_deadline = Some(run_deadline);
+    let generation = PHASE_2A_CRON_GENERATION;
+    let row = tx
+        .query_one(
+            recipe.admit(),
             &[
-                &f.run_id,
+                &AdmissionProducer::Cron.as_sql(),
+                &cron.catalog_id,
+                &cron.environment,
+                &cron.catalog_version,
+                &cron.attachment_id,
+                &cron.definition_hash,
                 &f.flow_id,
                 &f.flow_version,
-                &f.trigger_source,
+                &f.run_id,
                 &f.input_json,
+                &invocation_context,
+                &env!("CARGO_PKG_VERSION"),
+                &no_timestamp,
+                &run_deadline,
+                &no_text,
+                &no_text,
+                &no_text,
+                &no_timestamp,
+                &no_text,
+                &no_i64,
+                &Some(generation),
+                &Some(tick_identity.as_str()),
+                &no_text,
+                &no_i64,
+                &no_text,
+                &no_text,
+                &partition_key,
+                &policy,
             ],
         )
         .await?;
-    if inserted == 1 {
-        enqueue_firing(&tx, &f.run_id, partition_key, policy).await?;
+    let code: String = row.get("result_code");
+    let run_id: Option<String> = row.get("run_id");
+    let result = AdmissionResult::from_parts(&code, run_id)
+        .with_context(|| format!("unknown cron admission result {code:?}"))?;
+    if matches!(
+        result,
+        AdmissionResult::Admitted { .. } | AdmissionResult::Duplicate { .. }
+    ) {
+        tx.execute(&upsert_cron_anchor_sql(), &[&f.flow_id, &tick])
+            .await?;
     }
-    // The durable cron anchor (wamn-fqg.6), co-transacted with the write-ahead
-    // + enqueue so the run can never commit without its anchor. Upserted
-    // UNCONDITIONALLY — even on a dedupe hit (inserted == 0, another replica or
-    // a redelivery already fired this tick): the upsert is monotonic
-    // (GREATEST — upsert_cron_anchor_sql), so a losing writer's upsert is a
-    // no-op, while the unconditional write additionally HEALS the pruned-anchor
-    // + surviving-run edge (the run conflicts, yet the anchor is re-established
-    // in the same transaction). Guarding it on `inserted == 1` would gain
-    // nothing and lose the heal.
-    tx.execute(&upsert_cron_anchor_sql(), &[&f.flow_id, &tick])
-        .await?;
     tx.commit().await?;
-    Ok(inserted == 1)
+    Ok(result)
 }
 
 /// [9.8] Register the `wamn.run_queue.depth` observable gauge over the
@@ -1062,9 +1178,11 @@ fn init_crypto() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DispatcherConfig, Ordering, PartitionPolicy, RUN_QUEUE_DEPTH_SQL, Registry,
-        partition_key_for_firing, partition_policy_for_firing, valid_tenant,
+        CRON_ATTACHMENTS_SQL, DispatcherConfig, Ordering, PartitionPolicy, RUN_QUEUE_DEPTH_SQL,
+        Registry, fire, parse_registry, partition_key_for_firing, partition_policy_for_firing,
+        valid_tenant,
     };
+    use wamn_run_state::admission::AdmissionResult;
     use wamn_scheduler::Firing;
 
     // [9.8] the run_queue.depth count must reuse the CLAIMABLE predicate (rows a
@@ -1093,6 +1211,291 @@ mod tests {
         assert!(claim.contains("available_at <= now()"));
         assert!(claim.contains("lease_expires_at IS NULL"));
         assert!(claim.contains("attempts < "));
+    }
+
+    #[test]
+    fn cron_registry_reads_only_authoritative_attachment_projection() {
+        let sql = CRON_ATTACHMENTS_SQL;
+        assert!(sql.contains("FROM catalog.cron_attachments AS a"));
+        assert!(sql.contains("JOIN catalog.release_sources AS source"));
+        assert!(sql.contains("source.source_kind = 'schedule'"));
+        assert!(sql.contains("JOIN catalog.release_flows AS rf"));
+        assert!(sql.contains("JOIN catalog.flow_artifacts AS fa"));
+        assert!(sql.contains("source.definition_json->>'schedule'"));
+        assert!(!sql.contains("INSERT INTO"));
+        assert!(!sql.contains("wamn_run.runs"));
+        assert!(!sql.contains("wamn_run.run_queue"));
+        assert!(!sql.contains("FROM flows"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires WAMN_RUN_STORE_PG_URL and a throwaway PostgreSQL database"]
+    async fn callable_cron_attachment_live() {
+        let url = std::env::var("WAMN_RUN_STORE_PG_URL")
+            .expect("set WAMN_RUN_STORE_PG_URL to a throwaway PostgreSQL database");
+        let (mut client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+            .await
+            .expect("connect throwaway PostgreSQL");
+        let connection = tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        client
+            .batch_execute(
+                "DO $$ BEGIN \
+                   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
+                     CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+                   END IF; \
+                 END $$; \
+                 DROP SCHEMA IF EXISTS catalog CASCADE; \
+                 DROP SCHEMA IF EXISTS wamn_run CASCADE;",
+            )
+            .await
+            .unwrap();
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        for path in [
+            "/deploy/sql/catalog-schema.sql",
+            "/deploy/sql/run-state.sql",
+            "/deploy/sql/run-queue.sql",
+        ] {
+            let ddl = std::fs::read_to_string(format!("{root}{path}")).unwrap();
+            client.batch_execute(&ddl).await.unwrap();
+        }
+        let graph = serde_json::json!({
+            "schema-version": "0.1",
+            "flow-id": "flow-cron",
+            "version": 1,
+            "nodes": [{"id": "entry", "type": "cron"}]
+        })
+        .to_string();
+        client
+            .execute(
+                "INSERT INTO catalog.flow_artifacts \
+                   (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
+                    artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
+                 VALUES ('t1','flow-cron',1,'0.1',$1::text::jsonb,'gh','ah','[]','ih','[]')",
+                &[&graph],
+            )
+            .await
+            .unwrap();
+        client
+            .batch_execute(
+                "INSERT INTO catalog.catalogs \
+                   (tenant_id,catalog_id,version,environment,schema_version,state) \
+                 VALUES ('t1','c1',1,'dev','0.1','applied'); \
+                 INSERT INTO catalog.release_manifests \
+                   (tenant_id,catalog_id,catalog_version,members_json) \
+                 VALUES ('t1','c1',1, \
+                   '[{\"flow-id\":\"flow-cron\",\"flow-version\":1,\"artifact-hash\":\"ah\"}]'); \
+                 INSERT INTO catalog.release_flows \
+                   (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
+                 VALUES ('t1','c1',1,'flow-cron',1); \
+                 INSERT INTO catalog.release_exposure_manifests \
+                   (tenant_id,catalog_id,catalog_version,definitions_json) \
+                 VALUES ('t1','c1',1,'{}'); \
+                 INSERT INTO catalog.release_sources \
+                   (tenant_id,catalog_id,catalog_version,source_id,source_kind,definition_json,source_hash) \
+                 VALUES ('t1','c1',1,'schedule-a','schedule', \
+                   '{\"schedule\":\"* * * * * *\",\"timezone\":\"UTC\",\"catch-up\":\"skip\"}','sh'); \
+                 INSERT INTO catalog.release_attachments \
+                   (tenant_id,catalog_id,catalog_version,attachment_id,attachment_kind,flow_id, \
+                    source_id,definition_hash,definition_json) \
+                 VALUES ('t1','c1',1,'cron-a','cron','flow-cron','schedule-a','sha256:cron', \
+                   '{\"id\":\"cron-a\",\"kind\":\"cron\",\"flow-id\":\"flow-cron\", \
+                     \"source-id\":\"schedule-a\",\"run-deadline-ms\":60000}'); \
+                 INSERT INTO catalog.catalog_heads \
+                   (tenant_id,catalog_id,environment,applied_catalog_version) \
+                 VALUES ('t1','c1','dev',1); \
+                 INSERT INTO catalog.attachment_activation \
+                   (tenant_id,catalog_id,environment,attachment_id,confirmed_definition_hash,enabled) \
+                 VALUES ('t1','c1','dev','cron-a','sha256:cron',true);",
+            )
+            .await
+            .unwrap();
+        client
+            .batch_execute("SET app.tenant='t1'; SET search_path=wamn_run,public")
+            .await
+            .unwrap();
+        let rows = client.query(CRON_ATTACHMENTS_SQL, &[]).await.unwrap();
+        let registry = parse_registry("live", &rows);
+        assert_eq!(registry.crons.len(), 1);
+        let cron = registry.crons[0].clone();
+        let tick = 1_767_225_600_000;
+        let firing =
+            wamn_scheduler::cron_firing(&cron.flow_id, cron.flow_version, 0, tick, tick + 5_000)
+                .unwrap();
+
+        let result = fire(
+            &mut client,
+            &cron,
+            &firing,
+            tick,
+            tick + 5_000,
+            None,
+            "blocking",
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, AdmissionResult::Admitted { .. }));
+        let duplicate = fire(
+            &mut client,
+            &cron,
+            &firing,
+            tick,
+            tick + 5_000,
+            None,
+            "blocking",
+        )
+        .await
+        .unwrap();
+        assert!(matches!(duplicate, AdmissionResult::Duplicate { .. }));
+
+        client
+            .batch_execute(
+                "CREATE FUNCTION wamn_run.reject_cron_anchor() RETURNS trigger \
+                   LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fault-after-admit'; END $$; \
+                 CREATE TRIGGER cron_anchor_fault BEFORE INSERT OR UPDATE ON wamn_run.cron_anchor \
+                   FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_cron_anchor();",
+            )
+            .await
+            .unwrap();
+        let tick2 = tick + 1_000;
+        let firing2 =
+            wamn_scheduler::cron_firing(&cron.flow_id, cron.flow_version, 0, tick2, tick2).unwrap();
+        assert!(
+            fire(&mut client, &cron, &firing2, tick2, tick2, None, "blocking")
+                .await
+                .is_err()
+        );
+        client
+            .batch_execute(
+                "DROP TRIGGER cron_anchor_fault ON wamn_run.cron_anchor; \
+                 DROP FUNCTION wamn_run.reject_cron_anchor();",
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            fire(&mut client, &cron, &firing2, tick2, tick2, None, "blocking")
+                .await
+                .unwrap(),
+            AdmissionResult::Admitted { .. }
+        ));
+
+        let tick3 = tick2 + 1_000;
+        let firing3 =
+            wamn_scheduler::cron_firing(&cron.flow_id, cron.flow_version, 0, tick3, tick3).unwrap();
+        assert!(matches!(
+            fire(&mut client, &cron, &firing3, tick3, tick3, None, "blocking")
+                .await
+                .unwrap(),
+            AdmissionResult::Admitted { .. }
+        ));
+        let counts = client
+            .query_one(
+                "SELECT (SELECT count(*) FROM wamn_run.runs), \
+                        (SELECT count(*) FROM wamn_run.run_queue)",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!((counts.get::<_, i64>(0), counts.get::<_, i64>(1)), (3, 3));
+
+        let mut stale = cron.clone();
+        stale.catalog_version = 99;
+        let stale_firing =
+            wamn_scheduler::cron_firing(&cron.flow_id, cron.flow_version, 0, tick3 + 1_000, tick3)
+                .unwrap();
+        assert_eq!(
+            fire(
+                &mut client,
+                &stale,
+                &stale_firing,
+                tick3 + 1_000,
+                tick3,
+                None,
+                "blocking"
+            )
+            .await
+            .unwrap(),
+            AdmissionResult::HeadDrift
+        );
+        let mut changed = cron.clone();
+        changed.definition_hash = "sha256:changed".to_string();
+        let changed_firing =
+            wamn_scheduler::cron_firing(&cron.flow_id, cron.flow_version, 0, tick3 + 1_500, tick3)
+                .unwrap();
+        assert_eq!(
+            fire(
+                &mut client,
+                &changed,
+                &changed_firing,
+                tick3 + 1_500,
+                tick3,
+                None,
+                "blocking"
+            )
+            .await
+            .unwrap(),
+            AdmissionResult::DefinitionDrift
+        );
+
+        client
+            .execute(
+                "UPDATE catalog.attachment_activation SET enabled=false \
+                 WHERE attachment_id='cron-a'",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(
+            client
+                .query(CRON_ATTACHMENTS_SQL, &[])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        client
+            .execute(
+                "INSERT INTO catalog.attachment_tombstones \
+                   (tenant_id,catalog_id,environment,attachment_id,removed_in_catalog_version) \
+                 VALUES ('t1','c1','dev','cron-a',2)",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(
+            client
+                .query(CRON_ATTACHMENTS_SQL, &[])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let disabled_firing =
+            wamn_scheduler::cron_firing(&cron.flow_id, cron.flow_version, 0, tick3 + 2_000, tick3)
+                .unwrap();
+        assert_eq!(
+            fire(
+                &mut client,
+                &cron,
+                &disabled_firing,
+                tick3 + 2_000,
+                tick3,
+                None,
+                "blocking"
+            )
+            .await
+            .unwrap(),
+            AdmissionResult::InactiveDefinition
+        );
+        assert_eq!(
+            client
+                .query_one("SELECT count(*) FROM wamn_run.runs", &[])
+                .await
+                .unwrap()
+                .get::<_, i64>(0),
+            3
+        );
+        drop(client);
+        connection.abort();
     }
 
     fn firing(flow_id: &str, input_json: &str) -> Firing {
@@ -1173,6 +1576,16 @@ mod tests {
             partition_policy_for_firing(&reg, &firing("unknown", input)),
             "blocking"
         );
+        // The caller binds this literal only for keyed work. Unordered work
+        // carries no key and admission must receive the blocking default:
+        // unkeyed leapfrog is deliberately invalid at the centralized boundary.
+        let unordered_key = partition_key_for_firing(&reg, &firing("leap", input));
+        let admitted_policy = unordered_key
+            .as_ref()
+            .map_or(PartitionPolicy::Blocking.as_sql(), |_| {
+                partition_policy_for_firing(&reg, &firing("leap", input))
+            });
+        assert_eq!(admitted_policy, "blocking");
     }
 
     // R16b (wamn-2jkm.20) — the dispatcher and the wamn:postgres plugin now share

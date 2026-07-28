@@ -9,18 +9,15 @@
 //! The exactly-once story: a fire's identity is its **scheduled tick instant**,
 //! not the moment a dispatcher observed it. [`due_tick`] canonicalizes the tick
 //! (truncated to the second, so replicas observing the same tick at different
-//! sub-second offsets agree) and [`mint_cron_run_id`] derives the run id from it
-//! (zero-padded, so lexical order == chronological order within one flow's cron
-//! ids); the write-ahead `ON CONFLICT` then absorbs a re-fired tick from a
-//! restarted or concurrently racing dispatcher. The `runs` table itself is the
-//! dispatcher's cron state — `wamn_run_state::queue::cron_last_run_sql` recovers the last
-//! fired tick from the flow's OWN cron runs (a flow-exclusive predicate, never
-//! a lexical id range — flow ids are unconstrained user text and text ordering
-//! is collation-dependent), so there is no dispatcher-local storage to desync.
+//! sub-second offsets agree) and [`mint_cron_run_id`] derives the generation-
+//! bearing run id from its canonical RFC 3339 form. Central admission absorbs a
+//! re-fired tick from a restarted or concurrently racing dispatcher. The
+//! durable cron anchor is the normal recovery source; a runs-derived lookup
+//! remains only as the pre-anchor bootstrap fallback.
 
 use std::str::FromStr as _;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use croner::Cron;
 
 use crate::{Firing, Millis};
@@ -119,45 +116,62 @@ pub fn due_tick(schedule: &str, anchor: Millis, now: Millis) -> Result<Option<Mi
     Ok((tick > anchor).then_some(tick))
 }
 
-/// Deterministic run id for a cron firing: one run per (flow, tick instant),
-/// `{flow_id}:cron:{tick:013}`. Zero-padding makes lexical order chronological
-/// WITHIN one flow's cron ids (equal-length digit suffixes order the same under
-/// any collation), which lets the durable-state adapter recover the last fired
-/// tick as `max(run_id)` over the flow's own cron runs — and two
-/// replicas racing the same tick collide on the same id (the write-ahead
-/// `ON CONFLICT` absorbs the loser).
-pub fn mint_cron_run_id(flow_id: &str, tick: Millis) -> String {
-    format!("{flow_id}:cron:{tick:013}")
+/// Canonical RFC 3339 identity for a scheduled tick.
+pub fn canonical_tick(tick: Millis) -> Result<String, CronError> {
+    Ok(to_dt(tick)?.to_rfc3339_opts(SecondsFormat::AutoSi, true))
 }
 
-/// Recover the tick instant from one of `flow_id`'s own [`mint_cron_run_id`]
-/// ids (the last-fired anchor read back from `runs`). EXACT-prefix parse:
-/// `None` for anything that is not precisely `{flow_id}:cron:` + 13 digits —
-/// flow ids are unconstrained user text (one may literally contain `:cron:`),
-/// so a suffix-based parse could read a FOREIGN flow's tick as this flow's
-/// anchor and silently skip its due tick.
+/// Deterministic run id for a generation-bearing cron firing.
+///
+/// Generation zero is the Phase 2A minimal-spine generation. Definition-change
+/// and re-enable generation advancement belongs to Phase 2B.
+pub fn mint_cron_run_id(flow_id: &str, tick: Millis) -> String {
+    mint_cron_run_id_for_generation(flow_id, 0, tick)
+        .expect("a due cron tick is representable as RFC 3339")
+}
+
+/// Deterministic `{flow}:cron:{generation}:{tick}` identity.
+pub fn mint_cron_run_id_for_generation(
+    flow_id: &str,
+    generation: i64,
+    tick: Millis,
+) -> Result<String, CronError> {
+    Ok(format!(
+        "{flow_id}:cron:{generation}:{}",
+        canonical_tick(tick)?
+    ))
+}
+
+/// Recover the tick instant from one of `flow_id`'s generation-bearing cron ids.
 pub fn cron_tick_of(flow_id: &str, run_id: &str) -> Option<Millis> {
-    let tick = run_id.strip_prefix(flow_id)?.strip_prefix(":cron:")?;
-    if tick.len() != 13 || !tick.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    tick.parse().ok()
+    let rest = run_id.strip_prefix(flow_id)?.strip_prefix(":cron:")?;
+    let (_, tick) = rest.split_once(':')?;
+    DateTime::parse_from_rfc3339(tick)
+        .ok()
+        .map(|value| value.timestamp_millis())
 }
 
 /// Assemble a cron firing: the deterministic run id, the trigger input the run
 /// is replayed from (5.7: `input_json` is what a replay re-runs), and the audit
 /// `trigger_source`.
-pub fn cron_firing(flow_id: &str, flow_version: i32, schedule: &str, tick: Millis) -> Firing {
+pub fn cron_firing(
+    flow_id: &str,
+    flow_version: i32,
+    generation: i64,
+    tick: Millis,
+    fired_at: Millis,
+) -> Result<Firing, CronError> {
+    let scheduled_at = canonical_tick(tick)?;
+    let fired_at = canonical_tick(fired_at)?;
     let input = serde_json::json!({
-        "trigger": "cron",
-        "schedule": schedule,
-        "fire-at-ms": tick,
+        "scheduled-at": scheduled_at,
+        "fired-at": fired_at,
     });
-    Firing {
-        run_id: mint_cron_run_id(flow_id, tick),
+    Ok(Firing {
+        run_id: mint_cron_run_id_for_generation(flow_id, generation, tick)?,
         flow_id: flow_id.to_string(),
         flow_version,
         input_json: input.to_string(),
         trigger_source: "cron".to_string(),
-    }
+    })
 }

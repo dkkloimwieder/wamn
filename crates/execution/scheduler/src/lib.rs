@@ -11,7 +11,10 @@ mod reconcile;
 /// Unix epoch milliseconds supplied by an adapter.
 pub type Millis = i64;
 
-pub use cron::{CronError, cron_firing, cron_tick_of, due_tick, mint_cron_run_id, next_fire};
+pub use cron::{
+    CronError, canonical_tick, cron_firing, cron_tick_of, due_tick, mint_cron_run_id,
+    mint_cron_run_id_for_generation, next_fire,
+};
 pub use dispatch::{
     Cadence, CadenceError, DEFAULT_MAX_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS, Firing,
 };

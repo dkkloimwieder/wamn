@@ -2248,6 +2248,36 @@ kubectl -n wamn-system logs job/wakeproof   # -> overall PASS: true
 kubectl -n wamn-system get deploy/runner   # READY should return to its pre-gate replicas
 ```
 
+### [CALLABLE-FLOWS-P2A / wamn-5wd1.49] cron attachment admission
+
+The dispatcher reads only the authoritative active cron-attachment projection,
+synthesizes the normative `scheduled-at`/`fired-at` input, and commits the
+generation-0 deterministic run, available queue row, and durable anchor through
+the centralized admission transaction.
+
+```bash
+cargo test --locked -p wamn-dispatcher -p wamn-scheduler
+# recipe-test: H5-CALLABLE-CRON | integration | wamn-proof-integration | lib | - | callable_cron::tests:: | 1 | tests/integration/src/callable_cron.rs process-boundary catalog/attachment/admission proof
+cargo test --locked -p wamn-proof-integration --lib callable_cron::tests::
+docker run -d --rm --name wamn-cf-cron-pg -p 5458:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
+  cargo test --locked -p wamn-dispatcher callable_cron_attachment_live \
+  -- --ignored --nocapture
+docker stop wamn-cf-cron-pg
+docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system delete job callable-flow-cron --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/callable-flow-cron-job.yaml
+kubectl -n wamn-system wait --for=condition=complete \
+  job/callable-flow-cron --timeout=180s
+kubectl -n wamn-system logs job/callable-flow-cron
+```
+
+The older multi-mode `dispatchbench` fixtures still model the retired local
+`flows` table and are tracked for explicit conversion by `wamn-5wd1.68`; they
+are not evidence for this callable-flow gate.
+
 ### [5.14] shared trigger dispatcher
 
 Docs: docs/run-queue.md

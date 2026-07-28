@@ -102,31 +102,36 @@ fn cron_error_variants_pin_the_failure_mode() {
 fn cron_run_ids_are_deterministic_and_ordered() {
     let a = mint_cron_run_id("escalate-stale-holds", JAN1_2026);
     let b = mint_cron_run_id("escalate-stale-holds", JAN1_2026 + DAY);
-    assert_eq!(a, "escalate-stale-holds:cron:1767225600000");
+    assert_eq!(a, "escalate-stale-holds:cron:0:2026-01-01T00:00:00Z");
     assert!(a < b);
     assert_eq!(cron_tick_of("escalate-stale-holds", &a), Some(JAN1_2026));
 
     let small = mint_cron_run_id("f", 42);
-    assert_eq!(small, "f:cron:0000000000042");
+    assert_eq!(small, "f:cron:0:1970-01-01T00:00:00.042Z");
     assert_eq!(cron_tick_of("f", &small), Some(42));
     assert_eq!(cron_tick_of("f", "f:outbox:42"), None);
     assert_eq!(cron_tick_of("f", "plain-run"), None);
-    assert_eq!(cron_tick_of("a", "acron5:cron:0000000000042"), None);
-    assert_eq!(cron_tick_of("a", "a:cron:5x:cron:0000000000042"), None);
     assert_eq!(
-        cron_tick_of("a:cron:5x", "a:cron:5x:cron:0000000000042"),
+        cron_tick_of("a", "acron5:cron:0:1970-01-01T00:00:00.042Z"),
+        None
+    );
+    assert_eq!(
+        cron_tick_of("a", "a:cron:5x:cron:0:1970-01-01T00:00:00.042Z"),
+        None
+    );
+    assert_eq!(
+        cron_tick_of("a:cron:5x", "a:cron:5x:cron:0:1970-01-01T00:00:00.042Z"),
         Some(42)
     );
 
-    let firing = cron_firing("escalate-stale-holds", 3, "0 2 * * *", JAN1_2026);
+    let firing = cron_firing("escalate-stale-holds", 3, 0, JAN1_2026, JAN1_2026 + 5_000).unwrap();
     assert_eq!(firing.run_id, a);
     assert_eq!(firing.flow_id, "escalate-stale-holds");
     assert_eq!(firing.flow_version, 3);
     assert_eq!(firing.trigger_source, "cron");
     let input: serde_json::Value = serde_json::from_str(&firing.input_json).unwrap();
-    assert_eq!(input["trigger"], "cron");
-    assert_eq!(input["schedule"], "0 2 * * *");
-    assert_eq!(input["fire-at-ms"], JAN1_2026);
+    assert_eq!(input["scheduled-at"], "2026-01-01T00:00:00Z");
+    assert_eq!(input["fired-at"], "2026-01-01T00:00:05Z");
 }
 
 #[test]

@@ -8,6 +8,7 @@ use wamn_run_state::schema_drift;
 
 pub mod apibench;
 pub mod bench;
+pub mod callable_cron;
 pub mod capturebench;
 pub mod catalog_live;
 mod cdc_reader_process;
