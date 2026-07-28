@@ -16,7 +16,7 @@ use wamn_proof_integration::{
     testhostbench, testkitbench, tracebench, wakeproof, walbench,
 };
 use wamn_proof_system::{
-    apiproof, callable_f0, callable_f3, credproof, f1proof, ladderproof,
+    apiproof, callable_f0, callable_f1, callable_f3, credproof, f1proof, ladderproof,
     pocsuiteproof as callable_flow_schema, traceproof,
 };
 
@@ -145,6 +145,8 @@ enum Command {
     CallableFlowSchema(callable_flow_schema::CallableFlowSchemaArgs),
     /// Prove the callable F0 immutable release, HTTP attachment, and two-commit path.
     CallableF0(callable_f0::CallableF0Args),
+    /// Prove the callable F1 immutable release, deterministic CTEs, and webhook cutover.
+    CallableF1(callable_f1::CallableF1Args),
     /// Prove the callable F3 graph, cron attachment, and recovery windows.
     CallableF3(callable_f3::CallableF3Args),
 }
@@ -218,6 +220,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Pocsuiteproof(args) => pocsuiteproof::run(args).await,
         Command::CallableFlowSchema(args) => callable_flow_schema::run(args).await,
         Command::CallableF0(args) => callable_f0::run(args),
+        Command::CallableF1(args) => callable_f1::run(args),
         Command::CallableF3(args) => callable_f3::run(args),
     };
 

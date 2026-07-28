@@ -56,10 +56,6 @@ fn every_embedded_component_comes_from_the_locked_builder() {
         ),
         ("/component-output/pgprobe.wasm", "/bench/pgprobe.wasm"),
         (
-            "/component-output/poc_webhook_f1.wasm",
-            "/bench/poc-webhook-f1.wasm",
-        ),
-        (
             "/component-output/sample_node.wasm",
             "/bench/sample-node.wasm",
         ),

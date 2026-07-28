@@ -707,10 +707,9 @@ REL=components/target/wasm32-wasip2/release
   --flowrunner $REL/flowrunner.wasm \
   --component $REL/sample_node.wasm --component $REL/hello.wasm \
   --reject-tenant $REL/pgprobe.wasm \
-  --reject-tenant $REL/api_gateway.wasm \
-  --reject-tenant $REL/poc_webhook_f1.wasm
+  --reject-tenant $REL/api_gateway.wasm
   # sample-node: ZERO egress; hello: wasi:cli/clocks/io only — both CLEAR the
-  # allowlist. pgprobe/api-gateway/poc-webhook import wamn:postgres → refused.
+  # allowlist. pgprobe/api-gateway import wamn:postgres → refused.
   # node-rs / flow-composed are nodebench fixtures (import the bench-only
   # wamn:nodebench) — exercised by the nodebench gate, not this DB-path review.
 
@@ -1671,12 +1670,10 @@ own harness path, folding every stored assertion through `wamn_scenario_model::e
 
 What the stored suites cover (the expressible core) vs what stays in the sibling
 proof gates:
-- **F1** (`poc-f1-suite`): flow-level cases over `receipt-received` v1, driven via
-  `poc-webhook-f1.wasm` on `wasi:http/incoming-handler` (ProxyPre). The sync
-  response body rides `DbState` on `runs.result_json` (portable to the generic
-  0lfu executor); the final DB state (holds created) rides `DbState` row-count on
-  `quality_holds`; the outcome rides `RunOutcome`. `f1bench` retains the imperative
-  node-trace / RLS / burst asserts.
+- **F1** (`poc-f1-suite`): flow-level cases over `receipt-received` v1. The
+  legacy embedded webhook driver was retired by `wamn-5wd1.57`; the callable
+  graph/release proof below owns the current F1 path and `.9` owns the composed
+  from-zero stored-suite campaign.
 - **F3** (`poc-f3-suite`): `escalate-stale-holds` v1 under the ExecutionHost
   scenario capability set at a fixed virtual epoch. The **48h cutoff** is proven by
   time-offset arithmetic (`fire-at-ms − 48h`) against **epoch-anchored** seed rows
@@ -1694,10 +1691,8 @@ proof gates:
   stored vocabulary (the ERP ledger is an in-memory audit, not a DB table) and stay
   in `f4proof`.
 
-The gate is `suiteproof` generalized to the three real POC flows + a fixture-
-realism pass; it is NOT the generic PG-loading executor (sibling lane 0lfu) — it is
-hard-wired per-POC-flow so it can drive F1, whose node types are baked into
-`poc-webhook-f1` (NOT flowrunner-drivable).
+The fixture-realism and stored-data tests remain useful independently. The old
+hard-wired F1 drive is no longer a gate of record after the callable cutover.
 
 ```bash
 # Unit / drift / coherence tests (pure — no DB): the 3 embedded suites parse +
@@ -1711,22 +1706,6 @@ hard-wired per-POC-flow so it can drive F1, whose node types are baked into
 cargo test -p wamn-proof-integration --lib pocsuiteproof::tests::
 cargo test -p wamn-scenario-model -p wamn-scenario-catalog
 
-# Build the gate + the three guests this drive needs (all release wasm):
-cargo build -p wamn-gates
-(cd components && cargo build --release --target wasm32-wasip2 \
-   -p flowrunner -p poc-webhook-f1 -p disposition-node)
-
-# Local drive (throwaway PG; the gate owns wamn_pocsuiteproof + _f1/_f3/_f4):
-docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
-REL=components/target/wasm32-wasip2/release
-./target/debug/wamn-gates --log-level error pocsuiteproof \
-  --webhook-entry $REL/poc_webhook_f1.wasm \
-  --flowrunner   $REL/flowrunner.wasm \
-  --node         $REL/disposition_node.wasm \
-  --database-url       postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn
-docker rm -f wamn-pg
-
 # Seed-only (the wave-end composition gate's path): seed the 3 suites into a
 # shared target schema/tenant at a flow version and STOP (no drive, no drop) —
 # 0lfu then loads them by flow@version + tenant. seed-only is ADDITIVE on a
@@ -1738,11 +1717,6 @@ docker rm -f wamn-pg
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
   --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn
 
-# IN-CLUSTER gate of record (gates image only — no host/guest rebuild; the wasm
-# poc-webhook-f1/flowrunner/disposition-node + the 3 suite JSONs are baked):
-kubectl -n wamn-system apply -f deploy/gates/pocsuiteproof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/pocsuiteproof --timeout=300s
-kubectl -n wamn-system logs job/pocsuiteproof
 # 3 mutants killed (apply/test/restore via sha256 byte-restore, debug builds):
 # M1 F1/F3/F4 seed step skipped in Phase A → embedded_suites/STORE counts + drive
 #   "no run facts captured"; M2 the ExactlyThese fold inverted (evaluate.rs
@@ -3165,49 +3139,28 @@ docker stop wamn-dm1-pg
 # NOTHING in-cluster (a catalog + schema deliverable, the migrate/rls/seed
 ```
 
-### [POC-F1] receipt-received sync flow end-to-end (P1 exit, wamn-067)
+### [CALLABLE-FLOWS-POC-F1 / wamn-5wd1.57] receipt-received r6
 
 Docs: docs/poc-f1.md
 
 ```bash
-cargo test -p wamn-f1        # decimal/payload/evaluate/shapes + catalog & flow drift-guards
-cargo clippy -p wamn-f1 --all-targets && cargo fmt -p wamn-f1 --check
-(cd components && cargo build --release --target wasm32-wasip2 -p poc-webhook-f1)
-cargo clippy --manifest-path components/poc/webhook-f1/Cargo.toml --release --target wasm32-wasip2 \
-  && cargo fmt --manifest-path components/poc/webhook-f1/Cargo.toml --check
-# Fixture boundary: F1 coherence moved to repository test support; the gates
-# package only routes the executable f1bench/f1proof commands.
-# recipe-test: H5-F1-FIXTURE | fixture | wamn-test-fixtures | lib | - | f1fixture::tests:: | 1 | test-support/fixtures/f1fixture.rs receipt burst and flow coherence
-cargo test -p wamn-test-fixtures --lib f1fixture::tests::
-# cross-check incl expand=line). Local iteration (throwaway PG; superuser
-# provisions the ephemeral schema):
-docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
-  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
-REL=components/target/wasm32-wasip2/release
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
-  ./target/release/wamn-gates --log-level error f1bench \
-  --webhook-entry $REL/poc_webhook_f1.wasm --api-gateway $REL/api_gateway.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
-# In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS
-# lesson; ephemeral schema => shared-PG safe; bench Jobs run SEQUENTIALLY):
-kubectl -n wamn-system apply -f deploy/gates/f1bench-job.yaml
-kubectl -n wamn-system logs -f job/f1bench
-# (sync + burst + DB audit + REST):
-wash push localhost:5000/wamn/poc-webhook-f1:dev \
-  components/target/wasm32-wasip2/release/poc_webhook_f1.wasm --insecure
-kubectl -n wamn-system create configmap f1-fixtures \
-  --from-file=poc-receiving.catalog.json=crates/schema/model/tests/fixtures/poc-receiving.catalog.json \
-  --from-file=f1-flow.json=deploy/poc/f1-flow.json \
-  --from-file=f1-seed.dataset.json=deploy/poc/f1-seed.dataset.json
-kubectl -n wamn-system apply -f deploy/poc/f1-provision-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/f1-provision --timeout=120s
-kubectl -n wamn-system apply -f deploy/poc/f1-workloads.yaml
-kubectl -n wamn-system apply -f deploy/gates/f1proof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/f1proof --timeout=180s
-kubectl -n wamn-system logs job/f1proof
+# recipe-test: H5-CALLABLE-F1 | system | wamn-proof-system | lib | - | callable_f1::tests:: | 6 | tests/system/src/callable_f1.rs F1 release, direct pure nodes, deterministic CTE recovery, refusals, and webhook cutover
+cargo test --locked -p wamn-proof-system --lib callable_f1::tests::
+cargo test --locked --manifest-path components/Cargo.toml \
+  -p normalize-receipt -p evaluate-specs
+cargo test --locked --manifest-path components/Cargo.toml -p flowrunner \
+  f1_supplied_node_types_dispatch_through_the_custom_abi
+cargo test --locked -p wamn-proof-conformance --lib \
+  docker_component_provenance::every_embedded_component_comes_from_the_locked_builder
 
-docker build --target host -t wamn-host:dev . \
-  && docker build --target gates -t wamn-gates:dev .   # fork git dep fetched in the builder stage
+docker build --target gates -t wamn-gates:cf-f1-<commit> .
+kind load docker-image wamn-gates:cf-f1-<commit> --name wamn
+kubectl -n wamn-system delete job callable-flow-f1 --ignore-not-found
+sed "s/wamn-gates:cf-f1-ISSUE/wamn-gates:cf-f1-<commit>/" \
+  deploy/gates/callable-flow-f1-job.yaml | kubectl -n wamn-system apply -f -
+kubectl -n wamn-system wait --for=condition=complete \
+  job/callable-flow-f1 --timeout=300s
+kubectl -n wamn-system logs job/callable-flow-f1
 ```
 
 ### [CF-TIMESHIFT / wamn-5wd1.41] deterministic RFC3339 time-shift component
@@ -3641,7 +3594,6 @@ WAMN_RUN_QUEUE_PG_URL=... WAMN_RUN_STORE_PG_URL=... cargo test -p wamn-run-state
 # delay node parks between the merge's visits; every re-claim reconstructs — want
 # 7 node_runs rows, m/r visits (2,0,1)):
 (cd components/execution/flowrunner && cargo build --release --target wasm32-wasip2)
-(cd components/poc/webhook-f1 && cargo build --release --target wasm32-wasip2)
 ./target/debug/wamn-gates runnerbench --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
   --database-url ... --admin-database-url ...
 # regressions: failoverbench (all), flowbench (all), testhostbench (all), f1bench (all).

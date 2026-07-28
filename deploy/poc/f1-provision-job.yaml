@@ -1,12 +1,13 @@
 # POC-F1 provisioning: publish-catalog stands up the poc_f1 project schema —
 # 3.2 floor for the POC catalog + wamn_catalog snapshot + run-state storage
-# (runs/node_runs) + flow registry + wamn-schema-compiler business rows + the registered,
-# ACTIVE receipt-received flow. Everything additive (shared-cluster guardrail).
+# (runs/node_runs) + immutable release storage + business rows + the published,
+# attached receipt-received flow. Everything additive (shared-cluster guardrail).
 # Fixtures come from the f1-fixtures ConfigMap:
 #   kubectl -n wamn-system create configmap f1-fixtures \
-#     --from-file=poc-receiving.catalog.json=crates/schema/model/tests/fixtures/poc-receiving.catalog.json \
+#     --from-file=poc-receiving.catalog.json=deploy/poc/poc-material-receiving.catalog.json \
 #     --from-file=poc-receiving.config.json=deploy/poc/poc-material-receiving.config.json \
 #     --from-file=f1-flow.json=deploy/poc/f1-flow.json \
+#     --from-file=f1-http-attachment.json=deploy/poc/f1-http-attachment.json \
 #     --from-file=f1-seed.dataset.json=deploy/poc/f1-seed.dataset.json
 apiVersion: batch/v1
 kind: Job
@@ -44,6 +45,7 @@ spec:
               "--runstate",
               "--seed-dataset", "/fixtures/f1-seed.dataset.json",
               "--flow", "/fixtures/f1-flow.json",
+              "--exposure", "/fixtures/f1-http-attachment.json",
             ]
           env:
             # Admin credential sourced from the `postgres-fixture-superuser`

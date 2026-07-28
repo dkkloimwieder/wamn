@@ -707,18 +707,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "poc-webhook-f1"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-f1",
- "wamn-flow",
- "wamn-run-state",
- "wamn-runner",
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1101,14 +1089,6 @@ name = "wamn-event-wire"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "wamn-f1"
-version = "0.1.0"
-dependencies = [
  "serde",
  "serde_json",
 ]

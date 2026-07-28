@@ -6,14 +6,14 @@
 //! here instead of shipping skew that only surfaces as a cryptic linker error
 //! when a guest fails to INSTANTIATE.
 //!
-//! Six... seven copies of `wamn:postgres/package.wit` are vendored under
+//! Six copies of `wamn:postgres/package.wit` are vendored under
 //! `components/`, `crates/`, and `services/` (wit-bindgen resolves each guest/host's imports
 //! from its OWN `wit/deps` tree, never from `docs/`). This guard:
 //!
 //!   1. WALKS `components/`, `crates/`, and `services/` for every `deps/wamn-postgres/
 //!      package.wit`, and cross-checks the discovered set against the explicit
 //!      [`EXPECTED_COPIES`] list BOTH ways — a removed/missing copy fails, and a
-//!      NEW (eighth) copy fails with a message telling the author to register it
+//!      NEW copy fails with a message telling the author to register it
 //!      here, so a future copy cannot dodge the guard.
 //!   2. Asserts every copy's CODE (comment/blank-stripped, trimmed) is identical
 //!      to `docs/wamn-postgres.wit`. This is the load-bearing check: the actual
@@ -53,24 +53,22 @@ fn code_lines(wit: &str) -> Vec<&str> {
 /// The complete, explicit set of vendored `wamn:postgres` contract copies. The
 /// walk in [`all_vendored_copies_are_registered`] must discover exactly these;
 /// adding a new guest that vendors the contract requires adding its path here.
-const EXPECTED_COPIES: [&str; 7] = [
+const EXPECTED_COPIES: [&str; 6] = [
     "components/ingress/api-gateway/wit/deps/wamn-postgres/package.wit",
     "components/fixtures/pgprobe/wit/deps/wamn-postgres/package.wit",
     "components/execution/flowrunner/wit/deps/wamn-postgres/package.wit",
     "components/execution/materializer/wit/deps/wamn-postgres/package.wit",
-    "components/poc/webhook-f1/wit/deps/wamn-postgres/package.wit",
     "crates/platform/runtime/wit/deps/wamn-postgres/package.wit",
     "crates/node/guest/wit-caps/deps/wamn-postgres/package.wit",
 ];
 
-/// The five copies that are byte-identical to one another today (the fuller
+/// The four copies that are byte-identical to one another today (the fuller
 /// doc-comment revision). Byte-identity within the cluster is asserted so a
 /// comment edit to one member fails here.
-const CLUSTER_A: [&str; 5] = [
+const CLUSTER_A: [&str; 4] = [
     "components/ingress/api-gateway/wit/deps/wamn-postgres/package.wit",
     "components/fixtures/pgprobe/wit/deps/wamn-postgres/package.wit",
     "components/execution/flowrunner/wit/deps/wamn-postgres/package.wit",
-    "components/poc/webhook-f1/wit/deps/wamn-postgres/package.wit",
     "crates/node/guest/wit-caps/deps/wamn-postgres/package.wit",
 ];
 

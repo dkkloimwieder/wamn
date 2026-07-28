@@ -14,7 +14,7 @@
     },
     "component_workspace": {
       "manifest": "components/Cargo.toml",
-      "package_count": 22
+      "package_count": 21
     },
     "non_cargo_inputs": [
       "components/samples/node-ts"
@@ -170,7 +170,6 @@
         "node-rs",
         "normalize-receipt",
         "pgprobe",
-        "poc-webhook-f1",
         "sample-node",
         "sockprobe",
         "time-shift",
@@ -218,7 +217,6 @@
         "node-rs",
         "normalize-receipt",
         "pgprobe",
-        "poc-webhook-f1",
         "sample-node",
         "sockprobe",
         "time-shift",

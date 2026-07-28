@@ -38,21 +38,47 @@
         }
       }
     },
-    { "id": "normalize-receipt", "type": "custom", "config": { "manifest": "normalize-receipt" } },
+    {
+      "id": "normalize-receipt",
+      "type": "normalize-receipt",
+      "config": {
+        "endpoint": "http://normalize-receipt.wamn-system.svc.cluster.local"
+      }
+    },
     {
       "id": "resolve-and-persist",
       "type": "postgres-query",
-      "config": { "mode": "query", "statement": "resolve-and-persist-returning" }
+      "config": {
+        "mode": "query",
+        "idempotent-with-key": true,
+        "params": ["@"],
+        "sql": "WITH input AS (SELECT $1::jsonb AS receipt), supplier AS (SELECT id FROM suppliers, input WHERE name = receipt->>'supplier'), site AS (SELECT id FROM sites, input WHERE code = receipt->>'site'), material_input AS (SELECT value AS line, ordinality::int AS line_no FROM input, jsonb_array_elements(receipt->'lines') WITH ORDINALITY), material_rows AS (SELECT mi.line, mi.line_no, m.id AS material_id, m.moisture_max_pct::text, m.weight_tolerance_kg::text FROM material_input mi LEFT JOIN materials m ON m.name = mi.line->>'material'), refs AS (SELECT input.receipt, supplier.id AS supplier_id, site.id AS site_id, NOT EXISTS (SELECT 1 FROM material_rows WHERE material_id IS NULL) AND supplier.id IS NOT NULL AND site.id IS NOT NULL AS references_valid FROM input LEFT JOIN supplier ON true LEFT JOIN site ON true), receipt_upsert AS (INSERT INTO receipts (tenant_id, receipt_no, supplier_id, site_id, received_at) SELECT current_setting('app.tenant', true), receipt->>'receipt_no', supplier_id, site_id, (receipt->>'received_at')::timestamptz FROM refs WHERE references_valid ON CONFLICT (tenant_id, receipt_no, supplier_id) DO UPDATE SET site_id = EXCLUDED.site_id, received_at = EXCLUDED.received_at RETURNING id, site_id), line_upsert AS (INSERT INTO receipt_lines (tenant_id, receipt_id, line_no, material_id, quantity) SELECT current_setting('app.tenant', true), r.id, mr.line_no, mr.material_id, (mr.line->>'quantity')::numeric FROM receipt_upsert r CROSS JOIN material_rows mr ON CONFLICT (tenant_id, receipt_id, line_no) DO UPDATE SET material_id = EXCLUDED.material_id, quantity = EXCLUDED.quantity RETURNING id, line_no, material_id) SELECT refs.receipt, refs.references_valid, receipt_upsert.id::text AS receipt_id, refs.site_id::text AS site_id, COALESCE(jsonb_agg(jsonb_build_object('material_id', mr.material_id::text, 'moisture_max_pct', mr.moisture_max_pct, 'weight_tolerance_kg', mr.weight_tolerance_kg) ORDER BY mr.line_no) FILTER (WHERE mr.material_id IS NOT NULL), '[]'::jsonb) AS line_specs, COALESCE(jsonb_agg(line_upsert.id::text ORDER BY line_upsert.line_no) FILTER (WHERE line_upsert.id IS NOT NULL), '[]'::jsonb) AS line_ids FROM refs LEFT JOIN receipt_upsert ON true LEFT JOIN material_rows mr ON true LEFT JOIN line_upsert ON line_upsert.line_no = mr.line_no GROUP BY refs.receipt, refs.references_valid, receipt_upsert.id, refs.site_id"
+      }
     },
-    { "id": "references-valid", "type": "conditional", "config": { "expression": "references_valid" } },
+    {
+      "id": "references-valid",
+      "type": "conditional",
+      "config": { "expression": "rows[0].references_valid" }
+    },
     { "id": "invalid-reference", "type": "fail", "config": { "code": "invalid-reference", "status": 400 } },
-    { "id": "evaluate-specs", "type": "custom", "config": { "manifest": "evaluate-specs" } },
+    {
+      "id": "evaluate-specs",
+      "type": "evaluate-specs",
+      "config": {
+        "endpoint": "http://evaluate-specs.wamn-system.svc.cluster.local"
+      }
+    },
     {
       "id": "create-holds",
       "type": "postgres-query",
-      "config": { "mode": "query", "statement": "create-holds-returning" }
+      "config": {
+        "mode": "query",
+        "idempotent-with-key": true,
+        "params": ["@"],
+        "sql": "WITH input AS (SELECT $1::jsonb AS result), wanted AS (SELECT (value->>'line')::int AS line_no, value->>'line_id' AS line_id FROM input, jsonb_array_elements(result->'out_of_spec')), ins AS (INSERT INTO quality_holds (tenant_id, line_id, site_id, status, opened_at) SELECT current_setting('app.tenant', true), wanted.line_id::uuid, (input.result->>'site_id')::uuid, 'open', now() FROM input CROSS JOIN wanted ON CONFLICT (tenant_id, line_id) DO NOTHING RETURNING id, line_id), read_back AS (SELECT q.id, q.line_id, wanted.line_no FROM wanted JOIN quality_holds q ON q.line_id = wanted.line_id::uuid) SELECT input.result->>'receipt_id' AS receipt_id, COALESCE(jsonb_agg(jsonb_build_object('id', read_back.id::text, 'line_id', read_back.line_id::text) ORDER BY read_back.line_no) FILTER (WHERE read_back.id IS NOT NULL), '[]'::jsonb) AS holds FROM input LEFT JOIN read_back ON true GROUP BY input.result"
+      }
     },
-    { "id": "shape-response", "type": "transform", "config": { "expression": "@" } },
+    { "id": "shape-response", "type": "transform", "config": { "expression": "rows[0]" } },
     { "id": "respond", "type": "respond", "config": { "status": 200 } },
     { "id": "invalid-input", "type": "fail", "config": { "code": "invalid-input", "status": 400 } }
   ],

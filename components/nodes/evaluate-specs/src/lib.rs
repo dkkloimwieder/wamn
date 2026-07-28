@@ -27,6 +27,11 @@ impl Node for EvaluateSpecs {
 wamn_node_guest::export_node!(EvaluateSpecs);
 
 fn evaluate(input: &Value) -> Result<Value, String> {
+    let input = input
+        .get("rows")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.first())
+        .unwrap_or(input);
     let receipt = object_field(input, "receipt")?;
     let lines = receipt
         .get("lines")
@@ -292,6 +297,13 @@ mod tests {
     fn golden_decimal_boundary_equality_is_in_spec() {
         let output = payload(run(input()).expect("boundary input"));
         assert_eq!(output["out_of_spec"], json!([]));
+    }
+
+    #[test]
+    fn query_mode_read_back_row_is_the_component_input() {
+        let output = payload(run(json!({"rows": [input()]})).expect("query read-back row"));
+        assert_eq!(output["out_of_spec"], json!([]));
+        assert_eq!(output["receipt_id"], "44444444-4444-4444-4444-444444444444");
     }
 
     #[test]

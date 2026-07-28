@@ -1226,7 +1226,7 @@ fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
         "pg-write" => Some(ResolvedNode::PgWrite),
         "delay" => Some(ResolvedNode::Delay),
         "http-call" => Some(ResolvedNode::HttpCall),
-        "custom" => Some(ResolvedNode::Custom),
+        "custom" | "normalize-receipt" | "evaluate-specs" => Some(ResolvedNode::Custom),
         node_type if wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),
         _ => None,
     }
@@ -3199,6 +3199,21 @@ mod tests {
         assert_eq!(
             resolve_node("transform", &config),
             Some(ResolvedNode::Standard)
+        );
+    }
+
+    #[test]
+    fn f1_supplied_node_types_dispatch_through_the_custom_abi() {
+        let config = serde_json::json!({
+            "endpoint": "http://normalize-receipt.wamn-system.svc.cluster.local"
+        });
+        assert_eq!(
+            resolve_node("normalize-receipt", &config),
+            Some(ResolvedNode::Custom)
+        );
+        assert_eq!(
+            resolve_node("evaluate-specs", &config),
+            Some(ResolvedNode::Custom)
         );
     }
 

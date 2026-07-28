@@ -1,15 +1,6 @@
-# POC-TESTS in-cluster gate of record (wamn-3rj): pocsuiteproof seeds the F1/F3/F4
-# stored suites as catalog data and drives each flow ONCE through its real path,
-# folding the stored assertions through wamn_scenario_model::evaluate (F1 sync-webhook
-# body + final DB; F3 virtual-time 48h cutoff; F4 egress spy). It provisions its
-# OWN ephemeral schemas (wamn_pocsuiteproof + _f1/_f3/_f4) through the superuser
-# url — no shared-schema mutation, all dropped at the end.
-#
-# Every wasm this gate needs is ALREADY baked into wamn-gates:dev
-# (poc-webhook-f1.wasm, flowrunner.wasm, disposition-node.wasm) + the three suite
-# JSONs — so a change here needs ONLY the gates image rebaked (`--target gates`),
-# never a host or guest rebuild. The F4 serve-node hop + ERP callback listener run
-# IN-PROCESS on loopback ports 18191/18192 — no external Service.
+# POC-TESTS compatibility gate after the callable F1 cutover: seed the F1/F3/F4
+# stored suites only. The serial callable Wave-1 campaign (wamn-5wd1.9) owns the
+# composed drive; this Job must not retain the deleted embedded F1 webhook.
 #
 # Co-located with postgres, NO cpu limit (the S2 CFS lesson). Run bench/proof Jobs
 # SEQUENTIALLY on the shared postgres.
@@ -49,9 +40,7 @@ spec:
             [
               "--log-level", "error",
               "pocsuiteproof",
-              "--webhook-entry", "/bench/poc-webhook-f1.wasm",
-              "--flowrunner", "/bench/flowrunner.wasm",
-              "--node", "/bench/disposition-node.wasm",
+              "--seed-only",
             ]
           env:
             # App reads/writes: the non-superuser, non-BYPASSRLS role (RLS-scoped).

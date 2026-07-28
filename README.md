@@ -75,7 +75,6 @@ components/             wasm32-wasip2 guests
   execution/            product execution components (flowrunner, materializer)
   fixtures/             non-product proof fixtures (flow-driver, hello, memhog,
                         busyloop, pgprobe, logspewer, trace-relay)
-  poc/                  component POCs (webhook-f1)
   samples/              reference/sample nodes (node-rs, node-ts, sample-node)
 
 poc/                    POC integration crates (f1, dm1, cdc1)

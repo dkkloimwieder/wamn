@@ -57,7 +57,6 @@ COPY components/ingress ./components/ingress
 COPY components/fixtures ./components/fixtures
 COPY components/execution ./components/execution
 COPY components/nodes ./components/nodes
-COPY components/poc ./components/poc
 COPY components/samples ./components/samples
 WORKDIR /build/components
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry \
@@ -66,13 +65,11 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
     cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
       -p api-gateway -p evaluate-specs -p flow-http -p flowrunner -p materializer -p normalize-receipt \
       -p busyloop -p flow-driver -p hello -p logspewer -p memhog -p pgprobe -p sockprobe \
-      -p poc-webhook-f1 \
       -p disposition-node -p js-sample -p node-rs -p sample-node \
  && install -d /component-output \
  && for artifact in \
       api_gateway evaluate_specs flow_http flowrunner materializer normalize_receipt \
       busyloop flow_driver hello logspewer memhog pgprobe sockprobe \
-      poc_webhook_f1 \
       disposition_node js-sample node_rs sample_node; do \
       install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm" \
         "/component-output/${artifact}.wasm"; \
@@ -209,16 +206,12 @@ COPY --from=component-builder /component-output/materializer.wasm /bench/materia
 # template; the samplebench gate drives it via CommandPre). Bin crate, so the
 # artifact keeps its hyphen (js-sample.wasm), unlike the cdylib underscore names.
 COPY --from=component-builder /component-output/js-sample.wasm /bench/js-sample.wasm
-# POC-F1 sync-webhook ingress (exports wasi:http/incoming-handler, imports
-# wamn:postgres, embeds the wamn-runner engine; the f1bench gate drives it).
-COPY --from=component-builder /component-output/poc_webhook_f1.wasm /bench/poc-webhook-f1.wasm
 # 11.4 assertion-library fixture: the checked-in Vec<TestCase> the testkitbench
 # gate loads (the cases-as-data path). Static JSON, not a compiled artifact.
 COPY deploy/gates/testkit-cases.json /bench/testkit-cases.json
 # POC-TESTS (wamn-3rj): the F1/F3/F4 stored suite envelopes the pocsuiteproof
 # gate seeds + drives. Static JSON, not compiled artifacts; every wasm this gate
-# needs (poc-webhook-f1.wasm, flowrunner.wasm, disposition-node.wasm) is already
-# baked above, so this gate adds NO host/guest rebuild — only these three files.
+# needs is already baked above, so this gate adds no additional component build.
 COPY deploy/gates/poc-f1-suite.json /bench/poc-f1-suite.json
 COPY deploy/gates/poc-f3-suite.json /bench/poc-f3-suite.json
 COPY deploy/gates/poc-f4-suite.json /bench/poc-f4-suite.json

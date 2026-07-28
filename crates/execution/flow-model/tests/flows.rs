@@ -32,10 +32,8 @@ fn load(name: &str) -> (String, Flow) {
 fn interfaces() -> ResolvedInterfaces {
     BTreeMap::from([
         ("conditional".into(), vec!["true".into(), "false".into()]),
-        (
-            "evaluate-specs".into(),
-            vec!["main".into(), "out-of-spec".into()],
-        ),
+        ("evaluate-specs".into(), vec!["main".into()]),
+        ("normalize-receipt".into(), vec!["main".into()]),
         ("custom".into(), vec!["main".into()]),
         ("http-request".into(), vec!["main".into()]),
         ("invoke-flow".into(), vec!["main".into()]),
