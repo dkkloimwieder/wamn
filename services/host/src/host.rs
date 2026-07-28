@@ -11,12 +11,17 @@ use anyhow::Context as _;
 use clap::Args;
 use wash_runtime::engine::WasmProposal;
 use wash_runtime::host::HostConfig;
+use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::{DynamicRouter, HttpServer};
 use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
-use wamn_runtime::build_engine;
-use wamn_runtime::plugins::{WamnJetstream, WamnLogging, WamnNodeControl, WamnPostgres};
+use wamn_runtime::plugins::{
+    WamnFlowInvocation, WamnJetstream, WamnLogging, WamnNodeControl, WamnPostgres,
+};
+use wamn_runtime::{build_engine, spawn_epoch_ticker};
+
+use crate::inline_invocation::InlineExecutionDriver;
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -97,6 +102,26 @@ pub struct HostArgs {
     /// epoch deadlines never fire)
     #[arg(long = "epoch-tick-ms", default_value_t = 10)]
     pub epoch_tick_ms: u64,
+
+    /// Compiled flowrunner used for inline HTTP invocation execution.
+    #[arg(long, default_value = "/components/flowrunner.wasm")]
+    pub flowrunner: PathBuf,
+
+    /// Mounted production credential-vault file.
+    #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
+    pub credentials_file: Option<PathBuf>,
+
+    /// Production outbound HTTP allowlist. Empty denies all egress.
+    #[arg(
+        long = "allowed-hosts",
+        env = "WAMN_ALLOWED_HOSTS",
+        value_delimiter = ','
+    )]
+    pub allowed_hosts: Vec<String>,
+
+    /// Lease TTL for an inline claimed run, in milliseconds.
+    #[arg(long, default_value_t = 30_000)]
+    pub inline_lease_ttl_ms: u64,
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
@@ -119,10 +144,28 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // `wamn.doorbell.<tenant>` on this NATS) — no second connection.
     let doorbell_client = scheduler_nats_client.clone();
 
-    let engine = build_engine(&args.wasm_proposals)?;
+    let engine = Arc::new(build_engine(&args.wasm_proposals)?);
     if args.epoch_tick_ms > 0 {
-        wamn_runtime::spawn_epoch_ticker(&engine, Duration::from_millis(args.epoch_tick_ms));
+        spawn_epoch_ticker(&engine, Duration::from_millis(args.epoch_tick_ms));
     }
+    let postgres = Arc::new(WamnPostgres::from_env().context("wamn:postgres plugin init")?);
+    let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
+    let allowed_hosts: Arc<[AllowedHost]> = args
+        .allowed_hosts
+        .iter()
+        .map(|value| value.parse::<AllowedHost>())
+        .collect::<Result<Vec<_>, _>>()
+        .context("parse --allowed-hosts")?
+        .into();
+    let inline_driver = Arc::new(InlineExecutionDriver::new(
+        engine.clone(),
+        &args.flowrunner,
+        postgres.clone(),
+        logging.clone(),
+        args.credentials_file.as_deref(),
+        allowed_hosts,
+        args.inline_lease_ttl_ms,
+    )?);
 
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,
@@ -131,7 +174,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
 
     let mut builder = ClusterHostBuilder::default()
-        .with_engine(engine)
+        .with_engine((*engine).clone())
         .with_host_config(host_config)
         .with_nats_client(Arc::new(scheduler_nats_client))
         .with_host_group(args.host_group.clone())
@@ -145,21 +188,21 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // owns a bounded front queue + drop counter, and ships enriched OTel log
         // records to the collector. Both claim wasi:logging/logging, so exactly
         // one may be registered.
-        .with_plugin(Arc::new(
-            WamnLogging::from_env().context("wamn:logging plugin init")?,
-        ))?
+        .with_plugin(logging)?
         .with_plugin(Arc::new(plugin::wasi_otel::WasiOtel::default()))?
         // Pool config from DATABASE_URL / WAMN_PG_* env; without a URL the
         // plugin still links and returns connection-unavailable on use.
-        .with_plugin(Arc::new(
-            WamnPostgres::from_env().context("wamn:postgres plugin init")?,
-        ))?
+        .with_plugin(postgres)?
         // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
         // Service-first materializer. Data-plane URL from WAMN_EVT_NATS_URL
         // (absent ⇒ links but returns connection-unavailable, the WAMN_PG_*
         // posture); the doorbell rings on the control-plane client above.
         .with_plugin(Arc::new(
             WamnJetstream::from_env().with_doorbell(doorbell_client),
+        ))?
+        .with_plugin(Arc::new(
+            WamnFlowInvocation::from_env(inline_driver)
+                .context("wamn:flow-invocation plugin init")?,
         ))?
         .with_plugin(Arc::new(WamnNodeControl))?;
 
@@ -186,7 +229,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let cluster_host = builder.build().context("failed to build cluster host")?;
     tracing::info!(
-        "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:node/control[stub])"
+        "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-invocation, wamn:node/control[stub])"
     );
     let cleanup = wash_runtime::washlet::run_cluster_host(cluster_host)
         .await

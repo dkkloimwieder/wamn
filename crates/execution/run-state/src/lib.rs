@@ -63,6 +63,8 @@ pub mod cancellation;
 /// capture columns before the write.
 pub mod capture;
 pub mod context;
+/// Durable lookup, wait, and fenced-cancel queries for flow invocation.
+pub mod invocation;
 mod model;
 /// Durable queue, lease, partition, timer, and dead-letter decisions and SQL.
 pub mod queue;

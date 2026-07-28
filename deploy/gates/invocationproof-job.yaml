@@ -1,8 +1,7 @@
-# wamn-5wd1.72 exact-image gate. The gates image and production run-worker image
-# receive the same component-builder output; this job drives that exact
-# /bench/flowrunner.wasm through ExecutionHost::execute_claimed against a
-# throwaway database, including instantiation failure, stale-fence refusal,
-# expired-lease recovery, stored response, and dequeue.
+# wamn-5wd1.55 exact-image gate. The gates image and production host image
+# receive the same component-builder output; this job composes provider
+# admission, exact fenced execution, bounded wait, stored recovery, conflicts,
+# disabled recovery, crash seams, and dequeue against a throwaway database.
 apiVersion: batch/v1
 kind: Job
 metadata:

@@ -83,10 +83,11 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
       --plug target/wasm32-wasip2/release/node_rs.wasm \
       -o /component-output/flow_composed.wasm
 
-# ---- washlet image: the host binary only ------------------------------------
+# ---- washlet image: host + locked inline flowrunner -------------------------
 FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/wamn-host /usr/local/bin/wamn-host
+COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
 

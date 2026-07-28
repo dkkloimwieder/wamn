@@ -17,6 +17,7 @@ use std::str::FromStr as _;
 use clap::{Parser, Subcommand};
 
 mod host;
+mod inline_invocation;
 
 #[derive(Parser)]
 #[command(name = "wamn-host", version, about)]

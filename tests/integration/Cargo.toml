@@ -29,6 +29,7 @@ wamn-catalog = { workspace = true }
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }
+wamn-flow-invocation = { workspace = true }
 wamn-scenario-catalog = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-test-fixtures = { workspace = true }

@@ -869,6 +869,27 @@ kubectl -n wamn-system wait --for=condition=complete job/invocationproof --timeo
 kubectl -n wamn-system logs job/invocationproof
 ```
 
+### [CALLABLE-FLOWS-P4] production invocation provider
+
+Docs: `docs/FLOW-SPEC.md` §§6.1–6.2, §§9.4–9.7, §§10–11, Phase 4.
+
+```bash
+cargo test --locked -p wamn-runtime -p wamn-run-state -p wamn-flow-invocation
+cargo test --locked -p wamn-proof-system --lib invocationproof::tests::
+cargo test --locked -p wamn-proof-integration --lib invocationproof::tests::
+cargo test --locked -p wamn-proof-conformance docker_component_provenance
+cargo check --locked -p wamn-host
+
+# Gate of record: the exact image composes admission, inline fenced execution,
+# bounded wait, stored-outcome recovery, conflicts, and disabled recovery.
+docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system delete job invocationproof --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/invocationproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/invocationproof --timeout=300s
+kubectl -n wamn-system logs job/invocationproof
+```
+
 ### [5.2] production flow-runner engine (crates/execution/flow-engine)
 
 Docs: docs/flow-runner.md

@@ -23,13 +23,14 @@ fn every_embedded_component_comes_from_the_locked_builder() {
             "/component-output/flow_composed.wasm",
             "/bench/flow-composed.wasm",
         ),
-        (
-            "/component-output/flow_http.wasm",
-            "/bench/flow-http.wasm",
-        ),
+        ("/component-output/flow_http.wasm", "/bench/flow-http.wasm"),
         (
             "/component-output/flowrunner.wasm",
             "/bench/flowrunner.wasm",
+        ),
+        (
+            "/component-output/flowrunner.wasm",
+            "/components/flowrunner.wasm",
         ),
         (
             "/component-output/flowrunner.wasm",

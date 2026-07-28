@@ -11,7 +11,12 @@ use tokio_postgres::{Client, Config, NoTls};
 use wamn_catalog::Artifact;
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_flow::Flow;
+use wamn_flow_invocation::{BeginResult, InvokeRequest, InvokeResult};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::flow_invocation::{
+    InlineRunClaim, InlineRunDriver, InvocationService, InvocationServiceConfig,
+    PostgresInvocationBackend,
+};
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
@@ -21,6 +26,26 @@ const TENANT: &str = "inline-tenant";
 const OWNER: &str = "inline-provider";
 const FLOW_ID: &str = "inline-echo";
 const CATALOG_ID: &str = "inline-catalog";
+const ATTACHMENT_ID: &str = "http-proof";
+const DEFINITION_HASH: &str = "sha256:inline-proof";
+
+struct ProofInlineDriver {
+    host: Arc<tokio::sync::Mutex<ExecutionHost>>,
+}
+
+impl InlineRunDriver for ProofInlineDriver {
+    fn start(&self, claim: InlineRunClaim) -> anyhow::Result<()> {
+        let host = self.host.clone();
+        tokio::spawn(async move {
+            host.lock()
+                .await
+                .execute_claimed(&claim.run_id, &claim.lease_owner, claim.lease_generation)
+                .await
+                .expect("proof inline execution must complete");
+        });
+        Ok(())
+    }
+}
 
 #[derive(Debug, Args)]
 pub struct InvocationProofArgs {
@@ -169,6 +194,55 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             &[&TENANT, &CATALOG_ID, &FLOW_ID],
         )
         .await?;
+    release
+        .execute(
+            "INSERT INTO catalog.release_exposure_manifests \
+               (tenant_id,catalog_id,catalog_version,definitions_json) \
+             VALUES ($1,$2,1,'{}')",
+            &[&TENANT, &CATALOG_ID],
+        )
+        .await?;
+    release
+        .execute(
+            "INSERT INTO catalog.release_sources \
+               (tenant_id,catalog_id,catalog_version,source_id,source_kind,definition_json,source_hash) \
+             VALUES ($1,$2,1,'auth-proof','auth','{}','sha256:auth-proof')",
+            &[&TENANT, &CATALOG_ID],
+        )
+        .await?;
+    release
+        .execute(
+            "INSERT INTO catalog.release_attachments \
+               (tenant_id,catalog_id,catalog_version,attachment_id,attachment_kind,flow_id,source_id, \
+                definition_hash,definition_json,route_host,route_path,route_template,route_method) \
+             VALUES ($1,$2,1,$3,'http',$4,'auth-proof',$5, \
+                     '{\"run-deadline-ms\":60000,\"response-deadline-ms\":30000}', \
+                     'proof.test','/echo','/echo','POST')",
+            &[
+                &TENANT,
+                &CATALOG_ID,
+                &ATTACHMENT_ID,
+                &FLOW_ID,
+                &DEFINITION_HASH,
+            ],
+        )
+        .await?;
+    release
+        .execute(
+            "INSERT INTO catalog.catalog_heads \
+               (tenant_id,catalog_id,environment,applied_catalog_version) \
+             VALUES ($1,$2,'proof',1)",
+            &[&TENANT, &CATALOG_ID],
+        )
+        .await?;
+    release
+        .execute(
+            "INSERT INTO catalog.attachment_activation \
+               (tenant_id,catalog_id,environment,attachment_id,confirmed_definition_hash,enabled) \
+             VALUES ($1,$2,'proof',$3,$4,true)",
+            &[&TENANT, &CATALOG_ID, &ATTACHMENT_ID, &DEFINITION_HASH],
+        )
+        .await?;
     release.commit().await?;
     drop(client);
     let _ = handle.await;
@@ -250,7 +324,7 @@ pub async fn run(args: InvocationProofArgs) -> anyhow::Result<()> {
         let engine = build_engine(&[])?;
         let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
         let mut pg_config = WamnPostgresConfig::from_env();
-        pg_config.database_url = Some(app_url);
+        pg_config.database_url = Some(app_url.clone());
         let postgres = Arc::new(WamnPostgres::new(pg_config)?);
         let credentials = Arc::new(WamnCredentials::empty());
         let logging = Arc::new(WamnLogging::from_env()?);
@@ -312,9 +386,87 @@ pub async fn run(args: InvocationProofArgs) -> anyhow::Result<()> {
             .expect_err("completed run has no claimed queue row");
         assert!(observed_after_completion.to_string().contains("not-found"));
 
+        let host = Arc::new(tokio::sync::Mutex::new(host));
+        let service = InvocationService::new(
+            PostgresInvocationBackend::from_database_url(&app_url)?,
+            Some(app_url.clone()),
+            InvocationServiceConfig {
+                tenant_id: TENANT.to_string(),
+                catalog_id: CATALOG_ID.to_string(),
+                environment: "proof".to_string(),
+                project: "proof".to_string(),
+                schema: Some("wamn_run".to_string()),
+                executor_id: OWNER.to_string(),
+                platform_revision: "invocationproof".to_string(),
+                lease_ttl: std::time::Duration::from_secs(30),
+                admission_ttl: std::time::Duration::from_secs(60),
+            },
+            Arc::new(ProofInlineDriver { host }),
+        );
+        let request = InvokeRequest {
+            attachment_id: ATTACHMENT_ID.to_string(),
+            expected_catalog_version: 1,
+            expected_definition_hash: DEFINITION_HASH.to_string(),
+            client_request_fingerprint: "sha256:provider-request".to_string(),
+            payload: r#"{"echo":"provider"}"#.to_string(),
+            idempotency_key: Some("provider-key".to_string()),
+            principal: "proof-principal".to_string(),
+            deadline_override: None,
+            trace: None,
+        };
+        let BeginResult::Admitted(admitted) = service.begin(request.clone()).await? else {
+            bail!("provider refused the valid proof request");
+        };
+        let Some(InvokeResult::Responded(response)) =
+            service.wait(admitted.run_id.clone(), 5_000).await?
+        else {
+            bail!("provider did not return the exact stored response");
+        };
+        if response.body != r#"{"echo":"provider"}"# || response.status_hint != Some(200) {
+            bail!("provider changed the stored response");
+        }
+        let BeginResult::Admitted(recovered) = service.begin(request.clone()).await? else {
+            bail!("provider did not recover the completed admission");
+        };
+        if recovered.run_id != admitted.run_id {
+            bail!("provider recovery changed the durable run id");
+        }
+        let mut conflicting = request.clone();
+        conflicting.client_request_fingerprint = "sha256:different-body".to_string();
+        let BeginResult::Rejected(rejection) = service.begin(conflicting).await? else {
+            bail!("provider accepted a conflicting idempotency body");
+        };
+        if rejection.code != "idempotency-key-reused" {
+            bail!("provider collapsed the idempotency conflict");
+        }
+        let (client, connection) = connect(&admin_url).await?;
+        client
+            .execute(
+                "UPDATE catalog.attachment_activation SET enabled=false \
+                  WHERE tenant_id=$1 AND catalog_id=$2 AND environment='proof' AND attachment_id=$3",
+                &[&TENANT, &CATALOG_ID, &ATTACHMENT_ID],
+            )
+            .await?;
+        drop(client);
+        let _ = connection.await;
+        let BeginResult::Admitted(disabled_recovery) = service.begin(request.clone()).await? else {
+            bail!("disabled attachment did not recover its stored admission");
+        };
+        if disabled_recovery.run_id != admitted.run_id {
+            bail!("disabled recovery changed the durable run id");
+        }
+        let mut fresh_disabled = request;
+        fresh_disabled.idempotency_key = Some("provider-key-disabled".to_string());
+        let BeginResult::Rejected(rejection) = service.begin(fresh_disabled).await? else {
+            bail!("disabled attachment admitted a new run");
+        };
+        if rejection.code != "attachment-disabled" {
+            bail!("disabled new admission returned the wrong refusal");
+        }
+
         ticker.abort();
         println!(
-            "invocationproof PASS: exact image drove fresh + recovered claims under one fence"
+            "invocationproof PASS: provider admitted, drove, waited, recovered, and fenced the exact image"
         );
         anyhow::Ok(())
     }

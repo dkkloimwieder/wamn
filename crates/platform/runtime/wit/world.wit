@@ -14,6 +14,11 @@ world node-plugin {
   import wamn:node/control@0.1.0;
 }
 
+/// Production provider for the callable-flow invocation boundary.
+world flow-invocation-plugin {
+  import wamn:flow-invocation/invocation@0.1.0;
+}
+
 /// Host-side bindgen world for the wamn:node credentials vault (5.9): the
 /// host IMPLEMENTS `get` — per-project resolution from a mounted static
 /// source, grant-enforced (cjv.3) and audit-logged. The trusted
