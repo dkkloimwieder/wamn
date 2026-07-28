@@ -956,9 +956,9 @@ forgery and depth refusals, immutable retry identity, and rollback:
 cargo test --locked -p wamn-run-state
 docker run -d --rm --name wamn-admission-pg -p 5458:5432 \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+# recipe-test: CALLABLE-EVENT-LINEAGE | integration | wamn-run-state | test | admission_live | - | 1 | trusted event source/root/depth, cross-tenant and forged-lineage refusal, immutable retry, queue-fault rollback
 WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
   cargo test --locked -p wamn-run-state --test admission_live -- --ignored
-# recipe-test: CALLABLE-EVENT-LINEAGE | integration | wamn-run-state | test | admission_live | - | 1 | trusted event source/root/depth, cross-tenant and forged-lineage refusal, immutable retry, queue-fault rollback
 docker stop wamn-admission-pg
 ```
 
