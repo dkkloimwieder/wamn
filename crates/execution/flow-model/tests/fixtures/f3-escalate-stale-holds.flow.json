@@ -21,7 +21,7 @@
       "type": "postgres-query",
       "config": {
         "mode": "query",
-        "statement": "next-stale-hold",
+        "sql": "SELECT id, status, opened_at FROM quality_holds WHERE status = 'open' AND opened_at < $1::timestamptz ORDER BY opened_at, id LIMIT 1",
         "params": ["context().cutoff"]
       }
     },
@@ -45,7 +45,8 @@
       "config": {
         "method": "POST",
         "url": "https://notify.example/holds",
-        "body": "context().hold"
+        "body": "context().hold",
+        "idempotency-key": true
       }
     },
     {
@@ -53,8 +54,9 @@
       "type": "postgres-query",
       "config": {
         "mode": "execute",
-        "statement": "escalate-head",
-        "params": ["context().hold.id"]
+        "sql": "UPDATE quality_holds SET status = 'escalated' WHERE id = $1::uuid AND status = 'open'",
+        "params": ["context().hold.id"],
+        "idempotent-with-key": true
       }
     },
     {

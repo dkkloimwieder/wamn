@@ -5,6 +5,7 @@ use wamn_run_state::schema_drift;
 pub use wamn_test_fixtures::{apifixture, f1fixture};
 
 pub mod apiproof;
+pub mod callable_f3;
 pub mod credproof;
 pub mod deadlineproof;
 pub mod f1proof;

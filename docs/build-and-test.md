@@ -2340,6 +2340,29 @@ immutable catalog/source/attachment/head/activation chain for every phase and
 exercises this centralized admission path under race, rollback, retention,
 reconnect, fairness, and wake faults.
 
+### [CALLABLE-FLOWS-POC-F3 / wamn-5wd1.58] stale-hold escalation r6
+
+The canonical F3 graph and minimal cron attachment prove the scheduled-time
+cutoff, one-row notify-before-escalate loop, natural completion, and the
+same-run/new-run recovery-key distinction. The gate image is tagged with the
+implementation commit; substitute that tag without editing the tracked Job.
+
+```bash
+# recipe-test: H5-CALLABLE-F3 | system | wamn-proof-system | lib | - | callable_f3::tests:: | 5 | tests/system/src/callable_f3.rs F3 graph, attachment, recovery, and failure windows
+cargo test --locked -p wamn-proof-system --lib callable_f3::tests::
+cargo test --locked -p wamn-flow --test flows f3_
+cargo test --locked -p wamn-proof-integration --lib pocsuiteproof::tests::
+
+docker build --target gates -t wamn-gates:cf-f3-<commit> .
+kind load docker-image wamn-gates:cf-f3-<commit> --name wamn
+kubectl -n wamn-system delete job callable-flow-f3 --ignore-not-found
+sed "s/wamn-gates:cf-f3-ISSUE/wamn-gates:cf-f3-<commit>/" \
+  deploy/gates/callable-flow-f3-job.yaml | kubectl -n wamn-system apply -f -
+kubectl -n wamn-system wait --for=condition=complete \
+  job/callable-flow-f3 --timeout=300s
+kubectl -n wamn-system logs job/callable-flow-f3
+```
+
 ### [5.14] shared trigger dispatcher
 
 Docs: docs/run-queue.md

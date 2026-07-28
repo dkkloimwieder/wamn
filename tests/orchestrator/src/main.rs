@@ -16,7 +16,8 @@ use wamn_proof_integration::{
     testhostbench, testkitbench, tracebench, wakeproof, walbench,
 };
 use wamn_proof_system::{
-    apiproof, credproof, f1proof, ladderproof, pocsuiteproof as callable_flow_schema, traceproof,
+    apiproof, callable_f3, credproof, f1proof, ladderproof, pocsuiteproof as callable_flow_schema,
+    traceproof,
 };
 
 // Repository-only fixture and temporary-service commands.
@@ -142,6 +143,8 @@ enum Command {
     Pocsuiteproof(pocsuiteproof::PocSuiteProofArgs),
     /// Prove the canonical F0-F4 POC catalog applies from zero atomically and enforces replay keys.
     CallableFlowSchema(callable_flow_schema::CallableFlowSchemaArgs),
+    /// Prove the callable F3 graph, cron attachment, and recovery windows.
+    CallableF3(callable_f3::CallableF3Args),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -212,6 +215,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Dashproof(args) => dashproof::run(args).await,
         Command::Pocsuiteproof(args) => pocsuiteproof::run(args).await,
         Command::CallableFlowSchema(args) => callable_flow_schema::run(args).await,
+        Command::CallableF3(args) => callable_f3::run(args),
     };
 
     shutdown_observability();

@@ -192,7 +192,8 @@ fn f3_gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
               "config": { "base": "scheduled-at", "offset-ms": offset_ms,
                           "format": "iso", "key": "cutoff", "ctx": "@" } },
             { "id": "next-stale-hold", "type": "postgres-query",
-              "config": { "mode": "query", "statement": "next-stale-hold",
+              "config": { "mode": "query",
+                          "sql": "SELECT id, status, opened_at FROM quality_holds WHERE status = 'open' AND opened_at < $1::timestamptz ORDER BY opened_at, id LIMIT 1",
                           "params": ["context().cutoff"] } },
             { "id": "found", "type": "conditional",
               "config": { "expression": "length(rows) > `0`" } },
@@ -202,10 +203,12 @@ fn f3_gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
             { "id": "notify-manager", "type": "http-request",
               "credential": "notify-webhook",
               "config": { "method": "POST", "url": format!("http://{echo_host}/holds"),
-                          "body": "context().hold" } },
+                          "body": "context().hold", "idempotency-key": true } },
             { "id": "escalate-head", "type": "postgres-query",
-              "config": { "mode": "execute", "statement": "escalate-head",
-                          "params": ["context().hold.id"] } },
+              "config": { "mode": "execute",
+                          "sql": "UPDATE quality_holds SET status = 'escalated' WHERE id = $1::uuid AND status = 'open'",
+                          "params": ["context().hold.id"],
+                          "idempotent-with-key": true } },
             { "id": "notification-failed", "type": "fail",
               "config": { "code": "notification-failed" } }
         ],
@@ -1426,6 +1429,14 @@ mod tests {
         };
         assert_eq!(types(&mine), types(&src), "node id→type set drifted");
         assert!(mine.credentials.iter().any(|c| c.name == "notify-webhook"));
+        assert_eq!(
+            mine.nodes
+                .iter()
+                .find(|node| node.id == "notify-manager")
+                .and_then(|node| node.config.get("idempotency-key")),
+            Some(&serde_json::json!(true)),
+            "F3 notify must remain provider-deduplicable on same-key recovery"
+        );
         assert!(
             mine.edges
                 .iter()

@@ -198,6 +198,14 @@ fn f3_escalate_stale_holds_shape() {
         Some("notify-webhook".to_string()),
         "notify references the declared credential"
     );
+    assert_eq!(
+        f.nodes
+            .iter()
+            .find(|n| n.id == "notify-manager")
+            .and_then(|n| n.config.get("idempotency-key")),
+        Some(&serde_json::json!(true)),
+        "notify opts into same-key recovery and provider dedupe"
+    );
 
     assert!(
         f.edges

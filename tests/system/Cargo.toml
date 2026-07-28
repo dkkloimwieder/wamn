@@ -17,6 +17,7 @@ wamn-flow = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-test-fixtures = { workspace = true }
 wamn-run-state = { workspace = true }
+wamn-schema-control = { workspace = true }
 wamn-schema-compiler = { workspace = true }
 wamn-schema-model = { workspace = true }
 
