@@ -1938,7 +1938,7 @@ fn complete_attempt_success(
     ttl_ms: i64,
     owner: &str,
     lease_generation: i64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let (binds, _) = capture_binds(capture, output, &dispatch.payload);
     let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
     let response = client::query(
@@ -1966,7 +1966,7 @@ fn complete_attempt_success(
     decode_attempt_completion(&response.rows)
 }
 
-fn decode_attempt_completion(rows: &[Vec<SqlValue>]) -> Result<(), String> {
+fn decode_attempt_completion(rows: &[Vec<SqlValue>]) -> Result<bool, String> {
     let row = rows.first().ok_or("attempt completion returned no row")?;
     let code = match row.first() {
         Some(SqlValue::Text(code)) => code.as_str(),
@@ -1980,7 +1980,8 @@ fn decode_attempt_completion(rows: &[Vec<SqlValue>]) -> Result<(), String> {
     match CheckpointResult::from_parts(code, status)
         .ok_or_else(|| format!("unknown attempt completion result: {code}"))?
     {
-        CheckpointResult::Applied => Ok(()),
+        CheckpointResult::Applied => Ok(false),
+        CheckpointResult::Cancelled => Ok(true),
         CheckpointResult::FenceLost => Err("attempt completion refused: fence-lost".to_string()),
         other => Err(format!("attempt completion refused: {other:?}")),
     }
@@ -2002,7 +2003,7 @@ fn record_error_and_renew(
     ttl_ms: i64,
     owner: &str,
     lease_generation: i64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let (kind, payload, mut detail_json) = error_row_values(err);
     let (binds, redacted) = capture_binds(capture, &payload, input);
     if redacted {
@@ -2814,7 +2815,7 @@ fn execute_claimed(
                                 context,
                             } => {
                                 let checkpoint_context = context.as_ref().unwrap_or(&d.context);
-                                complete_attempt_success(
+                                let cancelled = complete_attempt_success(
                                     run_id,
                                     &d,
                                     port,
@@ -2825,6 +2826,13 @@ fn execute_claimed(
                                     owner,
                                     lease_generation,
                                 )?;
+                                if cancelled {
+                                    return Ok(ClaimOutcome {
+                                        outcome: 0,
+                                        park_ms: 0,
+                                        fail_reason: None,
+                                    });
+                                }
                                 next_seq += 1;
                                 emit_node_complete(
                                     &flow.flow_id,
@@ -2839,7 +2847,7 @@ fn execute_claimed(
                                 if will_error_route(err, &d)
                                     && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
                             {
-                                record_error_and_renew(
+                                let cancelled = record_error_and_renew(
                                     run_id,
                                     &d.node,
                                     d.occurrence,
@@ -2851,6 +2859,13 @@ fn execute_claimed(
                                     owner,
                                     lease_generation,
                                 )?;
+                                if cancelled {
+                                    return Ok(ClaimOutcome {
+                                        outcome: 0,
+                                        park_ms: 0,
+                                        fail_reason: None,
+                                    });
+                                }
                                 next_seq += 1;
                                 emit_node_error(
                                     &flow.flow_id,

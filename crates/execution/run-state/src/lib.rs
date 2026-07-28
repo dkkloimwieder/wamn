@@ -56,6 +56,8 @@
 pub mod admission;
 /// Capture-independent node attempt protocol and recovery classes.
 pub mod attempt;
+/// Durable cancellation requests and bounded deadline reconciliation.
+pub mod cancellation;
 /// Node-level I/O capture policy application (9.6): the pure scrub / truncate /
 /// preview-derivation the flowrunner guest links to fill a `node_runs` row's
 /// capture columns before the write.

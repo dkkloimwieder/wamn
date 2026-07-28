@@ -915,6 +915,19 @@ WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
 docker stop wamn-admission-pg
 ```
 
+Durable cancellation and the bounded dispatcher deadline sweep use the same
+throwaway database:
+
+```bash
+# recipe-test: CALLABLE-CANCEL | integration | wamn-run-state,wamn-runner,wamn-dispatcher | all | - | cancellation_live | 1 | generation-fenced request, live-attempt deferral, completion-time cancellation, propagation, bounded deadline sweep
+cargo test --locked -p wamn-run-state -p wamn-runner -p wamn-dispatcher
+docker run -d --rm --name wamn-cancellation-pg -p 5458:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
+  cargo test --locked -p wamn-run-state --test cancellation_live -- --ignored
+docker stop wamn-cancellation-pg
+```
+
 ### [5.7-resume-pin / wamn-cox] resume pins the run's persisted flow_version
 
 Docs: docs/run-state.md § *Resume pins the run's persisted version*

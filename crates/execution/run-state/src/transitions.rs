@@ -532,6 +532,7 @@ pub fn terminalize_sql() -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckpointResult {
     Applied,
+    Cancelled,
     AlreadyCompleted,
     AttemptNotFound,
     AttemptNotStarted,
@@ -545,6 +546,7 @@ impl CheckpointResult {
     pub fn from_parts(code: &str, run_status: &str) -> Option<CheckpointResult> {
         match code {
             "parked" | "completed" => Some(CheckpointResult::Applied),
+            "cancelled" => Some(CheckpointResult::Cancelled),
             "already-completed" => Some(CheckpointResult::AlreadyCompleted),
             "attempt-not-found" => Some(CheckpointResult::AttemptNotFound),
             "attempt-not-started" => Some(CheckpointResult::AttemptNotStarted),
@@ -663,8 +665,10 @@ pub fn complete_attempt_success_sql() -> String {
                       WHEN n.status IN ('success', 'error') THEN 'already-completed' \
                       WHEN n.status <> 'started' THEN 'attempt-not-started' \
                       ELSE 'ready' \
-                    END AS result_code, a.tenant_id, a.run_id, a.status \
+                    END AS result_code, a.tenant_id, a.run_id, a.status, \
+                    r.flow_id, r.flow_version, r.cancel_requested_kind \
                FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
+               LEFT JOIN locked_run AS r ON true \
          ), \
          completed_attempt AS ( \
              UPDATE node_runs AS n \
@@ -677,6 +681,64 @@ pub fn complete_attempt_success_sql() -> String {
                 AND n.node_id = $5 AND n.occurrence = $6 \
              RETURNING n.tenant_id, n.run_id \
          ), \
+         cancellation_outcome AS MATERIALIZED ( \
+             SELECT c.*, \
+                    '{{\"error\":{{\"code\":' \
+                    || to_jsonb(c.cancel_requested_kind)::text \
+                    || ',\"flow-id\":' || to_jsonb(c.flow_id)::text \
+                    || ',\"flow-version\":' || c.flow_version::text \
+                    || ',\"run-id\":' || to_jsonb(c.run_id)::text || '}}}}' \
+                       AS canonical_text \
+               FROM classified AS c JOIN completed_attempt AS n \
+                 ON n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
+              WHERE c.cancel_requested_kind IS NOT NULL \
+         ), \
+         cancelled AS ( \
+             UPDATE runs AS r \
+                SET status = 'cancelled', cancel_kind = o.cancel_requested_kind, \
+                    terminal_reason = o.cancel_requested_kind, \
+                    caller_outcome_kind = CASE WHEN r.caller_released_at IS NULL \
+                                               THEN 'cancelled' ELSE r.caller_outcome_kind END, \
+                    caller_outcome_json = CASE WHEN r.caller_released_at IS NULL \
+                                               THEN o.canonical_text::jsonb \
+                                               ELSE r.caller_outcome_json END, \
+                    caller_http_status = CASE WHEN r.caller_released_at IS NULL \
+                                              THEN 499 ELSE r.caller_http_status END, \
+                    caller_outcome_hash = CASE WHEN r.caller_released_at IS NULL \
+                                               THEN 'sha256:' || encode(sha256( \
+                                                   convert_to(o.canonical_text, 'UTF8')), 'hex') \
+                                               ELSE r.caller_outcome_hash END, \
+                    caller_released_at = COALESCE(r.caller_released_at, now()), \
+                    updated_at = now() \
+               FROM cancellation_outcome AS o \
+              WHERE r.tenant_id = o.tenant_id AND r.run_id = o.run_id \
+             RETURNING r.tenant_id, r.run_id, r.status \
+         ), \
+         descendants AS ( \
+             WITH RECURSIVE tree AS ( \
+                 SELECT r.tenant_id, r.run_id, c.cancel_requested_kind \
+                   FROM runs AS r JOIN classified AS c \
+                     ON r.tenant_id = c.tenant_id AND r.parent_run_id = c.run_id \
+                  WHERE r.status IN ('dispatched', 'running') \
+                 UNION ALL \
+                 SELECT r.tenant_id, r.run_id, tree.cancel_requested_kind \
+                   FROM runs AS r JOIN tree \
+                     ON r.tenant_id = tree.tenant_id AND r.parent_run_id = tree.run_id \
+                  WHERE r.status IN ('dispatched', 'running') \
+             ) SELECT * FROM tree \
+         ), \
+         propagated AS ( \
+             UPDATE runs AS r \
+                SET cancel_requested_kind = COALESCE( \
+                        r.cancel_requested_kind, \
+                        'parent-' || d.cancel_requested_kind), \
+                    cancel_requested_at = COALESCE(r.cancel_requested_at, now()), \
+                    updated_at = now() \
+               FROM descendants AS d \
+              WHERE EXISTS (SELECT 1 FROM cancelled) \
+                AND r.tenant_id = d.tenant_id AND r.run_id = d.run_id \
+             RETURNING r.run_id \
+         ), \
          checkpointed AS ( \
              UPDATE runs AS r \
                 SET state_json = jsonb_set(COALESCE(r.state_json, '{{}}'::jsonb), \
@@ -685,7 +747,19 @@ pub fn complete_attempt_success_sql() -> String {
                FROM completed_attempt AS n \
               WHERE r.tenant_id = n.tenant_id AND r.run_id = n.run_id \
                 AND jsonb_typeof($15::text::jsonb) = 'object' \
+                AND NOT EXISTS (SELECT 1 FROM cancelled) \
              RETURNING r.run_id \
+         ), \
+         dequeued AS ( \
+             DELETE FROM run_queue AS q USING cancelled AS x \
+              WHERE q.tenant_id = x.tenant_id AND q.run_id = x.run_id \
+                AND (SELECT count(*) FROM propagated) >= 0 \
+             RETURNING q.run_id \
+         ), \
+         notified AS ( \
+             SELECT pg_notify('wamn_run_outcome', x.tenant_id || ':' || x.run_id) \
+               FROM cancelled AS x \
+              WHERE (SELECT count(*) FROM dequeued) >= 0 \
          ), \
          renewed AS ( \
              UPDATE run_queue AS q \
@@ -694,9 +768,14 @@ pub fn complete_attempt_success_sql() -> String {
               WHERE q.tenant_id = c.tenant_id AND q.run_id = p.run_id \
              RETURNING q.run_id \
          ) \
-         SELECT CASE WHEN r.run_id IS NOT NULL THEN 'completed' ELSE c.result_code END \
-                    AS result_code, c.status AS run_status \
-           FROM classified AS c LEFT JOIN renewed AS r ON true"
+         SELECT CASE WHEN x.run_id IS NOT NULL THEN 'cancelled' \
+                     WHEN q.run_id IS NOT NULL THEN 'completed' ELSE c.result_code END \
+                    AS result_code, COALESCE(x.status, c.status) AS run_status, \
+                (SELECT count(*) FROM notified) AS notification_count \
+           FROM classified AS c \
+           LEFT JOIN cancelled AS x ON true \
+           LEFT JOIN renewed AS q ON true \
+          WHERE (SELECT count(*) FROM notified) >= 0"
     )
 }
 
@@ -722,8 +801,10 @@ pub fn complete_attempt_error_sql() -> String {
                       WHEN n.status IN ('success', 'error') THEN 'already-completed' \
                       WHEN n.status <> 'started' THEN 'attempt-not-started' \
                       ELSE 'ready' \
-                    END AS result_code, a.tenant_id, a.run_id, a.status \
+                    END AS result_code, a.tenant_id, a.run_id, a.status, \
+                    r.flow_id, r.flow_version, r.cancel_requested_kind \
                FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
+               LEFT JOIN locked_run AS r ON true \
          ), \
          completed_attempt AS ( \
              UPDATE node_runs AS n \
@@ -736,18 +817,93 @@ pub fn complete_attempt_error_sql() -> String {
               WHERE c.result_code = 'ready' \
                 AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
                 AND n.node_id = $5 AND n.occurrence = $6 \
-             RETURNING n.run_id \
+             RETURNING n.tenant_id, n.run_id \
+         ), \
+         cancellation_outcome AS MATERIALIZED ( \
+             SELECT c.*, \
+                    '{{\"error\":{{\"code\":' \
+                    || to_jsonb(c.cancel_requested_kind)::text \
+                    || ',\"flow-id\":' || to_jsonb(c.flow_id)::text \
+                    || ',\"flow-version\":' || c.flow_version::text \
+                    || ',\"run-id\":' || to_jsonb(c.run_id)::text || '}}}}' \
+                       AS canonical_text \
+               FROM classified AS c JOIN completed_attempt AS n \
+                 ON n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
+              WHERE c.cancel_requested_kind IS NOT NULL \
+         ), \
+         cancelled AS ( \
+             UPDATE runs AS r \
+                SET status = 'cancelled', cancel_kind = o.cancel_requested_kind, \
+                    terminal_reason = o.cancel_requested_kind, \
+                    caller_outcome_kind = CASE WHEN r.caller_released_at IS NULL \
+                                               THEN 'cancelled' ELSE r.caller_outcome_kind END, \
+                    caller_outcome_json = CASE WHEN r.caller_released_at IS NULL \
+                                               THEN o.canonical_text::jsonb \
+                                               ELSE r.caller_outcome_json END, \
+                    caller_http_status = CASE WHEN r.caller_released_at IS NULL \
+                                              THEN 499 ELSE r.caller_http_status END, \
+                    caller_outcome_hash = CASE WHEN r.caller_released_at IS NULL \
+                                               THEN 'sha256:' || encode(sha256( \
+                                                   convert_to(o.canonical_text, 'UTF8')), 'hex') \
+                                               ELSE r.caller_outcome_hash END, \
+                    caller_released_at = COALESCE(r.caller_released_at, now()), \
+                    updated_at = now() \
+               FROM cancellation_outcome AS o \
+              WHERE r.tenant_id = o.tenant_id AND r.run_id = o.run_id \
+             RETURNING r.tenant_id, r.run_id, r.status \
+         ), \
+         descendants AS ( \
+             WITH RECURSIVE tree AS ( \
+                 SELECT r.tenant_id, r.run_id, c.cancel_requested_kind \
+                   FROM runs AS r JOIN classified AS c \
+                     ON r.tenant_id = c.tenant_id AND r.parent_run_id = c.run_id \
+                  WHERE r.status IN ('dispatched', 'running') \
+                 UNION ALL \
+                 SELECT r.tenant_id, r.run_id, tree.cancel_requested_kind \
+                   FROM runs AS r JOIN tree \
+                     ON r.tenant_id = tree.tenant_id AND r.parent_run_id = tree.run_id \
+                  WHERE r.status IN ('dispatched', 'running') \
+             ) SELECT * FROM tree \
+         ), \
+         propagated AS ( \
+             UPDATE runs AS r \
+                SET cancel_requested_kind = COALESCE( \
+                        r.cancel_requested_kind, \
+                        'parent-' || d.cancel_requested_kind), \
+                    cancel_requested_at = COALESCE(r.cancel_requested_at, now()), \
+                    updated_at = now() \
+               FROM descendants AS d \
+              WHERE EXISTS (SELECT 1 FROM cancelled) \
+                AND r.tenant_id = d.tenant_id AND r.run_id = d.run_id \
+             RETURNING r.run_id \
+         ), \
+         dequeued AS ( \
+             DELETE FROM run_queue AS q USING cancelled AS x \
+              WHERE q.tenant_id = x.tenant_id AND q.run_id = x.run_id \
+                AND (SELECT count(*) FROM propagated) >= 0 \
+             RETURNING q.run_id \
+         ), \
+         notified AS ( \
+             SELECT pg_notify('wamn_run_outcome', x.tenant_id || ':' || x.run_id) \
+               FROM cancelled AS x \
+              WHERE (SELECT count(*) FROM dequeued) >= 0 \
          ), \
          renewed AS ( \
              UPDATE run_queue AS q \
                 SET lease_expires_at = now() + ($16::bigint * interval '1 millisecond') \
                FROM completed_attempt AS n, classified AS c \
               WHERE q.tenant_id = c.tenant_id AND q.run_id = n.run_id \
+                AND NOT EXISTS (SELECT 1 FROM cancelled) \
              RETURNING q.run_id \
          ) \
-         SELECT CASE WHEN r.run_id IS NOT NULL THEN 'completed' ELSE c.result_code END \
-                    AS result_code, c.status AS run_status \
-           FROM classified AS c LEFT JOIN renewed AS r ON true"
+         SELECT CASE WHEN x.run_id IS NOT NULL THEN 'cancelled' \
+                     WHEN q.run_id IS NOT NULL THEN 'completed' ELSE c.result_code END \
+                    AS result_code, COALESCE(x.status, c.status) AS run_status, \
+                (SELECT count(*) FROM notified) AS notification_count \
+           FROM classified AS c \
+           LEFT JOIN cancelled AS x ON true \
+           LEFT JOIN renewed AS q ON true \
+          WHERE (SELECT count(*) FROM notified) >= 0"
     )
 }
 
@@ -955,6 +1111,15 @@ mod tests {
         assert!(error.contains("output_port = 'error'"));
         assert!(error.contains("renewed AS"));
         assert!(!error.contains("INSERT INTO node_runs"));
+
+        for sql in [success, error] {
+            assert!(sql.contains("cancellation_outcome AS MATERIALIZED"));
+            assert!(sql.contains("THEN 499 ELSE r.caller_http_status"));
+            assert!(sql.contains("sha256("));
+            assert!(sql.contains("convert_to(o.canonical_text, 'UTF8')"));
+            assert!(!sql.contains("jsonb::text"));
+            assert!(sql.contains("(SELECT count(*) FROM notified) AS notification_count"));
+        }
     }
 
     #[test]

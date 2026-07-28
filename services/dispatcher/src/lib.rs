@@ -25,10 +25,12 @@
 //!      make an already-fired tick re-fire, wamn-fqg.6), fire the due tick via
 //!      the centralized callable-flow admission + anchor co-transaction,
 //!      doorbell the winner;
-//!   3. wake — doorbell every currently-due unleased queue row (a parked run
+//!   3. cancellation — reconcile a bounded batch of durable requests and
+//!      elapsed run/response deadlines, deferring live attempts;
+//!   4. wake — doorbell every currently-due unleased queue row (a parked run
 //!      whose `available_at` arrived, or a run whose enqueue hint was lost) —
 //!      one read-only scan doubling as the reconciliation backstop;
-//!   4. cadence — tighten the project's interval on work, decay while idle.
+//!   5. cadence — tighten the project's interval on work, decay while idle.
 //!
 //! Exactly-once across restart AND concurrently racing replicas needs no leader:
 //! run ids are deterministic per firing (`{flow}:cron:{generation}:{tick}`),
@@ -58,6 +60,7 @@ use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
 use wamn_flow::{EntryKind, Flow, Ordering};
 use wamn_run_state::admission::{AdmissionProducer, AdmissionResult, admission_sql};
+use wamn_run_state::cancellation::cancellation_sweep_sql;
 use wamn_run_state::queue::{
     PartitionPolicy, cron_anchor_sql, cron_last_run_sql, parked_due_sql, upsert_cron_anchor_sql,
 };
@@ -239,11 +242,13 @@ pub struct TickReport {
     /// (the claim is the arbiter), and a persistently-unclaimed backlog SHOULD
     /// keep the cadence tight — waking a scale-to-zero runner is the point.
     pub woken: Vec<String>,
+    /// Runs terminalized by the bounded cancellation/deadline reconciliation.
+    pub cancelled: Vec<String>,
 }
 
 impl TickReport {
     pub fn found_work(&self) -> bool {
-        !self.cron_fired.is_empty() || !self.woken.is_empty()
+        !self.cron_fired.is_empty() || !self.woken.is_empty() || !self.cancelled.is_empty()
     }
 }
 
@@ -624,7 +629,20 @@ impl Dispatcher {
             .filter_map(|cron| next_fire(&cron.schedule, now_ms).ok())
             .min();
 
-        // 3. Wake / reconciliation: hint every currently-due unleased row.
+        // 3. Cancellation/deadline reconciliation. The run-state statement
+        // owns locking, deferred seizure, terminalization, propagation, and
+        // transactional waiter notification; the dispatcher only supplies the
+        // fairness bound.
+        let sweep_batch = i64::try_from(batch).unwrap_or(i64::MAX);
+        for row in p
+            .client
+            .query(cancellation_sweep_sql(), &[&sweep_batch])
+            .await?
+        {
+            report.cancelled.push(row.get("run_id"));
+        }
+
+        // 4. Wake / reconciliation: hint every currently-due unleased row.
         for row in p.client.query(&parked_due_sql(batch), &[]).await? {
             let run_id: String = row.get("run_id");
             doorbells.push(run_id.clone());
@@ -658,7 +676,7 @@ impl Dispatcher {
             nats.flush().await?;
         }
 
-        // 4. Adaptive cadence.
+        // 5. Adaptive cadence.
         p.interval_ms = cadence.next_interval(p.interval_ms, report.found_work());
         p.last_sweep_ms = now_ms;
         Ok(report)
