@@ -1144,6 +1144,9 @@ mod tests {
             "catalog_version",
             "attachment_id",
             "registration_id",
+            "event_source_run_id",
+            "event_root_run_id",
+            "event_depth",
             "parent_run_id",
             "parent_node_id",
             "parent_occurrence",
@@ -1176,6 +1179,7 @@ mod tests {
             assert!(run.contains(field), "run-state DDL missing {field}");
         }
         assert!(run.contains("CREATE TABLE wamn_run.invocation_admissions"));
+        assert!(run.contains("CREATE TRIGGER runs_event_lineage_immutable"));
         assert!(run.contains("'effect-uncertain'"));
 
         let queue = include_str!("../../../../deploy/sql/run-queue.sql");

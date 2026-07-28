@@ -94,6 +94,7 @@ pub enum AdmissionResult {
     RegistrationNotFound,
     RegistrationDrift,
     InvalidRegistrationHash,
+    InvalidEventLineage,
     IdempotencyKeyReused,
     IdempotencyScopeChanged,
     ConflictingRunIdentity,
@@ -114,6 +115,7 @@ impl AdmissionResult {
             "registration-not-found" => Some(Self::RegistrationNotFound),
             "registration-drift" => Some(Self::RegistrationDrift),
             "invalid-registration-hash" => Some(Self::InvalidRegistrationHash),
+            "invalid-event-lineage" => Some(Self::InvalidEventLineage),
             "idempotency-key-reused" => Some(Self::IdempotencyKeyReused),
             "idempotency-scope-changed" => Some(Self::IdempotencyScopeChanged),
             "conflicting-run-identity" => Some(Self::ConflictingRunIdentity),
@@ -213,8 +215,11 @@ fn lock_catalog_head_sql() -> String {
 /// 24. event sequence (event)
 /// 25. RFC 8785 registration JSON text (event)
 /// 26. canonical registration hash (event)
-/// 27. resolved partition key (all producers; null means unordered)
-/// 28. resolved partition policy (all producers; `blocking | leapfrog`)
+/// 27. immediate source run id (event)
+/// 28. causal root run id (event)
+/// 29. causal depth (event)
+/// 30. resolved partition key (all producers; null means unordered)
+/// 31. resolved partition policy (all producers; `blocking | leapfrog`)
 ///
 /// HTTP identity is reserved in the deferred-FK ledger before the run insert.
 /// The named unique constraint chooses the concurrent winner without allowing a
@@ -235,8 +240,9 @@ WITH input AS ( \
            $20::bigint AS lease_ttl_ms, $21::bigint AS cron_generation, \
            $22::text AS cron_tick, $23::text AS registration_id, \
            $24::bigint AS event_seq, $25::text::jsonb AS registration_document, \
-           $26::text AS registration_hash, $27::text AS partition_key, \
-           $28::text AS partition_policy \
+           $26::text AS registration_hash, $27::text AS event_source_run_id, \
+           $28::text AS event_root_run_id, $29::int AS event_depth, \
+           $30::text AS partition_key, $31::text AS partition_policy \
 ), \
 locked_head AS MATERIALIZED ( \
     SELECT h.applied_catalog_version \
@@ -263,6 +269,14 @@ live_registration AS MATERIALIZED ( \
       FROM catalog.event_registrations AS r, input AS i \
      WHERE i.producer = 'event' AND r.tenant_id = i.tenant_id \
        AND r.catalog_id = i.catalog_id AND r.registration_id = i.registration_id \
+     FOR KEY SHARE OF r \
+), \
+source_lineage AS MATERIALIZED ( \
+    SELECT r.run_id, COALESCE(r.event_root_run_id, r.run_id) AS root_run_id, \
+           COALESCE(r.event_depth, 0) AS depth \
+      FROM wamn_run.runs AS r, input AS i \
+     WHERE i.producer = 'event' AND i.event_source_run_id <> i.run_id \
+       AND r.tenant_id = i.tenant_id AND r.run_id = i.event_source_run_id \
      FOR KEY SHARE OF r \
 ), \
 release_flow AS MATERIALIZED ( \
@@ -327,7 +341,9 @@ classified AS ( \
         OR i.lease_ttl_ms IS NULL OR i.lease_ttl_ms <= 0 \
         OR i.cron_generation IS NOT NULL OR i.cron_tick IS NOT NULL \
         OR i.registration_id IS NOT NULL OR i.event_seq IS NOT NULL \
-        OR i.registration_document IS NOT NULL OR i.registration_hash IS NOT NULL) \
+        OR i.registration_document IS NOT NULL OR i.registration_hash IS NOT NULL \
+        OR i.event_source_run_id IS NOT NULL OR i.event_root_run_id IS NOT NULL \
+        OR i.event_depth IS NOT NULL) \
         THEN 'invalid-input' \
       WHEN i.producer = 'cron' AND (i.attachment_id IS NULL \
         OR i.expected_definition_hash IS NULL OR i.cron_generation IS NULL \
@@ -338,12 +354,16 @@ classified AS ( \
         OR i.admission_expires_at IS NOT NULL OR i.executor_id IS NOT NULL \
         OR i.lease_ttl_ms IS NOT NULL OR i.registration_id IS NOT NULL \
         OR i.event_seq IS NOT NULL OR i.registration_document IS NOT NULL \
-        OR i.registration_hash IS NOT NULL) \
+        OR i.registration_hash IS NOT NULL OR i.event_source_run_id IS NOT NULL \
+        OR i.event_root_run_id IS NOT NULL OR i.event_depth IS NOT NULL) \
         THEN 'invalid-input' \
       WHEN i.producer = 'event' AND (i.registration_id IS NULL \
         OR i.registration_id = '' OR i.event_seq IS NULL OR i.event_seq < 0 \
         OR i.registration_document IS NULL OR i.registration_hash IS NULL \
-        OR i.registration_hash = '' OR i.attachment_id IS NOT NULL \
+        OR i.registration_hash = '' OR i.event_source_run_id IS NULL \
+        OR i.event_source_run_id = '' OR i.event_root_run_id IS NULL \
+        OR i.event_root_run_id = '' OR i.event_depth IS NULL \
+        OR i.event_depth < 0 OR i.event_depth > 16 OR i.attachment_id IS NOT NULL \
         OR i.expected_definition_hash IS NOT NULL OR i.response_deadline_at IS NOT NULL \
         OR i.principal_digest IS NOT NULL OR i.client_key_digest IS NOT NULL \
         OR i.request_fingerprint IS NOT NULL OR i.admission_expires_at IS NOT NULL \
@@ -366,6 +386,14 @@ classified AS ( \
        AND i.registration_hash <> ('sha256:' || encode( \
          sha256(convert_to($25::text, 'UTF8')), 'hex')) \
         THEN 'invalid-registration-hash' \
+      WHEN i.producer = 'event' AND ( \
+        i.input_json ? 'causation' OR i.invocation_context ? 'causation' \
+        OR (i.event_depth = 0 AND (i.event_source_run_id <> i.run_id \
+          OR i.event_root_run_id <> i.run_id)) \
+        OR (i.event_depth > 0 AND (i.event_source_run_id = i.run_id \
+          OR sl.run_id IS NULL OR sl.root_run_id <> i.event_root_run_id \
+          OR sl.depth + 1 <> i.event_depth))) \
+        THEN 'invalid-event-lineage' \
       WHEN i.producer = 'http' AND eh.run_id IS NOT NULL \
        AND eh.definition_hash <> i.expected_definition_hash \
         THEN 'idempotency-scope-changed' \
@@ -384,6 +412,9 @@ classified AS ( \
          OR xr.catalog_version IS DISTINCT FROM i.expected_catalog_version \
          OR xr.attachment_id IS DISTINCT FROM i.attachment_id \
          OR xr.registration_id IS DISTINCT FROM i.registration_id \
+         OR xr.event_source_run_id IS DISTINCT FROM i.event_source_run_id \
+         OR xr.event_root_run_id IS DISTINCT FROM i.event_root_run_id \
+         OR xr.event_depth IS DISTINCT FROM i.event_depth \
          OR xr.input_json IS DISTINCT FROM i.input_json) \
         THEN 'conflicting-run-identity' \
       WHEN xr.run_id IS NOT NULL THEN 'duplicate' \
@@ -393,6 +424,7 @@ classified AS ( \
     LEFT JOIN locked_head AS h ON true \
     LEFT JOIN active_definition AS d ON true \
     LEFT JOIN live_registration AS er ON true \
+    LEFT JOIN source_lineage AS sl ON true \
     LEFT JOIN release_flow AS rf ON true \
     LEFT JOIN existing_http AS eh ON true \
     LEFT JOIN existing_queue AS eq ON true \
@@ -416,6 +448,7 @@ created_run AS ( \
     INSERT INTO wamn_run.runs \
       (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
        attachment_id, registration_id, status, trigger_source, input_json, \
+       event_source_run_id, event_root_run_id, event_depth, \
        invocation_context, platform_revision, idempotency_key, \
        response_deadline_at, run_deadline_at) \
     SELECT c.tenant_id, c.run_id, c.flow_id, c.flow_version, c.catalog_id, \
@@ -423,6 +456,9 @@ created_run AS ( \
            CASE WHEN c.producer IN ('http', 'cron') THEN c.attachment_id END, \
            CASE WHEN c.producer = 'event' THEN c.registration_id END, \
            'dispatched', c.producer, c.input_json, \
+           CASE WHEN c.producer = 'event' THEN c.event_source_run_id END, \
+           CASE WHEN c.producer = 'event' THEN c.event_root_run_id END, \
+           CASE WHEN c.producer = 'event' THEN c.event_depth END, \
            CASE WHEN c.producer = 'event' THEN jsonb_set(c.invocation_context, \
              '{registration-hash}', to_jsonb(c.registration_hash), true) \
              ELSE c.invocation_context END, \
@@ -552,6 +588,7 @@ mod tests {
             "definition-drift",
             "registration-drift",
             "invalid-registration-hash",
+            "invalid-event-lineage",
             "idempotency-key-reused",
             "idempotency-scope-changed",
             "conflicting-run-identity",
@@ -565,6 +602,8 @@ mod tests {
         assert!(sql.contains("i.partition_policy NOT IN ('blocking', 'leapfrog')"));
         assert!(sql.contains("i.partition_key IS NULL AND i.partition_policy <> 'blocking'"));
         assert!(sql.contains("eq.partition_key IS DISTINCT FROM i.partition_key"));
+        assert!(sql.contains("sl.depth + 1 <> i.event_depth"));
+        assert!(sql.contains("xr.event_root_run_id IS DISTINCT FROM i.event_root_run_id"));
     }
 
     #[test]

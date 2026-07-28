@@ -35,7 +35,7 @@ fn prepare(sql: &str) -> String {
         "PREPARE admit_stmt \
          (text,text,text,int,text,text,text,int,text,text,text,text, \
           timestamptz,timestamptz,text,text,text,timestamptz,text,bigint, \
-          bigint,text,text,bigint,text,text,text,text) AS {sql};"
+          bigint,text,text,bigint,text,text,text,text,int,text,text) AS {sql};"
     )
 }
 
@@ -59,7 +59,7 @@ fn execute_http_ordered(
          '{run_id}','{{\"request\":1}}','{{\"request-id\":\"req-1\"}}','rev-test',\
          now()+interval '30 seconds',now()+interval '1 minute',\
          'principal','{key}','{fingerprint}',now()+interval '1 day',\
-         'inline-1',30000,NULL,NULL,NULL,NULL,NULL,NULL,{})",
+         'inline-1',30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,{})",
         ordering(partition_key, partition_policy)
     )
 }
@@ -81,7 +81,7 @@ fn execute_cron_ordered(
          '{run_id}','{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}',\
          '{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}','rev-test',\
          NULL,now()+interval '1 minute',NULL,NULL,NULL,NULL,NULL,NULL,\
-         {generation},'{tick}',NULL,NULL,NULL,NULL,{})",
+         {generation},'{tick}',NULL,NULL,NULL,NULL,NULL,NULL,NULL,{})",
         ordering(partition_key, partition_policy)
     )
 }
@@ -98,7 +98,7 @@ fn execute_cron_with_http_principal(generation: i64, tick: &str) -> String {
          '{run_id}','{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}',\
          '{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}','rev-test',\
          NULL,now()+interval '1 minute','swapped',NULL,NULL,NULL,NULL,NULL,\
-         {generation},'{tick}',NULL,NULL,NULL,NULL,NULL,'blocking')"
+         {generation},'{tick}',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking')"
     )
 }
 
@@ -110,12 +110,38 @@ fn execute_event_ordered(
     partition_key: Option<&str>,
     partition_policy: &str,
 ) -> String {
+    execute_event_lineage_ordered(
+        run_id,
+        document,
+        hash,
+        seq,
+        run_id,
+        run_id,
+        0,
+        partition_key,
+        partition_policy,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_event_lineage_ordered(
+    run_id: &str,
+    document: &str,
+    hash: &str,
+    seq: i64,
+    source_run_id: &str,
+    root_run_id: &str,
+    depth: i32,
+    partition_key: Option<&str>,
+    partition_policy: &str,
+) -> String {
     format!(
         "EXECUTE admit_stmt(\
          'event','c1','dev',1,NULL,NULL,'flow-event',1,\
          '{run_id}','{{\"event\":{seq}}}','{{\"event-seq\":{seq}}}','rev-test',\
          NULL,now()+interval '1 minute',NULL,NULL,NULL,NULL,NULL,NULL,\
-         NULL,NULL,'reg-a',{seq},'{document}','{hash}',{})",
+         NULL,NULL,'reg-a',{seq},'{document}','{hash}',\
+         '{source_run_id}','{root_run_id}',{depth},{})",
         ordering(partition_key, partition_policy)
     )
 }
@@ -267,6 +293,61 @@ fn admission_live() {
         ),
     );
 
+    // Trusted causal ancestry is stored outside both the business input and
+    // invocation context. A non-event source roots at itself; subsequent event
+    // runs carry the immediate parent while retaining the original root.
+    for (execution, expected) in [
+        (
+            execute_event_lineage_ordered(
+                "event-child",
+                &registration_document,
+                &registration_digest,
+                46,
+                "http-1",
+                "http-1",
+                1,
+                None,
+                "blocking",
+            ),
+            "admitted|event-child",
+        ),
+        (
+            execute_event_lineage_ordered(
+                "event-grandchild",
+                &registration_document,
+                &registration_digest,
+                47,
+                "event-child",
+                "http-1",
+                2,
+                None,
+                "blocking",
+            ),
+            "admitted|event-grandchild",
+        ),
+    ] {
+        let result = success(
+            &url,
+            &format!("{} {} {}; COMMIT;", app_preamble(), prepared, execution),
+        );
+        assert_eq!(result.trim(), expected);
+    }
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT event_source_run_id='event-1' AND event_root_run_id='event-1' \
+                     AND event_depth=0 FROM wamn_run.runs WHERE run_id='event-1'); \
+           ASSERT (SELECT event_source_run_id='http-1' AND event_root_run_id='http-1' \
+                     AND event_depth=1 FROM wamn_run.runs WHERE run_id='event-child'); \
+           ASSERT (SELECT event_source_run_id='event-child' AND event_root_run_id='http-1' \
+                     AND event_depth=2 FROM wamn_run.runs WHERE run_id='event-grandchild'); \
+           ASSERT NOT (SELECT input_json ? 'causation' FROM wamn_run.runs \
+                        WHERE run_id='event-grandchild'); \
+           ASSERT NOT (SELECT invocation_context ? 'causation' FROM wamn_run.runs \
+                        WHERE run_id='event-grandchild'); \
+         END $$;",
+    );
+
     // The centralized insert carries ordering for every producer. Unordered
     // work is explicitly null+blocking; keyed work preserves either policy.
     for (execution, expected) in [
@@ -410,11 +491,11 @@ fn admission_live() {
          CREATE TEMP TABLE stale_head AS EXECUTE admit_stmt(\
            'cron','c1','dev',99,'cron-a','sha256:cron','flow-cron',1,\
            'flow-cron:cron:9:stale','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           9,'stale',NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           9,'stale',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE inactive AS EXECUTE admit_stmt(\
            'cron','c1','dev',1,'missing','sha256:cron','flow-cron',1,\
            'flow-cron:cron:10:inactive','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           10,'inactive',NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           10,'inactive',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM reused) = 'idempotency-key-reused'; \
            ASSERT (SELECT result_code FROM bad_hash) = 'invalid-registration-hash'; \
@@ -436,15 +517,15 @@ fn admission_live() {
          CREATE TEMP TABLE bad_http AS EXECUTE admit_stmt(\
            'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
            'bad-http','{{}}','{{}}','rev-test',NULL,NULL,'p','k','f',now()+interval '1 day',\
-           NULL,30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           NULL,30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE bad_cron AS EXECUTE admit_stmt(\
            'cron','c1','dev',1,'cron-a','sha256:cron','flow-cron',1,\
            'caller-chosen','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           1,'tick',NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           1,'tick',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE bad_event AS EXECUTE admit_stmt(\
            'event','c1','dev',1,NULL,NULL,'flow-event',1,\
            'bad-event','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           NULL,NULL,'reg-a',43,'{}',NULL,NULL,'blocking'); \
+           NULL,NULL,'reg-a',43,'{}',NULL,'bad-event','bad-event',0,NULL,'blocking'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM bad_http) = 'invalid-input'; \
            ASSERT (SELECT result_code FROM bad_cron) = 'invalid-input'; \
@@ -457,6 +538,150 @@ fn admission_live() {
         registration_document,
     );
     success(&url, &invalid_inputs);
+
+    // Lineage is checked against the immediate source under tenant RLS. A
+    // changed root/depth, a foreign-tenant source, an over-budget chain, or a
+    // payload/context attempt to forge causation cannot create a run.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,status,trigger_source) \
+         VALUES ('t2','foreign-source','flow-http',1,'completed','http');",
+    );
+    let forged_input = execute_event(
+        "event-forged",
+        &registration_document,
+        &registration_digest,
+        52,
+    )
+    .replace(
+        "{\"event\":52}",
+        "{\"event\":52,\"causation\":{\"run\":\"forged\"}}",
+    );
+    for (execution, expected) in [
+        (
+            execute_event_lineage_ordered(
+                "event-bad-root",
+                &registration_document,
+                &registration_digest,
+                48,
+                "event-child",
+                "wrong-root",
+                2,
+                None,
+                "blocking",
+            ),
+            "invalid-event-lineage|",
+        ),
+        (
+            execute_event_lineage_ordered(
+                "event-bad-depth",
+                &registration_document,
+                &registration_digest,
+                49,
+                "event-child",
+                "http-1",
+                3,
+                None,
+                "blocking",
+            ),
+            "invalid-event-lineage|",
+        ),
+        (
+            execute_event_lineage_ordered(
+                "event-foreign",
+                &registration_document,
+                &registration_digest,
+                50,
+                "foreign-source",
+                "foreign-source",
+                1,
+                None,
+                "blocking",
+            ),
+            "invalid-event-lineage|",
+        ),
+        (
+            execute_event_lineage_ordered(
+                "event-over-depth",
+                &registration_document,
+                &registration_digest,
+                51,
+                "event-child",
+                "http-1",
+                17,
+                None,
+                "blocking",
+            ),
+            "invalid-input|",
+        ),
+        (forged_input, "invalid-event-lineage|"),
+    ] {
+        let result = success(
+            &url,
+            &format!("{} {} {}; COMMIT;", app_preamble(), prepared, execution),
+        );
+        assert_eq!(result.trim(), expected, "{execution}");
+    }
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE run_id IN (\
+             'event-bad-root','event-bad-depth','event-foreign',\
+             'event-over-depth','event-forged')); \
+         END $$;",
+    );
+
+    // Retry can recover the exact immutable record, but cannot alter its
+    // lineage. Direct post-admission mutation is rejected by the DDL guard.
+    let duplicate = success(
+        &url,
+        &format!(
+            "{} {} {}; COMMIT;",
+            app_preamble(),
+            prepared,
+            execute_event_lineage_ordered(
+                "event-child-retry",
+                &registration_document,
+                &registration_digest,
+                46,
+                "http-1",
+                "http-1",
+                1,
+                None,
+                "blocking",
+            )
+        ),
+    );
+    assert_eq!(duplicate.trim(), "duplicate|event-child");
+    let changed = success(
+        &url,
+        &format!(
+            "{} {} {}; COMMIT;",
+            app_preamble(),
+            prepared,
+            execute_event_lineage_ordered(
+                "event-child-retry",
+                &registration_document,
+                &registration_digest,
+                46,
+                "event-1",
+                "event-1",
+                1,
+                None,
+                "blocking",
+            )
+        ),
+    );
+    assert_eq!(changed.trim(), "conflicting-run-identity|event-child");
+    let mutation = psql(
+        &url,
+        &format!(
+            "{} UPDATE wamn_run.runs SET event_depth=9 WHERE run_id='event-child'; COMMIT;",
+            app_preamble()
+        ),
+    );
+    assert!(!mutation.status.success(), "lineage mutation must fail");
 
     for execution in [
         execute_cron_ordered(11, "unknown-policy", Some("site"), "unknown"),
@@ -488,7 +713,14 @@ fn admission_live() {
         (
             "queue",
             "wamn_run.run_queue",
-            execute_cron_ordered(2, "fault", Some("fault-key"), "leapfrog"),
+            execute_event_ordered(
+                "event-fault",
+                &registration_document,
+                &registration_digest,
+                53,
+                Some("fault-key"),
+                "leapfrog",
+            ),
         ),
         (
             "ledger",
@@ -525,21 +757,21 @@ fn admission_live() {
                    ASSERT NOT EXISTS (SELECT FROM wamn_run.invocation_admissions WHERE run_id='{}'); \
                  END $$;",
                 if name == "queue" {
-                    "flow-cron:cron:2:fault"
+                    "event-fault"
                 } else if name == "run" {
                     "flow-cron:cron:3:run-fault"
                 } else {
                     "http-fault"
                 },
                 if name == "queue" {
-                    "flow-cron:cron:2:fault"
+                    "event-fault"
                 } else if name == "run" {
                     "flow-cron:cron:3:run-fault"
                 } else {
                     "http-fault"
                 },
                 if name == "queue" {
-                    "flow-cron:cron:2:fault"
+                    "event-fault"
                 } else if name == "run" {
                     "flow-cron:cron:3:run-fault"
                 } else {

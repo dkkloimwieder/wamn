@@ -86,6 +86,11 @@ CREATE TABLE wamn_run.runs (
     catalog_version bigint,
     attachment_id   text,
     registration_id text,
+    -- Trusted CDC causation is distinct from replay lineage. The immediate
+    -- source lets admission verify the carried root/depth under tenant RLS.
+    event_source_run_id text,
+    event_root_run_id text,
+    event_depth      int CHECK (event_depth BETWEEN 0 AND 16),
     status          text NOT NULL DEFAULT 'running'
         CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
                           'cancelled', 'infrastructure-failure')),
@@ -127,6 +132,18 @@ CREATE TABLE wamn_run.runs (
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
     CHECK ((catalog_id IS NULL) = (catalog_version IS NULL)),
+    CHECK (
+      (event_source_run_id IS NULL AND event_root_run_id IS NULL AND event_depth IS NULL)
+      OR
+      (trigger_source = 'event'
+       AND event_source_run_id IS NOT NULL AND event_source_run_id <> ''
+       AND event_root_run_id IS NOT NULL AND event_root_run_id <> ''
+       AND event_depth IS NOT NULL)
+    ),
+    CHECK (
+      event_depth IS DISTINCT FROM 0
+      OR (event_source_run_id = run_id AND event_root_run_id = run_id)
+    ),
     CHECK ((parent_run_id IS NULL) = (parent_node_id IS NULL)
        AND (parent_run_id IS NULL) = (parent_occurrence IS NULL)),
     CHECK ((waiting_child_run_id IS NULL) = (waiting_child_occurrence IS NULL)
@@ -145,6 +162,8 @@ CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (tenant_id, idempotency_ke
 -- History listing / lineage traversal.
 CREATE INDEX runs_flow ON wamn_run.runs (tenant_id, flow_id, created_at);
 CREATE INDEX runs_root ON wamn_run.runs (tenant_id, root_run_id) WHERE root_run_id IS NOT NULL;
+CREATE INDEX runs_event_root ON wamn_run.runs (tenant_id, event_root_run_id)
+    WHERE event_root_run_id IS NOT NULL;
 CREATE UNIQUE INDEX runs_parent_occurrence ON wamn_run.runs
     (tenant_id, parent_run_id, parent_node_id, parent_occurrence)
     WHERE parent_run_id IS NOT NULL;
@@ -172,6 +191,26 @@ ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_tenant ON wamn_run.runs
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+
+-- Causation is fixed by the admission transaction. Normal run-state updates
+-- may advance status/checkpoints, but cannot rewrite event ancestry.
+CREATE FUNCTION wamn_run.guard_event_lineage_immutable()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id
+       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id
+       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN
+        RAISE EXCEPTION 'event causation lineage is immutable';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER runs_event_lineage_immutable
+BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
+ON wamn_run.runs
+FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app;
 
 -- HTTP invocation idempotency ledger (§6.2). The identity is intentionally

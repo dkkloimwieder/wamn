@@ -52,6 +52,9 @@ pub struct FirePlan {
     pub stream_seq: i64,
     /// The child causation for trusted lineage persistence and logging.
     pub causation: Causation,
+    /// Immediate causal source. Organic events self-root; chained events name
+    /// the trusted parent run carried by the CDC envelope.
+    pub source_run_id: String,
 }
 
 /// Mint an event run identity scoped to the live registration.
@@ -283,6 +286,10 @@ pub fn decide(
         Ok(c) => c,
         Err(refuse) => return Verdict::Refuse(refuse),
     };
+    let source_run_id = envelope
+        .causation
+        .as_ref()
+        .map_or_else(|| run_id.clone(), |parent| parent.run.clone());
     let input_json = evt_input_json(envelope, stream_seq, &child);
     let invocation_context_json = event_invocation_context_json(envelope, stream_seq);
     let run_input: Value = serde_json::from_str(&input_json).expect("minted input parses");
@@ -297,6 +304,7 @@ pub fn decide(
         policy: rq_policy(flow.partition_policy),
         stream_seq: seq_i64,
         causation: child,
+        source_run_id,
     }))
 }
 
@@ -367,6 +375,7 @@ mod tests {
         // Organic write → fresh root at depth 0.
         assert_eq!(plan.causation.depth, 0);
         assert_eq!(plan.causation.root, plan.run_id);
+        assert_eq!(plan.source_run_id, plan.run_id);
         let input: Value = serde_json::from_str(&plan.input_json).unwrap();
         assert_eq!(input["event"], "insert");
         assert_eq!(input["new"]["id"], "7");
@@ -593,6 +602,10 @@ mod tests {
         assert_eq!(plan.causation.depth, 4, "child depth = parent + 1");
         assert_eq!(plan.causation.root, "origin", "the root carries");
         assert_eq!(plan.causation.run, plan.run_id);
+        assert_eq!(
+            plan.source_run_id, "f0:evt:00000000000000000001",
+            "the immediate parent is retained separately from the child stamp"
+        );
 
         // At the ceiling: parent 15 → child 16 fires; parent 16 → 17 refuses.
         env.causation.as_mut().unwrap().depth = 15;

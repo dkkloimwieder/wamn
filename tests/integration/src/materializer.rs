@@ -47,6 +47,13 @@ pub mod tests {
         assert!(sql.contains("'{registration-hash}'"));
         assert!(sql.contains("CASE WHEN c.producer = 'event' THEN c.registration_id END"));
         assert!(sql.contains("CASE WHEN c.producer = 'event' THEN c.event_seq ELSE 0 END"));
+        assert!(sql.contains("CASE WHEN c.producer = 'event' THEN c.event_source_run_id END"));
+        assert!(sql.contains("sl.root_run_id <> i.event_root_run_id"));
+        assert!(sql.contains("sl.depth + 1 <> i.event_depth"));
+        assert!(sql.contains("i.input_json ? 'causation'"));
+        assert!(SHELL.contains("text(&plan.source_run_id)"));
+        assert!(SHELL.contains("text(&plan.causation.root)"));
+        assert!(!SHELL.contains("UPDATE wamn_run.runs"));
     }
 
     #[test]

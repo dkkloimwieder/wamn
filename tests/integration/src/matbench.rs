@@ -14,7 +14,8 @@
 //!   1. decide  — seed 4 flows + 4 registrations (unconditional / conditional /
 //!      partitioned-with-extractor / old-value SERVED, l5i9.31), publish a
 //!      fixture tape of 8 envelopes (fires, condition-false, foreign tenant,
-//!      unscopable table, unscopable DELETE, causation depth 3, causation depth
+//!      unscopable table, unscopable DELETE, durable causation depth 3,
+//!      causation depth
 //!      16, and an UPDATE carrying a FULL old image → the changed-to eval fires),
 //!      run the
 //!      guest, and assert: the run/queue rows (padded run ids, REAL
@@ -432,6 +433,32 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     }
     println!("seeded 4 flows + 4 registrations (r-old is the SERVED old-condition case — l5i9.31)");
 
+    // E6 carries a depth-3 parent. Admission must resolve that parent from
+    // durable trusted state, so seed its complete ancestry rather than relying
+    // on the envelope to assert lineage. These fixture-only rows have no
+    // registration_id and are excluded from workload counts below.
+    let parent_run_id = registered_evt_run_id("parent", "parent-reg", 3);
+    admin
+        .execute(
+            "INSERT INTO wamn_run.runs \
+             (tenant_id,run_id,flow_id,flow_version,status,trigger_source, \
+              event_source_run_id,event_root_run_id,event_depth) VALUES \
+             ($1,$2,'fixture-lineage',1,'completed','event',$2,$2,0), \
+             ($1,$3,'fixture-lineage',1,'completed','event',$2,$2,1), \
+             ($1,$4,'fixture-lineage',1,'completed','event',$3,$2,2), \
+             ($1,$5,'fixture-lineage',1,'completed','event',$4,$2,3)",
+            &[
+                &TENANT,
+                &"origin-root",
+                &"fixture-parent-depth-1",
+                &"fixture-parent-depth-2",
+                &parent_run_id,
+            ],
+        )
+        .await
+        .context("seed durable E6 causation ancestry")?;
+    println!("seeded durable E6 causation ancestry through depth 3");
+
     // --- NATS: throwaway stream + the fixture tape --------------------------
     let nats = async_nats::connect(&args.nats_url)
         .await
@@ -648,7 +675,8 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     // The DB truth (superuser reads, explicit tenant predicates).
     let runs: i64 = admin
         .query_one(
-            "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = $1",
+            "SELECT count(*) FROM wamn_run.runs \
+             WHERE tenant_id = $1 AND registration_id IS NOT NULL",
             &[&TENANT],
         )
         .await?
@@ -706,7 +734,9 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .query_one(
             "SELECT trigger_source, invocation_context->>'trigger', \
                     invocation_context->>'entity', invocation_context->>'table', \
-                    invocation_context->>'seq' \
+                    invocation_context->>'seq', event_source_run_id, \
+                    event_root_run_id, event_depth, input_json ? 'causation', \
+                    invocation_context ? 'causation' \
              FROM wamn_run.runs WHERE tenant_id = $1 AND run_id = $2",
             &[&TENANT, &plain_e6],
         )
@@ -718,13 +748,19 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             && row.get::<_, String>(1) == "event"
             && row.get::<_, String>(2) == ENTITY
             && row.get::<_, String>(3) == "receipts_v2"
-            && row.get::<_, String>(4) == "6",
+            && row.get::<_, String>(4) == "6"
+            && row.get::<_, String>(5) == parent_run_id
+            && row.get::<_, String>(6) == "origin-root"
+            && row.get::<_, i32>(7) == 4
+            && !row.get::<_, bool>(8)
+            && !row.get::<_, bool>(9),
     );
 
     // The depth-16 parent (E7) fired NOTHING.
     let e7_runs: i64 = admin
         .query_one(
             "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = $1 \
+             AND registration_id IS NOT NULL \
              AND invocation_context->>'seq' = '7'",
             &[&TENANT],
         )
@@ -830,7 +866,8 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     }
     let before: i64 = admin
         .query_one(
-            "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = $1",
+            "SELECT count(*) FROM wamn_run.runs \
+             WHERE tenant_id = $1 AND registration_id IS NOT NULL",
             &[&TENANT],
         )
         .await?
@@ -841,7 +878,8 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     let drain = t1.elapsed();
     let after: i64 = admin
         .query_one(
-            "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = $1",
+            "SELECT count(*) FROM wamn_run.runs \
+             WHERE tenant_id = $1 AND registration_id IS NOT NULL",
             &[&TENANT],
         )
         .await?
@@ -874,7 +912,8 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     }
     let total_before: i64 = admin
         .query_one(
-            "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = $1",
+            "SELECT count(*) FROM wamn_run.runs \
+             WHERE tenant_id = $1 AND registration_id IS NOT NULL",
             &[&TENANT],
         )
         .await?
@@ -882,7 +921,8 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     let report3 = harness.run_guest(sweeps, 64).await?;
     let total_after: i64 = admin
         .query_one(
-            "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = $1",
+            "SELECT count(*) FROM wamn_run.runs \
+             WHERE tenant_id = $1 AND registration_id IS NOT NULL",
             &[&TENANT],
         )
         .await?
