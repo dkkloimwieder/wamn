@@ -237,6 +237,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "flow-http"
+version = "0.1.0"
+dependencies = [
+ "boon",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wamn-flow-invocation",
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
 name = "flowrunner"
 version = "0.1.0"
 dependencies = [
@@ -1111,6 +1123,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "wamn-flow-invocation"
+version = "0.1.0"
 
 [[package]]
 name = "wamn-materializer"

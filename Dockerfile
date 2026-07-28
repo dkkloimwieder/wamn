@@ -64,13 +64,13 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=wamn-component-target,target=/build/components/target \
     cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
-      -p api-gateway -p evaluate-specs -p flowrunner -p materializer -p normalize-receipt \
+      -p api-gateway -p evaluate-specs -p flow-http -p flowrunner -p materializer -p normalize-receipt \
       -p busyloop -p flow-driver -p hello -p logspewer -p memhog -p pgprobe -p sockprobe \
       -p poc-webhook-f1 \
       -p disposition-node -p js-sample -p node-rs -p sample-node \
  && install -d /component-output \
  && for artifact in \
-      api_gateway evaluate_specs flowrunner materializer normalize_receipt \
+      api_gateway evaluate_specs flow_http flowrunner materializer normalize_receipt \
       busyloop flow_driver hello logspewer memhog pgprobe sockprobe \
       poc_webhook_f1 \
       disposition_node js-sample node_rs sample_node; do \
@@ -196,6 +196,9 @@ COPY --from=component-builder /component-output/logspewer.wasm /bench/logspewer.
 # 4.1 generated REST API gateway (exports wasi:http/incoming-handler, imports
 # wamn:postgres; the apibench gate drives it via ProxyPre).
 COPY --from=component-builder /component-output/api_gateway.wasm /bench/api-gateway.wasm
+# Callable-flow HTTP ingress: bounded routing/auth/mapping adapter over the
+# frozen flow-invocation provider contract.
+COPY --from=component-builder /component-output/flow_http.wasm /bench/flow-http.wasm
 # l5i9.17 materializer Service guest (wasi:cli/run; imports wamn:postgres +
 # wamn:jetstream; the matbench gate drives it via CommandPre — the same wasm the
 # WorkloadDeployment pulls from the registry in production).

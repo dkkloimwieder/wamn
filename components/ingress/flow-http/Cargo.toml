@@ -1,0 +1,15 @@
+[package]
+name = "flow-http"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+boon = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = "0.11"
+wit-bindgen = { workspace = true }
+wamn-flow-invocation = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "rlib"]

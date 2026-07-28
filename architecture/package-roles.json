@@ -554,6 +554,15 @@
     },
     {
       "workspace": "components",
+      "name": "flow-http",
+      "manifest_path": "components/ingress/flow-http/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "execution",
+      "deployable": true
+    },
+    {
+      "workspace": "components",
       "name": "flowrunner",
       "manifest_path": "components/execution/flowrunner/Cargo.toml",
       "role": "component",

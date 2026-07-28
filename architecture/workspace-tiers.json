@@ -3,7 +3,7 @@
   "selection": {
     "mechanism": "named-explicit-selectors",
     "default_members_selected": false,
-    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 39-package developer loop and the six product components explicit without hiding POCs, fixtures, samples, or proof packages from bare workspace commands.",
+    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 39-package developer loop and the seven product components explicit without hiding POCs, fixtures, samples, or proof packages from bare workspace commands.",
     "package_classification_source": "architecture/package-roles.json",
     "membership_evidence": "cargo metadata --locked --offline --format-version 1"
   },
@@ -14,7 +14,7 @@
     },
     "component_workspace": {
       "manifest": "components/Cargo.toml",
-      "package_count": 21
+      "package_count": 22
     },
     "non_cargo_inputs": [
       "components/samples/node-ts"
@@ -72,6 +72,7 @@
       "component_packages": [
         "api-gateway",
         "evaluate-specs",
+        "flow-http",
         "flowrunner",
         "materializer",
         "normalize-receipt",
@@ -158,6 +159,7 @@
         "disposition-node",
         "evaluate-specs",
         "flow-driver",
+        "flow-http",
         "flowrunner",
         "hello",
         "js-sample",
@@ -205,6 +207,7 @@
         "disposition-node",
         "evaluate-specs",
         "flow-driver",
+        "flow-http",
         "flowrunner",
         "hello",
         "js-sample",
@@ -242,6 +245,7 @@
       "component_packages": [
         "api-gateway",
         "evaluate-specs",
+        "flow-http",
         "flowrunner",
         "materializer",
         "normalize-receipt",
@@ -269,7 +273,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "all 21 component workspace members",
+      "selected_packages": "all 22 component workspace members",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     }
   ],

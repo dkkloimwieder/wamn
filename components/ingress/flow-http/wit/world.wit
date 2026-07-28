@@ -1,0 +1,9 @@
+package wamn:flow-http@0.1.0;
+
+world flow-http {
+  import wamn:flow-http-routing/routing@0.1.0;
+  import wamn:flow-invocation/invocation@0.1.0;
+  import wasi:http/types@0.2.12;
+
+  export wasi:http/incoming-handler@0.2.12;
+}

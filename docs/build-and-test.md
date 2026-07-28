@@ -19,7 +19,7 @@ rev-bump procedure. The rev is pinned in one place:
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
-selection for the current **49 root + 21 component packages**. The selection
+selection for the current **49 root + 22 component packages**. The selection
 uses named explicit selectors and deliberately does not add
 `default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
 sets with live, locked Cargo metadata and `architecture/package-roles.json`.
@@ -29,11 +29,11 @@ The selected package roots are:
 | Tier | Root | Components | Selection |
 |---|---:|---:|---|
 | fast developer/native | 39 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
-| product components | 0 | 6 | `api-gateway`, `evaluate-specs`, `flowrunner`, `materializer`, `normalize-receipt`, `time-shift` |
+| product components | 0 | 7 | `api-gateway`, `evaluate-specs`, `flow-http`, `flowrunner`, `materializer`, `normalize-receipt`, `time-shift` |
 | contract/conformance | 12 | 0 | all 11 contract packages plus `wamn-proof-conformance` |
-| full CI | 49 | 21 | every Cargo member plus the classified non-Cargo `node-ts` sample |
-| deployed-system proof | 16 | 21 | deployable native/proof owners plus every guest proof input and `node-ts` |
-| release | 10 | 6 | every package classified `deployable: true` |
+| full CI | 49 | 22 | every Cargo member plus the classified non-Cargo `node-ts` sample |
+| deployed-system proof | 16 | 22 | deployable native/proof owners plus every guest proof input and `node-ts` |
+| release | 10 | 7 | every package classified `deployable: true` |
 
 Package roots are selection inputs, not hand-maintained dependency closures.
 Cargo resolves their normal, build, and test path dependencies from live
@@ -71,7 +71,7 @@ There are no `default-members` in either virtual workspace. Consequently:
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
   select all 49 root members. Bare `cargo test` uses each package's default
   test targets.
-- From `components/`, the same bare commands select all 21 component members.
+- From `components/`, the same bare commands select all 22 component members.
   The production guest build remains
   `cargo build --workspace --target wasm32-wasip2`.
 - Full CI keeps three package/artifact steps—every root target, every component
@@ -3009,6 +3009,28 @@ kubectl -n wamn-system apply -f deploy/platform/api-gateway-workload.yaml
 kubectl -n wamn-system apply -f deploy/gates/apiproof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
 kubectl -n wamn-system logs job/apiproof
+```
+
+### [4.1c] callable-flow HTTP adapter (components/ingress/flow-http)
+
+Docs: FLOW-SPEC rev18 §§6.2, 7.2–7.3, 8, and 11
+
+```bash
+# Adversarial fake-provider proof: route precedence and disabled-definition
+# recovery lookup, selected-policy auth, partial/oversize body reads, mapping
+# and schema refusals, fingerprint/admission identity, every stored outcome and
+# typed rejection, finite wait, disconnect cancel, and provider failures.
+cargo test --locked --manifest-path components/Cargo.toml -p flow-http
+
+# Deployable guest imports only authoritative route/auth and the frozen
+# wamn:flow-invocation boundary; it exports wasi:http/incoming-handler.
+cargo build --locked --manifest-path components/Cargo.toml -p flow-http \
+  --target wasm32-wasip2
+
+# Static exclusion: the adapter has no graph walker, run SQL, queue insertion,
+# direct PostgreSQL import, or invocation-provider implementation.
+! rg -n 'wamn:postgres|INSERT[[:space:]]+INTO[[:space:]]+(runs|run_queue)|FlowGraph|GraphWalker' \
+  components/ingress/flow-http
 ```
 
 ### [POC-DM1] data model via the catalog API (wamn-521, P1 build)
