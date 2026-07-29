@@ -261,6 +261,16 @@ enum ResultKind {
     },
 }
 
+struct Invocation<'a> {
+    artifact_hash: &'a str,
+    expected_hash: &'a str,
+    body: &'a Value,
+    key: &'a str,
+    authenticated: bool,
+    raw_sql_enabled: bool,
+    fault: Fault,
+}
+
 fn valid_request(body: &Value) -> bool {
     let Some(object) = body.as_object() else {
         return false;
@@ -374,16 +384,16 @@ fn create_holds(store: &mut Store, evaluated: &Value) -> Value {
     })
 }
 
-fn invoke(
-    artifact_hash: &str,
-    expected_hash: &str,
-    body: &Value,
-    key: &str,
-    authenticated: bool,
-    raw_sql_enabled: bool,
-    fault: Fault,
-    store: &mut Store,
-) -> ResultKind {
+fn invoke(input: Invocation<'_>, store: &mut Store) -> ResultKind {
+    let Invocation {
+        artifact_hash,
+        expected_hash,
+        body,
+        key,
+        authenticated,
+        raw_sql_enabled,
+        fault,
+    } = input;
     if artifact_hash != expected_hash
         || key.is_empty()
         || key.contains(char::is_whitespace)
@@ -447,24 +457,28 @@ fn fixture() -> Value {
 fn prove_scenarios(artifact_hash: &str) -> anyhow::Result<()> {
     let body = fixture();
     let normal = invoke(
-        artifact_hash,
-        artifact_hash,
-        &body,
-        "receipt-1",
-        true,
-        true,
-        Fault::None,
+        Invocation {
+            artifact_hash,
+            expected_hash: artifact_hash,
+            body: &body,
+            key: "receipt-1",
+            authenticated: true,
+            raw_sql_enabled: true,
+            fault: Fault::None,
+        },
         &mut Store::default(),
     );
     for fault in [Fault::ResolveCommitted, Fault::HoldsCommitted] {
         let recovered = invoke(
-            artifact_hash,
-            artifact_hash,
-            &body,
-            "receipt-1",
-            true,
-            true,
-            fault,
+            Invocation {
+                artifact_hash,
+                expected_hash: artifact_hash,
+                body: &body,
+                key: "receipt-1",
+                authenticated: true,
+                raw_sql_enabled: true,
+                fault,
+            },
             &mut Store::default(),
         );
         ensure!(
@@ -514,43 +528,51 @@ pub mod tests {
         let hash = &published.artifact_hash;
         for result in [
             invoke(
-                hash,
-                hash,
-                &json!(null),
-                "key",
-                true,
-                true,
-                Fault::None,
+                Invocation {
+                    artifact_hash: hash,
+                    expected_hash: hash,
+                    body: &json!(null),
+                    key: "key",
+                    authenticated: true,
+                    raw_sql_enabled: true,
+                    fault: Fault::None,
+                },
                 &mut Store::default(),
             ),
             invoke(
-                hash,
-                hash,
-                &fixture(),
-                "bad key",
-                true,
-                true,
-                Fault::None,
+                Invocation {
+                    artifact_hash: hash,
+                    expected_hash: hash,
+                    body: &fixture(),
+                    key: "bad key",
+                    authenticated: true,
+                    raw_sql_enabled: true,
+                    fault: Fault::None,
+                },
                 &mut Store::default(),
             ),
             invoke(
-                hash,
-                hash,
-                &fixture(),
-                "key",
-                false,
-                true,
-                Fault::None,
+                Invocation {
+                    artifact_hash: hash,
+                    expected_hash: hash,
+                    body: &fixture(),
+                    key: "key",
+                    authenticated: false,
+                    raw_sql_enabled: true,
+                    fault: Fault::None,
+                },
                 &mut Store::default(),
             ),
             invoke(
-                hash,
-                hash,
-                &fixture(),
-                "key",
-                true,
-                false,
-                Fault::None,
+                Invocation {
+                    artifact_hash: hash,
+                    expected_hash: hash,
+                    body: &fixture(),
+                    key: "key",
+                    authenticated: true,
+                    raw_sql_enabled: false,
+                    fault: Fault::None,
+                },
                 &mut Store::default(),
             ),
         ] {
@@ -565,13 +587,15 @@ pub mod tests {
         body["supplier"] = json!("unknown");
         assert_eq!(
             invoke(
-                &published.artifact_hash,
-                &published.artifact_hash,
-                &body,
-                "unknown-ref",
-                true,
-                true,
-                Fault::None,
+                Invocation {
+                    artifact_hash: &published.artifact_hash,
+                    expected_hash: &published.artifact_hash,
+                    body: &body,
+                    key: "unknown-ref",
+                    authenticated: true,
+                    raw_sql_enabled: true,
+                    fault: Fault::None,
+                },
                 &mut Store::default(),
             ),
             ResultKind::AuthoredFail(400)
