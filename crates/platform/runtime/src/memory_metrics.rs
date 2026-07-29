@@ -168,11 +168,8 @@ mod tests {
         const MIB: usize = 1 << 20;
         let mut limiter = WamnStoreLimiter::new(64 * MIB, StdArc::from("memtest"));
         // An allowed grow sets the high-water; a grow past budget is denied.
-        assert_eq!(limiter.memory_growing(0, 32 * MIB, None).unwrap(), true);
-        assert_eq!(
-            limiter.memory_growing(32 * MIB, 128 * MIB, None).unwrap(),
-            false
-        );
+        assert!(limiter.memory_growing(0, 32 * MIB, None).unwrap());
+        assert!(!limiter.memory_growing(32 * MIB, 128 * MIB, None).unwrap());
 
         // Register a standalone meter (not the global one — no global provider in
         // a unit test) and publish the snapshot.
