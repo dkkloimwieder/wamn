@@ -40,7 +40,7 @@ fn run(
     let clock = Cell::new(0u64);
     let mut visited = Vec::new();
     let mut waits = Vec::new();
-    let mut st = started(&plan, run_id, input);
+    let mut st = started(plan, run_id, input);
     let status = loop {
         match plan.next(&mut st, clock.get()) {
             Step::Done(s) => break s,
@@ -1434,7 +1434,7 @@ fn drive_across_parks(
     let mut dispatches = Vec::new();
     let mut parks = 0usize;
     for claim in 1..=max_claims {
-        let mut st = resumed(&plan, run_id, input.clone(), &completed).unwrap();
+        let mut st = resumed(plan, run_id, input.clone(), &completed).unwrap();
         if let Some((node, attempt, throttle)) = &retry {
             plan.restore_retry(&mut st, node, *attempt, throttle.clone());
         }
