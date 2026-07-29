@@ -121,23 +121,6 @@ impl WamnFlowInvocation {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::inline_executor_id;
-
-    #[test]
-    fn inline_executor_id_is_stable_and_runner_safe() {
-        let id = inline_executor_id("workload/component:replica");
-        assert_eq!(id, inline_executor_id("workload/component:replica"));
-        assert_ne!(id, inline_executor_id("workload/component:other"));
-        assert!(id.len() <= 128);
-        assert!(
-            id.bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        );
-    }
-}
-
 fn build_pool(database_url: &str) -> anyhow::Result<Pool> {
     let config = tokio_postgres::Config::from_str(database_url)?;
     let manager = Manager::new(config, tokio_postgres::NoTls);
@@ -303,5 +286,22 @@ fn map_failure(failure: wamn_flow_invocation::Failure) -> invocation::Failure {
             flow_id: failure.error.flow_id,
             flow_version: failure.error.flow_version,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inline_executor_id;
+
+    #[test]
+    fn inline_executor_id_is_stable_and_runner_safe() {
+        let id = inline_executor_id("workload/component:replica");
+        assert_eq!(id, inline_executor_id("workload/component:replica"));
+        assert_ne!(id, inline_executor_id("workload/component:other"));
+        assert!(id.len() <= 128);
+        assert!(
+            id.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        );
     }
 }
