@@ -65,6 +65,7 @@ pub fn ladder_ddl(schema: &str) -> String {
             partition_policy text NOT NULL DEFAULT 'blocking' CHECK (partition_policy IN ('blocking', 'leapfrog')), \
             priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
             lease_owner text, lease_expires_at timestamptz, \
+            lease_generation bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0), \
             attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
             enqueued_at timestamptz NOT NULL DEFAULT now(), \
             stream_seq bigint NOT NULL DEFAULT 0, \
