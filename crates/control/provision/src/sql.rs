@@ -11,12 +11,12 @@ use crate::name::{APP_ROLE, database_name};
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
 
-/// Quote a SQL identifier (double-quoted, embedded `"` doubled). Mirrors the
-/// canonical `wamn_schema_compiler::sql::quote_ident` (inlined to keep this crate's
-/// dependency closure to `serde_json`).
+// Quote a SQL identifier (double-quoted, embedded `"` doubled). Mirrors the
+// canonical `wamn_schema_compiler::sql::quote_ident` (inlined to keep this crate's
+// dependency closure to `serde_json`).
 
-/// Quote a SQL string literal (single-quoted, embedded `'` doubled). Mirrors the
-/// canonical `wamn_schema_compiler::sql::quote_literal`.
+// Quote a SQL string literal (single-quoted, embedded `'` doubled). Mirrors the
+// canonical `wamn_schema_compiler::sql::quote_literal`.
 
 /// Idempotently bootstrap the shared, cluster-global [`APP_ROLE`]. Runs in a
 /// `DO` block so re-running against a cluster that already has the role is a
