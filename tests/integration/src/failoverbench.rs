@@ -224,6 +224,7 @@ fn failover_ddl(schema: &str) -> String {
               CHECK (partition_policy IN ('blocking','leapfrog')), \
             priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
             lease_owner text, lease_expires_at timestamptz, \
+            lease_generation bigint NOT NULL DEFAULT 0, \
             attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
             enqueued_at timestamptz NOT NULL DEFAULT now(), \
             stream_seq bigint NOT NULL DEFAULT 0, \
@@ -1646,14 +1647,16 @@ mod tests {
     /// Required.
     #[test]
     fn failoverbench_stand_in_tracks_run_queue_schema_of_record() {
+        let ddl = failover_ddl("wamn_run");
         assert_stand_in(
             "failoverbench",
-            &failover_ddl("wamn_run"),
+            &ddl,
             &[
                 ("run_queue", Need::Required),
                 ("partition_owner", Need::Required),
                 ("run_dead_letters", Need::Required),
             ],
         );
+        assert!(ddl.contains("lease_generation bigint NOT NULL DEFAULT 0"));
     }
 }
