@@ -18,8 +18,8 @@ use wamn_proof_integration::{
     testhostbench, testkitbench, tracebench, wakeproof, walbench,
 };
 use wamn_proof_system::{
-    apiproof, callable_f0, callable_f1, callable_f2, callable_f3, credproof, f1proof, ladderproof,
-    pocsuiteproof as callable_flow_schema, traceproof,
+    apiproof, callable_f0, callable_f1, callable_f2, callable_f3, callable_f4, credproof, f1proof,
+    ladderproof, pocsuiteproof as callable_flow_schema, traceproof,
 };
 
 // Repository-only fixture and temporary-service commands.
@@ -153,6 +153,8 @@ enum Command {
     CallableF2(callable_f2::CallableF2Args),
     /// Prove the callable F3 graph, cron attachment, and recovery windows.
     CallableF3(callable_f3::CallableF3Args),
+    /// Prove the callable F4 graph, event scope, child recovery, and effective-once callback.
+    CallableF4(callable_f4::CallableF4Args),
     /// Reprovision and prove the composed callable-flow Wave-1 F0/F1/F3 campaign.
     CallableWave1(callable_wave1::CallableWave1Args),
 }
@@ -229,6 +231,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::CallableF1(args) => callable_f1::run(args),
         Command::CallableF2(args) => callable_f2::run(args),
         Command::CallableF3(args) => callable_f3::run(args),
+        Command::CallableF4(args) => callable_f4::run(args),
         Command::CallableWave1(args) => callable_wave1::run(args).await,
     };
 

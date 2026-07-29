@@ -2415,6 +2415,31 @@ kubectl -n wamn-system wait --for=condition=complete \
 kubectl -n wamn-system logs job/callable-flow-f2
 ```
 
+## H5-CALLABLE-F4 — event child/review/callback composition (`wamn-5wd1.62`)
+
+The package proof pins F4's canonical event graph and live registration,
+strictly-prior `(decided_at,id)` history, service-mode F2 invocation, unique
+review read-back, occurrence-keyed callback, fully-scoped event admission, and
+the existing child create/recover, atomic wake, and generation-seized
+cancellation transitions.
+
+```bash
+# recipe-test: H5-CALLABLE-F4 | system | wamn-proof-system | lib | - | callable_f4::tests:: | 10 | tests/system/src/callable_f4.rs F4 graph, registration, prior history, review/callback recovery, event scope, and child transition mutants
+CARGO_TARGET_DIR=/tmp/wamn-target-f4-62 \
+  cargo test --locked -p wamn-proof-system --lib callable_f4::tests::
+CARGO_TARGET_DIR=/tmp/wamn-target-f4-62 \
+  cargo test --locked -p wamn-flow --test flows f4_
+
+docker build --target gates -t wamn-gates:cf-f4-<commit> .
+kind load docker-image wamn-gates:cf-f4-<commit> --name wamn
+kubectl -n wamn-system delete job callable-flow-f4 --ignore-not-found
+sed "s/wamn-gates:cf-f4-ISSUE/wamn-gates:cf-f4-<commit>/" \
+  deploy/gates/callable-flow-f4-job.yaml | kubectl -n wamn-system apply -f -
+kubectl -n wamn-system wait --for=condition=complete \
+  job/callable-flow-f4 --timeout=300s
+kubectl -n wamn-system logs job/callable-flow-f4
+```
+
 ### [5.14] shared trigger dispatcher
 
 Docs: docs/run-queue.md

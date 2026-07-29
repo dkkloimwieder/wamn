@@ -1,0 +1,10 @@
+{
+  "schema-version": "0.1",
+  "registration-id": "disposition-recorded-insert",
+  "catalog-id": "poc-material-receiving",
+  "flow-id": "disposition-recorded",
+  "entity": "dispositions",
+  "ops": [
+    "insert"
+  ]
+}

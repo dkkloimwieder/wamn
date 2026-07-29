@@ -4623,6 +4623,7 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "wamn-catalog",
+ "wamn-event-reg",
  "wamn-flow",
  "wamn-gate-harness",
  "wamn-node-manifest",

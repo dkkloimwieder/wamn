@@ -16,6 +16,7 @@ tokio = { workspace = true, features = ["net", "io-util", "time", "rt"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 tracing = { workspace = true }
 wamn-catalog = { workspace = true }
+wamn-event-reg = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-node-manifest = { workspace = true }
