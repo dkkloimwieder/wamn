@@ -247,11 +247,6 @@
         "source_class": "sample"
       },
       {
-        "kind": "path-prefix",
-        "value": "components/poc",
-        "source_class": "poc"
-      },
-      {
         "kind": "exact-file",
         "value": "deploy/sql/postgres-init.sql",
         "source_class": "gate-fixture-stand-in"

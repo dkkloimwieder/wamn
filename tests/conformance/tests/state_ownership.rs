@@ -1202,6 +1202,22 @@ fn repository_state_ownership_manifest_is_complete() {
 }
 
 #[test]
+fn missing_scan_exclusion_path_is_rejected() {
+    let repository = repository();
+    let mut manifest = read_manifest(&repository);
+    manifest.scan_policy.exclusions.push(ScanExclusion {
+        kind: "path-prefix".to_string(),
+        value: "components/does-not-exist".to_string(),
+        source_class: "mutation".to_string(),
+    });
+    let error = validate_scan_policy(&repository, &manifest).unwrap_err();
+    assert!(
+        error.contains("scan exclusion path `components/does-not-exist` does not exist"),
+        "{error}"
+    );
+}
+
+#[test]
 fn unregistered_canonical_table_is_rejected() {
     let registered = BTreeSet::from([("catalog.catalogs", "canonical.sql")]);
     let discovered = BTreeSet::from([
