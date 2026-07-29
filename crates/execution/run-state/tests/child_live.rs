@@ -475,7 +475,7 @@ fn child_live() {
          DO $$ BEGIN ASSERT (SELECT result_code FROM released_guard)='already-released'; END $$; \
          COMMIT;",
         app_preamble(),
-        prepare_cancel(&cancel)
+        prepare_cancel(cancel)
     );
     success(&url, &cancel_checks);
 }
