@@ -3168,6 +3168,29 @@ kubectl -n wamn-system wait --for=condition=complete \
 kubectl -n wamn-system logs job/callable-flow-f1
 ```
 
+### [CALLABLE-FLOWS-POC-W1 / wamn-5wd1.9] composed F0/F1/F3 campaign
+
+The Wave-1 gate applies the promoted POC catalog from zero, runs the production
+invocation provider and the F0/F1/F3 proofs, checks T-CTX/T-NR, and emits one
+receipt binding the exact source, image, supplied component bytes, POC config,
+schema, release inputs, and deployment identity. Replace `<commit>` in all
+three positions from the same `git rev-parse HEAD`.
+
+```bash
+# recipe-test: H5-CALLABLE-WAVE1 | system | wamn-proof-system | lib | - | callable_wave1::tests:: | 4 | tests/system/src/callable_wave1.rs composed F0/F1/F3 identities and T-CTX/T-NR contracts
+cargo test --locked -p wamn-proof-system --lib callable_wave1::tests::
+cargo test --locked -p wamn-proof-conformance -p wamn-proof-integration -p wamn-proof-system
+
+docker build --target gates -t wamn-gates:cf-wave1-<commit> .
+kind load docker-image wamn-gates:cf-wave1-<commit> --name wamn
+kubectl -n wamn-system delete job callable-flow-wave1 --ignore-not-found
+sed "s/ISSUE/<commit>/g" deploy/gates/callable-flow-wave1-job.yaml | \
+  kubectl -n wamn-system apply -f -
+kubectl -n wamn-system wait --for=condition=complete \
+  job/callable-flow-wave1 --timeout=600s
+kubectl -n wamn-system logs job/callable-flow-wave1
+```
+
 ### [CF-TIMESHIFT / wamn-5wd1.41] deterministic RFC3339 time-shift component
 
 `time-shift` is a pure, zero-import custom-node component. Its `base` config

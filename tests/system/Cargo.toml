@@ -9,7 +9,9 @@ build = "build.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
+hex = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-util", "time", "rt"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 tracing = { workspace = true }

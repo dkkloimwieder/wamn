@@ -5,6 +5,8 @@
 //! test-support homes. Proofs that import service clients remain integration
 //! evidence even when they also exercise a deployed endpoint.
 
+mod callable_wave1;
+
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::{buildproof, credprobe, egressbench, socketguard, testgate};
@@ -149,6 +151,8 @@ enum Command {
     CallableF1(callable_f1::CallableF1Args),
     /// Prove the callable F3 graph, cron attachment, and recovery windows.
     CallableF3(callable_f3::CallableF3Args),
+    /// Reprovision and prove the composed callable-flow Wave-1 F0/F1/F3 campaign.
+    CallableWave1(callable_wave1::CallableWave1Args),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -222,6 +226,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::CallableF0(args) => callable_f0::run(args),
         Command::CallableF1(args) => callable_f1::run(args),
         Command::CallableF3(args) => callable_f3::run(args),
+        Command::CallableWave1(args) => callable_wave1::run(args).await,
     };
 
     shutdown_observability();

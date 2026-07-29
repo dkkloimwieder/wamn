@@ -47,6 +47,14 @@ impl InlineRunDriver for ProofInlineDriver {
     }
 }
 
+struct ProofPausedDriver;
+
+impl InlineRunDriver for ProofPausedDriver {
+    fn start(&self, _claim: InlineRunClaim) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Args)]
 pub struct InvocationProofArgs {
     /// Exact flowrunner component baked into the gates image.
@@ -308,6 +316,76 @@ async fn assert_completed(admin_url: &str, run_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn promote_attachment_definition(
+    admin_url: &str,
+    definition_hash: &str,
+) -> anyhow::Result<()> {
+    let (mut client, handle) = connect(admin_url).await?;
+    let transaction = client.transaction().await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.catalogs \
+               (tenant_id,catalog_id,version,environment,schema_version,state,document) \
+             VALUES ($1,$2,2,'proof','0.1','applied','{}')",
+            &[&TENANT, &CATALOG_ID],
+        )
+        .await?;
+    for statement in [
+        "INSERT INTO catalog.release_manifests \
+           SELECT tenant_id,catalog_id,2,members_json \
+           FROM catalog.release_manifests \
+           WHERE tenant_id=$1 AND catalog_id=$2 AND catalog_version=1",
+        "INSERT INTO catalog.release_flows \
+           SELECT tenant_id,catalog_id,2,flow_id,flow_version \
+           FROM catalog.release_flows \
+           WHERE tenant_id=$1 AND catalog_id=$2 AND catalog_version=1",
+        "INSERT INTO catalog.release_exposure_manifests \
+           SELECT tenant_id,catalog_id,2,definitions_json \
+           FROM catalog.release_exposure_manifests \
+           WHERE tenant_id=$1 AND catalog_id=$2 AND catalog_version=1",
+        "INSERT INTO catalog.release_sources \
+           SELECT tenant_id,catalog_id,2,source_id,source_kind,definition_json,source_hash \
+           FROM catalog.release_sources \
+           WHERE tenant_id=$1 AND catalog_id=$2 AND catalog_version=1",
+    ] {
+        transaction
+            .execute(statement, &[&TENANT, &CATALOG_ID])
+            .await?;
+    }
+    transaction
+        .execute(
+            "INSERT INTO catalog.release_attachments \
+               (tenant_id,catalog_id,catalog_version,attachment_id,attachment_kind,flow_id,source_id, \
+                definition_hash,definition_json,route_host,route_path,route_template,route_method) \
+             SELECT tenant_id,catalog_id,2,attachment_id,attachment_kind,flow_id,source_id, \
+                    $3,definition_json,route_host,route_path,route_template,route_method \
+             FROM catalog.release_attachments \
+             WHERE tenant_id=$1 AND catalog_id=$2 AND catalog_version=1",
+            &[&TENANT, &CATALOG_ID, &definition_hash],
+        )
+        .await?;
+    transaction
+        .execute(
+            "UPDATE catalog.catalog_heads SET applied_catalog_version=2 \
+             WHERE tenant_id=$1 AND catalog_id=$2 AND environment='proof'",
+            &[&TENANT, &CATALOG_ID],
+        )
+        .await?;
+    transaction
+        .execute(
+            "UPDATE catalog.attachment_activation \
+             SET confirmed_definition_hash=$3, enabled=true \
+             WHERE tenant_id=$1 AND catalog_id=$2 AND environment='proof' \
+               AND attachment_id='http-proof'",
+            &[&TENANT, &CATALOG_ID, &definition_hash],
+        )
+        .await?;
+    transaction.commit().await?;
+    drop(client);
+    let _ = handle.await;
+    Ok(())
+}
+
 pub async fn run(args: InvocationProofArgs) -> anyhow::Result<()> {
     let name = proof_database_name();
     create_database(&args.admin_database_url, &name).await?;
@@ -439,6 +517,7 @@ pub async fn run(args: InvocationProofArgs) -> anyhow::Result<()> {
         if rejection.code != "idempotency-key-reused" {
             bail!("provider collapsed the idempotency conflict");
         }
+
         let (client, connection) = connect(&admin_url).await?;
         client
             .execute(
@@ -455,7 +534,7 @@ pub async fn run(args: InvocationProofArgs) -> anyhow::Result<()> {
         if disabled_recovery.run_id != admitted.run_id {
             bail!("disabled recovery changed the durable run id");
         }
-        let mut fresh_disabled = request;
+        let mut fresh_disabled = request.clone();
         fresh_disabled.idempotency_key = Some("provider-key-disabled".to_string());
         let BeginResult::Rejected(rejection) = service.begin(fresh_disabled).await? else {
             bail!("disabled attachment admitted a new run");
@@ -464,9 +543,48 @@ pub async fn run(args: InvocationProofArgs) -> anyhow::Result<()> {
             bail!("disabled new admission returned the wrong refusal");
         }
 
+        let changed_definition_hash = "sha256:inline-proof-edited";
+        promote_attachment_definition(&admin_url, changed_definition_hash).await?;
+        let BeginResult::Rejected(rejection) = service.begin(request.clone()).await? else {
+            bail!("provider recovered a key across attachment-definition drift");
+        };
+        if rejection.code != "idempotency-scope-changed" {
+            bail!("provider collapsed attachment-definition drift");
+        }
+
+        let paused_service = InvocationService::new(
+            PostgresInvocationBackend::from_database_url(&app_url)?,
+            Some(app_url.clone()),
+            InvocationServiceConfig {
+                tenant_id: TENANT.to_string(),
+                catalog_id: CATALOG_ID.to_string(),
+                environment: "proof".to_string(),
+                project: "proof".to_string(),
+                schema: Some("wamn_run".to_string()),
+                executor_id: OWNER.to_string(),
+                platform_revision: "invocationproof".to_string(),
+                lease_ttl: std::time::Duration::from_secs(30),
+                admission_ttl: std::time::Duration::from_secs(60),
+            },
+            Arc::new(ProofPausedDriver),
+        );
+        let mut in_flight = request;
+        in_flight.expected_catalog_version = 2;
+        in_flight.expected_definition_hash = changed_definition_hash.to_string();
+        in_flight.idempotency_key = Some("provider-key-in-flight".to_string());
+        let BeginResult::Admitted(_) = paused_service.begin(in_flight.clone()).await? else {
+            bail!("provider refused the in-flight fixture");
+        };
+        let BeginResult::Rejected(rejection) = paused_service.begin(in_flight).await? else {
+            bail!("provider admitted a duplicate while the first run was in flight");
+        };
+        if rejection.code != "in-flight" {
+            bail!("provider returned the wrong in-flight duplicate refusal");
+        }
+
         ticker.abort();
         println!(
-            "invocationproof PASS: provider admitted, drove, waited, recovered, and fenced the exact image"
+            "invocationproof PASS: provider admitted, drove, waited, recovered, and enforced the complete idempotency matrix"
         );
         anyhow::Ok(())
     }
