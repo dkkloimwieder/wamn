@@ -2393,6 +2393,28 @@ kubectl -n wamn-system wait --for=condition=complete \
 kubectl -n wamn-system logs job/callable-flow-f3
 ```
 
+## H5-CALLABLE-F2 — immutable pure recommendation (`wamn-5wd1.61`)
+
+The package proof pins F2's direct supplied-node graph, strict request
+contract, verified component identity, internal caller policy, service-mode
+runtime refusal, and replay/effect-uncertain controls. The exact-image Job also
+hashes the baked component bytes used by the release proof.
+
+```bash
+# recipe-test: H5-CALLABLE-F2 | system | wamn-proof-system | lib | - | callable_f2::tests:: | 8 | tests/system/src/callable_f2.rs F2 direct pure component release, internal caller policy, deterministic replay, and mutation controls
+CARGO_TARGET_DIR=/tmp/wamn-target-f2-61 \
+  cargo test --locked -p wamn-proof-system --lib callable_f2::tests::
+
+docker build --target gates -t wamn-gates:cf-f2-<commit> .
+kind load docker-image wamn-gates:cf-f2-<commit> --name wamn
+kubectl -n wamn-system delete job callable-flow-f2 --ignore-not-found
+sed "s/wamn-gates:cf-f2-ISSUE/wamn-gates:cf-f2-<commit>/" \
+  deploy/gates/callable-flow-f2-job.yaml | kubectl -n wamn-system apply -f -
+kubectl -n wamn-system wait --for=condition=complete \
+  job/callable-flow-f2 --timeout=300s
+kubectl -n wamn-system logs job/callable-flow-f2
+```
+
 ### [5.14] shared trigger dispatcher
 
 Docs: docs/run-queue.md

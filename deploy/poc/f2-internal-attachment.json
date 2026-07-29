@@ -1,0 +1,21 @@
+{
+  "sources": [
+    {
+      "id": "disposition-recommendation-callers",
+      "kind": "caller-policy",
+      "definition": {
+        "allowed-callers": ["disposition-recorded"]
+      }
+    }
+  ],
+  "attachments": [
+    {
+      "id": "disposition-recommendation-internal",
+      "kind": "internal",
+      "flow-id": "disposition-recommendation",
+      "source-id": "disposition-recommendation-callers",
+      "run-deadline-ms": 30000,
+      "response-deadline-ms": 10000
+    }
+  ]
+}

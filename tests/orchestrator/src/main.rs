@@ -18,7 +18,7 @@ use wamn_proof_integration::{
     testhostbench, testkitbench, tracebench, wakeproof, walbench,
 };
 use wamn_proof_system::{
-    apiproof, callable_f0, callable_f1, callable_f3, credproof, f1proof, ladderproof,
+    apiproof, callable_f0, callable_f1, callable_f2, callable_f3, credproof, f1proof, ladderproof,
     pocsuiteproof as callable_flow_schema, traceproof,
 };
 
@@ -149,6 +149,8 @@ enum Command {
     CallableF0(callable_f0::CallableF0Args),
     /// Prove the callable F1 immutable release, deterministic CTEs, and webhook cutover.
     CallableF1(callable_f1::CallableF1Args),
+    /// Prove the callable F2 pure component release, internal policy, and replay.
+    CallableF2(callable_f2::CallableF2Args),
     /// Prove the callable F3 graph, cron attachment, and recovery windows.
     CallableF3(callable_f3::CallableF3Args),
     /// Reprovision and prove the composed callable-flow Wave-1 F0/F1/F3 campaign.
@@ -225,6 +227,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::CallableFlowSchema(args) => callable_flow_schema::run(args).await,
         Command::CallableF0(args) => callable_f0::run(args),
         Command::CallableF1(args) => callable_f1::run(args),
+        Command::CallableF2(args) => callable_f2::run(args),
         Command::CallableF3(args) => callable_f3::run(args),
         Command::CallableWave1(args) => callable_wave1::run(args).await,
     };

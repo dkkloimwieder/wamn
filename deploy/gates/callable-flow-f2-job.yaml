@@ -1,0 +1,31 @@
+# Exact-image gate for the callable-flow F2 release, caller policy, and replay proof.
+#
+# Build and load the issue commit's gates image before applying this immutable Job:
+#   docker build --target gates -t wamn-gates:cf-f2-<commit> .
+#   kind load docker-image wamn-gates:cf-f2-<commit> --name wamn
+#   sed "s/wamn-gates:cf-f2-ISSUE/wamn-gates:cf-f2-<commit>/" \
+#     deploy/gates/callable-flow-f2-job.yaml | kubectl -n wamn-system apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: callable-flow-f2
+  namespace: wamn-system
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: callable-flow-f2
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: proof
+          image: wamn-gates:cf-f2-ISSUE
+          imagePullPolicy: Never
+          args: ["--log-level", "error", "callable-f2"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+            limits:
+              memory: "128Mi"

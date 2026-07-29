@@ -34,6 +34,7 @@ fn interfaces() -> ResolvedInterfaces {
         ("conditional".into(), vec!["true".into(), "false".into()]),
         ("evaluate-specs".into(), vec!["main".into()]),
         ("normalize-receipt".into(), vec!["main".into()]),
+        ("disposition-recommendation".into(), vec!["main".into()]),
         ("custom".into(), vec!["main".into()]),
         ("http-request".into(), vec!["main".into()]),
         ("invoke-flow".into(), vec!["main".into()]),
@@ -232,6 +233,27 @@ fn f3_escalate_stale_holds_shape() {
     assert_eq!(
         mark.config["ctx"], "merge(context(), {hold: rows[0]})",
         "mark explicitly preserves the cutoff while storing the selected hold"
+    );
+}
+
+#[test]
+fn f2_disposition_recommendation_shape() {
+    let (raw, flow) = load("f2-disposition-recommendation.flow.json");
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(flow.nodes.len(), 3);
+    assert_eq!(flow.edges.len(), 2);
+    assert_eq!(flow.nodes[0].node_type, "request");
+    assert_eq!(flow.nodes[1].node_type, "disposition-recommendation");
+    assert_eq!(flow.nodes[2].node_type, "respond");
+    assert!(!raw.contains(r#""type": "custom""#));
+    assert!(!raw.contains(r#""manifest""#));
+    assert_eq!(
+        parsed["nodes"][0]["config"]["input-schema"]["required"],
+        json!(["hold", "history", "decision"])
+    );
+    assert_eq!(
+        parsed["nodes"][0]["config"]["input-schema"]["additionalProperties"],
+        false
     );
 }
 
