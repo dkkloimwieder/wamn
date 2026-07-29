@@ -20,7 +20,7 @@ use wamn_proof_integration::{
 };
 use wamn_proof_system::{
     apiproof, callable_f0, callable_f1, callable_f2, callable_f3, callable_f4, credproof, f1proof,
-    ladderproof, pocsuiteproof as callable_flow_schema, traceproof,
+    pocsuiteproof as callable_flow_schema, traceproof,
 };
 
 // Repository-only fixture and temporary-service commands.
@@ -120,8 +120,6 @@ enum Command {
     F1proof(f1proof::F1ProofArgs),
     /// Run the POC-F2 disposition-node invocation gate (warm ServeNode over the zero-import node; one input per disposition outcome + InvalidInput)
     F2invoke(f2invoke::F2InvokeArgs),
-    /// Run the exec-ladder rung-1 conformance proof against the deployed runner (seed one manual run, assert it executes correctly)
-    Ladderproof(ladderproof::LadderProofArgs),
     /// Run the POC-F3 scale-to-zero wake proof (park the runner at 0; a LIVE dispatcher cron fire wakes it via the waker and it completes)
     Wakeproof(wakeproof::WakeProofArgs),
     /// Run the POC-F3 escalate-stale-holds proof (time-shift cutoff + structural cycle drain + credentialed notify + egress allowlist; local seed or in-cluster park→wake)
@@ -217,7 +215,6 @@ async fn async_main() -> anyhow::Result<()> {
         Command::F1bench(args) => f1bench::run(args).await,
         Command::F1proof(args) => f1proof::run(args).await,
         Command::F2invoke(args) => f2invoke::run(args).await,
-        Command::Ladderproof(args) => ladderproof::run(args).await,
         Command::Wakeproof(args) => wakeproof::run(args).await,
         Command::F3proof(args) => f3proof::run(args).await,
         Command::Suiteproof(args) => suiteproof::run(args).await,

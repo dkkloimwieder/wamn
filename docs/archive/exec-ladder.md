@@ -1,5 +1,8 @@
 # Execution conformance ladder
 
+> Superseded 2026-07-29 by callable-flow rev18 and the F0–F4 acceptance
+> campaign. Retained as historical proof context.
+
 A graduated set of live-execution POCs (epic `wamn-ojm`) that prove flows execute
 CORRECTLY on the **deployed** runner — outside a bench harness — climbing from a
 single node to branching logic. Each rung is a small, repeatable, mutation-tested

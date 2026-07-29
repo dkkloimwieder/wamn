@@ -24,7 +24,7 @@ docs-of-record follow. One doc per subsystem, each with a predictable name.
 | Subsystem group | Files |
 |---|---|
 | Catalog / schema | [catalog-model.md](catalog-model.md), [app-schema.md](app-schema.md), [schema-lifecycle.md](schema-lifecycle.md), [ddl-compiler.md](ddl-compiler.md), [migration-engine.md](migration-engine.md), [rls-builder.md](rls-builder.md), [seed-data.md](seed-data.md) |
-| Execution | [flow-schema.md](flow-schema.md), [flow-runner.md](flow-runner.md), [node-library.md](node-library.md), [exec-ladder.md](exec-ladder.md), [run-queue.md](run-queue.md), [run-state.md](run-state.md), [wamn-node-design-notes.md](wamn-node-design-notes.md), [wamn-node.wit](wamn-node.wit) |
+| Execution | [flow-schema.md](flow-schema.md), [flow-runner.md](flow-runner.md), [node-library.md](node-library.md), [run-queue.md](run-queue.md), [run-state.md](run-state.md), [wamn-node-design-notes.md](wamn-node-design-notes.md), [wamn-node.wit](wamn-node.wit) |
 | Data path | [security-db-path.md](security-db-path.md), [wamn-postgres.wit](wamn-postgres.wit), [credential-vault.md](credential-vault.md) |
 | Event plane | [event-plane-jetstream.md](event-plane-jetstream.md) (v3, current), [pg-walstream-fork.md](pg-walstream-fork.md) |
 | Platform / infra | [platform-plan.md](platform-plan.md), [deployment-model.md](deployment-model.md), [postgres-topology.md](postgres-topology.md), [system-cluster.md](system-cluster.md), [registry-model.md](registry-model.md), [provisioning.md](provisioning.md), [wasmcloud-utilization.md](wasmcloud-utilization.md), [wash-runtime-fork.md](wash-runtime-fork.md), [api-gateway.md](api-gateway.md), [tracing.md](tracing.md) |
@@ -48,6 +48,9 @@ one-line header (superseded by what, when, retained for what).
 - **[archive/event-plane-v2-outbox.md](archive/event-plane-v2-outbox.md)** — the
   v2 event-plane doc, superseded by v3 ([event-plane-jetstream.md](event-plane-jetstream.md)).
   Retained for the outbox-era rationale and the teardown list's provenance.
+- **[archive/exec-ladder.md](archive/exec-ladder.md)** — the predecessor
+  execution-ladder proof, superseded by callable-flow rev18 and the F0–F4
+  acceptance campaign. Retained as historical proof context.
 - **[archive/p0-exit-criteria.md](archive/p0-exit-criteria.md)** — P0 is closed
   and its results live in [p0-results.md](p0-results.md). Retained for the
   go/no-go thresholds that gate re-measurement.
