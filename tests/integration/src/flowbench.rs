@@ -136,10 +136,9 @@ pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
         .replace('"', "\\\"");
     format!(
         r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,
-            "trigger":{{"type":"webhook"}},"entry":"in",
             "allowed-hosts":["{authority}"],
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
+              {{"id":"in","type":"request","config":{{"input-schema":true}}}},
               {{"id":"d","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
               {{"id":"h","type":"http-call","config":{{"url":"{url}"}}}},
               {{"id":"w","type":"pg-write"}},
@@ -619,9 +618,17 @@ mod s6_fixture_tests {
 
     #[test]
     fn s6_flow_declares_its_controlled_http_authority() {
-        let flow = wamn_flow::Flow::from_json(&flow_json_s6(0, "http://127.0.0.1:18080/echo"))
-            .expect("S6 fixture parses");
+        let fixture = flow_json_s6(0, "http://127.0.0.1:18080/echo");
+        let flow = wamn_flow::Flow::from_json(&fixture).expect("S6 fixture parses");
+        let definition: serde_json::Value =
+            serde_json::from_str(&fixture).expect("S6 fixture is JSON");
 
         assert_eq!(flow.allowed_hosts, ["127.0.0.1:18080"]);
+        assert_eq!(
+            flow.entry_node().map(|node| node.node_type.as_str()),
+            Some("request")
+        );
+        assert!(definition.get("trigger").is_none());
+        assert!(definition.get("entry").is_none());
     }
 }
