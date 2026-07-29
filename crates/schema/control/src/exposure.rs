@@ -233,10 +233,9 @@ pub fn resolve_exposure(
                 canonical_route_template(&route.path),
                 route.method.clone(),
             )
-        }) {
-            if !route_keys.insert(key) {
-                return Err(error("ambiguous-http-route", &attachment.id));
-            }
+        }) && !route_keys.insert(key)
+        {
+            return Err(error("ambiguous-http-route", &attachment.id));
         }
         let mut normalized_attachment = attachment.clone();
         normalized_attachment.route = route.clone();
