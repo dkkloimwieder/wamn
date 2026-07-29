@@ -666,10 +666,10 @@ impl<'f> Plan<'f> {
                 port,
                 context,
             } => {
-                if let Some(replacement) = context.as_ref() {
-                    if !replacement.is_object() {
-                        return Err(ApplyError::InvalidContext(replacement.clone()));
-                    }
+                if let Some(replacement) = context.as_ref()
+                    && !replacement.is_object()
+                {
+                    return Err(ApplyError::InvalidContext(replacement.clone()));
                 }
                 state.current = None;
                 state.step_seq += 1;
