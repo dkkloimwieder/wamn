@@ -142,6 +142,19 @@ pub fn burst() -> Vec<(Value, usize)> {
 mod tests {
     use super::*;
 
+    fn resolved_interfaces() -> wamn_flow::ResolvedInterfaces {
+        wamn_flow::ResolvedInterfaces::from([
+            (
+                "conditional".to_string(),
+                vec!["false".to_string(), "true".to_string()],
+            ),
+            ("evaluate-specs".to_string(), vec!["main".to_string()]),
+            ("normalize-receipt".to_string(), vec!["main".to_string()]),
+            ("postgres-query".to_string(), vec!["main".to_string()]),
+            ("transform".to_string(), vec!["main".to_string()]),
+        ])
+    }
+
     /// The embedded fixtures parse and agree with each other: the catalog
     /// validates, the flow validates and matches the F1 contract, the seed
     /// dataset compiles against the catalog, and the burst carries exactly the
@@ -152,7 +165,12 @@ mod tests {
         assert!(cat.validate().is_ok());
 
         let flow = wamn_flow::Flow::from_json(F1_FLOW_JSON).expect("flow");
-        assert!(flow.issues().is_empty(), "{:?}", flow.issues());
+        let interfaces = resolved_interfaces();
+        assert!(
+            flow.issues(&interfaces).is_empty(),
+            "{:?}",
+            flow.issues(&interfaces)
+        );
         assert_eq!(flow.flow_id, "receipt-received");
 
         let dataset =
@@ -186,5 +204,18 @@ mod tests {
         nos.sort();
         nos.dedup();
         assert_eq!(nos.len(), 20);
+    }
+
+    #[test]
+    fn f1_fixture_rejects_resolved_port_drift() {
+        let flow = wamn_flow::Flow::from_json(F1_FLOW_JSON).expect("flow");
+        let mut interfaces = resolved_interfaces();
+        interfaces.insert("conditional".to_string(), vec!["true".to_string()]);
+        assert!(
+            flow.issues(&interfaces)
+                .iter()
+                .any(|issue| issue.code == "unknown-output-port"),
+            "removing F1's conditional false port must invalidate the graph"
+        );
     }
 }
