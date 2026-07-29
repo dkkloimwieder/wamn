@@ -60,12 +60,12 @@
 //! ```
 
 mod environment;
-mod lifecycle;
 mod promote;
+mod state;
 
 pub use environment::{Environment, LifecycleError, VersionRecord};
-pub use lifecycle::{Action, Outcome, State, transition};
 pub use promote::{PromoteError, PromotionPlan, promote, promote_catalog};
+pub use state::{Action, Outcome, State, transition};
 
 // Re-exported for convenience so callers can drive the safety gate without a
 // direct dependency on wamn-schema-compiler.

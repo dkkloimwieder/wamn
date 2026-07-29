@@ -7,7 +7,7 @@
 //! environment is a project-env's database. It holds
 //! the lifecycle of **one catalog's** versions: which versions exist, their
 //! [`State`], and which one is live. Two invariants live here, both of which
-//! need cross-version context the pure [`super::lifecycle`] table cannot see:
+//! need cross-version context the pure [`super::state`] table cannot see:
 //!
 //! - **single-applied** — at most one [`State::Applied`] version per environment;
 //!   applying a Staged version demotes the previous Applied to
@@ -26,7 +26,7 @@
 use wamn_control_registry::{Env, Triple};
 use wamn_schema_model::Catalog;
 
-use super::lifecycle::{Action, Outcome, State, transition};
+use super::state::{Action, Outcome, State, transition};
 
 /// Why a lifecycle operation was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
