@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::{NodeRunStatus, RunStatus};
 
-const FENCED_PREFIX: &str = "\
+pub(crate) const FENCED_PREFIX: &str = "\
 WITH input AS ( \
     SELECT NULLIF(current_setting('app.tenant', true), '')::text AS tenant_id, \
            $1::text AS target_run_id, $2::text AS authority_run_id, \

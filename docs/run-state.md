@@ -127,6 +127,23 @@ still picked up because newly dispatched runs carry the new version. `Plan::resu
 still raises `Mismatch` as the backstop against a corrupt history. Which version a
 *new* run executes is a hot-reload / dispatcher concern (4.4 / 5.14).
 
+### Occurrence-keyed child state
+
+The engine-reserved `invoke-flow` boundary uses two typed, generation-fenced
+statements from `wamn_run_state::child`. `create_or_recover_child_sql` resolves
+the supplied definition and artifact hashes against the parent's immutable
+catalog release, then creates or recovers the unique
+`(parent_run_id, parent_node_id, parent_occurrence)` child. The same statement
+enqueues that child, records the parent's child occurrence and queue generation,
+and parks the parent by releasing its lease.
+
+`release_child_sql` verifies the child's persisted parent tuple and the parent's
+current `wait_generation`. It stores the child caller outcome, clears the exact
+parent wait, and makes the parent queue row available in one transaction. A
+stale generation or cross-parent tuple changes neither row. Execution policy,
+authorization, actor lineage, and cancellation propagation remain runtime
+concerns above these durable transitions.
+
 ## Node-level I/O capture (9.6)
 
 5.7 stores each node's I/O inline; **9.6 (wamn-srb)** decides *how much* and *in

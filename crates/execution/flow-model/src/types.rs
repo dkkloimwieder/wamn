@@ -386,6 +386,27 @@ fn default_fail_status() -> u16 {
     400
 }
 
+/// Configuration carried by the engine-reserved `invoke-flow` node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct InvokeFlowConfig {
+    /// Tenant-scoped flow identifier resolved in the parent's pinned release.
+    pub flow_id: String,
+    /// Internal attachment used to authorize and resolve the child.
+    pub attachment_id: String,
+    /// Actor identity policy applied when the child is created.
+    pub actor_mode: InvokeActorMode,
+}
+
+/// Actor identity modes accepted by an `invoke-flow` declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum InvokeActorMode {
+    Inherit,
+    Service,
+    Attenuate,
+}
+
 /// Input synthesized for a `cron` entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

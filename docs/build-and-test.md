@@ -975,6 +975,19 @@ WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
 docker stop wamn-cancellation-pg
 ```
 
+Occurrence-keyed `invoke-flow` child creation and wake-at-release use the same
+throwaway database:
+
+```bash
+cargo test --locked -p wamn-run-state -p wamn-flow
+docker run -d --rm --name wamn-child-state-pg -p 5458:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+# recipe-test: CALLABLE-CHILD-STATE | integration | wamn-run-state | test | child_live | - | 1 | exact occurrence recovery, conflicting/cross-parent refusal, wait-generation fence, create/release fault rollback, atomic wake
+WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
+  cargo test --locked -p wamn-run-state --test child_live -- --ignored --nocapture
+docker stop wamn-child-state-pg
+```
+
 ### [5.7-resume-pin / wamn-cox] resume pins the run's persisted flow_version
 
 Docs: docs/run-state.md § *Resume pins the run's persisted version*

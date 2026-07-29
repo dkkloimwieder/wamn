@@ -62,6 +62,8 @@ pub mod cancellation;
 /// preview-derivation the flowrunner guest links to fill a `node_runs` row's
 /// capture columns before the write.
 pub mod capture;
+/// Occurrence-keyed child creation, parent parking, and atomic child release.
+pub mod child;
 pub mod context;
 /// Durable lookup, wait, and fenced-cancel queries for flow invocation.
 pub mod invocation;

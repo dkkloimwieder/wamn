@@ -6,8 +6,8 @@ use boon::{Compiler, Draft, Schemas};
 use serde_json::Value;
 
 use crate::types::{
-    ERROR_PORT, EntryKind, FailConfig, Flow, MAIN_PORT, Node, Ordering, RequestConfig,
-    RespondConfig, SCHEMA_VERSION,
+    ERROR_PORT, EntryKind, FailConfig, Flow, InvokeFlowConfig, MAIN_PORT, Node, Ordering,
+    RequestConfig, RespondConfig, SCHEMA_VERSION,
 };
 
 /// Completion ports keyed by resolved node type.
@@ -357,7 +357,7 @@ fn owned_completion_ports<'a>(
     resolved_interfaces: &'a ResolvedInterfaces,
 ) -> Option<Vec<&'a str>> {
     match node.node_type.as_str() {
-        "request" | "cron" | "event" | "respond" => Some(vec![MAIN_PORT]),
+        "request" | "cron" | "event" | "respond" | "invoke-flow" => Some(vec![MAIN_PORT]),
         "fail" => Some(Vec::new()),
         node_type => resolved_interfaces
             .get(node_type)
@@ -411,6 +411,38 @@ fn validate_reserved_nodes(flow: &Flow, issues: &mut Vec<Issue>) {
                         "invalid-respond-successors",
                         format!("nodes[{index}]"),
                         "respond has zero or one outgoing main edge",
+                    ));
+                }
+            }
+            "invoke-flow" => {
+                match serde_json::from_value::<InvokeFlowConfig>(node.config.clone()) {
+                    Ok(config) => {
+                        if config.flow_id.trim().is_empty() {
+                            issues.push(Issue::error(
+                                "empty-invoke-flow-id",
+                                format!("nodes[{index}].config.flow-id"),
+                                "invoke-flow flow-id is required",
+                            ));
+                        }
+                        if config.attachment_id.trim().is_empty() {
+                            issues.push(Issue::error(
+                                "empty-invoke-attachment-id",
+                                format!("nodes[{index}].config.attachment-id"),
+                                "invoke-flow attachment-id is required",
+                            ));
+                        }
+                    }
+                    Err(error) => issues.push(Issue::error(
+                        "invalid-invoke-flow-config",
+                        format!("nodes[{index}].config"),
+                        error.to_string(),
+                    )),
+                }
+                if node.credential.is_some() {
+                    issues.push(Issue::error(
+                        "invoke-flow-has-credential",
+                        format!("nodes[{index}].credential"),
+                        "invoke-flow is internal invocation, not credentialed egress",
                     ));
                 }
             }
@@ -1043,9 +1075,22 @@ mod tests {
         fail.config = json!({"code": "", "status": 399});
         flow.nodes.push(fail);
         flow.edges.push(edge("in", "error", "failed"));
+        let fail_codes = codes(&flow);
+        assert!(fail_codes.contains(&"empty-fail-code"));
+        assert!(fail_codes.contains(&"invalid-fail-status"));
+
+        let mut invoke = node("child", "invoke-flow");
+        invoke.config = json!({
+            "flow-id": "",
+            "attachment-id": "",
+            "actor-mode": "service"
+        });
+        invoke.credential = Some("secret".into());
+        flow.nodes.push(invoke);
         let codes = codes(&flow);
-        assert!(codes.contains(&"empty-fail-code"));
-        assert!(codes.contains(&"invalid-fail-status"));
+        assert!(codes.contains(&"empty-invoke-flow-id"));
+        assert!(codes.contains(&"empty-invoke-attachment-id"));
+        assert!(codes.contains(&"invoke-flow-has-credential"));
     }
 
     #[test]
@@ -1057,6 +1102,16 @@ mod tests {
         let mut respond = request_flow();
         respond.nodes[2].config["body"] = json!("configured");
         assert!(codes(&respond).contains(&"invalid-respond-config"));
+
+        let mut invoke = request_flow();
+        let mut child = node("child", "invoke-flow");
+        child.config = json!({
+            "flow-id": "callee",
+            "attachment-id": "callee-internal",
+            "actor-mode": "root"
+        });
+        invoke.nodes.push(child);
+        assert!(codes(&invoke).contains(&"invalid-invoke-flow-config"));
 
         let unknown_flow_field = request_flow().to_json().replacen(
             "\"version\": 1,",
