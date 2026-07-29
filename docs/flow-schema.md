@@ -152,7 +152,7 @@ adopts `wamn-flow`; the S3 flowrunner is left as-is until then.
 ## Regenerating the contract
 
 ```sh
-cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
+cargo run -p wamn-flow --example print-flow-schema > docs/flow-schema.schema.json
 ```
 
 `flows.rs::committed_schema_matches_types` fails if the committed file drifts

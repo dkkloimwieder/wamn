@@ -213,7 +213,7 @@ fn schema_drift() {
         committed,
         wamn_node_manifest::json_schema_string(),
         "docs/wamn-node-manifest.schema.json is out of sync with the types; \
-         regenerate: cargo run -p wamn-node-manifest --example print-schema > docs/wamn-node-manifest.schema.json"
+         regenerate: cargo run -p wamn-node-manifest --example print-node-manifest-schema > docs/wamn-node-manifest.schema.json"
     );
 }
 

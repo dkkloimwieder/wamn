@@ -98,7 +98,7 @@ fn fixtures_conform_to_published_schema() {
 #[test]
 fn committed_schema_matches_types() {
     // Drift guard: regenerate with
-    //   cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
+    //   cargo run -p wamn-flow --example print-flow-schema > docs/flow-schema.schema.json
     let committed = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/flow-schema.schema.json"),
     )
@@ -106,7 +106,7 @@ fn committed_schema_matches_types() {
     assert_eq!(
         committed,
         wamn_flow::json_schema_string(),
-        "docs/flow-schema.schema.json is stale — regenerate it (see print-schema example)"
+        "docs/flow-schema.schema.json is stale — regenerate it (see print-flow-schema example)"
     );
 }
 

@@ -214,7 +214,7 @@ rejects a `schema-version` with a newer major or minor than it implements.
 ## Regenerating the contract
 
 ```sh
-cargo run -p wamn-schema-model --example print-schema > docs/catalog-model.schema.json
+cargo run -p wamn-schema-model --example print-catalog-model-schema > docs/catalog-model.schema.json
 ```
 
 `catalog.rs::committed_schema_matches_types` fails if the committed file drifts

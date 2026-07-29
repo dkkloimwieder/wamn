@@ -797,7 +797,7 @@ cargo test --locked -p wamn-proof-conformance --lib flow
 cargo clippy --locked -p wamn-flow --all-targets -- -D warnings
 cargo fmt -p wamn-flow --check
 # regenerate the published JSON Schema contract after changing the types:
-cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
+cargo run -p wamn-flow --example print-flow-schema > docs/flow-schema.schema.json
 ```
 
 ### [CALLABLE-FLOWS-P2A / wamn-5wd1.44] immutable catalog definition identity
@@ -923,7 +923,7 @@ cargo test -p wamn-node-manifest # fixture/negatives/conformance/drift
 cargo clippy -p wamn-node-guest -p wamn-node-manifest --all-targets \
   && cargo fmt -p wamn-node-sdk -p wamn-node-guest -p wamn-node-manifest --check
 # regenerate the published manifest schema after changing the types:
-cargo run -p wamn-node-manifest --example print-schema > docs/wamn-node-manifest.schema.json
+cargo run -p wamn-node-manifest --example print-node-manifest-schema > docs/wamn-node-manifest.schema.json
 ```
 
 ### [5.7] run-state persistence (crates/execution/run-state)
@@ -2439,7 +2439,7 @@ Docs: docs/run-state.md § *Node-level I/O capture (9.6)*
 cargo test -p wamn-flow -p wamn-run-state
 cargo clippy -p wamn-flow -p wamn-run-state -p wamn-ctl -p wamn-gates --all-targets
 # If Flow.capture changed, regenerate the published schema (drift-guarded):
-cargo run -p wamn-flow --example print-schema > docs/flow-schema.schema.json
+cargo run -p wamn-flow --example print-flow-schema > docs/flow-schema.schema.json
 # Rebuild the flowrunner guest (9.6 enforcement site; release-wasm exception):
 ( cd components && cargo build --release --target wasm32-wasip2 -p flowrunner )
 
@@ -2985,7 +2985,7 @@ Docs: docs/catalog-model.md
 cargo test -p wamn-schema-model
 cargo clippy -p wamn-schema-model --all-targets && cargo fmt -p wamn-schema-model --check
 # regenerate the published JSON Schema contract after changing the types:
-cargo run -p wamn-schema-model --example print-schema > docs/catalog-model.schema.json
+cargo run -p wamn-schema-model --example print-catalog-model-schema > docs/catalog-model.schema.json
 # cjv.5 expression-chaining guard (unsafe_expression_reason): the Check (here) and
 # RolePredicate (wamn-schema-compiler) validators reject a top-level ';', unbalanced parens, or
 # a comment-open. Mutation harness (5 mutants, each fails a named test in
