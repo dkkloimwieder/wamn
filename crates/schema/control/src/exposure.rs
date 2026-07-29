@@ -27,6 +27,13 @@ pub struct Source {
     pub definition: Value,
 }
 
+/// Runtime authorization policy resolved by an internal attachment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct CallerPolicy {
+    pub allowed_callers: Vec<String>,
+}
+
 /// Source classes carried by the Phase 2A spine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -201,6 +208,7 @@ pub fn resolve_exposure(
         if !source.definition.is_object()
             || (source.kind == SourceKind::Schedule
                 && !valid_schedule_definition(&source.definition))
+            || (source.kind == SourceKind::CallerPolicy && !valid_caller_policy(&source.definition))
         {
             return Err(error("invalid-source-definition", &source.id));
         }
@@ -259,6 +267,18 @@ pub fn resolve_exposure(
     }
     resolved.sort_by(|a, b| a.attachment.id.cmp(&b.attachment.id));
     Ok(resolved)
+}
+
+fn valid_caller_policy(definition: &Value) -> bool {
+    serde_json::from_value::<CallerPolicy>(definition.clone()).is_ok_and(|policy| {
+        !policy.allowed_callers.is_empty()
+            && policy
+                .allowed_callers
+                .iter()
+                .all(|caller| validate_id(caller, "invalid-caller-id").is_ok())
+            && policy.allowed_callers.iter().collect::<BTreeSet<_>>().len()
+                == policy.allowed_callers.len()
+    })
 }
 
 fn valid_schedule_definition(definition: &Value) -> bool {
@@ -533,6 +553,39 @@ mod tests {
                 && item.normalized_host.is_none()
                 && item.normalized_path.is_none()
         }));
+    }
+
+    #[test]
+    fn caller_policy_is_typed_nonempty_and_unique() {
+        let mut authored = release();
+        authored.sources[0].kind = SourceKind::CallerPolicy;
+        authored.attachments[0].kind = AttachmentKind::Internal;
+        authored.attachments[0].route = None;
+        authored.attachments[0].mappings.clear();
+        authored.sources[0].definition = serde_json::json!({"allowed-callers": []});
+        assert_eq!(
+            resolve_exposure(&authored, &[request_flow()])
+                .unwrap_err()
+                .code,
+            "invalid-source-definition"
+        );
+
+        authored.sources[0].definition = serde_json::json!({"allowed-callers": ["f4", "f4"]});
+        assert_eq!(
+            resolve_exposure(&authored, &[request_flow()])
+                .unwrap_err()
+                .code,
+            "invalid-source-definition"
+        );
+
+        authored.sources[0].definition =
+            serde_json::json!({"allowed-callers": ["f4"], "ambient": true});
+        assert_eq!(
+            resolve_exposure(&authored, &[request_flow()])
+                .unwrap_err()
+                .code,
+            "invalid-source-definition"
+        );
     }
 
     #[test]

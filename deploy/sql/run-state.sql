@@ -84,6 +84,7 @@ CREATE TABLE wamn_run.runs (
     flow_version    int  NOT NULL,
     catalog_id      text,
     catalog_version bigint,
+    environment     text,
     attachment_id   text,
     registration_id text,
     -- Trusted CDC causation is distinct from replay lineage. The immediate
@@ -109,6 +110,7 @@ CREATE TABLE wamn_run.runs (
     parent_node_id  text,
     parent_occurrence int,
     invoke_depth    int NOT NULL DEFAULT 0 CHECK (invoke_depth >= 0),
+    invoke_root_run_id text,
     waiting_child_run_id text,
     waiting_child_occurrence int,
     wait_generation bigint,
@@ -132,6 +134,9 @@ CREATE TABLE wamn_run.runs (
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
     CHECK ((catalog_id IS NULL) = (catalog_version IS NULL)),
+    CHECK (environment IS NULL OR environment <> ''),
+    CHECK (jsonb_typeof(invocation_context) = 'object'
+           AND octet_length(invocation_context::text) <= 16384),
     CHECK (
       (event_source_run_id IS NULL AND event_root_run_id IS NULL AND event_depth IS NULL)
       OR
@@ -146,6 +151,7 @@ CREATE TABLE wamn_run.runs (
     ),
     CHECK ((parent_run_id IS NULL) = (parent_node_id IS NULL)
        AND (parent_run_id IS NULL) = (parent_occurrence IS NULL)),
+    CHECK ((parent_run_id IS NULL) = (invoke_root_run_id IS NULL)),
     CHECK ((waiting_child_run_id IS NULL) = (waiting_child_occurrence IS NULL)
        AND (waiting_child_run_id IS NULL) = (wait_generation IS NULL)),
     CHECK ((cancel_requested_kind IS NULL) = (cancel_requested_at IS NULL)),
@@ -167,6 +173,8 @@ CREATE INDEX runs_event_root ON wamn_run.runs (tenant_id, event_root_run_id)
 CREATE UNIQUE INDEX runs_parent_occurrence ON wamn_run.runs
     (tenant_id, parent_run_id, parent_node_id, parent_occurrence)
     WHERE parent_run_id IS NOT NULL;
+CREATE INDEX runs_invoke_root ON wamn_run.runs (tenant_id, invoke_root_run_id)
+    WHERE invoke_root_run_id IS NOT NULL;
 CREATE INDEX runs_waiting_child ON wamn_run.runs (tenant_id, waiting_child_run_id)
     WHERE waiting_child_run_id IS NOT NULL;
 CREATE INDEX runs_response_deadline ON wamn_run.runs (tenant_id, response_deadline_at)

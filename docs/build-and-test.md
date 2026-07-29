@@ -988,6 +988,20 @@ WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
 docker stop wamn-child-state-pg
 ```
 
+Callable-flow child runtime authorization, bounds, service lineage, outcome
+resume, and pre-release generation seizure extend the same gate:
+
+```bash
+cargo test --locked -p wamn-runner -p wamn-run-state
+cargo test --locked -p wamn-proof-system --lib childproof::tests::
+docker run -d --rm --name wamn-child-runtime-pg -p 5458:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+# recipe-test: CALLABLE-CHILD-RUNTIME | integration | wamn-run-state | test | child_live | - | 1 | creation-only authorization, service actor lineage, fresh context, depth and deadline bounds, released outcome recovery, stale-generation and pre-release cancellation
+WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
+  cargo test --locked -p wamn-run-state --test child_live -- --ignored --nocapture
+docker stop wamn-child-runtime-pg
+```
+
 ### [5.7-resume-pin / wamn-cox] resume pins the run's persisted flow_version
 
 Docs: docs/run-state.md § *Resume pins the run's persisted version*

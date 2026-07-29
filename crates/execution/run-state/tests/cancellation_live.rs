@@ -75,9 +75,9 @@ fn cancellation_live() {
          VALUES ('t1','live-attempt','f',1,'http-a','running',now()+interval '5 minutes'); \
          INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,status,parent_run_id,parent_node_id, \
-            parent_occurrence,run_deadline_at) \
+            parent_occurrence,invoke_root_run_id,run_deadline_at) \
          VALUES ('t1','live-child','f',1,'running','live-attempt','invoke',0, \
-                 now()+interval '5 minutes'); \
+                 'live-attempt',now()+interval '5 minutes'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','live-attempt','worker-a',now()+interval '1 minute',4); \
@@ -244,9 +244,9 @@ fn cancellation_live() {
            ('t1','other-expired','f',1,'running',now()-interval '1 second'); \
          INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,status,parent_run_id,parent_node_id, \
-            parent_occurrence,run_deadline_at) \
+            parent_occurrence,invoke_root_run_id,run_deadline_at) \
          VALUES ('t1','deadline-child','f',1,'running','deadline-parent','invoke',0, \
-                 now()+interval '1 hour'); \
+                 'deadline-parent',now()+interval '1 hour'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_generation) VALUES \
            ('t1','deadline-parent',1),('t1','deadline-child',1),('t1','other-expired',1); \

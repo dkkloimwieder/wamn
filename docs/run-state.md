@@ -131,18 +131,27 @@ still raises `Mismatch` as the backstop against a corrupt history. Which version
 
 The engine-reserved `invoke-flow` boundary uses two typed, generation-fenced
 statements from `wamn_run_state::child`. `create_or_recover_child_sql` resolves
-the supplied definition and artifact hashes against the parent's immutable
-catalog release, then creates or recovers the unique
+the internal attachment, caller-policy source, flow artifact, and single-hash
+activation against the parent's immutable catalog release. Activation and
+`allowed-callers` gate only first creation; occurrence recovery uses the stored
+pin even after revocation. It then creates or recovers the unique
 `(parent_run_id, parent_node_id, parent_occurrence)` child. The same statement
 enqueues that child, records the parent's child occurrence and queue generation,
-and parks the parent by releasing its lease.
+and parks the parent by releasing its lease. `environment` identifies the
+activation and service actor; `invoke_root_run_id` scopes the fanout bound.
+The child starts with empty authored context. Its size-capped, capture-exempt
+`invocation_context` separately records the effective service actor and nested
+caller lineage.
 
 `release_child_sql` verifies the child's persisted parent tuple and the parent's
 current `wait_generation`. It stores the child caller outcome, clears the exact
 parent wait, and makes the parent queue row available in one transaction. A
 stale generation or cross-parent tuple changes neither row. Execution policy,
-authorization, actor lineage, and cancellation propagation remain runtime
-concerns above these durable transitions.
+authorization, actor lineage, deadline minima, and depth/fanout bounds execute
+in the production flowrunner before external dispatch. Pre-release cancellation
+either propagates into the ordinary bounded sweep or uses
+`cancel_unreleased_child_sql` to seize the exact child queue generation; both
+paths stop at `caller_released_at`.
 
 ## Node-level I/O capture (9.6)
 

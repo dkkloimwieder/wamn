@@ -167,14 +167,14 @@ terminalized AS ( \
 descendants AS ( \
     WITH RECURSIVE tree AS ( \
         SELECT r.tenant_id, r.run_id, t.cancel_kind \
-          FROM runs AS r JOIN terminalized AS t \
+         FROM runs AS r JOIN terminalized AS t \
             ON r.tenant_id = t.tenant_id AND r.parent_run_id = t.run_id \
-         WHERE r.status IN ('dispatched','running') \
+         WHERE r.status IN ('dispatched','running') AND r.caller_released_at IS NULL \
         UNION ALL \
         SELECT r.tenant_id, r.run_id, tree.cancel_kind \
           FROM runs AS r JOIN tree \
             ON r.tenant_id = tree.tenant_id AND r.parent_run_id = tree.run_id \
-         WHERE r.status IN ('dispatched','running') \
+         WHERE r.status IN ('dispatched','running') AND r.caller_released_at IS NULL \
     ) SELECT * FROM tree \
 ), \
 propagated AS ( \
@@ -238,6 +238,10 @@ mod tests {
         assert!(sql.contains("(SELECT count(*) FROM notified) AS notification_count"));
         assert!(sql.contains("t.seized_generation"));
         assert!(sql.contains("WITH RECURSIVE tree"));
+        assert!(
+            sql.matches("r.caller_released_at IS NULL").count() >= 4,
+            "cancellation propagation must stop at every released child boundary"
+        );
         assert!(sql.contains("pg_notify('wamn_run_outcome'"));
     }
 

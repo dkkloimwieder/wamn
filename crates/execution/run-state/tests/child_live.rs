@@ -2,7 +2,9 @@
 
 use std::process::{Command, Output};
 
-use wamn_run_state::child::{create_or_recover_child_sql, release_child_sql};
+use wamn_run_state::child::{
+    cancel_unreleased_child_sql, create_or_recover_child_sql, release_child_sql,
+};
 
 fn psql(url: &str, script: &str) -> Output {
     Command::new("psql")
@@ -30,8 +32,8 @@ fn app_preamble() -> &'static str {
 fn prepare_create(sql: &str) -> String {
     format!(
         "PREPARE create_child_stmt \
-         (text,text,text,bigint,text,int,text,text,text,text,int,text,text,text, \
-          timestamptz,timestamptz,text,text) AS {sql};"
+         (text,text,text,bigint,text,int,text,text,text,text,text,text,int,bigint,text,text) \
+         AS {sql};"
     )
 }
 
@@ -42,13 +44,16 @@ fn prepare_release(sql: &str) -> String {
     )
 }
 
+fn prepare_cancel(sql: &str) -> String {
+    format!("PREPARE cancel_child_stmt (text,bigint,text) AS {sql};")
+}
+
 fn execute_create(parent: &str, owner: &str, generation: i64, child: &str) -> String {
     format!(
         "EXECUTE create_child_stmt(\
          '{parent}','{parent}','{owner}',{generation},'invoke',0,'{child}',\
-         'child-internal','sha256:def','child-flow',2,'sha256:artifact',\
-         '{{\"decision\":\"approve\"}}','rev-child',\
-         now()+interval '30 seconds',now()+interval '1 minute',NULL,'blocking')"
+         'child-internal','child-flow','service',\
+         '{{\"decision\":\"approve\"}}','rev-child',8,64,NULL,'blocking')"
     )
 }
 
@@ -57,8 +62,8 @@ fn seed_parent(url: &str, run_id: &str, owner: &str, generation: i64) {
         url,
         &format!(
             "INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,status) \
-             VALUES ('t1','{run_id}','parent-flow',1,'cat',4,'running'); \
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment,status) \
+             VALUES ('t1','{run_id}','parent-flow',1,'cat',4,'poc','running'); \
              INSERT INTO wamn_run.run_queue \
                (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
              VALUES ('t1','{run_id}','{owner}',now()+interval '1 minute',{generation});"
@@ -92,26 +97,40 @@ fn child_live() {
              CREATE TABLE catalog.release_attachments (\
                tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL,\
                attachment_id text NOT NULL, attachment_kind text NOT NULL, flow_id text NOT NULL,\
-               definition_hash text NOT NULL);\
+               source_id text NOT NULL, definition_hash text NOT NULL, definition_json jsonb NOT NULL);\
+             CREATE TABLE catalog.release_sources (\
+               tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL,\
+               source_id text NOT NULL, source_kind text NOT NULL, definition_json jsonb NOT NULL);\
              CREATE TABLE catalog.release_flows (\
                tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL,\
                flow_id text NOT NULL, flow_version int NOT NULL);\
              CREATE TABLE catalog.flow_artifacts (\
                tenant_id text NOT NULL, flow_id text NOT NULL, flow_version int NOT NULL,\
                artifact_hash text NOT NULL);\
+             CREATE TABLE catalog.attachment_activation (\
+               tenant_id text NOT NULL, catalog_id text NOT NULL, environment text NOT NULL,\
+               attachment_id text NOT NULL, confirmed_definition_hash text NOT NULL,\
+               enabled boolean NOT NULL);\
              GRANT USAGE ON SCHEMA catalog TO wamn_app;\
              GRANT SELECT ON ALL TABLES IN SCHEMA catalog TO wamn_app;\
+             INSERT INTO catalog.release_sources VALUES \
+               ('t1','cat',4,'child-callers','caller-policy',\
+                '{{\"allowed-callers\":[\"parent-flow\"]}}');\
              INSERT INTO catalog.release_attachments VALUES \
-               ('t1','cat',4,'child-internal','internal','child-flow','sha256:def');\
+               ('t1','cat',4,'child-internal','internal','child-flow','child-callers','sha256:def',\
+                '{{\"run-deadline-ms\":60000,\"response-deadline-ms\":30000}}');\
              INSERT INTO catalog.release_flows VALUES \
                ('t1','cat',4,'child-flow',2);\
              INSERT INTO catalog.flow_artifacts VALUES \
-               ('t1','child-flow',2,'sha256:artifact');"
+               ('t1','child-flow',2,'sha256:artifact');\
+             INSERT INTO catalog.attachment_activation VALUES \
+               ('t1','cat','poc','child-internal','sha256:def',true);"
         ),
     );
 
     let create = create_or_recover_child_sql();
     let release = release_child_sql();
+    let cancel = cancel_unreleased_child_sql();
 
     // Positive: one statement inserts and pins the child, enqueues it, records
     // the occurrence wait, and releases the parent's queue lease.
@@ -120,15 +139,18 @@ fn child_live() {
         "{} {} \
          CREATE TEMP TABLE created AS {}; \
          DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM created) = 'created', 'child created'; \
+           ASSERT (SELECT result_code FROM created) = 'created', \
+             'child created: ' || (SELECT result_code FROM created); \
            ASSERT (SELECT child_run_id FROM created) = 'child-created', 'returned child'; \
            ASSERT (SELECT wait_generation FROM created) = 7, 'wait generation pinned'; \
            ASSERT EXISTS (SELECT FROM runs WHERE run_id='child-created' \
              AND parent_run_id='parent-create' AND parent_node_id='invoke' \
              AND parent_occurrence=0 AND flow_id='child-flow' AND flow_version=2 \
-             AND catalog_id='cat' AND catalog_version=4 \
+             AND catalog_id='cat' AND catalog_version=4 AND environment='poc' \
              AND attachment_id='child-internal' \
-             AND input_json='{{\"decision\":\"approve\"}}'::jsonb), 'child identity pinned'; \
+             AND input_json='{{\"decision\":\"approve\"}}'::jsonb \
+             AND invocation_context->'actor'->>'subject'='service:cat:poc:child-flow' \
+             AND invocation_context->'caller'->>'flow-id'='parent-flow'), 'child identity pinned'; \
            ASSERT EXISTS (SELECT FROM run_queue WHERE run_id='child-created'), 'child enqueued'; \
            ASSERT EXISTS (SELECT FROM runs WHERE run_id='parent-create' \
              AND waiting_child_run_id='child-created' AND waiting_child_occurrence=0 \
@@ -151,11 +173,11 @@ fn child_live() {
         &url,
         "INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,attachment_id,\
-            status,trigger_source,input_json,platform_revision,parent_run_id,parent_node_id,\
-            parent_occurrence,invoke_depth) \
-         VALUES ('t1','child-existing','child-flow',2,'cat',4,'child-internal',\
+            environment,status,trigger_source,input_json,platform_revision,parent_run_id,parent_node_id,\
+            parent_occurrence,invoke_depth,invoke_root_run_id) \
+         VALUES ('t1','child-existing','child-flow',2,'cat',4,'child-internal','poc',\
                  'dispatched','internal','{\"decision\":\"approve\"}','rev-child',\
-                 'parent-recover','invoke',0,1);",
+                 'parent-recover','invoke',0,1,'parent-recover');",
     );
     let recovered = format!(
         "{} {} \
@@ -187,11 +209,11 @@ fn child_live() {
         &url,
         "INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,attachment_id,\
-            status,trigger_source,input_json,platform_revision,parent_run_id,parent_node_id,\
-            parent_occurrence,invoke_depth) \
-         VALUES ('t1','child-conflict','child-flow',2,'cat',4,'child-internal',\
+            environment,status,trigger_source,input_json,platform_revision,parent_run_id,parent_node_id,\
+            parent_occurrence,invoke_depth,invoke_root_run_id) \
+         VALUES ('t1','child-conflict','child-flow',2,'cat',4,'child-internal','poc',\
                  'dispatched','internal','{\"decision\":\"deny\"}','rev-child',\
-                 'parent-conflict','invoke',0,1);",
+                 'parent-conflict','invoke',0,1,'parent-conflict');",
     );
     let conflict = format!(
         "{} {} \
@@ -351,4 +373,109 @@ fn child_live() {
         prepare_release(&release)
     );
     success(&url, &released);
+
+    // Revocation gates creation only. Once release wakes the parent, a fresh
+    // claim recovers the exact stored outcome without re-authorizing or
+    // inheriting any child-authored context.
+    success(
+        &url,
+        "UPDATE catalog.attachment_activation SET enabled=false \
+          WHERE attachment_id='child-internal'; \
+         UPDATE wamn_run.run_queue SET lease_owner='parent-resume', \
+           lease_expires_at=now()+interval '1 minute', lease_generation=8 \
+          WHERE run_id='parent-create';",
+    );
+    let resumed = format!(
+        "{} {} \
+         CREATE TEMP TABLE resumed AS {}; \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM resumed) = 'released', \
+             'released child bypasses live reauthorization'; \
+           ASSERT (SELECT outcome_json::jsonb FROM resumed) = '{{\"ok\":true}}'::jsonb, \
+             'stored child outcome is byte-stable input to parent resume'; \
+           ASSERT (SELECT waiting_child_run_id FROM runs WHERE run_id='parent-create') IS NULL, \
+             'released recovery does not repark parent'; \
+           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='parent-create')='parent-resume', \
+             'released recovery preserves the new parent fence'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        prepare_create(&create),
+        execute_create("parent-create", "parent-resume", 8, "ignored-child-id")
+    );
+    success(&url, &resumed);
+
+    // A new caller is checked against the typed policy and current activation.
+    // Restore activation so the refusal discriminator is caller policy, not
+    // revocation.
+    success(
+        &url,
+        "UPDATE catalog.attachment_activation SET enabled=true \
+          WHERE attachment_id='child-internal';",
+    );
+    seed_parent(&url, "parent-refused", "refused-worker", 11);
+    success(
+        &url,
+        "UPDATE wamn_run.runs SET flow_id='not-allowed' WHERE run_id='parent-refused';",
+    );
+    let refused = format!(
+        "{} {} CREATE TEMP TABLE refused_caller AS {}; \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM refused_caller)='caller-refused'; \
+           ASSERT NOT EXISTS (SELECT FROM runs WHERE parent_run_id='parent-refused'); \
+         END $$; COMMIT;",
+        app_preamble(),
+        prepare_create(&create),
+        execute_create("parent-refused", "refused-worker", 11, "child-refused")
+    );
+    success(&url, &refused);
+
+    seed_parent(&url, "parent-depth", "depth-worker", 12);
+    success(
+        &url,
+        "UPDATE wamn_run.runs SET invoke_depth=8 WHERE run_id='parent-depth';",
+    );
+    let depth = format!(
+        "{} {} CREATE TEMP TABLE depth_refused AS {}; \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM depth_refused)='depth-exceeded'; \
+           ASSERT NOT EXISTS (SELECT FROM runs WHERE parent_run_id='parent-depth'); \
+         END $$; COMMIT;",
+        app_preamble(),
+        prepare_create(&create),
+        execute_create("parent-depth", "depth-worker", 12, "child-depth")
+    );
+    success(&url, &depth);
+
+    // Pre-release cancellation requires the exact child generation, seizes it,
+    // and never mutates a child whose caller outcome was already released.
+    seed_parent(&url, "parent-cancel", "cancel-worker", 13);
+    let create_cancel = format!(
+        "{} {} {}; COMMIT;",
+        app_preamble(),
+        prepare_create(&create),
+        execute_create("parent-cancel", "cancel-worker", 13, "child-cancel")
+    );
+    success(&url, &create_cancel);
+    let cancel_checks = format!(
+        "{} {} \
+         CREATE TEMP TABLE stale_cancel AS \
+           EXECUTE cancel_child_stmt('child-cancel',1,'parent-operator'); \
+         DO $$ BEGIN ASSERT (SELECT result_code FROM stale_cancel)='stale-generation'; END $$; \
+         CREATE TEMP TABLE cancelled AS \
+           EXECUTE cancel_child_stmt('child-cancel',0,'parent-operator'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM cancelled)='cancelled'; \
+           ASSERT (SELECT seized_generation FROM cancelled)=1; \
+           ASSERT EXISTS (SELECT FROM runs WHERE run_id='child-cancel' \
+             AND status='cancelled' AND cancel_kind='parent-operator'); \
+           ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='child-cancel'); \
+         END $$; \
+         CREATE TEMP TABLE released_guard AS \
+           EXECUTE cancel_child_stmt('child-created',3,'parent-operator'); \
+         DO $$ BEGIN ASSERT (SELECT result_code FROM released_guard)='already-released'; END $$; \
+         COMMIT;",
+        app_preamble(),
+        prepare_cancel(&cancel)
+    );
+    success(&url, &cancel_checks);
 }

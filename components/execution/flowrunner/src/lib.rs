@@ -51,12 +51,15 @@ use std::cell::RefCell;
 use std::time::Instant;
 
 use serde_json::{Value, json};
-use wamn_flow::{Flow, canonical_json_sha256};
+use wamn_flow::{Flow, InvokeActorMode, InvokeFlowConfig, canonical_json_sha256};
 use wamn_node_sdk as sdk;
 use wamn_run_state::attempt::{AttemptDispatchResult, AttemptStartResult, RecoveryClass};
+use wamn_run_state::child::{
+    ChildCreateResult, ChildReleaseResult, create_or_recover_child_sql, release_child_sql,
+};
 use wamn_run_state::transitions::{
-    CallerReleaseResult, CheckpointResult, ReservedCheckpointResult, TerminalizeResult,
-    begin_attempt_sql, complete_attempt_error_sql, complete_attempt_success_sql,
+    CallerReleaseResult, CheckpointResult, ReservedCheckpointResult, StoredCallerOutcome,
+    TerminalizeResult, begin_attempt_sql, complete_attempt_error_sql, complete_attempt_success_sql,
     mark_attempt_dispatched_sql, release_caller_sql, reserved_checkpoint_sql, terminalize_sql,
 };
 use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
@@ -66,8 +69,8 @@ use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
 // amortization: one statement where the split path spent two or three.
 use wamn_run_state::queue::{
     acquire_partitions_sql, begin_claimed_run_sql, claim_dispatch_sql, claim_partition_head_sql,
-    dead_letter_dequeue_sql, mark_running_sql, park_sql, record_success_and_renew_sql,
-    release_partition_sql, renew_partition_sql,
+    dead_letter_dequeue_sql, mark_running_sql, park_sql, record_error_and_renew_sql,
+    record_success_and_renew_sql, release_partition_sql, renew_partition_sql,
 };
 use wamn_runner::{
     CallerState, Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState,
@@ -1160,6 +1163,7 @@ enum ResolvedNode {
     Delay,
     HttpCall,
     Custom,
+    InvokeFlow,
     Standard,
 }
 
@@ -1227,6 +1231,7 @@ fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
         "delay" => Some(ResolvedNode::Delay),
         "http-call" => Some(ResolvedNode::HttpCall),
         "custom" | "normalize-receipt" | "evaluate-specs" => Some(ResolvedNode::Custom),
+        "invoke-flow" => Some(ResolvedNode::InvokeFlow),
         node_type if wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),
         _ => None,
     }
@@ -1342,6 +1347,9 @@ fn dispatch_node(
         // the walk. The grant is EXACTLY `node.credential` (never the project's
         // whole set); the serve-node host installs it before invoking, get-only.
         ResolvedNode::Custom => custom_node_dispatch(d, run_id, flow),
+        ResolvedNode::InvokeFlow => {
+            Err("invoke-flow is handled by the claimed-run child runtime".to_string())
+        }
         // The standard node library (5.3): everything the library ships
         // dispatches through the capability policy table over this
         // component's real imports. A NodeError feeds the engine, which
@@ -1752,6 +1760,215 @@ struct ClaimOutcome {
     outcome: u32,
     park_ms: u64,
     fail_reason: Option<String>,
+    already_settled: bool,
+}
+
+const DEFAULT_CHILD_DEPTH_LIMIT: i32 = 8;
+const DEFAULT_CHILD_FANOUT_LIMIT: i64 = 64;
+
+enum ChildInvocation {
+    Parked,
+    Released(NodeOutcome),
+}
+
+fn invoke_actor_mode(mode: InvokeActorMode) -> &'static str {
+    match mode {
+        InvokeActorMode::Inherit => "inherit",
+        InvokeActorMode::Service => "service",
+        InvokeActorMode::Attenuate => "attenuate",
+    }
+}
+
+fn child_outcome(outcome: StoredCallerOutcome) -> NodeOutcome {
+    if outcome.kind == "responded" {
+        return NodeOutcome::ok(outcome.body);
+    }
+    let error = outcome.body.get("error").unwrap_or(&outcome.body);
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or("callee-failed");
+    let message = error.get("message").and_then(Value::as_str).unwrap_or(code);
+    NodeOutcome::Error(NodeError::Terminal(ErrorDetail {
+        message: message.to_string(),
+        code: Some(code.to_string()),
+        data: Some(outcome.body),
+    }))
+}
+
+fn invoke_child(
+    run_id: &str,
+    dispatch: &Dispatch,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<ChildInvocation, String> {
+    let config: InvokeFlowConfig = serde_json::from_value(dispatch.config.clone())
+        .map_err(|error| format!("invoke-flow config: {error}"))?;
+    let child_run_id = format!("child:{run_id}:{}:{}", dispatch.node, dispatch.occurrence);
+    let response = client::query(
+        &create_or_recover_child_sql(),
+        &[
+            text(run_id),
+            text(run_id),
+            text(owner),
+            int64(lease_generation),
+            text(&dispatch.node),
+            int32(dispatch.occurrence as i32),
+            text(child_run_id),
+            text(config.attachment_id),
+            text(config.flow_id),
+            text(invoke_actor_mode(config.actor_mode)),
+            jsonb(&dispatch.payload),
+            text(env!("CARGO_PKG_VERSION")),
+            int32(DEFAULT_CHILD_DEPTH_LIMIT),
+            int64(DEFAULT_CHILD_FANOUT_LIMIT),
+            SqlValue::Null,
+            text("blocking"),
+        ],
+    )
+    .map_err(|error| err_name(&error))?;
+    let row = response
+        .rows
+        .first()
+        .ok_or("invoke-flow transition returned no result row")?;
+    let code = match row.first() {
+        Some(SqlValue::Text(value)) => value.as_str(),
+        other => return Err(format!("invoke-flow result shape: {other:?}")),
+    };
+    let run_status = match row.get(1) {
+        Some(SqlValue::Text(value)) => value.as_str(),
+        Some(SqlValue::Null) => "",
+        other => return Err(format!("invoke-flow run status shape: {other:?}")),
+    };
+    let child_run_id = match row.get(2) {
+        Some(SqlValue::Text(value)) => Some(value.clone()),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("invoke-flow child id shape: {other:?}")),
+    };
+    let wait_generation = match row.get(3) {
+        Some(SqlValue::Int64(value)) => Some(*value),
+        Some(SqlValue::Int32(value)) => Some(i64::from(*value)),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("invoke-flow wait generation shape: {other:?}")),
+    };
+    let kind = match row.get(4) {
+        Some(SqlValue::Text(value)) => Some(value.clone()),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("invoke-flow outcome kind shape: {other:?}")),
+    };
+    let body = match row.get(5) {
+        Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Some(
+            serde_json::from_str(value)
+                .map_err(|error| format!("invoke-flow outcome parse: {error}"))?,
+        ),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("invoke-flow outcome body shape: {other:?}")),
+    };
+    let http_status = match row.get(6) {
+        Some(SqlValue::Int32(value)) => u16::try_from(*value).ok(),
+        Some(SqlValue::Int64(value)) => u16::try_from(*value).ok(),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("invoke-flow HTTP status shape: {other:?}")),
+    };
+    let release_node_id = match row.get(7) {
+        Some(SqlValue::Text(value)) => Some(value.clone()),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("invoke-flow release node shape: {other:?}")),
+    };
+    let hash = match row.get(8) {
+        Some(SqlValue::Text(value)) => Some(value.clone()),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("invoke-flow outcome hash shape: {other:?}")),
+    };
+    match ChildCreateResult::from_parts(
+        code,
+        run_status,
+        child_run_id,
+        wait_generation,
+        kind,
+        body,
+        http_status,
+        release_node_id,
+        hash,
+    )
+    .ok_or_else(|| format!("unknown invoke-flow result: {code}"))?
+    {
+        ChildCreateResult::Created { .. } | ChildCreateResult::Recovered { .. } => {
+            Ok(ChildInvocation::Parked)
+        }
+        ChildCreateResult::Released { outcome, .. } => {
+            Ok(ChildInvocation::Released(child_outcome(outcome)))
+        }
+        ChildCreateResult::FenceLost => Err("invoke-flow refused: fence-lost".to_string()),
+        other => Err(format!("invoke-flow refused: {other:?}")),
+    }
+}
+
+fn checkpoint_child_outcome(
+    run_id: &str,
+    dispatch: &Dispatch,
+    seq: i32,
+    outcome: &NodeOutcome,
+    capture: &wamn_flow::Capture,
+    ttl_ms: i64,
+    owner: &str,
+) -> Result<(), String> {
+    match outcome {
+        NodeOutcome::Success { payload, port, .. } => {
+            let (binds, _) = capture_binds(capture, payload, &dispatch.payload);
+            let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+            client::execute(
+                &record_success_and_renew_sql(),
+                &[
+                    text(run_id),
+                    text(&dispatch.node),
+                    int32(dispatch.occurrence as i32),
+                    int32(seq),
+                    text(port),
+                    out_j,
+                    in_j,
+                    preview,
+                    size,
+                    hash,
+                    mode,
+                    redacted,
+                    int64(ttl_ms),
+                    text(owner),
+                ],
+            )
+            .map_err(|error| err_name(&error))?;
+        }
+        NodeOutcome::Error(error) => {
+            let (kind, payload, mut detail) = error_row_values(error);
+            let (binds, redacted) = capture_binds(capture, &payload, &dispatch.payload);
+            if redacted {
+                wamn_run_state::capture::scrub(&mut detail);
+            }
+            let [out_j, in_j, preview, size, hash, mode, red] = binds;
+            client::execute(
+                &record_error_and_renew_sql(),
+                &[
+                    text(run_id),
+                    text(&dispatch.node),
+                    int32(dispatch.occurrence as i32),
+                    int32(seq),
+                    out_j,
+                    in_j,
+                    text(kind),
+                    jsonb(&detail),
+                    preview,
+                    size,
+                    hash,
+                    mode,
+                    red,
+                    int64(ttl_ms),
+                    text(owner),
+                ],
+            )
+            .map_err(|error| err_name(&error))?;
+        }
+    }
+    Ok(())
 }
 
 /// The host-injected durable-queue lease owner (`app.runner`, fqg.4). The plugin
@@ -2151,20 +2368,68 @@ fn commit_reserved_and_renew(
 
     if let Some(kind) = release_kind {
         let release_hash = canonical_json_sha256(&release_body);
+        let parent = txn
+            .query(
+                "SELECT c.parent_run_id, c.parent_node_id, c.parent_occurrence, p.wait_generation \
+                   FROM runs AS c LEFT JOIN runs AS p \
+                     ON p.tenant_id = c.tenant_id AND p.run_id = c.parent_run_id \
+                  WHERE c.tenant_id = current_setting('app.tenant', true) AND c.run_id = $1",
+                &[text(run_id)],
+            )
+            .map_err(|error| err_name(&error))?
+            .rows
+            .first()
+            .and_then(|row| match row.as_slice() {
+                [
+                    SqlValue::Text(parent_run_id),
+                    SqlValue::Text(parent_node_id),
+                    SqlValue::Int32(parent_occurrence),
+                    SqlValue::Int64(wait_generation),
+                ] => Some((
+                    parent_run_id.clone(),
+                    parent_node_id.clone(),
+                    *parent_occurrence,
+                    *wait_generation,
+                )),
+                _ => None,
+            });
         let response = txn
             .query(
-                &release_caller_sql(),
-                &[
-                    text(run_id),
-                    text(run_id),
-                    text(owner),
-                    int64(lease_generation),
-                    text(kind),
-                    jsonb(&release_body),
-                    int32(i32::from(release_status.expect("release has status"))),
-                    text(release_node.expect("release has node")),
-                    text(&release_hash),
-                ],
+                &if parent.is_some() {
+                    release_child_sql()
+                } else {
+                    release_caller_sql()
+                },
+                &match &parent {
+                    Some((parent_run_id, parent_node_id, parent_occurrence, wait_generation)) => {
+                        vec![
+                            text(run_id),
+                            text(run_id),
+                            text(owner),
+                            int64(lease_generation),
+                            text(kind),
+                            jsonb(&release_body),
+                            int32(i32::from(release_status.expect("release has status"))),
+                            text(release_node.expect("release has node")),
+                            text(&release_hash),
+                            text(parent_run_id),
+                            text(parent_node_id),
+                            int32(*parent_occurrence),
+                            int64(*wait_generation),
+                        ]
+                    }
+                    None => vec![
+                        text(run_id),
+                        text(run_id),
+                        text(owner),
+                        int64(lease_generation),
+                        text(kind),
+                        jsonb(&release_body),
+                        int32(i32::from(release_status.expect("release has status"))),
+                        text(release_node.expect("release has node")),
+                        text(&release_hash),
+                    ],
+                },
             )
             .map_err(|error| err_name(&error))?;
         let row = response
@@ -2209,35 +2474,66 @@ fn commit_reserved_and_renew(
             Some(SqlValue::Null) => None,
             other => return Err(format!("caller release hash shape: {other:?}")),
         };
-        let release = CallerReleaseResult::from_parts(
-            code,
-            run_status,
-            stored_kind,
-            stored_body,
-            stored_status,
-            stored_node,
-            stored_hash,
-        )
-        .ok_or_else(|| format!("unknown caller release result: {code}"))?;
-        match release {
-            CallerReleaseResult::Released => {}
-            CallerReleaseResult::AlreadyReleased(stored)
-                if stored.exactly_matches(
-                    kind,
-                    &release_body,
-                    release_status,
-                    release_node,
-                    &release_hash,
-                ) => {}
-            CallerReleaseResult::AlreadyReleased(_) => {
-                return Err("caller release replay disagrees with stored outcome".to_string());
+        if parent.is_some() {
+            let release = ChildReleaseResult::from_parts(
+                code,
+                run_status,
+                stored_kind,
+                stored_body,
+                stored_status,
+                stored_node,
+                stored_hash,
+            )
+            .ok_or_else(|| format!("unknown child release result: {code}"))?;
+            match release {
+                ChildReleaseResult::Released => {}
+                ChildReleaseResult::AlreadyReleased(stored)
+                    if stored.exactly_matches(
+                        kind,
+                        &release_body,
+                        release_status,
+                        release_node,
+                        &release_hash,
+                    ) => {}
+                ChildReleaseResult::AlreadyReleased(_) => {
+                    return Err("child release replay disagrees with stored outcome".to_string());
+                }
+                ChildReleaseResult::FenceLost => {
+                    return Err("child release refused: fence-lost".to_string());
+                }
+                other => return Err(format!("child release refused: {other:?}")),
             }
-            // FenceLost is absolute: return before recording, terminalizing, or
-            // committing anything else through this transaction.
-            CallerReleaseResult::FenceLost => {
-                return Err("caller release refused: fence-lost".to_string());
+        } else {
+            let release = CallerReleaseResult::from_parts(
+                code,
+                run_status,
+                stored_kind,
+                stored_body,
+                stored_status,
+                stored_node,
+                stored_hash,
+            )
+            .ok_or_else(|| format!("unknown caller release result: {code}"))?;
+            match release {
+                CallerReleaseResult::Released => {}
+                CallerReleaseResult::AlreadyReleased(stored)
+                    if stored.exactly_matches(
+                        kind,
+                        &release_body,
+                        release_status,
+                        release_node,
+                        &release_hash,
+                    ) => {}
+                CallerReleaseResult::AlreadyReleased(_) => {
+                    return Err("caller release replay disagrees with stored outcome".to_string());
+                }
+                // FenceLost is absolute: return before recording, terminalizing, or
+                // committing anything else through this transaction.
+                CallerReleaseResult::FenceLost => {
+                    return Err("caller release refused: fence-lost".to_string());
+                }
+                other => return Err(format!("caller release refused: {other:?}")),
             }
-            other => return Err(format!("caller release refused: {other:?}")),
         }
     }
 
@@ -2576,6 +2872,9 @@ fn release_partition(partition_key: &str, owner: &str) -> Result<(), String> {
 /// [`dead_letter_dequeue`], so a `blocking`-partition head's key continues past
 /// the failure WITH its ledger marker in the same transaction (wamn-v8cv).
 fn settle(run_id: &str, claim: &ClaimOutcome) -> Result<(), String> {
+    if claim.already_settled {
+        return Ok(());
+    }
     match claim.outcome {
         0 => {}                            // completed: already dequeued
         1 => park(run_id, claim.park_ms)?, // parked -> re-offered at wake
@@ -2679,6 +2978,7 @@ fn execute_claimed(
                     outcome: 0,
                     park_ms: 0,
                     fail_reason: None,
+                    already_settled: false,
                 });
             }
             Step::Done(status) => {
@@ -2714,6 +3014,7 @@ fn execute_claimed(
                     outcome: 2,
                     park_ms: 0,
                     fail_reason: Some(fail_reason),
+                    already_settled: false,
                 });
             }
             // R32: a scheduled retry not yet due — persist the attempt and PARK
@@ -2734,6 +3035,7 @@ fn execute_claimed(
                     outcome: 1,
                     park_ms: until_ms,
                     fail_reason: None,
+                    already_settled: false,
                 });
             }
             Step::Reserved(step) => {
@@ -2777,10 +3079,64 @@ fn execute_claimed(
                                 })
                                 .unwrap_or_else(|| "failed".to_string())
                         }),
+                        already_settled: false,
                     });
                 }
             }
             Step::Dispatch(d) => {
+                if d.node_type == "invoke-flow" {
+                    match invoke_child(run_id, &d, owner, lease_generation)? {
+                        ChildInvocation::Parked => {
+                            return Ok(ClaimOutcome {
+                                outcome: 1,
+                                park_ms: 0,
+                                fail_reason: None,
+                                already_settled: true,
+                            });
+                        }
+                        ChildInvocation::Released(outcome) => {
+                            let should_checkpoint = matches!(outcome, NodeOutcome::Success { .. })
+                                || !plan.successors(&d.node, ERROR_PORT).is_empty();
+                            if should_checkpoint {
+                                checkpoint_child_outcome(
+                                    run_id,
+                                    &d,
+                                    next_seq,
+                                    &outcome,
+                                    &flow.capture,
+                                    ttl_ms,
+                                    owner,
+                                )?;
+                                next_seq += 1;
+                            }
+                            match &outcome {
+                                NodeOutcome::Success { port, .. } => emit_node_complete(
+                                    &flow.flow_id,
+                                    run_id,
+                                    &d.node,
+                                    next_seq.saturating_sub(1),
+                                    &tp,
+                                    port,
+                                ),
+                                NodeOutcome::Error(error) if should_checkpoint => emit_node_error(
+                                    &flow.flow_id,
+                                    run_id,
+                                    &d.node,
+                                    next_seq.saturating_sub(1),
+                                    &tp,
+                                    error_row_values(error).0,
+                                ),
+                                NodeOutcome::Error(_) => {}
+                            }
+                            if let Some(partition_key) = partition {
+                                renew_partition(partition_key, ttl_ms, owner)?;
+                            }
+                            plan.apply(&mut st, &d, outcome, 0)
+                                .map_err(|error| error.to_string())?;
+                            continue;
+                        }
+                    }
+                }
                 // The lease heartbeat rides each node's checkpoint statement
                 // (fqg.18): the claim's fresh lease covers the first node, each
                 // record's renew covers the next — the same coverage the split
@@ -2799,6 +3155,7 @@ fn execute_claimed(
                                 "effect-uncertain: {}: incomplete attempt",
                                 d.node
                             )),
+                            already_settled: false,
                         });
                     }
                     AttemptStartResult::FenceLost => {
@@ -2831,6 +3188,7 @@ fn execute_claimed(
                                         outcome: 0,
                                         park_ms: 0,
                                         fail_reason: None,
+                                        already_settled: false,
                                     });
                                 }
                                 next_seq += 1;
@@ -2864,6 +3222,7 @@ fn execute_claimed(
                                         outcome: 0,
                                         park_ms: 0,
                                         fail_reason: None,
+                                        already_settled: false,
                                     });
                                 }
                                 next_seq += 1;
@@ -2903,6 +3262,7 @@ fn execute_claimed(
                             outcome: 1,
                             park_ms,
                             fail_reason: None,
+                            already_settled: false,
                         });
                     }
                 }

@@ -446,13 +446,13 @@ created_http AS ( \
 ), \
 created_run AS ( \
     INSERT INTO wamn_run.runs \
-      (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
+      (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
        attachment_id, registration_id, status, trigger_source, input_json, \
        event_source_run_id, event_root_run_id, event_depth, \
        invocation_context, platform_revision, idempotency_key, \
        response_deadline_at, run_deadline_at) \
     SELECT c.tenant_id, c.run_id, c.flow_id, c.flow_version, c.catalog_id, \
-           c.expected_catalog_version, \
+           c.expected_catalog_version, c.environment, \
            CASE WHEN c.producer IN ('http', 'cron') THEN c.attachment_id END, \
            CASE WHEN c.producer = 'event' THEN c.registration_id END, \
            'dispatched', c.producer, c.input_json, \

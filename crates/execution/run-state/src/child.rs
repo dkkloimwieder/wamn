@@ -20,10 +20,19 @@ pub enum ChildCreateResult {
         child_run_id: String,
         wait_generation: i64,
     },
+    Released {
+        child_run_id: String,
+        outcome: StoredCallerOutcome,
+    },
     OccurrenceConflict,
     ChildIdConflict,
     ParentAlreadyWaiting,
     DefinitionMismatch,
+    CalleeRevoked,
+    CallerRefused,
+    DepthExceeded,
+    FanoutExceeded,
+    UnsupportedActorMode,
     InvalidInput,
     RunTerminal(RunStatus),
     FenceLost,
@@ -34,11 +43,20 @@ pub enum ChildCreateResult {
 
 impl ChildCreateResult {
     /// Decode the single row returned by [`create_or_recover_child_sql`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the decoder mirrors the transition's flat SQL result row"
+    )]
     pub fn from_parts(
         code: &str,
         run_status: &str,
         child_run_id: Option<String>,
         wait_generation: Option<i64>,
+        kind: Option<String>,
+        body: Option<Value>,
+        http_status: Option<u16>,
+        release_node_id: Option<String>,
+        hash: Option<String>,
     ) -> Option<ChildCreateResult> {
         match code {
             "created" => Some(ChildCreateResult::Created {
@@ -49,10 +67,25 @@ impl ChildCreateResult {
                 child_run_id: child_run_id?,
                 wait_generation: wait_generation?,
             }),
+            "released" => Some(ChildCreateResult::Released {
+                child_run_id: child_run_id?,
+                outcome: StoredCallerOutcome {
+                    kind: kind?,
+                    body: body?,
+                    http_status,
+                    release_node_id,
+                    hash,
+                },
+            }),
             "occurrence-conflict" => Some(ChildCreateResult::OccurrenceConflict),
             "child-id-conflict" => Some(ChildCreateResult::ChildIdConflict),
             "parent-already-waiting" => Some(ChildCreateResult::ParentAlreadyWaiting),
             "definition-mismatch" => Some(ChildCreateResult::DefinitionMismatch),
+            "callee-revoked" => Some(ChildCreateResult::CalleeRevoked),
+            "caller-refused" => Some(ChildCreateResult::CallerRefused),
+            "depth-exceeded" => Some(ChildCreateResult::DepthExceeded),
+            "fanout-exceeded" => Some(ChildCreateResult::FanoutExceeded),
+            "unsupported-actor-mode" => Some(ChildCreateResult::UnsupportedActorMode),
             "invalid-input" => Some(ChildCreateResult::InvalidInput),
             "run-terminal" => Some(ChildCreateResult::RunTerminal(RunStatus::from_sql(
                 run_status,
@@ -71,37 +104,145 @@ impl ChildCreateResult {
     }
 }
 
+/// Result of a generation-fenced pre-release child cancellation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildCancelResult {
+    Cancelled { seized_generation: i64 },
+    AlreadyTerminal(RunStatus),
+    AlreadyReleased,
+    LiveAttempt,
+    StaleGeneration,
+    NotChild,
+    NotFound,
+    StateConflict,
+}
+
+impl ChildCancelResult {
+    pub fn from_parts(
+        code: &str,
+        run_status: &str,
+        seized_generation: Option<i64>,
+    ) -> Option<Self> {
+        match code {
+            "cancelled" => Some(Self::Cancelled {
+                seized_generation: seized_generation?,
+            }),
+            "run-terminal" => Some(Self::AlreadyTerminal(RunStatus::from_sql(run_status)?)),
+            "already-released" => Some(Self::AlreadyReleased),
+            "live-attempt" => Some(Self::LiveAttempt),
+            "stale-generation" => Some(Self::StaleGeneration),
+            "not-child" => Some(Self::NotChild),
+            "not-found" => Some(Self::NotFound),
+            "state-conflict" => Some(Self::StateConflict),
+            _ => None,
+        }
+    }
+}
+
+/// Seize and cancel an unreleased child before it can execute another attempt.
+///
+/// Params: child run id, observed queue generation, and persisted cancellation
+/// cause. A released child is an irreversible boundary and is never touched.
+pub fn cancel_unreleased_child_sql() -> &'static str {
+    "\
+WITH input AS ( \
+    SELECT NULLIF(current_setting('app.tenant', true), '')::text AS tenant_id, \
+           $1::text AS run_id, $2::bigint AS expected_generation, \
+           $3::text AS cancel_kind \
+), \
+locked_child AS MATERIALIZED ( \
+    SELECT r.* FROM runs AS r, input AS i \
+     WHERE r.tenant_id = i.tenant_id AND r.run_id = i.run_id \
+     FOR UPDATE OF r \
+), \
+locked_queue AS MATERIALIZED ( \
+    SELECT q.* FROM run_queue AS q JOIN locked_child AS r USING (tenant_id, run_id) \
+     FOR UPDATE OF q \
+), \
+classified AS ( \
+    SELECT CASE \
+      WHEN c.run_id IS NULL THEN 'not-found' \
+      WHEN c.parent_run_id IS NULL THEN 'not-child' \
+      WHEN c.caller_released_at IS NOT NULL THEN 'already-released' \
+      WHEN c.status IN ('completed','failed','cancelled','infrastructure-failure') \
+        THEN 'run-terminal' \
+      WHEN q.run_id IS NULL OR q.lease_generation <> i.expected_generation \
+        THEN 'stale-generation' \
+      WHEN EXISTS (SELECT FROM node_runs AS n \
+                    WHERE n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
+                      AND n.status = 'started' AND n.attempt_deadline_at > now()) \
+        THEN 'live-attempt' \
+      WHEN i.cancel_kind IS NULL OR i.cancel_kind = '' THEN 'state-conflict' \
+      ELSE 'ready' END AS result_code, c.tenant_id, c.run_id, c.status, \
+           i.cancel_kind, q.lease_generation \
+      FROM input AS i \
+      LEFT JOIN locked_child AS c ON true \
+      LEFT JOIN locked_queue AS q ON true \
+), \
+seized AS ( \
+    DELETE FROM run_queue AS q USING classified AS c \
+     WHERE c.result_code = 'ready' AND q.tenant_id = c.tenant_id AND q.run_id = c.run_id \
+       AND q.lease_generation = c.lease_generation \
+    RETURNING q.tenant_id, q.run_id, q.lease_generation + 1 AS seized_generation \
+), \
+cancelled AS ( \
+    UPDATE runs AS r SET status = 'cancelled', cancel_kind = c.cancel_kind, \
+      terminal_reason = c.cancel_kind, cancel_requested_kind = c.cancel_kind, \
+      cancel_requested_at = COALESCE(r.cancel_requested_at, now()), \
+      caller_outcome_kind = 'cancelled', \
+      caller_outcome_json = jsonb_build_object('error', jsonb_build_object( \
+        'code', c.cancel_kind, 'run-id', r.run_id, 'flow-id', r.flow_id, \
+        'flow-version', r.flow_version)), \
+      caller_http_status = 499, caller_released_at = now(), updated_at = now() \
+      FROM classified AS c JOIN seized AS s USING (tenant_id, run_id) \
+     WHERE r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
+    RETURNING s.seized_generation \
+) \
+SELECT CASE WHEN x.seized_generation IS NOT NULL THEN 'cancelled' ELSE c.result_code END, \
+       c.status, x.seized_generation \
+  FROM classified AS c LEFT JOIN cancelled AS x ON true"
+}
+
 /// Create or recover one occurrence-keyed child and park the fenced parent.
 ///
 /// Params are the parent fence (`$1..$4`), parent node id and occurrence,
-/// proposed child run id, internal attachment id, resolved definition hash,
-/// callee flow id/version, resolved artifact hash, input JSON, platform
-/// revision, response/run deadlines, and child partition key/policy.
+/// proposed child run id, internal attachment id, callee flow id, actor mode,
+/// input JSON, platform revision, depth/fanout caps, and child partition
+/// key/policy.
 ///
-/// The child pins the parent's catalog release. The immutable catalog tuple,
-/// attachment id, flow version, and artifact/definition rows are the complete
-/// resolved identity; an existing occurrence must match it and the input
-/// exactly. Child insertion, enqueue, parent wait, and lease release are one
-/// statement.
+/// Creation resolves and authorizes against the parent's pinned release and
+/// current single-hash activation. Recovery deliberately bypasses both live
+/// activation and caller-policy checks, using the child's stored pin. Child
+/// insertion, enqueue, parent wait, and lease release are one statement.
 pub fn create_or_recover_child_sql() -> String {
     format!(
         "{FENCED_PREFIX}, \
          resolved AS MATERIALIZED ( \
              SELECT a.attachment_id, a.definition_hash, a.flow_id, f.flow_version, \
-                    g.artifact_hash \
+                    g.artifact_hash, s.definition_json AS caller_policy, \
+                    x.enabled AS activation_enabled, \
+                    x.confirmed_definition_hash, \
+                    (a.definition_json->>'run-deadline-ms')::bigint AS run_deadline_ms, \
+                    (a.definition_json->>'response-deadline-ms')::bigint AS response_deadline_ms \
                FROM locked_run AS p \
                JOIN catalog.release_attachments AS a \
                  ON a.tenant_id = p.tenant_id AND a.catalog_id = p.catalog_id \
                 AND a.catalog_version = p.catalog_version \
                 AND a.attachment_id = $8 AND a.attachment_kind = 'internal' \
-                AND a.definition_hash = $9 AND a.flow_id = $10 \
+                AND a.flow_id = $9 \
+               JOIN catalog.release_sources AS s \
+                 ON s.tenant_id = a.tenant_id AND s.catalog_id = a.catalog_id \
+                AND s.catalog_version = a.catalog_version AND s.source_id = a.source_id \
+                AND s.source_kind = 'caller-policy' \
                JOIN catalog.release_flows AS f \
                  ON f.tenant_id = a.tenant_id AND f.catalog_id = a.catalog_id \
                 AND f.catalog_version = a.catalog_version AND f.flow_id = a.flow_id \
-                AND f.flow_version = $11 \
                JOIN catalog.flow_artifacts AS g \
                  ON g.tenant_id = f.tenant_id AND g.flow_id = f.flow_id \
-                AND g.flow_version = f.flow_version AND g.artifact_hash = $12 \
+                AND g.flow_version = f.flow_version \
+               LEFT JOIN catalog.attachment_activation AS x \
+                 ON x.tenant_id = a.tenant_id AND x.catalog_id = a.catalog_id \
+                AND x.environment = p.environment AND x.attachment_id = a.attachment_id \
          ), \
          existing_child AS MATERIALIZED ( \
              SELECT c.* FROM runs AS c, locked_run AS p \
@@ -119,6 +260,11 @@ pub fn create_or_recover_child_sql() -> String {
                ON q.tenant_id = c.tenant_id AND q.run_id = c.run_id \
               FOR UPDATE OF q \
          ), \
+         family_size AS MATERIALIZED ( \
+             SELECT count(*)::bigint AS child_count FROM runs AS child, locked_run AS p \
+              WHERE child.tenant_id = p.tenant_id \
+                AND child.invoke_root_run_id = COALESCE(p.invoke_root_run_id, p.run_id) \
+         ), \
          classified AS ( \
              SELECT CASE \
                       WHEN a.result_code <> 'ready' THEN a.result_code \
@@ -127,19 +273,14 @@ pub fn create_or_recover_child_sql() -> String {
                         OR $7::text IS NULL OR $7::text = '' \
                         OR $8::text IS NULL OR $8::text = '' \
                         OR $9::text IS NULL OR $9::text = '' \
-                        OR $10::text IS NULL OR $10::text = '' \
-                        OR $11::int IS NULL OR $11::int <= 0 \
+                        OR $10::text IS NULL OR $11::text::jsonb IS NULL \
                         OR $12::text IS NULL OR $12::text = '' \
-                        OR $13::text::jsonb IS NULL \
-                        OR $14::text IS NULL OR $14::text = '' \
-                        OR $18::text IS NULL OR $18::text NOT IN ('blocking', 'leapfrog') \
-                        OR ($17::text IS NULL AND $18::text <> 'blocking') \
-                        OR $17::text = '' \
-                        OR ($15::timestamptz IS NOT NULL AND $16::timestamptz IS NOT NULL \
-                            AND $15::timestamptz > $16::timestamptz) \
+                        OR $13::int IS NULL OR $13::int <= 0 \
+                        OR $14::bigint IS NULL OR $14::bigint <= 0 \
+                        OR $16::text IS NULL OR $16::text NOT IN ('blocking', 'leapfrog') \
+                        OR ($15::text IS NULL AND $16::text <> 'blocking') \
+                        OR $15::text = '' \
                         THEN 'invalid-input' \
-                      WHEN p.catalog_id IS NULL OR p.catalog_version IS NULL \
-                        OR d.attachment_id IS NULL THEN 'definition-mismatch' \
                       WHEN c.run_id IS NULL AND proposed.run_id IS NOT NULL \
                         THEN 'child-id-conflict' \
                       WHEN c.run_id IS NULL AND p.waiting_child_run_id IS NOT NULL \
@@ -147,35 +288,80 @@ pub fn create_or_recover_child_sql() -> String {
                       WHEN c.run_id IS NOT NULL AND ( \
                            c.catalog_id IS DISTINCT FROM p.catalog_id \
                         OR c.catalog_version IS DISTINCT FROM p.catalog_version \
-                        OR c.attachment_id IS DISTINCT FROM d.attachment_id \
-                        OR c.flow_id IS DISTINCT FROM d.flow_id \
-                        OR c.flow_version IS DISTINCT FROM d.flow_version \
-                        OR c.input_json IS DISTINCT FROM $13::text::jsonb \
-                        OR c.platform_revision IS DISTINCT FROM $14::text) \
+                        OR c.environment IS DISTINCT FROM p.environment \
+                        OR c.attachment_id IS DISTINCT FROM $8::text \
+                        OR c.flow_id IS DISTINCT FROM $9::text \
+                        OR c.input_json IS DISTINCT FROM $11::text::jsonb \
+                        OR c.platform_revision IS DISTINCT FROM $12::text) \
                         THEN 'occurrence-conflict' \
                       WHEN c.run_id IS NOT NULL AND p.waiting_child_run_id IS NOT NULL \
                        AND (p.waiting_child_run_id IS DISTINCT FROM c.run_id \
                         OR p.waiting_child_occurrence IS DISTINCT FROM $6::int \
                         OR p.wait_generation IS DISTINCT FROM $4::bigint) \
                         THEN 'parent-already-waiting' \
+               WHEN c.run_id IS NOT NULL THEN 'ready' \
+                      WHEN $10::text <> 'service' THEN 'unsupported-actor-mode' \
+                      WHEN p.catalog_id IS NULL OR p.catalog_version IS NULL \
+                        OR p.environment IS NULL OR d.attachment_id IS NULL \
+                        OR d.run_deadline_ms IS NULL OR d.run_deadline_ms <= 0 \
+                        OR d.response_deadline_ms IS NOT NULL \
+                           AND (d.response_deadline_ms <= 0 \
+                                OR d.response_deadline_ms > d.run_deadline_ms) \
+                        THEN 'definition-mismatch' \
+                      WHEN d.activation_enabled IS DISTINCT FROM true \
+                        OR d.confirmed_definition_hash IS DISTINCT FROM d.definition_hash \
+                        THEN 'callee-revoked' \
+                      WHEN jsonb_typeof(d.caller_policy->'allowed-callers') \
+                           IS DISTINCT FROM 'array' \
+                        OR jsonb_array_length(d.caller_policy->'allowed-callers') = 0 \
+                        OR NOT (d.caller_policy->'allowed-callers' ? p.flow_id) \
+                        THEN 'caller-refused' \
+                      WHEN p.invoke_depth + 1 > $13::int THEN 'depth-exceeded' \
+                      WHEN fs.child_count >= $14::bigint THEN 'fanout-exceeded' \
                       ELSE 'ready' \
                     END AS result_code, a.tenant_id, a.run_id, a.status, \
-                    p.catalog_id, p.catalog_version, p.invoke_depth, c.run_id AS existing_run_id \
+                    p.catalog_id, p.catalog_version, p.environment, p.flow_id AS caller_flow_id, \
+                    p.invocation_context AS caller_context, p.run_deadline_at AS parent_run_deadline, \
+                    p.response_deadline_at AS parent_response_deadline, \
+                    p.caller_released_at AS parent_released_at, \
+                    p.invoke_depth, COALESCE(p.invoke_root_run_id, p.run_id) AS invoke_root_run_id, \
+                    c.run_id AS existing_run_id, c.caller_released_at AS child_released_at, \
+                    c.caller_outcome_kind, c.caller_outcome_json, c.caller_http_status, \
+                    c.caller_release_node_id, c.caller_outcome_hash, \
+                    d.flow_version, d.run_deadline_ms, d.response_deadline_ms \
                FROM authority AS a \
                LEFT JOIN locked_run AS p ON true \
                LEFT JOIN resolved AS d ON true \
                LEFT JOIN existing_child AS c ON true \
                LEFT JOIN proposed_child AS proposed ON true \
+               LEFT JOIN family_size AS fs ON true \
          ), \
          inserted_child AS ( \
              INSERT INTO runs \
-                    (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
+                    (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
                      attachment_id, status, trigger_source, input_json, invocation_context, \
                      platform_revision, parent_run_id, parent_node_id, parent_occurrence, \
-                     invoke_depth, response_deadline_at, run_deadline_at) \
-             SELECT c.tenant_id, $7, $10, $11, c.catalog_id, c.catalog_version, \
-                    $8, 'dispatched', 'internal', $13::text::jsonb, '{{}}'::jsonb, \
-                    $14, c.run_id, $5, $6, c.invoke_depth + 1, $15, $16 \
+                     invoke_depth, invoke_root_run_id, response_deadline_at, run_deadline_at) \
+             SELECT c.tenant_id, $7, $9, c.flow_version, c.catalog_id, c.catalog_version, \
+                    c.environment, $8, 'dispatched', 'internal', $11::text::jsonb, \
+                    jsonb_build_object( \
+                      'actor', jsonb_build_object( \
+                        'mode', 'service', \
+                        'subject', 'service:' || c.catalog_id || ':' \
+                                   || c.environment || ':' || $9::text), \
+                      'caller', jsonb_build_object( \
+                        'run-id', c.run_id, 'flow-id', c.caller_flow_id, \
+                        'actor', COALESCE(c.caller_context->'actor', 'null'::jsonb), \
+                        'lineage', COALESCE(c.caller_context->'caller', 'null'::jsonb))), \
+                    $12, c.run_id, $5, $6, c.invoke_depth + 1, c.invoke_root_run_id, \
+                    LEAST( \
+                      now() + (COALESCE(c.response_deadline_ms, c.run_deadline_ms) \
+                               * interval '1 millisecond'), \
+                      COALESCE(CASE WHEN c.parent_released_at IS NULL \
+                                    THEN c.parent_response_deadline END, \
+                               c.parent_run_deadline, 'infinity'::timestamptz), \
+                      now() + (c.run_deadline_ms * interval '1 millisecond')), \
+                    now() + (c.run_deadline_ms * interval '1 millisecond') \
                FROM classified AS c \
               WHERE c.result_code = 'ready' AND c.existing_run_id IS NULL \
              RETURNING tenant_id, run_id \
@@ -189,7 +375,9 @@ pub fn create_or_recover_child_sql() -> String {
          inserted_queue AS ( \
              INSERT INTO run_queue \
                     (tenant_id, run_id, partition_key, partition_policy, available_at) \
-             SELECT c.tenant_id, c.run_id, $17, $18, now() FROM chosen_child AS c \
+             SELECT c.tenant_id, c.run_id, $15, $16, now() FROM chosen_child AS c \
+              JOIN classified AS x ON x.tenant_id = c.tenant_id \
+             WHERE x.child_released_at IS NULL \
              ON CONFLICT (tenant_id, run_id) DO NOTHING \
              RETURNING run_id \
          ), \
@@ -204,6 +392,7 @@ pub fn create_or_recover_child_sql() -> String {
                FROM classified AS x JOIN chosen_child AS c ON c.tenant_id = x.tenant_id \
               WHERE x.result_code = 'ready' \
                 AND p.tenant_id = x.tenant_id AND p.run_id = x.run_id \
+                AND x.child_released_at IS NULL \
                 AND (SELECT count(*) FROM queued_child) = 1 \
              RETURNING p.tenant_id, p.run_id \
          ), \
@@ -217,10 +406,16 @@ pub fn create_or_recover_child_sql() -> String {
          ) \
          SELECT CASE \
                   WHEN x.result_code <> 'ready' THEN x.result_code \
+                  WHEN x.child_released_at IS NOT NULL THEN 'released' \
                   WHEN pq.run_id IS NULL THEN 'state-conflict' \
                   WHEN c.inserted THEN 'created' ELSE 'recovered' \
                 END AS result_code, x.status AS run_status, c.run_id AS child_run_id, \
-                CASE WHEN pq.run_id IS NOT NULL THEN $4::bigint END AS wait_generation \
+                CASE WHEN pq.run_id IS NOT NULL THEN $4::bigint END AS wait_generation, \
+                x.caller_outcome_kind AS outcome_kind, \
+                x.caller_outcome_json::text AS outcome_json, \
+                x.caller_http_status AS http_status, \
+                x.caller_release_node_id AS release_node_id, \
+                x.caller_outcome_hash AS outcome_hash \
            FROM classified AS x \
            LEFT JOIN chosen_child AS c ON true \
            LEFT JOIN parked_queue AS pq ON true"
@@ -392,10 +587,43 @@ mod tests {
     #[test]
     fn child_result_decoders_preserve_identity_and_stored_outcome() {
         assert_eq!(
-            ChildCreateResult::from_parts("recovered", "running", Some("child-1".into()), Some(7),),
+            ChildCreateResult::from_parts(
+                "recovered",
+                "running",
+                Some("child-1".into()),
+                Some(7),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
             Some(ChildCreateResult::Recovered {
                 child_run_id: "child-1".into(),
                 wait_generation: 7,
+            })
+        );
+        assert_eq!(
+            ChildCreateResult::from_parts(
+                "released",
+                "running",
+                Some("child-1".into()),
+                None,
+                Some("responded".into()),
+                Some(json!({"recommendation": "approve"})),
+                Some(200),
+                Some("respond".into()),
+                Some("sha256:out".into()),
+            ),
+            Some(ChildCreateResult::Released {
+                child_run_id: "child-1".into(),
+                outcome: StoredCallerOutcome {
+                    kind: "responded".into(),
+                    body: json!({"recommendation": "approve"}),
+                    http_status: Some(200),
+                    release_node_id: Some("respond".into()),
+                    hash: Some("sha256:out".into()),
+                },
             })
         );
         assert_eq!(
@@ -427,9 +655,39 @@ mod tests {
         assert!(sql.contains("inserted_child AS"));
         assert!(sql.contains("parked_parent AS"));
         assert!(sql.contains("parked_queue AS"));
+        assert!(sql.contains("catalog.release_sources AS s"));
+        assert!(sql.contains("catalog.attachment_activation AS x"));
+        assert!(sql.contains("NOT (d.caller_policy->'allowed-callers' ? p.flow_id)"));
+        assert!(sql.contains("WHEN c.run_id IS NOT NULL THEN 'ready'"));
+        assert!(sql.contains("p.invoke_depth + 1 > $13::int"));
+        assert!(sql.contains("fs.child_count >= $14::bigint"));
+        assert!(sql.contains(
+            "'subject', 'service:' || c.catalog_id || ':' || c.environment || ':' || $9::text"
+        ));
+        assert!(sql.contains("x.child_released_at IS NOT NULL THEN 'released'"));
         assert!(
             sql.find("inserted_child AS").expect("child insert")
                 < sql.find("parked_parent AS").expect("parent park")
+        );
+    }
+
+    #[test]
+    fn pre_release_child_cancel_seizes_the_observed_generation() {
+        let sql = cancel_unreleased_child_sql();
+        assert!(sql.contains("c.caller_released_at IS NOT NULL THEN 'already-released'"));
+        assert!(sql.contains("q.lease_generation <> i.expected_generation"));
+        assert!(sql.contains("n.attempt_deadline_at > now()"));
+        assert!(sql.contains("q.lease_generation + 1 AS seized_generation"));
+        assert!(sql.contains("DELETE FROM run_queue"));
+        assert_eq!(
+            ChildCancelResult::from_parts("cancelled", "running", Some(9)),
+            Some(ChildCancelResult::Cancelled {
+                seized_generation: 9
+            })
+        );
+        assert_eq!(
+            ChildCancelResult::from_parts("stale-generation", "running", None),
+            Some(ChildCancelResult::StaleGeneration)
         );
     }
 

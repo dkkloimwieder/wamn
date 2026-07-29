@@ -9,6 +9,7 @@ pub mod callable_f0;
 pub mod callable_f1;
 pub mod callable_f3;
 pub mod callable_wave1;
+pub mod childproof;
 pub mod credproof;
 pub mod deadlineproof;
 pub mod f1proof;
