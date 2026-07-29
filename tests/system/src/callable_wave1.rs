@@ -49,14 +49,19 @@ pub struct CallableWave1IdentityArgs {
 
 pub fn run(args: CallableWave1IdentityArgs) -> anyhow::Result<String> {
     validate_identity(&args)?;
-    callable_f0::run(callable_f0::CallableF0Args {})?;
-    callable_f1::run(callable_f1::CallableF1Args {})?;
-    callable_f3::run(callable_f3::CallableF3Args {})?;
-    prove_runtime_contracts()?;
+    prove_contracts()?;
 
     let receipt = identity_receipt(&args)?;
     println!("callable-flow-wave1 PASS: T0/T-CTX/T-NR/T1/T3; identity-receipt={receipt}");
     Ok(receipt)
+}
+
+/// Runs the Wave-1 contract and recovery proofs without issuing a Wave-1 receipt.
+pub fn prove_contracts() -> anyhow::Result<()> {
+    callable_f0::run(callable_f0::CallableF0Args {})?;
+    callable_f1::run(callable_f1::CallableF1Args {})?;
+    callable_f3::run(callable_f3::CallableF3Args {})?;
+    prove_runtime_contracts()
 }
 
 fn validate_identity(args: &CallableWave1IdentityArgs) -> anyhow::Result<()> {

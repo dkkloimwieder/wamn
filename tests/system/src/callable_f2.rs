@@ -32,7 +32,7 @@ const TEST_COMPONENT_DIGEST: &str =
 pub struct CallableF2Args {
     /// Exact component bytes pinned into the immutable F2 artifact.
     #[arg(long, default_value = "/bench/disposition-node.wasm")]
-    component: PathBuf,
+    pub component: PathBuf,
 }
 
 pub fn run(args: CallableF2Args) -> anyhow::Result<()> {

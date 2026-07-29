@@ -3265,6 +3265,40 @@ kubectl -n wamn-system wait --for=condition=complete \
 kubectl -n wamn-system logs job/callable-flow-wave1
 ```
 
+### [CALLABLE-FLOWS-POC-W2 / wamn-5wd1.10] composed F0-F4 campaign
+
+The serial Wave-2 gate reuses the Wave-1 from-zero schema and production
+invocation campaign, then composes the F2/F4 contract and recovery proofs. Its
+receipt binds the source commit, exact image tag and local image ID, flowrunner
+and all three supplied custom-node components, POC configuration and schema,
+all five graph definitions, each attachment/registration input, release
+membership, deployment identity, and the four T5 measurement-hook shapes.
+The recorded T5 hooks deliberately carry no Phase-6 budgets.
+
+```bash
+# recipe-test: H5-CALLABLE-WAVE2 | system | wamn-proof-system | lib | - | callable_wave2::tests:: | 4 | tests/system/src/callable_wave2.rs F0-F4 identity receipt, mixed-identity refusal, T5 hooks, and exact-image routing
+CARGO_TARGET_DIR=/tmp/wamn-target-wave2-10 \
+  cargo test --locked -p wamn-proof-system --lib callable_wave2::tests::
+CARGO_TARGET_DIR=/tmp/wamn-target-wave2-10 \
+  cargo test --locked -p wamn-proof-conformance -p wamn-proof-integration \
+    -p wamn-proof-system
+
+commit="$(git rev-parse HEAD)"
+tag="wamn-gates:cf-wave2-${commit}"
+docker build --target gates -t "${tag}" .
+image_id="$(docker image inspect "${tag}" --format '{{.Id}}')"
+kind load docker-image "${tag}" --name wamn
+kubectl -n wamn-system delete job callable-flow-wave2 --ignore-not-found
+sed -e "s/ISSUE/${commit}/g" -e "s/IMAGE_ID/${image_id}/g" \
+  deploy/gates/callable-flow-wave2-job.yaml > /tmp/callable-flow-wave2-job.yaml
+kubectl -n wamn-system apply -f /tmp/callable-flow-wave2-job.yaml
+kubectl -n wamn-system wait --for=condition=complete \
+  job/callable-flow-wave2 --timeout=600s
+kubectl -n wamn-system logs job/callable-flow-wave2
+kubectl -n wamn-system get pod -l app=callable-flow-wave2 \
+  -o jsonpath='{.items[0].status.containerStatuses[0].imageID}{"\n"}'
+```
+
 ### [CF-TIMESHIFT / wamn-5wd1.41] deterministic RFC3339 time-shift component
 
 `time-shift` is a pure, zero-import custom-node component. Its `base` config

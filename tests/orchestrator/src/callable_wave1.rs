@@ -23,18 +23,35 @@ pub struct CallableWave1Args {
 }
 
 pub async fn run(args: CallableWave1Args) -> anyhow::Result<()> {
+    prove_runtime(
+        args.flowrunner,
+        args.database_url,
+        args.admin_database_url,
+        "wamn_callable_flow_wave1",
+    )
+    .await?;
+    callable_wave1::run(args.identity)?;
+    Ok(())
+}
+
+/// Runs the reusable from-zero schema and production invocation campaign.
+pub async fn prove_runtime(
+    flowrunner: std::path::PathBuf,
+    database_url: String,
+    admin_database_url: String,
+    schema: &str,
+) -> anyhow::Result<()> {
     pocsuiteproof::run(pocsuiteproof::CallableFlowSchemaArgs {
-        admin_database_url: args.admin_database_url.clone(),
-        schema: "wamn_callable_flow_wave1".to_string(),
+        admin_database_url: admin_database_url.clone(),
+        schema: schema.to_string(),
         keep: false,
     })
     .await?;
     invocationproof::run(invocationproof::InvocationProofArgs {
-        flowrunner: args.flowrunner,
-        database_url: args.database_url,
-        admin_database_url: args.admin_database_url,
+        flowrunner,
+        database_url,
+        admin_database_url,
     })
     .await?;
-    callable_wave1::run(args.identity)?;
     Ok(())
 }

@@ -6,6 +6,7 @@
 //! evidence even when they also exercise a deployed endpoint.
 
 mod callable_wave1;
+mod callable_wave2;
 
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
@@ -157,6 +158,8 @@ enum Command {
     CallableF4(callable_f4::CallableF4Args),
     /// Reprovision and prove the composed callable-flow Wave-1 F0/F1/F3 campaign.
     CallableWave1(callable_wave1::CallableWave1Args),
+    /// Reprovision all five flows and prove Wave 2 plus the Wave-1 regression.
+    CallableWave2(callable_wave2::CallableWave2Args),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -233,6 +236,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::CallableF3(args) => callable_f3::run(args),
         Command::CallableF4(args) => callable_f4::run(args),
         Command::CallableWave1(args) => callable_wave1::run(args).await,
+        Command::CallableWave2(args) => callable_wave2::run(args).await,
     };
 
     shutdown_observability();
