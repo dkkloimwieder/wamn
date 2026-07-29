@@ -424,6 +424,52 @@ mod tests {
     /// `nodes[notify].credential`) — only the drift-guard tests below pin it.
     const CREDENTIAL_NAME: &str = "notify-token";
 
+    fn resolved_interfaces() -> wamn_flow::ResolvedInterfaces {
+        std::collections::BTreeMap::from([
+            ("http-request".to_string(), vec!["main".to_string()]),
+            ("transform".to_string(), vec!["main".to_string()]),
+        ])
+    }
+
+    #[test]
+    fn credential_fixtures_use_exactly_one_rev18_request_entry() {
+        for (name, source) in [("cred-notify", FLOW_JSON), ("egress-deny", DENY_FLOW_JSON)] {
+            let v: Value = serde_json::from_str(source).expect("fixture parses");
+            assert!(
+                v.get("trigger").is_none(),
+                "{name} must not retain legacy Flow.trigger"
+            );
+            assert!(
+                v.get("entry").is_none(),
+                "{name} must not retain legacy scalar Flow.entry"
+            );
+
+            let nodes = v["nodes"].as_array().expect("nodes array");
+            let entries: Vec<&Value> = nodes
+                .iter()
+                .filter(|node| {
+                    node["type"]
+                        .as_str()
+                        .is_some_and(|kind| matches!(kind, "request" | "cron" | "event"))
+                })
+                .collect();
+            assert_eq!(entries.len(), 1, "{name} must have exactly one entry node");
+            assert_eq!(entries[0]["id"], json!("in"));
+            assert_eq!(entries[0]["type"], json!("request"));
+            assert_eq!(
+                entries[0]["config"]["input-schema"],
+                json!({
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object"
+                })
+            );
+
+            let flow = wamn_flow::Flow::from_json(source).expect("fixture is a wamn-flow");
+            flow.validate(&resolved_interfaces())
+                .expect("fixture validates");
+        }
+    }
+
     /// The committed fixture parses + VALIDATES under the same engine the
     /// runner compiles it with, and pins the 5.9 shape: the credential is
     /// declared + referenced BY NAME on the notify node only, the url comes
@@ -433,10 +479,9 @@ mod tests {
     fn cred_fixture_declares_the_credential_by_name_only() {
         let v: Value = serde_json::from_str(FLOW_JSON).expect("fixture parses");
         let flow = wamn_flow::Flow::from_json(FLOW_JSON).expect("fixture is a wamn-flow");
-        flow.validate(&Default::default())
+        flow.validate(&resolved_interfaces())
             .expect("fixture validates");
         assert_eq!(flow.flow_id.as_str(), FLOW_ID);
-        assert_eq!(v["trigger"]["type"], json!("manual"));
 
         // The by-ref credential surface: one declared ref, one node naming it.
         let creds = v["credentials"].as_array().expect("credentials array");
@@ -483,7 +528,7 @@ mod tests {
     #[test]
     fn deny_fixture_declares_no_egress() {
         let flow = wamn_flow::Flow::from_json(DENY_FLOW_JSON).expect("fixture is a wamn-flow");
-        flow.validate(&Default::default())
+        flow.validate(&resolved_interfaces())
             .expect("fixture validates");
         assert_eq!(flow.flow_id.as_str(), DENY_FLOW_ID);
         assert!(

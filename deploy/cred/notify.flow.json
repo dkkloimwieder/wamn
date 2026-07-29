@@ -3,8 +3,6 @@
   "flow-id": "cred-notify",
   "version": 1,
   "name": "Credential-vault notify proof (5.9)",
-  "trigger": { "type": "manual" },
-  "entry": "in",
   "credentials": [
     {
       "name": "notify-token",
@@ -13,7 +11,16 @@
     }
   ],
   "nodes": [
-    { "id": "in", "type": "webhook-in" },
+    {
+      "id": "in",
+      "type": "request",
+      "config": {
+        "input-schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object"
+        }
+      }
+    },
     {
       "id": "notify",
       "type": "http-request",
@@ -21,7 +28,7 @@
       "config": { "method": "GET", "url": "{{echo}}" }
     },
     { "id": "status", "type": "transform", "config": { "expression": "status" } },
-    { "id": "out", "type": "respond" }
+    { "id": "out", "type": "respond", "config": { "status": 200 } }
   ],
   "edges": [
     { "from": "in", "to": "notify" },
