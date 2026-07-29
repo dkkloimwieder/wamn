@@ -560,7 +560,9 @@ impl WamnPostgres {
     pub fn register_pool_metrics(self: &std::sync::Arc<Self>) {
         use opentelemetry::KeyValue;
         let meter = opentelemetry::global::meter("wamn-postgres");
-        let specs: [(&str, &str, fn(&(usize, usize, usize)) -> u64); 3] = [
+        type PoolStatus = (usize, usize, usize);
+        type MetricSpec = (&'static str, &'static str, fn(&PoolStatus) -> u64);
+        let specs: [MetricSpec; 3] = [
             (
                 "wamn.postgres.pool.size",
                 "deadpool connections currently allocated for a project's pool",
