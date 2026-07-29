@@ -1695,6 +1695,11 @@ The fixture-realism and stored-data tests remain useful independently. The old
 hard-wired F1 drive is no longer a gate of record after the callable cutover.
 
 ```bash
+# recipe-test: H5-F1-FIXTURE | system | wamn-test-fixtures | lib | - | f1fixture::tests:: | 1 | shared F1 catalog, flow, seed, and burst fixture coherence
+cargo test --locked -p wamn-test-fixtures --lib f1fixture::tests::
+```
+
+```bash
 # Unit / drift / coherence tests (pure — no DB): the 3 embedded suites parse +
 # validate-on-write, the F1 flow-ref binding, the F3/F4 graph copies mirror the
 # committed source fixtures (deploy/poc/f3-flow.json,
