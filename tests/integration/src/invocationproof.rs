@@ -326,7 +326,7 @@ async fn promote_attachment_definition(
         .execute(
             "INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state,document) \
-             VALUES ($1,$2,2,'proof','0.1','applied','{}')",
+             VALUES ($1,$2,2,'proof','0.1','staged','{}')",
             &[&TENANT, &CATALOG_ID],
         )
         .await?;
@@ -362,6 +362,22 @@ async fn promote_attachment_definition(
              FROM catalog.release_attachments \
              WHERE tenant_id=$1 AND catalog_id=$2 AND catalog_version=1",
             &[&TENANT, &CATALOG_ID, &definition_hash],
+        )
+        .await?;
+    transaction
+        .execute(
+            "UPDATE catalog.catalogs SET state='superseded' \
+             WHERE tenant_id=$1 AND catalog_id=$2 AND environment='proof' \
+               AND version=1 AND state='applied'",
+            &[&TENANT, &CATALOG_ID],
+        )
+        .await?;
+    transaction
+        .execute(
+            "UPDATE catalog.catalogs SET state='applied' \
+             WHERE tenant_id=$1 AND catalog_id=$2 AND environment='proof' \
+               AND version=2 AND state='staged'",
+            &[&TENANT, &CATALOG_ID],
         )
         .await?;
     transaction
