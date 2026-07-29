@@ -3,14 +3,12 @@
   "flow-id": "ladder-rung3",
   "version": 1,
   "name": "Exec-ladder rung 3: conditional branch + merge",
-  "trigger": { "type": "manual" },
-  "entry": "in",
   "nodes": [
-    { "id": "in", "type": "webhook-in" },
+    { "id": "in", "type": "request", "config": { "input-schema": {} } },
     { "id": "cond", "type": "conditional", "config": { "expression": "take" } },
     { "id": "yes", "type": "transform", "config": { "expression": "yes" } },
     { "id": "no", "type": "transform", "config": { "expression": "no" } },
-    { "id": "out", "type": "respond" }
+    { "id": "out", "type": "respond", "config": { "status": 200 } }
   ],
   "edges": [
     { "from": "in", "to": "cond" },

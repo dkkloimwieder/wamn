@@ -12,10 +12,10 @@
 //!
 //! The proof is rung-parameterised (`--rung`): each rung is a set of `RungCase`s
 //! over the same seed/poll/assert client, climbing the ladder.
-//!   * **Rung 1** (wamn-ojm.1) — `webhook-in -> respond`
+//!   * **Rung 1** (wamn-ojm.1) — `request -> respond`
 //!     (deploy/gates/ladder/rung1.flow.json): a single meaningful node + a terminal,
 //!     both passthrough, so the run completes echoing its input.
-//!   * **Rung 2** (wamn-ojm.2) — `webhook-in -> transform{upper} ->
+//!   * **Rung 2** (wamn-ojm.2) — `request -> transform{upper} ->
 //!     transform{reverse} -> respond` (deploy/gates/ladder/rung2.flow.json): a linear
 //!     multi-node chain that proves correct SEQUENCING (the `node_runs` seq
 //!     order) + payload THREADING (each node's recorded input is the prior
@@ -27,9 +27,8 @@
 //!     branch executes (a node_run for the other branch would break the count),
 //!     and the taken branch's distinct output threads to the merged result.
 //!
-//! Each rung is a `manual`-trigger flow: nothing auto-fires it, so the proof
-//! seeds the run directly, isolating the RUNNER (the subject) from the trigger
-//! machinery (cron, already gated by the dispatcher).
+//! Each rung is a request-entry flow, but the proof seeds the run directly,
+//! isolating the RUNNER (the subject) from HTTP admission.
 //!
 //! `--setup` provisions a fresh ephemeral schema + registers EVERY rung's flow
 //! (the LOCAL self-contained path, run once before the mutation loop) so one
@@ -108,7 +107,7 @@ pub struct LadderProofArgs {
 /// One case's fixture + the exact execution trace the deployed runner must
 /// produce. `chain` is the ordered list of `(node_id, expected output payload,
 /// expected output port)` in dispatch order — the sequencing + routing spine;
-/// `input` is the seeded trigger payload (the entry node's incoming payload).
+/// `input` is the seeded run payload (the entry node's incoming payload).
 /// Threading is then structural: node i's recorded input must equal the run
 /// input (i == 0) or the prior node's recorded output.
 ///
@@ -464,9 +463,10 @@ async fn assert_run(
 mod tests {
     use super::*;
     use crate::schema_drift::{Need, assert_stand_in};
+    use wamn_flow::ResolvedInterfaces;
 
     /// wamn-9mg8 [GATE-DRIFT]: ladderproof's `run_queue` stand-in vs the schema of
-    /// record, through the uniform guard. The proof seeds only UNPARTITIONED manual
+    /// record, through the uniform guard. The proof seeds only UNPARTITIONED request-entry
     /// runs, but the DEPLOYED `run-next` (wamn-fqg.9) probes the partition path
     /// whenever the global claim drains — `acquire_partitions_sql` names
     /// `partition_owner` and `claim_partition_head_sql` reads `run_queue.partition_policy`
@@ -496,18 +496,30 @@ mod tests {
     fn assert_valid_fixture(json: &str, flow_id: &str) -> Value {
         let v: Value = serde_json::from_str(json).expect("fixture parses");
         assert_eq!(v["flow-id"], json!(flow_id));
-        assert_eq!(v["trigger"]["type"], json!("manual"));
+        assert!(v.get("trigger").is_none(), "legacy trigger must be absent");
+        assert!(
+            v.get("entry").is_none(),
+            "legacy scalar entry must be absent"
+        );
         let flow = wamn_flow::Flow::from_json(json).expect("fixture is a wamn-flow");
-        flow.validate(&Default::default())
-            .expect("fixture validates");
+        flow.validate(&ResolvedInterfaces::from([
+            ("transform".to_string(), vec!["main".to_string()]),
+            (
+                "conditional".to_string(),
+                vec!["true".to_string(), "false".to_string()],
+            ),
+        ]))
+        .expect("fixture validates");
         assert_eq!(flow.flow_id.as_str(), flow_id);
+        let entry = flow.entry_node().expect("exactly one typed entry node");
+        assert_eq!(entry.id, "in");
+        assert_eq!(entry.node_type, "request");
         v
     }
 
     #[test]
-    fn rung1_fixture_is_the_manual_passthrough_flow() {
+    fn rung1_fixture_is_the_request_passthrough_flow() {
         let v = assert_valid_fixture(RUNG1_FLOW_JSON, "ladder-rung1");
-        assert_eq!(v["entry"], json!("in"));
         let nodes = v["nodes"].as_array().expect("nodes array");
         assert_eq!(
             nodes.len(),
@@ -515,7 +527,8 @@ mod tests {
             "rung 1 is a single meaningful node + respond"
         );
         assert_eq!(nodes[0]["id"], json!("in"));
-        assert_eq!(nodes[0]["type"], json!("webhook-in"));
+        assert_eq!(nodes[0]["type"], json!("request"));
+        assert_eq!(nodes[0]["config"]["input-schema"], json!({}));
         assert_eq!(nodes[1]["id"], json!("out"));
         assert_eq!(nodes[1]["type"], json!("respond"));
         let edges = v["edges"].as_array().expect("edges array");
@@ -527,7 +540,6 @@ mod tests {
     #[test]
     fn rung2_fixture_is_the_linear_transform_chain() {
         let v = assert_valid_fixture(RUNG2_FLOW_JSON, "ladder-rung2");
-        assert_eq!(v["entry"], json!("in"));
         let nodes = v["nodes"].as_array().expect("nodes array");
         assert_eq!(nodes.len(), 4, "rung 2 is in -> t1 -> t2 -> out");
         // The transform ops are load-bearing: t1 upper then t2 reverse.
@@ -586,7 +598,6 @@ mod tests {
     #[test]
     fn rung3_fixture_is_the_branching_diamond() {
         let v = assert_valid_fixture(RUNG3_FLOW_JSON, "ladder-rung3");
-        assert_eq!(v["entry"], json!("in"));
         let nodes = v["nodes"].as_array().expect("nodes array");
         assert_eq!(nodes.len(), 5, "rung 3 is in -> cond -> (yes|no) -> out");
         // The conditional branches on a JMESPath predicate (the `expression`
@@ -633,6 +644,45 @@ mod tests {
         // `out` is a merge: reached from both branches.
         let into_out = edges.iter().filter(|(_, _, to)| to == "out").count();
         assert_eq!(into_out, 2, "out is the merge node (two inbound edges)");
+    }
+
+    #[test]
+    fn rung_entry_shape_rejects_missing_and_multiple_entries() {
+        let mut missing: Value =
+            serde_json::from_str(RUNG1_FLOW_JSON).expect("rung 1 fixture parses");
+        missing["nodes"][0]["type"] = json!("transform");
+        let missing: wamn_flow::Flow =
+            serde_json::from_value(missing).expect("missing-entry mutant parses");
+        assert!(
+            missing
+                .issues(&ResolvedInterfaces::from([(
+                    "transform".to_string(),
+                    vec!["main".to_string()],
+                )]))
+                .iter()
+                .any(|issue| issue.code == "no-entry-node"),
+            "a rung without a typed entry must fail the no-entry-node guard"
+        );
+
+        let mut multiple: Value =
+            serde_json::from_str(RUNG1_FLOW_JSON).expect("rung 1 fixture parses");
+        multiple["nodes"]
+            .as_array_mut()
+            .expect("nodes array")
+            .push(json!({
+                "id": "second-request",
+                "type": "request",
+                "config": {"input-schema": {}}
+            }));
+        let multiple: wamn_flow::Flow =
+            serde_json::from_value(multiple).expect("multiple-entry mutant parses");
+        assert!(
+            multiple
+                .issues(&ResolvedInterfaces::default())
+                .iter()
+                .any(|issue| issue.code == "multiple-entry-nodes"),
+            "a rung with two typed entries must fail the multiple-entry-nodes guard"
+        );
     }
 
     /// The two rung-3 cases route true and false: the conditional records the

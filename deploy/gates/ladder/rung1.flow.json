@@ -3,11 +3,9 @@
   "flow-id": "ladder-rung1",
   "version": 1,
   "name": "Exec-ladder rung 1: single-node passthrough",
-  "trigger": { "type": "manual" },
-  "entry": "in",
   "nodes": [
-    { "id": "in", "type": "webhook-in" },
-    { "id": "out", "type": "respond" }
+    { "id": "in", "type": "request", "config": { "input-schema": {} } },
+    { "id": "out", "type": "respond", "config": { "status": 200 } }
   ],
   "edges": [
     { "from": "in", "to": "out" }
