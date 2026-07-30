@@ -35,6 +35,7 @@ wamn-gate-harness = { workspace = true }
 wamn-test-fixtures = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-node-invoke = { workspace = true }
+wamn-node-manifest = { workspace = true }
 wamn-node-runtime = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-execution-host = { workspace = true }

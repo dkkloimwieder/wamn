@@ -4647,6 +4647,7 @@ dependencies = [
  "wamn-flow-invocation",
  "wamn-gate-harness",
  "wamn-node-invoke",
+ "wamn-node-manifest",
  "wamn-node-runtime",
  "wamn-run-state",
  "wamn-runner",

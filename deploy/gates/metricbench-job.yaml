@@ -12,9 +12,10 @@
 #   kubectl -n wamn-system logs job/metricbench
 #
 # metricbench drives the flowrunner GUEST (run drives + their DB writes) and a
-# real Dispatcher tick against ONE ephemeral schema (the runner-DDL union of the
-# flow tables + run_queue), provisioned/dropped through the Postgres superuser
-# (WAMN_PG_ADMIN_URL — wamn_app is NOSUPERUSER/NOCREATEDB). Phase 6 (api RPS) is
+# real Dispatcher tick against ONE throwaway database. It applies the canonical
+# catalog + run-plane DDL, seeds exact immutable release artifacts, and drops the
+# database through the Postgres superuser (WAMN_PG_ADMIN_URL — wamn_app remains
+# NOSUPERUSER/NOCREATEDB). Phase 6 (api RPS) is
 # honest-skipped: wamn_api_requests needs the deployed api-gateway (ProxyPre
 # benches bypass the host HTTP server) — see apiproof/traceproof for that surface.
 apiVersion: batch/v1
@@ -62,7 +63,7 @@ spec:
             # Runner/dispatcher pool: the non-superuser, non-BYPASSRLS app role.
             - name: WAMN_PG_URL
               value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
-            # Admin: superuser, used ONLY to provision/drop the ephemeral schema.
+            # Admin: superuser, used ONLY to create/drop the throwaway database.
             - name: PGUSER
               valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
             - name: PGPASSWORD

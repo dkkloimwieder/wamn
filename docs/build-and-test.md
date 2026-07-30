@@ -461,11 +461,12 @@ Docs: docs/metrics.md
 # recipe-test: H5-METRIC-RUNTIME | unit | wamn-runtime | lib | - | memory_metrics::tests:: | 2 | crates/platform/runtime/src/memory_metrics.rs instrument snapshots
 cargo test -p wamn-runtime --lib memory_metrics::tests::
 cargo test -p wamn-execution-host -p wamn-executor -p wamn-dispatcher --no-fail-fast
-# recipe-test: H5-METRIC-PROOF | integration | wamn-proof-integration | lib | - | metricbench::tests:: | 2 | tests/integration/src/metricbench.rs scrape parsing and body assembly
+# recipe-test: H5-METRIC-PROOF | integration | wamn-proof-integration | lib | - | metricbench::tests:: | 5 | tests/integration/src/metricbench.rs hermetic release fixture, URL isolation, scrape parsing, and body assembly
 cargo test -p wamn-proof-integration --lib metricbench::tests::
 cargo build -p wamn-dispatcher -p wamn-gates   # metricbench spawns the sibling service binary
 # Local iteration: a throwaway Postgres (+ the NOSUPERUSER wamn_app role) and the
-# local collector with the new :8889 metrics pipeline. metricbench drives the
+# local collector with the new :8889 metrics pipeline. metricbench creates and
+# drops its own database, applies the canonical catalog/run-plane DDL, drives the
 # real run/queue/pool/memory seams, then scrapes :8889 for the wamn_* families.
 docker run -d --name lane-metric-pg -e POSTGRES_PASSWORD=pg -p 127.0.0.1:15503:5432 postgres:18
 until docker exec lane-metric-pg pg_isready -U postgres; do sleep 1; done

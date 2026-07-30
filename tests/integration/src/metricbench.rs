@@ -29,13 +29,17 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
+use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_postgres::{Client, NoTls};
+use wamn_catalog::{Artifact, NodeImplementation};
+use wamn_flow::Flow;
+use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use crate::dispatcher_process::{DispatcherProcess, ProjectSpec};
@@ -47,16 +51,17 @@ use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wash_runtime::engine::ctx::WamnStoreLimiter;
 use wash_runtime::wasmtime::ResourceLimiter as _;
 
-/// The metricbench ephemeral schema + identity (distinct from runnerbench's so a
-/// concurrent run does not collide).
+/// The metricbench run-plane schema inside its throwaway database.
 const SCHEMA: &str = "wamn_metricbench";
 const TENANT: &str = "metric-tenant";
 const TENANT_METRIC_LABEL: &str = "wamn_tenant=\"metric-tenant\"";
 const OWNER: &str = "metric-bench";
+const CATALOG_ID: &str = "metricbench";
+const CATALOG_VERSION: i32 = 1;
 /// The normal (completing) fixture flow — poc-receipt (webhook, pg-write): its DB
 /// write also drives the pool + query-latency families.
 const FLOW_ID: &str = "poc-receipt";
-/// The forced-failure fixture: a single `postgres-query` head that dies
+/// The forced-failure fixture: its only work node is `postgres-query`, which dies
 /// `Terminal("capability-denied")` at the standard-node grant check (D8 raw-SQL
 /// off) — a one-step, no-I/O terminal business failure (outcome = failed),
 /// deterministic and instant (unlike a runaway-budget spin).
@@ -64,16 +69,19 @@ const FAIL_FLOW_ID: &str = "metric-terminal";
 
 /// The component id the phase-4 forced-denial limiter is labelled by.
 const MEM_COMPONENT: &str = "metricbench-memhog";
+const CATALOG_DDL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const RUN_STATE_DDL: &str = include_str!("../../../deploy/sql/run-state.sql");
+const RUN_QUEUE_DDL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 
 fn fail_flow_json() -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"{FAIL_FLOW_ID}","version":1,
-            "trigger":{{"type":"manual"}},"entry":"in",
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
-              {{"id":"q","type":"postgres-query","config":{{}}}}
+              {{"id":"in","type":"request","config":{{"input-schema":true}}}},
+              {{"id":"q","type":"postgres-query","config":{{}}}},
+              {{"id":"out","type":"respond","config":{{"status":200}}}}
             ],
-            "edges":[{{"from":"in","to":"q"}}]}}"#
+            "edges":[{{"from":"in","to":"q"}},{{"from":"q","to":"out"}}]}}"#
     )
 }
 
@@ -88,7 +96,7 @@ pub struct MetricBenchArgs {
     #[arg(long)]
     pub database_url: Option<String>,
 
-    /// Superuser URL: provisions/drops the ephemeral schema.
+    /// Superuser URL: creates/drops the isolated metricbench database.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: Option<String>,
 
@@ -115,45 +123,234 @@ pub struct MetricBenchArgs {
 }
 
 // ---------------------------------------------------------------------------
-// Ephemeral schema + seeding (the runnerbench pattern; reuses its drift-guarded
-// union DDL so metricbench tracks the run-queue schema of record for free).
+// Hermetic database + immutable release seeding. The throwaway database keeps
+// the per-database `catalog` schema isolated from every earlier serial gate,
+// while canonical deploy SQL keeps the fixture on the production contract.
 // ---------------------------------------------------------------------------
 
-async fn provision(admin_url: &str) -> anyhow::Result<()> {
+#[derive(Debug)]
+struct FixtureArtifact {
+    flow_id: String,
+    graph_json: String,
+    graph_hash: String,
+    artifact_hash: String,
+    interface_bundle_json: String,
+    interface_bundle_hash: String,
+    component_digests: Value,
+}
+
+fn interface(
+    node_type: &str,
+    purity: ResolvedPurity,
+    recovery_class: RecoveryClass,
+) -> NodeImplementation {
+    NodeImplementation::platform(ResolvedNodeInterface {
+        node_type: node_type.to_string(),
+        output_ports: vec!["main".to_string()],
+        purity,
+        recovery_class,
+    })
+}
+
+fn fixture_artifact(
+    graph_json: &str,
+    implementations: Vec<NodeImplementation>,
+) -> anyhow::Result<FixtureArtifact> {
+    let flow =
+        Flow::from_json(graph_json).map_err(|error| anyhow::anyhow!("flow parse: {error}"))?;
+    let artifact = Artifact::new(TENANT, &flow, implementations)
+        .map_err(|error| anyhow::anyhow!("immutable fixture artifact: {error}"))?;
+    Ok(FixtureArtifact {
+        flow_id: flow.flow_id.clone(),
+        graph_json: String::from_utf8(flow.canonical_bytes())
+            .expect("canonical flow graph is UTF-8"),
+        graph_hash: artifact.graph_hash().to_string(),
+        artifact_hash: artifact.identity().artifact_hash().as_str().to_string(),
+        interface_bundle_json: String::from_utf8(
+            artifact.interface_bundle().canonical_bytes().to_vec(),
+        )
+        .expect("canonical interface bundle is UTF-8"),
+        interface_bundle_hash: artifact.interface_bundle().hash().to_string(),
+        component_digests: serde_json::to_value(artifact.supplied_components())?,
+    })
+}
+
+fn fixture_artifacts() -> anyhow::Result<Vec<FixtureArtifact>> {
+    let mut artifacts = vec![
+        fixture_artifact(
+            &crate::flowbench::flow_json(1),
+            vec![
+                interface("conditional", ResolvedPurity::Pure, RecoveryClass::Replay),
+                interface(
+                    "pg-write",
+                    ResolvedPurity::Effectful,
+                    RecoveryClass::NeverReplay,
+                ),
+                interface("transform", ResolvedPurity::Pure, RecoveryClass::Replay),
+            ],
+        )?,
+        fixture_artifact(
+            &fail_flow_json(),
+            vec![interface(
+                "postgres-query",
+                ResolvedPurity::Effectful,
+                RecoveryClass::NeverReplay,
+            )],
+        )?,
+    ];
+    artifacts.sort_by(|left, right| left.flow_id.cmp(&right.flow_id));
+    Ok(artifacts)
+}
+
+fn fixture_ddl() -> String {
+    let run_state = RUN_STATE_DDL.replace("wamn_run", SCHEMA);
+    let run_queue = RUN_QUEUE_DDL.replace("wamn_run", SCHEMA);
+    format!(
+        "{CATALOG_DDL}\n{run_state}\n{run_queue}\n\
+         CREATE TABLE {SCHEMA}.sink (\
+           tenant_id text NOT NULL CHECK (tenant_id <> ''), \
+           run_id text NOT NULL, step int NOT NULL, payload text NOT NULL, \
+           dispatch_seq bigint GENERATED ALWAYS AS IDENTITY, \
+           CONSTRAINT sink_idem UNIQUE (tenant_id, run_id, step)); \
+         ALTER TABLE {SCHEMA}.sink ENABLE ROW LEVEL SECURITY; \
+         ALTER TABLE {SCHEMA}.sink FORCE ROW LEVEL SECURITY; \
+         CREATE POLICY sink_tenant ON {SCHEMA}.sink \
+           USING (tenant_id = NULLIF(current_setting('app.tenant', true), '')) \
+           WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), '')); \
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {SCHEMA}.sink TO wamn_app;"
+    )
+}
+
+fn proof_database_name() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after the Unix epoch")
+        .as_nanos();
+    format!("wamn_metricbench_{}_{}", std::process::id(), nanos)
+}
+
+fn database_url(url: &str, database: &str) -> anyhow::Result<String> {
+    let (prefix, tail) = url
+        .rsplit_once('/')
+        .context("PostgreSQL URL must contain a database path")?;
+    let query = tail
+        .find('?')
+        .map(|index| &tail[index..])
+        .unwrap_or_default();
+    Ok(format!("{prefix}/{database}{query}"))
+}
+
+async fn create_database(admin_url: &str, database: &str) -> anyhow::Result<()> {
     let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
         .await
-        .context("admin connect for ephemeral schema")?;
+        .context("admin connect to create metricbench database")?;
+    let conn_task = tokio::spawn(conn);
+    let result = client
+        .batch_execute(&format!("CREATE DATABASE {database}"))
+        .await
+        .context("create metricbench database");
+    drop(client);
+    let _ = conn_task.await;
+    result
+}
+
+async fn drop_database(admin_url: &str, database: &str) -> anyhow::Result<()> {
+    let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
+        .await
+        .context("admin connect to drop metricbench database")?;
+    let conn_task = tokio::spawn(conn);
+    let result = client
+        .batch_execute(&format!("DROP DATABASE IF EXISTS {database} WITH (FORCE)"))
+        .await
+        .context("drop metricbench database");
+    drop(client);
+    let _ = conn_task.await;
+    result
+}
+
+async fn provision(admin_url: &str) -> anyhow::Result<()> {
+    let (mut client, conn) = tokio_postgres::connect(admin_url, NoTls)
+        .await
+        .context("admin connect for metricbench fixture")?;
     let conn_task = tokio::spawn(conn);
     let result = async {
         client
-            .batch_execute(&format!(
-                "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
-                 CREATE SCHEMA {SCHEMA} AUTHORIZATION postgres; \
-                 GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_app;"
-            ))
+            .batch_execute(&fixture_ddl())
             .await
-            .context("create ephemeral schema")?;
-        client
-            .batch_execute(&crate::runnerbench::runner_ddl(SCHEMA))
-            .await
-            .context("apply runner DDL")?;
+            .context("apply canonical catalog and run-plane DDL")?;
+
+        let artifacts = fixture_artifacts()?;
+        let members = Value::Array(
+            artifacts
+                .iter()
+                .map(|artifact| {
+                    json!({
+                        "flow-id": artifact.flow_id,
+                        "flow-version": 1,
+                        "artifact-hash": artifact.artifact_hash,
+                    })
+                })
+                .collect(),
+        );
+        let transaction = client.transaction().await?;
+        transaction
+            .execute(
+                "INSERT INTO catalog.catalogs \
+                   (tenant_id,catalog_id,version,environment,schema_version,state,document) \
+                 VALUES ($1,$2,$3,'metricbench','0.1','applied','{}')",
+                &[&TENANT, &CATALOG_ID, &CATALOG_VERSION],
+            )
+            .await?;
+        for artifact in &artifacts {
+            transaction
+                .execute(
+                    "INSERT INTO catalog.flow_artifacts \
+                       (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
+                        artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
+                     VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8)",
+                    &[
+                        &TENANT,
+                        &artifact.flow_id,
+                        &artifact.graph_json,
+                        &artifact.graph_hash,
+                        &artifact.artifact_hash,
+                        &artifact.interface_bundle_json,
+                        &artifact.interface_bundle_hash,
+                        &artifact.component_digests,
+                    ],
+                )
+                .await?;
+        }
+        transaction
+            .execute(
+                "INSERT INTO catalog.release_manifests \
+                   (tenant_id,catalog_id,catalog_version,members_json) \
+                 VALUES ($1,$2,$3,$4)",
+                &[&TENANT, &CATALOG_ID, &CATALOG_VERSION, &members],
+            )
+            .await?;
+        for artifact in &artifacts {
+            transaction
+                .execute(
+                    "INSERT INTO catalog.release_flows \
+                       (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
+                     VALUES ($1,$2,$3,$4,1)",
+                    &[
+                        &TENANT,
+                        &CATALOG_ID,
+                        &CATALOG_VERSION,
+                        &artifact.flow_id,
+                    ],
+                )
+                .await?;
+        }
+        transaction.commit().await?;
         anyhow::Ok(())
     }
     .await;
     drop(client);
     let _ = conn_task.await;
     result
-}
-
-async fn teardown(admin_url: &str) {
-    if let Ok((client, conn)) = tokio_postgres::connect(admin_url, NoTls).await {
-        let conn_task = tokio::spawn(conn);
-        let _ = client
-            .batch_execute(&format!("DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;"))
-            .await;
-        drop(client);
-        let _ = conn_task.await;
-    }
 }
 
 /// A wamn_app connection pinned to the ephemeral schema + tenant claim (the RLS
@@ -183,6 +380,16 @@ async fn seed_run(client: &mut Client, run_id: &str, flow_id: &str) -> anyhow::R
         &[&run_id, &flow_id, &1i32, &"cron", &"\"receipt\""],
     )
     .await?;
+    let catalog_version = i64::from(CATALOG_VERSION);
+    let pinned = tx
+        .execute(
+            "UPDATE runs \
+                SET catalog_id = $2, catalog_version = $3, environment = 'metricbench' \
+              WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1",
+            &[&run_id, &CATALOG_ID, &catalog_version],
+        )
+        .await?;
+    anyhow::ensure!(pinned == 1, "seeded run {run_id} was not release-pinned");
     tx.execute(
         &enqueue_sql(),
         &[&run_id, &Option::<&str>::None, &0i32, &0i64],
@@ -223,69 +430,56 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
     let admin_url = args.admin_database_url.clone().context(
         "metricbench needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL",
     )?;
+    let database = proof_database_name();
+    let metric_app_url = database_url(&app_url, &database)?;
+    let metric_admin_url = database_url(&admin_url, &database)?;
+    create_database(&admin_url, &database).await?;
 
-    println!("# wamn-gates [9.8] metricbench (schema {SCHEMA}, tenant {TENANT})");
-    println!("metrics = {}", args.metrics_url);
-    provision(&admin_url)
-        .await
-        .context("provision ephemeral schema")?;
+    let result = async {
+        println!(
+            "# wamn-gates [9.8] metricbench (database {database}, schema {SCHEMA}, tenant {TENANT})"
+        );
+        println!("metrics = {}", args.metrics_url);
+        provision(&metric_admin_url)
+            .await
+            .context("provision hermetic catalog and run plane")?;
 
-    let mut cfg = WamnPostgresConfig::from_env();
-    cfg.database_url = Some(app_url.clone());
-    let plugin = Arc::new(WamnPostgres::new(cfg)?);
-    // [9.8-5] pool-saturation gauges over the runner's own project pool.
-    plugin.register_pool_metrics();
+        let mut cfg = WamnPostgresConfig::from_env();
+        cfg.database_url = Some(metric_app_url.clone());
+        let plugin = Arc::new(WamnPostgres::new(cfg)?);
+        // [9.8-5] pool-saturation gauges over the runner's own project pool.
+        plugin.register_pool_metrics();
 
-    let engine = build_engine(&[])?;
-    let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
+        let engine = build_engine(&[])?;
+        let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
 
-    let outcome = async {
-        let (mut seed_conn, _h) = connect_app(&app_url).await?;
-        wamn_gate_harness::seed_flow_version(
-            &seed_conn,
-            TENANT,
-            FLOW_ID,
-            1,
-            true,
-            &crate::flowbench::flow_json(1),
-            true,
-        )
-        .await?;
-        wamn_gate_harness::seed_flow_version(
-            &seed_conn,
-            TENANT,
-            FAIL_FLOW_ID,
-            1,
-            true,
-            &fail_flow_json(),
-            true,
-        )
-        .await?;
+        let outcome = async {
+            let (mut seed_conn, _h) = connect_app(&metric_app_url).await?;
 
-        // The production runner (registers wamn.run.* on instantiate).
-        let vault = Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty());
-        let logging = Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?);
-        let mut worker = ExecutionHost::instantiate(
-            &engine,
-            &guest,
-            plugin.clone(),
-            vault,
-            logging,
-            wamn_execution_host::ExecutionIdentity {
-                owner: OWNER,
-                tenant: TENANT,
-                schema: Some(SCHEMA),
-                project: "default",
-            },
-            production_capabilities(
-                Arc::from([]),
-                Arc::new(RunnerEgressPolicy::default()),
-            ),
-            30_000,
-        )
-        .await?;
+            // The production runner (registers wamn.run.* on instantiate).
+            let vault = Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty());
+            let logging = Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?);
+            let mut worker = ExecutionHost::instantiate(
+                &engine,
+                &guest,
+                plugin.clone(),
+                vault,
+                logging,
+                wamn_execution_host::ExecutionIdentity {
+                    owner: OWNER,
+                    tenant: TENANT,
+                    schema: Some(SCHEMA),
+                    project: "default",
+                },
+                production_capabilities(
+                    Arc::from([]),
+                    Arc::new(RunnerEgressPolicy::default()),
+                ),
+                30_000,
+            )
+            .await?;
 
-        let mut pass = true;
+            let mut pass = true;
 
         // === (1) executions counter + success ratio =========================
         let n = args.runs;
@@ -355,7 +549,7 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
         // tick -> depth back to 0. The claimable predicate is the mutant target.
         let specs = [ProjectSpec {
             name: "default".to_string(),
-            url: app_url.clone(),
+            url: metric_app_url.clone(),
             tenant: TENANT.to_string(),
             schema: Some(SCHEMA.to_string()),
         }];
@@ -459,19 +653,22 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
         let queued = count(&seed_conn, &format!("SELECT count(*) FROM {SCHEMA}.run_queue")).await?;
         println!("queue drained fully = {}", queued == 0);
 
-        anyhow::Ok(pass)
+            anyhow::Ok(pass)
+        }
+        .await;
+
+        ticker.abort();
+        let pass = outcome?;
+
+        println!("\nmetricbench complete — overall PASS: {pass}");
+        if !pass {
+            bail!("metricbench gate failed");
+        }
+        anyhow::Ok(())
     }
     .await;
-
-    ticker.abort();
-    teardown(&admin_url).await;
-    let pass = outcome?;
-
-    println!("\nmetricbench complete — overall PASS: {pass}");
-    if !pass {
-        bail!("metricbench gate failed");
-    }
-    Ok(())
+    let cleanup = drop_database(&admin_url, &database).await;
+    result.and(cleanup)
 }
 
 fn check(pass: &mut bool, label: &str, ok: bool, detail: &str) {
@@ -631,6 +828,66 @@ fn dechunk(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hermetic_preamble_contains_release_flows_required_by_run_next() {
+        let ddl = fixture_ddl();
+        for relation in [
+            "CREATE TABLE catalog.flow_artifacts",
+            "CREATE TABLE catalog.release_manifests",
+            "CREATE TABLE catalog.release_flows",
+        ] {
+            assert!(
+                ddl.contains(relation),
+                "metricbench preamble omitted {relation}"
+            );
+        }
+        assert!(ddl.contains(&format!("CREATE TABLE {SCHEMA}.runs")));
+        assert!(ddl.contains("catalog_id      text"));
+        assert!(ddl.contains("catalog_version bigint"));
+        assert!(
+            !ddl.contains(&format!("CREATE TABLE {SCHEMA}.flows")),
+            "metricbench must not fall back to the legacy mutable flow table"
+        );
+    }
+
+    #[test]
+    fn release_fixture_round_trips_through_pinned_artifact_verification() {
+        let artifacts = fixture_artifacts().unwrap();
+        assert_eq!(
+            artifacts
+                .iter()
+                .map(|artifact| artifact.flow_id.as_str())
+                .collect::<Vec<_>>(),
+            [FAIL_FLOW_ID, FLOW_ID]
+        );
+        for artifact in artifacts {
+            wamn_catalog::PinnedArtifact::from_storage(
+                TENANT,
+                &artifact.flow_id,
+                1,
+                &artifact.graph_json,
+                &artifact.graph_hash,
+                &artifact.artifact_hash,
+                &artifact.interface_bundle_json,
+                &artifact.interface_bundle_hash,
+                &artifact.component_digests.to_string(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn database_url_replaces_only_the_database_path() {
+        assert_eq!(
+            database_url(
+                "postgresql://u:p@db:5432/base?sslmode=disable",
+                "metricbench"
+            )
+            .unwrap(),
+            "postgresql://u:p@db:5432/metricbench?sslmode=disable"
+        );
+    }
 
     // The prometheus-text parser: exact family matching (never a `_created` or
     // `_bucket` sibling), label filtering, and value extraction — the pure bit
