@@ -148,7 +148,7 @@ fn lock_packages(lock_path: &Path) -> Vec<LockPackage> {
     let mut version = None;
     let mut package_source = None;
 
-    for line in source.lines().chain(["[[package]]"].into_iter()) {
+    for line in source.lines().chain(["[[package]]"]) {
         if line == "[[package]]" {
             if let Some(name) = name.take() {
                 packages.push(LockPackage {
