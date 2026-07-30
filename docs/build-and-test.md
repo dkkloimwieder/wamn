@@ -10,10 +10,10 @@ dev/test/deploy commands.
 ## Build environment
 
 wamn-host builds against wash-runtime consumed as a **git dependency from our
-fork** (dkkloimwieder/wasmCloud, branch `wamn/2.5.2` = upstream v2.5.2 + the
-carried epoch-deadline and memory-limiter commits) — see
-`docs/wash-runtime-fork.md` for the carried-commit ledger, sync runbook, and
-rev-bump procedure. The rev is pinned in one place:
+fork** (dkkloimwieder/wasmCloud, branch `wamn/2.6.0` = upstream v2.6.0).
+`docs/wash-runtime-fork.md` is the authoritative carried-policy ledger and
+rev-bump runbook; this preamble does not duplicate its commit or seam
+inventory. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
 
 ### wash-runtime feature and deployed-workload inventory (wamn-8zht.12)
