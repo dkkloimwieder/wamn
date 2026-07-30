@@ -8,6 +8,9 @@ use std::process::Command;
 
 const INVENTORY: &str = include_str!("../runtime-inventory.json");
 const ALLOWED_WASH_RUNTIME_FEATURES: [&str; 4] = ["oci", "wasi-config", "wasi-otel", "washlet"];
+const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
+const EXECUTION_HOST_STORE_CONSTRUCTOR: &str =
+    "let mut store = Store::new(raw, SharedCtx::new(ctx));";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -138,12 +141,42 @@ fn workspace_wash_runtime_declaration(root: &Path) -> String {
     panic!("root [workspace.dependencies] must declare wash-runtime");
 }
 
+fn validate_one(source: &str, marker: &str, seam: &str) -> Result<(), String> {
+    let observed = source.matches(marker).count();
+    if observed == 1 {
+        Ok(())
+    } else {
+        Err(format!(
+            "{seam} must retain exactly one `{marker}` marker; found {observed}"
+        ))
+    }
+}
+
 fn assert_one(source: &str, marker: &str, seam: &str) {
-    assert_eq!(
-        source.matches(marker).count(),
-        1,
-        "{seam} must retain exactly one `{marker}` marker"
-    );
+    validate_one(source, marker, seam).unwrap_or_else(|error| panic!("{error}"));
+}
+
+fn production_execution_host_source(source: &str) -> Result<&str, String> {
+    let test_modules = source.matches(CFG_TEST_MODULE).count();
+    if test_modules != 1 {
+        return Err(format!(
+            "ExecutionHost source must retain exactly one terminal `{CFG_TEST_MODULE}` module; \
+             found {test_modules}"
+        ));
+    }
+    let (production, _) = source
+        .split_once(CFG_TEST_MODULE)
+        .expect("the counted cfg(test) module must split");
+    Ok(production)
+}
+
+fn validate_execution_host_store_constructor(source: &str) -> Result<(), String> {
+    let production = production_execution_host_source(source)?;
+    validate_one(
+        production,
+        EXECUTION_HOST_STORE_CONSTRUCTOR,
+        "production ExecutionHost store constructor",
+    )
 }
 
 fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
@@ -198,11 +231,7 @@ fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
     let execution_path = root.join("crates/execution/host/src/lib.rs");
     let execution = fs::read_to_string(&execution_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", execution_path.display()));
-    assert_one(
-        &execution,
-        "let mut store = Store::new(raw, SharedCtx::new(ctx));",
-        "ExecutionHost store constructor",
-    );
+    validate_execution_host_store_constructor(&execution).unwrap_or_else(|error| panic!("{error}"));
 
     let node_path = root.join("crates/platform/node-runtime/src/lib.rs");
     let node = fs::read_to_string(&node_path)
@@ -492,4 +521,48 @@ fn nonzero_pool_size_mutation_is_rejected() {
         validate_workload_policy("pool-size-mutant.yaml", mutant, &WorkloadAbi::P2Components)
             .expect_err("mutation must fail closed");
     assert!(error.contains("poolSize 1 enables reusable component stores"));
+}
+
+#[test]
+fn execution_host_inventory_ignores_cfg_test_store_constructor() {
+    let source = format!(
+        "{EXECUTION_HOST_STORE_CONSTRUCTOR}\n\
+         {CFG_TEST_MODULE}\n\
+             {EXECUTION_HOST_STORE_CONSTRUCTOR}\n\
+         }}\n"
+    );
+    assert_eq!(
+        source.matches(EXECUTION_HOST_STORE_CONSTRUCTOR).count(),
+        2,
+        "fixture must contain identical production and test-only constructors"
+    );
+    validate_execution_host_store_constructor(&source)
+        .expect("the cfg(test) constructor must not widen the production inventory");
+}
+
+#[test]
+fn execution_host_inventory_rejects_removed_or_duplicated_production_constructor() {
+    let test_module = format!(
+        "{CFG_TEST_MODULE}\n\
+             {EXECUTION_HOST_STORE_CONSTRUCTOR}\n\
+         }}\n"
+    );
+    let removed = validate_execution_host_store_constructor(&test_module)
+        .expect_err("removing the production ExecutionHost constructor must fail");
+    assert!(
+        removed.ends_with("found 0"),
+        "removed-constructor failure must report the production count: {removed}"
+    );
+
+    let duplicated = format!(
+        "{EXECUTION_HOST_STORE_CONSTRUCTOR}\n\
+         {EXECUTION_HOST_STORE_CONSTRUCTOR}\n\
+         {test_module}"
+    );
+    let duplicate = validate_execution_host_store_constructor(&duplicated)
+        .expect_err("duplicating the production ExecutionHost constructor must fail");
+    assert!(
+        duplicate.ends_with("found 2"),
+        "duplicate-constructor failure must report the production count: {duplicate}"
+    );
 }
