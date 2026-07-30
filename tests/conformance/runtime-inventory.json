@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "wash_runtime": {
+    "cargo_tree_root": "wash-runtime v2.6.0 (https://github.com/dkkloimwieder/wasmCloud?rev=0928c3ecdc56d1674cab90b66125b06d58145e22#0928c3ec)",
+    "default_features": false
+  },
+  "live_store_paths": [
+    "fork: new_store_from_templates (single production site)",
+    "wamn: ExecutionHost store (crates/execution/host)",
+    "wamn: NodeRuntime store (crates/platform/node-runtime)"
+  ],
+  "consumers": [
+    {
+      "package": "wamn-builder",
+      "manifest": "services/builder/Cargo.toml",
+      "features": []
+    },
+    {
+      "package": "wamn-executor",
+      "manifest": "services/executor/Cargo.toml",
+      "features": [
+        "oci",
+        "washlet"
+      ]
+    },
+    {
+      "package": "wamn-host",
+      "manifest": "services/host/Cargo.toml",
+      "features": [
+        "oci",
+        "wasi-config",
+        "wasi-otel",
+        "washlet"
+      ]
+    },
+    {
+      "package": "wamn-node-host",
+      "manifest": "services/node-host/Cargo.toml",
+      "features": []
+    },
+    {
+      "package": "wamn-scenario-worker",
+      "manifest": "services/scenario-worker/Cargo.toml",
+      "features": []
+    }
+  ],
+  "workload_manifests": [
+    {
+      "path": "deploy/platform/api-gateway-workload.yaml",
+      "deployment_state": "active",
+      "abi": "p2-components"
+    },
+    {
+      "path": "deploy/platform/flow-http-workload.example.yaml",
+      "deployment_state": "template",
+      "abi": "p2-components"
+    },
+    {
+      "path": "deploy/platform/hello-workload.yaml",
+      "deployment_state": "active",
+      "abi": "p2-components"
+    },
+    {
+      "path": "deploy/platform/materializer.example.yaml",
+      "deployment_state": "template",
+      "abi": "p2-cli-service",
+      "abi_evidence": {
+        "path": "components/execution/materializer/Cargo.toml",
+        "required_marker": "# A COMMAND component (wasi:cli/run via `main`), not a cdylib"
+      }
+    },
+    {
+      "path": "deploy/platform/trace-relay-workload.yaml",
+      "deployment_state": "active",
+      "abi": "p2-components"
+    }
+  ]
+}

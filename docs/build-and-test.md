@@ -16,6 +16,21 @@ carried epoch-deadline and memory-limiter commits) — see
 rev-bump procedure. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
 
+### wash-runtime feature and deployed-workload inventory (wamn-8zht.12)
+
+The checked-in inventory resolves every production service that consumes
+`wash-runtime`, records its exact feature set, and proves the three enabled
+store constructors against the pinned fork source. It also inventories every
+generated `WorkloadDeployment`: host-component plugins remain disabled,
+`poolSize` is absent or zero (so `maxInvocations` is inert), and no P3 service
+workload is deployed.
+
+```bash
+# recipe-test: H5-RUNTIME-INVENTORY | unit | wamn-proof-conformance | lib | - | runtime_inventory::resolved_feature_and_deployed_workload_inventory_is_current | 1 | recorded per-service wash-runtime features, three live store constructors, and generated workload reuse/P3 exclusions
+cargo test --locked --offline -p wamn-proof-conformance --lib \
+  runtime_inventory::resolved_feature_and_deployed_workload_inventory_is_current -- --exact
+```
+
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable

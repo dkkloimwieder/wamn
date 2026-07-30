@@ -17,4 +17,7 @@ mod docker_component_provenance;
 mod manifest_dependencies;
 
 #[cfg(test)]
+mod runtime_inventory;
+
+#[cfg(test)]
 mod schema_drift;
