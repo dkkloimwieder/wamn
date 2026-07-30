@@ -24,7 +24,9 @@
 //! `wamn.allow-raw-sockets`, consulting `allowed_hosts` for `wasi:http` only. So a
 //! shipped component's world still must not *import* `wasi:sockets` at all — this
 //! gate asserts it does not, that the DB-touching runner imports `wamn:postgres`,
-//! and (with `--sockprobe`) that the runtime deny actually fires. See
+//! and (with `--sockprobe`) that the runtime deny actually fires independently
+//! for every P2 arm. The unit gate additionally pins the same shared decision
+//! and every P3 mirror call site on the exact linked fork revision. See
 //! docs/security-db-path.md.
 //!
 //! TWO PROFILES (E17). The verdict comes from `wamn_component_policy` — the
@@ -40,7 +42,10 @@
 //!   cannot express this: `wamn:postgres` is the *intended* path for the runner.
 
 use std::collections::BTreeSet;
+use std::net::{SocketAddr, UdpSocket as StdUdpSocket};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -222,28 +227,79 @@ fn assert_reject_tenant(label: &str, names: &[String]) -> bool {
     }
 }
 
-/// A sockprobe per-protocol verdict that means the raw-egress op was PERMITTED:
+/// A sockprobe per-arm verdict that means the raw-egress op was PERMITTED:
 /// the policy let the socket op proceed (it then either connected or failed for
 /// an unrelated reason). Anything else — `denied`, `bind-failed`, or a missing
 /// report — is NOT permitted. Keyed on sockprobe's stable tokens, not error
 /// text, so the positive assertion never guesses the exact non-deny error.
 fn sock_permitted(verdict: &str) -> bool {
-    matches!(verdict, "connected" | "allowed-failed")
+    matches!(verdict, "connected" | "allowed-failed" | "sent")
 }
 
-/// Parse sockprobe's `tcp=<v>` / `udp=<v>` report file into `(tcp, udp)`.
-fn read_verdicts(report_dir: &Path) -> Option<(String, String)> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SocketVerdicts {
+    tcp_connect: String,
+    udp_connect: String,
+    udp_outgoing_datagram: String,
+    udp_bind_loopback: String,
+    udp_bind_non_loopback: String,
+}
+
+/// Parse sockprobe's five arm-specific verdicts.
+fn read_verdicts(report_dir: &Path) -> Option<SocketVerdicts> {
     let contents = std::fs::read_to_string(report_dir.join("outcome")).ok()?;
-    let mut tcp = None;
-    let mut udp = None;
+    let mut tcp_connect = None;
+    let mut udp_connect = None;
+    let mut udp_outgoing_datagram = None;
+    let mut udp_bind_loopback = None;
+    let mut udp_bind_non_loopback = None;
     for line in contents.lines() {
-        if let Some(v) = line.strip_prefix("tcp=") {
-            tcp = Some(v.trim().to_string());
-        } else if let Some(v) = line.strip_prefix("udp=") {
-            udp = Some(v.trim().to_string());
+        if let Some(v) = line.strip_prefix("tcp-connect=") {
+            tcp_connect = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("udp-connect=") {
+            udp_connect = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("udp-outgoing-datagram=") {
+            udp_outgoing_datagram = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("udp-bind-loopback=") {
+            udp_bind_loopback = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("udp-bind-non-loopback=") {
+            udp_bind_non_loopback = Some(v.trim().to_string());
         }
     }
-    Some((tcp?, udp?))
+    Some(SocketVerdicts {
+        tcp_connect: tcp_connect?,
+        udp_connect: udp_connect?,
+        udp_outgoing_datagram: udp_outgoing_datagram?,
+        udp_bind_loopback: udp_bind_loopback?,
+        udp_bind_non_loopback: udp_bind_non_loopback?,
+    })
+}
+
+fn runtime_verdicts_pass(deny: &SocketVerdicts, optin: &SocketVerdicts) -> bool {
+    deny.tcp_connect == "denied"
+        && deny.udp_connect == "denied"
+        && deny.udp_outgoing_datagram == "denied"
+        && deny.udp_bind_loopback == "bound"
+        && deny.udp_bind_non_loopback == "denied"
+        && sock_permitted(&optin.tcp_connect)
+        && sock_permitted(&optin.udp_connect)
+        && sock_permitted(&optin.udp_outgoing_datagram)
+        && optin.udp_bind_loopback == "bound"
+        && optin.udp_bind_non_loopback == "denied"
+}
+
+/// Resolve an address on this host's non-loopback interface. Port 9 is
+/// intentionally expected to be closed: opted-in TCP therefore returns quickly
+/// with connection-refused, while the policy check still sees a real
+/// non-loopback address before the syscall.
+fn non_loopback_target() -> anyhow::Result<SocketAddr> {
+    let socket = StdUdpSocket::bind("0.0.0.0:0")?;
+    socket.connect("192.0.2.1:9")?;
+    let ip = socket.local_addr()?.ip();
+    if ip.is_loopback() || ip.is_unspecified() {
+        bail!("could not resolve a non-loopback address for sockprobe: {ip}");
+    }
+    Ok(SocketAddr::new(ip, 9))
 }
 
 /// Start sockprobe as a SERVICE (so `is_service` is true and its loopback UDP
@@ -273,6 +329,10 @@ async fn run_sockprobe(
     resources.environment.insert(
         "SOCKPROBE_REPORT_PATH".to_string(),
         "/report/outcome".to_string(),
+    );
+    resources.environment.insert(
+        "SOCKPROBE_NON_LOOPBACK_TARGET".to_string(),
+        non_loopback_target()?.to_string(),
     );
     if allow_raw_sockets {
         // The fork reads this per-component config in build_ctx_from_template
@@ -342,28 +402,20 @@ async fn assert_runtime_sockets(sockprobe: &[u8]) -> anyhow::Result<bool> {
     println!("  deny-by-default (no wamn.allow-raw-sockets): {deny:?}");
     println!("  opted-in        (wamn.allow-raw-sockets=true): {optin:?}");
 
-    // Negative (E13/E15): both protocols denied when NOT opted in.
-    let neg = matches!(&deny, Some((tcp, udp)) if tcp == "denied" && udp == "denied");
-    // Positive (opted-in): both protocols permitted once opted in.
-    let pos = matches!(&optin, Some((tcp, udp)) if sock_permitted(tcp) && sock_permitted(udp));
-
-    if neg {
-        println!("    PASS(negative): raw TCP + UDP egress DENIED by default (no opt-in)");
+    let pass =
+        matches!((&deny, &optin), (Some(deny), Some(optin)) if runtime_verdicts_pass(deny, optin));
+    if pass {
+        println!(
+            "    PASS: TcpConnect, UdpConnect, and UdpOutgoingDatagram deny by default and \
+             permit only on opt-in; UdpBind remains service-loopback-only"
+        );
     } else {
         println!(
-            "    FAIL(negative): expected tcp=denied,udp=denied without opt-in, got {deny:?} — \
-             the fork's socket_addr_check deny-by-default did not hold"
+            "    FAIL: expected each raw-egress arm denied/default + permitted/opt-in and \
+             UdpBind service-loopback-only; deny={deny:?}, optin={optin:?}"
         );
     }
-    if pos {
-        println!("    PASS(positive): raw TCP + UDP egress PERMITTED under wamn.allow-raw-sockets");
-    } else {
-        println!(
-            "    FAIL(positive): expected both permitted under wamn.allow-raw-sockets=true, got \
-             {optin:?} — the opt-in did not flip the verdict"
-        );
-    }
-    Ok(neg && pos)
+    Ok(pass)
 }
 
 pub async fn run(args: EgressBenchArgs) -> anyhow::Result<()> {
@@ -419,6 +471,75 @@ pub async fn run(args: EgressBenchArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn canonical_verdicts() -> (SocketVerdicts, SocketVerdicts) {
+        (
+            SocketVerdicts {
+                tcp_connect: "denied".to_string(),
+                udp_connect: "denied".to_string(),
+                udp_outgoing_datagram: "denied".to_string(),
+                udp_bind_loopback: "bound".to_string(),
+                udp_bind_non_loopback: "denied".to_string(),
+            },
+            SocketVerdicts {
+                tcp_connect: "allowed-failed".to_string(),
+                udp_connect: "connected".to_string(),
+                udp_outgoing_datagram: "sent".to_string(),
+                udp_bind_loopback: "bound".to_string(),
+                udp_bind_non_loopback: "denied".to_string(),
+            },
+        )
+    }
+
+    fn wash_runtime_source() -> PathBuf {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("conformance package must live at tests/conformance");
+        let output = Command::new(env!("CARGO"))
+            .current_dir(root)
+            .args(["metadata", "--locked", "--offline", "--format-version", "1"])
+            .output()
+            .expect("run cargo metadata for linked wash-runtime source");
+        assert!(
+            output.status.success(),
+            "cargo metadata failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("cargo metadata must be JSON");
+        let package = metadata["packages"]
+            .as_array()
+            .expect("metadata packages must be an array")
+            .iter()
+            .find(|package| package["name"] == "wash-runtime")
+            .expect("linked graph must contain wash-runtime");
+        assert_eq!(
+            package["version"], "2.6.0",
+            "socket gate must inspect wash-runtime 2.6.0"
+        );
+        let source = package["source"]
+            .as_str()
+            .expect("wash-runtime must retain its git source");
+        assert!(
+            source.ends_with("#0928c3ecdc56d1674cab90b66125b06d58145e22"),
+            "socket gate must inspect the exact linked wash-runtime 2.6.0 fork revision, got {source}"
+        );
+        Path::new(
+            package["manifest_path"]
+                .as_str()
+                .expect("wash-runtime manifest path must be text"),
+        )
+        .parent()
+        .expect("wash-runtime manifest must have a parent")
+        .to_path_buf()
+    }
+
+    fn fork_source(path: &str) -> String {
+        let path = wash_runtime_source().join(path);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read linked fork source {}: {error}", path.display()))
+    }
 
     fn names(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
@@ -518,24 +639,175 @@ mod tests {
     fn sock_permitted_only_accepts_permitted_tokens() {
         assert!(sock_permitted("connected"));
         assert!(sock_permitted("allowed-failed"));
+        assert!(sock_permitted("sent"));
         assert!(!sock_permitted("denied"));
         assert!(!sock_permitted("bind-failed"));
         assert!(!sock_permitted(""));
     }
 
-    /// The report parser pulls the tcp/udp verdicts out of sockprobe's file; a
-    /// report missing either line yields None (treated as a phase failure).
+    /// The report parser requires every independently asserted arm; a missing
+    /// line yields None (treated as a phase failure).
     #[test]
-    fn read_verdicts_parses_both_lines() {
+    fn read_verdicts_requires_every_socket_arm() {
         let dir = std::env::temp_dir().join(format!("wamn-egress-parse-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("outcome"), "tcp=denied\nudp=connected\n").unwrap();
+        std::fs::write(
+            dir.join("outcome"),
+            "tcp-connect=denied\nudp-connect=connected\nudp-outgoing-datagram=sent\n\
+             udp-bind-loopback=bound\nudp-bind-non-loopback=denied\n",
+        )
+        .unwrap();
         assert_eq!(
             read_verdicts(&dir),
-            Some(("denied".to_string(), "connected".to_string()))
+            Some(SocketVerdicts {
+                tcp_connect: "denied".to_string(),
+                udp_connect: "connected".to_string(),
+                udp_outgoing_datagram: "sent".to_string(),
+                udp_bind_loopback: "bound".to_string(),
+                udp_bind_non_loopback: "denied".to_string(),
+            })
         );
-        std::fs::write(dir.join("outcome"), "tcp=denied\n").unwrap();
+        std::fs::write(dir.join("outcome"), "tcp-connect=denied\n").unwrap();
         assert_eq!(read_verdicts(&dir), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tcp_connect_arm_rejects_unconditional_allow_mutation() {
+        let (deny, optin) = canonical_verdicts();
+        assert!(runtime_verdicts_pass(&deny, &optin));
+        let mutant = SocketVerdicts {
+            tcp_connect: "connected".to_string(),
+            ..deny
+        };
+        assert!(
+            !runtime_verdicts_pass(&mutant, &optin),
+            "TcpConnect unconditional-allow mutation survived"
+        );
+    }
+
+    #[test]
+    fn udp_connect_arm_rejects_unconditional_allow_mutation() {
+        let (deny, optin) = canonical_verdicts();
+        assert!(runtime_verdicts_pass(&deny, &optin));
+        let mutant = SocketVerdicts {
+            udp_connect: "connected".to_string(),
+            ..deny
+        };
+        assert!(
+            !runtime_verdicts_pass(&mutant, &optin),
+            "UdpConnect unconditional-allow mutation survived"
+        );
+    }
+
+    #[test]
+    fn udp_outgoing_datagram_arm_rejects_unconditional_allow_mutation() {
+        let (deny, optin) = canonical_verdicts();
+        assert!(runtime_verdicts_pass(&deny, &optin));
+        let mutant = SocketVerdicts {
+            udp_outgoing_datagram: "sent".to_string(),
+            ..deny
+        };
+        assert!(
+            !runtime_verdicts_pass(&mutant, &optin),
+            "UdpOutgoingDatagram unconditional-allow mutation survived"
+        );
+    }
+
+    #[test]
+    fn udp_bind_arm_rejects_service_scope_or_address_widening() {
+        let (deny, optin) = canonical_verdicts();
+        assert!(runtime_verdicts_pass(&deny, &optin));
+        let mutant = SocketVerdicts {
+            udp_bind_non_loopback: "bound".to_string(),
+            ..deny
+        };
+        assert!(
+            !runtime_verdicts_pass(&mutant, &optin),
+            "UdpBind service-non-loopback widening mutation survived"
+        );
+    }
+
+    #[test]
+    fn tcp_connect_policy_and_p2_p3_call_sites_are_pinned() {
+        let policy = fork_source("src/engine/linked_call.rs");
+        assert!(
+            policy.contains("SocketAddrUse::TcpConnect => allow_raw_sockets,"),
+            "TcpConnect must deny non-loopback P2/P3 egress without opt-in and permit opted-in work"
+        );
+        let p2 = fork_source("src/sockets/host_tcp.rs");
+        assert!(
+            p2.contains(".check_socket_addr(remote_address, SocketAddrUse::TcpConnect)"),
+            "P2 TcpConnect must consult the shared socket policy"
+        );
+        let p3 = fork_source("src/sockets/host_tcp_p3.rs");
+        assert!(
+            p3.contains("if !check(remote_address, SocketAddrUse::TcpConnect).await"),
+            "P3 TcpConnect mirror must consult the shared socket policy"
+        );
+    }
+
+    #[test]
+    fn udp_connect_policy_and_p2_p3_call_sites_are_pinned() {
+        let policy = fork_source("src/engine/linked_call.rs");
+        assert!(
+            policy.contains("SocketAddrUse::UdpConnect => allow_raw_sockets,"),
+            "UdpConnect must deny non-loopback P2/P3 egress without opt-in and permit opted-in work"
+        );
+        let p2 = fork_source("src/sockets/host_udp.rs");
+        assert!(
+            p2.contains(".check(connect_addr, SocketAddrUse::UdpConnect)"),
+            "P2 UdpConnect must consult the shared socket policy"
+        );
+        let p3 = fork_source("src/sockets/host_udp_p3.rs");
+        assert!(
+            p3.contains(
+                "(self.ctx.socket_addr_check)(remote_address, SocketAddrUse::UdpConnect).await"
+            ),
+            "P3 UdpConnect mirror must consult the shared socket policy"
+        );
+    }
+
+    #[test]
+    fn udp_outgoing_datagram_policy_and_p2_p3_call_sites_are_pinned() {
+        let policy = fork_source("src/engine/linked_call.rs");
+        assert!(
+            policy.contains("SocketAddrUse::UdpOutgoingDatagram => allow_raw_sockets,"),
+            "UdpOutgoingDatagram must deny non-loopback P2/P3 sends without opt-in and permit opt-in"
+        );
+        let p2 = fork_source("src/sockets/host_udp.rs");
+        assert!(
+            p2.contains(".check(addr, SocketAddrUse::UdpOutgoingDatagram)"),
+            "P2 UdpOutgoingDatagram must consult the shared socket policy"
+        );
+        let p3 = fork_source("src/sockets/host_udp_p3.rs");
+        assert!(
+            p3.contains("check(remote_address, SocketAddrUse::UdpOutgoingDatagram).await"),
+            "P3 UdpOutgoingDatagram mirror must consult the shared socket policy"
+        );
+    }
+
+    #[test]
+    fn udp_bind_policy_and_p2_p3_call_sites_are_service_loopback_only() {
+        let policy = fork_source("src/engine/linked_call.rs");
+        assert!(
+            policy.contains(
+                "SocketAddrUse::TcpBind | SocketAddrUse::UdpBind => is_service && ip_is_loopback,"
+            ),
+            "UdpBind must allow service-loopback, deny service-non-loopback, and deny \
+             non-service-loopback on P2/P3"
+        );
+        let p2 = fork_source("src/sockets/host_udp.rs");
+        assert!(
+            p2.contains(".check(local_address, SocketAddrUse::UdpBind)"),
+            "P2 UdpBind must consult the shared socket policy"
+        );
+        let p3 = fork_source("src/sockets/host_udp_p3.rs");
+        assert!(
+            p3.contains(
+                "(self.ctx.socket_addr_check)(local_address, SocketAddrUse::UdpBind).await"
+            ),
+            "P3 UdpBind mirror must consult the shared socket policy"
+        );
     }
 }

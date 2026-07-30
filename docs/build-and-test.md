@@ -749,12 +749,14 @@ cargo clippy -p wamn-host -p wamn-runtime -p wamn-component-policy \
     -p wamn-execution-host -p wamn-executor -p wamn-gates -p wamn-gate-harness --check
 
 # E13/E15 runtime raw-socket deny + E17 rejection (wamn-o3u6), the in-cluster
-# gate of record. sockprobe attempts raw TCP/UDP egress through the production
-# host store path, so the fork's linked_call socket_addr_check is the policy
-# under test (pins 8b76869 / eef76cd): raw egress is DENIED by default and
-# PERMITTED only under wamn.allow-raw-sockets. --reject-tenant asserts a
-# wamn:postgres importer (pgprobe) is refused by the allowlist v1 (E17). Runs
-# locally without a cluster:
+# gate of record. sockprobe independently executes the P2 TcpConnect,
+# UdpConnect, UdpOutgoingDatagram, and service/non-loopback UdpBind arms through
+# the production host store path. Raw egress is DENIED by default and PERMITTED
+# only under wamn.allow-raw-sockets; UdpBind remains service-loopback-only. The
+# conformance proof resolves exact linked wash-runtime 2.6.0 revision
+# 0928c3ecdc56d1674cab90b66125b06d58145e22 and pins the shared policy plus every
+# P2/P3 mirror call site. --reject-tenant asserts a wamn:postgres importer
+# (pgprobe) is refused by the allowlist v1 (E17). Runs locally without a cluster:
 ./target/release/wamn-gates --log-level warn egressbench \
   --flowrunner $REL/flowrunner.wasm \
   --reject-tenant $REL/pgprobe.wasm \
@@ -770,17 +772,18 @@ kubectl -n wamn-system logs job/egressbench
 Docs: docs/security-db-path.md · Manifest: deploy/gates/socketguard-job.yaml
 
 ```bash
-# Hermetic: synthesizes a wasi:sockets importer (must be REFUSED at publish) and
-# a standard world (must publish) in-process — no registry, no fixtures, no DB,
-# so the local run IS the whole gate. Unlike egressbench (which walks the shipped
-# components), this proves the guard REJECTS an adversarial world.
+# Hermetic: synthesizes P2 and P3 wasi:sockets importers (both must be REFUSED at
+# publish) and a standard world (must publish) in-process — no registry, no
+# fixtures, no DB, so the local run IS the whole gate. Unlike egressbench (which
+# walks the shipped components), this independently proves the guard REJECTS
+# adversarial worlds for both ABIs.
 # Conformance proof: egressbench and socketguard live behind the router in the
 # conformance library. The shared classifier itself lives in component-policy.
-# recipe-test: H5-EGRESSBENCH | conformance | wamn-proof-conformance | lib | - | egressbench::tests:: | 11 | tests/conformance/src/egressbench.rs runtime and reject-tenant assertions
+# recipe-test: H5-EGRESSBENCH | conformance | wamn-proof-conformance | lib | - | egressbench::tests:: | 19 | tests/conformance/src/egressbench.rs arm-specific P2 runtime denial/opt-in assertions and exact linked-fork P2/P3 mirror guards
 cargo test -p wamn-proof-conformance --lib egressbench::tests::
-# recipe-test: H5-SOCKETGUARD | conformance | wamn-proof-conformance | lib | - | socketguard::tests:: | 2 | tests/conformance/src/socketguard.rs publish refusal and standard-workload control
+# recipe-test: H5-SOCKETGUARD | conformance | wamn-proof-conformance | lib | - | socketguard::tests:: | 3 | tests/conformance/src/socketguard.rs P2/P3 publish refusal and standard-workload control
 cargo test -p wamn-proof-conformance --lib socketguard::tests::
-# recipe-test: H5-COMPONENT-POLICY | policy-unit | wamn-component-policy | lib | - | tests:: | 19 | crates/platform/component-policy/src/lib.rs import classifiers and derived grants
+# recipe-test: H5-COMPONENT-POLICY | policy-unit | wamn-component-policy | lib | - | tests:: | 20 | crates/platform/component-policy/src/lib.rs import classifiers, P2/P3 socket-package refusal, and derived grants
 cargo test -p wamn-component-policy --lib tests::
 ./target/release/wamn-gates --log-level warn socketguard
 # in-cluster sweep (carries the hermetic gate alongside egressbench-job):

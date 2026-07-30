@@ -503,6 +503,26 @@ mod tests {
         assert_eq!(denied_imports(names).len(), names.len());
     }
 
+    /// The package rule is ABI-version-independent: publish refuses both the P2
+    /// and P3 socket worlds, including P3's consolidated `types` interface.
+    #[test]
+    fn denied_imports_refuses_p2_and_p3_socket_worlds() {
+        let names = [
+            "wasi:sockets/tcp@0.2.3",
+            "wasi:sockets/types@0.3.0",
+            "wasi:sockets/ip-name-lookup@0.3.0",
+            "wasi:clocks/monotonic-clock@0.3.0",
+        ];
+        assert_eq!(
+            denied_imports(names),
+            vec![
+                "wasi:sockets/tcp@0.2.3".to_string(),
+                "wasi:sockets/types@0.3.0".to_string(),
+                "wasi:sockets/ip-name-lookup@0.3.0".to_string(),
+            ]
+        );
+    }
+
     /// A standard workload — the DB plugin, the `allowed_hosts`-gated http
     /// chokepoint, clocks/io — imports nothing denied.
     #[test]
