@@ -19,10 +19,10 @@ license = "Apache-2.0"
 # default-features off: `wasi-webgpu` pulls crates.io wasmtime alongside the
 # workspace's git-pinned one (two wasmtimes = linker typecheck failures upstream
 # solves with a [patch] we'd otherwise have to replicate).
-wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "981fdc56ebc1840f08161aef5edec592538e5d4c", default-features = false }
+wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "0928c3ecdc56d1674cab90b66125b06d58145e22", default-features = false }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
-wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
-wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "7535c0255b2b84f6ae4de6034649ba2eeda84173" }
+wasmtime-wasi = "47.0.1"
+wasmtime-wasi-http = "47.0.1"
 # pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch
 # wamn/0.8.0 = upstream v0.8.0 (784e644) + the carried failover-slot-syntax
 # commit (S-CDC-1 finding F1: legacy `… FAILOVER` → 42601 on PG17+; the fork
@@ -30,7 +30,7 @@ wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev
 # Carried-commit ledger + sync runbook: docs/pg-walstream-fork.md.
 pg_walstream = { git = "https://github.com/dkkloimwieder/pg-walstream", rev = "0b007cd627bb913d4b159c705a106b6d4152c91a" }
 anyhow = "1"
-async-nats = { version = "0.47", default-features = false }
+async-nats = { version = "0.49.1", default-features = false }
 boon = "0.6"
 bytes = "1"
 chrono = { version = "0.4", default-features = false }

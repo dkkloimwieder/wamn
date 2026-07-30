@@ -110,6 +110,7 @@ fn empty_resources() -> LocalResources {
         environment: Default::default(),
         volume_mounts: vec![],
         allowed_hosts: Arc::from(vec![]),
+        allow_ip_name_lookup: Default::default(),
     }
 }
 

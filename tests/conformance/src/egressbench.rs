@@ -268,6 +268,7 @@ async fn run_sockprobe(
             read_only: false,
         }],
         allowed_hosts: Arc::from(vec![]),
+        allow_ip_name_lookup: Default::default(),
     };
     resources.environment.insert(
         "SOCKPROBE_REPORT_PATH".to_string(),
