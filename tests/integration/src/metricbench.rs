@@ -659,28 +659,35 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
             // Delta == N+1 executions, with at least one `failed` (the mutant target:
             // an outcome-fold would keep failed at its baseline).
             let want_total = (n + 1) as f64;
-            let (exec_ok, (exec_total, failed_delta)) = poll(&args.metrics_url, |text| {
-                let total = labels_sum(
-                    text,
-                    "wamn_run_executions",
-                    &[&tenant_label, &project_label],
-                ) - base_exec;
-                let failed = labels_sum(
-                    text,
-                    "wamn_run_executions",
-                    &[&tenant_label, &project_label, failed_label],
-                ) - base_failed;
-                (total == want_total && failed >= 1.0, (total, failed))
-            })
-            .await;
+            let (exec_ok, (exec_total, failed_delta, executor_instance)) =
+                poll(&args.metrics_url, |text| {
+                    let run_labels = [tenant_label.as_str(), project_label.as_str()];
+                    let failed_labels =
+                        [tenant_label.as_str(), project_label.as_str(), failed_label];
+                    let total = labels_sum(text, "wamn_run_executions", &run_labels) - base_exec;
+                    let failed =
+                        labels_sum(text, "wamn_run_executions", &failed_labels) - base_failed;
+                    let instance = series_label_fragment(
+                        text,
+                        "wamn_run_executions",
+                        &failed_labels,
+                        "instance",
+                    );
+                    (
+                        total == want_total && failed >= 1.0 && instance.is_some(),
+                        (total, failed, instance),
+                    )
+                })
+                .await;
             check(
                 &mut pass,
                 "(1) executions: delta == N+1 with a failed series",
                 first == expected_first && exec_ok,
                 &format!(
                     "database total={}/{} completed={} failed={} ; scrape delta={exec_total} \
-                 (want {want_total}), failed delta={failed_delta} (want >=1)",
-                    first.total, expected_first.total, first.completed, first.failed
+                 (want {want_total}), failed delta={failed_delta} (want >=1), \
+                 executor {executor_instance:?}",
+                    first.total, expected_first.total, first.completed, first.failed,
                 ),
             );
 
@@ -703,14 +710,19 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
             );
 
             // === (5) pool saturation + query latency (from the drives' DB writes) =
+            // The guest's configured Postgres pool is `default`, independently of
+            // the executor identity's unique project label. Correlate both families
+            // through the OTel resource instance shared by this executor process.
+            let executor_instance =
+                executor_instance.unwrap_or_else(|| "instance=\"<missing>\"".to_string());
             let (pool_ok, (pool_size, query_count)) = poll(&args.metrics_url, |text| {
                 let pool_present =
-                    present_with_labels(text, "wamn_postgres_pool_size", &[&project_label]);
-                let pool_size = labels_sum(text, "wamn_postgres_pool_size", &[&project_label]);
+                    present_with_labels(text, "wamn_postgres_pool_size", &[&executor_instance]);
+                let pool_size = labels_sum(text, "wamn_postgres_pool_size", &[&executor_instance]);
                 let query_count = labels_sum(
                     text,
                     "wamn_postgres_query_duration_ms_count",
-                    &[&project_label],
+                    &[&executor_instance],
                 );
                 (pool_present && query_count > 0.0, (pool_size, query_count))
             })
@@ -720,7 +732,7 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
                 "(5) postgres pool gauge present + query-latency count > 0",
                 pool_ok,
                 &format!(
-                    "project={project}: wamn_postgres_pool_size={pool_size}, \
+                    "{executor_instance}: wamn_postgres_pool_size={pool_size}, \
                  query_count={query_count}"
                 ),
             );
@@ -936,6 +948,34 @@ fn labels_sum(text: &str, name: &str, labels: &[&str]) -> f64 {
         })
         .filter_map(line_value)
         .sum()
+}
+
+/// Return one raw `key="value"` label fragment from a matching series.
+fn series_label_fragment(
+    text: &str,
+    name: &str,
+    required_labels: &[&str],
+    key: &str,
+) -> Option<String> {
+    let prefix = format!("{key}=\"");
+    text.lines()
+        .filter(|line| {
+            !line.starts_with('#')
+                && line_is(line, name)
+                && required_labels.iter().all(|label| line.contains(label))
+        })
+        .find_map(|line| {
+            let labels = line
+                .strip_prefix(name)?
+                .strip_prefix('{')?
+                .split_once('}')?
+                .0;
+            labels.split(',').find_map(|label| {
+                let value = label.strip_prefix(&prefix)?;
+                let end = value.find('"')?;
+                Some(format!("{prefix}{}\"", &value[..end]))
+            })
+        })
 }
 
 /// The value of the first series of `name` carrying `label`, if any.
@@ -1160,10 +1200,13 @@ mod tests {
         let text = "\
 # HELP wamn_run_executions runs
 # TYPE wamn_run_executions counter
-wamn_run_executions{outcome=\"completed\",wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 8
-wamn_run_executions{outcome=\"failed\",wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 1
+wamn_run_executions{instance=\"metric-process\",outcome=\"completed\",wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 8
+wamn_run_executions{instance=\"metric-process\",outcome=\"failed\",wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 1
 wamn_run_executions_created{outcome=\"completed\"} 1.72e9
-wamn_run_drive_duration_ms_count{wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 9
+wamn_run_drive_duration_ms_count{instance=\"metric-process\",wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 9
+wamn_postgres_pool_size{instance=\"metric-process\",wamn_project=\"default\"} 1
+wamn_postgres_query_duration_ms_count{db_operation=\"query\",instance=\"metric-process\",wamn_project=\"default\"} 9
+wamn_postgres_query_duration_ms_count{db_operation=\"query\",instance=\"other-process\",wamn_project=\"default\"} 44182
 wamn_memory_high_water_bytes{component=\"metricbench-memhog\"} 33554432
 wamn_run_queue_depth{wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 6
 wamn_run_queue_depth{wamn_project=\"f1\",wamn_tenant=\"f1-tenant\"} 3619
@@ -1198,6 +1241,22 @@ wamn_run_queue_depth{wamn_project=\"f1\",wamn_tenant=\"f1-tenant\"} 3619
             "wamn_run_executions",
             &[tenant, project]
         ));
+        let instance = series_label_fragment(
+            text,
+            "wamn_run_executions",
+            &[tenant, project, "outcome=\"failed\""],
+            "instance",
+        )
+        .expect("executor series must carry an instance label");
+        assert_eq!(instance, "instance=\"metric-process\"");
+        assert_eq!(
+            labels_sum(text, "wamn_postgres_pool_size", &[&instance]),
+            1.0
+        );
+        assert_eq!(
+            labels_sum(text, "wamn_postgres_query_duration_ms_count", &[&instance]),
+            9.0
+        );
         // Label value read (high-water = the allowed 32 MiB, not a budget).
         assert_eq!(
             label_value(
