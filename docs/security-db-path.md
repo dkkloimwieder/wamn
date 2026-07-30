@@ -1,4 +1,4 @@
-# DB-Path Egress Review (2.6)
+# DB-Path Egress Review (wasmCloud v2.6.0)
 
 Review of the claim that the `wamn:postgres` host plugin is the **only** path a
 workload component has to Postgres — components never get `wasi:sockets` to open
@@ -12,154 +12,125 @@ a raw TCP connection that would bypass the plugin's tenant-claim / RLS injection
 
 ## Verdict
 
-**The guarantee holds for everything shippable in P1 — but it is enforced by
-WIT-world composition at build/publish time, not by the host at deploy time.**
-The standard flow-runner and every generated/custom-node workload we ship do
-**not** import `wasi:sockets`, so the raw-socket interface — though present on
-the linker — is never reachable, and the plugin (plus the `allowed_hosts`-gated,
-egress-spied `wasi:http` chokepoint from S6) is the only egress. This is asserted
-by a static gate (`egressbench`, below).
+**The DB-path guarantee now has two independent application layers.** First,
+published workload components are refused if their world imports
+`wasi:sockets`; this applies to both P2 and P3 socket packages. Second, the
+pinned wasmCloud v2.6.0 runtime denies raw TCP and UDP connect/send operations
+unless the workload has the explicit `wamn.allow-raw-sockets` opt-in. The opt-in
+does not widen bind authority: `UdpBind` remains service-loopback-only.
 
-The finding is that **the host provides no defense-in-depth**: if a component
-whose world imports `wasi:sockets` ever reaches the runtime (the production
-custom-code-node path, 5.6 / wamn-bd5), the runtime currently permits it to
-connect to Postgres directly. We recommend closing that with a deploy-time guard
-(wamn-7j0.1) and a K8s NetworkPolicy (infra), tracked below — but no host code
-changes in 2.6, which stays a review.
+WIT-world composition still matters, but it is not the whole enforcement story.
+Composition determines whether a guest can name a socket interface at all; the
+publish policy refuses that surface, and the runtime policy is an independent
+backstop if a socket-importing component nevertheless reaches a store. For
+ordinary published workloads, `wamn:postgres` (plus separately controlled
+`wasi:http` egress) remains the host-mediated DB path.
 
 ## How egress actually works in the runtime
 
-Three mechanisms govern whether a component can reach the network. Verified
-against the pinned wash-runtime (fork `wamn/2.5.2`, `crates/wash-runtime` —
-see `docs/wash-runtime-fork.md`).
+The layers below are verified against the pinned v2.6.0 `wash-runtime`.
+`docs/wash-runtime-fork.md` is authoritative for the moving branch, revision,
+carried-commit ledger, configuration precedence, and policy exit conditions;
+this review records the resulting security posture rather than duplicating that
+ledger.
 
 | Mechanism | What it gates | Default / behavior | The DB path |
 |---|---|---|---|
-| **WIT-world composition** | Which interfaces a component can *call* | A component can only call imports declared in its world | **The effective boundary.** Shipped worlds don't import `wasi:sockets`, so raw TCP is unreachable |
-| **`allowed_network_uses` + `socket_addr_check`** (raw sockets) | Whether a *socket call* is permitted | TCP **allow-all** for outbound connect (see below) | Provides **no** second layer — if sockets are imported, PG:5432 connect is allowed |
+| **WIT-world composition** | Which interfaces a component can name and call | A component can call only imports declared in its world | Shipped standard worlds omit `wasi:sockets` |
+| **Publish-time component policy** | Whether a socket-importing artifact is admitted | P2 and P3 `wasi:sockets` packages are refused | Prevents a published workload from acquiring the raw DB-bypass surface |
+| **Runtime raw-socket policy** | Whether an admitted raw-socket operation proceeds | `TcpConnect`, `UdpConnect`, and `UdpOutgoingDatagram` deny by default and require explicit opt-in; `UdpBind` is service-loopback-only | Independent defense if a socket-importing component reaches the runtime |
 | **`allowed_hosts`** (wasi:http only) | HTTP egress destinations | Per-workload allowlist; S6 `HostHandler` egress spy | Governs `wasi:http` only; never consulted for raw sockets |
+| **Kubernetes network policy** | Pod-level destinations and ports | Deployment defense in depth; enforcement depends on the cluster network provider | Can limit the host pod's DB destinations, but cannot identify which in-process guest or host plugin opened a connection |
 
-### 1. WIT-world composition — the effective boundary
+### 1. WIT-world composition — reachability, not permission
 
-`wasi:sockets` is registered on **every** workload linker unconditionally
-(`engine/mod.rs:146-190`: `sockets::tcp / udp / tcp_create_socket /
-instance_network / network / ip_name_lookup`, plus `add_p3_to_linker` at
-`:184`). This registration is **not** gated by `host_interfaces` — that allowlist
-(`engine/workload.rs:1418`, `bind_plugins`) only matches host *plugins* (like
-`wamn:postgres`) to component imports; wasi built-ins bypass it entirely.
+`wasi:sockets` is registered on every workload linker for P2 and P3. Linker
+registration makes an imported interface satisfiable; it does not add that
+import to a component or grant permission to call it. `host_interfaces`
+separately controls host plugins such as `wamn:postgres`; WASI built-ins do not
+become host-plugin grants.
 
-So having `wasi:sockets` on the linker is harmless *only because* a component
-that does not **import** it in its world can never reference it. The boundary is
-the component's world, established at build/publish time by the wamn SDK world +
-builder lint (5.4 / 5.6) — not an enforced host check.
+A standard world that omits `wasi:sockets` cannot issue a raw socket call.
+Conversely, composition alone does not make a socket-importing world safe, which
+is why publication and runtime each enforce a separate policy.
 
-### 2. Raw-socket policy is allow-all for outbound TCP
+### 2. Publish-time socket refusal
 
-The production store path (`engine/linked_call.rs:176-191`,
-`build_ctx_from_template`) sets:
+The component import policy screens artifacts before publication. A component
+importing the P2 socket interfaces or P3's consolidated socket interfaces is
+refused, while a standard clocks/I/O/HTTP world remains admissible. This is a
+policy decision over the component's declared imports, not a claim that the
+runtime linker lacks socket implementations.
 
-```rust
-socket_addr_check: SocketAddrCheck::new(move |addr, reason| Box::pin(async move {
-    match reason {
-        SocketAddrUse::TcpBind if is_service => addr.ip().is_loopback(),
-        SocketAddrUse::TcpBind => false,
-        SocketAddrUse::UdpBind => addr.ip().is_loopback() || addr.ip().is_unspecified(),
-        SocketAddrUse::TcpConnect
-        | SocketAddrUse::UdpConnect
-        | SocketAddrUse::UdpOutgoingDatagram => true,   // any address
-    }
-})),
-```
+`socketguard` proves both refusal arms with synthesized valid components, one P2
+and one P3, plus the standard-world positive control. `egressbench` separately
+walks real shipped artifacts. Neither proof substitutes for the runtime test:
+publish refusal proves admission, while runtime denial proves what an admitted
+socket call can do.
 
-and fills `allowed_network_uses` from `Default` (`sockets/mod.rs:68`:
-`tcp: true, udp: true`). `check_allowed_tcp()` (`sockets/mod.rs:90`) is coarse —
-an on/off boolean, default on. **Outbound TCP connect is permitted to any
-address, and the check never consults `allowed_hosts`.** So the host offers no
-second layer: a component that imports `wasi:sockets` can `connect(PG_HOST:5432)`
-and speak the Postgres wire protocol under its own credentials, bypassing the
-plugin's `SET LOCAL app.tenant` claim and RLS.
+### 3. Runtime raw TCP/UDP policy — default deny, explicit opt-in
 
-(The bench harnesses build stores with `wasmtime_wasi::p2::add_to_linker_async`
-over a default `WasiCtx`, whose `socket_addr_check` denies by default — that is a
-bench convenience, **not** the production grant. The production template path
-above is the one that matters, and it is allow-all.)
+The production store policy covers every compiled, guest-reachable raw-socket
+surface:
 
-### 3. `allowed_hosts` gates only `wasi:http`
+- P2 and P3 `TcpConnect`;
+- P2 and P3 `UdpConnect`;
+- P2 and P3 `UdpOutgoingDatagram`; and
+- P2 and P3 `UdpBind`.
+
+`TcpConnect`, `UdpConnect`, and `UdpOutgoingDatagram` deny when the raw-socket
+capability is absent and proceed only when `wamn.allow-raw-sockets` is
+explicitly enabled. Name lookup and `allowed_hosts` are independent authorities;
+neither grants raw TCP or UDP access.
+
+`UdpBind` is service-loopback-only: only service workloads may bind, and only
+to loopback. A non-service loopback bind and every non-loopback bind are denied.
+Raw-egress opt-in never widens that bind rule. P3 policy is load-bearing even
+though wamn deploys no P3 service workload: a guest importing a P3 socket
+interface reaches the P3 host surface regardless of deployment-level P3
+adoption.
+
+`egressbench` drives the P2 operations through the production store path and
+pins the corresponding P2 and P3 policy call sites on the exact linked fork.
+Its named mutations fail if any connect/send arm becomes unconditional or if
+the bind rule widens.
+
+### 4. `allowed_hosts` gates only `wasi:http`
 
 `allowed_hosts` is carried on the ctx (`engine/ctx.rs` `CtxHttpHooks`) and
 enforced for `wasi:http` egress — the S6 `HostHandler` chokepoint that the
 egress-spy test exercises (memory `wamn-s6-testhost-facts`). It has no effect on
-raw sockets.
+raw sockets and is not the raw-socket opt-in.
 
-## Why the P1 guarantee holds today — the gate
+## Kubernetes defense in depth
 
-Because the boundary is "does the shipped component import `wasi:sockets`," it is
-directly checkable on the wasm artifacts. `wamn-gates egressbench` compiles each
-component and walks its import list, asserting:
+A production cluster should also enforce egress policy beneath the component
+runtime: constrain host pods to the approved Postgres endpoints and ports, and
+deny unrelated destinations. This limits blast radius if an application-layer
+control regresses.
 
-- the DB-touching **flow-runner** imports `wamn:postgres` (the DB path) and
-  **not** `wasi:sockets`;
-- every swept component imports **no** `wasi:sockets` and no unexpected
-  host-plugin egress interface (`wasi:blobstore/keyvalue/messaging`).
+Kubernetes policy is not a substitute for either application layer. The
+`wamn:postgres` plugin and guest stores are co-located in the host process, so a
+pod-level policy normally cannot distinguish a plugin connection from a raw
+socket opened on behalf of a guest in the same pod. A more granular
+plugin-only network identity would require a different deployment boundary.
+NetworkPolicy enforcement must also be proven on the production CNI; a manifest
+that the cluster network provider ignores supplies no protection. NetworkPolicy
+implementation remains an infra / Epic 8 concern, outside this review.
 
-It is a **static** check — a pure function of the wasm bytes, no socket opened,
-no Postgres touched. Its result is identical in-cluster and locally, so unlike
-the timing/DB gates there is **no separate in-cluster Job of record**; it runs in
-CI / locally / in the image build.
+## Standing proof set
 
-Result (local, `flowrunner` + custom-node / probe / trivial shapes + the 4.1
-api-gateway serving workload):
+- `egressbench` checks real artifact imports, executes P2 raw-socket denial and
+  opt-in behavior through the production host store path, and pins all P2/P3
+  TCP/UDP policy call sites.
+- `socketguard` proves that valid adversarial P2 and P3 socket worlds are
+  refused at publish, and that a standard world still publishes.
+- `wamn-component-policy` unit tests pin the shared import classifier used at
+  the publication boundary.
 
-```
-# wamn-host 2.6 egressbench — DB-path egress review (static)
-  flow-runner  .../flowrunner.wasm
-    egress imports: allowed=["wamn:postgres", "wasi:http"] raw-socket=[] other=[]
-    PASS: no raw-socket surface; wamn:postgres is the DB path
-  component    .../pgprobe.wasm
-    egress imports: allowed=["wamn:postgres"] raw-socket=[] other=[]
-    PASS: no raw-socket surface
-  component    .../node_rs.wasm
-    egress imports: allowed=[] raw-socket=[] other=[]
-    PASS: no raw-socket surface
-  component    .../flow_composed.wasm
-    egress imports: allowed=[] raw-socket=[] other=[]
-    PASS: no raw-socket surface
-  component    .../hello.wasm
-    egress imports: allowed=[] raw-socket=[] other=[]
-    PASS: no raw-socket surface
-  component    .../api_gateway.wasm
-    egress imports: allowed=["wamn:postgres", "wasi:http"] raw-socket=[] other=[]
-    PASS: no raw-socket surface
-
-egressbench complete — overall PASS: true
-```
-
-The flow-runner's only egress is `wamn:postgres` (the DB plugin) and `wasi:http`
-(the `allowed_hosts`-gated, egress-spied S6 chokepoint) — both host-mediated. The
-4.1 **api-gateway** serving workload has the same surface (`wamn:postgres` +
-`wasi:http`, no raw sockets), so a future import regression there — e.g. adding
-`wasi:sockets` or an unexpected host-plugin egress — now fails the standing gate.
-No shipped workload has a raw-socket surface. The gate's FAIL path is unit-tested
-(`egressbench::tests`): a `wasi:sockets` import, an unexpected egress import, and
-a DB workload missing `wamn:postgres` each correctly fail — the assertion is not
-vacuous.
-
-## Recommended controls
-
-1. **Deploy-time host guard (wamn-7j0.1, recommended).** Reject any workload
-   whose component world imports `wasi:sockets` (unless explicitly allowlisted),
-   turning the build-time convention into an enforced host check. Likely a
-   carried wash-runtime patch in the `workload_start` path (inspect imports
-   before instantiate) or an admission check in the operator / control plane.
-   This is defense-in-depth ahead of the production custom-code-node path (5.6 /
-   wamn-bd5), which is why wamn-bd5 now depends on it.
-2. **K8s NetworkPolicy (defer to infra / 8.x).** Deny pod → Postgres:5432 except
-   from the plugin's egress identity — a network-layer belt beneath the runtime
-   control. Deployment/infra concern; recommended, not built in 2.6.
-3. **Custom-code-node world (5.6).** The residual risk lives here: the custom
-   node SDK world must exclude `wasi:sockets`, and the publish gate (5.4 builder
-   lint / 11.5) must reject a custom node that declares it. `egressbench` is that
-   gate's artifact-level check.
+The local unit commands and in-cluster jobs are recorded in
+`docs/build-and-test.md`. The runtime gate and publish gate remain independent:
+passing one never compensates for losing the other.
 
 ## In-band claim integrity within the plugin path (wamn-cjv.2)
 
@@ -256,10 +227,8 @@ provisioning and both exec paths (migrate + copy) and is deferred to its own bea
 
 ## References
 
-- Runtime: `engine/mod.rs:146-190` (unconditional sockets linking),
-  `engine/linked_call.rs:176-191` (allow-all `socket_addr_check`),
-  `sockets/mod.rs:68,90` (`AllowedNetworkUses` default + coarse `check_allowed_tcp`),
-  `engine/workload.rs:1418` (`host_interfaces` gates plugins only).
+- Runtime branch, revision, carried-policy details, and exit conditions:
+  `docs/wash-runtime-fork.md`.
 - Plugin: `crates/platform/runtime/src/plugins/wamn_postgres/mod.rs`; memory
   `wamn-2.2-postgres-production-facts`, `wamn-postgres-wit-0.1-frozen`.
 - In-band claim guard (cjv.2): `reject_claim_mutation` /
@@ -275,4 +244,6 @@ provisioning and both exec paths (migrate + copy) and is deferred to its own bea
   `crates/schema/compiler/tests/ddl.rs::chaining_check_expression_never_reaches_postgres`;
   least-privileged migrate role deferred to its own bead.
 - HTTP egress chokepoint: memory `wamn-s6-testhost-facts` (egress spy).
-- Gate: `tests/conformance/src/egressbench.rs`.
+- Gates: `tests/conformance/src/egressbench.rs`,
+  `tests/conformance/src/socketguard.rs`, and
+  `crates/platform/component-policy/src/lib.rs`.
