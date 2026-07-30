@@ -1,16 +1,14 @@
-//! Publish-time egress guard: refuse any component whose world imports
-//! `wasi:sockets` (E13a).
+//! Structurally refuses publication of components whose worlds import `wasi:sockets` (E13a).
 //!
-//! The runtime links `wasi:sockets` (tcp/udp/create-socket/instance-network/
-//! network/ip_name_lookup) on **every** workload linker unconditionally, and
-//! its `TcpConnect` policy is allow-all — it never consults the per-flow
-//! `allowed_hosts` egress allowlist, which governs `wasi:http` ONLY (see
-//! docs/security-db-path.md, docs/findings.md §3 E13). So a component that
-//! *imports* `wasi:sockets` gets arbitrary outbound TCP with DNS, bypassing the
-//! `wamn:postgres` tenant-claim / RLS path. The effective boundary is therefore
-//! whether a component's world imports the interface at all — and until the
-//! runtime half (a binary opt-in `TcpConnect` policy, the fork commit) lands,
-//! the build/publish side owns the enforcement.
+//! This admission rule rejects every P2 or P3 `wasi:sockets` interface before
+//! publication. It is independent of the pinned wasmCloud v2.6.0 runtime
+//! policy: `TcpConnect`, `UdpConnect`, and `UdpOutgoingDatagram` deny by default
+//! and proceed only with explicit raw-socket opt-in. `UdpBind` remains
+//! service-loopback-only, and raw-socket opt-in never widens bind authority.
+//! The `allowed_hosts` allowlist governs `wasi:http` only and grants no raw
+//! socket authority. See `docs/security-db-path.md` for the layered boundary
+//! and `docs/wash-runtime-fork.md` for the authoritative branch, revision, and
+//! carried-policy details.
 //!
 //! This module is that enforcement: a single structural rule — reject a
 //! component that imports any interface of the `wasi:sockets` package — reusable
