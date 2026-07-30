@@ -75,7 +75,8 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
         "/component-output/${artifact}.wasm"; \
     done \
  && jco componentize samples/node-ts/node.js --wit samples/node-ts/wit \
-      --world-name node-bench -o /component-output/node-ts.wasm \
+      --world-name node-bench --disable http --disable fetch-event \
+      -o /component-output/node-ts.wasm \
  && wac plug target/wasm32-wasip2/release/flow_driver.wasm \
       --plug target/wasm32-wasip2/release/node_rs.wasm \
       -o /component-output/flow_composed.wasm

@@ -4,6 +4,22 @@ const DOCKERFILE: &str = include_str!("../../../Dockerfile");
 const DOCKERIGNORE: &str = include_str!("../../../.dockerignore");
 
 #[test]
+fn node_ts_builder_disables_unused_jco_interfaces() {
+    let dockerfile = DOCKERFILE.replace("\\\n", " ");
+    let command = dockerfile
+        .split("&&")
+        .map(str::trim)
+        .find(|segment| segment.starts_with("jco componentize samples/node-ts/node.js"))
+        .expect("Dockerfile must componentize the node-ts fixture");
+
+    assert!(command.contains("--wit samples/node-ts/wit"));
+    assert!(command.contains("--world-name node-bench"));
+    assert!(command.contains("--disable http"));
+    assert!(command.contains("--disable fetch-event"));
+    assert!(command.contains("-o /component-output/node-ts.wasm"));
+}
+
+#[test]
 fn every_embedded_component_comes_from_the_locked_builder() {
     let expected = [
         (
