@@ -8,13 +8,18 @@ build = "build.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+bytes = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 hex = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+opentelemetry = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-util", "time", "rt"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-event-reg = { workspace = true }
 wamn-flow = { workspace = true }
@@ -25,6 +30,10 @@ wamn-run-state = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-schema-compiler = { workspace = true }
 wamn-schema-model = { workspace = true }
+wash-runtime = { workspace = true }
+wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
+opentelemetry_sdk = { workspace = true }
+tracing-subscriber = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }

@@ -84,7 +84,7 @@ enum Command {
     Logbench(logbench::LogBenchArgs),
     /// Run the 9.1 OTel trace-pipeline gate (host spans → Tempo; enriched single trace)
     Tracebench(tracebench::TracebenchArgs),
-    /// Run the 9.2 deployed cross-pod traceparent-propagation proof (relay → serve-echo)
+    /// Run the 9.2 independent P2/P3 host traceparent proof (host surfaces → serve-echo)
     Traceproof(traceproof::TraceproofArgs),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
     ServeEcho(traceproof::ServeEchoArgs),

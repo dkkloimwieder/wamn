@@ -4669,13 +4669,20 @@ name = "wamn-proof-system"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "hex",
+ "http-body-util",
+ "hyper",
+ "opentelemetry",
+ "opentelemetry_sdk",
  "serde_json",
  "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
  "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
  "wamn-catalog",
  "wamn-event-reg",
  "wamn-flow",
@@ -4686,6 +4693,8 @@ dependencies = [
  "wamn-schema-control",
  "wamn-schema-model",
  "wamn-test-fixtures",
+ "wash-runtime",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]

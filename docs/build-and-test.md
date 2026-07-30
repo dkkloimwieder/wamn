@@ -487,29 +487,24 @@ Docs: docs/wash-runtime-fork.md, docs/tracing.md
 
 ```bash
 cargo test -p wamn-node-sdk -p wamn-standard-nodes   # trace_headers/apply + http-node forward + explicit-header-wins
-# System-proof unit boundary: deployed trace headers are parsed by traceproof.
-# recipe-test: H5-TRACEPROOF | system | wamn-proof-system | lib | - | traceproof::tests:: | 2 | tests/system/src/traceproof.rs W3C trace-header parsing
+# System-proof boundary: traceproof independently invokes the public P2 and P3
+# host surfaces, captures only their post-host headers, and sends those captured
+# headers across the pod boundary without guest help.
+# recipe-test: H5-TRACEPROOF | system | wamn-proof-system | lib | - | traceproof::tests:: | 5 | tests/system/src/traceproof.rs independent P2/P3 host-enforced W3C trace injection and keep-alive response framing
 cargo test -p wamn-proof-system --lib traceproof::tests::
-cargo clippy -p wamn-node-sdk -p wamn-standard-nodes -p wamn-gates --all-targets \
-  && cargo fmt -p wamn-node-sdk -p wamn-standard-nodes -p wamn-gates --check
-(cd components && cargo build --release --target wasm32-wasip2 -p trace-relay)
-cargo clippy --manifest-path components/fixtures/trace-relay/Cargo.toml --release --target wasm32-wasip2 \
-  && cargo fmt --manifest-path components/fixtures/trace-relay/Cargo.toml --check
-# No local run: the fork inject fires ONLY on the real washlet outbound path
-# In-cluster gate of record. A FORK rev bump => FULL docker rebuild (both --target
-# wash-runtime):
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system rollout restart deploy/hostgroup-default
-kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=180s
-# via the registry port-forward):
-kubectl -n wamn-system port-forward svc/registry 5000:5000 &
-wash push localhost:5000/wamn/trace-relay:dev \
-  components/target/wasm32-wasip2/release/trace_relay.wasm --insecure
-# Deploy pod B (serve-echo) + pod A (trace-relay), then run the proof:
+cargo clippy -p wamn-node-sdk -p wamn-standard-nodes -p wamn-proof-system -p wamn-gates \
+  --all-targets -- -D warnings
+cargo fmt -p wamn-node-sdk -p wamn-standard-nodes -p wamn-proof-system -p wamn-gates --check
+
+# No component fixture: the gate invokes both public host surfaces directly.
+docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system apply -f deploy/infra/otel-collector.yaml
+kubectl -n wamn-system rollout status deploy/otel-collector --timeout=120s
 kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
+kubectl -n wamn-system rollout restart deploy/serve-echo
 kubectl -n wamn-system rollout status deploy/serve-echo --timeout=120s
-kubectl -n wamn-system apply -f deploy/platform/trace-relay-workload.yaml
+kubectl -n wamn-system delete job traceproof --ignore-not-found
 kubectl -n wamn-system apply -f deploy/gates/traceproof-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/traceproof --timeout=180s
 kubectl -n wamn-system logs job/traceproof

@@ -1,10 +1,10 @@
 # [9.2] The reflecting upstream for the traceproof cross-pod proof: a plain
 # HTTP server (NOT wash-served) that answers every request 200 with
 # {"traceparent": <received|null>, "tracestate": <received|null>}. The
-# trace-relay makes a BARE outbound call here; the host stamps traceparent onto
-# it (9.2), and serve-echo reflects exactly what it received, so traceproof can
-# assert the injected trace threaded the pod boundary. Runs the wamn-gates image
-# (SR1), like serve-node.
+# traceproof gate invokes each public host surface, captures only the header
+# that surface emits, and uses it for a raw call here. serve-echo reflects
+# exactly what it received so the gate can assert the host-injected trace
+# threaded the pod boundary. Runs the wamn-gates image (SR1), like serve-node.
 #
 #   kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
 #   kubectl -n wamn-system rollout status deploy/serve-echo --timeout=120s

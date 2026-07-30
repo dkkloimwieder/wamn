@@ -1,12 +1,11 @@
-# [9.2] The in-cluster gate of record: prove host-enforced cross-pod traceparent
-# propagation over real networking. traceproof sends a known traceparent to the
-# deployed trace-relay (Host = its route); the relay makes a bare outbound call
-# to serve-echo, which reflects the traceparent it received. The proof asserts
-# the reflected trace id equals the one sent (the trace threaded the boundary)
-# and the span id differs (the host minted a child client span). Runs the
-# wamn-gates image (SR1) — no external client to pull.
+# [9.2] The in-cluster gate of record: independently prove host-enforced P2 and
+# P3 traceparent propagation over real networking. traceproof invokes each
+# public wash-runtime HostHandler surface without a guest, captures only the
+# post-host header, then uses that header for a request to serve-echo. The
+# reflected trace id must match separately for P2 and P3. Runs the wamn-gates
+# image (SR1) — no external client to pull.
 #
-# Prereqs: trace-relay WorkloadDeployment Ready + serve-echo rolled out.
+# Prereqs: serve-echo and the OTel collector rolled out.
 #
 #   kubectl -n wamn-system apply -f deploy/gates/traceproof-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/traceproof --timeout=180s
@@ -31,21 +30,23 @@ spec:
             - -c
             - |
               until nc -z serve-echo 8091; do echo "waiting serve-echo:8091"; sleep 2; done
-              until nc -z trace-relay 80; do echo "waiting trace-relay:80"; sleep 2; done
+              until nc -z otel-collector 4317; do echo "waiting otel-collector:4317"; sleep 2; done
       containers:
         - name: traceproof
           image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"
-            - "error"
+            - "info"
             - "traceproof"
-            - "--relay-url"
-            - "http://trace-relay.wamn-system.svc.cluster.local:80"
-            - "--relay-host"
-            - "relay.localhost.direct"
             - "--upstream"
             - "http://serve-echo.wamn-system.svc.cluster.local:8091/"
+          env:
+            # Host spans must carry an OTel context for the W3C propagator to
+            # inject; the collector is the same production path used by 9.1.
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4317" }
+            - { name: OTEL_EXPORTER_OTLP_PROTOCOL, value: "grpc" }
+            - { name: RUST_LOG, value: "error" }
           resources:
             requests: { cpu: "250m", memory: "128Mi" }
             limits: { memory: "256Mi" }
