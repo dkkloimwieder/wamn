@@ -31,6 +31,19 @@ cargo test --locked --offline -p wamn-proof-conformance --lib \
   runtime_inventory::resolved_feature_and_deployed_workload_inventory_is_current -- --exact
 ```
 
+### ExecutionHost deadline re-arm and trap disposal (wamn-8zht.13)
+
+Wasmtime 47 must preserve `ExecutionHost`'s existing per-invocation epoch
+window. Invocation A consumes part of its window, invocation B receives a full
+fresh window, and an interrupted invocation disposes the live instance before
+any later call. NodeRuntime/H9, cancellation, and pooling are excluded.
+
+```bash
+# recipe-test: H5-EXECUTION-DEADLINE | unit | wamn-execution-host | lib | - | - | 8 | crates/execution/host/src/lib.rs per-entry epoch re-arm and trapped-instance disposal
+cargo test --locked -p wamn-execution-host --lib
+cargo test --locked -p wamn-executor -p wamn-proof-integration
+```
+
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable

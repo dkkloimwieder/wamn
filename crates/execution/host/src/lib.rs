@@ -598,7 +598,252 @@ impl ExecutionHost {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+
+    async fn deadline_gate(increments: Arc<[u64]>) -> (ExecutionHost, Arc<AtomicUsize>) {
+        // Each core export calls the host tick, then returns a zeroed canonical-ABI
+        // record encoding its successful component-level result.
+        const COMPONENT: &str = r#"
+            (component
+                (import "tick" (func $tick))
+                (core func $tick-lowered (canon lower (func $tick)))
+                (core module $guest
+                    (import "" "tick" (func $tick))
+                    (memory (export "memory") 1)
+                    (global $next (mut i32) (i32.const 1024))
+                    (func $realloc
+                        (export "realloc")
+                        (param $old i32)
+                        (param $old-size i32)
+                        (param $align i32)
+                        (param $new-size i32)
+                        (result i32)
+                        (local $result i32)
+                        global.get $next
+                        local.tee $result
+                        local.get $new-size
+                        i32.add
+                        global.set $next
+                        local.get $result)
+                    (func $epoch-checkpoint
+                        (local $return i32)
+                        loop $checkpoint
+                            local.get $return
+                            if
+                                return
+                            end
+                            i32.const 1
+                            local.set $return
+                            br $checkpoint
+                        end)
+                    (func (export "check-flow")
+                        (param i32 i32)
+                        (result i32)
+                        call $tick
+                        call $epoch-checkpoint
+                        i32.const 64
+                        i32.const 0
+                        i32.store
+                        i32.const 68
+                        i32.const 0
+                        i32.store
+                        i32.const 72
+                        i32.const 0
+                        i32.store
+                        i32.const 64)
+                    (func (export "run-next")
+                        (param i64)
+                        (result i32)
+                        call $tick
+                        call $epoch-checkpoint
+                        i32.const 64
+                        i32.const 0
+                        i32.store
+                        i32.const 68
+                        i32.const 0
+                        i32.store
+                        i32.const 72
+                        i32.const 0
+                        i32.store
+                        i32.const 76
+                        i32.const 0
+                        i32.store
+                        i32.const 80
+                        i32.const 0
+                        i32.store
+                        i32.const 84
+                        i32.const 0
+                        i32.store
+                        i32.const 64)
+                    (func (export "execute-claimed")
+                        (param i32 i32 i32 i32 i64 i64)
+                        (result i32)
+                        call $tick
+                        call $epoch-checkpoint
+                        i32.const 64
+                        i32.const 0
+                        i32.store
+                        i32.const 68
+                        i32.const 0
+                        i32.store
+                        i32.const 72
+                        i32.const 0
+                        i32.store
+                        i32.const 64))
+                (core instance $guest
+                    (instantiate $guest
+                        (with "" (instance
+                            (export "tick" (func $tick-lowered))))))
+                (func (export "check-flow")
+                    (param "flow" string)
+                    (result (result (list string) (error string)))
+                    (canon lift
+                        (core func $guest "check-flow")
+                        (memory $guest "memory")
+                        (realloc (func $guest "realloc"))))
+                (func (export "run-next")
+                    (param "ttl-ms" u64)
+                    (result (result (tuple bool (option string) u32) (error string)))
+                    (canon lift
+                        (core func $guest "run-next")
+                        (memory $guest "memory")
+                        (realloc (func $guest "realloc"))))
+                (func (export "execute-claimed")
+                    (param "run-id" string)
+                    (param "lease-owner" string)
+                    (param "lease-generation" s64)
+                    (param "ttl-ms" u64)
+                    (result (result u32 (error string)))
+                    (canon lift
+                        (core func $guest "execute-claimed")
+                        (memory $guest "memory")
+                        (realloc (func $guest "realloc"))))
+            )
+        "#;
+
+        let engine = wamn_runtime::engine::build_engine(&[]).expect("deadline gate engine");
+        let raw = engine.inner();
+        let bytes = wat::parse_str(COMPONENT).expect("encode deadline gate component");
+        let component =
+            WasmtimeComponent::new(raw, bytes).expect("compile deadline gate component");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut linker: Linker<SharedCtx> = Linker::new(raw);
+        linker
+            .root()
+            .func_wrap("tick", {
+                let calls = calls.clone();
+                let increments = increments.clone();
+                let raw = raw.clone();
+                move |_caller, (): ()| {
+                    let call = calls.fetch_add(1, Ordering::SeqCst);
+                    for _ in 0..increments.get(call).copied().unwrap_or_default() {
+                        raw.increment_epoch();
+                    }
+                    Ok(())
+                }
+            })
+            .expect("link deadline gate tick");
+        let ctx = Ctx::builder("deadline-gate".to_string(), "deadline-gate".to_string()).build();
+        let mut store = Store::new(raw, SharedCtx::new(ctx));
+        store.set_epoch_deadline(deadline_ticks(40));
+        let instance = linker
+            .instantiate_async(&mut store, &component)
+            .await
+            .expect("instantiate deadline gate");
+        let check_flow = instance
+            .get_typed_func(&mut store, "check-flow")
+            .expect("typed check-flow gate");
+        let run_next = instance
+            .get_typed_func(&mut store, "run-next")
+            .expect("typed run-next gate");
+        let execute_claimed = instance
+            .get_typed_func(&mut store, "execute-claimed")
+            .expect("typed execute-claimed gate");
+
+        (
+            ExecutionHost {
+                live: Some(LiveExecution {
+                    store,
+                    check_flow,
+                    run_next,
+                    execute_claimed,
+                }),
+                ttl_ms: 40,
+                mem: None,
+            },
+            calls,
+        )
+    }
+
+    #[tokio::test]
+    async fn invocation_b_receives_a_fresh_epoch_window_after_a_consumes_ticks() {
+        let (mut host, calls) = deadline_gate(Arc::from([2, 3])).await;
+
+        host.check_flow("invocation-a")
+            .await
+            .expect("A remains inside its four-tick window after consuming two ticks");
+        host.check_flow("invocation-b")
+            .await
+            .expect("B has four fresh ticks, not the two remaining from A");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn trapped_call_disposes_instance_before_later_invocation() {
+        let (mut host, calls) = deadline_gate(Arc::from([5, 0])).await;
+
+        let trapped = host
+            .check_flow("interrupt")
+            .await
+            .expect_err("advancing past the four-tick window interrupts the invocation");
+        assert!(trapped.to_string().contains("check-flow trapped"));
+        assert!(trapped.to_string().contains("execution instance disposed"));
+        assert!(host.is_disposed());
+
+        let later = host
+            .check_flow("must-not-reuse")
+            .await
+            .expect_err("a later invocation cannot reuse the trapped instance");
+        assert_eq!(later.to_string(), "execution instance disposed");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the later call never enters the trapped guest"
+        );
+    }
+
+    fn method_source<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        let start = source.find(start).expect("method start");
+        let end = source[start..].find(end).expect("next method") + start;
+        &source[start..end]
+    }
+
+    #[test]
+    fn check_flow_rearms_before_calling_the_guest() {
+        let source = include_str!("lib.rs");
+        let method = method_source(source, "pub async fn check_flow", "async fn call_run_next");
+        assert!(method.contains("live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));"));
+    }
+
+    #[test]
+    fn run_next_rearms_before_calling_the_guest() {
+        let source = include_str!("lib.rs");
+        let method = method_source(
+            source,
+            "async fn call_run_next",
+            "pub async fn execute_claimed",
+        );
+        assert!(method.contains("live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));"));
+    }
+
+    #[test]
+    fn execute_claimed_rearms_before_calling_the_guest() {
+        let source = include_str!("lib.rs");
+        let method = method_source(source, "pub async fn execute_claimed", "pub async fn drain");
+        assert!(method.contains("live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));"));
+    }
 
     /// wamn-yf3: the run-path wasi:logging claim is HOST-INJECTED — the
     /// registration keys the runner's own `(tenant, project)` under the component
