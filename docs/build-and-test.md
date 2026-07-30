@@ -44,6 +44,19 @@ cargo test --locked -p wamn-execution-host --lib
 cargo test --locked -p wamn-executor -p wamn-proof-integration
 ```
 
+### allowIpNameLookup runtime primitive (wamn-8zht.16)
+
+The gate exercises exact, wildcard, literal-IP, and default-empty behavior
+through the pinned runtime's public matcher. It resolves the pinned fork source
+and proves that P2/P3 TCP and UDP operations remain governed by the independent
+raw-socket policy when lookup is approved. Workload-generation exposure and
+socket-patch retirement remain separate post-upgrade work.
+
+```bash
+# recipe-test: H5-IP-NAME-LOOKUP | conformance | wamn-proof-conformance | lib | - | ip_name_lookup:: | 6 | pinned runtime exact/wildcard/literal-IP/default [] behavior and P2/P3 TCP/UDP dominance
+cargo test --locked --offline -p wamn-proof-conformance --lib ip_name_lookup::
+```
+
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable

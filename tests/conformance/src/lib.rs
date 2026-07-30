@@ -14,6 +14,9 @@ pub mod testgate;
 mod docker_component_provenance;
 
 #[cfg(test)]
+mod ip_name_lookup;
+
+#[cfg(test)]
 mod manifest_dependencies;
 
 #[cfg(test)]
