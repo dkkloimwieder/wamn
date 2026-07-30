@@ -21,7 +21,7 @@
 //!
 //! PoC shortcuts and where the real work is tracked: catalog re-read instead of
 //! a NATS doorbell -> wamn-m2z [5.14]; minimal ad-hoc flow JSON -> wamn-34t
-//! [5.1]; webhook-in/respond modeled as walk input/return (no HTTP server) ->
+//! [5.1]; request/respond modeled as walk input/return (no HTTP server) ->
 //! trigger dispatch in wamn-m2z [5.14] + production runner wamn-uyd [5.2].
 
 use std::path::PathBuf;
@@ -107,20 +107,19 @@ pub fn flow_json(version: u32) -> String {
     let op = if version == 1 { "upper" } else { "reverse" };
     format!(
         r#"{{"schema-version":"0.1","flow-id":"{FIXTURE_FLOW_ID}","version":{version},
-            "trigger":{{"type":"webhook","sync":true}},"entry":"in",
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
+              {{"id":"in","type":"request","config":{{"input-schema":true}}}},
               {{"id":"t","type":"transform","config":{{"op":"{op}"}}}},
               {{"id":"w","type":"pg-write"}},
               {{"id":"c","type":"conditional","config":{{"min-len":3}}}},
-              {{"id":"out","type":"respond"}}
+              {{"id":"out","type":"respond","config":{{"status":200}}}}
             ],
             "edges":[{{"from":"in","to":"t"}},{{"from":"t","to":"w"}},
                      {{"from":"w","to":"c"}},{{"from":"c","to":"out"}}]}}"#
     )
 }
 
-/// The S6 fixture flow: `webhook-in -> delay(delay-secs) -> http-call(url) ->
+/// The S6 fixture flow: `request -> delay(delay-secs) -> http-call(url) ->
 /// pg-write -> respond` (used by testhostbench through this module).
 pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
     // http_url is a controlled harness value (a loopback URL); escape the two
@@ -149,7 +148,7 @@ pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
     )
 }
 
-/// A TWO-delay `poc-s6` fixture: `webhook-in -> delay(d1) -> delay(d2) ->
+/// A TWO-delay `poc-s6` fixture: `request -> delay(d1) -> delay(d2) ->
 /// pg-write -> respond` (wamn-2jkm.51). Both delays use the same `delay_secs`.
 /// The two delay nodes must park INDEPENDENTLY: after the first elapses the
 /// second must actually delay (park again), never inherit the first's stale
@@ -158,13 +157,12 @@ pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
 pub fn flow_json_s6_twodelay(delay_secs: u64) -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,
-            "trigger":{{"type":"webhook"}},"entry":"in",
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
+              {{"id":"in","type":"request","config":{{"input-schema":true}}}},
               {{"id":"d1","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
               {{"id":"d2","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
               {{"id":"w","type":"pg-write"}},
-              {{"id":"out","type":"respond"}}
+              {{"id":"out","type":"respond","config":{{"status":200}}}}
             ],
             "edges":[{{"from":"in","to":"d1"}},{{"from":"d1","to":"d2"}},
                      {{"from":"d2","to":"w"}},{{"from":"w","to":"out"}}]}}"#
@@ -669,8 +667,84 @@ async fn resume_phase(
 }
 
 #[cfg(test)]
-mod s6_fixture_tests {
-    use super::flow_json_s6;
+mod fixture_tests {
+    use super::{FIXTURE_FLOW_ID, flow_json, flow_json_s6, flow_json_s6_twodelay};
+
+    fn assert_no_legacy_entry_fields(definition: &serde_json::Value) {
+        assert!(definition.get("trigger").is_none());
+        assert!(definition.get("entry").is_none());
+    }
+
+    #[test]
+    fn primary_fixture_parses_with_typed_request_entry() {
+        for (version, op) in [(1, "upper"), (2, "reverse")] {
+            let fixture = flow_json(version);
+            let flow =
+                wamn_flow::Flow::from_json(&fixture).expect("primary flowbench fixture parses");
+            let definition: serde_json::Value =
+                serde_json::from_str(&fixture).expect("primary flowbench fixture is JSON");
+
+            assert_no_legacy_entry_fields(&definition);
+            assert_eq!(flow.flow_id, FIXTURE_FLOW_ID);
+            assert_eq!(flow.version, version);
+            assert_eq!(
+                flow.entry_node()
+                    .map(|node| (node.id.as_str(), node.node_type.as_str())),
+                Some(("in", "request"))
+            );
+            assert_eq!(
+                flow.nodes
+                    .iter()
+                    .map(|node| node.node_type.as_str())
+                    .collect::<Vec<_>>(),
+                ["request", "transform", "pg-write", "conditional", "respond"]
+            );
+            assert_eq!(flow.nodes[1].config["op"], op);
+            assert_eq!(flow.nodes[4].config["status"], 200);
+            assert_eq!(
+                flow.edges
+                    .iter()
+                    .map(|edge| (edge.from.as_str(), edge.to.as_str()))
+                    .collect::<Vec<_>>(),
+                [("in", "t"), ("t", "w"), ("w", "c"), ("c", "out")]
+            );
+        }
+    }
+
+    #[test]
+    fn two_delay_fixture_parses_with_typed_request_entry() {
+        let fixture = flow_json_s6_twodelay(7);
+        let flow =
+            wamn_flow::Flow::from_json(&fixture).expect("two-delay flowbench fixture parses");
+        let definition: serde_json::Value =
+            serde_json::from_str(&fixture).expect("two-delay flowbench fixture is JSON");
+
+        assert_no_legacy_entry_fields(&definition);
+        assert_eq!(flow.flow_id, "poc-s6");
+        assert_eq!(flow.version, 1);
+        assert_eq!(
+            flow.entry_node()
+                .map(|node| (node.id.as_str(), node.node_type.as_str())),
+            Some(("in", "request"))
+        );
+        assert_eq!(
+            flow.nodes
+                .iter()
+                .map(|node| node.node_type.as_str())
+                .collect::<Vec<_>>(),
+            ["request", "delay", "delay", "pg-write", "respond"]
+        );
+        assert_eq!(flow.nodes[1].config["delay-secs"], 7);
+        assert_eq!(flow.nodes[2].config["delay-secs"], 7);
+        assert_eq!(flow.nodes[4].config["status"], 200);
+        assert_eq!(
+            flow.edges
+                .iter()
+                .map(|edge| (edge.from.as_str(), edge.to.as_str()))
+                .collect::<Vec<_>>(),
+            [("in", "d1"), ("d1", "d2"), ("d2", "w"), ("w", "out")]
+        );
+    }
 
     #[test]
     fn s6_flow_declares_its_controlled_http_authority() {
@@ -684,7 +758,6 @@ mod s6_fixture_tests {
             flow.entry_node().map(|node| node.node_type.as_str()),
             Some("request")
         );
-        assert!(definition.get("trigger").is_none());
-        assert!(definition.get("entry").is_none());
+        assert_no_legacy_entry_fields(&definition);
     }
 }
