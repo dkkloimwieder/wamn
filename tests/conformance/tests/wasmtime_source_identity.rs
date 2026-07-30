@@ -1,4 +1,4 @@
-//! Guards the single workspace-owned Wasmtime source and type universe.
+//! Guards the workspace-owned Wasmtime and async-nats type universes.
 
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -6,9 +6,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const WASMTIME_GIT: &str = "https://github.com/bytecodealliance/wasmtime";
-const WASMTIME_REV: &str = "7535c0255b2b84f6ae4de6034649ba2eeda84173";
-const RESOLVED_SOURCE: &str = "git+https://github.com/bytecodealliance/wasmtime?rev=7535c0255b2b84f6ae4de6034649ba2eeda84173#7535c0255b2b84f6ae4de6034649ba2eeda84173";
+const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
+const WASMTIME_VERSION: &str = "47.0.1";
+const ASYNC_NATS_VERSION: &str = "0.49.1";
 
 const DIRECT_CONSUMERS: [(&str, &[&str]); 6] = [
     (
@@ -45,6 +45,7 @@ struct CargoMetadata {
 struct CargoPackage {
     id: String,
     name: String,
+    version: String,
     manifest_path: String,
     source: Option<String>,
 }
@@ -68,6 +69,7 @@ struct CargoDependency {
 #[derive(Debug)]
 struct LockPackage {
     name: String,
+    version: String,
     source: Option<String>,
 }
 
@@ -142,6 +144,7 @@ fn lock_packages(lock_path: &Path) -> Vec<LockPackage> {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", lock_path.display()));
     let mut packages = Vec::new();
     let mut name = None;
+    let mut version = None;
     let mut package_source = None;
 
     for line in source.lines().chain(["[[package]]"].into_iter()) {
@@ -149,6 +152,9 @@ fn lock_packages(lock_path: &Path) -> Vec<LockPackage> {
             if let Some(name) = name.take() {
                 packages.push(LockPackage {
                     name,
+                    version: version
+                        .take()
+                        .expect("Cargo.lock package must declare a version"),
                     source: package_source.take(),
                 });
             }
@@ -156,6 +162,8 @@ fn lock_packages(lock_path: &Path) -> Vec<LockPackage> {
         }
         if let Some(value) = line.strip_prefix("name = \"") {
             name = value.strip_suffix('"').map(str::to_owned);
+        } else if let Some(value) = line.strip_prefix("version = \"") {
+            version = value.strip_suffix('"').map(str::to_owned);
         } else if let Some(value) = line.strip_prefix("source = \"") {
             package_source = value.strip_suffix('"').map(str::to_owned);
         }
@@ -166,10 +174,10 @@ fn lock_packages(lock_path: &Path) -> Vec<LockPackage> {
 
 fn assert_single_wasmtime_family<'a>(
     origin: &str,
-    packages: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+    packages: impl Iterator<Item = (&'a str, &'a str, Option<&'a str>)>,
 ) {
     let family: Vec<_> = packages
-        .filter(|(name, _)| name == &"wasmtime" || name.starts_with("wasmtime-"))
+        .filter(|(name, _, _)| name == &"wasmtime" || name.starts_with("wasmtime-"))
         .collect();
     assert!(
         !family.is_empty(),
@@ -178,23 +186,62 @@ fn assert_single_wasmtime_family<'a>(
 
     let sources: BTreeSet<_> = family
         .iter()
-        .map(|(name, source)| {
+        .map(|(name, _, source)| {
             source.unwrap_or_else(|| panic!("{origin} package {name} has no external source"))
         })
         .collect();
     assert_eq!(
         sources,
-        BTreeSet::from([RESOLVED_SOURCE]),
+        BTreeSet::from([CRATES_IO_SOURCE]),
         "{origin} resolves multiple or non-canonical Wasmtime source identities"
     );
 
-    for required in ["wasmtime", "wasmtime-wasi", "wasmtime-wasi-http"] {
-        let matches = family.iter().filter(|(name, _)| *name == required).count();
+    let versions: BTreeSet<_> = family.iter().map(|(_, version, _)| *version).collect();
+    assert_eq!(
+        versions,
+        BTreeSet::from([WASMTIME_VERSION]),
+        "{origin} resolves multiple or non-canonical Wasmtime versions"
+    );
+
+    for required in [
+        "wasmtime",
+        "wasmtime-wasi",
+        "wasmtime-wasi-http",
+        "wasmtime-wasi-io",
+    ] {
+        let matches = family
+            .iter()
+            .filter(|(name, _, _)| *name == required)
+            .count();
         assert_eq!(
             matches, 1,
             "{origin} must resolve exactly one `{required}` package"
         );
     }
+}
+
+fn assert_single_async_nats<'a>(
+    origin: &str,
+    packages: impl Iterator<Item = (&'a str, &'a str, Option<&'a str>)>,
+) {
+    let resolved: Vec<_> = packages
+        .filter(|(name, _, _)| name == &"async-nats")
+        .collect();
+    assert_eq!(
+        resolved.len(),
+        1,
+        "{origin} must resolve exactly one `async-nats` package"
+    );
+    let (_, version, source) = resolved[0];
+    assert_eq!(
+        version, ASYNC_NATS_VERSION,
+        "{origin} must resolve async-nats {ASYNC_NATS_VERSION}"
+    );
+    assert_eq!(
+        source,
+        Some(CRATES_IO_SOURCE),
+        "{origin} must resolve async-nats from crates.io"
+    );
 }
 
 #[test]
@@ -203,11 +250,11 @@ fn direct_wasmtime_consumers_inherit_workspace_source_contract() {
     let workspace = dependency_declarations(&root.join("Cargo.toml"), "workspace.dependencies");
 
     for dependency in ["wasmtime-wasi", "wasmtime-wasi-http"] {
-        let expected = format!("{{git=\"{WASMTIME_GIT}\",rev=\"{WASMTIME_REV}\"}}");
+        let expected = format!("\"{WASMTIME_VERSION}\"");
         assert_eq!(
             workspace.get(dependency),
             Some(&expected),
-            "workspace must own the canonical `{dependency}` Git revision"
+            "workspace must own the canonical `{dependency}` registry version"
         );
     }
 
@@ -240,16 +287,25 @@ fn resolved_wasmtime_type_universe_is_single_and_canonical() {
 
     assert_single_wasmtime_family(
         "cargo metadata",
-        metadata
-            .packages
-            .iter()
-            .map(|package| (package.name.as_str(), package.source.as_deref())),
+        metadata.packages.iter().map(|package| {
+            (
+                package.name.as_str(),
+                package.version.as_str(),
+                package.source.as_deref(),
+            )
+        }),
     );
     assert_single_wasmtime_family(
         "Cargo.lock",
         lock_packages(&root.join("Cargo.lock"))
             .iter()
-            .map(|package| (package.name.as_str(), package.source.as_deref())),
+            .map(|package| {
+                (
+                    package.name.as_str(),
+                    package.version.as_str(),
+                    package.source.as_deref(),
+                )
+            }),
     );
 
     let mut actual_direct = BTreeMap::<String, BTreeSet<String>>::new();
@@ -290,5 +346,41 @@ fn resolved_wasmtime_type_universe_is_single_and_canonical() {
         actual_direct,
         expected_direct_dependencies(),
         "retained direct Wasmtime consumers or their required host interfaces drifted"
+    );
+}
+
+#[test]
+fn resolved_async_nats_universe_is_single_and_canonical() {
+    let root = repository();
+    let workspace = dependency_declarations(&root.join("Cargo.toml"), "workspace.dependencies");
+    let expected = format!("{{version=\"{ASYNC_NATS_VERSION}\",default-features=false}}");
+    assert_eq!(
+        workspace.get("async-nats").map(String::as_str),
+        Some(expected.as_str()),
+        "workspace must own the canonical async-nats registry version"
+    );
+
+    let metadata = cargo_metadata(&root);
+    assert_single_async_nats(
+        "cargo metadata",
+        metadata.packages.iter().map(|package| {
+            (
+                package.name.as_str(),
+                package.version.as_str(),
+                package.source.as_deref(),
+            )
+        }),
+    );
+    assert_single_async_nats(
+        "Cargo.lock",
+        lock_packages(&root.join("Cargo.lock"))
+            .iter()
+            .map(|package| {
+                (
+                    package.name.as_str(),
+                    package.version.as_str(),
+                    package.source.as_deref(),
+                )
+            }),
     );
 }
