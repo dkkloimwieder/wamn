@@ -19,13 +19,12 @@ to consume it; the fork is where our carried commits live.
   `workspace = true`.
 - **Features:** `default-features = false, features = ["washlet",
   "wasi-config", "wasi-logging", "wasi-otel"]`. Default features pull
-  `wasi-webgpu`, which drags a *crates.io* wasmtime alongside the workspace's
-  git-pinned one — two wasmtimes = linker typecheck failures.
-- **wasmtime alignment:** wamn-host pins `wasmtime-wasi`/`wasmtime-wasi-http`
-  to the exact git rev the fork's workspace uses (currently
-  `7535c0255b2b84f6ae4de6034649ba2eeda84173`, wasmtime 46.0.0) so the graph
-  carries **one** wasmtime. Re-verify on every rev bump:
-  `grep -c '^name = "wasmtime"$' Cargo.lock` must be 1.
+  `wasi-webgpu`, which remains excluded from the base upgrade; disabling
+  defaults is feature posture, not a source-identity workaround.
+- **Wasmtime alignment:** wamn and `wash-runtime` resolve one crates.io
+  Wasmtime 47.0.1 family. Re-verify that production and proof packages retain
+  that single type universe on every rev bump with the executable gate:
+  `cargo test -p wamn-proof-conformance --test wasmtime_source_identity`.
 
 This replaces the earlier vendoring mechanism (`scripts/vendor-wasmcloud.sh` +
 `patches/` + a `[patch]` redirect into a gitignored `vendor/` checkout),
@@ -88,10 +87,13 @@ git cherry-pick <epoch-commit> [<limiter-commit> ...]
 git push -u origin wamn/X.Y.Z
 ```
 
-Then in wamn: bump `rev` to the new branch tip, re-align the wasmtime pin to
-the new workspace's line, `cargo update -p wash-runtime`, rebuild, and run the
-**upgrade gate subset** — deliberately not all of P0, just the fork-load-bearing
-behaviors:
+Then in wamn: bump `rev` to the new branch tip, re-align the workspace's
+crates.io `wasmtime-wasi` and `wasmtime-wasi-http` versions to the exact
+release `wash-runtime` resolves, and run
+`cargo update -p wash-runtime`. Before rebuilding, run
+`cargo test -p wamn-proof-conformance --test wasmtime_source_identity`; then
+run the **upgrade gate subset** — deliberately not all of P0, just the
+fork-load-bearing behaviors:
 
 - **S1:** instantiation p50/p99 + cap-kill + the epoch-deadline demo
   (`wamn-gates bench`) — phase 4 is the regression that the epoch commit is

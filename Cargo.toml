@@ -12,9 +12,9 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # Upstream v2.6.0 plus the policies recorded in
 # docs/wash-runtime-fork.md. The ledger is authoritative.
-# default-features off: `wasi-webgpu` pulls crates.io wasmtime alongside the
-# workspace's git-pinned one (two wasmtimes = linker typecheck failures upstream
-# solves with a [patch] we'd otherwise have to replicate).
+# default-features off keeps the excluded `wasi-webgpu` surface disabled.
+# wamn and wash-runtime resolve one crates.io Wasmtime 47.0.1 family; enforce
+# that contract with tests/conformance/tests/wasmtime_source_identity.rs.
 wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "0928c3ecdc56d1674cab90b66125b06d58145e22", default-features = false }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
 wasmtime-wasi = "47.0.1"
