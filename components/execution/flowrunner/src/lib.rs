@@ -51,7 +51,9 @@ use std::cell::RefCell;
 use std::time::Instant;
 
 use serde_json::{Value, json};
-use wamn_flow::{Flow, InvokeActorMode, InvokeFlowConfig, canonical_json_sha256};
+use wamn_flow::{
+    Flow, InvokeActorMode, InvokeFlowConfig, ResolvedInterfaces, canonical_json_sha256,
+};
 use wamn_node_sdk as sdk;
 use wamn_run_state::attempt::{AttemptDispatchResult, AttemptStartResult, RecoveryClass};
 use wamn_run_state::child::{
@@ -74,8 +76,8 @@ use wamn_run_state::queue::{
 };
 use wamn_runner::{
     CallerState, Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState,
-    ExecutionStatus, NodeError, NodeOutcome, Plan, RateLimitDetail, ReservedStep, RetryPolicy,
-    Step, ThrottleKey,
+    ExecutionStatus, MAIN_PORT, NodeError, NodeOutcome, Plan, RateLimitDetail, ReservedStep,
+    RetryPolicy, Step, ThrottleKey,
 };
 
 use wamn_node_invoke::{
@@ -1237,6 +1239,18 @@ fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
     }
 }
 
+/// Output ports for the legacy S3 fixture nodes compiled inside this component.
+///
+/// Production execution resolves interfaces from the release's pinned artifact
+/// bundle; this map exists only for the S3 benchmark and direct fixture paths.
+fn s3_fixture_interfaces() -> ResolvedInterfaces {
+    ResolvedInterfaces::from([
+        ("conditional".to_string(), vec![MAIN_PORT.to_string()]),
+        ("pg-write".to_string(), vec![MAIN_PORT.to_string()]),
+        ("transform".to_string(), vec![MAIN_PORT.to_string()]),
+    ])
+}
+
 fn check_flow(flow_json: &str) -> Result<Vec<String>, String> {
     let flow = Flow::from_json(flow_json).map_err(|error| format!("check flow: {error}"))?;
     let mut unsupported: Vec<String> = flow
@@ -1598,7 +1612,8 @@ fn execute(
     };
     declare_run_grant(&flow);
     declare_run_egress(&flow);
-    let plan = Plan::compile(&flow, &Default::default()).map_err(|e| e.to_string())?;
+    let interfaces = s3_fixture_interfaces();
+    let plan = Plan::compile(&flow, &interfaces).map_err(|e| e.to_string())?;
     let version = plan.version();
 
     // Reconstruct the frontier from what already completed (empty on a fresh run
@@ -3424,7 +3439,8 @@ fn bench_walk(plan: &Plan, mut on_step: impl FnMut(&Dispatch, NodeOutcome, &mut 
 impl Guest for Component {
     fn dispatch_bench(iterations: u32, flow_json: String) -> Result<(u64, Vec<u32>), String> {
         let flow = Flow::from_json(&flow_json).map_err(|e| format!("bench flow: {e}"))?;
-        let plan = Plan::compile(&flow, &Default::default()).map_err(|e| e.to_string())?;
+        let interfaces = s3_fixture_interfaces();
+        let plan = Plan::compile(&flow, &interfaces).map_err(|e| e.to_string())?;
         let iters = iterations.max(1) as usize;
 
         // Warm up (page in, settle the branch predictor) before measuring.
@@ -3551,6 +3567,34 @@ mod tests {
             check_flow(flow).unwrap(),
             vec!["a-unsupported".to_string(), "z-unsupported".to_string()]
         );
+    }
+
+    #[test]
+    fn s3_fixture_interfaces_compile_the_legacy_main_path() {
+        let flow = Flow::from_json(
+            r#"{
+                "schema-version":"0.1",
+                "flow-id":"poc-receipt",
+                "version":1,
+                "nodes":[
+                    {"id":"in","type":"request","config":{"input-schema":true}},
+                    {"id":"t","type":"transform","config":{"op":"upper"}},
+                    {"id":"w","type":"pg-write"},
+                    {"id":"c","type":"conditional","config":{"min-len":3}},
+                    {"id":"out","type":"respond","config":{"status":200}}
+                ],
+                "edges":[
+                    {"from":"in","to":"t"},
+                    {"from":"t","to":"w"},
+                    {"from":"w","to":"c"},
+                    {"from":"c","to":"out"}
+                ]
+            }"#,
+        )
+        .expect("S3 fixture parses");
+
+        Plan::compile(&flow, &s3_fixture_interfaces())
+            .expect("legacy S3 fixture compiles with its explicit interfaces");
     }
 
     #[test]
