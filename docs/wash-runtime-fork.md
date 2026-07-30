@@ -8,9 +8,10 @@ dependency. Upstream is `publish = false`, so a git dependency is the only way
 to consume it; the fork is where our carried commits live.
 
 - **Branch naming:** `wamn/X.Y.Z` = upstream release `runtime-operator/vX.Y.Z`
-  + the carried wamn commits on top. Current: `wamn/2.5.2` = upstream v2.5.2
-  (`ec012da`) + the epoch-deadline, memory-limiter, and outbound-traceparent
-  commits.
+  + the carried wamn commits on top. Current: `wamn/2.6.0` = upstream v2.6.0
+  (`9bf8e97`) + seven carried policy commits: epoch deadline, memory limiter,
+  outbound trace context, raw TCP denial, limiter accessors, inbound API
+  request counting, and raw UDP denial.
 - **The pin:** `workspace.dependencies.wash-runtime.rev` in the root
   `Cargo.toml` — the **single source of truth**. Pin a **rev** (immutable),
   never a branch name (branches move); the branch's existence on the fork is
@@ -37,7 +38,7 @@ The fork carries **host-integration commits only** — things upstream should
 arguably own. wamn features never land there. Each commit records its **exit
 condition**: the upstream change that makes it deletable.
 
-| Commit (on `wamn/2.5.2`) | What / why | Exit condition |
+| Commit (on `wamn/2.6.0`) | What / why | Exit condition |
 |---|---|---|
 | `7bf5e9ab` "fix(wash-runtime): restore epoch deadline policy (wamn-8zht.2)" | Functional. On v2.6.0, `new_store_from_templates` remains the single production policy call site for enabled workload-store paths. It gives every newly created store a finite epoch deadline: the active component's `wamn.epoch-deadline-ticks` config, else `WAMN_EPOCH_DEADLINE_TICKS`, else effectively unbounded (`u64::MAX / 2`; `u64::MAX` would wrap in `current_epoch + delta`). Without it, Wasmtime's default deadline is 0 and epoch-enabled stores trap on the first tick. Warm pooling, trigger/service adoption, and host-component plugin stores remain disabled in the base upgrade; reusable-store adoption must re-arm the deadline per checkout. `NodeRuntime` is unchanged. One production call site is preserved by design to minimize rebase drift. | upstream ships native epoch-deadline support — delete the commit (the wamn-host ticker/config side stays as-is) |
 | `a2a1ef16` "fix(wash-runtime): restore memory limiter policy (wamn-8zht.3)" | Functional. On v2.6.0, `new_store_from_templates` remains the single production policy call site for enabled workload-store paths. It resolves the active component's per-linear-memory budget from first-class `memory_limit_mb`, else `wamn.memory-limit-mb` config, else `WAMN_MEMORY_LIMIT_MB`; only a configured budget attaches `WamnStoreLimiter` through `Store::limiter`, so unbudgeted stores retain upstream behavior. Growth above budget is denied, logged on `wamn::memory`, and counted; a fixed 500,000-element table cap rides with budgeted stores. A budget above host-advertised `WAMN_MEMORY_CEILING_MB` fails store construction descriptively and is never clamped. Warm pooling, trigger/service adoption, and host-component plugins remain disabled in the base upgrade; aggregate `pool_size × budget` enforcement is a reusable-store adoption prerequisite. `NodeRuntime` is unchanged. | upstream plumbs `memory_limit_mb` into a Store limiter — delete the commit |

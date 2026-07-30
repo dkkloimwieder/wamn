@@ -239,8 +239,9 @@ gates." Until it holds, every **Done when** below is unfalsifiable.
   carried commit on consecutive syncs.*
 
 **The v2.6.0 upgrade is a one-time prerequisite, not routine sync** — plan in
-`wasmcloud-2.6.0-upgrade.md`. It precedes items 1 and 2A because both are built *against*
-the runtime; doing them on 2.5.2 and re-porting is rework in the two most expensive items.
+`docs/PLAN/WASMCLOUD-UPGRADE-2.6.0.md`. It precedes items 1 and 2A because both are
+built *against* the runtime; doing them on 2.5.2 and re-porting is rework in the two most
+expensive items.
 It is a **policy re-port**, not a dependency bump: upstream reworked the same files the fork
 patches. It also puts P3 on the table for item 1's streaming decision.
 
