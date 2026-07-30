@@ -69,7 +69,7 @@ pub struct FlowBenchArgs {
     #[arg(long, value_enum, default_value_t = Mode::All)]
     pub mode: Mode,
 
-    /// Standard-only graph walks for the dispatch gate (× 5 nodes = samples)
+    /// Standard-only graph walks for the dispatch gate
     #[arg(long, default_value_t = 200_000)]
     pub dispatch_iters: u32,
 
@@ -440,14 +440,70 @@ async fn preflight(plugin: &Arc<WamnPostgres>) -> anyhow::Result<()> {
 // dispatch
 // ---------------------------------------------------------------------------
 
+/// The unchanged S3 dispatch latency ceiling.
+const DISPATCH_P99_NS: u64 = 50_000;
+
+fn walk_dispatches(flow: &wamn_flow::Flow) -> u64 {
+    flow.nodes
+        .iter()
+        .filter(|node| {
+            node.entry_kind().is_none() && !matches!(node.node_type.as_str(), "respond" | "fail")
+        })
+        .count() as u64
+}
+
+fn dispatch_passes(flow: &wamn_flow::Flow, iterations: u32, count: u64, p99_ns: u64) -> bool {
+    p99_ns < DISPATCH_P99_NS && count == u64::from(iterations) * walk_dispatches(flow)
+}
+
+#[cfg(test)]
+mod dispatch_cardinality_tests {
+    use super::{DISPATCH_P99_NS, dispatch_passes, walk_dispatches};
+
+    #[test]
+    fn typed_s3_verdict_requires_three_dispatches_per_walk() {
+        let flow = wamn_flow::Flow::from_json(
+            r#"{
+                "schema-version":"0.1",
+                "flow-id":"poc-receipt",
+                "version":2,
+                "nodes":[
+                    {"id":"in","type":"request","config":{"input-schema":true}},
+                    {"id":"t","type":"transform","config":{"op":"reverse"}},
+                    {"id":"w","type":"pg-write"},
+                    {"id":"c","type":"conditional","config":{"min-len":3}},
+                    {"id":"out","type":"respond","config":{"status":200}}
+                ],
+                "edges":[
+                    {"from":"in","to":"t"},
+                    {"from":"t","to":"w"},
+                    {"from":"w","to":"c"},
+                    {"from":"c","to":"out"}
+                ]
+            }"#,
+        )
+        .expect("typed S3 fixture parses");
+
+        assert_eq!(walk_dispatches(&flow), 3);
+        assert!(dispatch_passes(&flow, 2, 6, DISPATCH_P99_NS - 1));
+        assert!(!dispatch_passes(&flow, 2, 10, DISPATCH_P99_NS - 1));
+        assert!(!dispatch_passes(&flow, 2, 4, DISPATCH_P99_NS - 1));
+        assert!(!dispatch_passes(&flow, 2, 6, DISPATCH_P99_NS));
+    }
+}
+
 async fn dispatch_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Result<bool> {
+    let definition = flow_json(2);
+    let flow =
+        wamn_flow::Flow::from_json(&definition).context("parse the S3 dispatch fixture flow")?;
+    let per_walk = walk_dispatches(&flow);
     println!(
-        "\n## dispatch — {} standard-only graph walks (× 5 nodes), same-binary",
-        args.dispatch_iters
+        "\n## dispatch — {} standard-only graph walks (× {per_walk} dispatched nodes), same-binary",
+        args.dispatch_iters,
     );
     let mut w = harness.worker(None).await?;
     // The bench walks the v2 fixture flow; the JSON rides in from HERE (SR2).
-    let (bare_ns, mut samples) = w.dispatch(args.dispatch_iters, &flow_json(2)).await?;
+    let (bare_ns, mut samples) = w.dispatch(args.dispatch_iters, &definition).await?;
     let count = samples.len() as u64;
     let mean = bare_ns / count.max(1);
     samples.sort_unstable();
@@ -462,10 +518,10 @@ async fn dispatch_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Resu
         "dispatches = {count}, mean = {mean} ns (amortized), p50 = {p50} ns, p99 = {p99} ns, max = {max} ns"
     );
     println!("(p50/p99/max each include one monotonic-clock read — conservative upper bounds)");
-    let p99_ok = p99 < 50_000; // 50 us
-    let pass = p99_ok && count == args.dispatch_iters as u64 * 5;
+    let expected = u64::from(args.dispatch_iters) * per_walk;
+    let pass = dispatch_passes(&flow, args.dispatch_iters, count, p99);
     println!(
-        "PASS(dispatch p99 < 50us): {pass} (p99 = {:.2} us)",
+        "PASS(dispatch p99 < 50us, dispatches = {expected}): {pass} (p99 = {:.2} us)",
         p99 as f64 / 1000.0
     );
     Ok(pass)
