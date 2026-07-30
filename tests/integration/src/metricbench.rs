@@ -9,11 +9,12 @@
 //! Collector's Prometheus scrape (`:8889`, the metrics analog of `tracebench`'s
 //! Tempo query / `logbench`'s Loki query):
 //!
-//!   1. drive N runs incl. exactly one forced failure -> `wamn_run_executions`
-//!      grows by N and carries an `outcome="failed"` series (success ratio);
+//!   1. drive N normal runs plus exactly one forced failure through the production
+//!      executor -> `wamn_run_executions` grows by N+1 and carries an
+//!      `outcome="failed"` series (success ratio);
 //!   2. seed a queue then run a dispatcher tick -> `wamn_run_queue_depth` > 0,
 //!      then drain -> back to 0;
-//!   3. `wamn_run_drive_duration_ms_count` > 0 (a real per-drive histogram);
+//!   3. `wamn_run_drive_duration_ms_count` grows by N+1 for the same drives;
 //!   4. force a memory-limiter denial -> `wamn_memory_denied` > 0 and
 //!      `wamn_memory_high_water_bytes` reads the ALLOWED size, not the budget;
 //!   5. the run drives' own DB calls surface `wamn_postgres_pool_size` and
@@ -27,7 +28,9 @@
 //! `OTEL_METRIC_EXPORT_INTERVAL=1000` so the periodic reader does not wait a
 //! minute. In-cluster gate of record: `deploy/gates/metricbench-job.yaml`.
 
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -36,6 +39,8 @@ use clap::Args;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::process::{Child, Command};
+use tokio::time::Instant;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{Artifact, NodeImplementation};
 use wamn_flow::Flow;
@@ -43,18 +48,13 @@ use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use crate::dispatcher_process::{DispatcherProcess, ProjectSpec};
-use wamn_execution_host::{ExecutionHost, production_capabilities};
-use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::memory_metrics::global_memory_meter;
-use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
-use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wash_runtime::engine::ctx::WamnStoreLimiter;
 use wash_runtime::wasmtime::ResourceLimiter as _;
 
 /// The metricbench run-plane schema inside its throwaway database.
 const SCHEMA: &str = "wamn_metricbench";
 const TENANT: &str = "metric-tenant";
-const TENANT_METRIC_LABEL: &str = "wamn_tenant=\"metric-tenant\"";
 const OWNER: &str = "metric-bench";
 const CATALOG_ID: &str = "metricbench";
 const CATALOG_VERSION: i32 = 1;
@@ -72,6 +72,10 @@ const MEM_COMPONENT: &str = "metricbench-memhog";
 const CATALOG_DDL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const RUN_STATE_DDL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_DDL: &str = include_str!("../../../deploy/sql/run-queue.sql");
+const EXECUTOR_BINARY_ENV: &str = "WAMN_RUN_WORKER_BIN";
+const EXECUTOR_NATS_URL: &str = "nats://127.0.0.1:1";
+const EXECUTOR_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const RUN_BATCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn fail_flow_json() -> String {
     format!(
@@ -120,6 +124,173 @@ pub struct MetricBenchArgs {
     /// api-gateway calls the in-cluster phase 6 would drive (SKIPPED locally).
     #[arg(long, default_value_t = 5)]
     pub api_calls: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RunBatchStatus {
+    total: i64,
+    completed: i64,
+    failed: i64,
+}
+
+#[derive(Debug)]
+struct ExecutorProcess {
+    child: Child,
+}
+
+impl ExecutorProcess {
+    fn spawn(flowrunner: &Path, database_url: &str, project: &str) -> anyhow::Result<Self> {
+        let binary = executor_binary();
+        let mut command = executor_command(&binary, flowrunner, database_url, project);
+        command
+            .kill_on_drop(true)
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        let child = command
+            .spawn()
+            .with_context(|| format!("launch executor process {}", binary.to_string_lossy()))?;
+        Ok(Self { child })
+    }
+
+    async fn wait_for_batch(
+        &mut self,
+        client: &Client,
+        run_prefix: &str,
+        expected: RunBatchStatus,
+    ) -> anyhow::Result<RunBatchStatus> {
+        let deadline = Instant::now() + RUN_BATCH_TIMEOUT;
+        loop {
+            let observed = run_batch_status(client, run_prefix).await?;
+            if observed == expected {
+                return Ok(observed);
+            }
+            if let Some(status) = self
+                .child
+                .try_wait()
+                .context("poll executor while waiting for run batch")?
+            {
+                bail!(
+                    "executor exited {status} before {run_prefix} reached {expected:?}; \
+                     observed {observed:?}"
+                );
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "executor did not settle {run_prefix} within {RUN_BATCH_TIMEOUT:?}; \
+                     expected {expected:?}, observed {observed:?}"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    async fn shutdown(mut self) -> anyhow::Result<bool> {
+        if let Some(status) = self
+            .child
+            .try_wait()
+            .context("poll executor before shutdown")?
+        {
+            return Ok(status.success());
+        }
+
+        let pid = self
+            .child
+            .id()
+            .context("executor has no process id before shutdown")?;
+        let pid = libc::pid_t::try_from(pid).context("executor process id exceeds pid_t")?;
+        // SAFETY: `kill` does not dereference pointers. The PID comes directly
+        // from the live child and SIGTERM is the service's graceful boundary.
+        let signal_result = unsafe { libc::kill(pid, libc::SIGTERM) };
+        if signal_result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(error).context("send SIGTERM to executor process");
+            }
+        }
+
+        match tokio::time::timeout(EXECUTOR_SHUTDOWN_TIMEOUT, self.child.wait()).await {
+            Ok(status) => Ok(status.context("wait for executor shutdown")?.success()),
+            Err(_) => {
+                self.child
+                    .start_kill()
+                    .context("kill executor after shutdown timeout")?;
+                let _ = self.child.wait().await;
+                Ok(false)
+            }
+        }
+    }
+}
+
+impl Drop for ExecutorProcess {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
+fn executor_binary() -> OsString {
+    if let Some(binary) = std::env::var_os(EXECUTOR_BINARY_ENV) {
+        return binary;
+    }
+
+    let sibling = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("wamn-run-worker")));
+    sibling
+        .filter(|path| path.is_file())
+        .map(PathBuf::into_os_string)
+        .unwrap_or_else(|| OsString::from("wamn-run-worker"))
+}
+
+fn executor_command(
+    binary: &OsStr,
+    flowrunner: &Path,
+    database_url: &str,
+    project: &str,
+) -> Command {
+    let mut command = Command::new(binary);
+    command
+        .env_remove("WAMN_ALLOWED_HOSTS")
+        .env_remove("WAMN_CREDENTIALS_FILE")
+        .arg("--log-level")
+        .arg("error")
+        .arg("--flowrunner")
+        .arg(flowrunner)
+        .arg("--database-url")
+        .arg(database_url)
+        .arg("--tenant")
+        .arg(TENANT)
+        .arg("--schema")
+        .arg(SCHEMA)
+        .arg("--runner")
+        .arg(OWNER)
+        .arg("--project")
+        .arg(project)
+        .arg("--nats-url")
+        .arg(EXECUTOR_NATS_URL)
+        .arg("--min-idle-ms")
+        .arg("25")
+        .arg("--max-idle-ms")
+        .arg("100");
+    command
+}
+
+async fn run_batch_status(client: &Client, run_prefix: &str) -> anyhow::Result<RunBatchStatus> {
+    let pattern = format!("{run_prefix}%");
+    let row = client
+        .query_one(
+            "SELECT count(*)::bigint, \
+                    count(*) FILTER (WHERE status = 'completed')::bigint, \
+                    count(*) FILTER (WHERE status = 'failed')::bigint \
+               FROM runs WHERE run_id LIKE $1",
+            &[&pattern],
+        )
+        .await?;
+    Ok(RunBatchStatus {
+        total: row.get(0),
+        completed: row.get(1),
+        failed: row.get(2),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +590,7 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
         );
     }
 
-    let guest = std::fs::read(&args.flowrunner)
+    std::fs::metadata(&args.flowrunner)
         .with_context(|| format!("failed to read {}", args.flowrunner.display()))?;
     let app_url = args
         .database_url
@@ -431,233 +602,259 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
         "metricbench needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL",
     )?;
     let database = proof_database_name();
+    let project = database.clone();
     let metric_app_url = database_url(&app_url, &database)?;
     let metric_admin_url = database_url(&admin_url, &database)?;
     create_database(&admin_url, &database).await?;
 
     let result = async {
         println!(
-            "# wamn-gates [9.8] metricbench (database {database}, schema {SCHEMA}, tenant {TENANT})"
+            "# wamn-gates [9.8] metricbench \
+             (database {database}, schema {SCHEMA}, tenant {TENANT}, project {project})"
         );
         println!("metrics = {}", args.metrics_url);
         provision(&metric_admin_url)
             .await
             .context("provision hermetic catalog and run plane")?;
 
-        let mut cfg = WamnPostgresConfig::from_env();
-        cfg.database_url = Some(metric_app_url.clone());
-        let plugin = Arc::new(WamnPostgres::new(cfg)?);
-        // [9.8-5] pool-saturation gauges over the runner's own project pool.
-        plugin.register_pool_metrics();
-
-        let engine = build_engine(&[])?;
-        let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
-
         let outcome = async {
             let (mut seed_conn, _h) = connect_app(&metric_app_url).await?;
 
-            // The production runner (registers wamn.run.* on instantiate).
-            let vault = Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty());
-            let logging = Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?);
-            let mut worker = ExecutionHost::instantiate(
-                &engine,
-                &guest,
-                plugin.clone(),
-                vault,
-                logging,
-                wamn_execution_host::ExecutionIdentity {
-                    owner: OWNER,
-                    tenant: TENANT,
-                    schema: Some(SCHEMA),
-                    project: "default",
-                },
-                production_capabilities(
-                    Arc::from([]),
-                    Arc::new(RunnerEgressPolicy::default()),
-                ),
-                30_000,
-            )
-            .await?;
-
             let mut pass = true;
 
-        // === (1) executions counter + success ratio =========================
-        let n = args.runs;
-        let base_exec = scrape_sum(&args.metrics_url, "wamn_run_executions").await;
-        let base_failed = scrape_where(&args.metrics_url, "wamn_run_executions", "outcome=\"failed\"")
+            // === (1) executions counter + success ratio =========================
+            let n = args.runs;
+            let tenant_label = format!("wamn_tenant=\"{TENANT}\"");
+            let project_label = format!("wamn_project=\"{project}\"");
+            let failed_label = "outcome=\"failed\"";
+            let baseline = fetch(&args.metrics_url).await.unwrap_or_default();
+            let base_exec = labels_sum(
+                &baseline,
+                "wamn_run_executions",
+                &[&tenant_label, &project_label],
+            );
+            let base_failed = labels_sum(
+                &baseline,
+                "wamn_run_executions",
+                &[&tenant_label, &project_label, failed_label],
+            );
+            let base_duration = labels_sum(
+                &baseline,
+                "wamn_run_drive_duration_ms_count",
+                &[&tenant_label, &project_label],
+            );
+            for i in 0..n {
+                seed_run(&mut seed_conn, &format!("mb-{i}"), FLOW_ID).await?;
+            }
+            seed_run(&mut seed_conn, "mb-fail", FAIL_FLOW_ID).await?;
+            let expected_first = RunBatchStatus {
+                total: i64::try_from(n + 1).context("phase-1 run count exceeds i64")?,
+                completed: i64::try_from(n).context("phase-1 completed count exceeds i64")?,
+                failed: 1,
+            };
+            let mut executor = ExecutorProcess::spawn(&args.flowrunner, &metric_app_url, &project)?;
+            let first = executor
+                .wait_for_batch(&seed_conn, "mb-", expected_first)
+                .await?;
+            // Delta == N+1 executions, with at least one `failed` (the mutant target:
+            // an outcome-fold would keep failed at its baseline).
+            let want_total = (n + 1) as f64;
+            let (exec_ok, (exec_total, failed_delta)) = poll(&args.metrics_url, |text| {
+                let total = labels_sum(
+                    text,
+                    "wamn_run_executions",
+                    &[&tenant_label, &project_label],
+                ) - base_exec;
+                let failed = labels_sum(
+                    text,
+                    "wamn_run_executions",
+                    &[&tenant_label, &project_label, failed_label],
+                ) - base_failed;
+                (total == want_total && failed >= 1.0, (total, failed))
+            })
             .await;
-        for i in 0..n {
-            seed_run(&mut seed_conn, &format!("mb-{i}"), FLOW_ID).await?;
-        }
-        seed_run(&mut seed_conn, "mb-fail", FAIL_FLOW_ID).await?;
-        let r1 = worker.drain().await?;
-        // Local sanity on the drive itself before waiting on the export.
-        let drove_ok = r1.claimed == n + 1 && r1.completed == n && r1.failed == 1;
-        // Delta == N+1 executions, with at least one `failed` (the mutant target:
-        // an outcome-fold would keep failed at its baseline).
-        let want_total = (n + 1) as f64;
-        let (exec_ok, (exec_total, failed_delta)) = poll(&args.metrics_url, |text| {
-            let total = family_sum(text, "wamn_run_executions") - base_exec;
-            let failed = label_sum(text, "wamn_run_executions", "outcome=\"failed\"") - base_failed;
-            (total >= want_total && failed >= 1.0, (total, failed))
-        })
-        .await;
-        check(
-            &mut pass,
-            "(1) executions: delta == N+1 with a failed series",
-            drove_ok && exec_ok,
-            &format!(
-                "drove claimed={}/{} completed={} failed={} ; scrape delta={exec_total} (want {want_total}), failed delta={failed_delta} (want >=1)",
-                r1.claimed, n + 1, r1.completed, r1.failed
-            ),
-        );
-
-        // === (3) run-drive duration histogram (same drives) =================
-        let (dur_ok, dur_count) = poll(&args.metrics_url, |text| {
-            let c = family_sum(text, "wamn_run_drive_duration_ms_count");
-            (c > 0.0, c)
-        })
-        .await;
-        check(
-            &mut pass,
-            "(3) run-drive duration histogram count > 0",
-            dur_ok,
-            &format!("wamn_run_drive_duration_ms_count = {dur_count}"),
-        );
-
-        // === (5) pool saturation + query latency (from the drives' DB writes) =
-        let (pool_ok, pool_size) = poll(&args.metrics_url, |text| {
-            let present = present(text, "wamn_postgres_pool_size")
-                && family_sum(text, "wamn_postgres_query_duration_ms_count") > 0.0;
-            (present, family_sum(text, "wamn_postgres_pool_size"))
-        })
-        .await;
-        check(
-            &mut pass,
-            "(5) postgres pool gauge present + query-latency count > 0",
-            pool_ok,
-            &format!(
-                "wamn_postgres_pool_size present={} size={pool_size}, query_count={}",
-                present_now(&args.metrics_url, "wamn_postgres_pool_size").await,
-                scrape_sum(&args.metrics_url, "wamn_postgres_query_duration_ms_count").await
-            ),
-        );
-
-        // === (2) run-queue depth via the dispatcher tick ====================
-        // The real dispatcher executable owns the gauge and samples it during
-        // stepped sweeps. Seed a claimable batch, tick -> depth > 0; drain ->
-        // tick -> depth back to 0. The claimable predicate is the mutant target.
-        let specs = [ProjectSpec {
-            name: "default".to_string(),
-            url: metric_app_url.clone(),
-            tenant: TENANT.to_string(),
-            schema: Some(SCHEMA.to_string()),
-        }];
-        let mut dispatcher = DispatcherProcess::spawn(
-            &specs,
-            "nats://127.0.0.1:1",
-            None,
-            None,
-            None,
-            None,
-        )?;
-        let m = args.depth_seed;
-        for i in 0..m {
-            seed_run(&mut seed_conn, &format!("mq-{i}"), FLOW_ID).await?;
-        }
-        dispatcher
-            .tick_project(0, chrono::Utc::now().timestamp_millis())
-            .await?;
-        let (depth_up_ok, depth_up) = poll(&args.metrics_url, |text| {
-            let d = label_sum(
-                text,
-                "wamn_run_queue_depth",
-                TENANT_METRIC_LABEL,
+            check(
+                &mut pass,
+                "(1) executions: delta == N+1 with a failed series",
+                first == expected_first && exec_ok,
+                &format!(
+                    "database total={}/{} completed={} failed={} ; scrape delta={exec_total} \
+                 (want {want_total}), failed delta={failed_delta} (want >=1)",
+                    first.total, expected_first.total, first.completed, first.failed
+                ),
             );
-            (d >= m as f64, d)
-        })
-        .await;
-        // Drain the seeded batch, re-tick: the gauge must fall to 0.
-        let r2 = worker.drain().await?;
-        dispatcher
-            .tick_project(0, chrono::Utc::now().timestamp_millis())
-            .await?;
-        let (depth_zero_ok, depth_zero) = poll(&args.metrics_url, |text| {
-            let d = label_sum(
-                text,
-                "wamn_run_queue_depth",
-                TENANT_METRIC_LABEL,
-            );
-            (d == 0.0, d)
-        })
-        .await;
-        check(
-            &mut pass,
-            "(2) run_queue depth > 0 on a seeded queue, drains to 0",
-            depth_up_ok && depth_zero_ok && r2.claimed == m,
-            &format!(
-                "seeded {m}: depth peaked {depth_up} (want >= {m}), after drain (claimed {}) depth {depth_zero} (want 0)",
-                r2.claimed
-            ),
-        );
 
-        // === (4) memory limiter denial + high-water (budget knob) ===========
-        // Force one allowed grow (sets high-water) then one over-budget grow
-        // (denied) on a budgeted limiter, snapshot it into the process memory
-        // meter, and assert the SCRAPE: denied >= 1, high_water reads the ALLOWED
-        // 32 MiB (NOT the 64 MiB budget — the budget-vs-high-water swap mutant).
-        const MIB: usize = 1 << 20;
-        let mut limiter = WamnStoreLimiter::new(64 * MIB, Arc::from(MEM_COMPONENT));
-        let allowed = limiter.memory_growing(0, 32 * MIB, None)?;
-        let denied = limiter.memory_growing(32 * MIB, 128 * MIB, None)?;
-        let mem = global_memory_meter();
-        mem.snapshot_from(&limiter);
-        let inproc = mem.snapshot_of(MEM_COMPONENT);
-        let (mem_ok, (mem_denied, mem_hw)) = poll(&args.metrics_url, |text| {
-            let d = family_sum(text, "wamn_memory_denied");
-            let hw = label_value(
-                text,
-                "wamn_memory_high_water_bytes",
-                &format!("component=\"{MEM_COMPONENT}\""),
+            // === (3) run-drive duration histogram (same drives) =================
+            let (dur_ok, dur_delta) = poll(&args.metrics_url, |text| {
+                let count = labels_sum(
+                    text,
+                    "wamn_run_drive_duration_ms_count",
+                    &[&tenant_label, &project_label],
+                );
+                let delta = count - base_duration;
+                (delta == want_total, delta)
+            })
+            .await;
+            check(
+                &mut pass,
+                "(3) run-drive duration histogram delta == N+1",
+                dur_ok,
+                &format!("wamn_run_drive_duration_ms_count delta = {dur_delta}"),
             );
-            let budget_present = present(text, "wamn_memory_budget_bytes");
-            (
-                d >= 1.0 && hw == Some((32 * MIB) as f64) && budget_present,
-                (d, hw),
-            )
-        })
-        .await;
-        check(
-            &mut pass,
-            "(4) memory: denied >= 1 and high_water is the allowed size, not the budget",
-            allowed && !denied && mem_ok,
-            &format!(
-                "limiter allowed={allowed} denied={denied}; in-proc snapshot={inproc:?}; \
+
+            // === (5) pool saturation + query latency (from the drives' DB writes) =
+            let (pool_ok, (pool_size, query_count)) = poll(&args.metrics_url, |text| {
+                let pool_present =
+                    present_with_labels(text, "wamn_postgres_pool_size", &[&project_label]);
+                let pool_size = labels_sum(text, "wamn_postgres_pool_size", &[&project_label]);
+                let query_count = labels_sum(
+                    text,
+                    "wamn_postgres_query_duration_ms_count",
+                    &[&project_label],
+                );
+                (pool_present && query_count > 0.0, (pool_size, query_count))
+            })
+            .await;
+            check(
+                &mut pass,
+                "(5) postgres pool gauge present + query-latency count > 0",
+                pool_ok,
+                &format!(
+                    "project={project}: wamn_postgres_pool_size={pool_size}, \
+                 query_count={query_count}"
+                ),
+            );
+            anyhow::ensure!(
+                executor.shutdown().await?,
+                "executor did not shut down cleanly after the phase-1 metric export"
+            );
+
+            // === (2) run-queue depth via the dispatcher tick ====================
+            // The real dispatcher executable owns the gauge and samples it during
+            // stepped sweeps. Seed a claimable batch, tick -> depth > 0; drain ->
+            // tick -> depth back to 0. The claimable predicate is the mutant target.
+            let specs = [ProjectSpec {
+                name: project.clone(),
+                url: metric_app_url.clone(),
+                tenant: TENANT.to_string(),
+                schema: Some(SCHEMA.to_string()),
+            }];
+            let mut dispatcher =
+                DispatcherProcess::spawn(&specs, "nats://127.0.0.1:1", None, None, None, None)?;
+            let m = args.depth_seed;
+            for i in 0..m {
+                seed_run(&mut seed_conn, &format!("mq-{i}"), FLOW_ID).await?;
+            }
+            dispatcher
+                .tick_project(0, chrono::Utc::now().timestamp_millis())
+                .await?;
+            let (depth_up_ok, depth_up) = poll(&args.metrics_url, |text| {
+                let d = labels_sum(
+                    text,
+                    "wamn_run_queue_depth",
+                    &[&tenant_label, &project_label],
+                );
+                (d >= m as f64, d)
+            })
+            .await;
+            // Start the production executor only after the dispatcher has sampled
+            // the high-water mark, then stop it before the zero-depth sample.
+            let expected_second = RunBatchStatus {
+                total: i64::try_from(m).context("phase-2 run count exceeds i64")?,
+                completed: i64::try_from(m).context("phase-2 completed count exceeds i64")?,
+                failed: 0,
+            };
+            let mut executor = ExecutorProcess::spawn(&args.flowrunner, &metric_app_url, &project)?;
+            let second = executor
+                .wait_for_batch(&seed_conn, "mq-", expected_second)
+                .await?;
+            anyhow::ensure!(
+                executor.shutdown().await?,
+                "executor did not shut down cleanly after draining the phase-2 queue"
+            );
+            dispatcher
+                .tick_project(0, chrono::Utc::now().timestamp_millis())
+                .await?;
+            let (depth_zero_ok, depth_zero) = poll(&args.metrics_url, |text| {
+                let d = labels_sum(
+                    text,
+                    "wamn_run_queue_depth",
+                    &[&tenant_label, &project_label],
+                );
+                (d == 0.0, d)
+            })
+            .await;
+            check(
+                &mut pass,
+                "(2) run_queue depth > 0 on a seeded queue, drains to 0",
+                depth_up_ok && depth_zero_ok && second == expected_second,
+                &format!(
+                    "seeded {m}: depth peaked {depth_up} (want >= {m}), after drain \
+                 (completed {}) depth {depth_zero} (want 0)",
+                    second.completed
+                ),
+            );
+
+            // === (4) memory limiter denial + high-water (budget knob) ===========
+            // Force one allowed grow (sets high-water) then one over-budget grow
+            // (denied) on a budgeted limiter, snapshot it into the process memory
+            // meter, and assert the SCRAPE: denied >= 1, high_water reads the ALLOWED
+            // 32 MiB (NOT the 64 MiB budget — the budget-vs-high-water swap mutant).
+            const MIB: usize = 1 << 20;
+            let mut limiter = WamnStoreLimiter::new(64 * MIB, Arc::from(MEM_COMPONENT));
+            let allowed = limiter.memory_growing(0, 32 * MIB, None)?;
+            let denied = limiter.memory_growing(32 * MIB, 128 * MIB, None)?;
+            let mem = global_memory_meter();
+            mem.snapshot_from(&limiter);
+            let inproc = mem.snapshot_of(MEM_COMPONENT);
+            let (mem_ok, (mem_denied, mem_hw)) = poll(&args.metrics_url, |text| {
+                let d = family_sum(text, "wamn_memory_denied");
+                let hw = label_value(
+                    text,
+                    "wamn_memory_high_water_bytes",
+                    &format!("component=\"{MEM_COMPONENT}\""),
+                );
+                let budget_present = present(text, "wamn_memory_budget_bytes");
+                (
+                    d >= 1.0 && hw == Some((32 * MIB) as f64) && budget_present,
+                    (d, hw),
+                )
+            })
+            .await;
+            check(
+                &mut pass,
+                "(4) memory: denied >= 1 and high_water is the allowed size, not the budget",
+                allowed && !denied && mem_ok,
+                &format!(
+                    "limiter allowed={allowed} denied={denied}; in-proc snapshot={inproc:?}; \
                  scrape denied={mem_denied} high_water={mem_hw:?} (want {} not the 64 MiB budget)",
-                (32 * MIB) as f64
-            ),
-        );
+                    (32 * MIB) as f64
+                ),
+            );
 
-        // === (6) generated-API RPS (IN-CLUSTER ONLY) ========================
-        // The fork's wamn.api.requests counter fires in the host HTTP server's
-        // record_response_status; ProxyPre benches bypass that server, so there
-        // is no local way to drive it. Honest-skip (traceproof-style) — this
-        // phase does NOT touch `pass`.
-        println!(
-            "## (6) api RPS — SKIP: wamn_api_requests needs the deployed api-gateway \
+            // === (6) generated-API RPS (IN-CLUSTER ONLY) ========================
+            // The fork's wamn.api.requests counter fires in the host HTTP server's
+            // record_response_status; ProxyPre benches bypass that server, so there
+            // is no local way to drive it. Honest-skip (traceproof-style) — this
+            // phase does NOT touch `pass`.
+            println!(
+                "## (6) api RPS — SKIP: wamn_api_requests needs the deployed api-gateway \
              ({} calls); ProxyPre bypasses the host HTTP server locally (in-cluster only)",
-            args.api_calls
-        );
+                args.api_calls
+            );
 
-        // Housekeeping counts (informational).
-        let queued = count(&seed_conn, &format!("SELECT count(*) FROM {SCHEMA}.run_queue")).await?;
-        println!("queue drained fully = {}", queued == 0);
+            // Housekeeping counts (informational).
+            let queued = count(
+                &seed_conn,
+                &format!("SELECT count(*) FROM {SCHEMA}.run_queue"),
+            )
+            .await?;
+            println!("queue drained fully = {}", queued == 0);
 
             anyhow::Ok(pass)
         }
         .await;
 
-        ticker.abort();
         let pass = outcome?;
 
         println!("\nmetricbench complete — overall PASS: {pass}");
@@ -708,18 +905,6 @@ where
     (false, last.unwrap_or(value))
 }
 
-async fn scrape_sum(url: &str, name: &str) -> f64 {
-    family_sum(&fetch(url).await.unwrap_or_default(), name)
-}
-
-async fn scrape_where(url: &str, name: &str, label: &str) -> f64 {
-    label_sum(&fetch(url).await.unwrap_or_default(), name, label)
-}
-
-async fn present_now(url: &str, name: &str) -> bool {
-    present(&fetch(url).await.unwrap_or_default(), name)
-}
-
 /// Whether a scrape line is exactly `name` (followed by `{` or a space), so
 /// `wamn_run_executions` never matches `wamn_run_executions_created` or the
 /// `_bucket`/`_sum` siblings of a histogram.
@@ -741,11 +926,14 @@ fn family_sum(text: &str, name: &str) -> f64 {
         .sum()
 }
 
-/// Sum every series of `name` whose label set contains `label` (a raw
-/// `key="value"` fragment).
-fn label_sum(text: &str, name: &str, label: &str) -> f64 {
+/// Sum every series of `name` whose label set contains every raw label fragment.
+fn labels_sum(text: &str, name: &str, labels: &[&str]) -> f64 {
     text.lines()
-        .filter(|l| !l.starts_with('#') && line_is(l, name) && l.contains(label))
+        .filter(|line| {
+            !line.starts_with('#')
+                && line_is(line, name)
+                && labels.iter().all(|label| line.contains(label))
+        })
         .filter_map(line_value)
         .sum()
 }
@@ -759,8 +947,16 @@ fn label_value(text: &str, name: &str, label: &str) -> Option<f64> {
 
 /// Whether any series of `name` is present.
 fn present(text: &str, name: &str) -> bool {
-    text.lines()
-        .any(|l| !l.starts_with('#') && line_is(l, name))
+    present_with_labels(text, name, &[])
+}
+
+/// Whether a series of `name` carrying every raw label fragment is present.
+fn present_with_labels(text: &str, name: &str, labels: &[&str]) -> bool {
+    text.lines().any(|line| {
+        !line.starts_with('#')
+            && line_is(line, name)
+            && labels.iter().all(|label| line.contains(label))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -889,6 +1085,73 @@ mod tests {
         );
     }
 
+    #[test]
+    fn executor_command_preserves_the_production_metric_boundary() {
+        let command = executor_command(
+            OsStr::new("/proof/wamn-run-worker"),
+            Path::new("/proof/flowrunner.wasm"),
+            "postgres://app@db/metricbench",
+            "metric-proof",
+        );
+        let command = command.as_std();
+        assert_eq!(command.get_program(), "/proof/wamn-run-worker");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "--log-level",
+                "error",
+                "--flowrunner",
+                "/proof/flowrunner.wasm",
+                "--database-url",
+                "postgres://app@db/metricbench",
+                "--tenant",
+                TENANT,
+                "--schema",
+                SCHEMA,
+                "--runner",
+                OWNER,
+                "--project",
+                "metric-proof",
+                "--nats-url",
+                EXECUTOR_NATS_URL,
+                "--min-idle-ms",
+                "25",
+                "--max-idle-ms",
+                "100",
+            ]
+            .map(OsStr::new)
+        );
+    }
+
+    #[test]
+    fn run_metrics_proof_cannot_bypass_executor_process() {
+        let source = include_str!("metricbench.rs");
+        let process_spawn = ["ExecutorProcess", "::spawn"].concat();
+        let direct_instantiate = ["ExecutionHost", "::instantiate"].concat();
+        let unobserved_drain = ["worker", ".drain().await"].concat();
+        assert!(
+            source.contains(&process_spawn),
+            "metricbench must spawn the production executor process"
+        );
+        assert!(
+            !source.contains(&direct_instantiate) && !source.contains(&unobserved_drain),
+            "metricbench bypassed executor-owned RunMetrics"
+        );
+
+        let manifest = include_str!("../Cargo.toml");
+        assert!(
+            !manifest
+                .lines()
+                .any(|line| line.trim_start().starts_with("wamn-executor")),
+            "metricbench must drive wamn-executor through its executable boundary"
+        );
+        let dockerfile = include_str!("../../../Dockerfile");
+        assert!(dockerfile.contains(
+            "COPY --from=builder /build/target/release/wamn-run-worker \
+             /usr/local/bin/wamn-run-worker"
+        ));
+    }
+
     // The prometheus-text parser: exact family matching (never a `_created` or
     // `_bucket` sibling), label filtering, and value extraction — the pure bit
     // the scrape assertions stand on.
@@ -897,30 +1160,44 @@ mod tests {
         let text = "\
 # HELP wamn_run_executions runs
 # TYPE wamn_run_executions counter
-wamn_run_executions{outcome=\"completed\",wamn_project=\"default\"} 8
-wamn_run_executions{outcome=\"failed\",wamn_project=\"default\"} 1
+wamn_run_executions{outcome=\"completed\",wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 8
+wamn_run_executions{outcome=\"failed\",wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 1
 wamn_run_executions_created{outcome=\"completed\"} 1.72e9
-wamn_run_drive_duration_ms_count{wamn_project=\"default\"} 9
+wamn_run_drive_duration_ms_count{wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 9
 wamn_memory_high_water_bytes{component=\"metricbench-memhog\"} 33554432
-wamn_run_queue_depth{wamn_project=\"default\",wamn_tenant=\"metric-tenant\"} 6
+wamn_run_queue_depth{wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 6
 wamn_run_queue_depth{wamn_project=\"f1\",wamn_tenant=\"f1-tenant\"} 3619
 ";
+        let tenant = "wamn_tenant=\"metric-tenant\"";
+        let project = "wamn_project=\"metric-proof\"";
         // Family sum ignores the `_created` sibling (its huge timestamp would
         // otherwise dominate) and the `_count` of a different family.
         assert_eq!(family_sum(text, "wamn_run_executions"), 9.0);
-        // Label filter isolates the failed series.
+        // Multi-label filters isolate this proof's failed series.
         assert_eq!(
-            label_sum(text, "wamn_run_executions", "outcome=\"failed\""),
+            labels_sum(
+                text,
+                "wamn_run_executions",
+                &[tenant, project, "outcome=\"failed\""]
+            ),
             1.0
         );
         // A distinct family matched exactly.
-        assert_eq!(family_sum(text, "wamn_run_drive_duration_ms_count"), 9.0);
-        // A live cluster can carry unrelated project backlog; the gate must
-        // isolate the ephemeral metricbench tenant instead of summing it.
         assert_eq!(
-            label_sum(text, "wamn_run_queue_depth", TENANT_METRIC_LABEL),
+            labels_sum(text, "wamn_run_drive_duration_ms_count", &[tenant, project]),
+            9.0
+        );
+        // A live cluster can carry unrelated project backlog; the gate must
+        // isolate both the ephemeral metricbench tenant and project.
+        assert_eq!(
+            labels_sum(text, "wamn_run_queue_depth", &[tenant, project]),
             6.0
         );
+        assert!(present_with_labels(
+            text,
+            "wamn_run_executions",
+            &[tenant, project]
+        ));
         // Label value read (high-water = the allowed 32 MiB, not a budget).
         assert_eq!(
             label_value(

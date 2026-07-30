@@ -165,6 +165,9 @@ COPY --from=builder /build/target/release/wamn-cdc-reader /usr/local/bin/wamn-cd
 # Dispatcher gates drive stepped and lifecycle behavior through the executable
 # boundary; the gates package does not link the deployable service crate.
 COPY --from=builder /build/target/release/wamn-dispatcher /usr/local/bin/wamn-dispatcher
+# Metricbench drives run telemetry through the production executor boundary;
+# the integration proof must not duplicate the executor-owned instruments.
+COPY --from=builder /build/target/release/wamn-run-worker /usr/local/bin/wamn-run-worker
 # Bench fixtures baked in so the gate Jobs run with no volume plumbing.
 COPY --from=component-builder /component-output/hello.wasm /bench/hello.wasm
 COPY --from=component-builder /component-output/memhog.wasm /bench/memhog.wasm
