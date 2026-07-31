@@ -478,7 +478,7 @@ fn expand_to_one_parent_via_fk() {
     let sub = Router::new(&cat).build_expand(ex, &keys);
     assert_eq!(
         sub.sql(),
-        "SELECT \"id\", \"receipt_id\", \"material_id\", \"quantity\" FROM \"receipt_lines\" WHERE \"id\" IN ($1, $2)"
+        "SELECT \"id\", \"receipt_id\", \"line_no\", \"material_id\", \"quantity\" FROM \"receipt_lines\" WHERE \"id\" IN ($1, $2)"
     );
     assert_eq!(sub.params(), keys);
 }
@@ -529,6 +529,7 @@ fn expand_merge_embeds_records() {
     let expanded_rows = vec![vec![
         SqlValue::Uuid(A_UUID.into()),
         SqlValue::Uuid("receipt-1".into()),
+        SqlValue::Int32(1),
         SqlValue::Uuid("mat-1".into()),
         SqlValue::Numeric("3.000".into()),
     ]];
