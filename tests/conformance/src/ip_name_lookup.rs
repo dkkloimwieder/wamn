@@ -212,15 +212,15 @@ fn policy(entry: &str) -> AllowedIpName {
 fn exact_lookup_matches_only_the_approved_name() {
     let entry = policy("Example.COM");
     assert!(check_allowed_ip_name(
-        &[entry.clone()],
+        std::slice::from_ref(&entry),
         &host("example.com")
     ));
     assert!(check_allowed_ip_name(
-        &[entry.clone()],
+        std::slice::from_ref(&entry),
         &host("EXAMPLE.COM")
     ));
     assert!(!check_allowed_ip_name(
-        &[entry.clone()],
+        std::slice::from_ref(&entry),
         &host("api.example.com")
     ));
     assert!(!check_allowed_ip_name(&[entry], &host("example.org")));
@@ -230,19 +230,19 @@ fn exact_lookup_matches_only_the_approved_name() {
 fn wildcard_lookup_requires_a_real_subdomain_and_never_matches_an_ip() {
     let entry = policy("*.example.com");
     assert!(check_allowed_ip_name(
-        &[entry.clone()],
+        std::slice::from_ref(&entry),
         &host("api.example.com")
     ));
     assert!(check_allowed_ip_name(
-        &[entry.clone()],
+        std::slice::from_ref(&entry),
         &host("deep.api.example.com")
     ));
     assert!(!check_allowed_ip_name(
-        &[entry.clone()],
+        std::slice::from_ref(&entry),
         &host("example.com")
     ));
     assert!(!check_allowed_ip_name(
-        &[entry.clone()],
+        std::slice::from_ref(&entry),
         &host("notexample.com")
     ));
     assert!(!check_allowed_ip_name(&[entry], &host("127.0.0.1")));
@@ -251,8 +251,14 @@ fn wildcard_lookup_requires_a_real_subdomain_and_never_matches_an_ip() {
 #[test]
 fn literal_ip_lookup_matches_only_the_approved_address() {
     let entry = policy("127.0.0.1");
-    assert!(check_allowed_ip_name(&[entry.clone()], &host("127.0.0.1")));
-    assert!(!check_allowed_ip_name(&[entry.clone()], &host("127.0.0.2")));
+    assert!(check_allowed_ip_name(
+        std::slice::from_ref(&entry),
+        &host("127.0.0.1")
+    ));
+    assert!(!check_allowed_ip_name(
+        std::slice::from_ref(&entry),
+        &host("127.0.0.2")
+    ));
     assert!(!check_allowed_ip_name(&[entry], &host("localhost")));
 }
 
