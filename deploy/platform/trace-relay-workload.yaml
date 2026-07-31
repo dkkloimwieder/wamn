@@ -49,6 +49,7 @@ spec:
           image: registry.wamn-system.svc.cluster.local:5000/wamn/trace-relay:dev
           imagePullPolicy: Always
           localResources:
+            allowIpNameLookup: []
             # wasi:http egress is allow-list gated (empty = deny-all). Permit
             # only the serve-echo upstream — the relay makes no other call.
             allowedHosts:

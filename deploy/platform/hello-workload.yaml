@@ -38,3 +38,5 @@ spec:
       components:
         - name: hello-world
           image: ghcr.io/wasmcloud/components/http-hello-world-rust:0.1.0
+          localResources:
+            allowIpNameLookup: []

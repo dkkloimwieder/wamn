@@ -65,6 +65,7 @@ spec:
         # restart here means repeated hard failure (bad config, trap).
         maxRestarts: 5
         localResources:
+          allowIpNameLookup: []
           config:
             wamn.tenant: t1
             wamn.project: default

@@ -57,6 +57,7 @@ spec:
           image: registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
           imagePullPolicy: Always
           localResources:
+            allowIpNameLookup: []
             config:
               wamn.tenant: "00000000-0000-0000-0000-000000000001"
               wamn.catalog: "default"

@@ -16,19 +16,20 @@ rev-bump runbook; this preamble does not duplicate its commit or seam
 inventory. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
 
-### wash-runtime feature and deployed-workload inventory (wamn-8zht.12)
+### wash-runtime feature and deployed-workload inventory (wamn-8zht.12, wamn-8zht.18)
 
 The checked-in inventory resolves every production service that consumes
 `wash-runtime`, records its exact feature set, and proves the three enabled
 store constructors against the pinned fork source. It also inventories every
 generated `WorkloadDeployment`: host-component plugins remain disabled,
 `poolSize` is absent or zero (so `maxInvocations` is inert), and no P3 service
-workload is deployed.
+workload is deployed. Every component or service `localResources` block also
+exposes exactly one `allowIpNameLookup: []`, preserving deny-all lookup by
+default.
 
 ```bash
-# recipe-test: H5-RUNTIME-INVENTORY | unit | wamn-proof-conformance | lib | - | runtime_inventory::resolved_feature_and_deployed_workload_inventory_is_current | 1 | recorded per-service wash-runtime features, three live store constructors, and generated workload reuse/P3 exclusions
-cargo test --locked --offline -p wamn-proof-conformance --lib \
-  runtime_inventory::resolved_feature_and_deployed_workload_inventory_is_current -- --exact
+# recipe-test: H5-RUNTIME-INVENTORY | unit | wamn-proof-conformance | lib | - | runtime_inventory:: | 7 | recorded per-service wash-runtime features, three live store constructors, generated workload reuse/P3 exclusions, and explicit empty lookup defaults
+cargo test --locked --offline -p wamn-proof-conformance --lib runtime_inventory::
 ```
 
 ### ExecutionHost deadline re-arm and trap disposal (wamn-8zht.13)
@@ -49,8 +50,9 @@ cargo test --locked -p wamn-executor -p wamn-proof-integration
 The gate exercises exact, wildcard, literal-IP, and default-empty behavior
 through the pinned runtime's public matcher. It resolves the pinned fork source
 and proves that P2/P3 TCP and UDP operations remain governed by the independent
-raw-socket policy when lookup is approved. Workload-generation exposure and
-socket-patch retirement remain separate post-upgrade work.
+raw-socket policy when lookup is approved. The workload-generation exposure is
+enforced by the inventory gate above; socket-patch retirement remains separate
+post-upgrade work.
 
 ```bash
 # recipe-test: H5-IP-NAME-LOOKUP | conformance | wamn-proof-conformance | lib | - | ip_name_lookup:: | 6 | pinned runtime exact/wildcard/literal-IP/default [] behavior and P2/P3 TCP/UDP dominance

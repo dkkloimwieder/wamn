@@ -339,6 +339,69 @@ fn validate_feature_policy(features: &BTreeSet<String>) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_ip_name_lookup_defaults(path: &str, source: &str) -> Result<(), String> {
+    let lines: Vec<_> = source.lines().collect();
+    let mut local_resources_blocks = 0;
+
+    for (index, line) in lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == "localResources:")
+    {
+        local_resources_blocks += 1;
+        let block_indent = line.len() - line.trim_start().len();
+        let block_end = lines[index + 1..]
+            .iter()
+            .position(|line| {
+                let trimmed = line.trim();
+                !trimmed.is_empty()
+                    && !trimmed.starts_with('#')
+                    && line.len() - line.trim_start().len() <= block_indent
+            })
+            .map_or(lines.len(), |offset| index + 1 + offset);
+        let block = &lines[index + 1..block_end];
+        let child_indent = block
+            .iter()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.is_empty() && !trimmed.starts_with('#')
+            })
+            .map(|line| line.len() - line.trim_start().len())
+            .min();
+        let values: Vec<_> = block
+            .iter()
+            .filter(|line| {
+                child_indent.is_some_and(|indent| line.len() - line.trim_start().len() == indent)
+            })
+            .filter_map(|line| {
+                line.trim()
+                    .strip_prefix("allowIpNameLookup:")
+                    .map(str::trim)
+            })
+            .collect();
+
+        if values.len() != 1 {
+            return Err(format!(
+                "{path}: each localResources block must contain exactly one allowIpNameLookup field; found {}",
+                values.len()
+            ));
+        }
+        if values[0] != "[]" {
+            return Err(format!(
+                "{path}: allowIpNameLookup must default to [], got `{}`",
+                values[0]
+            ));
+        }
+    }
+
+    if local_resources_blocks == 0 {
+        return Err(format!(
+            "{path}: workload must expose localResources.allowIpNameLookup with default []"
+        ));
+    }
+    Ok(())
+}
+
 fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Result<(), String> {
     let pool_sizes = yaml_i32(source, "poolSize:");
     if let Some(pool_size) = pool_sizes.into_iter().find(|pool_size| *pool_size != 0) {
@@ -346,6 +409,8 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
             "{path}: poolSize {pool_size} enables reusable component stores"
         ));
     }
+
+    validate_ip_name_lookup_defaults(path, source)?;
 
     let has_components = source.lines().any(|line| line == "      components:");
     // maxInvocations has no effect when poolSize is absent or zero.
@@ -521,6 +586,42 @@ fn nonzero_pool_size_mutation_is_rejected() {
         validate_workload_policy("pool-size-mutant.yaml", mutant, &WorkloadAbi::P2Components)
             .expect_err("mutation must fail closed");
     assert!(error.contains("poolSize 1 enables reusable component stores"));
+}
+
+#[test]
+fn nonempty_ip_name_lookup_default_mutation_is_rejected() {
+    let mutant = "      components:\n        - name: mutant\n          localResources:\n            allowIpNameLookup: [\"example.com\"]\n";
+    let error = validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P2Components)
+        .expect_err("nonempty allowIpNameLookup default must fail closed");
+    assert!(error.contains("allowIpNameLookup must default to []"));
+}
+
+#[test]
+fn missing_misspelled_or_duplicate_ip_name_lookup_defaults_are_rejected() {
+    let mutants = [
+        (
+            "missing",
+            "      components:\n        - name: mutant\n          localResources:\n            config: {}\n",
+        ),
+        (
+            "misspelled",
+            "      components:\n        - name: mutant\n          localResources:\n            allowIpNameLookups: []\n",
+        ),
+        (
+            "duplicate",
+            "      components:\n        - name: mutant\n          localResources:\n            allowIpNameLookup: []\n            allowIpNameLookup: []\n",
+        ),
+    ];
+
+    for (name, mutant) in mutants {
+        let error =
+            validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P2Components)
+                .expect_err("invalid allowIpNameLookup structure must fail closed");
+        assert!(
+            error.contains("must contain exactly one allowIpNameLookup field"),
+            "{name} mutation failed for an unexpected reason: {error}"
+        );
+    }
 }
 
 #[test]
