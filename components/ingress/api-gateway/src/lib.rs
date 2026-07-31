@@ -106,7 +106,13 @@ fn execute(router: &Router, plan: &Plan) -> Result<(u16, Option<Value>), (u16, S
         PlanKind::List => {
             let rs = run_query(plan.query())?;
             let mut rows = shape_rows(plan.query().columns(), &api_rows(&rs));
-            apply_expands(router, &mut rows, plan.query().columns(), &rs, plan.expands())?;
+            apply_expands(
+                router,
+                &mut rows,
+                plan.query().columns(),
+                &rs,
+                plan.expands(),
+            )?;
             Ok((plan.status(), Some(Value::Array(rows))))
         }
         PlanKind::GetOne => {
@@ -115,12 +121,20 @@ fn execute(router: &Router, plan: &Plan) -> Result<(u16, Option<Value>), (u16, S
                 return Ok((404, Some(not_found())));
             }
             let mut rows = shape_rows(plan.query().columns(), &api_rows(&rs));
-            apply_expands(router, &mut rows, plan.query().columns(), &rs, plan.expands())?;
+            apply_expands(
+                router,
+                &mut rows,
+                plan.query().columns(),
+                &rs,
+                plan.expands(),
+            )?;
             Ok((plan.status(), rows.into_iter().next()))
         }
         PlanKind::CreateOne => {
             let rs = run_query(plan.query())?;
-            let row = shape_rows(plan.query().columns(), &api_rows(&rs)).into_iter().next();
+            let row = shape_rows(plan.query().columns(), &api_rows(&rs))
+                .into_iter()
+                .next();
             Ok((plan.status(), Some(row.unwrap_or(Value::Null))))
         }
         PlanKind::UpdateOne => {
@@ -128,7 +142,9 @@ fn execute(router: &Router, plan: &Plan) -> Result<(u16, Option<Value>), (u16, S
             if rs.rows.is_empty() {
                 return Ok((404, Some(not_found())));
             }
-            let row = shape_rows(plan.query().columns(), &api_rows(&rs)).into_iter().next();
+            let row = shape_rows(plan.query().columns(), &api_rows(&rs))
+                .into_iter()
+                .next();
             Ok((plan.status(), Some(row.unwrap_or(Value::Null))))
         }
         PlanKind::DeleteOne => {
@@ -139,7 +155,11 @@ fn execute(router: &Router, plan: &Plan) -> Result<(u16, Option<Value>), (u16, S
             Ok((plan.status(), None)) // 204, no body
         }
         // PlanKind is #[non_exhaustive]; a future variant is a graceful 500.
-        _ => Err((500, "unsupported-plan".into(), "unsupported plan kind".into())),
+        _ => Err((
+            500,
+            "unsupported-plan".into(),
+            "unsupported plan kind".into(),
+        )),
     }
 }
 
@@ -189,7 +209,8 @@ fn catalog() -> Result<Rc<Catalog>, String> {
         return Ok(c);
     }
     let json = load_catalog_json()?;
-    let cat = Catalog::from_json(&json).map_err(|e| format!("catalog snapshot parse error: {e}"))?;
+    let cat =
+        Catalog::from_json(&json).map_err(|e| format!("catalog snapshot parse error: {e}"))?;
     let rc = Rc::new(cat);
     CATALOG.with(|c| *c.borrow_mut() = Some(rc.clone()));
     Ok(rc)
@@ -208,11 +229,15 @@ fn replace_catalog(cat: Catalog) {
 /// to the injected tenant; the table name is unqualified (the host injects the
 /// project schema via `search_path`, exactly like every other query).
 fn load_catalog_json() -> Result<String, String> {
-    let rs = client::query("SELECT document::text FROM wamn_catalog LIMIT 1", &[]).map_err(|e| {
-        let (_, code, msg) = map_pg_error(e);
-        format!("catalog load: {code}: {msg}")
-    })?;
-    let row = rs.rows.first().ok_or_else(|| "no catalog snapshot for this project".to_string())?;
+    let rs =
+        client::query("SELECT document::text FROM wamn_catalog LIMIT 1", &[]).map_err(|e| {
+            let (_, code, msg) = map_pg_error(e);
+            format!("catalog load: {code}: {msg}")
+        })?;
+    let row = rs
+        .rows
+        .first()
+        .ok_or_else(|| "no catalog snapshot for this project".to_string())?;
     match row.first() {
         Some(PgVal::Text(s)) | Some(PgVal::Json(s)) => Ok(s.clone()),
         other => Err(format!("unexpected catalog document shape: {other:?}")),
@@ -226,7 +251,10 @@ fn pg_params(params: &[ApiVal]) -> Vec<PgVal> {
 }
 
 fn api_rows(rs: &RowSet) -> Vec<Vec<ApiVal>> {
-    rs.rows.iter().map(|r| r.iter().map(from_pg).collect()).collect()
+    rs.rows
+        .iter()
+        .map(|r| r.iter().map(from_pg).collect())
+        .collect()
 }
 
 /// `wamn-api` value → `wamn:postgres` binding value (1:1).
@@ -267,21 +295,41 @@ fn from_pg(v: &PgVal) -> ApiVal {
 fn map_pg_error(e: PgError) -> (u16, String, String) {
     match e {
         PgError::PermissionDenied => (403, "permission-denied".into(), "permission denied".into()),
-        PgError::UniqueViolation(c) => (409, "unique-violation".into(), format!("unique constraint: {c}")),
-        PgError::ForeignKeyViolation(c) => {
-            (409, "foreign-key-violation".into(), format!("foreign key: {c}"))
-        }
-        PgError::CheckViolation(c) => (409, "check-violation".into(), format!("check constraint: {c}")),
-        PgError::SerializationFailure => {
-            (409, "serialization-failure".into(), "write conflict, retry".into())
-        }
-        PgError::StatementTimeout => (503, "statement-timeout".into(), "statement timed out".into()),
-        PgError::ConnectionUnavailable => {
-            (503, "connection-unavailable".into(), "database unavailable".into())
-        }
-        PgError::RowLimitExceeded(n) => {
-            (400, "row-limit-exceeded".into(), format!("row limit {n} exceeded"))
-        }
+        PgError::UniqueViolation(c) => (
+            409,
+            "unique-violation".into(),
+            format!("unique constraint: {c}"),
+        ),
+        PgError::ForeignKeyViolation(c) => (
+            409,
+            "foreign-key-violation".into(),
+            format!("foreign key: {c}"),
+        ),
+        PgError::CheckViolation(c) => (
+            409,
+            "check-violation".into(),
+            format!("check constraint: {c}"),
+        ),
+        PgError::SerializationFailure => (
+            409,
+            "serialization-failure".into(),
+            "write conflict, retry".into(),
+        ),
+        PgError::StatementTimeout => (
+            503,
+            "statement-timeout".into(),
+            "statement timed out".into(),
+        ),
+        PgError::ConnectionUnavailable => (
+            503,
+            "connection-unavailable".into(),
+            "database unavailable".into(),
+        ),
+        PgError::RowLimitExceeded(n) => (
+            400,
+            "row-limit-exceeded".into(),
+            format!("row limit {n} exceeded"),
+        ),
         PgError::QueryError((code, msg)) => (400, "query-error".into(), format!("{code}: {msg}")),
     }
 }
@@ -406,7 +454,12 @@ fn serialize(v: &Value) -> Vec<u8> {
 }
 
 fn error(status: u16, code: &str, message: &str) -> (u16, Option<Vec<u8>>) {
-    (status, Some(serialize(&json!({ "error": { "code": code, "message": message } }))))
+    (
+        status,
+        Some(serialize(
+            &json!({ "error": { "code": code, "message": message } }),
+        )),
+    )
 }
 
 fn not_found() -> Value {

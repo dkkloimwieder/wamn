@@ -73,7 +73,11 @@ mod tests {
         assert!(!new_only.references_old());
 
         // A column literally named `old` on the NEW image is not a root read.
-        assert!(!compile_condition("new.old == 'x'").unwrap().references_old());
+        assert!(
+            !compile_condition("new.old == 'x'")
+                .unwrap()
+                .references_old()
+        );
 
         assert!(matches!(
             compile_condition("]not jmespath["),
@@ -99,8 +103,10 @@ mod tests {
         // With the old image present (RI FULL), a changed-to predicate is a
         // normal boolean — both outcomes reachable.
         let cond = compile_condition("new.status != old.status").unwrap();
-        let changed = json!({"op": "update", "old": {"status": "draft"}, "new": {"status": "shipped"}});
-        let unchanged = json!({"op": "update", "old": {"status": "shipped"}, "new": {"status": "shipped"}});
+        let changed =
+            json!({"op": "update", "old": {"status": "draft"}, "new": {"status": "shipped"}});
+        let unchanged =
+            json!({"op": "update", "old": {"status": "shipped"}, "new": {"status": "shipped"}});
         assert!(cond.matches(&changed).unwrap());
         assert!(!cond.matches(&unchanged).unwrap());
     }

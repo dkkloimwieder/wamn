@@ -48,7 +48,14 @@ impl Guest for Component {
         samples
     }
 
-    fn emit_batch(count: u32, seq_base: u64, run_label: String, flow: String, run: String, node: String) {
+    fn emit_batch(
+        count: u32,
+        seq_base: u64,
+        run_label: String,
+        flow: String,
+        run: String,
+        node: String,
+    ) {
         for i in 0..count as u64 {
             let seq = seq_base + i;
             let ctx = context(&flow, &run, &node, seq, &run_label);
