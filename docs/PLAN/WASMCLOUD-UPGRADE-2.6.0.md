@@ -55,7 +55,7 @@ the disposition against *those*, not against a fresh judgment.
 | `94bf77f` epoch deadline | upstream ships native epoch-deadline support | **re-port as-is** for the base upgrade; per-checkout re-arming is a *reusable-store adoption* prerequisite, not base scope (§3) |
 | `5b158ff` memory limiter (D16) | upstream plumbs `memory_limit_mb` into a Store limiter | **keep, broaden** — see §3 |
 | `d3d83f3` outbound W3C trace inject | upstream injects trace context in its default outgoing handler | **keep, and now doubles** — P2 *and* P3 HTTP paths |
-| `8b76869` deny `TcpConnect` (E13) | upstream gates socket linking on `host_interfaces`, or consults egress policy | **keep** — `allowIpNameLookup` does not meet it |
+| `8b76869` deny `TcpConnect` (E13) | upstream gates socket linking on `host_interfaces`, or consults egress policy | **keep** — `allowedIpNameLookups` does not meet it |
 | `eef76cd` deny raw UDP, tighten `UdpBind` (E15/E16) | same | **keep** |
 | `981fdc5` limiter accessors + `wamn.api.requests` | upstream exposes accessors **AND** an inbound request-count metric | **split** — the exit is an AND; upstream now satisfies at most the metric half |
 
@@ -66,7 +66,7 @@ replacement, not satisfaction of an exit condition that names an inbound request
 metric. Remove `wamn.api.requests` only once dashboards, SLOs, **and** its mutation
 gate run on a demonstrated equivalent.
 
-**`allowIpNameLookup` is more interesting than a complement.** The `8b76869`
+**`allowedIpNameLookups` is more interesting than a complement.** The `8b76869`
 ledger entry rejected allowlist matching because *"`TcpConnect` sees a post-DNS
 `SocketAddr`, so proper matching would need an `ip_name_lookup` hook and name→IP
 allowlists are fragile."* Upstream has now built that hook — so it is **the missing primitive for that
@@ -75,7 +75,7 @@ a replacement policy must show that an approved lookup cannot be bypassed by a l
 socket address; that a resolved address cannot be substituted; that DNS change does not
 silently widen authority; that TCP connect and UDP send/bind obey one declared policy;
 and that P2 and P3 socket surfaces reach the same decision. Until then: adopt
-`allowIpNameLookup` defaulting to `[]`, and keep raw sockets denied independently.
+`allowedIpNameLookups` defaulting to `[]`, and keep raw sockets denied independently.
 
 **D23 status:** runtime-maintainer posture was accepted at six commits and the
 escalation ceiling retired. What is new is that **v2.6.0 maintains parallel P2 and P3
@@ -335,7 +335,7 @@ share one Wasmtime type universe."* Checking the top-level crate alone is insuff
   47 preserves behaviour wamn already has; it is not an expansion into H9
 - P2 **and** P3 outbound trace-context propagation
 - raw TCP and UDP still denied, including the P3 mirrors
-- `allowIpNameLookup` **as a runtime primitive** — exact, wildcard, and literal-IP
+- `allowedIpNameLookups` **as a runtime primitive** — exact, wildcard, and literal-IP
   cases, and the fork's TCP/UDP restrictions still dominating it when lookup is
   permitted. This proves upstream behaviour; **exposing the field through wamn
   workload generation is the separate post-upgrade milestone** (§7), so the base gate
@@ -350,7 +350,7 @@ share one Wasmtime type universe."* Checking the top-level crate alone is insuff
 
 **5 — Features, separately and only after green.** In this order:
 
-1. `allowIpNameLookup` in workload generation and architecture checks — and the
+1. `allowedIpNameLookups` in workload generation and architecture checks — and the
    evaluation of whether it can retire `8b76869` / `eef76cd`
 2. P3 node-ABI decision, feeding item 1's bulk boundary
 3. warm-pool and P3 cross-store-stream experiments, inside 2A's bundle economics
@@ -379,7 +379,7 @@ share one Wasmtime type universe."* Checking the top-level crate alone is insuff
   supply component lifetime and transport, not durable admission, queue ownership,
   occurrence identity, recovery classes, child-run semantics, or the caller-outcome
   protocol.
-- **No removal of the socket patches** on the strength of `allowIpNameLookup` alone.
+- **No removal of the socket patches** on the strength of `allowedIpNameLookups` alone.
 - **No deadline-enforcement work** — plan item 4 / Phase 3, tracked separately.
 
 ---
@@ -400,7 +400,7 @@ share one Wasmtime type universe."* Checking the top-level crate alone is insuff
 **First post-upgrade adoption complete** — deliberately separate, so "features only
 after green" is not circular with the definition of green:
 
-- workload generation and architecture checks expose `allowIpNameLookup`
+- workload generation and architecture checks expose `allowedIpNameLookups`
 - its default remains `[]`
 - raw TCP and UDP remain independently denied
 - the socket-policy retirement investigation may begin
