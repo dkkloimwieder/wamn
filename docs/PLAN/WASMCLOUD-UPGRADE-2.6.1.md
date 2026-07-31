@@ -73,7 +73,7 @@ Verify the upstream target from Git refs, including the peeled annotated tag:
 
 ```sh
 git ls-remote --tags https://github.com/wasmCloud/wasmCloud.git \
-  'refs/tags/runtime-operator/v2.6.1*'
+  'refs/tags/v2.6.1' 'refs/tags/v2.6.1^{}'
 ```
 
 Do not use the GitHub releases page as the version authority. It currently shows

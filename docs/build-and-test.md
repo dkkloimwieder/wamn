@@ -10,7 +10,7 @@ dev/test/deploy commands.
 ## Build environment
 
 wamn-host builds against wash-runtime consumed as a **git dependency from our
-fork** (dkkloimwieder/wasmCloud, branch `wamn/2.6.0` = upstream v2.6.0).
+fork** (dkkloimwieder/wasmCloud, branch `wamn/2.6.1` = upstream v2.6.1).
 `docs/wash-runtime-fork.md` is the authoritative carried-policy ledger and
 rev-bump runbook; this preamble does not duplicate its commit or seam
 inventory. The rev is pinned in one place:
@@ -24,7 +24,7 @@ store constructors against the pinned fork source. It also inventories every
 generated `WorkloadDeployment`: host-component plugins remain disabled,
 `poolSize` is absent or zero (so `maxInvocations` is inert), and no P3 service
 workload is deployed. Every component or service `localResources` block also
-exposes exactly one `allowIpNameLookup: []`, preserving deny-all lookup by
+exposes exactly one `allowedIpNameLookups: []`, preserving deny-all lookup by
 default.
 
 ```bash
@@ -45,7 +45,7 @@ cargo test --locked -p wamn-execution-host --lib
 cargo test --locked -p wamn-executor -p wamn-proof-integration
 ```
 
-### allowIpNameLookup runtime primitive (wamn-8zht.16)
+### allowedIpNameLookups runtime primitive (wamn-8zht.16)
 
 The gate exercises exact, wildcard, literal-IP, and default-empty behavior
 through the pinned runtime's public matcher. It resolves the pinned fork source
@@ -765,8 +765,8 @@ cargo clippy -p wamn-host -p wamn-runtime -p wamn-component-policy \
 # UdpConnect, UdpOutgoingDatagram, and service/non-loopback UdpBind arms through
 # the production host store path. Raw egress is DENIED by default and PERMITTED
 # only under wamn.allow-raw-sockets; UdpBind remains service-loopback-only. The
-# conformance proof resolves exact linked wash-runtime 2.6.0 revision
-# 0928c3ecdc56d1674cab90b66125b06d58145e22 and pins the shared policy plus every
+# conformance proof resolves exact linked wash-runtime 2.6.1 revision
+# 09b1132f2bab36e6e71f4637bd0e4755e359dd43 and pins the shared policy plus every
 # P2/P3 mirror call site. --reject-tenant asserts a wamn:postgres importer
 # (pgprobe) is refused by the allowlist v1 (E17). Runs locally without a cluster:
 ./target/release/wamn-gates --log-level warn egressbench \

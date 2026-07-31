@@ -1,4 +1,4 @@
-# DB-Path Egress Review (wasmCloud v2.6.0)
+# DB-Path Egress Review (wasmCloud v2.6.1)
 
 Review of the claim that the `wamn:postgres` host plugin is the **only** path a
 workload component has to Postgres — components never get `wasi:sockets` to open
@@ -15,7 +15,7 @@ a raw TCP connection that would bypass the plugin's tenant-claim / RLS injection
 **The DB-path guarantee now has two independent application layers.** First,
 published workload components are refused if their world imports
 `wasi:sockets`; this applies to both P2 and P3 socket packages. Second, the
-pinned wasmCloud v2.6.0 runtime denies raw TCP and UDP connect/send operations
+pinned wasmCloud v2.6.1 runtime denies raw TCP and UDP connect/send operations
 unless the workload has the explicit `wamn.allow-raw-sockets` opt-in. The opt-in
 does not widen bind authority: `UdpBind` remains service-loopback-only.
 
@@ -28,7 +28,7 @@ ordinary published workloads, `wamn:postgres` (plus separately controlled
 
 ## How egress actually works in the runtime
 
-The layers below are verified against the pinned v2.6.0 `wash-runtime`.
+The layers below are verified against the pinned v2.6.1 `wash-runtime`.
 `docs/wash-runtime-fork.md` is authoritative for the moving branch, revision,
 carried-commit ledger, configuration precedence, and policy exit conditions;
 this review records the resulting security posture rather than duplicating that
@@ -80,7 +80,8 @@ surface:
 
 `TcpConnect`, `UdpConnect`, and `UdpOutgoingDatagram` deny when the raw-socket
 capability is absent and proceed only when `wamn.allow-raw-sockets` is
-explicitly enabled. Name lookup and `allowed_hosts` are independent authorities;
+explicitly enabled. `AllowedIPNameLookups` (JSON/YAML
+`allowedIpNameLookups`) and `allowed_hosts` are independent authorities;
 neither grants raw TCP or UDP access.
 
 `UdpBind` is service-loopback-only: only service workloads may bind, and only

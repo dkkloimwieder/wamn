@@ -10,7 +10,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-# Upstream v2.6.0 plus the policies recorded in
+# Upstream v2.6.1 plus the policies recorded in
 # docs/wash-runtime-fork.md. The ledger is authoritative.
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
 # wamn and wash-runtime resolve one crates.io Wasmtime 47.0.1 family; enforce

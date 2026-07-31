@@ -1,13 +1,14 @@
 //! Structurally refuses publication of components whose worlds import `wasi:sockets` (E13a).
 //!
 //! This admission rule rejects every P2 or P3 `wasi:sockets` interface before
-//! publication. It is independent of the pinned wasmCloud v2.6.0 runtime
+//! publication. It is independent of the pinned wasmCloud v2.6.1 runtime
 //! policy: `TcpConnect`, `UdpConnect`, and `UdpOutgoingDatagram` deny by default
 //! and proceed only with explicit raw-socket opt-in. `UdpBind` remains
 //! service-loopback-only, and raw-socket opt-in never widens bind authority.
-//! The `allowed_hosts` allowlist governs `wasi:http` only and grants no raw
-//! socket authority. See `docs/security-db-path.md` for the layered boundary
-//! and `docs/wash-runtime-fork.md` for the authoritative branch, revision, and
+//! `AllowedIPNameLookups` and the `allowed_hosts` allowlist are independent of
+//! that authority; `allowed_hosts` governs `wasi:http` only. See
+//! `docs/security-db-path.md` for the layered boundary and
+//! `docs/wash-runtime-fork.md` for the authoritative branch, revision, and
 //! carried-policy details.
 //!
 //! This module is that enforcement: a single structural rule — reject a

@@ -113,7 +113,7 @@ is built, and the plan should not pretend otherwise.
   a loop against the interpreter and then switching is rework where H1 makes rework
   expensive. It develops against `ctl` and fixtures — a studio is convenience, not a
   dependency.
-- The **v2.6.0 fork upgrade precedes 1 and 2A** (0.3) — both build against the runtime.
+- The **v2.6.1 fork upgrade precedes 1 and 2A** (0.3) — both build against the runtime.
 - Item 8 needs 7's registration versioning.
 - Items 1 and 2A are **largely parallel**: checkpointing is host-side (`run-state`),
   composition is guest-side. Only 2C's bulk connectors need payload handles.
@@ -238,14 +238,15 @@ gates." Until it holds, every **Done when** below is unfalsifiable.
   added commit. No carried-commit ceiling. *Revisit if a base-version bump conflicts a
   carried commit on consecutive syncs.*
 
-**The v2.6.0 upgrade is a one-time prerequisite, not routine sync** — plan in
-`docs/PLAN/WASMCLOUD-UPGRADE-2.6.0.md`. It precedes items 1 and 2A because both are
-built *against* the runtime; doing them on 2.5.2 and re-porting is rework in the two most
-expensive items.
+**The v2.6.1 upgrade is a one-time prerequisite, not routine sync** — delta in
+`docs/PLAN/WASMCLOUD-UPGRADE-2.6.1.md`, amending the base plan in
+`docs/PLAN/WASMCLOUD-UPGRADE-2.6.0.md`. It precedes items 1 and 2A because both
+are built *against* the runtime; doing them on 2.5.2 and re-porting is rework in
+the two most expensive items.
 It is a **policy re-port**, not a dependency bump: upstream reworked the same files the fork
 patches. It also puts P3 on the table for item 1's streaming decision.
 
-**New D23 cost:** v2.6.0 maintains **parallel P2 and P3 host surfaces**, so a policy at a
+**New D23 cost:** v2.6.1 maintains **parallel P2 and P3 host surfaces**, so a policy at a
 boundary implemented separately for both generations needs dual coverage — already
 demonstrated by the UDP commit covering `host_udp.rs` *and* `host_udp_p3.rs`. Trace
 injection is the HTTP instance of the same problem, and the strongest argument yet for
@@ -352,7 +353,7 @@ streaming shape is **a decision this item makes**, together with the bulk bounda
 case, an optional `payloads` interface over `wasi:io/streams@0.2.6`, and a header deferring
 the WASI 0.3 revision to 0.2 — so the choice is *implement the existing P2 contract* or
 *deliberately introduce a P3-native 0.2*, not a forced bump. Cheap now, dearer once clients
-author nodes against it. Doing this on the 2.6.0 fork is what puts the second option on the
+author nodes against it. Doing this on the 2.6.1 fork is what puts the second option on the
 table (0.3).
 
 **Offload does not solve guest memory, and the split matters.** Host-side offload fixes

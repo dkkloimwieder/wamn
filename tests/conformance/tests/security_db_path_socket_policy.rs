@@ -23,14 +23,14 @@ fn section<'a>(document: &'a str, start: &str, end: &str) -> &'a str {
 }
 
 #[test]
-fn security_db_path_v2_6_0_rejects_allow_all_and_pins_p2_p3_tcp_udp() {
+fn security_db_path_v2_6_1_rejects_allow_all_and_pins_p2_p3_tcp_udp() {
     let path = repository_root().join(SECURITY_DB_PATH_DOC);
     let document = fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
 
     assert!(
-        document.contains("wasmCloud v2.6.0"),
-        "DB-path posture must name the v2.6.0 runtime baseline"
+        document.contains("wasmCloud v2.6.1"),
+        "DB-path posture must name the v2.6.1 runtime baseline"
     );
     assert!(
         document.contains("`docs/wash-runtime-fork.md` is authoritative"),
@@ -40,12 +40,14 @@ fn security_db_path_v2_6_0_rejects_allow_all_and_pins_p2_p3_tcp_udp() {
     for stale_claim in [
         "allow-all",
         "allow all",
+        "AllowIPNameLookup",
+        "allowIpNameLookup",
         "Outbound TCP connect is permitted to any address",
         "the host provides no defense-in-depth",
     ] {
         assert!(
             !document.contains(stale_claim),
-            "stale pre-v2.6.0 socket-policy claim returned: {stale_claim:?}"
+            "stale socket-policy claim returned: {stale_claim:?}"
         );
     }
 
@@ -86,6 +88,8 @@ fn security_db_path_v2_6_0_rejects_allow_all_and_pins_p2_p3_tcp_udp() {
         "P2 and P3 `UdpBind`",
         "deny when the raw-socket",
         "wamn.allow-raw-sockets",
+        "`AllowedIPNameLookups`",
+        "`allowedIpNameLookups`",
         "service-loopback-only",
     ] {
         assert!(
