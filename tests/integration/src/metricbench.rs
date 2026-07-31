@@ -1069,9 +1069,9 @@ mod tests {
     fn hermetic_preamble_contains_release_flows_required_by_run_next() {
         let ddl = fixture_ddl();
         for relation in [
-            "CREATE TABLE catalog.flow_artifacts",
-            "CREATE TABLE catalog.release_manifests",
-            "CREATE TABLE catalog.release_flows",
+            "CREATE TABLE catalog.flow_artifacts (",
+            "CREATE TABLE catalog.release_manifests (",
+            "CREATE TABLE catalog.release_flows (",
         ] {
             assert!(
                 ddl.contains(relation),
