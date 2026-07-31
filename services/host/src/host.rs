@@ -12,7 +12,7 @@ use clap::Args;
 use wash_runtime::engine::WasmProposal;
 use wash_runtime::host::HostConfig;
 use wash_runtime::host::allowed_hosts::AllowedHost;
-use wash_runtime::host::http::{DynamicRouter, HttpServer};
+use wash_runtime::host::http::{DynamicRouter, Ingress};
 use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
@@ -220,9 +220,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             if let Some(ca) = args.tls_ca_path.as_deref() {
                 tls = tls.with_ca(ca);
             }
-            HttpServer::new_with_tls(router, addr, tls).await?
+            Ingress::new_with_tls(router, addr, tls).await?
         } else {
-            HttpServer::new(router, addr).await?
+            Ingress::new(router, addr).await?
         };
         builder = builder.with_http_handler(Arc::new(server));
     }

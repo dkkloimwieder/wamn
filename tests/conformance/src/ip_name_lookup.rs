@@ -1,4 +1,4 @@
-//! Conformance proof for the pinned runtime's `allowIpNameLookup` primitive.
+//! Conformance proof for the pinned runtime's `allowedIpNameLookups` primitive.
 //!
 //! Matching behavior is exercised through wash-runtime's public policy API.
 //! Socket dominance is a source-backed guard because the runtime's socket
@@ -12,8 +12,8 @@ use url::Host;
 use wash_runtime::host::allowed_ip_name::{AllowedIpName, check_allowed_ip_name};
 use wash_runtime::types::LocalResources;
 
-const EXPECTED_VERSION: &str = "2.6.0";
-const EXPECTED_REVISION: &str = "0928c3ecdc56d1674cab90b66125b06d58145e22";
+const EXPECTED_VERSION: &str = "2.6.1";
+const EXPECTED_REVISION: &str = "09b1132f2bab36e6e71f4637bd0e4755e359dd43";
 
 #[derive(Debug, Deserialize)]
 struct CargoMetadata {
@@ -120,7 +120,7 @@ fn validate_socket_dominance(sources: &RuntimeSources) -> Result<(), String> {
     let linked_call = compact(&sources.linked_call);
     require(
         &linked_call,
-        "allowed_ip_names:Arc::clone(&template.local_resources.allow_ip_name_lookup)",
+        "allowed_ip_name_lookups:Arc::clone(&template.local_resources.allowed_ip_name_lookups)",
         "lookup policy wiring",
     )?;
     require(
@@ -139,7 +139,7 @@ fn validate_socket_dominance(sources: &RuntimeSources) -> Result<(), String> {
     let lookup_p2 = compact(&sources.lookup_p2);
     require(
         &lookup_p2,
-        "check_allowed_ip_name(&network.allowed_ip_names,&host)",
+        "check_allowed_ip_name(&network.allowed_ip_name_lookups,&host,)",
         "P2 lookup policy",
     )?;
     require(
@@ -151,7 +151,7 @@ fn validate_socket_dominance(sources: &RuntimeSources) -> Result<(), String> {
     let lookup_p3 = compact(&sources.lookup_p3);
     require(
         &lookup_p3,
-        "check_allowed_ip_name(&view.get().ctx.allowed_ip_names,&host,)",
+        "check_allowed_ip_name(&view.get().ctx.allowed_ip_name_lookups,&host,)",
         "P3 lookup policy",
     )?;
     require(
@@ -266,15 +266,15 @@ fn literal_ip_lookup_matches_only_the_approved_address() {
 fn local_resources_default_is_an_empty_deny_all_lookup_policy() {
     let resources = LocalResources::default();
     assert!(
-        resources.allow_ip_name_lookup.is_empty(),
-        "LocalResources must default allowIpNameLookup to []"
+        resources.allowed_ip_name_lookups.is_empty(),
+        "LocalResources must default allowedIpNameLookups to []"
     );
     assert!(!check_allowed_ip_name(
-        &resources.allow_ip_name_lookup,
+        &resources.allowed_ip_name_lookups,
         &host("localhost")
     ));
     assert!(!check_allowed_ip_name(
-        &resources.allow_ip_name_lookup,
+        &resources.allowed_ip_name_lookups,
         &host("127.0.0.1")
     ));
 }
@@ -298,7 +298,7 @@ fn approved_lookup_must_not_authorize_fork_denied_tcp_or_udp() {
     let package = runtime_package();
     let mut sources = runtime_sources(&package.root);
     let original = "let permitted = socket_addr_permitted(";
-    let fault = "let permitted = !template.local_resources.allow_ip_name_lookup.is_empty() || socket_addr_permitted(";
+    let fault = "let permitted = !template.local_resources.allowed_ip_name_lookups.is_empty() || socket_addr_permitted(";
     assert!(
         sources.linked_call.contains(original),
         "fault injection target must remain present"

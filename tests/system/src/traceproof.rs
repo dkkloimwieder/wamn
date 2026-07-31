@@ -38,7 +38,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_test_fixtures::runner::fnv1a_64;
 use wash_runtime::host::allowed_hosts::AllowedHost;
-use wash_runtime::host::http::{DevRouter, HostHandler as _, HttpServer, OutgoingHandler};
+use wash_runtime::host::http::{DevRouter, HostHandler as _, Ingress, OutgoingHandler};
 use wash_runtime::host::http_p3::{P3Body, P3RequestErrorFuture, P3SendFuture};
 use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode as P2ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
@@ -358,7 +358,7 @@ async fn capture_host_traceparent(
     parent: &opentelemetry::Context,
 ) -> anyhow::Result<Option<String>> {
     let capture = CaptureOutgoing::default();
-    let server = HttpServer::builder(DevRouter::default(), "127.0.0.1:0".parse()?)
+    let server = Ingress::builder(DevRouter::default(), "127.0.0.1:0".parse()?)
         .outgoing_handler(capture.clone())
         .build()
         .await

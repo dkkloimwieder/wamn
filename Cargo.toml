@@ -15,7 +15,7 @@ license = "Apache-2.0"
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
 # wamn and wash-runtime resolve one crates.io Wasmtime 47.0.1 family; enforce
 # that contract with tests/conformance/tests/wasmtime_source_identity.rs.
-wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "0928c3ecdc56d1674cab90b66125b06d58145e22", default-features = false }
+wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "09b1132f2bab36e6e71f4637bd0e4755e359dd43", default-features = false }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
 wasmtime-wasi = "47.0.1"
 wasmtime-wasi-http = "47.0.1"

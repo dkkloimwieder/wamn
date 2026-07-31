@@ -71,7 +71,7 @@ spec:
           # up on the next workload start.
           imagePullPolicy: Always
           localResources:
-            allowIpNameLookup: []
+            allowedIpNameLookups: []
             config:
               wamn.tenant: tenant-a
               wamn.project: default

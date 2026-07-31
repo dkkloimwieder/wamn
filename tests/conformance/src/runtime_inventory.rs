@@ -375,20 +375,20 @@ fn validate_ip_name_lookup_defaults(path: &str, source: &str) -> Result<(), Stri
             })
             .filter_map(|line| {
                 line.trim()
-                    .strip_prefix("allowIpNameLookup:")
+                    .strip_prefix("allowedIpNameLookups:")
                     .map(str::trim)
             })
             .collect();
 
         if values.len() != 1 {
             return Err(format!(
-                "{path}: each localResources block must contain exactly one allowIpNameLookup field; found {}",
+                "{path}: each localResources block must contain exactly one allowedIpNameLookups field; found {}",
                 values.len()
             ));
         }
         if values[0] != "[]" {
             return Err(format!(
-                "{path}: allowIpNameLookup must default to [], got `{}`",
+                "{path}: allowedIpNameLookups must default to [], got `{}`",
                 values[0]
             ));
         }
@@ -396,7 +396,7 @@ fn validate_ip_name_lookup_defaults(path: &str, source: &str) -> Result<(), Stri
 
     if local_resources_blocks == 0 {
         return Err(format!(
-            "{path}: workload must expose localResources.allowIpNameLookup with default []"
+            "{path}: workload must expose localResources.allowedIpNameLookups with default []"
         ));
     }
     Ok(())
@@ -590,10 +590,10 @@ fn nonzero_pool_size_mutation_is_rejected() {
 
 #[test]
 fn nonempty_ip_name_lookup_default_mutation_is_rejected() {
-    let mutant = "      components:\n        - name: mutant\n          localResources:\n            allowIpNameLookup: [\"example.com\"]\n";
+    let mutant = "      components:\n        - name: mutant\n          localResources:\n            allowedIpNameLookups: [\"example.com\"]\n";
     let error = validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P2Components)
-        .expect_err("nonempty allowIpNameLookup default must fail closed");
-    assert!(error.contains("allowIpNameLookup must default to []"));
+        .expect_err("nonempty allowedIpNameLookups default must fail closed");
+    assert!(error.contains("allowedIpNameLookups must default to []"));
 }
 
 #[test]
@@ -604,21 +604,25 @@ fn missing_misspelled_or_duplicate_ip_name_lookup_defaults_are_rejected() {
             "      components:\n        - name: mutant\n          localResources:\n            config: {}\n",
         ),
         (
-            "misspelled",
+            "wrong-allow-prefix",
             "      components:\n        - name: mutant\n          localResources:\n            allowIpNameLookups: []\n",
         ),
         (
+            "legacy-singular",
+            "      components:\n        - name: mutant\n          localResources:\n            allowIpNameLookup: []\n",
+        ),
+        (
             "duplicate",
-            "      components:\n        - name: mutant\n          localResources:\n            allowIpNameLookup: []\n            allowIpNameLookup: []\n",
+            "      components:\n        - name: mutant\n          localResources:\n            allowedIpNameLookups: []\n            allowedIpNameLookups: []\n",
         ),
     ];
 
     for (name, mutant) in mutants {
         let error =
             validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P2Components)
-                .expect_err("invalid allowIpNameLookup structure must fail closed");
+                .expect_err("invalid allowedIpNameLookups structure must fail closed");
         assert!(
-            error.contains("must contain exactly one allowIpNameLookup field"),
+            error.contains("must contain exactly one allowedIpNameLookups field"),
             "{name} mutation failed for an unexpected reason: {error}"
         );
     }

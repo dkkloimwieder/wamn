@@ -324,7 +324,7 @@ async fn run_sockprobe(
             read_only: false,
         }],
         allowed_hosts: Arc::from(vec![]),
-        allow_ip_name_lookup: Default::default(),
+        allowed_ip_name_lookups: Default::default(),
     };
     resources.environment.insert(
         "SOCKPROBE_REPORT_PATH".to_string(),
@@ -515,15 +515,15 @@ mod tests {
             .find(|package| package["name"] == "wash-runtime")
             .expect("linked graph must contain wash-runtime");
         assert_eq!(
-            package["version"], "2.6.0",
-            "socket gate must inspect wash-runtime 2.6.0"
+            package["version"], "2.6.1",
+            "socket gate must inspect wash-runtime 2.6.1"
         );
         let source = package["source"]
             .as_str()
             .expect("wash-runtime must retain its git source");
         assert!(
-            source.ends_with("#0928c3ecdc56d1674cab90b66125b06d58145e22"),
-            "socket gate must inspect the exact linked wash-runtime 2.6.0 fork revision, got {source}"
+            source.ends_with("#09b1132f2bab36e6e71f4637bd0e4755e359dd43"),
+            "socket gate must inspect the exact linked wash-runtime 2.6.1 fork revision, got {source}"
         );
         Path::new(
             package["manifest_path"]
