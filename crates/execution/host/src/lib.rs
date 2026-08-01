@@ -5,6 +5,14 @@
 //! Artifact lifecycle policy such as polling, doorbell subscription, shutdown,
 //! and production capability selection remains in the service leaves.
 
+mod pool;
+
+pub use pool::{
+    ExecutionInstancePool, ExecutionLease, ExecutionPoolKey, ExecutionPoolLimits,
+    ExecutionPoolSnapshot, InvalidExecutionPoolLimits, InvocationDisposition, PoolCapacityError,
+    PoolCleanupError, RetirementReason, ReusableExecutionInstance,
+};
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
