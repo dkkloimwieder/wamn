@@ -18,6 +18,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
+mod http_operation_fingerprint;
+
+#[doc(inline)]
+pub use http_operation_fingerprint::{
+    HTTP_OPERATION_FINGERPRINT_VERSION, HttpBodyDigest, HttpOperation, HttpOperationFingerprint,
+    HttpOperationFingerprintError, HttpOperationFingerprintErrorKind, HttpSemanticHeader,
+    fingerprint_http_operation,
+};
+
 /// The OCI annotation key the manifest JSON is stored under.
 pub const ANNOTATION_KEY: &str = "wamn.node.manifest";
 
