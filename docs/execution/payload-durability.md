@@ -47,11 +47,12 @@ rows and does not call the current `reconstruct()` fold over
 | Field | Meaning |
 |---|---|
 | `version` | Exact checkpoint encoding version; initially `1`. |
-| `frontier` | Ordered pending tokens, each containing node id, occurrence, and a payload value. |
-| `current` | Absent at a completed boundary; present only for a durably parked retry/wait with node id, occurrence, attempt, deadline, and throttle key. |
+| `frontier` | Ordered pending tokens, each containing node id and a payload value; occurrence is derived when the token is promoted from this order plus `visits`. |
+| `current` | Absent at a completed boundary; present only for a durably parked retry/wait with node id, payload, attempt, engine deadline, and throttle key; occurrence remains derived from `visits`. |
 | `visits` | Completed occurrence count by node id. |
 | `step-seq` | Next monotonic execution sequence. |
 | `context` | Faithful, unscrubbed run context. |
+| `result` | Last reducer result, including a response already released before downstream work continues. |
 | `caller` | Caller-release state needed to preserve the one-result CAS semantics. |
 
 A checkpoint payload value is tagged `inline` or `ref`. An inline value contains
@@ -72,6 +73,9 @@ uses the existing fenced transition to commit the attempt result and replace
 the whole checkpoint atomically. Parking commits the same checkpoint shape with
 `current` populated. Terminalization removes the active checkpoint only after
 the terminal outcome and replay seed are durable in that same transaction.
+The run-state adapter converts the engine's invocation-relative retry deadline
+to and from the durable queue clock; a process restart must preserve the
+remaining delay rather than treating every reclaimed wait as immediately due.
 
 `node_runs` remains authoritative for effect-attempt facts: recovery class,
 attempt number, attempt key, dispatch/commit timestamps, and the explicit

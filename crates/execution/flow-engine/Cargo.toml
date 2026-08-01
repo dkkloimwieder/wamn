@@ -16,6 +16,7 @@ wamn-flow = { workspace = true }
 wamn-node-sdk = { workspace = true }
 # Payloads and opaque node config are JSON; no schema of its own (this is an
 # engine, not a contract — like wamn-schema-compiler / wamn-api, no schemars).
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 # No DB / host / wasm / clock dependency: the reducer is a pure function of

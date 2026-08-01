@@ -61,8 +61,9 @@ mod retry;
 mod throttle;
 
 pub use engine::{
-    ApplyError, CallerState, Dispatch, ExecutionFailureKind, ExecutionState, ExecutionStatus,
-    Failure, Recorded, ReservedStep, ResumeError, SeedError, Step,
+    ApplyError, CallerState, CheckpointError, Dispatch, ExecutionFailureKind, ExecutionState,
+    ExecutionStatus, Failure, Recorded, ReservedStep, ResumeError, SeedError, Step, restore,
+    snapshot,
 };
 pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
 pub use plan::{DEFAULT_DISPATCH_BUDGET, EngineError, Plan};

@@ -36,6 +36,10 @@ use crate::plan::Plan;
 use crate::retry::RetryPolicy;
 use crate::throttle::ThrottleKey;
 
+mod checkpoint;
+
+pub use checkpoint::{CheckpointError, restore, snapshot};
+
 /// Terminal + in-progress run status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionStatus {
