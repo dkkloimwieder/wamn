@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 genre:  plan
 date:   2026-07-27
 verified-against: a2c120c
@@ -2392,7 +2392,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~Which persona does the authoring surface target?~~ | **Settled (item 6):** the advanced surface now. The simple surface is *also* authoring — an operations persona building report flows (schedule → query → format → deliver) — deferred as a strict subset, and gated on items 1 and 2 for the formatter/delivery nodes and bulk-payload handles | — |
 | **Does an advanced author eventually get a visual canvas?** | Kept open by four don't-foreclose items; only layout-outside-the-artifact is expensive to retrofit | 6 |
 | **Concurrent-edit notification** | LWW settled; warning an author mid-edit that someone else saved is the recorded future exploration | 6 |
-| **Does the E1–E11 roadmap survive, and in what form?** | The shape of items 9–11 and ~70 anchored backlog records | 0.1 |
+| ~~Does the E1–E11 roadmap survive, and in what form?~~ | **Settled (0.1, 2026-07-31):** it does not survive as ordering — the backlog was re-baselined onto items 0–11 as `[PLAN-*]` epics (bd sweep `wamn-role`): survivors re-anchored, speculation closed with supersession reasons, `platform-plan.md` retained as the D-number and E-heading archive of record | — |
 | **Run placement — inline or queued** | Item 3's exit. One execution model, two placements — the queue row exists either way; only who executes it differs. If inline does not earn its complexity, there is one placement | 3 |
 | **Runs-per-process density** | One replica drives one run at a time today, so request concurrency scales only by pod count; 2A's instance pooling is the mechanism, measured in 3 | 2A, 3 |
 | **Payload inline threshold and hard ceiling** | Item 3 cannot measure the execution model until these are set and capture is off the recovery path | 1 |
