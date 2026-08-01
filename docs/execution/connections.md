@@ -257,11 +257,14 @@ bindings.
 A connection generation is pinned per external effect attempt, before send. A
 retry or recovery of that attempt may use only the recorded instance generation,
 definition hash, credential generation, and effective recovery class. The
-minimum experiment baseline does **not** retarget an uncertain attempt to a
+durable decision in `wamn-ko5r.1` does **not** retarget an uncertain attempt to a
 newer generation, even when an operator asserts a shared idempotency domain.
-Decision bead `wamn-ko5r.1` owns whether that conservative rule becomes durable
-direction or a versioned retarget protocol is justified; its result must fold
-back into `PLAN.md`.
+The retry uses the recorded claim, attestation, operation fingerprint, and stable
+key and proceeds only when its recovery class permits redispatch and the exact
+pinned definition, credential generation, and authority remain usable. Otherwise
+it refuses explicitly. Shared-domain evidence may admit a new generation for a
+later occurrence; it is not substitution authority for the existing attempt.
+Version 1 defines no retarget protocol.
 
 For `idempotent-with-key`, the record is durable before send and includes the
 stable occurrence idempotency key, canonical operation fingerprint, and exact

@@ -929,8 +929,24 @@ where an effect was actually sent.
 
 At minimum, effect history identifies the connection requirement, the instance, its
 generation or definition hash, and the credential generation used — never secret material.
-The retry policy (continue on C1, refuse, or permit C2 only within one idempotency domain)
-is 2B's design.
+
+**Decision (wamn-ko5r.1): an uncertain attempt stays on its recorded generation.** A retry
+or recovery dispatch for an existing effect attempt may use only the exact immutable
+connection-instance generation, definition hash, credential generation, admitted claim and
+attestation, operation fingerprint, and stable key recorded before its first send. It may
+dispatch again only when the pinned recovery class permits it and that exact non-secret
+definition, credential generation, and still-valid authority are reacquirable. Otherwise it
+refuses explicitly; `never-replay` with a lost outcome remains `effect-uncertain`. Recovery
+does not re-resolve the binding's current active generation and does not silently downgrade
+the recorded recovery class.
+
+Even an attestation that C1 and C2 share an idempotency domain does **not** authorize C2 for
+the uncertain attempt. C2 can also change destination, TLS/proxy posture, credential
+identity, and audit meaning; substituting it would turn recovery into a new authority
+decision while retaining the old attempt identity. Shared-domain evidence is relevant to
+generation activation and later occurrences, not substitution. A later distinct occurrence
+may resolve C2 under the normal compatibility and admission checks. Version 1 therefore has
+no retarget protocol for an existing attempt.
 
 **Pinning granularity — per attempt.** A long-lived run raises the question directly:
 occurrence 1 uses C1, the run parks, C2 activates, occurrence 2 reaches the same node.
@@ -2437,7 +2453,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~How does the tenant key relate to `(org, project, env)`?~~ | **Settled (item 5):** registry-minted `<org-abbrev>_<project-abbrev>_<8 random>`, ≤34 chars, never changes; abbreviations are the machine-facing id, names are labels. D6's one-database-per-`(org, project, env)` confirmed on isolation and operational merits — *not*, as previously recorded, because logical replication forecloses sharing | — |
 | ~~Abbreviation charset, length, and who picks it~~ | **Answered in item 5's body:** `[a-z0-9]`, bounded, org globally unique and project unique within org, slugified default at creation with client override. It also collapses the registry/provisioning validator divergence | — |
 | **Revocation scope** | "Prevents further execution" is ambiguous across new admissions, resumed parked runs, in-flight attempts, and tested-but-unpublished drafts | 2D |
-| **Retry policy across a connection-instance change** | Continue on the original generation, refuse, or permit the new one only within a shared idempotency domain — recovery must never silently retarget | 2B |
+| ~~Retry policy across a connection-instance change~~ | **Settled (wamn-ko5r.1):** retry or recovery of an uncertain effect attempt may use only its recorded immutable connection and credential generations, admitted claim/attestation, fingerprint, and stable key. A missing pinned definition or credential, an expired/revoked attestation, or policy-prohibited pinned authority refuses explicitly; `never-replay` remains `effect-uncertain`. A newer generation is never substituted for that attempt, even under an asserted shared idempotency domain; only a later distinct occurrence may resolve it. | — |
 | ~~What a connection type's contract asserts~~ | **Settled (wamn-ko5r.2):** the portable type contract defines ABI, authority/field ownership, credential injection, conservative recovery default, and the exact semantics of named recovery claims. A portable requirement selects a claim; an authorized environment administrator attests that one immutable instance generation satisfies it. HTTP `0.1` defaults to `never-replay`; `stable-key-dedup-v1` requires scoped, retained, fingerprint-bound deduplication and terminal-outcome recovery, not merely an `Idempotency-Key` header. | — |
 | **Generation activation compatibility** | What validation a new generation must pass against active bindings, and whether failure refuses, forks a new instance, or disables bindings | 2B |
 | **What evidence, freshness, and invalidation rules apply per semantic-attestation type** | *Who* may issue one is settled (an authorized connection administrator); what keeps it true is not — external behaviour drifts without any definition changing | 2B |
