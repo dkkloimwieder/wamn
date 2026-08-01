@@ -308,6 +308,7 @@ dependencies = [
 name = "flowrunner"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "wamn-catalog",
  "wamn-flow",
@@ -1257,6 +1258,7 @@ dependencies = [
  "jmespath",
  "serde_json",
  "wamn-entity-access",
+ "wamn-node-manifest",
  "wamn-node-sdk",
  "wamn-pg-core",
  "wamn-schema-model",
