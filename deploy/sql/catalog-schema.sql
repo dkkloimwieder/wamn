@@ -914,6 +914,272 @@ SELECT * FROM catalog.active_attachments
 WHERE attachment_kind = 'cron';
 GRANT SELECT ON catalog.cron_attachments TO wamn_app;
 
+-- BEGIN CONNECTION STORAGE MIGRATION (wamn-ko5r.6)
+-- Portable requirements are artifact-owned. Every other record in this block
+-- is environment-owned and therefore absent from artifact and bundle bytes.
+CREATE TABLE catalog.connection_requirements (
+    tenant_id        text NOT NULL CHECK (tenant_id <> ''),
+    artifact_hash    text NOT NULL CHECK (artifact_hash <> ''),
+    requirement_name text NOT NULL CHECK (requirement_name <> ''),
+    requirement_json jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
+    requirement_hash text NOT NULL CHECK (requirement_hash <> ''),
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, artifact_hash, requirement_name)
+);
+ALTER TABLE catalog.connection_requirements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.connection_requirements FORCE ROW LEVEL SECURITY;
+CREATE POLICY connection_requirements_tenant ON catalog.connection_requirements
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.connection_requirements TO wamn_app;
+CREATE TRIGGER connection_requirements_immutable
+BEFORE UPDATE OR DELETE ON catalog.connection_requirements
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+CREATE FUNCTION catalog.require_connection_artifact()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM catalog.flow_artifacts artifact
+        WHERE artifact.tenant_id = NEW.tenant_id
+          AND artifact.artifact_hash = NEW.artifact_hash
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23503',
+            MESSAGE = 'connection-requirement-artifact-missing';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER connection_requirements_require_artifact
+BEFORE INSERT ON catalog.connection_requirements
+FOR EACH ROW EXECUTE FUNCTION catalog.require_connection_artifact();
+
+CREATE TABLE catalog.connection_instances (
+    tenant_id         text NOT NULL CHECK (tenant_id <> ''),
+    environment       text NOT NULL CHECK (environment <> ''),
+    instance_id       text NOT NULL CHECK (instance_id <> ''),
+    requirement_type  text NOT NULL CHECK (requirement_type <> ''),
+    contract           text NOT NULL CHECK (contract <> ''),
+    lifecycle_status   text NOT NULL DEFAULT 'enabled'
+        CHECK (lifecycle_status IN ('enabled', 'disabled')),
+    active_generation  bigint CHECK (active_generation > 0),
+    revision           bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, environment, instance_id),
+    CONSTRAINT connection_instances_disabled_pointer CHECK (
+        lifecycle_status = 'enabled' OR active_generation IS NULL
+    )
+);
+ALTER TABLE catalog.connection_instances ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.connection_instances FORCE ROW LEVEL SECURITY;
+CREATE POLICY connection_instances_tenant ON catalog.connection_instances
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.connection_instances TO wamn_app;
+
+CREATE FUNCTION catalog.guard_connection_instance_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF (NEW.tenant_id, NEW.environment, NEW.instance_id,
+        NEW.requirement_type, NEW.contract, NEW.created_at)
+       IS DISTINCT FROM
+       (OLD.tenant_id, OLD.environment, OLD.instance_id,
+        OLD.requirement_type, OLD.contract, OLD.created_at)
+       OR NEW.revision <> OLD.revision + 1
+       OR NEW.updated_at <= OLD.updated_at THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'connection-instance-uncontrolled-update';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER connection_instance_controlled_update
+BEFORE UPDATE ON catalog.connection_instances
+FOR EACH ROW EXECUTE FUNCTION catalog.guard_connection_instance_update();
+CREATE TRIGGER connection_instances_delete_immutable
+BEFORE DELETE ON catalog.connection_instances
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+CREATE TABLE catalog.connection_generations (
+    tenant_id             text NOT NULL CHECK (tenant_id <> ''),
+    environment           text NOT NULL CHECK (environment <> ''),
+    instance_id           text NOT NULL CHECK (instance_id <> ''),
+    generation            bigint NOT NULL CHECK (generation > 0),
+    definition_json       jsonb NOT NULL CHECK (jsonb_typeof(definition_json) = 'object'),
+    definition_hash       text NOT NULL CHECK (definition_hash <> ''),
+    credential_set_handle text NOT NULL CHECK (credential_set_handle <> ''),
+    created_at             timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, environment, instance_id, generation),
+    UNIQUE (tenant_id, environment, instance_id, definition_hash),
+    FOREIGN KEY (tenant_id, environment, instance_id)
+        REFERENCES catalog.connection_instances (tenant_id, environment, instance_id)
+);
+ALTER TABLE catalog.connection_generations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.connection_generations FORCE ROW LEVEL SECURITY;
+CREATE POLICY connection_generations_tenant ON catalog.connection_generations
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.connection_generations TO wamn_app;
+CREATE TRIGGER connection_generations_update_immutable
+BEFORE UPDATE ON catalog.connection_generations
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+ALTER TABLE catalog.connection_instances
+    ADD CONSTRAINT connection_instances_active_generation_fk
+    FOREIGN KEY (tenant_id, environment, instance_id, active_generation)
+    REFERENCES catalog.connection_generations
+        (tenant_id, environment, instance_id, generation)
+    DEFERRABLE INITIALLY IMMEDIATE;
+
+CREATE TABLE catalog.connection_bindings (
+    tenant_id        text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id       text NOT NULL CHECK (catalog_id <> ''),
+    catalog_version  int NOT NULL CHECK (catalog_version > 0),
+    artifact_hash    text NOT NULL CHECK (artifact_hash <> ''),
+    requirement_name text NOT NULL CHECK (requirement_name <> ''),
+    environment      text NOT NULL CHECK (environment <> ''),
+    instance_id      text NOT NULL CHECK (instance_id <> ''),
+    binding_status   text NOT NULL DEFAULT 'active'
+        CHECK (binding_status IN ('active', 'disabled')),
+    validation_status text NOT NULL
+        CHECK (validation_status IN ('valid', 'invalid')),
+    validation_hash  text NOT NULL CHECK (validation_hash <> ''),
+    created_at       timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, catalog_id, catalog_version, artifact_hash, requirement_name),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
+    FOREIGN KEY (tenant_id, artifact_hash, requirement_name)
+        REFERENCES catalog.connection_requirements
+            (tenant_id, artifact_hash, requirement_name),
+    FOREIGN KEY (tenant_id, environment, instance_id)
+        REFERENCES catalog.connection_instances (tenant_id, environment, instance_id)
+);
+ALTER TABLE catalog.connection_bindings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.connection_bindings FORCE ROW LEVEL SECURITY;
+CREATE POLICY connection_bindings_tenant ON catalog.connection_bindings
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.connection_bindings TO wamn_app;
+CREATE TRIGGER connection_bindings_immutable
+BEFORE UPDATE OR DELETE ON catalog.connection_bindings
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+CREATE FUNCTION catalog.require_binding_release_environment()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM catalog.catalogs release
+        WHERE release.tenant_id = NEW.tenant_id
+          AND release.catalog_id = NEW.catalog_id
+          AND release.version = NEW.catalog_version
+          AND release.environment = NEW.environment
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM catalog.release_flows member
+        JOIN catalog.flow_artifacts artifact
+          ON artifact.tenant_id = member.tenant_id
+         AND artifact.flow_id = member.flow_id
+         AND artifact.flow_version = member.flow_version
+        WHERE member.tenant_id = NEW.tenant_id
+          AND member.catalog_id = NEW.catalog_id
+          AND member.catalog_version = NEW.catalog_version
+          AND artifact.artifact_hash = NEW.artifact_hash
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23514',
+            MESSAGE = 'connection-binding-environment-mismatch';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER connection_bindings_match_release_environment
+BEFORE INSERT ON catalog.connection_bindings
+FOR EACH ROW EXECUTE FUNCTION catalog.require_binding_release_environment();
+
+CREATE TABLE catalog.connection_generation_retention (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    environment     text NOT NULL CHECK (environment <> ''),
+    instance_id     text NOT NULL CHECK (instance_id <> ''),
+    generation      bigint NOT NULL CHECK (generation > 0),
+    reference_kind  text NOT NULL
+        CHECK (reference_kind IN ('active-attempt', 'replay-seed', 'audit-seed')),
+    reference_id    text NOT NULL CHECK (reference_id <> ''),
+    retained_until  timestamptz,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (
+        tenant_id, environment, instance_id, generation, reference_kind, reference_id
+    ),
+    FOREIGN KEY (tenant_id, environment, instance_id, generation)
+        REFERENCES catalog.connection_generations
+            (tenant_id, environment, instance_id, generation)
+);
+ALTER TABLE catalog.connection_generation_retention ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.connection_generation_retention FORCE ROW LEVEL SECURITY;
+CREATE POLICY connection_generation_retention_tenant
+    ON catalog.connection_generation_retention
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.connection_generation_retention TO wamn_app;
+
+CREATE FUNCTION catalog.guard_connection_retention_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF (NEW.tenant_id, NEW.environment, NEW.instance_id, NEW.generation,
+        NEW.reference_kind, NEW.reference_id, NEW.created_at)
+       IS DISTINCT FROM
+       (OLD.tenant_id, OLD.environment, OLD.instance_id, OLD.generation,
+        OLD.reference_kind, OLD.reference_id, OLD.created_at)
+       OR (OLD.retained_until IS NULL AND NEW.retained_until IS NOT NULL)
+       OR (OLD.retained_until IS NOT NULL
+           AND NEW.retained_until IS NOT NULL
+           AND NEW.retained_until < OLD.retained_until) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'connection-generation-retention-cannot-shorten';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER connection_generation_retention_controlled_update
+BEFORE UPDATE ON catalog.connection_generation_retention
+FOR EACH ROW EXECUTE FUNCTION catalog.guard_connection_retention_update();
+
+CREATE FUNCTION catalog.reject_referenced_connection_generation_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM catalog.connection_generation_retention retention
+        WHERE retention.tenant_id = OLD.tenant_id
+          AND retention.environment = OLD.environment
+          AND retention.instance_id = OLD.instance_id
+          AND retention.generation = OLD.generation
+          AND (retention.retained_until IS NULL OR retention.retained_until > now())
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'connection-generation-retained';
+    END IF;
+    RETURN OLD;
+END
+$$;
+CREATE TRIGGER connection_generations_delete_retained
+BEFORE DELETE ON catalog.connection_generations
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_referenced_connection_generation_delete();
+-- END CONNECTION STORAGE MIGRATION (wamn-ko5r.6)
+
 -- ---------------------------------------------------------------------------
 -- Migration history (2.5, crates/schema/control). One IMMUTABLE row per applied
 -- migration — the versioned, forward-only apply journal the migration engine

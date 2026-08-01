@@ -429,7 +429,8 @@ async fn finish_publication_transaction(
     }
 }
 
-pub(crate) async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+/// Install or additively upgrade the catalog persistence schema.
+pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::Result<()> {
     let baseline_present: bool = client
         .query_one("SELECT to_regclass('catalog.catalogs') IS NOT NULL", &[])
         .await?
@@ -476,7 +477,12 @@ pub(crate) async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> a
                     EXISTS (SELECT 1 FROM information_schema.columns \
                              WHERE table_schema = 'catalog' \
                                AND table_name = 'flow_artifacts' \
-                               AND column_name = 'occurrence_recovery_hash')",
+                               AND column_name = 'occurrence_recovery_hash'), \
+                    to_regclass('catalog.connection_requirements') IS NOT NULL, \
+                    to_regclass('catalog.connection_instances') IS NOT NULL, \
+                    to_regclass('catalog.connection_generations') IS NOT NULL, \
+                    to_regclass('catalog.connection_bindings') IS NOT NULL, \
+                    to_regclass('catalog.connection_generation_retention') IS NOT NULL",
             &[],
         )
         .await?;
@@ -498,23 +504,46 @@ pub(crate) async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> a
             release_row.get::<_, bool>(11),
             release_row.get::<_, bool>(12),
         ];
-        if selection_columns.iter().all(|present| *present) {
+        if !selection_columns.iter().all(|present| *present) {
+            anyhow::ensure!(
+                selection_columns.iter().all(|present| !*present),
+                "catalog occurrence recovery storage is partially installed; reconcile it before publication"
+            );
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN OCCURRENCE RECOVERY STORAGE MIGRATION")
+                .expect("occurrence recovery migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END OCCURRENCE RECOVERY STORAGE MIGRATION")
+                .expect("occurrence recovery migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install occurrence recovery artifact storage")?;
+        }
+        let connection_objects = [
+            release_row.get::<_, bool>(13),
+            release_row.get::<_, bool>(14),
+            release_row.get::<_, bool>(15),
+            release_row.get::<_, bool>(16),
+            release_row.get::<_, bool>(17),
+        ];
+        if connection_objects.iter().all(|present| *present) {
             return Ok(());
         }
         anyhow::ensure!(
-            selection_columns.iter().all(|present| !*present),
-            "catalog occurrence recovery storage is partially installed; reconcile it before publication"
+            connection_objects.iter().all(|present| !*present),
+            "catalog connection storage is partially installed; reconcile it before publication"
         );
         let start = CATALOG_SCHEMA_SQL
-            .find("-- BEGIN OCCURRENCE RECOVERY STORAGE MIGRATION")
-            .expect("occurrence recovery migration start");
+            .find("-- BEGIN CONNECTION STORAGE MIGRATION")
+            .expect("connection storage migration start");
         let end = CATALOG_SCHEMA_SQL
-            .find("-- END OCCURRENCE RECOVERY STORAGE MIGRATION")
-            .expect("occurrence recovery migration end");
+            .find("-- END CONNECTION STORAGE MIGRATION")
+            .expect("connection storage migration end");
         client
             .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
             .await
-            .context("install occurrence recovery artifact storage")?;
+            .context("install connection storage")?;
         return Ok(());
     }
     anyhow::ensure!(

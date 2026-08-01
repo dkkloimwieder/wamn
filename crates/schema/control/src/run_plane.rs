@@ -983,9 +983,18 @@ CREATE INDEX event_registrations_by_entity
         ] {
             assert!(catalog.contains(&exposure_table.to_string()));
         }
+        for connection_table in [
+            "connection_requirements",
+            "connection_instances",
+            "connection_generations",
+            "connection_bindings",
+            "connection_generation_retention",
+        ] {
+            assert!(catalog.contains(&connection_table.to_string()));
+        }
         assert_eq!(
             catalog.len(),
-            20,
+            25,
             "catalog-schema.sql table count: {catalog:?}"
         );
     }

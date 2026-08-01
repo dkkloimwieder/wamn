@@ -4843,6 +4843,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-event-reg",
  "wamn-flow",
+ "wamn-node-manifest",
  "wamn-pg-core",
  "wamn-schema-compiler",
  "wamn-schema-model",

@@ -61,6 +61,7 @@
 //! pure tests do NOT cover; the live half is the throwaway-PG gates over the
 //! real prepared-statement path (SR12b).
 
+pub mod connections;
 mod engine;
 pub mod exposure;
 pub mod impact;
