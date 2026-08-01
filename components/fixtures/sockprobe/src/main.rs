@@ -4,7 +4,7 @@
 //! `wasi:sockets` (reached through `std::net` on wasm32-wasip2 — the default
 //! command world imports the whole `wasi:sockets` package) and reports the
 //! POLICY verdict of each attempt, so the egressbench runtime phase can assert
-//! the fork's `linked_call` raw-socket policy (docs/wash-runtime-fork.md, pins
+//! the fork's `linked_call` raw-socket policy (docs/platform/wash-runtime-fork.md, pins
 //! 8b76869 E13 / eef76cd E15/E16) WITHOUT matching on error text:
 //!
 //!   - deny-by-default: with no `wamn.allow-raw-sockets`, `socket_addr_check`

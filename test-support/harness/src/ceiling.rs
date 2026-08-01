@@ -1,4 +1,4 @@
-//! Ceiling-mode load-profile vocabulary (EVT-C7, docs/event-plane-jetstream.md §10).
+//! Ceiling-mode load-profile vocabulary (EVT-C7, docs/events/event-plane-jetstream.md §10).
 //!
 //! Pure planning/analysis for the ceiling measurement campaigns: the ramp
 //! controller (coarse doubling, then a bisect to the knee), the saturation

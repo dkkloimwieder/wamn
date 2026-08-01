@@ -11,8 +11,8 @@
 #   kubectl -n wamn-system logs -f job/walbench
 #
 # The curves land in the logs as `=== BEGIN CSV <name> ===` blocks; extract
-# them into docs/ceilings-data/ (cwal0-perop / cwal0-mixed) and cite them from
-# docs/ceilings.md (§ C-WAL-0: date, env, git rev, knobs, pre-CDC assert
+# them into docs/results/ceilings-data/ (cwal0-perop / cwal0-mixed) and cite them from
+# docs/results/ceilings.md (§ C-WAL-0: date, env, git rev, knobs, pre-CDC assert
 # result, raw-data pointer). A single run is the record (the C2 practice): no
 # knee search a one-sided disk stall can poison — the headline numbers are byte
 # counts and medians. No NATS. The fixture pod runs fsync=off/synchronous_commit

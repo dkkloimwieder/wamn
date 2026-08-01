@@ -7,8 +7,8 @@
 //! service-loopback-only, and raw-socket opt-in never widens bind authority.
 //! `AllowedIPNameLookups` and the `allowed_hosts` allowlist are independent of
 //! that authority; `allowed_hosts` governs `wasi:http` only. See
-//! `docs/security-db-path.md` for the layered boundary and
-//! `docs/wash-runtime-fork.md` for the authoritative branch, revision, and
+//! `docs/data-path/security-db-path.md` for the layered boundary and
+//! `docs/platform/wash-runtime-fork.md` for the authoritative branch, revision, and
 //! carried-policy details.
 //!
 //! This module is that enforcement: a single structural rule — reject a
@@ -25,7 +25,7 @@
 //!
 //! A TENANT (custom-node) artifact is held to a *positive* allowlist instead of
 //! the socket denylist above: it may import only [`TENANT_ALLOWED_PKGS`]
-//! (allowlist v1, docs/wamn-node-design-notes.md §9), and anything else is
+//! (allowlist v1, docs/execution/wamn-node-design-notes.md §9), and anything else is
 //! refused — most load-bearingly `wamn:postgres` (the raw DB surface + the
 //! `DO`/`EXECUTE` claim-mutation bypass, docs/findings.md §3 E17) and
 //! `wasi:sockets`, neither of which is on the list. A denylist alone could not
@@ -192,7 +192,7 @@ pub fn screen_imports(imports: &ComponentImports, label: &str) -> Result<(), Egr
 }
 
 /// Tenant / custom-node import allowlist v1 — the WIT `namespace:package`s a
-/// TENANT artifact may import (docs/wamn-node-design-notes.md §9, the 5.4
+/// TENANT artifact may import (docs/execution/wamn-node-design-notes.md §9, the 5.4
 /// freeze). Keyed on `namespace:package`, like [`DENIED_EGRESS_PKG`]. A tenant
 /// component importing anything OUTSIDE this set is refused at publish — most
 /// load-bearingly `wamn:postgres` (raw DB surface + `DO`/`EXECUTE` claim-mutation
@@ -256,10 +256,10 @@ pub fn screen_tenant_imports(
 //   2. `derive_grants` — import set -> the derived host-interface grants plus
 //      the allowedHosts REQUIREMENT (present iff wasi:http/outgoing-handler is
 //      imported, refused otherwise). Grants are DERIVED, never declared twice
-//      (docs/wamn-node-design-notes.md note 7).
+//      (docs/execution/wamn-node-design-notes.md note 7).
 
 /// Within the `wamn:node` package a custom node may import ONLY these
-/// interfaces (5.5 interface-level tightening; the frozen `docs/wamn-node.wit`
+/// interfaces (5.5 interface-level tightening; the frozen `docs/contracts/wamn-node.wit`
 /// stream-node/http-node worlds import exactly the capability subset).
 /// `handler` is an EXPORT, never imported. `types` is NOT a capability: it is
 /// the type-only instance import wit-bindgen materializes because the exported
@@ -658,7 +658,7 @@ mod tests {
         );
     }
 
-    /// A standard http-node world (`docs/wamn-node.wit`) clears the interface
+    /// A standard http-node world (`docs/contracts/wamn-node.wit`) clears the interface
     /// tightening: wasi:http/outgoing-handler + credentials + control.
     #[test]
     fn disallowed_node_interfaces_passes_http_node_world() {

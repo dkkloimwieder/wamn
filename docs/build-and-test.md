@@ -11,7 +11,7 @@ dev/test/deploy commands.
 
 wamn-host builds against wash-runtime consumed as a **git dependency from our
 fork** (dkkloimwieder/wasmCloud, branch `wamn/2.6.1` = upstream v2.6.1).
-`docs/wash-runtime-fork.md` is the authoritative carried-policy ledger and
+`docs/platform/wash-runtime-fork.md` is the authoritative carried-policy ledger and
 rev-bump runbook; this preamble does not duplicate its commit or seam
 inventory. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
@@ -329,7 +329,7 @@ docker stop wamn-lb3-pg
 
 ### [2.3] managed Postgres provisioning
 
-Docs: docs/provisioning.md
+Docs: docs/platform/provisioning.md
 
 ```bash
 cargo test -p wamn-control-provision   # naming/slug/reserved-prefix + SQL shape + secret + live-apply
@@ -416,7 +416,7 @@ kubectl -n wamn-system logs -f job/logbench
 
 ### [9.1] OTel trace pipeline
 
-Docs: docs/tracing.md
+Docs: docs/observability/tracing.md
 
 ```bash
 # Static proof spans the thin host artifact and the runtime library that owns
@@ -455,7 +455,7 @@ kubectl -n wamn-system logs job/tracebench
 
 ### [9.8] OTel metric set
 
-Docs: docs/metrics.md
+Docs: docs/observability/metrics.md
 
 ```bash
 # Unit proof: the memory instruments live in wamn-runtime; execution/service
@@ -500,7 +500,7 @@ kubectl -n wamn-system logs job/metricbench
 
 ### [9.2] trace context propagation
 
-Docs: docs/wash-runtime-fork.md, docs/tracing.md
+Docs: docs/platform/wash-runtime-fork.md, docs/observability/tracing.md
 
 ```bash
 cargo test -p wamn-node-sdk -p wamn-standard-nodes   # trace_headers/apply + http-node forward + explicit-header-wins
@@ -545,7 +545,7 @@ kubectl -n wamn-system logs -f job/testhostbench
 
 ### [11.4] assertion library (testkitbench)
 
-Docs: docs/scenario-model.md · Crate: crates/scenarios/model · Fixture: deploy/gates/testkit-cases.json
+Docs: docs/testing/scenario-model.md · Crate: crates/scenarios/model · Fixture: deploy/gates/testkit-cases.json
 
 ```bash
 # Unit tests (the pure vocabulary: serde drift-guards, subset semantics, the
@@ -702,7 +702,7 @@ kubectl -n wamn-system logs job/suiteexec
 
 ### [11.3 / wamn-htn] record-and-replay fixtures (pin-run + pinproof)
 
-Docs: docs/scenario-model.md → "Record-and-replay: pin a run". The `pin_run`
+Docs: docs/testing/scenario-model.md → "Record-and-replay: pin a run". The `pin_run`
 transform (a `wamn_run_state` run + its `node_runs` → a `wamn_scenario_model::TestCase`)
 lives in `wamn-scenario-catalog`, while the additive `normalize` vocabulary
 (`ignore-paths` + `canonicalize`, no regex) stays in the pure model. The `wamn-ctl pin-run`
@@ -735,7 +735,7 @@ docker rm -f wamn-pg
 
 ### [2.6] DB-path egress review
 
-Docs: docs/security-db-path.md
+Docs: docs/data-path/security-db-path.md
 
 ```bash
 REL=components/target/wasm32-wasip2/release
@@ -781,7 +781,7 @@ kubectl -n wamn-system logs job/egressbench
 
 ### [E13a] publish-time egress-guard refusal (socketguard)
 
-Docs: docs/security-db-path.md · Manifest: deploy/gates/socketguard-job.yaml
+Docs: docs/data-path/security-db-path.md · Manifest: deploy/gates/socketguard-job.yaml
 
 ```bash
 # Hermetic: synthesizes P2 and P3 wasi:sockets importers (both must be REFUSED at
@@ -806,7 +806,7 @@ kubectl -n wamn-system logs job/socketguard
 
 ### [11.5] custom-node test gate (testgate)
 
-Docs: docs/builder.md §11.5 · Manifest: deploy/gates/f2-testgate-job.yaml
+Docs: docs/platform/builder.md §11.5 · Manifest: deploy/gates/f2-testgate-job.yaml
 
 ```bash
 # A node's cases.json is a PUBLISH gate: the builder runs it against the built
@@ -832,7 +832,7 @@ kubectl -n wamn-system logs job/f2-testgate-refusal   # a TestGateError naming t
 
 ### [5.1] flow-graph schema crate (crates/execution/flow-model)
 
-Docs: docs/flow-schema.md
+Docs: docs/execution/flow-schema.md
 
 ```bash
 cargo test --locked -p wamn-flow
@@ -840,12 +840,12 @@ cargo test --locked -p wamn-proof-conformance --lib flow
 cargo clippy --locked -p wamn-flow --all-targets -- -D warnings
 cargo fmt -p wamn-flow --check
 # regenerate the published JSON Schema contract after changing the types:
-cargo run -p wamn-flow --example print-flow-schema > docs/flow-schema.schema.json
+cargo run -p wamn-flow --example print-flow-schema > docs/contracts/flow-schema.schema.json
 ```
 
 ### [CALLABLE-FLOWS-P2A / wamn-5wd1.44] immutable catalog definition identity
 
-Docs: `docs/FLOW-SPEC.md` §§5.1–5.4 and Phase 2A.
+Docs: `docs/execution/FLOW-SPEC.md` §§5.1–5.4 and Phase 2A.
 
 ```bash
 cargo test --locked -p wamn-catalog -p wamn-flow
@@ -857,7 +857,7 @@ cargo fmt -p wamn-catalog --check
 
 ### [CALLABLE-FLOWS-POC-F1 / wamn-5wd1.42] pure receipt components
 
-Docs: `docs/FLOW-SPEC.md` §10.3 and `docs/POC-PLAN.md` F1 / Named mechanical
+Docs: `docs/execution/FLOW-SPEC.md` §10.3 and `docs/poc/POC-PLAN.md` F1 / Named mechanical
 deltas. Both components use the zero-import `wamn:node/handler` world, declare
 only the `main` output port, and carry the explicit `purity: pure` assertion
 that authorizes replay. The host tests run the named decimal, float-refusal,
@@ -879,7 +879,7 @@ wasm-tools component wit \
 
 ### [CALLABLE-FLOWS-P4] flow invocation contract
 
-Docs: `docs/FLOW-SPEC.md` §8, §§9.1–9.7, §11, Phase 4.
+Docs: `docs/execution/FLOW-SPEC.md` §8, §§9.1–9.7, §11, Phase 4.
 
 ```bash
 cargo test --locked -p wamn-flow-invocation
@@ -889,7 +889,7 @@ cargo clippy --locked -p wamn-flow-invocation --all-targets -- -D warnings
 
 ### [CALLABLE-FLOWS-P4] exact claimed-run driver
 
-Docs: `docs/FLOW-SPEC.md` §§9.1–9.7, §10, §11, Phase 4.
+Docs: `docs/execution/FLOW-SPEC.md` §§9.1–9.7, §10, §11, Phase 4.
 
 ```bash
 cargo test --locked -p wamn-runner -p wamn-runtime -p wamn-run-state
@@ -913,7 +913,7 @@ kubectl -n wamn-system logs job/invocationproof
 
 ### [CALLABLE-FLOWS-P4] production invocation provider
 
-Docs: `docs/FLOW-SPEC.md` §§6.1–6.2, §§9.4–9.7, §§10–11, Phase 4.
+Docs: `docs/execution/FLOW-SPEC.md` §§6.1–6.2, §§9.4–9.7, §§10–11, Phase 4.
 
 ```bash
 cargo test --locked -p wamn-runtime -p wamn-run-state -p wamn-flow-invocation
@@ -934,7 +934,7 @@ kubectl -n wamn-system logs job/invocationproof
 
 ### [5.2] production flow-runner engine (crates/execution/flow-engine)
 
-Docs: docs/flow-runner.md
+Docs: docs/execution/flow-runner.md
 
 ```bash
 cargo test -p wamn-runner
@@ -947,7 +947,7 @@ cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --releas
 
 ### [5.3] standard node library v1 (crates/node/sdk + crates/execution/standard-nodes)
 
-Docs: docs/node-library.md
+Docs: docs/execution/node-library.md
 
 ```bash
 cargo test -p wamn-standard-nodes             # nodes + policy negatives + purity lint
@@ -966,12 +966,12 @@ cargo test -p wamn-node-manifest # fixture/negatives/conformance/drift
 cargo clippy -p wamn-node-guest -p wamn-node-manifest --all-targets \
   && cargo fmt -p wamn-node-sdk -p wamn-node-guest -p wamn-node-manifest --check
 # regenerate the published manifest schema after changing the types:
-cargo run -p wamn-node-manifest --example print-node-manifest-schema > docs/wamn-node-manifest.schema.json
+cargo run -p wamn-node-manifest --example print-node-manifest-schema > docs/contracts/wamn-node-manifest.schema.json
 ```
 
 ### [5.7] run-state persistence (crates/execution/run-state)
 
-Docs: docs/run-state.md
+Docs: docs/execution/run-state.md
 
 ```bash
 cargo test -p wamn-run-state
@@ -1047,7 +1047,7 @@ docker stop wamn-child-runtime-pg
 
 ### [5.7-resume-pin / wamn-cox] resume pins the run's persisted flow_version
 
-Docs: docs/run-state.md § *Resume pins the run's persisted version*
+Docs: docs/execution/run-state.md § *Resume pins the run's persisted version*
 
 ```bash
 # A resume loads the run's PERSISTED runs.flow_version (stamped at write-ahead
@@ -1073,7 +1073,7 @@ cargo test -p wamn-run-state   # pure text pins + queue.rs live
 
 ### [5.9] credential vault (plugins/wamn_credentials + credproof)
 
-Docs: docs/credential-vault.md
+Docs: docs/data-path/credential-vault.md
 
 ```bash
 # Pure units: the SDK facade + http-request injection/classification + the
@@ -1146,7 +1146,7 @@ kubectl -n wamn-system logs job/credproof   # overall PASS: true
 
 ### [5.14] durable run queue & runner scaling (crates/execution/run-state)
 
-Docs: docs/run-queue.md
+Docs: docs/execution/run-queue.md
 
 ```bash
 cargo test -p wamn-run-state -p wamn-scheduler
@@ -1186,7 +1186,7 @@ gates-image rebuild only (guest unchanged for this slice).
 
 ### [EVT-C7 / wamn-z7b.1] queuebench ceiling campaign (measurement, not a gate)
 
-Docs: docs/ceilings.md (the published curves) + docs/event-plane-jetstream.md §10/§11
+Docs: docs/results/ceilings.md (the published curves) + docs/events/event-plane-jetstream.md §10/§11
 
 ```bash
 # The pure ramp/knee controller (coarse-double → bisect; p99-doubling /
@@ -1205,7 +1205,7 @@ docker stop wamn-ceil-pg
 kubectl -n wamn-system apply -f deploy/gates/queuebench-ceiling-job.yaml
 kubectl -n wamn-system logs -f job/queuebench-ceiling
 # Extract the `=== BEGIN CSV <name> ===` blocks from the job log into
-# docs/ceilings-data/ and cite them from docs/ceilings.md (§11 provenance).
+# docs/results/ceilings-data/ and cite them from docs/results/ceilings.md (§11 provenance).
 ```
 
 The ceiling mode is deliberately NOT in `--mode all` (the regression gate of
@@ -1218,7 +1218,7 @@ wamn-gate-harness unit test).
 
 ### [EVT-C2 / wamn-z7b.2] outboxbench — RETIRED (l5i9.19 teardown)
 
-The C2 campaign of record stands in docs/ceilings.md + docs/ceilings-data/
+The C2 campaign of record stands in docs/results/ceilings.md + docs/results/ceilings-data/
 (c2-*.csv). The bench, the outbox triggers it measured
 (`Migration::outbox_triggers`), and deploy/gates/outboxbench-job.yaml were
 deleted with the outbox path (D19 v3 §3, executed 2026-07-20) — the numbers
@@ -1226,7 +1226,7 @@ are history of a retired mechanism and cannot be re-measured.
 
 ### [EVT-C-WAL-0 / wamn-l5i9.4] walbench pre-CDC WAL baseline (measurement, not a gate)
 
-Docs: docs/ceilings.md § C-WAL-0 (the published numbers) + docs/event-plane-jetstream.md
+Docs: docs/results/ceilings.md § C-WAL-0 (the published numbers) + docs/events/event-plane-jetstream.md
 §7/§8/§10. The *denominator* every later C-CDC WAL-delta claim (wamn-l5i9.14) divides
 by: representative-app WAL volume BEFORE any publication/slot exists (bd dep
 wamn-l5i9.9 → wamn-l5i9.4 keeps it strictly pre-CDC).
@@ -1253,7 +1253,7 @@ docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-g
 kubectl -n wamn-system apply -f deploy/gates/walbench-job.yaml
 kubectl -n wamn-system logs -f job/walbench
 # Extract the `=== BEGIN CSV <name> ===` blocks (cwal0-perop / cwal0-mixed) into
-# docs/ceilings-data/ and cite them from docs/ceilings.md (§ C-WAL-0 provenance).
+# docs/results/ceilings-data/ and cite them from docs/results/ceilings.md (§ C-WAL-0 provenance).
 ```
 
 The pre-CDC claim is made checkable, not assumed: `precheck` asserts the measured DB
@@ -1268,10 +1268,10 @@ kill; M2 op-batch runs `n/2` fails the exact-op-count assert).
 
 ### [EVT-S-CDC-1 / wamn-l5i9.2] pg_walstream diligence spike (diligence, not a gate)
 
-Docs: docs/event-plane-jetstream.md §7; verdicts live in the wamn-l5i9.2 bead
+Docs: docs/events/event-plane-jetstream.md §7; verdicts live in the wamn-l5i9.2 bead
 notes and feed wamn-l5i9.6 [BUILD-VS-BUY]. The harness is `poc/cdc1`
 (pg_walstream from the wamn fork, rev-pinned in the root workspace table since
-wamn-l5i9.8 — ledger: docs/pg-walstream-fork.md).
+wamn-l5i9.8 — ledger: docs/events/pg-walstream-fork.md).
 
 ```bash
 cargo build -p wamn-cdc1 && cargo clippy -p wamn-cdc1 && cargo fmt -p wamn-cdc1 --check
@@ -1297,7 +1297,7 @@ the slot through the crate.
 
 ### [EVT-VENDOR / wamn-l5i9.8] pg_walstream fork + pin
 
-Docs: docs/pg-walstream-fork.md (carried-commit ledger + sync runbook). The
+Docs: docs/events/pg-walstream-fork.md (carried-commit ledger + sync runbook). The
 fork branch `wamn/0.8.0` = upstream v0.8.0 + the F1 failover-syntax commit;
 the rev is pinned once in the root `Cargo.toml` workspace table.
 
@@ -1315,7 +1315,7 @@ grep -c '^name = "pg_walstream"$' Cargo.lock   # must be 1 (git-sourced)
 
 ### [EVT-NATS / wamn-l5i9.7] streambench data-plane JetStream gate
 
-Docs: docs/event-plane-jetstream.md §5/§7 Phase 1. Stands up the DEDICATED
+Docs: docs/events/event-plane-jetstream.md §5/§7 Phase 1. Stands up the DEDICATED
 data-plane NATS (deploy/infra/nats-jetstream.yaml — a 3-node JetStream cluster, R3
 file storage, Service `evt-nats`), SEPARATE from the operator/control-plane NATS
 (Service `nats`, doorbells) which stays untouched. The gate (`streambench`, a
@@ -1375,7 +1375,7 @@ reader wamn-l5i9.10 + C-JS wamn-l5i9.15 consume it); reclaim with
 
 ### [EVT-PROVISION / wamn-l5i9.9] enable-cdc-project-env — publication + failover slot + reader registration
 
-Docs: docs/event-plane-jetstream.md §4, docs/provisioning.md
+Docs: docs/events/event-plane-jetstream.md §4, docs/platform/provisioning.md
 §enable-cdc-project-env. The CDC capture overlay on a provisioned project-env:
 one shared `wamn_cdc_<org>__<project>__<env>` name for the publication
 (`FOR TABLES IN SCHEMA <data schema>` — auto-includes tables catalog-publish
@@ -1425,7 +1425,7 @@ env-policy knobs) are a SIBLING bead, not this overlay.
 
 ### [EVT-READER / wamn-l5i9.10] event-reader — one project-env → the EVT_ stream
 
-Docs: docs/event-plane-jetstream.md §4. The CDC reader MVP: `wamn-cdc-reader --org --project --env` (replicas=1 Deployment,
+Docs: docs/events/event-plane-jetstream.md §4. The CDC reader MVP: `wamn-cdc-reader --org --project --env` (replicas=1 Deployment,
 deploy/platform/event-reader.example.yaml) reads its `registry.event_readers`
 registration, opens ONE pg_walstream session (`StreamingMode::Off` — whole
 txns, commit order), and publishes `wamn-event-wire` envelopes onto
@@ -1473,7 +1473,7 @@ apply/test/restore with sha256, DEBUG builds.
 
 ### [EVT-OIDMAP / wamn-l5i9.11] relation-OID → catalog-entity keying (R9b)
 
-Docs: docs/event-plane-jetstream.md §4/§5, docs/archive/review-findings.md R9b. The
+Docs: docs/events/event-plane-jetstream.md §4/§5, docs/archive/review-findings.md R9b. The
 reader resolves each relation OID to its stable catalog **entity id** via the
 `wamn_entities` map (`relation_oid → entity_id, table_name`), maintained by
 `publish-catalog`/`migrate-catalog` IN the DDL transaction (OID-keyed, so a
@@ -1511,7 +1511,7 @@ assert; apply/test/restore with sha256, DEBUG builds.
 
 ### [EVT-CAUSATION-STITCH] reader stitches wamn.causation (l5i9.12.1)
 
-Docs: docs/event-plane-jetstream.md §4 · Recipe extends [EVT-READER]/[EVT-OIDMAP]
+Docs: docs/events/event-plane-jetstream.md §4 · Recipe extends [EVT-READER]/[EVT-OIDMAP]
 
 The reader enables protocol Messages (`with_messages(true)`) and switches
 `drain()` to **buffer-per-txn**: it collects a transaction's row events and
@@ -1546,7 +1546,7 @@ exact-prefix guard broken — M1/M2 fail live-gate phase G, M3 fails the
 
 ### [EVT-CAUSATION-EMIT] the plugin emits wamn.causation per run-owned txn (l5i9.12.2)
 
-Docs: docs/event-plane-jetstream.md §4 · The emit half of the split above.
+Docs: docs/events/event-plane-jetstream.md §4 · The emit half of the split above.
 
 The trusted flow-runner declares the run it drives through a new **additive**
 `wamn:runner/causation.set-run-context` channel (linked ONLY into the compiled-in
@@ -1589,7 +1589,7 @@ apply/test/restore with sha256, DEBUG builds.
 
 ### [EVT-REG / wamn-l5i9.16] registration surface — catalog + minimal API
 
-Docs: docs/event-plane-jetstream.md §5. The **declaration surface** the
+Docs: docs/events/event-plane-jetstream.md §5. The **declaration surface** the
 materializer (l5i9.17) consumes: a registration = subscribing flow id, entity id
 (the rename-proof catalog **entity id**, EVT-OIDMAP — never a table name), a
 non-empty op set, an optional JMESPath condition, and an optional JMESPath
@@ -1670,7 +1670,7 @@ docker rm -f wave3-pg-rmxa
 
 ### [11.2 / wamn-828] test cases as catalog data — flow-tests schema, promote-with-flow
 
-Docs: docs/scenario-catalog.md. A flow's test suites/cases live as catalog data
+Docs: docs/testing/scenario-catalog.md. A flow's test suites/cases live as catalog data
 (`deploy/sql/flow-tests.sql`: `wamn_run.test_suites` + `wamn_run.test_cases`,
 both FORCE-RLS + `wamn_app` grants), versioned WITH the flow via the FK to
 `wamn_run.flows` ON DELETE CASCADE. They promote together through
@@ -1730,7 +1730,7 @@ kubectl -n wamn-system logs job/callable-flow-schema
 
 ### [POC-TESTS / wamn-3rj] F1/F3/F4 stored suites + drive-and-fold (pocsuiteproof)
 
-Docs: docs/poc-material-receiving.md ("Tests", L37–39). The F1/F3/F4 POC test
+Docs: docs/poc/poc-material-receiving.md ("Tests", L37–39). The F1/F3/F4 POC test
 suites as STORED DATA — `wamn-scenario-model` envelopes persisted by
 `wamn-scenario-catalog`
 (`deploy/gates/poc-f{1,3,4}-suite.json`, case bodies = `wamn_scenario_model::TestCase`)
@@ -1802,7 +1802,7 @@ cargo test -p wamn-scenario-model -p wamn-scenario-catalog
 
 ### [11.8 / wamn-wvb] schema-change impact analysis — affected flows/suites/API
 
-Docs: docs/impact-analysis.md. Before a migration applies, enumerate the
+Docs: docs/testing/impact-analysis.md. Before a migration applies, enumerate the
 dependency graph a change touches: affected entities (additive/destructive, from
 the plan's per-op attribution) → flows via event registration (id-keyed,
 rename-proof) + node config (NAME-keyed `config["entity"]`, NOT rename-proof) →
@@ -1845,7 +1845,7 @@ docker rm -f wave-wvb-pg
 
 ### [EVT-MAT / wamn-l5i9.17] materializer — CDC events → flow runs (Service-first)
 
-Docs: docs/event-plane-jetstream.md §5 · decisions D19–D24. The Service-first
+Docs: docs/events/event-plane-jetstream.md §5 · decisions D19–D24. The Service-first
 materializer: a wasi:cli/run SERVICE workload (`spec.service`, E11/D21 + E12 —
 deploy/platform/materializer.example.yaml) and the **first `wamn:jetstream`
 importer** (the plugin is now wired in the washlet; the doorbell rides the
@@ -1900,7 +1900,7 @@ matbench's `8 doorbell rings` assert. Apply/test/restore with sha256, DEBUG.
 
 ### [E10-E2E / wamn-l5i9.57] samplebench — component-driven wamn:jetstream e2e + the js-sample adopter template
 
-Docs: docs/event-plane-jetstream.md §5 · docs/wamn-jetstream.wit (FROZEN 0.1.0).
+Docs: docs/events/event-plane-jetstream.md §5 · docs/contracts/wamn-jetstream.wit (FROZEN 0.1.0).
 `components/samples/js-sample` is the **adopter template** — the smallest
 wasi:cli/run guest that drives BOTH sides of the frozen `wamn:jetstream@0.1.0`
 package and the **first `producer` importer** (the materializer, l5i9.17, only
@@ -1940,14 +1940,14 @@ the `wamn_run.evt_shadow` ledger, registration `state: shadow|live` (owner
 decision 2026-07-20: removed entirely — no permanent dual mode), the
 dispatcher's `cdc_live_flows` yield guard, and deploy/gates/cutbench-job.yaml
 were all deleted at the §3 teardown (executed 2026-07-20). The definition of
-the comparison and its evidence live in docs/event-plane-jetstream.md §7
+the comparison and its evidence live in docs/events/event-plane-jetstream.md §7
 Phase 2 (status note) + the l5i9.18 bead. Post-teardown, row events have ONE
 path: CDC reader → JetStream → materializer ([EVT-MAT], [EVT-READER],
 [EVT-NATS], [E10-E2E] are the standing gates).
 
 ### [EVT-RI-E2E / wamn-3glr] rie2ebench — reader-inclusive REPLICA IDENTITY flip e2e
 
-Docs: docs/event-plane-jetstream.md §7 · decisions D19/l5i9.31/l5i9.61. The
+Docs: docs/events/event-plane-jetstream.md §7 · decisions D19/l5i9.31/l5i9.61. The
 coverage the l5i9.19 teardown deleted with `cutbench`'s phase 3: `matbench`
 covers the old-image-absent refusal + a SYNTHESIZED FULL old image (a
 hand-published tape), and `ri_orch_live` covers the ctl flip machinery on
@@ -1999,7 +1999,7 @@ restoring the dep.
 
 ### [EVT-C-CDC / wamn-l5i9.14] cdcbench ceiling campaign (measurement, not a gate)
 
-Docs: docs/event-plane-jetstream.md §7/§8/§11 · record docs/ceilings.md § C-CDC.
+Docs: docs/events/event-plane-jetstream.md §7/§8/§11 · record docs/results/ceilings.md § C-CDC.
 Four axes on the rie2ebench substrate (gate-owned throwaway `wamn_ccdc`
 database on a `wal_level=logical` PG, REAL deploy/sql DDL + wamn-control-provision/
 wamn-control-registry builders, the REAL embedded reader via
@@ -2041,7 +2041,7 @@ docker run -d --name wamn-ccdc-nats -p 44222:4222 nats:2 -js
 # wamn-ccdc-pg` inside the drill window.
 docker rm -f wamn-ccdc-pg wamn-ccdc-nats
 # In-cluster CAMPAIGN OF RECORD (release gates image, sequential with other
-# jobs — the z7b.7 noise defense; CSVs from the job log → docs/ceilings-data/):
+# jobs — the z7b.7 noise defense; CSVs from the job log → docs/results/ceilings-data/):
 kubectl -n wamn-system apply -f deploy/gates/cdcbench-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/cdcbench --timeout=2400s
 # Axis 4 vs the LIVE wamn-pg pool (single-instance today → timed primary
@@ -2061,7 +2061,7 @@ restore with sha256, DEBUG builds; rebuild wamn-gates after restoring a dep.
 
 ### [5.14] checkpoint/resume on replica loss
 
-Docs: docs/run-queue.md
+Docs: docs/execution/run-queue.md
 
 ```bash
 cargo test -p wamn-run-state   # incl the janitor completion-race guard (shape + live-apply)
@@ -2080,7 +2080,7 @@ kubectl -n wamn-system logs -f job/failoverbench
 
 ### [5.14] guest-self-claim
 
-Docs: docs/run-queue.md
+Docs: docs/execution/run-queue.md
 
 ```bash
 cargo test -p wamn-run-state   # incl select_run_dispatch shape (fl3's traceparent seam)
@@ -2112,7 +2112,7 @@ kubectl -n wamn-system logs job/failoverbench
 
 ### [5.14 / wamn-fqg.9] guest-side partitioned claim
 
-Docs: docs/run-queue.md §Head-unavailability policy + §Per-partition ownership
+Docs: docs/execution/run-queue.md §Head-unavailability policy + §Per-partition ownership
 
 The guest `run-next` export now also serves `partitioned(key)` runs: when the
 global (unpartitioned) `claim_dispatch_sql` is empty it leases a partition
@@ -2170,7 +2170,7 @@ stream_seq from `partition::stream_key`) fails the pure test; M2 SQL builder
 
 ### [5.14] production runner (run-worker, fqg.8)
 
-Docs: docs/run-queue.md · Manifests: deploy/platform/runner.yaml + deploy/platform/runner-db.example.yaml
+Docs: docs/execution/run-queue.md · Manifests: deploy/platform/runner.yaml + deploy/platform/runner-db.example.yaml
 
 ```bash
 cargo test -p wamn-executor   # owner fallback + drain tally + idle backoff
@@ -2251,7 +2251,7 @@ kubectl -n wamn-system rollout status deploy/runner --timeout=120s
 
 ### [POC-F3] scale-to-zero / parked-project wake (wamn-fqg.12)
 
-Docs: docs/run-queue.md (Scale-to-zero wake) · Actuator: services/waker +
+Docs: docs/execution/run-queue.md (Scale-to-zero wake) · Actuator: services/waker +
 deploy/platform/waker.yaml · Manifest: deploy/gates/wakeproof-job.yaml
 
 `wakeproof` parks the runner Deployment at 0 replicas, seeds an every-second
@@ -2432,7 +2432,7 @@ kubectl -n wamn-system logs job/callable-flow-f4
 
 ### [5.14] shared trigger dispatcher
 
-Docs: docs/run-queue.md
+Docs: docs/execution/run-queue.md
 
 ```bash
 cargo test -p wamn-run-state -p wamn-scheduler   # durable anchors + pure cron/cadence decisions
@@ -2474,7 +2474,7 @@ kubectl -n wamn-system logs -f job/dispatchbench
 
 ### [9.6] node-level I/O capture (wamn-srb)
 
-Docs: docs/run-state.md § *Node-level I/O capture (9.6)*
+Docs: docs/execution/run-state.md § *Node-level I/O capture (9.6)*
 
 ```bash
 # Pure decision + SQL builders (scrub / truncate / preview derivation, the
@@ -2482,7 +2482,7 @@ Docs: docs/run-state.md § *Node-level I/O capture (9.6)*
 cargo test -p wamn-flow -p wamn-run-state
 cargo clippy -p wamn-flow -p wamn-run-state -p wamn-ctl -p wamn-gates --all-targets
 # If Flow.capture changed, regenerate the published schema (drift-guarded):
-cargo run -p wamn-flow --example print-flow-schema > docs/flow-schema.schema.json
+cargo run -p wamn-flow --example print-flow-schema > docs/contracts/flow-schema.schema.json
 # Rebuild the flowrunner guest (9.6 enforcement site; release-wasm exception):
 ( cd components && cargo build --release --target wasm32-wasip2 -p flowrunner )
 
@@ -2505,7 +2505,7 @@ kubectl -n wamn-system logs -f job/capturebench
 
 ### [D6/wamn-q3n.1] control-plane registry model crate
 
-Docs: docs/postgres-topology.md, docs/registry-model.md
+Docs: docs/platform/postgres-topology.md, docs/platform/registry-model.md
 
 ```bash
 cargo test -p wamn-control-registry
@@ -2514,7 +2514,7 @@ cargo clippy -p wamn-control-registry --all-targets && cargo fmt -p wamn-control
 
 ### [D6/wamn-q3n.2] T1 system cluster
 
-Docs: docs/system-cluster.md
+Docs: docs/platform/system-cluster.md
 
 ```bash
 kubectl apply -f deploy/platform/wamn-sysdb.yaml
@@ -2531,7 +2531,7 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
 
 ### [D6/wamn-q3n.3] system-DB registry schema + the four invariants
 
-Docs: docs/registry-model.md, docs/system-cluster.md
+Docs: docs/platform/registry-model.md, docs/platform/system-cluster.md
 
 ```bash
 cargo test -p wamn-control-registry   # drift-guard (placement cols + env_policies seed vs the model) + inv-1 grep (live-apply skips)
@@ -2566,7 +2566,7 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn
 
 ### [D6/wamn-q3n.6] provision-org
 
-Docs: docs/provisioning.md, docs/postgres-topology.md
+Docs: docs/platform/provisioning.md, docs/platform/postgres-topology.md
 
 ```bash
 cargo test -p wamn-control-registry -p wamn-control-provision -p wamn-ctl   # renderer shape + org-row SQL + drift/subcommand units
@@ -2600,7 +2600,7 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
 
 ### [D6/wamn-q3n.7] provision-project-env
 
-Docs: docs/provisioning.md, docs/postgres-topology.md
+Docs: docs/platform/provisioning.md, docs/platform/postgres-topology.md
 
 ```bash
 cargo test -p wamn-control-provision -p wamn-control-registry -p wamn-ctl   # renderer/naming + project SQL + drift/subcommand units
@@ -2634,7 +2634,7 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
 
 ### [D6/wamn-q3n.8] provisionbench four-tier extension
 
-Docs: docs/provisioning.md, docs/postgres-topology.md
+Docs: docs/platform/provisioning.md, docs/platform/postgres-topology.md
 
 ```bash
 cargo test -p wamn-control-registry -p wamn-control-provision   # saga/named-db builders + drift-guards
@@ -2674,7 +2674,7 @@ kubectl -n wamn-system delete objectstore gate8-prod-store --ignore-not-found
 
 ### [D6/wamn-q3n.9] demote the shipped shared cluster to the T3 trials pool
 
-Docs: docs/postgres-topology.md, docs/provisioning.md
+Docs: docs/platform/postgres-topology.md, docs/platform/provisioning.md
 
 ```bash
 cargo test -p wamn-control-registry -p wamn-ctl   # Org::pooled placement + pooled-vs-dedicated subcommand units
@@ -2707,7 +2707,7 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
 
 ### [D6/wamn-q3n.10] scheduled per-project-env logical dumps
 
-Docs: docs/postgres-topology.md, docs/provisioning.md
+Docs: docs/platform/postgres-topology.md, docs/platform/provisioning.md
 
 ```bash
 cargo test -p wamn-control-provision -p wamn-control-registry -p wamn-ctl   # renderers/builders + record_dump SQL + drift/subcommand units
@@ -2769,7 +2769,7 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn
 
 ### [D6/wamn-q3n.11] restore per-project-env logical dumps
 
-Docs: docs/postgres-topology.md, docs/provisioning.md
+Docs: docs/platform/postgres-topology.md, docs/platform/provisioning.md
 
 ```bash
 cargo test -p wamn-control-provision -p wamn-control-registry -p wamn-ctl   # restore builders + select_latest shape/drift + subcommand units
@@ -2831,7 +2831,7 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn
 
 ### [D6/wamn-q3n.13] tier-move / promotion tooling — RETIRED (D18, wamn-8df.3)
 
-Docs: docs/provisioning.md, docs/deployment-model.md
+Docs: docs/platform/provisioning.md, docs/platform/deployment-model.md
 
 `move-org-tier` + `wamn_control_provision::tier_move` are removed with the `Tier` enum.
 A placement change is one case of the unified `copy(src -> dst)` operation
@@ -2842,7 +2842,7 @@ update the org's placement row.
 
 ### [D6/wamn-q3n.14] dedicated-per-env (T4) — now an env policy, not a tier (D18)
 
-Docs: docs/postgres-topology.md, docs/deployment-model.md
+Docs: docs/platform/postgres-topology.md, docs/platform/deployment-model.md
 
 The wamn-q3n.14 canary special case (`canary_cluster` column + two CHECKs +
 `Org::cluster_for_env`) is retired (wamn-8df.3). The T4 shape is a `canary` env
@@ -2871,7 +2871,7 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn
 
 ### [ARCH/wamn-8df.4] templates + org-scoped env policies (the Tier successor)
 
-Docs: docs/deployment-model.md, docs/registry-model.md, docs/provisioning.md
+Docs: docs/platform/deployment-model.md, docs/platform/registry-model.md, docs/platform/provisioning.md
 
 ```bash
 cargo test -p wamn-control-registry -p wamn-ctl   # Template presets + OrgEnvPolicy + org-scoped validate/resolve/SQL + subcommand units
@@ -2908,7 +2908,7 @@ docker stop wamn-8df4-pg
 
 ### [ARCH/wamn-8df.5] unified copy — copy-project-env (deploy/promote/clone/move)
 
-Docs: docs/deployment-model.md §4, docs/provisioning.md
+Docs: docs/platform/deployment-model.md §4, docs/platform/provisioning.md
 
 ```bash
 cargo test -p wamn-control-provision copy      # the pure plan (clone vs cutover pipeline, unbuilt axes, quiesce/verify builders)
@@ -2951,7 +2951,7 @@ WAMN_DUMP_PG_URL=$U WAMN_RESTORE_PG_URL=$U WAMN_PROVISION_PG_URL=$U cargo test -
 
 ### [D6/wamn-e1g] per-org WAL/PITR via the Barman Cloud plugin + the shared object
 
-Docs: docs/postgres-topology.md, docs/provisioning.md
+Docs: docs/platform/postgres-topology.md, docs/platform/provisioning.md
 
 ```bash
 cargo test -p wamn-control-provision -p wamn-ctl   # backup renderer + policy knobs + org/dump wiring + subcommand units
@@ -2987,7 +2987,7 @@ kubectl -n wamn-system delete scheduledbackup e1gate-prod-backup
 
 ### [2.4] per-project system schema v1
 
-Docs: docs/app-schema.md
+Docs: docs/schema/app-schema.md
 
 ```bash
 cargo test -p wamn-project-state     # unit (status literals + table manifest) + drift-guard
@@ -3002,7 +3002,7 @@ docker stop wamn-as5-pg
 
 ### [2.5] migration engine (crates/schema/control + wamn-ctl migrate-catalog)
 
-Docs: docs/migration-engine.md
+Docs: docs/schema/migration-engine.md
 
 ```bash
 cargo test -p wamn-schema-control     # unit (guards/gate/dry-run/rollback) + drift-guard + live-apply
@@ -3022,13 +3022,13 @@ docker stop wamn-schema-control-pg
 
 ### [3.1] metadata catalog schema crate (crates/schema/model)
 
-Docs: docs/catalog-model.md
+Docs: docs/schema/catalog-model.md
 
 ```bash
 cargo test -p wamn-schema-model
 cargo clippy -p wamn-schema-model --all-targets && cargo fmt -p wamn-schema-model --check
 # regenerate the published JSON Schema contract after changing the types:
-cargo run -p wamn-schema-model --example print-catalog-model-schema > docs/catalog-model.schema.json
+cargo run -p wamn-schema-model --example print-catalog-model-schema > docs/contracts/catalog-model.schema.json
 # cjv.5 expression-chaining guard (unsafe_expression_reason): the Check (here) and
 # RolePredicate (wamn-schema-compiler) validators reject a top-level ';', unbalanced parens, or
 # a comment-open. Mutation harness (5 mutants, each fails a named test in
@@ -3037,7 +3037,7 @@ cargo run -p wamn-schema-model --example print-catalog-model-schema > docs/catal
 
 ### [3.2] DDL compiler crate (crates/schema/compiler)
 
-Docs: docs/run-queue.md, docs/ddl-compiler.md
+Docs: docs/execution/run-queue.md, docs/schema/ddl-compiler.md
 
 ```bash
 cargo test -p wamn-schema-compiler
@@ -3056,7 +3056,7 @@ docker stop wamn-schema-compiler-pg
 
 ### [3.4] schema versioning & environments crate (crates/schema/control/src/lifecycle)
 
-Docs: docs/schema-lifecycle.md
+Docs: docs/schema/schema-lifecycle.md
 
 ```bash
 cargo test -p wamn-schema-control
@@ -3074,7 +3074,7 @@ docker stop wamn-cat-pg
 
 ### [3.5] RLS policy builder crate (crates/schema/compiler/src/rls)
 
-Docs: docs/rls-builder.md
+Docs: docs/schema/rls-builder.md
 
 ```bash
 cargo test -p wamn-schema-compiler
@@ -3089,7 +3089,7 @@ docker stop wamn-schema-compiler-pg
 
 ### [3.6] seed-data & fixtures crate (crates/schema/compiler/src/seed)
 
-Docs: docs/seed-data.md
+Docs: docs/schema/seed-data.md
 
 ```bash
 cargo test -p wamn-schema-compiler
@@ -3104,7 +3104,7 @@ docker stop wamn-schema-compiler-pg
 
 ### [4.1] REST API gateway (crates/data/entity-access + crates/data/api + components/ingress/api-gateway)
 
-Docs: docs/api-gateway.md
+Docs: docs/platform/api-gateway.md
 
 ```bash
 cargo test -p wamn-entity-access -p wamn-api
@@ -3131,7 +3131,7 @@ kubectl -n wamn-system logs -f job/apibench
 
 ### [4.1b] api-gateway SERVING deployment + catalog snapshot
 
-Docs: docs/api-gateway.md
+Docs: docs/platform/api-gateway.md
 
 ```bash
 # Unit/fixture boundaries: publish-catalog belongs to wamn-ctl and the API
@@ -3194,7 +3194,7 @@ cargo build --locked --manifest-path components/Cargo.toml -p flow-http \
 
 ### [POC-DM1] data model via the catalog API (wamn-521, P1 build)
 
-Docs: docs/poc-material-receiving.md, docs/poc-dm1.md
+Docs: docs/poc/poc-material-receiving.md, docs/poc/poc-dm1.md
 
 ```bash
 cargo test -p wamn-dm1     # drift-guard + compile checks + live-apply gate (skips w/o WAMN_DM1_PG_URL)
@@ -3210,7 +3210,7 @@ docker stop wamn-dm1-pg
 
 ### [CALLABLE-FLOWS-POC-F1 / wamn-5wd1.57] receipt-received r6
 
-Docs: docs/poc-f1.md
+Docs: docs/poc/poc-f1.md
 
 ```bash
 # recipe-test: H5-CALLABLE-F1 | system | wamn-proof-system | lib | - | callable_f1::tests:: | 6 | tests/system/src/callable_f1.rs F1 release, direct pure nodes, deterministic CTE recovery, refusals, and webhook cutover
@@ -3307,7 +3307,7 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-timeshift-41 \
 
 ### [POC-F4] disposition-recorded CDC row-event flow + 429 throttle (wamn-lxk)
 
-Docs: docs/poc-material-receiving.md §F4. The `f4proof` gate is the F4
+Docs: docs/poc/poc-material-receiving.md §F4. The `f4proof` gate is the F4
 end-to-end proof AND the **EVT-CUTOVER regression by construction**: it is the
 first gate to drive the WHOLE event-plane arc — REAL reader (`run_with_token`)
 → REAL materializer guest → run queue → REAL production runner (`ExecutionHost` +
@@ -3369,7 +3369,7 @@ rebuild); M3 the ERP sim always answers 202 → `erp_sim`
 
 ### [EVT-REPLICA-IDENT / wamn-l5i9.31] per-entity REPLICA IDENTITY FULL reconciler
 
-Docs: docs/event-plane-jetstream.md §5 ("Old images") + docs/provisioning.md
+Docs: docs/events/event-plane-jetstream.md §5 ("Old images") + docs/platform/provisioning.md
 (`reconcile-replica-identity`). `REPLICA IDENTITY FULL` is a platform-managed
 per-entity knob (l5i9.1 decision d): an entity runs FULL only when a registered
 row-event needs the OLD image — any registration whose condition reads root
@@ -3426,7 +3426,7 @@ with sha256, DEBUG builds.
 
 ### [EVT-RI-ORCH / wamn-l5i9.61] publish/migrate-catalog auto-reconcile REPLICA IDENTITY
 
-Docs: docs/provisioning.md (`reconcile-replica-identity`, "Automatic caller").
+Docs: docs/platform/provisioning.md (`reconcile-replica-identity`, "Automatic caller").
 Wires the l5i9.31 reconciler into an OPERATIONAL caller: `publish-catalog` and
 `migrate-catalog` run the RI reconcile as their last step (they already connect
 as the superuser `ALTER … REPLICA IDENTITY` needs), scoped strictly to the
@@ -3478,7 +3478,7 @@ apply/test/restore with sha256, DEBUG builds.
 
 ### [RUN-PLANE-RECONCILE / wamn-1wdq] reconcile-run-plane — the run-plane schema migration verb
 
-Docs: docs/provisioning.md (`reconcile-run-plane`). The durable migration path
+Docs: docs/platform/provisioning.md (`reconcile-run-plane`). The durable migration path
 for provisioned run-plane schemas: `wamn-ctl reconcile-run-plane --schema <env>`
 diffs ONE project-env schema (+ the per-database `catalog` schema) against the
 deploy/sql schema of record (embedded `include_str!` — the same source the
@@ -3522,8 +3522,8 @@ DEBUG builds.
 
 ### [EVT-C-E2E / wamn-l5i9.22] e2ebench — RETIRED (l5i9.19 teardown)
 
-The C-E2E campaign of record stands in docs/ceilings.md § C-E2E +
-docs/ceilings-data/ (ce2e-*.csv): the one before/after chart (commit→run-start
+The C-E2E campaign of record stands in docs/results/ceilings.md § C-E2E +
+docs/results/ceilings-data/ (ce2e-*.csv): the one before/after chart (commit→run-start
 distribution, fan-out 1→N, 10× burst — outbox vs CDC at identical load). It
 ran BEFORE the teardown by design (the measure-first ordering); the bench and
 deploy/gates/e2ebench-job.yaml were deleted with the old path (D19 v3 §3,
@@ -3533,7 +3533,7 @@ re-measured, so the record is final. CDC-path regression coverage continues in
 
 ### [NODE-INVOKE / wamn-bd5] production runner ↔ custom-node invocation (5.6)
 
-Docs: docs/platform-plan.md §5.6, docs/wamn-node.wit, docs/p0-results.md §S4.
+Docs: docs/platform-plan.md §5.6, docs/contracts/wamn-node.wit, docs/results/p0-results.md §S4.
 v0 dispatch of a dynamically-loaded CUSTOM node is a boring in-cluster HTTP hop:
 the trusted flow-runner (a custom-node step) POSTs an invocation envelope over
 `wasi:http` to a `serve-node` host that runs the node under the REAL frozen
@@ -3703,7 +3703,7 @@ below re-touches the guest). Mutation harness: scratchpad `mutate_lane_a.py`
 
 ### [R24 / wamn-03m + wamn-cjv.10 + wamn-2jkm.42] per-visit occurrence — merge/loop history + resume
 
-Docs: docs/run-state.md (branch-aware replay — the occurrence paragraph)
+Docs: docs/execution/run-state.md (branch-aware replay — the occurrence paragraph)
 
 The engine computes `Dispatch::occurrence` (prior COMPLETED visits of the node
 in the run); both guests bind it into the `node_runs` insert builders
@@ -3731,8 +3731,8 @@ WAMN_RUN_QUEUE_PG_URL=... WAMN_RUN_STORE_PG_URL=... cargo test -p wamn-run-state
 ### [S2/D15-durable / wamn-dzhw] fixture pod on durable commits
 
 `deploy/platform/postgres.yaml` runs `fsync=on` + `synchronous_commit=on` since
-2026-07-21 (wamn-dzhw; addenda in docs/ceilings.md provenance banner +
-docs/p0-results.md §S2). The pod is EPHEMERAL: any restart (including applying
+2026-07-21 (wamn-dzhw; addenda in docs/results/ceilings.md provenance banner +
+docs/results/p0-results.md §S2). The pod is EPHEMERAL: any restart (including applying
 a knob change) wipes provisioned schemas — restore BEFORE re-running gates:
 
 ```bash
@@ -3747,7 +3747,7 @@ kubectl -n wamn-system apply -f deploy/platform/run-plane-reconcile.example.yaml
 
 ### [5.5 / wamn-0si] custom-node builder — build Job + buildproof
 
-Subsystem spec: `docs/builder.md`. The builder is its OWN cargo-ful image
+Subsystem spec: `docs/platform/builder.md`. The builder is its OWN cargo-ful image
 (`--target builder-svc`); the build Job runs the whole pipeline (allowlist →
 build → 5.5 lint → sign + SBOM → OCI push) on the baked-in `sample-node` fixture,
 and `buildproof` verifies the pushed artifact FROM the registry.
@@ -3799,10 +3799,10 @@ buildproof. `builder-netpol.yaml` does not actually restrict egress under kind
 
 ### [9.9] Dashboards (per-tenant Grafana + SRE)
 
-Docs: docs/dashboards.md
+Docs: docs/observability/dashboards.md
 
 ```bash
-# Unit tests (dashboards-as-code drift guards: metric names vs docs/metrics.md,
+# Unit tests (dashboards-as-code drift guards: metric names vs docs/observability/metrics.md,
 # the checked-in SRE JSON vs the render, tenant->folder uid mapping, base64/auth).
 # The implementation belongs to wamn-ctl; wamn-gates only routes dashproof:
 # recipe-test: H5-DASHBOARDS | unit | wamn-ctl | lib | - | provision_dashboards::tests:: | 7 | services/ctl/src/provision_dashboards.rs dashboard drift, rendering, tenant, and encoding guards

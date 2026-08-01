@@ -6,19 +6,19 @@ use std::path::{Path, PathBuf};
 const ACTIVE_PLAN: &str = "docs/PLAN/PLAN.md";
 const BUILD_AND_TEST_DOC: &str = "docs/build-and-test.md";
 const CARGO_LOCK: &str = "Cargo.lock";
-const FORK_LEDGER: &str = "docs/wash-runtime-fork.md";
+const FORK_LEDGER: &str = "docs/platform/wash-runtime-fork.md";
 const ROOT_MANIFEST: &str = "Cargo.toml";
 const RUST_TOOLCHAIN: &str = "rust-toolchain.toml";
 const UPGRADE_DELTA: &str = "docs/PLAN/WASMCLOUD-UPGRADE-2.6.1.md";
 
 const EXPECTED_BUILD_ENVIRONMENT_PREAMBLE: &str = r#"wamn-host builds against wash-runtime consumed as a **git dependency from our
 fork** (dkkloimwieder/wasmCloud, branch `wamn/2.6.1` = upstream v2.6.1).
-`docs/wash-runtime-fork.md` is the authoritative carried-policy ledger and
+`docs/platform/wash-runtime-fork.md` is the authoritative carried-policy ledger and
 rev-bump runbook; this preamble does not duplicate its commit or seam
 inventory. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`."#;
 const EXPECTED_MANIFEST_LEDGER_COMMENT: &str = "# Upstream v2.6.1 plus the policies recorded in\n\
-# docs/wash-runtime-fork.md. The ledger is authoritative.";
+# docs/platform/wash-runtime-fork.md. The ledger is authoritative.";
 const EXPECTED_REVISION: &str = "09b1132f2bab36e6e71f4637bd0e4755e359dd43";
 const EXPECTED_UPSTREAM_BASE: &str = "df8a8bcd69adc9c23ded842e504071a5272d04ed";
 const POLICY_COMMITS: [&str; 7] = [

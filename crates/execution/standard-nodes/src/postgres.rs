@@ -11,7 +11,7 @@
 //!   projects is gated on the dedicated user-SQL role, wamn-1nd).
 //!
 //! Both classify `wamn:postgres` failures MECHANICALLY per the frozen 0.1 WIT
-//! annotation (`docs/wamn-postgres.wit`): serialization-failure /
+//! annotation (`docs/contracts/wamn-postgres.wit`): serialization-failure /
 //! connection-unavailable / statement-timeout → retryable; the rest terminal.
 
 use serde_json::{Map, Value, json};
@@ -466,7 +466,7 @@ mod tests {
     use super::*;
 
     /// THE mechanical pg-error → taxonomy map, pinned per the frozen 0.1 WIT
-    /// annotation (docs/wamn-postgres.wit): serialization-failure /
+    /// annotation (docs/contracts/wamn-postgres.wit): serialization-failure /
     /// connection-unavailable / statement-timeout → retryable; the rest
     /// terminal. A swapped arm here is the taxonomy mutant the retry engine
     /// would silently amplify (retrying a unique violation forever / failing a

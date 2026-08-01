@@ -1,7 +1,7 @@
 # [9.1] in-cluster OTel trace-pipeline gate (gate of record). Runs the
 # tracebench subcommand of the wamn-gates image (SR1) against the real OTel
 # Collector + Tempo, driving a real guest DB call on the in-cluster Postgres.
-# Local docker runs (docs/tracing.md) are for iteration.
+# Local docker runs (docs/observability/tracing.md) are for iteration.
 #
 # The gate proves two real boundaries: the dispatcher process exports its
 # enriched wamn.trigger span, and pgprobe op 6 (SELECT pg_sleep(0)) produces a

@@ -2,7 +2,7 @@
 //! spike. The runner is a long-lived component that embeds the standard node
 //! library as NATIVE Rust — since 5.3 the `wamn-standard-nodes` vocabulary, dispatched
 //! through the SDK capability facade under the policy table
-//! (docs/node-library.md), beside the S3/S6 fixture node shapes — and walks
+//! (docs/execution/node-library.md), beside the S3/S6 fixture node shapes — and walks
 //! the flow graph with the pure `wamn-runner` engine (5.2): the ported-edge
 //! walk, branch/merge, error routing, and retry/backoff live in the crate;
 //! this component supplies the effects — dispatching each node, the

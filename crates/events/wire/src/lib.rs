@@ -1,4 +1,4 @@
-//! The D19 v3 event-plane **wire contract** (docs/event-plane-jetstream.md §4):
+//! The D19 v3 event-plane **wire contract** (docs/events/event-plane-jetstream.md §4):
 //! the envelope a CDC reader publishes per row event, the subject it lands on,
 //! and the `Nats-Msg-Id` the whole plane keys dedupe on.
 //!

@@ -14,7 +14,7 @@
 //!   node interfaces; ordinary node `config` remains node-library-owned);
 //! - **diff** — [`diff::diff`] (structured version diff for the editor);
 //! - **contract** — [`json_schema`] generates the language-neutral JSON Schema
-//!   published at `docs/flow-schema.schema.json` (drift-guarded by a test).
+//!   published at `docs/contracts/flow-schema.schema.json` (drift-guarded by a test).
 
 mod canonical;
 mod diff;
@@ -57,7 +57,7 @@ pub fn canonical_json_bytes(value: &Value) -> Vec<u8> {
 }
 
 /// The JSON Schema for [`Flow`], generated from the Rust types (the single
-/// source of truth). Serialized to `docs/flow-schema.schema.json`; a drift test
+/// source of truth). Serialized to `docs/contracts/flow-schema.schema.json`; a drift test
 /// keeps the committed file in lockstep with the types.
 pub fn json_schema() -> serde_json::Value {
     let schema = schemars::schema_for!(Flow);

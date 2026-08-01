@@ -1,5 +1,5 @@
 //! Drift-guards tying the FROZEN `wamn:node` 0.1 contract file
-//! (`docs/wamn-node.wit`) to (a) every vendored copy of it and (b) the exact
+//! (`docs/contracts/wamn-node.wit`) to (a) every vendored copy of it and (b) the exact
 //! WIT lines this SDK mirrors natively. The wamn-schema-model/wamn-flow
 //! committed-contract pattern: editing the contract without updating the
 //! mirrors (or vice versa) fails a named test instead of shipping skew.
@@ -33,8 +33,8 @@ fn root() -> &'static Path {
 }
 
 fn docs_wit() -> String {
-    fs::read_to_string(root().join("../../../docs/wamn-node.wit"))
-        .expect("docs/wamn-node.wit reads")
+    fs::read_to_string(root().join("../../../docs/contracts/wamn-node.wit"))
+        .expect("docs/contracts/wamn-node.wit reads")
 }
 
 fn workspace_root() -> PathBuf {
@@ -163,7 +163,7 @@ fn vendored_wit_copies_match_the_frozen_contract() {
         for line in code_lines(copy) {
             assert!(
                 docs_iter.any(|d| *d == line),
-                "{name}: line {line:?} does not appear (in order) in docs/wamn-node.wit — \
+                "{name}: line {line:?} does not appear (in order) in docs/contracts/wamn-node.wit — \
                  a vendored copy drifted from the frozen contract"
             );
         }
@@ -188,7 +188,7 @@ fn every_invocation_wit_requires_input_context() {
 
 #[test]
 fn replacement_context_exists_only_on_success_emissions() {
-    let mut copies = vec![("docs/wamn-node.wit", docs_wit())];
+    let mut copies = vec![("docs/contracts/wamn-node.wit", docs_wit())];
     copies.extend(
         FULL_TYPE_WIT_PATHS
             .into_iter()

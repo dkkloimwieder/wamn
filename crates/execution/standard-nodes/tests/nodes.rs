@@ -879,7 +879,7 @@ fn http_request_credential_errors_classify_mechanically() {
     assert!(mock.http_calls.is_empty(), "nothing left the node");
 }
 
-/// THE mechanical status → taxonomy map (docs/wamn-node.wit): 429 →
+/// THE mechanical status → taxonomy map (docs/contracts/wamn-node.wit): 429 →
 /// rate-limited with the source delay + throttle host; 408/5xx → retryable;
 /// other 4xx → terminal; transport → retryable; host egress denial → terminal.
 #[test]

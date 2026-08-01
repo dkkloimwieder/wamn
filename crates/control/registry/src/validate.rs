@@ -5,7 +5,7 @@
 //! project **and** a real env policy) — plus schema-format compatibility and the
 //! D18 env-policy integrity (`env` resolves to a policy; `shared-with` targets
 //! exist and form no cycle). It is pure and clock-free; with the closed-enum
-//! CHECK literals retired (`docs/deployment-model.md` §5, cjv.20), this is the
+//! CHECK literals retired (`docs/platform/deployment-model.md` §5, cjv.20), this is the
 //! enforcement that holds on the in-memory `from_json` import path, not just at
 //! DB insert.
 

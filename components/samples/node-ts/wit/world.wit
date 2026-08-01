@@ -1,7 +1,7 @@
 // S4 bench node world (Rust + JS guests share this shape). It is the minimal
 // wamn:node `world node` (export handler, no host I/O) with exactly one
 // bench-only import: wamn:nodebench/host.wait-ns, used to model an I/O-bound
-// node uniformly across guest languages. See docs/wamn-node.wit for the real
+// node uniformly across guest languages. See docs/contracts/wamn-node.wit for the real
 // contract and docs/p0-exit-criteria.md S4 for what this measures.
 package wamn:nodebench-guest@0.1.0;
 

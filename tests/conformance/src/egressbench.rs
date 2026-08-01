@@ -27,7 +27,7 @@
 //! and (with `--sockprobe`) that the runtime deny actually fires independently
 //! for every P2 arm. The unit gate additionally pins the same shared decision
 //! and every P3 mirror call site on the exact linked fork revision. See
-//! docs/security-db-path.md.
+//! docs/data-path/security-db-path.md.
 //!
 //! TWO PROFILES (E17). The verdict comes from `wamn_component_policy` — the
 //! same classifier the host publish-gate uses — not a forked local rule:
@@ -35,7 +35,7 @@
 //!   path); it is screened by the socket denylist (`egress_guard::denied_imports`,
 //!   E13a) and must import the plugin.
 //! - **tenant / custom-node** artifacts are held to the POSITIVE allowlist v1
-//!   (`egress_guard::disallowed_tenant_imports`, docs/wamn-node-design-notes.md
+//!   (`egress_guard::disallowed_tenant_imports`, docs/execution/wamn-node-design-notes.md
 //!   §9): any non-allowlisted package is refused — `wamn:postgres` most of all,
 //!   since importing the plugin hands a tenant node the raw DB surface + the
 //!   `DO`/`EXECUTE` claim-mutation bypass (docs/findings.md §3 E17). A denylist
@@ -336,7 +336,7 @@ async fn run_sockprobe(
     );
     if allow_raw_sockets {
         // The fork reads this per-component config in build_ctx_from_template
-        // (docs/wash-runtime-fork.md); it is the ONLY opt-in that flips the
+        // (docs/platform/wash-runtime-fork.md); it is the ONLY opt-in that flips the
         // raw-egress verdict from deny to allow.
         resources
             .config

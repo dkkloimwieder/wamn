@@ -1,5 +1,5 @@
 //! The `wamn:node/credentials` host plugin — the per-project credential VAULT
-//! (5.9). Contract source of truth: docs/wamn-node.wit (`interface
+//! (5.9). Contract source of truth: docs/contracts/wamn-node.wit (`interface
 //! credentials`, frozen 0.1 at 5.4; this is its first host implementation).
 //!
 //! Flows reference a credential BY NAME (`wamn-flow` `CredentialRef` +

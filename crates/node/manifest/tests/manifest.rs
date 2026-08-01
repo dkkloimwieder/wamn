@@ -191,7 +191,7 @@ fn fixture_conforms_to_the_published_schema() {
     let mut schemas = Schemas::new();
     let mut compiler = Compiler::new();
     let schema_doc: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../docs/wamn-node-manifest.schema.json"
+        "../../../../docs/contracts/wamn-node-manifest.schema.json"
     ))
     .expect("published schema parses");
     compiler
@@ -208,12 +208,12 @@ fn fixture_conforms_to_the_published_schema() {
 
 #[test]
 fn schema_drift() {
-    let committed = include_str!("../../../../docs/wamn-node-manifest.schema.json");
+    let committed = include_str!("../../../../docs/contracts/wamn-node-manifest.schema.json");
     assert_eq!(
         committed,
         wamn_node_manifest::json_schema_string(),
-        "docs/wamn-node-manifest.schema.json is out of sync with the types; \
-         regenerate: cargo run -p wamn-node-manifest --example print-node-manifest-schema > docs/wamn-node-manifest.schema.json"
+        "docs/contracts/wamn-node-manifest.schema.json is out of sync with the types; \
+         regenerate: cargo run -p wamn-node-manifest --example print-node-manifest-schema > docs/contracts/wamn-node-manifest.schema.json"
     );
 }
 

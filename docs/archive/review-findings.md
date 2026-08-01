@@ -2,7 +2,7 @@
 
 # Review Findings — Issues R1–R5
 
-Source: external code review of the wamn repo (2026-07-11, tip `155ac4b`), cross-checked against the P0 results and the planning corpus; amended same day after review of the 5.14 follow-up commits (`75d8277` partition ownership, `a7d2ad2` failover — tip `5107268`); amended 2026-07-12 after review of the dispatcher tranche (`a3fb0b3` shared trigger dispatcher, `98ba290` flow-id slugs, `9123e13` production deploy, `b687d45` outbox trigger producers); amended again after review of the migration-ordering commit (`873c3d8` name-freeing preamble — tip `873c3d8`); amended 2026-07-18 after the **D19 v3 event-plane decision** (CDC via logical decoding retires the outbox capture path — R8c closes, R9b re-homes to the CDC decode layer; see `docs/event-plane-jetstream.md`). CI/LICENSE finding excluded by decision. Each issue: context → evidence → design → implementation → verification → doc closure. Repo `docs/` are canonical; all doc-closure edits land there.
+Source: external code review of the wamn repo (2026-07-11, tip `155ac4b`), cross-checked against the P0 results and the planning corpus; amended same day after review of the 5.14 follow-up commits (`75d8277` partition ownership, `a7d2ad2` failover — tip `5107268`); amended 2026-07-12 after review of the dispatcher tranche (`a3fb0b3` shared trigger dispatcher, `98ba290` flow-id slugs, `9123e13` production deploy, `b687d45` outbox trigger producers); amended again after review of the migration-ordering commit (`873c3d8` name-freeing preamble — tip `873c3d8`); amended 2026-07-18 after the **D19 v3 event-plane decision** (CDC via logical decoding retires the outbox capture path — R8c closes, R9b re-homes to the CDC decode layer; see `docs/events/event-plane-jetstream.md`). CI/LICENSE finding excluded by decision. Each issue: context → evidence → design → implementation → verification → doc closure. Repo `docs/` are canonical; all doc-closure edits land there.
 
 Status of R4's prerequisite: the fork exists and the tree is on **2.5.2 + the epoch commit**; R4 below is the remaining Cargo.toml switch and the standing sync runbook.
 
@@ -17,7 +17,7 @@ Status of R4's prerequisite: the fork exists and the tree is on **2.5.2 + the ep
 | R7 | Failover status-flip alerting + two-lease failover latency | Low — operational notes | With 9.10 alerting / run-queue doc touch |
 | R8a | Cron anchor vs run-history retention — latent duplicate fire | **Medium — latent correctness** | Must be decided before 9.6 retention ships |
 | R8b | Dispatcher DB role scoping (`wamn_dispatch`) | Medium — hardening | With the next dispatcher/deploy touch |
-| R8c | Outbox write-amplification + GC verification | Medium — scale | **Closed 2026-07-18** — D19 v3 (CDC) retires the outbox capture path; GC had shipped (wamn-d8v), amplification is moot (wamn-vbl/wamn-32d closed; measured record in `docs/ceilings.md` § C2) |
+| R8c | Outbox write-amplification + GC verification | Medium — scale | **Closed 2026-07-18** — D19 v3 (CDC) retires the outbox capture path; GC had shipped (wamn-d8v), amplification is moot (wamn-vbl/wamn-32d closed; measured record in `docs/results/ceilings.md` § C2) |
 | R8d | Cron misfire collapse — document the contract, policy knob later | Low — semantics | Doc now; knob rides 5.11-adjacent backlog |
 | R9a | Reserve the `wamn_` identifier prefix at catalog validation | Low — hardening/UX | With the next 3.1 catalog-validation touch |
 | R9b | Table rename × row-event registration — silent trigger loss | **Medium — silent breakage** | Decode side **CLOSED 2026-07-19 (wamn-l5i9.11, EVT-OIDMAP)**: OID→entity-id keying makes envelopes + subjects rename-stable (live rename drill + 5 mutants). Registration-continuity half lands with the materializer (l5i9.17); the 11.8 impact-analysis case stands |
@@ -52,7 +52,7 @@ attempts = q.attempts + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 E
 2. `sql.rs::claim_partition_head_sql` — **the same `CASE`** (commit `75d8277` added this second claim path with the same unconditional `attempts = q.attempts + 1`; both paths must carry crash-evidence semantics or partitioned flows keep the bug). The partition path sharpens the urgency: head-first + one-in-flight means a parked partitioned run is re-claimed on *every* wake, so delay-heavy partitioned flows burn budget fastest of all.
 3. `claim.rs` pure layer — `Claimed`'s post-increment `attempts` computation gains the same conditional; `claim_state`/`is_claimable` are unchanged (`Exhausted` classification still `attempts >= max_attempts`); `plan_claim` **and `partition.rs::plan_partition_claim`** mirror the new increment so the pure models keep matching the SQL.
 4. **Gate expectations:** `failoverbench` asserts `attempts == 2` after the kill→reclaim cycle; under crash-evidence semantics that becomes `1` (first claim free, expired-lease reclaim counts). Update the assertion *with* the semantics change and state why in the gate's comment — the new value is the point, not a regression.
-5. Doc comments in both files + `docs/run-queue.md` lifecycle step 3: state the crash-evidence semantics explicitly, including the first-dispatch case (first claim is not a redelivery; a first-dispatch crash costs its unit on the *reclaim*).
+5. Doc comments in both files + `docs/execution/run-queue.md` lifecycle step 3: state the crash-evidence semantics explicitly, including the first-dispatch case (first claim is not a redelivery; a first-dispatch crash costs its unit on the *reclaim*).
 
 ### Verification
 - Unit (`tests/queue.rs`, pure layer): (a) N-park flow with `max_attempts = 1` remains claimable at every wake; (b) crash-loop — repeated expired-lease reclaims — exhausts at exactly `max_attempts` and lands `Exhausted`; (c) interleaving: claim → park → wake-claim → crash → reclaim yields `attempts = 1`, not 3.
@@ -88,11 +88,11 @@ Today the claims ride the same `batch_execute` round trip as `BEGIN` (simple que
 3. Grep-gate: no remaining `format!` containing `SET LOCAL` in the plugin (the janitor/queue SQL uses binds already; `current_setting` reads are unaffected).
 
 ### Verification
-- Re-run the full S2 gate set (throughput, p99, chaos ×100, RLS ×10k, injection ×10k) — thresholds unchanged; record the new p50/p99 next to the old in `docs/p0-results.md` as an addendum so the round-trip cost is on the record.
+- Re-run the full S2 gate set (throughput, p99, chaos ×100, RLS ×10k, injection ×10k) — thresholds unchanged; record the new p50/p99 next to the old in `docs/results/p0-results.md` as an addendum so the round-trip cost is on the record.
 - New injection cases targeting the claim path itself: tenant/schema strings containing `'`, `;`, `--`, unicode — now legal to *attempt* (they bind as data and simply name a nonexistent tenant/schema) where before they were rejected pre-SQL; assert no statement-level effect either way.
 
 ### Doc closure
-`docs/security-db-path.md` + the WIT header comment: the "no interpolation path" claim becomes unconditionally true; note the identity-format validators' demoted role.
+`docs/data-path/security-db-path.md` + the WIT header comment: the "no interpolation path" claim becomes unconditionally true; note the identity-format validators' demoted role.
 
 ---
 
@@ -168,7 +168,7 @@ Then in wamn: bump the `rev` to the new branch tip, re-align the wasmtime pin to
 - **S3:** kill/resume idempotency (`flowbench`),
 - **R3's phase** once it exists (differentiation gate).
 
-Record in the fork branch's final commit message (or `docs/p0-results.md` addendum): date, base rev old→new, commits carried/dropped, gate numbers old→new. Budget: an afternoon when clean.
+Record in the fork branch's final commit message (or `docs/results/p0-results.md` addendum): date, base rev old→new, commits carried/dropped, gate numbers old→new. Budget: an afternoon when clean.
 
 **Rollback:** the old `wamn/OLD` branch is never deleted — repoint wamn's `rev` at its tip and rebuild. Retention: keep every branch wamn ever pinned (they're cheap and they're the bisect trail).
 
@@ -184,14 +184,14 @@ Record in the fork branch's final commit message (or `docs/p0-results.md` addend
 Policies compare `tenant_id = current_setting('app.tenant', true)`. Postgres resets a custom GUC to the **empty string** (not NULL) after `SET LOCAL` scope ends, so an idle pooled connection carries `''` — which matches nothing *only while no row ever has an empty `tenant_id`*. That is accidentally-match-nothing, not structurally-match-nothing. Fix in the single quoting/template source (`wamn-rls/src/compile.rs`): emit `tenant_id = NULLIF(current_setting('app.tenant', true), '')` — `NULL` comparison matches no row, ever, including a hypothetical empty-tenant row. Belt-and-braces: `wamn-catalog` validation + `wamn-seed` reject empty/whitespace `tenant_id` values, and the system-schema DDL adds `CHECK (tenant_id <> '')` on tenant-scoped tables. Verification: extend the S2 RLS gate with an *empty-claim* pass — a connection with claims deliberately unset queries a table seeded (superuser fixture) with an empty-tenant row; assert zero rows both before and after the template change (documenting that the fix converts an invariant-dependent pass into a structural one).
 
 ### 5b. Scope honesty: S2 proved tenant-level RLS only
-The S2 pass is component-identity → `app.tenant`. User/role-level enforcement (`app.user`, `app.role`, field-level masks) does not exist yet — it arrives with 4.2/4.3 — and the S2 result must not be over-read as "RLS validated" generally. Actions: a one-line scope note in `docs/p0-results.md` S2; and 4.2's acceptance criteria gain an S2-style randomized gate at the *user* level (two users, one tenant, row-ownership policies, ×10k cross-user attempts, zero leaks; field-mask read/write assertions for 4.3). The R2 `set_config` statement is where `app.user`/`app.role` will bind when they arrive — bound parameters from day one, never joining a `format!` template (the R2 rationale in action).
+The S2 pass is component-identity → `app.tenant`. User/role-level enforcement (`app.user`, `app.role`, field-level masks) does not exist yet — it arrives with 4.2/4.3 — and the S2 result must not be over-read as "RLS validated" generally. Actions: a one-line scope note in `docs/results/p0-results.md` S2; and 4.2's acceptance criteria gain an S2-style randomized gate at the *user* level (two users, one tenant, row-ownership policies, ×10k cross-user attempts, zero leaks; field-mask read/write assertions for 4.3). The R2 `set_config` statement is where `app.user`/`app.role` will bind when they arrive — bound parameters from day one, never joining a `format!` template (the R2 rationale in action).
 
 ---
 
 ## R6 — `partitioned(key)` ordering under retry/park: decide the policy, don't inherit it from the SQL
 
 ### Problem
-Commit `75d8277` delivers per-partition ownership with head-first, one-in-flight dispatch keyed on `(available_at, run_id)`. The head-blocking `NOT EXISTS` counts only *ready* earlier runs — so a run that fails transiently and backs off (future `available_at`), or parks on a delay node, **yields the key**: the next run of the partition becomes the head and dispatches first. `docs/run-queue.md` explicitly defers the *terminal*-failure case (wedge vs release) to 5.11 — correctly — but the *transient* case is silently decided by the mechanism: `partitioned(key)` currently means **ordered-except-under-retry-or-park**.
+Commit `75d8277` delivers per-partition ownership with head-first, one-in-flight dispatch keyed on `(available_at, run_id)`. The head-blocking `NOT EXISTS` counts only *ready* earlier runs — so a run that fails transiently and backs off (future `available_at`), or parks on a delay node, **yields the key**: the next run of the partition becomes the head and dispatches first. `docs/execution/run-queue.md` explicitly defers the *terminal*-failure case (wedge vs release) to 5.11 — correctly — but the *transient* case is silently decided by the mechanism: `partitioned(key)` currently means **ordered-except-under-retry-or-park**.
 
 That is weaker than the platform's stated semantics (plan 5.11: "order preserved per key — the Kafka model"; a Kafka consumer blocks its partition on retry, it never leapfrogs) and weaker than what the target workloads require: genealogy/traceability streams (consume-before-produce, state-machine transitions per asset) corrupt under exactly this reordering, triggered by nothing more than a transient network blip. The danger is not the current behavior per se — it is that flows will ship and silently depend on whichever behavior exists, after which changing the default is a breaking change.
 
@@ -209,7 +209,7 @@ Make ordering-under-unavailability an explicit per-flow (or per-node) policy on 
 `queuebench` partition phase gains both-policy cases: under `blocking`, kill/backoff the head and assert run 2 does **not** dispatch until the head completes; under `leapfrog`, assert today's behavior. A wedge case: exhaust the head's budget under `blocking`, assert the key stalls and the janitor verdict does not release it; operator-release path asserted once 5.11 ships the intervention surface.
 
 ### Doc closure
-5.11's semantics table gains the policy column; `docs/run-queue.md`'s "policy decision that belongs to 5.11" paragraph is replaced by a pointer to the decided policy; decision table gains the row (chosen: per-key policy, `blocking` default; rejected: inherit `(available_at, run_id)` order silently — semantics by accident).
+5.11's semantics table gains the policy column; `docs/execution/run-queue.md`'s "policy decision that belongs to 5.11" paragraph is replaced by a pointer to the decided policy; decision table gains the row (chosen: per-key policy, `blocking` default; rejected: inherit `(available_at, run_id)` order silently — semantics by accident).
 
 ---
 
@@ -217,7 +217,7 @@ Make ordering-under-unavailability an explicit per-flow (or per-node) policy on 
 
 **7a. Status-flip false alarms.** The reverse-race resolution is correct (janitor reaps a slow-but-alive resume → `infrastructure-failure`; the guest's deliberately unconditional completion write overrides → `completed`; the work happened exactly once and the final status says so). But any alert that fires on the `infrastructure-failure` *transition* will false-alarm on every slow resume. 9.10 alerting rule: fire on `infrastructure-failure` **sustained** past a delay (or on janitor verdicts not subsequently overridden within it), not on the transition. And the janitor grace period should be sized against worst-case reconstruction time — which `failoverbench` can now measure; record that number and derive the grace from it rather than guessing.
 
-**7b. Failover latency is two-lease.** A new owner acquires a dead replica's partition immediately after the *partition* lease expires, but the dead runner's in-flight run still blocks the head until the *run* lease expires — effective partition failover = `max(partition-lease TTL, run-lease TTL)`. One line in `docs/run-queue.md` so nobody tunes one TTL and wonders why failover didn't speed up.
+**7b. Failover latency is two-lease.** A new owner acquires a dead replica's partition immediately after the *partition* lease expires, but the dead runner's in-flight run still blocks the head until the *run* lease expires — effective partition failover = `max(partition-lease TTL, run-lease TTL)`. One line in `docs/execution/run-queue.md` so nobody tunes one TTL and wonders why failover didn't speed up.
 
 ---
 
@@ -238,7 +238,7 @@ Context: the dispatcher achieves exactly-once **leaderless** — deterministic f
 **Amendment (2026-07-18, D19 v3).** The event-plane CDC reader introduces a **new top privilege tier above both**: **replication credentials** (the `REPLICATION` attribute + logical-decoding slot ownership). This tier is *separate from* `wamn_dispatch` (wamn-286) — the reader's role holds replication and nothing else; it is never folded into the dispatch role, and the dispatch-role scoping described here is unchanged. The tier is implemented with the Phase-1 reader (wamn-l5i9.10).
 
 ### R8c — Outbox write-amplification + GC verification
-**Status (2026-07-18): CLOSED by D19 v3.** CDC via logical decoding removes capture-side write amplification entirely — no outbox insert per row; the WAL record already exists. The GC half had shipped (wamn-d8v, dispatcher maintenance step + `outbox_prune_sql`); the amplification fix-direction beads closed superseded (wamn-vbl registration-driven emission, wamn-32d payload/width axis). The measured cost of the retired path is recorded in `docs/ceilings.md` § C2 (wamn-z7b.2); the outbox path itself is deleted at wamn-l5i9.19. Original finding kept below for the record.
+**Status (2026-07-18): CLOSED by D19 v3.** CDC via logical decoding removes capture-side write amplification entirely — no outbox insert per row; the WAL record already exists. The GC half had shipped (wamn-d8v, dispatcher maintenance step + `outbox_prune_sql`); the amplification fix-direction beads closed superseded (wamn-vbl registration-driven emission, wamn-32d payload/width axis). The measured cost of the retired path is recorded in `docs/results/ceilings.md` § C2 (wamn-z7b.2); the outbox path itself is deleted at wamn-l5i9.19. Original finding kept below for the record.
 **Problem (amplification).** `b687d45` emits `AFTER … FOR EACH ROW` triggers uniformly across **all** entity tables when the (opt-in) plan is applied. A 100k-row bulk import pays 100k outbox inserts inside the user's transaction (write amplification, txn bloat, WAL) and then up to 100k firings per registered flow. The doc's "dispatcher acks unregistered rows cheaply" is true but the *write* cost is paid regardless of registration.
 **Fix direction.** Per-entity emission driven by actual row-event flow registration (or an explicit designer flag per entity), reconciled when registrations change — the trigger-emission plan already supports idempotent re-apply (`CREATE OR REPLACE`, constant-named triggers), so narrowing its coverage is mechanical. Separately: a coalescing/rate policy story for registered high-churn tables (statement-level triggers with transition tables are the escape hatch if per-row ever dominates — payload shape change, so a deliberate decision, not a default). Gate this **before bulk-import tooling (3.6)** lands.
 **Problem (GC — verify).** Acked rows set `dispatched_at` and remain. Confirm a pruner exists for dispatched outbox rows (janitor sweep or DDL-side policy); if not, the outbox grows without bound on every project. If missing: co-locate pruning with the janitor sweep (`DELETE … WHERE dispatched_at < now() - interval`), interval generous enough for forensics.
@@ -246,7 +246,7 @@ Context: the dispatcher achieves exactly-once **leaderless** — deterministic f
 
 ### R8d — Cron misfire collapse: document the contract
 **Problem.** Dispatcher downtime spanning multiple ticks fires only the **latest** (misfire collapse). Right default — but jobs whose ticks denote *work items* (hourly aggregation windows) silently lose windows, and nothing tells a flow author which contract they have.
-**Action now:** document collapse as the cron contract (flow-editor trigger docs + `docs/run-queue.md`). **Later (5.11-adjacent backlog):** per-flow misfire policy (`collapse` default | `catch-up` with a bounded backfill window), Quartz-precedented. Deterministic tick-named run ids make `catch-up` mechanically trivial when wanted — fire each missed tick's id; `ON CONFLICT` dedupes.
+**Action now:** document collapse as the cron contract (flow-editor trigger docs + `docs/execution/run-queue.md`). **Later (5.11-adjacent backlog):** per-flow misfire policy (`collapse` default | `catch-up` with a bounded backfill window), Quartz-precedented. Deterministic tick-named run ids make `catch-up` mechanically trivial when wanted — fire each missed tick's id; `ON CONFLICT` dedupes.
 **Linkage (no action, R6 evidence):** row-event flows on genealogy tables will want `partition_key = <row pk>` so outbox `seq` order survives dispatch — one more consumer for R6's `blocking` default.
 
 ---
@@ -269,7 +269,7 @@ Context: the name-freeing preamble is correct, well-gated (hoisted destructive o
 
 ### R9c — The one-transaction apply assumption now carries more weight: record its expiry
 **Problem.** The preamble's aside-renames leave zero residue *because* apply is one transaction — rollback undoes them. That assumption has a known future breaker: `CREATE INDEX CONCURRENTLY` (which zero-downtime index builds on large tables will eventually demand) cannot run inside a transaction block. The moment 3.2 grows a non-transactional migration step, a mid-apply crash can orphan `wamn_mig_drop_*` relations (and half-built indexes), and nothing today would clean them up.
-**Action now:** one paragraph in `docs/ddl-compiler.md` stating the one-txn invariant as load-bearing for the preamble and naming CONCURRENTLY as its known expiry. **Then (with the future non-txn work, not before):** a residue janitor — startup/scheduled sweep dropping `wamn_mig_drop_*` relations older than a grace period with no in-flight migration — plus the apply-journal machinery non-txn migrations need anyway. This is a standing constraint to inherit knowingly, not current work.
+**Action now:** one paragraph in `docs/schema/ddl-compiler.md` stating the one-txn invariant as load-bearing for the preamble and naming CONCURRENTLY as its known expiry. **Then (with the future non-txn work, not before):** a residue janitor — startup/scheduled sweep dropping `wamn_mig_drop_*` relations older than a grace period with no in-flight migration — plus the apply-journal machinery non-txn migrations need anyway. This is a standing constraint to inherit knowingly, not current work.
 
 ---
 

@@ -1,7 +1,7 @@
 //! Rendering per-project-env logical **dumps** (wamn-q3n.10 / plan 10.3).
 //!
 //! The second backup mechanism in the four-tier topology
-//! (docs/postgres-topology.md §Backup architecture): a scheduled `pg_dump -Fd`
+//! (docs/platform/postgres-topology.md §Backup architecture): a scheduled `pg_dump -Fd`
 //! of one project-env database to object storage. **One artifact serves both**
 //! tenant-scoped restore-to-last-dump *and* the 10.3 project export — the RPO for
 //! dump-based restore is the dump interval ([`DEFAULT_DUMP_SCHEDULE`]; a per-env
@@ -131,7 +131,7 @@ pub fn select_latest_dump_key(prefix: &str, keys: &[String]) -> Option<String> {
 
 /// The default scheduled-dump cadence, a 5-field cron: **daily** (03:00). Under
 /// D18 the dump cadence is no longer a closed-tier knob — a per-env `dump_cadence`
-/// policy field is a future additive column (`docs/deployment-model.md` §Region:
+/// policy field is a future additive column (`docs/platform/deployment-model.md` §Region:
 /// "the next placement axis is data"). Callers that want a per-env RPO pass their
 /// own schedule to [`render_project_env_dump_cronjob`].
 pub const DEFAULT_DUMP_SCHEDULE: &str = "0 3 * * *";

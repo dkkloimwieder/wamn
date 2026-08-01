@@ -23,7 +23,7 @@
 //!      counter) — IN-CLUSTER ONLY (ProxyPre benches bypass the host's HTTP
 //!      server), honest-skipped locally.
 //!
-//! Local recipe (docs/metrics.md): the tracebench docker collector +
+//! Local recipe (docs/observability/metrics.md): the tracebench docker collector +
 //! otelcol-local's new metrics pipeline + a throwaway Postgres, with
 //! `OTEL_METRIC_EXPORT_INTERVAL=1000` so the periodic reader does not wait a
 //! minute. In-cluster gate of record: `deploy/gates/metricbench-job.yaml`.

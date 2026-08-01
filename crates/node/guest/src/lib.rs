@@ -3,7 +3,7 @@
 //! Makes the 5.13 "componentization is mechanical" promise literal: a custom
 //! node implements the SAME [`wamn_node_sdk::Node`] trait the standard library
 //! (5.3) uses, and one macro turns it into a `wamn:node/handler` export over
-//! the FROZEN 0.1 contract (`docs/wamn-node.wit`):
+//! the FROZEN 0.1 contract (`docs/contracts/wamn-node.wit`):
 //!
 //! ```ignore
 //! #[derive(Default)]

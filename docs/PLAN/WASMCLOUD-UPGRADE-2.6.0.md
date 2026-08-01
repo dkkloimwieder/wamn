@@ -47,7 +47,7 @@ Current pins: `wash-runtime` @ `981fdc56` (`default-features = false`),
 
 ## 2. Carried commits — disposition
 
-Each already records its own exit condition in `docs/wash-runtime-fork.md`. Check
+Each already records its own exit condition in `docs/platform/wash-runtime-fork.md`. Check
 the disposition against *those*, not against a fresh judgment.
 
 | Commit | Exit condition | v2.6.0 verdict |
@@ -286,7 +286,7 @@ duplicate it, so it cannot go stale again at the seventh commit:
 
 ```toml
 # Upstream v2.6.0 plus the policies recorded in
-# docs/wash-runtime-fork.md. The ledger is authoritative.
+# docs/platform/wash-runtime-fork.md. The ledger is authoritative.
 ```
 
 **2 — Re-port policies, not diffs.** For each seam, reimplement its *policy* against the

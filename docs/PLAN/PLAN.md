@@ -1537,7 +1537,7 @@ per database, so pool sizing does not amortize.
 
 - **Org-tier roles.** A client admin who requests a project is **org-scoped** — above any
   project, and the role cannot live inside a project that does not exist yet. But
-  `docs/app-schema.md` ships `users`, `roles`, `permissions`, `api_keys` **per project**.
+  `docs/schema/app-schema.md` ships `users`, `roles`, `permissions`, `api_keys` **per project**.
   The org tier is a genuine gap, and item 10's project-request API depends on it.
 - **Build or adopt the IdP** (Keycloak / Ory / hosted vs. our own).
 - **Where inbound caller policy lives** — the auth source names a credential-set handle;

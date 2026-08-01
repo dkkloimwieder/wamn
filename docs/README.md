@@ -9,8 +9,8 @@ docs-of-record follow. One doc per subsystem, each with a predictable name.
   decision map (items 0–11). *What are we working on, in what order, and what
   is decided, directional, or open?* (The pivot-era ordering ledger is archived
   at [archive/core-pivot-plan.md](archive/core-pivot-plan.md).)
-- **[FLOW-SPEC.md](FLOW-SPEC.md)** (rev 18, normative) and
-  **[POC-PLAN.md](POC-PLAN.md)** (r6) — the callable-flow protocol and its
+- **[FLOW-SPEC.md](execution/FLOW-SPEC.md)** (rev 18, normative) and
+  **[POC-PLAN.md](poc/POC-PLAN.md)** (r6) — the callable-flow protocol and its
   proven POC ladder: the entry gate every PLAN item builds on.
 - **[findings.md](findings.md)** — the single findings ledger and
   [status board](findings.md#0--status-board). *What is open, how bad, and what
@@ -33,21 +33,21 @@ docs-of-record follow. One doc per subsystem, each with a predictable name.
 
 | Subsystem group | Files |
 |---|---|
-| Catalog / schema | [catalog-model.md](catalog-model.md), [app-schema.md](app-schema.md), [schema-lifecycle.md](schema-lifecycle.md), [ddl-compiler.md](ddl-compiler.md), [migration-engine.md](migration-engine.md), [rls-builder.md](rls-builder.md), [seed-data.md](seed-data.md), [catalog-model.schema.json](catalog-model.schema.json) |
-| Execution | [flow-schema.md](flow-schema.md), [flow-runner.md](flow-runner.md), [node-library.md](node-library.md), [run-queue.md](run-queue.md), [run-state.md](run-state.md), [wamn-node-design-notes.md](wamn-node-design-notes.md), [wamn-node.wit](wamn-node.wit), [flow-schema.schema.json](flow-schema.schema.json), [wamn-node-manifest.schema.json](wamn-node-manifest.schema.json) |
-| Node supply chain | [builder.md](builder.md) |
-| Data path | [security-db-path.md](security-db-path.md), [wamn-postgres.wit](wamn-postgres.wit), [credential-vault.md](credential-vault.md) |
-| Event plane | [event-plane-jetstream.md](event-plane-jetstream.md) (v3, current), [pg-walstream-fork.md](pg-walstream-fork.md), [wamn-jetstream.wit](wamn-jetstream.wit) |
-| Observability | [tracing.md](tracing.md), [metrics.md](metrics.md), [dashboards.md](dashboards.md) |
-| Testing / scenarios | [scenario-model.md](scenario-model.md), [scenario-catalog.md](scenario-catalog.md), [impact-analysis.md](impact-analysis.md) |
-| Platform / infra | [platform-plan.md](platform-plan.md), [deployment-model.md](deployment-model.md), [postgres-topology.md](postgres-topology.md), [system-cluster.md](system-cluster.md), [registry-model.md](registry-model.md), [provisioning.md](provisioning.md), [wasmcloud-utilization.md](wasmcloud-utilization.md), [wash-runtime-fork.md](wash-runtime-fork.md), [api-gateway.md](api-gateway.md) |
-| POC | [POC-PLAN.md](POC-PLAN.md), [poc-material-receiving.md](poc-material-receiving.md), [poc-f1.md](poc-f1.md), [poc-dm1.md](poc-dm1.md) |
-| Process | [PLAN/PLAN.md](PLAN/PLAN.md), [findings.md](findings.md), [build-and-test.md](build-and-test.md), [p0-results.md](p0-results.md), [ceilings.md](ceilings.md) |
+| Catalog / schema | [catalog-model.md](schema/catalog-model.md), [app-schema.md](schema/app-schema.md), [schema-lifecycle.md](schema/schema-lifecycle.md), [ddl-compiler.md](schema/ddl-compiler.md), [migration-engine.md](schema/migration-engine.md), [rls-builder.md](schema/rls-builder.md), [seed-data.md](schema/seed-data.md), [catalog-model.schema.json](contracts/catalog-model.schema.json) |
+| Execution | [flow-schema.md](execution/flow-schema.md), [flow-runner.md](execution/flow-runner.md), [node-library.md](execution/node-library.md), [run-queue.md](execution/run-queue.md), [run-state.md](execution/run-state.md), [wamn-node-design-notes.md](execution/wamn-node-design-notes.md), [wamn-node.wit](contracts/wamn-node.wit), [flow-schema.schema.json](contracts/flow-schema.schema.json), [wamn-node-manifest.schema.json](contracts/wamn-node-manifest.schema.json) |
+| Node supply chain | [builder.md](platform/builder.md) |
+| Data path | [security-db-path.md](data-path/security-db-path.md), [wamn-postgres.wit](contracts/wamn-postgres.wit), [credential-vault.md](data-path/credential-vault.md) |
+| Event plane | [event-plane-jetstream.md](events/event-plane-jetstream.md) (v3, current), [pg-walstream-fork.md](events/pg-walstream-fork.md), [wamn-jetstream.wit](contracts/wamn-jetstream.wit) |
+| Observability | [tracing.md](observability/tracing.md), [metrics.md](observability/metrics.md), [dashboards.md](observability/dashboards.md) |
+| Testing / scenarios | [scenario-model.md](testing/scenario-model.md), [scenario-catalog.md](testing/scenario-catalog.md), [impact-analysis.md](testing/impact-analysis.md) |
+| Platform / infra | [platform-plan.md](platform-plan.md), [deployment-model.md](platform/deployment-model.md), [postgres-topology.md](platform/postgres-topology.md), [system-cluster.md](platform/system-cluster.md), [registry-model.md](platform/registry-model.md), [provisioning.md](platform/provisioning.md), [wasmcloud-utilization.md](platform/wasmcloud-utilization.md), [wash-runtime-fork.md](platform/wash-runtime-fork.md), [api-gateway.md](platform/api-gateway.md) |
+| POC | [POC-PLAN.md](poc/POC-PLAN.md), [poc-material-receiving.md](poc/poc-material-receiving.md), [poc-f1.md](poc/poc-f1.md), [poc-dm1.md](poc/poc-dm1.md) |
+| Process | [PLAN/PLAN.md](PLAN/PLAN.md), [findings.md](findings.md), [build-and-test.md](build-and-test.md), [p0-results.md](results/p0-results.md), [ceilings.md](results/ceilings.md) |
 
 ## Results & measurements
 
-- **[p0-results.md](p0-results.md)** — P0 measurement record.
-- **[ceilings.md](ceilings.md)** — capacity ceilings (raw CSVs in `ceilings-data/`).
+- **[p0-results.md](results/p0-results.md)** — P0 measurement record.
+- **[ceilings.md](results/ceilings.md)** — capacity ceilings (raw CSVs in `ceilings-data/`).
 
 **Provenance caveat:** these figures were measured with `fsync=off` — they are
 **shape-only, not externally citable** (findings §1.3 / E6; durable re-measure
@@ -64,13 +64,13 @@ findings.md pins them by SHA-256.
   pivot-era work-ordering ledger, superseded by [PLAN/PLAN.md](PLAN/PLAN.md).
   Retained for wave records and sequencing provenance.
 - **[archive/event-plane-v2-outbox.md](archive/event-plane-v2-outbox.md)** — the
-  v2 event-plane doc, superseded by v3 ([event-plane-jetstream.md](event-plane-jetstream.md)).
+  v2 event-plane doc, superseded by v3 ([event-plane-jetstream.md](events/event-plane-jetstream.md)).
   Retained for the outbox-era rationale and the teardown list's provenance.
 - **[archive/exec-ladder.md](archive/exec-ladder.md)** — the predecessor
   execution-ladder proof, superseded by callable-flow rev18 and the F0–F4
   acceptance campaign. Retained as historical proof context.
 - **[archive/p0-exit-criteria.md](archive/p0-exit-criteria.md)** — P0 is closed
-  and its results live in [p0-results.md](p0-results.md). Retained for the
+  and its results live in [p0-results.md](results/p0-results.md). Retained for the
   go/no-go thresholds that gate re-measurement.
 - **[archive/review-findings.md](archive/review-findings.md)** — the R-series,
   absorbed by [findings.md](findings.md). Retained for commit-message resolution.

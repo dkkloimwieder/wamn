@@ -22,7 +22,7 @@
 //! 7. **deployment emission** ([`deploy_emit`], 5.5f) — the serve-node runtime
 //!    manifest with grants DERIVED from the imports (design-note 7).
 //!
-//! Spec: `docs/builder.md`.
+//! Spec: `docs/platform/builder.md`.
 
 pub mod allowlist;
 pub mod build;

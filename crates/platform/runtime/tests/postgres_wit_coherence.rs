@@ -1,5 +1,5 @@
 //! Drift guard tying the FROZEN `wamn:postgres@0.1.0` doc-of-record
-//! (`docs/wamn-postgres.wit`) to every vendored copy of it. The `wamn:node`
+//! (`docs/contracts/wamn-postgres.wit`) to every vendored copy of it. The `wamn:node`
 //! (`crates/node/sdk/tests/wit_coherence.rs`) and `wamn:jetstream`
 //! (`jetstream_wit_coherence.rs`) precedents: editing the contract without
 //! re-vendoring every copy (or drifting one copy on its own) fails a NAMED test
@@ -16,7 +16,7 @@
 //!      NEW copy fails with a message telling the author to register it
 //!      here, so a future copy cannot dodge the guard.
 //!   2. Asserts every copy's CODE (comment/blank-stripped, trimmed) is identical
-//!      to `docs/wamn-postgres.wit`. This is the load-bearing check: the actual
+//!      to `docs/contracts/wamn-postgres.wit`. This is the load-bearing check: the actual
 //!      interface surface (types, records, variants, function signatures) must
 //!      match everywhere, or a guest binds a different contract than the host.
 //!   3. Asserts byte-identity WITHIN each cluster of copies that are byte-
@@ -25,7 +25,7 @@
 //!      from its cluster.
 //!
 //! Why not one byte-identity check against docs? The copies are NOT byte-
-//! identical to `docs/wamn-postgres.wit`: the doc comments diverge (the frozen
+//! identical to `docs/contracts/wamn-postgres.wit`: the doc comments diverge (the frozen
 //! contract's prose still mentions the retired outbox, and two copies carry a
 //! shorter doc-comment revision). Those differences are COMMENT-ONLY and known;
 //! do not "fix" them by editing a WIT file. Hence check (2) compares CODE lines,
@@ -175,8 +175,8 @@ fn all_vendored_copies_are_registered() {
 #[test]
 fn every_copy_shares_the_contract_code() {
     let root = repo_root();
-    let docs = fs::read_to_string(root.join("docs/wamn-postgres.wit"))
-        .expect("docs/wamn-postgres.wit reads");
+    let docs = fs::read_to_string(root.join("docs/contracts/wamn-postgres.wit"))
+        .expect("docs/contracts/wamn-postgres.wit reads");
     let docs_code = code_lines(&docs);
 
     for rel in EXPECTED_COPIES {
@@ -185,7 +185,7 @@ fn every_copy_shares_the_contract_code() {
         assert_eq!(
             code_lines(&copy),
             docs_code,
-            "{rel} drifted from docs/wamn-postgres.wit in a CODE line — the vendored \
+            "{rel} drifted from docs/contracts/wamn-postgres.wit in a CODE line — the vendored \
              contract surface must stay identical (edit the doc of record AND re-vendor \
              every copy, or neither)"
         );

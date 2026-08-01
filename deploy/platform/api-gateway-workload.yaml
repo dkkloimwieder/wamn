@@ -5,7 +5,7 @@
 # wasi:http/incoming-handler export (the same mechanism apibench mirrors
 # in-process). One gateway instance per project.
 #
-# Prereqs (see docs/api-gateway.md § serving):
+# Prereqs (see docs/platform/api-gateway.md § serving):
 #   1. deploy/platform/registry.yaml applied + api_gateway.wasm pushed to it.
 #   2. The host group deployed with --allow-insecure-registries + WAMN_PG_URL
 #      (deploy/infra/values-wamn.yaml).

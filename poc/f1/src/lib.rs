@@ -15,7 +15,7 @@
 //! `postgres-query` node — the raw-SQL node lands with 5.3 under the D8
 //! decision (wamn-r13: flag-gated raw-SQL node, default OFF; decision table).
 //!
-//! See `docs/poc-f1.md`; the flow graph itself is `deploy/poc/f1-flow.json`
+//! See `docs/poc/poc-f1.md`; the flow graph itself is `deploy/poc/f1-flow.json`
 //! (drift-guarded by this crate's tests).
 
 mod decimal;

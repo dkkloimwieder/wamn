@@ -1,8 +1,8 @@
 //! The `wamn:node` error taxonomy — a 1:1 **mirror** of the `node-error` WIT
-//! variant (`docs/wamn-node.wit`), the same way `wamn_api::SqlValue` mirrors
+//! variant (`docs/contracts/wamn-node.wit`), the same way `wamn_api::SqlValue` mirrors
 //! `wamn:postgres`'s `sql-value`. The runner decides retry-vs-error-branch-vs-
 //! fail **mechanically from the variant** — never by string-matching a message
-//! (`docs/wamn-node-design-notes.md` §6). `wamn-runner` re-exports these types,
+//! (`docs/execution/wamn-node-design-notes.md` §6). `wamn-runner` re-exports these types,
 //! so the engine, the drivers, and every node crate share one definition; the
 //! SDK owns it because nodes must be authorable without the runner (5.13).
 

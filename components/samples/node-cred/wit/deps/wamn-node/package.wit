@@ -1,4 +1,4 @@
-// Trimmed vendored copy of docs/wamn-node.wit (FROZEN 0.1.0) for guests that
+// Trimmed vendored copy of docs/contracts/wamn-node.wit (FROZEN 0.1.0) for guests that
 // need only the handler ABI. Only `types` + `handler` are kept: the
 // `payloads`/`credentials`/`control` interfaces (and the stream-node/http-node
 // worlds) pull in wasi:io / wasi:http and have no host implementation yet
@@ -120,7 +120,7 @@ interface types {
 
   /// What a successful node execution produced: the output payload plus
   /// the output port selecting which edges the engine routes it down
-  /// (`docs/flow-schema.md` ported edges). Absent port = "main". Branch
+  /// (`docs/execution/flow-schema.md` ported edges). Absent port = "main". Branch
   /// nodes emit named ports (a conditional's "true"/"false"); the
   /// reserved "error" port is never emitted here -- errors travel as
   /// node-error and the engine routes them.
@@ -145,7 +145,7 @@ interface handler {
 /// audit-logged host-side with the executing component's identity + project.
 /// A custom node imports this DIRECTLY and is granted host-side per invocation
 /// (wamn-bd5) — it never gets the trusted set-granted channel, so it cannot
-/// self-grant. Kept verbatim from docs/wamn-node.wit (FROZEN 0.1.0).
+/// self-grant. Kept verbatim from docs/contracts/wamn-node.wit (FROZEN 0.1.0).
 interface credentials {
   variant credential-error {
     /// Handle exists but was not granted to this node execution.

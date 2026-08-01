@@ -1,5 +1,5 @@
 # Throwaway 2-instance CNPG cluster for the S-CDC-1 pg_walstream diligence
-# spike (wamn-l5i9.2, docs/event-plane-jetstream.md §7). NOT production infra:
+# spike (wamn-l5i9.2, docs/events/event-plane-jetstream.md §7). NOT production infra:
 # stood up for the spike, torn down at the end. Two instances because the
 # switchover drill needs a standby (the guardrailed wamn-pg pool is 1/1 and
 # wamn-sysdb is the T1 control plane — neither may be touched).

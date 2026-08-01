@@ -4,7 +4,7 @@
 //! debuggable in-cluster HTTP hop**: the trusted flow-runner POSTs an
 //! invocation envelope to a `serve-node` host that owns the node's warm
 //! instance, and the node runs under the REAL frozen `wamn:node` world
-//! (`docs/wamn-node.wit`). This crate is the pure heart of that path so it
+//! (`docs/contracts/wamn-node.wit`). This crate is the pure heart of that path so it
 //! cannot drift between the two ends:
 //!
 //! - the **wire envelope** ([`NodeInvokeRequest`] / [`NodeInvokeResponse`]) —
@@ -31,7 +31,7 @@ use sha2::Sha256;
 // ---------------------------------------------------------------------------
 
 /// The `run-context` the runner hands a node, mirroring `wamn:node/types`'s
-/// `run-context` (docs/wamn-node.wit) field-for-field. Deliberately carries NO
+/// `run-context` (docs/contracts/wamn-node.wit) field-for-field. Deliberately carries NO
 /// secrets — the node pulls its granted credential lazily through the
 /// `wamn:node/credentials` import the serve-node host links.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

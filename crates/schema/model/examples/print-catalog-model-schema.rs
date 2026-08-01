@@ -1,7 +1,7 @@
 //! Regenerate the published JSON Schema contract from the canonical types:
 //!
 //! ```sh
-//! cargo run -p wamn-schema-model --example print-catalog-model-schema > docs/catalog-model.schema.json
+//! cargo run -p wamn-schema-model --example print-catalog-model-schema > docs/contracts/catalog-model.schema.json
 //! ```
 //!
 //! `committed_schema_matches_types` (tests/catalog.rs) fails if the committed

@@ -11,7 +11,7 @@ serves custom nodes. Both are thin deployable leaves over reusable platform
 packages. Production queue execution and deterministic scenario execution are
 separate artifacts which share `crates/execution/host` and the same flowrunner
 component. Our wash-runtime changes are carried commits on a fork — see
-`docs/wash-runtime-fork.md`.
+`docs/platform/wash-runtime-fork.md`.
 
 ## Repository layout
 

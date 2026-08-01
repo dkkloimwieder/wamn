@@ -1,4 +1,4 @@
-> **Archived 2026-07-19** — P0 closed; results live in `docs/p0-results.md`; retained for the go/no-go thresholds that gate re-measurement.
+> **Archived 2026-07-19** — P0 closed; results live in `docs/results/p0-results.md`; retained for the go/no-go thresholds that gate re-measurement.
 
 # P0 Exit Criteria — Measurable Go/No-Go per Spike
 

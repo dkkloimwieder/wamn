@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-# The published JSON Schema contract (docs/wamn-node-manifest.schema.json) is
+# The published JSON Schema contract (docs/contracts/wamn-node-manifest.schema.json) is
 # GENERATED from these types (single source of truth); a drift test keeps them
 # in lockstep.
 schemars = { workspace = true }

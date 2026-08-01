@@ -32,7 +32,7 @@ COPY deploy ./deploy
 COPY components/execution/flowrunner/src/lib.rs ./components/execution/flowrunner/src/lib.rs
 COPY components/samples/disposition-node/cases.json components/samples/disposition-node/cases-refusal-fixture.json ./components/samples/disposition-node/
 # wash-runtime resolves as a git dep from the fork pinned in Cargo.toml
-# (docs/wash-runtime-fork.md); cargo fetches it during the build.
+# (docs/platform/wash-runtime-fork.md); cargo fetches it during the build.
 # rust-toolchain.toml would force a rustup download inside the container;
 # the base image already ships the right version.
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-waker -p wamn-gates -p wamn-builder

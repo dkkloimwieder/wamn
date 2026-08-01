@@ -1,5 +1,5 @@
 # The shared object store (wamn-e1g) — a single in-cluster MinIO (S3-compatible)
-# holding BOTH backup mechanisms' artifacts (docs/postgres-topology.md §Backup
+# holding BOTH backup mechanisms' artifacts (docs/platform/postgres-topology.md §Backup
 # architecture):
 #   * WAL + base backups (the Barman Cloud plugin) under bucket `wamn-backups`
 #     (per-cluster prefix `wal/<cluster>`) — crates/control/provision/src/backup.rs;

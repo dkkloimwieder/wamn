@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-# The published JSON Schema contract (docs/flow-schema.schema.json) is GENERATED
+# The published JSON Schema contract (docs/contracts/flow-schema.schema.json) is GENERATED
 # from these types (single source of truth); a drift test keeps them in lockstep.
 schemars = { workspace = true }
 # The `partitioned(key)` ordering key (5.11) is a JMESPath over the run input —

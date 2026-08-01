@@ -2,7 +2,7 @@
 
 const PLATFORM_PLAN: &str = include_str!("../../../docs/platform-plan.md");
 const AUTHORITATIVE_LEDGER_STATEMENT: &str =
-    "`docs/wash-runtime-fork.md` is the authoritative branch, revision, and carried-policy ledger";
+    "`docs/platform/wash-runtime-fork.md` is the authoritative branch, revision, and carried-policy ledger";
 
 #[test]
 fn d23_current_state_names_the_v2_6_1_fork() {

@@ -20,7 +20,7 @@
 //! cluster guardrail): re-running against an already-provisioned project
 //! refreshes the grants and re-emits the credential, never dropping anything.
 //! Backups / WAL archiving / PITR are deferred to a fast-follow bead; per-project
-//! **distinct** roles are an 8.2 hardening (see docs/provisioning.md).
+//! **distinct** roles are an 8.2 hardening (see docs/platform/provisioning.md).
 
 use std::path::PathBuf;
 

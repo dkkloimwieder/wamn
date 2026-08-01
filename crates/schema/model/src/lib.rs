@@ -18,7 +18,7 @@
 //! - **diff** — [`diff::diff`] (structured version diff feeding the 3.2 DDL
 //!   compiler and 11.8 schema-impact analysis);
 //! - **contract** — [`json_schema`] generates the language-neutral JSON Schema
-//!   published at `docs/catalog-model.schema.json` (drift-guarded by a test).
+//!   published at `docs/contracts/catalog-model.schema.json` (drift-guarded by a test).
 
 mod diff;
 mod types;
@@ -35,7 +35,7 @@ pub use validate::{
 };
 
 /// The JSON Schema for [`Catalog`], generated from the Rust types (the single
-/// source of truth). Serialized to `docs/catalog-model.schema.json`; a drift
+/// source of truth). Serialized to `docs/contracts/catalog-model.schema.json`; a drift
 /// test keeps the committed file in lockstep with the types.
 pub fn json_schema() -> serde_json::Value {
     let schema = schemars::schema_for!(Catalog);

@@ -44,7 +44,7 @@ struct MetaPkg {
 }
 
 /// The contract version defaulted when `[package.metadata.wamn-node]` omits it —
-/// the frozen `wamn:node` 0.1 contract (`docs/wamn-node.wit`).
+/// the frozen `wamn:node` 0.1 contract (`docs/contracts/wamn-node.wit`).
 pub const DEFAULT_CONTRACT: &str = "0.1.0";
 
 /// Build a validated [`NodeManifest`] for `package` from a `cargo metadata` JSON

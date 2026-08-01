@@ -1,10 +1,10 @@
 //! # wamn-node-manifest — the `wamn.node.manifest` OCI annotation (5.4)
 //!
-//! Design-note 8 (`docs/wamn-node-design-notes.md`): node metadata lives in an
+//! Design-note 8 (`docs/execution/wamn-node-design-notes.md`): node metadata lives in an
 //! OCI **annotation**, not a WIT export — a registry scan builds the node
 //! palette with no instantiation. This crate is the annotation's canonical
 //! model: types, structural validation, import/export, and the generated
-//! language-neutral JSON Schema (`docs/wamn-node-manifest.schema.json`, the
+//! language-neutral JSON Schema (`docs/contracts/wamn-node-manifest.schema.json`, the
 //! wamn-flow/wamn-schema-model pattern).
 //!
 //! Consumers: the builder (5.5) writes the annotation at push; the designer /
@@ -455,7 +455,7 @@ pub fn json_schema() -> Value {
 }
 
 /// [`json_schema`] as canonical pretty JSON with a trailing newline — the
-/// exact bytes of `docs/wamn-node-manifest.schema.json`.
+/// exact bytes of `docs/contracts/wamn-node-manifest.schema.json`.
 pub fn json_schema_string() -> String {
     let mut s = serde_json::to_string_pretty(&json_schema()).expect("schema serializes");
     s.push('\n');

@@ -1,0 +1,314 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "Capture": {
+      "additionalProperties": false,
+      "description": "Node-level I/O capture policy (9.6): how a flow's per-node input/output payloads are persisted to `node_runs`, plus the size threshold that forces preview-only storage. The pure application logic — secret scrubbing, size truncation, and preview/size/hash derivation — lives in `wamn_run_state::capture`; this is the authored declaration that rides `graph_json` (the flow is in scope at every `node_runs` write site).",
+      "properties": {
+        "max-bytes": {
+          "default": 65536,
+          "description": "Payloads whose serialization exceeds this many bytes are stored preview-only (head + size + hash, payload NULL) regardless of `mode`, recorded as `capture_mode = 'preview'`. Absent = [`DEFAULT_CAPTURE_MAX_BYTES`] (64 KiB).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CaptureMode"
+            }
+          ],
+          "default": "full",
+          "description": "The capture mode. Absent = [`CaptureMode::Full`]."
+        }
+      },
+      "type": "object"
+    },
+    "CaptureMode": {
+      "description": "How a node's I/O payloads are persisted (9.6), most → least captured. The storage literal (`capture_mode`) is exactly the serde kebab-case name.",
+      "oneOf": [
+        {
+          "description": "Payloads stored faithfully (replayable). Secret scrubbing is applied to the `preview_head` ONLY; the stored payload stays exact, `redacted` false. The default.",
+          "enum": [
+            "full"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Secret scrubbing applied to the STORED payloads AND the preview (`redacted = true`). A replay still runs, but replays the scrubbed values — the documented capture/replay tradeoff (see `docs/execution/run-state.md`).",
+          "enum": [
+            "scrubbed"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Only the preview head + size + hash are stored; the payloads are NULL, so the run reconstructs to `CaptureOff` (non-replayable).",
+          "enum": [
+            "preview"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Nothing is captured (`capture_mode = 'off'`); payloads NULL, no preview.",
+          "enum": [
+            "off"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "CredentialRef": {
+      "additionalProperties": false,
+      "description": "A credential the flow references by logical name; the vault (5.9) resolves it to a lazy handle at run time. No secret material is ever stored in flow data.",
+      "properties": {
+        "description": {
+          "description": "Human-readable description (editor).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "Optional hint for the editor's credential picker (e.g. `http-basic`, `api-key`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Logical name referenced by [`Node::credential`].",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Edge": {
+      "additionalProperties": false,
+      "description": "A wire from one node's output port to a downstream node. Branch = several edges from distinct ports of one node; merge = several edges into one node.",
+      "properties": {
+        "from": {
+          "description": "Source node id.",
+          "type": "string"
+        },
+        "from-port": {
+          "description": "Source output port. Defaults to [`MAIN_PORT`]; [`ERROR_PORT`] is the error path; node-library node types may define others (e.g. a `conditional`'s `true`/`false`).",
+          "type": "string"
+        },
+        "to": {
+          "description": "Target node id.",
+          "type": "string"
+        },
+        "to-port": {
+          "description": "Target input port. Defaults to the node's single input; present only for future multi-input node types.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "description": "A single graph step.",
+      "properties": {
+        "config": {
+          "description": "Opaque per-node configuration — a JSON object typed by the node library (5.3), not by this crate."
+        },
+        "credential": {
+          "description": "Optional reference to a declared credential by [`CredentialRef::name`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Unique within the flow.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Human-readable label (editor).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The node type. Engine-reserved types are checked here; ordinary open strings are resolved through the pinned node-interface bundle.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Ordering": {
+      "description": "The flow's record-stream **ordering** (5.11): which ordered stream a run joins. This is the run's `run_queue.partition_key` seam — the dispatcher evaluates the declaration at fire() and stamps the key; a NULL key is the order-agnostic global claim. Orthogonal to [`PartitionPolicy`], which ranks runs *within* one stream (D20). Absent = [`Ordering::Unordered`].\n\nPer-node ordering (the 5.11 plan wording) is deferred: the queue's dispatch unit is the **run** (records map 1:1 to runs, D9), so ordering is declared on the flow, not per node — a later refinement if per-node streams are ever needed. See `docs/execution/run-queue.md` §Flow-level ordering declaration.",
+      "oneOf": [
+        {
+          "description": "No ordering: runs dispatch by the global claim in `available_at` order (`partition_key` NULL). Today's behavior, and the default.",
+          "properties": {
+            "mode": {
+              "enum": [
+                "unordered"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The whole flow is ONE ordered stream: every run carries a constant partition key (the flow id), so the flow's runs dispatch strictly in-order — one in flight per stream — across replicas.",
+          "properties": {
+            "mode": {
+              "enum": [
+                "strict"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Per-key ordering: the run's partition key is a [JMESPath] over the run input. Runs sharing a key dispatch in-order; distinct keys dispatch independently.\n\n[JMESPath]: https://jmespath.org/",
+          "properties": {
+            "mode": {
+              "enum": [
+                "partitioned"
+              ],
+              "type": "string"
+            },
+            "partition-key": {
+              "description": "The JMESPath expression evaluated over the run input to produce the stream key. Validated for syntactic well-formedness by [`crate::validate`].",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "partition-key"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PartitionPolicy": {
+      "description": "The `partitioned(key)` head-unavailability policy (5.11 / D20): what a key does while its earliest (head) run cannot dispatch. The stream order the policy ranks by is `(enqueued_at, run_id)` — stamped once at enqueue, never moved by a park/backoff (unlike `available_at`).",
+      "oneOf": [
+        {
+          "description": "The default: an unavailable head still **blocks** its key — a backed-off or parked head holds later runs until it completes, and a head that exhausts its redelivery budget **wedges** the key (operator release; the janitor's `infrastructure-failure` verdict does not free it). The Kafka-consumer model: a partition never leapfrogs.",
+          "enum": [
+            "blocking"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Opt-in: a later ready run may overtake an unavailable head (the `(available_at, run_id)` order among currently-ready siblings), and the janitor's verdict on an exhausted head releases the key. For keys where ordering is a throughput heuristic, not a correctness requirement.",
+          "enum": [
+            "leapfrog"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "One version of a flow — the unit stored in the catalog and pointed at by the active-version pointer (deploying = flipping that pointer + a NATS doorbell, 5.14).",
+  "properties": {
+    "allowed-hosts": {
+      "description": "Hosts this flow's outbound HTTP may reach (fqg.11). Entries use the host allowlist grammar: `host[:port]`, `scheme://host[:port]`, or a `*.suffix` subdomain wildcard. Egress is opt-in and fail-closed — undeclared (or empty) means DENY-ALL for the flow, and a declared host is still bounded by the runner's host-level allowlist (both must allow). Mirrors [`Flow::credentials`]: capability by declaration.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "capture": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Capture"
+        }
+      ],
+      "description": "The flow's node-level I/O capture policy (9.6): how each node's input / output payloads are persisted to `node_runs` — faithfully, scrubbed of secrets, preview-only, or not at all — plus the byte threshold above which any mode stores a preview only. Absent = [`Capture::default`] (full capture, 64 KiB threshold): the platform captures replayable payloads by default. Rides `graph_json`; the flowrunner guest applies it at every `node_runs` write ([`wamn_run_state::capture`](../wamn_run_state))."
+    },
+    "credentials": {
+      "description": "Credentials the flow needs, declared by logical name and resolved by the vault (5.9) at run time. Nodes reference these by [`Node::credential`]; secrets never appear in flow data.",
+      "items": {
+        "$ref": "#/definitions/CredentialRef"
+      },
+      "type": "array"
+    },
+    "edges": {
+      "description": "The wiring between node output ports and downstream nodes.",
+      "items": {
+        "$ref": "#/definitions/Edge"
+      },
+      "type": "array"
+    },
+    "flow-id": {
+      "description": "Stable identifier shared across every version of this flow.",
+      "type": "string"
+    },
+    "name": {
+      "description": "Human-readable label (editor).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "nodes": {
+      "description": "The nodes of the graph. Exactly one has a type in [`ENTRY_TYPES`].",
+      "items": {
+        "$ref": "#/definitions/Node"
+      },
+      "type": "array"
+    },
+    "ordering": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Ordering"
+        }
+      ],
+      "description": "The flow's record-stream ordering (5.11): which ordered stream its runs join. Absent = [`Ordering::Unordered`] (today's global-claim behavior). The dispatcher evaluates this at fire() and stamps `run_queue.partition_key` ([`Ordering::partition_key_for`]); the CDC materializer (wamn-l5i9.17) consumes the SAME declaration. Composes with [`Flow::partition_policy`], which is the head-unavailability policy *within* a stream (orthogonal: this picks the stream, that ranks it)."
+    },
+    "partition-policy": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/PartitionPolicy"
+        }
+      ],
+      "description": "How this flow's `partitioned(key)` runs dispatch when the key's earliest (head) run is unavailable — backed off, parked, or budget-exhausted (5.11 ordering decision, D20). Absent = [`PartitionPolicy::Blocking`]: choosing partitioned dispatch *is* opting into ordering. Inert for a flow whose runs carry no partition key; materialized onto each queue row at enqueue (`wamn-run-state`) so the claim SQL is self-contained."
+    },
+    "schema-version": {
+      "description": "The flow-schema format version (e.g. `\"0.1\"`). See [`SCHEMA_VERSION`].",
+      "type": "string"
+    },
+    "version": {
+      "description": "Monotonic version of this flow (>= 1).",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "flow-id",
+    "nodes",
+    "schema-version",
+    "version"
+  ],
+  "title": "Flow",
+  "type": "object"
+}

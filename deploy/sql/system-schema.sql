@@ -23,7 +23,7 @@
 -- what .6 provision-org connects as. A superuser driving the apply `SET ROLE
 -- wamn_system` first.
 --
--- THE GENERIC DEPLOYMENT MODEL (D18, docs/deployment-model.md, wamn-8df.3;
+-- THE GENERIC DEPLOYMENT MODEL (D18, docs/platform/deployment-model.md, wamn-8df.3;
 -- org-scoped policies + templates, wamn-8df.4): the closed tier/env CHECK
 -- enumerations are RETIRED. `env` is a validated slug resolving a
 -- `registry.env_policies` row IN ITS ORG's set (referential integrity — the
@@ -35,7 +35,7 @@
 -- provision-org time; there is NO platform-global policy seed — an org
 -- instantiates a template and then customizes its own rows per-env.
 --
--- THE FOUR INVARIANTS (docs/postgres-topology.md §T1), and how this schema
+-- THE FOUR INVARIANTS (docs/platform/postgres-topology.md §T1), and how this schema
 -- encodes / makes each testable:
 --   (1) request-path-free  — an ARCHITECTURAL property, not a DB constraint. No
 --       data-plane workload (gateway/runner/dispatcher/webhook) may reference
@@ -294,7 +294,7 @@ CREATE TABLE provisioning.sagas (
 
 -- ---------------------------------------------------------------------------
 -- Dumps — bookkeeping for the scheduled per-project-env LOGICAL DUMPS
--- (wamn-q3n.10, the second backup mechanism; docs/postgres-topology.md §Backup
+-- (wamn-q3n.10, the second backup mechanism; docs/platform/postgres-topology.md §Backup
 -- architecture). One row per dump taken: the object-store `object_key`
 -- (`dumps/<org>/<project>/<env>/<timestamp>` — derivable, this row is a record
 -- not the source), the dump `format` (`pg_dump -Fd` = directory), the completed

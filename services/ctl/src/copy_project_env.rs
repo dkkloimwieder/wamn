@@ -1,6 +1,6 @@
 //! The `copy-project-env` subcommand (wamn-8df.5): the unified env-symmetric
 //! **copy** between two `(org, project, env)` triples — deploy / promote /
-//! clone / move in one operation (`docs/deployment-model.md` §4).
+//! clone / move in one operation (`docs/platform/deployment-model.md` §4).
 //!
 //! The plan comes from the pure [`wamn_control_provision::plan_copy`]; this driver holds
 //! the connections and executes each [`CopyStep`] by composing the shipped

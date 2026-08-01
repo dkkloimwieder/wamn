@@ -5,9 +5,9 @@
 //! re-exported here, so the engine, the drivers, and every node crate share
 //! one definition while nodes stay authorable without the runner (the 5.13
 //! purity rule). It is a 1:1 mirror of the `wamn:node` `node-error` WIT
-//! variant (`docs/wamn-node.wit`); the engine decides retry-vs-error-vs-fail
+//! variant (`docs/contracts/wamn-node.wit`); the engine decides retry-vs-error-vs-fail
 //! **mechanically from the variant** — never by string-matching a message
-//! (`docs/wamn-node-design-notes.md` §6).
+//! (`docs/execution/wamn-node-design-notes.md` §6).
 
 use serde_json::Value;
 

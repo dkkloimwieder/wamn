@@ -1,6 +1,6 @@
 //! The `dump-project-env` subcommand (wamn-q3n.10): the per-project-env logical
 //! **dump** producer — the second backup mechanism in the four-tier topology
-//! (docs/postgres-topology.md §Backup architecture).
+//! (docs/platform/postgres-topology.md §Backup architecture).
 //!
 //! `pg_dump -Fd` of one project-env database → object storage. **One artifact**
 //! serves tenant-scoped restore-to-last-dump *and* the 10.3 project export; the

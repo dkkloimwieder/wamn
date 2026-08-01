@@ -1,5 +1,5 @@
 //! S4 Rust bench node — implements the minimal `wamn:node` handler
-//! (docs/wamn-node.wit) with three workload modes, driven entirely by the
+//! (docs/contracts/wamn-node.wit) with three workload modes, driven entirely by the
 //! JSON `config` on the run-context. This is the "composed"/native arm's node
 //! (also usable dynamically, as the Rust-dynamic reference column). Its JS twin
 //! is `components/samples/node-ts`.

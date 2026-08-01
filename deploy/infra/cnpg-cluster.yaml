@@ -1,4 +1,4 @@
-# The T3 TRIALS POOL (D6 four-tier topology, docs/postgres-topology.md §T3): ONE
+# The T3 TRIALS POOL (D6 four-tier topology, docs/platform/postgres-topology.md §T3): ONE
 # shared CloudNativePG Cluster holding a database per project-env, the
 # PRE-CONTRACT tier — trials, demos, hobby evaluation. Pooled density where it
 # belongs: many small idle tenants who haven't paid for a dedicated instance.
@@ -18,7 +18,7 @@
 #
 # Cross-tenant isolation = per-project-env database + per-DB CONNECT (PUBLIC
 # revoked) + RLS within, under the single shared NOSUPERUSER `wamn_app` role
-# (roles are cluster-global). See docs/provisioning.md.
+# (roles are cluster-global). See docs/platform/provisioning.md.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -52,7 +52,7 @@ spec:
     pg_hba:
       - host all all all scram-sha-256
     parameters:
-      # CDC-capture WAL bound (§11 sharp edge, docs/event-plane-jetstream.md;
+      # CDC-capture WAL bound (§11 sharp edge, docs/events/event-plane-jetstream.md;
       # wamn-l5i9.32). The reader MVP (l5i9.10) runs CDC on this shared pool, and
       # the reader never GCs a slot it did not create — without a bound a
       # forgotten/invalidated logical slot pins WAL until the volume fills.

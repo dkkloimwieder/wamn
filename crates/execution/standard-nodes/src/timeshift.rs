@@ -11,7 +11,7 @@
 //! PURE (no capabilities): the value derives from the TICK the runner already
 //! handed the run, which is deterministic and virtual-time-friendly — under the
 //! gate's virtual clock a 48h offset maps to wall-clock seconds by construction
-//! (`docs/poc-material-receiving.md` :39). No `SystemClock`, no chrono: the
+//! (`docs/poc/poc-material-receiving.md` :39). No `SystemClock`, no chrono: the
 //! epoch-ms → civil-date conversion is the closed-form proleptic-Gregorian
 //! algorithm below, keeping this node linkable into `flowrunner.wasm` under the
 //! no-chrono guest posture.

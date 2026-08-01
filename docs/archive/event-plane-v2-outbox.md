@@ -1,4 +1,4 @@
-> **Archived 2026-07-19** — superseded by `docs/event-plane-jetstream.md` (v3, D19) on 2026-07-18; retained for the outbox-era rationale and the teardown list provenance.
+> **Archived 2026-07-19** — superseded by `docs/events/event-plane-jetstream.md` (v3, D19) on 2026-07-18; retained for the outbox-era rationale and the teardown list provenance.
 
 # Event Plane Design — JetStream behind the outbox (candidate D19, v2)
 
@@ -261,7 +261,7 @@ pass/fail thresholds are attached in this document — the owner attaches
 decision rules after the numbers exist. Output of the program: a **capacity
 model** ("one org sustains X events/sec steady, Y burst for Z minutes, at W GiB
 retention/day, with app-path p99 impact of V%") published to
-`docs/ceilings.md`, every figure carrying its measurement date, environment,
+`docs/results/ceilings.md`, every figure carrying its measurement date, environment,
 and raw-data pointer. Functional verification (crash orderings, redelivery,
 ordering) is deliberately out of scope here and is planned at implementation
 time as beads.
@@ -365,8 +365,8 @@ rig for the JetStream-specific rows only.
 |---|---|
 | Plugin ~2k qps, p99 <10 ms | **measured** (S2, p0-results) |
 | Dispatch p99s (write-ahead 1.11 ms, fast 361 µs) | **measured** (queuebench) |
-| Queue ~1–5k transitions/sec | **measured** (C7, wamn-z7b.1 2026-07-18, `docs/ceilings.md`): 60 s knee ~2000–2500/s, overload drain ~4000/s, sustained untuned ~550–1400/s (stock autovacuum boom-busts above that — the phase-2 tuning matrix moves it) |
-| Outbox trigger overhead (R8c's "write amplification" adjectives) | **measured** (C2, wamn-z7b.2 2026-07-18, `docs/ceilings.md`): +30 µs / +500 B WAL per single-row write; bulk ×5–6 duration, ×2.2 WAL; growth bounded at `rate × cadence` under the d8v GC — sizes wamn-vbl |
+| Queue ~1–5k transitions/sec | **measured** (C7, wamn-z7b.1 2026-07-18, `docs/results/ceilings.md`): 60 s knee ~2000–2500/s, overload drain ~4000/s, sustained untuned ~550–1400/s (stock autovacuum boom-busts above that — the phase-2 tuning matrix moves it) |
+| Outbox trigger overhead (R8c's "write amplification" adjectives) | **measured** (C2, wamn-z7b.2 2026-07-18, `docs/results/ceilings.md`): +30 µs / +500 B WAL per single-row write; bulk ×5–6 duration, ×2.2 WAL; growth bounded at `rate × cadence` under the d8v GC — sizes wamn-vbl |
 | v1's "events table sufficient below 1–2k events/sec/org" | **fabricated extrapolation — retracted**; C1 measures the knee |
 | 256 KiB payload cap | **proposed knob** → C4a informs |
 | Dedupe window 10 min | **derived** (2× redelivery horizon) → C4c prices |

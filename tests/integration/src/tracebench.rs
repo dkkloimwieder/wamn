@@ -20,7 +20,7 @@
 //! intentionally not fabricated here; it remains the 9.2 traceparent contract.
 //!
 //! Cross-pod threading (traceparent injection on outbound calls) and
-//! guest-minted `run_id`/`node_id` are 9.2 (`docs/tracing.md` § Boundaries).
+//! guest-minted `run_id`/`node_id` are 9.2 (`docs/observability/tracing.md` § Boundaries).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
