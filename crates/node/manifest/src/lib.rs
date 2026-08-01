@@ -67,7 +67,9 @@ pub enum ResolvedPurity {
 }
 
 /// The recovery class authorized by the resolved manifest semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum RecoveryClass {
     Replay,
@@ -93,7 +95,9 @@ pub struct ConnectionRequirement {
 }
 
 /// A field whose ownership is fixed by a connection-type descriptor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConnectionField {
     Method,
@@ -109,7 +113,9 @@ pub enum ConnectionField {
 }
 
 /// The principal allowed to supply one connection field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConnectionFieldOwner {
     Author,
@@ -118,7 +124,9 @@ pub enum ConnectionFieldOwner {
 }
 
 /// Canonical ownership for one connection field.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ConnectionFieldOwnership {
     pub field: ConnectionField,
@@ -126,28 +134,36 @@ pub struct ConnectionFieldOwnership {
 }
 
 /// The authority interpretation fixed by a connection type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConnectionAuthorityModel {
     HttpOrigin,
 }
 
 /// How environment-owned credentials enter a request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum CredentialInjection {
     EnvironmentSelectedHttpHeader,
 }
 
 /// How the engine-owned stable key enters a request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum IdempotencyKeyInjection {
     HttpIdempotencyKeyHeader,
 }
 
 /// A field in the canonical operation fingerprint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum OperationFingerprintField {
     Method,
@@ -157,14 +173,18 @@ pub enum OperationFingerprintField {
 }
 
 /// A typed parameter accepted by a recovery claim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum RecoveryClaimParameterSchema {
     MinimumRetentionMs,
 }
 
 /// A named recovery claim and its portable parameter schema.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case", tag = "claim", deny_unknown_fields)]
 pub enum RecoveryClaimSchema {
     StableKeyDedupV1 {
@@ -174,7 +194,9 @@ pub enum RecoveryClaimSchema {
 }
 
 /// Versioned portable semantics for one connection type.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ConnectionTypeDescriptor {
     pub descriptor_version: String,
@@ -260,7 +282,9 @@ impl ConnectionTypeDescriptor {
 }
 
 /// A portable recovery guarantee selected from a descriptor.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case", tag = "claim", deny_unknown_fields)]
 pub enum PortableRecoveryClaim {
     NeverReplay,
@@ -268,7 +292,9 @@ pub enum PortableRecoveryClaim {
 }
 
 /// A portable descriptor and recovery-claim selection.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PortableConnectionRequirement {
     pub requirement_version: String,
@@ -778,4 +804,31 @@ pub fn json_schema_string() -> String {
     let mut s = serde_json::to_string_pretty(&json_schema()).expect("schema serializes");
     s.push('\n');
     s
+}
+
+#[derive(schemars::JsonSchema)]
+#[serde(untagged)]
+#[expect(
+    dead_code,
+    reason = "schema-only variants combine the two portable document roots"
+)]
+enum ConnectionContractDocument {
+    Descriptor(ConnectionTypeDescriptor),
+    Requirement(PortableConnectionRequirement),
+}
+
+/// The language-neutral JSON Schema for portable connection descriptors and
+/// requirements, generated from their canonical Rust types.
+pub fn connection_contract_json_schema() -> Value {
+    let schema = schemars::schema_for!(ConnectionContractDocument);
+    serde_json::to_value(schema).expect("connection contract schema serializes")
+}
+
+/// [`connection_contract_json_schema`] as canonical pretty JSON with a
+/// trailing newline.
+pub fn connection_contract_json_schema_string() -> String {
+    let mut schema = serde_json::to_string_pretty(&connection_contract_json_schema())
+        .expect("connection contract schema serializes");
+    schema.push('\n');
+    schema
 }

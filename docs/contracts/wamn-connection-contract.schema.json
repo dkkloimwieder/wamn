@@ -1,0 +1,250 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "anyOf": [
+    {
+      "$ref": "#/definitions/ConnectionTypeDescriptor"
+    },
+    {
+      "$ref": "#/definitions/PortableConnectionRequirement"
+    }
+  ],
+  "definitions": {
+    "ConnectionAuthorityModel": {
+      "description": "The authority interpretation fixed by a connection type.",
+      "enum": [
+        "http-origin"
+      ],
+      "type": "string"
+    },
+    "ConnectionField": {
+      "description": "A field whose ownership is fixed by a connection-type descriptor.",
+      "enum": [
+        "method",
+        "relative-target",
+        "headers",
+        "body",
+        "authority",
+        "tls",
+        "redirect",
+        "proxy",
+        "credential",
+        "idempotency-key"
+      ],
+      "type": "string"
+    },
+    "ConnectionFieldOwner": {
+      "description": "The principal allowed to supply one connection field.",
+      "enum": [
+        "author",
+        "environment",
+        "system"
+      ],
+      "type": "string"
+    },
+    "ConnectionFieldOwnership": {
+      "additionalProperties": false,
+      "description": "Canonical ownership for one connection field.",
+      "properties": {
+        "field": {
+          "$ref": "#/definitions/ConnectionField"
+        },
+        "owner": {
+          "$ref": "#/definitions/ConnectionFieldOwner"
+        }
+      },
+      "required": [
+        "field",
+        "owner"
+      ],
+      "type": "object"
+    },
+    "ConnectionTypeDescriptor": {
+      "additionalProperties": false,
+      "description": "Versioned portable semantics for one connection type.",
+      "properties": {
+        "authority-model": {
+          "$ref": "#/definitions/ConnectionAuthorityModel"
+        },
+        "conservative-recovery": {
+          "$ref": "#/definitions/RecoveryClass"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "credential-injection": {
+          "$ref": "#/definitions/CredentialInjection"
+        },
+        "descriptor-version": {
+          "type": "string"
+        },
+        "field-ownership": {
+          "items": {
+            "$ref": "#/definitions/ConnectionFieldOwnership"
+          },
+          "type": "array"
+        },
+        "idempotency-key-injection": {
+          "$ref": "#/definitions/IdempotencyKeyInjection"
+        },
+        "recovery-claims": {
+          "items": {
+            "$ref": "#/definitions/RecoveryClaimSchema"
+          },
+          "type": "array"
+        },
+        "requirement-type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "authority-model",
+        "conservative-recovery",
+        "contract",
+        "credential-injection",
+        "descriptor-version",
+        "field-ownership",
+        "idempotency-key-injection",
+        "recovery-claims",
+        "requirement-type"
+      ],
+      "type": "object"
+    },
+    "CredentialInjection": {
+      "description": "How environment-owned credentials enter a request.",
+      "enum": [
+        "environment-selected-http-header"
+      ],
+      "type": "string"
+    },
+    "IdempotencyKeyInjection": {
+      "description": "How the engine-owned stable key enters a request.",
+      "enum": [
+        "http-idempotency-key-header"
+      ],
+      "type": "string"
+    },
+    "OperationFingerprintField": {
+      "description": "A field in the canonical operation fingerprint.",
+      "enum": [
+        "method",
+        "relative-target",
+        "semantic-headers",
+        "body-digest"
+      ],
+      "type": "string"
+    },
+    "PortableConnectionRequirement": {
+      "additionalProperties": false,
+      "description": "A portable descriptor and recovery-claim selection.",
+      "properties": {
+        "descriptor": {
+          "$ref": "#/definitions/ConnectionTypeDescriptor"
+        },
+        "recovery": {
+          "$ref": "#/definitions/PortableRecoveryClaim"
+        },
+        "requirement-version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "descriptor",
+        "recovery",
+        "requirement-version"
+      ],
+      "type": "object"
+    },
+    "PortableRecoveryClaim": {
+      "description": "A portable recovery guarantee selected from a descriptor.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "claim": {
+              "enum": [
+                "never-replay"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "claim"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "claim": {
+              "enum": [
+                "stable-key-dedup-v1"
+              ],
+              "type": "string"
+            },
+            "minimum_retention_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "claim",
+            "minimum_retention_ms"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RecoveryClaimParameterSchema": {
+      "description": "A typed parameter accepted by a recovery claim.",
+      "enum": [
+        "minimum-retention-ms"
+      ],
+      "type": "string"
+    },
+    "RecoveryClaimSchema": {
+      "description": "A named recovery claim and its portable parameter schema.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "claim": {
+              "enum": [
+                "stable-key-dedup-v1"
+              ],
+              "type": "string"
+            },
+            "operation_fingerprint": {
+              "items": {
+                "$ref": "#/definitions/OperationFingerprintField"
+              },
+              "type": "array"
+            },
+            "parameters": {
+              "items": {
+                "$ref": "#/definitions/RecoveryClaimParameterSchema"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "claim",
+            "operation_fingerprint",
+            "parameters"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RecoveryClass": {
+      "description": "The recovery class authorized by the resolved manifest semantics.",
+      "enum": [
+        "replay",
+        "idempotent-with-key",
+        "never-replay"
+      ],
+      "type": "string"
+    }
+  },
+  "title": "ConnectionContractDocument"
+}

@@ -1,3 +1,4 @@
+use boon::{Compiler, Schemas};
 use serde_json::Value;
 use wamn_node_manifest::{
     CONNECTION_DESCRIPTOR_VERSION, ConnectionTypeDescriptor,
@@ -9,6 +10,22 @@ fn stable_requirement() -> PortableConnectionRequirement {
         ConnectionTypeDescriptor::http_v1(),
         86_400_000,
     )
+}
+
+fn published_schema_accepts(document: &Value) -> bool {
+    let mut schemas = Schemas::new();
+    let mut compiler = Compiler::new();
+    let schema = serde_json::from_str(include_str!(
+        "../../../../docs/contracts/wamn-connection-contract.schema.json"
+    ))
+    .expect("published connection contract schema parses");
+    compiler
+        .add_resource("connection-contract-schema", schema)
+        .expect("connection contract schema resource");
+    let schema_index = compiler
+        .compile("connection-contract-schema", &mut schemas)
+        .expect("connection contract schema compiles");
+    schemas.validate(document, schema_index).is_ok()
 }
 
 #[test]
@@ -94,4 +111,67 @@ fn environment_instance_values_are_unrepresentable_in_portable_forms() {
             "portable requirement admitted environment field {field:?}"
         );
     }
+}
+
+#[test]
+fn published_connection_contract_schema_accepts_canonical_forms() {
+    let descriptor = ConnectionTypeDescriptor::http_v1();
+    let never_replay = PortableConnectionRequirement::never_replay(descriptor.clone());
+    let stable_key_dedup =
+        PortableConnectionRequirement::stable_key_dedup_v1(descriptor.clone(), 86_400_000);
+
+    for document in [
+        serde_json::to_value(descriptor).expect("descriptor serializes"),
+        serde_json::to_value(never_replay).expect("never-replay requirement serializes"),
+        serde_json::to_value(stable_key_dedup).expect("stable-key requirement serializes"),
+    ] {
+        assert!(
+            published_schema_accepts(&document),
+            "published schema rejected canonical document: {document}"
+        );
+    }
+}
+
+#[test]
+fn published_connection_contract_schema_rejects_unknown_surface() {
+    let requirement = stable_requirement();
+
+    let mut unknown_field = serde_json::to_value(&requirement).expect("requirement serializes");
+    unknown_field["unexpected"] = Value::Bool(true);
+    assert!(!published_schema_accepts(&unknown_field));
+
+    let mut unknown_descriptor_field =
+        serde_json::to_value(ConnectionTypeDescriptor::http_v1()).expect("descriptor serializes");
+    unknown_descriptor_field["environment-default"] = Value::Bool(true);
+    assert!(!published_schema_accepts(&unknown_descriptor_field));
+
+    let mut unknown_claim = serde_json::to_value(&requirement).expect("requirement serializes");
+    unknown_claim["recovery"]["claim"] = Value::String("receiver-is-safe".to_string());
+    assert!(!published_schema_accepts(&unknown_claim));
+
+    let mut unknown_parameter = serde_json::to_value(&requirement).expect("requirement serializes");
+    unknown_parameter["recovery"]["retention_ms"] = Value::Number(86_400_000.into());
+    assert!(!published_schema_accepts(&unknown_parameter));
+
+    for field in ["endpoint", "generation", "evidence", "environment-id"] {
+        let mut environment_field =
+            serde_json::to_value(&requirement).expect("requirement serializes");
+        environment_field[field] = Value::String("forbidden".to_string());
+        assert!(
+            !published_schema_accepts(&environment_field),
+            "published schema admitted environment field {field:?}"
+        );
+    }
+}
+
+#[test]
+fn connection_contract_schema_drift() {
+    let committed = include_str!("../../../../docs/contracts/wamn-connection-contract.schema.json");
+    assert_eq!(
+        committed,
+        wamn_node_manifest::connection_contract_json_schema_string(),
+        "docs/contracts/wamn-connection-contract.schema.json is out of sync with the types; \
+         regenerate: cargo run -p wamn-node-manifest --example print-connection-contract-schema > \
+         docs/contracts/wamn-connection-contract.schema.json"
+    );
 }
