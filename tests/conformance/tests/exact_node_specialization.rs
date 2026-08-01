@@ -1,6 +1,7 @@
 //! PLAN-2A exact-node specialization proof over the frozen fleet fixture.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -14,6 +15,7 @@ use wamn_node_manifest::{CapabilityClass, RecoveryClass, ResolvedNodeInterface, 
 
 const FLEET_JSON: &str = include_str!("../../fixtures/exact-node-fleet.json");
 const TOOL_IDENTITY: &str = "wac-cli@0.10.1";
+const COMPOSITION_INVARIANT: &str = "sorted-single-plug-v1";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -234,6 +236,59 @@ struct CompositionGate<'a> {
     fleet: &'a Fleet,
 }
 
+#[derive(Debug)]
+struct CompositionPlan<'a> {
+    stages: Vec<Vec<&'a str>>,
+}
+
+impl CompositionPlan<'_> {
+    fn provenance_log(&self) -> Vec<u8> {
+        let mut log =
+            format!("tool={TOOL_IDENTITY}\ncomposition-invariant={COMPOSITION_INVARIANT}\n");
+        for (index, node_types) in self.stages.iter().enumerate() {
+            writeln!(log, "stage={index};plugs={}", node_types.join(","))
+                .expect("writing composition provenance to a string cannot fail");
+        }
+        log.into_bytes()
+    }
+}
+
+fn composition_plan(flow: &FlowFixture) -> CompositionPlan<'_> {
+    // wac-cli 0.10.1 does not emit reproducible bytes when multiple --plug arguments are
+    // resolved in one invocation. The supported production path is one sorted plug per pass.
+    CompositionPlan {
+        stages: flow
+            .selected_nodes
+            .iter()
+            .map(|node_type| vec![node_type.as_str()])
+            .collect(),
+    }
+}
+
+#[test]
+fn exact_node_composition_plan_pins_reproducible_single_plug_stages() {
+    let fleet = fleet();
+    validate_fleet(&fleet);
+
+    for flow in &fleet.flows {
+        let plan = composition_plan(flow);
+        assert_eq!(plan.stages.len(), flow.selected_nodes.len());
+        assert!(plan.stages.iter().all(|stage| stage.len() == 1));
+        assert_eq!(
+            plan.stages.iter().flatten().copied().collect::<Vec<_>>(),
+            flow.selected_nodes
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        );
+
+        let provenance =
+            String::from_utf8(plan.provenance_log()).expect("composition provenance is UTF-8");
+        assert!(provenance.contains("tool=wac-cli@0.10.1\n"));
+        assert!(provenance.contains("composition-invariant=sorted-single-plug-v1\n"));
+    }
+}
+
 impl CompositionGate<'_> {
     fn compose(
         &self,
@@ -242,36 +297,33 @@ impl CompositionGate<'_> {
         output: &Path,
         stage_prefix: &str,
     ) -> Vec<u8> {
+        let plan = composition_plan(flow);
         let mut input = driver.to_path_buf();
-        let mut log = Vec::new();
-        for (stage, node_type) in flow.selected_nodes.iter().enumerate() {
-            let node = self
-                .fleet
-                .nodes
-                .iter()
-                .find(|candidate| candidate.node_type == *node_type)
-                .expect("selected node exists");
-            let stage_output = if stage + 1 == flow.selected_nodes.len() {
+        for (stage, node_types) in plan.stages.iter().enumerate() {
+            let stage_output = if stage + 1 == plan.stages.len() {
                 output.to_path_buf()
             } else {
                 self.output_dir
                     .join(format!("{stage_prefix}-stage-{stage}.wasm"))
             };
-            let stage_log = run(
-                Command::new(self.wac)
-                    .arg("plug")
-                    .arg(&input)
+            let mut command = Command::new(self.wac);
+            command.arg("plug").arg(&input);
+            for node_type in node_types {
+                let node = self
+                    .fleet
+                    .nodes
+                    .iter()
+                    .find(|candidate| candidate.node_type == *node_type)
+                    .expect("selected node exists");
+                command
                     .arg("--plug")
-                    .arg(self.component_dir.join(&node.component))
-                    .arg("-o")
-                    .arg(&stage_output),
-                "compose one deterministic exact-node plug",
-            );
-            log.extend_from_slice(&stage_log.stdout);
-            log.extend_from_slice(&stage_log.stderr);
+                    .arg(self.component_dir.join(&node.component));
+            }
+            command.arg("-o").arg(&stage_output);
+            run(&mut command, "compose exact-node plug stage");
             input = stage_output;
         }
-        log
+        plan.provenance_log()
     }
 }
 
