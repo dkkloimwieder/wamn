@@ -439,13 +439,29 @@ shared primitive gets this split**; blob is its newest instance, and the next on
   That one rule is what keeps blob GC, bundle retention, emergency revocation, platform
   upgrades, and the author-facing meaning of "Replay" from acquiring incompatible
   interpretations — a retained bundle is not executable merely because its bytes exist.
-  *Candidate decomposition, not settled:* **audit reconstruction** (explain what ran, with
-  which inputs, identities, versions and effects — never executes the old bundle);
-  **controlled replay** (executes against doubles or isolated scenario capabilities, possibly
-  permitted for a revoked bundle under explicit administrative control, with no production
-  credentials or live egress); **live re-execution** (runs under *current* authorization,
-  revocation, and connection policy). Item 8's historical-versus-current-definition decision
-  is the event-plane instance of the same question.
+
+  **Decided (wamn-4u7p.1): three author operations, with “Replay” reserved for controlled
+  execution.**
+
+  | Operation | Executes? | Definition and authority | Durable result |
+  |---|---|---|---|
+  | **Audit reconstruction** (“Inspect original”) | No | Projects the authoritative retained seed and attempt facts, even when an executable or credential is now unavailable or revoked | A read-only audit projection with explicit unavailable/revoked markers; no run |
+  | **Replay** | Yes, controlled only | Uses the exact pinned artifact, bundle, occurrence input, and seed, subject to current platform executable admissibility | An isolated scenario report, never a production run |
+  | **Run again** / **live re-execution** (event-plane **Reprocess**) | Yes, in production | Performs fresh admission from the entry under the current active release or registration, principal authorization, revocation, connections, credentials, idempotency, and effect policy | A fresh production run with typed lineage to its origin |
+
+  Retained bytes are evidence, not permission. Controlled Replay refuses a prohibited or
+  unavailable pinned executable or credential generation and never substitutes a current
+  definition. It runs with an ephemeral database, deterministic clock and randomness,
+  fixture-only credentials, and doubles or recorders that cannot reach live egress or emit
+  production business events. Arbitrary mid-graph seeding and partial rerun exist only in
+  that scenario boundary.
+
+  Live re-execution always starts at the entry transition and never claims historical
+  equivalence. Durable lineage records the operation kind, origin, and selected definition:
+  controlled Replay produces scenario provenance, live re-execution produces a production
+  run, and audit reconstruction produces no run. Item 8 applies the same split to events:
+  historical pinned processing is controlled Replay; processing retained input with the
+  current definition is explicitly Reprocess/live re-execution.
 - **The checkpoint is unscrubbed by necessity** — scrubbing a frontier payload resumes to
   different results. Scrubbing is a capture convenience and **not a security boundary**;
   secrets travel by credential reference and must not ride in payloads.
@@ -2102,22 +2118,20 @@ consumer reconciler, and replay.
   identities anyway — which is this item's own work, so expect to.*
 
 **Done when** registrations are release members with a reconciler converging durable
-consumers to the desired set, reporting drift; replay works across a registration change;
-and per-org accounts isolate.
+consumers to the desired set, reporting drift; historical controlled Replay works across a
+registration change; and per-org accounts isolate.
 
 **Failed if** the reconciler cannot converge without manual intervention on any realistic
 registration edit — an external-resource reconciler that needs an operator is not a
 reconciler.
 
 **Decision points**
-- **Which replay?** "Replay works across a registration change" hides two different
-  products, with different idempotency, audit, compensation, and user-expectation semantics:
-  **historical replay** reprocesses retained events under the registration and release that
-  originally admitted them (the reproducibility and recovery story), while
-  **current-definition replay** re-evaluates them under the currently active registration and
-  flow release (the "I fixed my logic, re-run yesterday" story). Both are legitimate; the
-  protocol need not be settled now, but the word must not silently acquire two meanings
-  during implementation.
+- ~~**Which replay?**~~ **Settled by wamn-4u7p.1.** Historical execution under the pinned
+  registration, release, artifact, and bundle is controlled Replay and is this item's replay
+  exit (`wamn-v21a.1`). Processing retained event input under the current active registration
+  and flow release is the separate production operation **Reprocess** / live re-execution
+  (`wamn-v21a.2`). Item 8 still owns each protocol's ordering, idempotency, audit, and
+  compensation details; it does not collapse them behind one verb.
 - **Per-org reader identity** — D22's own revisit trigger, expected to fire here.
 - **Claim-check / payload store** for oversize events — the previous plan carries "payload
   store backend" as unowned; this item is where it bites.
@@ -2395,7 +2409,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Generation activation compatibility** | What validation a new generation must pass against active bindings, and whether failure refuses, forks a new instance, or disables bindings | 2B |
 | **What evidence, freshness, and invalidation rules apply per semantic-attestation type** | *Who* may issue one is settled (an authorized connection administrator); what keeps it true is not — external behaviour drifts without any definition changing | 2B |
 | **Which project role may approve a privileged recovery assertion for author-supplied effects** | Raw SQL has no connection administrator; candidates run from a project admin to a safety role to no user assertion at all | 5, 6A |
-| **What "Replay" means to an author** | Retention guarantees reconstructability, not permission to re-execute. Audit reconstruction / controlled replay / live re-execution are a candidate split; item 8's historical-vs-current-definition question is its event-plane instance | 1, 8, 6A |
+| ~~What "Replay" means to an author~~ | **Settled (wamn-4u7p.1):** audit reconstruction is read-only and creates no run; Replay is exact-definition execution in a fail-closed scenario sandbox; Run again/Reprocess is fresh production admission under current definitions and authority. Retained bytes never grant execution permission, and typed lineage distinguishes the two executing operations | — |
 | **Field-ownership metadata in node and connection descriptors** | The simple surface can only be a constrained view if descriptors say who owns each field — author, environment, or system. Tiers are 6A's design | 6A, 2B |
 | **Do composition economics hold?** | 2A's exit; if not, least privilege stays intra-runner (code-enforced) rather than structural, and 6A builds against the linked runner | 2A |
 | **Replay classification for standard nodes** | An item 1 exit gate — custom manifests pin purity and recovery class, standard descriptors do not | 1 |
@@ -2410,7 +2424,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Draft retention and cache eviction** | Content-addressed drafts, unpublished artifacts, orphaned bundles and draft-run captures accumulate; 6A owns draft reachability, 2A owns cache eviction | 6A, 2A |
 | **Which connections are draft-safe?** | Draft execution is a real admission capability with real effects; an author iterating against a connection pointing at production is the failure to prevent | 6A, 2B |
 | **Flow-draft loop only, or a project-definition draft workspace?** | 6A's fast loop pins the applied catalog, so schema/connection changes go through ordinary releases unless a provisional definition world is built | 6A |
-| **Historical replay or current-definition replay?** | "Replay works" otherwise acquires two incompatible meanings with different idempotency, audit, and compensation semantics | 8 |
+| ~~Historical replay or current-definition replay?~~ | **Settled by wamn-4u7p.1:** historical pinned execution is controlled Replay (`wamn-v21a.1`); current-definition production processing is Reprocess/live re-execution (`wamn-v21a.2`). Item 8 specifies and implements the distinct protocols | — |
 | **Do custom nodes compose in, or keep D7's signed hop?** | Removes a round trip and preserves memory isolation, but moves the supply-chain signature to the composition | 2D |
 | **Node digest pinning versus patchability** | A platform node's security patch would otherwise need every client flow republished | 2D |
 | **Node distribution: curated, private, marketplace?** | Feeds the studio palette and decides whether clients can share nodes | 2C |

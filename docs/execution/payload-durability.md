@@ -128,6 +128,32 @@ blob collection make the bytes eligible. Retention of a bundle, payload, or
 connection definition does not bypass revocation or current authorization for
 live re-execution.
 
+### Author operations over a retained seed
+
+The retained seed is authority for historical facts, not authorization to
+execute them. The author-facing operations are deliberately distinct:
+
+| Operation | Execution boundary | Result |
+|---|---|---|
+| **Audit reconstruction** (“Inspect original”) | No execution; projects the seed and effect-attempt facts even when referenced executable or credential material is unavailable or revoked | Read-only audit projection with explicit unavailable/revoked markers; no run |
+| **Replay** | Exact pinned artifact, bundle, occurrence input, and seed in a fail-closed scenario sandbox, subject to current platform executable admissibility | Isolated scenario report with controlled-replay provenance |
+| **Run again** / **live re-execution** | Fresh entry admission under the current release or registration, current principal authority, revocation, connections, credentials, idempotency, and effect policy | New production run with live-re-execution lineage to the origin |
+
+Controlled Replay refuses when the pinned executable or required credential
+generation is prohibited or unavailable; it never substitutes a current
+definition. Its capabilities are an ephemeral database, deterministic clock
+and randomness, fixture-only credentials, and doubles or recorders with no
+live egress or production business-event path. Selecting an occurrence and
+seeding an arbitrary mid-graph partial rerun is available only inside this
+scenario boundary.
+
+Live re-execution starts at the entry transition and makes no claim of
+historical equivalence. Durable operation lineage records the operation kind,
+origin, and selected definition so a controlled Replay report cannot be
+confused with a production run. Audit reconstruction creates neither kind of
+run. Existing capture-derived replay and partial-rerun planners are migration
+sources only; capture is not an authority or input to any target operation.
+
 ### 3. Observability capture
 
 `node_captures` is an optional one-to-one child of a node occurrence. It owns
