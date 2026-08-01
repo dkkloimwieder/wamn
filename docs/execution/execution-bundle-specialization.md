@@ -102,8 +102,31 @@ run against two environment connection bindings without changing artifact or bun
 identity. Any material change to the 2B WIT or adapter identity invalidates and reruns this
 tranche and the final economics.
 
-Postgres is not an admissible fixture for this experiment. Item 2B deliberately confines its
-provider prototype to a low-risk HTTP target.
+The class-packaging arm still inventories and builds the complete first-party `pure`, `http`,
+and `postgres` plug sets. That inventory proves packaging membership, patch blast radius, and
+absence from bundles that do not select a class; it does not admit every class to the runtime
+tranche. In particular, the frozen fleet selects no `postgres` class, so its full plug is built
+and inspected but must remain absent from every composed fleet bundle. Item 2B deliberately
+confines runtime provider admission to its low-risk HTTP target. The fixture's scalar HTTP and
+Postgres imports are structural class markers, not substitutes for the 2B typed connection WIT,
+host adapter, or two-environment execution proof.
+
+## Capability-class fixture invariant
+
+The capability-class arm reuses the exact-node arm's frozen flow names, invocation weights,
+driver bytes, empty adapter set, resource posture, and `wac-cli@0.10.1`. Its immutable input is
+`tests/fixtures/capability-class-fleet.json`. Selected classes are sorted, and production
+composition uses the `sorted-single-plug-v1` invariant: exactly one class plug is resolved in
+each WAC pass. The provenance log records that tool identity, invariant, and ordered stage list.
+
+Each class component contains its full recorded first-party member set, including a member not
+selected by each flow that carries the class. Therefore rebuilding any member changes the class
+component digest and invalidates every bundle carrying that class, while bundles without the
+class retain their identity. The focused
+`capability_class_artifacts_are_deterministic_and_match_selected_class_worlds` gate composes each
+frozen flow twice, verifies byte identity and provenance, inspects the final component world, and
+rejects missing members or capability worlds from selected classes as well as any member or world
+from an absent class.
 
 ## Platform-upgrade drill
 

@@ -2,7 +2,7 @@
 resolver = "2"
 # Product components are grouped by runtime role. Bench fixtures, reference
 # samples, and POC components remain visibly outside those product tiers.
-members = ["ingress/api-gateway", "ingress/flow-http", "execution/flowrunner", "execution/materializer", "nodes/evaluate-specs", "nodes/normalize-receipt", "nodes/time-shift", "fixtures/busyloop", "fixtures/cred-probe", "fixtures/exact-driver-alpha", "fixtures/exact-driver-alpha-beta", "fixtures/exact-node-alpha", "fixtures/exact-node-beta", "fixtures/exact-node-unused", "fixtures/flow-driver", "fixtures/hello", "fixtures/logspewer", "fixtures/memhog", "fixtures/pgprobe", "fixtures/sockprobe", "fixtures/trace-relay", "samples/disposition-node", "samples/js-sample", "samples/node-rs", "samples/node-cred", "samples/sample-node"]
+members = ["ingress/api-gateway", "ingress/flow-http", "execution/flowrunner", "execution/materializer", "nodes/evaluate-specs", "nodes/normalize-receipt", "nodes/time-shift", "fixtures/busyloop", "fixtures/capability-class-http", "fixtures/capability-class-postgres", "fixtures/capability-class-pure", "fixtures/cred-probe", "fixtures/exact-driver-alpha", "fixtures/exact-driver-alpha-beta", "fixtures/exact-node-alpha", "fixtures/exact-node-beta", "fixtures/exact-node-unused", "fixtures/flow-driver", "fixtures/hello", "fixtures/logspewer", "fixtures/memhog", "fixtures/pgprobe", "fixtures/sockprobe", "fixtures/trace-relay", "samples/disposition-node", "samples/js-sample", "samples/node-rs", "samples/node-cred", "samples/sample-node"]
 
 [workspace.package]
 version = "0.1.0"

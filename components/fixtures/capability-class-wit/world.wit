@@ -1,0 +1,38 @@
+package wamn:capability-class@0.1.0;
+
+interface http-capability {
+  request: func(input: u32) -> u32;
+}
+
+interface postgres-capability {
+  query: func(input: u32) -> u32;
+}
+
+interface http-helper {
+  run: func(input: u32) -> u32;
+}
+
+interface postgres-query {
+  run: func(input: u32) -> u32;
+}
+
+interface postgres-write {
+  run: func(input: u32) -> u32;
+}
+
+world pure-class {
+  export wamn:exact-bundle/alpha@0.1.0;
+  export wamn:exact-bundle/unused@0.1.0;
+}
+
+world http-class {
+  import http-capability;
+  export wamn:exact-bundle/beta@0.1.0;
+  export http-helper;
+}
+
+world postgres-class {
+  import postgres-capability;
+  export postgres-query;
+  export postgres-write;
+}

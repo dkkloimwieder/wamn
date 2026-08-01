@@ -1,0 +1,13 @@
+package wamn:exact-bundle@0.1.0;
+
+interface alpha {
+  run: func(input: u32) -> u32;
+}
+
+interface beta {
+  run: func(input: u32) -> u32;
+}
+
+interface unused {
+  run: func(input: u32) -> u32;
+}
