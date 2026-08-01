@@ -1,3 +1,5 @@
+> **Archived 2026-07-31** — orphaned amendment of an earlier external review (reviewed `main` at `96f4ca4`); the review corpus's assessment lives in `docs/findings.md` §I/§U/§V. Retained for review-era provenance. (`wamn-role.1`)
+
 # Amended findings
 
 ## Overall disposition

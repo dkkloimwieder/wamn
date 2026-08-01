@@ -39,8 +39,8 @@ Snapshot time: **2026-07-23 07:56 EDT**.
 | Evidence class | Frozen baseline | Qualification |
 |---|---|---|
 | Git source | local `HEAD`, local `origin/main`, and remote `refs/heads/main` all `1da2a10087ff3404f72983d139ddb5c8de07b6db`; tree `5fb399786ad2bbdee7df9871410fb7730e5e4fd0` | This commit is the tracked source baseline. |
-| Dirty worktree | modified `.beads/interactions.jsonl` and `AGENTS.md`; untracked `docs/REVIEW-260723.md` | These were present before B0. They are not silently folded into the source baseline. `AGENTS.md` and the interactions log remain user-owned working state. |
-| External review | `docs/REVIEW-260723.md`, SHA-256 `3fcb2d272dd2b5ea761da0aa2459a8627cd3da3405dc55b66a81652a8455dbc5` | Static review only: it says it inspected current `main`, did not compile or run the repository, and links mutable `/blob/main/` URLs rather than a commit. The exact revision seen by its author is therefore **not attestable** from the document. For this audit its claims are hypotheses against the frozen source above and receive credit only when re-checked there. |
+| Dirty worktree | modified `.beads/interactions.jsonl` and `AGENTS.md`; untracked `docs/archive/REVIEW-260723.md` | These were present before B0. They are not silently folded into the source baseline. `AGENTS.md` and the interactions log remain user-owned working state. |
+| External review | `docs/archive/REVIEW-260723.md`, SHA-256 `3fcb2d272dd2b5ea761da0aa2459a8627cd3da3405dc55b66a81652a8455dbc5` | Static review only: it says it inspected current `main`, did not compile or run the repository, and links mutable `/blob/main/` URLs rather than a commit. The exact revision seen by its author is therefore **not attestable** from the document. For this audit its claims are hypotheses against the frozen source above and receive credit only when re-checked there. |
 | Root Rust workspace | 38 packages from root `cargo metadata --no-deps` | `Cargo.toml` has 38 explicit members, excludes `components`, and has no `default-members`. |
 | Component workspace | 18 Rust component/fixture/sample packages from `components/Cargo.toml` | Built separately for `wasm32-wasip2`; non-Rust sample sources remain part of the repository surface even when absent from Cargo metadata. |
 | Contracts | 65 `.wit` files including vendored component copies; 3 checked-in `*.schema.json` contracts | Canonical ownership and copy drift are questions for STR5/STR6, not assumptions in this count. |
@@ -226,7 +226,7 @@ seams rather than shipped requirements (`docs/platform-plan.md:22-26`,
 `docs/platform-plan.md:118-131`). The receiving POC is the concrete product
 journey, while the newer pivot explicitly prioritizes correct flow execution
 and API behavior and parks UI, auth, deep security, and IaC
-(`docs/poc-material-receiving.md:1-12`, `docs/core-pivot-plan.md:7-21`).
+(`docs/poc-material-receiving.md:1-12`, `docs/archive/core-pivot-plan.md:7-21`).
 
 The table inventories documented roles and implementation-intended capability
 boundaries. Its trusted/untrusted wording is source evidence, not an owner-set
@@ -234,7 +234,7 @@ development threat model; M.6 explicitly defers that broader contract.
 
 | Actor | Authority and intended privilege boundary | Product action and current requirement status |
 |---|---|---|
-| Organization/project owner, platform builder, deployer, and viewer | Owns tenant definitions and deployments but not platform/T1 or another tenant. The `builder`/`admin`/`viewer`/`deployer` plane is specified, not yet a current authentication system. | Define catalogs and flows, manage credentials, run tests, and promote releases (`docs/platform-plan.md:133-141`, `docs/core-pivot-plan.md:167-173`). |
+| Organization/project owner, platform builder, deployer, and viewer | Owns tenant definitions and deployments but not platform/T1 or another tenant. The `builder`/`admin`/`viewer`/`deployer` plane is specified, not yet a current authentication system. | Define catalogs and flows, manage credentials, run tests, and promote releases (`docs/platform-plan.md:133-141`, `docs/archive/core-pivot-plan.md:167-173`). |
 | Application user | Has an application role and server-established claims within one project environment. It must not choose its tenant identity or bypass RLS. | The POC's inspector is site-scoped and its quality manager spans sites; the app schema is substrate, not current JWT/session behavior (`docs/poc-material-receiving.md:8-20`, `docs/app-schema.md:1-7`, `docs/app-schema.md:39-54`). |
 | External industrial/business system | Machine client with narrowly authorized API or callback access; v0 means ERP-like HTTP/DB integration, not native PLC protocols. | The POC ERP submits receipts and receives disposition callbacks with an API key (`docs/poc-material-receiving.md:8-9`, `docs/poc-material-receiving.md:44-50`). |
 | Flow author | Chooses graph, ordering, retry, trigger, credential names, and allowed hosts, but must not mint host claims or broaden runtime grants. | Publishes immutable flow versions and expects in-flight runs to remain pinned to their version (`docs/flow-schema.md:1-15`, `docs/run-state.md:115-126`). |
@@ -363,14 +363,14 @@ from surviving a correctness-gate failure.
 
 ### B.6 External review: accepted feedback, corrections, and routing
 
-`docs/REVIEW-260723.md` is a static review that did not build or run the system
-(`docs/REVIEW-260723.md:9-11`). ARC1 therefore used it as a hypothesis source:
+`docs/archive/REVIEW-260723.md` is a static review that did not build or run the system
+(`docs/archive/REVIEW-260723.md:9-11`). ARC1 therefore used it as a hypothesis source:
 
 - **Corroborated and adopted as an ARC1 requirement question:** the current
   event path can provide deterministic exactly-once *run-row creation* while
   node execution and nontransactional external effects remain at least once
   unless the sink honors idempotency. The review's narrower wording
-  (`docs/REVIEW-260723.md:334-369`) agrees with the canonical state/event
+  (`docs/archive/REVIEW-260723.md:334-369`) agrees with the canonical state/event
   contracts (`docs/event-plane-jetstream.md:191-229`,
   `docs/run-state.md:87-113`). Later work must not market or reason from a
   broader end-to-end exactly-once claim.
@@ -378,22 +378,22 @@ from surviving a correctness-gate failure.
   workloads are not yet shown to be “nearly free” after CRDs, routes, secrets,
   pools, subscriptions, telemetry, reconciliation, cold starts, and upgrade
   fan-out. The proposed 100/1,000/10,000 campaign
-  (`docs/REVIEW-260723.md:373-399`) is a useful input to `.6.27`; it is not a
+  (`docs/archive/REVIEW-260723.md:373-399`) is a useful input to `.6.27`; it is not a
   product scale requirement, prescribed ladder, or completed measurement.
 - **Corroborated and made explicit in QA8:** standard-node isolation is logical
   within a trusted component, unlike the custom-node sandbox
-  (`docs/REVIEW-260723.md:403-415`). This is not a newly proven exploit; `.15`
+  (`docs/archive/REVIEW-260723.md:403-415`). This is not a newly proven exploit; `.15`
   must decide whether that trust boundary is acceptable for each deployment
   class.
 - **Correct direction, stale detail:** the two pinned forks are product
   subsystems with upgrade/on-call cost, but D23 already accepts runtime-fork
   maintainer status and the current wash-runtime ledger carries six rather than
-  the review's five commits (`docs/REVIEW-260723.md:314-330`,
+  the review's five commits (`docs/archive/REVIEW-260723.md:314-330`,
   `docs/wash-runtime-fork.md:120-140`). ARC5/ARC9 must compare that continuing
   cost; ARC1 does not reopen it solely from patch count.
 - **Useful product-boundary observation:** the review argues that `testkit` and
   `flow-tests` may implement a customer-facing test/replay product rather than
-  mere repository support (`docs/REVIEW-260723.md:216-241`). The platform plan
+  mere repository support (`docs/archive/REVIEW-260723.md:216-241`). The platform plan
   independently specifies stored suites, replay, assertions, publish gates, and
   schema-impact analysis as product capabilities
   (`docs/platform-plan.md:175-187`). ARC1 therefore includes that lifecycle,
@@ -403,7 +403,7 @@ from surviving a correctness-gate failure.
   architecture/structure verdicts rather than product forces. They remain
   routed to ARC4–ARC11 and STR1–STR9 and receive no ARC1 credit without the
   relevant state, dependency, failure-domain, and operability comparison
-  (`docs/REVIEW-260723.md:5-11`, `docs/REVIEW-260723.md:516-518`).
+  (`docs/archive/REVIEW-260723.md:5-11`, `docs/archive/REVIEW-260723.md:516-518`).
 
 The review also helped expose current-document drift that later tasks must not
 mistake for product requirements: `platform-plan.md` still mentions dispatcher
@@ -597,13 +597,13 @@ general `wamn-host` binary (`deploy/infra/values-wamn.yaml:14-50`,
 The external review's broad process map is therefore useful but incomplete.
 Its event sketch correctly identifies the WAL-to-run chain, but collapses the
 separate event and scheduler brokers and misses their materializer/host bridge
-(`docs/REVIEW-260723.md:334-369`). Its node-host observation is confirmed by
+(`docs/archive/REVIEW-260723.md:334-369`). Its node-host observation is confirmed by
 deployment rather than accepted from package size
-(`docs/REVIEW-260723.md:179-215`, `deploy/platform/serve-node.yaml:43-138`).
+(`docs/archive/REVIEW-260723.md:179-215`, `deploy/platform/serve-node.yaml:43-138`).
 Its “per-project nearly free” challenge remains an unproven scale hypothesis,
 owned by `.12`/`.6.27` and future measurement/decision `.1.37/.1.38`, rather
 than either a fact or a refutation
-(`docs/REVIEW-260723.md:373-399`).
+(`docs/archive/REVIEW-260723.md:373-399`).
 
 ARC2 adds no duplicate security or topology finding: the shared database,
 replication, broker, builder, and ownership gaps already have the Beads owners
@@ -701,7 +701,7 @@ the discriminating bad-database rollout is `wamn-4tob.6.6`.
 
 This accepts the external review's correction that deterministic materialization
 must not be advertised as end-to-end exactly once
-(`docs/REVIEW-260723.md:334-369`). It also adds the missing refusal,
+(`docs/archive/REVIEW-260723.md:334-369`). It also adds the missing refusal,
 synchronous-orphan, cutover, and second-broker boundaries found in source.
 
 ### D.4 New journey findings and proof owners
@@ -877,7 +877,7 @@ classification and test-versus-shipped-artifact attribution.
 
 The external review's node-host boundary, builder-to-host dependency, and
 customer-facing nature of stored test/replay contracts are corroborated
-(`docs/REVIEW-260723.md:179-241`). Its proposed crate merges remain hypotheses:
+(`docs/archive/REVIEW-260723.md:179-241`). Its proposed crate merges remain hypotheses:
 STR1 found role ambiguity and deployment coupling, but did not collect the
 co-change, dependency-direction, versioning, or build-cost evidence required
 to justify those merges. Stale README/package descriptions and the old
@@ -964,8 +964,8 @@ The external review's two ARC4 hypotheses are therefore accepted with
 qualification. Physical schema ownership is still split between hand-written
 DDL and partial Rust models/builders; selective drift guards and `wamn-sql`
 reduce individual defects but do not establish one authority
-(`docs/REVIEW-260723.md:277-310`). And deterministic run creation is much
-narrower than exactly-once effects (`docs/REVIEW-260723.md:334-369`).
+(`docs/archive/REVIEW-260723.md:277-310`). And deterministic run creation is much
+narrower than exactly-once effects (`docs/archive/REVIEW-260723.md:334-369`).
 
 ### F.3 Delivery, ordering, and idempotency claims
 
@@ -1212,7 +1212,7 @@ The policy owner classifies imports and derives grants; a runtime adapter exists
 only for engine behavior that genuinely must match; node-host owns fetch,
 signature/digest verification, Store/WASI construction, invocation auth,
 credentials, egress, limits, and telemetry. This supports the external review's
-decomposition as a hypothesis (`docs/REVIEW-260723.md:15-47,245-273`), but
+decomposition as a hypothesis (`docs/archive/REVIEW-260723.md:15-47,245-273`), but
 SR15/`wamn-2jkm.78` and SR16/`wamn-2jkm.79` already own the decision and
 implementation work.
 
@@ -1451,7 +1451,7 @@ touching both paths:
 | Test product | testkit 3; flow-tests 3 | testkit+flow-tests 1 | Too little evidence for a merge. First assign contract ownership and compatibility under STR5/SR19. |
 
 The external review correctly highlighted the builder inversion and the
-customer-facing nature of test/replay (`docs/REVIEW-260723.md:179-241`).
+customer-facing nature of test/replay (`docs/archive/REVIEW-260723.md:179-241`).
 Its suggested broad execution/schema consolidation is not yet supported:
 catalog/flow/event/node leaves have real serialization, WIT, guest-target, or
 compatibility consumers, while the measured pairs do not show a single change
@@ -1494,12 +1494,12 @@ This section is the result of `wamn-4tob.9`. The submitted proposal is frozen
 at SHA-256
 `4c3271711767378887685cf04c0f310e7a290ca579ecb170ee2b0f3cd73e90dd`.
 It identifies source baseline `1da2a10` and evidence snapshot `ffdbd1e`
-(`docs/RESTRUCTURE-260723.md:9-17`). Git history reconciles those claims:
-`1da2a10..ffdbd1e` changes only `docs/REVIEW-260723.md` and this ledger, and
+(`docs/archive/RESTRUCTURE-260723.md:9-17`). Git history reconciles those claims:
+`1da2a10..ffdbd1e` changes only `docs/archive/REVIEW-260723.md` and this ledger, and
 `ffdbd1e..1069a76` changes only this ledger. The source-bearing structural facts
 therefore still apply at issue baseline `1069a76`, although calling `ffdbd1e`
 current is stale. The proposal is explicitly static and did not compile, deploy,
-or exercise the repository (`docs/RESTRUCTURE-260723.md:916-918`); it receives
+or exercise the repository (`docs/archive/RESTRUCTURE-260723.md:916-918`); it receives
 source-evidence credit, not behavioral or live-artifact credit.
 
 **Executive verdict: amend; do not approve wholesale.** The proposal is a
@@ -1541,18 +1541,18 @@ Risk order for consuming the proposal is:
 
 | Proposal claim | Evidence verdict | Audit consequence and owner |
 |---|---|---|
-| Flat peer workspaces obscure package roles and target classes (`docs/RESTRUCTURE-260723.md:66-83`). | **Keep, qualified.** The root has 38 packages and the component workspace 18, with all members in their default sets. That supports explicit roles and measured default-member/CI tiers, not a package-count or directory-depth verdict (`docs/findings.md:721-729,1330-1332`). | RP-D1/P2/P9/P10 reinforce H.2 and route to STR7/STR9. Preserve the separate component workspace and lockfile as a real target boundary. |
-| Builder and run-worker are equally wrong for depending on `wamn-host` (`docs/RESTRUCTURE-260723.md:69-70,305-328`). | **Amend.** Builder imports a peer composition root for policy, engine, credentials, and conformance behavior, confirming SR16. Run-worker embeds the current hybrid runtime library and is an explicit transition exception, not the same inversion (`docs/findings.md:1277-1284`). | SR16/`wamn-2jkm.79` owns builder remediation. ARC5/STR3/STR9 decide whether the worker's runtime adapter is retained, narrowed, or removed. |
-| Queue state and scheduler dependencies are mixed (`docs/RESTRUCTURE-260723.md:71`). | **Keep observation; defer split.** `wamn-run-queue` feature-gates dispatcher cadence/cron, while production guests currently resolve the intended no-default closure (`docs/findings.md:1254-1261`). | STR3/STR7/STR9 must show a correctness, scaling, or change-coupling benefit before creating a scheduler package. |
-| Standard nodes depend on a data-API context because the shared entity kernel is missing (`docs/RESTRUCTURE-260723.md:72,377-404`). | **Amend.** `wamn-api` is already a guest-safe pure crate, not the deployable API component or HTTP shell. It deliberately supplies the single audited catalog-derived SQL planner to `wamn-nodes`. The real seam is narrower: standard Postgres nodes manufacture API `Method`/route/plan vocabulary (`crates/wamn-api/Cargo.toml:8-20`, `crates/wamn-nodes/src/postgres.rs:18,157-181`). | Keep one semantic implementation. STR5/STR9 decide whether transport-neutral operations justify a module/crate and compatibility facade; no service-to-service defect or mandatory `entity-access` package is established. |
-| SQL primitives have incidental owners and duplicated quoting is a vulnerability surface (`docs/RESTRUCTURE-260723.md:73,359-375`). | **Amend.** Canonical quoting is in `wamn-ddl`; provisioning intentionally avoids its larger production closure and has byte/adversarial drift comparison under closed `wamn-7nd.1`. `wamn-sql` is already a zero-dependency guest-safe composition leaf. There is no known exploit or current divergence. | STR6/STR9 may select one smaller canonical primitive owner, generation, or continued structural comparison. Do not preselect `pg-core` or merge `wamn-sql` on naming alone. |
-| Stored suites, cases, replay vocabulary, deterministic capabilities, and captured egress are product scenario state (`docs/RESTRUCTURE-260723.md:74,661-675`). | **Keep category; amend packaging.** Checked-in suites/cases pin flow versions and are product data; SR19 proves the current contract points upward into persistence (`docs/findings.md:913-915,1294-1308`). | STR5 assigns the contract/status/capture vocabulary; SR19/`wamn-2jkm.83` owns the dependency correction; STR9 decides package names and count. |
-| The table/schema layout lacks enforceable state ownership (`docs/RESTRUCTURE-260723.md:75,420-473`). | **Keep need; amend model.** The proposal's table list matches the named non-fixture platform tables in `deploy/sql`, but its owners are target roles, not current evidence, and Postgres is only one authority class. | ARC4 decision `wamn-4tob.1.17`, STR6, and STR9 own the complete current/target authority model. |
-| `wamn-gates` is a white-box second composition root (`docs/RESTRUCTURE-260723.md:76,696-715`). | **Keep observation; amend remedy.** Its broad fan-in is intentional for several exact-path proofs and is not merge evidence (`docs/findings.md:1277-1280`). | STR4/STR7 must classify each proof as package, embedded-component, image, or deployed-system evidence before moving or deleting it. |
-| Production has no generic authenticated HTTP flow ingress or complete invocation contract (`docs/RESTRUCTURE-260723.md:77-79`). | **Keep capability gap.** The only concrete synchronous HTTP path is the F1 POC, which owns route handling, run SQL, graph drive, and F1 dispatch; the current flowrunner WIT is an execution interface, not this application/wire contract (`docs/findings.md:643-644`, `components/flowrunner/wit/world.wit:69-127`). | New P3 feature `wamn-fqg.39` owns a non-POC thin ingress plus canonical invocation boundary. ARC8/ARC10/ARC11 and STR5/STR9 decide trust, priority, transport, and placement. |
+| Flat peer workspaces obscure package roles and target classes (`docs/archive/RESTRUCTURE-260723.md:66-83`). | **Keep, qualified.** The root has 38 packages and the component workspace 18, with all members in their default sets. That supports explicit roles and measured default-member/CI tiers, not a package-count or directory-depth verdict (`docs/findings.md:721-729,1330-1332`). | RP-D1/P2/P9/P10 reinforce H.2 and route to STR7/STR9. Preserve the separate component workspace and lockfile as a real target boundary. |
+| Builder and run-worker are equally wrong for depending on `wamn-host` (`docs/archive/RESTRUCTURE-260723.md:69-70,305-328`). | **Amend.** Builder imports a peer composition root for policy, engine, credentials, and conformance behavior, confirming SR16. Run-worker embeds the current hybrid runtime library and is an explicit transition exception, not the same inversion (`docs/findings.md:1277-1284`). | SR16/`wamn-2jkm.79` owns builder remediation. ARC5/STR3/STR9 decide whether the worker's runtime adapter is retained, narrowed, or removed. |
+| Queue state and scheduler dependencies are mixed (`docs/archive/RESTRUCTURE-260723.md:71`). | **Keep observation; defer split.** `wamn-run-queue` feature-gates dispatcher cadence/cron, while production guests currently resolve the intended no-default closure (`docs/findings.md:1254-1261`). | STR3/STR7/STR9 must show a correctness, scaling, or change-coupling benefit before creating a scheduler package. |
+| Standard nodes depend on a data-API context because the shared entity kernel is missing (`docs/archive/RESTRUCTURE-260723.md:72,377-404`). | **Amend.** `wamn-api` is already a guest-safe pure crate, not the deployable API component or HTTP shell. It deliberately supplies the single audited catalog-derived SQL planner to `wamn-nodes`. The real seam is narrower: standard Postgres nodes manufacture API `Method`/route/plan vocabulary (`crates/wamn-api/Cargo.toml:8-20`, `crates/wamn-nodes/src/postgres.rs:18,157-181`). | Keep one semantic implementation. STR5/STR9 decide whether transport-neutral operations justify a module/crate and compatibility facade; no service-to-service defect or mandatory `entity-access` package is established. |
+| SQL primitives have incidental owners and duplicated quoting is a vulnerability surface (`docs/archive/RESTRUCTURE-260723.md:73,359-375`). | **Amend.** Canonical quoting is in `wamn-ddl`; provisioning intentionally avoids its larger production closure and has byte/adversarial drift comparison under closed `wamn-7nd.1`. `wamn-sql` is already a zero-dependency guest-safe composition leaf. There is no known exploit or current divergence. | STR6/STR9 may select one smaller canonical primitive owner, generation, or continued structural comparison. Do not preselect `pg-core` or merge `wamn-sql` on naming alone. |
+| Stored suites, cases, replay vocabulary, deterministic capabilities, and captured egress are product scenario state (`docs/archive/RESTRUCTURE-260723.md:74,661-675`). | **Keep category; amend packaging.** Checked-in suites/cases pin flow versions and are product data; SR19 proves the current contract points upward into persistence (`docs/findings.md:913-915,1294-1308`). | STR5 assigns the contract/status/capture vocabulary; SR19/`wamn-2jkm.83` owns the dependency correction; STR9 decides package names and count. |
+| The table/schema layout lacks enforceable state ownership (`docs/archive/RESTRUCTURE-260723.md:75,420-473`). | **Keep need; amend model.** The proposal's table list matches the named non-fixture platform tables in `deploy/sql`, but its owners are target roles, not current evidence, and Postgres is only one authority class. | ARC4 decision `wamn-4tob.1.17`, STR6, and STR9 own the complete current/target authority model. |
+| `wamn-gates` is a white-box second composition root (`docs/archive/RESTRUCTURE-260723.md:76,696-715`). | **Keep observation; amend remedy.** Its broad fan-in is intentional for several exact-path proofs and is not merge evidence (`docs/findings.md:1277-1280`). | STR4/STR7 must classify each proof as package, embedded-component, image, or deployed-system evidence before moving or deleting it. |
+| Production has no generic authenticated HTTP flow ingress or complete invocation contract (`docs/archive/RESTRUCTURE-260723.md:77-79`). | **Keep capability gap.** The only concrete synchronous HTTP path is the F1 POC, which owns route handling, run SQL, graph drive, and F1 dispatch; the current flowrunner WIT is an execution interface, not this application/wire contract (`docs/findings.md:643-644`, `components/flowrunner/wit/world.wit:69-127`). | New P3 feature `wamn-fqg.39` owns a non-POC thin ingress plus canonical invocation boundary. ARC8/ARC10/ARC11 and STR5/STR9 decide trust, priority, transport, and placement. |
 
 Principles P2, P3, P5, P7–P10 and the package-boundary test are retained as
-structural heuristics (`docs/RESTRUCTURE-260723.md:92-118`). Three need explicit
+structural heuristics (`docs/archive/RESTRUCTURE-260723.md:92-118`). Three need explicit
 limits:
 
 1. **P1 deployable leaves:** forbid dependency on a *peer composition root* to
@@ -1578,14 +1578,14 @@ limits:
 | **RP-D4 — consolidate schema and execution contexts** | **Defer exact merges; keep ownership goal.** | Co-change supports grouping, not one release unit. Catalog/flow contracts, guest closures, and distinct state tables remain justified; H retains them pending target evidence (`docs/findings.md:1338-1368`). F.6 accepts PostgreSQL authority only for Wamn application/execution state; it does not justify moving Kubernetes, OCI, Secret, broker, or backup state into PostgreSQL. N.7, STR5/STR6, ARC11, and STR9 govern physical state moves. |
 | **RP-D5 — explicit product scenario subsystem** | **Keep category; amend/defer topology.** | Product scenario contracts and the SR19 downward-direction correction are supported. A separate model/catalog/runtime/worker quartet is not yet supported by rollout, trust, or change evidence. More importantly, closed `wamn-t92` deliberately chose the same runner binary with `--test-doubles`, while production source exposes that switch (`crates/wamn-run-worker/src/lib.rs:62,174-188,729-739`). STR3/ARC8/STR9 must explicitly retain or overturn that choice; the proposal cannot represent separate images as decided. |
 | **RP-D6 — versioned flow-invocation boundary** | **Keep principle; amend transport and defer topology.** | A stable application contract plus versioned wire adapters is required if ingress and execution are separate workloads. The proposed signed cluster-local HTTP, fields, executor service, and signing domain are hypotheses. They depend on R36/R37 delivery semantics, the M.6 client boundary, future trust/profile decisions `.1.25/.26`, the N.7 same-release development rule and `.1.31/.32` production compatibility decisions, STR5 ownership, ARC11 runtime choice, and route-authority design. A Rust trait alone is insufficient, but HTTP is not preselected. |
-| **RP-D7 — generic authenticated HTTP ingress in Phase 2** | **Keep capability; defer sequencing.** | `wamn-fqg.39` owns the missing production journey and forbids a second executor. Calling it Phase 2/product-blocking is unsupported by the current roadmap: the pivot parks user/API AuthN/AuthZ and IdP work, but does not decide machine-ingress authentication (`docs/core-pivot-plan.md:15-21,167-173`); API v1 separately excludes authentication (`docs/api-gateway.md:107-115`). ARC10/owner priority must decide it. The feature cannot close without delivery identity, orphan recovery, readiness, artifact provenance, and mixed-version evidence. |
+| **RP-D7 — generic authenticated HTTP ingress in Phase 2** | **Keep capability; defer sequencing.** | `wamn-fqg.39` owns the missing production journey and forbids a second executor. Calling it Phase 2/product-blocking is unsupported by the current roadmap: the pivot parks user/API AuthN/AuthZ and IdP work, but does not decide machine-ingress authentication (`docs/archive/core-pivot-plan.md:15-21,167-173`); API v1 separately excludes authentication (`docs/api-gateway.md:107-115`). ARC10/owner priority must decide it. The feature cannot close without delivery identity, orphan recovery, readiness, artifact provenance, and mixed-version evidence. |
 | **RP-D8 — replace the gate sink with test levels and CI enforcement** | **Amend.** | Keep role/edge, guest-closure, source-identity, compatibility, and architecture-delta checks. Do not dismantle gates or ban all private constructors by directory: first name what each proof exercises and retain equivalent evidence. System tests should be black-box by default; package/conformance/integration tests may intentionally use internals. STR4/STR7/STR9 own classification and migration. |
-| **RP-D9 — inbound identity/authentication** | **Keep trust invariant; defer provider and priority.** | Tenant/project/environment/flow binding must come from trusted route/deployment state, and external caller auth must not share a credential/signature domain with ingress-to-executor auth (`docs/RESTRUCTURE-260723.md:580-643`). Per-route HMAC, nonce storage, replay windows, and rotation overlap are unselected and the proposed state matrix names no nonce/key-version authority. ARC8, `.1.25`, `.1.27`, existing `wamn-0xd`/`wamn-sbh`, and ARC10 own the future choice; custom-node auth `wamn-fqg.22` is a different trust boundary. |
+| **RP-D9 — inbound identity/authentication** | **Keep trust invariant; defer provider and priority.** | Tenant/project/environment/flow binding must come from trusted route/deployment state, and external caller auth must not share a credential/signature domain with ingress-to-executor auth (`docs/archive/RESTRUCTURE-260723.md:580-643`). Per-route HMAC, nonce storage, replay windows, and rotation overlap are unselected and the proposed state matrix names no nonce/key-version authority. ARC8, `.1.25`, `.1.27`, existing `wamn-0xd`/`wamn-sbh`, and ARC10 own the future choice; custom-node auth `wamn-fqg.22` is a different trust boundary. |
 
 ### I.3 Target graph, state, and contract corrections
 
 The proposal's technology non-goal
-(`docs/RESTRUCTURE-260723.md:54-60`) is **keep for compute/runtime**.
+(`docs/archive/RESTRUCTURE-260723.md:54-60`) is **keep for compute/runtime**.
 `wamn-4tob.1.39` confirms that Wamn is WASI/Wasm/wasmCloud-first and native
 services are evidence-bearing exceptions. Wasmtime, Postgres, NATS,
 Kubernetes, and the event model remain independently reviewable rather than
@@ -1600,19 +1600,19 @@ runtime, and scenario grouping to STR9. Four target-model corrections are
 required before ARC11 can reuse its diagrams:
 
 1. The graph draws `flow-engine -> run-state`
-   (`docs/RESTRUCTURE-260723.md:162-180`), while the responsibility table calls
-   the engine pure and run-state persistent (`docs/RESTRUCTURE-260723.md:477-486`).
+   (`docs/archive/RESTRUCTURE-260723.md:162-180`), while the responsibility table calls
+   the engine pure and run-state persistent (`docs/archive/RESTRUCTURE-260723.md:477-486`).
    That edge is **replace**: the executor composes both, or both consume a
    lower contract; pure graph decisions must not depend on persistence.
 2. `flow-http` is drawn with only an invocation-contract dependency, yet must
-   resolve an active trusted route (`docs/RESTRUCTURE-260723.md:625-634`).
+   resolve an active trusted route (`docs/archive/RESTRUCTURE-260723.md:625-634`).
    Flow registry is assigned to run-state, while ingress-to-run-state is
-   forbidden (`docs/RESTRUCTURE-260723.md:432-435,779-781`). STR5 must add an
+   forbidden (`docs/archive/RESTRUCTURE-260723.md:432-435,779-781`). STR5 must add an
    authoritative route-registry/query contract or adapter; ingress must not
    gain private run-state SQL.
 3. The target tree defines caller/auth/project-state roles but the state matrix
    assigns semantics to undefined authorization, project-config, and audit
-   services (`docs/RESTRUCTURE-260723.md:247-255,439-443`). ARC11/STR9 must
+   services (`docs/archive/RESTRUCTURE-260723.md:247-255,439-443`). ARC11/STR9 must
    either define those owners or mark them roadmap placeholders.
 4. “No deployable depends on a deployable” must be checked against package
    targets/composition roots, not path names. The supported invariant is no
@@ -1621,14 +1621,14 @@ required before ARC11 can reuse its diagrams:
 
 The populated Postgres matrix is a strong start and its table inventory is
 complete for the checked-in platform SQL it claims
-(`docs/RESTRUCTURE-260723.md:420-446`). It is not a current-state inventory:
+(`docs/archive/RESTRUCTURE-260723.md:420-446`). It is not a current-state inventory:
 several “application service”
 writers and semantic owners do not exist. Mark every entry
 `current / target / unknown`, and do not equate a proposed owner name with an
 authority decision.
 
 More importantly, delaying non-Postgres resources until after the table
-manifest (`docs/RESTRUCTURE-260723.md:448-473`) is **replace** for correctness
+manifest (`docs/archive/RESTRUCTURE-260723.md:448-473`) is **replace** for correctness
 work. ARC4 found the main gaps at cross-store boundaries
 (`docs/findings.md:862-869,902-924`). Before any state-affecting move, the
 manifest or linked authority model must also cover:
@@ -1650,7 +1650,7 @@ D6/D18/D19.
 
 The invocation proposal correctly separates application semantics from wire
 transport and prohibits ingress from walking graphs or writing run SQL
-(`docs/RESTRUCTURE-260723.md:520-563,572-659`). Its concrete contract still
+(`docs/archive/RESTRUCTURE-260723.md:520-563,572-659`). Its concrete contract still
 needs:
 
 - the authoritative route/binding version and lookup failure semantics;
@@ -1681,7 +1681,7 @@ preselecting HTTP/HMAC/runtime internals.
 
 The proposal's compatibility rules—temporary facades with owners/expiry,
 move-before-rewrite, explicit contract versioning, no ownership-hiding feature
-flags, and proof equivalence—are **keep** (`docs/RESTRUCTURE-260723.md:742-749`).
+flags, and proof equivalence—are **keep** (`docs/archive/RESTRUCTURE-260723.md:742-749`).
 They are incomplete without active-run quiesce/resume policy, additive and
 round-trip stored-state migrations, immutable artifact provenance, readiness
 before cutover, and the tested rollback/forward-fix path required by N.7.
@@ -1706,9 +1706,9 @@ Add three missing cross-cutting checks to the proposal's list:
 
 Governance clauses that keep the program interruptible, preserve behavior,
 require evidence-equivalent gate migration, and close findings only on fixing
-commits are retained (`docs/RESTRUCTURE-260723.md:810-816`). Replace the
+commits are retained (`docs/archive/RESTRUCTURE-260723.md:810-816`). Replace the
 requested wholesale approval of RP-D1–RP-D9 and Phases 0–2
-(`docs/RESTRUCTURE-260723.md:836-848`) with input to ARC11/STR9. The proposal's
+(`docs/archive/RESTRUCTURE-260723.md:836-848`) with input to ARC11/STR9. The proposal's
 E1–E24 sources are static repository evidence; E25's current official
 wasmCloud capabilities show what the platform can do, not that it is the best
 target. ARC5's first-principles ranking remains controlling
@@ -2256,7 +2256,7 @@ R43/R53, ARC8/ARC11, STR4/STR7/STR9, M.6, F.6, N.7, and future decisions
 
 This section is the ARC8 result for `wamn-4tob.1.8` at baseline
 `fda533a1a36aee6c29b22205caa021185eff7ba1`. It tests the trust hypotheses in
-`docs/REVIEW-260723.md` and `docs/RESTRUCTURE-260723.md` against repository
+`docs/archive/REVIEW-260723.md` and `docs/archive/RESTRUCTURE-260723.md` against repository
 source and current official security contracts. `Proven` means the boundary is
 enforced by the checked source or an upstream guarantee; `contradicted` means
 an asserted boundary is disproved by the implementation; `inferred` still needs
@@ -4689,7 +4689,7 @@ the filename, keeping a one-line pointer at the top of the archived file
 | `poc-f1.md`, `poc-dm1.md` | **keep** | shipped POC slices, current |
 | `p0-results.md` (707 ln), `ceilings.md` (334 ln) | **keep**, banner | measurement records. **Add the `fsync=off` banner** (E6): shape-only, not citable externally |
 | `review-findings.md`, `structure-review.md` | **archive** → `archive/` | absorbed by this ledger; keep for commit-message resolution |
-| `core-pivot-plan.md` | **keep** | live status ledger, correctly marked suspended by event-plane Phase 0 |
+| `core-pivot-plan.md` | ~~keep~~ **archived 2026-07-31** → `archive/` | was the live status ledger; ordering authority superseded by `docs/PLAN/PLAN.md` (`wamn-role.1`) |
 | `build-and-test.md` (1,643 ln) | **keep**, restructure | see §1.5 |
 | everything else (subsystem docs-of-record) | **keep** | one per subsystem, current, well-named |
 

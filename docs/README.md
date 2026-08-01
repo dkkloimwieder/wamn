@@ -12,9 +12,9 @@ docs-of-record follow. One doc per subsystem, each with a predictable name.
   — the decision table inside the plan. *Which architectural choices are decided
   or locked, and which alternatives were rejected — and why?* (Note: D4 is
   superseded by D19 — CDC via logical decoding replaces the outbox trigger path.)
-- **[core-pivot-plan.md](core-pivot-plan.md)** — the live work-ordering ledger,
-  currently suspended by event-plane v3 Phase 0 (`wamn-l5i9`). *What are we
-  working on right now, and in what order?*
+- **[PLAN/PLAN.md](PLAN/PLAN.md)** — the authoritative post-POC roadmap and
+  decision map. *What are we working on, and in what order?* (The pivot-era
+  ledger is archived at [archive/core-pivot-plan.md](archive/core-pivot-plan.md).)
 - **[findings.md](findings.md)** — the single findings ledger and
   [status board](findings.md#0--status-board). *What is open, how bad, and what
   is next?* Its §6 is the current sequencing overlay (waves/clusters).
@@ -29,7 +29,7 @@ docs-of-record follow. One doc per subsystem, each with a predictable name.
 | Event plane | [event-plane-jetstream.md](event-plane-jetstream.md) (v3, current), [pg-walstream-fork.md](pg-walstream-fork.md) |
 | Platform / infra | [platform-plan.md](platform-plan.md), [deployment-model.md](deployment-model.md), [postgres-topology.md](postgres-topology.md), [system-cluster.md](system-cluster.md), [registry-model.md](registry-model.md), [provisioning.md](provisioning.md), [wasmcloud-utilization.md](wasmcloud-utilization.md), [wash-runtime-fork.md](wash-runtime-fork.md), [api-gateway.md](api-gateway.md), [tracing.md](tracing.md) |
 | POC | [poc-material-receiving.md](poc-material-receiving.md), [poc-f1.md](poc-f1.md), [poc-dm1.md](poc-dm1.md) |
-| Process | [core-pivot-plan.md](core-pivot-plan.md), [findings.md](findings.md), [build-and-test.md](build-and-test.md), [p0-results.md](p0-results.md), [ceilings.md](ceilings.md) |
+| Process | [PLAN/PLAN.md](PLAN/PLAN.md), [findings.md](findings.md), [build-and-test.md](build-and-test.md), [p0-results.md](p0-results.md), [ceilings.md](ceilings.md) |
 
 ## Results & measurements
 

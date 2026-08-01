@@ -9,7 +9,7 @@ single node to branching logic. Each rung is a small, repeatable, mutation-teste
 conformance proof that the next rung extends.
 
 The rungs are gated on the live runner (`deploy/platform/runner.yaml`, wamn-fqg.8 — see
-[run-queue.md](run-queue.md) § *Production runner*): the same `run-worker` service
+[run-queue.md](../run-queue.md) § *Production runner*): the same `run-worker` service
 that closes the `dispatcher → run_queue → runner` chain.
 
 | Rung | Flow | Proves |
@@ -160,7 +160,7 @@ reorder mutant.
   wrong *branch*, not just its own arithmetic.
 * **In-cluster gate of record** — `deploy/gates/ladderproof-job.yaml` (`--rung 3`, and
   `--rung 2` / `--rung 1` for the regressions) drives the real `deploy/platform/runner.yaml`
-  service over the shared Postgres. See [build-and-test.md](build-and-test.md) §
+  service over the shared Postgres. See [build-and-test.md](../build-and-test.md) §
   *[EXEC-LADDER.1/2/3]*.
 
 No guest or host change — `ladderproof` is gates-only (the flowrunner already

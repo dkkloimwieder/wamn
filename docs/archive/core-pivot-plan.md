@@ -1,5 +1,7 @@
 # Core Pivot Plan
 
+> **Archived 2026-07-31** — superseded by `docs/PLAN/PLAN.md` (the authoritative post-POC roadmap and decision map, 2026-07-27); retained for the 2026-07 pivot-era wave records and sequencing provenance. (`wamn-role.1`)
+
 > **§1.9a audit (2026-07-19): amendments contradicted the base — header rewritten 2026-07-20 (findings §1.9b, `wamn-2jkm.60`).**
 
 > **Restructure enforcement waves executed 2026-07-25 (status only; priority order unchanged):** SR27 package-role/resolved-graph enforcement (`b936e84`, `wamn-2jkm.101`) and SR28 PostgreSQL ownership/writer enforcement (`ea0e18f`, `wamn-2jkm.102`) are closed and pushed. SR20 now has one workspace-owned Wasmtime source plus resolved metadata/lock guards (`91b66de`, `wamn-2jkm.84`), the measured workspace-tier experiment selected named explicit package selectors while preserving exhaustive bare Cargo commands (`a07dcf2`, `wamn-4tob.6.29`), and that selection is installed as the CWD-independent JSON-driven `tools/workspace-tier` helper with ten fail-closed guards (`bc25a54`, `wamn-5wd1.28`). H5 command repair now maps active Cargo, Docker, component, image, and deployment recipes to current owners, with fail-closed test-selection and structural guards (`3b60d9b`, `wamn-5wd1.14`). Final repository integration reconciles active paths and passes the exhaustive locked debug/structural matrix (`95be7d1`, `wamn-5wd1.8`); owner-coordinated instruction wording remains `wamn-5wd1.32`, and the live ladder remains `wamn-5wd1.9`. The component-workload proof `wamn-4tob.6.28` remains unclaimed.
