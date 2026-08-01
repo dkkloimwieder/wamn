@@ -41,6 +41,7 @@ pub mod queuebench;
 pub mod readerbench;
 pub mod rie2ebench;
 pub mod runnerbench;
+pub mod runstate_baseline;
 pub mod samplebench;
 pub mod streambench;
 pub mod suiteproof;

@@ -15,8 +15,8 @@ use wamn_proof_integration::{
     apibench, bench, callable_cron, capturebench, cdcbench, dashproof, dispatchbench, f1bench,
     f2invoke, f3proof, f4proof, failoverbench, flowbench, impactproof, invocationproof, logbench,
     matbench, metricbench, nodebench, nodeinvoke, pgbench, pinproof, pocsuiteproof, provisionbench,
-    queuebench, readerbench, rie2ebench, runnerbench, samplebench, streambench, suiteproof,
-    testhostbench, testkitbench, tracebench, wakeproof, walbench,
+    queuebench, readerbench, rie2ebench, runnerbench, runstate_baseline, samplebench, streambench,
+    suiteproof, testhostbench, testkitbench, tracebench, wakeproof, walbench,
 };
 use wamn_proof_system::{
     apiproof, callable_f0, callable_f1, callable_f2, callable_f3, callable_f4, credproof, f1proof,
@@ -69,6 +69,8 @@ enum Command {
     Readerbench(readerbench::ReaderBenchArgs),
     /// Run the EVT-C-WAL-0 pre-CDC WAL-volume baseline (per-op WAL/op + representative-load bytes/s)
     Walbench(walbench::WalBenchArgs),
+    /// Record the PLAN-3 pre-checkpoint F1 capture-on persistence baseline.
+    RunstateBaseline(runstate_baseline::RunstateBaselineArgs),
     /// Run the EVT-C-CDC ceiling campaign (decode drain / slot-lag knee / RI-FULL WAL delta / timed switchover drill)
     Cdcbench(cdcbench::CdcBenchArgs),
     /// Run the 5.9 credential-vault proof (delivery to serve-echo + no-leak containment)
@@ -190,6 +192,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Streambench(args) => streambench::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::Walbench(args) => walbench::run(args).await,
+        Command::RunstateBaseline(args) => runstate_baseline::run(args).await,
         Command::Cdcbench(args) => cdcbench::run(args).await,
         Command::Credprobe(args) => credprobe::run(args).await,
         Command::Credproof(args) => credproof::run(args).await,

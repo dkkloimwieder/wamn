@@ -1184,6 +1184,41 @@ shape/DDL drift guards. The live-apply gate (Phase A/B) and the queuebench
 guest does not read the flow field until fqg.9, so the in-cluster gate is a
 gates-image rebuild only (guest unchanged for this slice).
 
+### [PLAN-3 / wamn-vshi.5] F1 capture-on run-state baseline
+
+Docs: `docs/PLAN/PLAN.md` items 1 and 3; published record in
+`docs/results/ceilings.md` § PLAN-3-F1.
+
+```bash
+# Deterministic F1-path and argument guards.
+cargo test -p wamn-proof-integration runstate_baseline --no-fail-fast
+
+# Short live iteration against a throwaway PostgreSQL 18 database. The command
+# applies the production run-state DDL in an ephemeral schema and drops it.
+WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5457/postgres \
+  WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5457/postgres \
+  ./target/debug/wamn-gates --log-level error runstate-baseline \
+  --line-counts 1,10 --runs-per-size 5 --concurrency 2
+
+# Record run: build/load the gates image from the source revision being cited,
+# recreate the Job, and capture its CSV block.
+docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system delete job runstate-baseline --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/runstate-baseline-job.yaml
+kubectl -n wamn-system logs -f job/runstate-baseline
+# Extract `=== BEGIN/END CSV plan3-f1-capture-baseline ===` into
+# docs/results/ceilings-data/plan3-f1-capture-baseline.csv.
+```
+
+The campaign measures the current capture-replay architecture before item 1
+rewires recovery. It uses the canonical successful F1 node path with 1, 10,
+and 100 schema-valid receipt lines. Each node boundary commits a full input and
+output capture; context-bearing nodes also update `runs.state_json`, matching
+the present source of heap/TOAST growth, WAL, and vacuum pressure. Measurements
+are curves, not budgets. Only durable-commit provenance, exact run/node counts,
+full-capture presence, and nonzero WAL are pass/fail assertions.
+
 ### [EVT-C7 / wamn-z7b.1] queuebench ceiling campaign (measurement, not a gate)
 
 Docs: docs/results/ceilings.md (the published curves) + docs/events/event-plane-jetstream.md §10/§11
