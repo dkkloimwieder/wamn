@@ -10,7 +10,7 @@ use wamn_catalog::{
     NodeImplementation, Release, ReleaseId, Source, SourceId, SourceKind,
 };
 use wamn_flow::{EntryKind, Flow, ResolvedInterfaces, canonical_json_sha256};
-use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{CapabilityClass, RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
 use wamn_schema_control::exposure::{ExposureRelease, FlowExposure, resolve_exposure};
 
 const FLOW_JSON: &str = include_str!("../../../deploy/poc/f1-flow.json");
@@ -40,15 +40,21 @@ struct PublishedRelease {
 }
 
 fn interface(node_type: &str, ports: &[&str], purity: ResolvedPurity) -> ResolvedNodeInterface {
-    ResolvedNodeInterface {
-        node_type: node_type.to_string(),
-        output_ports: ports.iter().map(|port| (*port).to_string()).collect(),
+    ResolvedNodeInterface::new(
+        node_type,
+        "wamn:node@0.1.0",
+        ports.iter().map(|port| (*port).to_string()).collect(),
+        vec![match purity {
+            ResolvedPurity::Pure => CapabilityClass::Pure,
+            ResolvedPurity::Effectful => CapabilityClass::Postgres,
+        }],
+        Vec::new(),
         purity,
-        recovery_class: match purity {
+        match purity {
             ResolvedPurity::Pure => RecoveryClass::Replay,
             ResolvedPurity::Effectful => RecoveryClass::NeverReplay,
         },
-    }
+    )
 }
 
 fn implementations() -> anyhow::Result<Vec<NodeImplementation>> {

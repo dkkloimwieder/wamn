@@ -1175,8 +1175,8 @@ fn recovery_class(artifact: &wamn_catalog::PinnedArtifact, dispatch: &Dispatch) 
         &dispatch.config,
         artifact
             .interface_bundle()
-            .interface(&dispatch.node_type)
-            .map(|interface| interface.recovery_class),
+            .contract(&dispatch.node_type)
+            .map(wamn_node_manifest::ResolvedNodeContract::recovery_class),
     )
 }
 
@@ -1188,6 +1188,9 @@ fn classify_recovery(
     if let Some(pinned) = pinned {
         return match pinned {
             wamn_node_manifest::RecoveryClass::Replay => RecoveryClass::Replay,
+            wamn_node_manifest::RecoveryClass::IdempotentWithKey => {
+                RecoveryClass::IdempotentWithKey
+            }
             wamn_node_manifest::RecoveryClass::NeverReplay => RecoveryClass::NeverReplay,
         };
     }

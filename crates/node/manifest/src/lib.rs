@@ -24,6 +24,9 @@ pub const ANNOTATION_KEY: &str = "wamn.node.manifest";
 /// The manifest schema version this crate reads/writes.
 pub const SCHEMA_VERSION: &str = "0.1";
 
+/// Shape version for the canonical resolved-node contract.
+pub const RESOLVED_CONTRACT_VERSION: &str = "1";
+
 /// An ordering policy a node declares support for (design-note 2). The
 /// runner's dispatch honors the flow's per-node choice among the node's
 /// declared set; the node itself stays a pure function under all three.
@@ -62,7 +65,25 @@ pub enum ResolvedPurity {
 #[serde(rename_all = "kebab-case")]
 pub enum RecoveryClass {
     Replay,
+    IdempotentWithKey,
     NeverReplay,
+}
+
+/// Structural capability class used to specialize execution bundles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CapabilityClass {
+    Pure,
+    Http,
+    Postgres,
+}
+
+/// A portable connection need. Environment instance data never enters this value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ConnectionRequirement {
+    pub requirement_type: String,
+    pub contract: String,
 }
 
 /// A publish-time node interface pin.
@@ -72,18 +93,78 @@ pub enum RecoveryClass {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ResolvedNodeInterface {
+    /// Version of this resolved contract's serialized shape.
+    pub contract_version: String,
     pub node_type: String,
+    /// Exact component interface/WIT contract implemented by the executable.
+    pub interface_contract: String,
     pub output_ports: Vec<String>,
+    pub capability_classes: Vec<CapabilityClass>,
+    pub connection_requirements: Vec<ConnectionRequirement>,
     pub purity: ResolvedPurity,
     pub recovery_class: RecoveryClass,
 }
 
 impl ResolvedNodeInterface {
+    /// Build the minimum complete environment-independent interface contract.
+    pub fn new(
+        node_type: impl Into<String>,
+        interface_contract: impl Into<String>,
+        output_ports: Vec<String>,
+        capability_classes: Vec<CapabilityClass>,
+        connection_requirements: Vec<ConnectionRequirement>,
+        purity: ResolvedPurity,
+        recovery_class: RecoveryClass,
+    ) -> Self {
+        Self {
+            contract_version: RESOLVED_CONTRACT_VERSION.to_string(),
+            node_type: node_type.into(),
+            interface_contract: interface_contract.into(),
+            output_ports,
+            capability_classes,
+            connection_requirements,
+            purity,
+            recovery_class,
+        }
+    }
+
     /// Whether the pinned interface permits a successful emission on `port`.
     pub fn permits_output_port(&self, port: &str) -> bool {
         self.output_ports
             .binary_search_by(|candidate| candidate.as_str().cmp(port))
             .is_ok()
+    }
+}
+
+/// Exact executable bytes or platform revision selected for a resolved node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", tag = "kind")]
+pub enum ExecutableIdentity {
+    Platform { revision: String },
+    Component { digest: String },
+}
+
+/// The one canonical resolution consumed by artifacts, replay and bundles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ResolvedNodeContract {
+    pub interface: ResolvedNodeInterface,
+    pub executable: ExecutableIdentity,
+}
+
+impl ResolvedNodeContract {
+    /// The replay classifier consumes the pinned resolution, never a node-type table.
+    pub const fn recovery_class(&self) -> RecoveryClass {
+        self.interface.recovery_class
+    }
+
+    /// Stable identity bytes for artifact and execution-bundle keys.
+    pub fn identity_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("resolved node contract identity serializes")
+    }
+
+    pub fn identity_hash(&self) -> String {
+        sha256_identity(&self.identity_bytes())
     }
 }
 
@@ -94,27 +175,30 @@ impl ResolvedNodeInterface {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ResolvedComponent {
-    pub interface: ResolvedNodeInterface,
-    pub component_digest: String,
+    pub contract: ResolvedNodeContract,
 }
 
 impl ResolvedComponent {
     /// Stable identity bytes for this resolved supplied component.
     pub fn identity_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).expect("resolved component identity serializes")
+        self.contract.identity_bytes()
     }
 
     /// SHA-256 of [`Self::identity_bytes`].
     pub fn identity_hash(&self) -> String {
-        let digest = Sha256::digest(self.identity_bytes());
-        let mut hash = String::with_capacity("sha256:".len() + digest.len() * 2);
-        hash.push_str("sha256:");
-        for byte in digest {
-            use std::fmt::Write as _;
-            write!(&mut hash, "{byte:02x}").expect("writing to a string is infallible");
-        }
-        hash
+        sha256_identity(&self.identity_bytes())
     }
+}
+
+fn sha256_identity(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hash = String::with_capacity("sha256:".len() + digest.len() * 2);
+    hash.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut hash, "{byte:02x}").expect("writing to a string is infallible");
+    }
+    hash
 }
 
 fn default_ordering() -> Vec<OrderingPolicy> {
@@ -388,12 +472,19 @@ impl NodeManifest {
             Some(Purity::Pure) => (ResolvedPurity::Pure, RecoveryClass::Replay),
             None => (ResolvedPurity::Effectful, RecoveryClass::NeverReplay),
         };
-        Ok(ResolvedNodeInterface {
-            node_type: self.node_type.clone(),
+        Ok(ResolvedNodeInterface::new(
+            self.node_type.clone(),
+            self.contract.clone(),
             output_ports,
+            if purity == ResolvedPurity::Pure {
+                vec![CapabilityClass::Pure]
+            } else {
+                Vec::new()
+            },
+            Vec::new(),
             purity,
             recovery_class,
-        })
+        ))
     }
 
     /// Refuse a resolved bundle that does not exactly match this manifest.
@@ -432,8 +523,12 @@ impl NodeManifest {
             }]);
         }
         Ok(ResolvedComponent {
-            interface,
-            component_digest,
+            contract: ResolvedNodeContract {
+                interface,
+                executable: ExecutableIdentity::Component {
+                    digest: component_digest,
+                },
+            },
         })
     }
 }

@@ -315,12 +315,19 @@ fn interface(
     purity: ResolvedPurity,
     recovery_class: RecoveryClass,
 ) -> NodeImplementation {
-    NodeImplementation::platform(ResolvedNodeInterface {
-        node_type: node_type.to_string(),
-        output_ports: vec!["main".to_string()],
+    NodeImplementation::platform(ResolvedNodeInterface::new(
+        node_type,
+        "wamn:node@0.1.0",
+        vec!["main".to_string()],
+        vec![if purity == ResolvedPurity::Pure {
+            wamn_node_manifest::CapabilityClass::Pure
+        } else {
+            wamn_node_manifest::CapabilityClass::Http
+        }],
+        Vec::new(),
         purity,
         recovery_class,
-    })
+    ))
 }
 
 fn fixture_artifact(

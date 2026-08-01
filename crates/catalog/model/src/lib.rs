@@ -7,16 +7,22 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use wamn_flow::{Flow, ResolvedInterfaces};
-use wamn_node_manifest::{ResolvedComponent, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{
+    ExecutableIdentity, ResolvedComponent, ResolvedNodeContract, ResolvedNodeInterface,
+    ResolvedPurity,
+};
 
 const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;
 const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v1";
 const MODEL_OWNED_NODES: [&str; 5] = ["cron", "event", "fail", "request", "respond"];
+const LEGACY_RESOLVED_CONTRACT_VERSION: &str = "legacy-v0";
+const LEGACY_INTERFACE_CONTRACT: &str = "legacy-unpinned-wamn-node";
+const LEGACY_PLATFORM_REVISION: &str = "legacy-unpinned-platform";
 
 /// A catalog identity construction error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -385,15 +391,18 @@ impl CanonicalJson {
 /// Whether an implementation is platform-pinned or supplied by the release.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeImplementation {
-    interface: ResolvedNodeInterface,
-    component_digest: Option<String>,
+    contract: ResolvedNodeContract,
 }
 
 impl NodeImplementation {
     pub fn platform(interface: ResolvedNodeInterface) -> Self {
         Self {
-            interface,
-            component_digest: None,
+            contract: ResolvedNodeContract {
+                interface,
+                executable: ExecutableIdentity::Platform {
+                    revision: "wamn-standard-nodes@0.1.0".to_string(),
+                },
+            },
         }
     }
 
@@ -404,27 +413,44 @@ impl NodeImplementation {
         let component_digest = component_digest.into();
         validate_digest(&component_digest, "component-digest")?;
         Ok(Self {
-            interface,
-            component_digest: Some(component_digest),
+            contract: ResolvedNodeContract {
+                interface,
+                executable: ExecutableIdentity::Component {
+                    digest: component_digest,
+                },
+            },
         })
     }
 
     pub fn from_resolved_component(
         component: ResolvedComponent,
     ) -> Result<Self, CatalogIdentityError> {
-        validate_digest(&component.component_digest, "component-digest")?;
+        let ExecutableIdentity::Component { digest } = &component.contract.executable else {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: "a supplied component must carry component executable identity"
+                    .to_string(),
+            });
+        };
+        validate_digest(digest, "component-digest")?;
         Ok(Self {
-            interface: component.interface,
-            component_digest: Some(component.component_digest),
+            contract: component.contract,
         })
     }
 
     pub fn interface(&self) -> &ResolvedNodeInterface {
-        &self.interface
+        &self.contract.interface
     }
 
     pub fn component_digest(&self) -> Option<&str> {
-        self.component_digest.as_deref()
+        match &self.contract.executable {
+            ExecutableIdentity::Component { digest } => Some(digest),
+            ExecutableIdentity::Platform { .. } => None,
+        }
+    }
+
+    /// The canonical resolved-node contract shared by all identity consumers.
+    pub fn contract(&self) -> &ResolvedNodeContract {
+        &self.contract
     }
 }
 
@@ -482,7 +508,7 @@ impl Artifact {
 
         let interfaces: Vec<_> = implementations
             .iter()
-            .map(|implementation| implementation.interface.clone())
+            .map(|implementation| implementation.interface().clone())
             .collect();
         let resolved: ResolvedInterfaces = interfaces
             .iter()
@@ -501,45 +527,29 @@ impl Artifact {
         owned.push(("artifact-id", id_bytes));
         owned.push(("schema-version", flow.schema_version.as_bytes().to_vec()));
         owned.push(("graph", graph_bytes));
-        for interface in &interfaces {
+        for implementation in &implementations {
             owned.push((
-                "interface",
+                "resolved-node",
                 canonical_json(
-                    &serde_json::to_value(interface).expect("resolved interface serializes"),
+                    &serde_json::to_value(implementation.contract())
+                        .expect("resolved node contract serializes"),
                 ),
             ));
         }
         let supplied_components: Vec<_> = implementations
             .iter()
-            .filter_map(|implementation| {
-                implementation
-                    .component_digest
-                    .as_ref()
-                    .map(|component_digest| ResolvedComponent {
-                        interface: implementation.interface.clone(),
-                        component_digest: component_digest.clone(),
-                    })
+            .filter(|implementation| implementation.component_digest().is_some())
+            .map(|implementation| ResolvedComponent {
+                contract: implementation.contract().clone(),
             })
             .collect();
-        for implementation in implementations
-            .iter()
-            .filter(|implementation| implementation.component_digest.is_some())
-        {
-            owned.push((
-                "supplied-component",
-                canonical_json(&serde_json::json!({
-                    "component-digest": implementation.component_digest,
-                    "node-type": implementation.interface.node_type,
-                })),
-            ));
-        }
         let borrowed: Vec<_> = owned
             .iter()
             .map(|(tag, bytes)| (*tag, bytes.as_slice()))
             .collect();
         let canonical_bytes = frames("artifact", borrowed).into_boxed_slice();
         let artifact_hash = ArtifactHash(digest(&canonical_bytes));
-        let interface_bundle = InterfaceBundle::new(interfaces)?;
+        let interface_bundle = InterfaceBundle::from_implementations(&implementations)?;
         Ok(Self {
             identity: ArtifactIdentity { id, artifact_hash },
             schema_version: flow.schema_version.clone(),
@@ -580,23 +590,128 @@ impl Artifact {
     }
 }
 
+/// Persisted resolved-interface shape used before the canonical node contract landed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct LegacyResolvedNodeInterface {
+    node_type: String,
+    output_ports: Vec<String>,
+    purity: ResolvedPurity,
+    recovery_class: wamn_node_manifest::RecoveryClass,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct LegacyResolvedComponent {
+    interface: LegacyResolvedNodeInterface,
+    component_digest: String,
+}
+
+fn synthesize_legacy_interface(legacy: &LegacyResolvedNodeInterface) -> ResolvedNodeInterface {
+    ResolvedNodeInterface {
+        contract_version: LEGACY_RESOLVED_CONTRACT_VERSION.to_string(),
+        node_type: legacy.node_type.clone(),
+        interface_contract: LEGACY_INTERFACE_CONTRACT.to_string(),
+        output_ports: legacy.output_ports.clone(),
+        capability_classes: if legacy.purity == ResolvedPurity::Pure {
+            vec![wamn_node_manifest::CapabilityClass::Pure]
+        } else {
+            Vec::new()
+        },
+        connection_requirements: Vec::new(),
+        purity: legacy.purity,
+        recovery_class: legacy.recovery_class,
+    }
+}
+
 /// Exact canonical JSON bytes and typed semantics for one resolved interface bundle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceBundle {
+    contracts: Box<[ResolvedNodeContract]>,
     interfaces: Box<[ResolvedNodeInterface]>,
     canonical_bytes: Box<[u8]>,
     hash: String,
 }
 
+/// Content key for a composed runner and the exact canonical node resolutions it embeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionBundleIdentity {
+    hash: String,
+    canonical_bytes: Box<[u8]>,
+}
+
+impl ExecutionBundleIdentity {
+    pub fn new(
+        runner_revision: &str,
+        implementations: &[NodeImplementation],
+        adapters: &[String],
+    ) -> Result<Self, CatalogIdentityError> {
+        validate_text(runner_revision, "runner-revision")?;
+        validate_implementation_order(implementations)?;
+        validate_sorted_text(adapters, "adapter")?;
+        let mut owned = vec![("runner-revision", runner_revision.as_bytes().to_vec())];
+        for implementation in implementations {
+            owned.push((
+                "resolved-node",
+                canonical_json(
+                    &serde_json::to_value(implementation.contract())
+                        .expect("resolved node contract serializes"),
+                ),
+            ));
+        }
+        for adapter in adapters {
+            owned.push(("adapter", adapter.as_bytes().to_vec()));
+        }
+        let borrowed = owned
+            .iter()
+            .map(|(tag, bytes)| (*tag, bytes.as_slice()))
+            .collect::<Vec<_>>();
+        let canonical_bytes = frames("execution-bundle", borrowed).into_boxed_slice();
+        let hash = digest(&canonical_bytes);
+        Ok(Self {
+            hash,
+            canonical_bytes,
+        })
+    }
+
+    pub fn hash(&self) -> &str {
+        &self.hash
+    }
+
+    pub fn canonical_bytes(&self) -> &[u8] {
+        &self.canonical_bytes
+    }
+}
+
 impl InterfaceBundle {
     /// Build a canonical bundle from interfaces already resolved at publication.
     pub fn new(interfaces: Vec<ResolvedNodeInterface>) -> Result<Self, CatalogIdentityError> {
+        let implementations = interfaces
+            .into_iter()
+            .map(NodeImplementation::platform)
+            .collect::<Vec<_>>();
+        Self::from_implementations(&implementations)
+    }
+
+    fn from_implementations(
+        implementations: &[NodeImplementation],
+    ) -> Result<Self, CatalogIdentityError> {
+        validate_implementation_order(implementations)?;
+        let interfaces = implementations
+            .iter()
+            .map(|implementation| implementation.interface().clone())
+            .collect::<Vec<_>>();
         validate_interface_order(&interfaces)?;
+        let contracts = implementations
+            .iter()
+            .map(|implementation| implementation.contract().clone())
+            .collect::<Vec<_>>();
         let value =
-            serde_json::to_value(&interfaces).expect("resolved interfaces serialize to JSON");
+            serde_json::to_value(&contracts).expect("resolved node contracts serialize to JSON");
         let canonical_bytes = canonical_json(&value).into_boxed_slice();
         let hash = digest(&canonical_bytes);
         Ok(Self {
+            contracts: contracts.into_boxed_slice(),
             interfaces: interfaces.into_boxed_slice(),
             canonical_bytes,
             hash,
@@ -610,19 +725,49 @@ impl InterfaceBundle {
                 message: format!("resolved interface bundle JSON is invalid: {error}"),
             }
         })?;
-        let interfaces: Vec<ResolvedNodeInterface> = serde_json::from_value(value.clone())
-            .map_err(|error| CatalogIdentityError::InvalidDefinition {
-                message: format!("resolved interface bundle shape is invalid: {error}"),
-            })?;
-        let bundle = Self::new(interfaces)?;
-        if bundle.canonical_bytes.as_ref() != input.as_bytes() {
+        if canonical_json(&value) != input.as_bytes() {
             return Err(CatalogIdentityError::NonCanonicalJson);
         }
+        let contracts: Vec<ResolvedNodeContract> = match serde_json::from_value(value.clone()) {
+            Ok(contracts) => contracts,
+            Err(current_error) => {
+                let legacy: Vec<LegacyResolvedNodeInterface> = serde_json::from_value(value)
+                    .map_err(|legacy_error| CatalogIdentityError::InvalidDefinition {
+                        message: format!(
+                            "resolved interface bundle shape is invalid: current: {current_error}; legacy: {legacy_error}"
+                        ),
+                    })?;
+                let implementations = legacy
+                    .iter()
+                    .map(|interface| NodeImplementation {
+                        contract: ResolvedNodeContract {
+                            interface: synthesize_legacy_interface(interface),
+                            executable: ExecutableIdentity::Platform {
+                                revision: LEGACY_PLATFORM_REVISION.to_string(),
+                            },
+                        },
+                    })
+                    .collect::<Vec<_>>();
+                let mut bundle = Self::from_implementations(&implementations)?;
+                bundle.canonical_bytes = input.as_bytes().into();
+                bundle.hash = digest(input.as_bytes());
+                return Ok(bundle);
+            }
+        };
+        let implementations = contracts
+            .into_iter()
+            .map(|contract| NodeImplementation { contract })
+            .collect::<Vec<_>>();
+        let bundle = Self::from_implementations(&implementations)?;
         Ok(bundle)
     }
 
     pub fn interfaces(&self) -> &[ResolvedNodeInterface] {
         &self.interfaces
+    }
+
+    pub fn contracts(&self) -> &[ResolvedNodeContract] {
+        &self.contracts
     }
 
     pub fn canonical_bytes(&self) -> &[u8] {
@@ -645,6 +790,13 @@ impl InterfaceBundle {
             .binary_search_by(|interface| interface.node_type.as_str().cmp(node_type))
             .ok()
             .map(|index| &self.interfaces[index])
+    }
+
+    pub fn contract(&self, node_type: &str) -> Option<&ResolvedNodeContract> {
+        self.contracts
+            .binary_search_by(|contract| contract.interface.node_type.as_str().cmp(node_type))
+            .ok()
+            .map(|index| &self.contracts[index])
     }
 }
 
@@ -694,6 +846,20 @@ impl PinnedArtifact {
             .map_err(|issues| CatalogIdentityError::FlowInvalid {
                 codes: issues.into_iter().map(|issue| issue.code).collect(),
             })?;
+        if interface_bundle
+            .contracts()
+            .iter()
+            .all(|contract| contract.interface.contract_version == LEGACY_RESOLVED_CONTRACT_VERSION)
+        {
+            return Self::from_legacy_storage(
+                expected_tenant_id,
+                flow,
+                artifact_hash,
+                interface_bundle_json,
+                interface_bundle,
+                component_digests_json,
+            );
+        }
         let supplied_components: Vec<ResolvedComponent> =
             serde_json::from_str(component_digests_json).map_err(|error| {
                 CatalogIdentityError::InvalidDefinition {
@@ -702,7 +868,7 @@ impl PinnedArtifact {
             })?;
         let mut components_by_node = BTreeMap::new();
         for component in supplied_components {
-            let node_type = component.interface.node_type.clone();
+            let node_type = component.contract.interface.node_type.clone();
             if components_by_node
                 .insert(node_type.clone(), component)
                 .is_some()
@@ -710,16 +876,22 @@ impl PinnedArtifact {
                 return Err(CatalogIdentityError::DuplicateInterface { node_type });
             }
         }
-        let mut implementations = Vec::with_capacity(interface_bundle.interfaces().len());
-        for interface in interface_bundle.interfaces() {
+        let mut implementations = Vec::with_capacity(interface_bundle.contracts().len());
+        for contract in interface_bundle.contracts() {
+            let interface = &contract.interface;
             let implementation =
                 if let Some(component) = components_by_node.remove(&interface.node_type) {
-                    if component.interface != *interface {
+                    if component.contract != *contract {
                         return Err(CatalogIdentityError::ArtifactHashMismatch);
                     }
-                    NodeImplementation::supplied(interface.clone(), component.component_digest)?
+                    NodeImplementation::from_resolved_component(component)?
                 } else {
-                    NodeImplementation::platform(interface.clone())
+                    if !matches!(contract.executable, ExecutableIdentity::Platform { .. }) {
+                        return Err(CatalogIdentityError::ArtifactHashMismatch);
+                    }
+                    NodeImplementation {
+                        contract: contract.clone(),
+                    }
                 };
             implementations.push(implementation);
         }
@@ -730,6 +902,112 @@ impl PinnedArtifact {
         if reconstructed.identity().artifact_hash().as_str() != artifact_hash {
             return Err(CatalogIdentityError::ArtifactHashMismatch);
         }
+        Ok(Self {
+            flow,
+            interface_bundle,
+        })
+    }
+
+    fn from_legacy_storage(
+        expected_tenant_id: &str,
+        flow: Flow,
+        artifact_hash: &str,
+        interface_bundle_json: &str,
+        mut interface_bundle: InterfaceBundle,
+        component_digests_json: &str,
+    ) -> Result<Self, CatalogIdentityError> {
+        let legacy_interfaces: Vec<LegacyResolvedNodeInterface> =
+            serde_json::from_str(interface_bundle_json).map_err(|error| {
+                CatalogIdentityError::InvalidDefinition {
+                    message: format!("legacy resolved interface bundle is invalid: {error}"),
+                }
+            })?;
+        let legacy_components: Vec<LegacyResolvedComponent> =
+            serde_json::from_str(component_digests_json).map_err(|error| {
+                CatalogIdentityError::InvalidDefinition {
+                    message: format!("legacy supplied component bundle is invalid: {error}"),
+                }
+            })?;
+        let mut components_by_node = BTreeMap::new();
+        for component in &legacy_components {
+            validate_digest(&component.component_digest, "component-digest")?;
+            let node_type = component.interface.node_type.clone();
+            if components_by_node
+                .insert(node_type.clone(), component)
+                .is_some()
+            {
+                return Err(CatalogIdentityError::DuplicateInterface { node_type });
+            }
+        }
+        let mut implementations = Vec::with_capacity(legacy_interfaces.len());
+        for legacy in &legacy_interfaces {
+            let interface = synthesize_legacy_interface(legacy);
+            let contract = if let Some(component) = components_by_node.remove(&legacy.node_type) {
+                if component.interface != *legacy {
+                    return Err(CatalogIdentityError::ArtifactHashMismatch);
+                }
+                ResolvedNodeContract {
+                    interface,
+                    executable: ExecutableIdentity::Component {
+                        digest: component.component_digest.clone(),
+                    },
+                }
+            } else {
+                ResolvedNodeContract {
+                    interface,
+                    executable: ExecutableIdentity::Platform {
+                        revision: LEGACY_PLATFORM_REVISION.to_string(),
+                    },
+                }
+            };
+            implementations.push(NodeImplementation { contract });
+        }
+        if let Some((node_type, _)) = components_by_node.pop_first() {
+            return Err(CatalogIdentityError::UnexpectedInterface { node_type });
+        }
+        validate_implementations(&flow, &implementations)?;
+        let id = ArtifactId::new(expected_tenant_id, flow.flow_id.clone(), flow.version)?;
+        let mut owned = Vec::new();
+        owned.push((
+            "artifact-id",
+            canonical_json(&serde_json::to_value(&id).expect("artifact id serializes")),
+        ));
+        owned.push(("schema-version", flow.schema_version.as_bytes().to_vec()));
+        owned.push(("graph", flow.canonical_bytes()));
+        for interface in &legacy_interfaces {
+            owned.push((
+                "interface",
+                canonical_json(
+                    &serde_json::to_value(interface).expect("legacy interface serializes"),
+                ),
+            ));
+        }
+        for component in &legacy_components {
+            owned.push((
+                "supplied-component",
+                canonical_json(&serde_json::json!({
+                    "component-digest": component.component_digest,
+                    "node-type": component.interface.node_type,
+                })),
+            ));
+        }
+        let borrowed = owned
+            .iter()
+            .map(|(tag, bytes)| (*tag, bytes.as_slice()))
+            .collect::<Vec<_>>();
+        if digest(&frames("artifact", borrowed)) != artifact_hash {
+            return Err(CatalogIdentityError::ArtifactHashMismatch);
+        }
+        interface_bundle.contracts = implementations
+            .iter()
+            .map(|implementation| implementation.contract().clone())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        interface_bundle.interfaces = implementations
+            .iter()
+            .map(|implementation| implementation.interface().clone())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         Ok(Self {
             flow,
             interface_bundle,
@@ -775,11 +1053,12 @@ fn validate_implementations(
     let mut resolved = BTreeSet::new();
     let interfaces: Vec<_> = implementations
         .iter()
-        .map(|implementation| implementation.interface.clone())
+        .map(|implementation| implementation.interface().clone())
         .collect();
     validate_interface_order(&interfaces)?;
+    validate_implementation_order(implementations)?;
     for implementation in implementations {
-        let interface = &implementation.interface;
+        let interface = implementation.interface();
         resolved.insert(interface.node_type.clone());
     }
 
@@ -804,7 +1083,67 @@ fn validate_implementations(
     Ok(())
 }
 
+fn validate_implementation_order(
+    implementations: &[NodeImplementation],
+) -> Result<(), CatalogIdentityError> {
+    for implementation in implementations {
+        validate_interface(implementation.interface())?;
+        match &implementation.contract().executable {
+            ExecutableIdentity::Platform { revision } => {
+                validate_text(revision, "platform-revision")?;
+            }
+            ExecutableIdentity::Component { digest } => {
+                validate_digest(digest, "component-digest")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_sorted_text(
+    values: &[String],
+    field: &'static str,
+) -> Result<(), CatalogIdentityError> {
+    let mut previous = None;
+    for value in values {
+        validate_text(value, field)?;
+        if previous.is_some_and(|candidate: &str| candidate >= value.as_str()) {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: format!("{field} values must be sorted and unique"),
+            });
+        }
+        previous = Some(value.as_str());
+    }
+    Ok(())
+}
+
 fn validate_interface(interface: &ResolvedNodeInterface) -> Result<(), CatalogIdentityError> {
+    validate_text(&interface.contract_version, "resolved-contract-version")?;
+    validate_text(&interface.interface_contract, "interface-contract")?;
+    if interface
+        .capability_classes
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+    {
+        return Err(CatalogIdentityError::InvalidInterface {
+            node_type: interface.node_type.clone(),
+            message: "capability classes must be sorted and unique".to_string(),
+        });
+    }
+    for requirement in &interface.connection_requirements {
+        validate_text(&requirement.requirement_type, "connection-requirement-type")?;
+        validate_text(&requirement.contract, "connection-requirement-contract")?;
+    }
+    if interface
+        .connection_requirements
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+    {
+        return Err(CatalogIdentityError::InvalidInterface {
+            node_type: interface.node_type.clone(),
+            message: "connection requirements must be sorted and unique".to_string(),
+        });
+    }
     if interface.output_ports.is_empty() {
         return Err(CatalogIdentityError::InvalidInterface {
             node_type: interface.node_type.clone(),
@@ -832,6 +1171,9 @@ fn validate_interface(interface: &ResolvedNodeInterface) -> Result<(), CatalogId
         (
             ResolvedPurity::Pure,
             wamn_node_manifest::RecoveryClass::Replay
+        ) | (
+            ResolvedPurity::Effectful,
+            wamn_node_manifest::RecoveryClass::IdempotentWithKey
         ) | (
             ResolvedPurity::Effectful,
             wamn_node_manifest::RecoveryClass::NeverReplay

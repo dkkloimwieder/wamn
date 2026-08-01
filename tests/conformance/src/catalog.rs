@@ -8,7 +8,9 @@ mod tests {
         CatalogHead, NodeImplementation, Release, ReleaseId, Source, SourceId, SourceKind,
     };
     use wamn_flow::Flow;
-    use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+    use wamn_node_manifest::{
+        CapabilityClass, RecoveryClass, ResolvedNodeInterface, ResolvedPurity,
+    };
 
     fn flow() -> Flow {
         Flow::from_json(
@@ -31,12 +33,15 @@ mod tests {
     }
 
     fn artifact() -> Artifact {
-        let interface = ResolvedNodeInterface {
-            node_type: "custom-node".to_string(),
-            output_ports: vec!["main".to_string()],
-            purity: ResolvedPurity::Effectful,
-            recovery_class: RecoveryClass::NeverReplay,
-        };
+        let interface = ResolvedNodeInterface::new(
+            "custom-node",
+            "wamn:node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Http],
+            Vec::new(),
+            ResolvedPurity::Effectful,
+            RecoveryClass::NeverReplay,
+        );
         Artifact::new(
             "tenant-a",
             &flow(),

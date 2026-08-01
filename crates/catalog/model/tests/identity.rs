@@ -1,11 +1,14 @@
 use serde_json::json;
 use wamn_catalog::{
     Artifact, Attachment, AttachmentActivation, AttachmentDraft, AttachmentId, AttachmentKind,
-    CanonicalJson, CatalogHead, CatalogIdentityError, DefinitionHash, InterfaceBundle,
-    NodeImplementation, PinnedArtifact, Release, ReleaseId, Source, SourceId, SourceKind,
+    CanonicalJson, CatalogHead, CatalogIdentityError, DefinitionHash, ExecutionBundleIdentity,
+    InterfaceBundle, NodeImplementation, PinnedArtifact, Release, ReleaseId, Source, SourceId,
+    SourceKind,
 };
 use wamn_flow::Flow;
-use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{
+    CapabilityClass, ConnectionRequirement, RecoveryClass, ResolvedNodeInterface, ResolvedPurity,
+};
 
 fn request_flow() -> Flow {
     Flow::from_json(
@@ -28,12 +31,33 @@ fn request_flow() -> Flow {
 }
 
 fn interface() -> ResolvedNodeInterface {
-    ResolvedNodeInterface {
-        node_type: "custom-node".to_string(),
-        output_ports: vec!["main".to_string()],
-        purity: ResolvedPurity::Effectful,
-        recovery_class: RecoveryClass::NeverReplay,
-    }
+    resolved_interface(
+        "custom-node",
+        vec!["main".to_string()],
+        ResolvedPurity::Effectful,
+        RecoveryClass::NeverReplay,
+    )
+}
+
+fn resolved_interface(
+    node_type: &str,
+    output_ports: Vec<String>,
+    purity: ResolvedPurity,
+    recovery_class: RecoveryClass,
+) -> ResolvedNodeInterface {
+    ResolvedNodeInterface::new(
+        node_type,
+        "wamn:node@0.1.0",
+        output_ports,
+        if purity == ResolvedPurity::Pure {
+            vec![CapabilityClass::Pure]
+        } else {
+            vec![CapabilityClass::Http]
+        },
+        Vec::new(),
+        purity,
+        recovery_class,
+    )
 }
 
 fn supplied(digit: char) -> NodeImplementation {
@@ -154,9 +178,75 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
 
     // Golden bytes kill removal or reordering of any domain-separated frame.
     assert_eq!(
-        baseline_hash, "sha256:7ffb85fc00483d38f78c09969dd26da8a07a5b43842df2040f28f843a0037f7c",
+        baseline_hash, "sha256:dab341e733e7f0cc25cabe40a5832794f52bb9c409fb04c9471ea071f2c0d940",
         "artifact frame sequence changed"
     );
+}
+
+#[test]
+fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
+    let baseline_implementation = supplied('1');
+    let baseline_artifact = Artifact::new(
+        "tenant-a",
+        &request_flow(),
+        vec![baseline_implementation.clone()],
+    )
+    .unwrap();
+    let baseline_bundle = ExecutionBundleIdentity::new(
+        "runner@1",
+        std::slice::from_ref(&baseline_implementation),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        baseline_implementation.contract().recovery_class(),
+        RecoveryClass::NeverReplay
+    );
+
+    let mut mutations = Vec::new();
+    let mut contract_version = interface();
+    contract_version.contract_version = "2".to_string();
+    mutations.push(("contract-version", contract_version));
+    let mut strict_interface = interface();
+    strict_interface.interface_contract = "wamn:node@0.2.0".to_string();
+    mutations.push(("interface-contract", strict_interface));
+    let mut capabilities = interface();
+    capabilities.capability_classes = vec![CapabilityClass::Postgres];
+    mutations.push(("capability-class", capabilities));
+    let mut recovery = interface();
+    recovery.recovery_class = RecoveryClass::IdempotentWithKey;
+    mutations.push(("recovery", recovery));
+    let mut connection = interface();
+    connection.connection_requirements = vec![ConnectionRequirement {
+        requirement_type: "http".to_string(),
+        contract: "wamn:connection/http@0.1.0".to_string(),
+    }];
+    mutations.push(("connection-requirement", connection));
+
+    for (name, interface) in mutations {
+        let implementation =
+            NodeImplementation::supplied(interface, format!("sha256:{}", "1".repeat(64))).unwrap();
+        let artifact =
+            Artifact::new("tenant-a", &request_flow(), vec![implementation.clone()]).unwrap();
+        let bundle =
+            ExecutionBundleIdentity::new("runner@1", std::slice::from_ref(&implementation), &[])
+                .unwrap();
+        assert_ne!(
+            baseline_artifact.identity().artifact_hash(),
+            artifact.identity().artifact_hash(),
+            "{name} did not invalidate artifact identity"
+        );
+        assert_ne!(
+            baseline_bundle.hash(),
+            bundle.hash(),
+            "{name} did not invalidate execution-bundle identity"
+        );
+    }
+
+    let changed_executable = supplied('2');
+    let changed_bundle =
+        ExecutionBundleIdentity::new("runner@1", &[changed_executable], &[]).unwrap();
+    assert_ne!(baseline_bundle.hash(), changed_bundle.hash());
 }
 
 #[test]
@@ -165,7 +255,7 @@ fn interface_bundle_round_trips_exact_canonical_bytes_and_typed_recovery() {
     let canonical = std::str::from_utf8(bundle.canonical_bytes()).unwrap();
     assert_eq!(
         canonical,
-        r#"[{"node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"}]"#
+        r#"[{"executable":{"kind":"platform","revision":"wamn-standard-nodes@0.1.0"},"interface":{"capability-classes":["http"],"connection-requirements":[],"contract-version":"1","interface-contract":"wamn:node@0.1.0","node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"}}]"#
     );
     assert!(bundle.hash().starts_with("sha256:"));
     assert_eq!(
@@ -195,12 +285,12 @@ fn interface_bundle_refuses_shape_canonicality_hash_and_order_mutations() {
     }
 
     let reversed = InterfaceBundle::new(vec![
-        ResolvedNodeInterface {
-            node_type: "z-node".into(),
-            output_ports: vec!["main".into()],
-            purity: ResolvedPurity::Effectful,
-            recovery_class: RecoveryClass::NeverReplay,
-        },
+        resolved_interface(
+            "z-node",
+            vec!["main".into()],
+            ResolvedPurity::Effectful,
+            RecoveryClass::NeverReplay,
+        ),
         interface(),
     ]);
     assert!(matches!(
@@ -327,6 +417,47 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
 }
 
 #[test]
+fn pinned_artifact_verifies_and_projects_the_legacy_persisted_shape() {
+    const LEGACY_BUNDLE: &str = r#"[{"node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"}]"#;
+    const LEGACY_BUNDLE_HASH: &str =
+        "sha256:6dedf8035e4ed1bb053b9701f5b5a9620e340111fcba07e71bcb3a8897a03201";
+    const LEGACY_COMPONENTS: &str = r#"[{"interface":{"node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"},"component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}]"#;
+    const LEGACY_ARTIFACT_HASH: &str =
+        "sha256:7ffb85fc00483d38f78c09969dd26da8a07a5b43842df2040f28f843a0037f7c";
+
+    let flow = request_flow();
+    let graph = flow.to_json();
+    let graph_hash = Artifact::new("tenant-a", &flow, vec![supplied('1')])
+        .unwrap()
+        .graph_hash()
+        .to_string();
+    let pinned = PinnedArtifact::from_storage(
+        "tenant-a",
+        &flow.flow_id,
+        flow.version,
+        &graph,
+        &graph_hash,
+        LEGACY_ARTIFACT_HASH,
+        LEGACY_BUNDLE,
+        LEGACY_BUNDLE_HASH,
+        LEGACY_COMPONENTS,
+    )
+    .expect("a pre-contract-version persisted artifact remains recoverable");
+
+    let contract = pinned
+        .interface_bundle()
+        .contract("custom-node")
+        .expect("legacy interface projects into a runtime contract");
+    assert_eq!(contract.interface.contract_version, "legacy-v0");
+    assert_eq!(contract.recovery_class(), RecoveryClass::NeverReplay);
+    assert!(matches!(
+        contract.executable,
+        wamn_node_manifest::ExecutableIdentity::Component { .. }
+    ));
+    assert_eq!(pinned.interface_bundle().hash(), LEGACY_BUNDLE_HASH);
+}
+
+#[test]
 fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     let baseline_artifact = artifact();
     let baseline_sources = vec![
@@ -432,7 +563,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:6a6fe2a9a01897295cafa3e3c6e431a013c35c8d09278e2a5f11b6c0c4d3dd5d",
+        baseline_hash, "sha256:e64b7840deb81287f1d2268f350fd9c75082d98d535ca7f41b97adfb453f93cc",
         "definition frame sequence changed"
     );
 }
@@ -535,12 +666,12 @@ fn noncanonical_interface_and_member_reordering_is_rejected() {
             to_port: None,
         },
     ];
-    let z_interface = ResolvedNodeInterface {
-        node_type: "z-node".to_string(),
-        output_ports: vec!["main".to_string()],
-        purity: ResolvedPurity::Effectful,
-        recovery_class: RecoveryClass::NeverReplay,
-    };
+    let z_interface = resolved_interface(
+        "z-node",
+        vec!["main".to_string()],
+        ResolvedPurity::Effectful,
+        RecoveryClass::NeverReplay,
+    );
     let reordered = Artifact::new(
         "tenant-a",
         &flow,

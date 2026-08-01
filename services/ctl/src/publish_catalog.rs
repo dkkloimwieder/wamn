@@ -1310,7 +1310,10 @@ fn prepare_flow_artifact(
     graph_json: &str,
     supplied: &BTreeMap<String, wamn_catalog::NodeImplementation>,
 ) -> anyhow::Result<PreparedFlowArtifact> {
-    use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+    use wamn_node_manifest::{
+        CapabilityClass, ConnectionRequirement, RecoveryClass, ResolvedNodeInterface,
+        ResolvedPurity,
+    };
 
     let flow =
         wamn_flow::Flow::from_json(graph_json).map_err(|e| anyhow::anyhow!("flow parse: {e}"))?;
@@ -1332,21 +1335,53 @@ fn prepare_flow_artifact(
         };
         let replay_safe =
             wamn_standard_nodes::is_replay_safe(node_type).expect("standard node has semantics");
+        let required = wamn_standard_nodes::required_capabilities(node_type)
+            .expect("standard node has a capability descriptor");
+        let mut capability_classes = required
+            .iter()
+            .map(|capability| match capability {
+                wamn_standard_nodes::Capability::HttpEgress => CapabilityClass::Http,
+                wamn_standard_nodes::Capability::Postgres
+                | wamn_standard_nodes::Capability::RawSql => CapabilityClass::Postgres,
+            })
+            .collect::<Vec<_>>();
+        capability_classes.sort();
+        capability_classes.dedup();
+        if capability_classes.is_empty() {
+            capability_classes.push(CapabilityClass::Pure);
+        }
+        let connection_requirements = capability_classes
+            .iter()
+            .filter_map(|capability| match capability {
+                CapabilityClass::Pure => None,
+                CapabilityClass::Http => Some(ConnectionRequirement {
+                    requirement_type: "http".to_string(),
+                    contract: "wamn:connection/http@0.1.0".to_string(),
+                }),
+                CapabilityClass::Postgres => Some(ConnectionRequirement {
+                    requirement_type: "postgres".to_string(),
+                    contract: "wamn:connection/postgres@0.1.0".to_string(),
+                }),
+            })
+            .collect();
         implementations.push(wamn_catalog::NodeImplementation::platform(
-            ResolvedNodeInterface {
-                node_type: node_type.to_string(),
-                output_ports: ports.iter().map(|port| (*port).to_string()).collect(),
-                purity: if replay_safe {
+            ResolvedNodeInterface::new(
+                node_type,
+                "wamn:node@0.1.0",
+                ports.iter().map(|port| (*port).to_string()).collect(),
+                capability_classes,
+                connection_requirements,
+                if replay_safe {
                     ResolvedPurity::Pure
                 } else {
                     ResolvedPurity::Effectful
                 },
-                recovery_class: if replay_safe {
+                if replay_safe {
                     RecoveryClass::Replay
                 } else {
                     RecoveryClass::NeverReplay
                 },
-            },
+            ),
         ));
     }
     let supplied_node_types = implementations
@@ -1842,6 +1877,12 @@ mod tests {
         assert_eq!(prepared.artifact.interfaces().len(), 1);
         assert_eq!(prepared.artifact.interfaces()[0].node_type, "transform");
         assert_eq!(prepared.artifact.interfaces()[0].output_ports, ["main"]);
+        let contract = &prepared.artifact.interface_bundle().contracts()[0];
+        assert_eq!(contract.interface.interface_contract, "wamn:node@0.1.0");
+        assert!(matches!(
+            contract.executable,
+            wamn_node_manifest::ExecutableIdentity::Platform { .. }
+        ));
     }
 
     #[test]
@@ -1870,10 +1911,25 @@ mod tests {
             BTreeSet::from(["normalize-receipt".to_string()])
         );
         assert_eq!(
-            prepared.artifact.supplied_components()[0].component_digest,
+            match &prepared.artifact.supplied_components()[0]
+                .contract
+                .executable
+            {
+                wamn_node_manifest::ExecutableIdentity::Component { digest } => digest.clone(),
+                wamn_node_manifest::ExecutableIdentity::Platform { .. } => {
+                    panic!("custom node resolved to a platform executable")
+                }
+            },
             component_digest(b"component")
         );
-        let interface = &prepared.artifact.supplied_components()[0].interface;
+        let interface = &prepared.artifact.supplied_components()[0]
+            .contract
+            .interface;
+        assert_eq!(
+            &prepared.artifact.supplied_components()[0].contract,
+            &prepared.artifact.interface_bundle().contracts()[0],
+            "custom resolution must use the persisted canonical contract"
+        );
         assert_eq!(interface.node_type, "normalize-receipt");
         assert_eq!(interface.output_ports, ["main"]);
         assert_eq!(interface.purity, wamn_node_manifest::ResolvedPurity::Pure);
@@ -1895,7 +1951,9 @@ mod tests {
         let supplied = load_supplied_components(&[descriptor]).unwrap();
         let graph = custom_graph("legacy-node");
         let prepared = prepare_flow_artifact("tenant", &graph, &supplied).unwrap();
-        let interface = &prepared.artifact.supplied_components()[0].interface;
+        let interface = &prepared.artifact.supplied_components()[0]
+            .contract
+            .interface;
         assert_eq!(
             interface.purity,
             wamn_node_manifest::ResolvedPurity::Effectful

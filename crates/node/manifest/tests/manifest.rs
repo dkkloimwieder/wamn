@@ -109,8 +109,8 @@ fn artifact_identity_pins_interface_and_component_digest() {
     );
     assert!(
         a.identity_bytes()
-            .windows(b"component-digest".len())
-            .any(|window| { window == b"component-digest" })
+            .windows(b"executable".len())
+            .any(|window| { window == b"executable" })
     );
 }
 

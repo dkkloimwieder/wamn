@@ -11,7 +11,9 @@ use wamn_catalog::{
     NodeImplementation, Release, ReleaseId, Source, SourceId, SourceKind,
 };
 use wamn_flow::{EntryKind, Flow, canonical_json_sha256};
-use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{
+    CapabilityClass, ExecutableIdentity, RecoveryClass, ResolvedNodeInterface, ResolvedPurity,
+};
 use wamn_run_state::attempt::{AttemptStartResult, RecoveryClass as AttemptRecoveryClass};
 use wamn_run_state::child::{ChildCreateResult, create_or_recover_child_sql};
 use wamn_schema_control::exposure::{ExposureRelease, FlowExposure, resolve_exposure};
@@ -53,15 +55,18 @@ fn component_digest(bytes: &[u8]) -> String {
 }
 
 fn interface(purity: ResolvedPurity) -> ResolvedNodeInterface {
-    ResolvedNodeInterface {
-        node_type: "disposition-recommendation".to_string(),
-        output_ports: vec!["main".to_string()],
+    ResolvedNodeInterface::new(
+        "disposition-recommendation",
+        "wamn:node@0.1.0",
+        vec!["main".to_string()],
+        vec![CapabilityClass::Pure],
+        Vec::new(),
         purity,
-        recovery_class: match purity {
+        match purity {
             ResolvedPurity::Pure => RecoveryClass::Replay,
             ResolvedPurity::Effectful => RecoveryClass::NeverReplay,
         },
-    }
+    )
 }
 
 fn implementation(digest: &str, purity: ResolvedPurity) -> anyhow::Result<NodeImplementation> {
@@ -116,11 +121,11 @@ fn published_release(
     );
     let component = &artifact.supplied_components()[0];
     ensure!(
-        component.interface.node_type == "disposition-recommendation"
-            && component.interface.output_ports == ["main"]
-            && component.interface.purity == ResolvedPurity::Pure
-            && component.interface.recovery_class == RecoveryClass::Replay
-            && component.component_digest == digest,
+        component.contract.interface.node_type == "disposition-recommendation"
+            && component.contract.interface.output_ports == ["main"]
+            && component.contract.interface.purity == ResolvedPurity::Pure
+            && component.contract.interface.recovery_class == RecoveryClass::Replay
+            && matches!(&component.contract.executable, ExecutableIdentity::Component { digest: pinned } if pinned == digest),
         "F2 resolved component contract drift"
     );
 
@@ -320,6 +325,7 @@ fn prove_scenarios(published: &PublishedRelease) -> anyhow::Result<()> {
     );
     ensure!(
         published.artifact.supplied_components()[0]
+            .contract
             .interface
             .recovery_class
             == RecoveryClass::Replay,
@@ -383,7 +389,10 @@ pub mod tests {
             effectful.identity().artifact_hash()
         );
         assert_eq!(
-            effectful.supplied_components()[0].interface.recovery_class,
+            effectful.supplied_components()[0]
+                .contract
+                .interface
+                .recovery_class,
             RecoveryClass::NeverReplay
         );
         assert_eq!(AttemptRecoveryClass::NeverReplay.as_sql(), "never-replay");

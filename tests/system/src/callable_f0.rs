@@ -8,7 +8,7 @@ use wamn_catalog::{
     NodeImplementation, Release, ReleaseId, Source, SourceId, SourceKind,
 };
 use wamn_flow::{EntryKind, Flow, ResolvedInterfaces, canonical_json_sha256};
-use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{CapabilityClass, RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
 use wamn_schema_control::exposure::{ExposureRelease, FlowExposure, resolve_exposure};
 
 const FLOW_JSON: &str = include_str!("../../../deploy/poc/f0-flow.json");
@@ -32,12 +32,15 @@ struct PublishedRelease {
 }
 
 fn transform_interface() -> ResolvedNodeInterface {
-    ResolvedNodeInterface {
-        node_type: "transform".to_string(),
-        output_ports: vec!["main".to_string()],
-        purity: ResolvedPurity::Pure,
-        recovery_class: RecoveryClass::Replay,
-    }
+    ResolvedNodeInterface::new(
+        "transform",
+        "wamn:node@0.1.0",
+        vec!["main".to_string()],
+        vec![CapabilityClass::Pure],
+        Vec::new(),
+        ResolvedPurity::Pure,
+        RecoveryClass::Replay,
+    )
 }
 
 fn published_release(flow_json: &str, exposure_json: &str) -> anyhow::Result<PublishedRelease> {
