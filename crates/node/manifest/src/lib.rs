@@ -332,6 +332,37 @@ impl PortableConnectionRequirement {
     }
 }
 
+/// A portable recovery claim implemented by an executable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExecutableRecoveryClaim {
+    StableKeyDedupV1,
+}
+
+/// One connection recovery mode implemented by an executable.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    tag = "recovery-class",
+    deny_unknown_fields
+)]
+pub enum ExecutableConnectionRecoveryMode {
+    NeverReplay,
+    IdempotentWithKey {
+        claim: ExecutableRecoveryClaim,
+        key_propagation: IdempotencyKeyInjection,
+    },
+}
+
+/// Environment-independent recovery support for one exact connection contract.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ConnectionRecoverySupport {
+    pub descriptor: ConnectionTypeDescriptor,
+    pub supported_modes: Vec<ExecutableConnectionRecoveryMode>,
+}
+
 /// A publish-time node interface pin.
 ///
 /// Output ports are sorted because they are a set for graph validation and
@@ -396,6 +427,8 @@ pub enum ExecutableIdentity {
 pub struct ResolvedNodeContract {
     pub interface: ResolvedNodeInterface,
     pub executable: ExecutableIdentity,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connection_recovery_support: Vec<ConnectionRecoverySupport>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub portable_connections: Vec<PortableConnectionRequirement>,
 }
@@ -776,6 +809,7 @@ impl NodeManifest {
                 executable: ExecutableIdentity::Component {
                     digest: component_digest,
                 },
+                connection_recovery_support: Vec::new(),
                 portable_connections: Vec::new(),
             },
         })

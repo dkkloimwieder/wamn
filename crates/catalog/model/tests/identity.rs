@@ -7,7 +7,8 @@ use wamn_catalog::{
 };
 use wamn_flow::Flow;
 use wamn_node_manifest::{
-    CapabilityClass, ConnectionRequirement, RecoveryClass, ResolvedNodeInterface, ResolvedPurity,
+    CapabilityClass, ConnectionRecoverySupport, ConnectionRequirement, ConnectionTypeDescriptor,
+    ExecutableConnectionRecoveryMode, RecoveryClass, ResolvedNodeInterface, ResolvedPurity,
 };
 
 fn request_flow() -> Flow {
@@ -251,8 +252,16 @@ fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
     mutations.push(("connection-requirement", connection));
 
     for (name, interface) in mutations {
-        let implementation =
+        let mut implementation =
             NodeImplementation::supplied(interface, format!("sha256:{}", "1".repeat(64))).unwrap();
+        if name == "connection-requirement" {
+            implementation = implementation
+                .with_connection_recovery_support(vec![ConnectionRecoverySupport {
+                    descriptor: ConnectionTypeDescriptor::http_v1(),
+                    supported_modes: vec![ExecutableConnectionRecoveryMode::NeverReplay],
+                }])
+                .unwrap();
+        }
         let artifact =
             Artifact::new("tenant-a", &request_flow(), vec![implementation.clone()]).unwrap();
         let bundle = execution_bundle(implementation);
