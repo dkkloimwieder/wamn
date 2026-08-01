@@ -5,9 +5,10 @@ use wamn_catalog::{
 use wamn_flow::Flow;
 use wamn_node_manifest::{
     CapabilityClass, ConnectionRecoverySupport, ConnectionRequirement, ConnectionTypeDescriptor,
-    ExecutableConnectionRecoveryMode, ExecutableRecoveryClaim, IdempotencyKeyInjection,
-    PortableConnectionRequirement, RecoveryClass, ResolvedNodeContract, ResolvedNodeInterface,
-    ResolvedPurity,
+    ExecutableConnectionRecoveryMode, ExecutableRecoveryClaim, ExecutableRecoveryContract,
+    IdempotencyKeyInjection, OccurrenceRecoverySelection, PortableConnectionRequirement,
+    PortableRecoveryClaim, RecoveryClass, ResolvedComponent, ResolvedNodeContract,
+    ResolvedNodeInterface, ResolvedPurity,
 };
 
 fn digest(digit: char) -> String {
@@ -43,11 +44,34 @@ fn implementation(
     let interface = http_interface(contract);
     let support = full_recovery_support(descriptor.clone());
     NodeImplementation::supplied(interface, digest('1'))?
+        .with_executable_recovery(ExecutableRecoveryContract::effectful(true))?
         .with_connection_recovery_support(vec![support])?
         .with_portable_connections(vec![PortableConnectionRequirement::stable_key_dedup_v1(
             descriptor,
             minimum_retention_ms,
         )])
+}
+
+fn repeated_flow() -> Flow {
+    Flow::from_json(
+        r#"{
+          "schema-version":"0.1",
+          "flow-id":"repeated-connection-identity",
+          "version":1,
+          "nodes":[
+            {"id":"request","type":"request","config":{"input-schema":true}},
+            {"id":"call-b","type":"http-node"},
+            {"id":"call-a","type":"http-node"},
+            {"id":"response","type":"respond","config":{"status":200}}
+          ],
+          "edges":[
+            {"from":"request","to":"call-a"},
+            {"from":"call-a","to":"call-b"},
+            {"from":"call-b","to":"response"}
+          ]
+        }"#,
+    )
+    .expect("fixture flow parses")
 }
 
 fn http_interface(contract: &str) -> ResolvedNodeInterface {
@@ -403,4 +427,150 @@ fn empty_portable_model_preserves_the_existing_resolved_contract_shape() {
             .windows(b"connection-recovery-support".len())
             .any(|window| window == b"connection-recovery-support")
     );
+}
+
+#[test]
+fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types() {
+    let implementation = implementation("wamn:connection/http@0.1.0", 86_400_000).unwrap();
+    let portable = implementation.portable_connections()[0].clone();
+    let selections = vec![
+        OccurrenceRecoverySelection {
+            selection_version: "1".to_string(),
+            node_id: "call-a".to_string(),
+            node_type: "http-node".to_string(),
+            recovery_class: RecoveryClass::IdempotentWithKey,
+            portable_connection: Some(portable),
+        },
+        OccurrenceRecoverySelection {
+            selection_version: "1".to_string(),
+            node_id: "call-b".to_string(),
+            node_type: "http-node".to_string(),
+            recovery_class: RecoveryClass::NeverReplay,
+            portable_connection: None,
+        },
+    ];
+    let selected = Artifact::new_with_recovery_selections(
+        "tenant-a",
+        &repeated_flow(),
+        vec![implementation.clone()],
+        selections.clone(),
+    )
+    .unwrap();
+    let conservative =
+        Artifact::new("tenant-a", &repeated_flow(), vec![implementation.clone()]).unwrap();
+
+    assert_eq!(selected.occurrence_recovery(), selections);
+    assert_ne!(
+        selected.identity().artifact_hash(),
+        conservative.identity().artifact_hash()
+    );
+    assert_eq!(
+        selected.identity().artifact_hash().as_str(),
+        "sha256:449286a4ac2b17aa3a5a603cbdcc12f08afb9d5f9b4f908fab9d5edabe8dccf3",
+        "occurrence recovery frame sequence changed"
+    );
+
+    let mut claim_mutant = selections;
+    let Some(requirement) = claim_mutant[0].portable_connection.as_mut() else {
+        panic!("fixture carries a portable claim");
+    };
+    let PortableRecoveryClaim::StableKeyDedupV1 {
+        minimum_retention_ms,
+    } = &mut requirement.recovery
+    else {
+        panic!("fixture carries stable-key recovery");
+    };
+    *minimum_retention_ms += 1;
+    assert!(
+        Artifact::new_with_recovery_selections(
+            "tenant-a",
+            &repeated_flow(),
+            vec![implementation],
+            claim_mutant,
+        )
+        .is_err(),
+        "an unpinned claim mutation must fail closed"
+    );
+}
+
+#[test]
+fn occurrence_selection_rejects_missing_reordered_unknown_and_weaker_inputs() {
+    let implementation = implementation("wamn:connection/http@0.1.0", 1).unwrap();
+    let baseline = Artifact::new("tenant-a", &repeated_flow(), vec![implementation.clone()])
+        .unwrap()
+        .occurrence_recovery()
+        .to_vec();
+
+    assert!(
+        Artifact::new_with_recovery_selections(
+            "tenant-a",
+            &repeated_flow(),
+            vec![implementation.clone()],
+            baseline[..1].to_vec(),
+        )
+        .is_err()
+    );
+    let mut reordered = baseline.clone();
+    reordered.reverse();
+    assert!(
+        Artifact::new_with_recovery_selections(
+            "tenant-a",
+            &repeated_flow(),
+            vec![implementation.clone()],
+            reordered,
+        )
+        .is_err()
+    );
+    let mut unknown = baseline;
+    unknown[0].selection_version = "99".to_string();
+    assert!(
+        Artifact::new_with_recovery_selections(
+            "tenant-a",
+            &repeated_flow(),
+            vec![implementation],
+            unknown,
+        )
+        .is_err()
+    );
+
+    let pure_interface = ResolvedNodeInterface::new(
+        "http-node",
+        "wamn:node@0.1.0",
+        vec!["main".to_string()],
+        vec![CapabilityClass::Pure],
+        Vec::new(),
+        ResolvedPurity::Pure,
+        RecoveryClass::Replay,
+    );
+    let pure = NodeImplementation::supplied(pure_interface, digest('2')).unwrap();
+    let weaker = vec![OccurrenceRecoverySelection {
+        selection_version: "1".to_string(),
+        node_id: "call".to_string(),
+        node_type: "http-node".to_string(),
+        recovery_class: RecoveryClass::NeverReplay,
+        portable_connection: None,
+    }];
+    assert!(
+        Artifact::new_with_recovery_selections("tenant-a", &flow(), vec![pure], weaker).is_err(),
+        "a selection cannot weaken the executable's conservative default"
+    );
+}
+
+#[test]
+fn recovery_contract_versions_and_compatibility_mutations_fail_closed() {
+    let implementation = implementation("wamn:connection/http@0.1.0", 1).unwrap();
+    let mut contract = implementation.contract().clone();
+    contract.interface.recovery_class = RecoveryClass::IdempotentWithKey;
+    let mismatch = NodeImplementation::from_resolved_component(ResolvedComponent { contract })
+        .expect("component identity remains structurally valid");
+    assert!(Artifact::new("tenant-a", &flow(), vec![mismatch]).is_err());
+
+    let mut interface = http_interface("wamn:connection/http@0.1.0");
+    interface.contract_version = "99".to_string();
+    let unknown = NodeImplementation::supplied(interface, digest('1')).unwrap();
+    assert!(Artifact::new("tenant-a", &flow(), vec![unknown]).is_err());
+
+    let mut recovery = ExecutableRecoveryContract::effectful(true);
+    recovery.contract_version = "99".to_string();
+    assert!(implementation.with_executable_recovery(recovery).is_err());
 }

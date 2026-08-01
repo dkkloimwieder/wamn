@@ -25,7 +25,13 @@ pub const ANNOTATION_KEY: &str = "wamn.node.manifest";
 pub const SCHEMA_VERSION: &str = "0.1";
 
 /// Shape version for the canonical resolved-node contract.
-pub const RESOLVED_CONTRACT_VERSION: &str = "1";
+pub const RESOLVED_CONTRACT_VERSION: &str = "2";
+
+/// Shape version for executable recovery semantics.
+pub const EXECUTABLE_RECOVERY_CONTRACT_VERSION: &str = "1";
+
+/// Shape version for one graph-occurrence recovery selection.
+pub const OCCURRENCE_RECOVERY_SELECTION_VERSION: &str = "1";
 
 /// Shape version for portable connection-type descriptors.
 pub const CONNECTION_DESCRIPTOR_VERSION: &str = "1";
@@ -75,6 +81,52 @@ pub enum RecoveryClass {
     Replay,
     IdempotentWithKey,
     NeverReplay,
+}
+
+/// Environment-independent recovery semantics implemented by executable bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ExecutableRecoveryContract {
+    pub contract_version: String,
+    pub purity: ResolvedPurity,
+    pub conservative_class: RecoveryClass,
+    pub supported_classes: Vec<RecoveryClass>,
+}
+
+impl ExecutableRecoveryContract {
+    /// Pure execution has one safe, deterministic recovery behavior.
+    pub fn pure() -> Self {
+        Self {
+            contract_version: EXECUTABLE_RECOVERY_CONTRACT_VERSION.to_string(),
+            purity: ResolvedPurity::Pure,
+            conservative_class: RecoveryClass::Replay,
+            supported_classes: vec![RecoveryClass::Replay],
+        }
+    }
+
+    /// Effectful execution defaults closed and may additionally support keyed recovery.
+    pub fn effectful(supports_idempotent_with_key: bool) -> Self {
+        let mut supported_classes = vec![RecoveryClass::NeverReplay];
+        if supports_idempotent_with_key {
+            supported_classes.insert(0, RecoveryClass::IdempotentWithKey);
+        }
+        Self {
+            contract_version: EXECUTABLE_RECOVERY_CONTRACT_VERSION.to_string(),
+            purity: ResolvedPurity::Effectful,
+            conservative_class: RecoveryClass::NeverReplay,
+            supported_classes,
+        }
+    }
+
+    /// Project the pre-v2 single-class representation without strengthening it.
+    pub fn historical(purity: ResolvedPurity, recovery_class: RecoveryClass) -> Self {
+        Self {
+            contract_version: EXECUTABLE_RECOVERY_CONTRACT_VERSION.to_string(),
+            purity,
+            conservative_class: recovery_class,
+            supported_classes: vec![recovery_class],
+        }
+    }
 }
 
 /// Structural capability class used to specialize execution bundles.
@@ -427,6 +479,10 @@ pub enum ExecutableIdentity {
 pub struct ResolvedNodeContract {
     pub interface: ResolvedNodeInterface,
     pub executable: ExecutableIdentity,
+    /// Authoritative recovery semantics for v2 resolutions. Absence is accepted only for
+    /// historical pre-v2 bytes and is projected without strengthening.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable_recovery: Option<ExecutableRecoveryContract>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connection_recovery_support: Vec<ConnectionRecoverySupport>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -434,9 +490,23 @@ pub struct ResolvedNodeContract {
 }
 
 impl ResolvedNodeContract {
-    /// The replay classifier consumes the pinned resolution, never a node-type table.
-    pub const fn recovery_class(&self) -> RecoveryClass {
-        self.interface.recovery_class
+    /// The conservative recovery class pinned by this resolution.
+    pub fn recovery_class(&self) -> RecoveryClass {
+        self.executable_recovery
+            .as_ref()
+            .map_or(self.interface.recovery_class, |contract| {
+                contract.conservative_class
+            })
+    }
+
+    /// Recovery semantics, projecting historical v1 bytes without widening support.
+    pub fn recovery_contract(&self) -> ExecutableRecoveryContract {
+        self.executable_recovery.clone().unwrap_or_else(|| {
+            ExecutableRecoveryContract::historical(
+                self.interface.purity,
+                self.interface.recovery_class,
+            )
+        })
     }
 
     /// Stable identity bytes for artifact and execution-bundle keys.
@@ -446,6 +516,35 @@ impl ResolvedNodeContract {
 
     pub fn identity_hash(&self) -> String {
         sha256_identity(&self.identity_bytes())
+    }
+}
+
+/// Recovery policy selected for one exact occurrence in a flow graph.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct OccurrenceRecoverySelection {
+    pub selection_version: String,
+    pub node_id: String,
+    pub node_type: String,
+    pub recovery_class: RecoveryClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_connection: Option<PortableConnectionRequirement>,
+}
+
+impl OccurrenceRecoverySelection {
+    /// Select an executable's conservative class for one graph occurrence.
+    pub fn conservative(
+        node_id: impl Into<String>,
+        node_type: impl Into<String>,
+        contract: &ResolvedNodeContract,
+    ) -> Self {
+        Self {
+            selection_version: OCCURRENCE_RECOVERY_SELECTION_VERSION.to_string(),
+            node_id: node_id.into(),
+            node_type: node_type.into(),
+            recovery_class: contract.recovery_class(),
+            portable_connection: None,
+        }
     }
 }
 
@@ -809,6 +908,11 @@ impl NodeManifest {
                 executable: ExecutableIdentity::Component {
                     digest: component_digest,
                 },
+                executable_recovery: Some(if self.purity == Some(Purity::Pure) {
+                    ExecutableRecoveryContract::pure()
+                } else {
+                    ExecutableRecoveryContract::effectful(false)
+                }),
                 connection_recovery_support: Vec::new(),
                 portable_connections: Vec::new(),
             },

@@ -211,7 +211,7 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
 
     // Golden bytes kill removal or reordering of any domain-separated frame.
     assert_eq!(
-        baseline_hash, "sha256:dab341e733e7f0cc25cabe40a5832794f52bb9c409fb04c9471ea071f2c0d940",
+        baseline_hash, "sha256:67383b709b6870d027c1674a1b14b904122cd3785484145d7c782fa3a718e29a",
         "artifact frame sequence changed"
     );
 }
@@ -233,8 +233,14 @@ fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
 
     let mut mutations = Vec::new();
     let mut contract_version = interface();
-    contract_version.contract_version = "2".to_string();
-    mutations.push(("contract-version", contract_version));
+    contract_version.contract_version = "99".to_string();
+    let unknown_version =
+        NodeImplementation::supplied(contract_version, format!("sha256:{}", "1".repeat(64)))
+            .unwrap();
+    assert!(
+        Artifact::new("tenant-a", &request_flow(), vec![unknown_version]).is_err(),
+        "unknown resolved-contract versions must fail closed"
+    );
     let mut strict_interface = interface();
     strict_interface.interface_contract = "wamn:node@0.2.0".to_string();
     mutations.push(("interface-contract", strict_interface));
@@ -242,7 +248,8 @@ fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
     capabilities.capability_classes = vec![CapabilityClass::Postgres];
     mutations.push(("capability-class", capabilities));
     let mut recovery = interface();
-    recovery.recovery_class = RecoveryClass::IdempotentWithKey;
+    recovery.purity = ResolvedPurity::Pure;
+    recovery.recovery_class = RecoveryClass::Replay;
     mutations.push(("recovery", recovery));
     let mut connection = interface();
     connection.connection_requirements = vec![ConnectionRequirement {
@@ -310,7 +317,7 @@ fn execution_bundle_identity_pins_every_composition_input() {
     );
     let baseline_hash = baseline.hash();
     assert_eq!(
-        baseline_hash, "sha256:bd7ba335344dfeb64d2a5a33efcc923b781134da92133b237bb2929914be2350",
+        baseline_hash, "sha256:4621f8d2b53e8571739e23325d10a617531737baa766edbb7f1ed21c4a12cf9b",
         "execution-bundle frame sequence changed"
     );
 
@@ -523,7 +530,7 @@ fn interface_bundle_round_trips_exact_canonical_bytes_and_typed_recovery() {
     let canonical = std::str::from_utf8(bundle.canonical_bytes()).unwrap();
     assert_eq!(
         canonical,
-        r#"[{"executable":{"kind":"platform","revision":"wamn-standard-nodes@0.1.0"},"interface":{"capability-classes":["http"],"connection-requirements":[],"contract-version":"1","interface-contract":"wamn:node@0.1.0","node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"}}]"#
+        r#"[{"executable":{"kind":"platform","revision":"wamn-standard-nodes@0.1.0"},"executable-recovery":{"conservative-class":"never-replay","contract-version":"1","purity":"effectful","supported-classes":["never-replay"]},"interface":{"capability-classes":["http"],"connection-requirements":[],"contract-version":"2","interface-contract":"wamn:node@0.1.0","node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"}}]"#
     );
     assert!(bundle.hash().starts_with("sha256:"));
     assert_eq!(
@@ -831,7 +838,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:e64b7840deb81287f1d2268f350fd9c75082d98d535ca7f41b97adfb453f93cc",
+        baseline_hash, "sha256:eef54b2338ab183b87272cbc5b7c959f6626fd96821116794a31e6ec22862f20",
         "definition frame sequence changed"
     );
 }

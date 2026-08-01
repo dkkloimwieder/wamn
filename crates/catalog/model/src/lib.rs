@@ -13,8 +13,10 @@ use sha2::{Digest as _, Sha256};
 use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_node_manifest::{
     CONNECTION_DESCRIPTOR_VERSION, ConnectionRecoverySupport, ConnectionTypeDescriptor,
-    ExecutableConnectionRecoveryMode, ExecutableIdentity, ExecutableRecoveryClaim,
-    PORTABLE_CONNECTION_REQUIREMENT_VERSION, PortableConnectionRequirement, PortableRecoveryClaim,
+    EXECUTABLE_RECOVERY_CONTRACT_VERSION, ExecutableConnectionRecoveryMode, ExecutableIdentity,
+    ExecutableRecoveryClaim, ExecutableRecoveryContract, OCCURRENCE_RECOVERY_SELECTION_VERSION,
+    OccurrenceRecoverySelection, PORTABLE_CONNECTION_REQUIREMENT_VERSION,
+    PortableConnectionRequirement, PortableRecoveryClaim, RESOLVED_CONTRACT_VERSION,
     RecoveryClaimParameterSchema, RecoveryClaimSchema, RecoveryClass, ResolvedComponent,
     ResolvedNodeContract, ResolvedNodeInterface, ResolvedPurity,
 };
@@ -417,6 +419,7 @@ impl NodeImplementation {
     pub fn platform(interface: ResolvedNodeInterface) -> Self {
         Self {
             contract: ResolvedNodeContract {
+                executable_recovery: Some(recovery_from_interface(&interface)),
                 interface,
                 executable: ExecutableIdentity::Platform {
                     revision: "wamn-standard-nodes@0.1.0".to_string(),
@@ -435,6 +438,7 @@ impl NodeImplementation {
         validate_digest(&component_digest, "component-digest")?;
         Ok(Self {
             contract: ResolvedNodeContract {
+                executable_recovery: Some(recovery_from_interface(&interface)),
                 interface,
                 executable: ExecutableIdentity::Component {
                     digest: component_digest,
@@ -462,6 +466,18 @@ impl NodeImplementation {
 
     pub fn interface(&self) -> &ResolvedNodeInterface {
         &self.contract.interface
+    }
+
+    /// Replace the executable recovery declaration while keeping v2 compatibility fields exact.
+    pub fn with_executable_recovery(
+        mut self,
+        recovery: ExecutableRecoveryContract,
+    ) -> Result<Self, CatalogIdentityError> {
+        self.contract.interface.purity = recovery.purity;
+        self.contract.interface.recovery_class = recovery.conservative_class;
+        self.contract.executable_recovery = Some(recovery);
+        validate_executable_recovery(&self.contract)?;
+        Ok(self)
     }
 
     /// Attach executable recovery declarations for exact connection contracts.
@@ -507,6 +523,15 @@ impl NodeImplementation {
     }
 }
 
+fn recovery_from_interface(interface: &ResolvedNodeInterface) -> ExecutableRecoveryContract {
+    match interface.purity {
+        ResolvedPurity::Pure => ExecutableRecoveryContract::pure(),
+        ResolvedPurity::Effectful => ExecutableRecoveryContract::effectful(
+            interface.recovery_class == RecoveryClass::IdempotentWithKey,
+        ),
+    }
+}
+
 /// The complete immutable artifact identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -545,6 +570,7 @@ pub struct Artifact {
     graph_hash: String,
     interface_bundle: InterfaceBundle,
     supplied_components: Vec<ResolvedComponent>,
+    occurrence_recovery: Box<[OccurrenceRecoverySelection]>,
     canonical_bytes: Box<[u8]>,
 }
 
@@ -555,9 +581,21 @@ impl Artifact {
         flow: &Flow,
         implementations: Vec<NodeImplementation>,
     ) -> Result<Self, CatalogIdentityError> {
+        let occurrence_recovery = conservative_occurrence_recovery(flow, &implementations)?;
+        Self::new_with_recovery_selections(tenant_id, flow, implementations, occurrence_recovery)
+    }
+
+    /// Build an artifact with an explicit ordered recovery choice for every graph occurrence.
+    pub fn new_with_recovery_selections(
+        tenant_id: impl Into<String>,
+        flow: &Flow,
+        implementations: Vec<NodeImplementation>,
+        occurrence_recovery: Vec<OccurrenceRecoverySelection>,
+    ) -> Result<Self, CatalogIdentityError> {
         let id = ArtifactId::new(tenant_id, flow.flow_id.clone(), flow.version)?;
         validate_text(&flow.schema_version, "schema-version")?;
         validate_implementations(flow, &implementations)?;
+        validate_occurrence_recovery(flow, &implementations, &occurrence_recovery)?;
 
         let interfaces: Vec<_> = implementations
             .iter()
@@ -589,6 +627,20 @@ impl Artifact {
                 ),
             ));
         }
+        let current_resolution = implementations.iter().all(|implementation| {
+            implementation.interface().contract_version == RESOLVED_CONTRACT_VERSION
+        });
+        if current_resolution {
+            for selection in &occurrence_recovery {
+                owned.push((
+                    "occurrence-recovery",
+                    canonical_json(
+                        &serde_json::to_value(selection)
+                            .expect("occurrence recovery selection serializes"),
+                    ),
+                ));
+            }
+        }
         let supplied_components: Vec<_> = implementations
             .iter()
             .filter(|implementation| implementation.component_digest().is_some())
@@ -609,6 +661,7 @@ impl Artifact {
             graph_hash,
             interface_bundle,
             supplied_components,
+            occurrence_recovery: occurrence_recovery.into_boxed_slice(),
             canonical_bytes,
         })
     }
@@ -636,6 +689,11 @@ impl Artifact {
 
     pub fn supplied_components(&self) -> &[ResolvedComponent] {
         &self.supplied_components
+    }
+
+    /// Ordered recovery choices keyed by exact graph occurrence id.
+    pub fn occurrence_recovery(&self) -> &[OccurrenceRecoverySelection] {
+        &self.occurrence_recovery
     }
 
     pub fn canonical_bytes(&self) -> &[u8] {
@@ -1012,6 +1070,7 @@ impl InterfaceBundle {
                             executable: ExecutableIdentity::Platform {
                                 revision: LEGACY_PLATFORM_REVISION.to_string(),
                             },
+                            executable_recovery: None,
                             connection_recovery_support: Vec::new(),
                             portable_connections: Vec::new(),
                         },
@@ -1074,6 +1133,7 @@ impl InterfaceBundle {
 pub struct PinnedArtifact {
     flow: Flow,
     interface_bundle: InterfaceBundle,
+    occurrence_recovery: Box<[OccurrenceRecoverySelection]>,
 }
 
 impl PinnedArtifact {
@@ -1174,6 +1234,7 @@ impl PinnedArtifact {
         Ok(Self {
             flow,
             interface_bundle,
+            occurrence_recovery: reconstructed.occurrence_recovery.clone(),
         })
     }
 
@@ -1220,6 +1281,7 @@ impl PinnedArtifact {
                     executable: ExecutableIdentity::Component {
                         digest: component.component_digest.clone(),
                     },
+                    executable_recovery: None,
                     connection_recovery_support: Vec::new(),
                     portable_connections: Vec::new(),
                 }
@@ -1229,6 +1291,7 @@ impl PinnedArtifact {
                     executable: ExecutableIdentity::Platform {
                         revision: LEGACY_PLATFORM_REVISION.to_string(),
                     },
+                    executable_recovery: None,
                     connection_recovery_support: Vec::new(),
                     portable_connections: Vec::new(),
                 }
@@ -1281,9 +1344,12 @@ impl PinnedArtifact {
             .map(|implementation| implementation.interface().clone())
             .collect::<Vec<_>>()
             .into_boxed_slice();
+        let occurrence_recovery =
+            conservative_occurrence_recovery(&flow, &implementations)?.into_boxed_slice();
         Ok(Self {
             flow,
             interface_bundle,
+            occurrence_recovery,
         })
     }
 
@@ -1293,6 +1359,10 @@ impl PinnedArtifact {
 
     pub fn interface_bundle(&self) -> &InterfaceBundle {
         &self.interface_bundle
+    }
+
+    pub fn occurrence_recovery(&self) -> &[OccurrenceRecoverySelection] {
+        &self.occurrence_recovery
     }
 }
 
@@ -1319,6 +1389,120 @@ fn validate_interface_order(
     Ok(())
 }
 
+fn conservative_occurrence_recovery(
+    flow: &Flow,
+    implementations: &[NodeImplementation],
+) -> Result<Vec<OccurrenceRecoverySelection>, CatalogIdentityError> {
+    let mut selections = Vec::new();
+    for node in &flow.nodes {
+        if MODEL_OWNED_NODES.contains(&node.node_type.as_str()) {
+            continue;
+        }
+        let implementation = implementations
+            .iter()
+            .find(|implementation| implementation.interface().node_type == node.node_type)
+            .ok_or_else(|| CatalogIdentityError::UnresolvedInterface {
+                node_type: node.node_type.clone(),
+            })?;
+        selections.push(OccurrenceRecoverySelection::conservative(
+            node.id.clone(),
+            node.node_type.clone(),
+            implementation.contract(),
+        ));
+    }
+    selections.sort_by(|left, right| left.node_id.cmp(&right.node_id));
+    Ok(selections)
+}
+
+fn validate_occurrence_recovery(
+    flow: &Flow,
+    implementations: &[NodeImplementation],
+    selections: &[OccurrenceRecoverySelection],
+) -> Result<(), CatalogIdentityError> {
+    let mut expected = flow
+        .nodes
+        .iter()
+        .filter(|node| !MODEL_OWNED_NODES.contains(&node.node_type.as_str()))
+        .map(|node| (node.id.as_str(), node.node_type.as_str()))
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+    if selections.len() != expected.len() {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: "recovery selections must cover every non-model-owned graph occurrence"
+                .to_string(),
+        });
+    }
+    for ((expected_id, expected_type), selection) in expected.into_iter().zip(selections) {
+        if selection.selection_version != OCCURRENCE_RECOVERY_SELECTION_VERSION {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: format!(
+                    "unsupported occurrence recovery selection version {:?}",
+                    selection.selection_version
+                ),
+            });
+        }
+        if selection.node_id != expected_id || selection.node_type != expected_type {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: "recovery selections must be ordered by node id and match the graph"
+                    .to_string(),
+            });
+        }
+        let implementation = implementations
+            .iter()
+            .find(|implementation| implementation.interface().node_type == expected_type)
+            .ok_or_else(|| CatalogIdentityError::UnresolvedInterface {
+                node_type: expected_type.to_string(),
+            })?;
+        let recovery = implementation.contract().recovery_contract();
+        if !recovery
+            .supported_classes
+            .contains(&selection.recovery_class)
+            || recovery_rank(selection.recovery_class) < recovery_rank(recovery.conservative_class)
+        {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: format!(
+                    "recovery selection for occurrence {:?} weakens or exceeds executable support",
+                    selection.node_id
+                ),
+            });
+        }
+        match (&selection.recovery_class, &selection.portable_connection) {
+            (RecoveryClass::Replay, None) | (RecoveryClass::NeverReplay, None) => {}
+            (RecoveryClass::IdempotentWithKey, Some(requirement))
+                if matches!(
+                    requirement.recovery,
+                    PortableRecoveryClaim::StableKeyDedupV1 { .. }
+                ) && implementation
+                    .contract()
+                    .portable_connections
+                    .contains(requirement) => {}
+            (RecoveryClass::NeverReplay, Some(requirement))
+                if matches!(requirement.recovery, PortableRecoveryClaim::NeverReplay)
+                    && implementation
+                        .contract()
+                        .portable_connections
+                        .contains(requirement) => {}
+            _ => {
+                return Err(CatalogIdentityError::InvalidDefinition {
+                    message: format!(
+                        "recovery selection for occurrence {:?} has no exact portable claim",
+                        selection.node_id
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+const fn recovery_rank(class: RecoveryClass) -> u8 {
+    match class {
+        RecoveryClass::NeverReplay => 0,
+        RecoveryClass::IdempotentWithKey => 1,
+        RecoveryClass::Replay => 2,
+    }
+}
+
 fn validate_implementations(
     flow: &Flow,
     implementations: &[NodeImplementation],
@@ -1332,6 +1516,7 @@ fn validate_implementations(
     validate_implementation_order(implementations)?;
     for implementation in implementations {
         let interface = implementation.interface();
+        validate_executable_recovery(implementation.contract())?;
         resolved.insert(interface.node_type.clone());
     }
 
@@ -1352,6 +1537,81 @@ fn validate_implementations(
         if !required.contains(node_type.as_str()) {
             return Err(CatalogIdentityError::UnexpectedInterface { node_type });
         }
+    }
+    Ok(())
+}
+
+fn validate_executable_recovery(
+    contract: &ResolvedNodeContract,
+) -> Result<(), CatalogIdentityError> {
+    let interface = &contract.interface;
+    if interface.contract_version == RESOLVED_CONTRACT_VERSION {
+        let Some(recovery) = &contract.executable_recovery else {
+            return Err(CatalogIdentityError::InvalidInterface {
+                node_type: interface.node_type.clone(),
+                message: "resolved contract v2 omits executable recovery semantics".to_string(),
+            });
+        };
+        if recovery.contract_version != EXECUTABLE_RECOVERY_CONTRACT_VERSION {
+            return Err(CatalogIdentityError::InvalidInterface {
+                node_type: interface.node_type.clone(),
+                message: format!(
+                    "unsupported executable recovery contract version {:?}",
+                    recovery.contract_version
+                ),
+            });
+        }
+        if recovery.supported_classes.is_empty()
+            || recovery
+                .supported_classes
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            || !recovery
+                .supported_classes
+                .contains(&recovery.conservative_class)
+        {
+            return Err(CatalogIdentityError::InvalidInterface {
+                node_type: interface.node_type.clone(),
+                message: "executable recovery classes must be non-empty, sorted, unique, and contain the conservative class".to_string(),
+            });
+        }
+        let valid = match recovery.purity {
+            ResolvedPurity::Pure => {
+                recovery.conservative_class == RecoveryClass::Replay
+                    && recovery.supported_classes == [RecoveryClass::Replay]
+            }
+            ResolvedPurity::Effectful => {
+                recovery.conservative_class == RecoveryClass::NeverReplay
+                    && !recovery.supported_classes.contains(&RecoveryClass::Replay)
+            }
+        };
+        if !valid
+            || interface.purity != recovery.purity
+            || interface.recovery_class != recovery.conservative_class
+        {
+            return Err(CatalogIdentityError::InvalidInterface {
+                node_type: interface.node_type.clone(),
+                message: "executable recovery semantics are invalid or disagree with compatibility fields".to_string(),
+            });
+        }
+    } else if interface.contract_version == "1"
+        || interface.contract_version == LEGACY_RESOLVED_CONTRACT_VERSION
+    {
+        if contract.executable_recovery.is_some() {
+            return Err(CatalogIdentityError::InvalidInterface {
+                node_type: interface.node_type.clone(),
+                message: "historical resolved contracts cannot carry v2 recovery semantics"
+                    .to_string(),
+            });
+        }
+    } else {
+        return Err(CatalogIdentityError::InvalidInterface {
+            node_type: interface.node_type.clone(),
+            message: format!(
+                "unsupported resolved contract version {:?}",
+                interface.contract_version
+            ),
+        });
     }
     Ok(())
 }
