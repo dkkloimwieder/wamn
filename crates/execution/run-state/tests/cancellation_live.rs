@@ -84,9 +84,10 @@ fn cancellation_live() {
          INSERT INTO wamn_run.run_queue (tenant_id,run_id,lease_generation) \
          VALUES ('t1','live-child',1); \
          INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status,recovery_class, \
+           (tenant_id,run_id,node_id,occurrence,seq,status,selected_recovery_class, \
+            recovery_class,generation_fact_kind, \
             attempt_started_at,attempt_dispatched_at,attempt_deadline_at,attempt_input_ref) \
-         VALUES ('t1','live-attempt','effect',0,1,'started','replay', \
+         VALUES ('t1','live-attempt','effect',0,1,'started','replay','replay','not-required', \
                  now(),now(),now()+interval '1 minute','sha256:input');",
     );
 
@@ -184,9 +185,10 @@ fn cancellation_live() {
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','completion-race','worker-race',now()+interval '1 minute',7); \
          INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status,recovery_class, \
+           (tenant_id,run_id,node_id,occurrence,seq,status,selected_recovery_class, \
+            recovery_class,generation_fact_kind, \
             attempt_started_at,attempt_dispatched_at,attempt_deadline_at,attempt_input_ref) \
-         VALUES ('t1','completion-race','effect',0,1,'started','replay', \
+         VALUES ('t1','completion-race','effect',0,1,'started','replay','replay','not-required', \
                  now(),now(),now()+interval '1 minute','sha256:race');",
     );
     let request_script = format!(
@@ -347,9 +349,11 @@ fn cancellation_live() {
            ('t1','response-only',11),('t1','deadline-equal',12),('t1','run-only',13), \
            ('t1','operator-request',14),('t1','response-live-attempt',15); \
          INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status,recovery_class, \
+           (tenant_id,run_id,node_id,occurrence,seq,status,selected_recovery_class, \
+            recovery_class,generation_fact_kind, \
             attempt_started_at,attempt_dispatched_at,attempt_deadline_at,attempt_input_ref) \
-         VALUES ('t1','response-live-attempt','effect',0,1,'started','replay', \
+         VALUES ('t1','response-live-attempt','effect',0,1,'started','replay','replay', \
+                 'not-required', \
                  now(),now(),now()+interval '1 minute','sha256:response-live'); \
          INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,status,caller_outcome_kind, \

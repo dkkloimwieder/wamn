@@ -308,8 +308,14 @@ CREATE TABLE wamn_run.node_runs (
     attempt       int  NOT NULL DEFAULT 0,
     status        text NOT NULL
         CHECK (status IN ('started', 'parked', 'success', 'error')),
+    selected_recovery_class text
+        CHECK (selected_recovery_class IN ('replay', 'idempotent-with-key', 'never-replay')),
     recovery_class text
         CHECK (recovery_class IN ('replay', 'idempotent-with-key', 'never-replay')),
+    generation_fact_kind text
+        CHECK (generation_fact_kind IN ('not-required', 'attested')),
+    connection_generation text,
+    credential_generation text,
     attempt_started_at timestamptz,
     attempt_dispatched_at timestamptz,
     attempt_deadline_at timestamptz,
@@ -333,10 +339,21 @@ CREATE TABLE wamn_run.node_runs (
     started_at    timestamptz NOT NULL DEFAULT now(),
     ended_at      timestamptz,
     CHECK ((status <> 'started') OR
-           (recovery_class IS NOT NULL
+           (selected_recovery_class IS NOT NULL
+            AND recovery_class IS NOT NULL
+            AND selected_recovery_class = recovery_class
+            AND generation_fact_kind IS NOT NULL
             AND attempt_started_at IS NOT NULL
             AND attempt_deadline_at IS NOT NULL
             AND attempt_input_ref IS NOT NULL)),
+    CHECK ((generation_fact_kind = 'not-required'
+            AND connection_generation IS NULL
+            AND credential_generation IS NULL)
+           OR (generation_fact_kind = 'attested'
+               AND connection_generation IS NOT NULL
+               AND connection_generation <> ''
+               AND credential_generation IS NOT NULL
+               AND credential_generation <> '')),
     CHECK (attempt_deadline_at IS NULL OR attempt_started_at IS NULL
            OR attempt_started_at <= attempt_deadline_at),
     CHECK (attempt_dispatched_at IS NULL OR attempt_started_at IS NULL

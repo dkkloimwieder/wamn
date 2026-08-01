@@ -262,9 +262,11 @@ fn run_state_live() {
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','attempt-1','worker-c',now()+interval '1 minute',4); \
          INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status,recovery_class, \
+           (tenant_id,run_id,node_id,occurrence,seq,status,selected_recovery_class, \
+            recovery_class,generation_fact_kind, \
             attempt_started_at,attempt_deadline_at,attempt_input_ref,attempt_key) \
-         VALUES ('t1','attempt-1','effect',0,1,'started','never-replay', \
+         VALUES ('t1','attempt-1','effect',0,1,'started','never-replay','never-replay', \
+                 'not-required', \
                  now(),now()+interval '30 seconds','sha256:input','attempt-key');",
     );
     let complete_script = format!(
@@ -305,9 +307,10 @@ fn run_state_live() {
     );
     let rollback_script = format!(
         "{} PREPARE begin_stmt \
-           (text,text,text,bigint,text,int,int,text,text,text,bigint) AS {}; \
+           (text,text,text,bigint,text,int,int,text,text,text,text,text,text,text,bigint) AS {}; \
          EXECUTE begin_stmt('nr-rollback','nr-rollback','worker-nr',1, \
-                            'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+                            'effect',0,1,'never-replay','never-replay','not-required', \
+                            NULL,NULL,'sha256:input',NULL,30000); \
          ROLLBACK;",
         app_preamble(),
         begin_attempt
@@ -315,52 +318,68 @@ fn run_state_live() {
     success(&url, &rollback_script);
     let nr_script = format!(
         "{} PREPARE begin_stmt \
-           (text,text,text,bigint,text,int,int,text,text,text,bigint) AS {}; \
+           (text,text,text,bigint,text,int,int,text,text,text,text,text,text,text,bigint) AS {}; \
          PREPARE mark_stmt (text,text,text,bigint,text,int,bigint) AS {}; \
          CREATE TEMP TABLE rollback_recovery AS \
            EXECUTE begin_stmt('nr-rollback','nr-rollback','worker-nr',1, \
-                              'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+                              'effect',0,1,'never-replay','never-replay','not-required', \
+                              NULL,NULL,'sha256:input',NULL,30000); \
          CREATE TEMP TABLE before_first AS \
            EXECUTE begin_stmt('nr-before-send','nr-before-send','worker-nr',1, \
-                              'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+                              'effect',0,1,'never-replay','never-replay','not-required', \
+                              NULL,NULL,'sha256:input',NULL,30000); \
+         CREATE TEMP TABLE before_retarget AS \
+           EXECUTE begin_stmt('nr-before-send','nr-before-send','worker-nr',1, \
+                              'effect',0,1,'replay','replay','not-required', \
+                              NULL,NULL,'sha256:input',NULL,30000); \
          CREATE TEMP TABLE before_recovery AS \
            EXECUTE begin_stmt('nr-before-send','nr-before-send','worker-nr',1, \
-                              'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+                              'effect',0,1,'never-replay','never-replay','not-required', \
+                              NULL,NULL,'sha256:input',NULL,30000); \
          CREATE TEMP TABLE before_marked AS \
            EXECUTE mark_stmt('nr-before-send','nr-before-send','worker-nr',1, \
                              'effect',0,30000); \
          CREATE TEMP TABLE nr_first AS \
            EXECUTE begin_stmt('nr-never','nr-never','worker-nr',1, \
-                              'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+                              'effect',0,1,'never-replay','never-replay','not-required', \
+                              NULL,NULL,'sha256:input',NULL,30000); \
          CREATE TEMP TABLE nr_marked AS \
            EXECUTE mark_stmt('nr-never','nr-never','worker-nr',1,'effect',0,30000); \
          CREATE TEMP TABLE nr_recovery AS \
            EXECUTE begin_stmt('nr-never','nr-never','worker-nr',1, \
-                              'effect',0,1,'never-replay','sha256:input',NULL,30000); \
+                              'effect',0,1,'never-replay','never-replay','not-required', \
+                              NULL,NULL,'sha256:input',NULL,30000); \
          CREATE TEMP TABLE pure_first AS \
            EXECUTE begin_stmt('nr-replay','nr-replay','worker-nr',1, \
-                              'pure',0,1,'replay','sha256:input',NULL,30000); \
+                              'pure',0,1,'replay','replay','not-required', \
+                              NULL,NULL,'sha256:input',NULL,30000); \
          CREATE TEMP TABLE pure_marked AS \
            EXECUTE mark_stmt('nr-replay','nr-replay','worker-nr',1,'pure',0,30000); \
          CREATE TEMP TABLE pure_recovery AS \
            EXECUTE begin_stmt('nr-replay','nr-replay','worker-nr',1, \
-                              'pure',0,1,'replay','sha256:input',NULL,30000); \
+                              'pure',0,1,'replay','replay','not-required', \
+                              NULL,NULL,'sha256:input',NULL,30000); \
          CREATE TEMP TABLE keyed_first AS \
            EXECUTE begin_stmt('nr-keyed','nr-keyed','worker-nr',1, \
-                              'keyed',0,1,'idempotent-with-key','sha256:input','key-1',30000); \
+                              'keyed',0,1,'idempotent-with-key','idempotent-with-key', \
+                              'not-required',NULL,NULL,'sha256:input','key-1',30000); \
          CREATE TEMP TABLE keyed_prepared_missing AS \
            EXECUTE begin_stmt('nr-keyed','nr-keyed','worker-nr',1, \
-                              'keyed',0,1,'idempotent-with-key','sha256:input',NULL,30000); \
+                              'keyed',0,1,'idempotent-with-key','idempotent-with-key', \
+                              'not-required',NULL,NULL,'sha256:input',NULL,30000); \
          CREATE TEMP TABLE keyed_marked AS \
            EXECUTE mark_stmt('nr-keyed','nr-keyed','worker-nr',1,'keyed',0,30000); \
          CREATE TEMP TABLE keyed_missing AS \
            EXECUTE begin_stmt('nr-keyed','nr-keyed','worker-nr',1, \
-                              'keyed',0,1,'idempotent-with-key','sha256:input',NULL,30000); \
+                              'keyed',0,1,'idempotent-with-key','idempotent-with-key', \
+                              'not-required',NULL,NULL,'sha256:input',NULL,30000); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM rollback_recovery) = 'started', \
                   'crash before intent commit leaves the occurrence resumable'; \
            ASSERT (SELECT result_code FROM before_recovery) = 'started', \
                   'committed intent before send remains resumable'; \
+           ASSERT (SELECT result_code FROM before_retarget) = 'effect-uncertain', \
+                  'recovery cannot retarget the pinned admission facts'; \
            ASSERT (SELECT result_code FROM before_marked) = 'marked', \
                   'resumed occurrence crosses the durable send boundary once'; \
            ASSERT (SELECT result_code FROM nr_first) = 'started', 'intent commits before send'; \
@@ -374,6 +393,13 @@ fn run_state_live() {
                   'authorized redispatch increments the durable attempt'; \
            ASSERT (SELECT attempt FROM node_runs WHERE run_id='nr-never') = 0, \
                   'effect-uncertain performs no second attempt'; \
+           ASSERT (SELECT selected_recovery_class = 'never-replay' \
+                          AND recovery_class = 'never-replay' \
+                          AND generation_fact_kind = 'not-required' \
+                          AND connection_generation IS NULL \
+                          AND credential_generation IS NULL \
+                     FROM node_runs WHERE run_id='nr-never'), \
+                  'attempt ledger records selected/effective class and explicit no-generation facts'; \
            ASSERT (SELECT result_code FROM keyed_prepared_missing) = 'missing-attempt-key', \
                   'prepared keyed attempt still requires the original key'; \
            ASSERT (SELECT result_code FROM keyed_missing) = 'missing-attempt-key', \
@@ -400,11 +426,12 @@ fn run_state_live() {
            ('t1','deadline-attempt','worker-deadline',now()+interval '1 minute',1), \
            ('t1','deadline-run','worker-deadline',now()+interval '1 minute',1); \
          INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status,recovery_class, \
+           (tenant_id,run_id,node_id,occurrence,seq,status,selected_recovery_class, \
+            recovery_class,generation_fact_kind, \
             attempt_started_at,attempt_deadline_at,attempt_input_ref) VALUES \
-           ('t1','deadline-attempt','effect',0,1,'started','replay', \
+           ('t1','deadline-attempt','effect',0,1,'started','replay','replay','not-required', \
             now()-interval '2 seconds',now()-interval '1 second','sha256:expired'), \
-           ('t1','deadline-run','effect',0,1,'started','replay', \
+           ('t1','deadline-run','effect',0,1,'started','replay','replay','not-required', \
             now()-interval '2 seconds',now()+interval '1 minute','sha256:run-expired');",
     );
     let deadline_script = format!(

@@ -55,7 +55,9 @@ use wamn_flow::{
     Flow, InvokeActorMode, InvokeFlowConfig, ResolvedInterfaces, canonical_json_sha256,
 };
 use wamn_node_sdk as sdk;
-use wamn_run_state::attempt::{AttemptDispatchResult, AttemptStartResult, RecoveryClass};
+use wamn_run_state::attempt::{
+    AttemptDispatchResult, AttemptStartResult, GenerationFactKind, RecoveryClass,
+};
 use wamn_run_state::child::{
     ChildCreateResult, ChildReleaseResult, create_or_recover_child_sql, release_child_sql,
 };
@@ -294,13 +296,15 @@ fn load_flow_at(flow_id: &str, version: u32) -> Result<Flow, String> {
     Flow::from_json(&raw).map_err(|e| format!("flow parse: {e}"))
 }
 
-/// Read and verify the graph plus resolved interfaces from the exact release
-/// artifact pinned on `runs`. The joins make mixed graph/interface identities
-/// unrepresentable in the result, and there is deliberately no legacy fallback.
+/// Read and verify the graph, resolved interfaces, and occurrence recovery
+/// selections from the exact release artifact pinned on `runs`. The joins make
+/// mixed identities unrepresentable in the result, and there is deliberately
+/// no mutable catalog fallback.
 const PINNED_ARTIFACT_SQL: &str = "\
 SELECT r.tenant_id, r.flow_id, r.flow_version, a.graph_json::text, a.graph_hash, \
        a.artifact_hash, a.interface_bundle_json, a.interface_bundle_hash, \
-       a.component_digests::text \
+       a.component_digests::text, a.occurrence_recovery_json, \
+       a.occurrence_recovery_hash \
   FROM runs AS r \
   JOIN catalog.release_flows AS rf \
     ON rf.tenant_id = r.tenant_id \
@@ -336,6 +340,11 @@ fn load_pinned_artifact(run_id: &str) -> Result<wamn_catalog::PinnedArtifact, St
         Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Ok(value.as_str()),
         other => Err(format!("{name} shape: {other:?}")),
     };
+    let optional_string = |index: usize, name: &str| match row.get(index) {
+        Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Ok(Some(value.as_str())),
+        Some(SqlValue::Null) => Ok(None),
+        other => Err(format!("{name} shape: {other:?}")),
+    };
     let tenant_id = string(0, "runs.tenant_id")?;
     let flow_id = string(1, "runs.flow_id")?;
     let flow_version =
@@ -346,6 +355,10 @@ fn load_pinned_artifact(run_id: &str) -> Result<wamn_catalog::PinnedArtifact, St
                 .map_err(|_| "runs.flow_version is not positive".to_string())?,
             other => return Err(format!("runs.flow_version shape: {other:?}")),
         };
+    let occurrence_recovery_json = optional_string(9, "flow_artifacts.occurrence_recovery_json")?
+        .ok_or("pinned artifact omits occurrence recovery selections")?;
+    let occurrence_recovery_hash = optional_string(10, "flow_artifacts.occurrence_recovery_hash")?
+        .ok_or("pinned artifact omits occurrence recovery selection hash")?;
     wamn_catalog::PinnedArtifact::from_storage(
         tenant_id,
         flow_id,
@@ -356,6 +369,8 @@ fn load_pinned_artifact(run_id: &str) -> Result<wamn_catalog::PinnedArtifact, St
         string(6, "flow_artifacts.interface_bundle_json")?,
         string(7, "flow_artifacts.interface_bundle_hash")?,
         string(8, "flow_artifacts.component_digests")?,
+        Some(occurrence_recovery_json),
+        Some(occurrence_recovery_hash),
     )
     .map_err(|error| format!("pinned flow artifact verification: {error}"))
 }
@@ -1169,60 +1184,61 @@ enum ResolvedNode {
     Standard,
 }
 
-fn recovery_class(artifact: &wamn_catalog::PinnedArtifact, dispatch: &Dispatch) -> RecoveryClass {
-    classify_recovery(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RecoveryAdmission {
+    selected_class: RecoveryClass,
+    effective_class: RecoveryClass,
+    generation_fact_kind: GenerationFactKind,
+}
+
+fn recovery_admission(
+    artifact: &wamn_catalog::PinnedArtifact,
+    dispatch: &Dispatch,
+) -> Result<RecoveryAdmission, String> {
+    admit_occurrence_recovery(
+        artifact.occurrence_recovery(),
+        &dispatch.node,
         &dispatch.node_type,
-        &dispatch.config,
-        artifact
-            .interface_bundle()
-            .contract(&dispatch.node_type)
-            .map(wamn_node_manifest::ResolvedNodeContract::recovery_class),
     )
 }
 
-fn classify_recovery(
+fn admit_occurrence_recovery(
+    selections: &[wamn_node_manifest::OccurrenceRecoverySelection],
+    node_id: &str,
     node_type: &str,
-    config: &Value,
-    pinned: Option<wamn_node_manifest::RecoveryClass>,
-) -> RecoveryClass {
-    if let Some(pinned) = pinned {
-        return match pinned {
-            wamn_node_manifest::RecoveryClass::Replay => RecoveryClass::Replay,
-            wamn_node_manifest::RecoveryClass::IdempotentWithKey => {
-                RecoveryClass::IdempotentWithKey
-            }
-            wamn_node_manifest::RecoveryClass::NeverReplay => RecoveryClass::NeverReplay,
-        };
+) -> Result<RecoveryAdmission, String> {
+    let mut matching = selections
+        .iter()
+        .filter(|selection| selection.node_id == node_id);
+    let selection = matching
+        .next()
+        .ok_or_else(|| format!("pinned artifact omits recovery selection for node {node_id}"))?;
+    if matching.next().is_some() {
+        return Err(format!(
+            "pinned artifact has duplicate recovery selections for node {node_id}"
+        ));
     }
-    if wamn_nodes::is_replay_safe(node_type) == Some(true) {
-        return RecoveryClass::Replay;
+    if selection.node_type != node_type {
+        return Err(format!(
+            "pinned recovery selection type mismatch for node {node_id}: expected {node_type}, got {}",
+            selection.node_type
+        ));
     }
-    match node_type {
-        "pg-write" => RecoveryClass::IdempotentWithKey,
-        "http-request" => {
-            let method = config
-                .get("method")
-                .and_then(Value::as_str)
-                .unwrap_or("GET")
-                .to_ascii_uppercase();
-            match method.as_str() {
-                "GET" | "HEAD" => RecoveryClass::Replay,
-                "PUT" | "DELETE" => RecoveryClass::IdempotentWithKey,
-                "POST" | "PATCH"
-                    if config.get("idempotency-key").and_then(Value::as_bool) == Some(true) =>
-                {
-                    RecoveryClass::IdempotentWithKey
-                }
-                _ => RecoveryClass::NeverReplay,
-            }
-        }
-        "postgres" | "postgres-query"
-            if config.get("idempotent-with-key").and_then(Value::as_bool) == Some(true) =>
-        {
-            RecoveryClass::IdempotentWithKey
-        }
-        _ => RecoveryClass::NeverReplay,
+    if selection.portable_connection.is_some() {
+        return Err(format!(
+            "pinned recovery selection for node {node_id} requires an attested immutable connection and credential generation"
+        ));
     }
+    let selected_class = match selection.recovery_class {
+        wamn_node_manifest::RecoveryClass::Replay => RecoveryClass::Replay,
+        wamn_node_manifest::RecoveryClass::IdempotentWithKey => RecoveryClass::IdempotentWithKey,
+        wamn_node_manifest::RecoveryClass::NeverReplay => RecoveryClass::NeverReplay,
+    };
+    Ok(RecoveryAdmission {
+        selected_class,
+        effective_class: selected_class,
+        generation_fact_kind: GenerationFactKind::NotRequired,
+    })
 }
 
 fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
@@ -2076,21 +2092,17 @@ fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String
     }))
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "durable attempt identity and the queue fence are one transition"
-)]
 fn begin_attempt(
     run_id: &str,
     dispatch: &Dispatch,
     seq: i32,
-    class: RecoveryClass,
+    admission: RecoveryAdmission,
     owner: &str,
     lease_generation: i64,
     ttl_ms: i64,
 ) -> Result<AttemptStartResult, String> {
     let input_ref = canonical_json_sha256(&dispatch.attempt_input());
-    let attempt_key = (class == RecoveryClass::IdempotentWithKey)
+    let attempt_key = (admission.effective_class == RecoveryClass::IdempotentWithKey)
         .then_some(dispatch.idempotency_key.as_str())
         .filter(|key| !key.is_empty());
     let response = client::query(
@@ -2103,7 +2115,11 @@ fn begin_attempt(
             text(&dispatch.node),
             int32(dispatch.occurrence as i32),
             int32(seq),
-            text(class.as_sql()),
+            text(admission.selected_class.as_sql()),
+            text(admission.effective_class.as_sql()),
+            text(admission.generation_fact_kind.as_sql()),
+            SqlValue::Null,
+            SqlValue::Null,
             text(input_ref),
             attempt_key.map_or(SqlValue::Null, text),
             int64(ttl_ms),
@@ -3159,8 +3175,16 @@ fn execute_claimed(
                 // (fqg.18): the claim's fresh lease covers the first node, each
                 // record's renew covers the next — the same coverage the split
                 // renew-before-dispatch gave, one round trip cheaper.
-                let class = recovery_class(artifact, &d);
-                match begin_attempt(run_id, &d, next_seq, class, owner, lease_generation, ttl_ms)? {
+                let admission = recovery_admission(artifact, &d)?;
+                match begin_attempt(
+                    run_id,
+                    &d,
+                    next_seq,
+                    admission,
+                    owner,
+                    lease_generation,
+                    ttl_ms,
+                )? {
                     AttemptStartResult::Started | AttemptStartResult::Redispatch => {
                         mark_attempt_dispatched(run_id, &d, owner, lease_generation, ttl_ms)?;
                     }
@@ -3684,6 +3708,8 @@ mod tests {
         assert!(PINNED_ARTIFACT_SQL.contains("a.graph_json::text"));
         assert!(PINNED_ARTIFACT_SQL.contains("a.interface_bundle_json"));
         assert!(PINNED_ARTIFACT_SQL.contains("a.interface_bundle_hash"));
+        assert!(PINNED_ARTIFACT_SQL.contains("a.occurrence_recovery_json"));
+        assert!(PINNED_ARTIFACT_SQL.contains("a.occurrence_recovery_hash"));
         for join in [
             "rf.catalog_id = r.catalog_id",
             "rf.catalog_version = r.catalog_version",
@@ -3702,47 +3728,98 @@ mod tests {
         assert!(!PINNED_ARTIFACT_SQL.contains("catalog_heads"));
     }
 
+    fn selection(
+        node_id: &str,
+        node_type: &str,
+        recovery_class: wamn_node_manifest::RecoveryClass,
+    ) -> wamn_node_manifest::OccurrenceRecoverySelection {
+        wamn_node_manifest::OccurrenceRecoverySelection {
+            selection_version: wamn_node_manifest::OCCURRENCE_RECOVERY_SELECTION_VERSION
+                .to_string(),
+            node_id: node_id.to_string(),
+            node_type: node_type.to_string(),
+            recovery_class,
+            portable_connection: None,
+        }
+    }
+
     #[test]
-    fn pinned_custom_purity_is_the_replay_authority() {
-        assert_eq!(
-            classify_recovery(
-                "normalize-receipt",
-                &json!({}),
-                Some(wamn_node_manifest::RecoveryClass::Replay),
+    fn pinned_occurrence_selection_is_the_only_recovery_authority() {
+        let selections = [
+            selection(
+                "get-call",
+                "http-request",
+                wamn_node_manifest::RecoveryClass::NeverReplay,
             ),
-            RecoveryClass::Replay
+            selection(
+                "post-call",
+                "http-request",
+                wamn_node_manifest::RecoveryClass::Replay,
+            ),
+        ];
+        assert_eq!(
+            admit_occurrence_recovery(&selections, "get-call", "http-request").unwrap(),
+            RecoveryAdmission {
+                selected_class: RecoveryClass::NeverReplay,
+                effective_class: RecoveryClass::NeverReplay,
+                generation_fact_kind: GenerationFactKind::NotRequired,
+            }
         );
         assert_eq!(
-            classify_recovery(
-                "custom-without-purity",
-                &json!({}),
-                Some(wamn_node_manifest::RecoveryClass::NeverReplay),
-            ),
-            RecoveryClass::NeverReplay
+            admit_occurrence_recovery(&selections, "post-call", "http-request").unwrap(),
+            RecoveryAdmission {
+                selected_class: RecoveryClass::Replay,
+                effective_class: RecoveryClass::Replay,
+                generation_fact_kind: GenerationFactKind::NotRequired,
+            }
         );
     }
 
     #[test]
-    fn effectful_standard_nodes_require_their_replay_contract() {
-        assert_eq!(
-            classify_recovery("http-request", &json!({"method":"GET"}), None),
-            RecoveryClass::Replay
+    fn absent_duplicate_and_retargeted_occurrence_selections_fail_closed() {
+        let selected = selection(
+            "call",
+            "http-request",
+            wamn_node_manifest::RecoveryClass::NeverReplay,
         );
-        assert_eq!(
-            classify_recovery("http-request", &json!({"method":"POST"}), None),
-            RecoveryClass::NeverReplay
-        );
-        assert_eq!(
-            classify_recovery(
+        assert!(admit_occurrence_recovery(&[], "call", "http-request").is_err());
+        assert!(
+            admit_occurrence_recovery(
+                &[selection(
+                    "other",
+                    "http-request",
+                    wamn_node_manifest::RecoveryClass::Replay,
+                )],
+                "call",
                 "http-request",
-                &json!({"method":"POST","idempotency-key":true}),
-                None,
+            )
+            .is_err()
+        );
+        assert!(
+            admit_occurrence_recovery(
+                &[selected.clone(), selected.clone()],
+                "call",
+                "http-request"
+            )
+            .is_err()
+        );
+        assert!(admit_occurrence_recovery(&[selected], "call", "postgres-query").is_err());
+    }
+
+    #[test]
+    fn portable_occurrence_refuses_without_attested_immutable_generations() {
+        let mut selected = selection(
+            "call",
+            "http-request",
+            wamn_node_manifest::RecoveryClass::IdempotentWithKey,
+        );
+        selected.portable_connection = Some(
+            wamn_node_manifest::PortableConnectionRequirement::stable_key_dedup_v1(
+                wamn_node_manifest::ConnectionTypeDescriptor::http_v1(),
+                86_400_000,
             ),
-            RecoveryClass::IdempotentWithKey
         );
-        assert_eq!(
-            classify_recovery("postgres-query", &json!({}), None),
-            RecoveryClass::NeverReplay
-        );
+        let error = admit_occurrence_recovery(&[selected], "call", "http-request").unwrap_err();
+        assert!(error.contains("attested immutable connection and credential generation"));
     }
 }

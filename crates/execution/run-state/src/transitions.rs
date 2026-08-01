@@ -53,9 +53,11 @@ authority AS ( \
 /// Persist an attempt intent and renew the exact queue lease before dispatch.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
-/// node id, occurrence, sequence, recovery class, immutable input reference,
-/// optional attempt key, and lease TTL milliseconds. An authorized redispatch
-/// advances the durable attempt counter in the same statement.
+/// node id, occurrence, sequence, selected and effective recovery classes,
+/// generation fact kind, exact optional connection and credential generations,
+/// immutable input reference, optional attempt key, and lease TTL milliseconds.
+/// An authorized redispatch advances the durable attempt counter in the same
+/// statement only when those immutable admission facts match.
 pub fn begin_attempt_sql() -> String {
     format!(
         "{FENCED_PREFIX}, \
@@ -69,16 +71,22 @@ pub fn begin_attempt_sql() -> String {
          classified AS ( \
              SELECT CASE \
                       WHEN a.result_code <> 'ready' THEN a.result_code \
-                      WHEN n.run_id IS NULL AND $8::text = 'idempotent-with-key' \
-                       AND ($10::text IS NULL OR $10::text = '') \
+                      WHEN n.run_id IS NULL AND $9::text = 'idempotent-with-key' \
+                       AND ($14::text IS NULL OR $14::text = '') \
                         THEN 'missing-attempt-key' \
                       WHEN n.run_id IS NULL THEN 'new' \
+                      WHEN n.selected_recovery_class IS DISTINCT FROM $8::text \
+                        OR n.recovery_class IS DISTINCT FROM $9::text \
+                        OR n.generation_fact_kind IS DISTINCT FROM $10::text \
+                        OR n.connection_generation IS DISTINCT FROM $11::text \
+                        OR n.credential_generation IS DISTINCT FROM $12::text \
+                        THEN 'effect-uncertain' \
                       WHEN n.status IN ('success', 'error') THEN 'already-completed' \
                       WHEN n.status <> 'started' THEN 'attempt-not-started' \
                       WHEN n.recovery_class = 'idempotent-with-key' \
                        AND (n.attempt_key IS NULL OR n.attempt_key = '' \
-                            OR $10::text IS NULL OR $10::text = '' \
-                            OR n.attempt_key <> $10::text) THEN 'missing-attempt-key' \
+                            OR $14::text IS NULL OR $14::text = '' \
+                            OR n.attempt_key <> $14::text) THEN 'missing-attempt-key' \
                       WHEN n.attempt_dispatched_at IS NULL THEN 'prepared' \
                       WHEN n.recovery_class = 'never-replay' THEN 'effect-uncertain' \
                       WHEN n.recovery_class IN ('replay', 'idempotent-with-key') \
@@ -91,13 +99,15 @@ pub fn begin_attempt_sql() -> String {
          inserted AS ( \
              INSERT INTO node_runs \
                     (tenant_id, run_id, node_id, occurrence, seq, status, \
-                     recovery_class, attempt_started_at, attempt_deadline_at, \
-                     attempt_input_ref, attempt_key) \
-             SELECT c.tenant_id, c.run_id, $5, $6, $7, 'started', $8, now(), \
+                     selected_recovery_class, recovery_class, \
+                     generation_fact_kind, connection_generation, credential_generation, \
+                     attempt_started_at, attempt_deadline_at, attempt_input_ref, attempt_key) \
+             SELECT c.tenant_id, c.run_id, $5, $6, $7, 'started', $8, $9, \
+                    $10, $11, $12, now(), \
                     LEAST( \
-                        now() + ($11::bigint * interval '1 millisecond'), \
+                        now() + ($15::bigint * interval '1 millisecond'), \
                         COALESCE(c.run_deadline_at, 'infinity'::timestamptz) \
-                    ), $9, $10 \
+                    ), $13, $14 \
                FROM classified AS c WHERE c.result_code = 'new' \
              RETURNING run_id \
          ), \
@@ -106,7 +116,7 @@ pub fn begin_attempt_sql() -> String {
                 SET attempt = n.attempt + 1, attempt_started_at = now(), \
                     attempt_dispatched_at = NULL, \
                     attempt_deadline_at = LEAST( \
-                        now() + ($11::bigint * interval '1 millisecond'), \
+                        now() + ($15::bigint * interval '1 millisecond'), \
                         COALESCE(c.run_deadline_at, 'infinity'::timestamptz) \
                     ) \
                FROM classified AS c \
@@ -117,7 +127,7 @@ pub fn begin_attempt_sql() -> String {
          ), \
          renewed AS ( \
              UPDATE run_queue AS q \
-                SET lease_expires_at = now() + ($11::bigint * interval '1 millisecond') \
+                SET lease_expires_at = now() + ($15::bigint * interval '1 millisecond') \
                FROM classified AS c \
               WHERE c.result_code IN ('new', 'prepared', 'redispatch') \
                 AND q.tenant_id = c.tenant_id AND q.run_id = c.run_id \
@@ -1071,7 +1081,11 @@ mod tests {
     fn attempt_intent_precedes_dispatch_and_classifies_recovery() {
         let sql = begin_attempt_sql();
         assert!(sql.contains("INSERT INTO node_runs"));
-        assert!(sql.contains("'started', $8, now()"));
+        assert!(sql.contains("'started', $8, $9"));
+        assert!(sql.contains("selected_recovery_class, recovery_class"));
+        assert!(sql.contains("generation_fact_kind, connection_generation, credential_generation"));
+        assert!(sql.contains("n.selected_recovery_class IS DISTINCT FROM $8::text"));
+        assert!(sql.contains("n.generation_fact_kind IS DISTINCT FROM $10::text"));
         assert!(sql.contains("attempt_input_ref, attempt_key"));
         assert!(sql.contains("COALESCE(c.run_deadline_at, 'infinity'::timestamptz)"));
         assert!(sql.contains("n.recovery_class = 'never-replay'"));
@@ -1170,6 +1184,10 @@ mod tests {
             "cancel_kind",
             "terminal_reason",
             "recovery_class",
+            "selected_recovery_class",
+            "generation_fact_kind",
+            "connection_generation",
+            "credential_generation",
             "attempt_started_at",
             "attempt_dispatched_at",
             "attempt_deadline_at",
