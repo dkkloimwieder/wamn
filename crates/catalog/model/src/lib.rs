@@ -23,6 +23,8 @@ const MODEL_OWNED_NODES: [&str; 5] = ["cron", "event", "fail", "request", "respo
 const LEGACY_RESOLVED_CONTRACT_VERSION: &str = "legacy-v0";
 const LEGACY_INTERFACE_CONTRACT: &str = "legacy-unpinned-wamn-node";
 const LEGACY_PLATFORM_REVISION: &str = "legacy-unpinned-platform";
+/// Serialized execution-bundle key shape. Bump on any incompatible frame change.
+const EXECUTION_BUNDLE_IDENTITY_VERSION: &[u8] = b"1";
 
 /// A catalog identity construction error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +51,8 @@ pub enum CatalogIdentityError {
     ArtifactMismatch,
     UnresolvedSource { source_id: String },
     SourceMismatch { source_id: String },
+    ExecutionBundleIdentityMismatch,
+    ExecutionBundleOutputMismatch,
 }
 
 impl fmt::Display for CatalogIdentityError {
@@ -128,6 +132,18 @@ impl fmt::Display for CatalogIdentityError {
                 write!(
                     formatter,
                     "source {source_id:?} differs from its resolved definition"
+                )
+            }
+            Self::ExecutionBundleIdentityMismatch => {
+                write!(
+                    formatter,
+                    "execution-bundle provenance identity does not match"
+                )
+            }
+            Self::ExecutionBundleOutputMismatch => {
+                write!(
+                    formatter,
+                    "execution-bundle rebuild output does not match provenance"
                 )
             }
         }
@@ -633,7 +649,166 @@ pub struct InterfaceBundle {
     hash: String,
 }
 
-/// Content key for a composed runner and the exact canonical node resolutions it embeds.
+/// Packaging boundary selected for an execution bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExecutionBundlePackaging {
+    ExactNode,
+    CapabilityClass,
+}
+
+impl ExecutionBundlePackaging {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::ExactNode => "exact-node",
+            Self::CapabilityClass => "capability-class",
+        }
+    }
+}
+
+/// Immutable named bytes participating in execution-bundle composition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ExecutionBundleInput {
+    identity: String,
+    digest: String,
+}
+
+impl ExecutionBundleInput {
+    pub fn new(
+        identity: impl Into<String>,
+        digest: impl Into<String>,
+    ) -> Result<Self, CatalogIdentityError> {
+        let identity = identity.into();
+        let digest = digest.into();
+        validate_text(&identity, "execution-bundle-input-identity")?;
+        validate_digest(&digest, "execution-bundle-input-digest")?;
+        Ok(Self { identity, digest })
+    }
+
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+}
+
+/// Deterministic manifest for one executable plug.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ExecutionPlugManifest {
+    identity: String,
+    node_types: Box<[String]>,
+    component_digest: String,
+}
+
+impl ExecutionPlugManifest {
+    pub fn new(
+        identity: impl Into<String>,
+        node_types: Vec<String>,
+        component_digest: impl Into<String>,
+    ) -> Result<Self, CatalogIdentityError> {
+        let identity = identity.into();
+        let component_digest = component_digest.into();
+        validate_text(&identity, "execution-plug-identity")?;
+        if node_types.is_empty() {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: "execution plug must contain at least one node type".to_string(),
+            });
+        }
+        validate_sorted_text(&node_types, "execution-plug-node-type")?;
+        validate_digest(&component_digest, "execution-plug-component-digest")?;
+        Ok(Self {
+            identity,
+            node_types: node_types.into_boxed_slice(),
+            component_digest,
+        })
+    }
+
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    pub fn node_types(&self) -> &[String] {
+        &self.node_types
+    }
+
+    pub fn component_digest(&self) -> &str {
+        &self.component_digest
+    }
+}
+
+/// Builder for the complete byte-affecting execution-bundle input set.
+#[derive(Debug, Clone)]
+pub struct ExecutionBundleIdentityBuilder {
+    packaging: ExecutionBundlePackaging,
+    runner: ExecutionBundleInput,
+    composition_tool: ExecutionBundleInput,
+    implementations: Vec<NodeImplementation>,
+    plugs: Vec<ExecutionPlugManifest>,
+    adapters: Vec<ExecutionBundleInput>,
+}
+
+impl ExecutionBundleIdentityBuilder {
+    pub fn implementations(mut self, implementations: Vec<NodeImplementation>) -> Self {
+        self.implementations = implementations;
+        self
+    }
+
+    pub fn plugs(mut self, plugs: Vec<ExecutionPlugManifest>) -> Self {
+        self.plugs = plugs;
+        self
+    }
+
+    pub fn adapters(mut self, adapters: Vec<ExecutionBundleInput>) -> Self {
+        self.adapters = adapters;
+        self
+    }
+
+    pub fn build(self) -> Result<ExecutionBundleIdentity, CatalogIdentityError> {
+        validate_execution_bundle_inputs(&self)?;
+
+        let mut owned = Vec::with_capacity(
+            4 + self.implementations.len() + self.plugs.len() + self.adapters.len(),
+        );
+        owned.push((
+            "identity-version",
+            EXECUTION_BUNDLE_IDENTITY_VERSION.to_vec(),
+        ));
+        owned.push(("packaging-arm", self.packaging.as_str().as_bytes().to_vec()));
+        owned.push(("runner", canonical_serialized(&self.runner)));
+        for implementation in &self.implementations {
+            owned.push((
+                "resolved-node",
+                canonical_serialized(implementation.contract()),
+            ));
+        }
+        for plug in &self.plugs {
+            owned.push(("plug-manifest", canonical_serialized(plug)));
+        }
+        for adapter in &self.adapters {
+            owned.push(("adapter", canonical_serialized(adapter)));
+        }
+        owned.push((
+            "composition-tool",
+            canonical_serialized(&self.composition_tool),
+        ));
+        let borrowed = owned
+            .iter()
+            .map(|(tag, bytes)| (*tag, bytes.as_slice()))
+            .collect::<Vec<_>>();
+        let canonical_bytes = frames("execution-bundle", borrowed).into_boxed_slice();
+        let hash = digest(&canonical_bytes);
+        Ok(ExecutionBundleIdentity {
+            hash,
+            canonical_bytes,
+        })
+    }
+}
+
+/// Content key for a composed runner and every input that can change its bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionBundleIdentity {
     hash: String,
@@ -641,37 +816,19 @@ pub struct ExecutionBundleIdentity {
 }
 
 impl ExecutionBundleIdentity {
-    pub fn new(
-        runner_revision: &str,
-        implementations: &[NodeImplementation],
-        adapters: &[String],
-    ) -> Result<Self, CatalogIdentityError> {
-        validate_text(runner_revision, "runner-revision")?;
-        validate_implementation_order(implementations)?;
-        validate_sorted_text(adapters, "adapter")?;
-        let mut owned = vec![("runner-revision", runner_revision.as_bytes().to_vec())];
-        for implementation in implementations {
-            owned.push((
-                "resolved-node",
-                canonical_json(
-                    &serde_json::to_value(implementation.contract())
-                        .expect("resolved node contract serializes"),
-                ),
-            ));
+    pub fn builder(
+        packaging: ExecutionBundlePackaging,
+        runner: ExecutionBundleInput,
+        composition_tool: ExecutionBundleInput,
+    ) -> ExecutionBundleIdentityBuilder {
+        ExecutionBundleIdentityBuilder {
+            packaging,
+            runner,
+            composition_tool,
+            implementations: Vec::new(),
+            plugs: Vec::new(),
+            adapters: Vec::new(),
         }
-        for adapter in adapters {
-            owned.push(("adapter", adapter.as_bytes().to_vec()));
-        }
-        let borrowed = owned
-            .iter()
-            .map(|(tag, bytes)| (*tag, bytes.as_slice()))
-            .collect::<Vec<_>>();
-        let canonical_bytes = frames("execution-bundle", borrowed).into_boxed_slice();
-        let hash = digest(&canonical_bytes);
-        Ok(Self {
-            hash,
-            canonical_bytes,
-        })
     }
 
     pub fn hash(&self) -> &str {
@@ -680,6 +837,79 @@ impl ExecutionBundleIdentity {
 
     pub fn canonical_bytes(&self) -> &[u8] {
         &self.canonical_bytes
+    }
+
+    /// Record the exact inputs and output digest needed to verify a rebuild.
+    pub fn provenance(&self, output: &[u8], composition_log: &[u8]) -> ExecutionBundleProvenance {
+        ExecutionBundleProvenance::new(self, output, composition_log)
+    }
+}
+
+/// Reproducible record binding one input key to exactly one composed output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionBundleProvenance {
+    identity_hash: String,
+    identity_bytes: Box<[u8]>,
+    output_digest: String,
+    composition_log: Box<[u8]>,
+    canonical_bytes: Box<[u8]>,
+}
+
+impl ExecutionBundleProvenance {
+    fn new(identity: &ExecutionBundleIdentity, output: &[u8], composition_log: &[u8]) -> Self {
+        let output_digest = digest(output);
+        let canonical_bytes = frames(
+            "execution-bundle-provenance",
+            [
+                ("execution-bundle-key", identity.hash.as_bytes()),
+                ("execution-bundle-inputs", identity.canonical_bytes.as_ref()),
+                ("output-digest", output_digest.as_bytes()),
+                ("composition-log", composition_log),
+            ],
+        )
+        .into_boxed_slice();
+        Self {
+            identity_hash: identity.hash.clone(),
+            identity_bytes: identity.canonical_bytes.clone(),
+            output_digest,
+            composition_log: composition_log.into(),
+            canonical_bytes,
+        }
+    }
+
+    pub fn identity_hash(&self) -> &str {
+        &self.identity_hash
+    }
+
+    pub fn identity_bytes(&self) -> &[u8] {
+        &self.identity_bytes
+    }
+
+    pub fn output_digest(&self) -> &str {
+        &self.output_digest
+    }
+
+    pub fn composition_log(&self) -> &[u8] {
+        &self.composition_log
+    }
+
+    pub fn canonical_bytes(&self) -> &[u8] {
+        &self.canonical_bytes
+    }
+
+    /// Reject a cache entry or rebuild that differs in inputs or output bytes.
+    pub fn verify_rebuild(
+        &self,
+        identity: &ExecutionBundleIdentity,
+        output: &[u8],
+    ) -> Result<(), CatalogIdentityError> {
+        if self.identity_hash != identity.hash || self.identity_bytes != identity.canonical_bytes {
+            return Err(CatalogIdentityError::ExecutionBundleIdentityMismatch);
+        }
+        if self.output_digest != digest(output) {
+            return Err(CatalogIdentityError::ExecutionBundleOutputMismatch);
+        }
+        Ok(())
     }
 }
 
@@ -1096,6 +1326,83 @@ fn validate_implementation_order(
                 validate_digest(digest, "component-digest")?;
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_execution_bundle_inputs(
+    builder: &ExecutionBundleIdentityBuilder,
+) -> Result<(), CatalogIdentityError> {
+    if builder.implementations.is_empty() || builder.plugs.is_empty() {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: "execution bundle requires resolved nodes and executable plugs".to_string(),
+        });
+    }
+    validate_implementation_order(&builder.implementations)?;
+    let interfaces = builder
+        .implementations
+        .iter()
+        .map(|implementation| implementation.interface().clone())
+        .collect::<Vec<_>>();
+    validate_interface_order(&interfaces)?;
+
+    validate_named_order(
+        builder.plugs.iter().map(ExecutionPlugManifest::identity),
+        "execution-plug",
+    )?;
+    validate_named_order(
+        builder.adapters.iter().map(ExecutionBundleInput::identity),
+        "execution-adapter",
+    )?;
+
+    let mut packaged_nodes = BTreeSet::new();
+    for plug in &builder.plugs {
+        if builder.packaging == ExecutionBundlePackaging::ExactNode && plug.node_types.len() != 1 {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: "exact-node plugs must contain exactly one node type".to_string(),
+            });
+        }
+        for node_type in &plug.node_types {
+            if !packaged_nodes.insert(node_type.as_str()) {
+                return Err(CatalogIdentityError::InvalidDefinition {
+                    message: format!("node type {node_type:?} appears in multiple plugs"),
+                });
+            }
+        }
+    }
+    let resolved_node_count = interfaces.len();
+    for interface in interfaces {
+        if !packaged_nodes.contains(interface.node_type.as_str()) {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: format!(
+                    "resolved node type {:?} is absent from plug manifests",
+                    interface.node_type
+                ),
+            });
+        }
+    }
+    if builder.packaging == ExecutionBundlePackaging::ExactNode
+        && packaged_nodes.len() != resolved_node_count
+    {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: "exact-node layout contains an unresolved node type".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_named_order<'a>(
+    values: impl IntoIterator<Item = &'a str>,
+    field: &'static str,
+) -> Result<(), CatalogIdentityError> {
+    let mut previous = None;
+    for value in values {
+        if previous.is_some_and(|candidate: &str| candidate >= value) {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: format!("{field} values must be sorted and unique"),
+            });
+        }
+        previous = Some(value);
     }
     Ok(())
 }
@@ -1641,6 +1948,10 @@ fn canonical_json(value: &Value) -> Vec<u8> {
     let mut output = Vec::new();
     write_json(value, &mut output);
     output
+}
+
+fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    canonical_json(&serde_json::to_value(value).expect("identity input serializes"))
 }
 
 fn write_json(value: &Value, output: &mut Vec<u8>) {

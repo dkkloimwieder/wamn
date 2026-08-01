@@ -2,8 +2,8 @@ use serde_json::json;
 use wamn_catalog::{
     Artifact, Attachment, AttachmentActivation, AttachmentDraft, AttachmentId, AttachmentKind,
     CanonicalJson, CatalogHead, CatalogIdentityError, DefinitionHash, ExecutionBundleIdentity,
-    InterfaceBundle, NodeImplementation, PinnedArtifact, Release, ReleaseId, Source, SourceId,
-    SourceKind,
+    ExecutionBundleInput, ExecutionBundlePackaging, ExecutionPlugManifest, InterfaceBundle,
+    NodeImplementation, PinnedArtifact, Release, ReleaseId, Source, SourceId, SourceKind,
 };
 use wamn_flow::Flow;
 use wamn_node_manifest::{
@@ -66,6 +66,38 @@ fn supplied(digit: char) -> NodeImplementation {
         format!("sha256:{}", digit.to_string().repeat(64)),
     )
     .expect("fixture component digest is valid")
+}
+
+fn digest_with(digit: char) -> String {
+    format!("sha256:{}", digit.to_string().repeat(64))
+}
+
+fn bundle_input(identity: &str, digit: char) -> ExecutionBundleInput {
+    ExecutionBundleInput::new(identity, digest_with(digit)).expect("fixture input is valid")
+}
+
+fn plug(identity: &str, node_types: &[&str], digit: char) -> ExecutionPlugManifest {
+    ExecutionPlugManifest::new(
+        identity,
+        node_types
+            .iter()
+            .map(|node_type| (*node_type).to_string())
+            .collect(),
+        digest_with(digit),
+    )
+    .expect("fixture plug manifest is valid")
+}
+
+fn execution_bundle(implementation: NodeImplementation) -> ExecutionBundleIdentity {
+    ExecutionBundleIdentity::builder(
+        ExecutionBundlePackaging::ExactNode,
+        bundle_input("runner@1", 'a'),
+        bundle_input("wac@0.9.0", 'b'),
+    )
+    .implementations(vec![implementation])
+    .plugs(vec![plug("custom-node", &["custom-node"], 'c')])
+    .build()
+    .expect("fixture execution bundle is valid")
 }
 
 fn artifact() -> Artifact {
@@ -192,12 +224,7 @@ fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
         vec![baseline_implementation.clone()],
     )
     .unwrap();
-    let baseline_bundle = ExecutionBundleIdentity::new(
-        "runner@1",
-        std::slice::from_ref(&baseline_implementation),
-        &[],
-    )
-    .unwrap();
+    let baseline_bundle = execution_bundle(baseline_implementation.clone());
     assert_eq!(
         baseline_implementation.contract().recovery_class(),
         RecoveryClass::NeverReplay
@@ -228,9 +255,7 @@ fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
             NodeImplementation::supplied(interface, format!("sha256:{}", "1".repeat(64))).unwrap();
         let artifact =
             Artifact::new("tenant-a", &request_flow(), vec![implementation.clone()]).unwrap();
-        let bundle =
-            ExecutionBundleIdentity::new("runner@1", std::slice::from_ref(&implementation), &[])
-                .unwrap();
+        let bundle = execution_bundle(implementation);
         assert_ne!(
             baseline_artifact.identity().artifact_hash(),
             artifact.identity().artifact_hash(),
@@ -244,9 +269,243 @@ fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
     }
 
     let changed_executable = supplied('2');
-    let changed_bundle =
-        ExecutionBundleIdentity::new("runner@1", &[changed_executable], &[]).unwrap();
+    let changed_bundle = execution_bundle(changed_executable);
     assert_ne!(baseline_bundle.hash(), changed_bundle.hash());
+}
+
+#[test]
+fn execution_bundle_identity_pins_every_composition_input() {
+    fn build(
+        packaging: ExecutionBundlePackaging,
+        runner: ExecutionBundleInput,
+        implementation: NodeImplementation,
+        plugs: Vec<ExecutionPlugManifest>,
+        adapters: Vec<ExecutionBundleInput>,
+        tool: ExecutionBundleInput,
+    ) -> ExecutionBundleIdentity {
+        ExecutionBundleIdentity::builder(packaging, runner, tool)
+            .implementations(vec![implementation])
+            .plugs(plugs)
+            .adapters(adapters)
+            .build()
+            .unwrap()
+    }
+
+    let baseline = build(
+        ExecutionBundlePackaging::ExactNode,
+        bundle_input("runner@1", 'a'),
+        supplied('1'),
+        vec![plug("custom-node", &["custom-node"], 'c')],
+        vec![bundle_input("wamn:connection/http@0.1.0", 'd')],
+        bundle_input("wac@0.9.0", 'b'),
+    );
+    let baseline_hash = baseline.hash();
+    assert_eq!(
+        baseline_hash, "sha256:bd7ba335344dfeb64d2a5a33efcc923b781134da92133b237bb2929914be2350",
+        "execution-bundle frame sequence changed"
+    );
+
+    let mutants = [
+        build(
+            ExecutionBundlePackaging::CapabilityClass,
+            bundle_input("runner@1", 'a'),
+            supplied('1'),
+            vec![plug("http", &["custom-node", "http-request"], 'c')],
+            vec![bundle_input("wamn:connection/http@0.1.0", 'd')],
+            bundle_input("wac@0.9.0", 'b'),
+        ),
+        build(
+            ExecutionBundlePackaging::ExactNode,
+            bundle_input("runner@2", 'a'),
+            supplied('1'),
+            vec![plug("custom-node", &["custom-node"], 'c')],
+            vec![bundle_input("wamn:connection/http@0.1.0", 'd')],
+            bundle_input("wac@0.9.0", 'b'),
+        ),
+        build(
+            ExecutionBundlePackaging::ExactNode,
+            bundle_input("runner@1", '9'),
+            supplied('1'),
+            vec![plug("custom-node", &["custom-node"], 'c')],
+            vec![bundle_input("wamn:connection/http@0.1.0", 'd')],
+            bundle_input("wac@0.9.0", 'b'),
+        ),
+        build(
+            ExecutionBundlePackaging::ExactNode,
+            bundle_input("runner@1", 'a'),
+            supplied('1'),
+            vec![plug("custom-node-v2", &["custom-node"], 'c')],
+            vec![bundle_input("wamn:connection/http@0.1.0", 'd')],
+            bundle_input("wac@0.9.0", 'b'),
+        ),
+        build(
+            ExecutionBundlePackaging::ExactNode,
+            bundle_input("runner@1", 'a'),
+            supplied('1'),
+            vec![plug("custom-node", &["custom-node"], '8')],
+            vec![bundle_input("wamn:connection/http@0.1.0", 'd')],
+            bundle_input("wac@0.9.0", 'b'),
+        ),
+        build(
+            ExecutionBundlePackaging::ExactNode,
+            bundle_input("runner@1", 'a'),
+            supplied('1'),
+            vec![plug("custom-node", &["custom-node"], 'c')],
+            vec![bundle_input("wamn:connection/http@0.2.0", 'd')],
+            bundle_input("wac@0.9.0", 'b'),
+        ),
+        build(
+            ExecutionBundlePackaging::ExactNode,
+            bundle_input("runner@1", 'a'),
+            supplied('1'),
+            vec![plug("custom-node", &["custom-node"], 'c')],
+            vec![bundle_input("wamn:connection/http@0.1.0", '7')],
+            bundle_input("wac@0.9.0", 'b'),
+        ),
+        build(
+            ExecutionBundlePackaging::ExactNode,
+            bundle_input("runner@1", 'a'),
+            supplied('1'),
+            vec![plug("custom-node", &["custom-node"], 'c')],
+            vec![bundle_input("wamn:connection/http@0.1.0", 'd')],
+            bundle_input("wac@0.10.0", 'b'),
+        ),
+        build(
+            ExecutionBundlePackaging::ExactNode,
+            bundle_input("runner@1", 'a'),
+            supplied('1'),
+            vec![plug("custom-node", &["custom-node"], 'c')],
+            vec![bundle_input("wamn:connection/http@0.1.0", 'd')],
+            bundle_input("wac@0.9.0", '6'),
+        ),
+    ];
+    for mutant in mutants {
+        assert_ne!(baseline_hash, mutant.hash());
+    }
+
+    let rebuilt = build(
+        ExecutionBundlePackaging::ExactNode,
+        bundle_input("runner@1", 'a'),
+        supplied('1'),
+        vec![plug("custom-node", &["custom-node"], 'c')],
+        vec![bundle_input("wamn:connection/http@0.1.0", 'd')],
+        bundle_input("wac@0.9.0", 'b'),
+    );
+    assert_eq!(baseline, rebuilt);
+}
+
+#[test]
+fn bundle_provenance_is_reproducible_and_rejects_cache_poisoning() {
+    struct EnvironmentInstance<'a> {
+        environment: &'a str,
+        endpoint: &'a str,
+        credential_generation: u32,
+    }
+
+    let dev = EnvironmentInstance {
+        environment: "dev",
+        endpoint: "https://sandbox.example.test",
+        credential_generation: 3,
+    };
+    let prod = EnvironmentInstance {
+        environment: "prod",
+        endpoint: "https://api.example.test",
+        credential_generation: 91,
+    };
+    assert_ne!(dev.environment, prod.environment);
+    assert_ne!(dev.endpoint, prod.endpoint);
+    assert_ne!(dev.credential_generation, prod.credential_generation);
+
+    let dev_identity = execution_bundle(supplied('1'));
+    let prod_identity = execution_bundle(supplied('1'));
+    assert_eq!(
+        dev_identity, prod_identity,
+        "environment instances are excluded"
+    );
+
+    let output = b"deterministic composed component";
+    let composition_log = b"wac plug: deterministic fixture";
+    let provenance = dev_identity.provenance(output, composition_log);
+    let rebuilt = prod_identity.provenance(output, composition_log);
+    assert_eq!(provenance, rebuilt);
+    assert_eq!(provenance.identity_hash(), dev_identity.hash());
+    assert_eq!(provenance.identity_bytes(), dev_identity.canonical_bytes());
+    assert!(provenance.output_digest().starts_with("sha256:"));
+    assert_eq!(provenance.composition_log(), composition_log);
+    assert!(!provenance.canonical_bytes().is_empty());
+    assert_eq!(provenance.verify_rebuild(&prod_identity, output), Ok(()));
+
+    assert_eq!(
+        provenance.verify_rebuild(&execution_bundle(supplied('2')), output),
+        Err(CatalogIdentityError::ExecutionBundleIdentityMismatch)
+    );
+    assert_eq!(
+        provenance.verify_rebuild(&prod_identity, b"poisoned cached component"),
+        Err(CatalogIdentityError::ExecutionBundleOutputMismatch)
+    );
+}
+
+#[test]
+fn bundle_builder_refuses_ambiguous_layouts_and_order() {
+    let runner = bundle_input("runner@1", 'a');
+    let tool = bundle_input("wac@0.9.0", 'b');
+
+    let multi_node_exact = ExecutionBundleIdentity::builder(
+        ExecutionBundlePackaging::ExactNode,
+        runner.clone(),
+        tool.clone(),
+    )
+    .implementations(vec![supplied('1')])
+    .plugs(vec![plug("combined", &["custom-node", "other-node"], 'c')])
+    .build();
+    assert!(multi_node_exact.is_err());
+
+    let extra_exact_plug = ExecutionBundleIdentity::builder(
+        ExecutionBundlePackaging::ExactNode,
+        runner.clone(),
+        tool.clone(),
+    )
+    .implementations(vec![supplied('1')])
+    .plugs(vec![
+        plug("custom-node", &["custom-node"], 'c'),
+        plug("other-node", &["other-node"], 'd'),
+    ])
+    .build();
+    assert!(extra_exact_plug.is_err());
+
+    let missing_node = ExecutionBundleIdentity::builder(
+        ExecutionBundlePackaging::CapabilityClass,
+        runner.clone(),
+        tool.clone(),
+    )
+    .implementations(vec![supplied('1')])
+    .plugs(vec![plug("pure", &["other-node"], 'c')])
+    .build();
+    assert!(missing_node.is_err());
+
+    let duplicate_node = ExecutionBundleIdentity::builder(
+        ExecutionBundlePackaging::CapabilityClass,
+        runner.clone(),
+        tool.clone(),
+    )
+    .implementations(vec![supplied('1')])
+    .plugs(vec![
+        plug("http-a", &["custom-node"], 'c'),
+        plug("http-b", &["custom-node"], 'd'),
+    ])
+    .build();
+    assert!(duplicate_node.is_err());
+
+    let unsorted_adapters =
+        ExecutionBundleIdentity::builder(ExecutionBundlePackaging::ExactNode, runner, tool)
+            .implementations(vec![supplied('1')])
+            .plugs(vec![plug("custom-node", &["custom-node"], 'c')])
+            .adapters(vec![
+                bundle_input("z-adapter", 'd'),
+                bundle_input("a-adapter", 'e'),
+            ])
+            .build();
+    assert!(unsorted_adapters.is_err());
 }
 
 #[test]
