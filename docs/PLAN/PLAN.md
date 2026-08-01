@@ -125,9 +125,11 @@ canonical descriptor, recovery semantics could change artifact identity without 
 a composition, or the reverse.
 
 > One resolved-node contract carries the strict interface identity, declared ports,
-> capability classes, recovery contract, executable/component identity, and a contract
-> version. **Artifact validation, artifact identity, replay classification, and
-> execution-bundle identity all consume that same resolution.**
+> capability classes, executable recovery contract, executable/component identity, and a
+> contract version. A graph-occurrence binding selects one recovery class and portable claim
+> from that contract. **Artifact validation, artifact identity, replay classification, and
+> execution-bundle identity all consume that same resolution; runtime node-type tables do
+> not supply missing semantics.**
 
 It holds **environment-independent** facts only: an environment-specific attestation (such
 as a destination honouring idempotency keys) belongs to the connection instance, never to
@@ -137,8 +139,9 @@ this names the owner-level source of truth before parallel work starts. (The con
 resolved under must remain recoverable.)
 
 **Joint milestone:** one standard node and one custom node resolve through the same
-canonical contract, and changing any recovery-, interface-, capability-, or
-executable-relevant field invalidates every artifact and bundle identity that depends on it.
+canonical contract. Changing any executable recovery-, interface-, capability-, or
+executable-relevant field invalidates every artifact and bundle identity that depends on it;
+changing an occurrence's selected recovery class or claim invalidates the artifact.
 
 **2A and 2B share a capability-bearing integration gate.** 2A's decisive experiment includes
 a capability-bearing node, but 2B owns the connection ABI it must use. A plug built against
@@ -468,14 +471,30 @@ shared primitive gets this split**; blob is its newest instance, and the next on
 
 ### Exit gates — two that were previously filed as decision points
 
-**One resolved recovery model across standard and custom nodes.** Custom-node resolution
-already produces a pinned interface carrying purity and recovery class, defaulting undeclared
-nodes to effectful + never-replay. Standard nodes carry a **binary** `is_replay_safe`
-classification — hardcoded per type, separate from the descriptor, not pinned into the
-artifact's resolved identity, and unable to express `idempotent-with-key` versus
-`never-replay`. That is incomplete, not absent. Item 1 unifies both under one resolved
-recovery model, pinned into artifact identity so it cannot drift across platform revisions
-without something failing.
+**Decided (wamn-4u7p.2): one resolved recovery model across standard and custom nodes.**
+Recovery has three deliberately separate layers:
+
+| Layer | Durable authority | Rule |
+|---|---|---|
+| **Executable recovery contract** | Versioned canonical `ResolvedNodeContract`, produced from either a standard descriptor or a custom manifest | Declares purity, conservative default, supported recovery classes and portable claim requirements; contains no environment attestation |
+| **Occurrence selection** | Artifact binding keyed by graph node id | Selects one class and claim allowed by the executable contract; publication validates it and includes it in artifact identity |
+| **Effect attempt** | Append-only attempt fact | Records the effective admitted class plus the connection and credential generations that satisfied the selection; the environment may satisfy or refuse, never strengthen, weaken, or substitute |
+
+The standard-node library owns one complete public, versioned descriptor per type. It carries
+the exact interface/WIT identity, ports, capability classes, portable connection
+requirements, platform executable revision, purity, conservative recovery default, and
+supported selections. Publication converts that descriptor losslessly into the same
+canonical contract used for a supplied custom manifest. The descriptor is not hashed as a
+second identity format: artifact and bundle keys frame the complete canonical contract, and
+the artifact additionally frames the ordered occurrence selections. Custom declarations
+remain conservative by default (`effectful + never-replay`) and enter the same path.
+
+Runtime recovery reads only the pinned occurrence selection. The current binary
+`is_replay_safe` function and the runner's node-type/config fallbacks — including deriving
+HTTP safety from a method name or an `idempotent-with-key` flag — are migration inputs, not
+authorities. A standard descriptor or resolver change mints a new contract/platform
+revision; historical contract versions remain interpretable, unknown versions fail closed,
+and already-published artifacts are never silently reclassified.
 
 **Checkpoint recovery must not foreclose fan-out.** *Not* an exit gate — the engine cannot
 fan out: `Emission` carries one port and P1 allows one edge per port, so a completion yields
@@ -2412,7 +2431,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~What "Replay" means to an author~~ | **Settled (wamn-4u7p.1):** audit reconstruction is read-only and creates no run; Replay is exact-definition execution in a fail-closed scenario sandbox; Run again/Reprocess is fresh production admission under current definitions and authority. Retained bytes never grant execution permission, and typed lineage distinguishes the two executing operations | — |
 | **Field-ownership metadata in node and connection descriptors** | The simple surface can only be a constrained view if descriptors say who owns each field — author, environment, or system. Tiers are 6A's design | 6A, 2B |
 | **Do composition economics hold?** | 2A's exit; if not, least privilege stays intra-runner (code-enforced) rather than structural, and 6A builds against the linked runner | 2A |
-| **Replay classification for standard nodes** | An item 1 exit gate — custom manifests pin purity and recovery class, standard descriptors do not | 1 |
+| ~~Replay classification for standard nodes~~ | **Settled (wamn-4u7p.2):** standard descriptors and custom manifests resolve to one versioned executable recovery contract; an artifact pins each occurrence's selected class/claim; an attempt records what the environment admitted. Complete standard descriptors enter identity through the canonical contract, and runtime tables may not reclassify it | — |
 | ~~Fanout after a nondeterministic producer~~ | **Not a gate:** the engine cannot fan out (one port per emission, one edge per port), so the hazard needs a feature that does not exist. Recovery must stay fan-out-addable | — |
 | **Node ABI: implement 0.1's existing P2 streaming contract, or introduce a P3-native 0.2?** | Not a forced bump — 0.1 already carries `streamed(payload-ref)` and a `payloads` interface. Decide with item 1's bulk boundary and record it | 1 |
 | **The canonical command model beneath git and the management API** | Two front ends over two models grow divergent validation and authorization | 6A |

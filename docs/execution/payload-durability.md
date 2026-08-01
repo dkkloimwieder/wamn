@@ -30,10 +30,45 @@ The implementation preserves these invariants:
    and retention decisions.
 5. Platform payloads and client objects have separate namespaces, credentials,
    authorization, accounting, and garbage collectors.
-6. The resolved node contract is the only recovery classifier. Runtime node
-   type tables and environment configuration cannot override it.
+6. The artifact's validated occurrence recovery binding is the only runtime
+   classifier. It selects from the pinned resolved-node contract; node-type
+   tables and environment configuration cannot override it.
 7. A retained replay seed makes referenced immutable material retainable, not
    necessarily executable. Current authorization still governs live execution.
+
+## One resolved recovery model
+
+Recovery resolution has three authorities instead of one overloaded class:
+
+| Layer | Pinned content | Consumer |
+|---|---|---|
+| Executable recovery contract | Purity, conservative default, supported recovery classes and portable claim requirements inside the versioned `ResolvedNodeContract` | Publication validation, artifact and execution-bundle identity |
+| Occurrence selection | Graph node id, selected class, and selected portable requirement/claim | Runtime dispatch and recovery; canonical artifact identity |
+| Effect attempt | Effective admitted class plus connection-instance and credential generations | Recovery transition and audit |
+
+The standard-node library supplies one complete versioned descriptor per node
+type: interface/WIT identity, output ports, capability classes, portable
+connection requirements, executable platform revision, purity, conservative
+default, and supported recovery selections. Publication converts it losslessly
+to the same `ResolvedNodeContract` produced from a custom manifest. Canonical
+contract bytes enter artifact and execution-bundle identities; the ordered
+occurrence selections additionally enter artifact identity. The source
+descriptor is not retained as a second identity representation.
+
+Publication resolves each graph occurrence once. A standard node may therefore
+have two occurrences with different valid selections without runtime
+interpretation of their config, while a custom manifest's current fixed class
+selects identically for each occurrence. Pure contracts permit only `replay`;
+effectful contracts conservatively select `never-replay` unless a supported
+portable requirement and its authority select `idempotent-with-key`.
+Environment connection attestations satisfy or refuse that selection at
+admission; they cannot strengthen, weaken, or retarget it.
+
+Runtime never consults `is_replay_safe`, an HTTP-method table, or an
+`idempotent-with-key` config flag. A changed descriptor or resolver produces a
+new contract/platform revision and therefore a new identity. Historical
+contract versions remain readable for pinned artifacts; unknown versions and
+artifacts without an occurrence binding refuse explicitly.
 
 ## One recovery reader
 
@@ -118,9 +153,10 @@ occurrence; that value is part of the seed, not capture.
 
 The run input and occurrence inputs therefore use paired `*_json` / `*_ref`
 columns with an exactly-one-or-null constraint. The referenced artifact stores
-the full canonical `ResolvedNodeContract` set, so both standard and custom
-nodes recover under the same pinned recovery, interface, capability,
-connection-requirement, and executable identities.
+the full canonical `ResolvedNodeContract` set and ordered occurrence recovery
+bindings, so both standard and custom nodes recover under the same pinned
+recovery, interface, capability, connection-requirement, and executable
+identities.
 
 Seed retention is policy-governed after terminalization. Deleting a seed first
 deletes its authoritative payload-reference edges; only then can referenced
@@ -252,12 +288,14 @@ The candidate does not become durable direction until decision bead
 `wamn-4u7p.3` compares it with a P3-native breaking ABI and folds the result
 back into `PLAN.md`.
 
-The canonical resolved-node contract shipped at `95eb37a` remains the identity
-boundary. Its contract version, exact WIT interface identity, declared ports,
-capability classes, portable connection requirements, recovery class, and
-executable identity are consumed by artifact validation, replay
-classification, and execution-bundle identity. Item 1 must not add bucket,
-endpoint, threshold, ceiling, credential, or environment attestation to it.
+The canonical resolved-node contract shipped at `95eb37a` remains the
+executable identity boundary. Its contract version, exact WIT interface
+identity, declared ports, capability classes, portable connection
+requirements, executable recovery contract, and executable identity are
+consumed by artifact validation, replay classification, and execution-bundle
+identity. The artifact's occurrence bindings carry selected recovery classes
+and claims. Item 1 must not add bucket, endpoint, threshold, ceiling,
+credential, or environment attestation to either layer.
 Nodes importing `payloads` resolve to the corresponding strict WIT world; the
 host-side transparent offload path does not change a node's contract.
 
@@ -294,7 +332,8 @@ raise it.
   capture `full` control.
 - Kill immediately before and after attempt completion/checkpoint commit for
   each resolved recovery class. Assert replay, stable-key replay, or explicit
-  `effect-uncertain` exactly as pinned in `ResolvedNodeContract`.
+  `effect-uncertain` exactly as pinned in the artifact occurrence binding and
+  admitted in the attempt fact.
 - Kill at every blob protocol boundary. Assert either no durable reference or a
   readable object, then resume the run from the previous or new checkpoint as
   appropriate.
