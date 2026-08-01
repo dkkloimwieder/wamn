@@ -163,7 +163,8 @@ async fn real_f1_f2_components_publish_retry_and_conflict_by_exact_bytes() {
     let connection_task = tokio::spawn(connection);
     let row = client
         .query_one(
-            "SELECT interface_bundle_json::text, component_digests::text, artifact_hash \
+            "SELECT interface_bundle_json::text, component_digests::text, \
+                    occurrence_recovery_json, occurrence_recovery_hash, artifact_hash \
              FROM catalog.flow_artifacts \
              WHERE tenant_id = $1 AND flow_id = 'custom-proof' AND flow_version = 1",
             &[&tenant],
@@ -195,7 +196,15 @@ async fn real_f1_f2_components_publish_retry_and_conflict_by_exact_bytes() {
             .unwrap();
         assert_eq!(component["component-digest"], expected);
     }
-    let artifact_hash: String = row.get(2);
+    let occurrence_recovery_json: String = row.get(2);
+    let occurrence_recovery: serde_json::Value =
+        serde_json::from_str(&occurrence_recovery_json).unwrap();
+    assert_eq!(occurrence_recovery.as_array().unwrap().len(), 3);
+    assert_eq!(
+        row.get::<_, String>(3),
+        digest(occurrence_recovery_json.as_bytes())
+    );
+    let artifact_hash: String = row.get(4);
 
     publish_catalog::run(publish_args(
         &url,

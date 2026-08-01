@@ -468,7 +468,15 @@ pub(crate) async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> a
                     EXISTS (SELECT 1 FROM information_schema.columns \
                              WHERE table_schema = 'catalog' \
                                AND table_name = 'flow_artifacts' \
-                               AND column_name = 'interface_bundle_json')",
+                               AND column_name = 'interface_bundle_json'), \
+                    EXISTS (SELECT 1 FROM information_schema.columns \
+                             WHERE table_schema = 'catalog' \
+                               AND table_name = 'flow_artifacts' \
+                               AND column_name = 'occurrence_recovery_json'), \
+                    EXISTS (SELECT 1 FROM information_schema.columns \
+                             WHERE table_schema = 'catalog' \
+                               AND table_name = 'flow_artifacts' \
+                               AND column_name = 'occurrence_recovery_hash')",
             &[],
         )
         .await?;
@@ -486,6 +494,27 @@ pub(crate) async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> a
         release_row.get::<_, bool>(10),
     ];
     if release_objects.iter().all(|present| *present) {
+        let selection_columns = [
+            release_row.get::<_, bool>(11),
+            release_row.get::<_, bool>(12),
+        ];
+        if selection_columns.iter().all(|present| *present) {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            selection_columns.iter().all(|present| !*present),
+            "catalog occurrence recovery storage is partially installed; reconcile it before publication"
+        );
+        let start = CATALOG_SCHEMA_SQL
+            .find("-- BEGIN OCCURRENCE RECOVERY STORAGE MIGRATION")
+            .expect("occurrence recovery migration start");
+        let end = CATALOG_SCHEMA_SQL
+            .find("-- END OCCURRENCE RECOVERY STORAGE MIGRATION")
+            .expect("occurrence recovery migration end");
+        client
+            .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+            .await
+            .context("install occurrence recovery artifact storage")?;
         return Ok(());
     }
     anyhow::ensure!(
@@ -655,6 +684,8 @@ async fn publish_release(
             let interface_bundle_hash = artifact.interface_bundle().hash();
             let component_digests = serde_json::to_string(artifact.supplied_components())
                 .context("serialize digests")?;
+            let occurrence_recovery = std::str::from_utf8(artifact.occurrence_recovery_bytes())
+                .context("canonical occurrence recovery selections are UTF-8")?;
             client
                 .execute(
                     wamn_schema_control::sql::register_flow_artifact_sql(),
@@ -669,6 +700,8 @@ async fn publish_release(
                         &interfaces,
                         &interface_bundle_hash,
                         &component_digests.as_str(),
+                        &occurrence_recovery,
+                        &artifact.occurrence_recovery_hash(),
                     ],
                 )
                 .await

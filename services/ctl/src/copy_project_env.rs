@@ -685,6 +685,8 @@ async fn exec_copy_definition(
                 let interface_bundle_json: String = artifact.get(6);
                 let interface_bundle_hash: String = artifact.get(7);
                 let component_digests: String = artifact.get(8);
+                let occurrence_recovery_json: Option<String> = artifact.get(9);
+                let occurrence_recovery_hash: Option<String> = artifact.get(10);
                 let flow_version_u32 =
                     u32::try_from(flow_version).context("copied flow version must be positive")?;
                 wamn_catalog::PinnedArtifact::from_storage(
@@ -697,6 +699,8 @@ async fn exec_copy_definition(
                     &interface_bundle_json,
                     &interface_bundle_hash,
                     &component_digests,
+                    occurrence_recovery_json.as_deref(),
+                    occurrence_recovery_hash.as_deref(),
                 )
                 .with_context(|| {
                     format!("verify copied immutable flow {flow_id} v{flow_version}")
@@ -714,6 +718,8 @@ async fn exec_copy_definition(
                         &interface_bundle_json,
                         &interface_bundle_hash,
                         &component_digests,
+                        &occurrence_recovery_json,
+                        &occurrence_recovery_hash,
                     ],
                 )
                 .await

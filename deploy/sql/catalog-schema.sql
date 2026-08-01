@@ -102,7 +102,15 @@ CREATE TABLE catalog.flow_artifacts (
     interface_bundle_hash text NOT NULL,
     component_digests     jsonb NOT NULL
         CHECK (jsonb_typeof(component_digests) = 'array'),
+    occurrence_recovery_json text,
+    occurrence_recovery_hash text,
     created_at             timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT flow_artifacts_occurrence_recovery_pair CHECK (
+        (occurrence_recovery_json IS NULL AND occurrence_recovery_hash IS NULL)
+        OR (occurrence_recovery_json IS NOT NULL
+            AND occurrence_recovery_hash IS NOT NULL
+            AND jsonb_typeof(occurrence_recovery_json::jsonb) = 'array')
+    ),
     PRIMARY KEY (tenant_id, flow_id, flow_version)
 );
 ALTER TABLE catalog.flow_artifacts ENABLE ROW LEVEL SECURITY;
@@ -130,7 +138,34 @@ CREATE TRIGGER flow_artifacts_delete_immutable
 BEFORE DELETE ON catalog.flow_artifacts
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
-CREATE FUNCTION catalog.register_flow_artifact(
+-- BEGIN OCCURRENCE RECOVERY STORAGE MIGRATION (wamn-4u7p.30)
+-- ensure_catalog_storage also applies this block to pre-selection schemas.
+ALTER TABLE catalog.flow_artifacts
+    ADD COLUMN IF NOT EXISTS occurrence_recovery_json text;
+ALTER TABLE catalog.flow_artifacts
+    ADD COLUMN IF NOT EXISTS occurrence_recovery_hash text;
+DO $migration$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'catalog.flow_artifacts'::regclass
+          AND conname = 'flow_artifacts_occurrence_recovery_pair'
+    ) THEN
+        ALTER TABLE catalog.flow_artifacts
+            ADD CONSTRAINT flow_artifacts_occurrence_recovery_pair CHECK (
+                (occurrence_recovery_json IS NULL AND occurrence_recovery_hash IS NULL)
+                OR (occurrence_recovery_json IS NOT NULL
+                    AND occurrence_recovery_hash IS NOT NULL
+                    AND jsonb_typeof(occurrence_recovery_json::jsonb) = 'array')
+            );
+    END IF;
+END
+$migration$;
+DROP FUNCTION IF EXISTS catalog.register_flow_artifact(
+    text, text, int, text, jsonb, text, text, text, text, jsonb
+);
+
+CREATE OR REPLACE FUNCTION catalog.register_flow_artifact(
     p_tenant_id text,
     p_flow_id text,
     p_flow_version int,
@@ -140,7 +175,9 @@ CREATE FUNCTION catalog.register_flow_artifact(
     p_artifact_hash text,
     p_interface_bundle_json text,
     p_interface_bundle_hash text,
-    p_component_digests jsonb
+    p_component_digests jsonb,
+    p_occurrence_recovery_json text,
+    p_occurrence_recovery_hash text
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -149,13 +186,16 @@ BEGIN
     INSERT INTO catalog.flow_artifacts (
         tenant_id, flow_id, flow_version, schema_version, graph_json,
         graph_hash, artifact_hash, interface_bundle_json,
-        interface_bundle_hash, component_digests
+        interface_bundle_hash, component_digests,
+        occurrence_recovery_json, occurrence_recovery_hash
     )
     VALUES (
         p_tenant_id, p_flow_id, p_flow_version, p_schema_version, p_graph_json,
         p_graph_hash, p_artifact_hash, p_interface_bundle_json,
         p_interface_bundle_hash,
-        p_component_digests
+        p_component_digests,
+        p_occurrence_recovery_json,
+        p_occurrence_recovery_hash
     )
     ON CONFLICT (tenant_id, flow_id, flow_version) DO NOTHING;
 
@@ -172,6 +212,8 @@ BEGIN
           AND interface_bundle_json = p_interface_bundle_json
           AND interface_bundle_hash = p_interface_bundle_hash
           AND component_digests = p_component_digests
+          AND occurrence_recovery_json IS NOT DISTINCT FROM p_occurrence_recovery_json
+          AND occurrence_recovery_hash IS NOT DISTINCT FROM p_occurrence_recovery_hash
     ) THEN
         RAISE EXCEPTION USING
             ERRCODE = '23505',
@@ -180,8 +222,9 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.register_flow_artifact(
-    text, text, int, text, jsonb, text, text, text, text, jsonb
+    text, text, int, text, jsonb, text, text, text, text, jsonb, text, text
 ) FROM PUBLIC;
+-- END OCCURRENCE RECOVERY STORAGE MIGRATION (wamn-4u7p.30)
 
 -- The sealed canonical member set. Registering the same set converges;
 -- attempting to add/remove/change a member of an existing release conflicts.

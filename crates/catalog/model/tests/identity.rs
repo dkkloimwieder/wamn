@@ -580,6 +580,7 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
     let artifact = artifact();
     let graph = flow.to_json();
     let bundle = std::str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap();
+    let occurrence_recovery = std::str::from_utf8(artifact.occurrence_recovery_bytes()).unwrap();
     let verified = PinnedArtifact::from_storage(
         "tenant-a",
         &flow.flow_id,
@@ -590,6 +591,8 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
         bundle,
         artifact.interface_bundle().hash(),
         &serde_json::to_string(artifact.supplied_components()).unwrap(),
+        Some(occurrence_recovery),
+        Some(artifact.occurrence_recovery_hash()),
     )
     .unwrap();
     assert_eq!(verified.flow(), &flow);
@@ -600,6 +603,23 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
             .unwrap()
             .purity,
         ResolvedPurity::Effectful
+    );
+    assert!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            &flow.flow_id,
+            flow.version,
+            &graph,
+            artifact.graph_hash(),
+            artifact.identity().artifact_hash().as_str(),
+            bundle,
+            artifact.interface_bundle().hash(),
+            &serde_json::to_string(artifact.supplied_components()).unwrap(),
+            None,
+            None,
+        )
+        .is_err(),
+        "current conservative artifacts must not re-resolve omitted selections"
     );
 
     let bad_graph_hash = format!("sha256:{}", "0".repeat(64));
@@ -616,6 +636,8 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
             bundle,
             artifact.interface_bundle().hash(),
             &serde_json::to_string(artifact.supplied_components()).unwrap(),
+            Some(occurrence_recovery),
+            Some(artifact.occurrence_recovery_hash()),
         ),
         Err(CatalogIdentityError::ArtifactHashMismatch)
     ));
@@ -630,6 +652,8 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
             bundle,
             artifact.interface_bundle().hash(),
             "[]",
+            Some(occurrence_recovery),
+            Some(artifact.occurrence_recovery_hash()),
         ),
         Err(CatalogIdentityError::ArtifactHashMismatch)
     ));
@@ -644,6 +668,8 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
             bundle,
             artifact.interface_bundle().hash(),
             "not-json",
+            Some(occurrence_recovery),
+            Some(artifact.occurrence_recovery_hash()),
         )
         .is_err()
     );
@@ -658,6 +684,8 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
             bundle,
             artifact.interface_bundle().hash(),
             &serde_json::to_string(artifact.supplied_components()).unwrap(),
+            Some(occurrence_recovery),
+            Some(artifact.occurrence_recovery_hash()),
         ),
         Err(CatalogIdentityError::GraphHashMismatch)
     ));
@@ -672,6 +700,8 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
             bundle,
             &bad_bundle_hash,
             &serde_json::to_string(artifact.supplied_components()).unwrap(),
+            Some(occurrence_recovery),
+            Some(artifact.occurrence_recovery_hash()),
         ),
         Err(CatalogIdentityError::InterfaceBundleHashMismatch)
     ));
@@ -686,6 +716,8 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
             bundle,
             artifact.interface_bundle().hash(),
             &serde_json::to_string(artifact.supplied_components()).unwrap(),
+            Some(occurrence_recovery),
+            Some(artifact.occurrence_recovery_hash()),
         ),
         Err(CatalogIdentityError::ArtifactIdMismatch)
     ));
@@ -716,6 +748,8 @@ fn pinned_artifact_verifies_and_projects_the_legacy_persisted_shape() {
         LEGACY_BUNDLE,
         LEGACY_BUNDLE_HASH,
         LEGACY_COMPONENTS,
+        None,
+        None,
     )
     .expect("a pre-contract-version persisted artifact remains recoverable");
 

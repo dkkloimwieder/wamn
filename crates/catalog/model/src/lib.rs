@@ -25,6 +25,7 @@ const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;
 const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v1";
 const MODEL_OWNED_NODES: [&str; 5] = ["cron", "event", "fail", "request", "respond"];
+const HISTORICAL_RESOLVED_CONTRACT_VERSION: &str = "1";
 const LEGACY_RESOLVED_CONTRACT_VERSION: &str = "legacy-v0";
 const LEGACY_INTERFACE_CONTRACT: &str = "legacy-unpinned-wamn-node";
 const LEGACY_PLATFORM_REVISION: &str = "legacy-unpinned-platform";
@@ -45,6 +46,7 @@ pub enum CatalogIdentityError {
     NonCanonicalInterfaceOrder { node_type: String },
     InvalidInterface { node_type: String, message: String },
     InterfaceBundleHashMismatch,
+    OccurrenceRecoveryHashMismatch,
     GraphHashMismatch,
     ArtifactIdMismatch,
     ArtifactHashMismatch,
@@ -99,6 +101,9 @@ impl fmt::Display for CatalogIdentityError {
             }
             Self::InterfaceBundleHashMismatch => {
                 write!(formatter, "resolved interface bundle hash does not match")
+            }
+            Self::OccurrenceRecoveryHashMismatch => {
+                write!(formatter, "occurrence recovery hash does not match")
             }
             Self::GraphHashMismatch => write!(formatter, "flow graph hash does not match"),
             Self::ArtifactIdMismatch => {
@@ -585,6 +590,8 @@ pub struct Artifact {
     interface_bundle: InterfaceBundle,
     supplied_components: Vec<ResolvedComponent>,
     occurrence_recovery: Box<[OccurrenceRecoverySelection]>,
+    occurrence_recovery_bytes: Box<[u8]>,
+    occurrence_recovery_hash: String,
     canonical_bytes: Box<[u8]>,
 }
 
@@ -644,6 +651,14 @@ impl Artifact {
         let current_resolution = implementations.iter().all(|implementation| {
             implementation.interface().contract_version == RESOLVED_CONTRACT_VERSION
         });
+        let historical_resolution = implementations.iter().all(|implementation| {
+            implementation.interface().contract_version == HISTORICAL_RESOLVED_CONTRACT_VERSION
+        });
+        if !current_resolution && !historical_resolution {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: "an artifact must use one supported resolved-contract version".to_string(),
+            });
+        }
         if current_resolution {
             for selection in &occurrence_recovery {
                 owned.push((
@@ -669,6 +684,12 @@ impl Artifact {
         let canonical_bytes = frames("artifact", borrowed).into_boxed_slice();
         let artifact_hash = ArtifactHash(digest(&canonical_bytes));
         let interface_bundle = InterfaceBundle::from_implementations(&implementations)?;
+        let occurrence_recovery_bytes = canonical_json(
+            &serde_json::to_value(&occurrence_recovery)
+                .expect("occurrence recovery selections serialize"),
+        )
+        .into_boxed_slice();
+        let occurrence_recovery_hash = digest(&occurrence_recovery_bytes);
         Ok(Self {
             identity: ArtifactIdentity { id, artifact_hash },
             schema_version: flow.schema_version.clone(),
@@ -676,6 +697,8 @@ impl Artifact {
             interface_bundle,
             supplied_components,
             occurrence_recovery: occurrence_recovery.into_boxed_slice(),
+            occurrence_recovery_bytes,
+            occurrence_recovery_hash,
             canonical_bytes,
         })
     }
@@ -708,6 +731,16 @@ impl Artifact {
     /// Ordered recovery choices keyed by exact graph occurrence id.
     pub fn occurrence_recovery(&self) -> &[OccurrenceRecoverySelection] {
         &self.occurrence_recovery
+    }
+
+    /// Canonical ordered occurrence-recovery-selection JSON persisted with this artifact.
+    pub fn occurrence_recovery_bytes(&self) -> &[u8] {
+        &self.occurrence_recovery_bytes
+    }
+
+    /// SHA-256 of [`Self::occurrence_recovery_bytes`].
+    pub fn occurrence_recovery_hash(&self) -> &str {
+        &self.occurrence_recovery_hash
     }
 
     pub fn canonical_bytes(&self) -> &[u8] {
@@ -1166,6 +1199,8 @@ impl PinnedArtifact {
         interface_bundle_json: &str,
         interface_bundle_hash: &str,
         component_digests_json: &str,
+        occurrence_recovery_json: Option<&str>,
+        occurrence_recovery_hash: Option<&str>,
     ) -> Result<Self, CatalogIdentityError> {
         validate_digest(artifact_hash, "artifact-hash")?;
         validate_digest(graph_hash, "graph-hash")?;
@@ -1194,6 +1229,10 @@ impl PinnedArtifact {
             .iter()
             .all(|contract| contract.interface.contract_version == LEGACY_RESOLVED_CONTRACT_VERSION)
         {
+            require_historical_selection_absence(
+                occurrence_recovery_json,
+                occurrence_recovery_hash,
+            )?;
             return Self::from_legacy_storage(
                 expected_tenant_id,
                 flow,
@@ -1241,7 +1280,32 @@ impl PinnedArtifact {
         if let Some((node_type, _)) = components_by_node.pop_first() {
             return Err(CatalogIdentityError::UnexpectedInterface { node_type });
         }
-        let reconstructed = Artifact::new(expected_tenant_id, &flow, implementations)?;
+        let current_resolution = implementations.iter().all(|implementation| {
+            implementation.interface().contract_version == RESOLVED_CONTRACT_VERSION
+        });
+        let historical_resolution = implementations.iter().all(|implementation| {
+            implementation.interface().contract_version == HISTORICAL_RESOLVED_CONTRACT_VERSION
+        });
+        let occurrence_recovery = if current_resolution {
+            parse_persisted_occurrence_recovery(occurrence_recovery_json, occurrence_recovery_hash)?
+        } else if historical_resolution {
+            require_historical_selection_absence(
+                occurrence_recovery_json,
+                occurrence_recovery_hash,
+            )?;
+            conservative_occurrence_recovery(&flow, &implementations)?
+        } else {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: "a persisted artifact must use one supported resolved-contract version"
+                    .to_string(),
+            });
+        };
+        let reconstructed = Artifact::new_with_recovery_selections(
+            expected_tenant_id,
+            &flow,
+            implementations,
+            occurrence_recovery,
+        )?;
         if reconstructed.identity().artifact_hash().as_str() != artifact_hash {
             return Err(CatalogIdentityError::ArtifactHashMismatch);
         }
@@ -1378,6 +1442,45 @@ impl PinnedArtifact {
     pub fn occurrence_recovery(&self) -> &[OccurrenceRecoverySelection] {
         &self.occurrence_recovery
     }
+}
+
+fn parse_persisted_occurrence_recovery(
+    occurrence_recovery_json: Option<&str>,
+    occurrence_recovery_hash: Option<&str>,
+) -> Result<Vec<OccurrenceRecoverySelection>, CatalogIdentityError> {
+    let (Some(json), Some(hash)) = (occurrence_recovery_json, occurrence_recovery_hash) else {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: "current artifact omits occurrence recovery selections or hash".to_string(),
+        });
+    };
+    validate_digest(hash, "occurrence-recovery-hash")?;
+    if digest(json.as_bytes()) != hash {
+        return Err(CatalogIdentityError::OccurrenceRecoveryHashMismatch);
+    }
+    let selections: Vec<OccurrenceRecoverySelection> =
+        serde_json::from_str(json).map_err(|error| CatalogIdentityError::InvalidDefinition {
+            message: format!("occurrence recovery selections are invalid: {error}"),
+        })?;
+    let canonical = canonical_json(
+        &serde_json::to_value(&selections).expect("occurrence recovery selections serialize"),
+    );
+    if canonical != json.as_bytes() {
+        return Err(CatalogIdentityError::NonCanonicalJson);
+    }
+    Ok(selections)
+}
+
+fn require_historical_selection_absence(
+    occurrence_recovery_json: Option<&str>,
+    occurrence_recovery_hash: Option<&str>,
+) -> Result<(), CatalogIdentityError> {
+    if occurrence_recovery_json.is_some() || occurrence_recovery_hash.is_some() {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: "historical artifacts cannot carry unversioned occurrence recovery data"
+                .to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_interface_order(
@@ -1608,7 +1711,7 @@ fn validate_executable_recovery(
                 message: "executable recovery semantics are invalid or disagree with compatibility fields".to_string(),
             });
         }
-    } else if interface.contract_version == "1"
+    } else if interface.contract_version == HISTORICAL_RESOLVED_CONTRACT_VERSION
         || interface.contract_version == LEGACY_RESOLVED_CONTRACT_VERSION
     {
         if contract.executable_recovery.is_some() {

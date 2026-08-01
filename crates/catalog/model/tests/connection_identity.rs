@@ -1,6 +1,7 @@
+use sha2::{Digest as _, Sha256};
 use wamn_catalog::{
     Artifact, ExecutionBundleIdentity, ExecutionBundleInput, ExecutionBundlePackaging,
-    ExecutionPlugManifest, NodeImplementation,
+    ExecutionPlugManifest, NodeImplementation, PinnedArtifact,
 };
 use wamn_flow::Flow;
 use wamn_node_manifest::{
@@ -13,6 +14,15 @@ use wamn_node_manifest::{
 
 fn digest(digit: char) -> String {
     format!("sha256:{}", digit.to_string().repeat(64))
+}
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    let value = Sha256::digest(bytes);
+    let hex = value
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("sha256:{hex}")
 }
 
 fn flow() -> Flow {
@@ -509,6 +519,167 @@ fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types()
         )
         .is_err(),
         "an unpinned claim mutation must fail closed"
+    );
+}
+
+#[test]
+fn explicit_occurrence_selections_round_trip_from_canonical_storage() {
+    let implementation = implementation("wamn:connection/http@0.1.0", 86_400_000).unwrap();
+    let selections = vec![
+        OccurrenceRecoverySelection {
+            selection_version: "1".to_string(),
+            node_id: "call-a".to_string(),
+            node_type: "http-node".to_string(),
+            recovery_class: RecoveryClass::IdempotentWithKey,
+            portable_connection: Some(implementation.portable_connections()[0].clone()),
+        },
+        OccurrenceRecoverySelection {
+            selection_version: "1".to_string(),
+            node_id: "call-b".to_string(),
+            node_type: "http-node".to_string(),
+            recovery_class: RecoveryClass::NeverReplay,
+            portable_connection: None,
+        },
+    ];
+    let flow = repeated_flow();
+    let artifact = Artifact::new_with_recovery_selections(
+        "tenant-a",
+        &flow,
+        vec![implementation],
+        selections.clone(),
+    )
+    .unwrap();
+    let graph = flow.to_json();
+    let interfaces = std::str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap();
+    let components = serde_json::to_string(artifact.supplied_components()).unwrap();
+    let occurrence_recovery = std::str::from_utf8(artifact.occurrence_recovery_bytes()).unwrap();
+
+    let pinned = PinnedArtifact::from_storage(
+        "tenant-a",
+        &flow.flow_id,
+        flow.version,
+        &graph,
+        artifact.graph_hash(),
+        artifact.identity().artifact_hash().as_str(),
+        interfaces,
+        artifact.interface_bundle().hash(),
+        &components,
+        Some(occurrence_recovery),
+        Some(artifact.occurrence_recovery_hash()),
+    )
+    .unwrap();
+    assert_eq!(pinned.occurrence_recovery(), selections);
+    assert_eq!(
+        artifact.occurrence_recovery_hash(),
+        "sha256:7127f4a08d4ca27aa6cf3c98cf4a2b3cdcf5e95e700341582a6faf8b5fc625db",
+        "canonical occurrence-selection ordering changed"
+    );
+
+    assert!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            &flow.flow_id,
+            flow.version,
+            &graph,
+            artifact.graph_hash(),
+            artifact.identity().artifact_hash().as_str(),
+            interfaces,
+            artifact.interface_bundle().hash(),
+            &components,
+            None,
+            None,
+        )
+        .is_err(),
+        "current artifacts must not re-resolve omitted selections"
+    );
+    assert!(matches!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            &flow.flow_id,
+            flow.version,
+            &graph,
+            artifact.graph_hash(),
+            artifact.identity().artifact_hash().as_str(),
+            interfaces,
+            artifact.interface_bundle().hash(),
+            &components,
+            Some("[]"),
+            Some(artifact.occurrence_recovery_hash()),
+        ),
+        Err(wamn_catalog::CatalogIdentityError::OccurrenceRecoveryHashMismatch)
+    ));
+
+    let mut mutated: serde_json::Value = serde_json::from_str(occurrence_recovery).unwrap();
+    mutated.as_array_mut().unwrap().swap(0, 1);
+    let mutated = serde_json::to_string(&mutated).unwrap();
+    let mutated_hash = digest_bytes(mutated.as_bytes());
+    assert!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            &flow.flow_id,
+            flow.version,
+            &graph,
+            artifact.graph_hash(),
+            artifact.identity().artifact_hash().as_str(),
+            interfaces,
+            artifact.interface_bundle().hash(),
+            &components,
+            Some(&mutated),
+            Some(&mutated_hash),
+        )
+        .is_err(),
+        "internally consistent mutated selection bytes must still fail artifact verification"
+    );
+}
+
+#[test]
+fn only_historical_v1_may_project_conservative_occurrence_selections() {
+    let current = implementation("wamn:connection/http@0.1.0", 1).unwrap();
+    let mut contract = current.contract().clone();
+    contract.interface.contract_version = "1".to_string();
+    contract.executable_recovery = None;
+    let historical =
+        NodeImplementation::from_resolved_component(ResolvedComponent { contract }).unwrap();
+    let flow = flow();
+    let artifact = Artifact::new("tenant-a", &flow, vec![historical]).unwrap();
+    let graph = flow.to_json();
+    let interfaces = std::str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap();
+    let components = serde_json::to_string(artifact.supplied_components()).unwrap();
+    let pinned = PinnedArtifact::from_storage(
+        "tenant-a",
+        &flow.flow_id,
+        flow.version,
+        &graph,
+        artifact.graph_hash(),
+        artifact.identity().artifact_hash().as_str(),
+        interfaces,
+        artifact.interface_bundle().hash(),
+        &components,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(pinned.occurrence_recovery().len(), 1);
+    assert_eq!(
+        pinned.occurrence_recovery()[0].recovery_class,
+        RecoveryClass::NeverReplay
+    );
+    assert!(
+        PinnedArtifact::from_storage(
+            "tenant-a",
+            &flow.flow_id,
+            flow.version,
+            &graph,
+            artifact.graph_hash(),
+            artifact.identity().artifact_hash().as_str(),
+            interfaces,
+            artifact.interface_bundle().hash(),
+            &components,
+            Some(std::str::from_utf8(artifact.occurrence_recovery_bytes()).unwrap()),
+            Some(artifact.occurrence_recovery_hash()),
+        )
+        .is_err(),
+        "historical projection must not accept unauthenticated selection bytes"
     );
 }
 

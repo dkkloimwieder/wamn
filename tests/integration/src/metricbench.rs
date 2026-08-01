@@ -308,6 +308,8 @@ struct FixtureArtifact {
     interface_bundle_json: String,
     interface_bundle_hash: String,
     component_digests: Value,
+    occurrence_recovery_json: String,
+    occurrence_recovery_hash: String,
 }
 
 fn interface(
@@ -350,6 +352,9 @@ fn fixture_artifact(
         .expect("canonical interface bundle is UTF-8"),
         interface_bundle_hash: artifact.interface_bundle().hash().to_string(),
         component_digests: serde_json::to_value(artifact.supplied_components())?,
+        occurrence_recovery_json: String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
+            .expect("canonical occurrence recovery selections are UTF-8"),
+        occurrence_recovery_hash: artifact.occurrence_recovery_hash().to_string(),
     })
 }
 
@@ -484,8 +489,9 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
                 .execute(
                     "INSERT INTO catalog.flow_artifacts \
                        (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                        artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
-                     VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8)",
+                        artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests, \
+                        occurrence_recovery_json,occurrence_recovery_hash) \
+                     VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8,$9,$10)",
                     &[
                         &TENANT,
                         &artifact.flow_id,
@@ -495,6 +501,8 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
                         &artifact.interface_bundle_json,
                         &artifact.interface_bundle_hash,
                         &artifact.component_digests,
+                        &artifact.occurrence_recovery_json,
+                        &artifact.occurrence_recovery_hash,
                     ],
                 )
                 .await?;
@@ -1115,6 +1123,8 @@ mod tests {
                 &artifact.interface_bundle_json,
                 &artifact.interface_bundle_hash,
                 &artifact.component_digests.to_string(),
+                Some(&artifact.occurrence_recovery_json),
+                Some(&artifact.occurrence_recovery_hash),
             )
             .unwrap();
         }

@@ -755,6 +755,8 @@ mod tests {
                     &"[]",
                     &"interfaces",
                     &"[]",
+                    &Option::<&str>::None,
+                    &Option::<&str>::None,
                 ],
             )
             .await
