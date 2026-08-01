@@ -1049,11 +1049,38 @@ config at bind, establish pools before the first node call, expose the typed cap
 receive exact caller identity, tear down at unbind. Maps onto requirement/instance/binding
 well; prototype on a low-risk provider, never the Postgres path.
 
-**Connection types carry a contract, not just an endpoint.** "The request carries an
-idempotency key" is not sufficient for safe retry — the *receiver* must honour it, which is
-a property of the destination. So a connection type's contract surface is where assertions
-like *this destination dedupes on `Idempotency-Key`* live, and it is what makes the recovery
-rule below checkable rather than aspirational.
+**Decision (wamn-ko5r.2): a connection type defines claim semantics; an instance attests
+facts.** A connection type contract is portable and versioned. It fixes the protocol
+operations and ABI, the authority and field-ownership model, credential injection rules, the
+conservative recovery default, and the vocabulary and exact meaning of stronger recovery
+claims. It does **not** assert that a particular endpoint satisfies one of those claims.
+
+The requirement / instance boundary is exact:
+
+| Layer | Recovery responsibility |
+|---|---|
+| **Resolved-node contract** | Says which connection contract the executable consumes and which recovery modes/key propagation it implements. |
+| **Portable connection requirement** | Selects a claim defined by that connection contract and any minimum parameters; it asks, but cannot certify, that an environment satisfies them. |
+| **Instance-generation attestation** | An authorized connection administrator asserts that this immutable generation satisfies the selected claim, naming its scope, measured values and evidence. |
+| **Binding validation / effect attempt** | Validation matches requirement to attestation; the attempt records the exact admitted claim, instance generation and credential generation. |
+
+For HTTP `0.1`, the conservative default is `never-replay`. The first strengthening claim is
+`stable-key-dedup-v1`. It means that the adapter delivers the engine-generated key through
+the contract-owned `Idempotency-Key` mechanism; the receiver deduplicates concurrent and
+later requests in one named idempotency domain for at least the requirement's minimum
+retention; repeating the same key and canonical operation fingerprint cannot repeat the
+externally visible effect and must yield the same terminal outcome (or a contract-defined
+duplicate result the adapter normalizes to it); and the same key with a different fingerprint
+is rejected. The contract-owned fingerprint covers the canonical method,
+connection-relative target, semantic headers and body digest. Every authority or failover
+target admitted by the generation must share the attested domain. Merely forwarding a
+header, HTTP method idempotence, or an operator saying "safe" satisfies none of this.
+
+HTTP `0.1` does not elevate an external call to `replay`: GET/HEAD method names establish
+neither response stability nor absence of receiver-specific effects. A future connection
+contract may define a stronger read/replay claim, but it must have equally precise semantics
+and evidence. Evidence freshness and invalidation remain the separate 2B decision; this
+decision fixes what the evidence would have to prove.
 
 **A release declares its connection requirements; the environment satisfies them.**
 Publish-time validation becomes: every referenced connection exists in the target env, is
@@ -2364,7 +2391,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~Abbreviation charset, length, and who picks it~~ | **Answered in item 5's body:** `[a-z0-9]`, bounded, org globally unique and project unique within org, slugified default at creation with client override. It also collapses the registry/provisioning validator divergence | — |
 | **Revocation scope** | "Prevents further execution" is ambiguous across new admissions, resumed parked runs, in-flight attempts, and tested-but-unpublished drafts | 2D |
 | **Retry policy across a connection-instance change** | Continue on the original generation, refuse, or permit the new one only within a shared idempotency domain — recovery must never silently retarget | 2B |
-| **What a connection type's contract asserts** | Retry safety depends on whether the destination honours idempotency keys; that is a property of the connection, not the node | 2B |
+| ~~What a connection type's contract asserts~~ | **Settled (wamn-ko5r.2):** the portable type contract defines ABI, authority/field ownership, credential injection, conservative recovery default, and the exact semantics of named recovery claims. A portable requirement selects a claim; an authorized environment administrator attests that one immutable instance generation satisfies it. HTTP `0.1` defaults to `never-replay`; `stable-key-dedup-v1` requires scoped, retained, fingerprint-bound deduplication and terminal-outcome recovery, not merely an `Idempotency-Key` header. | — |
 | **Generation activation compatibility** | What validation a new generation must pass against active bindings, and whether failure refuses, forks a new instance, or disables bindings | 2B |
 | **What evidence, freshness, and invalidation rules apply per semantic-attestation type** | *Who* may issue one is settled (an authorized connection administrator); what keeps it true is not — external behaviour drifts without any definition changing | 2B |
 | **Which project role may approve a privileged recovery assertion for author-supplied effects** | Raw SQL has no connection administrator; candidates run from a project admin to a safety role to no user assertion at all | 5, 6A |

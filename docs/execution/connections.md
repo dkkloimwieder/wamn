@@ -67,6 +67,55 @@ artifact change. Any material interface change uses a new package version and
 therefore invalidates artifact and bundle identities mechanically; compatibility
 is never inferred from an unchanged string.
 
+### What the type contract asserts
+
+The connection type contract defines portable semantics, not environmental
+truth. It fixes:
+
+- protocol operations and ABI identity;
+- which request fields are author-controlled and which authority, credential,
+  TLS, redirect, and proxy fields remain environment-controlled;
+- host-adapter obligations, including credential and idempotency-key injection;
+- the conservative recovery default; and
+- the vocabulary, parameters, and exact semantics of stronger recovery claims.
+
+The boundary is: a resolved node says which type contract and recovery
+mechanisms its executable supports; an artifact requirement selects a claim and
+minimum parameters from that contract; an authorized environment connection
+administrator attests that one immutable instance generation satisfies them;
+binding validation matches the two; and each effect attempt records the exact
+claim and generation admitted. Neither a node publisher nor a flow author can
+attest facts about a target environment.
+
+HTTP `0.1` defaults to `never-replay` and defines one strengthening claim,
+`stable-key-dedup-v1`:
+
+1. The adapter, not node configuration, transmits the engine-generated stable
+   key through the contract-owned `Idempotency-Key` mechanism.
+2. The attested receiver deduplicates concurrent and later requests within one
+   named idempotency domain for at least the requirement's minimum retention.
+3. Repeating the same key with the same canonical operation fingerprint cannot
+   repeat the externally visible effect. It returns the same terminal outcome,
+   or a contract-defined duplicate result the adapter normalizes to that
+   outcome.
+4. Reusing the key with a different fingerprint is rejected. The
+   contract-owned fingerprint covers canonical method, connection-relative
+   target, semantic headers, and body digest.
+5. Every authority and failover target admitted by the generation shares that
+   idempotency domain.
+
+Header propagation alone, HTTP method idempotence, and an unscoped assertion of
+"safe" do not satisfy the claim. HTTP `0.1` defines no `replay` strengthening:
+GET/HEAD names prove neither stable responses nor absence of receiver-specific
+effects. A later contract version may define a stronger read claim with precise
+semantics and evidence.
+
+The portable requirement therefore holds the claim name and minimum dedup
+retention. The instance-generation attestation holds the idempotency-domain
+identifier, achieved retention, approving principal, and evidence reference.
+Decision bead `wamn-ko5r.4` separately owns evidence freshness and invalidation;
+this decision defines what that evidence must establish.
+
 ## Lifecycle and compatibility
 
 Requirements are checked when a release is assembled or promoted, before it can
@@ -94,15 +143,13 @@ instance is a separate explicit operator action.
 
 Mechanical compatibility covers type and contract identity, required fields,
 canonical authority shape, TLS/redirect/proxy policy, credential kind, and the
-two outer egress ceilings. Semantic claims are attributable attestations. The
-item-local HTTP experiment candidate recognizes one strengthening claim:
-`idempotency-key-deduplicated`, with an idempotency-domain identifier, evidence
-reference, approving connection administrator, issuance time, and `valid_until`.
-Decision bead `wamn-ko5r.4` owns the durable evidence, freshness, and
-invalidation policy. Under the candidate, revocation or a material authority,
-proxy, or credential-identity change invalidates the evidence; expiry or
-invalidation makes a binding requiring `idempotent-with-key` unsatisfied and
-never changes the binding to `never-replay`.
+two outer egress ceilings. Semantic claims are attributable attestations. For
+HTTP `stable-key-dedup-v1`, binding validation compares the requirement's
+minimum retention with the generation's attested retention and requires the
+attested idempotency domain to cover every admitted authority. Decision bead
+`wamn-ko5r.4` owns the durable evidence, freshness, and invalidation policy.
+Expiry or invalidation must make a binding requiring `idempotent-with-key`
+unsatisfied and must never change it to `never-replay`.
 
 Non-secret generations and their evidence are retained while an active attempt
 or retained audit/replay seed refers to them. Credential material follows its
@@ -217,8 +264,9 @@ direction or a versioned retarget protocol is justified; its result must fold
 back into `PLAN.md`.
 
 For `idempotent-with-key`, the record is durable before send and includes the
-stable occurrence idempotency key plus the valid attestation that admitted the
-class. For `never-replay`, a lost outcome after send becomes `effect-uncertain`.
+stable occurrence idempotency key, canonical operation fingerprint, and exact
+`stable-key-dedup-v1` attestation that admitted the class. For `never-replay`, a
+lost outcome after send becomes `effect-uncertain`.
 If the old endpoint or credential generation cannot be reacquired, recovery
 refuses explicitly. A later, distinct node occurrence resolves and records the
 then-active compatible generation independently.
@@ -254,7 +302,7 @@ default.
 
 | Proof | Positive witness | Required negative or mutation witness |
 |---|---|---|
-| `connection-contract-proof` | Canonical manifest, artifact, and bundle round-trip the exact HTTP contract and adapter identity. | Removing/changing type, contract, or adapter identity changes or invalidates the appropriate identity. Environment fields appearing in canonical bytes fail. |
+| `connection-contract-proof` | Canonical manifest, artifact, and bundle round-trip the exact HTTP contract and adapter identity; a conforming `stable-key-dedup-v1` fixture collapses concurrent and later duplicates to one effect and one terminal outcome. | Removing/changing type, contract, claim parameters, or adapter identity changes or invalidates the appropriate identity; environment fields in canonical bytes, key reuse with a different operation fingerprint, header-only false attestations, and method-only `replay` all fail. |
 | `connection-publish-proof` | The same artifact publishes in dev and prod with compatible, different bindings. | Missing/wrong-type binding, stale attestation, or recovery mismatch rejects before activation. |
 | `connection-authority-proof` | Relative requests reach each environment's fixture through all three policy layers. | Absolute authority injection, base-path escape, cross-authority redirect, DNS rebinding, literal-IP substitution, undeclared proxy, and either outer-policy denial all fail. Bypassing the canonical resolver makes the gate fail. |
 | `connection-generation-proof` | A compatible staged generation activates atomically and a later occurrence uses it. | An incompatible or concurrently stale activation is refused and the previous generation stays active. |
