@@ -42,7 +42,7 @@ struct PublishedRelease {
 fn interface(node_type: &str, ports: &[&str], purity: ResolvedPurity) -> ResolvedNodeInterface {
     ResolvedNodeInterface::new(
         node_type,
-        "wamn:node@0.1.0",
+        "wamn:node/node@0.1.0",
         ports.iter().map(|port| (*port).to_string()).collect(),
         vec![match purity {
             ResolvedPurity::Pure => CapabilityClass::Pure,

@@ -57,7 +57,7 @@ fn component_digest(bytes: &[u8]) -> String {
 fn interface(purity: ResolvedPurity) -> ResolvedNodeInterface {
     ResolvedNodeInterface::new(
         "disposition-recommendation",
-        "wamn:node@0.1.0",
+        "wamn:node/node@0.1.0",
         vec!["main".to_string()],
         vec![CapabilityClass::Pure],
         Vec::new(),

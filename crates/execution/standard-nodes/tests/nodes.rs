@@ -1259,7 +1259,7 @@ fn every_standard_node_has_one_complete_versioned_resolution_descriptor() {
             STANDARD_NODE_DESCRIPTOR_VERSION
         );
         assert_eq!(descriptor.node_type, node_type);
-        assert_eq!(descriptor.interface_contract, "wamn:node@0.1.0");
+        assert_eq!(descriptor.interface_contract, "wamn:node/node@0.1.0");
         assert_eq!(
             descriptor.platform_revision,
             STANDARD_NODE_PLATFORM_REVISION

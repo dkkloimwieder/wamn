@@ -36,6 +36,42 @@ pub const SCHEMA_VERSION: &str = "0.1";
 /// Shape version for the canonical resolved-node contract.
 pub const RESOLVED_CONTRACT_VERSION: &str = "2";
 
+/// Strict identity of the frozen zero-import node world.
+pub const NODE_WORLD_INTERFACE: &str = "wamn:node/node@0.1.0";
+
+/// Strict identity of the frozen P2 streamed-payload node world.
+pub const STREAM_NODE_WORLD_INTERFACE: &str = "wamn:node/stream-node@0.1.0";
+
+/// Exact P2 stream interface imported by [`STREAM_NODE_WORLD_INTERFACE`].
+pub const PAYLOAD_STREAMS_INTERFACE: &str = "wasi:io/streams@0.2.12";
+
+/// Frozen `wamn:node@0.1.0` worlds selectable by a resolved node contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeWorld {
+    /// Zero-import transform world.
+    Node,
+    /// P2 payload-streaming world, including cooperative cancellation.
+    StreamNode,
+}
+
+impl NodeWorld {
+    /// Exact WIT world identity stored in resolved-node contracts.
+    pub const fn interface_contract(self) -> &'static str {
+        match self {
+            Self::Node => NODE_WORLD_INTERFACE,
+            Self::StreamNode => STREAM_NODE_WORLD_INTERFACE,
+        }
+    }
+
+    /// Exact external WIT imports in the selected world's transitive closure.
+    pub const fn external_imports(self) -> &'static [&'static str] {
+        match self {
+            Self::Node => &[],
+            Self::StreamNode => &[PAYLOAD_STREAMS_INTERFACE],
+        }
+    }
+}
+
 /// Shape version for executable recovery semantics.
 pub const EXECUTABLE_RECOVERY_CONTRACT_VERSION: &str = "1";
 
@@ -762,6 +798,16 @@ impl NodeManifest {
                     self.contract
                 ),
             );
+        } else if self.contract != "0.1.0" {
+            err(
+                &mut issues,
+                "unsupported-contract-version",
+                "contract",
+                format!(
+                    "contract version {:?} is unsupported; the active node ABI is frozen at 0.1.0",
+                    self.contract
+                ),
+            );
         }
         for (field, schema) in [
             ("config-schema", &self.config_schema),
@@ -854,6 +900,14 @@ impl NodeManifest {
 
     /// Resolve the manifest into the interface pinned by a flow artifact.
     pub fn resolved_interface(&self) -> Result<ResolvedNodeInterface, Vec<Issue>> {
+        self.resolved_interface_for_world(NodeWorld::Node)
+    }
+
+    /// Resolve the manifest against one exact frozen WIT world.
+    pub fn resolved_interface_for_world(
+        &self,
+        world: NodeWorld,
+    ) -> Result<ResolvedNodeInterface, Vec<Issue>> {
         self.validate()?;
         let mut output_ports = self.output_ports.clone();
         output_ports.sort();
@@ -863,7 +917,7 @@ impl NodeManifest {
         };
         Ok(ResolvedNodeInterface::new(
             self.node_type.clone(),
-            self.contract.clone(),
+            world.interface_contract(),
             output_ports,
             if purity == ResolvedPurity::Pure {
                 vec![CapabilityClass::Pure]
@@ -881,7 +935,16 @@ impl NodeManifest {
         &self,
         resolved: &ResolvedNodeInterface,
     ) -> Result<(), Vec<Issue>> {
-        let expected = self.resolved_interface()?;
+        self.validate_resolved_interface_for_world(NodeWorld::Node, resolved)
+    }
+
+    /// Refuse a resolved bundle that does not match the selected frozen WIT world.
+    pub fn validate_resolved_interface_for_world(
+        &self,
+        world: NodeWorld,
+        resolved: &ResolvedNodeInterface,
+    ) -> Result<(), Vec<Issue>> {
+        let expected = self.resolved_interface_for_world(world)?;
         if expected == *resolved {
             Ok(())
         } else {
@@ -901,7 +964,16 @@ impl NodeManifest {
         &self,
         component_digest: impl Into<String>,
     ) -> Result<ResolvedComponent, Vec<Issue>> {
-        let interface = self.resolved_interface()?;
+        self.resolved_component_for_world(NodeWorld::Node, component_digest)
+    }
+
+    /// Resolve component bytes against one exact frozen WIT world.
+    pub fn resolved_component_for_world(
+        &self,
+        world: NodeWorld,
+        component_digest: impl Into<String>,
+    ) -> Result<ResolvedComponent, Vec<Issue>> {
+        let interface = self.resolved_interface_for_world(world)?;
         let component_digest = component_digest.into();
         if !is_sha256_digest(&component_digest) {
             return Err(vec![Issue {

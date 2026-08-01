@@ -34,7 +34,7 @@ struct PublishedRelease {
 fn transform_interface() -> ResolvedNodeInterface {
     ResolvedNodeInterface::new(
         "transform",
-        "wamn:node@0.1.0",
+        "wamn:node/node@0.1.0",
         vec!["main".to_string()],
         vec![CapabilityClass::Pure],
         Vec::new(),

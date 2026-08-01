@@ -4,7 +4,7 @@
 
 use boon::{Compiler, Schemas};
 use wamn_node_manifest::{
-    ANNOTATION_KEY, NodeManifest, OrderingPolicy, Purity, RecoveryClass, ResolvedPurity,
+    ANNOTATION_KEY, NodeManifest, NodeWorld, OrderingPolicy, Purity, RecoveryClass, ResolvedPurity,
 };
 
 const FIXTURE: &str = include_str!("fixtures/sample-echo.manifest.json");
@@ -55,8 +55,61 @@ fn t_nr_absent_purity_resolves_to_effectful_never_replay() {
     let mut m = fixture();
     m.purity = None;
     let resolved = m.resolved_interface().expect("valid manifest resolves");
+    assert_eq!(resolved.interface_contract, "wamn:node/node@0.1.0");
     assert_eq!(resolved.purity, ResolvedPurity::Effectful);
     assert_eq!(resolved.recovery_class, RecoveryClass::NeverReplay);
+}
+
+#[test]
+fn stream_world_resolution_pins_the_authoritative_p2_import_closure() {
+    let m = fixture();
+    let digest = format!("sha256:{}", "1".repeat(64));
+    let plain = m
+        .resolved_component(digest.clone())
+        .expect("zero-import world resolves");
+    let streamed = m
+        .resolved_component_for_world(NodeWorld::StreamNode, digest)
+        .expect("stream world resolves");
+
+    assert_eq!(
+        streamed.contract.interface.interface_contract,
+        "wamn:node/stream-node@0.1.0"
+    );
+    assert_eq!(
+        NodeWorld::StreamNode.external_imports(),
+        ["wasi:io/streams@0.2.12"]
+    );
+    assert_ne!(plain.identity_hash(), streamed.identity_hash());
+    m.validate_resolved_interface_for_world(NodeWorld::StreamNode, &streamed.contract.interface)
+        .expect("stream world validates against the same strict selection");
+    assert!(
+        m.validate_resolved_interface(&streamed.contract.interface)
+            .is_err(),
+        "a stream-world contract must not validate as the zero-import world"
+    );
+
+    let authority = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../docs/contracts/wamn-node.wit"),
+    )
+    .expect("authoritative node WIT reads");
+    let payloads = authority
+        .split_once("interface payloads {")
+        .and_then(|(_, rest)| rest.split_once("interface credentials {"))
+        .map(|(block, _)| block)
+        .expect("payloads interface is bounded by credentials");
+    assert!(payloads.contains("use wasi:io/streams@0.2.12.{input-stream, output-stream};"));
+    let stream_world = authority
+        .split_once("world stream-node {")
+        .and_then(|(_, rest)| rest.split_once('}'))
+        .map(|(block, _)| block)
+        .expect("stream-node world exists");
+    for declaration in ["import payloads;", "import control;", "export handler;"] {
+        assert!(
+            stream_world.contains(declaration),
+            "stream-node world lost {declaration}"
+        );
+    }
 }
 
 #[test]
@@ -145,6 +198,14 @@ fn structural_negatives_are_rejected() {
         m.issues()
             .iter()
             .any(|i| i.code == "invalid-contract-version")
+    );
+
+    let mut m = fixture();
+    m.contract = "0.2.0".into();
+    assert!(
+        m.issues()
+            .iter()
+            .any(|i| i.code == "unsupported-contract-version")
     );
 
     let mut m = fixture();

@@ -50,7 +50,8 @@ use serde_json::Value;
 use wamn_node_manifest::{
     CapabilityClass, ConnectionRecoverySupport, ConnectionRequirement, ConnectionTypeDescriptor,
     ExecutableConnectionRecoveryMode, ExecutableIdentity, ExecutableRecoveryContract,
-    PortableConnectionRequirement, ResolvedNodeContract, ResolvedNodeInterface,
+    NODE_WORLD_INTERFACE, PortableConnectionRequirement, ResolvedNodeContract,
+    ResolvedNodeInterface,
 };
 
 /// Shape version for the complete standard-node descriptor.
@@ -59,7 +60,7 @@ pub const STANDARD_NODE_DESCRIPTOR_VERSION: &str = "1";
 /// Exact executable revision for the standard library described here.
 pub const STANDARD_NODE_PLATFORM_REVISION: &str = "wamn-standard-nodes@0.1.0";
 
-const STANDARD_NODE_INTERFACE: &str = "wamn:node@0.1.0";
+const STANDARD_NODE_INTERFACE: &str = NODE_WORLD_INTERFACE;
 
 /// Every node type this library implements (drift-guarded by docs + tests).
 pub const NODE_TYPES: [&str; 7] = [

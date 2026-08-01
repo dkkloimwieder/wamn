@@ -15,9 +15,8 @@ package wamn:node@0.1.0;
 /// `emit` progress interface (5.15).
 /// Host-implementation status of the OPTIONAL imports (the interfaces are
 /// frozen; linking one fails instantiation until its host side lands):
-/// `payloads` = the payload store (5.10) -- its `wasi:io` version pin is
-/// provisional and will be aligned with the host's wasi:io when 5.10 activates
-/// the import (non-breaking while the import is inert); `credentials` =
+/// `payloads` = the payload store (5.10) -- its P2 stream resources are frozen
+/// at the pinned host's `wasi:io/streams@0.2.12`; `credentials` =
 /// SHIPPED (5.9, wamn-17o): the wamn-host vault plugin implements `get`
 /// (per-project resolution from a mounted source + audit log) and the
 /// flowrunner links it; `control` = cooperative cancellation (5.12).
@@ -159,7 +158,7 @@ interface handler {
 /// fixture files.
 interface payloads {
   use types.{payload-ref, framing};
-  use wasi:io/streams@0.2.6.{input-stream, output-stream};
+  use wasi:io/streams@0.2.12.{input-stream, output-stream};
 
   variant payload-error {
     /// Handle unknown or belongs to another run.

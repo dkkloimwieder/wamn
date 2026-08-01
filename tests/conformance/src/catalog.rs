@@ -35,7 +35,7 @@ mod tests {
     fn artifact() -> Artifact {
         let interface = ResolvedNodeInterface::new(
             "custom-node",
-            "wamn:node@0.1.0",
+            "wamn:node/node@0.1.0",
             vec!["main".to_string()],
             vec![CapabilityClass::Http],
             Vec::new(),

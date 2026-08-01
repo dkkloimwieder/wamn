@@ -1866,7 +1866,10 @@ mod tests {
         assert_eq!(prepared.artifact.interfaces()[0].node_type, "transform");
         assert_eq!(prepared.artifact.interfaces()[0].output_ports, ["main"]);
         let contract = &prepared.artifact.interface_bundle().contracts()[0];
-        assert_eq!(contract.interface.interface_contract, "wamn:node@0.1.0");
+        assert_eq!(
+            contract.interface.interface_contract,
+            "wamn:node/node@0.1.0"
+        );
         assert!(matches!(
             contract.executable,
             wamn_node_manifest::ExecutableIdentity::Platform { .. }

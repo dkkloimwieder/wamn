@@ -64,6 +64,17 @@ fn block_lines<'a>(wit: &'a str, declaration: &str) -> Vec<&'a str> {
         .collect()
 }
 
+fn assert_code_subsequence(name: &str, candidate: &str, authority: &str) {
+    let authority_lines = code_lines(authority);
+    let mut authority_iter = authority_lines.iter();
+    for line in code_lines(candidate) {
+        assert!(
+            authority_iter.any(|authority_line| *authority_line == line),
+            "{name}: line {line:?} is absent or out of order in the authority"
+        );
+    }
+}
+
 fn discover_wamn_node_packages(dir: &Path, found: &mut Vec<String>) {
     for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("{} reads: {e}", dir.display())) {
         let entry = entry.expect("directory entry reads");
@@ -105,7 +116,6 @@ fn vendored_wit_inventory_is_complete() {
 #[test]
 fn vendored_wit_copies_match_the_frozen_contract() {
     let docs = docs_wit();
-    let docs_lines = code_lines(&docs);
 
     let trimmed_paths = [
         "../../../components/samples/node-rs/wit/deps/wamn-node/package.wit",
@@ -159,14 +169,93 @@ fn vendored_wit_copies_match_the_frozen_contract() {
     ));
 
     for (name, copy) in &copies {
-        let mut docs_iter = docs_lines.iter();
-        for line in code_lines(copy) {
-            assert!(
-                docs_iter.any(|d| *d == line),
-                "{name}: line {line:?} does not appear (in order) in docs/contracts/wamn-node.wit — \
-                 a vendored copy drifted from the frozen contract"
-            );
-        }
+        assert_code_subsequence(name, copy, &docs);
+    }
+}
+
+#[test]
+fn payload_streams_are_the_pinned_host_p2_interface() {
+    const PIN: &str = "wasi:io/streams@0.2.12";
+    const IMPORT: &str = "use wasi:io/streams@0.2.12.{input-stream, output-stream};";
+
+    let docs = docs_wit();
+    let host = workspace_wit("crates/platform/runtime/wit/deps/wamn-node/package.wit");
+    for (name, wit) in [
+        ("docs/contracts/wamn-node.wit", &docs),
+        (
+            "crates/platform/runtime/wit/deps/wamn-node/package.wit",
+            &host,
+        ),
+    ] {
+        assert_eq!(
+            code_lines(wit)
+                .into_iter()
+                .filter(|line| line.contains("wasi:io/streams@"))
+                .collect::<Vec<_>>(),
+            vec![IMPORT],
+            "{name}: payloads must use exactly {PIN}"
+        );
+        assert!(
+            !wit.contains("stream<"),
+            "{name}: the frozen 0.1 payload ABI must remain P2 resource-based"
+        );
+    }
+
+    assert_eq!(
+        block_lines(&docs, "interface payloads {"),
+        block_lines(&host, "interface payloads {"),
+        "the host binding copy must retain the authoritative payload interface"
+    );
+}
+
+#[test]
+fn host_wasi_io_dependency_matches_the_pinned_generated_copy() {
+    let generated = workspace_wit("components/execution/flowrunner/wit/deps/wasi-io/package.wit");
+    assert!(generated.starts_with("package wasi:io@0.2.12;"));
+
+    let mut host_lines = vec!["package wasi:io@0.2.12;".to_string()];
+    for file in ["error.wit", "poll.wit", "streams.wit", "world.wit"] {
+        let path = format!("crates/platform/runtime/wit/deps/wasi-io/{file}");
+        let copy = workspace_wit(&path);
+        assert!(
+            copy.starts_with("package wasi:io@0.2.12;"),
+            "{path}: wrong wasi:io package version"
+        );
+        let without_repeated_package = copy
+            .strip_prefix("package wasi:io@0.2.12;")
+            .expect("version checked above");
+        host_lines.extend(
+            code_lines(without_repeated_package)
+                .into_iter()
+                .map(str::to_string),
+        );
+    }
+
+    assert_eq!(
+        host_lines,
+        code_lines(&generated),
+        "the host dependency must match the exact generated wasi:io@0.2.12 code"
+    );
+}
+
+#[test]
+fn frozen_node_packages_reject_a_p3_or_0_2_drift() {
+    let mut copies = vec![("docs/contracts/wamn-node.wit", docs_wit())];
+    copies.extend(
+        VENDORED_WIT_PATHS
+            .into_iter()
+            .map(|path| (path, workspace_wit(path))),
+    );
+
+    for (path, wit) in copies {
+        assert!(
+            wit.contains("package wamn:node@0.1.0;"),
+            "{path}: frozen node package identity changed"
+        );
+        assert!(
+            !wit.contains("package wamn:node@0.2") && !wit.contains("stream<"),
+            "{path}: accidental node 0.2/P3 ABI"
+        );
     }
 }
 

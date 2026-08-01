@@ -1,4 +1,4 @@
-package wasi:io@0.2.6;
+package wasi:io@0.2.12;
 
 /// WASI I/O is an I/O abstraction API which is currently focused on providing
 /// stream types.
@@ -25,7 +25,7 @@ interface streams {
         /// The stream is closed: no more input will be accepted by the
         /// stream. A closed output-stream will return this error on all
         /// future operations.
-        closed
+        closed,
     }
 
     /// An input bytestream.
@@ -65,36 +65,24 @@ interface streams {
         /// as a return value by the callee. The callee may return a list of bytes
         /// less than `len` in size while more bytes are available for reading.
         @since(version = 0.2.0)
-        read: func(
-            /// The maximum number of bytes to read
-            len: u64
-        ) -> result<list<u8>, stream-error>;
+        read: func(len: u64) -> result<list<u8>, stream-error>;
 
         /// Read bytes from a stream, after blocking until at least one byte can
         /// be read. Except for blocking, behavior is identical to `read`.
         @since(version = 0.2.0)
-        blocking-read: func(
-            /// The maximum number of bytes to read
-            len: u64
-        ) -> result<list<u8>, stream-error>;
+        blocking-read: func(len: u64) -> result<list<u8>, stream-error>;
 
         /// Skip bytes from a stream. Returns number of bytes skipped.
         ///
         /// Behaves identical to `read`, except instead of returning a list
         /// of bytes, returns the number of bytes consumed from the stream.
         @since(version = 0.2.0)
-        skip: func(
-            /// The maximum number of bytes to skip.
-            len: u64,
-        ) -> result<u64, stream-error>;
+        skip: func(len: u64) -> result<u64, stream-error>;
 
         /// Skip bytes from a stream, after blocking until at least one byte
         /// can be skipped. Except for blocking behavior, identical to `skip`.
         @since(version = 0.2.0)
-        blocking-skip: func(
-            /// The maximum number of bytes to skip.
-            len: u64,
-        ) -> result<u64, stream-error>;
+        blocking-skip: func(len: u64) -> result<u64, stream-error>;
 
         /// Create a `pollable` which will resolve once either the specified stream
         /// has bytes available to read or the other end of the stream has been
@@ -147,9 +135,7 @@ interface streams {
         /// returns Err(closed) without writing if the stream has closed since
         /// the last call to check-write provided a permit.
         @since(version = 0.2.0)
-        write: func(
-            contents: list<u8>
-        ) -> result<_, stream-error>;
+        write: func(contents: list<u8>) -> result<_, stream-error>;
 
         /// Perform a write of up to 4096 bytes, and then flush the stream. Block
         /// until all of these operations are complete, or an error occurs.
@@ -176,9 +162,7 @@ interface streams {
         /// let _ = this.check-write();         // eliding error handling
         /// ```
         @since(version = 0.2.0)
-        blocking-write-and-flush: func(
-            contents: list<u8>
-        ) -> result<_, stream-error>;
+        blocking-write-and-flush: func(contents: list<u8>) -> result<_, stream-error>;
 
         /// Request to flush buffered output. This function never blocks.
         ///
@@ -218,10 +202,7 @@ interface streams {
         /// passing a list of bytes, you simply pass the number of zero-bytes
         /// that should be written.
         @since(version = 0.2.0)
-        write-zeroes: func(
-            /// The number of zero-bytes to write
-            len: u64
-        ) -> result<_, stream-error>;
+        write-zeroes: func(len: u64) -> result<_, stream-error>;
 
         /// Perform a write of up to 4096 zeroes, and then flush the stream.
         /// Block until all of these operations are complete, or an error
@@ -248,10 +229,7 @@ interface streams {
         /// let _ = this.check-write();         // eliding error handling
         /// ```
         @since(version = 0.2.0)
-        blocking-write-zeroes-and-flush: func(
-            /// The number of zero-bytes to write
-            len: u64
-        ) -> result<_, stream-error>;
+        blocking-write-zeroes-and-flush: func(len: u64) -> result<_, stream-error>;
 
         /// Read from one stream and write to another.
         ///
@@ -267,12 +245,7 @@ interface streams {
         /// This function returns the number of bytes transferred; it may be less
         /// than `len`.
         @since(version = 0.2.0)
-        splice: func(
-            /// The stream to read from
-            src: borrow<input-stream>,
-            /// The number of bytes to splice
-            len: u64,
-        ) -> result<u64, stream-error>;
+        splice: func(src: borrow<input-stream>, len: u64) -> result<u64, stream-error>;
 
         /// Read from one stream and write to another, with blocking.
         ///
@@ -280,11 +253,6 @@ interface streams {
         /// `output-stream` is ready for writing, and the `input-stream`
         /// is ready for reading, before performing the `splice`.
         @since(version = 0.2.0)
-        blocking-splice: func(
-            /// The stream to read from
-            src: borrow<input-stream>,
-            /// The number of bytes to splice
-            len: u64,
-        ) -> result<u64, stream-error>;
+        blocking-splice: func(src: borrow<input-stream>, len: u64) -> result<u64, stream-error>;
     }
 }

@@ -87,7 +87,7 @@ fn repeated_flow() -> Flow {
 fn http_interface(contract: &str) -> ResolvedNodeInterface {
     ResolvedNodeInterface::new(
         "http-node",
-        "wamn:node@0.1.0",
+        "wamn:node/node@0.1.0",
         vec!["main".to_string()],
         vec![CapabilityClass::Http],
         vec![ConnectionRequirement {
@@ -418,7 +418,7 @@ fn recovery_support_must_be_declared_by_the_resolved_interface() {
 fn empty_portable_model_preserves_the_existing_resolved_contract_shape() {
     let interface = ResolvedNodeInterface::new(
         "pure-node",
-        "wamn:node@0.1.0",
+        "wamn:node/node@0.1.0",
         vec!["main".to_string()],
         vec![CapabilityClass::Pure],
         Vec::new(),
@@ -443,7 +443,7 @@ fn empty_portable_model_preserves_the_existing_resolved_contract_shape() {
 fn conservative_only_connection_requirement_needs_no_stronger_claim_descriptor() {
     let interface = ResolvedNodeInterface::new(
         "http-node",
-        "wamn:node@0.1.0",
+        "wamn:node/node@0.1.0",
         vec!["main".to_string()],
         vec![CapabilityClass::Postgres],
         vec![ConnectionRequirement {
@@ -495,7 +495,7 @@ fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types()
     );
     assert_eq!(
         selected.identity().artifact_hash().as_str(),
-        "sha256:449286a4ac2b17aa3a5a603cbdcc12f08afb9d5f9b4f908fab9d5edabe8dccf3",
+        "sha256:408160643a96ccef1ea0177c66540e235599fed577853061424466107596416c",
         "occurrence recovery frame sequence changed"
     );
 
@@ -725,7 +725,7 @@ fn occurrence_selection_rejects_missing_reordered_unknown_and_weaker_inputs() {
 
     let pure_interface = ResolvedNodeInterface::new(
         "http-node",
-        "wamn:node@0.1.0",
+        "wamn:node/node@0.1.0",
         vec!["main".to_string()],
         vec![CapabilityClass::Pure],
         Vec::new(),

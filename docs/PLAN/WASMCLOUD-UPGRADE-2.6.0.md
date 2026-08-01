@@ -185,7 +185,7 @@ runtime path; size it by measuring wamn's topology.
 ### Where wamn sits
 
 wamn's component contracts use **WASI 0.2** interfaces; exact package versions and
-imported interfaces vary by component (`wasi:io/streams@0.2.6` in the node ABI,
+imported interfaces vary by component (`wasi:io/streams@0.2.12` in the node ABI,
 `@0.2.12` elsewhere, and not every component imports HTTP at all). `wash-runtime`
 registers **both** P2 and P3 host bindings (`add_p3_to_linker`, the `host_udp_p3.rs`
 mirror), so guest imports decide which surface a component uses — and **wamn has not
@@ -195,7 +195,7 @@ intentionally adopted a P3 workload ABI at the pinned revision**.
 
 **P3 as data movement — a decision, not a forced bump.** `wamn:node@0.1.0` **already
 carries a streaming contract**: a `streamed(payload-ref)` payload case, an optional
-`payloads` interface over `wasi:io/streams@0.2.6`, and a header that explicitly defers
+`payloads` interface over `wasi:io/streams@0.2.12`, and a header that explicitly defers
 "the WASI 0.3 native-async revision" to 0.2. The host side is incomplete, but the P2
 shape exists. So item 1 has two real options:
 

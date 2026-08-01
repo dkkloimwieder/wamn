@@ -48,7 +48,7 @@ fn resolved_interface(
 ) -> ResolvedNodeInterface {
     ResolvedNodeInterface::new(
         node_type,
-        "wamn:node@0.1.0",
+        "wamn:node/node@0.1.0",
         output_ports,
         if purity == ResolvedPurity::Pure {
             vec![CapabilityClass::Pure]
@@ -211,7 +211,7 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
 
     // Golden bytes kill removal or reordering of any domain-separated frame.
     assert_eq!(
-        baseline_hash, "sha256:67383b709b6870d027c1674a1b14b904122cd3785484145d7c782fa3a718e29a",
+        baseline_hash, "sha256:5eaf3ab098f2ed8327682660255f75526fc4dd1821c41b683a72b32cbef81194",
         "artifact frame sequence changed"
     );
 }
@@ -317,7 +317,7 @@ fn execution_bundle_identity_pins_every_composition_input() {
     );
     let baseline_hash = baseline.hash();
     assert_eq!(
-        baseline_hash, "sha256:4621f8d2b53e8571739e23325d10a617531737baa766edbb7f1ed21c4a12cf9b",
+        baseline_hash, "sha256:cae763035a1ce71957e1cc2db007c2ac2c31e7770e72a2aa77985fe3228dab1a",
         "execution-bundle frame sequence changed"
     );
 
@@ -530,7 +530,7 @@ fn interface_bundle_round_trips_exact_canonical_bytes_and_typed_recovery() {
     let canonical = std::str::from_utf8(bundle.canonical_bytes()).unwrap();
     assert_eq!(
         canonical,
-        r#"[{"executable":{"kind":"platform","revision":"wamn-standard-nodes@0.1.0"},"executable-recovery":{"conservative-class":"never-replay","contract-version":"1","purity":"effectful","supported-classes":["never-replay"]},"interface":{"capability-classes":["http"],"connection-requirements":[],"contract-version":"2","interface-contract":"wamn:node@0.1.0","node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"}}]"#
+        r#"[{"executable":{"kind":"platform","revision":"wamn-standard-nodes@0.1.0"},"executable-recovery":{"conservative-class":"never-replay","contract-version":"1","purity":"effectful","supported-classes":["never-replay"]},"interface":{"capability-classes":["http"],"connection-requirements":[],"contract-version":"2","interface-contract":"wamn:node/node@0.1.0","node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"}}]"#
     );
     assert!(bundle.hash().starts_with("sha256:"));
     assert_eq!(
@@ -872,7 +872,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:eef54b2338ab183b87272cbc5b7c959f6626fd96821116794a31e6ec22862f20",
+        baseline_hash, "sha256:78a3184a6e5884de4e21e45020515e6af323071ca72b05414a6c35099842c33a",
         "definition frame sequence changed"
     );
 }

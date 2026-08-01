@@ -319,7 +319,7 @@ fn interface(
 ) -> NodeImplementation {
     NodeImplementation::platform(ResolvedNodeInterface::new(
         node_type,
-        "wamn:node@0.1.0",
+        "wamn:node/node@0.1.0",
         vec!["main".to_string()],
         vec![if purity == ResolvedPurity::Pure {
             wamn_node_manifest::CapabilityClass::Pure
