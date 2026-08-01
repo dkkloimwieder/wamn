@@ -3,7 +3,8 @@
 A wasmCloud-based managed low-code platform: a data/schema layer, a flow engine,
 and a four-tier Postgres control plane, all hosted on a customized wasmCloud
 runtime. **`docs/` is the design source of truth** — start with
-`docs/platform-plan.md` and the decision table.
+`docs/PLAN/PLAN.md` (the roadmap and decision map); `docs/platform-plan.md`
+holds the D-number decision table as the archive of record.
 
 `services/host` is the production washlet host, while `services/node-host`
 serves custom nodes. Both are thin deployable leaves over reusable platform
@@ -97,8 +98,9 @@ deploy/                 Kubernetes manifests + standalone SQL schemas
                         system-schema, app-schema, flows
   *-job.yaml            in-cluster gate-of-record Jobs
 
-docs/                   design source of truth (platform-plan.md, decision
-                        table, WIT contracts, per-subsystem specs)
+docs/                   design source of truth (PLAN/PLAN.md roadmap,
+                        platform-plan.md decision table, WIT contracts,
+                        per-subsystem specs)
 
 Cargo.toml              root workspace; pins the wash-runtime fork rev
 Dockerfile              shared build plus one final stage per deployable artifact
@@ -180,6 +182,7 @@ kubectl -n wamn-system logs -f job/<subsystem>
 
 ## More
 
+- `docs/PLAN/PLAN.md` — the authoritative roadmap and decision map.
 - `docs/` — design source of truth (per-subsystem specs, WIT contracts).
 - `docs/build-and-test.md` — every subsystem's build + gate commands.
 - `CLAUDE.md` / `AGENTS.md` — instructions for AI coding agents (identical).

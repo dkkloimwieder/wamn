@@ -1,5 +1,12 @@
 # Plan: wasmCloud-Based Managed Low-Code Platform for Industrial Clients
 
+> **Roadmap authority transferred 2026-07-31** to `docs/PLAN/PLAN.md` (the
+> authoritative post-POC roadmap and decision map). This document is **retained
+> as the archive of record**: the D1–D24 decision table below carries the full
+> owner decisions — attribution, dates, rejected alternatives — that PLAN.md's
+> one-line restatements point back to, and the E1–E11 epic headings anchor the
+> `[n.m]` references in subsystem docs and historical beads. (`wamn-role.2`)
+
 Working name: **"Wamn"** (placeholder). An opinionated n8n/Node-RED-style platform: visual dataflows + built-in Postgres + schema designer + generated REST/GraphQL APIs + hosted frontends, running on wasmCloud 2.x atop Kubernetes.
 
 ---
