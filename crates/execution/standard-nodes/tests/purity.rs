@@ -30,6 +30,7 @@ const FORBIDDEN: &[&str] = &[
 /// list is a conscious, test-updating act.
 const ALLOWED_DIRECT: &[&str] = &[
     "wamn-node-sdk",
+    "wamn-node-manifest",
     "wamn-entity-access",
     "wamn-pg-core",
     "wamn-schema-model",

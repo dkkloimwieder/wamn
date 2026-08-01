@@ -464,6 +464,20 @@ impl NodeImplementation {
         })
     }
 
+    /// Accept a complete platform contract resolved by its owning descriptor.
+    pub fn from_resolved_platform_contract(
+        contract: ResolvedNodeContract,
+    ) -> Result<Self, CatalogIdentityError> {
+        if !matches!(contract.executable, ExecutableIdentity::Platform { .. }) {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: "a standard node must carry platform executable identity".to_string(),
+            });
+        }
+        let implementation = Self { contract };
+        validate_implementation_order(std::slice::from_ref(&implementation))?;
+        Ok(implementation)
+    }
+
     pub fn interface(&self) -> &ResolvedNodeInterface {
         &self.contract.interface
     }
@@ -1723,18 +1737,23 @@ fn validate_connection_recovery_support(
             }
         }
     }
-    for requirement in &contract.interface.connection_requirements {
-        if !contract.connection_recovery_support.iter().any(|support| {
-            support.descriptor.requirement_type == requirement.requirement_type
-                && support.descriptor.contract == requirement.contract
-        }) {
-            return Err(CatalogIdentityError::InvalidInterface {
-                node_type: contract.interface.node_type.clone(),
-                message: format!(
-                    "connection requirement {:?} has no executable recovery declaration",
-                    requirement.contract
-                ),
-            });
+    // An empty set is an explicit conservative-only surface. Once a descriptor
+    // declares richer support, require complete coverage so omissions cannot
+    // selectively weaken one connection requirement.
+    if !contract.connection_recovery_support.is_empty() {
+        for requirement in &contract.interface.connection_requirements {
+            if !contract.connection_recovery_support.iter().any(|support| {
+                support.descriptor.requirement_type == requirement.requirement_type
+                    && support.descriptor.contract == requirement.contract
+            }) {
+                return Err(CatalogIdentityError::InvalidInterface {
+                    node_type: contract.interface.node_type.clone(),
+                    message: format!(
+                        "connection requirement {:?} has no executable recovery declaration",
+                        requirement.contract
+                    ),
+                });
+            }
         }
     }
     Ok(())

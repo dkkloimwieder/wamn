@@ -1303,6 +1303,15 @@ fn ensure_all_supplied_used(
     Ok(())
 }
 
+fn standard_implementation(
+    descriptor: &wamn_standard_nodes::NodeDescriptor,
+) -> anyhow::Result<wamn_catalog::NodeImplementation> {
+    let contract =
+        wamn_standard_nodes::resolve_descriptor(descriptor).map_err(anyhow::Error::new)?;
+    wamn_catalog::NodeImplementation::from_resolved_platform_contract(contract)
+        .map_err(anyhow::Error::new)
+}
+
 /// Resolve standard and verified supplied-node interfaces, then build the
 /// canonical CF-DEF-ID artifact without mutating storage.
 fn prepare_flow_artifact(
@@ -1310,11 +1319,6 @@ fn prepare_flow_artifact(
     graph_json: &str,
     supplied: &BTreeMap<String, wamn_catalog::NodeImplementation>,
 ) -> anyhow::Result<PreparedFlowArtifact> {
-    use wamn_node_manifest::{
-        CapabilityClass, ConnectionRequirement, RecoveryClass, ResolvedNodeInterface,
-        ResolvedPurity,
-    };
-
     let flow =
         wamn_flow::Flow::from_json(graph_json).map_err(|e| anyhow::anyhow!("flow parse: {e}"))?;
     let mut implementations = Vec::new();
@@ -1327,62 +1331,13 @@ fn prepare_flow_artifact(
         if matches!(node_type, "cron" | "event" | "fail" | "request" | "respond") {
             continue;
         }
-        let Some(ports) = wamn_standard_nodes::completion_ports(node_type) else {
+        let Some(descriptor) = wamn_standard_nodes::describe(node_type) else {
             if let Some(implementation) = supplied.get(node_type) {
                 implementations.push(implementation.clone());
             }
             continue;
         };
-        let replay_safe =
-            wamn_standard_nodes::is_replay_safe(node_type).expect("standard node has semantics");
-        let required = wamn_standard_nodes::required_capabilities(node_type)
-            .expect("standard node has a capability descriptor");
-        let mut capability_classes = required
-            .iter()
-            .map(|capability| match capability {
-                wamn_standard_nodes::Capability::HttpEgress => CapabilityClass::Http,
-                wamn_standard_nodes::Capability::Postgres
-                | wamn_standard_nodes::Capability::RawSql => CapabilityClass::Postgres,
-            })
-            .collect::<Vec<_>>();
-        capability_classes.sort();
-        capability_classes.dedup();
-        if capability_classes.is_empty() {
-            capability_classes.push(CapabilityClass::Pure);
-        }
-        let connection_requirements = capability_classes
-            .iter()
-            .filter_map(|capability| match capability {
-                CapabilityClass::Pure => None,
-                CapabilityClass::Http => Some(ConnectionRequirement {
-                    requirement_type: "http".to_string(),
-                    contract: "wamn:connection/http@0.1.0".to_string(),
-                }),
-                CapabilityClass::Postgres => Some(ConnectionRequirement {
-                    requirement_type: "postgres".to_string(),
-                    contract: "wamn:connection/postgres@0.1.0".to_string(),
-                }),
-            })
-            .collect();
-        implementations.push(wamn_catalog::NodeImplementation::platform(
-            ResolvedNodeInterface::new(
-                node_type,
-                "wamn:node@0.1.0",
-                ports.iter().map(|port| (*port).to_string()).collect(),
-                capability_classes,
-                connection_requirements,
-                if replay_safe {
-                    ResolvedPurity::Pure
-                } else {
-                    ResolvedPurity::Effectful
-                },
-                if replay_safe {
-                    RecoveryClass::Replay
-                } else {
-                    RecoveryClass::NeverReplay
-                },
-            ),
-        ));
+        implementations.push(standard_implementation(descriptor)?);
     }
     let supplied_node_types = implementations
         .iter()
@@ -1883,6 +1838,177 @@ mod tests {
             contract.executable,
             wamn_node_manifest::ExecutableIdentity::Platform { .. }
         ));
+        assert_eq!(
+            contract.executable_recovery,
+            Some(wamn_node_manifest::ExecutableRecoveryContract::pure())
+        );
+        assert_eq!(
+            prepared.artifact.occurrence_recovery()[0].recovery_class,
+            wamn_node_manifest::RecoveryClass::Replay
+        );
+    }
+
+    #[test]
+    fn every_descriptor_field_changes_both_identities_or_fails_validation() {
+        use wamn_catalog::{
+            Artifact, ExecutionBundleIdentity, ExecutionBundleInput, ExecutionBundlePackaging,
+            ExecutionPlugManifest,
+        };
+        use wamn_node_manifest::{
+            CapabilityClass, ConnectionRecoverySupport, ConnectionRequirement,
+            ConnectionTypeDescriptor, ExecutableConnectionRecoveryMode, ExecutableRecoveryContract,
+            PortableConnectionRequirement,
+        };
+
+        fn digest(digit: char) -> String {
+            format!("sha256:{}", digit.to_string().repeat(64))
+        }
+
+        fn identities(
+            descriptor: &wamn_standard_nodes::NodeDescriptor,
+        ) -> anyhow::Result<(String, String)> {
+            let implementation = standard_implementation(descriptor)?;
+            let flow = wamn_flow::Flow::from_json(
+                r#"{
+                  "schema-version":"0.1","flow-id":"descriptor-identity","version":1,
+                  "nodes":[
+                    {"id":"request","type":"request","config":{"input-schema":true}},
+                    {"id":"shape","type":"transform","config":{"expression":"@"}},
+                    {"id":"respond","type":"respond","config":{"status":200}}
+                  ],
+                  "edges":[
+                    {"from":"request","to":"shape"},
+                    {"from":"shape","to":"respond"}
+                  ]
+                }"#,
+            )?;
+            let artifact = Artifact::new("tenant", &flow, vec![implementation.clone()])?;
+            let bundle = ExecutionBundleIdentity::builder(
+                ExecutionBundlePackaging::ExactNode,
+                ExecutionBundleInput::new("runner@1", digest('a'))?,
+                ExecutionBundleInput::new("wac@1", digest('b'))?,
+            )
+            .implementations(vec![implementation])
+            .plugs(vec![ExecutionPlugManifest::new(
+                "transform",
+                vec!["transform".to_string()],
+                digest('c'),
+            )?])
+            .build()?;
+            Ok((
+                artifact.identity().artifact_hash().as_str().to_string(),
+                bundle.hash().to_string(),
+            ))
+        }
+
+        let baseline_descriptor = wamn_standard_nodes::describe("transform").unwrap();
+        let baseline = identities(baseline_descriptor).unwrap();
+        let mut identity_mutants = Vec::new();
+
+        let mut interface = baseline_descriptor.clone();
+        interface.interface_contract = "wamn:node@0.2.0".to_string();
+        identity_mutants.push(("interface-contract", interface));
+
+        let mut revision = baseline_descriptor.clone();
+        revision.platform_revision = "wamn-standard-nodes@0.1.1".to_string();
+        identity_mutants.push(("platform-revision", revision));
+
+        let mut recovery = baseline_descriptor.clone();
+        recovery.capability_classes.clear();
+        recovery.executable_recovery = ExecutableRecoveryContract::effectful(false);
+        identity_mutants.push(("executable-recovery", recovery));
+
+        let http = ConnectionTypeDescriptor::http_v1();
+        let mut requirement = baseline_descriptor.clone();
+        requirement.connection_requirements = vec![ConnectionRequirement {
+            requirement_type: http.requirement_type.clone(),
+            contract: http.contract.clone(),
+        }];
+        identity_mutants.push(("connection-requirements", requirement));
+
+        for (name, mutant) in identity_mutants {
+            let identities = identities(&mutant).unwrap();
+            assert_ne!(
+                baseline.0, identities.0,
+                "{name} survived artifact identity"
+            );
+            assert_ne!(baseline.1, identities.1, "{name} survived bundle identity");
+        }
+
+        let mut invalid_mutants = Vec::new();
+        let mut version = baseline_descriptor.clone();
+        version.descriptor_version = "99".to_string();
+        invalid_mutants.push(("descriptor-version", version));
+
+        let mut node_type = baseline_descriptor.clone();
+        node_type.node_type = "renamed-transform".to_string();
+        invalid_mutants.push(("node-type", node_type));
+
+        let mut ports = baseline_descriptor.clone();
+        ports.output_ports.push("secondary".to_string());
+        invalid_mutants.push(("output-ports", ports));
+
+        let mut capabilities = baseline_descriptor.clone();
+        capabilities.capability_classes = vec![CapabilityClass::Http];
+        invalid_mutants.push(("capability-classes", capabilities));
+
+        let mut dispatch = baseline_descriptor.clone();
+        dispatch.dispatch_capabilities = &[wamn_standard_nodes::Capability::HttpEgress];
+        invalid_mutants.push(("dispatch-capabilities", dispatch));
+
+        let mut support = baseline_descriptor.clone();
+        support.connection_recovery_support = vec![ConnectionRecoverySupport {
+            descriptor: http.clone(),
+            supported_modes: vec![ExecutableConnectionRecoveryMode::NeverReplay],
+        }];
+        invalid_mutants.push(("connection-recovery-support", support));
+
+        let mut portable = baseline_descriptor.clone();
+        portable.portable_connections = vec![PortableConnectionRequirement::never_replay(http)];
+        invalid_mutants.push(("portable-connections", portable));
+
+        for (name, mutant) in invalid_mutants {
+            assert!(
+                identities(&mutant).is_err(),
+                "{name} mutation must fail publication validation"
+            );
+        }
+    }
+
+    #[test]
+    fn standard_http_descriptor_resolves_without_method_or_config_reclassification() {
+        let graph = r#"{
+          "schema-version":"0.1","flow-id":"standard-http","version":1,
+          "nodes":[
+            {"id":"request","type":"request","config":{"input-schema":true}},
+            {"id":"get","type":"http-request","config":{
+              "method":"GET","url":"https://example.test/items","idempotency-key":true
+            }},
+            {"id":"respond","type":"respond","config":{"status":200}}
+          ],
+          "edges":[
+            {"from":"request","to":"get"},
+            {"from":"get","to":"respond"}
+          ]
+        }"#;
+        let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new()).unwrap();
+        let contract = &prepared.artifact.interface_bundle().contracts()[0];
+        let recovery = contract.executable_recovery.as_ref().unwrap();
+        assert_eq!(
+            recovery.conservative_class,
+            wamn_node_manifest::RecoveryClass::NeverReplay
+        );
+        assert_eq!(
+            recovery.supported_classes,
+            [wamn_node_manifest::RecoveryClass::NeverReplay]
+        );
+        assert_eq!(contract.connection_recovery_support.len(), 1);
+        assert_eq!(contract.portable_connections.len(), 1);
+        assert_eq!(
+            prepared.artifact.occurrence_recovery()[0].recovery_class,
+            wamn_node_manifest::RecoveryClass::NeverReplay,
+            "GET and idempotency-key config are not publication authorities"
+        );
     }
 
     #[test]

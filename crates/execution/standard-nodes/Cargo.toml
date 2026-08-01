@@ -10,6 +10,7 @@ license.workspace = true
 # wamn-runner must never appear in this crate's dependency closure — enforced
 # by the `purity_lint` test walking `cargo metadata`.
 wamn-node-sdk = { workspace = true }
+wamn-node-manifest = { workspace = true }
 # The `postgres` entity-op node compiles ops through the SAME audited,
 # injection-safe surface the generated REST gateway uses (4.1) — catalog
 # allowlisting, $n params, server-side tenant injection. D8: entity ops are the

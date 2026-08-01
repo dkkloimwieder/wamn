@@ -4,8 +4,8 @@
 //! contract ONLY — **never the runner crate** (the 5.13 purity rule, enforced
 //! mechanically by this crate's `purity_lint` test over `cargo metadata`).
 //! Every effect flows through the SDK's [`NodeCtx`] capability facade, gated
-//! by the dispatch-time policy table ([`required_capabilities`] +
-//! [`dispatch`]'s grant check + the internal gated context).
+//! by each node's [`NodeDescriptor`] plus [`dispatch`]'s grant check and the
+//! internal gated context.
 //!
 //! | node type        | capabilities            | what it does |
 //! |------------------|-------------------------|--------------|
@@ -43,7 +43,23 @@ pub use wamn_node_sdk::{
     Node, NodeCtx, NodeError, PgCapError, PgRows, PgValue, RateLimitDetail, RunContext,
 };
 
+use std::fmt;
+use std::sync::LazyLock;
+
 use serde_json::Value;
+use wamn_node_manifest::{
+    CapabilityClass, ConnectionRecoverySupport, ConnectionRequirement, ConnectionTypeDescriptor,
+    ExecutableConnectionRecoveryMode, ExecutableIdentity, ExecutableRecoveryContract,
+    PortableConnectionRequirement, ResolvedNodeContract, ResolvedNodeInterface,
+};
+
+/// Shape version for the complete standard-node descriptor.
+pub const STANDARD_NODE_DESCRIPTOR_VERSION: &str = "1";
+
+/// Exact executable revision for the standard library described here.
+pub const STANDARD_NODE_PLATFORM_REVISION: &str = "wamn-standard-nodes@0.1.0";
+
+const STANDARD_NODE_INTERFACE: &str = "wamn:node@0.1.0";
 
 /// Every node type this library implements (drift-guarded by docs + tests).
 pub const NODE_TYPES: [&str; 7] = [
@@ -55,29 +71,6 @@ pub const NODE_TYPES: [&str; 7] = [
     "postgres-query",
     "respond",
 ];
-
-const MAIN_COMPLETION_PORTS: &[&str] = &["main"];
-const CONDITIONAL_COMPLETION_PORTS: &[&str] = &["false", "true"];
-
-/// Canonical completion-port source for immutable standard-node interfaces.
-///
-/// The list is sorted because catalog artifact identity treats ports as a set.
-pub fn completion_ports(node_type: &str) -> Option<&'static [&'static str]> {
-    match node_type {
-        "conditional" => Some(CONDITIONAL_COMPLETION_PORTS),
-        node_type if NODE_TYPES.contains(&node_type) => Some(MAIN_COMPLETION_PORTS),
-        _ => None,
-    }
-}
-
-/// Whether the standard implementation is pure and therefore replay-safe.
-pub fn is_replay_safe(node_type: &str) -> Option<bool> {
-    match node_type {
-        "transform" | "conditional" | "time-shift" | "respond" => Some(true),
-        "http-request" | "postgres" | "postgres-query" => Some(false),
-        _ => None,
-    }
-}
 
 static TRANSFORM: transform::Transform = transform::Transform;
 static CONDITIONAL: conditional::Conditional = conditional::Conditional;
@@ -110,30 +103,191 @@ pub(crate) fn node(node_type: &str) -> Option<&'static dyn Node> {
     }
 }
 
-/// What a standard node type IS, without a handle that can run it (C2-3): the
-/// type name and its declared capability row. This is the public resolution
-/// surface — a caller inspecting the library (does this type exist? what may it
-/// touch?) gets a descriptor, never a runnable `&dyn Node`. To actually execute
-/// a standard node, go through [`dispatch`], which gates on the grant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Complete environment-independent publication and dispatch semantics.
+///
+/// Publication converts this descriptor once into [`ResolvedNodeContract`].
+/// The runnable implementation remains private and is reachable only through
+/// [`dispatch`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeDescriptor {
-    /// The node type this describes (one of [`NODE_TYPES`]).
-    pub node_type: &'static str,
-    /// The capabilities a dispatch of it may use (its policy row).
-    pub capabilities: &'static [Capability],
+    pub descriptor_version: String,
+    pub node_type: String,
+    pub interface_contract: String,
+    pub output_ports: Vec<String>,
+    pub capability_classes: Vec<CapabilityClass>,
+    pub connection_requirements: Vec<ConnectionRequirement>,
+    pub platform_revision: String,
+    pub executable_recovery: ExecutableRecoveryContract,
+    pub connection_recovery_support: Vec<ConnectionRecoverySupport>,
+    pub portable_connections: Vec<PortableConnectionRequirement>,
+    /// Capabilities available through the private dispatch facade.
+    pub dispatch_capabilities: &'static [Capability],
 }
 
-/// The descriptor for a standard node type, or `None` if this library does not
-/// ship it. The runnable node stays behind the [`dispatch`] gate (C2-3).
-pub fn describe(node_type: &str) -> Option<NodeDescriptor> {
-    NODE_TYPES
+/// A standard descriptor could not be converted without loss or fallback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DescriptorError {
+    message: String,
+}
+
+impl fmt::Display for DescriptorError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for DescriptorError {}
+
+static DESCRIPTORS: LazyLock<[NodeDescriptor; 7]> = LazyLock::new(|| {
+    [
+        pure_descriptor(NODE_TYPES[0], &["main"]),
+        pure_descriptor(NODE_TYPES[1], &["false", "true"]),
+        pure_descriptor(NODE_TYPES[2], &["main"]),
+        http_descriptor(NODE_TYPES[3]),
+        postgres_descriptor(NODE_TYPES[4], &[Capability::Postgres]),
+        postgres_descriptor(NODE_TYPES[5], &[Capability::Postgres, Capability::RawSql]),
+        pure_descriptor(NODE_TYPES[6], &["main"]),
+    ]
+});
+
+fn descriptor(
+    node_type: &str,
+    output_ports: &[&str],
+    capability_classes: Vec<CapabilityClass>,
+    executable_recovery: ExecutableRecoveryContract,
+    dispatch_capabilities: &'static [Capability],
+) -> NodeDescriptor {
+    NodeDescriptor {
+        descriptor_version: STANDARD_NODE_DESCRIPTOR_VERSION.to_string(),
+        node_type: node_type.to_string(),
+        interface_contract: STANDARD_NODE_INTERFACE.to_string(),
+        output_ports: output_ports
+            .iter()
+            .map(|port| (*port).to_string())
+            .collect(),
+        capability_classes,
+        connection_requirements: Vec::new(),
+        platform_revision: STANDARD_NODE_PLATFORM_REVISION.to_string(),
+        executable_recovery,
+        connection_recovery_support: Vec::new(),
+        portable_connections: Vec::new(),
+        dispatch_capabilities,
+    }
+}
+
+fn pure_descriptor(node_type: &str, output_ports: &[&str]) -> NodeDescriptor {
+    descriptor(
+        node_type,
+        output_ports,
+        vec![CapabilityClass::Pure],
+        ExecutableRecoveryContract::pure(),
+        &[],
+    )
+}
+
+fn effectful_descriptor(
+    node_type: &str,
+    dispatch_capabilities: &'static [Capability],
+) -> NodeDescriptor {
+    let capability_classes = capability_classes(dispatch_capabilities);
+    descriptor(
+        node_type,
+        &["main"],
+        capability_classes,
+        ExecutableRecoveryContract::effectful(false),
+        dispatch_capabilities,
+    )
+}
+
+fn http_descriptor(node_type: &str) -> NodeDescriptor {
+    let connection = ConnectionTypeDescriptor::http_v1();
+    let mut descriptor = effectful_descriptor(node_type, &[Capability::HttpEgress]);
+    descriptor.connection_requirements = vec![ConnectionRequirement {
+        requirement_type: connection.requirement_type.clone(),
+        contract: connection.contract.clone(),
+    }];
+    descriptor.connection_recovery_support = vec![ConnectionRecoverySupport {
+        descriptor: connection.clone(),
+        supported_modes: vec![ExecutableConnectionRecoveryMode::NeverReplay],
+    }];
+    descriptor.portable_connections = vec![PortableConnectionRequirement::never_replay(connection)];
+    descriptor
+}
+
+fn postgres_descriptor(
+    node_type: &str,
+    dispatch_capabilities: &'static [Capability],
+) -> NodeDescriptor {
+    let mut descriptor = effectful_descriptor(node_type, dispatch_capabilities);
+    descriptor.connection_requirements = vec![ConnectionRequirement {
+        requirement_type: "postgres".to_string(),
+        contract: "wamn:connection/postgres@0.1.0".to_string(),
+    }];
+    descriptor
+}
+
+fn capability_classes(capabilities: &[Capability]) -> Vec<CapabilityClass> {
+    let mut classes = capabilities
         .iter()
-        .find(|t| **t == node_type)
-        .and_then(|t| node(t).map(|n| (t, n)))
-        .map(|(t, n)| NodeDescriptor {
-            node_type: t,
-            capabilities: n.capabilities(),
+        .map(|capability| match capability {
+            Capability::HttpEgress => CapabilityClass::Http,
+            Capability::Postgres | Capability::RawSql => CapabilityClass::Postgres,
         })
+        .collect::<Vec<_>>();
+    classes.sort();
+    classes.dedup();
+    classes
+}
+
+/// The descriptor for a shipped standard node. No runnable handle is exposed.
+pub fn describe(node_type: &str) -> Option<&'static NodeDescriptor> {
+    DESCRIPTORS
+        .iter()
+        .find(|descriptor| descriptor.node_type == node_type)
+}
+
+/// Convert every descriptor field exactly once into the canonical contract.
+pub fn resolve_descriptor(
+    descriptor: &NodeDescriptor,
+) -> Result<ResolvedNodeContract, DescriptorError> {
+    if descriptor.descriptor_version != STANDARD_NODE_DESCRIPTOR_VERSION {
+        return Err(DescriptorError {
+            message: format!(
+                "unsupported standard-node descriptor version {:?}",
+                descriptor.descriptor_version
+            ),
+        });
+    }
+    let expected_classes = if descriptor.dispatch_capabilities.is_empty()
+        && descriptor.executable_recovery.purity == wamn_node_manifest::ResolvedPurity::Pure
+    {
+        vec![CapabilityClass::Pure]
+    } else {
+        capability_classes(descriptor.dispatch_capabilities)
+    };
+    if descriptor.capability_classes != expected_classes {
+        return Err(DescriptorError {
+            message: "canonical capability classes disagree with the dispatch capability row"
+                .to_string(),
+        });
+    }
+    Ok(ResolvedNodeContract {
+        interface: ResolvedNodeInterface::new(
+            descriptor.node_type.clone(),
+            descriptor.interface_contract.clone(),
+            descriptor.output_ports.clone(),
+            descriptor.capability_classes.clone(),
+            descriptor.connection_requirements.clone(),
+            descriptor.executable_recovery.purity,
+            descriptor.executable_recovery.conservative_class,
+        ),
+        executable: ExecutableIdentity::Platform {
+            revision: descriptor.platform_revision.clone(),
+        },
+        executable_recovery: Some(descriptor.executable_recovery.clone()),
+        connection_recovery_support: descriptor.connection_recovery_support.clone(),
+        portable_connections: descriptor.portable_connections.clone(),
+    })
 }
 
 /// Whether this library ships `node_type` — the existence check the flow-runner
@@ -145,7 +299,16 @@ pub fn is_standard(node_type: &str) -> bool {
 
 /// The capability policy row for a node type — what a dispatch of it may use.
 pub fn required_capabilities(node_type: &str) -> Option<&'static [Capability]> {
-    describe(node_type).map(|d| d.capabilities)
+    describe(node_type).map(|descriptor| descriptor.dispatch_capabilities)
+}
+
+/// Compatibility projection for the runtime migration tracked by `wamn-4u7p.23`.
+pub fn is_replay_safe(node_type: &str) -> Option<bool> {
+    describe(node_type).map(|descriptor| {
+        descriptor.executable_recovery.purity == wamn_node_manifest::ResolvedPurity::Pure
+            && descriptor.executable_recovery.conservative_class
+                == wamn_node_manifest::RecoveryClass::Replay
+    })
 }
 
 /// Dispatch one standard node under the policy table:
@@ -179,7 +342,9 @@ pub fn dispatch(
             )));
         }
     };
-    let declared = node.capabilities();
+    let declared = describe(node_type)
+        .expect("a runnable standard node has one complete descriptor")
+        .dispatch_capabilities;
     policy::check_grants(node_type, declared, granted)?;
     let mut gated = policy::GatedCtx {
         inner: ctx,
@@ -199,4 +364,23 @@ pub fn dispatch(
         emission.ctx = Some(replacement);
     }
     Ok(emission)
+}
+
+#[cfg(test)]
+mod descriptor_tests {
+    use super::*;
+
+    #[test]
+    fn private_implementations_match_their_descriptor_dispatch_rows() {
+        for descriptor in DESCRIPTORS.iter() {
+            let implementation =
+                node(&descriptor.node_type).expect("descriptor has an implementation");
+            assert_eq!(
+                implementation.capabilities(),
+                descriptor.dispatch_capabilities,
+                "descriptor is the public authority for {}",
+                descriptor.node_type
+            );
+        }
+    }
 }

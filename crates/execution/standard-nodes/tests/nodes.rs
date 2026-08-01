@@ -8,7 +8,8 @@ use std::collections::VecDeque;
 use serde_json::{Value, json};
 use wamn_standard_nodes::{
     Capability, CredentialCapError, HttpCapError, HttpRequest, HttpResponse, NodeCtx, NodeError,
-    PgCapError, PgRows, PgValue, RunContext, dispatch, granted_for, required_capabilities, respond,
+    PgCapError, PgRows, PgValue, RunContext, STANDARD_NODE_DESCRIPTOR_VERSION,
+    STANDARD_NODE_PLATFORM_REVISION, dispatch, granted_for, required_capabilities, respond,
 };
 
 // ---------------------------------------------------------------------------
@@ -1221,13 +1222,16 @@ fn public_resolution_surface_is_descriptor_only() {
     use wamn_standard_nodes::{NodeDescriptor, describe, is_standard};
 
     // Pin the descriptor-returning signature (compile-time API-surface guard).
-    let resolve: fn(&str) -> Option<NodeDescriptor> = describe;
+    let resolve: fn(&str) -> Option<&'static NodeDescriptor> = describe;
 
     let d = resolve("http-request").expect("http-request is a standard node");
     assert_eq!(d.node_type, "http-request");
-    assert_eq!(d.capabilities, &[Capability::HttpEgress][..]);
+    assert_eq!(d.dispatch_capabilities, &[Capability::HttpEgress][..]);
     // The descriptor's row and the capability query agree, by construction.
-    assert_eq!(Some(d.capabilities), required_capabilities("http-request"));
+    assert_eq!(
+        Some(d.dispatch_capabilities),
+        required_capabilities("http-request")
+    );
 
     // The existence check the flow-runner uses (the non-running replacement for
     // the old `node(t).is_some()` leak) covers exactly the shipped types.
@@ -1239,6 +1243,123 @@ fn public_resolution_surface_is_descriptor_only() {
         "a custom node is not standard-library"
     );
     assert!(describe("delay").is_none(), "delay is runner-intrinsic");
+}
+
+#[test]
+fn every_standard_node_has_one_complete_versioned_resolution_descriptor() {
+    use wamn_node_manifest::{
+        CapabilityClass, ExecutableConnectionRecoveryMode, RecoveryClass, ResolvedPurity,
+    };
+    use wamn_standard_nodes::{describe, resolve_descriptor};
+
+    for node_type in wamn_standard_nodes::NODE_TYPES {
+        let descriptor = describe(node_type).expect("every shipped node has a descriptor");
+        assert_eq!(
+            descriptor.descriptor_version,
+            STANDARD_NODE_DESCRIPTOR_VERSION
+        );
+        assert_eq!(descriptor.node_type, node_type);
+        assert_eq!(descriptor.interface_contract, "wamn:node@0.1.0");
+        assert_eq!(
+            descriptor.platform_revision,
+            STANDARD_NODE_PLATFORM_REVISION
+        );
+        assert!(!descriptor.output_ports.is_empty());
+        assert!(
+            descriptor
+                .output_ports
+                .windows(2)
+                .all(|pair| pair[0] < pair[1]),
+            "ports are canonical for {node_type}"
+        );
+        let contract = resolve_descriptor(descriptor).expect("descriptor converts losslessly");
+        assert_eq!(contract.interface.node_type, descriptor.node_type);
+        assert_eq!(contract.interface.output_ports, descriptor.output_ports);
+        assert_eq!(
+            contract.interface.capability_classes,
+            descriptor.capability_classes
+        );
+        assert_eq!(
+            contract.interface.connection_requirements,
+            descriptor.connection_requirements
+        );
+        assert_eq!(
+            contract.executable_recovery.as_ref(),
+            Some(&descriptor.executable_recovery)
+        );
+        assert_eq!(
+            contract.connection_recovery_support,
+            descriptor.connection_recovery_support
+        );
+        assert_eq!(
+            contract.portable_connections,
+            descriptor.portable_connections
+        );
+
+        if descriptor.executable_recovery.purity == ResolvedPurity::Pure {
+            assert_eq!(descriptor.capability_classes, [CapabilityClass::Pure]);
+            assert_eq!(
+                descriptor.executable_recovery.supported_classes,
+                [RecoveryClass::Replay]
+            );
+        } else {
+            assert_eq!(
+                descriptor.executable_recovery.conservative_class,
+                RecoveryClass::NeverReplay
+            );
+            assert!(
+                !descriptor
+                    .executable_recovery
+                    .supported_classes
+                    .contains(&RecoveryClass::Replay)
+            );
+        }
+    }
+
+    let http = describe("http-request").unwrap();
+    assert_eq!(http.connection_requirements.len(), 1);
+    assert_eq!(http.portable_connections.len(), 1);
+    assert!(matches!(
+        http.connection_recovery_support[0]
+            .supported_modes
+            .as_slice(),
+        [ExecutableConnectionRecoveryMode::NeverReplay]
+    ));
+
+    for node_type in ["postgres", "postgres-query"] {
+        let postgres = describe(node_type).unwrap();
+        assert_eq!(
+            postgres.connection_requirements,
+            [wamn_node_manifest::ConnectionRequirement {
+                requirement_type: "postgres".to_string(),
+                contract: "wamn:connection/postgres@0.1.0".to_string(),
+            }],
+            "{node_type} retains its exact portable Postgres interface requirement"
+        );
+        assert!(postgres.connection_recovery_support.is_empty());
+        assert!(postgres.portable_connections.is_empty());
+        assert_eq!(
+            postgres.executable_recovery.conservative_class,
+            RecoveryClass::NeverReplay
+        );
+        assert_eq!(
+            postgres.executable_recovery.supported_classes,
+            [RecoveryClass::NeverReplay]
+        );
+    }
+}
+
+#[test]
+fn descriptor_version_and_dispatch_divergence_fail_before_publication() {
+    use wamn_standard_nodes::{describe, resolve_descriptor};
+
+    let mut unknown_version = describe("transform").unwrap().clone();
+    unknown_version.descriptor_version = "99".to_string();
+    assert!(resolve_descriptor(&unknown_version).is_err());
+
+    let mut divergent_capabilities = describe("http-request").unwrap().clone();
+    divergent_capabilities.dispatch_capabilities = &[];
+    assert!(resolve_descriptor(&divergent_capabilities).is_err());
 }
 
 /// The dispatch-time capability policy table, pinned row by row.

@@ -430,6 +430,25 @@ fn empty_portable_model_preserves_the_existing_resolved_contract_shape() {
 }
 
 #[test]
+fn conservative_only_connection_requirement_needs_no_stronger_claim_descriptor() {
+    let interface = ResolvedNodeInterface::new(
+        "http-node",
+        "wamn:node@0.1.0",
+        vec!["main".to_string()],
+        vec![CapabilityClass::Postgres],
+        vec![ConnectionRequirement {
+            requirement_type: "postgres".to_string(),
+            contract: "wamn:connection/postgres@0.1.0".to_string(),
+        }],
+        ResolvedPurity::Effectful,
+        RecoveryClass::NeverReplay,
+    );
+    let implementation = NodeImplementation::supplied(interface, digest('1')).unwrap();
+    Artifact::new("tenant-a", &flow(), vec![implementation])
+        .expect("an exact WIT requirement may remain conservative without stronger claims");
+}
+
+#[test]
 fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types() {
     let implementation = implementation("wamn:connection/http@0.1.0", 86_400_000).unwrap();
     let portable = implementation.portable_connections()[0].clone();

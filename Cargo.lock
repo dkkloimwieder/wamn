@@ -4864,6 +4864,7 @@ dependencies = [
  "jmespath",
  "serde_json",
  "wamn-entity-access",
+ "wamn-node-manifest",
  "wamn-node-sdk",
  "wamn-pg-core",
  "wamn-schema-model",
