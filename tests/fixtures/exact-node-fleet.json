@@ -1,0 +1,43 @@
+{
+  "schema-version": 1,
+  "nodes": [
+    {
+      "node-type": "alpha",
+      "component": "exact_node_alpha.wasm",
+      "world": "wamn:exact-bundle/alpha@0.1.0",
+      "capability-worlds": []
+    },
+    {
+      "node-type": "beta",
+      "component": "exact_node_beta.wasm",
+      "world": "wamn:exact-bundle/beta@0.1.0",
+      "capability-worlds": []
+    },
+    {
+      "node-type": "unused",
+      "component": "exact_node_unused.wasm",
+      "world": "wamn:exact-bundle/unused@0.1.0",
+      "capability-worlds": ["wasi:filesystem"]
+    }
+  ],
+  "flows": [
+    {
+      "flow": "org-a:project-a/alpha-only",
+      "driver": "exact_driver_alpha.wasm",
+      "selected-nodes": ["alpha"],
+      "invocation-weight": 50
+    },
+    {
+      "flow": "org-b:project-b/alpha-reuse",
+      "driver": "exact_driver_alpha.wasm",
+      "selected-nodes": ["alpha"],
+      "invocation-weight": 30
+    },
+    {
+      "flow": "org-a:project-a/alpha-beta",
+      "driver": "exact_driver_alpha_beta.wasm",
+      "selected-nodes": ["alpha", "beta"],
+      "invocation-weight": 20
+    }
+  ]
+}

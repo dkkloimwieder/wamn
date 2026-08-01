@@ -230,6 +230,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "exact-driver-alpha"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "exact-driver-alpha-beta"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "exact-node-alpha"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "exact-node-beta"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "exact-node-unused"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
 name = "flow-driver"
 version = "0.1.0"
 dependencies = [
@@ -252,7 +287,6 @@ dependencies = [
 name = "flowrunner"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
  "wamn-catalog",
  "wamn-flow",
@@ -1180,6 +1214,7 @@ dependencies = [
 name = "wamn-runner"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "wamn-flow",
  "wamn-node-sdk",

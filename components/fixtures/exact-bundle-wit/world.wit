@@ -1,0 +1,36 @@
+package wamn:exact-bundle@0.1.0;
+
+interface alpha {
+  run: func(input: u32) -> u32;
+}
+
+interface beta {
+  run: func(input: u32) -> u32;
+}
+
+interface unused {
+  run: func(input: u32) -> u32;
+}
+
+world alpha-node {
+  export alpha;
+}
+
+world beta-node {
+  export beta;
+}
+
+world unused-node {
+  export unused;
+}
+
+world alpha-driver {
+  import alpha;
+  export run-flow: func(input: u32) -> u32;
+}
+
+world alpha-beta-driver {
+  import alpha;
+  import beta;
+  export run-flow: func(input: u32) -> u32;
+}
