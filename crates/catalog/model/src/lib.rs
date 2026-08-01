@@ -12,8 +12,10 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_node_manifest::{
-    ExecutableIdentity, ResolvedComponent, ResolvedNodeContract, ResolvedNodeInterface,
-    ResolvedPurity,
+    CONNECTION_DESCRIPTOR_VERSION, ConnectionTypeDescriptor, ExecutableIdentity,
+    PORTABLE_CONNECTION_REQUIREMENT_VERSION, PortableConnectionRequirement, PortableRecoveryClaim,
+    RecoveryClaimParameterSchema, RecoveryClaimSchema, RecoveryClass, ResolvedComponent,
+    ResolvedNodeContract, ResolvedNodeInterface, ResolvedPurity,
 };
 
 const HASH_PREFIX: &str = "sha256:";
@@ -418,6 +420,7 @@ impl NodeImplementation {
                 executable: ExecutableIdentity::Platform {
                     revision: "wamn-standard-nodes@0.1.0".to_string(),
                 },
+                portable_connections: Vec::new(),
             },
         }
     }
@@ -434,6 +437,7 @@ impl NodeImplementation {
                 executable: ExecutableIdentity::Component {
                     digest: component_digest,
                 },
+                portable_connections: Vec::new(),
             },
         })
     }
@@ -455,6 +459,20 @@ impl NodeImplementation {
 
     pub fn interface(&self) -> &ResolvedNodeInterface {
         &self.contract.interface
+    }
+
+    /// Attach canonical portable connection semantics to this resolution.
+    pub fn with_portable_connections(
+        mut self,
+        portable_connections: Vec<PortableConnectionRequirement>,
+    ) -> Result<Self, CatalogIdentityError> {
+        self.contract.portable_connections = portable_connections;
+        validate_portable_connections(&self.contract)?;
+        Ok(self)
+    }
+
+    pub fn portable_connections(&self) -> &[PortableConnectionRequirement] {
+        &self.contract.portable_connections
     }
 
     pub fn component_digest(&self) -> Option<&str> {
@@ -975,6 +993,7 @@ impl InterfaceBundle {
                             executable: ExecutableIdentity::Platform {
                                 revision: LEGACY_PLATFORM_REVISION.to_string(),
                             },
+                            portable_connections: Vec::new(),
                         },
                     })
                     .collect::<Vec<_>>();
@@ -1181,6 +1200,7 @@ impl PinnedArtifact {
                     executable: ExecutableIdentity::Component {
                         digest: component.component_digest.clone(),
                     },
+                    portable_connections: Vec::new(),
                 }
             } else {
                 ResolvedNodeContract {
@@ -1188,6 +1208,7 @@ impl PinnedArtifact {
                     executable: ExecutableIdentity::Platform {
                         revision: LEGACY_PLATFORM_REVISION.to_string(),
                     },
+                    portable_connections: Vec::new(),
                 }
             };
             implementations.push(NodeImplementation { contract });
@@ -1318,6 +1339,7 @@ fn validate_implementation_order(
 ) -> Result<(), CatalogIdentityError> {
     for implementation in implementations {
         validate_interface(implementation.interface())?;
+        validate_portable_connections(implementation.contract())?;
         match &implementation.contract().executable {
             ExecutableIdentity::Platform { revision } => {
                 validate_text(revision, "platform-revision")?;
@@ -1328,6 +1350,137 @@ fn validate_implementation_order(
         }
     }
     Ok(())
+}
+
+fn validate_portable_connections(
+    contract: &ResolvedNodeContract,
+) -> Result<(), CatalogIdentityError> {
+    if contract
+        .portable_connections
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+    {
+        return Err(CatalogIdentityError::InvalidInterface {
+            node_type: contract.interface.node_type.clone(),
+            message: "portable connection requirements must be sorted and unique".to_string(),
+        });
+    }
+    for requirement in &contract.portable_connections {
+        validate_portable_connection_requirement(requirement)?;
+        let descriptor = &requirement.descriptor;
+        if !contract
+            .interface
+            .connection_requirements
+            .iter()
+            .any(|capability| {
+                capability.requirement_type == descriptor.requirement_type
+                    && capability.contract == descriptor.contract
+            })
+        {
+            return Err(CatalogIdentityError::InvalidInterface {
+                node_type: contract.interface.node_type.clone(),
+                message: format!(
+                    "portable connection {:?} is absent from the resolved interface",
+                    descriptor.contract
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_portable_connection_requirement(
+    requirement: &PortableConnectionRequirement,
+) -> Result<(), CatalogIdentityError> {
+    if requirement.requirement_version != PORTABLE_CONNECTION_REQUIREMENT_VERSION {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: format!(
+                "unsupported portable connection requirement version {:?}",
+                requirement.requirement_version
+            ),
+        });
+    }
+    validate_connection_descriptor(&requirement.descriptor)?;
+    match requirement.recovery {
+        PortableRecoveryClaim::NeverReplay => {}
+        PortableRecoveryClaim::StableKeyDedupV1 {
+            minimum_retention_ms,
+        } => {
+            if minimum_retention_ms == 0 {
+                return Err(CatalogIdentityError::InvalidDefinition {
+                    message: "stable-key-dedup-v1 minimum-retention-ms must be positive"
+                        .to_string(),
+                });
+            }
+            let declares_claim = requirement.descriptor.recovery_claims.iter().any(|claim| {
+                matches!(
+                    claim,
+                    RecoveryClaimSchema::StableKeyDedupV1 { parameters, .. }
+                        if parameters
+                            == &[RecoveryClaimParameterSchema::MinimumRetentionMs]
+                )
+            });
+            if !declares_claim {
+                return Err(CatalogIdentityError::InvalidDefinition {
+                    message: "stable-key-dedup-v1 is absent from the connection descriptor"
+                        .to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_connection_descriptor(
+    descriptor: &ConnectionTypeDescriptor,
+) -> Result<(), CatalogIdentityError> {
+    if descriptor.descriptor_version != CONNECTION_DESCRIPTOR_VERSION {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: format!(
+                "unsupported connection descriptor version {:?}",
+                descriptor.descriptor_version
+            ),
+        });
+    }
+    validate_text(&descriptor.requirement_type, "connection-descriptor-type")?;
+    validate_text(&descriptor.contract, "connection-descriptor-contract")?;
+    let expected_prefix = format!("wamn:connection/{}@", descriptor.requirement_type);
+    let Some(version) = descriptor.contract.strip_prefix(&expected_prefix) else {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: "connection descriptor contract must match its requirement type".to_string(),
+        });
+    };
+    if !is_three_part_numeric_version(version) {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: "connection descriptor contract must carry an exact numeric version"
+                .to_string(),
+        });
+    }
+
+    let baseline = ConnectionTypeDescriptor::http_v1();
+    if descriptor.requirement_type != baseline.requirement_type
+        || descriptor.authority_model != baseline.authority_model
+        || descriptor.field_ownership != baseline.field_ownership
+        || descriptor.credential_injection != baseline.credential_injection
+        || descriptor.idempotency_key_injection != baseline.idempotency_key_injection
+        || descriptor.conservative_recovery != RecoveryClass::NeverReplay
+        || descriptor.recovery_claims != baseline.recovery_claims
+    {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: "connection descriptor v1 has unsupported or non-canonical semantics"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn is_three_part_numeric_version(version: &str) -> bool {
+    let mut parts = version.split('.');
+    (0..3).all(|_| {
+        parts
+            .next()
+            .is_some_and(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    }) && parts.next().is_none()
 }
 
 fn validate_execution_bundle_inputs(

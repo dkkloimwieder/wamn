@@ -27,6 +27,12 @@ pub const SCHEMA_VERSION: &str = "0.1";
 /// Shape version for the canonical resolved-node contract.
 pub const RESOLVED_CONTRACT_VERSION: &str = "1";
 
+/// Shape version for portable connection-type descriptors.
+pub const CONNECTION_DESCRIPTOR_VERSION: &str = "1";
+
+/// Shape version for portable connection requirements.
+pub const PORTABLE_CONNECTION_REQUIREMENT_VERSION: &str = "1";
+
 /// An ordering policy a node declares support for (design-note 2). The
 /// runner's dispatch honors the flow's per-node choice among the node's
 /// declared set; the node itself stays a pure function under all three.
@@ -61,7 +67,7 @@ pub enum ResolvedPurity {
 }
 
 /// The recovery class authorized by the resolved manifest semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RecoveryClass {
     Replay,
@@ -84,6 +90,220 @@ pub enum CapabilityClass {
 pub struct ConnectionRequirement {
     pub requirement_type: String,
     pub contract: String,
+}
+
+/// A field whose ownership is fixed by a connection-type descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectionField {
+    Method,
+    RelativeTarget,
+    Headers,
+    Body,
+    Authority,
+    Tls,
+    Redirect,
+    Proxy,
+    Credential,
+    IdempotencyKey,
+}
+
+/// The principal allowed to supply one connection field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectionFieldOwner {
+    Author,
+    Environment,
+    System,
+}
+
+/// Canonical ownership for one connection field.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ConnectionFieldOwnership {
+    pub field: ConnectionField,
+    pub owner: ConnectionFieldOwner,
+}
+
+/// The authority interpretation fixed by a connection type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectionAuthorityModel {
+    HttpOrigin,
+}
+
+/// How environment-owned credentials enter a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CredentialInjection {
+    EnvironmentSelectedHttpHeader,
+}
+
+/// How the engine-owned stable key enters a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum IdempotencyKeyInjection {
+    HttpIdempotencyKeyHeader,
+}
+
+/// A field in the canonical operation fingerprint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OperationFingerprintField {
+    Method,
+    RelativeTarget,
+    SemanticHeaders,
+    BodyDigest,
+}
+
+/// A typed parameter accepted by a recovery claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryClaimParameterSchema {
+    MinimumRetentionMs,
+}
+
+/// A named recovery claim and its portable parameter schema.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", tag = "claim", deny_unknown_fields)]
+pub enum RecoveryClaimSchema {
+    StableKeyDedupV1 {
+        parameters: Vec<RecoveryClaimParameterSchema>,
+        operation_fingerprint: Vec<OperationFingerprintField>,
+    },
+}
+
+/// Versioned portable semantics for one connection type.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ConnectionTypeDescriptor {
+    pub descriptor_version: String,
+    pub requirement_type: String,
+    pub contract: String,
+    pub authority_model: ConnectionAuthorityModel,
+    pub field_ownership: Vec<ConnectionFieldOwnership>,
+    pub credential_injection: CredentialInjection,
+    pub idempotency_key_injection: IdempotencyKeyInjection,
+    pub conservative_recovery: RecoveryClass,
+    pub recovery_claims: Vec<RecoveryClaimSchema>,
+}
+
+impl ConnectionTypeDescriptor {
+    /// The minimum HTTP descriptor settled by PLAN item 2B.
+    pub fn http_v1() -> Self {
+        Self {
+            descriptor_version: CONNECTION_DESCRIPTOR_VERSION.to_string(),
+            requirement_type: "http".to_string(),
+            contract: "wamn:connection/http@0.1.0".to_string(),
+            authority_model: ConnectionAuthorityModel::HttpOrigin,
+            field_ownership: vec![
+                ConnectionFieldOwnership {
+                    field: ConnectionField::Method,
+                    owner: ConnectionFieldOwner::Author,
+                },
+                ConnectionFieldOwnership {
+                    field: ConnectionField::RelativeTarget,
+                    owner: ConnectionFieldOwner::Author,
+                },
+                ConnectionFieldOwnership {
+                    field: ConnectionField::Headers,
+                    owner: ConnectionFieldOwner::Author,
+                },
+                ConnectionFieldOwnership {
+                    field: ConnectionField::Body,
+                    owner: ConnectionFieldOwner::Author,
+                },
+                ConnectionFieldOwnership {
+                    field: ConnectionField::Authority,
+                    owner: ConnectionFieldOwner::Environment,
+                },
+                ConnectionFieldOwnership {
+                    field: ConnectionField::Tls,
+                    owner: ConnectionFieldOwner::Environment,
+                },
+                ConnectionFieldOwnership {
+                    field: ConnectionField::Redirect,
+                    owner: ConnectionFieldOwner::Environment,
+                },
+                ConnectionFieldOwnership {
+                    field: ConnectionField::Proxy,
+                    owner: ConnectionFieldOwner::Environment,
+                },
+                ConnectionFieldOwnership {
+                    field: ConnectionField::Credential,
+                    owner: ConnectionFieldOwner::Environment,
+                },
+                ConnectionFieldOwnership {
+                    field: ConnectionField::IdempotencyKey,
+                    owner: ConnectionFieldOwner::System,
+                },
+            ],
+            credential_injection: CredentialInjection::EnvironmentSelectedHttpHeader,
+            idempotency_key_injection: IdempotencyKeyInjection::HttpIdempotencyKeyHeader,
+            conservative_recovery: RecoveryClass::NeverReplay,
+            recovery_claims: vec![RecoveryClaimSchema::StableKeyDedupV1 {
+                parameters: vec![RecoveryClaimParameterSchema::MinimumRetentionMs],
+                operation_fingerprint: vec![
+                    OperationFingerprintField::Method,
+                    OperationFingerprintField::RelativeTarget,
+                    OperationFingerprintField::SemanticHeaders,
+                    OperationFingerprintField::BodyDigest,
+                ],
+            }],
+        }
+    }
+
+    /// Stable bytes embedded in resolved-node, artifact, and bundle identities.
+    pub fn identity_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("connection descriptor identity serializes")
+    }
+}
+
+/// A portable recovery guarantee selected from a descriptor.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", tag = "claim", deny_unknown_fields)]
+pub enum PortableRecoveryClaim {
+    NeverReplay,
+    StableKeyDedupV1 { minimum_retention_ms: u64 },
+}
+
+/// A portable descriptor and recovery-claim selection.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct PortableConnectionRequirement {
+    pub requirement_version: String,
+    pub descriptor: ConnectionTypeDescriptor,
+    pub recovery: PortableRecoveryClaim,
+}
+
+impl PortableConnectionRequirement {
+    /// Select the descriptor's conservative recovery behavior.
+    pub fn never_replay(descriptor: ConnectionTypeDescriptor) -> Self {
+        Self {
+            requirement_version: PORTABLE_CONNECTION_REQUIREMENT_VERSION.to_string(),
+            descriptor,
+            recovery: PortableRecoveryClaim::NeverReplay,
+        }
+    }
+
+    /// Require stable-key deduplication for at least `minimum_retention_ms`.
+    pub fn stable_key_dedup_v1(
+        descriptor: ConnectionTypeDescriptor,
+        minimum_retention_ms: u64,
+    ) -> Self {
+        Self {
+            requirement_version: PORTABLE_CONNECTION_REQUIREMENT_VERSION.to_string(),
+            descriptor,
+            recovery: PortableRecoveryClaim::StableKeyDedupV1 {
+                minimum_retention_ms,
+            },
+        }
+    }
+
+    /// Stable bytes embedded in resolved-node, artifact, and bundle identities.
+    pub fn identity_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("portable connection requirement identity serializes")
+    }
 }
 
 /// A publish-time node interface pin.
@@ -150,6 +370,8 @@ pub enum ExecutableIdentity {
 pub struct ResolvedNodeContract {
     pub interface: ResolvedNodeInterface,
     pub executable: ExecutableIdentity,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub portable_connections: Vec<PortableConnectionRequirement>,
 }
 
 impl ResolvedNodeContract {
@@ -528,6 +750,7 @@ impl NodeManifest {
                 executable: ExecutableIdentity::Component {
                     digest: component_digest,
                 },
+                portable_connections: Vec::new(),
             },
         })
     }
