@@ -36,6 +36,7 @@ hex = "0.4"
 http-body-util = "0.1"
 hyper = "1"
 hyper-util = "0.1"
+url = "2"
 jmespath = "0.3"
 libc = "0.2"
 opentelemetry = { version = "0.31", default-features = false }
