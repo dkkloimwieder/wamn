@@ -14,6 +14,40 @@ const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
 const BUILD_AND_TEST_DOCS: &str = "docs/build-and-test.md";
+const SPECIALIZATION_FIXTURES: [(&str, &str); 8] = [
+    (
+        "capability-class-http",
+        "components/fixtures/capability-class-http/Cargo.toml",
+    ),
+    (
+        "capability-class-postgres",
+        "components/fixtures/capability-class-postgres/Cargo.toml",
+    ),
+    (
+        "capability-class-pure",
+        "components/fixtures/capability-class-pure/Cargo.toml",
+    ),
+    (
+        "exact-driver-alpha",
+        "components/fixtures/exact-driver-alpha/Cargo.toml",
+    ),
+    (
+        "exact-driver-alpha-beta",
+        "components/fixtures/exact-driver-alpha-beta/Cargo.toml",
+    ),
+    (
+        "exact-node-alpha",
+        "components/fixtures/exact-node-alpha/Cargo.toml",
+    ),
+    (
+        "exact-node-beta",
+        "components/fixtures/exact-node-beta/Cargo.toml",
+    ),
+    (
+        "exact-node-unused",
+        "components/fixtures/exact-node-unused/Cargo.toml",
+    ),
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -110,7 +144,10 @@ enum Role {
 struct PackageRole {
     workspace: String,
     name: String,
+    manifest_path: String,
     role: Role,
+    target_class: String,
+    bounded_context: String,
     deployable: bool,
 }
 
@@ -800,6 +837,61 @@ fn workspace_tier_inventory_matches_live_cargo_metadata() {
 }
 
 #[test]
+fn specialization_fixtures_are_classified_once_and_excluded_from_product_tiers() {
+    let root = repository_root();
+    let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
+    let roles: PackageRoleManifest = read_json(&root, PACKAGE_ROLES_MANIFEST);
+
+    for (name, manifest_path) in SPECIALIZATION_FIXTURES {
+        let matching = roles
+            .packages
+            .iter()
+            .filter(|package| package.name == name || package.manifest_path == manifest_path)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "specialization fixture {name} at {manifest_path} must be classified exactly once"
+        );
+        let package = matching[0];
+        assert_eq!(package.name, name);
+        assert_eq!(package.manifest_path, manifest_path);
+        assert_eq!(package.workspace, COMPONENT_WORKSPACE);
+        assert_eq!(package.role, Role::Test);
+        assert_eq!(package.target_class, "guest");
+        assert_eq!(package.bounded_context, "proof");
+        assert!(!package.deployable);
+
+        for (tier_name, tier) in [
+            ("product_components", &manifest.tiers.product_components),
+            ("release", &manifest.tiers.release),
+        ] {
+            assert!(
+                !tier
+                    .component_packages
+                    .iter()
+                    .any(|package| package == name),
+                "fixture-only package {name} entered product tier {tier_name}"
+            );
+        }
+        for (tier_name, tier) in [
+            ("full_ci", &manifest.tiers.full_ci),
+            (
+                "deployed_system_proof",
+                &manifest.tiers.deployed_system_proof,
+            ),
+        ] {
+            assert!(
+                tier.component_packages
+                    .iter()
+                    .any(|package| package == name),
+                "specialization fixture {name} is absent from exhaustive tier {tier_name}"
+            );
+        }
+    }
+}
+
+#[test]
 fn workspace_tier_membership_matches_live_classification() {
     let root = repository_root();
     let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
@@ -984,7 +1076,7 @@ fn bare_cargo_commands_remain_exhaustive() {
         .iter()
         .map(|entry| (entry.working_directory.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
-    for (working_directory, package_count) in [(".", 49), ("components", 22)] {
+    for (working_directory, package_count) in [(".", 49), ("components", 29)] {
         let entry = semantics
             .get(working_directory)
             .unwrap_or_else(|| panic!("missing bare Cargo semantics for {working_directory}"));

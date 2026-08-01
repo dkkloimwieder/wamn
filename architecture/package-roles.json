@@ -608,8 +608,80 @@
     },
     {
       "workspace": "components",
+      "name": "capability-class-http",
+      "manifest_path": "components/fixtures/capability-class-http/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "capability-class-postgres",
+      "manifest_path": "components/fixtures/capability-class-postgres/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "capability-class-pure",
+      "manifest_path": "components/fixtures/capability-class-pure/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
       "name": "cred-probe",
       "manifest_path": "components/fixtures/cred-probe/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "exact-driver-alpha",
+      "manifest_path": "components/fixtures/exact-driver-alpha/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "exact-driver-alpha-beta",
+      "manifest_path": "components/fixtures/exact-driver-alpha-beta/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "exact-node-alpha",
+      "manifest_path": "components/fixtures/exact-node-alpha/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "exact-node-beta",
+      "manifest_path": "components/fixtures/exact-node-beta/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "exact-node-unused",
+      "manifest_path": "components/fixtures/exact-node-unused/Cargo.toml",
       "role": "test",
       "target_class": "guest",
       "bounded_context": "proof",
