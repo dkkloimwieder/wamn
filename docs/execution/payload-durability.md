@@ -279,14 +279,40 @@ guest linear memory. Client objects have client-selected lifetime and can be
 used by other flows and product surfaces; platform objects remain run-scoped
 implementation details.
 
-The implementation candidate uses the existing `wamn:node@0.1.x`
-`streamed(payload-ref)` and `payloads` import over
-`wasi:io/streams@0.2.6`. This would keep the frozen P2 ABI and avoid waiting for
-component-model async. The handle is transport-neutral, so a later P3 adapter
-could relocate a stream handle internally without changing payload identity.
-The candidate does not become durable direction until decision bead
-`wamn-4u7p.3` compares it with a P3-native breaking ABI and folds the result
-back into `PLAN.md`.
+Decision `wamn-4u7p.3` activates the existing `wamn:node@0.1.x`
+`streamed(payload-ref)` and optional P2 `payloads` import. The durable value
+crossing nodes and checkpoints is the opaque `payload-ref`, not a live stream
+resource. Passing it moves no bytes. A bulk-capable endpoint opens the reference
+with `payloads.read`, or creates one with `payloads.create`, and transfers bytes
+through bounded, backpressured `wasi:io/streams` resources. The complete object
+never enters guest linear memory and component-model async is not required.
+
+This choice is grounded in the exact runtime, not only API preference. The
+pinned `wash-runtime` v2.6.1 fork at `09b1132f` supports parallel P2 and P3 host
+surfaces. Its P3 cross-store relocation extracts `stream<T>` into a live
+no-buffering channel pump, keeps the producing store alive while results drain,
+and bounds that drain with a timeout. P3 can therefore bridge a logical stream
+handle between component stores, but host code still pumps elements; it is not
+zero-copy relocation of the platform object's storage handle. WAMN already has
+that storage handle in `payload-ref`, so a breaking P3-native node ABI buys no
+item-1 invariant.
+
+Before the currently inert import is enabled, its provisional `wasi:io` version
+pin is aligned across the authoritative WIT, every generated dependency copy,
+and the pinned host. The aligned strict interface identity enters the canonical
+resolved-node contract. The host implementation resolves a handle only under
+the active run/project/environment, reads or finalizes directly against the
+platform store, enforces logical-byte ceilings, and never exposes backend
+location or credentials. A returned create handle remains ineligible for an
+attempt/checkpoint reference until its output stream is closed, finalized, and
+verified by the blob-before-reference protocol.
+
+`wamn:node@0.2` remains the later coordinated WASI 0.3/native-async revision
+owned by `wamn-72i`. It is not an internal adapter hidden behind 0.1: changing
+the handler's stream shape changes the strict interface identity and requires a
+deliberate SDK, component, builder-policy, composition, and migration campaign.
+Revisit only after the target ABI and P3 service lifecycle are stable and a
+measured cross-component stream case justifies that cost.
 
 The canonical resolved-node contract shipped at `95eb37a` remains the
 executable identity boundary. Its contract version, exact WIT interface

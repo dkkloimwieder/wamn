@@ -348,16 +348,30 @@ streaming. So the mechanism is a function of size, not a preference:
 | bulk, client-directed | **streaming blob node** — guest orchestrates, host transfers | bounded chunks transit the guest; the complete object is never materialized there |
 | above ceiling | typed, catchable rejection | — |
 
-`wasi:io/streams` (P2) does chunked transfer synchronously, so streaming does **not** wait
-on `component-model-async`. But P3's cross-store stream relocation moves a *handle* rather
-than pumping chunks through host code, which is structurally better for bulk — so the node ABI's
-streaming shape is **a decision this item makes**, together with the bulk boundary. Note
-`wamn:node@0.1.0` **already carries a streaming contract** — a `streamed(payload-ref)`
-case, an optional `payloads` interface over `wasi:io/streams@0.2.6`, and a header deferring
-the WASI 0.3 revision to 0.2 — so the choice is *implement the existing P2 contract* or
-*deliberately introduce a P3-native 0.2*, not a forced bump. Cheap now, dearer once clients
-author nodes against it. Doing this on the 2.6.1 fork is what puts the second option on the
-table (0.3).
+**Decided (wamn-4u7p.3): activate the existing P2 streaming contract in
+`wamn:node@0.1.x`; do not introduce a P3-native 0.2 in item 1.** The durable dataflow value
+is `payload-ref`, a plain run-scoped storage handle that crosses node and checkpoint
+boundaries without moving bytes. A node opens that handle only when it actually consumes or
+produces bulk data, through the optional `payloads` import. Its P2
+`wasi:io/streams` resources provide bounded, backpressured transfer without waiting for
+`component-model-async`, so they meet the guest-memory boundary the blob design requires.
+
+The exact pinned wasmCloud v2.6.1 fork (`wash-runtime` rev `09b1132f`) does put P3 on the
+table, but it does not supply a zero-copy storage-handle transfer. Its cross-store
+`stream<T>` relocation builds a live, no-buffering channel pump, keeps the producing store
+alive, and applies a drain timeout. That is useful for P3 component-to-component signatures;
+it does not improve on passing WAMN's opaque `payload-ref` as a value and opening the backing
+object only at the endpoint. Moving to 0.2 now would instead add a breaking client/SDK/world
+migration and another P2/P3 host-policy surface before a measured requirement needs it.
+
+Activation first aligns the currently inert `wasi:io` version pin across the authoritative
+WIT, generated copies, and the pinned host, then freezes that strict world in resolved-node
+identity. The host resolves handles under the active run/project/environment, streams
+directly to or from the platform store with ceiling enforcement, and exposes no store
+location or credential. Runner and SDK adapters preserve a streamed reference without
+materializing the complete object. `wamn:node@0.2` remains the coordinated WASI 0.3/native
+async revision (`wamn-72i`), revisited only when the target ABI and service lifecycle are
+stable and a measured cross-component streaming case justifies migration.
 
 **Offload does not solve guest memory, and the split matters.** Host-side offload fixes
 checkpoint size, WAL amplification, and database bloat — but a node that constructs a 100 MB
@@ -2433,7 +2447,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Do composition economics hold?** | 2A's exit; if not, least privilege stays intra-runner (code-enforced) rather than structural, and 6A builds against the linked runner | 2A |
 | ~~Replay classification for standard nodes~~ | **Settled (wamn-4u7p.2):** standard descriptors and custom manifests resolve to one versioned executable recovery contract; an artifact pins each occurrence's selected class/claim; an attempt records what the environment admitted. Complete standard descriptors enter identity through the canonical contract, and runtime tables may not reclassify it | — |
 | ~~Fanout after a nondeterministic producer~~ | **Not a gate:** the engine cannot fan out (one port per emission, one edge per port), so the hazard needs a feature that does not exist. Recovery must stay fan-out-addable | — |
-| **Node ABI: implement 0.1's existing P2 streaming contract, or introduce a P3-native 0.2?** | Not a forced bump — 0.1 already carries `streamed(payload-ref)` and a `payloads` interface. Decide with item 1's bulk boundary and record it | 1 |
+| ~~Node ABI: implement 0.1's existing P2 streaming contract, or introduce a P3-native 0.2?~~ | **Settled (wamn-4u7p.3):** activate `wamn:node@0.1.x`'s existing P2 `streamed(payload-ref)` + `payloads` contract. The opaque reference already moves storage identity without bytes; the pinned fork's P3 cross-store bridge is a backpressured element pump, not zero-copy object-handle relocation. Defer the breaking 0.2/WASI 0.3 migration to `wamn-72i` | — |
 | **The canonical command model beneath git and the management API** | Two front ends over two models grow divergent validation and authorization | 6A |
 | **Org-tier roles** | A client admin who requests a project is org-scoped, but the shipped auth schema is per-project; item 10's request API depends on this | 5 |
 | **Template binding: what does "linked" enforce?** | Extension points and upgrade reconciliation — blocks **only the future managed/static mode**, not item 10's first implementation, which is an instantiated copy with provenance | later |
