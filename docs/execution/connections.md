@@ -134,22 +134,51 @@ Failure rejects publication or promotion with the requirement name and failed
 condition. It does not defer failure to first dispatch and does not select a
 weaker recovery class.
 
-A proposed generation is staged, validated against **every active binding** of
-the instance, then activated with a compare-and-swap against the previously
-active generation. Validation and activation are one serialized operation. If
-any binding would become unsatisfied, activation fails and the previous
-generation remains active. Disabling a binding or creating a differently scoped
-instance is a separate explicit operator action.
+Decision `wamn-ko5r.3` makes activation a per-instance serialized compatibility
+commit. A proposed generation is immutable and staged. The operation snapshots:
 
-Mechanical compatibility covers type and contract identity, required fields,
-canonical authority shape, TLS/redirect/proxy policy, credential kind, and the
-two outer egress ceilings. Semantic claims are attributable attestations. For
-HTTP `stable-key-dedup-v1`, binding validation compares the requirement's
-minimum retention with the generation's attested retention and requires the
-attested idempotency domain to cover every admitted authority. Decision bead
-`wamn-ko5r.4` owns the durable evidence, freshness, and invalidation policy.
-Expiry or invalidation must make a binding requiring `idempotent-with-key`
-unsatisfied and must never change it to `never-replay`.
+- the expected active-generation pointer;
+- the complete set of active bindings and their portable requirements; and
+- the referenced connection-contract, credential-kind, attestation,
+  platform-host-policy, and cluster-network-policy revisions.
+
+The candidate first passes intrinsic definition validation: exact supported
+type and contract, all required fields and no unknown or environment-forbidden
+fields, canonical primary/failover/proxy authorities, coherent TLS verification
+and name identity, redirect scope and proxy transport, and an existing
+credential-set reference of a contract-permitted kind. Validation examines the
+credential kind, never secret material.
+
+Every declared destination, failover target, literal address, and configured
+proxy must then be admissible under both snapshotted outer policy ceilings. That
+check proves the candidate cannot widen policy; it is not a substitute for
+dispatch-time DNS, redirect, proxy-target, and current-policy enforcement.
+
+Finally, the candidate is validated against **every active binding**. Type and
+exact contract must match; portable required fields and authority constraints
+must hold; credential kind must match; and every selected recovery claim must
+have a live, attributable attestation covering every admitted authority and
+meeting every minimum parameter. For HTTP `stable-key-dedup-v1`, this compares
+minimum and achieved retention and requires every primary/failover authority to
+share the attested idempotency domain. Decision `wamn-ko5r.4` owns evidence,
+freshness, and invalidation; activation consumes its typed live/invalid verdict.
+An instance with no active bindings may activate after intrinsic and
+outer-ceiling validation; any later binding must still pass publication or
+promotion validation.
+
+Activation changes the pointer by compare-and-swap only when all checks pass
+and every snapshotted input remains current. A changed pointer, binding set,
+requirement, policy, credential-kind record, or attestation makes the proposal
+stale and refuses it. Success records the candidate definition hash and the
+identities of the validated inputs. Any intrinsic, policy, binding, attestation,
+or stale-snapshot failure leaves the previous generation and every binding
+unchanged. Disabling a binding or creating a differently scoped instance is a
+separate explicit operator action; neither occurs as a validation side effect.
+
+Activation is not a perpetual compatibility certificate. Current outer policy
+is enforced again at dispatch, and attestation expiry or invalidation makes a
+binding requiring `idempotent-with-key` unsatisfied; neither case silently
+changes it to `never-replay`.
 
 Non-secret generations and their evidence are retained while an active attempt
 or retained audit/replay seed refers to them. Credential material follows its

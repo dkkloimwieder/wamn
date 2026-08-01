@@ -978,30 +978,60 @@ credential revocation. This lets audit explain where an effect was sent, lets re
 evaluate the applicable contract, and keeps a generation hash from pointing at configuration
 that no longer exists.
 
-**A new generation becomes active only after a compatibility check.** Failover and rotation
-are operational rather than release changes — but a generation can also alter the idempotency
-domain, TLS or proxy requirements, authentication behaviour, authority scope, redirect
-policy, and the destination guarantees recovery classification depends on.
+**Decision (wamn-ko5r.3): activation is a serialized all-bindings compatibility commit.**
+Failover and rotation are operational rather than release changes — but a generation can
+also alter the idempotency domain, TLS or proxy requirements, authentication behaviour,
+authority scope, redirect policy, and the destination guarantees recovery classification
+depends on. A proposed generation is therefore immutable and staged; it is never made
+current by an unchecked configuration write.
 
-> **A new connection-instance generation activates only after validation against every active
-> binding and connection requirement that uses it. An incompatible generation is refused, and
-> it never silently weakens a contract.**
->
-> **Failure preserves the status quo:** an incompatible generation does **not** replace the
-> current one — activation fails closed while the existing compatible generation stays
-> active. Creating another instance, or disabling affected bindings, requires an **explicit
-> operator action**.
+Activation serializes per instance and takes one validation snapshot containing the
+expected active-generation pointer, every active binding and its portable requirement, and
+the referenced connection-contract, credential-kind, attestation, platform-host-policy, and
+cluster-network-policy revisions. The candidate must pass, in order:
 
-Those responses are not equally safe defaults. Automatically disabling working bindings
-because someone proposed a bad endpoint, TLS configuration, proxy, or attestation would turn
-configuration validation into an outage mechanism.
+1. **Intrinsic definition validation:** exact supported connection type and contract;
+   every contract-required field present and every unknown or environment-forbidden field
+   absent; every primary, failover, and proxy authority canonical and unambiguous; TLS
+   verification, TLS name/identity, redirect scope, and proxy transport consistent with
+   those authorities; and an existing credential-set reference of a contract-permitted
+   kind. Secret material is neither copied nor inspected.
+2. **Outer-ceiling validation:** every declared destination, failover target, literal
+   address, and configured proxy is admissible under both snapshotted outer policies. This
+   proves that the definition cannot widen policy; it does not replace dispatch-time DNS,
+   redirect, proxy-target, or current-policy enforcement.
+3. **Every-active-binding validation:** type and exact contract match; required fields and
+   portable authority constraints are satisfied; the credential kind matches; and each
+   selected recovery claim has a live, attributable attestation whose scope covers every
+   admitted authority and whose measured parameters meet the requirement. The separate
+   `wamn-ko5r.4` decision owns evidence freshness and invalidation; activation consumes its
+   typed live/invalid verdict rather than inventing a second policy.
 
-No table or transaction is prescribed; this establishes that a generation is an operationally
-mutable object with a **controlled activation lifecycle**, not an unchecked configuration
-blob. It also sharpens promotion's role: promotion validates that the target binding is
-compatible *initially*; generation activation preserves that compatibility *afterwards*.
+An instance with no active bindings may activate after the intrinsic and outer-ceiling
+checks pass; a later binding still has to pass ordinary publication or promotion validation.
 
-**But "validation" covers two different things, and only one is mechanical:**
+The active pointer changes by compare-and-swap only if **all** checks pass and every
+snapshotted input is still current. A changed pointer, binding set, requirement, policy,
+credential-kind record, or attestation makes the proposal stale and refuses activation; the
+operator may retry against a fresh snapshot. The commit records the candidate definition
+hash and the identities of the validated inputs so the decision is auditable.
+
+> **Any intrinsic, policy, binding, attestation, or stale-snapshot failure preserves the
+> status quo:** the candidate does not replace the current generation, the existing
+> compatible generation stays active, and no binding is disabled or forked automatically.
+> Disabling an affected binding or creating a differently scoped instance requires an
+> explicit operator action, followed by a new activation attempt where applicable.
+
+Automatically disabling working bindings because someone proposed a bad endpoint, TLS
+configuration, proxy, or attestation would turn validation into an outage mechanism.
+Activation is also not a perpetual certificate: dispatch still enforces current authority
+and outer policy, and attestation expiry or revocation fails the affected operation
+explicitly rather than silently weakening its recovery class.
+
+This sharpens promotion's role: promotion validates that the target binding is compatible
+*initially*; generation activation preserves that compatibility after environment changes.
+
+**The validation snapshot covers two different things, and only one is mechanical:**
 
 | | Examples | Nature |
 |---|---|---|
@@ -1249,8 +1279,9 @@ inspecting the artifact; draft and published execution use the same bundle.
 definitions; a flow referencing an unsatisfied connection fails at **publish**, not dispatch;
 a destination outside the connection's authority fails at dispatch; **a connection that
 cannot satisfy a declared recovery requirement rejects the artifact rather than silently
-degrading it**; and **an incompatible new connection generation is refused or disables its
-bindings rather than activating**.
+degrading it**; and **an incompatible new connection generation is refused while the current
+compatible generation and bindings remain unchanged**. Disabling a binding is a separate,
+explicit operator action.
 
 **2C** — a platform operator authors a connector through the same builder pipeline a client
 uses, it installs into a project, and it appears in the usable catalogue; the node-authoring
@@ -2455,7 +2486,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Revocation scope** | "Prevents further execution" is ambiguous across new admissions, resumed parked runs, in-flight attempts, and tested-but-unpublished drafts | 2D |
 | ~~Retry policy across a connection-instance change~~ | **Settled (wamn-ko5r.1):** retry or recovery of an uncertain effect attempt may use only its recorded immutable connection and credential generations, admitted claim/attestation, fingerprint, and stable key. A missing pinned definition or credential, an expired/revoked attestation, or policy-prohibited pinned authority refuses explicitly; `never-replay` remains `effect-uncertain`. A newer generation is never substituted for that attempt, even under an asserted shared idempotency domain; only a later distinct occurrence may resolve it. | — |
 | ~~What a connection type's contract asserts~~ | **Settled (wamn-ko5r.2):** the portable type contract defines ABI, authority/field ownership, credential injection, conservative recovery default, and the exact semantics of named recovery claims. A portable requirement selects a claim; an authorized environment administrator attests that one immutable instance generation satisfies it. HTTP `0.1` defaults to `never-replay`; `stable-key-dedup-v1` requires scoped, retained, fingerprint-bound deduplication and terminal-outcome recovery, not merely an `Idempotency-Key` header. | — |
-| **Generation activation compatibility** | What validation a new generation must pass against active bindings, and whether failure refuses, forks a new instance, or disables bindings | 2B |
+| ~~Generation activation compatibility~~ | **Settled (wamn-ko5r.3):** stage an immutable candidate and validate its exact type/contract, required fields, canonical authorities, TLS/redirect/proxy posture, credential kind, both outer policy ceilings, and every active binding's portable requirement plus live semantic-attestation verdict in one per-instance serialized snapshot. An instance with no active bindings may activate after intrinsic and outer-ceiling checks. Compare-and-swap activates only while the active pointer and every validated input remain current. Any incompatibility or stale snapshot refuses the candidate, preserves the existing active generation and bindings, and requires explicit operator action to disable a binding or create another instance. Dispatch still rechecks current policy. | — |
 | **What evidence, freshness, and invalidation rules apply per semantic-attestation type** | *Who* may issue one is settled (an authorized connection administrator); what keeps it true is not — external behaviour drifts without any definition changing | 2B |
 | **Which project role may approve a privileged recovery assertion for author-supplied effects** | Raw SQL has no connection administrator; candidates run from a project admin to a safety role to no user assertion at all | 5, 6A |
 | ~~What "Replay" means to an author~~ | **Settled (wamn-4u7p.1):** audit reconstruction is read-only and creates no run; Replay is exact-definition execution in a fail-closed scenario sandbox; Run again/Reprocess is fresh production admission under current definitions and authority. Retained bytes never grant execution permission, and typed lineage distinguishes the two executing operations | — |
