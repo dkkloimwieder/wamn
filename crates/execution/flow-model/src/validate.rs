@@ -3,7 +3,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use boon::{Compiler, Draft, Schemas};
+use serde::Deserialize;
 use serde_json::Value;
+use wamn_node_manifest::{ConnectionTypeDescriptor, PORTABLE_CONNECTION_REQUIREMENT_VERSION};
 
 use crate::types::{
     ERROR_PORT, EntryKind, FailConfig, Flow, InvokeFlowConfig, MAIN_PORT, Node, Ordering,
@@ -100,6 +102,7 @@ pub fn validate(flow: &Flow, resolved_interfaces: &ResolvedInterfaces) -> Vec<Is
 
     validate_credentials(flow, &mut issues);
     validate_allowed_hosts(flow, &mut issues);
+    validate_connections(flow, &mut issues);
 
     let entries: Vec<(usize, &Node, EntryKind)> = flow
         .nodes
@@ -255,6 +258,192 @@ fn validate_allowed_hosts(flow: &Flow, issues: &mut Vec<Issue>) {
             ));
         }
     }
+}
+
+fn validate_connections(flow: &Flow, issues: &mut Vec<Issue>) {
+    let mut names = HashSet::new();
+    for (index, named) in flow.connection_requirements.iter().enumerate() {
+        if !is_slug(&named.name) {
+            issues.push(Issue::error(
+                "invalid-connection-requirement-name",
+                format!("connection-requirements[{index}].name"),
+                format!(
+                    "connection requirement {:?} must be a lowercase slug: [a-z0-9-], starting and ending alphanumeric",
+                    named.name
+                ),
+            ));
+        } else if !names.insert(named.name.as_str()) {
+            issues.push(Issue::error(
+                "duplicate-connection-requirement",
+                format!("connection-requirements[{index}].name"),
+                format!("connection requirement {:?} is not unique", named.name),
+            ));
+        }
+        if named.requirement.requirement_version != PORTABLE_CONNECTION_REQUIREMENT_VERSION
+            || named.requirement.descriptor != ConnectionTypeDescriptor::http_v1()
+        {
+            issues.push(Issue::error(
+                "unsupported-connection-requirement",
+                format!("connection-requirements[{index}].requirement"),
+                "the initial flow contract accepts only the exact portable HTTP 0.1 requirement",
+            ));
+        }
+    }
+
+    if flow
+        .connection_requirements
+        .windows(2)
+        .any(|pair| pair[0].name >= pair[1].name)
+    {
+        issues.push(Issue::error(
+            "unsorted-connection-requirements",
+            "connection-requirements",
+            "connection requirements must be sorted by unique logical name",
+        ));
+    }
+
+    let connection_backed_http = flow
+        .nodes
+        .iter()
+        .any(|node| node.node_type == "http-request" && node.connection.is_some());
+    if connection_backed_http && !flow.allowed_hosts.is_empty() {
+        issues.push(Issue::error(
+            "connection-http-has-allowed-hosts",
+            "allowed-hosts",
+            "connection-backed HTTP authority comes from the environment binding, not allowed-hosts",
+        ));
+    }
+
+    for (index, node) in flow.nodes.iter().enumerate() {
+        if let Some(connection) = node.connection.as_deref() {
+            if !names.contains(connection) {
+                issues.push(Issue::error(
+                    "unknown-connection-requirement",
+                    format!("nodes[{index}].connection"),
+                    format!("references undeclared connection requirement {connection:?}"),
+                ));
+            }
+            if matches!(
+                node.node_type.as_str(),
+                "request" | "cron" | "event" | "respond" | "fail" | "invoke-flow"
+            ) {
+                issues.push(Issue::error(
+                    "control-node-has-connection",
+                    format!("nodes[{index}].connection"),
+                    format!(
+                        "control node type {:?} cannot consume a connection",
+                        node.node_type
+                    ),
+                ));
+            }
+        }
+
+        if node.node_type == "http-request" {
+            validate_http_request_connection(flow, index, node, issues);
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct HttpRequestConfig {
+    path_and_query: String,
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    headers: serde_json::Map<String, Value>,
+    #[serde(default)]
+    body: Option<String>,
+}
+
+fn validate_http_request_connection(
+    flow: &Flow,
+    index: usize,
+    node: &Node,
+    issues: &mut Vec<Issue>,
+) {
+    let connection = match node.connection.as_deref() {
+        Some(connection) => Some(connection),
+        None => {
+            issues.push(Issue::error(
+                "http-request-missing-connection",
+                format!("nodes[{index}].connection"),
+                "http-request requires one artifact-local connection",
+            ));
+            None
+        }
+    };
+    if node.credential.is_some() {
+        issues.push(Issue::error(
+            "connection-http-has-credential",
+            format!("nodes[{index}].credential"),
+            "connection-backed HTTP credentials come from the environment binding",
+        ));
+    }
+
+    if let Some(named) = connection.and_then(|connection| {
+        flow.connection_requirements
+            .iter()
+            .find(|named| named.name == connection)
+    }) && named.requirement.descriptor != ConnectionTypeDescriptor::http_v1()
+    {
+        issues.push(Issue::error(
+            "http-request-wrong-connection-type",
+            format!("nodes[{index}].connection"),
+            format!(
+                "connection requirement {:?} is not exact HTTP 0.1",
+                named.name
+            ),
+        ));
+    }
+
+    let config = match serde_json::from_value::<HttpRequestConfig>(node.config.clone()) {
+        Ok(config) => config,
+        Err(error) => {
+            issues.push(Issue::error(
+                "invalid-http-request-config",
+                format!("nodes[{index}].config"),
+                format!(
+                    "connection-backed HTTP accepts only method, path-and-query, headers, and body: {error}"
+                ),
+            ));
+            return;
+        }
+    };
+    let target = config.path_and_query.as_str();
+    let prefix = target.split(['/', '?', '#']).next().unwrap_or_default();
+    if target.is_empty() || target.starts_with("//") || target.contains('#') || prefix.contains(':')
+    {
+        issues.push(Issue::error(
+            "http-request-target-not-relative",
+            format!("nodes[{index}].config.path-and-query"),
+            format!("HTTP path-and-query {target:?} must be connection-relative"),
+        ));
+    }
+    if config
+        .method
+        .as_deref()
+        .is_some_and(|method| method.trim().is_empty())
+    {
+        issues.push(Issue::error(
+            "invalid-http-request-method",
+            format!("nodes[{index}].config.method"),
+            "HTTP method cannot be empty",
+        ));
+    }
+    for header in config.headers.keys() {
+        if matches!(
+            header.to_ascii_lowercase().as_str(),
+            "authorization" | "proxy-authorization" | "host"
+        ) {
+            issues.push(Issue::error(
+                "http-request-environment-header",
+                format!("nodes[{index}].config.headers[{header:?}]"),
+                format!("HTTP header {header:?} is owned by the environment connection"),
+            ));
+        }
+    }
+    let _ = config.body;
 }
 
 fn validate_edges(
@@ -834,7 +1023,11 @@ mod tests {
 
     use serde_json::json;
 
-    use crate::types::{Capture, Edge, Flow, Node, Ordering, PartitionPolicy};
+    use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
+
+    use crate::types::{
+        Capture, Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy,
+    };
 
     use super::ResolvedInterfaces;
 
@@ -844,6 +1037,7 @@ mod tests {
             node_type: node_type.into(),
             label: None,
             config: json!({}),
+            connection: None,
             credential: None,
         }
     }
@@ -860,6 +1054,7 @@ mod tests {
     fn interfaces() -> ResolvedInterfaces {
         BTreeMap::from([
             ("delay".into(), vec!["main".into()]),
+            ("http-request".into(), vec!["main".into()]),
             ("split".into(), vec!["left".into(), "right".into()]),
             ("step".into(), vec!["main".into()]),
         ])
@@ -882,6 +1077,7 @@ mod tests {
             name: None,
             nodes: vec![request, node("work", "step"), respond],
             edges: vec![edge("in", "main", "work"), edge("work", "main", "out")],
+            connection_requirements: vec![],
             credentials: vec![],
             allowed_hosts: vec![],
             partition_policy: PartitionPolicy::default(),
@@ -895,6 +1091,182 @@ mod tests {
             .into_iter()
             .map(|issue| issue.code)
             .collect()
+    }
+
+    fn http_requirement(name: &str) -> FlowConnectionRequirement {
+        FlowConnectionRequirement {
+            name: name.into(),
+            requirement: PortableConnectionRequirement::never_replay(
+                ConnectionTypeDescriptor::http_v1(),
+            ),
+        }
+    }
+
+    fn connection_http_flow() -> Flow {
+        let mut flow = request_flow();
+        let node = &mut flow.nodes[1];
+        node.node_type = "http-request".into();
+        node.connection = Some("erp".into());
+        node.config = json!({
+            "method": "POST",
+            "path-and-query": "/dispositions?source={{source}}",
+            "headers": {"content-type": "application/json"},
+            "body": "@"
+        });
+        flow.connection_requirements = vec![http_requirement("erp")];
+        flow
+    }
+
+    #[test]
+    fn portable_http_connection_is_valid_for_standard_and_custom_integrate_nodes() {
+        let standard = connection_http_flow();
+        assert_eq!(codes(&standard), Vec::<&str>::new());
+
+        let mut custom = standard.clone();
+        custom.nodes[1].node_type = "step".into();
+        assert_eq!(codes(&custom), Vec::<&str>::new());
+        assert_eq!(
+            standard.connection_requirements, custom.connection_requirements,
+            "standard and custom integrate nodes share one portable requirement shape"
+        );
+    }
+
+    #[test]
+    fn legacy_absolute_http_config_is_explicitly_refused() {
+        let mut flow = connection_http_flow();
+        flow.nodes[1].connection = None;
+        flow.nodes[1].config = json!({"method": "POST", "url": "https://erp.example/x"});
+        let codes = codes(&flow);
+        assert!(codes.contains(&"http-request-missing-connection"));
+        assert!(codes.contains(&"invalid-http-request-config"));
+    }
+
+    #[test]
+    fn http_config_refuses_environment_owned_fields_and_headers() {
+        for (field, value) in [
+            ("url", json!("https://erp.example/x")),
+            ("authority", json!("erp.example")),
+            ("proxy", json!("http://proxy.example")),
+            ("credential", json!("secret")),
+            ("tls", json!({"insecure": true})),
+            ("idempotency-key", json!(true)),
+        ] {
+            let mut flow = connection_http_flow();
+            flow.nodes[1]
+                .config
+                .as_object_mut()
+                .unwrap()
+                .insert(field.into(), value);
+            assert!(
+                codes(&flow).contains(&"invalid-http-request-config"),
+                "environment/system-owned field {field:?} was accepted"
+            );
+        }
+
+        for header in ["Host", "Authorization", "Proxy-Authorization"] {
+            let mut flow = connection_http_flow();
+            flow.nodes[1].config["headers"] = json!({header: "injected"});
+            assert!(
+                codes(&flow).contains(&"http-request-environment-header"),
+                "environment-owned header {header:?} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn http_target_must_be_connection_relative() {
+        for target in [
+            "https://erp.example/x",
+            "//erp.example/x",
+            "custom:authority",
+            "/safe#fragment",
+            "",
+        ] {
+            let mut flow = connection_http_flow();
+            flow.nodes[1].config["path-and-query"] = json!(target);
+            assert!(
+                codes(&flow).contains(&"http-request-target-not-relative"),
+                "non-relative target {target:?} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn connection_references_are_declared_sorted_and_absent_from_control_nodes() {
+        let mut unknown = connection_http_flow();
+        unknown.nodes[1].connection = Some("missing".into());
+        assert!(codes(&unknown).contains(&"unknown-connection-requirement"));
+
+        let mut unsorted = connection_http_flow();
+        unsorted
+            .connection_requirements
+            .insert(0, http_requirement("z-last"));
+        assert!(codes(&unsorted).contains(&"unsorted-connection-requirements"));
+
+        let mut control = connection_http_flow();
+        control.nodes[0].connection = Some("erp".into());
+        assert!(codes(&control).contains(&"control-node-has-connection"));
+    }
+
+    #[test]
+    fn portable_http_requirement_version_and_descriptor_are_exact() {
+        let mut bad_version = connection_http_flow();
+        bad_version.connection_requirements[0]
+            .requirement
+            .requirement_version = "2".into();
+        assert!(codes(&bad_version).contains(&"unsupported-connection-requirement"));
+
+        let mut bad_contract = connection_http_flow();
+        bad_contract.connection_requirements[0]
+            .requirement
+            .descriptor
+            .contract = "wamn:connection/http@0.2.0".into();
+        assert!(codes(&bad_contract).contains(&"unsupported-connection-requirement"));
+        assert!(codes(&bad_contract).contains(&"http-request-wrong-connection-type"));
+    }
+
+    #[test]
+    fn artifact_identity_covers_portable_requirement_and_refuses_environment_fields() {
+        let baseline = connection_http_flow();
+        let mut changed = baseline.clone();
+        changed.connection_requirements[0].requirement =
+            PortableConnectionRequirement::stable_key_dedup_v1(
+                ConnectionTypeDescriptor::http_v1(),
+                1,
+            );
+        assert_ne!(baseline.graph_hash(), changed.graph_hash());
+
+        let baseline_value = serde_json::to_value(&baseline).unwrap();
+        for field in [
+            "environment",
+            "instance",
+            "generation",
+            "endpoint",
+            "credential-set-handle",
+            "proxy",
+        ] {
+            let mut mutant = baseline_value.clone();
+            mutant["connection-requirements"][0][field] = json!("dev-owned");
+            assert!(
+                serde_json::from_value::<Flow>(mutant).is_err(),
+                "environment field {field:?} entered portable artifact bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn connection_backed_http_rejects_legacy_credential_and_allowed_hosts() {
+        let mut flow = connection_http_flow();
+        flow.nodes[1].credential = Some("erp-secret".into());
+        flow.credentials.push(crate::CredentialRef {
+            name: "erp-secret".into(),
+            kind: Some("api-key".into()),
+            description: None,
+        });
+        flow.allowed_hosts.push("erp.example".into());
+        let codes = codes(&flow);
+        assert!(codes.contains(&"connection-http-has-credential"));
+        assert!(codes.contains(&"connection-http-has-allowed-hosts"));
     }
 
     #[test]

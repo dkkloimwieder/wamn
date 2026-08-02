@@ -100,7 +100,8 @@ fn committed_schema_matches_types() {
     // Drift guard: regenerate with
     //   cargo run -p wamn-flow --example print-flow-schema > docs/contracts/flow-schema.schema.json
     let committed = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/contracts/flow-schema.schema.json"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../docs/contracts/flow-schema.schema.json"),
     )
     .expect("read committed schema");
     assert_eq!(
@@ -128,6 +129,7 @@ fn diff_detects_changes() {
         node_type: "custom".into(),
         label: None,
         config: serde_json::json!({}),
+        connection: None,
         credential: None,
     });
     v2.edges.push(wamn_flow::Edge {
@@ -159,6 +161,37 @@ fn diff_detects_changes() {
     assert!(wamn_flow::diff(&v1, &v1).is_empty());
 }
 
+#[test]
+fn diff_detects_connection_reference_and_requirement_changes() {
+    let (_, old) = load("f3-escalate-stale-holds.flow.json");
+    let mut changed_reference = old.clone();
+    changed_reference
+        .nodes
+        .iter_mut()
+        .find(|node| node.node_type == "http-request")
+        .unwrap()
+        .connection = Some("replacement".into());
+    let reference_diff = wamn_flow::diff(&old, &changed_reference);
+    assert!(
+        reference_diff.nodes_changed.iter().any(|change| {
+            change.connection_changed
+                == Some((
+                    Some("manager-notifications".into()),
+                    Some("replacement".into()),
+                ))
+        }),
+        "a logical connection reference is a visible node change"
+    );
+
+    let mut changed_requirement = old.clone();
+    changed_requirement.connection_requirements[0]
+        .requirement
+        .requirement_version = "mutant".into();
+    let requirement_diff = wamn_flow::diff(&old, &changed_requirement);
+    assert_eq!(requirement_diff.connection_requirements_added.len(), 1);
+    assert_eq!(requirement_diff.connection_requirements_removed.len(), 1);
+}
+
 /// F3 keeps the scheduled anchor and selected hold in durable context while it
 /// drains one row at a time. The false port is deliberately unwired: frontier
 /// exhaustion is the callerless flow's successful completion.
@@ -183,27 +216,25 @@ fn f3_escalate_stale_holds_shape() {
         "callerless F3 has no response node"
     );
 
-    // Egress + credential are DECLARED (fail-closed capability-by-declaration).
-    assert_eq!(f.allowed_hosts, vec!["notify.example".to_string()]);
-    assert!(
-        f.credentials.iter().any(|c| c.name == "notify-webhook"),
-        "the webhook credential is declared"
+    // The artifact declares a portable logical requirement, never environment
+    // authority or credential selection.
+    assert!(f.allowed_hosts.is_empty());
+    assert!(f.credentials.is_empty());
+    assert_eq!(
+        f.nodes
+            .iter()
+            .find(|n| n.id == "notify-manager")
+            .and_then(|n| n.connection.as_deref()),
+        Some("manager-notifications"),
+        "notify references the portable connection requirement"
     );
     assert_eq!(
         f.nodes
             .iter()
             .find(|n| n.id == "notify-manager")
-            .and_then(|n| n.credential.clone()),
-        Some("notify-webhook".to_string()),
-        "notify references the declared credential"
-    );
-    assert_eq!(
-        f.nodes
-            .iter()
-            .find(|n| n.id == "notify-manager")
-            .and_then(|n| n.config.get("idempotency-key")),
-        Some(&serde_json::json!(true)),
-        "notify opts into same-key recovery and provider dedupe"
+            .and_then(|n| n.config.get("path-and-query")),
+        Some(&serde_json::json!("/holds")),
+        "notify carries only a connection-relative target"
     );
 
     assert!(
@@ -385,6 +416,7 @@ fn mutant_f3_or_f4_terminal_response_is_rejected() {
             node_type: "respond".into(),
             label: None,
             config: json!({"status": 200}),
+            connection: None,
             credential: None,
         });
         let from = if name.starts_with("f3") {

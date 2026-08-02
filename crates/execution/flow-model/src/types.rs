@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
+use wamn_node_manifest::PortableConnectionRequirement;
 
 use crate::canonical;
 
@@ -46,6 +47,11 @@ pub struct Flow {
     /// The wiring between node output ports and downstream nodes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<Edge>,
+    /// Portable connection requirements named by this artifact. Environment
+    /// bindings, instances, generations, authorities, and secrets never enter
+    /// this declaration or the artifact identity derived from it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connection_requirements: Vec<FlowConnectionRequirement>,
     /// Credentials the flow needs, declared by logical name and resolved by the
     /// vault (5.9) at run time. Nodes reference these by [`Node::credential`];
     /// secrets never appear in flow data.
@@ -310,9 +316,25 @@ pub struct Node {
     /// (5.3), not by this crate.
     #[serde(default, skip_serializing_if = "is_empty_object")]
     pub config: Value,
+    /// The artifact-local connection requirement consumed by this integrate
+    /// node. Pure and control nodes do not carry a connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<String>,
     /// Optional reference to a declared credential by [`CredentialRef::name`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
+}
+
+/// One artifact-local name bound to a portable connection requirement.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct FlowConnectionRequirement {
+    /// Artifact-local logical name referenced by [`Node::connection`].
+    pub name: String,
+    /// Portable type, contract, field ownership, and recovery requirement.
+    pub requirement: PortableConnectionRequirement,
 }
 
 impl Node {

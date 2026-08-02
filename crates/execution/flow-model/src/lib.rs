@@ -28,9 +28,9 @@ use serde_json::Value;
 pub use diff::{FlowDiff, NodeChange, diff};
 pub use types::{
     Capture, CaptureMode, CredentialRef, CronInput, DEFAULT_CAPTURE_MAX_BYTES, ENTRY_TYPES,
-    ERROR_PORT, Edge, EntryKind, EventInput, FailConfig, Flow, InvokeActorMode, InvokeFlowConfig,
-    MAIN_PORT, Node, NodeId, Ordering, PartitionPolicy, RequestConfig, RespondConfig, RowEvent,
-    SCHEMA_VERSION,
+    ERROR_PORT, Edge, EntryKind, EventInput, FailConfig, Flow, FlowConnectionRequirement,
+    InvokeActorMode, InvokeFlowConfig, MAIN_PORT, Node, NodeId, Ordering, PartitionPolicy,
+    RequestConfig, RespondConfig, RowEvent, SCHEMA_VERSION,
 };
 pub use validate::{Issue, ResolvedInterfaces, Severity, validate};
 

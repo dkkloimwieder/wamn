@@ -4437,6 +4437,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "wamn-node-manifest",
 ]
 
 [[package]]

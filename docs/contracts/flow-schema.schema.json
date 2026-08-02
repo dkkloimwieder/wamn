@@ -58,6 +58,113 @@
         }
       ]
     },
+    "ConnectionAuthorityModel": {
+      "description": "The authority interpretation fixed by a connection type.",
+      "enum": [
+        "http-origin"
+      ],
+      "type": "string"
+    },
+    "ConnectionField": {
+      "description": "A field whose ownership is fixed by a connection-type descriptor.",
+      "enum": [
+        "method",
+        "relative-target",
+        "headers",
+        "body",
+        "authority",
+        "tls",
+        "redirect",
+        "proxy",
+        "credential",
+        "idempotency-key"
+      ],
+      "type": "string"
+    },
+    "ConnectionFieldOwner": {
+      "description": "The principal allowed to supply one connection field.",
+      "enum": [
+        "author",
+        "environment",
+        "system"
+      ],
+      "type": "string"
+    },
+    "ConnectionFieldOwnership": {
+      "additionalProperties": false,
+      "description": "Canonical ownership for one connection field.",
+      "properties": {
+        "field": {
+          "$ref": "#/definitions/ConnectionField"
+        },
+        "owner": {
+          "$ref": "#/definitions/ConnectionFieldOwner"
+        }
+      },
+      "required": [
+        "field",
+        "owner"
+      ],
+      "type": "object"
+    },
+    "ConnectionTypeDescriptor": {
+      "additionalProperties": false,
+      "description": "Versioned portable semantics for one connection type.",
+      "properties": {
+        "authority-model": {
+          "$ref": "#/definitions/ConnectionAuthorityModel"
+        },
+        "conservative-recovery": {
+          "$ref": "#/definitions/RecoveryClass"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "credential-injection": {
+          "$ref": "#/definitions/CredentialInjection"
+        },
+        "descriptor-version": {
+          "type": "string"
+        },
+        "field-ownership": {
+          "items": {
+            "$ref": "#/definitions/ConnectionFieldOwnership"
+          },
+          "type": "array"
+        },
+        "idempotency-key-injection": {
+          "$ref": "#/definitions/IdempotencyKeyInjection"
+        },
+        "recovery-claims": {
+          "items": {
+            "$ref": "#/definitions/RecoveryClaimSchema"
+          },
+          "type": "array"
+        },
+        "requirement-type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "authority-model",
+        "conservative-recovery",
+        "contract",
+        "credential-injection",
+        "descriptor-version",
+        "field-ownership",
+        "idempotency-key-injection",
+        "recovery-claims",
+        "requirement-type"
+      ],
+      "type": "object"
+    },
+    "CredentialInjection": {
+      "description": "How environment-owned credentials enter a request.",
+      "enum": [
+        "environment-selected-http-header"
+      ],
+      "type": "string"
+    },
     "CredentialRef": {
       "additionalProperties": false,
       "description": "A credential the flow references by logical name; the vault (5.9) resolves it to a lazy handle at run time. No secret material is ever stored in flow data.",
@@ -116,12 +223,49 @@
       ],
       "type": "object"
     },
+    "FlowConnectionRequirement": {
+      "additionalProperties": false,
+      "description": "One artifact-local name bound to a portable connection requirement.",
+      "properties": {
+        "name": {
+          "description": "Artifact-local logical name referenced by [`Node::connection`].",
+          "type": "string"
+        },
+        "requirement": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PortableConnectionRequirement"
+            }
+          ],
+          "description": "Portable type, contract, field ownership, and recovery requirement."
+        }
+      },
+      "required": [
+        "name",
+        "requirement"
+      ],
+      "type": "object"
+    },
+    "IdempotencyKeyInjection": {
+      "description": "How the engine-owned stable key enters a request.",
+      "enum": [
+        "http-idempotency-key-header"
+      ],
+      "type": "string"
+    },
     "Node": {
       "additionalProperties": false,
       "description": "A single graph step.",
       "properties": {
         "config": {
           "description": "Opaque per-node configuration — a JSON object typed by the node library (5.3), not by this crate."
+        },
+        "connection": {
+          "description": "The artifact-local connection requirement consumed by this integrate node. Pure and control nodes do not carry a connection.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "credential": {
           "description": "Optional reference to a declared credential by [`CredentialRef::name`].",
@@ -151,6 +295,16 @@
         "type"
       ],
       "type": "object"
+    },
+    "OperationFingerprintField": {
+      "description": "A field in the canonical operation fingerprint.",
+      "enum": [
+        "method",
+        "relative-target",
+        "semantic-headers",
+        "body-digest"
+      ],
+      "type": "string"
     },
     "Ordering": {
       "description": "The flow's record-stream **ordering** (5.11): which ordered stream a run joins. This is the run's `run_queue.partition_key` seam — the dispatcher evaluates the declaration at fire() and stamps the key; a NULL key is the order-agnostic global claim. Orthogonal to [`PartitionPolicy`], which ranks runs *within* one stream (D20). Absent = [`Ordering::Unordered`].\n\nPer-node ordering (the 5.11 plan wording) is deferred: the queue's dispatch unit is the **run** (records map 1:1 to runs, D9), so ordering is declared on the flow, not per node — a later refinement if per-node streams are ever needed. See `docs/execution/run-queue.md` §Flow-level ordering declaration.",
@@ -225,6 +379,118 @@
           "type": "string"
         }
       ]
+    },
+    "PortableConnectionRequirement": {
+      "additionalProperties": false,
+      "description": "A portable descriptor and recovery-claim selection.",
+      "properties": {
+        "descriptor": {
+          "$ref": "#/definitions/ConnectionTypeDescriptor"
+        },
+        "recovery": {
+          "$ref": "#/definitions/PortableRecoveryClaim"
+        },
+        "requirement-version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "descriptor",
+        "recovery",
+        "requirement-version"
+      ],
+      "type": "object"
+    },
+    "PortableRecoveryClaim": {
+      "description": "A portable recovery guarantee selected from a descriptor.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "claim": {
+              "enum": [
+                "never-replay"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "claim"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "claim": {
+              "enum": [
+                "stable-key-dedup-v1"
+              ],
+              "type": "string"
+            },
+            "minimum_retention_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "claim",
+            "minimum_retention_ms"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RecoveryClaimParameterSchema": {
+      "description": "A typed parameter accepted by a recovery claim.",
+      "enum": [
+        "minimum-retention-ms"
+      ],
+      "type": "string"
+    },
+    "RecoveryClaimSchema": {
+      "description": "A named recovery claim and its portable parameter schema.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "claim": {
+              "enum": [
+                "stable-key-dedup-v1"
+              ],
+              "type": "string"
+            },
+            "operation_fingerprint": {
+              "items": {
+                "$ref": "#/definitions/OperationFingerprintField"
+              },
+              "type": "array"
+            },
+            "parameters": {
+              "items": {
+                "$ref": "#/definitions/RecoveryClaimParameterSchema"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "claim",
+            "operation_fingerprint",
+            "parameters"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RecoveryClass": {
+      "description": "The recovery class authorized by the resolved manifest semantics.",
+      "enum": [
+        "replay",
+        "idempotent-with-key",
+        "never-replay"
+      ],
+      "type": "string"
     }
   },
   "description": "One version of a flow — the unit stored in the catalog and pointed at by the active-version pointer (deploying = flipping that pointer + a NATS doorbell, 5.14).",
@@ -243,6 +509,13 @@
         }
       ],
       "description": "The flow's node-level I/O capture policy (9.6): how each node's input / output payloads are persisted to `node_runs` — faithfully, scrubbed of secrets, preview-only, or not at all — plus the byte threshold above which any mode stores a preview only. Absent = [`Capture::default`] (full capture, 64 KiB threshold): the platform captures replayable payloads by default. Rides `graph_json`; the flowrunner guest applies it at every `node_runs` write ([`wamn_run_state::capture`](../wamn_run_state))."
+    },
+    "connection-requirements": {
+      "description": "Portable connection requirements named by this artifact. Environment bindings, instances, generations, authorities, and secrets never enter this declaration or the artifact identity derived from it.",
+      "items": {
+        "$ref": "#/definitions/FlowConnectionRequirement"
+      },
+      "type": "array"
     },
     "credentials": {
       "description": "Credentials the flow needs, declared by logical name and resolved by the vault (5.9) at run time. Nodes reference these by [`Node::credential`]; secrets never appear in flow data.",

@@ -998,6 +998,7 @@ fn noncanonical_interface_and_member_reordering_is_rejected() {
             node_type: "z-node".to_string(),
             label: None,
             config: json!({}),
+            connection: None,
             credential: None,
         },
     );

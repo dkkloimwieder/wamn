@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use crate::types::{Edge, Flow, NodeId};
+use crate::types::{Edge, Flow, FlowConnectionRequirement, NodeId};
 
 /// What changed about a single node kept across both versions.
 #[derive(Debug, Clone, PartialEq)]
@@ -17,11 +17,16 @@ pub struct NodeChange {
     pub config_changed: bool,
     /// `Some((old, new))` if the node's credential reference changed.
     pub credential_changed: Option<(Option<String>, Option<String>)>,
+    /// `Some((old, new))` if the node's logical connection changed.
+    pub connection_changed: Option<(Option<String>, Option<String>)>,
 }
 
 impl NodeChange {
     fn any(&self) -> bool {
-        self.type_changed.is_some() || self.config_changed || self.credential_changed.is_some()
+        self.type_changed.is_some()
+            || self.config_changed
+            || self.credential_changed.is_some()
+            || self.connection_changed.is_some()
     }
 }
 
@@ -35,6 +40,8 @@ pub struct FlowDiff {
     pub edges_removed: Vec<Edge>,
     pub credentials_added: Vec<String>,
     pub credentials_removed: Vec<String>,
+    pub connection_requirements_added: Vec<FlowConnectionRequirement>,
+    pub connection_requirements_removed: Vec<FlowConnectionRequirement>,
 }
 
 impl FlowDiff {
@@ -47,6 +54,8 @@ impl FlowDiff {
             && self.edges_removed.is_empty()
             && self.credentials_added.is_empty()
             && self.credentials_removed.is_empty()
+            && self.connection_requirements_added.is_empty()
+            && self.connection_requirements_removed.is_empty()
     }
 }
 
@@ -72,6 +81,8 @@ pub fn diff(old: &Flow, new: &Flow) -> FlowDiff {
                 config_changed: o.config != n.config,
                 credential_changed: (o.credential != n.credential)
                     .then(|| (o.credential.clone(), n.credential.clone())),
+                connection_changed: (o.connection != n.connection)
+                    .then(|| (o.connection.clone(), n.connection.clone())),
             };
             if change.any() {
                 d.nodes_changed.push(change);
@@ -106,6 +117,17 @@ pub fn diff(old: &Flow, new: &Flow) -> FlowDiff {
     d.credentials_removed = old_creds
         .difference(&new_creds)
         .map(|s| s.to_string())
+        .collect();
+
+    let old_connections: BTreeSet<_> = old.connection_requirements.iter().collect();
+    let new_connections: BTreeSet<_> = new.connection_requirements.iter().collect();
+    d.connection_requirements_added = new_connections
+        .difference(&old_connections)
+        .map(|requirement| (*requirement).clone())
+        .collect();
+    d.connection_requirements_removed = old_connections
+        .difference(&new_connections)
+        .map(|requirement| (*requirement).clone())
         .collect();
 
     d
