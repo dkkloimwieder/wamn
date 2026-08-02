@@ -262,10 +262,13 @@ mod tests {
     /// T-NR control: absence is the dangerous custom-node default, never replay.
     #[test]
     fn t_nr_custom_manifest_without_purity_is_never_replay() {
-        let interface = custom_manifest("")
-            .resolved_interface()
+        let component = custom_manifest("")
+            .resolved_component(format!("sha256:{}", "1".repeat(64)))
             .expect("valid manifest resolves");
-        assert_eq!(interface.recovery_class, RecoveryClass::NeverReplay);
+        assert_eq!(
+            component.contract.executable_recovery.conservative_class,
+            RecoveryClass::NeverReplay
+        );
     }
 
     /// Identity gate: both the resolved interface and component digest are pins.

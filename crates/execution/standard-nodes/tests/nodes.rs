@@ -1283,10 +1283,7 @@ fn every_standard_node_has_one_complete_versioned_resolution_descriptor() {
             contract.interface.connection_requirements,
             descriptor.connection_requirements
         );
-        assert_eq!(
-            contract.executable_recovery.as_ref(),
-            Some(&descriptor.executable_recovery)
-        );
+        assert_eq!(contract.executable_recovery, descriptor.executable_recovery);
         assert_eq!(
             contract.connection_recovery_support,
             descriptor.connection_recovery_support
@@ -1432,6 +1429,16 @@ fn f3_fixture_node_types_are_all_standard() {
     assert!(
         types.contains(&"time-shift"),
         "F3 must use the time-shift node"
+    );
+}
+
+#[test]
+fn current_standard_node_surface_has_no_replay_safe_fallback() {
+    let source = include_str!("../src/lib.rs");
+    let retired_name = concat!("is_", "replay_safe");
+    assert!(
+        !source.contains(retired_name),
+        "current standard-node producers must not restore the compatibility fallback"
     );
 }
 

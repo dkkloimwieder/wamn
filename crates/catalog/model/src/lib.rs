@@ -421,10 +421,13 @@ pub struct NodeImplementation {
 }
 
 impl NodeImplementation {
-    pub fn platform(interface: ResolvedNodeInterface) -> Self {
+    pub fn platform(
+        interface: ResolvedNodeInterface,
+        executable_recovery: ExecutableRecoveryContract,
+    ) -> Self {
         Self {
             contract: ResolvedNodeContract {
-                executable_recovery: Some(recovery_from_interface(&interface)),
+                executable_recovery,
                 interface,
                 executable: ExecutableIdentity::Platform {
                     revision: "wamn-standard-nodes@0.1.0".to_string(),
@@ -438,12 +441,13 @@ impl NodeImplementation {
     pub fn supplied(
         interface: ResolvedNodeInterface,
         component_digest: impl Into<String>,
+        executable_recovery: ExecutableRecoveryContract,
     ) -> Result<Self, CatalogIdentityError> {
         let component_digest = component_digest.into();
         validate_digest(&component_digest, "component-digest")?;
         Ok(Self {
             contract: ResolvedNodeContract {
-                executable_recovery: Some(recovery_from_interface(&interface)),
+                executable_recovery,
                 interface,
                 executable: ExecutableIdentity::Component {
                     digest: component_digest,
@@ -487,14 +491,12 @@ impl NodeImplementation {
         &self.contract.interface
     }
 
-    /// Replace the executable recovery declaration while keeping v2 compatibility fields exact.
+    /// Replace the authoritative executable recovery declaration.
     pub fn with_executable_recovery(
         mut self,
         recovery: ExecutableRecoveryContract,
     ) -> Result<Self, CatalogIdentityError> {
-        self.contract.interface.purity = recovery.purity;
-        self.contract.interface.recovery_class = recovery.conservative_class;
-        self.contract.executable_recovery = Some(recovery);
+        self.contract.executable_recovery = recovery;
         validate_executable_recovery(&self.contract)?;
         Ok(self)
     }
@@ -539,15 +541,6 @@ impl NodeImplementation {
     /// The canonical resolved-node contract shared by all identity consumers.
     pub fn contract(&self) -> &ResolvedNodeContract {
         &self.contract
-    }
-}
-
-fn recovery_from_interface(interface: &ResolvedNodeInterface) -> ExecutableRecoveryContract {
-    match interface.purity {
-        ResolvedPurity::Pure => ExecutableRecoveryContract::pure(),
-        ResolvedPurity::Effectful => ExecutableRecoveryContract::effectful(
-            interface.recovery_class == RecoveryClass::IdempotentWithKey,
-        ),
     }
 }
 
@@ -648,27 +641,22 @@ impl Artifact {
                 ),
             ));
         }
-        let current_resolution = implementations.iter().all(|implementation| {
+        if !implementations.iter().all(|implementation| {
             implementation.interface().contract_version == RESOLVED_CONTRACT_VERSION
-        });
-        let historical_resolution = implementations.iter().all(|implementation| {
-            implementation.interface().contract_version == HISTORICAL_RESOLVED_CONTRACT_VERSION
-        });
-        if !current_resolution && !historical_resolution {
+        }) {
             return Err(CatalogIdentityError::InvalidDefinition {
-                message: "an artifact must use one supported resolved-contract version".to_string(),
+                message: "current artifact producers require the current resolved-contract version"
+                    .to_string(),
             });
         }
-        if current_resolution {
-            for selection in &occurrence_recovery {
-                owned.push((
-                    "occurrence-recovery",
-                    canonical_json(
-                        &serde_json::to_value(selection)
-                            .expect("occurrence recovery selection serializes"),
-                    ),
-                ));
-            }
+        for selection in &occurrence_recovery {
+            owned.push((
+                "occurrence-recovery",
+                canonical_json(
+                    &serde_json::to_value(selection)
+                        .expect("occurrence recovery selection serializes"),
+                ),
+            ));
         }
         let supplied_components: Vec<_> = implementations
             .iter()
@@ -765,6 +753,85 @@ struct LegacyResolvedComponent {
     component_digest: String,
 }
 
+/// Exact resolved-node contract persisted by historical contract version 1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct HistoricalResolvedNodeInterfaceV1 {
+    contract_version: String,
+    node_type: String,
+    interface_contract: String,
+    output_ports: Vec<String>,
+    capability_classes: Vec<wamn_node_manifest::CapabilityClass>,
+    connection_requirements: Vec<wamn_node_manifest::ConnectionRequirement>,
+    purity: ResolvedPurity,
+    recovery_class: RecoveryClass,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct HistoricalResolvedNodeContractV1 {
+    interface: HistoricalResolvedNodeInterfaceV1,
+    executable: ExecutableIdentity,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    connection_recovery_support: Vec<ConnectionRecoverySupport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    portable_connections: Vec<PortableConnectionRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct HistoricalResolvedComponentV1 {
+    contract: HistoricalResolvedNodeContractV1,
+}
+
+fn project_historical_v1(
+    historical: &HistoricalResolvedNodeContractV1,
+) -> Result<ResolvedNodeContract, CatalogIdentityError> {
+    if historical.interface.contract_version != HISTORICAL_RESOLVED_CONTRACT_VERSION {
+        return Err(CatalogIdentityError::InvalidInterface {
+            node_type: historical.interface.node_type.clone(),
+            message: format!(
+                "unsupported historical resolved contract version {:?}",
+                historical.interface.contract_version
+            ),
+        });
+    }
+    let contract = ResolvedNodeContract {
+        interface: ResolvedNodeInterface {
+            contract_version: historical.interface.contract_version.clone(),
+            node_type: historical.interface.node_type.clone(),
+            interface_contract: historical.interface.interface_contract.clone(),
+            output_ports: historical.interface.output_ports.clone(),
+            capability_classes: historical.interface.capability_classes.clone(),
+            connection_requirements: historical.interface.connection_requirements.clone(),
+        },
+        executable: historical.executable.clone(),
+        executable_recovery: ExecutableRecoveryContract::historical_v1_projection(
+            historical.interface.purity,
+            historical.interface.recovery_class,
+        ),
+        connection_recovery_support: historical.connection_recovery_support.clone(),
+        portable_connections: historical.portable_connections.clone(),
+    };
+    validate_executable_recovery(&contract)?;
+    Ok(contract)
+}
+
+fn synthesize_legacy_contract(
+    legacy: &LegacyResolvedNodeInterface,
+    executable: ExecutableIdentity,
+) -> ResolvedNodeContract {
+    let executable_recovery =
+        ExecutableRecoveryContract::historical_v1_projection(legacy.purity, legacy.recovery_class);
+    ResolvedNodeContract {
+        interface: synthesize_legacy_interface(legacy),
+        executable,
+        executable_recovery,
+        connection_recovery_support: Vec::new(),
+        portable_connections: Vec::new(),
+    }
+}
+
 fn synthesize_legacy_interface(legacy: &LegacyResolvedNodeInterface) -> ResolvedNodeInterface {
     ResolvedNodeInterface {
         contract_version: LEGACY_RESOLVED_CONTRACT_VERSION.to_string(),
@@ -777,8 +844,6 @@ fn synthesize_legacy_interface(legacy: &LegacyResolvedNodeInterface) -> Resolved
             Vec::new()
         },
         connection_requirements: Vec::new(),
-        purity: legacy.purity,
-        recovery_class: legacy.recovery_class,
     }
 }
 
@@ -1056,12 +1121,8 @@ impl ExecutionBundleProvenance {
 }
 
 impl InterfaceBundle {
-    /// Build a canonical bundle from interfaces already resolved at publication.
-    pub fn new(interfaces: Vec<ResolvedNodeInterface>) -> Result<Self, CatalogIdentityError> {
-        let implementations = interfaces
-            .into_iter()
-            .map(NodeImplementation::platform)
-            .collect::<Vec<_>>();
+    /// Build a canonical bundle from complete implementations resolved at publication.
+    pub fn new(implementations: Vec<NodeImplementation>) -> Result<Self, CatalogIdentityError> {
         Self::from_implementations(&implementations)
     }
 
@@ -1103,24 +1164,36 @@ impl InterfaceBundle {
         let contracts: Vec<ResolvedNodeContract> = match serde_json::from_value(value.clone()) {
             Ok(contracts) => contracts,
             Err(current_error) => {
+                if let Ok(historical) =
+                    serde_json::from_value::<Vec<HistoricalResolvedNodeContractV1>>(value.clone())
+                {
+                    let implementations = historical
+                        .iter()
+                        .map(project_historical_v1)
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .map(|contract| NodeImplementation { contract })
+                        .collect::<Vec<_>>();
+                    let mut bundle = Self::from_implementations(&implementations)?;
+                    bundle.canonical_bytes = input.as_bytes().into();
+                    bundle.hash = digest(input.as_bytes());
+                    return Ok(bundle);
+                }
                 let legacy: Vec<LegacyResolvedNodeInterface> = serde_json::from_value(value)
                     .map_err(|legacy_error| CatalogIdentityError::InvalidDefinition {
                         message: format!(
-                            "resolved interface bundle shape is invalid: current: {current_error}; legacy: {legacy_error}"
+                            "resolved interface bundle shape is invalid: current: {current_error}; historical-v1/legacy: {legacy_error}"
                         ),
                     })?;
                 let implementations = legacy
                     .iter()
                     .map(|interface| NodeImplementation {
-                        contract: ResolvedNodeContract {
-                            interface: synthesize_legacy_interface(interface),
-                            executable: ExecutableIdentity::Platform {
+                        contract: synthesize_legacy_contract(
+                            interface,
+                            ExecutableIdentity::Platform {
                                 revision: LEGACY_PLATFORM_REVISION.to_string(),
                             },
-                            executable_recovery: None,
-                            connection_recovery_support: Vec::new(),
-                            portable_connections: Vec::new(),
-                        },
+                        ),
                     })
                     .collect::<Vec<_>>();
                 let mut bundle = Self::from_implementations(&implementations)?;
@@ -1242,6 +1315,22 @@ impl PinnedArtifact {
                 component_digests_json,
             );
         }
+        if interface_bundle.contracts().iter().all(|contract| {
+            contract.interface.contract_version == HISTORICAL_RESOLVED_CONTRACT_VERSION
+        }) {
+            require_historical_selection_absence(
+                occurrence_recovery_json,
+                occurrence_recovery_hash,
+            )?;
+            return Self::from_historical_v1_storage(
+                expected_tenant_id,
+                flow,
+                artifact_hash,
+                interface_bundle_json,
+                interface_bundle,
+                component_digests_json,
+            );
+        }
         let supplied_components: Vec<ResolvedComponent> =
             serde_json::from_str(component_digests_json).map_err(|error| {
                 CatalogIdentityError::InvalidDefinition {
@@ -1280,26 +1369,19 @@ impl PinnedArtifact {
         if let Some((node_type, _)) = components_by_node.pop_first() {
             return Err(CatalogIdentityError::UnexpectedInterface { node_type });
         }
-        let current_resolution = implementations.iter().all(|implementation| {
+        if !implementations.iter().all(|implementation| {
             implementation.interface().contract_version == RESOLVED_CONTRACT_VERSION
-        });
-        let historical_resolution = implementations.iter().all(|implementation| {
-            implementation.interface().contract_version == HISTORICAL_RESOLVED_CONTRACT_VERSION
-        });
-        let occurrence_recovery = if current_resolution {
-            parse_persisted_occurrence_recovery(occurrence_recovery_json, occurrence_recovery_hash)?
-        } else if historical_resolution {
-            require_historical_selection_absence(
-                occurrence_recovery_json,
-                occurrence_recovery_hash,
-            )?;
-            conservative_occurrence_recovery(&flow, &implementations)?
-        } else {
+        }) {
             return Err(CatalogIdentityError::InvalidDefinition {
-                message: "a persisted artifact must use one supported resolved-contract version"
-                    .to_string(),
+                message:
+                    "a current persisted artifact must use the current resolved-contract version"
+                        .to_string(),
             });
-        };
+        }
+        let occurrence_recovery = parse_persisted_occurrence_recovery(
+            occurrence_recovery_json,
+            occurrence_recovery_hash,
+        )?;
         let reconstructed = Artifact::new_with_recovery_selections(
             expected_tenant_id,
             &flow,
@@ -1313,6 +1395,94 @@ impl PinnedArtifact {
             flow,
             interface_bundle,
             occurrence_recovery: reconstructed.occurrence_recovery.clone(),
+        })
+    }
+
+    fn from_historical_v1_storage(
+        expected_tenant_id: &str,
+        flow: Flow,
+        artifact_hash: &str,
+        interface_bundle_json: &str,
+        interface_bundle: InterfaceBundle,
+        component_digests_json: &str,
+    ) -> Result<Self, CatalogIdentityError> {
+        let historical: Vec<HistoricalResolvedNodeContractV1> =
+            serde_json::from_str(interface_bundle_json).map_err(|error| {
+                CatalogIdentityError::InvalidDefinition {
+                    message: format!("historical v1 resolved contract bundle is invalid: {error}"),
+                }
+            })?;
+        let historical_components: Vec<HistoricalResolvedComponentV1> =
+            serde_json::from_str(component_digests_json).map_err(|error| {
+                CatalogIdentityError::InvalidDefinition {
+                    message: format!("historical v1 supplied component bundle is invalid: {error}"),
+                }
+            })?;
+        let mut components_by_node = BTreeMap::new();
+        for component in &historical_components {
+            let node_type = component.contract.interface.node_type.clone();
+            if components_by_node
+                .insert(node_type.clone(), component)
+                .is_some()
+            {
+                return Err(CatalogIdentityError::DuplicateInterface { node_type });
+            }
+        }
+        let mut implementations = Vec::with_capacity(historical.len());
+        for stored in &historical {
+            let node_type = &stored.interface.node_type;
+            let projected = project_historical_v1(stored)?;
+            let implementation = if let Some(component) = components_by_node.remove(node_type) {
+                if component.contract != *stored {
+                    return Err(CatalogIdentityError::ArtifactHashMismatch);
+                }
+                NodeImplementation::from_resolved_component(ResolvedComponent {
+                    contract: projected,
+                })?
+            } else {
+                if !matches!(projected.executable, ExecutableIdentity::Platform { .. }) {
+                    return Err(CatalogIdentityError::ArtifactHashMismatch);
+                }
+                NodeImplementation {
+                    contract: projected,
+                }
+            };
+            implementations.push(implementation);
+        }
+        if let Some((node_type, _)) = components_by_node.pop_first() {
+            return Err(CatalogIdentityError::UnexpectedInterface { node_type });
+        }
+        validate_implementations(&flow, &implementations)?;
+        let id = ArtifactId::new(expected_tenant_id, flow.flow_id.clone(), flow.version)?;
+        let mut owned = vec![
+            (
+                "artifact-id",
+                canonical_json(&serde_json::to_value(&id).expect("artifact id serializes")),
+            ),
+            ("schema-version", flow.schema_version.as_bytes().to_vec()),
+            ("graph", flow.canonical_bytes()),
+        ];
+        for contract in &historical {
+            owned.push((
+                "resolved-node",
+                canonical_json(
+                    &serde_json::to_value(contract)
+                        .expect("historical v1 resolved contract serializes"),
+                ),
+            ));
+        }
+        let borrowed = owned
+            .iter()
+            .map(|(tag, bytes)| (*tag, bytes.as_slice()))
+            .collect::<Vec<_>>();
+        if digest(&frames("artifact", borrowed)) != artifact_hash {
+            return Err(CatalogIdentityError::ArtifactHashMismatch);
+        }
+        let occurrence_recovery = conservative_occurrence_recovery(&flow, &implementations)?;
+        Ok(Self {
+            flow,
+            interface_bundle,
+            occurrence_recovery: occurrence_recovery.into_boxed_slice(),
         })
     }
 
@@ -1349,30 +1519,23 @@ impl PinnedArtifact {
         }
         let mut implementations = Vec::with_capacity(legacy_interfaces.len());
         for legacy in &legacy_interfaces {
-            let interface = synthesize_legacy_interface(legacy);
             let contract = if let Some(component) = components_by_node.remove(&legacy.node_type) {
                 if component.interface != *legacy {
                     return Err(CatalogIdentityError::ArtifactHashMismatch);
                 }
-                ResolvedNodeContract {
-                    interface,
-                    executable: ExecutableIdentity::Component {
+                synthesize_legacy_contract(
+                    legacy,
+                    ExecutableIdentity::Component {
                         digest: component.component_digest.clone(),
                     },
-                    executable_recovery: None,
-                    connection_recovery_support: Vec::new(),
-                    portable_connections: Vec::new(),
-                }
+                )
             } else {
-                ResolvedNodeContract {
-                    interface,
-                    executable: ExecutableIdentity::Platform {
+                synthesize_legacy_contract(
+                    legacy,
+                    ExecutableIdentity::Platform {
                         revision: LEGACY_PLATFORM_REVISION.to_string(),
                     },
-                    executable_recovery: None,
-                    connection_recovery_support: Vec::new(),
-                    portable_connections: Vec::new(),
-                }
+                )
             };
             implementations.push(NodeImplementation { contract });
         }
@@ -1633,7 +1796,6 @@ fn validate_implementations(
     validate_implementation_order(implementations)?;
     for implementation in implementations {
         let interface = implementation.interface();
-        validate_executable_recovery(implementation.contract())?;
         resolved.insert(interface.node_type.clone());
     }
 
@@ -1662,72 +1824,64 @@ fn validate_executable_recovery(
     contract: &ResolvedNodeContract,
 ) -> Result<(), CatalogIdentityError> {
     let interface = &contract.interface;
-    if interface.contract_version == RESOLVED_CONTRACT_VERSION {
-        let Some(recovery) = &contract.executable_recovery else {
-            return Err(CatalogIdentityError::InvalidInterface {
-                node_type: interface.node_type.clone(),
-                message: "resolved contract v2 omits executable recovery semantics".to_string(),
-            });
-        };
-        if recovery.contract_version != EXECUTABLE_RECOVERY_CONTRACT_VERSION {
-            return Err(CatalogIdentityError::InvalidInterface {
-                node_type: interface.node_type.clone(),
-                message: format!(
-                    "unsupported executable recovery contract version {:?}",
-                    recovery.contract_version
-                ),
-            });
-        }
-        if recovery.supported_classes.is_empty()
-            || recovery
-                .supported_classes
-                .windows(2)
-                .any(|pair| pair[0] >= pair[1])
-            || !recovery
-                .supported_classes
-                .contains(&recovery.conservative_class)
-        {
-            return Err(CatalogIdentityError::InvalidInterface {
-                node_type: interface.node_type.clone(),
-                message: "executable recovery classes must be non-empty, sorted, unique, and contain the conservative class".to_string(),
-            });
-        }
-        let valid = match recovery.purity {
-            ResolvedPurity::Pure => {
-                recovery.conservative_class == RecoveryClass::Replay
-                    && recovery.supported_classes == [RecoveryClass::Replay]
-            }
-            ResolvedPurity::Effectful => {
-                recovery.conservative_class == RecoveryClass::NeverReplay
-                    && !recovery.supported_classes.contains(&RecoveryClass::Replay)
-            }
-        };
-        if !valid
-            || interface.purity != recovery.purity
-            || interface.recovery_class != recovery.conservative_class
-        {
-            return Err(CatalogIdentityError::InvalidInterface {
-                node_type: interface.node_type.clone(),
-                message: "executable recovery semantics are invalid or disagree with compatibility fields".to_string(),
-            });
-        }
-    } else if interface.contract_version == HISTORICAL_RESOLVED_CONTRACT_VERSION
-        || interface.contract_version == LEGACY_RESOLVED_CONTRACT_VERSION
-    {
-        if contract.executable_recovery.is_some() {
-            return Err(CatalogIdentityError::InvalidInterface {
-                node_type: interface.node_type.clone(),
-                message: "historical resolved contracts cannot carry v2 recovery semantics"
-                    .to_string(),
-            });
-        }
-    } else {
+    if !matches!(
+        interface.contract_version.as_str(),
+        RESOLVED_CONTRACT_VERSION
+            | HISTORICAL_RESOLVED_CONTRACT_VERSION
+            | LEGACY_RESOLVED_CONTRACT_VERSION
+    ) {
         return Err(CatalogIdentityError::InvalidInterface {
             node_type: interface.node_type.clone(),
             message: format!(
                 "unsupported resolved contract version {:?}",
                 interface.contract_version
             ),
+        });
+    }
+    let recovery = &contract.executable_recovery;
+    if recovery.contract_version != EXECUTABLE_RECOVERY_CONTRACT_VERSION {
+        return Err(CatalogIdentityError::InvalidInterface {
+            node_type: interface.node_type.clone(),
+            message: format!(
+                "unsupported executable recovery contract version {:?}",
+                recovery.contract_version
+            ),
+        });
+    }
+    if recovery.supported_classes.is_empty()
+        || recovery
+            .supported_classes
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+        || !recovery
+            .supported_classes
+            .contains(&recovery.conservative_class)
+    {
+        return Err(CatalogIdentityError::InvalidInterface {
+            node_type: interface.node_type.clone(),
+            message: "executable recovery classes must be non-empty, sorted, unique, and contain the conservative class".to_string(),
+        });
+    }
+    let current_valid = match recovery.purity {
+        ResolvedPurity::Pure => {
+            recovery.conservative_class == RecoveryClass::Replay
+                && recovery.supported_classes == [RecoveryClass::Replay]
+        }
+        ResolvedPurity::Effectful => {
+            recovery.conservative_class == RecoveryClass::NeverReplay
+                && !recovery.supported_classes.contains(&RecoveryClass::Replay)
+        }
+    };
+    let historical_valid = match recovery.purity {
+        ResolvedPurity::Pure => recovery.conservative_class == RecoveryClass::Replay,
+        ResolvedPurity::Effectful => recovery.conservative_class != RecoveryClass::Replay,
+    } && recovery.supported_classes == [recovery.conservative_class];
+    if (interface.contract_version == RESOLVED_CONTRACT_VERSION && !current_valid)
+        || (interface.contract_version != RESOLVED_CONTRACT_VERSION && !historical_valid)
+    {
+        return Err(CatalogIdentityError::InvalidInterface {
+            node_type: interface.node_type.clone(),
+            message: "executable recovery semantics are invalid".to_string(),
         });
     }
     Ok(())
@@ -1738,6 +1892,7 @@ fn validate_implementation_order(
 ) -> Result<(), CatalogIdentityError> {
     for implementation in implementations {
         validate_interface(implementation.interface())?;
+        validate_executable_recovery(implementation.contract())?;
         validate_connection_recovery_support(implementation.contract())?;
         validate_portable_connections(implementation.contract())?;
         match &implementation.contract().executable {
@@ -2167,25 +2322,6 @@ fn validate_interface(interface: &ResolvedNodeInterface) -> Result<(), CatalogId
             });
         }
         previous = Some(port);
-    }
-    let recovery_matches = matches!(
-        (interface.purity, interface.recovery_class),
-        (
-            ResolvedPurity::Pure,
-            wamn_node_manifest::RecoveryClass::Replay
-        ) | (
-            ResolvedPurity::Effectful,
-            wamn_node_manifest::RecoveryClass::IdempotentWithKey
-        ) | (
-            ResolvedPurity::Effectful,
-            wamn_node_manifest::RecoveryClass::NeverReplay
-        )
-    );
-    if !recovery_matches {
-        return Err(CatalogIdentityError::InvalidInterface {
-            node_type: interface.node_type.clone(),
-            message: "purity and recovery class disagree".to_string(),
-        });
     }
     Ok(())
 }

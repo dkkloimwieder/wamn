@@ -11,7 +11,7 @@ use wamn_catalog::{
     ExecutionBundleIdentity, ExecutionBundleInput, ExecutionBundlePackaging, ExecutionPlugManifest,
     NodeImplementation,
 };
-use wamn_node_manifest::{CapabilityClass, RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 
 const FLEET_JSON: &str = include_str!("../../fixtures/exact-node-fleet.json");
 const TOOL_IDENTITY: &str = "wac-cli@0.10.1";
@@ -81,12 +81,14 @@ fn build_identity(
             vec!["main".to_string()],
             vec![CapabilityClass::Pure],
             Vec::new(),
-            ResolvedPurity::Pure,
-            RecoveryClass::Replay,
         );
         implementations.push(
-            NodeImplementation::supplied(interface, component_digest.clone())
-                .expect("fixture implementation resolves"),
+            NodeImplementation::supplied(
+                interface,
+                component_digest.clone(),
+                wamn_node_manifest::ExecutableRecoveryContract::pure(),
+            )
+            .expect("fixture implementation resolves"),
         );
         plugs.push(
             ExecutionPlugManifest::new(node_type, vec![node_type.clone()], component_digest)

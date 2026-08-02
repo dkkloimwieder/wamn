@@ -10,7 +10,7 @@ use wamn_catalog::{
     NodeImplementation, Release, ReleaseId, Source, SourceId, SourceKind,
 };
 use wamn_flow::{EntryKind, Flow, ResolvedInterfaces, canonical_json_sha256};
-use wamn_node_manifest::{CapabilityClass, RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface, ResolvedPurity};
 use wamn_schema_control::exposure::{ExposureRelease, FlowExposure, resolve_exposure};
 
 const FLOW_JSON: &str = include_str!("../../../deploy/poc/f1-flow.json");
@@ -49,35 +49,35 @@ fn interface(node_type: &str, ports: &[&str], purity: ResolvedPurity) -> Resolve
             ResolvedPurity::Effectful => CapabilityClass::Postgres,
         }],
         Vec::new(),
-        purity,
-        match purity {
-            ResolvedPurity::Pure => RecoveryClass::Replay,
-            ResolvedPurity::Effectful => RecoveryClass::NeverReplay,
-        },
     )
 }
 
 fn implementations() -> anyhow::Result<Vec<NodeImplementation>> {
+    let pure = wamn_node_manifest::ExecutableRecoveryContract::pure;
+    let effectful = || wamn_node_manifest::ExecutableRecoveryContract::effectful(false);
     Ok(vec![
-        NodeImplementation::platform(interface(
-            "conditional",
-            &["false", "true"],
-            ResolvedPurity::Pure,
-        )),
+        NodeImplementation::platform(
+            interface("conditional", &["false", "true"], ResolvedPurity::Pure),
+            pure(),
+        ),
         NodeImplementation::supplied(
             interface("evaluate-specs", &["main"], ResolvedPurity::Pure),
             EVALUATE_COMPONENT_DIGEST,
+            pure(),
         )?,
         NodeImplementation::supplied(
             interface("normalize-receipt", &["main"], ResolvedPurity::Pure),
             NORMALIZE_COMPONENT_DIGEST,
+            pure(),
         )?,
-        NodeImplementation::platform(interface(
-            "postgres-query",
-            &["main"],
-            ResolvedPurity::Effectful,
-        )),
-        NodeImplementation::platform(interface("transform", &["main"], ResolvedPurity::Pure)),
+        NodeImplementation::platform(
+            interface("postgres-query", &["main"], ResolvedPurity::Effectful),
+            effectful(),
+        ),
+        NodeImplementation::platform(
+            interface("transform", &["main"], ResolvedPurity::Pure),
+            pure(),
+        ),
     ])
 }
 

@@ -11,7 +11,7 @@ use wamn_catalog::{
     ExecutionBundleIdentity, ExecutionBundleInput, ExecutionBundlePackaging, ExecutionPlugManifest,
     NodeImplementation,
 };
-use wamn_node_manifest::{CapabilityClass, RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 
 const FLEET_JSON: &str = include_str!("../../fixtures/capability-class-fleet.json");
 const EXACT_FLEET_JSON: &str = include_str!("../../fixtures/exact-node-fleet.json");
@@ -112,10 +112,10 @@ fn build_identity(
                 .expect("selected class digest exists")
                 .clone();
             let class = capability(&node.class);
-            let (purity, recovery) = if class == CapabilityClass::Pure {
-                (ResolvedPurity::Pure, RecoveryClass::Replay)
+            let recovery = if class == CapabilityClass::Pure {
+                wamn_node_manifest::ExecutableRecoveryContract::pure()
             } else {
-                (ResolvedPurity::Effectful, RecoveryClass::NeverReplay)
+                wamn_node_manifest::ExecutableRecoveryContract::effectful(false)
             };
             let interface = ResolvedNodeInterface::new(
                 node_type,
@@ -123,10 +123,8 @@ fn build_identity(
                 vec!["main".to_string()],
                 vec![class],
                 Vec::new(),
-                purity,
-                recovery,
             );
-            NodeImplementation::supplied(interface, class_digest)
+            NodeImplementation::supplied(interface, class_digest, recovery)
                 .expect("fixture class implementation resolves")
         })
         .collect::<Vec<_>>();

@@ -163,8 +163,8 @@ impl ExecutableRecoveryContract {
         }
     }
 
-    /// Project the pre-v2 single-class representation without strengthening it.
-    pub fn historical(purity: ResolvedPurity, recovery_class: RecoveryClass) -> Self {
+    /// Project a historical v1 single-class declaration without strengthening it.
+    pub fn historical_v1_projection(purity: ResolvedPurity, recovery_class: RecoveryClass) -> Self {
         Self {
             contract_version: EXECUTABLE_RECOVERY_CONTRACT_VERSION.to_string(),
             purity,
@@ -475,8 +475,6 @@ pub struct ResolvedNodeInterface {
     pub output_ports: Vec<String>,
     pub capability_classes: Vec<CapabilityClass>,
     pub connection_requirements: Vec<ConnectionRequirement>,
-    pub purity: ResolvedPurity,
-    pub recovery_class: RecoveryClass,
 }
 
 impl ResolvedNodeInterface {
@@ -487,8 +485,6 @@ impl ResolvedNodeInterface {
         output_ports: Vec<String>,
         capability_classes: Vec<CapabilityClass>,
         connection_requirements: Vec<ConnectionRequirement>,
-        purity: ResolvedPurity,
-        recovery_class: RecoveryClass,
     ) -> Self {
         Self {
             contract_version: RESOLVED_CONTRACT_VERSION.to_string(),
@@ -497,8 +493,6 @@ impl ResolvedNodeInterface {
             output_ports,
             capability_classes,
             connection_requirements,
-            purity,
-            recovery_class,
         }
     }
 
@@ -524,10 +518,8 @@ pub enum ExecutableIdentity {
 pub struct ResolvedNodeContract {
     pub interface: ResolvedNodeInterface,
     pub executable: ExecutableIdentity,
-    /// Authoritative recovery semantics for v2 resolutions. Absence is accepted only for
-    /// historical pre-v2 bytes and is projected without strengthening.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executable_recovery: Option<ExecutableRecoveryContract>,
+    /// The sole authoritative recovery semantics for current resolutions.
+    pub executable_recovery: ExecutableRecoveryContract,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connection_recovery_support: Vec<ConnectionRecoverySupport>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -537,21 +529,12 @@ pub struct ResolvedNodeContract {
 impl ResolvedNodeContract {
     /// The conservative recovery class pinned by this resolution.
     pub fn recovery_class(&self) -> RecoveryClass {
-        self.executable_recovery
-            .as_ref()
-            .map_or(self.interface.recovery_class, |contract| {
-                contract.conservative_class
-            })
+        self.executable_recovery.conservative_class
     }
 
-    /// Recovery semantics, projecting historical v1 bytes without widening support.
-    pub fn recovery_contract(&self) -> ExecutableRecoveryContract {
-        self.executable_recovery.clone().unwrap_or_else(|| {
-            ExecutableRecoveryContract::historical(
-                self.interface.purity,
-                self.interface.recovery_class,
-            )
-        })
+    /// The authoritative executable recovery declaration.
+    pub const fn recovery_contract(&self) -> &ExecutableRecoveryContract {
+        &self.executable_recovery
     }
 
     /// Stable identity bytes for artifact and execution-bundle keys.
@@ -911,9 +894,9 @@ impl NodeManifest {
         self.validate()?;
         let mut output_ports = self.output_ports.clone();
         output_ports.sort();
-        let (purity, recovery_class) = match self.purity {
-            Some(Purity::Pure) => (ResolvedPurity::Pure, RecoveryClass::Replay),
-            None => (ResolvedPurity::Effectful, RecoveryClass::NeverReplay),
+        let purity = match self.purity {
+            Some(Purity::Pure) => ResolvedPurity::Pure,
+            None => ResolvedPurity::Effectful,
         };
         Ok(ResolvedNodeInterface::new(
             self.node_type.clone(),
@@ -925,8 +908,6 @@ impl NodeManifest {
                 Vec::new()
             },
             Vec::new(),
-            purity,
-            recovery_class,
         ))
     }
 
@@ -989,11 +970,11 @@ impl NodeManifest {
                 executable: ExecutableIdentity::Component {
                     digest: component_digest,
                 },
-                executable_recovery: Some(if self.purity == Some(Purity::Pure) {
+                executable_recovery: if self.purity == Some(Purity::Pure) {
                     ExecutableRecoveryContract::pure()
                 } else {
                     ExecutableRecoveryContract::effectful(false)
-                }),
+                },
                 connection_recovery_support: Vec::new(),
                 portable_connections: Vec::new(),
             },

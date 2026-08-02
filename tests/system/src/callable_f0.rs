@@ -8,7 +8,7 @@ use wamn_catalog::{
     NodeImplementation, Release, ReleaseId, Source, SourceId, SourceKind,
 };
 use wamn_flow::{EntryKind, Flow, ResolvedInterfaces, canonical_json_sha256};
-use wamn_node_manifest::{CapabilityClass, RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 use wamn_schema_control::exposure::{ExposureRelease, FlowExposure, resolve_exposure};
 
 const FLOW_JSON: &str = include_str!("../../../deploy/poc/f0-flow.json");
@@ -38,8 +38,6 @@ fn transform_interface() -> ResolvedNodeInterface {
         vec!["main".to_string()],
         vec![CapabilityClass::Pure],
         Vec::new(),
-        ResolvedPurity::Pure,
-        RecoveryClass::Replay,
     )
 }
 
@@ -81,7 +79,10 @@ fn published_release(flow_json: &str, exposure_json: &str) -> anyhow::Result<Pub
     let artifact = Artifact::new(
         "poc",
         &flow,
-        vec![NodeImplementation::platform(transform_interface())],
+        vec![NodeImplementation::platform(
+            transform_interface(),
+            wamn_node_manifest::ExecutableRecoveryContract::pure(),
+        )],
     )
     .context("construct immutable F0 artifact")?;
     let artifact_hash = artifact.identity().artifact_hash().as_str().to_string();

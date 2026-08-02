@@ -317,19 +317,29 @@ fn interface(
     purity: ResolvedPurity,
     recovery_class: RecoveryClass,
 ) -> NodeImplementation {
-    NodeImplementation::platform(ResolvedNodeInterface::new(
-        node_type,
-        "wamn:node/node@0.1.0",
-        vec!["main".to_string()],
-        vec![if purity == ResolvedPurity::Pure {
-            wamn_node_manifest::CapabilityClass::Pure
-        } else {
-            wamn_node_manifest::CapabilityClass::Http
-        }],
-        Vec::new(),
-        purity,
-        recovery_class,
-    ))
+    let recovery = match (purity, recovery_class) {
+        (ResolvedPurity::Pure, RecoveryClass::Replay) => {
+            wamn_node_manifest::ExecutableRecoveryContract::pure()
+        }
+        (ResolvedPurity::Effectful, RecoveryClass::NeverReplay) => {
+            wamn_node_manifest::ExecutableRecoveryContract::effectful(false)
+        }
+        _ => panic!("fixture recovery semantics must be canonical"),
+    };
+    NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            node_type,
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![if purity == ResolvedPurity::Pure {
+                wamn_node_manifest::CapabilityClass::Pure
+            } else {
+                wamn_node_manifest::CapabilityClass::Http
+            }],
+            Vec::new(),
+        ),
+        recovery,
+    )
 }
 
 fn fixture_artifact(

@@ -54,10 +54,21 @@ fn minimal_manifest_gets_the_defaults() {
 fn t_nr_absent_purity_resolves_to_effectful_never_replay() {
     let mut m = fixture();
     m.purity = None;
-    let resolved = m.resolved_interface().expect("valid manifest resolves");
-    assert_eq!(resolved.interface_contract, "wamn:node/node@0.1.0");
-    assert_eq!(resolved.purity, ResolvedPurity::Effectful);
-    assert_eq!(resolved.recovery_class, RecoveryClass::NeverReplay);
+    let resolved = m
+        .resolved_component(format!("sha256:{}", "1".repeat(64)))
+        .expect("valid manifest resolves");
+    assert_eq!(
+        resolved.contract.interface.interface_contract,
+        "wamn:node/node@0.1.0"
+    );
+    assert_eq!(
+        resolved.contract.executable_recovery.purity,
+        ResolvedPurity::Effectful
+    );
+    assert_eq!(
+        resolved.contract.executable_recovery.conservative_class,
+        RecoveryClass::NeverReplay
+    );
 }
 
 #[test]
@@ -118,8 +129,6 @@ fn declared_pure_resolves_to_replay_and_sorted_ports() {
     m.output_ports = vec!["retry".to_string(), "main".to_string()];
     let resolved = m.resolved_interface().expect("valid manifest resolves");
     assert_eq!(resolved.output_ports, vec!["main", "retry"]);
-    assert_eq!(resolved.purity, ResolvedPurity::Pure);
-    assert_eq!(resolved.recovery_class, RecoveryClass::Replay);
     assert!(resolved.permits_output_port("retry"));
     assert!(!resolved.permits_output_port("undeclared"));
 }

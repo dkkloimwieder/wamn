@@ -8,7 +8,8 @@ use wamn_catalog::{
 use wamn_flow::Flow;
 use wamn_node_manifest::{
     CapabilityClass, ConnectionRecoverySupport, ConnectionRequirement, ConnectionTypeDescriptor,
-    ExecutableConnectionRecoveryMode, RecoveryClass, ResolvedNodeInterface, ResolvedPurity,
+    ExecutableConnectionRecoveryMode, ExecutableRecoveryContract, RecoveryClass,
+    ResolvedNodeInterface, ResolvedPurity,
 };
 
 fn request_flow() -> Flow {
@@ -36,7 +37,6 @@ fn interface() -> ResolvedNodeInterface {
         "custom-node",
         vec!["main".to_string()],
         ResolvedPurity::Effectful,
-        RecoveryClass::NeverReplay,
     )
 }
 
@@ -44,7 +44,6 @@ fn resolved_interface(
     node_type: &str,
     output_ports: Vec<String>,
     purity: ResolvedPurity,
-    recovery_class: RecoveryClass,
 ) -> ResolvedNodeInterface {
     ResolvedNodeInterface::new(
         node_type,
@@ -56,8 +55,6 @@ fn resolved_interface(
             vec![CapabilityClass::Http]
         },
         Vec::new(),
-        purity,
-        recovery_class,
     )
 }
 
@@ -65,6 +62,7 @@ fn supplied(digit: char) -> NodeImplementation {
     NodeImplementation::supplied(
         interface(),
         format!("sha256:{}", digit.to_string().repeat(64)),
+        ExecutableRecoveryContract::effectful(false),
     )
     .expect("fixture component digest is valid")
 }
@@ -165,21 +163,26 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
         "tenant-a",
         &changed_ports_flow,
         vec![
-            NodeImplementation::supplied(changed_ports, format!("sha256:{}", "1".repeat(64)))
-                .unwrap(),
+            NodeImplementation::supplied(
+                changed_ports,
+                format!("sha256:{}", "1".repeat(64)),
+                ExecutableRecoveryContract::effectful(false),
+            )
+            .unwrap(),
         ],
     )
     .unwrap();
 
-    let mut changed_semantics = interface();
-    changed_semantics.purity = ResolvedPurity::Pure;
-    changed_semantics.recovery_class = RecoveryClass::Replay;
     let interface_semantics_mutant = Artifact::new(
         "tenant-a",
         &request_flow(),
         vec![
-            NodeImplementation::supplied(changed_semantics, format!("sha256:{}", "1".repeat(64)))
-                .unwrap(),
+            NodeImplementation::supplied(
+                interface(),
+                format!("sha256:{}", "1".repeat(64)),
+                ExecutableRecoveryContract::pure(),
+            )
+            .unwrap(),
         ],
     )
     .unwrap();
@@ -188,7 +191,10 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
     let implementation_class_mutant = Artifact::new(
         "tenant-a",
         &request_flow(),
-        vec![NodeImplementation::platform(interface())],
+        vec![NodeImplementation::platform(
+            interface(),
+            ExecutableRecoveryContract::effectful(false),
+        )],
     )
     .unwrap();
 
@@ -211,7 +217,7 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
 
     // Golden bytes kill removal or reordering of any domain-separated frame.
     assert_eq!(
-        baseline_hash, "sha256:5eaf3ab098f2ed8327682660255f75526fc4dd1821c41b683a72b32cbef81194",
+        baseline_hash, "sha256:a18cfdc85e45b5028b551f27de43753b3f6e42c9672327f84704d93d75588586",
         "artifact frame sequence changed"
     );
 }
@@ -234,33 +240,46 @@ fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
     let mut mutations = Vec::new();
     let mut contract_version = interface();
     contract_version.contract_version = "99".to_string();
-    let unknown_version =
-        NodeImplementation::supplied(contract_version, format!("sha256:{}", "1".repeat(64)))
-            .unwrap();
+    let unknown_version = NodeImplementation::supplied(
+        contract_version,
+        format!("sha256:{}", "1".repeat(64)),
+        ExecutableRecoveryContract::effectful(false),
+    )
+    .unwrap();
     assert!(
         Artifact::new("tenant-a", &request_flow(), vec![unknown_version]).is_err(),
         "unknown resolved-contract versions must fail closed"
     );
     let mut strict_interface = interface();
     strict_interface.interface_contract = "wamn:node@0.2.0".to_string();
-    mutations.push(("interface-contract", strict_interface));
+    mutations.push((
+        "interface-contract",
+        strict_interface,
+        ExecutableRecoveryContract::effectful(false),
+    ));
     let mut capabilities = interface();
     capabilities.capability_classes = vec![CapabilityClass::Postgres];
-    mutations.push(("capability-class", capabilities));
-    let mut recovery = interface();
-    recovery.purity = ResolvedPurity::Pure;
-    recovery.recovery_class = RecoveryClass::Replay;
-    mutations.push(("recovery", recovery));
+    mutations.push((
+        "capability-class",
+        capabilities,
+        ExecutableRecoveryContract::effectful(false),
+    ));
+    mutations.push(("recovery", interface(), ExecutableRecoveryContract::pure()));
     let mut connection = interface();
     connection.connection_requirements = vec![ConnectionRequirement {
         requirement_type: "http".to_string(),
         contract: "wamn:connection/http@0.1.0".to_string(),
     }];
-    mutations.push(("connection-requirement", connection));
+    mutations.push((
+        "connection-requirement",
+        connection,
+        ExecutableRecoveryContract::effectful(false),
+    ));
 
-    for (name, interface) in mutations {
+    for (name, interface, recovery) in mutations {
         let mut implementation =
-            NodeImplementation::supplied(interface, format!("sha256:{}", "1".repeat(64))).unwrap();
+            NodeImplementation::supplied(interface, format!("sha256:{}", "1".repeat(64)), recovery)
+                .unwrap();
         if name == "connection-requirement" {
             implementation = implementation
                 .with_connection_recovery_support(vec![ConnectionRecoverySupport {
@@ -317,7 +336,7 @@ fn execution_bundle_identity_pins_every_composition_input() {
     );
     let baseline_hash = baseline.hash();
     assert_eq!(
-        baseline_hash, "sha256:cae763035a1ce71957e1cc2db007c2ac2c31e7770e72a2aa77985fe3228dab1a",
+        baseline_hash, "sha256:e5516331382be01a7db05682b8aa6ab2076877a47454925308d8d8137b1e0e29",
         "execution-bundle frame sequence changed"
     );
 
@@ -526,15 +545,19 @@ fn bundle_builder_refuses_ambiguous_layouts_and_order() {
 
 #[test]
 fn interface_bundle_round_trips_exact_canonical_bytes_and_typed_recovery() {
-    let bundle = InterfaceBundle::new(vec![interface()]).unwrap();
+    let bundle = InterfaceBundle::new(vec![NodeImplementation::platform(
+        interface(),
+        ExecutableRecoveryContract::effectful(false),
+    )])
+    .unwrap();
     let canonical = std::str::from_utf8(bundle.canonical_bytes()).unwrap();
     assert_eq!(
         canonical,
-        r#"[{"executable":{"kind":"platform","revision":"wamn-standard-nodes@0.1.0"},"executable-recovery":{"conservative-class":"never-replay","contract-version":"1","purity":"effectful","supported-classes":["never-replay"]},"interface":{"capability-classes":["http"],"connection-requirements":[],"contract-version":"2","interface-contract":"wamn:node/node@0.1.0","node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"}}]"#
+        r#"[{"executable":{"kind":"platform","revision":"wamn-standard-nodes@0.1.0"},"executable-recovery":{"conservative-class":"never-replay","contract-version":"1","purity":"effectful","supported-classes":["never-replay"]},"interface":{"capability-classes":["http"],"connection-requirements":[],"contract-version":"2","interface-contract":"wamn:node/node@0.1.0","node-type":"custom-node","output-ports":["main"]}}]"#
     );
     assert!(bundle.hash().starts_with("sha256:"));
     assert_eq!(
-        bundle.interface("custom-node").unwrap().recovery_class,
+        bundle.contract("custom-node").unwrap().recovery_class(),
         RecoveryClass::NeverReplay
     );
     assert_eq!(
@@ -549,8 +572,6 @@ fn interface_bundle_refuses_shape_canonicality_hash_and_order_mutations() {
     let canonical = std::str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap();
     for mutant in [
         format!(" {canonical}"),
-        canonical.replace(r#""purity":"effectful""#, r#""purity":"pure""#),
-        canonical.replace(r#","recovery-class":"never-replay""#, ""),
         canonical.replace(r#""node-type":"custom-node""#, r#""unknown":"custom-node""#),
     ] {
         assert!(
@@ -560,18 +581,35 @@ fn interface_bundle_refuses_shape_canonicality_hash_and_order_mutations() {
     }
 
     let reversed = InterfaceBundle::new(vec![
-        resolved_interface(
-            "z-node",
-            vec!["main".into()],
-            ResolvedPurity::Effectful,
-            RecoveryClass::NeverReplay,
+        NodeImplementation::platform(
+            resolved_interface("z-node", vec!["main".into()], ResolvedPurity::Effectful),
+            ExecutableRecoveryContract::effectful(false),
         ),
-        interface(),
+        NodeImplementation::platform(interface(), ExecutableRecoveryContract::effectful(false)),
     ]);
     assert!(matches!(
         reversed,
         Err(CatalogIdentityError::NonCanonicalInterfaceOrder { .. })
     ));
+}
+
+#[test]
+fn current_contract_rejects_v1_compatibility_fields_and_missing_recovery() {
+    let artifact = artifact();
+    let canonical = std::str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap();
+    for mutant in [
+        canonical.replace(r#""purity":"effectful""#, r#""purity":"pure""#),
+        canonical.replace(r#""executable-recovery":{"#, r#""missing-recovery":{"#),
+        canonical.replace(
+            r#""output-ports":["main"]"#,
+            r#""output-ports":["main"],"purity":"effectful","recovery-class":"never-replay""#,
+        ),
+    ] {
+        assert!(
+            InterfaceBundle::from_canonical_json(&mutant).is_err(),
+            "current recovery compatibility mutation survived: {mutant}"
+        );
+    }
 }
 
 #[test]
@@ -599,8 +637,9 @@ fn pinned_artifact_verifies_graph_bundle_and_artifact_key_as_one_unit() {
     assert_eq!(
         verified
             .interface_bundle()
-            .interface("custom-node")
+            .contract("custom-node")
             .unwrap()
+            .executable_recovery
             .purity,
         ResolvedPurity::Effectful
     );
@@ -872,7 +911,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:78a3184a6e5884de4e21e45020515e6af323071ca72b05414a6c35099842c33a",
+        baseline_hash, "sha256:77136eb14f05014770c5843c6c522d3be8fb336b593cc26496e54bf6050b7b15",
         "definition frame sequence changed"
     );
 }
@@ -885,7 +924,14 @@ fn omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected() {
         missing_interface,
         CatalogIdentityError::UnresolvedInterface { .. }
     ));
-    assert!(NodeImplementation::supplied(interface(), "").is_err());
+    assert!(
+        NodeImplementation::supplied(
+            interface(),
+            "",
+            ExecutableRecoveryContract::effectful(false),
+        )
+        .is_err()
+    );
 
     let artifact = artifact();
     let missing_source = Attachment::resolve(
@@ -979,14 +1025,13 @@ fn noncanonical_interface_and_member_reordering_is_rejected() {
         "z-node",
         vec!["main".to_string()],
         ResolvedPurity::Effectful,
-        RecoveryClass::NeverReplay,
     );
     let reordered = Artifact::new(
         "tenant-a",
         &flow,
         vec![
-            NodeImplementation::platform(z_interface),
-            NodeImplementation::platform(interface()),
+            NodeImplementation::platform(z_interface, ExecutableRecoveryContract::effectful(false)),
+            NodeImplementation::platform(interface(), ExecutableRecoveryContract::effectful(false)),
         ],
     )
     .expect_err("interface bundle order is canonical");

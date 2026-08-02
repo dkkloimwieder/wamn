@@ -1905,7 +1905,7 @@ mod tests {
         ));
         assert_eq!(
             contract.executable_recovery,
-            Some(wamn_node_manifest::ExecutableRecoveryContract::pure())
+            wamn_node_manifest::ExecutableRecoveryContract::pure()
         );
         assert_eq!(
             prepared.artifact.occurrence_recovery()[0].recovery_class,
@@ -2058,7 +2058,7 @@ mod tests {
         }"#;
         let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new()).unwrap();
         let contract = &prepared.artifact.interface_bundle().contracts()[0];
-        let recovery = contract.executable_recovery.as_ref().unwrap();
+        let recovery = &contract.executable_recovery;
         assert_eq!(
             recovery.conservative_class,
             wamn_node_manifest::RecoveryClass::NeverReplay
@@ -2113,9 +2113,8 @@ mod tests {
             },
             component_digest(b"component")
         );
-        let interface = &prepared.artifact.supplied_components()[0]
-            .contract
-            .interface;
+        let contract = &prepared.artifact.supplied_components()[0].contract;
+        let interface = &contract.interface;
         assert_eq!(
             &prepared.artifact.supplied_components()[0].contract,
             &prepared.artifact.interface_bundle().contracts()[0],
@@ -2123,9 +2122,12 @@ mod tests {
         );
         assert_eq!(interface.node_type, "normalize-receipt");
         assert_eq!(interface.output_ports, ["main"]);
-        assert_eq!(interface.purity, wamn_node_manifest::ResolvedPurity::Pure);
         assert_eq!(
-            interface.recovery_class,
+            contract.executable_recovery.purity,
+            wamn_node_manifest::ResolvedPurity::Pure
+        );
+        assert_eq!(
+            contract.executable_recovery.conservative_class,
             wamn_node_manifest::RecoveryClass::Replay
         );
     }
@@ -2142,15 +2144,13 @@ mod tests {
         let supplied = load_supplied_components(&[descriptor]).unwrap();
         let graph = custom_graph("legacy-node");
         let prepared = prepare_flow_artifact("tenant", &graph, &supplied).unwrap();
-        let interface = &prepared.artifact.supplied_components()[0]
-            .contract
-            .interface;
+        let contract = &prepared.artifact.supplied_components()[0].contract;
         assert_eq!(
-            interface.purity,
+            contract.executable_recovery.purity,
             wamn_node_manifest::ResolvedPurity::Effectful
         );
         assert_eq!(
-            interface.recovery_class,
+            contract.executable_recovery.conservative_class,
             wamn_node_manifest::RecoveryClass::NeverReplay
         );
     }

@@ -8,9 +8,7 @@ mod tests {
         CatalogHead, NodeImplementation, Release, ReleaseId, Source, SourceId, SourceKind,
     };
     use wamn_flow::Flow;
-    use wamn_node_manifest::{
-        CapabilityClass, RecoveryClass, ResolvedNodeInterface, ResolvedPurity,
-    };
+    use wamn_node_manifest::{CapabilityClass, ExecutableRecoveryContract, ResolvedNodeInterface};
 
     fn flow() -> Flow {
         Flow::from_json(
@@ -39,15 +37,17 @@ mod tests {
             vec!["main".to_string()],
             vec![CapabilityClass::Http],
             Vec::new(),
-            ResolvedPurity::Effectful,
-            RecoveryClass::NeverReplay,
         );
         Artifact::new(
             "tenant-a",
             &flow(),
             vec![
-                NodeImplementation::supplied(interface, format!("sha256:{}", "1".repeat(64)))
-                    .expect("supplied component pin is complete"),
+                NodeImplementation::supplied(
+                    interface,
+                    format!("sha256:{}", "1".repeat(64)),
+                    ExecutableRecoveryContract::effectful(false),
+                )
+                .expect("supplied component pin is complete"),
             ],
         )
         .expect("artifact is canonical")

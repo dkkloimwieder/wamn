@@ -5,7 +5,7 @@ use wamn_catalog::{
 };
 use wamn_flow::Flow;
 use wamn_node_manifest::{
-    CapabilityClass, ConnectionRequirement, RecoveryClass, ResolvedNodeInterface, ResolvedPurity,
+    CapabilityClass, ConnectionRequirement, ExecutableRecoveryContract, ResolvedNodeInterface,
 };
 
 const HTTP_WIT: &[u8] = include_bytes!("../../../../docs/contracts/wamn-connection.wit");
@@ -33,10 +33,13 @@ fn implementation(contract: &str, executable_digest: String) -> NodeImplementati
             requirement_type: "http".to_string(),
             contract: contract.to_string(),
         }],
-        ResolvedPurity::Effectful,
-        RecoveryClass::NeverReplay,
     );
-    NodeImplementation::supplied(interface, executable_digest).expect("typed HTTP fixture resolves")
+    NodeImplementation::supplied(
+        interface,
+        executable_digest,
+        ExecutableRecoveryContract::effectful(false),
+    )
+    .expect("typed HTTP fixture resolves")
 }
 
 fn flow() -> Flow {

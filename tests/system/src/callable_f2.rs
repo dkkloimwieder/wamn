@@ -54,23 +54,24 @@ fn component_digest(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
-fn interface(purity: ResolvedPurity) -> ResolvedNodeInterface {
+fn interface() -> ResolvedNodeInterface {
     ResolvedNodeInterface::new(
         "disposition-recommendation",
         "wamn:node/node@0.1.0",
         vec!["main".to_string()],
         vec![CapabilityClass::Pure],
         Vec::new(),
-        purity,
-        match purity {
-            ResolvedPurity::Pure => RecoveryClass::Replay,
-            ResolvedPurity::Effectful => RecoveryClass::NeverReplay,
-        },
     )
 }
 
 fn implementation(digest: &str, purity: ResolvedPurity) -> anyhow::Result<NodeImplementation> {
-    NodeImplementation::supplied(interface(purity), digest).map_err(anyhow::Error::new)
+    let recovery = match purity {
+        ResolvedPurity::Pure => wamn_node_manifest::ExecutableRecoveryContract::pure(),
+        ResolvedPurity::Effectful => {
+            wamn_node_manifest::ExecutableRecoveryContract::effectful(false)
+        }
+    };
+    NodeImplementation::supplied(interface(), digest, recovery).map_err(anyhow::Error::new)
 }
 
 struct PublishedRelease {
@@ -123,8 +124,8 @@ fn published_release(
     ensure!(
         component.contract.interface.node_type == "disposition-recommendation"
             && component.contract.interface.output_ports == ["main"]
-            && component.contract.interface.purity == ResolvedPurity::Pure
-            && component.contract.interface.recovery_class == RecoveryClass::Replay
+            && component.contract.executable_recovery.purity == ResolvedPurity::Pure
+            && component.contract.executable_recovery.conservative_class == RecoveryClass::Replay
             && matches!(&component.contract.executable, ExecutableIdentity::Component { digest: pinned } if pinned == digest),
         "F2 resolved component contract drift"
     );
@@ -326,8 +327,8 @@ fn prove_scenarios(published: &PublishedRelease) -> anyhow::Result<()> {
     ensure!(
         published.artifact.supplied_components()[0]
             .contract
-            .interface
-            .recovery_class
+            .executable_recovery
+            .conservative_class
             == RecoveryClass::Replay,
         "published F2 purity did not authorize replay"
     );
@@ -391,8 +392,8 @@ pub mod tests {
         assert_eq!(
             effectful.supplied_components()[0]
                 .contract
-                .interface
-                .recovery_class,
+                .executable_recovery
+                .conservative_class,
             RecoveryClass::NeverReplay
         );
         assert_eq!(AttemptRecoveryClass::NeverReplay.as_sql(), "never-replay");

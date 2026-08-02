@@ -279,13 +279,11 @@ pub fn resolve_descriptor(
             descriptor.output_ports.clone(),
             descriptor.capability_classes.clone(),
             descriptor.connection_requirements.clone(),
-            descriptor.executable_recovery.purity,
-            descriptor.executable_recovery.conservative_class,
         ),
         executable: ExecutableIdentity::Platform {
             revision: descriptor.platform_revision.clone(),
         },
-        executable_recovery: Some(descriptor.executable_recovery.clone()),
+        executable_recovery: descriptor.executable_recovery.clone(),
         connection_recovery_support: descriptor.connection_recovery_support.clone(),
         portable_connections: descriptor.portable_connections.clone(),
     })
@@ -301,15 +299,6 @@ pub fn is_standard(node_type: &str) -> bool {
 /// The capability policy row for a node type — what a dispatch of it may use.
 pub fn required_capabilities(node_type: &str) -> Option<&'static [Capability]> {
     describe(node_type).map(|descriptor| descriptor.dispatch_capabilities)
-}
-
-/// Compatibility projection for the runtime migration tracked by `wamn-4u7p.23`.
-pub fn is_replay_safe(node_type: &str) -> Option<bool> {
-    describe(node_type).map(|descriptor| {
-        descriptor.executable_recovery.purity == wamn_node_manifest::ResolvedPurity::Pure
-            && descriptor.executable_recovery.conservative_class
-                == wamn_node_manifest::RecoveryClass::Replay
-    })
 }
 
 /// Dispatch one standard node under the policy table:
