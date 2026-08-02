@@ -7,6 +7,12 @@ world postgres-plugin {
   import wamn:postgres/client@0.1.0;
 }
 
+/// Declaration-only bindgen world for the minimum typed HTTP connection
+/// adapter. The adapter implementation is owned by wamn-ko5r.8.
+world connection-http-plugin {
+  import wamn:connection/http@0.1.0;
+}
+
 /// Host-side bindgen world for the wamn:node control interface (cooperative
 /// cancellation). payloads is deliberately not registered (5.10); credentials
 /// is the vault plugin below (5.9).

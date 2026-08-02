@@ -1,0 +1,37 @@
+package wamn:connection@0.1.0;
+
+/// The minimum environment-bound HTTP connection capability.
+interface http {
+  record header {
+    name: string,
+    value: list<u8>,
+  }
+
+  /// A logical request relative to the named portable requirement.
+  record request {
+    requirement: string,
+    method: string,
+    path-and-query: string,
+    headers: list<header>,
+    body: option<list<u8>>,
+    idempotency-key: option<string>,
+  }
+
+  record response {
+    status: u16,
+    headers: list<header>,
+    body: list<u8>,
+  }
+
+  variant connection-error {
+    unbound,
+    incompatible,
+    authority-denied,
+    attestation-invalid,
+    credential-unavailable,
+    timeout,
+    transport(string),
+  }
+
+  send: func(request: request) -> result<response, connection-error>;
+}

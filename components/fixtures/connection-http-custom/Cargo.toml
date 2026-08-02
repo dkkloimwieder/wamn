@@ -1,0 +1,13 @@
+[package]
+name = "connection-http-custom"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wit-bindgen = { version = "0.44", default-features = false, features = ["macros", "realloc"] }
+
+[features]
+std = []
+
+[lib]
+crate-type = ["cdylib"]

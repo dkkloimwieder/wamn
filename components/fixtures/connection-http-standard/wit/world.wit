@@ -1,0 +1,10 @@
+package wamn:connection-http-standard-fixture@0.1.0;
+
+interface node {
+  run: func(input: u32) -> u32;
+}
+
+world connection-http-standard {
+  import wamn:connection/http@0.1.0;
+  export node;
+}
