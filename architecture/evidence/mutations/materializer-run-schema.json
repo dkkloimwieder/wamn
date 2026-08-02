@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "campaign": "materializer-run-schema",
+  "bead": "wamn-l5i9.72",
+  "source": {
+    "git_commit": "b604a9af0d3de67606c39b04ed92ef440cc8ef98",
+    "runner_sha256": "1567f0d7b293f43a0685628f149936e6de4de40154c51f66ec09e7e1b5c92353"
+  },
+  "profile": "debug",
+  "green_runs": [
+    {
+      "gate": "materializer::tests::admission_scopes_dedup_and_records_registration_evidence",
+      "command": ["cargo", "test", "--locked", "-p", "wamn-proof-integration", "--lib", "materializer::tests::admission_scopes_dedup_and_records_registration_evidence", "--", "--exact"],
+      "exit_code": 0,
+      "log_sha256": "436c6a748f4c1b5148b8a29b5ac076b621883593714596225921a4997358d94d",
+      "status": "passed"
+    },
+    {
+      "gate": "admission::tests::custom_admission_schema_qualifies_every_run_state_reference",
+      "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--lib", "admission::tests::custom_admission_schema_qualifies_every_run_state_reference", "--", "--exact"],
+      "exit_code": 0,
+      "log_sha256": "197db9b2964cc6a7ec5912b47f06331edd336f9459276f0a8c9d59f4161454a7",
+      "status": "passed"
+    },
+    {
+      "gate": "admission::tests::run_state_schema_rejects_invalid_postgresql_identifiers",
+      "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--lib", "admission::tests::run_state_schema_rejects_invalid_postgresql_identifiers", "--", "--exact"],
+      "exit_code": 0,
+      "log_sha256": "fce44bc268768e78fba18bc98293ed65630b969c900f96ed6f5d3fdba0afa603",
+      "status": "passed"
+    }
+  ],
+  "mutants": [
+    {
+      "id": "materializer-default-bypasses-canonical-schema",
+      "gate": "materializer::tests::admission_scopes_dedup_and_records_registration_evidence",
+      "target": "components/execution/materializer/src/main.rs",
+      "command": ["cargo", "test", "--locked", "-p", "wamn-proof-integration", "--lib", "materializer::tests::admission_scopes_dedup_and_records_registration_evidence", "--", "--exact"],
+      "baseline_sha256": "3dcf0d6b142ed8731b422c527601fcc697ca5801431fcf779baf2b08fcd4d3d4",
+      "mutant_sha256": "3da9e0e86e6088829cdf6124ff7a89bff41f353a65510d5abc3f4b1fc7a76560",
+      "restored_sha256": "3dcf0d6b142ed8731b422c527601fcc697ca5801431fcf779baf2b08fcd4d3d4",
+      "exit_code": 101,
+      "log_sha256": "845be7f7f5d329bc6867473a1ef3cfbafc2e18995e019653a59b20d9fcc284c1",
+      "status": "killed"
+    },
+    {
+      "id": "custom-schema-leaves-admission-boundaries-canonical",
+      "gate": "admission::tests::custom_admission_schema_qualifies_every_run_state_reference",
+      "target": "crates/execution/run-state/src/admission.rs",
+      "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--lib", "admission::tests::custom_admission_schema_qualifies_every_run_state_reference", "--", "--exact"],
+      "baseline_sha256": "af1c0d8c1a4e4a13ae2867f0d469932d5729672811ff1bc5c9d6405ce1320d0f",
+      "mutant_sha256": "de959cc01939cb021257b8e18cbf66eb082066e40fe9881218e63a98675b3d3b",
+      "restored_sha256": "af1c0d8c1a4e4a13ae2867f0d469932d5729672811ff1bc5c9d6405ce1320d0f",
+      "exit_code": 101,
+      "log_sha256": "c196d5b453ff07847535ca73b3f7a2abb916c84fa55a0a539b5ba5e03708ff8f",
+      "status": "killed"
+    },
+    {
+      "id": "invalid-schema-bypasses-identifier-validation",
+      "gate": "admission::tests::run_state_schema_rejects_invalid_postgresql_identifiers",
+      "target": "crates/execution/run-state/src/admission.rs",
+      "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--lib", "admission::tests::run_state_schema_rejects_invalid_postgresql_identifiers", "--", "--exact"],
+      "baseline_sha256": "af1c0d8c1a4e4a13ae2867f0d469932d5729672811ff1bc5c9d6405ce1320d0f",
+      "mutant_sha256": "65f668fe7e16e80056d7d2ea2ea42dd04a1c4178f76c6a9dd319b92de4413deb",
+      "restored_sha256": "af1c0d8c1a4e4a13ae2867f0d469932d5729672811ff1bc5c9d6405ce1320d0f",
+      "exit_code": 101,
+      "log_sha256": "7a4a7100224c7fb56378fcf542ff267f0fa6a18a5a25afcc041c614745919140",
+      "status": "killed"
+    }
+  ]
+}
