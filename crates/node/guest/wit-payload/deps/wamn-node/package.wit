@@ -1,0 +1,30 @@
+package wamn:node@0.1.0;
+
+// Trimmed, code-line-subsequenced copy of the frozen wamn:node payload types
+// and import. The authority remains docs/contracts/wamn-node.wit.
+interface types {
+  enum framing {
+    ndjson,
+    raw,
+  }
+
+  record payload-ref {
+    handle: string,
+    framing: framing,
+    size-hint: option<u64>,
+  }
+}
+
+interface payloads {
+  use types.{payload-ref, framing};
+  use wasi:io/streams@0.2.12.{input-stream, output-stream};
+
+  variant payload-error {
+    not-found,
+    limit-exceeded(u64),
+    unavailable,
+  }
+
+  read: func(ref: payload-ref) -> result<input-stream, payload-error>;
+  create: func(framing: framing) -> result<tuple<payload-ref, output-stream>, payload-error>;
+}

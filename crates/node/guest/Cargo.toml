@@ -21,3 +21,5 @@ serde_json = { workspace = true }
 # mirrors over wamn:postgres + outbound wasi:http. OFF by default so the
 # zero-import custom-node scaffolding stays physically incapable of I/O.
 caps = []
+# Concrete bounded adapters over the frozen wamn:node/payloads P2 import.
+payloads = []

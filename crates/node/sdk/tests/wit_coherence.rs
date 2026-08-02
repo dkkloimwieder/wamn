@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const VENDORED_WIT_PATHS: [&str; 9] = [
+const VENDORED_WIT_PATHS: [&str; 10] = [
     "components/execution/flowrunner/wit/deps/wamn-node/package.wit",
     "components/fixtures/cred-probe/wit/deps/wamn-node/package.wit",
     "components/fixtures/flow-driver/wit/deps/wamn-node/package.wit",
@@ -15,6 +15,7 @@ const VENDORED_WIT_PATHS: [&str; 9] = [
     "components/samples/node-rs/wit/deps/wamn-node/package.wit",
     "components/samples/node-ts/wit/deps/wamn-node/package.wit",
     "crates/node/guest/wit-caps/deps/wamn-node/package.wit",
+    "crates/node/guest/wit-payload/deps/wamn-node/package.wit",
     "crates/node/guest/wit/deps/wamn-node/package.wit",
     "crates/platform/runtime/wit/deps/wamn-node/package.wit",
 ];
@@ -161,6 +162,11 @@ fn vendored_wit_copies_match_the_frozen_contract() {
     copies.push((trimmed_paths[0], first));
     copies.push((cred_paths[0], cred_first));
     copies.push((
+        "../guest/wit-payload/deps/wamn-node/package.wit",
+        fs::read_to_string(root().join("../guest/wit-payload/deps/wamn-node/package.wit"))
+            .expect("payload copy reads"),
+    ));
+    copies.push((
         "../../../components/samples/node-cred/wit/deps/wamn-node/package.wit",
         fs::read_to_string(
             root().join("../../../components/samples/node-cred/wit/deps/wamn-node/package.wit"),
@@ -236,6 +242,40 @@ fn host_wasi_io_dependency_matches_the_pinned_generated_copy() {
         code_lines(&generated),
         "the host dependency must match the exact generated wasi:io@0.2.12 code"
     );
+}
+
+#[test]
+fn payload_guest_import_is_bounded_and_pinned_to_the_frozen_p2_contract() {
+    let world = workspace_wit("crates/node/guest/wit-payload/world.wit");
+    let node = workspace_wit("crates/node/guest/wit-payload/deps/wamn-node/package.wit");
+    let wasi = workspace_wit("crates/node/guest/wit-payload/deps/wasi-io/package.wit");
+    let generated_wasi =
+        workspace_wit("components/execution/flowrunner/wit/deps/wasi-io/package.wit");
+
+    assert_eq!(
+        code_lines(&world),
+        vec![
+            "package wamn:node-payload-guest@0.1.0;",
+            "world payload-api {",
+            "import wamn:node/payloads@0.1.0;",
+            "}",
+        ],
+        "payload guest world must import only the frozen payload interface"
+    );
+    assert_code_subsequence("payload guest node copy", &node, &docs_wit());
+    assert_code_subsequence("payload guest wasi:io copy", &wasi, &generated_wasi);
+    assert!(wasi.starts_with("package wasi:io@0.2.12;"));
+    assert!(node.contains("use wasi:io/streams@0.2.12.{input-stream, output-stream};"));
+    assert!(
+        !node.contains("blocking"),
+        "node ABI exposes stream resources, not buffering helpers"
+    );
+    for forbidden in ["read-to-end", "collect-payload", "stream<"] {
+        assert!(
+            !world.contains(forbidden) && !node.contains(forbidden) && !wasi.contains(forbidden),
+            "payload guest bindings expose forbidden whole-object/P3 form: {forbidden}"
+        );
+    }
 }
 
 #[test]

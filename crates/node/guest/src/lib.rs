@@ -29,6 +29,9 @@ use wamn_node_sdk::{Emission, ErrorDetail, HttpCapError, HttpRequest, HttpRespon
 #[cfg(feature = "caps")]
 pub mod caps;
 
+#[cfg(feature = "payloads")]
+pub mod payload;
+
 pub mod bindings {
     wit_bindgen::generate!({
         world: "node",
@@ -124,9 +127,10 @@ fn terminal(code: &str, message: impl Into<String>) -> wit::NodeError {
     })
 }
 
-/// WIT payload -> SDK JSON value. Streamed payloads wait for the payload
-/// store (5.10): until a host implements the `payloads` import, an SDK node
-/// cannot read one, so the scaffolding refuses it up front.
+/// WIT payload -> SDK JSON value for the inline-only [`Node`] adapter.
+///
+/// Stream-aware components use the bounded `payload` API explicitly. This
+/// adapter keeps refusing streamed input rather than materializing it.
 pub fn payload_to_value(p: &wit::Payload) -> Result<Value, wit::NodeError> {
     match p {
         wit::Payload::Inline(s) => serde_json::from_str(s).map_err(|e| {
@@ -138,7 +142,7 @@ pub fn payload_to_value(p: &wit::Payload) -> Result<Value, wit::NodeError> {
         }),
         wit::Payload::Streamed(_) => Err(terminal(
             "streamed-payload-unsupported",
-            "streamed payloads land with the payload store (5.10)",
+            "the inline node adapter does not materialize streamed payloads",
         )),
     }
 }
@@ -289,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn streamed_input_is_refused_until_the_payload_store_lands() {
+    fn inline_node_adapter_refuses_streamed_input_without_materializing_it() {
         let p = wit::Payload::Streamed(wit::PayloadRef {
             handle: "h".into(),
             framing: wit::Framing::Ndjson,

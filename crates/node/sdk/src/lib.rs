@@ -15,20 +15,25 @@
 //! interface and silently break the frozen-flow composition path. `wamn-runner`
 //! depends on this crate and re-exports the taxonomy, keeping one definition.
 //!
-//! One deliberate delta from the frozen WIT remains: payloads are in-memory
-//! [`serde_json::Value`]s — the `streamed(payload-ref)` arm waits for the
-//! payload store (5.10; the scaffolding refuses a streamed input with
-//! `terminal("streamed-payload-unsupported")` until then). [`Emission::port`]
-//! `== MAIN_PORT` corresponds to an ABSENT port in the WIT emission record.
+//! Existing [`Node`] implementations remain the inline-JSON fast path. The
+//! streamed arm is exposed separately through bounded [`PayloadReader`] and
+//! [`PayloadWriter`] APIs; neither API can collect a complete object.
+//! [`Emission::port`] `== MAIN_PORT` corresponds to an ABSENT port in the WIT
+//! emission record.
 
 mod ctx;
 mod error;
+mod payload;
 
 pub use ctx::{
     Capability, CredentialCapError, HttpCapError, HttpRequest, HttpResponse, NodeCtx, PgCapError,
     PgRows, PgValue, RunContext,
 };
 pub use error::{ErrorDetail, NodeError, RateLimitDetail};
+pub use payload::{
+    Framing, MAX_PAYLOAD_CHUNK_BYTES, PayloadChunk, PayloadChunkError, PayloadError, PayloadReader,
+    PayloadRef, PayloadStreamError, PayloadWriter,
+};
 
 use serde_json::Value;
 
