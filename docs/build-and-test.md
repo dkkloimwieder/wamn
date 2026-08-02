@@ -1283,6 +1283,19 @@ docker stop wamn-rq-pg wamn-rq-nats
 # kind load docker-image wamn-gates:dev --name wamn):
 kubectl -n wamn-system apply -f deploy/gates/queuebench-job.yaml
 kubectl -n wamn-system logs -f job/queuebench
+
+# Checked-in PLAN-0.2 queue/runner mutation campaign. `check` pins the clean
+# source hashes; `green-all` runs every named debug gate; `run-all` requires
+# every fixed mutant to turn its gate red and restores each target byte-exactly.
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-2 \
+  tools/gate-mutants/queue-runner.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-2 \
+  tools/gate-mutants/queue-runner.sh green-all
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-2 \
+  tools/gate-mutants/queue-runner.sh run-all
+cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
+# Immutable green/red evidence:
+# architecture/evidence/mutations/queue-runner.json
 ```
 
 D20 (R6, wamn-1d4) the `partitioned(key)` head-unavailability policy lands here:
@@ -2361,7 +2374,9 @@ docker exec wamn-fqg8-pg psql -U postgres -c \
 # conditionality matrix [blocking -> marker, leapfrog/unpartitioned -> none,
 # redelivery idempotent, RLS isolation, key-advances] is the run-queue live
 # suite: cargo test -p wamn-run-state + WAMN_RUN_QUEUE_PG_URL).
-# Engine units: cargo test -p wamn-runner
+# Engine units:
+# recipe-test: H5-RUNNER-BUDGET | integration | wamn-runner | test | runner | a_runaway_cycle_fails_at_exactly_the_budget | 1 | flow-engine runaway dispatch budget is exact and load-bearing
+cargo test --locked -p wamn-runner --test runner a_runaway_cycle_fails_at_exactly_the_budget -- --exact
 # (budget section) + cargo test -p wamn-run-state (fail_kind literal + DDL
 # drift guard). Combined-builder shape + live-apply (PREPARE/EXECUTE the real
 # claim_dispatch/record+renew/complete+dequeue against deploy DDL incl
@@ -2419,10 +2434,8 @@ cargo test -p wamn-waker   # decision units (parse/decide/scale-parse)
 # recipe-test: H5-WAKEPROOF | integration | wamn-proof-integration | lib | - | wakeproof::tests:: | 1 | tests/integration/src/wakeproof.rs cron-flow fixture parse and validation
 cargo test -p wamn-proof-integration --lib wakeproof::tests::
 cargo clippy -p wamn-waker -p wamn-gates --all-targets
-# Mutation (decision is a load-bearing assert): flip `current_replicas == 0` in
-# services/waker/src/lib.rs decide() -> `!= 0`; then
-#   cargo test -p wamn-waker decide_skips_an_already_awake_deployment   # MUST fail
-# restore the file and re-run (green). sha256 the file before/after to confirm.
+# The checked-in `queue-runner` mutation campaign above owns the waker decision
+# mutant and its immutable green/red evidence.
 # In-cluster gate of record (NEW image: wamn-waker; gates rebuilt for the subcommand):
 docker build --target waker -t wamn-waker:dev . && docker build --target gates -t wamn-gates:dev .
 kind load docker-image wamn-waker:dev --name wamn

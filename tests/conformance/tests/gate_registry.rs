@@ -647,7 +647,7 @@ fn fixtures() -> (
 fn canonical_registry_covers_every_live_gate_source() {
     let (root, registry, manifests, recipes, plan) = fixtures();
     assert_eq!(manifests.len(), 55, "the live Job inventory changed");
-    assert_eq!(recipes.len(), 47, "the documented recipe inventory changed");
+    assert_eq!(recipes.len(), 48, "the documented recipe inventory changed");
     validate_registry(&registry, &manifests, &recipes, &plan, &root)
         .unwrap_or_else(|error| panic!("{error}"));
 }

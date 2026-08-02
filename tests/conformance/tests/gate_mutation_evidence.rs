@@ -11,6 +11,10 @@ const DURABLE_CAMPAIGN: &str = "durable-invocation-recovery";
 const DURABLE_BEAD: &str = "wamn-2jdm.5.1";
 const DURABLE_RUNNER: &str = "tools/gate-mutants/durable-invocation-recovery.sh";
 const DURABLE_SOURCE_COMMIT: &str = "cf9d5ffebc885629bf2f7c45a2310f6c55245f60";
+const QUEUE_CAMPAIGN: &str = "queue-runner";
+const QUEUE_BEAD: &str = "wamn-2jdm.5.2";
+const QUEUE_RUNNER: &str = "tools/gate-mutants/queue-runner.sh";
+const QUEUE_SOURCE_COMMIT: &str = "c51ca79516a8195b83db1572ae1d60f570bebef2";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -265,6 +269,17 @@ fn checked_in_mutation_evidence_conforms_when_present() {
                 evidence.source.runner_sha256,
                 hex::encode(Sha256::digest(runner)),
                 "durable evidence must identify the checked-in runner bytes"
+            );
+        }
+        if evidence.campaign == QUEUE_CAMPAIGN {
+            assert_eq!(evidence.bead, QUEUE_BEAD);
+            assert_eq!(evidence.source.git_commit, QUEUE_SOURCE_COMMIT);
+            let runner = fs::read(repository_root().join(QUEUE_RUNNER))
+                .expect("queue mutation runner is readable");
+            assert_eq!(
+                evidence.source.runner_sha256,
+                hex::encode(Sha256::digest(runner)),
+                "queue evidence must identify the checked-in runner bytes"
             );
         }
     }
