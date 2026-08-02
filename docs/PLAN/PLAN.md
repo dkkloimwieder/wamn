@@ -1055,16 +1055,30 @@ idempotency domain, a vendor alters retention, DNS resolves to a different servi
 same authority. An immutable generation and recorded evidence explain what the platform
 *believed*; they do not keep the belief true.
 
-> **Semantic attestations carry an explicit validity and invalidation policy, owned by 2B.**
-> Per connection type that may be indefinite operator responsibility, time-bounded evidence,
-> periodic revalidation, or invalidation on material endpoint / proxy / credential change. An
-> expired or revoked attestation cannot continue authorizing stronger recovery semantics.
+**Decision (wamn-ko5r.4): every strengthening semantic-attestation type owns a fail-closed
+freshness contract; external claims are never indefinite operator responsibility.** The
+versioned connection contract names the evidence kind and issuer, maximum validity window,
+revalidation procedure, semantic scope, and complete set of material invalidation inputs.
+An attestation instance records that contract version, its immutable connection generation,
+claim and measured parameters, scope, evidence reference, issuer, issue time, hard expiry,
+and the revisions or identities of those invalidation inputs. A new connection type may not
+offer a stronger recovery claim until this policy exists; absence of a policy means only the
+conservative recovery default is available.
 
-**And expiry must not silently downgrade.** If an attestation lapses while a flow requires
-idempotency, the environment no longer satisfies that requirement — so the effect **fails
-explicitly**, exactly as the portable-recovery rule demands. Quietly reverting to
-`never-replay` would be the environment changing recovery semantics implicitly, which that
-rule forbids.
+The policy by connection type starts deliberately narrow:
+
+| Connection contract | Freshness and evidence | Material invalidation |
+|---|---|---|
+| **HTTP `0.1` / `stable-key-dedup-v1`** | **Time-bounded, periodically revalidated end-to-end evidence** through the configured proxy and every admitted primary/failover route. Revalidation must finish and mint a new attestation before the old hard expiry; operator approval alone does not extend it. The type's maximum window bounds unobservable receiver or vendor drift, including remote upgrades and dedup-retention changes. | Any change to the immutable generation, admitted authority/failover set, proxy route or header policy, TLS-authenticated service identity, credential principal or tenant scope, named idempotency domain, claim parameters, or evidence/revalidator revision. DNS answers are neither semantic proof nor an automatic invalidation: dispatch still enforces current DNS and outer policy, but a resolution outside the attested TLS service identity and idempotency scope is an explicit refusal. |
+| **A connection type with no strengthening claim** | No semantic attestation is required or accepted. | It remains at the contract's conservative recovery default (`never-replay` for HTTP `0.1`). |
+| **A future strengthening type** | Must choose and gate its own bounded evidence, revalidation, and maximum window before publication or activation can consume the claim; it does not inherit HTTP evidence by analogy. | Must enumerate every input capable of changing the claimed semantics. An unenumerated or unavailable dependency makes the attestation invalid, not indefinite. |
+
+Revocation, a material-input mismatch, failed revalidation, or reaching the hard expiry makes
+the typed live verdict invalid immediately. Activation then preserves the prior compatible
+generation as `wamn-ko5r.3` requires; dispatch or recovery of an operation that requires the
+claim **fails explicitly**. It never silently downgrades to `never-replay`, substitutes a
+newer attestation, or continues under operator responsibility. A later distinct occurrence
+may proceed only after ordinary resolution admits a currently valid attestation.
 
 **This is an existing pattern, not new machinery.** Inbound authority is already pinned by
 `confirmed_definition_hash` on attachments and `generation` on cron anchors, and the attempt
@@ -2487,7 +2501,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~Retry policy across a connection-instance change~~ | **Settled (wamn-ko5r.1):** retry or recovery of an uncertain effect attempt may use only its recorded immutable connection and credential generations, admitted claim/attestation, fingerprint, and stable key. A missing pinned definition or credential, an expired/revoked attestation, or policy-prohibited pinned authority refuses explicitly; `never-replay` remains `effect-uncertain`. A newer generation is never substituted for that attempt, even under an asserted shared idempotency domain; only a later distinct occurrence may resolve it. | — |
 | ~~What a connection type's contract asserts~~ | **Settled (wamn-ko5r.2):** the portable type contract defines ABI, authority/field ownership, credential injection, conservative recovery default, and the exact semantics of named recovery claims. A portable requirement selects a claim; an authorized environment administrator attests that one immutable instance generation satisfies it. HTTP `0.1` defaults to `never-replay`; `stable-key-dedup-v1` requires scoped, retained, fingerprint-bound deduplication and terminal-outcome recovery, not merely an `Idempotency-Key` header. | — |
 | ~~Generation activation compatibility~~ | **Settled (wamn-ko5r.3):** stage an immutable candidate and validate its exact type/contract, required fields, canonical authorities, TLS/redirect/proxy posture, credential kind, both outer policy ceilings, and every active binding's portable requirement plus live semantic-attestation verdict in one per-instance serialized snapshot. An instance with no active bindings may activate after intrinsic and outer-ceiling checks. Compare-and-swap activates only while the active pointer and every validated input remain current. Any incompatibility or stale snapshot refuses the candidate, preserves the existing active generation and bindings, and requires explicit operator action to disable a binding or create another instance. Dispatch still rechecks current policy. | — |
-| **What evidence, freshness, and invalidation rules apply per semantic-attestation type** | *Who* may issue one is settled (an authorized connection administrator); what keeps it true is not — external behaviour drifts without any definition changing | 2B |
+| ~~What evidence, freshness, and invalidation rules apply per semantic-attestation type~~ | **Settled (wamn-ko5r.4):** each strengthening connection claim declares bounded evidence, a maximum validity window, periodic revalidation, semantic scope, and material invalidation inputs; missing policy means the conservative default only. HTTP `0.1` `stable-key-dedup-v1` requires time-bounded end-to-end evidence over every admitted proxy and route, with scope changes or expiry failing explicitly. DNS rotation is not proof; resolution outside the attested service identity/domain refuses. No expiry, revocation, or invalidation may silently downgrade to `never-replay`. | — |
 | **Which project role may approve a privileged recovery assertion for author-supplied effects** | Raw SQL has no connection administrator; candidates run from a project admin to a safety role to no user assertion at all | 5, 6A |
 | ~~What "Replay" means to an author~~ | **Settled (wamn-4u7p.1):** audit reconstruction is read-only and creates no run; Replay is exact-definition execution in a fail-closed scenario sandbox; Run again/Reprocess is fresh production admission under current definitions and authority. Retained bytes never grant execution permission, and typed lineage distinguishes the two executing operations | — |
 | **Field-ownership metadata in node and connection descriptors** | The simple surface can only be a constrained view if descriptors say who owns each field — author, environment, or system. Tiers are 6A's design | 6A, 2B |
