@@ -7,8 +7,35 @@
 //! admission ledger atomically.
 
 use serde_json::Value;
+use wamn_pg_core::Identifier;
 
 use crate::queue::PartitionPolicy;
+
+/// Validated schema containing the durable run-state tables and functions.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RunStateSchema(Identifier);
+
+impl RunStateSchema {
+    /// Validate a deployment-supplied run-state schema name.
+    pub fn new(value: impl Into<String>) -> Result<Self, wamn_pg_core::InvalidIdentifier> {
+        Identifier::new(value).map(Self)
+    }
+
+    /// The schema name before PostgreSQL identifier quoting.
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    fn qualifier(&self) -> String {
+        format!("{}.", self.0.quoted())
+    }
+}
+
+impl Default for RunStateSchema {
+    fn default() -> Self {
+        Self(Identifier::new("wamn_run").expect("the canonical run-state schema is valid"))
+    }
+}
 
 /// Producer variant accepted by the admission transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,6 +195,22 @@ pub fn admission_sql() -> AdmissionSql {
     AdmissionSql {
         lock_head: lock_catalog_head_sql(),
         admit: admit_sql(),
+    }
+}
+
+/// Build the admission recipe for a validated deployment-specific schema.
+///
+/// The canonical schema retains its historical byte shape. Alternate schemas
+/// are always PostgreSQL-quoted and can only enter through [`RunStateSchema`].
+pub fn admission_sql_for_schema(schema: &RunStateSchema) -> AdmissionSql {
+    let canonical = admission_sql();
+    if schema.as_str() == RunStateSchema::default().as_str() {
+        return canonical;
+    }
+    let qualifier = schema.qualifier();
+    AdmissionSql {
+        lock_head: canonical.lock_head.replace("wamn_run.", &qualifier),
+        admit: canonical.admit.replace("wamn_run.", &qualifier),
     }
 }
 
@@ -508,6 +551,44 @@ mod tests {
         assert_eq!(AdmissionProducer::Http.as_sql(), "http");
         assert_eq!(AdmissionProducer::Cron.as_sql(), "cron");
         assert_eq!(AdmissionProducer::Event.as_sql(), "event");
+    }
+
+    #[test]
+    fn default_admission_schema_remains_wamn_run() {
+        let schema = RunStateSchema::default();
+        let configured = admission_sql_for_schema(&schema);
+        assert_eq!(schema.as_str(), "wamn_run");
+        assert_eq!(configured, admission_sql());
+    }
+
+    #[test]
+    fn custom_admission_schema_qualifies_every_run_state_reference() {
+        let schema = RunStateSchema::new("wamn_runner_demo").unwrap();
+        let canonical = admission_sql();
+        let configured = admission_sql_for_schema(&schema);
+        let canonical_references = canonical.lock_head.matches("wamn_run.").count()
+            + canonical.admit.matches("wamn_run.").count();
+        let configured_sql = format!("{} {}", configured.lock_head, configured.admit);
+
+        assert_eq!(
+            canonical_references, 9,
+            "update this pin when admission adds a run-state boundary"
+        );
+        assert_eq!(configured_sql.matches("\"wamn_runner_demo\".").count(), 9);
+        assert!(!configured_sql.contains("wamn_run."));
+    }
+
+    #[test]
+    fn run_state_schema_rejects_invalid_postgresql_identifiers() {
+        assert!(RunStateSchema::new("").is_err());
+        assert!(RunStateSchema::new("bad\0schema").is_err());
+        assert!(RunStateSchema::new("x".repeat(64)).is_err());
+        let quoted = admission_sql_for_schema(&RunStateSchema::new("odd schema").unwrap());
+        assert!(
+            quoted
+                .lock_head()
+                .contains("\"odd schema\".lock_catalog_head")
+        );
     }
 
     #[test]

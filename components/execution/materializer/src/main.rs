@@ -47,7 +47,8 @@ use wamn_materializer::{
     sql::{select_registrations_sql, select_release_flow_sql},
 };
 use wamn_run_state::admission::{
-    AdmissionProducer, AdmissionResult, admission_sql, registration_evidence,
+    AdmissionProducer, AdmissionResult, RunStateSchema, admission_sql_for_schema,
+    registration_evidence,
 };
 
 use wamn::jetstream::consumer::{self, ConsumerConfig};
@@ -60,6 +61,8 @@ use wamn::postgres::types::{PgError, SqlValue};
 // ---------------------------------------------------------------------------
 
 struct Config {
+    /// Schema containing the run-state tables claimed by this project's runner.
+    run_schema: RunStateSchema,
     /// The org/env `EVT_` stream this workload consumes (provisioned
     /// out-of-band; recorded per project-env by enable-cdc-project-env).
     stream: String,
@@ -100,6 +103,8 @@ fn required(name: &str) -> Result<String, String> {
 impl Config {
     fn from_env() -> Result<Config, String> {
         Ok(Config {
+            run_schema: RunStateSchema::new(env_or("WAMN_MAT_RUN_SCHEMA", "wamn_run"))
+                .map_err(|e| format!("WAMN_MAT_RUN_SCHEMA: {e}"))?,
             stream: required("WAMN_MAT_STREAM")?,
             org: required("WAMN_MAT_ORG")?,
             project: required("WAMN_MAT_PROJECT")?,
@@ -386,7 +391,7 @@ fn load_flow(catalog_id: &str, environment: &str, flow_id: &str) -> Option<(i32,
 /// exactly-once no-op. Every typed drift/refusal rolls back and is retried from
 /// candidate resolution on redelivery.
 fn fire_txn(cfg: &Config, serving: &Serving, plan: &FirePlan) -> Result<bool, String> {
-    let recipe = admission_sql();
+    let recipe = admission_sql_for_schema(&cfg.run_schema);
     let txn = client::begin().map_err(|e| pg_name(&e))?;
     txn.query(
         recipe.lock_head(),
@@ -627,12 +632,13 @@ fn main() {
         }
     };
     println!(
-        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* tenant={} batch={} fetch_ms={} max_sweeps={}",
+        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* tenant={} run_schema={} batch={} fetch_ms={} max_sweeps={}",
         cfg.stream,
         cfg.org,
         cfg.project,
         cfg.env,
         cfg.tenant,
+        cfg.run_schema.as_str(),
         cfg.batch,
         cfg.fetch_ms,
         cfg.max_sweeps

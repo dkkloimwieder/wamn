@@ -53,6 +53,9 @@ pub mod tests {
         assert!(sql.contains("i.input_json ? 'causation'"));
         assert!(SHELL.contains("text(&plan.source_run_id)"));
         assert!(SHELL.contains("text(&plan.causation.root)"));
+        assert!(SHELL.contains("env_or(\"WAMN_MAT_RUN_SCHEMA\", \"wamn_run\")"));
+        assert!(SHELL.contains("admission_sql_for_schema(&cfg.run_schema)"));
+        assert!(!SHELL.contains("let recipe = admission_sql();"));
         assert!(!SHELL.contains("UPDATE wamn_run.runs"));
     }
 

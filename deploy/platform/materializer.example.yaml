@@ -77,3 +77,6 @@ spec:
               WAMN_MAT_PROJECT: mproj
               WAMN_MAT_ENV: menv
               WAMN_MAT_TENANT: t1
+              # Defaults to wamn_run; set this to the schema claimed by the
+              # paired runner when a deployment uses a noncanonical schema.
+              WAMN_MAT_RUN_SCHEMA: wamn_run
