@@ -8,7 +8,7 @@ use url::{Host, Url};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 /// Supported outbound HTTP schemes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HttpScheme {
     Http,
     Https,
@@ -31,7 +31,7 @@ pub enum TlsPolicy {
 }
 
 /// One canonical logical HTTP authority.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CanonicalAuthority {
     scheme: HttpScheme,
     host: Box<str>,
@@ -69,6 +69,28 @@ pub struct HttpConnectionAuthority {
     authority: CanonicalAuthority,
     base_path: Box<str>,
     proxy: Option<ProxyAuthority>,
+}
+
+impl HttpConnectionAuthority {
+    /// Canonical base URL, including its normalized base path.
+    pub fn canonical_base_url(&self) -> &str {
+        self.base_url.as_str()
+    }
+
+    /// Canonical logical authority selected by this definition.
+    pub fn authority(&self) -> &CanonicalAuthority {
+        &self.authority
+    }
+
+    /// Canonical configured proxy authority, when present.
+    pub fn proxy_authority(&self) -> Option<&CanonicalAuthority> {
+        self.proxy.as_ref().map(|proxy| &proxy.authority)
+    }
+
+    /// Canonical configured proxy URL, when present.
+    pub fn canonical_proxy_url(&self) -> Option<&str> {
+        self.proxy.as_ref().map(|proxy| proxy.url.as_str())
+    }
 }
 
 /// The TLS identity retained while transport connects to a pinned address.
