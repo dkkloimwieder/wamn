@@ -518,10 +518,31 @@ async fn flow_phase(
 
 #[cfg(test)]
 mod tests {
+    use wamn_scenario_model::{Assertion, AssertionResult};
+
+    use super::{Outcome, fold_outcome};
+
     #[test]
     fn integration_gate_uses_scenario_runtime_without_importing_worker() {
         let manifest = include_str!("../Cargo.toml");
         assert!(manifest.contains("wamn-scenario-runtime"));
         assert!(!manifest.contains("wamn-scenario-worker"));
+    }
+
+    #[test]
+    fn aggregate_fold_turns_red_when_any_stored_assertion_fails() {
+        let mut ok = true;
+        fold_outcome(
+            &mut ok,
+            &Outcome {
+                name: "stored failure".into(),
+                results: vec![AssertionResult {
+                    assertion: Assertion::Equals(serde_json::json!({"expected": true})),
+                    passed: false,
+                    detail: Some("captured output differed".into()),
+                }],
+            },
+        );
+        assert!(!ok, "a failed stored assertion must fail testkitbench");
     }
 }

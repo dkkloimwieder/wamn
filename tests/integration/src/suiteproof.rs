@@ -320,4 +320,29 @@ mod tests {
         assert!(!is_bare_ident("a; DROP"));
         assert!(!is_bare_ident("Cap"));
     }
+
+    #[test]
+    fn canonical_suite_ddl_enforces_tenant_and_version_lifetime() {
+        let ddl = include_str!("../../../deploy/sql/flow-tests.sql");
+        for table in ["test_suites", "test_cases"] {
+            assert!(
+                ddl.contains(&format!(
+                    "ALTER TABLE wamn_run.{table} FORCE ROW LEVEL SECURITY"
+                )),
+                "{table} must remain under forced tenant RLS"
+            );
+        }
+        assert!(
+            ddl.contains(
+                "REFERENCES wamn_run.flows (tenant_id, flow_id, version) ON DELETE CASCADE"
+            ),
+            "dropping a pinned flow version must cascade its suite"
+        );
+        assert!(
+            ddl.contains(
+                "REFERENCES wamn_run.test_suites (tenant_id, flow_id, flow_version, suite_id) ON DELETE CASCADE"
+            ),
+            "dropping a suite must cascade its cases"
+        );
+    }
 }

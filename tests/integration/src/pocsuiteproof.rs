@@ -1351,6 +1351,8 @@ fn is_bare_ident(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use wamn_scenario_model::AssertionResult;
+
     use super::*;
 
     fn fixture_interfaces() -> wamn_flow::ResolvedInterfaces {
@@ -1598,5 +1600,22 @@ mod tests {
         assert!(is_bare_ident("poc_f1"));
         assert!(!is_bare_ident("a; DROP"));
         assert!(!is_bare_ident("Cap"));
+    }
+
+    #[test]
+    fn aggregate_fold_turns_red_when_a_real_poc_assertion_fails() {
+        let mut ok = true;
+        fold_outcome(
+            &mut ok,
+            &Outcome {
+                name: "stored POC failure".into(),
+                results: vec![AssertionResult {
+                    assertion: Assertion::Equals(json!({"status": "accepted"})),
+                    passed: false,
+                    detail: Some("real POC facts differed".into()),
+                }],
+            },
+        );
+        assert!(!ok, "a failed POC assertion must fail pocsuiteproof");
     }
 }
