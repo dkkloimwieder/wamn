@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
-use wamn_proof_conformance::kubernetes_gate_receipt::{Expectation, Verdict, parse_receipt};
+use wamn_proof_conformance::kubernetes_gate_verdict::{Expectation, Verdict, parse_verdict_record};
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -171,7 +171,7 @@ fn negative_job() -> String {
 
 struct RunResult {
     output: Output,
-    receipt: Value,
+    record: Value,
     calls: String,
     probe_calls: String,
 }
@@ -181,7 +181,7 @@ fn run(scenario: &str, jobs: &[String], negative: bool) -> RunResult {
     let kubectl = directory.path("kubectl");
     let probe = directory.path("snapshot-probe");
     let manifest = directory.path("gate.yaml");
-    let receipt = directory.path("receipt.json");
+    let record = directory.path("record.json");
     let calls = directory.path("kubectl.calls");
     let probe_calls = directory.path("probe.calls");
     executable(&kubectl, FAKE_KUBECTL);
@@ -193,8 +193,8 @@ fn run(scenario: &str, jobs: &[String], negative: bool) -> RunResult {
         .arg(repository_root().join(RUNNER))
         .arg("--manifest")
         .arg(&manifest)
-        .arg("--receipt")
-        .arg(&receipt)
+        .arg("--verdict-record")
+        .arg(&record)
         .arg("--timeout-secs")
         .arg("3")
         .env("KUBECTL", &kubectl)
@@ -217,17 +217,17 @@ fn run(scenario: &str, jobs: &[String], negative: bool) -> RunResult {
             .arg("literal; never evaluated");
     }
     let output = command.output().expect("run verdict protocol");
-    let receipt_bytes = fs::read(&receipt).unwrap_or_else(|error| {
+    let record_bytes = fs::read(&record).unwrap_or_else(|error| {
         panic!(
-            "receipt missing ({error}); stdout={} stderr={}",
+            "record missing ({error}); stdout={} stderr={}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         )
     });
-    parse_receipt(&receipt_bytes).expect("receipt satisfies the typed SR26 consumer contract");
+    parse_verdict_record(&record_bytes).expect("record satisfies the typed SR26 consumer contract");
     RunResult {
         output,
-        receipt: serde_json::from_slice(&receipt_bytes).expect("receipt JSON"),
+        record: serde_json::from_slice(&record_bytes).expect("record JSON"),
         calls: fs::read_to_string(calls).unwrap_or_default(),
         probe_calls: fs::read_to_string(probe_calls).unwrap_or_default(),
     }
@@ -236,8 +236,8 @@ fn run(scenario: &str, jobs: &[String], negative: bool) -> RunResult {
 fn assert_red(scenario: &str, jobs: &[String], negative: bool, class: &str) {
     let result = run(scenario, jobs, negative);
     assert!(!result.output.status.success(), "{scenario} must be red");
-    assert_eq!(result.receipt["verdict"], "fail");
-    let classes = result.receipt["failure_classes"]
+    assert_eq!(result.record["verdict"], "fail");
+    let classes = result.record["failure_classes"]
         .as_array()
         .expect("failure classes");
     assert!(
@@ -245,8 +245,8 @@ fn assert_red(scenario: &str, jobs: &[String], negative: bool, class: &str) {
             .iter()
             .filter_map(Value::as_str)
             .any(|value| value.contains(class)),
-        "{scenario} receipt lacks {class}: {}",
-        result.receipt
+        "{scenario} record lacks {class}: {}",
+        result.record
     );
 }
 
@@ -258,22 +258,19 @@ fn fresh_positive_job_records_temporal_exit_and_image_evidence() {
         "stderr={}",
         String::from_utf8_lossy(&result.output.stderr)
     );
+    assert_eq!(result.record["protocol"], "wamn-kubernetes-gate-verdict/v1");
+    assert_eq!(result.record["verdict"], "pass");
     assert_eq!(
-        result.receipt["protocol"],
-        "wamn-kubernetes-gate-verdict/v1"
-    );
-    assert_eq!(result.receipt["verdict"], "pass");
-    assert_eq!(
-        result.receipt["jobs"][0]["observed"]["previous_uid"],
+        result.record["jobs"][0]["observed"]["previous_uid"],
         "old-gate"
     );
-    assert_eq!(result.receipt["jobs"][0]["observed"]["uid"], "new-gate");
+    assert_eq!(result.record["jobs"][0]["observed"]["uid"], "new-gate");
     assert_eq!(
-        result.receipt["jobs"][0]["observed"]["pods"][0]["container_exit_code"],
+        result.record["jobs"][0]["observed"]["pods"][0]["container_exit_code"],
         0
     );
     assert_eq!(
-        result.receipt["jobs"][0]["observed"]["pods"][0]["image_id"],
+        result.record["jobs"][0]["observed"]["pods"][0]["image_id"],
         "docker-pullable://wamn@sha256:abc"
     );
     let delete = result.calls.find("delete job gate").expect("fresh delete");
@@ -286,15 +283,15 @@ fn fresh_positive_job_records_temporal_exit_and_image_evidence() {
 }
 
 #[test]
-fn typed_receipt_distinguishes_positive_and_expected_negative_jobs() {
+fn typed_record_distinguishes_positive_and_expected_negative_jobs() {
     let directory = TestDirectory::new();
-    let receipt_path = directory.path("typed.json");
+    let record_path = directory.path("typed.json");
     let result = run("pass", &[positive_job("gate"), negative_job()], true);
-    fs::write(&receipt_path, serde_json::to_vec(&result.receipt).unwrap()).unwrap();
-    let receipt = parse_receipt(&fs::read(receipt_path).unwrap()).expect("typed receipt");
-    assert_eq!(receipt.verdict, Verdict::Pass);
-    assert_eq!(receipt.jobs[0].expectation, Expectation::Positive);
-    assert_eq!(receipt.jobs[1].expectation, Expectation::ExpectedNegative);
+    fs::write(&record_path, serde_json::to_vec(&result.record).unwrap()).unwrap();
+    let record = parse_verdict_record(&fs::read(record_path).unwrap()).expect("typed record");
+    assert_eq!(record.verdict, Verdict::Pass);
+    assert_eq!(record.jobs[0].expectation, Expectation::Positive);
+    assert_eq!(record.jobs[1].expectation, Expectation::ExpectedNegative);
 }
 
 #[test]
@@ -365,14 +362,14 @@ fn expected_negative_requires_typed_failure_and_an_unchanged_snapshot() {
         "stderr={}",
         String::from_utf8_lossy(&result.output.stderr)
     );
-    assert_eq!(result.receipt["verdict"], "pass");
-    assert_eq!(result.receipt["snapshot_probe"]["unchanged"], true);
+    assert_eq!(result.record["verdict"], "pass");
+    assert_eq!(result.record["snapshot_probe"]["unchanged"], true);
     assert_eq!(
-        result.receipt["snapshot_probe"]["before_stdout_sha256"],
-        result.receipt["snapshot_probe"]["after_stdout_sha256"]
+        result.record["snapshot_probe"]["before_stdout_sha256"],
+        result.record["snapshot_probe"]["after_stdout_sha256"]
     );
     assert_eq!(
-        result.receipt["snapshot_probe"]["argv"],
+        result.record["snapshot_probe"]["argv"],
         json!(["registry.example/v2/name:tag", "literal; never evaluated"])
     );
     assert_eq!(

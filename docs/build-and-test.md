@@ -150,10 +150,10 @@ Release membership is the 16 `deployable: true` packages in
 `architecture/package-roles.json`, including the `wamn-gates` proof image.
 Membership is not release admission. SR17 must join source revision and
 `Cargo.lock` digest to exact artifact SHA-256 and OCI manifest digest; SR26
-must join each required gate receipt back to that same source revision and
-artifact/image digests. The exact required fields and fail-closed rule live in
-`architecture/workspace-tiers.json`. Cargo defaults, a mutable tag, or a receipt
-that names only a test command are not release evidence.
+must join each required gate evidence record back to that same source revision
+and artifact/image digests. The exact required fields and fail-closed rule live
+in `architecture/workspace-tiers.json`. Cargo defaults, a mutable tag, or an
+evidence record that names only a test command are not release evidence.
 
 ### Measurement (2026-07-25)
 
@@ -923,7 +923,7 @@ registry_port_forward_pid=$!
 trap 'kill "$registry_port_forward_pid"' EXIT
 tools/kubernetes-gate-run \
   --manifest deploy/gates/f2-testgate-job.yaml \
-  --receipt /tmp/f2-testgate-receipt.json \
+  --verdict-record /tmp/f2-testgate-verdict-record.json \
   --timeout-secs 900 \
   --job '{"name":"f2-testgate-pass","container":"wamn-builder","expectation":"positive","exit_code":0,"image":"wamn-builder:dev","log_contains":"test gate (11.5): all case(s) passed"}' \
   --job '{"name":"f2-testgate-refusal","container":"wamn-builder","expectation":"expected-negative","exit_code":1,"image":"wamn-builder:dev","log_contains":"custom-node test gate (11.5): 1 case(s) FAILED against the built artifact"}' \
@@ -933,7 +933,7 @@ tools/kubernetes-gate-run \
   --snapshot-arg --header \
   --snapshot-arg 'Accept: application/vnd.oci.image.manifest.v1+json' \
   --snapshot-arg http://127.0.0.1:5000/v2/wamn/disposition-node/manifests/testgate-refusal
-jq . /tmp/f2-testgate-receipt.json
+jq . /tmp/f2-testgate-verdict-record.json
 ```
 
 ### [5.1] flow-graph schema crate (crates/execution/flow-model)
@@ -1179,9 +1179,9 @@ CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-1 \
   tools/gate-mutants/durable-invocation-recovery.sh green-all
 CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-1 \
   tools/gate-mutants/durable-invocation-recovery.sh run-all
-cargo test --locked -p wamn-proof-conformance --test gate_mutation_receipts
+cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
 # Immutable green/red evidence:
-# architecture/receipts/mutations/durable-invocation-recovery.json
+# architecture/evidence/mutations/durable-invocation-recovery.json
 ```
 
 ### [5.9] credential vault (plugins/wamn_credentials + credproof)
@@ -3384,9 +3384,9 @@ kubectl -n wamn-system logs job/callable-flow-f1
 
 The Wave-1 gate applies the promoted POC catalog from zero, runs the production
 invocation provider and the F0/F1/F3 proofs, checks T-CTX/T-NR, and emits one
-receipt binding the exact source, image, supplied component bytes, POC config,
-schema, release inputs, and deployment identity. Replace `<commit>` in all
-three positions from the same `git rev-parse HEAD`.
+gate evidence record binding the exact source, image, supplied component bytes,
+POC config, schema, release inputs, and deployment identity. Replace `<commit>`
+in all three positions from the same `git rev-parse HEAD`.
 
 ```bash
 # recipe-test: H5-CALLABLE-WAVE1 | system | wamn-proof-system | lib | - | callable_wave1::tests:: | 4 | tests/system/src/callable_wave1.rs composed F0/F1/F3 identities and T-CTX/T-NR contracts
@@ -3407,14 +3407,14 @@ kubectl -n wamn-system logs job/callable-flow-wave1
 
 The serial Wave-2 gate reuses the Wave-1 from-zero schema and production
 invocation campaign, then composes the F2/F4 contract and recovery proofs. Its
-receipt binds the source commit, exact image tag and local image ID, flowrunner
-and all three supplied custom-node components, POC configuration and schema,
-all five graph definitions, each attachment/registration input, release
-membership, deployment identity, and the four T5 measurement-hook shapes.
-The recorded T5 hooks deliberately carry no Phase-6 budgets.
+gate evidence record binds the source commit, exact image tag and local image
+ID, flowrunner and all three supplied custom-node components, POC configuration
+and schema, all five graph definitions, each attachment/registration input,
+release membership, deployment identity, and the four T5 measurement-hook
+shapes. The recorded T5 hooks deliberately carry no Phase-6 budgets.
 
 ```bash
-# recipe-test: H5-CALLABLE-WAVE2 | system | wamn-proof-system | lib | - | callable_wave2::tests:: | 4 | tests/system/src/callable_wave2.rs F0-F4 identity receipt, mixed-identity refusal, T5 hooks, and exact-image routing
+# recipe-test: H5-CALLABLE-WAVE2 | system | wamn-proof-system | lib | - | callable_wave2::tests:: | 4 | tests/system/src/callable_wave2.rs F0-F4 identity evidence, mixed-identity refusal, T5 hooks, and exact-image routing
 CARGO_TARGET_DIR=/tmp/wamn-target-wave2-10 \
   cargo test --locked -p wamn-proof-system --lib callable_wave2::tests::
 CARGO_TARGET_DIR=/tmp/wamn-target-wave2-10 \

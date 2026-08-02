@@ -243,7 +243,7 @@
       "deployable": true,
       "native": {
         "native_kind": "proof-infrastructure",
-        "native_reason": "The deployed gate Job composes exact native production paths and external systems for proof receipts.",
+        "native_reason": "The deployed gate Job composes exact native production paths and external systems for gate evidence records.",
         "owner": "SR26 / wamn-cjv.11",
         "credential_failure_scope": "Gate credentials and failures are confined to an explicit proof Job and its temporary infrastructure.",
         "tested_boundary": "The gates image and orchestrator commands execute conformance, integration, and black-box proof packages.",

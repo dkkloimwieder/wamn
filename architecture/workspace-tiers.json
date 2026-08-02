@@ -302,12 +302,12 @@
       "cargo_lock_sha256",
       "artifact_sha256",
       "oci_manifest_digest",
-      "proof_receipt_sha256",
+      "proof_evidence_sha256",
       "proof_source_revision",
       "proof_artifact_sha256",
       "proof_oci_manifest_digest"
     ],
-    "admission_rule": "Every released package artifact and image digest must join to one immutable source revision and Cargo.lock digest under SR17; every required gate-of-record receipt must name that same source revision and exact artifact/image digests under SR26. Missing or mismatched fields fail closed."
+    "admission_rule": "Every released package artifact and image digest must join to one immutable source revision and Cargo.lock digest under SR17; every required gate evidence record must name that same source revision and exact artifact/image digests under SR26. Missing or mismatched fields fail closed."
   },
   "measurement": {
     "status": "complete",

@@ -12,7 +12,7 @@ set -uo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: kubernetes-gate-run --manifest FILE --receipt FILE [options]
+usage: kubernetes-gate-run --manifest FILE --verdict-record FILE [options]
   --namespace NAME              Kubernetes namespace (default: wamn-system)
   --timeout-secs N              Per-command and Job wait bound (default: 900)
   --job JSON                    Repeat for every Job in the aggregate
@@ -22,7 +22,7 @@ EOF
 }
 
 manifest=
-receipt=
+verdict_record=
 namespace=wamn-system
 timeout_secs=900
 snapshot_executable=
@@ -32,7 +32,7 @@ declare -a job_specs=()
 while (($#)); do
   case "$1" in
     --manifest) manifest=${2-}; shift 2 ;;
-    --receipt) receipt=${2-}; shift 2 ;;
+    --verdict-record) verdict_record=${2-}; shift 2 ;;
     --namespace) namespace=${2-}; shift 2 ;;
     --timeout-secs) timeout_secs=${2-}; shift 2 ;;
     --job) job_specs+=("${2-}"); shift 2 ;;
@@ -43,7 +43,7 @@ while (($#)); do
   esac
 done
 
-if [[ -z "$manifest" || -z "$receipt" || ${#job_specs[@]} -eq 0 ]]; then
+if [[ -z "$manifest" || -z "$verdict_record" || ${#job_specs[@]} -eq 0 ]]; then
   usage
   exit 2
 fi
@@ -63,8 +63,8 @@ command_timeout="${timeout_secs}s"
 run_started_at=
 overall=pass
 declare -a failures=()
-declare -a job_receipts=()
-snapshot_receipt=null
+declare -a job_verdict_records=()
+snapshot_verdict_record=null
 probe_before_hash=
 probe_before_exit=
 probe_after_hash=
@@ -283,7 +283,7 @@ for index in "${!job_specs[@]}"; do
     done
   fi
   job_failure_json=$(printf '%s\n' "${job_failures[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
-  job_receipts+=("$(jq -cn \
+  job_verdict_records+=("$(jq -cn \
     --arg name "$name" --arg container "$container" --arg expectation "$expectation" \
     --argjson expected_exit_code "$expected_exit" --arg expected_image "$expected_image" \
     --arg uid "$uid" --arg old_uid "$old_uid" --arg created_at "$created" \
@@ -314,7 +314,7 @@ if ((negative_count == 1)); then
     add_failure "negative-side-effect-changed"
   fi
   argv_json=$(printf '%s\n' "${snapshot_argv[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
-  snapshot_receipt=$(jq -cn --arg executable "$snapshot_executable" \
+  snapshot_verdict_record=$(jq -cn --arg executable "$snapshot_executable" \
     --argjson argv "$argv_json" --argjson before_exit_code "${probe_before_exit:-255}" \
     --argjson after_exit_code "${probe_after_exit:-255}" \
     --arg before_stdout_sha256 "$probe_before_hash" --arg after_stdout_sha256 "$probe_after_hash" \
@@ -325,16 +325,16 @@ if ((negative_count == 1)); then
 fi
 
 failure_json=$(printf '%s\n' "${failures[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
-jobs_json=$(printf '%s\n' "${job_receipts[@]}" | jq -sc '.')
-mkdir -p -- "$(dirname -- "$receipt")"
+jobs_json=$(printf '%s\n' "${job_verdict_records[@]}" | jq -sc '.')
+mkdir -p -- "$(dirname -- "$verdict_record")"
 jq -n --arg protocol "wamn-kubernetes-gate-verdict/v1" \
   --arg manifest "$manifest" --arg namespace "$namespace" --arg run_started_at "$run_started_at" \
   --argjson timeout_seconds "$timeout_secs" --arg verdict "$overall" \
   --argjson failure_classes "$failure_json" --argjson jobs "$jobs_json" \
-  --argjson snapshot_probe "$snapshot_receipt" \
+  --argjson snapshot_probe "$snapshot_verdict_record" \
   '{schema_version:1,protocol:$protocol,manifest:$manifest,namespace:$namespace,
     run_started_at:$run_started_at,timeout_seconds:$timeout_seconds,verdict:$verdict,
-    failure_classes:$failure_classes,jobs:$jobs,snapshot_probe:$snapshot_probe}' >"$receipt"
+    failure_classes:$failure_classes,jobs:$jobs,snapshot_probe:$snapshot_probe}' >"$verdict_record"
 
 if [[ "$overall" != pass ]]; then
   exit 1

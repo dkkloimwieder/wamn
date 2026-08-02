@@ -6,7 +6,7 @@ pub mod credprobe;
 pub mod egressbench;
 pub mod flow;
 pub mod invocation;
-pub mod kubernetes_gate_receipt;
+pub mod kubernetes_gate_verdict;
 pub mod raw_sql;
 pub mod socketguard;
 pub mod testgate;

@@ -14,7 +14,7 @@ const REGISTRY_PATH: &str = "architecture/gate-registry.json";
 const GATE_DIRECTORY: &str = "deploy/gates";
 const BUILD_AND_TEST_DOC: &str = "docs/build-and-test.md";
 const PLAN_DOCUMENT: &str = "docs/PLAN/PLAN.md";
-const RECEIPT_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
+const EVIDENCE_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 const SCHEDULING_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 
 #[derive(Clone, Debug, Deserialize)]
@@ -23,7 +23,7 @@ struct Registry {
     schema_version: u32,
     authority: String,
     registry_owner: String,
-    machine_receipt_policy: String,
+    machine_evidence_policy: String,
     mutation_campaigns: Vec<MutationCampaign>,
     decisions: Vec<Decision>,
     excluded_decisions: Vec<ExcludedDecision>,
@@ -105,7 +105,7 @@ enum Classification {
 struct MutationEvidence {
     status: String,
     follow_up: Option<String>,
-    receipt: Option<String>,
+    evidence: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -113,8 +113,8 @@ struct MutationEvidence {
 struct LatestEvidence {
     issue: String,
     git: String,
-    machine_receipt: String,
-    receipt_follow_up: String,
+    machine_evidence: String,
+    evidence_follow_up: String,
     scheduling_follow_up: String,
 }
 
@@ -322,16 +322,16 @@ fn validate_registry(
         || !registry.authority.contains("intentionally absent")
         || registry.registry_owner != "bd:wamn-2jdm.2"
         || !registry
-            .machine_receipt_policy
+            .machine_evidence_policy
             .contains("tools/kubernetes-gate-run")
         || !registry
-            .machine_receipt_policy
+            .machine_evidence_policy
             .contains("wamn-kubernetes-gate-verdict/v1")
-        || !registry.machine_receipt_policy.contains("wamn-2jdm.8")
-        || !registry.machine_receipt_policy.contains("wamn-2jkm.98")
-        || !registry.machine_receipt_policy.contains("wamn-4tob.6.25")
+        || !registry.machine_evidence_policy.contains("wamn-2jdm.8")
+        || !registry.machine_evidence_policy.contains("wamn-2jkm.98")
+        || !registry.machine_evidence_policy.contains("wamn-4tob.6.25")
     {
-        return Err("registry authority and pending receipt policy must be explicit".to_string());
+        return Err("registry authority and pending evidence policy must be explicit".to_string());
     }
     let mutation_campaigns: BTreeSet<_> = registry
         .mutation_campaigns
@@ -506,12 +506,12 @@ fn validate_registry(
         if git.len() != 40 || !git.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(format!("{} has malformed git evidence", entry.source));
         }
-        if entry.latest_evidence.machine_receipt != "missing"
-            || entry.latest_evidence.receipt_follow_up != RECEIPT_FOLLOW_UP
+        if entry.latest_evidence.machine_evidence != "missing"
+            || entry.latest_evidence.evidence_follow_up != EVIDENCE_FOLLOW_UP
             || entry.latest_evidence.scheduling_follow_up != SCHEDULING_FOLLOW_UP
         {
             return Err(format!(
-                "{} must explicitly defer machine receipts and scheduling",
+                "{} must explicitly defer machine evidence and scheduling",
                 entry.source
             ));
         }
@@ -538,15 +538,15 @@ fn validate_registry(
             let valid_mutation_evidence = match entry.mutation_evidence.status.as_str() {
                 "pending" => {
                     entry.mutation_evidence.follow_up.is_some()
-                        && entry.mutation_evidence.receipt.is_none()
+                        && entry.mutation_evidence.evidence.is_none()
                 }
                 "proven" => {
                     entry.mutation_evidence.follow_up.is_none()
                         && entry
                             .mutation_evidence
-                            .receipt
+                            .evidence
                             .as_deref()
-                            .is_some_and(|receipt| root.join(receipt).is_file())
+                            .is_some_and(|evidence| root.join(evidence).is_file())
                 }
                 _ => false,
             };
@@ -722,7 +722,7 @@ fn rejects_decorative_required_gate_mutant() {
 }
 
 #[test]
-fn rejects_proven_mutation_without_a_checked_in_receipt() {
+fn rejects_proven_mutation_without_checked_in_evidence() {
     let (root, mut registry, manifests, recipes, plan) = fixtures();
     let entry = registry
         .entries
@@ -731,8 +731,50 @@ fn rejects_proven_mutation_without_a_checked_in_receipt() {
         .expect("registry must contain a live gate");
     entry.mutation_evidence.status = "proven".to_string();
     entry.mutation_evidence.follow_up = None;
-    entry.mutation_evidence.receipt = None;
+    entry.mutation_evidence.evidence = None;
     let error = validate_registry(&registry, &manifests, &recipes, &plan, &root)
-        .expect_err("proven mutation evidence without a receipt must fail");
+        .expect_err("proven mutation evidence without an evidence record must fail");
     assert!(error.contains("mutation evidence"), "{error}");
+}
+
+#[test]
+fn gate_evidence_terminology_has_no_legacy_aliases() {
+    let root = repository_root();
+    let governed_files = [
+        "architecture/gate-registry.json",
+        "architecture/package-roles.json",
+        "architecture/workspace-tiers.json",
+        "docs/build-and-test.md",
+        "docs/findings.md",
+        "tests/conformance/src/lib.rs",
+        "tests/conformance/src/kubernetes_gate_verdict.rs",
+        "tests/conformance/tests/gate_mutation_evidence.rs",
+        "tests/conformance/tests/gate_registry.rs",
+        "tests/conformance/tests/kubernetes_gate_runner.rs",
+        "tests/conformance/tests/workspace_tiers.rs",
+        "tools/kubernetes-gate-run",
+    ];
+    let forbidden = [
+        concat!("architecture/", "receipts"),
+        concat!("machine_", "receipt"),
+        concat!("receipt", "_follow_up"),
+        concat!("kubernetes_gate_", "receipt"),
+        concat!("gate_mutation_", "receipts"),
+        concat!("--", "receipt"),
+        concat!("gate ", "receipt"),
+        concat!("gate-of-record ", "receipt"),
+        concat!("mutation ", "receipt"),
+        concat!("proof ", "receipt"),
+    ];
+
+    for relative in governed_files {
+        let text = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        for term in forbidden {
+            assert!(
+                !text.to_ascii_lowercase().contains(term),
+                "{relative} retains legacy gate-evidence term {term:?}"
+            );
+        }
+    }
 }

@@ -1100,7 +1100,7 @@ fn release_tier_requires_sr17_sr26_identity_join() {
         "oci_manifest_digest",
         "proof_artifact_sha256",
         "proof_oci_manifest_digest",
-        "proof_receipt_sha256",
+        "proof_evidence_sha256",
         "proof_source_revision",
         "source_revision",
     ]

@@ -1,4 +1,4 @@
-//! Typed consumer contract for Kubernetes gate verdict receipts.
+//! Typed consumer contract for Kubernetes gate verdict records.
 
 use serde::Deserialize;
 
@@ -8,7 +8,7 @@ pub const PROTOCOL: &str = "wamn-kubernetes-gate-verdict/v1";
 /// A complete aggregate verdict for one freshly applied manifest.
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct Receipt {
+pub struct GateVerdictRecord {
     pub schema_version: u32,
     pub protocol: String,
     pub manifest: String,
@@ -17,7 +17,7 @@ pub struct Receipt {
     pub timeout_seconds: u64,
     pub verdict: Verdict,
     pub failure_classes: Vec<String>,
-    pub jobs: Vec<JobReceipt>,
+    pub jobs: Vec<JobVerdictRecord>,
     pub snapshot_probe: Option<SnapshotProbe>,
 }
 
@@ -40,7 +40,7 @@ pub enum Expectation {
 /// One Job's expected and observed execution evidence.
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct JobReceipt {
+pub struct JobVerdictRecord {
     pub name: String,
     pub container: String,
     pub expectation: Expectation,
@@ -91,17 +91,17 @@ pub struct SnapshotProbe {
     pub unchanged: bool,
 }
 
-/// Parse a receipt and reject unknown fields or a different protocol version.
-pub fn parse_receipt(bytes: &[u8]) -> Result<Receipt, String> {
-    let receipt: Receipt =
-        serde_json::from_slice(bytes).map_err(|error| format!("invalid receipt JSON: {error}"))?;
-    if receipt.schema_version != 1 || receipt.protocol != PROTOCOL {
+/// Parse a record and reject unknown fields or a different protocol version.
+pub fn parse_verdict_record(bytes: &[u8]) -> Result<GateVerdictRecord, String> {
+    let record: GateVerdictRecord =
+        serde_json::from_slice(bytes).map_err(|error| format!("invalid record JSON: {error}"))?;
+    if record.schema_version != 1 || record.protocol != PROTOCOL {
         return Err(format!(
-            "unsupported Kubernetes gate receipt {}/{}",
-            receipt.protocol, receipt.schema_version
+            "unsupported Kubernetes gate record {}/{}",
+            record.protocol, record.schema_version
         ));
     }
-    Ok(receipt)
+    Ok(record)
 }
 
 #[cfg(test)]
@@ -109,8 +109,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unknown_receipt_fields_are_rejected() {
-        let error = parse_receipt(
+    fn unknown_record_fields_are_rejected() {
+        let error = parse_verdict_record(
             br#"{"schema_version":1,"protocol":"wamn-kubernetes-gate-verdict/v1",
                 "manifest":"gate.yaml","namespace":"ns","run_started_at":"now",
                 "timeout_seconds":1,"verdict":"pass","failure_classes":[],"jobs":[],
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn future_protocol_versions_are_rejected() {
-        let error = parse_receipt(
+        let error = parse_verdict_record(
             br#"{"schema_version":2,"protocol":"wamn-kubernetes-gate-verdict/v2",
                 "manifest":"gate.yaml","namespace":"ns","run_started_at":"now",
                 "timeout_seconds":1,"verdict":"pass","failure_classes":[],"jobs":[],
@@ -130,7 +130,7 @@ mod tests {
         )
         .expect_err("unknown protocol must fail closed");
         assert!(
-            error.contains("unsupported Kubernetes gate receipt"),
+            error.contains("unsupported Kubernetes gate record"),
             "{error}"
         );
     }

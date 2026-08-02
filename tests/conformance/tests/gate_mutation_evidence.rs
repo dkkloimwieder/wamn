@@ -1,4 +1,4 @@
-//! Strict schema and invariant checks for checked-in gate-mutation receipts.
+//! Strict schema and invariant checks for checked-in gate-mutation evidence.
 
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const RECEIPT_DIRECTORY: &str = "architecture/receipts/mutations";
+const EVIDENCE_DIRECTORY: &str = "architecture/evidence/mutations";
 const DURABLE_CAMPAIGN: &str = "durable-invocation-recovery";
 const DURABLE_BEAD: &str = "wamn-2jdm.5.1";
 const DURABLE_RUNNER: &str = "tools/gate-mutants/durable-invocation-recovery.sh";
@@ -14,7 +14,7 @@ const DURABLE_SOURCE_COMMIT: &str = "cf9d5ffebc885629bf2f7c45a2310f6c55245f60";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Receipt {
+struct EvidenceRecord {
     schema_version: u32,
     campaign: String,
     bead: String,
@@ -81,21 +81,21 @@ fn validate_command(command: &[String], field: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_receipt(receipt: &Receipt) -> Result<(), String> {
-    if receipt.schema_version != 1 {
+fn validate_evidence(evidence: &EvidenceRecord) -> Result<(), String> {
+    if evidence.schema_version != 1 {
         return Err(format!(
-            "unsupported mutation receipt schema {}",
-            receipt.schema_version
+            "unsupported mutation evidence schema {}",
+            evidence.schema_version
         ));
     }
-    if receipt.campaign.trim().is_empty() || receipt.bead.trim().is_empty() {
-        return Err("receipt campaign and bead must be named".to_string());
+    if evidence.campaign.trim().is_empty() || evidence.bead.trim().is_empty() {
+        return Err("evidence campaign and bead must be named".to_string());
     }
-    if receipt.profile != "debug" {
-        return Err("mutation receipts must use the debug profile".to_string());
+    if evidence.profile != "debug" {
+        return Err("mutation evidence must use the debug profile".to_string());
     }
-    if receipt.source.git_commit.len() != 40
-        || !receipt
+    if evidence.source.git_commit.len() != 40
+        || !evidence
             .source
             .git_commit
             .bytes()
@@ -103,13 +103,13 @@ fn validate_receipt(receipt: &Receipt) -> Result<(), String> {
     {
         return Err("source.git_commit must be a full commit id".to_string());
     }
-    validate_sha256(&receipt.source.runner_sha256, "source.runner_sha256")?;
-    if receipt.green_runs.is_empty() || receipt.mutants.is_empty() {
-        return Err("receipt requires green and red evidence".to_string());
+    validate_sha256(&evidence.source.runner_sha256, "source.runner_sha256")?;
+    if evidence.green_runs.is_empty() || evidence.mutants.is_empty() {
+        return Err("evidence requires green and red evidence".to_string());
     }
 
     let mut green_gates = BTreeSet::new();
-    for run in &receipt.green_runs {
+    for run in &evidence.green_runs {
         if !green_gates.insert(run.gate.as_str()) {
             return Err(format!("duplicate green gate {}", run.gate));
         }
@@ -121,7 +121,7 @@ fn validate_receipt(receipt: &Receipt) -> Result<(), String> {
     }
 
     let mut mutant_ids = BTreeSet::new();
-    for mutant in &receipt.mutants {
+    for mutant in &evidence.mutants {
         if !mutant_ids.insert(mutant.id.as_str()) {
             return Err(format!("duplicate mutant {}", mutant.id));
         }
@@ -152,7 +152,7 @@ fn validate_receipt(receipt: &Receipt) -> Result<(), String> {
     Ok(())
 }
 
-fn receipt_json() -> String {
+fn evidence_json() -> String {
     format!(
         r#"{{
           "schema_version": 1,
@@ -188,83 +188,83 @@ fn receipt_json() -> String {
     )
 }
 
-fn parse_receipt(json: &str) -> Result<Receipt, String> {
-    serde_json::from_str(json).map_err(|error| format!("invalid receipt JSON: {error}"))
+fn parse_evidence(json: &str) -> Result<EvidenceRecord, String> {
+    serde_json::from_str(json).map_err(|error| format!("invalid evidence JSON: {error}"))
 }
 
 #[test]
-fn strict_receipt_schema_accepts_green_red_and_byte_exact_restore() {
-    let receipt = parse_receipt(&receipt_json()).expect("valid receipt fixture");
-    validate_receipt(&receipt).expect("valid receipt invariants");
+fn strict_evidence_schema_accepts_green_red_and_byte_exact_restore() {
+    let evidence = parse_evidence(&evidence_json()).expect("valid evidence fixture");
+    validate_evidence(&evidence).expect("valid evidence invariants");
 }
 
 #[test]
-fn strict_receipt_schema_rejects_unknown_fields_and_non_debug_runs() {
-    let unknown = receipt_json().replacen(
+fn strict_evidence_schema_rejects_unknown_fields_and_non_debug_runs() {
+    let unknown = evidence_json().replacen(
         "\"profile\": \"debug\"",
         "\"profile\": \"debug\", \"mutable_note\": true",
         1,
     );
-    assert!(parse_receipt(&unknown).is_err());
+    assert!(parse_evidence(&unknown).is_err());
 
-    let release = receipt_json().replacen("\"profile\": \"debug\"", "\"profile\": \"release\"", 1);
-    let receipt = parse_receipt(&release).expect("release is structurally valid JSON");
+    let release = evidence_json().replacen("\"profile\": \"debug\"", "\"profile\": \"release\"", 1);
+    let evidence = parse_evidence(&release).expect("release is structurally valid JSON");
     assert_eq!(
-        validate_receipt(&receipt),
-        Err("mutation receipts must use the debug profile".to_string())
+        validate_evidence(&evidence),
+        Err("mutation evidence must use the debug profile".to_string())
     );
 }
 
 #[test]
-fn strict_receipt_schema_rejects_survivors_and_non_restoration() {
-    let survived = receipt_json()
+fn strict_evidence_schema_rejects_survivors_and_non_restoration() {
+    let survived = evidence_json()
         .replacen("\"exit_code\": 101", "\"exit_code\": 0", 1)
         .replacen("\"status\": \"killed\"", "\"status\": \"survived\"", 1);
-    let receipt = parse_receipt(&survived).expect("survivor fixture parses");
+    let evidence = parse_evidence(&survived).expect("survivor fixture parses");
     assert!(
-        validate_receipt(&receipt)
+        validate_evidence(&evidence)
             .expect_err("survivor must fail")
             .contains("was not killed")
     );
 
-    let non_restored = receipt_json().replacen(
+    let non_restored = evidence_json().replacen(
         &format!("\"restored_sha256\": \"{}\"", "2".repeat(64)),
         &format!("\"restored_sha256\": \"{}\"", "4".repeat(64)),
         1,
     );
-    let receipt = parse_receipt(&non_restored).expect("non-restored fixture parses");
+    let evidence = parse_evidence(&non_restored).expect("non-restored fixture parses");
     assert!(
-        validate_receipt(&receipt)
+        validate_evidence(&evidence)
             .expect_err("non-restoration must fail")
             .contains("did not restore byte-exactly")
     );
 }
 
 #[test]
-fn checked_in_mutation_receipts_conform_when_present() {
-    let directory = repository_root().join(RECEIPT_DIRECTORY);
+fn checked_in_mutation_evidence_conforms_when_present() {
+    let directory = repository_root().join(EVIDENCE_DIRECTORY);
     if !directory.exists() {
         return;
     }
-    for entry in fs::read_dir(&directory).expect("mutation receipt directory is readable") {
-        let path = entry.expect("mutation receipt entry is readable").path();
+    for entry in fs::read_dir(&directory).expect("mutation evidence directory is readable") {
+        let path = entry.expect("mutation evidence entry is readable").path();
         if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
             continue;
         }
         let json = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-        let receipt =
-            parse_receipt(&json).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        validate_receipt(&receipt).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        if receipt.campaign == DURABLE_CAMPAIGN {
-            assert_eq!(receipt.bead, DURABLE_BEAD);
-            assert_eq!(receipt.source.git_commit, DURABLE_SOURCE_COMMIT);
+        let evidence =
+            parse_evidence(&json).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        validate_evidence(&evidence).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        if evidence.campaign == DURABLE_CAMPAIGN {
+            assert_eq!(evidence.bead, DURABLE_BEAD);
+            assert_eq!(evidence.source.git_commit, DURABLE_SOURCE_COMMIT);
             let runner = fs::read(repository_root().join(DURABLE_RUNNER))
                 .expect("durable mutation runner is readable");
             assert_eq!(
-                receipt.source.runner_sha256,
+                evidence.source.runner_sha256,
                 hex::encode(Sha256::digest(runner)),
-                "durable receipt must identify the checked-in runner bytes"
+                "durable evidence must identify the checked-in runner bytes"
             );
         }
     }
