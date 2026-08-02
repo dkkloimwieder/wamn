@@ -105,6 +105,7 @@ enum Classification {
 struct MutationEvidence {
     status: String,
     follow_up: Option<String>,
+    receipt: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -527,13 +528,21 @@ fn validate_registry(
                     entry.source
                 ));
             }
-            let valid_mutation_evidence = matches!(
-                (
-                    entry.mutation_evidence.status.as_str(),
-                    entry.mutation_evidence.follow_up.as_deref(),
-                ),
-                ("pending", Some(_)) | ("proven", None)
-            );
+            let valid_mutation_evidence = match entry.mutation_evidence.status.as_str() {
+                "pending" => {
+                    entry.mutation_evidence.follow_up.is_some()
+                        && entry.mutation_evidence.receipt.is_none()
+                }
+                "proven" => {
+                    entry.mutation_evidence.follow_up.is_none()
+                        && entry
+                            .mutation_evidence
+                            .receipt
+                            .as_deref()
+                            .is_some_and(|receipt| root.join(receipt).is_file())
+                }
+                _ => false,
+            };
             if !valid_mutation_evidence {
                 return Err(format!(
                     "{} must carry proven mutation evidence or point to its follow-up",
@@ -703,4 +712,20 @@ fn rejects_decorative_required_gate_mutant() {
     let error = validate_registry(&registry, &manifests, &recipes, &plan, &root)
         .expect_err("a decorative required gate must fail");
     assert!(error.contains("decorative required gate"), "{error}");
+}
+
+#[test]
+fn rejects_proven_mutation_without_a_checked_in_receipt() {
+    let (root, mut registry, manifests, recipes, plan) = fixtures();
+    let entry = registry
+        .entries
+        .iter_mut()
+        .find(|entry| entry.source_kind != SourceKind::Retired)
+        .expect("registry must contain a live gate");
+    entry.mutation_evidence.status = "proven".to_string();
+    entry.mutation_evidence.follow_up = None;
+    entry.mutation_evidence.receipt = None;
+    let error = validate_registry(&registry, &manifests, &recipes, &plan, &root)
+        .expect_err("proven mutation evidence without a receipt must fail");
+    assert!(error.contains("mutation evidence"), "{error}");
 }

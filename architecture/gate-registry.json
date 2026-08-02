@@ -1028,8 +1028,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "receipt": "architecture/receipts/mutations/durable-invocation-recovery.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -2152,8 +2153,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
+        "status": "proven",
+        "follow_up": null,
+        "receipt": "architecture/receipts/mutations/durable-invocation-recovery.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -2180,8 +2182,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
+        "status": "proven",
+        "follow_up": null,
+        "receipt": "architecture/receipts/mutations/durable-invocation-recovery.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -2209,8 +2212,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
+        "status": "proven",
+        "follow_up": null,
+        "receipt": "architecture/receipts/mutations/durable-invocation-recovery.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -2237,8 +2241,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
+        "status": "proven",
+        "follow_up": null,
+        "receipt": "architecture/receipts/mutations/durable-invocation-recovery.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -2949,8 +2954,9 @@
         "does not execute recovery or prove attempt-intent atomicity"
       ],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.5"
+        "status": "proven",
+        "follow_up": null,
+        "receipt": "architecture/receipts/mutations/durable-invocation-recovery.json"
       },
       "cadence": "per-recovery-contract-or-spec-change",
       "latest_evidence": {
@@ -2994,8 +3000,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.12"
       },
       "cadence": "per-gate-source-or-decision-change",
       "latest_evidence": {

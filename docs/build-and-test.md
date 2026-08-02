@@ -1154,13 +1154,20 @@ cargo test -p wamn-run-state   # pure text pins + queue.rs live
 # delay-merge; a structurally-different v2 (linear in->r) is registered+activated
 # MID-RUN; the pinned resume keeps driving v1 (completed, 7 node_runs rows, m/r
 # visits (2,0,1)). See [5.14] production runner (run-worker, fqg.8) for the run cmd.
-# Mutants (scratchpad mutate_cox.py; apply/test/restore with sha256):
-#   (a) GUEST: flow_at drops the version pin (loads the ACTIVE flow instead of
-#       load_flow_at) -> runnerbench merge-resume FAILS (Plan::resume Mismatch /
-#       wrong node_runs shape); rebuild the release guest for the mutant + restore.
-#   (b) QUEUE: claim_dispatch_sql reverted to the max-active-version subselect ->
-#       the queue.rs live cd_probe assert FAILS ('claim returns the run's
-#       persisted flow_version (3), not the active one (4)').
+# The checked-in PLAN-0.2 campaign replaces the historical scratchpad mutants.
+# `check` proves every exact mutation anchor and baseline hash is current;
+# `green-all` proves every named gate on the clean source; `run-all` applies
+# each fixed mutant, requires the named debug gate to turn red, and restores the
+# target byte-for-byte under a trap.
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-1 \
+  tools/gate-mutants/durable-invocation-recovery.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-1 \
+  tools/gate-mutants/durable-invocation-recovery.sh green-all
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-1 \
+  tools/gate-mutants/durable-invocation-recovery.sh run-all
+cargo test --locked -p wamn-proof-conformance --test gate_mutation_receipts
+# Immutable green/red evidence:
+# architecture/receipts/mutations/durable-invocation-recovery.json
 ```
 
 ### [5.9] credential vault (plugins/wamn_credentials + credproof)

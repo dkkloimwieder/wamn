@@ -1,6 +1,7 @@
 //! Strict schema and invariant checks for checked-in gate-mutation receipts.
 
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,6 +9,8 @@ use std::path::{Path, PathBuf};
 const RECEIPT_DIRECTORY: &str = "architecture/receipts/mutations";
 const DURABLE_CAMPAIGN: &str = "durable-invocation-recovery";
 const DURABLE_BEAD: &str = "wamn-2jdm.5.1";
+const DURABLE_RUNNER: &str = "tools/gate-mutants/durable-invocation-recovery.sh";
+const DURABLE_SOURCE_COMMIT: &str = "cf9d5ffebc885629bf2f7c45a2310f6c55245f60";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -253,5 +256,16 @@ fn checked_in_mutation_receipts_conform_when_present() {
         let receipt =
             parse_receipt(&json).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         validate_receipt(&receipt).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        if receipt.campaign == DURABLE_CAMPAIGN {
+            assert_eq!(receipt.bead, DURABLE_BEAD);
+            assert_eq!(receipt.source.git_commit, DURABLE_SOURCE_COMMIT);
+            let runner = fs::read(repository_root().join(DURABLE_RUNNER))
+                .expect("durable mutation runner is readable");
+            assert_eq!(
+                receipt.source.runner_sha256,
+                hex::encode(Sha256::digest(runner)),
+                "durable receipt must identify the checked-in runner bytes"
+            );
+        }
     }
 }
