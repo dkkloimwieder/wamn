@@ -4,9 +4,14 @@
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a
 //! throwaway Postgres (recipe: docs/build-and-test.md [RUN-PLANE-RECONCILE]);
-//! skipped cleanly when unset. Four legs, sequential under one test entry
+//! skipped cleanly when unset. Six legs, sequential under one test entry
 //! (they share the `catalog` schema and the `wamn_app` role):
 //!
+//! - **shared-runner legacy** (wamn-l5i9.73): the deployed fixture's old
+//!   runs/node_runs/run_queue shape gains canonical admission/causation
+//!   columns, CHECKs, helper functions, and lineage trigger without losing its
+//!   compatible history. The materializer catalog-head lock and immutable
+//!   lineage are exercised, then a second reconcile is a no-op.
 //! - **v1-era drifted** (manifestations 1 + 4): a queue schema predating E4
 //!   `stream_seq` / D20 `partition_policy` / fqg.20 `partition_owner` / v8cv
 //!   `run_dead_letters`, with the pre-E4 claimable index, outbox-era tables +
@@ -109,11 +114,172 @@ async fn run_plane_reconcile_live() {
         return;
     };
     let su = connect(&url).await;
+    shared_runner_legacy_leg(&su).await;
     v1_era_drifted_leg(&su, &url).await;
     queue_missing_leg(&su).await;
     from_zero_leg(&su).await;
     current_noop_leg(&su).await;
     fail_kind_check_drift_leg(&su).await;
+}
+
+/// The exact durable shape found under the deployed shared runner: legacy
+/// runs/node_runs/run_queue tables with compatible history rows, but no
+/// admission table, causation columns, helper functions, or lineage trigger.
+async fn shared_runner_legacy_leg(su: &Client) {
+    reset(su).await;
+    let schema = schema();
+    su.batch_execute(&format!(
+        "CREATE SCHEMA {SCHEMA}; GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_app; \
+         CREATE TABLE {SCHEMA}.runs ( \
+           tenant_id text NOT NULL CHECK (tenant_id <> ''), run_id text NOT NULL, \
+           flow_id text NOT NULL, flow_version int NOT NULL, \
+           status text NOT NULL DEFAULT 'running' CHECK (status IN \
+             ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
+           trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
+           idempotency_key text, replay_of text, root_run_id text, \
+           fail_kind text CHECK (fail_kind IN \
+             ('terminal','retry-exhausted','invalid-input','runaway-budget')), \
+           fail_node text, fail_reason text, created_at timestamptz NOT NULL DEFAULT now(), \
+           updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (tenant_id,run_id)); \
+         CREATE TABLE {SCHEMA}.cron_anchor (tenant_id text NOT NULL CHECK (tenant_id <> ''), \
+           flow_id text NOT NULL,last_tick bigint NOT NULL,PRIMARY KEY(tenant_id,flow_id)); \
+         CREATE TABLE {SCHEMA}.node_runs (tenant_id text NOT NULL CHECK (tenant_id <> ''), \
+           run_id text NOT NULL,node_id text NOT NULL,occurrence int NOT NULL DEFAULT 0, \
+           seq int NOT NULL,attempt int NOT NULL DEFAULT 0,status text NOT NULL CHECK \
+             (status IN ('running','parked','success','error')),output_port text,output_json jsonb, \
+           input_json jsonb,error_kind text CHECK (error_kind IN \
+             ('retryable','rate-limited','terminal','invalid-input','cancelled')),error_detail jsonb, \
+           resume_at timestamptz,input_ref text,output_ref text,preview_head text,payload_size bigint, \
+           payload_hash text,capture_mode text,redacted boolean NOT NULL DEFAULT false, \
+           started_at timestamptz NOT NULL DEFAULT now(),ended_at timestamptz, \
+           PRIMARY KEY(tenant_id,run_id,node_id,occurrence),FOREIGN KEY(tenant_id,run_id) \
+             REFERENCES {SCHEMA}.runs(tenant_id,run_id) ON DELETE CASCADE); \
+         CREATE INDEX node_runs_seq ON {SCHEMA}.node_runs(tenant_id,run_id,seq); \
+         CREATE TABLE {SCHEMA}.run_queue (tenant_id text NOT NULL CHECK (tenant_id <> ''), \
+           run_id text NOT NULL,partition_key text,partition_policy text NOT NULL DEFAULT 'blocking' \
+             CHECK(partition_policy IN ('blocking','leapfrog')),priority int NOT NULL DEFAULT 0, \
+           available_at timestamptz NOT NULL DEFAULT now(),stream_seq bigint NOT NULL DEFAULT 0, \
+           lease_owner text,lease_expires_at timestamptz,attempts int NOT NULL DEFAULT 0, \
+           max_attempts int NOT NULL DEFAULT 20,enqueued_at timestamptz NOT NULL DEFAULT now(), \
+           PRIMARY KEY(tenant_id,run_id),FOREIGN KEY(tenant_id,run_id) \
+             REFERENCES {SCHEMA}.runs(tenant_id,run_id) ON DELETE CASCADE); \
+         CREATE INDEX run_queue_claimable ON {SCHEMA}.run_queue \
+           (tenant_id,available_at,stream_seq,lease_expires_at); \
+         CREATE INDEX run_queue_partition ON {SCHEMA}.run_queue(tenant_id,partition_key) \
+           WHERE partition_key IS NOT NULL; \
+         CREATE TABLE {SCHEMA}.partition_owner (tenant_id text NOT NULL CHECK(tenant_id <> ''), \
+           partition_key text NOT NULL,lease_owner text NOT NULL,lease_expires_at timestamptz NOT NULL, \
+           acquired_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(tenant_id,partition_key)); \
+         CREATE TABLE {SCHEMA}.run_dead_letters (tenant_id text NOT NULL CHECK(tenant_id <> ''), \
+           run_id text NOT NULL,partition_key text NOT NULL,flow_id text NOT NULL,reason text NOT NULL, \
+           failed_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(tenant_id,run_id), \
+           FOREIGN KEY(tenant_id,run_id) REFERENCES {SCHEMA}.runs(tenant_id,run_id) ON DELETE CASCADE);"
+    ))
+    .await
+    .expect("build shared-runner legacy run plane");
+    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
+        .await
+        .expect("apply legacy-compatible flows");
+    su.batch_execute(&rewrite_schema(FLOW_TESTS_SQL, &schema))
+        .await
+        .expect("apply legacy-compatible flow tests");
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog schema");
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs(tenant_id,run_id,flow_id,flow_version,status) \
+           VALUES ('t1','history-run','f',1,'completed'); \
+         INSERT INTO {SCHEMA}.node_runs(tenant_id,run_id,node_id,occurrence,seq,status) \
+           VALUES ('t1','history-run','n1',0,0,'success'), \
+                  ('t1','history-run','n2',0,1,'success');"
+    ))
+    .await
+    .expect("seed compatible shared history");
+
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("upgrade shared-runner legacy fixture");
+    for kind in [
+        RunPlaneActionKind::AddColumn,
+        RunPlaneActionKind::CreateTable,
+        RunPlaneActionKind::RepairConstraint,
+        RunPlaneActionKind::RepairHelperFunction,
+        RunPlaneActionKind::RepairTrigger,
+    ] {
+        assert!(
+            plan.actions.iter().any(|action| action.kind == kind),
+            "shared fixture plans {kind:?}: {:#?}",
+            plan.actions
+        );
+    }
+    let counts = su
+        .query_one(
+            &format!(
+                "SELECT (SELECT count(*) FROM {SCHEMA}.runs), \
+                        (SELECT count(*) FROM {SCHEMA}.node_runs)"
+            ),
+            &[],
+        )
+        .await
+        .expect("read preserved row counts");
+    assert_eq!(counts.get::<_, i64>(0), 1);
+    assert_eq!(counts.get::<_, i64>(1), 2);
+
+    su.batch_execute(
+        "INSERT INTO catalog.catalogs \
+           (tenant_id,catalog_id,version,environment,schema_version,state) \
+           VALUES ('t1','cat',1,'dev','1','applied'); \
+         INSERT INTO catalog.catalog_heads \
+           (tenant_id,catalog_id,environment,applied_catalog_version) \
+           VALUES ('t1','cat','dev',1);",
+    )
+    .await
+    .expect("seed a stable catalog head");
+    su.batch_execute("SET ROLE wamn_app; SELECT set_config('app.tenant','t1',false)")
+        .await
+        .expect("enter tenant role");
+    let head: Option<i32> = su
+        .query_one(
+            &format!("SELECT {SCHEMA}.lock_catalog_head('t1','cat','dev')"),
+            &[],
+        )
+        .await
+        .expect("materializer lock boundary is callable")
+        .get(0);
+    assert_eq!(head, Some(1));
+    su.batch_execute("RESET ROLE; SELECT set_config('app.tenant','',false)")
+        .await
+        .expect("leave tenant role");
+
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,trigger_source,event_source_run_id,event_root_run_id,event_depth) \
+           VALUES ('t1','event-run','f',1,'event','event-run','event-run',0);"
+    ))
+    .await
+    .expect("insert canonical event lineage");
+    let mutation = su
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET event_depth=1 \
+                 WHERE tenant_id='t1' AND run_id='event-run'"
+            ),
+            &[],
+        )
+        .await;
+    assert!(
+        mutation.is_err(),
+        "lineage trigger rejects ancestry mutation"
+    );
+
+    let again = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("re-plan upgraded shared fixture");
+    assert!(
+        again.is_noop(),
+        "shared fixture converged: {:#?}",
+        again.actions
+    );
 }
 
 /// Manifestations 1 + 4: the 2jkm.41-sweep drift set plus the outbox era.
@@ -474,8 +640,8 @@ async fn current_noop_leg(su: &Client) {
     );
     assert_eq!(
         dry.at_target.len(),
-        9,
-        "all nine run-plane tables at target"
+        10,
+        "all ten run-plane tables at target"
     );
 
     let apply = reconcile_run_plane::reconcile(su, &schema, true)
@@ -548,7 +714,8 @@ async fn fail_kind_check_drift_leg(su: &Client) {
     assert!(
         plan.actions
             .iter()
-            .any(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck),
+            .any(|a| a.kind == RunPlaneActionKind::RepairConstraint
+                && a.target == "runs.runs_fail_kind_check"),
         "the fail_kind CHECK repair is planned: {:#?}",
         plan.actions
     );

@@ -4,11 +4,14 @@
 # the deploy/sql schema of record — created from older revisions, restored from
 # pre-teardown snapshots, or wiped by an ephemeral-fixture restart.
 #
-# WHAT IT COVERS (idempotent, ADDITIVE — a schema at record is a no-op):
+# WHAT IT COVERS (idempotent and data-preserving — record is a no-op):
 #   - missing record columns  (E4 stream_seq, D20 partition_policy, …)
 #   - a stale claimable-index definition (recreated WITH stream_seq)
 #   - wholly-missing tables   (run_queue/partition_owner/run_dead_letters,
 #                              flows, runs/node_runs — from-zero included)
+#   - exact record CHECK constraints, the run-state helper functions, and the
+#     event-lineage trigger (incompatible existing rows fail the Job; no row is
+#     rewritten or deleted)
 #   - the pre-l5i9.19 outbox-era teardown (outbox/evt_shadow tables, the
 #     wamn_outbox_event trigger/function, legacy registration `state` keys)
 #   - the per-database `catalog` metadata schema when absent

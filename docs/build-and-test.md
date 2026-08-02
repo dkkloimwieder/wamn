@@ -3666,10 +3666,12 @@ Docs: docs/platform/provisioning.md (`reconcile-run-plane`). The durable migrati
 for provisioned run-plane schemas: `wamn-ctl reconcile-run-plane --schema <env>`
 diffs ONE project-env schema (+ the per-database `catalog` schema) against the
 deploy/sql schema of record (embedded `include_str!` — the same source the
-wamn-9mg8 stand-in drift guard pins) and applies the idempotent ADDITIVE plan:
+wamn-9mg8 stand-in drift guard pins) and applies the idempotent, data-preserving plan:
 create-missing tables from record sections, `ADD COLUMN` for record columns a
 present table lacks, index create/recreate (the pre-E4 claimable index), the
-pre-l5i9.19 outbox-era teardown, and catalog-schema from-zero. Pure planner
+exact canonical CHECK/user-trigger/helper-function apparatus, the pre-l5i9.19
+outbox-era teardown, and catalog-schema from-zero. Existing rows are never
+rewritten or deleted; PostgreSQL rejects an incompatible canonical CHECK. Pure planner
 `wamn_schema_control::plan_run_plane` (crates/schema/control/src/run_plane.rs); thin
 shell `wamn_ctl::reconcile_run_plane` (shared `reconcile()` drives the CLI and
 the gate). `--dry-run` is strictly read-only. One-shot Job template:
@@ -3679,12 +3681,16 @@ the gate). `--dry-run` is strictly read-only. One-shot Job template:
 cargo test -p wamn-schema-control run_plane   # record parse pins + planner (no-op-at-record self-consistency, drift/from-zero/queue-missing plans)
 cargo clippy -p wamn-schema-control -p wamn-ctl --all-targets
 # Live-apply matrix (throwaway PG; plain postgres:18 — no wal_level needed).
-# Four legs, hermetic under one test entry: v1-era-drifted (E4/D20 columns +
+# Six legs, hermetic under one test entry: shared-runner-legacy (the deployed
+# fixture shape -> canonical admission/causation columns, CHECKs, helpers, and
+# lineage trigger with history row counts preserved and a materializer lock
+# smoke), v1-era-drifted (E4/D20 columns +
 # old claimable index + outbox era + legacy registration state key -> full
 # parity, defaults backfill the pre-existing row, re-run no-op), queue-missing
 # (the live poc_f1 case -> 3 queue tables + FK + append-only dead-letter
 # grants), from-zero (bare DB without even wamn_app; --dry-run proven
-# read-only; then full provision + RLS smoke as wamn_app), current=no-op:
+# read-only; then full provision + RLS smoke as wamn_app), current=no-op, and
+# fail_kind drift:
 docker run --rm -d --name wamn-1wdq-pg -e POSTGRES_PASSWORD=pg -p 55461:5432 postgres:18
 WAMN_CTL_PG_URL=postgres://postgres:pg@localhost:55461/postgres \
   cargo test -p wamn-ctl --test run_plane_live -- --nocapture
@@ -3692,17 +3698,17 @@ docker rm -f wamn-1wdq-pg
 ```
 
 In-cluster gate of record: rebake `wamn-ctl:dev` (`docker build --target ctl`),
-kind load, then apply `deploy/platform/run-plane-reconcile.example.yaml` per
-demo schema (`wamn_runner_demo`, and a `poc_f1` variant) — against the CURRENT
-live schemas both must report the no-op ("run plane already at the schema of
-record").
+kind load, then apply `deploy/platform/run-plane-reconcile.example.yaml` to
+`wamn_runner_demo`. The first run upgrades the deployed legacy fixture; verify
+its existing run/node row counts, the deployed runner replicas, and the helper
+lock/lineage apparatus. Recreate the Job and require the second run to report
+the no-op ("run plane already at the schema of record").
 
-Mutation harness: scratchpad `mutate_1wdq.py` — M1 the planner never emits
-AddColumn (killed by `run_plane::tests::v1_era_drift_plans_the_additive_repairs`),
-M2 a present index is never considered stale (killed by the same named test's
-RecreateIndex assert), M3 the shell computes the plan but never executes it
-(killed by the `run_plane_live` live gate); apply/test/restore with sha256,
-DEBUG builds.
+Mutation harness: `tools/gate-mutants/run-plane-canonical.sh` — checked-in
+exact-hash mutants independently remove CHECK planning, helper/trigger repair,
+and effect execution; the named planner/live gates must turn red, then the trap
+restores and verifies the original hashes. Typed gate evidence lives under
+`architecture/evidence/mutations/`; DEBUG builds only.
 
 ### [EVT-C-E2E / wamn-l5i9.22] e2ebench — RETIRED (l5i9.19 teardown)
 

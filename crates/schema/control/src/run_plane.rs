@@ -8,8 +8,9 @@
 //! fixture pod restarted — everything at once, including the `catalog` metadata
 //! schema. This module is the PURE decision (the reconcile-replica-identity
 //! precedent — no DB, clock, or wasm): given what the driver OBSERVED live
-//! (tables + columns + index definitions + legacy outbox-era objects + the
-//! `catalog` schema state), it produces the idempotent, ADDITIVE plan that
+//! (tables + columns + indexes + CHECKs + user triggers + helper functions +
+//! legacy outbox-era objects + the `catalog` schema state), it produces the
+//! idempotent plan that
 //! brings one project-env's run-plane schema to the schema of record. The
 //! `wamn-ctl reconcile-run-plane` shell reads/executes; the throwaway-PG gate
 //! proves the live transitions.
@@ -39,22 +40,18 @@
 //! 5. **From-zero restore** — an empty database plans the full set, including
 //!    `deploy/sql/catalog-schema.sql` (the `catalog` metadata schema the
 //!    registration storage and the RI reconcile read).
-//! 6. **`fail_kind` CHECK literal drift** (wamn-fqg.16) — a `runs.fail_kind`
-//!    CHECK provisioned before cjv.4 added the `'runaway-budget'` literal admits
-//!    only the 3 legacy literals, so a runaway run's `mark_failed` UPDATE is
-//!    rejected and the failure verdict silently lost from the audit row. The
-//!    CHECK is DROPped by its OBSERVED name and re-ADDed under the auto-name
-//!    fresh provisioning yields (`runs_fail_kind_check`) with the record's
-//!    literals, so a reconciled schema converges byte-for-byte with a freshly
-//!    provisioned one in `pg_constraint`.
+//! 6. **Exact CHECK + trigger convergence** — every record-table CHECK is
+//!    compared in PostgreSQL's canonical form; missing/drifted checks are added
+//!    or replaced and non-record checks are removed. The run-state helper
+//!    functions and lineage trigger are likewise repaired from record.
 //!
-//! **Additive only, with one targeted constraint exception:** the plan never
+//! **Data preserving:** the plan never
 //! drops a live column, table, or index other than the named legacy outbox-era
 //! objects and a stale-definition record index; live columns not in the record
-//! are SURFACED (`extra_columns`), never touched. The sole constraint it
-//! rewrites is the `runs.fail_kind` CHECK above (drop-and-re-add of a widening
-//! literal set — every existing row still satisfies it); this is NOT a generic
-//! constraint reconciler, scoped strictly to that one CHECK.
+//! are SURFACED (`extra_columns`), never touched. CHECK/trigger definitions may
+//! be replaced to converge with record, but rows are never rewritten or
+//! deleted: PostgreSQL validates new CHECKs against existing rows and aborts on
+//! incompatible legacy data.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -69,6 +66,324 @@ const FLOWS_SQL: &str = include_str!("../../../../deploy/sql/flows.sql");
 const FLOW_TESTS_SQL: &str = include_str!("../../../../deploy/sql/flow-tests.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
+
+#[derive(Clone, Copy)]
+enum CheckOrigin {
+    Inline(&'static str),
+    Table,
+}
+
+#[derive(Clone, Copy)]
+struct CheckSpec {
+    table: &'static str,
+    name: &'static str,
+    definition: &'static str,
+    origin: CheckOrigin,
+}
+
+/// PostgreSQL 18's canonical CHECK inventory for the four run-plane record
+/// files. The live shell reads the same `pg_get_constraintdef(..., true)` form.
+/// The throwaway-PG gate applies the deploy SQL and pins that this catalog is a
+/// byte-for-byte projection of the schema of record.
+const CHECK_SPECS: &[CheckSpec] = &[
+    CheckSpec {
+        table: "runs",
+        name: "runs_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_event_depth_check",
+        definition: "CHECK (event_depth >= 0 AND event_depth <= 16)",
+        origin: CheckOrigin::Inline("event_depth"),
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_status_check",
+        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'infrastructure-failure'::text]))",
+        origin: CheckOrigin::Inline("status"),
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_admission_context_version_check",
+        definition: "CHECK (admission_context_version > 0)",
+        origin: CheckOrigin::Inline("admission_context_version"),
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_invoke_depth_check",
+        definition: "CHECK (invoke_depth >= 0)",
+        origin: CheckOrigin::Inline("invoke_depth"),
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_caller_outcome_kind_check",
+        definition: "CHECK (caller_outcome_kind = ANY (ARRAY['responded'::text, 'failed'::text, 'cancelled'::text]))",
+        origin: CheckOrigin::Inline("caller_outcome_kind"),
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_caller_http_status_check",
+        definition: "CHECK (caller_http_status >= 100 AND caller_http_status <= 599)",
+        origin: CheckOrigin::Inline("caller_http_status"),
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_fail_kind_check",
+        definition: "CHECK (fail_kind = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text]))",
+        origin: CheckOrigin::Inline("fail_kind"),
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check",
+        definition: "CHECK ((catalog_id IS NULL) = (catalog_version IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_environment_check",
+        definition: "CHECK (environment IS NULL OR environment <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_invocation_context_check",
+        definition: "CHECK (jsonb_typeof(invocation_context) = 'object'::text AND octet_length(invocation_context::text) <= 16384)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check1",
+        definition: "CHECK (event_source_run_id IS NULL AND event_root_run_id IS NULL AND event_depth IS NULL OR trigger_source = 'event'::text AND event_source_run_id IS NOT NULL AND event_source_run_id <> ''::text AND event_root_run_id IS NOT NULL AND event_root_run_id <> ''::text AND event_depth IS NOT NULL)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check2",
+        definition: "CHECK (event_depth IS DISTINCT FROM 0 OR event_source_run_id = run_id AND event_root_run_id = run_id)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check3",
+        definition: "CHECK ((parent_run_id IS NULL) = (parent_node_id IS NULL) AND (parent_run_id IS NULL) = (parent_occurrence IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check4",
+        definition: "CHECK ((parent_run_id IS NULL) = (invoke_root_run_id IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check5",
+        definition: "CHECK ((waiting_child_run_id IS NULL) = (waiting_child_occurrence IS NULL) AND (waiting_child_run_id IS NULL) = (wait_generation IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check6",
+        definition: "CHECK ((cancel_requested_kind IS NULL) = (cancel_requested_at IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check7",
+        definition: "CHECK ((caller_released_at IS NULL) = (caller_outcome_kind IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check8",
+        definition: "CHECK (caller_outcome_kind IS NULL OR caller_outcome_json IS NOT NULL)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check9",
+        definition: "CHECK (caller_outcome_kind <> 'responded'::text OR caller_release_node_id IS NOT NULL)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_check10",
+        definition: "CHECK (response_deadline_at IS NULL OR run_deadline_at IS NULL OR response_deadline_at <= run_deadline_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "invocation_admissions",
+        name: "invocation_admissions_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "cron_anchor",
+        name: "cron_anchor_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_status_check",
+        definition: "CHECK (status = ANY (ARRAY['started'::text, 'parked'::text, 'success'::text, 'error'::text]))",
+        origin: CheckOrigin::Inline("status"),
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_selected_recovery_class_check",
+        definition: "CHECK (selected_recovery_class = ANY (ARRAY['replay'::text, 'idempotent-with-key'::text, 'never-replay'::text]))",
+        origin: CheckOrigin::Inline("selected_recovery_class"),
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_recovery_class_check",
+        definition: "CHECK (recovery_class = ANY (ARRAY['replay'::text, 'idempotent-with-key'::text, 'never-replay'::text]))",
+        origin: CheckOrigin::Inline("recovery_class"),
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_generation_fact_kind_check",
+        definition: "CHECK (generation_fact_kind = ANY (ARRAY['not-required'::text, 'attested'::text]))",
+        origin: CheckOrigin::Inline("generation_fact_kind"),
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_error_kind_check",
+        definition: "CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text, 'cancelled'::text]))",
+        origin: CheckOrigin::Inline("error_kind"),
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_check",
+        definition: "CHECK (status <> 'started'::text OR selected_recovery_class IS NOT NULL AND recovery_class IS NOT NULL AND selected_recovery_class = recovery_class AND generation_fact_kind IS NOT NULL AND attempt_started_at IS NOT NULL AND attempt_deadline_at IS NOT NULL AND attempt_input_ref IS NOT NULL)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_check1",
+        definition: "CHECK (generation_fact_kind = 'not-required'::text AND connection_generation IS NULL AND credential_generation IS NULL OR generation_fact_kind = 'attested'::text AND connection_generation IS NOT NULL AND connection_generation <> ''::text AND credential_generation IS NOT NULL AND credential_generation <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_check2",
+        definition: "CHECK (attempt_deadline_at IS NULL OR attempt_started_at IS NULL OR attempt_started_at <= attempt_deadline_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_check3",
+        definition: "CHECK (attempt_dispatched_at IS NULL OR attempt_started_at IS NULL OR attempt_started_at <= attempt_dispatched_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "flows",
+        name: "flows_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "test_suites",
+        name: "test_suites_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "test_cases",
+        name: "test_cases_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "run_queue",
+        name: "run_queue_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "run_queue",
+        name: "run_queue_partition_policy_check",
+        definition: "CHECK (partition_policy = ANY (ARRAY['blocking'::text, 'leapfrog'::text]))",
+        origin: CheckOrigin::Inline("partition_policy"),
+    },
+    CheckSpec {
+        table: "run_queue",
+        name: "run_queue_lease_generation_check",
+        definition: "CHECK (lease_generation >= 0)",
+        origin: CheckOrigin::Inline("lease_generation"),
+    },
+    CheckSpec {
+        table: "partition_owner",
+        name: "partition_owner_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "run_dead_letters",
+        name: "run_dead_letters_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+];
+
+const LOCK_CATALOG_HEAD_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(p_tenant_id text, p_catalog_id text, p_environment text)\n RETURNS integer\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'catalog'\nAS $function$\nDECLARE\n    applied_version int;\nBEGIN\n    SELECT head.applied_catalog_version INTO applied_version\n    FROM catalog.catalog_heads AS head\n    WHERE p_tenant_id = NULLIF(current_setting('app.tenant', true), '')\n      AND head.tenant_id = p_tenant_id\n      AND head.catalog_id = p_catalog_id\n      AND head.environment = p_environment\n    FOR KEY SHARE OF head;\n    RETURN applied_version;\nEND\n$function$\n";
+
+const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
+
+const RUNS_EVENT_LINEAGE_TRIGGER_DEF: &str = "CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()";
+
+const LOCK_CATALOG_HEAD_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(
+    p_tenant_id text,
+    p_catalog_id text,
+    p_environment text
+)
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, catalog
+AS $$
+DECLARE
+    applied_version int;
+BEGIN
+    SELECT head.applied_catalog_version INTO applied_version
+    FROM catalog.catalog_heads AS head
+    WHERE p_tenant_id = NULLIF(current_setting('app.tenant', true), '')
+      AND head.tenant_id = p_tenant_id
+      AND head.catalog_id = p_catalog_id
+      AND head.environment = p_environment
+    FOR KEY SHARE OF head;
+    RETURN applied_version;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.lock_catalog_head(text, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text) TO wamn_app;"#;
+
+const GUARD_EVENT_LINEAGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id
+       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id
+       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN
+        RAISE EXCEPTION 'event causation lineage is immutable';
+    END IF;
+    RETURN NEW;
+END
+$$;"#;
+
+const RUNS_EVENT_LINEAGE_TRIGGER_SQL: &str = "CREATE TRIGGER runs_event_lineage_immutable \
+    BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth \
+    ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
+    wamn_run.guard_event_lineage_immutable();";
 
 /// The run-plane record files in APPLY ORDER: run-state first (schema header +
 /// `runs`, which everything FKs), then the flow registry, then the 11.2 flow
@@ -173,13 +488,6 @@ impl fmt::Display for BareSchemaName {
     }
 }
 
-/// The constraint name Postgres auto-generates for the inline unnamed
-/// `runs.fail_kind` CHECK in `run-state.sql` (empirically `runs_fail_kind_check`
-/// — the `<table>_<column>_check` rule). The fqg.16 repair re-adds under this
-/// name so a reconciled schema converges byte-for-byte with a freshly
-/// provisioned one in `pg_constraint`.
-const FAIL_KIND_CHECK_NAME: &str = "runs_fail_kind_check";
-
 /// What the driver observed live, scoped to ONE project-env schema (plus the
 /// per-database `catalog` metadata schema). Everything here is a read — the
 /// pure planner turns it into the action list.
@@ -204,12 +512,15 @@ pub struct RunPlaneObservation {
     /// Rows in `catalog.event_registrations` still carrying the legacy `state`
     /// key (0 when the table is absent — nothing to strip).
     pub stale_registration_state_rows: i64,
-    /// The live CHECK constraint on `runs.fail_kind`: `(constraint name,
-    /// canonical `pg_get_constraintdef`)`, or `None` when `runs` or the CHECK is
-    /// absent. The planner compares its literal set against the record and
-    /// repairs legacy literal drift (wamn-fqg.16 — the missing
-    /// `'runaway-budget'`).
-    pub runs_fail_kind_check: Option<(String, String)>,
+    /// Every CHECK constraint on a record table, keyed by `(table, name)`, with
+    /// PostgreSQL's canonical `pg_get_constraintdef(..., true)` definition.
+    pub checks: BTreeMap<(String, String), String>,
+    /// Every non-internal trigger on a record table, keyed by `(table, name)`,
+    /// with PostgreSQL's canonical `pg_get_triggerdef(..., true)` definition.
+    pub triggers: BTreeMap<(String, String), String>,
+    /// Canonical `pg_get_functiondef` output for the two run-state helper
+    /// functions, keyed by function name.
+    pub helper_functions: BTreeMap<String, String>,
 }
 
 /// What one plan action does (for reporting; the SQL is on the action).
@@ -222,9 +533,16 @@ pub enum RunPlaneActionKind {
     CreateTable,
     /// Add a record column missing from a present table.
     AddColumn,
-    /// Drop the legacy `runs.fail_kind` CHECK (by its observed name) and re-add
-    /// it with the record's literals (the missing `'runaway-budget'`).
-    RepairFailKindCheck,
+    /// Drop/re-add a drifted record CHECK, or add it when absent.
+    RepairConstraint,
+    /// Remove a CHECK on a record table that is absent from the schema of record.
+    DropExtraConstraint,
+    /// Create or replace a missing/drifted run-state helper function.
+    RepairHelperFunction,
+    /// Drop/recreate a missing/drifted user trigger from the schema of record.
+    RepairTrigger,
+    /// Remove a user trigger on a record table that is absent from the record.
+    DropExtraTrigger,
     /// Create a record index absent from a present table.
     CreateIndex,
     /// Drop + recreate a present index whose live definition lost a record
@@ -301,7 +619,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::EnsureSchema,
             target: schema.to_string(),
-            sql: rewrite_schema(&header_section(RUN_STATE_SQL, "wamn_run"), schema),
+            sql: rewrite_schema(&schema_header_section(RUN_STATE_SQL, "wamn_run"), schema),
         });
     }
     plan.actions.extend(creates);
@@ -336,62 +654,135 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         }
     }
 
-    // 2b. `runs.fail_kind` CHECK literal drift (wamn-fqg.16): a schema
-    //    provisioned before cjv.4 added `'runaway-budget'` carries only the 3
-    //    legacy literals, so a runaway `mark_failed` UPDATE is CHECK-rejected and
-    //    the verdict lost. Repaired ONLY when `runs` and its `fail_kind` column
-    //    are BOTH present live — a missing table/column already gets the record's
-    //    inline 4-literal CHECK via CreateTable / AddColumn above. Comparison is
-    //    on the LITERAL SET parsed from the canonical `pg_get_constraintdef`
-    //    (robust to the `IN (…)` → `= ANY (ARRAY[…])` rewrite pg applies); the
-    //    re-add lists the record's literals in record order under the auto-name
-    //    for byte-identical convergence with fresh provisioning.
-    if obs
-        .tables
-        .get("runs")
-        .is_some_and(|cols| cols.contains("fail_kind"))
-    {
-        let record = fail_kind_literals(&record_fail_kind_definition());
-        let expected: BTreeSet<&str> = record.iter().map(String::as_str).collect();
-        let add = format!(
-            "ADD CONSTRAINT {} CHECK (fail_kind IN ({}))",
-            quote_ident(FAIL_KIND_CHECK_NAME),
-            record
-                .iter()
-                .map(|lit| format!("'{lit}'"))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-        let repair_sql = match &obs.runs_fail_kind_check {
-            // Present and admits exactly the record literals → nothing to do.
-            Some((_, def))
-                if fail_kind_literals(def)
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<BTreeSet<_>>()
-                    == expected =>
-            {
-                None
-            }
-            // Drifted: drop the OBSERVED name, re-add the convergent one.
-            Some((name, _)) => Some(format!(
-                "ALTER TABLE {}.{} DROP CONSTRAINT {}, {add}",
-                schema.quoted(),
-                quote_ident("runs"),
-                quote_ident(name),
-            )),
-            // Column present but the CHECK is absent → ADD only.
-            None => Some(format!(
-                "ALTER TABLE {}.{} {add}",
-                schema.quoted(),
-                quote_ident("runs"),
-            )),
+    // 2b. Exact CHECK convergence. AddColumn carries its own inline CHECK, so
+    // skip that spec when its column is absent in the observation. Table-level
+    // checks run after AddColumn and therefore may safely name newly-added
+    // columns. PostgreSQL validates every ADD against existing rows; a legacy
+    // row that violates the canonical contract aborts reconciliation rather
+    // than being rewritten or deleted.
+    let expected_checks: BTreeSet<(&str, &str)> = CHECK_SPECS
+        .iter()
+        .map(|spec| (spec.table, spec.name))
+        .collect();
+    for spec in CHECK_SPECS {
+        let Some(columns) = obs.tables.get(spec.table) else {
+            continue;
         };
-        if let Some(sql) = repair_sql {
+        if matches!(spec.origin, CheckOrigin::Inline(column) if !columns.contains(column)) {
+            continue;
+        }
+        let key = (spec.table.to_string(), spec.name.to_string());
+        if obs
+            .checks
+            .get(&key)
+            .is_some_and(|def| def == spec.definition)
+        {
+            continue;
+        }
+        let drop = if obs.checks.contains_key(&key) {
+            format!("DROP CONSTRAINT {}, ", quote_ident(spec.name))
+        } else {
+            String::new()
+        };
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RepairConstraint,
+            target: format!("{}.{}", spec.table, spec.name),
+            sql: format!(
+                "ALTER TABLE {}.{} {drop}ADD CONSTRAINT {} {}",
+                schema.quoted(),
+                quote_ident(spec.table),
+                quote_ident(spec.name),
+                spec.definition,
+            ),
+        });
+    }
+    for (table, name) in obs.checks.keys() {
+        if obs.tables.contains_key(table)
+            && record_table_names().contains(table.as_str())
+            && !expected_checks.contains(&(table.as_str(), name.as_str()))
+        {
             plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::RepairFailKindCheck,
-                target: "runs.fail_kind".to_string(),
-                sql,
+                kind: RunPlaneActionKind::DropExtraConstraint,
+                target: format!("{table}.{name}"),
+                sql: format!(
+                    "ALTER TABLE {}.{} DROP CONSTRAINT {}",
+                    schema.quoted(),
+                    quote_ident(table),
+                    quote_ident(name),
+                ),
+            });
+        }
+    }
+
+    // 2c. The functions and trigger are part of the run-state contract, not an
+    // incidental side effect of creating a missing table. CREATE OR REPLACE
+    // repairs function-body drift without dropping dependants. A missing runs
+    // table gets the guard + trigger from its canonical table section.
+    if obs
+        .helper_functions
+        .get("lock_catalog_head")
+        .is_none_or(|def| normalize_observed_schema(def, schema) != LOCK_CATALOG_HEAD_DEF)
+    {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RepairHelperFunction,
+            target: "lock_catalog_head".to_string(),
+            sql: rewrite_schema(LOCK_CATALOG_HEAD_SQL, schema),
+        });
+    }
+    if obs.tables.contains_key("runs") {
+        if obs
+            .helper_functions
+            .get("guard_event_lineage_immutable")
+            .is_none_or(|def| normalize_observed_schema(def, schema) != GUARD_EVENT_LINEAGE_DEF)
+        {
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::RepairHelperFunction,
+                target: "guard_event_lineage_immutable".to_string(),
+                sql: rewrite_schema(GUARD_EVENT_LINEAGE_SQL, schema),
+            });
+        }
+        let trigger_key = (
+            "runs".to_string(),
+            "runs_event_lineage_immutable".to_string(),
+        );
+        if obs.triggers.get(&trigger_key).is_none_or(|def| {
+            normalize_observed_schema(def, schema) != RUNS_EVENT_LINEAGE_TRIGGER_DEF
+        }) {
+            let drop = if obs.triggers.contains_key(&trigger_key) {
+                format!(
+                    "DROP TRIGGER {} ON {}.{}; ",
+                    quote_ident("runs_event_lineage_immutable"),
+                    schema.quoted(),
+                    quote_ident("runs"),
+                )
+            } else {
+                String::new()
+            };
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::RepairTrigger,
+                target: "runs.runs_event_lineage_immutable".to_string(),
+                sql: format!(
+                    "{drop}{}",
+                    rewrite_schema(RUNS_EVENT_LINEAGE_TRIGGER_SQL, schema)
+                ),
+            });
+        }
+    }
+    for (table, name) in obs.triggers.keys() {
+        let is_record_trigger = table == "runs" && name == "runs_event_lineage_immutable";
+        if record_table_names().contains(table.as_str())
+            && !is_record_trigger
+            && name != OUTBOX_TRIGGER_NAME
+        {
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::DropExtraTrigger,
+                target: format!("{table}.{name}"),
+                sql: format!(
+                    "DROP TRIGGER {} ON {}.{}",
+                    quote_ident(name),
+                    schema.quoted(),
+                    quote_ident(table),
+                ),
             });
         }
     }
@@ -535,32 +926,19 @@ fn ident_tokens(sql: &str) -> BTreeSet<&str> {
         .collect()
 }
 
-/// The single-quoted string literals in a SQL fragment, in order. Used to pull
-/// the `fail_kind` CHECK literals out of BOTH the record column definition and
-/// the live `pg_get_constraintdef` — the drift check compares this list's SET,
-/// so the `IN (…)` vs `= ANY (ARRAY[…])` canonicalization pg applies is
-/// irrelevant. Assumes literals free of embedded quotes (the fail_kind enum is).
-fn fail_kind_literals(sql: &str) -> Vec<String> {
-    sql.split('\'')
-        .skip(1)
-        .step_by(2)
-        .map(str::to_string)
+fn quote_ident(s: &str) -> String {
+    wamn_schema_compiler::sql::quote_ident(s)
+}
+
+fn record_table_names() -> BTreeSet<String> {
+    RUN_PLANE_FILES
+        .iter()
+        .flat_map(|file| record_tables(file, "wamn_run"))
         .collect()
 }
 
-/// The `runs.fail_kind` column definition from the record — the inline CHECK
-/// carries the canonical literal list in record order (the `mark_failed` verdicts
-/// the schema must admit).
-fn record_fail_kind_definition() -> String {
-    record_columns(RUN_STATE_SQL, "wamn_run", "runs")
-        .into_iter()
-        .find(|(col, _)| col == "fail_kind")
-        .expect("runs.fail_kind in the schema of record")
-        .1
-}
-
-fn quote_ident(s: &str) -> String {
-    wamn_schema_compiler::sql::quote_ident(s)
+fn normalize_observed_schema(definition: &str, schema: &BareSchemaName) -> String {
+    definition.replace(&format!("{}.", schema.as_str()), "wamn_run.")
 }
 
 /// The legacy registration `state`-key strip (the l5i9.19 teardown runbook): a
@@ -592,6 +970,36 @@ pub fn select_schema_indexes_sql() -> &'static str {
     "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = $1"
 }
 
+/// Every CHECK on an ordinary table in `$1`: `(table, name, canonical def)`.
+pub fn select_schema_checks_sql() -> &'static str {
+    "SELECT c.relname, con.conname, pg_get_constraintdef(con.oid, true) \
+     FROM pg_constraint con \
+     JOIN pg_class c ON c.oid = con.conrelid \
+     JOIN pg_namespace n ON n.oid = c.relnamespace \
+     WHERE n.nspname = $1 AND c.relkind = 'r' AND con.contype = 'c' \
+     ORDER BY c.relname, con.conname"
+}
+
+/// Every non-internal trigger in `$1`: `(table, name, canonical def)`.
+pub fn select_schema_triggers_sql() -> &'static str {
+    "SELECT c.relname, t.tgname, pg_get_triggerdef(t.oid, true) \
+     FROM pg_trigger t \
+     JOIN pg_class c ON c.oid = t.tgrelid \
+     JOIN pg_namespace n ON n.oid = c.relnamespace \
+     WHERE n.nspname = $1 AND NOT t.tgisinternal \
+     ORDER BY c.relname, t.tgname"
+}
+
+/// The canonical definitions of the run-state helper functions in `$1`.
+pub fn select_run_plane_helper_functions_sql() -> &'static str {
+    "SELECT p.proname, pg_get_functiondef(p.oid) \
+     FROM pg_proc p \
+     JOIN pg_namespace n ON n.oid = p.pronamespace \
+     WHERE n.nspname = $1 \
+       AND p.proname IN ('lock_catalog_head', 'guard_event_lineage_immutable') \
+     ORDER BY p.proname"
+}
+
 /// Tables in `$1` carrying the legacy `wamn_outbox_event` trigger.
 pub fn select_outbox_trigger_tables_sql() -> &'static str {
     "SELECT c.relname FROM pg_trigger t \
@@ -616,22 +1024,6 @@ pub fn catalog_schema_present_sql() -> &'static str {
 /// (the shell runs this only when the table was observed present).
 pub fn count_stale_registration_state_sql() -> &'static str {
     "SELECT count(*) FROM catalog.event_registrations WHERE registration ? 'state'"
-}
-
-/// The live CHECK constraint on `$1.runs.fail_kind`: `(conname,
-/// pg_get_constraintdef)`, or zero rows when `runs`/the CHECK is absent.
-/// Identified by CONKEY — the CHECK whose ONLY referenced column is `fail_kind`
-/// — never by name, so a legacy auto-name is found regardless of what it is; the
-/// fqg.16 repair then DROPs exactly that observed name. `query_opt` in the shell.
-pub fn select_runs_fail_kind_check_sql() -> &'static str {
-    "SELECT con.conname, pg_get_constraintdef(con.oid) \
-     FROM pg_constraint con \
-     JOIN pg_class c ON c.oid = con.conrelid \
-     JOIN pg_namespace n ON n.oid = c.relnamespace \
-     WHERE n.nspname = $1 AND c.relname = 'runs' AND con.contype = 'c' \
-       AND con.conkey = ARRAY[( \
-         SELECT a.attnum FROM pg_attribute a \
-         WHERE a.attrelid = c.oid AND a.attname = 'fail_kind')]"
 }
 
 // ---------------------------------------------------------------------------
@@ -680,10 +1072,22 @@ fn record_tables(src: &str, qualifier: &str) -> Vec<String> {
 /// The file header: every line before the first `CREATE TABLE <qualifier>.`.
 /// For run-state.sql this is the idempotent `CREATE SCHEMA IF NOT EXISTS` +
 /// role usage grant (plus prose comments).
+#[cfg(test)]
 fn header_section(src: &str, qualifier: &str) -> String {
     let head = format!("CREATE TABLE {qualifier}.");
     src.lines()
         .take_while(|line| !line.trim().starts_with(&head))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The schema declaration/grant prefix only. Helper functions are reconciled
+/// independently, so a missing table can never replay a plain `CREATE
+/// FUNCTION` against an already-present helper.
+fn schema_header_section(src: &str, qualifier: &str) -> String {
+    let function_head = format!("CREATE FUNCTION {qualifier}.");
+    src.lines()
+        .take_while(|line| !line.trim().starts_with(&function_head))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -938,20 +1342,27 @@ CREATE INDEX event_registrations_by_entity
         obs.catalog_tables = record_tables(CATALOG_SCHEMA_SQL, "catalog")
             .into_iter()
             .collect();
-        // The runs.fail_kind CHECK as fresh provisioning leaves it: the auto-name
-        // plus the canonical `= ANY (ARRAY[…])` form pg reports, built from the
-        // record literals so the fixture tracks the record.
-        let lits = fail_kind_literals(&record_fail_kind_definition());
-        obs.runs_fail_kind_check = Some((
-            FAIL_KIND_CHECK_NAME.to_string(),
-            format!(
-                "CHECK ((fail_kind = ANY (ARRAY[{}])))",
-                lits.iter()
-                    .map(|l| format!("'{l}'::text"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
+        for spec in CHECK_SPECS {
+            obs.checks.insert(
+                (spec.table.to_string(), spec.name.to_string()),
+                spec.definition.to_string(),
+            );
+        }
+        obs.helper_functions.insert(
+            "lock_catalog_head".to_string(),
+            LOCK_CATALOG_HEAD_DEF.to_string(),
+        );
+        obs.helper_functions.insert(
+            "guard_event_lineage_immutable".to_string(),
+            GUARD_EVENT_LINEAGE_DEF.to_string(),
+        );
+        obs.triggers.insert(
+            (
+                "runs".to_string(),
+                "runs_event_lineage_immutable".to_string(),
             ),
-        ));
+            RUNS_EVENT_LINEAGE_TRIGGER_DEF.to_string(),
+        );
         obs
     }
 
@@ -1315,133 +1726,103 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.is_noop(), "extras plan no action: {:#?}", plan.actions);
     }
 
-    /// fqg.16: a schema provisioned before cjv.4 carries the 3-literal legacy
-    /// `runs.fail_kind` CHECK → DROP the observed name + ADD the record's 4
-    /// literals under the convergent auto-name.
     #[test]
-    fn legacy_three_literal_fail_kind_check_plans_drop_and_add() {
+    fn drifted_and_missing_checks_plan_exact_repairs() {
         let mut obs = observation_at_record();
-        obs.runs_fail_kind_check = Some((
-            "runs_fail_kind_check".to_string(),
-            "CHECK ((fail_kind = ANY (ARRAY['terminal'::text, \
-             'retry-exhausted'::text, 'invalid-input'::text])))"
-                .to_string(),
-        ));
+        obs.checks.insert(
+            ("runs".to_string(), "runs_fail_kind_check".to_string()),
+            "CHECK (fail_kind = 'terminal'::text)".to_string(),
+        );
+        obs.checks
+            .remove(&("node_runs".to_string(), "node_runs_check".to_string()));
+
         let plan = plan_run_plane(&schema("demo"), &obs);
-        let repair = plan
+        let repairs: Vec<&RunPlaneAction> = plan
             .actions
             .iter()
-            .find(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck)
-            .expect("legacy fail_kind CHECK is repaired");
-        assert_eq!(repair.target, "runs.fail_kind");
+            .filter(|action| action.kind == RunPlaneActionKind::RepairConstraint)
+            .collect();
         assert_eq!(
-            repair.sql,
-            "ALTER TABLE \"demo\".\"runs\" DROP CONSTRAINT \"runs_fail_kind_check\", \
-             ADD CONSTRAINT \"runs_fail_kind_check\" CHECK (fail_kind IN \
-             ('terminal', 'retry-exhausted', 'invalid-input', 'runaway-budget', \
-             'effect-uncertain'))"
+            repairs.len(),
+            2,
+            "only the two drifted checks: {repairs:#?}"
         );
-        // runs was touched, so it is not reported at target.
-        assert!(!plan.at_target.contains(&"runs".to_string()));
+        assert!(repairs.iter().any(|action| {
+            action.target == "runs.runs_fail_kind_check"
+                && action
+                    .sql
+                    .contains("DROP CONSTRAINT \"runs_fail_kind_check\"")
+                && action.sql.contains("effect-uncertain")
+        }));
+        assert!(repairs.iter().any(|action| {
+            action.target == "node_runs.node_runs_check"
+                && !action.sql.contains("DROP CONSTRAINT")
+                && action.sql.contains("attempt_input_ref IS NOT NULL")
+        }));
     }
 
-    /// The DROP must target the OBSERVED name (never an assumed one) while the
-    /// ADD uses the convergent auto-name — proven with a hand-named legacy CHECK.
     #[test]
-    fn fail_kind_repair_drops_the_observed_constraint_name() {
+    fn extra_record_check_is_removed_but_floor_check_is_untouched() {
         let mut obs = observation_at_record();
-        obs.runs_fail_kind_check = Some((
-            "legacy_fk_ck".to_string(),
-            "CHECK ((fail_kind = ANY (ARRAY['terminal'::text, \
-             'retry-exhausted'::text, 'invalid-input'::text])))"
-                .to_string(),
-        ));
-        let repair = plan_run_plane(&schema("demo"), &obs)
-            .actions
-            .into_iter()
-            .find(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck)
-            .expect("repair emitted");
-        assert!(
-            repair.sql.contains("DROP CONSTRAINT \"legacy_fk_ck\","),
-            "drops the observed name: {}",
-            repair.sql
+        obs.checks.insert(
+            ("runs".to_string(), "legacy_runs_check".to_string()),
+            "CHECK (true)".to_string(),
         );
-        assert!(
-            repair
-                .sql
-                .contains("ADD CONSTRAINT \"runs_fail_kind_check\" CHECK"),
-            "re-adds the convergent name: {}",
-            repair.sql
+        obs.tables
+            .insert("receipts".to_string(), ["id".to_string()].into());
+        obs.checks.insert(
+            ("receipts".to_string(), "receipts_check".to_string()),
+            "CHECK (true)".to_string(),
         );
-    }
 
-    /// Set-equality comparison: the 4 record literals in a different order and
-    /// surface form (`IN (…)` vs `= ANY (ARRAY[…])`) plan NO repair.
-    #[test]
-    fn matching_fail_kind_check_plans_no_repair() {
-        let mut obs = observation_at_record();
-        obs.runs_fail_kind_check = Some((
-            "runs_fail_kind_check".to_string(),
-            "CHECK (fail_kind IN ('effect-uncertain', 'runaway-budget', 'invalid-input', \
-             'retry-exhausted', 'terminal'))"
-                .to_string(),
-        ));
         let plan = plan_run_plane(&schema("demo"), &obs);
-        assert!(
-            !plan
-                .actions
-                .iter()
-                .any(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck),
-            "matching literal set plans no repair: {:#?}",
-            plan.actions
-        );
-        assert!(plan.is_noop());
+        let drops: Vec<&RunPlaneAction> = plan
+            .actions
+            .iter()
+            .filter(|action| action.kind == RunPlaneActionKind::DropExtraConstraint)
+            .collect();
+        assert_eq!(drops.len(), 1);
+        assert_eq!(drops[0].target, "runs.legacy_runs_check");
     }
 
-    /// Column present but the CHECK absent (manually dropped) → ADD only.
     #[test]
-    fn absent_fail_kind_check_plans_add_only() {
+    fn missing_helpers_and_trigger_are_repaired_for_present_runs() {
         let mut obs = observation_at_record();
-        obs.runs_fail_kind_check = None;
-        let repair = plan_run_plane(&schema("demo"), &obs)
-            .actions
-            .into_iter()
-            .find(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck)
-            .expect("absent CHECK is added");
+        obs.helper_functions.clear();
+        obs.triggers.clear();
+        let plan = plan_run_plane(&schema("demo"), &obs);
         assert_eq!(
-            repair.sql,
-            "ALTER TABLE \"demo\".\"runs\" ADD CONSTRAINT \"runs_fail_kind_check\" \
-             CHECK (fail_kind IN \
-             ('terminal', 'retry-exhausted', 'invalid-input', 'runaway-budget', \
-             'effect-uncertain'))"
-        );
-        assert!(!repair.sql.contains("DROP CONSTRAINT"));
-    }
-
-    /// When `runs` is absent, CreateTable carries the record's inline CHECK — no
-    /// separate fail_kind repair fires even against a stale check observation.
-    #[test]
-    fn fail_kind_check_not_repaired_when_runs_table_absent() {
-        let mut obs = observation_at_record();
-        obs.tables.remove("runs");
-        obs.runs_fail_kind_check = Some((
-            "runs_fail_kind_check".to_string(),
-            "CHECK ((fail_kind = ANY (ARRAY['terminal'::text])))".to_string(),
-        ));
-        let plan = plan_run_plane(&schema("demo"), &obs);
-        assert!(
-            !plan
-                .actions
-                .iter()
-                .any(|a| a.kind == RunPlaneActionKind::RepairFailKindCheck),
-            "no fail_kind repair when runs is (re)created"
-        );
-        assert!(
             plan.actions
                 .iter()
-                .any(|a| a.kind == RunPlaneActionKind::CreateTable && a.target == "runs"),
-            "runs is created instead"
+                .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
+                .count(),
+            2
         );
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairTrigger
+                && action.target == "runs.runs_event_lineage_immutable"
+        }));
+    }
+
+    #[test]
+    fn extra_record_trigger_is_removed_but_floor_trigger_is_untouched() {
+        let mut obs = observation_at_record();
+        obs.triggers.insert(
+            ("runs".to_string(), "legacy_runs_trigger".to_string()),
+            "CREATE TRIGGER legacy_runs_trigger".to_string(),
+        );
+        obs.triggers.insert(
+            ("receipts".to_string(), "receipts_trigger".to_string()),
+            "CREATE TRIGGER receipts_trigger".to_string(),
+        );
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let drops: Vec<&RunPlaneAction> = plan
+            .actions
+            .iter()
+            .filter(|action| action.kind == RunPlaneActionKind::DropExtraTrigger)
+            .collect();
+        assert_eq!(drops.len(), 1);
+        assert_eq!(drops[0].target, "runs.legacy_runs_trigger");
     }
 
     /// The queue-missing manifestation (the live poc_f1 case): run-state +
@@ -1511,9 +1892,10 @@ CREATE INDEX event_registrations_by_entity
         assert!(select_outbox_trigger_tables_sql().contains("'wamn_outbox_event'"));
         assert!(select_outbox_function_present_sql().contains("pg_proc"));
         assert!(catalog_schema_present_sql().contains("'catalog'"));
-        // fqg.16: the fail_kind CHECK is found by CONKEY, not by name.
-        assert!(select_runs_fail_kind_check_sql().contains("con.conkey = ARRAY["));
-        assert!(select_runs_fail_kind_check_sql().contains("pg_get_constraintdef"));
+        assert!(select_schema_checks_sql().contains("con.contype = 'c'"));
+        assert!(select_schema_checks_sql().contains("pg_get_constraintdef"));
+        assert!(select_schema_triggers_sql().contains("NOT t.tgisinternal"));
+        assert!(select_run_plane_helper_functions_sql().contains("pg_get_functiondef"));
         assert_eq!(
             strip_registration_state_sql(),
             "UPDATE catalog.event_registrations SET registration = registration - 'state' \

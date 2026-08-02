@@ -7,27 +7,27 @@
 //! schemas broke on the E4 `stream_seq` column (runner 42703 warn-loops), one
 //! env had NO queue tables at all, and the ephemeral fixture restart wiped
 //! everything including the `catalog` metadata schema. This verb reads what ONE
-//! project-env schema actually has (tables, columns, index definitions, legacy
-//! outbox-era objects, the per-database `catalog` schema), asks the pure
-//! planner (`wamn_schema_control::plan_run_plane`) for the idempotent ADDITIVE plan,
+//! project-env schema actually has (tables, columns, indexes, CHECKs, user
+//! triggers, helper functions, legacy outbox-era objects, and the per-database
+//! `catalog` schema), asks the pure planner
+//! (`wamn_schema_control::plan_run_plane`) for the idempotent plan,
 //! and — unless `--dry-run` — executes it, in order:
 //!
 //! - missing tables from their record sections (from-zero restore included),
 //! - `ADD COLUMN` for record columns a present table lacks,
 //! - record indexes created / a stale-definition index (the pre-E4 claimable
 //!   index) recreated,
+//! - exact record CHECK constraints plus run-state helper functions and the
+//!   event-lineage trigger (missing/drifted definitions repaired; extra record
+//!   CHECKs/triggers removed),
 //! - the pre-l5i9.19 outbox-era teardown (tables, triggers, function, the
 //!   legacy registration `state` keys),
-//! - the `catalog` metadata schema when absent (or its missing tables),
-//! - the `runs.fail_kind` CHECK when it drifted from the record literal set
-//!   (wamn-fqg.16 — a pre-cjv.4 schema missing `'runaway-budget'`): dropped by
-//!   its observed name and re-added under the convergent auto-name.
+//! - the `catalog` metadata schema when absent (or its missing tables).
 //!
-//! **Additive, with one targeted constraint exception:** no live column, no
-//! non-legacy table, and no data row is ever dropped; live columns the record
-//! does not know are printed, not touched. The sole constraint rewritten is the
-//! `runs.fail_kind` CHECK above (a widening literal set every existing row still
-//! satisfies) — not a generic constraint reconciler.
+//! **Data preserving:** no live column, non-legacy table, or data row is ever
+//! dropped; live columns the record does not know are printed, not touched.
+//! PostgreSQL validates each canonical CHECK against existing rows and the verb
+//! fails loudly rather than rewriting incompatible history.
 //!
 //! **Ownership:** CREATE/ALTER/DROP need table ownership — `wamn_app` cannot
 //! run them — so this connects as a **superuser** (or the schema owner), like
@@ -49,8 +49,9 @@ use tokio_postgres::NoTls;
 use wamn_schema_control::{
     BareSchemaName, RunPlaneObservation, RunPlanePlan, catalog_schema_present_sql,
     count_stale_registration_state_sql, plan_run_plane, select_outbox_function_present_sql,
-    select_outbox_trigger_tables_sql, select_runs_fail_kind_check_sql, select_schema_columns_sql,
-    select_schema_indexes_sql,
+    select_outbox_trigger_tables_sql, select_run_plane_helper_functions_sql,
+    select_schema_checks_sql, select_schema_columns_sql, select_schema_indexes_sql,
+    select_schema_triggers_sql,
 };
 
 #[derive(Debug, Args)]
@@ -133,13 +134,27 @@ async fn observe(
     {
         obs.indexes.insert(row.get(0), row.get(1));
     }
-    // The live runs.fail_kind CHECK (name + canonical def), for the fqg.16
-    // literal-drift repair — zero rows when runs / the CHECK is absent.
-    obs.runs_fail_kind_check = client
-        .query_opt(select_runs_fail_kind_check_sql(), &[&schema.as_str()])
+    for row in client
+        .query(select_schema_checks_sql(), &[&schema.as_str()])
         .await
-        .context("read runs.fail_kind check constraint")?
-        .map(|row| (row.get(0), row.get(1)));
+        .context("read schema check constraints")?
+    {
+        obs.checks.insert((row.get(0), row.get(1)), row.get(2));
+    }
+    for row in client
+        .query(select_schema_triggers_sql(), &[&schema.as_str()])
+        .await
+        .context("read schema triggers")?
+    {
+        obs.triggers.insert((row.get(0), row.get(1)), row.get(2));
+    }
+    for row in client
+        .query(select_run_plane_helper_functions_sql(), &[&schema.as_str()])
+        .await
+        .context("read run-plane helper functions")?
+    {
+        obs.helper_functions.insert(row.get(0), row.get(1));
+    }
     for row in client
         .query(select_outbox_trigger_tables_sql(), &[&schema.as_str()])
         .await
