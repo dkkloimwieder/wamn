@@ -14,7 +14,7 @@ const REGISTRY_PATH: &str = "architecture/gate-registry.json";
 const GATE_DIRECTORY: &str = "deploy/gates";
 const BUILD_AND_TEST_DOC: &str = "docs/build-and-test.md";
 const PLAN_DOCUMENT: &str = "docs/PLAN/PLAN.md";
-const RECEIPT_FOLLOW_UP: &str = "bd:wamn-2jdm.7";
+const RECEIPT_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 const SCHEDULING_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 
 #[derive(Clone, Debug, Deserialize)]
@@ -321,8 +321,15 @@ fn validate_registry(
     if !registry.authority.contains("docs/PLAN/PLAN.md")
         || !registry.authority.contains("intentionally absent")
         || registry.registry_owner != "bd:wamn-2jdm.2"
-        || !registry.machine_receipt_policy.contains("wamn-2jdm.7")
+        || !registry
+            .machine_receipt_policy
+            .contains("tools/kubernetes-gate-run")
+        || !registry
+            .machine_receipt_policy
+            .contains("wamn-kubernetes-gate-verdict/v1")
         || !registry.machine_receipt_policy.contains("wamn-2jdm.8")
+        || !registry.machine_receipt_policy.contains("wamn-2jkm.98")
+        || !registry.machine_receipt_policy.contains("wamn-4tob.6.25")
     {
         return Err("registry authority and pending receipt policy must be explicit".to_string());
     }

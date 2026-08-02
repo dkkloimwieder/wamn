@@ -914,12 +914,26 @@ cargo test -p wamn-proof-conformance --lib testgate::tests::
 ./target/debug/wamn-gates --log-level warn testgate \
   --node components/target/wasm32-wasip2/release/disposition_node.wasm
 cargo clippy -p wamn-builder -p wamn-gates --all-targets
-# in-cluster (the builder image bakes cases.json + the refusal fixture) — the
-# refusal Job is EXPECTED to FAIL (Job failed + no new registry digest):
-kubectl -n wamn-system apply -f deploy/gates/f2-testgate-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/f2-testgate-pass --timeout=900s
-kubectl -n wamn-system wait --for=condition=failed   job/f2-testgate-refusal --timeout=900s
-kubectl -n wamn-system logs job/f2-testgate-refusal   # a TestGateError naming the wrong case; no "pushed" line
+# In-cluster: recreate both Jobs, require fresh Job/Pod identities and exact
+# positive/negative verdicts, and prove the refusal tag's registry response is
+# byte-identical before and after the expected TestGateError.
+kubectl -n wamn-system port-forward svc/registry 5000:5000 \
+  >/tmp/wamn-registry-port-forward.log 2>&1 &
+registry_port_forward_pid=$!
+trap 'kill "$registry_port_forward_pid"' EXIT
+tools/kubernetes-gate-run \
+  --manifest deploy/gates/f2-testgate-job.yaml \
+  --receipt /tmp/f2-testgate-receipt.json \
+  --timeout-secs 900 \
+  --job '{"name":"f2-testgate-pass","container":"wamn-builder","expectation":"positive","exit_code":0,"image":"wamn-builder:dev","log_contains":"test gate (11.5): all case(s) passed"}' \
+  --job '{"name":"f2-testgate-refusal","container":"wamn-builder","expectation":"expected-negative","exit_code":1,"image":"wamn-builder:dev","log_contains":"custom-node test gate (11.5): 1 case(s) FAILED against the built artifact"}' \
+  --snapshot-executable curl \
+  --snapshot-arg --silent \
+  --snapshot-arg --show-error \
+  --snapshot-arg --header \
+  --snapshot-arg 'Accept: application/vnd.oci.image.manifest.v1+json' \
+  --snapshot-arg http://127.0.0.1:5000/v2/wamn/disposition-node/manifests/testgate-refusal
+jq . /tmp/f2-testgate-receipt.json
 ```
 
 ### [5.1] flow-graph schema crate (crates/execution/flow-model)

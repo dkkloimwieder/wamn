@@ -2,7 +2,7 @@
   "schema_version": 1,
   "authority": "Canonical semantic registry for shipped gate ownership. Canonical decision status and identity derive from docs/PLAN/PLAN.md. Commands, artifact inputs, and dependencies derive from the referenced Job manifests and recipe-test directives and are intentionally absent.",
   "registry_owner": "bd:wamn-2jdm.2",
-  "machine_receipt_policy": "Bootstrap source provenance is immutable; machine verdict receipts and aggregate scheduling are explicitly pending wamn-2jdm.7 and wamn-2jdm.8.",
+  "machine_receipt_policy": "Kubernetes Job verdicts use tools/kubernetes-gate-run and the strict wamn-kubernetes-gate-verdict/v1 consumer contract; receipts require fresh Job UIDs, post-start Job/Pod evidence, bounded completion, exit codes, image IDs, logs, and explicit expected-negative side-effect snapshots. Aggregate scheduling remains pending bd:wamn-2jdm.8; artifact provenance remains owned by bd:wamn-2jkm.98 and bd:wamn-4tob.6.25.",
   "mutation_campaigns": [
     {
       "bead": "bd:wamn-2jdm.4",
@@ -251,7 +251,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -277,7 +277,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -304,7 +304,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -331,7 +331,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -360,7 +360,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -388,7 +388,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -416,7 +416,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -444,7 +444,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -472,7 +472,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -500,7 +500,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -527,7 +527,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -555,7 +555,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -583,7 +583,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -610,7 +610,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -637,7 +637,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -664,7 +664,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -691,7 +691,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -717,7 +717,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -745,7 +745,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -772,7 +772,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -796,7 +796,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -823,7 +823,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -849,7 +849,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -875,7 +875,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -902,7 +902,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -929,7 +929,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -955,7 +955,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -983,7 +983,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1009,7 +1009,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1037,7 +1037,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1063,7 +1063,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1089,7 +1089,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1115,7 +1115,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1143,7 +1143,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1172,7 +1172,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1199,7 +1199,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1225,7 +1225,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1252,7 +1252,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1279,7 +1279,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1303,7 +1303,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1330,7 +1330,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1358,7 +1358,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1385,7 +1385,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1412,7 +1412,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1439,7 +1439,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1466,7 +1466,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1492,7 +1492,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1518,7 +1518,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1545,7 +1545,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1572,7 +1572,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1598,7 +1598,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1625,7 +1625,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1653,7 +1653,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1679,7 +1679,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1705,7 +1705,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1733,7 +1733,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1760,7 +1760,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1787,7 +1787,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1814,7 +1814,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1841,7 +1841,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1867,7 +1867,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1894,7 +1894,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1920,7 +1920,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1946,7 +1946,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -1974,7 +1974,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2000,7 +2000,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2027,7 +2027,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2054,7 +2054,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2080,7 +2080,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2106,7 +2106,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2133,7 +2133,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2162,7 +2162,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2191,7 +2191,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2221,7 +2221,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2250,7 +2250,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2277,7 +2277,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2304,7 +2304,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2330,7 +2330,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2357,7 +2357,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2384,7 +2384,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2411,7 +2411,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2438,7 +2438,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2466,7 +2466,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2493,7 +2493,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2520,7 +2520,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2547,7 +2547,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2574,7 +2574,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2600,7 +2600,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2629,7 +2629,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2657,7 +2657,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2685,7 +2685,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2713,7 +2713,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2741,7 +2741,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2769,7 +2769,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2796,7 +2796,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2824,7 +2824,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2852,7 +2852,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2880,7 +2880,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2907,7 +2907,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2933,7 +2933,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -2963,7 +2963,7 @@
         "issue": "bd:wamn-4u7p.24",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -3008,7 +3008,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -3034,7 +3034,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -3060,7 +3060,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -3086,7 +3086,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -3112,7 +3112,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -3138,7 +3138,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     },
@@ -3164,7 +3164,7 @@
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_receipt": "missing",
-        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "receipt_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
     }
