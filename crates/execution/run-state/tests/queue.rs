@@ -331,7 +331,13 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
         "SET status = 'running'",
         "AND r.status = 'dispatched'",
         // The dispatch read + the PERSISTED flow_version (the plan-cache input).
-        "r.flow_id, r.input_json::text, r.flow_version AS flow_version",
+        "r.flow_id, (CASE WHEN r.event_root_run_id IS NOT NULL",
+        "THEN r.input_json || jsonb_build_object(",
+        "'run', r.run_id",
+        "'root', r.event_root_run_id",
+        "'depth', r.event_depth",
+        "ELSE r.input_json END)::text AS input_json",
+        "r.flow_version AS flow_version",
     ] {
         assert!(cd.contains(pin), "claim_dispatch_sql missing: {pin}");
     }
@@ -352,6 +358,21 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
         cd.contains(&batch[scan_start..scan_end]),
         "claim_dispatch_sql and claim_batch_sql have drifted apart on the claim scan"
     );
+    let split = wamn_run_state::sql::select_run_dispatch_sql();
+    for shared_lineage_pin in [
+        "CASE WHEN r.event_root_run_id IS NOT NULL",
+        "AND r.event_depth IS NOT NULL",
+        "THEN r.input_json || jsonb_build_object(",
+        "'run', r.run_id",
+        "'root', r.event_root_run_id",
+        "'depth', r.event_depth",
+        "ELSE r.input_json END",
+    ] {
+        assert!(
+            cd.contains(shared_lineage_pin) && split.contains(shared_lineage_pin),
+            "both dispatch selectors must share trusted transient causation: {shared_lineage_pin}"
+        );
+    }
 
     // complete_dequeue = update_run_completed_sql (fqg.2 unconditional override)
     // + dequeue_sql, sharing $1 — one atomic statement.
@@ -1385,6 +1406,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     let active_flows = active_flows_sql();
     // The fqg.18 combined claim/checkpoint/complete statements.
     let claim_dispatch = claim_dispatch_sql();
+    let select_dispatch = wamn_run_state::sql::select_run_dispatch_sql();
     let complete_dequeue = complete_dequeue_sql();
     let record_success_renew = record_success_and_renew_sql();
     let record_error_renew = record_error_and_renew_sql();
@@ -1486,6 +1508,46 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
            ASSERT (SELECT status FROM runs WHERE run_id='rq-healthy') = 'dispatched', 'healthy run untouched'; \
            ASSERT (SELECT status FROM runs WHERE run_id='rq-completed') = 'completed', 'janitor does NOT relabel a reclaimed-and-completed run (completion-vs-failover race guard)'; \
            ASSERT (SELECT count(*) FROM run_queue WHERE run_id='rq-completed') = 0, 'a completed run''s stale queue row is still cleaned up'; \
+         END $$;\n\
+         COMMIT;\n"
+    ));
+
+    // wamn-2jdm.11: both production dispatch selectors synthesize causation
+    // only in their returned execution input. The durable business input stays
+    // clean, and a same-named input field cannot override trusted run columns.
+    script.push_str(
+        "INSERT INTO wamn_run.runs \
+           (tenant_id, run_id, flow_id, flow_version, status, trigger_source, input_json, \
+            event_source_run_id, event_root_run_id, event_depth) VALUES \
+           ('t1','lineage-combined','f',3,'dispatched','event', \
+            '{\"event\":\"update\",\"new\":{\"id\":1}}'::jsonb,'parent-run','root-run',3), \
+           ('t1','lineage-split','f',3,'dispatched','event', \
+            '{\"event\":\"delete\",\"causation\":{\"run\":\"forged\",\"root\":\"forged\",\"depth\":99}}'::jsonb, \
+            'parent-run','trusted-root',7), \
+           ('t1','lineage-ordinary','f',3,'dispatched','manual', \
+            '{\"request\":1}'::jsonb,NULL,NULL,NULL);\n\
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id, run_id, available_at, attempts, max_attempts) VALUES \
+           ('t1','lineage-combined',now(),0,20);\n",
+    );
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
+         PREPARE lineage_claim (text, bigint) AS {claim_dispatch};\n\
+         PREPARE lineage_select (text) AS {select_dispatch};\n\
+         CREATE TEMP TABLE lineage_claimed AS EXECUTE lineage_claim('lineage-owner',60000);\n\
+         CREATE TEMP TABLE lineage_split AS EXECUTE lineage_select('lineage-split');\n\
+         CREATE TEMP TABLE lineage_ordinary AS EXECUTE lineage_select('lineage-ordinary');\n\
+         DO $$ BEGIN \
+           ASSERT (SELECT input_json::jsonb ->> 'event' FROM lineage_claimed) = 'update', 'combined selector preserves business input'; \
+           ASSERT (SELECT input_json::jsonb #>> '{{causation,run}}' FROM lineage_claimed) = 'lineage-combined', 'combined selector stamps the claimed run'; \
+           ASSERT (SELECT input_json::jsonb #>> '{{causation,root}}' FROM lineage_claimed) = 'root-run', 'combined selector stamps trusted root'; \
+           ASSERT (SELECT (input_json::jsonb #>> '{{causation,depth}}')::int FROM lineage_claimed) = 3, 'combined selector stamps trusted depth'; \
+           ASSERT NOT (SELECT input_json ? 'causation' FROM runs WHERE run_id='lineage-combined'), 'combined execution projection never mutates persisted business input'; \
+           ASSERT (SELECT input_json::jsonb #>> '{{causation,run}}' FROM lineage_split) = 'lineage-split', 'split selector ignores an input-supplied run'; \
+           ASSERT (SELECT input_json::jsonb #>> '{{causation,root}}' FROM lineage_split) = 'trusted-root', 'split selector replaces an input-supplied root'; \
+           ASSERT (SELECT (input_json::jsonb #>> '{{causation,depth}}')::int FROM lineage_split) = 7, 'split selector replaces an input-supplied depth'; \
+           ASSERT (SELECT input_json::jsonb FROM lineage_ordinary) = '{{\"request\":1}}'::jsonb, 'ordinary dispatch input remains unchanged'; \
          END $$;\n\
          COMMIT;\n"
     ));

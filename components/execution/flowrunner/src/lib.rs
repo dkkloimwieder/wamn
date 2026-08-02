@@ -1481,20 +1481,19 @@ fn declare_run_context(run_id: &str) {
     declare_run_context_at(run_id, run_id.to_string(), 0);
 }
 
-/// l5i9.17: the event-chain thread. An evt run's input envelope (minted by the
-/// TRUSTED materializer) carries `causation: {run, root, depth}` — the chain
-/// position the materializer computed from the CDC envelope's stitched stamp
-/// (parent depth + 1, bounded at 16 with an alertable refusal). Declaring THAT
-/// root/depth here makes this run's own writes emit the incremented stamp, so
-/// the NEXT hop's events carry it and the loop budget is real — without it,
-/// every run would re-root at depth 0 and the materializer's ceiling could
-/// never trip. `run` is ALWAYS the claimed run id (never read from input); a
-/// missing/malformed `causation` falls back to self-root depth 0 (every
-/// non-evt trigger: cron, webhook, manual). Trust note: `input_json`
-/// is minted by platform writers (dispatcher / materializer / gateway
-/// envelope), not raw tenant bytes — a tenant's webhook BODY lands under
-/// `payload`, never at the envelope's top level.
+/// l5i9.17: the event-chain thread. The dispatch SQL synthesizes transient
+/// `causation: {run, root, depth}` from the run row's trusted lineage columns;
+/// it is never persisted in author-visible business input. Declaring that
+/// root/depth here makes this run's writes emit the incremented stamp, so the
+/// next hop's events carry it and the loop budget is real. `run` is always the
+/// claimed run id (never read from input); missing or malformed causation falls
+/// back to self-root depth 0 for non-event triggers.
 fn declare_run_context_from(run_id: &str, input: &Value) {
+    let (root, depth) = run_context_from(run_id, input);
+    declare_run_context_at(run_id, root, depth);
+}
+
+fn run_context_from(run_id: &str, input: &Value) -> (String, u32) {
     let causation = input.get("causation");
     let root = causation
         .and_then(|c| c.get("root"))
@@ -1506,7 +1505,7 @@ fn declare_run_context_from(run_id: &str, input: &Value) {
         .and_then(Value::as_u64)
         .and_then(|d| u32::try_from(d).ok())
         .unwrap_or(0);
-    declare_run_context_at(run_id, root, depth);
+    (root, depth)
 }
 
 fn declare_run_context_at(run_id: &str, root: String, depth: u32) {
@@ -3572,6 +3571,36 @@ impl Guest for Component {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dispatch_causation_declares_trusted_root_and_depth_for_the_claimed_run() {
+        let input = serde_json::json!({
+            "event": "update",
+            "causation": {
+                "run": "author-cannot-select-run",
+                "root": "trusted-root",
+                "depth": 7
+            }
+        });
+
+        assert_eq!(
+            run_context_from("claimed-run", &input),
+            ("trusted-root".to_string(), 7)
+        );
+    }
+
+    #[test]
+    fn ordinary_and_fully_malformed_dispatch_input_self_root() {
+        for input in [
+            serde_json::json!({"request": 1}),
+            serde_json::json!({"causation": {"root": 42, "depth": "7"}}),
+        ] {
+            assert_eq!(
+                run_context_from("ordinary-run", &input),
+                ("ordinary-run".to_string(), 0)
+            );
+        }
+    }
 
     #[test]
     fn check_flow_reports_sorted_unique_types_from_the_dispatch_resolver() {

@@ -205,7 +205,7 @@ const CLAIM_LEASE_SET: &str = "SET lease_owner = $1, \
 /// preamble previously spent three on — claim the next unpartitioned run
 /// ([`claim_batch_sql`]'s exact scan + lease write, via the shared fragments),
 /// flip its run `dispatched` -> `running` (the [`mark_running_sql`] guard), and
-/// return the dispatch inputs (`flow_id`, `input_json`) plus the run's
+/// return the dispatch inputs (`flow_id`, execution-only input) plus the run's
 /// **persisted** `flow_version` so the guest's plan cache can probe for free.
 /// Params: `$1` owner, `$2` ttl_ms. Returns 0 or 1 row: `(run_id, flow_id,
 /// input_json::text, flow_version)`. `flow_version` is the run's OWN column
@@ -214,7 +214,8 @@ const CLAIM_LEASE_SET: &str = "SET lease_owner = $1, \
 /// pins a resume to the version the run started under (wamn-cox): a flow edited
 /// mid-run cannot make a resumed claim reconstruct against a divergent graph, and
 /// a hot-reload is still picked up because newly dispatched runs carry the new
-/// version.
+/// version. Event input gains transient causation synthesized from the trusted
+/// run columns; the persisted business input remains unchanged.
 pub fn claim_dispatch_sql() -> String {
     format!(
         "WITH claimed AS MATERIALIZED ( {cte} ), \
@@ -232,7 +233,8 @@ pub fn claim_dispatch_sql() -> String {
              WHERE r.tenant_id = leased.tenant_id AND r.run_id = leased.run_id \
                AND r.status = '{dispatched}' \
          ) \
-         SELECT l.run_id, r.flow_id, r.input_json::text, r.flow_version AS flow_version, \
+         SELECT l.run_id, r.flow_id, ({execution_input})::text AS input_json, \
+                r.flow_version AS flow_version, \
                 l.lease_generation \
            FROM leased AS l \
            JOIN runs AS r ON r.tenant_id = l.tenant_id AND r.run_id = l.run_id",
@@ -240,6 +242,7 @@ pub fn claim_dispatch_sql() -> String {
         set = CLAIM_LEASE_SET,
         running = RunStatus::Running.as_sql(),
         dispatched = RunStatus::Dispatched.as_sql(),
+        execution_input = run_sql::execution_input_sql("r"),
     )
 }
 

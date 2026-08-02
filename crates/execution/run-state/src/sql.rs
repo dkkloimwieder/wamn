@@ -19,6 +19,26 @@ use wamn_pg_core::Sql;
 
 use crate::status::{NodeRunStatus, RunStatus};
 
+/// Build the execution-only input projection for a run-row alias.
+///
+/// Event lineage is durable in trusted columns, never in author-visible
+/// `input_json`. At dispatch time the runner still needs the lineage object its
+/// frozen guest contract consumes, so both dispatch selectors use this exact
+/// expression. The right-hand `jsonb` object replaces any same-named author
+/// field; non-event rows retain their persisted input unchanged.
+pub(crate) fn execution_input_sql(run_alias: &str) -> String {
+    format!(
+        "CASE WHEN {run_alias}.event_root_run_id IS NOT NULL \
+                    AND {run_alias}.event_depth IS NOT NULL \
+              THEN {run_alias}.input_json || jsonb_build_object( \
+                     'causation', jsonb_build_object( \
+                         'run', {run_alias}.run_id, \
+                         'root', {run_alias}.event_root_run_id, \
+                         'depth', {run_alias}.event_depth)) \
+              ELSE {run_alias}.input_json END"
+    )
+}
+
 // SR11: the THREE builders `queue` COMPOSES are also exposed as [`Sql`]
 // (text + param arity) so the consumer renumbers its lease-renew tail against the
 // arity instead of hardcoding `$7`/`$8` on an assumption about this crate. The
@@ -111,10 +131,17 @@ pub fn select_run_state_sql() -> String {
 /// whatever version is active NOW (wamn-cox: a resume pins the run's own version,
 /// so a flow edited mid-run cannot make a resume reconstruct against a divergent
 /// graph). `$1` run_id; RLS scopes the tenant (like the other read builders). A
-/// per-run `traceparent` (wamn-fl3) is the natural next column added to this
+/// Event runs receive an execution-only `causation` object synthesized from
+/// trusted `event_root_run_id` / `event_depth` columns. This does not update
+/// `input_json`, and the trusted object replaces any same-named input field.
+/// A per-run `traceparent` (wamn-fl3) is the natural next column added to this
 /// projection.
 pub fn select_run_dispatch_sql() -> String {
-    "SELECT flow_id, flow_version, input_json::text FROM runs WHERE run_id = $1".to_string()
+    format!(
+        "SELECT r.flow_id, r.flow_version, ({execution_input})::text AS input_json \
+           FROM runs AS r WHERE r.run_id = $1",
+        execution_input = execution_input_sql("r"),
+    )
 }
 
 /// Persist the run's `state_json` (parking WITHOUT a `node_runs` row, so a
@@ -346,15 +373,37 @@ mod tests {
         // column, wamn-cox) pins a resume to the version the run started under;
         // fl3 extends this exact projection with `traceparent`.
         let sql = select_run_dispatch_sql();
-        assert!(
-            sql.contains("SELECT flow_id, flow_version, input_json::text"),
-            "{sql}"
-        );
-        assert!(sql.contains("FROM runs WHERE run_id = $1"), "{sql}");
+        assert!(sql.contains("SELECT r.flow_id, r.flow_version"), "{sql}");
+        assert!(sql.contains("FROM runs AS r WHERE r.run_id = $1"), "{sql}");
+        for trusted in [
+            "r.input_json || jsonb_build_object(",
+            "'run', r.run_id",
+            "'root', r.event_root_run_id",
+            "'depth', r.event_depth",
+        ] {
+            assert!(
+                sql.contains(trusted),
+                "missing trusted projection {trusted}: {sql}"
+            );
+        }
+        assert!(sql.contains("ELSE r.input_json END"), "{sql}");
         assert!(
             !sql.contains("wamn_run."),
             "schema must be unqualified: {sql}"
         );
+    }
+
+    #[test]
+    fn execution_input_is_transient_and_trusted_columns_replace_input_causation() {
+        let expression = execution_input_sql("run_row");
+        assert!(expression.starts_with("CASE WHEN run_row.event_root_run_id IS NOT NULL"));
+        assert!(expression.contains("AND run_row.event_depth IS NOT NULL"));
+        assert!(expression.contains("THEN run_row.input_json || jsonb_build_object("));
+        assert!(expression.contains("'run', run_row.run_id"));
+        assert!(expression.contains("'root', run_row.event_root_run_id"));
+        assert!(expression.contains("'depth', run_row.event_depth"));
+        assert!(expression.ends_with("ELSE run_row.input_json END"));
+        assert!(!expression.contains("UPDATE"));
     }
 
     #[test]
