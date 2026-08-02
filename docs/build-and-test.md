@@ -743,6 +743,19 @@ F1 refuses cleanly while F3/F4 (std nodes) drive.
 cargo test -p wamn-proof-integration --lib testkitbench::tests::
 cargo test -p wamn-scenario-catalog
 
+# Checked-in PLAN-0.2 scenario/replay/impact mutation campaign. `check` pins
+# clean source hashes; `green-all` runs one debug gate per 11 named mutants; `run-all`
+# requires every fixed mutant to turn red and restores each target byte-exactly.
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-3 \
+  tools/gate-mutants/scenario-replay-impact.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-3 \
+  tools/gate-mutants/scenario-replay-impact.sh green-all
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-3 \
+  tools/gate-mutants/scenario-replay-impact.sh run-all
+cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
+# Immutable green/red evidence:
+# architecture/evidence/mutations/scenario-replay-impact.json
+
 # Local FULL gate (throwaway PG). The flowrunner release wasm is reused (no
 # rebuild). --seed-demo is the simplest hermetic proof of the arc:
 docker run -d --name lane0lfu-pg -p 15617:5432 -e POSTGRES_PASSWORD=postgres postgres:18
@@ -781,15 +794,9 @@ kubectl -n wamn-system logs job/suiteexec
 # that run's writes). Suites are small; provision_case (~5 runner_ddl tables)
 # is sub-second/case locally. Fall back to per-suite schema + unique run ids only
 # if a large suite makes provisioning dominate.
-# 4 mutants killed (python sha256 apply/test/restore, debug builds):
-# M1 suite-selection WHERE predicate (drop suite_id=$4) → wamn-scenario-catalog
-#    sql::tests::cases_predicate_is_scoped_by_all_four_keys;
-# M2 per-case fail aggregation fold (OR/last-only) → testkitbench
-#    fold_outcome_flips_ok_on_any_failing_assertion;
-# M3 impact-tuple parse field-swap (flow_id→flow) → testkitbench
-#    suite_selector_matches_the_suite_edge_shape;
-# M4 drivability check inverted → testkitbench
-#    drivability_refuses_guest_baked_and_accepts_std_and_builtin.
+# The checked-in scenario/replay/impact campaign above owns the suite-selection,
+# case-isolation, aggregate-fold, RLS, replay, and impact-traversal mutants and
+# their immutable green/red evidence.
 ```
 
 ### [11.3 / wamn-htn] record-and-replay fixtures (pin-run + pinproof)

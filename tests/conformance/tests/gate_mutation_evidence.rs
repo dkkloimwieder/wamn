@@ -15,6 +15,10 @@ const QUEUE_CAMPAIGN: &str = "queue-runner";
 const QUEUE_BEAD: &str = "wamn-2jdm.5.2";
 const QUEUE_RUNNER: &str = "tools/gate-mutants/queue-runner.sh";
 const QUEUE_SOURCE_COMMIT: &str = "c51ca79516a8195b83db1572ae1d60f570bebef2";
+const SCENARIO_CAMPAIGN: &str = "scenario-replay-impact";
+const SCENARIO_BEAD: &str = "wamn-2jdm.5.3";
+const SCENARIO_RUNNER: &str = "tools/gate-mutants/scenario-replay-impact.sh";
+const SCENARIO_SOURCE_COMMIT: &str = "3b866e82725b84eea40f513d81838b6c7fcbfadf";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -280,6 +284,17 @@ fn checked_in_mutation_evidence_conforms_when_present() {
                 evidence.source.runner_sha256,
                 hex::encode(Sha256::digest(runner)),
                 "queue evidence must identify the checked-in runner bytes"
+            );
+        }
+        if evidence.campaign == SCENARIO_CAMPAIGN {
+            assert_eq!(evidence.bead, SCENARIO_BEAD);
+            assert_eq!(evidence.source.git_commit, SCENARIO_SOURCE_COMMIT);
+            let runner = fs::read(repository_root().join(SCENARIO_RUNNER))
+                .expect("scenario mutation runner is readable");
+            assert_eq!(
+                evidence.source.runner_sha256,
+                hex::encode(Sha256::digest(runner)),
+                "scenario evidence must identify the checked-in runner bytes"
             );
         }
     }
