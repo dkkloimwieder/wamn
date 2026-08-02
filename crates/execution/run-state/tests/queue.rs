@@ -1528,7 +1528,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
             '{\"request\":1}'::jsonb,NULL,NULL,NULL);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, available_at, attempts, max_attempts) VALUES \
-           ('t1','lineage-combined',now(),0,20);\n",
+           ('t1','lineage-combined',now() - interval '10 years',0,20);\n",
     );
     script.push_str(&format!(
         "BEGIN;\n\

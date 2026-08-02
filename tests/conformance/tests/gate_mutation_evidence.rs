@@ -11,6 +11,10 @@ const DURABLE_CAMPAIGN: &str = "durable-invocation-recovery";
 const DURABLE_BEAD: &str = "wamn-2jdm.5.1";
 const DURABLE_RUNNER: &str = "tools/gate-mutants/durable-invocation-recovery.sh";
 const DURABLE_SOURCE_COMMIT: &str = "cf9d5ffebc885629bf2f7c45a2310f6c55245f60";
+const EVENT_LINEAGE_CAMPAIGN: &str = "event-lineage-dispatch";
+const EVENT_LINEAGE_BEAD: &str = "wamn-2jdm.11";
+const EVENT_LINEAGE_RUNNER: &str = "tools/gate-mutants/event-lineage-dispatch.sh";
+const EVENT_LINEAGE_SOURCE_COMMIT: &str = "d82e72a2ad36aae00c19cfd1aef0e0ce62450ea4";
 const QUEUE_CAMPAIGN: &str = "queue-runner";
 const QUEUE_BEAD: &str = "wamn-2jdm.5.2";
 const QUEUE_RUNNER: &str = "tools/gate-mutants/queue-runner.sh";
@@ -273,6 +277,17 @@ fn checked_in_mutation_evidence_conforms_when_present() {
                 evidence.source.runner_sha256,
                 hex::encode(Sha256::digest(runner)),
                 "durable evidence must identify the checked-in runner bytes"
+            );
+        }
+        if evidence.campaign == EVENT_LINEAGE_CAMPAIGN {
+            assert_eq!(evidence.bead, EVENT_LINEAGE_BEAD);
+            assert_eq!(evidence.source.git_commit, EVENT_LINEAGE_SOURCE_COMMIT);
+            let runner = fs::read(repository_root().join(EVENT_LINEAGE_RUNNER))
+                .expect("event-lineage mutation runner is readable");
+            assert_eq!(
+                evidence.source.runner_sha256,
+                hex::encode(Sha256::digest(runner)),
+                "event-lineage evidence must identify the checked-in runner bytes"
             );
         }
         if evidence.campaign == QUEUE_CAMPAIGN {

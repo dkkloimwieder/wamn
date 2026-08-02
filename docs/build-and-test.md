@@ -1305,6 +1305,22 @@ cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
 # architecture/evidence/mutations/queue-runner.json
 ```
 
+Trusted event lineage in runner execution input has its own focused campaign.
+It proves the combined claim selector, split dispatch selector, and flowrunner
+context declaration while restoring each mutated source byte-exactly:
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-11 \
+  tools/gate-mutants/event-lineage-dispatch.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-11 \
+  tools/gate-mutants/event-lineage-dispatch.sh green-all
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-11 \
+  tools/gate-mutants/event-lineage-dispatch.sh run-all
+cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
+# Immutable green/red evidence:
+# architecture/evidence/mutations/event-lineage-dispatch.json
+```
+
 D20 (R6, wamn-1d4) the `partitioned(key)` head-unavailability policy lands here:
 `wamn-flow` gains `Flow::partition_policy` (`blocking` default / `leapfrog`),
 `run_queue.partition_policy` materializes it, `claim_partition_head_sql` branches on

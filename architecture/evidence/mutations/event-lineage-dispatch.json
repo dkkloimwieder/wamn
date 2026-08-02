@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "campaign": "event-lineage-dispatch",
+  "bead": "wamn-2jdm.11",
+  "source": {
+    "git_commit": "d82e72a2ad36aae00c19cfd1aef0e0ce62450ea4",
+    "runner_sha256": "b7a8f6b2b208edbb25bde0c2187aa205198064c4618f4ccb83950283f86f92ed"
+  },
+  "profile": "debug",
+  "green_runs": [
+    {
+      "gate": "combined_claim_and_checkpoint_builders_compose_the_split_statements",
+      "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--test", "queue", "combined_claim_and_checkpoint_builders_compose_the_split_statements", "--", "--exact"],
+      "exit_code": 0,
+      "log_sha256": "5b72c0c07b0be4868d6c720a3c0f8e0948a5d1e412a41353741e8e043ef68994",
+      "status": "passed"
+    },
+    {
+      "gate": "sql::tests::dispatch_read_projects_flow_and_input",
+      "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--lib", "sql::tests::dispatch_read_projects_flow_and_input", "--", "--exact"],
+      "exit_code": 0,
+      "log_sha256": "1b55db00c977a83f232a32c3d197438d6dee539689f69fd5bbcaeecd252c83f2",
+      "status": "passed"
+    },
+    {
+      "gate": "tests::dispatch_causation_declares_trusted_root_and_depth_for_the_claimed_run",
+      "command": ["cargo", "test", "--locked", "--manifest-path", "components/Cargo.toml", "-p", "flowrunner", "tests::dispatch_causation_declares_trusted_root_and_depth_for_the_claimed_run", "--", "--exact"],
+      "exit_code": 0,
+      "log_sha256": "ff53efc03316c24778c5b0e830bc094d30695008c3db324f487e87526c5c7aed",
+      "status": "passed"
+    }
+  ],
+  "mutants": [
+    {
+      "id": "combined-dispatch-drops-trusted-lineage",
+      "gate": "combined_claim_and_checkpoint_builders_compose_the_split_statements",
+      "target": "crates/execution/run-state/src/queue/sql.rs",
+      "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--test", "queue", "combined_claim_and_checkpoint_builders_compose_the_split_statements", "--", "--exact"],
+      "baseline_sha256": "aab6fc9b1faa54ffcb891f45cd9b83643e61e6e4b3ad0d4a86f221ea5a6d09d8",
+      "mutant_sha256": "a2935c77fb57d8b04aea54deef65b30ce585a96a2715e06e222d75c6a9d66e6e",
+      "restored_sha256": "aab6fc9b1faa54ffcb891f45cd9b83643e61e6e4b3ad0d4a86f221ea5a6d09d8",
+      "exit_code": 101,
+      "log_sha256": "3ca7322f529778c956b26f0cceea546a1f16303ef5c800140af27b41edecc033",
+      "status": "killed"
+    },
+    {
+      "id": "split-dispatch-drops-trusted-lineage",
+      "gate": "sql::tests::dispatch_read_projects_flow_and_input",
+      "target": "crates/execution/run-state/src/sql.rs",
+      "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--lib", "sql::tests::dispatch_read_projects_flow_and_input", "--", "--exact"],
+      "baseline_sha256": "d0841e3acb444bfa5663be7481c337e81142e1b810760222cc5198993f5a1d84",
+      "mutant_sha256": "c6c6725e12ebe881716a8601669b9fc8c87ddbda5bf5d0c74a2d456f3cfe5c0d",
+      "restored_sha256": "d0841e3acb444bfa5663be7481c337e81142e1b810760222cc5198993f5a1d84",
+      "exit_code": 101,
+      "log_sha256": "b249e907cd5181f81efab5c055c5deb8a901d0d409cb0402210b0ef91731bd2d",
+      "status": "killed"
+    },
+    {
+      "id": "flowrunner-ignores-dispatch-causation",
+      "gate": "tests::dispatch_causation_declares_trusted_root_and_depth_for_the_claimed_run",
+      "target": "components/execution/flowrunner/src/lib.rs",
+      "command": ["cargo", "test", "--locked", "--manifest-path", "components/Cargo.toml", "-p", "flowrunner", "tests::dispatch_causation_declares_trusted_root_and_depth_for_the_claimed_run", "--", "--exact"],
+      "baseline_sha256": "bab7eee8800092e95977c0adf2aa8c6edc5d32570a068f33641cab77e31cd210",
+      "mutant_sha256": "c30911515c1c61aadbbf4bca30ac7d95ce995f580fc363f440602f67ae7df739",
+      "restored_sha256": "bab7eee8800092e95977c0adf2aa8c6edc5d32570a068f33641cab77e31cd210",
+      "exit_code": 101,
+      "log_sha256": "f634784601d2f4ec274ffee8584ea91f32e1254a3914419cfd5b95ec54a9b9ca",
+      "status": "killed"
+    }
+  ]
+}
