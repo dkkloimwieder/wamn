@@ -62,7 +62,7 @@ cargo test --locked --offline -p wamn-proof-conformance --lib ip_name_lookup::
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
-selection for the current **49 root + 22 component packages**. The selection
+selection for the current **49 root + 29 component packages**. The selection
 uses named explicit selectors and deliberately does not add
 `default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
 sets with live, locked Cargo metadata and `architecture/package-roles.json`.
@@ -74,8 +74,8 @@ The selected package roots are:
 | fast developer/native | 39 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
 | product components | 0 | 7 | `api-gateway`, `evaluate-specs`, `flow-http`, `flowrunner`, `materializer`, `normalize-receipt`, `time-shift` |
 | contract/conformance | 12 | 0 | all 11 contract packages plus `wamn-proof-conformance` |
-| full CI | 49 | 22 | every Cargo member plus the classified non-Cargo `node-ts` sample |
-| deployed-system proof | 16 | 22 | deployable native/proof owners plus every guest proof input and `node-ts` |
+| full CI | 49 | 29 | every Cargo member plus the classified non-Cargo `node-ts` sample |
+| deployed-system proof | 16 | 29 | deployable native/proof owners plus every guest proof input and `node-ts` |
 | release | 10 | 7 | every package classified `deployable: true` |
 
 Package roots are selection inputs, not hand-maintained dependency closures.
@@ -114,7 +114,7 @@ There are no `default-members` in either virtual workspace. Consequently:
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
   select all 49 root members. Bare `cargo test` uses each package's default
   test targets.
-- From `components/`, the same bare commands select all 22 component members.
+- From `components/`, the same bare commands select all 29 component members.
   The production guest build remains
   `cargo build --workspace --target wasm32-wasip2`.
 - Full CI keeps three package/artifact steps—every root target, every component
@@ -249,6 +249,86 @@ cargo test -p wamn-test-fixtures -p wamn-test-infrastructure
 # Compile the compatibility command router used by the existing Jobs. Its test
 # implementations belong to the three proof libraries above.
 cargo check -p wamn-gates
+```
+
+### [PLAN-2A / wamn-ayq7.16] execution-bundle specialization gates
+
+`wamn-proof-conformance` owns both specialization proofs. Each recipe uses the
+debug profile, the locked offline component graph, and the pinned `wac-cli`
+0.10.1 composition boundary. `wasm-tools` supplies structural WIT inspection;
+the artifact gates verify its output rather than pinning its executable into
+execution-bundle identity.
+
+The exact-node arm builds the two driver inputs and three one-node plugs. Its
+identity evidence proves cross-flow reuse for equal inputs, exact byte and
+provenance equality across rebuilds, and digest locality: the deliberate beta
+component-digest mutant invalidates every and only bundle selecting beta. The
+artifact evidence also excludes the unused node world and every unselected
+capability world.
+
+```bash
+set -euo pipefail
+WAMN_2A_ROOT_TARGET="${CARGO_TARGET_DIR:-$PWD/target/wamn-plan-2a}"
+WAMN_2A_COMPONENT_TARGET="$WAMN_2A_ROOT_TARGET/components"
+WAMN_WAC_PATH="$(command -v wac)"
+WAMN_WASM_TOOLS_PATH="$(command -v wasm-tools)"
+test "$("$WAMN_WAC_PATH" --version)" = "wac-cli 0.10.1"
+
+# recipe-test: PLAN-2A-EXACT | conformance | wamn-proof-conformance | test | exact_node_specialization | - | 2 | exact-node identity locality, cross-flow reuse, and sorted single-plug composition plan
+CARGO_TARGET_DIR="$WAMN_2A_ROOT_TARGET" \
+  cargo test --locked --offline -p wamn-proof-conformance \
+  --test exact_node_specialization
+CARGO_TARGET_DIR="$WAMN_2A_COMPONENT_TARGET" \
+  cargo build --locked --offline --manifest-path components/Cargo.toml \
+  --target wasm32-wasip2 \
+  -p exact-driver-alpha -p exact-driver-alpha-beta \
+  -p exact-node-alpha -p exact-node-beta -p exact-node-unused
+WAMN_EXACT_COMPONENT_DIR="$WAMN_2A_COMPONENT_TARGET/wasm32-wasip2/debug" \
+WAMN_EXACT_OUTPUT_DIR="$WAMN_2A_ROOT_TARGET/exact-node-artifacts" \
+WAMN_WAC_PATH="$WAMN_WAC_PATH" \
+WAMN_WASM_TOOLS_PATH="$WAMN_WASM_TOOLS_PATH" \
+CARGO_TARGET_DIR="$WAMN_2A_ROOT_TARGET" \
+  cargo test --locked --offline -p wamn-proof-conformance \
+  --test exact_node_specialization \
+  exact_node_artifacts_compose_deterministically_and_exclude_unused_worlds \
+  -- --ignored --exact
+```
+
+The capability-class arm reuses the two exact drivers and builds the pure,
+HTTP, and Postgres class plugs. Its identity evidence proves equal class sets
+reuse one identity and that same-input rebuilds have exact byte and provenance
+equality. The deliberate class-member-digest mutants invalidate every and only
+bundle carrying that class, including flows that do not select the mutated
+member; the artifact evidence retains all members of a selected class while
+excluding every unselected class and capability world.
+
+```bash
+set -euo pipefail
+WAMN_2A_ROOT_TARGET="${CARGO_TARGET_DIR:-$PWD/target/wamn-plan-2a}"
+WAMN_2A_COMPONENT_TARGET="$WAMN_2A_ROOT_TARGET/components"
+WAMN_WAC_PATH="$(command -v wac)"
+WAMN_WASM_TOOLS_PATH="$(command -v wasm-tools)"
+test "$("$WAMN_WAC_PATH" --version)" = "wac-cli 0.10.1"
+
+# recipe-test: PLAN-2A-CAPABILITY-CLASS | conformance | wamn-proof-conformance | test | capability_class_specialization | - | 2 | class-set identity reuse, class-wide member blast radius, and sorted single-plug composition plan
+CARGO_TARGET_DIR="$WAMN_2A_ROOT_TARGET" \
+  cargo test --locked --offline -p wamn-proof-conformance \
+  --test capability_class_specialization
+CARGO_TARGET_DIR="$WAMN_2A_COMPONENT_TARGET" \
+  cargo build --locked --offline --manifest-path components/Cargo.toml \
+  --target wasm32-wasip2 \
+  -p exact-driver-alpha -p exact-driver-alpha-beta \
+  -p capability-class-http -p capability-class-postgres \
+  -p capability-class-pure
+WAMN_CAPABILITY_CLASS_COMPONENT_DIR="$WAMN_2A_COMPONENT_TARGET/wasm32-wasip2/debug" \
+WAMN_CAPABILITY_CLASS_OUTPUT_DIR="$WAMN_2A_ROOT_TARGET/capability-class-artifacts" \
+WAMN_WAC_PATH="$WAMN_WAC_PATH" \
+WAMN_WASM_TOOLS_PATH="$WAMN_WASM_TOOLS_PATH" \
+CARGO_TARGET_DIR="$WAMN_2A_ROOT_TARGET" \
+  cargo test --locked --offline -p wamn-proof-conformance \
+  --test capability_class_specialization \
+  capability_class_artifacts_are_deterministic_and_match_selected_class_worlds \
+  -- --ignored --exact
 ```
 
 ### S1/4p3/bp4.1 gates

@@ -41,6 +41,8 @@ const REQUIRED_RECIPE_IDS: &[&str] = &[
     "H5-TRACEPROOF",
     "H5-WAKEPROOF",
     "H5-WALBENCH",
+    "PLAN-2A-CAPABILITY-CLASS",
+    "PLAN-2A-EXACT",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +88,16 @@ struct RecipeDirective {
     filter: String,
     minimum: usize,
     boundary: String,
+}
+
+#[derive(Debug)]
+struct SpecializationRecipe<'a> {
+    id: &'a str,
+    target: &'a str,
+    component_packages: &'a [&'a str],
+    component_dir: &'a str,
+    output_dir: &'a str,
+    artifact_test: &'a str,
 }
 
 #[derive(Debug)]
@@ -658,6 +670,130 @@ fn recipe_test_directives_name_real_owners_and_commands() {
         assert!(
             ids.contains(*required),
             "missing required corrected recipe directive {required}"
+        );
+    }
+}
+
+#[test]
+fn specialization_recipes_pin_locked_debug_inputs_and_artifact_gates() {
+    let root = repository_root();
+    let source = fs::read_to_string(root.join(BUILD_AND_TEST_DOC)).expect("read build recipes");
+    let lines = bash_lines(&source);
+    let commands = logical_commands(&lines);
+    let directives = recipe_directives(&lines);
+    let recipes = [
+        SpecializationRecipe {
+            id: "PLAN-2A-EXACT",
+            target: "exact_node_specialization",
+            component_packages: &[
+                "exact-driver-alpha",
+                "exact-driver-alpha-beta",
+                "exact-node-alpha",
+                "exact-node-beta",
+                "exact-node-unused",
+            ],
+            component_dir: "WAMN_EXACT_COMPONENT_DIR",
+            output_dir: "WAMN_EXACT_OUTPUT_DIR",
+            artifact_test: "exact_node_artifacts_compose_deterministically_and_exclude_unused_worlds",
+        },
+        SpecializationRecipe {
+            id: "PLAN-2A-CAPABILITY-CLASS",
+            target: "capability_class_specialization",
+            component_packages: &[
+                "exact-driver-alpha",
+                "exact-driver-alpha-beta",
+                "capability-class-http",
+                "capability-class-postgres",
+                "capability-class-pure",
+            ],
+            component_dir: "WAMN_CAPABILITY_CLASS_COMPONENT_DIR",
+            output_dir: "WAMN_CAPABILITY_CLASS_OUTPUT_DIR",
+            artifact_test: "capability_class_artifacts_are_deterministic_and_match_selected_class_worlds",
+        },
+    ];
+
+    for recipe in recipes {
+        let directive = directives
+            .iter()
+            .find(|directive| directive.id == recipe.id)
+            .unwrap_or_else(|| panic!("missing specialization recipe {}", recipe.id));
+        assert_eq!(directive.proof, "conformance");
+        assert_eq!(directive.package, "wamn-proof-conformance");
+        assert_eq!(directive.kind, "test");
+        assert_eq!(directive.target, recipe.target);
+        assert_eq!(directive.filter, "-");
+        assert_eq!(directive.minimum, 2);
+
+        let recipe_commands = commands
+            .iter()
+            .filter(|command| command.block == directive.block)
+            .collect::<Vec<_>>();
+        let proof_command = recipe_commands
+            .iter()
+            .find(|command| {
+                command.number > directive.number
+                    && command.text.contains("cargo test --locked --offline")
+                    && command.text.contains(&format!("--test {}", recipe.target))
+                    && !command.text.contains("--ignored")
+            })
+            .unwrap_or_else(|| {
+                panic!("{} omits its locked offline proof-owner command", recipe.id)
+            });
+        assert!(!proof_command.text.contains("--release"));
+
+        let build_command = recipe_commands
+            .iter()
+            .find(|command| command.text.contains("cargo build --locked --offline"))
+            .unwrap_or_else(|| panic!("{} omits its locked offline component build", recipe.id));
+        assert!(
+            build_command
+                .text
+                .contains("--manifest-path components/Cargo.toml")
+        );
+        assert!(build_command.text.contains("--target wasm32-wasip2"));
+        assert!(!build_command.text.contains("--release"));
+        for package in recipe.component_packages {
+            assert!(
+                build_command.text.contains(&format!("-p {package}")),
+                "{} omits component input {package}",
+                recipe.id
+            );
+        }
+
+        let artifact_command = recipe_commands
+            .iter()
+            .find(|command| {
+                command.text.contains("cargo test --locked --offline")
+                    && command.text.contains(recipe.artifact_test)
+            })
+            .unwrap_or_else(|| panic!("{} omits its ignored artifact gate", recipe.id));
+        for required in [
+            recipe.component_dir,
+            recipe.output_dir,
+            "WAMN_WAC_PATH",
+            "WAMN_WASM_TOOLS_PATH",
+            "wasm32-wasip2/debug",
+            "-- --ignored --exact",
+        ] {
+            assert!(
+                artifact_command.text.contains(required),
+                "{} artifact gate omits {required}",
+                recipe.id
+            );
+        }
+        assert!(!artifact_command.text.contains("--release"));
+    }
+
+    let normalized_source = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    for evidence in [
+        "exact byte and provenance equality across rebuilds",
+        "deliberate beta component-digest mutant",
+        "deliberate class-member-digest mutants",
+        "invalidates every and only bundle",
+    ] {
+        assert!(
+            normalized_source.contains(evidence),
+            "specialization recipes omit deterministic evidence or mutation mode: {evidence}"
         );
     }
 }
